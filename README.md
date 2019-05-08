@@ -45,7 +45,7 @@ powerliftPassword=<InsertPowerLiftAccessTokenHere>
 
 ```bash
 # Include the .gitconfig file included with project to your local gitconfig
-git config --local include.path ../.gitconfig
+git config --local include.path ~/.gitconfig
 # Run this newly minted command to clone each repo as a subfolder
 git droidSetup
 ```
