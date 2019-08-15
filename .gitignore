@@ -26,3 +26,6 @@ build/
 # Local configuration file (sdk path, etc)
 gradle.properties
 local.properties
+
+# OSX file
+.DS_Store
