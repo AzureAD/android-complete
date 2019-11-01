@@ -34,27 +34,11 @@ allprojects {
     repositories {
         mavenLocal()
         maven {
-            name "msazure"
-            url 'https://msazure.pkgs.visualstudio.com/_packaging/android-maven/maven/v1'
-            credentials {
-                username project.vstsUsername
-                password project.msazureGradleAccessToken
-            }
-        }
-        maven {
             name "vsts-maven-adal-android"
             url "https://identitydivision.pkgs.visualstudio.com/_packaging/AndroidADAL/maven/v1"
             credentials {
                 username project.vstsUsername
                 password project.vstsMavenAccessToken
-            }
-        }
-        maven {
-            name project.ariaPkgName
-            url project.ariaPkgUrl
-            credentials {
-                username project.vstsUsername
-                password project.ariaGradleAccessToken
             }
         }
         google()
