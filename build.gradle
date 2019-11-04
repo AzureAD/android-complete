@@ -26,6 +26,7 @@ allprojects {
     repositories {
         mavenLocal()
         maven {
+            // msazure and aria are consumed via upstream sources of the AndroidADAL feed.
             name "vsts-maven-adal-android"
             url "https://identitydivision.pkgs.visualstudio.com/_packaging/AndroidADAL/maven/v1"
             credentials {
