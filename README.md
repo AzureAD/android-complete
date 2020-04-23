@@ -18,7 +18,7 @@ and store the credentials for the Identity and Aria azure devops instances.
 1. Go to //myaccess
 2. Send a request to join "Identity Apps Team - 18174"
 3. Install [Git Credential Manager for Windows](https://github.com/Microsoft/Git-Credential-Manager-for-Windows) or [Git Credential Manager for Mac and Linux](https://github.com/Microsoft/Git-Credential-Manager-for-Mac-and-Linux) and setup with your MSFT credential.
-4. Go to githib.com.  In the top let corner of the screen you'll create you'll see an icon or a profile picture.  Click it, select '''Settings'''.  On the subsequent screen, select '''Developer Settings''', and '''Personal Access Tokens''' on the subsequent screen.  Select Generate New Token, and give it permission for repo. Make a note of this token, because you'll need it later.
+4. Go to github.com.  In the top let corner of the screen you'll create you'll see an icon or a profile picture.  Click it, select '''Settings'''.  On the subsequent screen, select '''Developer Settings''', and '''Personal Access Tokens''' on the subsequent screen.  Select Generate New Token, and give it permission for repo. Make a note of this token, because you'll need it later.
 
 Then add the following to your gradle properties (in your user folder on windows in the .gradle folder.  You may need to create this file: gradle.properties. Learn more about gradle configuration properties [here](https://docs.gradle.org/current/userguide/build_environment.html#sec:gradle_configuration_properties)) file using the token values from the generate credentials UI:
 
