@@ -18,7 +18,7 @@ and store the credentials for the Identity and Aria azure devops instances.
 1. Go to //myaccess
 2. Send a request to join "Identity Apps Team - 18174"
 3. Install [Git Credential Manager for Windows](https://github.com/Microsoft/Git-Credential-Manager-for-Windows) or [Git Credential Manager for Mac and Linux](https://github.com/Microsoft/Git-Credential-Manager-for-Mac-and-Linux) and setup with your MSFT credential.
-4. If you're using iOS: Go to github.com.  In the top let corner of the screen you'll create you'll see an icon or a profile picture.  Click it, select '''Settings'''.  On the subsequent screen, select '''Developer Settings''', and '''Personal Access Tokens''' on the subsequent screen.  Select Generate New Token, and give it permission for repo. Make a note of this token, because you'll need it later.
+4. If you're using macOS: Go to github.com.  In the top let corner of the screen you'll create you'll see an icon or a profile picture.  Click it, select '''Settings'''.  On the subsequent screen, select '''Developer Settings''', and '''Personal Access Tokens''' on the subsequent screen.  Select Generate New Token, and give it permission for repo. Make a note of this token, because you'll need it later.
 
 Then add the following to your gradle properties (in your user folder on windows in the .gradle folder.  You may need to create this file: gradle.properties. Learn more about gradle configuration properties [here](https://docs.gradle.org/current/userguide/build_environment.html#sec:gradle_configuration_properties)) file using the token values from the generate credentials UI:
 
@@ -41,7 +41,7 @@ git config --local include.path ../.gitconfig
 git droidSetup
 ```
 
-**Note:** when you run droidSetup in iOS, it will attempt to check out the package for ''authenticator'' or ''broker''.  It will prompt for your GitHub username and password, but the password you need to provide is the Personal Access Token you created earler.
+**Note:** when you run droidSetup in macOS, it will attempt to check out the package for ''authenticator'' or ''broker''.  It will prompt for your GitHub username and password, but the password you need to provide is the Personal Access Token you created earler.
 
 3. Open Android Studio and open project from the folder you cloned into (project: android_auth)
 4. Update your build variants to point to use localDebug.  See more in the next section.
