@@ -41,7 +41,7 @@ git config --local include.path ../.gitconfig
 git droidSetup
 ```
 
-**Note:** when you run droidSetup, it will attempt to check out the package for ''authenticator'' or ''broker''.  It will prompt for your GitHub username and password, but the password you need to provide is the Personal Access Token you created earler.
+**Note:** when you run droidSetup in iOS, it will attempt to check out the package for ''authenticator'' or ''broker''.  It will prompt for your GitHub username and password, but the password you need to provide is the Personal Access Token you created earler.
 
 3. Open Android Studio and open project from the folder you cloned into (project: android_auth)
 4. Update your build variants to point to use localDebug.  See more in the next section.
