@@ -60,7 +60,7 @@ git droidSetup
 
 3. Open Android Studio and open project from the folder you cloned into (project: android_auth)
 4. Update your build variants to point to use localDebug.  See more in the next section.
-5. Install [Lobmok Plugin](https://plugins.jetbrains.com/plugin/6317-lombok) in Android Studio.
+5. Install [Lombok Plugin](https://plugins.jetbrains.com/plugin/6317-lombok) in Android Studio.
 
 ## Build Variants
 
