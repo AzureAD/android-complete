@@ -14,7 +14,7 @@ For this, you'll need a Personal Access Token (PAT) under IdentityDivision organ
 2. Select "New Token"
 3. Select Organization -> IdentityDivision
 4. Set the token expiration date as you see fit
-5 Select Scopes -> Packaging Read
+5. Select Scopes -> Packaging Read
 
 - [Authenticator App Dependency Feed](https://msazure.visualstudio.com/One/_packaging?_a=feed&feed=AuthApp)
 For this, you'll need a Personal Access Token (PAT) under msazure organization.
@@ -60,7 +60,7 @@ git droidSetup
 
 3. Open Android Studio and open project from the folder you cloned into (project: android_auth)
 4. Update your build variants to point to use localDebug.  See more in the next section.
-. Install [Lobmok Plugin](https://plugins.jetbrains.com/plugin/6317-lombok) in Android Studio.
+5. Install [Lobmok Plugin](https://plugins.jetbrains.com/plugin/6317-lombok) in Android Studio.
 
 ## Build Variants
 
