@@ -29,17 +29,18 @@ For this, you'll need a Personal Access Token (PAT) under msazure organization.
 2. Send a request to join "Identity Apps Team - 18174"
 3. Install [Git Credential Manager for Windows](https://github.com/Microsoft/Git-Credential-Manager-for-Windows) or [Git Credential Manager for Mac and Linux](https://github.com/Microsoft/Git-Credential-Manager-for-Mac-and-Linux) and setup with your MSFT credential.
 
-- [Private GitHub Repository](https://repos.opensource.microsoft.com/)
-1. Go to https://repos.opensource.microsoft.com/
+- [Private GitHub Repositories](https://repos.opensource.microsoft.com/)
+1. Go to https://repos.opensource.microsoft.com/. You'll need a github account.
 2. Join 'AzureAD' organization (to get an access to Broker)
 3. Join 'Microsoft' organization (to get an access to Authenticator app's submodule.)
+4. Set up your github credential on your dev machine. See [here](https://help.github.com/en/github/authenticating-to-github/connecting-to-github-with-ssh)
 
 Then add the following to your gradle properties (in your user folder on windows in the .gradle folder.  You may need to create this file: gradle.properties. Learn more about gradle configuration properties [here](https://docs.gradle.org/current/userguide/build_environment.html#sec:gradle_configuration_properties)) file using the token values from the generate credentials UI:
 
 ```gradle.properties
 vstsUsername=VSTS 
-vstsMavenAccessToken=[Insert a token for Android DevX Dependency Feed here]
-adoMsazureAuthAppAccessToken=[Insert a token for Authenticator App Dependency Feed here]
+vstsMavenAccessToken=[Insert a PAT for the Android DevX Feed here]
+adoMsazureAuthAppAccessToken=[Insert a PAT for the Authenticator App Feed here]
 ```
 >NOTE: The sample configuration produced by Azure DevOps changed when the service was renamed from Visual Studio Online to Azure DevOps... the vstsUsername VSTS is still accepted.  
 
@@ -56,9 +57,8 @@ git droidSetup
 ```
 
 3. Open Android Studio and open project from the folder you cloned into (project: android_auth)
-4. Click 'Sync Project with Gradle Files'.
-5. Update your build variants to point to use localDebug.  See more in the next section.
-6. Install [Lobmok Plugin](https://plugins.jetbrains.com/plugin/6317-lombok) in Android Studio.
+4. Update your build variants to point to use localDebug.  See more in the next section.
+5. Install [Lobmok Plugin](https://plugins.jetbrains.com/plugin/6317-lombok) in Android Studio.
 
 ## Build Variants
 
