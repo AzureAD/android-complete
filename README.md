@@ -33,7 +33,9 @@ For this, you'll need a Personal Access Token (PAT) under msazure organization.
 1. Go to https://repos.opensource.microsoft.com/. You'll need a github account.
 2. Join 'AzureAD' organization (to get an access to Broker)
 3. Join 'Microsoft' organization (to get an access to Authenticator app's submodule.)
-4. Set up your github credential on your dev machine. See [here](https://help.github.com/en/github/authenticating-to-github/connecting-to-github-with-ssh)
+4. Set up your github credential on your dev machine. 
+    - You can [connect to github with ssh](https://help.github.com/en/github/authenticating-to-github/connecting-to-github-with-ssh). (recommended for OSX)
+    - Alternatively, you can create a [Personal Access Token](https://help.github.com/en/github/authenticating-to-github/creating-a-personal-access-token-for-the-command-line) and use it as a password when prompted in command line.
 
 Then add the following to your gradle properties (in your user folder on windows in the .gradle folder.  You may need to create this file: gradle.properties. Learn more about gradle configuration properties [here](https://docs.gradle.org/current/userguide/build_environment.html#sec:gradle_configuration_properties)) file using the token values from the generate credentials UI:
 
@@ -58,7 +60,7 @@ git droidSetup
 
 3. Open Android Studio and open project from the folder you cloned into (project: android_auth)
 4. Update your build variants to point to use localDebug.  See more in the next section.
-5. Install [Lobmok Plugin](https://plugins.jetbrains.com/plugin/6317-lombok) in Android Studio.
+. Install [Lobmok Plugin](https://plugins.jetbrains.com/plugin/6317-lombok) in Android Studio.
 
 ## Build Variants
 
