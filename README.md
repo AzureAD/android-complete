@@ -31,8 +31,8 @@ For this, you'll need a Personal Access Token (PAT) under msazure organization.
 
 - [Private GitHub Repositories](https://repos.opensource.microsoft.com/)
 1. Go to https://repos.opensource.microsoft.com/. You'll need a github account.
-2. Join 'AzureAD' organization (to get an access to Broker)
-3. Join 'Microsoft' organization (to get an access to Authenticator app's submodule.)
+2. Join 'AzureAD' organization (to get an access to Broker) via https://repos.opensource.microsoft.com/AzureAD/join
+3. Join 'Microsoft' organization (to get an access to Authenticator app's submodule.) via https://repos.opensource.microsoft.com/Microsoft/join
 4. Set up your github credential on your dev machine. 
     - You can [connect to github with ssh](https://help.github.com/en/github/authenticating-to-github/connecting-to-github-with-ssh). (recommended for OSX)
     - Alternatively, you can create a [Personal Access Token](https://help.github.com/en/github/authenticating-to-github/creating-a-personal-access-token-for-the-command-line) and use it as a password when prompted in command line.
