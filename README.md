@@ -56,7 +56,7 @@ git droidSetup
 ```
 
 3. Open Android Studio and open project from the folder you cloned into (project: android_auth)
-4. Click 'Sync Project with Gradle Files'. This step could be very long for first time sync.
+4. Click 'Sync Project with Gradle Files'.
 5. Update your build variants to point to use localDebug.  See more in the next section.
 
 ## Build Variants
