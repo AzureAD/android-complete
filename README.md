@@ -44,7 +44,12 @@ vstsUsername=VSTS
 vstsMavenAccessToken=[Insert a PAT for the Android DevX Feed here]
 adoMsazureAuthAppAccessToken=[Insert a PAT for the Authenticator App Feed here]
 ```
->NOTE: The sample configuration produced by Azure DevOps changed when the service was renamed from Visual Studio Online to Azure DevOps... the vstsUsername VSTS is still accepted.  
+
+>NOTE: By default, this global gradle.properties is located at
+>1. /Users/<USER_NAME>/.gradle/gradle.properties (OSX)
+>2. C:\Users\<USER_NAME>\.gradle\gradle.properties (Windows)
+
+>NOTE: The sample configuration produced by Azure DevOps changed when the service was renamed from Visual Studio Online to Azure DevOps... the vstsUsername VSTS is still accepted.
 
 ## Install
 
