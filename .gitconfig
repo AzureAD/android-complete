@@ -3,10 +3,10 @@
 [alias]
 	hello = "!echo \"Hello World\""
 	droidSetup = "!f() { \
-		git clone -b dev https://github.com/AzureAD/microsoft-authentication-library-for-android.git msal; \
-		git clone -b dev https://github.com/AzureAD/microsoft-authentication-library-common-for-android.git common; \
+		git clone -b fadi-dev https://github.com/AzureAD/microsoft-authentication-library-for-android.git msal; \
+		git clone -b fadi-dev https://github.com/AzureAD/microsoft-authentication-library-common-for-android.git common; \
 		git clone -b dev https://github.com/AzureAD/azure-activedirectory-library-for-android.git adal; \
-		git clone -b dev https://github.com/AzureAD/ad-accounts-for-android.git broker; \
+		git clone -b fadi-dev https://github.com/AzureAD/ad-accounts-for-android.git broker; \
 		git clone -b working https://msazure.visualstudio.com/DefaultCollection/One/_git/AD-MFA-phonefactor-phoneApp-android authenticator; \
         git clone -b dev https://github.com/Azure-Samples/ms-identity-android-java.git azuresample; \
         git clone -b dev https://github.com/t-fadura/ramp-up-mini.git ramp-up-mini; \
