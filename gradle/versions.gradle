@@ -8,7 +8,7 @@ ext {
     buildToolsVersion = "28.0.3"
 
     // Plugins
-    gradleVersion = '4.1.0'
+    gradleVersion = '4.1.1'
     androidMavenGradlePluginVersion = "1.4.1"
     
     //Java Language Support
@@ -34,9 +34,10 @@ ext {
     materialVersion = "1.0.0"
     mockitoCoreVersion = "3.6.28"
     mockitoAndroidVersion = "3.6.28"
+    powerMockVersion = "2.0.9"
     multidexVersion = "2.0.1"
     nimbusVersion = "8.2"
-    powerMockVersion = "1.6.6"
+    powerMockVersion = "2.0.9"
     runnerVersion = "1.2.0"
     rulesVersion = "1.2.0"
     robolectricVersion = "4.5.1"
