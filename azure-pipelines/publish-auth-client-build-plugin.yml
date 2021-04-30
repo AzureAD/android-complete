@@ -1,0 +1,7 @@
+# File: publish0auth-client-build-plugin.yml
+# Description: Builds and publishes the Auth Client BuildPlugin
+# https://github.com/AzureAD/android-complete/blob/master/plugins/buildsystem/docs/Overview.md
+
+name: Build and Publish Auth Client BuildPlugin
+
+
