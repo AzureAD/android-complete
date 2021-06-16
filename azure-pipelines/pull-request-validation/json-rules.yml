@@ -1,0 +1,51 @@
+# File: azure-pipelines\pull-request-validation\json-rules.yml
+# Description: Assemble Json Rules
+# Variable: 'ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME' was defined in the Variables tab
+# Variable: 'mvnAccessToken' was defined in the Variables tab
+# https://docs.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate
+name: $(date:yyyyMMdd)$(rev:.r)
+
+trigger:
+  branches:
+    include:
+      - dev
+      - master
+      - release/*
+  batch: True
+
+resources:
+  repositories:
+    - repository: common
+      type: github
+      name: AzureAD/microsoft-authentication-library-common-for-android
+      ref: dev
+      endpoint: ANDROID_GITHUB
+
+jobs:
+  - job: Phase_1
+    displayName: Build & Test
+    cancelTimeoutInMinutes: 1
+    pool:
+      name: Hosted Windows 2019 with VS2019
+    steps:
+      - checkout: self
+        clean: true
+        submodules: recursive
+        persistCredentials: True
+      - template: azure-pipelines/templates/steps/credscan-policheck.yml@common
+        parameters:
+          policheckCmdLineArgsDir: broker
+      - template: azure-pipelines/templates/steps/automation-cert.yml@common
+        parameters:
+          envVstsMvnAt: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+      - task: Gradle@1
+        name: Gradle1
+        displayName: Assemble
+        inputs:
+          tasks: JsonRules:clean JsonRules:assemble --build-cache --info
+          publishJUnitResults: false
+          jdkArchitecture: x86
+          sqAnalysisBreakBuildIfQualityGateFailed: false
+      - task: ComponentGovernanceComponentDetection@0
+        displayName: Component Detection
+...
