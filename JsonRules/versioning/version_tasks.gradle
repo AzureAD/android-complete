@@ -1,0 +1,38 @@
+def getVersionFile() {
+    File file = new File("$rootDir/JsonRules/versioning/version.properties")
+    if(file.exists()){
+        return file;
+    }else{
+        return new File("$rootDir/versioning/version.properties")
+    }
+}
+
+def getVersionProps() {
+    def versionProps = new Properties();
+    getVersionFile().withInputStream {stream -> versionProps.load(stream)}
+    return versionProps
+}
+
+private String getVersionNamePatch() {
+    return (getVersionProps()['versionName'] =~ /[^.]+/)[2].toString()
+}
+
+private Integer getVersionNameMinor() {
+    return (getVersionProps()['versionName'] =~ /\d+/)[1].toInteger()
+}
+
+private Integer getVersionNameMajor() {
+    return (getVersionProps()['versionName'] =~ /\d+/)[0].toInteger()
+}
+
+private Integer getLatestPatchVersion() {
+    return getVersionProps()['latestPatchVersion'].toInteger()
+}
+
+ext.getAppVersionCode = {
+    getVersionProps()['versionCode'].toInteger()
+}
+
+ext.getAppVersionName = {
+    getVersionProps()['versionName'].toString()
+}
