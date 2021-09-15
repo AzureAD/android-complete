@@ -23,39 +23,70 @@
 package com.microsoft.identity.buildsystem;
 
 import com.android.build.gradle.LibraryExtension;
+import com.microsoft.identity.buildsystem.constants.Constants;
+import com.microsoft.identity.buildsystem.extensions.AndroidBuildExtension;
+import com.microsoft.identity.buildsystem.extensions.BuildPluginExtension;
+import com.microsoft.identity.buildsystem.extensions.JavaBuildExtension;
+import com.microsoft.identity.buildsystem.extensions.appliers.AndroidBuildExtensionApplier;
+import com.microsoft.identity.buildsystem.extensions.appliers.JavaBuildExtensionApplier;
+import com.microsoft.identity.buildsystem.spotbugs.SpotBugs;
+
 import org.gradle.api.JavaVersion;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
+import org.gradle.api.provider.Property;
+
+import static com.microsoft.identity.buildsystem.constants.Constants.PluginIdentifiers.ANDROID_LIBRARY_PLUGIN_ID;
+import static com.microsoft.identity.buildsystem.constants.Constants.PluginIdentifiers.JAVA_LIBRARY_PLUGIN_ID;
+import static com.microsoft.identity.buildsystem.constants.Constants.ProjectProperties.JAVA_SOURCE_COMPATIBILITY_PROPERTY;
+import static com.microsoft.identity.buildsystem.constants.Constants.ProjectProperties.JAVA_TARGET_COMPATIBILITY_PROPERTY;
 
 public class BuildPlugin implements Plugin<Project> {
 
-    private final static String ANDROID_LIBRARY_PLUGIN_ID = "com.android.library";
-    private final static String JAVA_LIBRARY_PLUGIN_ID = "java-library";
-
-    private final static String JAVA_SOURCE_COMPATIBILITY_PROPERTY = "sourceCompatibility";
-    private final static String JAVA_TARGET_COMPATIBILITY_PROPERTY = "targetCompatibility";
-
     @Override
     public void apply(final Project project) {
+        project.getPluginManager().withPlugin(ANDROID_LIBRARY_PLUGIN_ID, appliedPlugin -> {
+            final AndroidBuildExtension androidConfig = project.getExtensions()
+                    .create(Constants.ExtensionNames.ANDROID_BUILD_EXTENSION, AndroidBuildExtension.class);
 
-        final BuildPluginExtension config = project.getExtensions()
-                .create("buildSystem", BuildPluginExtension.class);
-
-        project.afterEvaluate(project1 -> {
-            if(config.getDesugar().get()) {
-                project1.getLogger().warn("DESUGARING ENABLED");
-                applyDesugaringToAndroidProject(project1);
-                applyJava8ToJavaProject(project1);
-            }else{
-                project1.getLogger().warn("DESUGARING DISABLED");
-            }
+            new AndroidBuildExtensionApplier().applyBuildExtensionProperties(project, androidConfig);
         });
+
+        project.getPluginManager().withPlugin(JAVA_LIBRARY_PLUGIN_ID, appliedPlugin -> {
+            final JavaBuildExtension javaConfig = project.getExtensions()
+                    .create(Constants.ExtensionNames.JAVA_BUILD_EXTENSION, JavaBuildExtension.class);
+
+            new JavaBuildExtensionApplier().applyBuildExtensionProperties(project, javaConfig);
+        });
+
+        applyBuildSystemConfig(project);
 
         SpotBugs.applySpotBugsPlugin(project);
     }
 
-    private void applyDesugaringToAndroidProject(final Project project){
+    @Deprecated
+    private void applyBuildSystemConfig(final Project project) {
+        final BuildPluginExtension config = project.getExtensions()
+                .create("buildSystem", BuildPluginExtension.class);
 
+        project.afterEvaluate(project1 -> {
+            final Property<Boolean> desugarProperty = config.getDesugar();
+
+            if (desugarProperty != null && desugarProperty.isPresent()) {
+                final boolean desugar = desugarProperty.get();
+                if (desugar) {
+                    project1.getLogger().warn("DESUGARING ENABLED");
+                    applyDesugaringToAndroidProject(project1);
+                    applyJava8ToJavaProject(project1);
+                } else {
+                    project1.getLogger().warn("DESUGARING DISABLED");
+                }
+            }
+        });
+    }
+
+    @Deprecated
+    private void applyDesugaringToAndroidProject(final Project project) {
         project.getPluginManager().withPlugin(ANDROID_LIBRARY_PLUGIN_ID, appliedPlugin -> {
             LibraryExtension libraryExtension = project.getExtensions().findByType(LibraryExtension.class);
             libraryExtension.getCompileOptions().setSourceCompatibility(JavaVersion.VERSION_1_8);
@@ -65,6 +96,7 @@ public class BuildPlugin implements Plugin<Project> {
 
     }
 
+    @Deprecated
     private void applyJava8ToJavaProject(final Project project) {
         project.getPluginManager().withPlugin(JAVA_LIBRARY_PLUGIN_ID, appliedPlugin -> {
             project.setProperty(JAVA_SOURCE_COMPATIBILITY_PROPERTY, JavaVersion.VERSION_1_8);

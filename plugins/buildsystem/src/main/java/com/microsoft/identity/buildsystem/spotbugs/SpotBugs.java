@@ -21,7 +21,7 @@
 //  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 //  THE SOFTWARE.
 
-package com.microsoft.identity.buildsystem;
+package com.microsoft.identity.buildsystem.spotbugs;
 import com.github.spotbugs.snom.SpotBugsExtension;
 import com.github.spotbugs.snom.SpotBugsPlugin;
 
@@ -41,7 +41,7 @@ public final class SpotBugs {
      * @see <a href="https://github.com/spotbugs/spotbugs-gradle-plugin">Spotbugs gradle plugin </a>
      * @param project project to apply the Spotbugs plugin
      */
-    static void applySpotBugsPlugin(Project project) {
+    public static void applySpotBugsPlugin(Project project) {
         if(!project.getPlugins().hasPlugin(SpotBugsPlugin.class)) {
             project.getPlugins().apply(SpotBugsPlugin.class);
         }
