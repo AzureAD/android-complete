@@ -76,8 +76,8 @@ project(':labapi').projectDir = new File('common/labapi')
 include(":keyvault")
 project(':keyvault').projectDir = new File('common/keyvault')
 
-include(":AcaPlugin")
-project(':AcaPlugin').projectDir = new File('plugins/buildsystem')
+include(":buildsystem")
+project(':buildsystem').projectDir = new File('plugins/buildsystem')
 
 include(":broker4j")
 project(':broker4j').projectDir = new File('broker/broker4j')
