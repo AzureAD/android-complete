@@ -23,13 +23,7 @@ steps:
   displayName: set mvnAccessToken in env.file
 - script: docker --version
   displayName: Docker Version
-- script: |
-    if docker image inspect $DOCKERIMAGE; then
-      echo "Image is already installed"
-    else
-      echo "Image is not installed... Pulling $DOCKERIMAGE"
-      docker pull $DOCKERIMAGE
-    fi
+- script: docker pull $DOCKERIMAGE
   env:
     DOCKERIMAGE: ${{ parameters.azureContainerRegistryImage }}
   displayName: Pulling Image from ACR
