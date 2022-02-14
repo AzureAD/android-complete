@@ -49,14 +49,13 @@ variables:
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
 
-pool:
-  vmImage: ubuntu-latest
-
 stages:
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish
   pool:
-    vmImage: ubuntu-latest
+    name: 1ES-AndroidPool-EOC
+    demands:
+    - ImageOverride -equals azure-pipeline-ubuntu-20.04-compliant
   jobs:
     - job: publishCommonLibraries
       displayName: Build and publish common4j and android common to internal maven feed
@@ -85,7 +84,9 @@ stages:
   displayName: Broker - Build and publish
   dependsOn: publishCommonLibraries
   pool:
-    vmImage: ubuntu-latest
+    name: 1ES-AndroidPool-EOC
+    demands:
+    - ImageOverride -equals azure-pipeline-ubuntu-20.04-compliant
   jobs:
     - job: publishBrokerLibraries
       displayName: Build and publish broker4j, android broker and linux broker libraries to internal maven feed
@@ -123,7 +124,9 @@ stages:
   displayName: Msal - Build and publish
   dependsOn: publishCommonLibraries
   pool:
-    vmImage: ubuntu-latest
+    name: 1ES-AndroidPool-EOC
+    demands:
+    - ImageOverride -equals azure-pipeline-ubuntu-20.04-compliant
   jobs:
   - job: publishAndroidMsal
     displayName: Build and publish msal for android to internal maven feed
@@ -143,7 +146,9 @@ stages:
   displayName: Adal - Build and publish
   dependsOn: publishCommonLibraries
   pool:
-    vmImage: ubuntu-latest
+    name: 1ES-AndroidPool-EOC
+    demands:
+    - ImageOverride -equals azure-pipeline-ubuntu-20.04-compliant
   jobs:
   - job: publishAndroidAdal
     displayName: Build and publish adal for android to internal maven feed
