@@ -29,4 +29,4 @@ jobs:
   workspace:
     clean: all
   steps:
-  - template: azure-pipelines/pr-validation/docker-tasks.yml
+  - template: docker-tasks.yml
