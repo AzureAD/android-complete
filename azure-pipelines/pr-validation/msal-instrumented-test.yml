@@ -31,4 +31,4 @@ jobs:
   steps:
   - template: docker-tasks.yml
     parameters:
-    androidProject: msal
+      androidProject: msal
