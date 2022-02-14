@@ -1,0 +1,32 @@
+# File: azure-pipelines\pr-validation\msal-instrumented-test.yml
+# Description: Run instrumented test for MSAL in a docker container
+name: Instrumented Tests
+
+trigger: none
+pr: none
+
+pool:
+ name: 1ES-AndroidPool-EOC
+ demands:
+ - ImageOverride -equals azure-pipeline-ubuntu-20.04-compliant
+
+resources:
+  repositories:
+  - repository: msal
+    type: github
+    name: AzureAD/microsoft-authentication-library-for-android
+    ref: dev
+    endpoint: ANDROID_GITHUB
+    trigger:
+      branches:
+        include:
+        - pedroro/*
+        - main
+
+jobs:
+- job: instrumentedTest
+  displayName: Instrumented Test MSAL
+  workspace:
+    clean: all
+  steps:
+  - template: azure-pipelines/pr-validation/docker-tasks.yml
