@@ -149,12 +149,24 @@ stages:
           inputs:
             SourceFolder: LinuxBrokerPackage/build/distributions
             TargetFolder: $(build.artifactstagingdirectory)
+        - task: CopyFiles@2
+          name: CopyFiles1
+          displayName: Copy Powerlift Files to Artifact Staging Directory
+          inputs:
+            SourceFolder: powerlift/build/distributions
+            TargetFolder: $(build.artifactstagingdirectory)    
         - task: PublishPipelineArtifact@1
           name: PublishPipelineArtifacts1
           displayName: 'Publish Artifact: LinuxBrokerPackage Linux Test App Deb'
           inputs:
             ArtifactName: LinuxBrokerPackage Deb Package
-            TargetPath: $(build.artifactstagingdirectory)                       
+            TargetPath: $(build.artifactstagingdirectory)
+        - task: PublishPipelineArtifact@1
+          name: PublishPipelineArtifacts1
+          displayName: 'Publish Artifact: Powerlift Client Deb'
+          inputs:
+            ArtifactName: Powerlift Client Deb Package
+            TargetPath: $(build.artifactstagingdirectory)                           
 - stage: 'publishMsal'
   displayName: Msal - Build and publish
   dependsOn: publishCommonLibraries
