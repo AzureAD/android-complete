@@ -150,7 +150,7 @@ stages:
             SourceFolder: LinuxBrokerPackage/build/distributions
             TargetFolder: $(build.artifactstagingdirectory)
         - task: CopyFiles@2
-          name: CopyFiles1
+          name: CopyFiles2
           displayName: Copy Powerlift Files to Artifact Staging Directory
           inputs:
             SourceFolder: powerlift/build/distributions
@@ -162,7 +162,7 @@ stages:
             ArtifactName: LinuxBrokerPackage Deb Package
             TargetPath: $(build.artifactstagingdirectory)
         - task: PublishPipelineArtifact@1
-          name: PublishPipelineArtifacts1
+          name: PublishPipelineArtifacts2
           displayName: 'Publish Artifact: Powerlift Client Deb'
           inputs:
             ArtifactName: Powerlift Client Deb Package
