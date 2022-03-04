@@ -18,14 +18,6 @@ For this, you'll need a Personal Access Token (PAT) under IdentityDivision organ
 
 **Copy this token and save it.  It is your vstsMavenAccessToken, placed in gradle.properties below.**  It is used by your local gradle builds to access artifacts in the microsoft maven repository in visualstudio online.  If you see errors like "Could not HEAD 'https://identitydivision.pkgs.visualstudio.com/_packaging/AndroidADAL/maven/v1/com/microsoft/device/display/display-mask/0.3.0/display-mask-0.3.0.pom'. Received status code 401 from server: Unauthorized" then this token is not set up correctly.
 
-- [Private GitHub Repositories](https://repos.opensource.microsoft.com/)
-1. Go to https://repos.opensource.microsoft.com/. You'll need a github account.
-2. Join 'AzureAD' organization (to get an access to Broker) via https://repos.opensource.microsoft.com/AzureAD/join
-3. Join 'Microsoft' organization (to get an access to Authenticator app's submodule.) via https://repos.opensource.microsoft.com/Microsoft/join
-4. Set up your github credential on your dev machine. 
-    - You can [connect to github with ssh](https://help.github.com/en/github/authenticating-to-github/connecting-to-github-with-ssh). (recommended for OSX)
-    - Alternatively, you can create a [Personal Access Token](https://help.github.com/en/github/authenticating-to-github/creating-a-personal-access-token-for-the-command-line) and use it as a password when prompted in command line.
-
 Then add the following to your gradle properties (in your user folder on windows in the .gradle folder.  You may need to create this file: gradle.properties. Learn more about gradle configuration properties [here](https://docs.gradle.org/current/userguide/build_environment.html#sec:gradle_configuration_properties)) file using the token values from the generate credentials UI:
 
 ```gradle.properties
@@ -41,6 +33,13 @@ adoMsazureAuthAppAccessToken=[Insert a PAT for the Authenticator App Feed here] 
 > (The folders could be hidden)
 
 >NOTE: The sample configuration produced by Azure DevOps changed when the service was renamed from Visual Studio Online to Azure DevOps... the vstsUsername VSTS is still accepted.
+
+- [Private GitHub Repositories](https://repos.opensource.microsoft.com/)
+1. Go to https://repos.opensource.microsoft.com/. You'll need a github account.
+2. Join 'AzureAD' organization (to get an access to Broker) via https://repos.opensource.microsoft.com/AzureAD/join
+3. Join 'Microsoft' organization (to get an access to Authenticator app's submodule.) via https://repos.opensource.microsoft.com/Microsoft/join
+
+- Install [Git-Credential-Manager](https://github.com/GitCredentialManager/git-credential-manager) on yor machine.
 
 ## Install
 
