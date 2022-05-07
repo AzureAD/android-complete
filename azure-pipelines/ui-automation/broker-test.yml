@@ -29,7 +29,7 @@ variables:
   msalTestApp: msalautomationapp-dist-AutoBroker-debug-androidTest.apk
   brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
   brokerTestApp: brokerautomationapp-dist-AutoBroker-debug-androidTest.apk
-  azureSampleApk: AzureSample-external-release.apk
+  azureSampleApk: AzureSample-local-debug.apk
   companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
   authenticatorApk: app-production-universal-release-signed.apk
   firebaseTimeout: 45m
