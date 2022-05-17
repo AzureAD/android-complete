@@ -98,6 +98,9 @@ project(':LinuxBrokerPackage').projectDir = new File('/broker/LinuxBrokerPackage
 include(":AzureSample")
 project(':AzureSample').projectDir = new File('azuresample/app')
 
+include(':microsoft-identity-diagnostics')
+project(':microsoft-identity-diagnostics').projectDir = new File('/broker/microsoft-identity-diagnostics')
+
 //include(":tsl")
 //project(':tsl').projectDir = new File('tsl/tokenshare')
 
