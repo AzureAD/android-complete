@@ -39,11 +39,11 @@ parameters:
 - name: firebaseDeviceId
   displayName: Firebase Device Id
   type: string
-  default: flame
+  default: blueline
 - name: firebaseDeviceAndroidVersion
   displayName: Firebase Device Android Version
   type: number
-  default: 29
+  default: 28
 - name: authenticatorVersion
   displayName: Authenticator Version
   type: string
