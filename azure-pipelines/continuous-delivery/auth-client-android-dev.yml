@@ -41,8 +41,12 @@ resources:
       endpoint: ANDROID_GITHUB
 
 variables:
-  versionNumber: $(Build.BuildNumber)
+  ${{ if eq(variables['customVersionNumber'], '') }}:  
+    versionNumber: $(Build.BuildNumber)
+  ${{ else }}:
+    versionNumber: $(customVersionNumber)
   projVersionParam: -PprojVersion=$(versionNumber)
+  labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(versionNumber)
   common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
   broker4jVersionParam: -PdistBroker4jVersion=$(versionNumber)
   commonVersionParam: -PdistCommonVersion=$(versionNumber)
@@ -51,6 +55,19 @@ variables:
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
 
 stages:
+# :LabApiUtilities - Build and publish
+- stage: 'publishLabApiUtilitiesLibraries'
+  displayName: LabApiUtilities - Build and publish
+  jobs:
+  - template: assemble&publish.yml
+    parameters:
+      repository: common
+      project: LabApiUtilities
+      dependencyParams: $(javaProjectDependencyParam)
+      assembleParams: $(projVersionParam)
+      publishParams: $(projVersionParam)
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
+      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
@@ -83,7 +100,9 @@ stages:
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
-  dependsOn: publishCommon4jLibraries
+  dependsOn: 
+  - publishLabApiUtilitiesLibraries
+  - publishCommon4jLibraries
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -91,14 +110,16 @@ stages:
       project: broker4j
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(common4jVersionParam)
-      publishParams: $(projVersionParam) $(common4jVersionParam)
+      assembleParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
+      publishParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
 # Broker - Build and publish
 - stage: 'publishBrokeLibraries'
   displayName: Broker - Build and publish
-  dependsOn: publishCommonLibraries
+  dependsOn: 
+  - publishCommonLibraries
+  - publishBroke4jLibraries
   jobs:
   - template: assemble&publish.yml
     parameters:
