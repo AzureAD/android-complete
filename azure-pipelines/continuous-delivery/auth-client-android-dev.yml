@@ -41,7 +41,7 @@ resources:
       endpoint: ANDROID_GITHUB
 
 variables:
-  ${{ if eq(variables['customVersionNumber'], '') }}:  
+  ${{ if eq(variables.customVersionNumber, '') }}:  
     versionNumber: $(Build.BuildNumber)
   ${{ else }}:
     versionNumber: $(customVersionNumber)
