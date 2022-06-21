@@ -71,6 +71,7 @@ stages:
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
+  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
   - template: assemble&publish.yml
     parameters:
