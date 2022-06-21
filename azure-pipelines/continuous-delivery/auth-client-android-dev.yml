@@ -40,11 +40,17 @@ resources:
       ref: $(adalBranch)
       endpoint: ANDROID_GITHUB
 
+parameters:
+  - name: customVersionNumber
+    displayName: Version Number
+    type: string
+    default: Default
+
 variables:
-  ${{ if eq(variables.customVersionNumber, '') }}:  
+  ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
     versionNumber: $(Build.BuildNumber)
   ${{ else }}:
-    versionNumber: $(customVersionNumber)
+    versionNumber:  ${{ parameters.customVersionNumber }}
   projVersionParam: -PprojVersion=$(versionNumber)
   labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(versionNumber)
   common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
