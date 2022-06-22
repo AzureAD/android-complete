@@ -123,7 +123,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
 # Broker - Build and publish
 - stage: 'publishBrokeLibraries'
-  displayName: Broker - Build and publish
+  displayName: Android Broker - Build and publish
   dependsOn: 
   - publishCommonLibraries
   - publishBroke4jLibraries
