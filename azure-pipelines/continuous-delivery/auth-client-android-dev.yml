@@ -134,7 +134,7 @@ stages:
       project: AADAuthenticator
       assembleCmd: assembleDist
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
-      dependencyParams: $(androidProjectDependencyParam)
+      dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
       publishParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
@@ -200,7 +200,7 @@ stages:
       project: msal
       assembleCmd: assembleDistRelease
       publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
-      dependencyParams: $(androidProjectDependencyParam)
+      dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam)
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
@@ -216,7 +216,7 @@ stages:
       project: adal
       assembleCmd: assembleDist
       publishCmd: publishAdalPublicationToVsts-maven-adal-androidRepository 
-      dependencyParams: $(androidProjectDependencyParam)
+      dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam)
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
