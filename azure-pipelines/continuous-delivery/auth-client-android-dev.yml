@@ -71,6 +71,7 @@ stages:
       project: LabApiUtilities
       dependencyParams: $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam)
+      testParams: $(projVersionParam)
       publishParams: $(projVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
@@ -85,6 +86,7 @@ stages:
       project: common4j
       dependencyParams: $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam)
+      testParams: $(projVersionParam)
       publishParams: $(projVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
@@ -98,9 +100,11 @@ stages:
       repository: common
       project: common
       assembleCmd: assembleDist
+      testCmd: testDist
       publishCmd: publishDistReleasePublicationToVsts-maven-adal-androidRepository
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam)
+      testParams: $(projVersionParam) $(common4jVersionParam)
       publishParams: $(projVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
@@ -118,6 +122,7 @@ stages:
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
+      testParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
       publishParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
@@ -133,9 +138,11 @@ stages:
       repository: broker
       project: AADAuthenticator
       assembleCmd: assembleDist
+      testCmd: assembleDist
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
+      testParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
       publishParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
@@ -153,6 +160,7 @@ stages:
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(common4jVersionParam) $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
+      testParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
       publishParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
@@ -199,9 +207,11 @@ stages:
       repository: msal
       project: msal
       assembleCmd: assembleDistRelease
+      testCmd: testDistRelease
       publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam)
+      testParams: $(projVersionParam) $(commonVersionParam)
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
@@ -215,9 +225,11 @@ stages:
       repository: adal
       project: adal
       assembleCmd: assembleDist
+      testCmd: testDist
       publishCmd: publishAdalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam)
+      testParams: $(projVersionParam) $(commonVersionParam)
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
