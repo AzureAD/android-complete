@@ -6,15 +6,11 @@ parameters:
 - name: project
 - name: assembleCmd
   default: assemble
-- name: testCmd
-  default: test
 - name: publishCmd
   default: publish
 - name: dependencyParams
   default: ''
 - name: assembleParams
-  default: ''
-- name: testParams
   default: ''
 - name: publishParams
   default: ''
@@ -42,13 +38,6 @@ jobs:
     displayName: Build ${{ parameters.project }}
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
-    env:
-      ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
-      ${{ parameters.vstsMvnAndroidAccessToken }}: $(AndroidAuthClient-Internal-Maven-Access-Token)
-  - task: Gradle@3
-    displayName: Test ${{ parameters.project }}
-    inputs:
-      tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(AndroidAuthClient-Internal-Maven-Access-Token)
