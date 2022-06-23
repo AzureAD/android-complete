@@ -22,27 +22,37 @@ resources:
     - repository: common
       type: github
       name: AzureAD/microsoft-authentication-library-common-for-android
-      ref: $(commonBranch)
+      ref: dev
       endpoint: ANDROID_GITHUB
     - repository: broker
       type: github
       name: AzureAD/ad-accounts-for-android
-      ref: $(brokerBranch)
+      ref: dev
       endpoint: ANDROID_GITHUB
     - repository: msal
       type: github
       name: AzureAD/microsoft-authentication-library-for-android
-      ref: $(msalBranch)
+      ref: dev
       endpoint: ANDROID_GITHUB
     - repository: adal
       type: github
       name: AzureAD/azure-activedirectory-library-for-android
-      ref: $(adalBranch)
+      ref: dev
       endpoint: ANDROID_GITHUB
 
+parameters:
+  - name: customVersionNumber
+    displayName: Version Number
+    type: string
+    default: Default
+
 variables:
-  versionNumber: $(Build.BuildNumber)
+  ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
+    versionNumber: $(Build.BuildNumber)
+  ${{ else }}:
+    versionNumber:  ${{ parameters.customVersionNumber }}
   projVersionParam: -PprojVersion=$(versionNumber)
+  labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(versionNumber)
   common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
   broker4jVersionParam: -PdistBroker4jVersion=$(versionNumber)
   commonVersionParam: -PdistCommonVersion=$(versionNumber)
@@ -51,9 +61,23 @@ variables:
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
 
 stages:
+# :LabApiUtilities - Build and publish
+- stage: 'publishLabApiUtilitiesLibraries'
+  displayName: LabApiUtilities - Build and publish
+  jobs:
+  - template: assemble&publish.yml
+    parameters:
+      repository: common
+      project: LabApiUtilities
+      dependencyParams: $(javaProjectDependencyParam)
+      assembleParams: $(projVersionParam)
+      publishParams: $(projVersionParam)
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
+      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
+  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -75,7 +99,7 @@ stages:
       project: common
       assembleCmd: assembleDist
       publishCmd: publishDistReleasePublicationToVsts-maven-adal-androidRepository
-      dependencyParams: $(androidProjectDependencyParam)
+      dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam)
       publishParams: $(projVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
@@ -83,7 +107,9 @@ stages:
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
-  dependsOn: publishCommon4jLibraries
+  dependsOn: 
+  - publishLabApiUtilitiesLibraries
+  - publishCommon4jLibraries
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -91,14 +117,16 @@ stages:
       project: broker4j
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(common4jVersionParam)
-      publishParams: $(projVersionParam) $(common4jVersionParam)
+      assembleParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
+      publishParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
 # Broker - Build and publish
 - stage: 'publishBrokeLibraries'
-  displayName: Broker - Build and publish
-  dependsOn: publishCommonLibraries
+  displayName: Android Broker - Build and publish
+  dependsOn: 
+  - publishCommonLibraries
+  - publishBroke4jLibraries
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -106,7 +134,7 @@ stages:
       project: AADAuthenticator
       assembleCmd: assembleDist
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
-      dependencyParams: $(androidProjectDependencyParam)
+      dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
       publishParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
@@ -172,7 +200,7 @@ stages:
       project: msal
       assembleCmd: assembleDistRelease
       publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
-      dependencyParams: $(androidProjectDependencyParam)
+      dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam)
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
@@ -188,7 +216,7 @@ stages:
       project: adal
       assembleCmd: assembleDist
       publishCmd: publishAdalPublicationToVsts-maven-adal-androidRepository 
-      dependencyParams: $(androidProjectDependencyParam)
+      dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam)
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
