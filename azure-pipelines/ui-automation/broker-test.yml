@@ -33,7 +33,7 @@ variables:
   azureSampleApk: AzureSample-external-release.apk
   companyPortalTestApk: com.microsoft.windowsintune.companyportal-signed.apk
   authenticatorApk: app-production-universal-release-signed.apk
-  brokerHostUpdatedApk: brokerHost-local-debug
+  brokerHostUpdatedApk: brokerHost-local-debug.apk
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
 
