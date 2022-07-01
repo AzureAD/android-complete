@@ -33,6 +33,7 @@ variables:
   azureSampleApk: AzureSample-external-release.apk
   companyPortalTestApk: com.microsoft.windowsintune.companyportal-signed.apk
   authenticatorApk: app-production-universal-release-signed.apk
+  brokerHostUpdatedApk: brokerHost-local-debug
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
 
@@ -245,6 +246,7 @@ stages:
             --other-files \
             "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalTestApk),\
             /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+            /data/local/tmp/UpdatedBrokerHost.apk=$(Pipeline.Workspace)/brokerapks/$(brokerHostUpdatedApk),\
             /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azureSampleApk)" \
             --results-dir "$(resultsDir)" \
             --directories-to-pull "/sdcard" \
@@ -303,6 +305,7 @@ stages:
             --other-files \
             "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalTestApk),\
             /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+            /data/local/tmp/UpdatedBrokerHost.apk=$(Pipeline.Workspace)/brokerapks/$(brokerHostUpdatedApk),\
             /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azureSampleApk)" \
             --results-dir "$(resultsDir)" \
             --directories-to-pull "/sdcard" \
