@@ -152,3 +152,16 @@ project(':AzureSample').projectDir = new File('azuresample/app')
 //include(":RootDetectionLibrary")
 //project(':RootDetectionLibrary').projectDir = new File('authenticator/PhoneFactor/RootDetectionLibrary')
 
+include ':catalog'
+
+dependencyResolutionManagement {
+    repositories {
+        mavenLocal()
+    }
+
+    versionCatalogs {
+        libs {
+            from("com.microsoft.identity:catalog:1")
+        }
+    }
+}
