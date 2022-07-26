@@ -2,10 +2,8 @@
 # Description: Build ADAL test app APK
 # use local_<project>_branch variables to build the Local version
 # use dist_<project>_version variables to build the Dist version
-# Variable 'local_[adal, common]_branch' was defined in the Variables tab
 # Variable 'dist_[adal, common]_version' was defined in the Variables tab
 # Variable: 'ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN' was defined in the Variables tab
-# Variable: 'mvnAccessToken' was defined in the Variables tab
 # https://docs.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate
 name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
 
@@ -40,12 +38,12 @@ resources:
   - repository: common
     type: github
     name: AzureAD/microsoft-authentication-library-common-for-android
-    ref: $(local_common_branch)
+    ref: dev
     endpoint: ANDROID_GITHUB
   - repository: adal
     type: github
     name: AzureAD/azure-activedirectory-library-for-android
-    ref: $(local_adal_branch)
+    ref: dev
     endpoint: ANDROID_GITHUB
 
 jobs:
@@ -53,6 +51,8 @@ jobs:
   displayName: Build ADAL Test App ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
   pool:
     vmImage: 'windows-latest'
+  variables:
+  - group: AndroidAuthClientVariables
   steps:
   - checkout: self
     clean: true
@@ -84,7 +84,7 @@ jobs:
     displayName: Set MVN AccessToken in Environment
     inputs:
       filename: echo
-      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN]$(mvnAccessToken)'
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN]$(AndroidAuthClient-Internal-Maven-Access-Token)'
   - task: Gradle@1
     name: Gradle1
     displayName: Assemble adalTestApp
