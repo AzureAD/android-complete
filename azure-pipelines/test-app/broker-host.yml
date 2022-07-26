@@ -40,22 +40,22 @@ resources:
   - repository: common
     type: github
     name: AzureAD/microsoft-authentication-library-common-for-android
-    ref: $(local_common_branch)
+    ref: dev
     endpoint: ANDROID_GITHUB
   - repository: msal
     type: github
     name: AzureAD/microsoft-authentication-library-for-android
-    ref: $(local_msal_branch)
+    ref: dev
     endpoint: ANDROID_GITHUB
   - repository: adal
     type: github
     name: AzureAD/azure-activedirectory-library-for-android
-    ref: $(local_adal_branch)
+    ref: dev
     endpoint: ANDROID_GITHUB
   - repository: broker
     type: github
     name: AzureAD/ad-accounts-for-android
-    ref: $(local_ad_accounts_branch)
+    ref: dev
     endpoint: ANDROID_GITHUB
 
 jobs:
@@ -63,6 +63,8 @@ jobs:
   displayName: Build BrokerHost ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
   pool:
     vmImage: 'windows-latest'
+  variables:
+  - group: AndroidAuthClientVariables
   steps:
   - checkout: self
     clean: true
@@ -109,7 +111,7 @@ jobs:
     displayName: Set MVN AccessToken in Environment
     inputs:
       filename: echo
-      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(mvnAccessToken)'
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(AndroidAuthClient-Internal-Maven-Access-Token)'
   - task: Gradle@1
     name: Gradle1
     displayName: Assemble BrokerHost
