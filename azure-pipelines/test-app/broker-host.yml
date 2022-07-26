@@ -2,10 +2,8 @@
 # Description: Generate BrokerHost APK
 # use local_<project>_branch variables to build the Local version
 # use dist_<project>_version variables to build the Dist version
-# Variable 'local_[adal, common, msal, ad_accounts]_branch' was defined in the Variables tab
 # Variable 'dist_[adal, common, msal, ad_accounts]_version' was defined in the Variables tab
 # Variable: 'ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN' was defined in the Variables tab
-# Variable: 'mvnAccessToken' was defined in the Variables tab
 # https://docs.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate
 name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
 
