@@ -61,6 +61,8 @@ ext {
     oshiCoreVersion = "5.7.5"
     tokenShare = "1.6.1"
     yubikitAndroidVersion = "2.0.0"
+    intuneAppSdkVersion = "8.6.3"
+    javaAssistVersion = "3.27.0-GA"
 
     // TODO: adal automation test app.
     supportLibraryVersion = "27.1.+"
