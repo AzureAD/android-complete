@@ -204,7 +204,7 @@ stages:
     variables:
       resultsDir: "msalautomationapp-testpass-broker-$(Build.BuildId)-$(Build.BuildNumber)"
     steps:
-    - checkout: none
+    - checkout: self
     - task: DownloadSecureFile@1
       displayName: 'Download Firebase Service Account Key File'
       name: gcServiceAccountKey
@@ -215,17 +215,22 @@ stages:
     - script: gcloud version
       displayName: 'Check gcloud version'
     - task: Bash@3
+      env:
+        GOOGLE_APPLICATION_CREDENTIALS: $(gcServiceAccountKey.secureFilePath)
       displayName: Run UI Automation on Firebase
       inputs:
         targetType: inline
         script: |
           gcloud auth activate-service-account --key-file "$(gcServiceAccountKey.secureFilePath)"
           gcloud config set project "$(gCloudProjectId)"
-          gcloud firebase test android run \
+          wget --quiet https://github.com/Flank/flank/releases/download/v22.05.0/flank.jar -O $(Build.SourcesDirectory)/flank.jar
+          cp $(Build.SourcesDirectory)/azure-pipelines/ui-automation/flank.yml ./flank.yml
+          java -jar $(Build.SourcesDirectory)/flank.jar firebase test android run \
             --type instrumentation \
             --app "$(Pipeline.Workspace)/msalautomationapks/$(msalApp)" \
             --test "$(Pipeline.Workspace)/msalautomationapks/$(msaltestApp)" \
-            --device "model=${{ parameters.firebaseDeviceId }},version=${{ parameters.firebaseDeviceAndroidVersion }}" \
+            --record-video \
+            --device model=${{ parameters.firebaseDeviceId }},version=${{ parameters.firebaseDeviceAndroidVersion }},locale=en,orientation=portrait \
             --timeout "$(firebaseTimeout)" \
             --other-files \
             "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
@@ -236,15 +241,16 @@ stages:
             --use-orchestrator \
             --environment-variables "clearPackageData=true" \
             --results-history-name "$(resultsHistoryName)" \
-            --test-targets "package com.microsoft.identity.client.msal.automationapp.testpass.broker"
-    - script: gsutil cp "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/$(resultsDir)/${{ parameters.firebaseDeviceId }}-${{ parameters.firebaseDeviceAndroidVersion }}-en-portrait/test_result_1.xml" "$(Build.SourcesDirectory)"
+            --test-targets "package com.microsoft.identity.client.msal.automationapp.testpass.broker" \
+            --smart-flank-gcs-path "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/smart-flank-xml/broker-ci/JUnitReport.xml"
+    - script: gsutil cp "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/$(resultsDir)/JUnitReport.xml" "$(Build.SourcesDirectory)"
       displayName: Download Test Result File
       condition: succeededOrFailed()
     - task: PublishTestResults@2
       displayName: Publish Test Results to ADO
       condition: succeededOrFailed()
       inputs:
-        testResultsFiles: '*test_result*.xml'
+        testResultsFiles: 'JUnitReport.xml'
         searchFolder: $(Build.SourcesDirectory)
         testRunTitle: 'Broker(MSAL) UI Automation - Build # $(Build.BuildNumber)'
 # ADAL with Broker Test Plan stage
@@ -262,7 +268,7 @@ stages:
     variables:
       resultsDir: "brokerautomationapp-testpass-adal&basic-$(Build.BuildId)-$(Build.BuildNumber)"
     steps:
-    - checkout: none
+    - checkout: self
     - task: DownloadSecureFile@1
       displayName: 'Download Firebase Service Account Key File'
       name: gcServiceAccountKey
@@ -273,17 +279,22 @@ stages:
     - script: gcloud version
       displayName: 'Check gcloud version'
     - task: Bash@3
+      env:
+        GOOGLE_APPLICATION_CREDENTIALS: $(gcServiceAccountKey.secureFilePath)
       displayName: Run UI Automation on Firebase
       inputs:
         targetType: inline
         script: |
           gcloud auth activate-service-account --key-file "$(gcServiceAccountKey.secureFilePath)"
           gcloud config set project "$(gCloudProjectId)"
-          gcloud firebase test android run \
+          wget --quiet https://github.com/Flank/flank/releases/download/v22.05.0/flank.jar -O $(Build.SourcesDirectory)/flank.jar
+          cp $(Build.SourcesDirectory)/azure-pipelines/ui-automation/flank.yml ./flank.yml
+          java -jar $(Build.SourcesDirectory)/flank.jar firebase test android run \
             --type instrumentation \
             --app "$(Pipeline.Workspace)/brokerautomationapks/$(brokerApp)" \
             --test "$(Pipeline.Workspace)/brokerautomationapks/$(brokertestApp)" \
-            --device "model=${{ parameters.firebaseDeviceId }},version=${{ parameters.firebaseDeviceAndroidVersion }}" \
+            --record-video \
+            --device model=${{ parameters.firebaseDeviceId }},version=${{ parameters.firebaseDeviceAndroidVersion }},locale=en,orientation=portrait \
             --timeout "$(firebaseTimeout)" \
             --other-files \
             "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
@@ -294,14 +305,15 @@ stages:
             --use-orchestrator \
             --environment-variables "clearPackageData=true" \
             --results-history-name "$(resultsHistoryName)" \
-            --test-targets "notPackage com.microsoft.identity.client.broker.automationapp.testpass.local.adal"
-    - script: gsutil cp "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/$(resultsDir)/${{ parameters.firebaseDeviceId }}-${{ parameters.firebaseDeviceAndroidVersion }}-en-portrait/test_result_1.xml" "$(Build.SourcesDirectory)"
+            --test-targets "notPackage com.microsoft.identity.client.broker.automationapp.testpass.local.adal" \
+            --smart-flank-gcs-path "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/smart-flank-xml/broker-ci/JUnitReport.xml"
+    - script: gsutil cp "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/$(resultsDir)/JUnitReport.xml" "$(Build.SourcesDirectory)"
       displayName: Download Test Result File
       condition: succeededOrFailed()
     - task: PublishTestResults@2
       displayName: Publish Test Results to ADO
       condition: succeededOrFailed()
       inputs:
-        testResultsFiles: '*test_result*.xml'
+        testResultsFiles: 'JUnitReport.xml'
         searchFolder: $(Build.SourcesDirectory)
         testRunTitle: 'Broker(ADAL) UI Automation - Build # $(Build.BuildNumber)'
