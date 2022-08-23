@@ -229,6 +229,7 @@ stages:
             --type instrumentation \
             --app "$(Pipeline.Workspace)/msalautomationapks/$(msalApp)" \
             --test "$(Pipeline.Workspace)/msalautomationapks/$(msaltestApp)" \
+            --record-video \
             --device model=${{ parameters.firebaseDeviceId }},version=${{ parameters.firebaseDeviceAndroidVersion }},locale=en,orientation=portrait \
             --timeout "$(firebaseTimeout)" \
             --other-files \
@@ -292,6 +293,7 @@ stages:
             --type instrumentation \
             --app "$(Pipeline.Workspace)/brokerautomationapks/$(brokerApp)" \
             --test "$(Pipeline.Workspace)/brokerautomationapks/$(brokertestApp)" \
+            --record-video \
             --device model=${{ parameters.firebaseDeviceId }},version=${{ parameters.firebaseDeviceAndroidVersion }},locale=en,orientation=portrait \
             --timeout "$(firebaseTimeout)" \
             --other-files \
