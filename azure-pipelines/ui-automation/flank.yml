@@ -17,3 +17,4 @@ flank:
   ## Local Results Directory
   # Local folder to store the test result. Folder is DELETED before each run to ensure only artifacts from the new run are saved.
   local-result-dir: flank
+  
