@@ -22,12 +22,12 @@ resources:
     - repository: common
       type: github
       name: AzureAD/microsoft-authentication-library-common-for-android
-      ref: dev
+      ref: wainaina/hotfix-icm-324716884
       endpoint: ANDROID_GITHUB
     - repository: broker
       type: github
       name: AzureAD/ad-accounts-for-android
-      ref: dev
+      ref: wainaina/hotfix-icm-324716884
       endpoint: ANDROID_GITHUB
     - repository: msal
       type: github
