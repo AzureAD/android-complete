@@ -35,8 +35,7 @@ The following packages are published to this feed:
 
 ## Other Feeds
 
-- OneAuthAndroid: [https://office.visualstudio.com/OneAuth/_packaging?_a=feed&feed=OneAuthAndroid](https://office.visualstudio.com/OneAuth/_packaging?_a=feed&feed=OneAuthAndroid)
-  - The feed that OneAuth reads dependencies from
+- OneAuth: [https://office.visualstudio.com/OneAuth/_artifacts/feed/OneAuth](https://office.visualstudio.com/OneAuth/_artifacts/feed/OneAuth)
 - AndroidOneDrive (TSL): [https://onedrive.visualstudio.com/SkyDrive/_packaging?_a=feed&feed=AndroidOneDrive%40Local](https://onedrive.visualstudio.com/SkyDrive/_packaging?_a=feed&
 feed=AndroidOneDrive%40Local)
   - The feed to which the Android Token Sharing Library is published
@@ -59,7 +58,7 @@ All Android Identity feeds are published to Azure DevOps Organizations that are 
 
 - AndroidADAL: azure-feed://IdentityDivision/AndroidADAL@Local
 - AndroidOneDrive: azure-feed://IdentityDivision/AndroidOneDrive@Local
-- OneAuthAndroid: azure-feed://office/OneAuthAndroid@Local
+- OneAuth: azure-feed://office/OneAuth@Local
 - ARIS-SDK: azure-feed://msag/ARIA-SDK@Local
 - PowerLift: azure-feed://office/PowerLift@Local
 - DuoSDK: azure-feed://MicrosoftDeviceSDK/DuoSDK-Public/Duo-SDK-Feed@Local
@@ -75,10 +74,10 @@ All Android Identity feeds are published to Azure DevOps Organizations that are 
 - DuoSDK: azure-feed://MicrosoftDeviceSDK/DuoSDK-Public/Duo-SDK-Feed@Local
 - AuthApp: azure-feed://msazure/One/AuthApp@Local
 
-### OneAuthAndroid Upstream Sources
+### OneAuth Upstream Sources
 
 - AndroidOneDrive: azure-feed://IdentityDivision/AndroidOneDrive@Local
-- AndroidADAL: azure-feed://IdentityDivision/AndroidADAL@Local
+- Android: azure-feed://IdentityDivision/IDDP/Android
 
 # Gradle Root Project - Feed references
 
@@ -93,7 +92,7 @@ Android-Complete (This project): Refers to the AndroidADAL feed as do:
 
 ## OneAuth
 
-OneAuth has multiple gradle root projects which refer to the OneAuthAndroid feed
+OneAuth has multiple gradle root projects which refer to the OneAuth feed
 
 # SNAPSHOT
 
