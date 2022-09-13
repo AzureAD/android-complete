@@ -6,10 +6,6 @@
  * Detailed information about configuring a multi-project build in Gradle can be found
  * in the user guide at https://docs.gradle.org/5.1.1/userguide/multi_project_builds.html
  */
-
-vstsUsername = System.getenv("ENV_VSTS_MVN_ANDROIDCOMPLETE_USERNAME") != null ? System.getenv("ENV_VSTS_MVN_ANDROIDCOMPLETE_USERNAME") : project.findProperty("vstsUsername")
-vstsMavenAccessToken = System.getenv("ENV_VSTS_MVN_ANDROIDCOMPLETE_ACCESSTOKEN") != null ? System.getenv("ENV_VSTS_MVN_ANDROIDCOMPLETE_ACCESSTOKEN") : project.findProperty("vstsMavenAccessToken")
-
 pluginManagement {
     repositories {
         mavenLocal()
@@ -21,8 +17,12 @@ pluginManagement {
             name "vsts-maven-adal-android"
             url "https://identitydivision.pkgs.visualstudio.com/_packaging/AndroidADAL/maven/v1"
             credentials {
-                username vstsUsername
-                password vstsMavenAccessToken
+                username System.getenv("ENV_VSTS_MVN_ANDROIDCOMPLETE_USERNAME") != null ?
+                        System.getenv("ENV_VSTS_MVN_ANDROIDCOMPLETE_USERNAME") :
+                        project.findProperty("vstsUsername")
+                password System.getenv("ENV_VSTS_MVN_ANDROIDCOMPLETE_ACCESSTOKEN") != null ?
+                        System.getenv("ENV_VSTS_MVN_ANDROIDCOMPLETE_ACCESSTOKEN") :
+                        project.findProperty("vstsMavenAccessToken")
             }
         }
     }
