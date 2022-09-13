@@ -6,6 +6,10 @@
  * Detailed information about configuring a multi-project build in Gradle can be found
  * in the user guide at https://docs.gradle.org/5.1.1/userguide/multi_project_builds.html
  */
+
+vstsUsername = System.getenv("ENV_VSTS_MVN_ANDROIDCOMPLETE_USERNAME") != null ? System.getenv("ENV_VSTS_MVN_ANDROIDCOMPLETE_USERNAME") : project.findProperty("vstsUsername")
+vstsMavenAccessToken = System.getenv("ENV_VSTS_MVN_ANDROIDCOMPLETE_ACCESSTOKEN") != null ? System.getenv("ENV_VSTS_MVN_ANDROIDCOMPLETE_ACCESSTOKEN") : project.findProperty("vstsMavenAccessToken")
+
 pluginManagement {
     repositories {
         mavenLocal()
@@ -67,14 +71,14 @@ project(':uiautomationutilities').projectDir = new File('common/uiautomationutil
 include(":brokerautomationapp")
 project(':brokerautomationapp').projectDir = new File('broker/brokerautomationapp')
 
-include(":oneauth")
-project(':oneauth').projectDir = new File('oneauth/sources/android/gradle')
+//include(":oneauth")
+//project(':oneauth').projectDir = new File('oneauth/sources/android/gradle')
 
-include(":oneauthtestapp")
-project(':oneauthtestapp').projectDir = new File('oneauth/testapps/android/oneauthtestapp/app')
+//include(":oneauthtestapp")
+//project(':oneauthtestapp').projectDir = new File('oneauth/testapps/android/oneauthtestapp/app')
 
-include(":msalcpptesthost")
-project(':msalcpptesthost').projectDir = new File('msalcpp/test/android/testhost/app')
+//include(":msalcpptesthost")
+//project(':msalcpptesthost').projectDir = new File('msalcpp/test/android/testhost/app')
 
 // Pure Java DevX Projects
 include(':common4j')
@@ -112,7 +116,7 @@ project(':AzureSample').projectDir = new File('azuresample/app')
 
 
 // Authenticator projects
-
+//
 //include(":app")
 //project(':app').projectDir = new File('authenticator/PhoneFactor/app')
 //
@@ -160,4 +164,4 @@ project(':AzureSample').projectDir = new File('azuresample/app')
 //
 //include(":RootDetectionLibrary")
 //project(':RootDetectionLibrary').projectDir = new File('authenticator/PhoneFactor/RootDetectionLibrary')
-
+//
