@@ -23,6 +23,7 @@ resources:
 variables:
   engineeringProjectId: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'
   azureSamplePipelineId: 1458
+  brokerHostPipelineId: 1432
   msazureServiceConnection: AndroidBroker-CI
   msazureFeedName: Android-Broker
   msalApp: msalautomationapp-dist-AutoBroker-debug.apk
@@ -32,6 +33,8 @@ variables:
   azureSampleApk: AzureSample-local-debug.apk
   companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
   authenticatorApk: app-production-universal-release-signed.apk
+  brokerHostApk: brokerHost-local-debug.apk
+  oldBrokerHostApk: brokerHost-local-debug.apk
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
 
@@ -52,6 +55,10 @@ parameters:
   displayName: Company Portal Version
   type: string
   default: '*'
+- name: oldBrokerHostVersion
+  displayName: Old Broker host Version
+  type: string
+  default: '0.0.1'
 
 stages:
 # msalautomationapp
@@ -163,6 +170,9 @@ stages:
     - script: mkdir cpauth
       displayName: 'make cpauth dir'
       workingDirectory: '$(Build.ArtifactStagingDirectory)'
+    - script: mkdir brokerhost
+      displayName: 'make brokerhost dir'
+      workingDirectory: '$(Build.ArtifactStagingDirectory)'
     - task: UniversalPackages@0
       displayName: 'Download com.azure.authenticator'
       inputs:
@@ -183,9 +193,31 @@ stages:
         feedDownloadExternal: '$(msazureFeedName)'
         packageDownloadExternal: 'com.microsoft.windowsintune.companyportal-signed'
         versionDownloadExternal: '${{ parameters.companyPortalVersion }}'
+    - task: DownloadPipelineArtifact@2
+      displayName: 'Download Broker Host'
+      inputs:
+        buildType: specific
+        project: '$(engineeringProjectId)'
+        definition: '$(brokerHostPipelineId)'
+        artifactName: BrokerHost
+        itemPattern: '**/*.apk'
+        targetPath: '$(Build.ArtifactStagingDirectory)/brokerhost'
+    - task: UniversalPackages@0
+      displayName: 'Download old brokerHost version from feed'
+      inputs:
+        command: 'download'
+        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokerhost/oldbrokerhost'
+        feedsToUse: 'external'
+        externalFeedCredentials: '$(msazureServiceConnection)'
+        feedDownloadExternal: '$(msazureFeedName)'
+        packageDownloadExternal: 'broker-host'
+        versionDownloadExternal: '${{ parameters.oldBrokerHostVersion }}'
     - publish: $(Build.ArtifactStagingDirectory)/cpauth
-      displayName: 'Publish Broker apks for later use'
+      displayName: 'Publish Authenticator/Company Portal Broker apks for later use'
       artifact: brokerapks
+    - publish: $(Build.ArtifactStagingDirectory)/brokerhost
+      displayName: 'Publish BrokerHost apks for later use'
+      artifact: brokerhostapks
     - publish: $(Build.ArtifactStagingDirectory)/azuresample
       displayName: 'Publish Azure Sample apk for later use'
       artifact: azuresample
@@ -236,7 +268,9 @@ stages:
             --other-files \
             "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
             /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-            /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azureSampleApk)" \
+            /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azureSampleApk), \
+            /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerhostapks/$(brokerHostApk),\
+            /data/local/tmp/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerhostapks/oldbrokerhost/$(oldBrokerHostApk)" \
             --results-dir "$(resultsDir)" \
             --directories-to-pull "/sdcard" \
             --use-orchestrator \
@@ -301,7 +335,9 @@ stages:
             --other-files \
             "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
             /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-            /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azureSampleApk)" \
+            /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azureSampleApk), \
+            /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerhostapks/$(brokerHostApk),\
+            /data/local/tmp/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerhostapks/oldbrokerhost/$(oldBrokerHostApk)" \
             --results-dir "$(resultsDir)" \
             --directories-to-pull "/sdcard" \
             --use-orchestrator \
