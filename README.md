@@ -63,6 +63,15 @@ git droidSetup
 
 Since Android Studio officially dropped Lombok Support, you will need to manually install Lombok by yourself for each Android Studio update.
 
+There are 2 ways to do this. 
+
+### 1. Copy lombok to the default plugin folder (Preferred) 
+1. under /lombok subfolder, copy the <b>/lombok/lombok</b> folder to Android Studio/plugins (Windows), or Android Studio -> Show Package Contents -> Contents -> plugins.
+    - The folder structure should be plugins/lombok/lib/..
+
+Note: This lombok folder is extracted from Intellij IDEA 2022.2.2
+
+### 2. Modify and manually install via plugin settings
 <b>We've provided the zipped plugin for you already under /lombok subfolder.</b>
  If the build for your android version is not there, you can follow the steps below to generate your own compatible lombok.
 
