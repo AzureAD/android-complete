@@ -66,7 +66,7 @@ Since Android Studio officially dropped Lombok Support, you will need to manuall
 There are 2 ways to do this. 
 
 ### 1. Copy lombok to the default plugin folder (Preferred) 
-1. under /lombok subfolder, copy the <b>/lombok/lombok</b> folder to Android Studio/plugins (Windows), or Android Studio -> Show Package Contents -> Contents -> plugins.
+1. under /lombok subfolder, copy the <b>/lombok/lombok</b> folder to Android Studio/plugins (Windows), or Android Studio -> Show Package Contents -> Contents -> plugins (OSX).
     - The folder structure should be plugins/lombok/lib/..
 
 Note: This lombok folder is extracted from Intellij IDEA 2022.2.2
