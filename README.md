@@ -56,8 +56,28 @@ git droidSetup
 
 3. Open Android Studio and open project from the folder you cloned into (project: android_auth)
 4. Update your build variants to point to use localDebug.  See more in the next section.
-5. Install [Lombok Plugin](https://plugins.jetbrains.com/plugin/6317-lombok) in Android Studio.
-6. (OSX only) Install [Powershell](https://docs.microsoft.com/en-us/powershell/scripting/install/installing-powershell-core-on-macos?view=powershell-7.1)
+5. (OSX only) Install [Powershell](https://docs.microsoft.com/en-us/powershell/scripting/install/installing-powershell-core-on-macos?view=powershell-7.1)
+6. Install [Lombok Plugin](https://plugins.jetbrains.com/plugin/6317-lombok) in Android Studio, see next section.
+
+## Installing Lombok to Android Studio
+
+Since Android Studio officially dropped Lombok Support, you will need to manually install Lombok by yourself for each Android Studio update.
+
+<b>We've provided the zipped plugin for you already under /lombok subfolder.</b>
+ If the build for your android version is not there, you can follow the steps below to generate your own compatible lombok.
+
+1. Download [The latest release (0.34.1-2019.1)](https://plugins.jetbrains.com/plugin/6317-lombok/versions) and extract.
+2. Navigate to lombok-plugin\lib
+3. Extract lombok-plugin-0.34.1-2019.1.jar
+4. Open META-INF\plugin.xml.
+5. Look for \<idea-version>, under <b>until-build</b>, set to the latest build version. You can get this information from "About Android Studio"
+    - For example, set until-build="AI-213.*" for Dolphin
+    ![](readme-img/dolphin.png)
+6. after that, make sure that the META-INF folder is in the same folder as lombok-plugin-0.34.1-2019.1.jar, and then execute `jar uf lombok-plugin-0.34.1-2019.1.jar META-INF/plugin.xml`
+7. Rezip the whole lombok-plugin folder.
+8. Don't forget to add it to /lombok subfolder, so that other people can use :)
+
+After that, go to Android Studio's plugins page (Under preferences), choose "Install plugin from disk", and select the compatible plugin zip file.
 
 ## Build Variants
 
