@@ -69,7 +69,7 @@ There are 2 ways to do this.
 1. under /lombok subfolder, copy the <b>/lombok/lombok</b> folder to Android Studio/plugins (Windows), or Android Studio -> Show Package Contents -> Contents -> plugins (OSX).
     - The folder structure should be plugins/lombok/lib/..
 
-Note: This lombok folder is extracted from Intellij IDEA 2022.2.2
+Note: This lombok folder is extracted from Dolphin-2021.3.1.zip
 
 ### 2. Modify and manually install via plugin settings
 <b>We've provided the zipped plugin for you already under /lombok subfolder.</b>
