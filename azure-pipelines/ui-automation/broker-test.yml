@@ -30,9 +30,10 @@ variables:
   msalTestApp: msalautomationapp-dist-AutoBroker-debug-androidTest.apk
   brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
   brokerTestApp: brokerautomationapp-dist-AutoBroker-debug-androidTest.apk
-  azureSampleApk: AzureSample-local-debug.apk
+  azureSampleApk: AzureSample-external-release.apk
   companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
   authenticatorApk: app-production-universal-release-signed.apk
+  oldAuthenticatorApk: app-production-universal-release-signed.apk
   brokerHostApk: brokerHost-local-debug.apk
   oldBrokerHostApk: brokerHost-local-debug.apk
   firebaseTimeout: 45m
@@ -51,6 +52,10 @@ parameters:
   displayName: Authenticator Version
   type: string
   default: '*'
+- name: oldAuthenticatorVersion
+  displayName: Old Authenticator Version
+  type: string
+  default: '6.2202.*'
 - name: companyPortalVersion
   displayName: Company Portal Version
   type: string
@@ -59,6 +64,14 @@ parameters:
   displayName: Old Broker host Version
   type: string
   default: '0.0.1'
+- name: msalTestTarget
+  displayName: Test Targets for MSAL
+  type: string
+  default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, notPackage com.microsoft.identity.client.msal.automationapp.testpass.broker.atpop.update, notAnnotation org.junit.Ignore
+- name: brokerTestTarget
+  displayName: Test Targets for Broker
+  type: string
+  default: package com.microsoft.identity.client.broker.automationapp.testpass, notPackage com.microsoft.identity.client.broker.automationapp.testpass.local.adal, notAnnotation org.junit.Ignore
 
 stages:
 # msalautomationapp
@@ -181,6 +194,16 @@ stages:
         packageDownloadExternal: 'com.azure.authenticator'
         versionDownloadExternal: '${{ parameters.authenticatorVersion }}'
     - task: UniversalPackages@0
+      displayName: 'Download old authenticator (Pre v5 Broker) version from feed'
+      inputs:
+        command: 'download'
+        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
+        feedsToUse: 'external'
+        externalFeedCredentials: '$(msazureServiceConnection)'
+        feedDownloadExternal: '$(msazureFeedName)'
+        packageDownloadExternal: 'com.azure.authenticator'
+        versionDownloadExternal: '${{ parameters.oldAuthenticatorVersion }}'
+    - task: UniversalPackages@0
       displayName: 'Download com.microsoft.windowsintune.companyportal-signed'
       inputs:
         command: 'download'
@@ -203,7 +226,7 @@ stages:
       displayName: 'Download old brokerHost version from feed'
       inputs:
         command: 'download'
-        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldbrokerhost'
+        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
         feedsToUse: 'external'
         externalFeedCredentials: '$(msazureServiceConnection)'
         feedDownloadExternal: '$(msazureFeedName)'
@@ -262,15 +285,16 @@ stages:
             --other-files \
             "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
             /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-            /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azureSampleApk), \
+            /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+            /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azureSampleApk),\
             /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerHostApk),\
-            /data/local/tmp/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldbrokerhost/$(oldBrokerHostApk)" \
+            /data/local/tmp/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldBrokerHostApk)" \
             --results-dir "$(resultsDir)" \
             --directories-to-pull "/sdcard" \
             --use-orchestrator \
             --environment-variables "clearPackageData=true" \
             --results-history-name "$(resultsHistoryName)" \
-            --test-targets "package com.microsoft.identity.client.msal.automationapp.testpass.broker" \
+            --test-targets "${{ parameters.msalTestTarget }}" \
             --smart-flank-gcs-path "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/smart-flank-xml/broker-ci/JUnitReport.xml"
     - script: gsutil cp "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/$(resultsDir)/JUnitReport.xml" "$(Build.SourcesDirectory)"
       displayName: Download Test Result File
@@ -329,15 +353,16 @@ stages:
             --other-files \
             "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
             /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-            /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azureSampleApk), \
+            /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+            /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azureSampleApk),\
             /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerHostApk),\
-            /data/local/tmp/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldbrokerhost/$(oldBrokerHostApk)" \
+            /data/local/tmp/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldBrokerHostApk)" \
             --results-dir "$(resultsDir)" \
             --directories-to-pull "/sdcard" \
             --use-orchestrator \
             --environment-variables "clearPackageData=true" \
             --results-history-name "$(resultsHistoryName)" \
-            --test-targets "notPackage com.microsoft.identity.client.broker.automationapp.testpass.local.adal" \
+            --test-targets "${{ parameters.brokerTestTarget }}" \
             --smart-flank-gcs-path "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/smart-flank-xml/broker-ci/JUnitReport.xml"
     - script: gsutil cp "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/$(resultsDir)/JUnitReport.xml" "$(Build.SourcesDirectory)"
       displayName: Download Test Result File
