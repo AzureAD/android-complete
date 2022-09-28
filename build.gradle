@@ -39,6 +39,8 @@ buildscript {
         classpath "com.google.protobuf:protobuf-gradle-plugin:$com_google_protobuf_protobuf_gradle_plugin_version"
         classpath "com.google.protobuf:protobuf-java:$com_google_protobuf_java_version"
         classpath "com.google.protobuf:protobuf-java-util:$com_google_protobuf_java_version"
+        classpath "com.google.guava:guava:$com_google_guava_jre_version"
+
         //    classpath "net.serenity-bdd:serenity-gradle-plugin:1.9.6"
     //    classpath 'com.google.gms:google-services:3.2.1'
     //    classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
