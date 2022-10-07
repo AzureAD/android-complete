@@ -84,7 +84,7 @@ jobs:
     displayName: Set MVN AccessToken in Environment
     inputs:
       filename: echo
-      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(AndroidAuthClient-Internal-Maven-Access-Token)'
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(AndroidAuthClientInternalMavenAccessToken)'
   - task: Gradle@1
     name: Gradle1
     displayName: Assemble adalTestApp
