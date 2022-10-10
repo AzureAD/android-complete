@@ -30,12 +30,9 @@ variables:
   msalTestApp: msalautomationapp-dist-AutoBroker-debug-androidTest.apk
   brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
   brokerTestApp: brokerautomationapp-dist-AutoBroker-debug-androidTest.apk
-  azureSampleApk: AzureSample-local-debug.apk
   companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
   authenticatorApk: app-production-universal-release-signed.apk
   oldAuthenticatorApk: app-production-universal-release-signed.apk
-  brokerHostApk: brokerHost-local-debug.apk
-  oldBrokerHostApk: brokerHost-local-debug.apk
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
 
@@ -286,9 +283,9 @@ stages:
             "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
             /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
             /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
-            /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azureSampleApk),\
-            /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerHostApk),\
-            /data/local/tmp/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldBrokerHostApk)" \
+            /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
+            /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
+            /data/local/tmp/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhost_apk)" \
             --results-dir "$(resultsDir)" \
             --directories-to-pull "/sdcard" \
             --use-orchestrator \
@@ -354,9 +351,9 @@ stages:
             "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
             /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
             /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
-            /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azureSampleApk),\
-            /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerHostApk),\
-            /data/local/tmp/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldBrokerHostApk)" \
+            /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
+            /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
+            /data/local/tmp/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhost_apk)" \
             --results-dir "$(resultsDir)" \
             --directories-to-pull "/sdcard" \
             --use-orchestrator \
