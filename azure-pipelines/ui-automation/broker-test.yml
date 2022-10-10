@@ -248,7 +248,7 @@ stages:
     - checkout: none
     - script: |
         pip3 install --upgrade --force-reinstall gplaydl==1.3.5
-        gplaydl configure
+        
         gplaydl download --packageId com.microsoft.teams
         gplaydl download --packageId com.microsoft.office.word
         gplaydl download --packageId com.microsoft.office.outlook
