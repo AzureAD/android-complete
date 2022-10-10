@@ -191,6 +191,36 @@ stages:
         packageDownloadExternal: 'com.azure.authenticator'
         versionDownloadExternal: '${{ parameters.authenticatorVersion }}'
     - task: UniversalPackages@0
+        displayName: 'Download com.microsoft.office.word'
+        inputs:
+          command: 'download'
+          downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
+          feedsToUse: 'external'
+          externalFeedCredentials: '$(msazureServiceConnection)'
+          feedDownloadExternal: '$(msazureFeedName)'
+          packageDownloadExternal: 'com.microsoft.office.word'
+          versionDownloadExternal: '*'
+    - task: UniversalPackages@0
+        displayName: 'Download com.microsoft.office.outlook'
+        inputs:
+          command: 'download'
+          downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
+          feedsToUse: 'external'
+          externalFeedCredentials: '$(msazureServiceConnection)'
+          feedDownloadExternal: '$(msazureFeedName)'
+          packageDownloadExternal: 'com.microsoft.office.outlook'
+          versionDownloadExternal: '*'
+    - task: UniversalPackages@0
+        displayName: 'Download com.microsoft.teams'
+        inputs:
+          command: 'download'
+          downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
+          feedsToUse: 'external'
+          externalFeedCredentials: '$(msazureServiceConnection)'
+          feedDownloadExternal: '$(msazureFeedName)'
+          packageDownloadExternal: 'com.microsoft.teams'
+          versionDownloadExternal: '*'
+    - task: UniversalPackages@0
       displayName: 'Download old authenticator (Pre v5 Broker) version from feed'
       inputs:
         command: 'download'
