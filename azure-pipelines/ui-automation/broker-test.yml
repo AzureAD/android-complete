@@ -236,7 +236,7 @@ stages:
       displayName: 'Publish Azure Sample apk for later use'
       artifact: azuresample
 # Download First Party Apps
-- stage: ``
+- stage: `first_party`
   dependsOn: [] # this removes the implicit dependency on previous stage and causes this to run in parallel
   displayName: Downlaod First Party Apps
   jobs:
