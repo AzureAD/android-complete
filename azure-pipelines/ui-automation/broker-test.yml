@@ -64,11 +64,11 @@ parameters:
 - name: msalTestTarget
   displayName: Test Targets for MSAL
   type: string
-  default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, notPackage com.microsoft.identity.client.msal.automationapp.testpass.broker.atpop.update, notAnnotation org.junit.Ignore
+  default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, notPackage com.microsoft.identity.client.msal.automationapp.testpass.broker.atpop.update, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.UnreliableOnPipeline
 - name: brokerTestTarget
   displayName: Test Targets for Broker
   type: string
-  default: package com.microsoft.identity.client.broker.automationapp.testpass, notPackage com.microsoft.identity.client.broker.automationapp.testpass.local.adal, notAnnotation org.junit.Ignore
+  default: package com.microsoft.identity.client.broker.automationapp.testpass, notPackage com.microsoft.identity.client.broker.automationapp.testpass.local.adal, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.UnreliableOnPipeline
 
 stages:
 # msalautomationapp
