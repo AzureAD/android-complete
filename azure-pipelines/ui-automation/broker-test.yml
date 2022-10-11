@@ -235,25 +235,6 @@ stages:
     - publish: $(Build.ArtifactStagingDirectory)/azuresample
       displayName: 'Publish Azure Sample apk for later use'
       artifact: azuresample
-# Download First Party Apps
-- stage: 'first_party'
-  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
-  displayName: Downlaod First Party Apps
-  jobs:
-  - job: 'download_first_party'
-    displayName: Download First Party Apps
-    pool:
-      vmImage: ubuntu-latest
-    steps:
-    - checkout: none
-    - script: |
-        pip3 install --upgrade --force-reinstall gplaydl==1.3.5
-        gplaydl configure
-        tdummy848@gmail.com
-        Simple.Pass2
-        gplaydl download --packageId com.microsoft.teams
-        gplaydl download --packageId com.microsoft.office.word
-        gplaydl download --packageId com.microsoft.office.outlook
 # MSAL with Broker Test Plan stage
 - stage: 'msal_with_broker'
   dependsOn:
