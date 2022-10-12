@@ -80,4 +80,4 @@ jobs:
         inputs:
           testResultsFiles: 'JUnitReport.xml'
           searchFolder: $(Build.SourcesDirectory)
-          testRunTitle: '${{ parameter.testRunTitle }}'
+          testRunTitle: '${{ parameters.testRunTitle }}'
