@@ -166,6 +166,6 @@ stages:
         testTargetPackages: ${{ parameters.brokerTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "brokerautomationapp-testpass-adal&basic-$(Build.BuildId)-$(Build.BuildNumber)"
-        firebaseDeviceId: ${{ parameters.firebaseDeviceId }}
-        firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersion }}
+        firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
+        firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "Broker(ADAL) UI Automation - Build # $(Build.BuildNumber)"
