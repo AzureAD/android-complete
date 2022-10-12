@@ -66,8 +66,7 @@ jobs:
               --use-orchestrator \
               --environment-variables "clearPackageData=true" \
               --results-history-name "${{ parameters.resultsHistoryName }}" \
-              --test-targets "${{ parameters.testTargetPackages }}" \
-              --test-targets "${{ parameters.apiLevelTarget }}"
+              --test-targets "${{ parameters.testTargetPackages }}, ${{ parameters.apiLevelTarget }}"
       - script: gsutil cp "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/$(resultsDir)/${{ parameters.firebaseDeviceId }}-${{ parameters.firebaseDeviceAndroidVersion }}-en-portrait/test_result_1.xml" "$(Build.SourcesDirectory)"
         displayName: Download Test Result File
         condition: succeededOrFailed()
