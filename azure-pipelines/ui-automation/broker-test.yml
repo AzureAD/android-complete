@@ -169,3 +169,4 @@ stages:
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "Broker(ADAL) UI Automation - Build # $(Build.BuildNumber)"
+        apiLevelTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
