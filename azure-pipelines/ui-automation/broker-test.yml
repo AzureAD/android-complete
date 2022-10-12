@@ -107,14 +107,14 @@ stages:
         companyPortalVersion: ${{ parameters.companyPortalVersion }}
         brokerHostPipelineId: '$(brokerHostPipelineId)'
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
-# MSAL with Broker Test Plan stage
-- stage: 'msal_with_broker'
+# MSAL with Broker Test Plan stage (high API)
+- stage: 'msal_with_broker_high_api'
   dependsOn:
   - msalautomationapp
   - brokers
-  displayName: Running MSAL with Broker Test Plan
+  displayName: Running MSAL with Broker Test Plan (API 30+)
   jobs:
-    - template: ./templates/flank/run-on-firebase-with-flank.yml
+    - template: ./templates/flank/run-on-firebase.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msalApp)"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msaltestApp)"
@@ -124,6 +124,26 @@ stages:
         firebaseDeviceId: ${{ parameters.firebaseDeviceId }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersion }}
         testRunTitle: "Broker(MSAL) UI Automation - Build # $(Build.BuildNumber)"
+        apiLevelTarget: "notPackage com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
+# MSAL with Broker Test Plan stage (low API)
+- stage: 'msal_with_broker_low_api'
+  dependsOn:
+    - msalautomationapp
+    - brokers
+  displayName: Running MSAL with Broker Test Plan (API 29-)
+  jobs:
+    - template: ./templates/flank/run-on-firebase.yml
+      parameters:
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msalApp)"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msaltestApp)"
+        testTargetPackages: ${{ parameters.msalTestTarget }}
+        resultsHistoryName: "$(resultsHistoryName)"
+        resultsDir: "msalautomationapp-testpass-broker-$(Build.BuildId)-$(Build.BuildNumber)"
+        firebaseDeviceId: blueline
+        firebaseDeviceAndroidVersion: 28
+        testRunTitle: "Broker(MSAL) UI Automation - Build # $(Build.BuildNumber)"
+        apiLevelTarget: "package com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
+
 # ADAL with Broker Test Plan stage
 - stage: 'adal_with_broker'
   dependsOn:
