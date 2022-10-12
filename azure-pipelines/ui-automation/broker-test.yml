@@ -119,7 +119,7 @@ stages:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msalApp)"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msaltestApp)"
         testTargetPackages: ${{ parameters.msalTestTarget }}
-        resultsHistoryName: "resultsHistoryName"
+        resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "msalautomationapp-testpass-broker-$(Build.BuildId)-$(Build.BuildNumber)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceId }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersion }}
