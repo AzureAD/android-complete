@@ -74,6 +74,16 @@
               cd $workDir/common/; git pull; \
               cd $workDir/msalcpp/; git pull; \
           }; f"
+    droidBranch = "!f() { \
+    	RED='\\033[0;31m'; \
+	    NC='\\033[0m'; \
+        workDir=$(git config --get androidcomplete.workDir); \
+        cd $workDir/; printf "${RED}ANDROID-COMPLETE${NC}"; printf '%s\n' ": "; git branch; \
+        cd $workDir/adal/; printf '\n' ; printf "${RED}ADAL${NC}"; printf '%s\n' ": "; git branch; \
+        cd $workDir/msal/; printf '\n' ; printf "${RED}MSAL${NC}"; printf '%s\n' ": "; git branch; \
+        cd $workDir/broker/; printf '\n' ; printf "${RED}BROKER${NC}"; printf '%s\n' ": "; git branch; \
+        cd $workDir/common/; printf '\n' ; printf "${RED}COMMON${NC}"; printf '%s\n' ": "; git branch; \
+    }; f"
     droidStash = "!f() { \
             workDir=$(git config --get androidcomplete.workDir); \
             cd $workDir/adal/; git stash $1; \
