@@ -140,7 +140,7 @@ stages:
     - brokers
   displayName: Running MSAL with Broker Test Plan (API 29-)
   jobs:
-    - template: ./templates/flank/run-on-firebase-with-flank.yml
+    - template: ./templates/run-on-firebase.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msalApp)"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msaltestApp)"
