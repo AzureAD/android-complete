@@ -48,7 +48,7 @@ parameters:
 - name: firebaseDeviceIdLow
   displayName: Firebase Device Id (Api 29-)
   type: string
-  default: bluefin
+  default: blueline
 - name: firebaseDeviceAndroidVersionLow
   displayName: Firebase Device Android Version (Api 29-)
   type: number
