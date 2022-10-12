@@ -124,7 +124,7 @@ stages:
         firebaseDeviceId: ${{ parameters.firebaseDeviceId }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersion }}
         testRunTitle: "Broker(MSAL) UI Automation - Build # $(Build.BuildNumber)"
-        apiLevelTarget: "notPackage com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
+        apiLevelTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
 # MSAL with Broker Test Plan stage (low API)
 - stage: 'msal_with_broker_low_api'
   dependsOn:
@@ -142,7 +142,7 @@ stages:
         firebaseDeviceId: blueline
         firebaseDeviceAndroidVersion: 28
         testRunTitle: "Broker(MSAL) UI Automation - Build # $(Build.BuildNumber)"
-        apiLevelTarget: "package com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
+        apiLevelTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
 
 # ADAL with Broker Test Plan stage
 - stage: 'adal_with_broker'
