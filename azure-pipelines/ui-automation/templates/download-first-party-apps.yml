@@ -1,0 +1,40 @@
+jobs:
+  - job: 'download_first_party_apps'
+    displayName: Download First Party Apps
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+      - checkout: none
+      - script: mkdir firstparty
+        displayName: 'Make firstparty dir'
+        workingDirectory: '$(Build.ArtifactStagingDirectory)'
+      - task: PythonScript@0
+        displayName: 'download outlook'
+        inputs:
+          scriptSource: inline
+          script: |
+            import urllib.request
+            url = 'https://www.apkmirror.com/apk/microsoft-corporation/outlook/outlook-4-2238-1-release/microsoft-outlook-4-2238-1-android-apk-download/download/?key=e2e341b62ce579b137fb571538bf91974fa9dd4f'
+            path = r"$(Build.ArtifactStagingDirectory)/firstparty/Outlook.apk"
+            urllib.request.urlretrieve(url, path)
+      - task: PythonScript@0
+        displayName: 'Download Teams'
+        inputs:
+          scriptSource: inline
+          script: |
+            import urllib.request
+            url = 'https://www.apkmirror.com/apk/microsoft-corporation/microsoft-teams/microsoft-teams-1416-1-0-0-2022384401-release/microsoft-teams-1416-1-0-0-2022384401-android-apk-download/download/?key=9aa1184c1841407f5526c79a204c6d51c3d15f0b'
+            path = r"$(Build.ArtifactStagingDirectory)/firstparty/Teams.apk"
+            urllib.request.urlretrieve(url, path)
+      - task: PythonScript@0
+        displayName: 'download Word'
+        inputs:
+          scriptSource: inline
+          script: |
+            import urllib.request
+            url = 'https://www.apkmirror.com/apk/microsoft-corporation/word/word-16-0-15128-20206-release/microsoft-word-edit-documents-16-0-15128-20206-2-android-apk-download/download/?key=bbf41a053379dd026b495a503e2c224eb5edfc94'
+            path = r"$(Build.ArtifactStagingDirectory)/firstparty/Word.apk"
+            urllib.request.urlretrieve(url, path)
+      - publish: $(Build.ArtifactStagingDirectory)/firstparty
+        displayName: 'Publish First Park APKs'
+        artifact: firstpartyapks

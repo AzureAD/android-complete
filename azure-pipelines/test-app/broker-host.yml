@@ -53,7 +53,7 @@ resources:
   - repository: broker
     type: github
     name: AzureAD/ad-accounts-for-android
-    ref: fadi/broker-c-up
+    ref: dev
     endpoint: ANDROID_GITHUB
 
 jobs:
