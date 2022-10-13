@@ -1,3 +1,26 @@
+parameters:
+  - name: internalFeedName
+    type: string
+    default: 'AndroidAdal'
+  - name: outlookPacakge
+    type: string
+    default: 'com.microsoft.office.outlook'
+  - name: outlookVersion
+    type: string
+    default: '4.2238.1'
+  - name: teamsPacakge
+    type: string
+    default: 'com.microsoft.teams'
+  - name: teamsVersion
+    type: string
+    default: '1.0.0'
+  - name: wordPacakge
+    type: string
+    default: 'com.microsoft.office.word'
+  - name: wordVersion
+    type: string
+    default: '1.0.0'
+
 jobs:
   - job: 'download_first_party_apps'
     displayName: Download First Party Apps
@@ -8,33 +31,33 @@ jobs:
       - script: mkdir firstparty
         displayName: 'Make firstparty dir'
         workingDirectory: '$(Build.ArtifactStagingDirectory)'
-      - task: PythonScript@0
-        displayName: 'Download Outlook'
+      - task: UniversalPackages@0
+        displayName: 'Download Outlook Apk'
         inputs:
-          scriptSource: inline
-          script: |
-            import urllib.request
-            url = 'https://www.apkmirror.com/wp-content/uploads/2022/10/63/63439f7305aa4/com.microsoft.office.outlook_4.2238.1-42238819_minAPI26(arm64-v8a)(nodpi)_apkmirror.com.apk?verify=1665648340-2mOS9K6BiA6gq9gF5KMzR8oXOB7-WVDB08DLwszbBWM'
-            path = r"$(Build.ArtifactStagingDirectory)/firstparty/$(outlookApk)"
-            urllib.request.urlretrieve(url, path)
-      - task: PythonScript@0
-        displayName: 'Download Teams'
+          command: 'download'
+          downloadDirectory: '$(Build.ArtifactStagingDirectory)/firstparty'
+          feedsToUse: 'internal'
+          vstsFeed: '${{ parameters.internalFeedName }}'
+          vstsFeedPackage: '${{ parameters.outlookPackage }}'
+          vstsPackageVersion: '${{ parameters.outlookVersion }}'
+      - task: UniversalPackages@0
+        displayName: 'Download Teams Apk'
         inputs:
-          scriptSource: inline
-          script: |
-            import urllib.request
-            url = 'https://www.apkmirror.com/wp-content/uploads/2022/10/36/63447681ccabf/com.microsoft.teams_1416_1.0.0.2022384401-2022384413_minAPI26(arm64-v8a)(nodpi)_apkmirror.com.apk?verify=1665649248-SpgR3K1hvb4k2A4OVJYBC_3KVcC_ga44P90Z8sj3Y8M'
-            path = r"$(Build.ArtifactStagingDirectory)/firstparty/$(teamApk)"
-            urllib.request.urlretrieve(url, path)
-      - task: PythonScript@0
-        displayName: 'Download Word'
+          command: 'download'
+          downloadDirectory: '$(Build.ArtifactStagingDirectory)/firstparty'
+          feedsToUse: 'internal'
+          vstsFeed: '${{ parameters.internalFeedName }}'
+          vstsFeedPackage: '${{ parameters.teamsPackage }}'
+          vstsPackageVersion: '${{ parameters.teamsVersion }}'
+      - task: UniversalPackages@0
+        displayName: 'Download Word Apk'
         inputs:
-          scriptSource: inline
-          script: |
-            import urllib.request
-            url = 'https://www.apkmirror.com/wp-content/uploads/2022/09/07/6336df57124df/com.microsoft.office.word_16.0.15128.20206-2002926215_minAPI26(arm64-v8a)(nodpi)_apkmirror.com.apk?verify=1665648391-9qSU8U3FlwHbvC-95Yo7guyYQSVqPcSsGByC30BajBw'
-            path = r"$(Build.ArtifactStagingDirectory)/firstparty/$(wordApk)"
-            urllib.request.urlretrieve(url, path)
+          command: 'download'
+          downloadDirectory: '$(Build.ArtifactStagingDirectory)/firstparty'
+          feedsToUse: 'internal'
+          vstsFeed: '${{ parameters.internalFeedName }}'
+          vstsFeedPackage: '${{ parameters.wordPackage }}'
+          vstsPackageVersion: '${{ parameters.wordVersion }}'
       - publish: $(Build.ArtifactStagingDirectory)/firstparty
         displayName: 'Publish First Party APKs'
         artifact: firstpartyapks

@@ -9,6 +9,8 @@ parameters:
     type: string
   - name: resultsHistoryName
     type: string
+  - name: otherFiles
+    type: string
   - name: resultsDir
     type: string
   - name: firebaseTimeout
@@ -54,16 +56,7 @@ jobs:
               --auto-google-login \
               --device model=${{ parameters.firebaseDeviceId }},version=${{ parameters.firebaseDeviceAndroidVersion }},locale=en,orientation=portrait \
               --timeout "${{ parameters.firebaseTimeout }}" \
-              --other-files \
-              "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-              /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-              /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
-              /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
-              /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
-              /data/local/tmp/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhost_apk),\
-              /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
-              /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
-              /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk)" \
+              --other-files ${{ parameters.otherFiles }} \
               --results-dir "${{ parameters.resultsDir }}" \
               --directories-to-pull "/sdcard" \
               --use-orchestrator \

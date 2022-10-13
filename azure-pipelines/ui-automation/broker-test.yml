@@ -102,14 +102,14 @@ stages:
         brokerApp: AutoBroker
         brokerFlavor: Dist
         brokerSource: LocalApk
-# FirstPartyApps
+# Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
   displayName: Download First Party Apps (Outlook, Teams, Word)
   jobs:
     - template: ./templates/download-first-party-apps.yml
-# Brokers
-- stage: 'brokers'
+# Download Brokers and Azure Sample
+- stage: 'brokers_azure_sample'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
   displayName: Brokers and Azure Sample APKs
   jobs: 
@@ -128,8 +128,7 @@ stages:
 - stage: 'msal_with_broker_high_api'
   dependsOn:
   - msalautomationapp
-  - brokers
-  - firstpartyapps
+  - brokers_azure_sample
   displayName: Running MSAL with Broker Test Plan (API 30+)
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -139,6 +138,12 @@ stages:
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "msalautomationapp-testpass-broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
+        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
+                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+                      /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+                      /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
+                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
+                      /data/local/tmp/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhost_apk)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "Broker(MSAL) UI Automation - Build (API 30+) # $(Build.BuildNumber)"
@@ -147,7 +152,7 @@ stages:
 - stage: 'msal_with_broker_low_api'
   dependsOn:
     - msalautomationapp
-    - brokers
+    - brokers_azure_sample
     - firstpartyapps
   displayName: Running MSAL with Broker Test Plan (API 29-)
   jobs:
@@ -158,6 +163,15 @@ stages:
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "msalautomationapp-testpass-broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
+        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
+                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+                      /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+                      /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
+                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
+                      /data/local/tmp/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhost_apk),\
+                      /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
+                      /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
+                      /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionLow }}
         testRunTitle: "Broker(MSAL) UI Automation - Build (API 29-) # $(Build.BuildNumber)"
@@ -166,8 +180,7 @@ stages:
 - stage: 'adal_with_broker_high_api'
   dependsOn:
   - brokerautomationapp
-  - brokers
-  - firstpartyapps
+  - brokers_azure_sample
   displayName: ADAL with broker and Broker basic validation test plan (API 30+)
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -177,6 +190,12 @@ stages:
         testTargetPackages: ${{ parameters.brokerTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "brokerautomationapp-testpass-adal&basic-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
+        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
+                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+                      /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+                      /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
+                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
+                      /data/local/tmp/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhost_apk)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "Broker(ADAL) UI Automation - Build (API 30+) # $(Build.BuildNumber)"
@@ -185,7 +204,7 @@ stages:
 - stage: 'adal_with_broker_low_api'
   dependsOn:
     - brokerautomationapp
-    - brokers
+    - brokers_azure_sample
     - firstpartyapps
   displayName: ADAL with broker and Broker basic validation test plan (API 29-)
   jobs:
@@ -196,6 +215,15 @@ stages:
         testTargetPackages: ${{ parameters.brokerTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "brokerautomationapp-testpass-adal&basic-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
+        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
+                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+                      /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+                      /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
+                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
+                      /data/local/tmp/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhost_apk),\
+                      /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
+                      /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
+                      /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionLow }}
         testRunTitle: "Broker(ADAL) UI Automation - Build (API 29-) # $(Build.BuildNumber)"
