@@ -152,7 +152,7 @@ stages:
         testRunTitle: "Broker(MSAL) UI Automation - Build (API 29-) # $(Build.BuildNumber)"
         apiLevelTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
 # ADAL with Broker Test Plan stage (API 30+)
-- stage: 'adal_with_broker'
+- stage: 'adal_with_broker_high_api'
   dependsOn:
   - brokerautomationapp
   - brokers
@@ -170,7 +170,7 @@ stages:
         testRunTitle: "Broker(ADAL) UI Automation - Build (API 30+) # $(Build.BuildNumber)"
         apiLevelTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
 # ADAL with Broker Test Plan stage (API 29-)
-- stage: 'adal_with_broker'
+- stage: 'adal_with_broker_low_api'
   dependsOn:
     - brokerautomationapp
     - brokers
