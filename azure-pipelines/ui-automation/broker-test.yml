@@ -33,6 +33,9 @@ variables:
   companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
   authenticatorApk: app-production-universal-release-signed.apk
   oldAuthenticatorApk: app-production-universal-release-signed.apk
+  outlookApk: Outlook.apk
+  teamsApk: Teams.apk
+  wordApk: Word.apk
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
 
@@ -40,11 +43,11 @@ parameters:
 - name: firebaseDeviceIdHigh
   displayName: Firebase Device Id (Api 30+)
   type: string
-  default: redfin
+  default: oriole
 - name: firebaseDeviceAndroidVersionHigh
   displayName: Firebase Device Android Version (Api 30+)
   type: number
-  default: 30
+  default: 32
 - name: firebaseDeviceIdLow
   displayName: Firebase Device Id (Api 29-)
   type: string
