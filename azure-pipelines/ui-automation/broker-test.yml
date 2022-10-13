@@ -96,7 +96,7 @@ stages:
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
   displayName: Brokers and Azure Sample APKs
   jobs: 
-    - template: ./templates/build-brokers.yml
+    - template: ./templates/download-brokers-and-azure-sample.yml
       parameters:
         engineeringProjectId: '$(engineeringProjectId)'
         azureSamplePipelineId: '$(azureSamplePipelineId)'
