@@ -180,6 +180,7 @@ stages:
   dependsOn:
     - brokerautomationapp
     - brokers
+    - firstpartyapps
   displayName: ADAL with broker and Broker basic validation test plan (API 29-)
   jobs:
     - template: ./templates/run-on-firebase.yml
