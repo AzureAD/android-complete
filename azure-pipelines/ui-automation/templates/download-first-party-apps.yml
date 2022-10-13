@@ -8,7 +8,7 @@ jobs:
       - script: mkdir firstparty
         displayName: 'Make firstparty dir'
         workingDirectory: '$(Build.ArtifactStagingDirectory)'
-      - task: Bash@3
+      - task: PythonScript@0
         displayName: 'Download Outlook'
         inputs:
           scriptSource: inline
