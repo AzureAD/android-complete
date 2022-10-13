@@ -115,7 +115,7 @@ stages:
         companyPortalVersion: ${{ parameters.companyPortalVersion }}
         brokerHostPipelineId: '$(brokerHostPipelineId)'
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
-# MSAL with Broker Test Plan stage (high API)
+# MSAL with Broker Test Plan stage (API 30+)
 - stage: 'msal_with_broker_high_api'
   dependsOn:
   - msalautomationapp
@@ -128,12 +128,12 @@ stages:
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msaltestApp)"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
-        resultsDir: "msalautomationapp-testpass-broker-$(Build.BuildId)-$(Build.BuildNumber)"
+        resultsDir: "msalautomationapp-testpass-broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
-        testRunTitle: "Broker(MSAL) UI Automation - Build # $(Build.BuildNumber)"
+        testRunTitle: "Broker(MSAL) UI Automation - Build (API 30+) # $(Build.BuildNumber)"
         apiLevelTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
-# MSAL with Broker Test Plan stage (low API)
+# MSAL with Broker Test Plan stage (API 29-)
 - stage: 'msal_with_broker_low_api'
   dependsOn:
     - msalautomationapp
@@ -146,18 +146,17 @@ stages:
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msaltestApp)"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
-        resultsDir: "msalautomationapp-testpass-broker-$(Build.BuildId)-$(Build.BuildNumber)"
+        resultsDir: "msalautomationapp-testpass-broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionLow }}
-        testRunTitle: "Broker(MSAL) UI Automation - Build # $(Build.BuildNumber)"
+        testRunTitle: "Broker(MSAL) UI Automation - Build (API 29-) # $(Build.BuildNumber)"
         apiLevelTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
-
-# ADAL with Broker Test Plan stage
+# ADAL with Broker Test Plan stage (API 30+)
 - stage: 'adal_with_broker'
   dependsOn:
   - brokerautomationapp
   - brokers
-  displayName: ADAL with broker and Broker basic validation test plan
+  displayName: ADAL with broker and Broker basic validation test plan (API 30+)
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
@@ -165,8 +164,26 @@ stages:
         automationAppTestApkPath: "$(Pipeline.Workspace)/brokerautomationapks/$(brokertestApp)"
         testTargetPackages: ${{ parameters.brokerTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
-        resultsDir: "brokerautomationapp-testpass-adal&basic-$(Build.BuildId)-$(Build.BuildNumber)"
+        resultsDir: "brokerautomationapp-testpass-adal&basic-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
-        testRunTitle: "Broker(ADAL) UI Automation - Build # $(Build.BuildNumber)"
+        testRunTitle: "Broker(ADAL) UI Automation - Build (API 30+) # $(Build.BuildNumber)"
         apiLevelTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
+# ADAL with Broker Test Plan stage (API 29-)
+- stage: 'adal_with_broker'
+  dependsOn:
+    - brokerautomationapp
+    - brokers
+  displayName: ADAL with broker and Broker basic validation test plan (API 29-)
+  jobs:
+    - template: ./templates/flank/run-on-firebase-with-flank.yml
+      parameters:
+        automationAppApkPath: "$(Pipeline.Workspace)/brokerautomationapks/$(brokerApp)"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/brokerautomationapks/$(brokertestApp)"
+        testTargetPackages: ${{ parameters.brokerTestTarget }}
+        resultsHistoryName: "$(resultsHistoryName)"
+        resultsDir: "brokerautomationapp-testpass-adal&basic-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
+        firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
+        firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
+        testRunTitle: "Broker(ADAL) UI Automation - Build (API 29-) # $(Build.BuildNumber)"
+        apiLevelTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
