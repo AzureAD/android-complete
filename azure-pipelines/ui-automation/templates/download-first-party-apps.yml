@@ -8,13 +8,12 @@ jobs:
       - script: mkdir firstparty
         displayName: 'Make firstparty dir'
         workingDirectory: '$(Build.ArtifactStagingDirectory)'
-      - task: PythonScript@0
-        displayName: 'download outlook'
+      - task: Bash@3
+        displayName: 'Download outlook'
         inputs:
           scriptSource: inline
           script: |
-            url = 'https://www.apkmirror.com/wp-content/themes/APKMirror/download.php?id=3995919&key=7d6e4758f6caf384efda114a6e6dea40b3f27de0'
-            wget.download(url, '$(Build.ArtifactStagingDirectory)/firstparty/Outlook.apk')
+            wget --quiet https://www.apkmirror.com/wp-content/themes/APKMirror/download.php?id=3995919&key=7d6e4758f6caf384efda114a6e6dea40b3f27de0 -O $(Build.ArtifactStagingDirectory)/firstparty/Outlook.apk
       - task: PythonScript@0
         displayName: 'Download Teams'
         inputs:
@@ -25,7 +24,7 @@ jobs:
             path = r"$(Build.ArtifactStagingDirectory)/firstparty/Teams.apk"
             urllib.request.urlretrieve(url, path)
       - task: PythonScript@0
-        displayName: 'download Word'
+        displayName: 'Download Word'
         inputs:
           scriptSource: inline
           script: |
@@ -34,5 +33,5 @@ jobs:
             path = r"$(Build.ArtifactStagingDirectory)/firstparty/Word.apk"
             urllib.request.urlretrieve(url, path)
       - publish: $(Build.ArtifactStagingDirectory)/firstparty
-        displayName: 'Publish First Park APKs'
+        displayName: 'Publish First Party APKs'
         artifact: firstpartyapks
