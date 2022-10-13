@@ -129,6 +129,7 @@ stages:
   dependsOn:
   - msalautomationapp
   - brokers
+  - firstpartyapps
   displayName: Running MSAL with Broker Test Plan (API 30+)
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -147,6 +148,7 @@ stages:
   dependsOn:
     - msalautomationapp
     - brokers
+    - firstpartyapps
   displayName: Running MSAL with Broker Test Plan (API 29-)
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -165,6 +167,7 @@ stages:
   dependsOn:
   - brokerautomationapp
   - brokers
+  - firstpartyapps
   displayName: ADAL with broker and Broker basic validation test plan (API 30+)
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
