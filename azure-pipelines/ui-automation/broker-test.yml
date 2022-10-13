@@ -176,14 +176,14 @@ stages:
     - brokers
   displayName: ADAL with broker and Broker basic validation test plan (API 29-)
   jobs:
-    - template: ./templates/flank/run-on-firebase-with-flank.yml
+    - template: ./templates/run-on-firebase.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/brokerautomationapks/$(brokerApp)"
         automationAppTestApkPath: "$(Pipeline.Workspace)/brokerautomationapks/$(brokertestApp)"
         testTargetPackages: ${{ parameters.brokerTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "brokerautomationapp-testpass-adal&basic-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
-        firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
-        firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
+        firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
+        firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionLow }}
         testRunTitle: "Broker(ADAL) UI Automation - Build (API 29-) # $(Build.BuildNumber)"
         apiLevelTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
