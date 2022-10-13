@@ -13,10 +13,8 @@ jobs:
         inputs:
           scriptSource: inline
           script: |
-            import urllib.request
             url = 'https://www.apkmirror.com/wp-content/themes/APKMirror/download.php?id=3995919&key=7d6e4758f6caf384efda114a6e6dea40b3f27de0'
-            path = r"$(Build.ArtifactStagingDirectory)/firstparty/Outlook.apk"
-            urllib.request.urlretrieve(url, path)
+            wget.download(url, '$(Build.ArtifactStagingDirectory)/firstparty/Outlook.apk')
       - task: PythonScript@0
         displayName: 'Download Teams'
         inputs:
