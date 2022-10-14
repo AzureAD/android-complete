@@ -7,19 +7,19 @@ parameters:
     default: 'com.microsoft.office.outlook'
   - name: outlookVersion
     type: string
-    default: '4.2238.1'
+    default: '1.0.1'
   - name: teamsPackage
     type: string
     default: 'com.microsoft.teams'
   - name: teamsVersion
     type: string
-    default: '1.0.0'
+    default: '1.0.1'
   - name: wordPackage
     type: string
     default: 'com.microsoft.office.word'
   - name: wordVersion
     type: string
-    default: '1.0.0'
+    default: '1.0.1'
 
 jobs:
   - job: 'download_first_party_apps'
