@@ -63,7 +63,7 @@ parameters:
 - name: oldAuthenticatorVersion
   displayName: Old Authenticator Version
   type: string
-  default: '6.2202.*'
+  default: '6.2204.2470'
 - name: companyPortalVersion
   displayName: Company Portal Version
   type: string
