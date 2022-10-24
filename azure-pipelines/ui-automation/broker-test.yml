@@ -32,7 +32,7 @@ variables:
   brokerTestApp: brokerautomationapp-dist-AutoBroker-debug-androidTest.apk
   companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
   authenticatorApk: app-production-universal-release-signed.apk
-  oldAuthenticatorApk: app-production-universal-release-signed.apk
+  oldAuthenticatorApk: Authenticator-4.1.0-RC.apk
   outlookApk: Outlook.apk
   teamsApk: Teams.apk
   wordApk: Word.apk
@@ -75,7 +75,7 @@ parameters:
 - name: msalTestTarget
   displayName: Test Targets for MSAL
   type: string
-  default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, notPackage com.microsoft.identity.client.msal.automationapp.testpass.broker.atpop.update, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
+  default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
 - name: brokerTestTarget
   displayName: Test Targets for Broker
   type: string
