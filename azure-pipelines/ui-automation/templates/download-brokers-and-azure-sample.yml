@@ -65,7 +65,7 @@ jobs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
         feedsToUse: 'internal'
-        vstsFeed: '${{ parameters.msazureFeedName }}'
+        vstsFeed: '${{ parameters.internalFeedName }}'
         vstsFeedPackage: 'com.azure.authenticator'
         vstsPackageVersion: '${{ parameters.oldAuthenticatorVersion }}'
     - task: UniversalPackages@0
