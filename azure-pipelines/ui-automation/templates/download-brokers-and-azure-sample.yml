@@ -10,21 +10,17 @@ parameters:
   - name: authenticatorVersion
     displayName: Authenticator Version
     type: string
-    default: '*'
   - name: oldAuthenticatorVersion
     displayName: Old Authenticator Version
     type: string
-    default: '6.2202.*'
   - name: companyPortalVersion
     displayName: Company Portal Version
     type: string
-    default: '*'
   - name: brokerHostPipelineId
     type: string
   - name: oldBrokerHostVersion
     displayName: Old Broker host Version
     type: string
-    default: '0.0.1'
   - name: internalFeedName
     type: string
     default: 'AndroidAdal'
