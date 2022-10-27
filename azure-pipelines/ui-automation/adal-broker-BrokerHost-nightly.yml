@@ -178,3 +178,4 @@ stages:
           firebaseDeviceId: ${{ parameters.firebaseDeviceId }}
           firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersion }}
           testsFolderName: "broker-ci"
+          testRunTitle: "Nightly ADAL Automation"
