@@ -1,0 +1,180 @@
+# run MSAL with Broker UI automation testcases
+# Variable: 'ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME' was defined in the Variables tab
+# Variable: 'gCloudProjectId' was defined in the Variables tab
+# Variable: 'mvnAccessToken' was defined in the Variables tab
+name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
+
+trigger: none
+pr: none
+
+schedules:
+  - cron: "0 5 * * 1-6" # 5:00 AM UTC everyday Mon-Sat
+    displayName: Daily Local ADAL UI Automation with Broker Run
+    branches:
+      include:
+        - dev
+    always: true
+
+parameters:
+  - name: firebaseDeviceId
+    type: string
+    displayName: Firebase Device Id
+    default: blueline
+    values:
+      - blueline
+      - flame
+      - redfin
+      - sailfish
+      - walleye
+      - bluejay
+      - oriole
+  - name: firebaseDeviceAndroidVersion
+    displayName: Firebase Device Android Version
+    type: number
+    default: 28
+    values:
+      - 25
+      - 26
+      - 27
+      - 28
+      - 29
+      - 30
+      - 31
+      - 32
+      - 33
+  - name: testTargetPackages
+    displayName: Packages as Test Targets
+    type: string
+    default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore
+  - name: oldBrokerHostVersion
+    displayName: Old Broker host Version
+    type: string
+    default: '0.0.1'
+  - name: companyPortalVersion
+    displayName: Company Portal Version
+    type: string
+    default: '*'
+  - name: authenticatorVersion
+    displayName: Authenticator Version
+    type: string
+    default: '*'
+
+variables:
+  engineeringProjectId: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'
+  azureSamplePipelineId: 1458
+  brokerHostPipelineId: 1432
+  msazureServiceConnection: AndroidBroker-CI
+  msazureFeedName: Android-Broker
+  azureSampleApk: AzureSample-local-debug.apk
+  brokerHostApk: brokerHost-dist-release.apk
+  oldBrokerHostApk: brokerHost-local-debug.apk
+  firebaseTimeout: 45m
+  brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
+  brokerTestApp: brokerautomationapp-dist-AutoBroker-debug-androidTest.apk
+  companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
+  authenticatorApk: app-production-universal-release-signed.apk
+  resultsHistoryName: Broker Release
+
+stages:
+  # adalautomationapp
+  - stage: 'adalautomationapp'
+    displayName: Build ADAL Automation APKs
+    jobs:
+      - template: ./templates/build-adal-automation-app.yml
+        parameters:
+          brokerFlavor: BrokerHost
+          adalFlavor: Local
+          brokerSource: LocalApk
+  # Brokers
+  - stage: 'brokers'
+    dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+    displayName: Brokers and Azure Sample APKs
+    jobs:
+      - job: 'download_brokers'
+        displayName: Download Brokers
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: none
+          - task: DownloadPipelineArtifact@2
+            displayName: 'Download latest Azure Sample'
+            inputs:
+              buildType: 'specific'
+              project: '$(engineeringProjectId)'
+              definition: '$(azureSamplePipelineId)'
+              artifactName: AzureSample
+              itemPattern: '**/*.apk'
+              targetPath: '$(Build.ArtifactStagingDirectory)/azureSample'
+              buildVersionToDownload: 'latest'
+          - task: DownloadPipelineArtifact@2
+            displayName: 'Download Broker Host'
+            inputs:
+              buildType: specific
+              project: '$(engineeringProjectId)'
+              definition: '$(brokerHostPipelineId)'
+              artifactName: BrokerHost
+              itemPattern: '**/*.apk'
+              targetPath: '$(Build.ArtifactStagingDirectory)/brokerHost'
+          - task: UniversalPackages@0
+            displayName: 'Download old brokerHost version from feed'
+            inputs:
+              command: 'download'
+              downloadDirectory: '$(Build.ArtifactStagingDirectory)/oldBrokerHost'
+              feedsToUse: 'external'
+              externalFeedCredentials: '$(msazureServiceConnection)'
+              feedDownloadExternal: '$(msazureFeedName)'
+              packageDownloadExternal: 'broker-host'
+              versionDownloadExternal: '${{ parameters.oldBrokerHostVersion }}'
+          - task: UniversalPackages@0
+            displayName: 'Download com.microsoft.windowsintune.companyportal-signed'
+            inputs:
+              command: 'download'
+              downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
+              feedsToUse: 'external'
+              externalFeedCredentials: '$(msazureServiceConnection)'
+              feedDownloadExternal: '$(msazureFeedName)'
+              packageDownloadExternal: 'com.microsoft.windowsintune.companyportal-signed'
+              versionDownloadExternal: '${{ parameters.companyPortalVersion }}'
+          - task: UniversalPackages@0
+            displayName: 'Download com.azure.authenticator'
+            inputs:
+              command: 'download'
+              downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
+              feedsToUse: 'external'
+              externalFeedCredentials: '$(msazureServiceConnection)'
+              feedDownloadExternal: '$(msazureFeedName)'
+              packageDownloadExternal: 'com.azure.authenticator'
+              versionDownloadExternal: '${{ parameters.authenticatorVersion }}'
+          - publish: $(Build.ArtifactStagingDirectory)/brokers
+            displayName: 'Publish Authenticator/Company Portal Broker apks for later use'
+            artifact: brokerapks
+          - publish: $(Build.ArtifactStagingDirectory)/azureSample
+            displayName: 'Publish Azure Sample apk for later use'
+            artifact: azureSample
+          - publish: $(Build.ArtifactStagingDirectory)/brokerHost
+            displayName: 'Publish Broker Host apk for later use'
+            artifact: brokerHost
+          - publish: $(Build.ArtifactStagingDirectory)/oldBrokerHost
+            displayName: 'Publish Broker Host old apk for later use'
+            artifact: oldBrokerHost
+  # ADAL with Broker Test Plan stage
+  - stage: 'adal_with_broker'
+    dependsOn:
+      - adalautomationapp
+      - brokers
+    displayName: Running ADAL with Broker Test UI Test Suite
+    jobs:
+      - template: ./templates/flank/run-on-firebase-with-flank.yml
+        parameters:
+          automationAppApkPath: "$(Pipeline.Workspace)/adalautomationapks/brokerautomationapp-dist-AutoBroker-debug.apk"
+          automationAppTestApkPath: "$(Pipeline.Workspace)/adalautomationapks/brokerautomationapp-dist-AutoBroker-debug-androidTest.apk"
+          testTargetPackages: ${{ parameters.testTargetPackages }}
+          resultsHistoryName: "Dev ADAL with Dev BrokerHost"
+          otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
+                                  /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+                                  /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/azureSample/$(azureSampleApk),\
+                                  /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerHost/$(oldBrokerHostApk)"
+          resultsDir: "adal-BrokerHost-$(Build.BuildId)-$(Build.BuildNumber)"
+          firebaseDeviceId: ${{ parameters.firebaseDeviceId }}
+          firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersion }}
+          testsFolderName: "broker-ci"

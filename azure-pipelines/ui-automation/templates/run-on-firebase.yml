@@ -7,6 +7,8 @@ parameters:
     type: string
   - name: resultsHistoryName
     type: string
+  - name: otherFiles
+    type: string
   - name: resultsDir
     type: string
   - name: firebaseTimeout
@@ -17,6 +19,8 @@ parameters:
   - name: firebaseDeviceAndroidVersion
     type: number
   - name: testRunTitle
+    type: string
+  - name: testsFolderName
     type: string
 
 jobs:
@@ -52,19 +56,14 @@ jobs:
               --auto-google-login \
               --device model=${{ parameters.firebaseDeviceId }},version=${{ parameters.firebaseDeviceAndroidVersion }},locale=en,orientation=portrait \
               --timeout "${{ parameters.firebaseTimeout }}" \
-              --other-files \
-              "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-              /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-              /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
-              /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
-              /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
-              /data/local/tmp/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhost_apk)" \
+              --other-files ${{ parameters.otherFiles }} \
               --results-dir "${{ parameters.resultsDir }}" \
               --directories-to-pull "/sdcard" \
               --use-orchestrator \
               --environment-variables "clearPackageData=true" \
               --results-history-name "${{ parameters.resultsHistoryName }}" \
               --test-targets "${{ parameters.testTargetPackages }}"
+            --smart-flank-gcs-path "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/smart-flank-xml/${{ project.testsFolderName }}/JUnitReport.xml"
       - script: gsutil cp "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/$(resultsDir)/${{ parameters.firebaseDeviceId }}-${{ parameters.firebaseDeviceAndroidVersion }}-en-portrait/test_result_1.xml" "$(Build.SourcesDirectory)"
         displayName: Download Test Result File
         condition: succeededOrFailed()
