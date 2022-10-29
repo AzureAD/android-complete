@@ -90,8 +90,8 @@ stages:
     jobs:
       - template: ./templates/build-broker-automation-app.yml
         parameters:
-          brokerApp: BrokerHost
-          brokerFlavor: Local
+          brokerApp: AutoBroker
+          brokerFlavor: Dist
           brokerSource: LocalApk
   # Brokers
   - stage: 'brokers'
