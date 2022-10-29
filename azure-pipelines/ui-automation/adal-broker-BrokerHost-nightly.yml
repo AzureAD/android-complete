@@ -7,6 +7,14 @@ name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMM
 trigger: none
 pr: none
 
+resources:
+  repositories:  
+  - repository: broker
+    type: github
+    name: AzureAD/ad-accounts-for-android
+    ref: $(broker_branch)
+    endpoint: ANDROID_GITHUB
+
 schedules:
   - cron: "0 5 * * 1-6" # 5:00 AM UTC everyday Mon-Sat
     displayName: Daily Local ADAL UI Automation with Broker Run
