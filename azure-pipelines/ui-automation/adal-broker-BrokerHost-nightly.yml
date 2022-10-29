@@ -80,7 +80,7 @@ stages:
   - stage: 'adalautomationapp'
     displayName: Build ADAL Automation APKs
     jobs:
-      - template: ./templates/build-adal-automation-app.yml
+      - template: ./templates/build-broker-automation-app.yml
         parameters:
           brokerFlavor: BrokerHost
           adalFlavor: Local
@@ -166,8 +166,8 @@ stages:
     jobs:
       - template: ./templates/flank/run-on-firebase-with-flank.yml
         parameters:
-          automationAppApkPath: "$(Pipeline.Workspace)/adalautomationapks/brokerautomationapp-dist-AutoBroker-debug.apk"
-          automationAppTestApkPath: "$(Pipeline.Workspace)/adalautomationapks/brokerautomationapp-dist-AutoBroker-debug-androidTest.apk"
+          automationAppApkPath: "$(Pipeline.Workspace)/brokerautomationapks/brokerautomationapp-dist-AutoBroker-debug.apk"
+          automationAppTestApkPath: "$(Pipeline.Workspace)/brokerautomationapks/brokerautomationapp-dist-AutoBroker-debug-androidTest.apk"
           testTargetPackages: ${{ parameters.testTargetPackages }}
           resultsHistoryName: "Dev ADAL with Dev BrokerHost"
           otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
