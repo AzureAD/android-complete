@@ -82,8 +82,8 @@ stages:
     jobs:
       - template: ./templates/build-broker-automation-app.yml
         parameters:
-          brokerFlavor: BrokerHost
-          adalFlavor: Local
+          brokerApp: BrokerHost
+          brokerFlavor: Local
           brokerSource: LocalApk
   # Brokers
   - stage: 'brokers'
