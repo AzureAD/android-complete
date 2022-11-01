@@ -22,22 +22,22 @@ resources:
     - repository: common
       type: github
       name: AzureAD/microsoft-authentication-library-common-for-android
-      ref: dev
+      ref: wainaina/release/9.0.0
       endpoint: ANDROID_GITHUB
     - repository: broker
       type: github
       name: AzureAD/ad-accounts-for-android
-      ref: dev
+      ref: wainaina/release/8.0.0
       endpoint: ANDROID_GITHUB
     - repository: msal
       type: github
       name: AzureAD/microsoft-authentication-library-for-android
-      ref: dev
+      ref: wainaina/release/4.1.0
       endpoint: ANDROID_GITHUB
     - repository: adal
       type: github
       name: AzureAD/azure-activedirectory-library-for-android
-      ref: dev
+      ref: wainaina/release/4.2.3
       endpoint: ANDROID_GITHUB
 
 parameters:
@@ -45,6 +45,25 @@ parameters:
     displayName: Version Number
     type: string
     default: Default
+  - name: adalVersionNumber
+    displayName: ADAL Version Number
+    type: string
+  - name: msalVersionNumber
+    displayName: MSAL Version Number
+    type: string
+  - name: adAccountsVersionNumber
+    displayName: AD Accounts Version Number
+    type: string
+  - name: broker4jAccountsVersionNumber
+    displayName: Broker4j Accounts Version Number
+    type: string
+  - name: commonVersionNumber
+    displayName: Common Version Number
+    type: string
+  - name: common4jVersionNumber
+    displayName: Common 4J Version Number
+    type: string
+
 
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
