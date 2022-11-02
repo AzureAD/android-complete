@@ -88,6 +88,8 @@ For example, the following properties are supported / required:
 
 - **brokerSource** (optional / default: `PlayStore`) - Determines where to install the broker app such as Authenticator & CP from when running the automation. When we are testing MSAL then we would want this to be `PlayStore` and when we are testing the broker release then we would want this to be `LocalApk` so that we can run the automation against the RC bits of Broker Apps that we obtain for testing. In the case of LocalApk, the broker app must be sideloaded on the device prior to the start of the test and this APK must dropped in the `/data/local/tmp` folder on the device because the Automation Infra will look for it in that folder and try to install it from there.
 
+- **brokerUpdateSource** (optional / default: `PlayStore`) - Determines where to update the broker app such as Authenticator & CP from when running the automation. In the case of LocalApk, the broker app must be sideloaded on the device prior to the start of the test and this APK must dropped in the `/data/local/tmp` folder on the device because the Automation Infra will look for it in that folder and try to install it from there. This property is particularly used for testing broker update scenarios. Hence we should provide two apks - old and updated apks. The old apk should be named as OldBrokerHost.apk and updated one can be BrokerHost.apk. The test automatically picks these apks as old and updated apks respectively.
+
 There are more aguments supported. For a complete list of supported command line arguments across each of our projects, please see [Gradle Project Properties as Command Line Arguments](../ProjectBuild/gradle_project_properties.md).
 
 ### Suggested Android Studio Project Settings
@@ -121,6 +123,7 @@ Some of our UI Automation Tests require installing additional apps on the device
   - Required when running tests against BrokerHost as the broker app
   
   - APK must be dropped in the `/data/local/tmp` directory and be named as `BrokerHost.apk`
+  - For update scenario test cases : Two APKs must be dropped in the `/data/local/tmp` directory and must be named as `OldBrokerHost.apk` and `BrokerHost.apk`
   
   - For WPJ API test cases two APKs must be dropped in the `/data/local/tmp` directory and be named as `BrokerHostRC.apk` and `BrokerHostProd.apk`
 
