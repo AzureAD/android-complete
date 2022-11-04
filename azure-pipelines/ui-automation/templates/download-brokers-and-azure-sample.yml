@@ -10,21 +10,20 @@ parameters:
   - name: authenticatorVersion
     displayName: Authenticator Version
     type: string
-    default: '*'
   - name: oldAuthenticatorVersion
     displayName: Old Authenticator Version
     type: string
-    default: '6.2202.*'
   - name: companyPortalVersion
     displayName: Company Portal Version
     type: string
-    default: '*'
   - name: brokerHostPipelineId
     type: string
   - name: oldBrokerHostVersion
     displayName: Old Broker host Version
     type: string
-    default: '0.0.1'
+  - name: internalFeedName
+    type: string
+    default: 'AndroidAdal'
 
 jobs:
 - job: 'download_brokers'
@@ -61,11 +60,10 @@ jobs:
       inputs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
-        feedsToUse: 'external'
-        externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
-        feedDownloadExternal: '${{ parameters.msazureFeedName }}'
-        packageDownloadExternal: 'com.azure.authenticator'
-        versionDownloadExternal: '${{ parameters.oldAuthenticatorVersion }}'
+        feedsToUse: 'internal'
+        vstsFeed: '${{ parameters.internalFeedName }}'
+        vstsFeedPackage: 'com.azure.authenticator'
+        vstsPackageVersion: '${{ parameters.oldAuthenticatorVersion }}'
     - task: UniversalPackages@0
       displayName: 'Download com.microsoft.windowsintune.companyportal-signed'
       inputs:
