@@ -138,7 +138,7 @@ stages:
   dependsOn:
   - msalautomationapp
   - brokers_azure_sample
-  displayName: Running MSAL with Broker Test Plan (API 30+)
+  displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceIdHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
@@ -154,15 +154,16 @@ stages:
                       /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
-        testRunTitle: "Broker(MSAL) UI Automation - Build (API 30+) # $(Build.BuildNumber)"
+        testRunTitle: "Broker(MSAL) UI Automation - Build (API ${{ parameters.firebaseDeviceIdHigh }}) # $(Build.BuildNumber)"
         apiLevelTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
+        flankShards: ${{ parameters.flankShards }}
 # MSAL with Broker Test Plan stage (API 29-)
 - stage: 'msal_with_broker_low_api'
   dependsOn:
     - msalautomationapp
     - brokers_azure_sample
     - firstpartyapps
-  displayName: Running MSAL with Broker Test Plan (API 29-)
+  displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceIdLow }})
   jobs:
     - template: ./templates/run-on-firebase.yml
       parameters:
@@ -181,14 +182,14 @@ stages:
                       /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionLow }}
-        testRunTitle: "Broker(MSAL) UI Automation - Build (API 29-) # $(Build.BuildNumber)"
+        testRunTitle: "Broker(MSAL) UI Automation - Build (API ${{ parameters.firebaseDeviceIdLow }}) # $(Build.BuildNumber)"
         apiLevelTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
 # ADAL with Broker Test Plan stage (API 30+)
 - stage: 'adal_with_broker_high_api'
   dependsOn:
   - brokerautomationapp
   - brokers_azure_sample
-  displayName: ADAL with broker and Broker basic validation test plan (API 30+)
+  displayName: ADAL with broker and Broker basic validation test plan (API ${{ parameters.firebaseDeviceIdHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
@@ -207,5 +208,6 @@ stages:
                       /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
-        testRunTitle: "Broker(ADAL) UI Automation - Build (API 30+) # $(Build.BuildNumber)"
+        testRunTitle: "Broker(ADAL) UI Automation - Build (API ${{ parameters.firebaseDeviceIdHigh }}) # $(Build.BuildNumber)"
         apiLevelTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
+        flankShards: ${{ parameters.flankShards }}
