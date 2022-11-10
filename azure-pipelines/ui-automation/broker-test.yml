@@ -61,6 +61,10 @@ parameters:
   displayName: Firebase Device Android Version (Api 29-)
   type: number
   default: 28
+- name: flankShards
+  displayName: Max Number of Flank Shards
+  type: number
+  default: 2
 - name: authenticatorVersion
   displayName: Authenticator Version
   type: string
