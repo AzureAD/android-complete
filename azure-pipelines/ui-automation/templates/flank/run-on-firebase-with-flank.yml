@@ -5,7 +5,11 @@ parameters:
     type: string
   - name: testTargetPackages
     type: string
+  - name: apiLevelTarget
+    type: string
   - name: resultsHistoryName
+    type: string
+  - name: otherFiles
     type: string
   - name: resultsDir
     type: string
@@ -61,14 +65,15 @@ jobs:
               --record-video \
               --device model=${{ parameters.firebaseDeviceId }},version=${{ parameters.firebaseDeviceAndroidVersion }},locale=en,orientation=portrait \
               --timeout "${{ parameters.firebaseTimeout }}" \
-              --other-files "${{ parameters.otherFiles }}"\
+              --other-files ${{ parameters.otherFiles }} \
               --results-dir "${{ parameters.resultsDir }}" \
               --directories-to-pull "/sdcard" \
               --use-orchestrator \
               --environment-variables "clearPackageData=true" \
               --results-history-name "${{ parameters.resultsHistoryName }}" \
-              --test-targets "${{ parameters.testTargetPackages }}" \
+              --test-targets "${{ parameters.testTargetPackages }}, ${{ parameters.apiLevelTarget }}" \
               --smart-flank-gcs-path "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/smart-flank-xml/${{ parameters.testsFolderName }}/JUnitReport.xml"
+
       - script: gsutil cp "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/${{ parameters.resultsDir }}/JUnitReport.xml" "$(Build.SourcesDirectory)"
         displayName: Download Test Result File
         condition: succeededOrFailed()
