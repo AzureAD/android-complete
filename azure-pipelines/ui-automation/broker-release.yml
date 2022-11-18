@@ -48,6 +48,12 @@ parameters:
 - name: msalVersion
   displayName: MSAL Version
   type: string 
+- name: commonVersion
+  displayName: Common Version
+  type: string
+- name: adAccountsVersion
+  displayName: Broker Version
+  type: string     
 - name: firebaseDeviceIdHigh
   displayName: Firebase Device Id (Api 30+)
   type: string
