@@ -45,6 +45,9 @@ variables:
   resultsHistoryName: Broker Release
 
 parameters:
+- name: msalVersion
+  displayName: MSAL Version
+  type: string 
 - name: firebaseDeviceIdHigh
   displayName: Firebase Device Id (Api 30+)
   type: string
@@ -101,6 +104,7 @@ stages:
         brokerApp: AutoBroker
         msalFlavor: Dist
         brokerSource: LocalApk
+        msalVersion: ${{ parameters.msalVersion }}
 # brokerautomationapp
 - stage: 'brokerautomationapp'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
