@@ -68,6 +68,9 @@ parameters:
   displayName: Max Number of Flank Shards
   type: number
   default: 2
+- name: prodAuthenticatorVersion
+  displayName: PROD Authenticator Version
+  type: string   
 - name: authenticatorVersion
   displayName: Authenticator Version
   type: string
@@ -79,6 +82,9 @@ parameters:
 - name: companyPortalVersion
   displayName: Company Portal Version
   type: string
+- name: prodCompanyPortalVersion
+  displayName: PROD Company Portal Version
+  type: string  
   default: '*'
 - name: oldBrokerHostVersion
   displayName: Old Broker host Version
