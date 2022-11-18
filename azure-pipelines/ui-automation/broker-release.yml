@@ -71,6 +71,7 @@ parameters:
 - name: prodAuthenticatorVersion
   displayName: PROD Authenticator Version
   type: string   
+  default: '*'
 - name: authenticatorVersion
   displayName: Authenticator Version
   type: string
@@ -82,6 +83,7 @@ parameters:
 - name: companyPortalVersion
   displayName: Company Portal Version
   type: string
+  default: '*'
 - name: prodCompanyPortalVersion
   displayName: PROD Company Portal Version
   type: string  
