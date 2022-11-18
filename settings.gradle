@@ -66,15 +66,15 @@ project(':uiautomationutilities').projectDir = new File('common/uiautomationutil
 
 include(":brokerautomationapp")
 project(':brokerautomationapp').projectDir = new File('broker/brokerautomationapp')
-
-include(":oneauth")
-project(':oneauth').projectDir = new File('oneauth/sources/android/gradle')
-
-include(":oneauthtestapp")
-project(':oneauthtestapp').projectDir = new File('oneauth/testapps/android/oneauthtestapp/app')
-
-include(":msalcpptesthost")
-project(':msalcpptesthost').projectDir = new File('msalcpp/test/android/testhost/app')
+//
+//include(":oneauth")
+//project(':oneauth').projectDir = new File('oneauth/sources/android/gradle')
+//
+//include(":oneauthtestapp")
+//project(':oneauthtestapp').projectDir = new File('oneauth/testapps/android/oneauthtestapp/app')
+//
+//include(":msalcpptesthost")
+//project(':msalcpptesthost').projectDir = new File('msalcpp/test/android/testhost/app')
 
 // Pure Java DevX Projects
 include(':common4j')
@@ -91,18 +91,18 @@ project(':AcaPlugin').projectDir = new File('plugins/buildsystem')
 
 include(":broker4j")
 project(':broker4j').projectDir = new File('broker/broker4j')
-
-include(":LinuxBroker")
-project(':LinuxBroker').projectDir = new File('broker/LinuxBroker')
+//
+//include(":LinuxBroker")
+//project(':LinuxBroker').projectDir = new File('broker/LinuxBroker')
 
 include(':LabApiUtilities')
 project(':LabApiUtilities').projectDir = new File('common/LabApiUtilities')
 
 include(':java-linux-test-app')
 project(':java-linux-test-app').projectDir = new File('broker/java-linux-test-app')
-
-include(":LinuxBrokerPackage")
-project(':LinuxBrokerPackage').projectDir = new File('/broker/LinuxBrokerPackage')
+//
+//include(":LinuxBrokerPackage")
+//project(':LinuxBrokerPackage').projectDir = new File('/broker/LinuxBrokerPackage')
 
 include(":AzureSample")
 project(':AzureSample').projectDir = new File('azuresample/app')
