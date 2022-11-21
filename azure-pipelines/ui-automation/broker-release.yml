@@ -160,7 +160,7 @@ stages:
         brokerApp: AutoBroker
         msalFlavor: Dist
         brokerSource: LocalApk
-        msalVersion: ${{ parameters.msalVersionRC }}
+        # msalVersion: ${{ parameters.msalVersionRC }}
 # brokerautomationapp
 - stage: 'brokerautomationapp'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
