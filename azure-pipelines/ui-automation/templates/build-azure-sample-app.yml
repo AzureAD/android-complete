@@ -24,24 +24,6 @@ parameters:
     - PROD
     - RC
 
-resources:
-  repositories:
-  - repository: msal
-    type: github
-    name: AzureAD/microsoft-authentication-library-for-android
-    ref: dev
-    endpoint: ANDROID_GITHUB
-  - repository: azuresample
-    type: github
-    name: Azure-Samples/ms-identity-android-java
-    ref: master
-    endpoint: ANDROID_GITHUB
-  - repository: common
-    type: github
-    name: AzureAD/microsoft-authentication-library-common-for-android
-    ref: dev
-    endpoint: ANDROID_GITHUB
-
 jobs:
 - job: azure_samples
   displayName: Build Azure Samples ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
