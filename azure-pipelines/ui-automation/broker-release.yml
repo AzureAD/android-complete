@@ -55,15 +55,27 @@ variables:
   resultsHistoryName: Broker Release
 
 parameters:
-- name: msalVersion
-  displayName: MSAL Version
-  type: string 
-- name: commonVersion
-  displayName: Common Version
+- name: msalVersionRC
+  displayName: MSAL RC Version
   type: string
-- name: adAccountsVersion
+- name: msalVersionPROD
+  displayName: MSAL PROD Version
+  type: string
+- name: commonVersionRC
+  displayName: Common RC Version
+  type: string
+- name: commonVersionPROD
+  displayName: Common PROD Version
+  type: string
+- name: adAccountsVersionRC
+  displayName: Broker RC Version
+  type: string
+- name: adAccountsVersionPROD
+  displayName: Broker PROD Version
+  type: string
+- name: adalVersion
   displayName: Broker Version
-  type: string     
+  type: string
 - name: firebaseDeviceIdHigh
   displayName: Firebase Device Id (Api 30+)
   type: string
