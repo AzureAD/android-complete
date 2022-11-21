@@ -82,7 +82,7 @@ jobs:
   - task: PublishPipelineArtifact@1
     displayName: Publish Broker Host APK
     inputs:
-      targetPath: $(Agent.BuildDirectory)/android-complete/azuresample/app/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}/${{upper(packageVariant)}}
+      targetPath: $(Agent.BuildDirectory)/android-complete/azuresample/app/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}/${{upper(parameters.packageVariant)}}
       artifactName: AzureSample
       patterns: '**/*.apk'
 ...
