@@ -13,7 +13,7 @@ parameters:
   values:
   - Debug
   - Release
-- name: dist_msal_version
+- name: msalVersion
   displayName: MSAL Version
   type: string
 - name: packageVariant
@@ -51,8 +51,8 @@ jobs:
         targetType: inline
         script: |
           $assembleTask = "assembleExternal${{ parameters.signingConfigurations }}"
-          if (("$(dist_msal_version)" -ne "")) {
-              $assembleTask = $assembleTask + " -PdistMsalVersion=" + "$(dist_msal_version)"
+          if (("$(msalVersion)" -ne "")) {
+              $assembleTask = $assembleTask + " -PdistMsalVersion=" + "$(msalVersion)"
           }
           Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
   - ${{ if eq(parameters.productFlavors, 'Local') }}:
