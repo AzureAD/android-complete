@@ -108,6 +108,26 @@ parameters:
   default: package com.microsoft.identity.client.broker.automationapp.testpass, notPackage com.microsoft.identity.client.broker.automationapp.testpass.local.adalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LongUIAutomationTest
 
 stages:
+- stage: 'azuresampleappRC'
+  dependsOn: []
+  displayName: Build Azure Sample App RC
+  jobs:
+    - template: ./templates/build-azure-sample-app.yml
+      parameters:
+        productFlavors: External
+        signingConfigurations: Release
+        dist_msal_version: 4.1.0
+        packageVariant: RC
+- stage: 'azuresampleappPROD'
+  dependsOn: []
+  displayName: Build Azure Sample App PROD
+  jobs:
+    - template: ./templates/build-azure-sample-app.yml
+      parameters:
+        productFlavors: External
+        signingConfigurations: Release
+        dist_msal_version: 4.0.4
+        packageVariant: PROD       
 # msalautomationapp
 - stage: 'msalautomationapp'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
