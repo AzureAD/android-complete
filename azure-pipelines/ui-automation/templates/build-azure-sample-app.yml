@@ -51,8 +51,8 @@ jobs:
         targetType: inline
         script: |
           $assembleTask = "assembleExternal${{ parameters.signingConfigurations }}"
-          if (("$(parameters.msalVersion)" -ne "")) {
-              $assembleTask = $assembleTask + " -PdistMsalVersion=" + "$(parameters.msalVersion)"
+          if (("${{ parameters.msalVersion }}" -ne "")) {
+              $assembleTask = $assembleTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
           }
           Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
   - ${{ if eq(parameters.productFlavors, 'Local') }}:
