@@ -67,12 +67,12 @@ jobs:
       - task: Gradle@2
         displayName: 'Assemble MSAL Automation App'
         inputs:
-          tasks: msalautomationapp:clean msalautomationapp:$(AssembleTask)
+          tasks: msalautomationapp:clean $(AssembleTask)
           publishJUnitResults: false
       - task: Gradle@2
         displayName: 'Assemble MSAL Automation App Instrumented Tests'
         inputs:
-          tasks: msalautomationapp:clean msalautomationapp:$(AssembleTestTask)
+          tasks: msalautomationapp:clean $(AssembleTestTask)
           publishJUnitResults: false
       - task: CopyFiles@2
         displayName: 'Copy apks for later use in the pipeline'
