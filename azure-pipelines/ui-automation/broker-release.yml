@@ -168,7 +168,7 @@ stages:
         adAccountsVersion: ${{ parameters.adAccountsVersionPROD }}        
         adalVersion: ${{ parameters.adalVersion }}        
         packageVariant: PROD 
-- stage: 'brokerHostRCRelease'
+- stage: 'brokerHostPRODRelease'
   dependsOn: []
   displayName: Build BrokerHost PROD
   jobs:
