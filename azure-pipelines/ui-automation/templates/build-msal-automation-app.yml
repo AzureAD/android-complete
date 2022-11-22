@@ -51,23 +51,19 @@ jobs:
           KeyVaultName: 'ADALTestInfo'
           SecretsFilter: 'AndroidAutomationRunnerAppSecret'
           RunAsPreJob: false
-      - ${{ if eq(parameters.productFlavors, 'External') }}:
-          - task: PowerShell@2
-            displayName: Generate Assemble External Task
-            inputs:
-              targetType: inline
-              script: |
-                $assembleTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=${{ parameters.brokerSource }}"
-                $assembleTestTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(AndroidAutomationRunnerAppSecret)"
-                if (("${{ parameters.msalVersion }}" -ne "")) {
-                    $assembleTask = $assembleTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
-                    $assembleTestTask = $assembleTestTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
-                }
-                Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
-                Write-Host "##vso[task.setvariable variable=AssembleTestTask;]$assembleTestTask"
-          - ${{ if eq(parameters.productFlavors, 'Local') }}:
-              - pwsh: echo "##vso[task.setvariable variable=AssembleTask;]assembleLocal${{ parameters.signingConfigurations }}"
-                displayName: Generate Assemble Local Task
+      - task: PowerShell@2
+        displayName: Generate Assemble Dist Task
+        inputs:
+          targetType: inline
+          script: |
+            $assembleTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=${{ parameters.brokerSource }}"
+            $assembleTestTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(AndroidAutomationRunnerAppSecret)"
+            if (("${{ parameters.msalVersion }}" -ne "")) {
+                $assembleTask = $assembleTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
+                $assembleTestTask = $assembleTestTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
+            }
+            Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
+            Write-Host "##vso[task.setvariable variable=AssembleTestTask;]$assembleTestTask"
       - task: Gradle@2
         displayName: 'Assemble MSAL Automation App'
         inputs:
@@ -76,7 +72,7 @@ jobs:
       - task: Gradle@2
         displayName: 'Assemble MSAL Automation App Instrumented Tests'
         inputs:
-          tasks: msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(AndroidAutomationRunnerAppSecret)
+          tasks: msalautomationapp:clean msalautomationapp:$(AssembleTestTask)
           publishJUnitResults: false
       - task: CopyFiles@2
         displayName: 'Copy apks for later use in the pipeline'
