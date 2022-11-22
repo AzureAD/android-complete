@@ -57,18 +57,25 @@ jobs:
           targetType: inline
           script: |
             $assembleTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=${{ parameters.brokerSource }}"
-            $assembleTestTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(AndroidAutomationRunnerAppSecret)"
             if (("${{ parameters.msalVersion }}" -ne "")) {
                 $assembleTask = $assembleTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
-                $assembleTestTask = $assembleTestTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
             }
             Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
-            Write-Host "##vso[task.setvariable variable=AssembleTestTask;]$assembleTestTask"
       - task: Gradle@2
         displayName: 'Assemble MSAL Automation App'
         inputs:
           tasks: msalautomationapp:clean $(AssembleTask)
           publishJUnitResults: false
+      - task: PowerShell@2
+          displayName: Generate Assemble Test Task
+          inputs:
+            targetType: inline
+            script: |
+              $assembleTestTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(AndroidAutomationRunnerAppSecret)"
+              if (("${{ parameters.msalVersion }}" -ne "")) {
+                  $assembleTestTask = $assembleTestTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
+              }
+              Write-Host "##vso[task.setvariable variable=AssembleTestTask;]$assembleTestTask"
       - task: Gradle@2
         displayName: 'Assemble MSAL Automation App Instrumented Tests'
         inputs:
