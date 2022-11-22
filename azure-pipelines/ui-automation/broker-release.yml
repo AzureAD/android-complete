@@ -407,7 +407,7 @@ stages:
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-RC-LocalApk/$(msaltestApp)"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
-        resultsDir: "RC_MSAL-PROD_Broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
+        resultsDir: "RC_MSAL-PROD_Broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
         otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
                       /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
@@ -434,7 +434,7 @@ stages:
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-PROD-LocalApk/$(msaltestApp)"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
-        resultsDir: "RC_MSAL-PROD_Broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
+        resultsDir: "RC_MSAL-PROD_Broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
         otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
                       /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
