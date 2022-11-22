@@ -372,7 +372,7 @@ stages:
     - brokers_azure_sample
     - firstpartyapps
     - azuresampleappPROD
-  displayName: RC MSAL - PROD Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
+  displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
     - template: ./templates/run-on-firebase.yml
       parameters:
@@ -426,7 +426,7 @@ stages:
     - brokers_azure_sample
     - firstpartyapps
     - azuresampleappPROD
-  displayName: RC MSAL - PROD Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
+  displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/run-on-firebase.yml
       parameters:
