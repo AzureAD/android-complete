@@ -20,6 +20,16 @@ parameters:
     values:
       - LocalApk
       - PlayStore
+  - name: msalVersion
+    displayName: MSAL Version
+    type: string
+  - name: packageVariant
+    displayName: Package Variant
+    type: string
+    default: PROD
+    values:
+      - PROD
+      - RC
 
 jobs:
   - job: 'msalautomationapp'
@@ -41,10 +51,27 @@ jobs:
           KeyVaultName: 'ADALTestInfo'
           SecretsFilter: 'AndroidAutomationRunnerAppSecret'
           RunAsPreJob: false
+      - ${{ if eq(parameters.productFlavors, 'External') }}:
+          - task: PowerShell@2
+            displayName: Generate Assemble External Task
+            inputs:
+              targetType: inline
+              script: |
+                $assembleTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=${{ parameters.brokerSource }}"
+                $assembleTestTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(AndroidAutomationRunnerAppSecret)"
+                if (("${{ parameters.msalVersion }}" -ne "")) {
+                    $assembleTask = $assembleTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
+                    $assembleTestTask = $assembleTestTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
+                }
+                Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
+                Write-Host "##vso[task.setvariable variable=AssembleTestTask;]$assembleTestTask"
+          - ${{ if eq(parameters.productFlavors, 'Local') }}:
+              - pwsh: echo "##vso[task.setvariable variable=AssembleTask;]assembleLocal${{ parameters.signingConfigurations }}"
+                displayName: Generate Assemble Local Task
       - task: Gradle@2
         displayName: 'Assemble MSAL Automation App'
         inputs:
-          tasks: clean msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=${{ parameters.brokerSource }}
+          tasks: msalautomationapp:clean msalautomationapp:$(AssembleTask)
           publishJUnitResults: false
       - task: Gradle@2
         displayName: 'Assemble MSAL Automation App Instrumented Tests'
@@ -59,4 +86,4 @@ jobs:
           targetFolder: '$(Build.ArtifactStagingDirectory)/msal'
       - publish: '$(Build.ArtifactStagingDirectory)/msal'
         displayName: 'Publish apks for later use'
-        artifact: msalautomationapks
+        artifact: msalautomationapks-${{ upper(parameters.packageVariant) }}-${{ parameters.brokerSource }}
