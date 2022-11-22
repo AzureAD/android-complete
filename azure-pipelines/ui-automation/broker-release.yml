@@ -195,6 +195,29 @@ stages:
         adalVersion: ${{ parameters.adalVersion }}        
         packageVariant: RC          
 # msalautomationapp
+- stage: 'msalautomationappRC'
+  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+  displayName: Build MSAL Automation APKs
+  jobs:
+    - template: ./templates/build-msal-automation-app.yml
+      parameters:
+        brokerApp: AutoBroker
+        msalFlavor: Dist
+        brokerSource: LocalApk
+        msalVersion: ${{ parameters.msalVersionRC }}        
+        packageVariant: RC
+- stage: 'msalautomationappPROD'
+  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+  displayName: Build MSAL Automation APKs
+  jobs:
+    - template: ./templates/build-msal-automation-app.yml
+      parameters:
+        brokerApp: AutoBroker
+        msalFlavor: Dist
+        brokerSource: LocalApk
+        msalVersion: ${{ parameters.msalVersionPROD }}        
+        packageVariant: PROD        
+# msalautomationapp
 - stage: 'msalautomationapp'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
   displayName: Build MSAL Automation APKs
