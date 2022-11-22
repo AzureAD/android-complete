@@ -168,19 +168,6 @@ stages:
         adAccountsVersion: ${{ parameters.adAccountsVersionPROD }}        
         adalVersion: ${{ parameters.adalVersion }}        
         packageVariant: PROD 
-- stage: 'brokerHostPRODRelease'
-  dependsOn: []
-  displayName: Build BrokerHost PROD
-  jobs:
-    - template: ./templates/build-broker-host.yml
-      parameters:
-        productFlavors: Dist
-        signingConfigurations: Release
-        msalVersion: ${{ parameters.msalVersionPROD }}
-        commonVersion: ${{ parameters.commonVersionPROD }}
-        adAccountsVersion: ${{ parameters.adAccountsVersionPROD }}        
-        adalVersion: ${{ parameters.adalVersion }}        
-        packageVariant: PROD 
 - stage: 'brokerHostRCRelease'
   dependsOn: []
   displayName: Build BrokerHost RC Release
