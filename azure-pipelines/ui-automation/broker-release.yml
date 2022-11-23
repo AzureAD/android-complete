@@ -160,7 +160,7 @@ stages:
 - stage: 'publishLabApiUtilitiesLibraries'
   displayName: LabApiUtilities - Build and publish
   jobs:
-  - template: assemble&publish.yml
+  - template: ../continuous-delivery/assemble&publish.yml
     parameters:
       repository: common
       project: LabApiUtilities
@@ -174,7 +174,7 @@ stages:
   displayName: Common4j - Build and publish
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
-  - template: assemble&publish.yml
+  - template: ../continuous-delivery/assemble&publish.yml
     parameters:
       repository: common
       project: common4j
@@ -188,7 +188,7 @@ stages:
   displayName: Common - Build and publish
   dependsOn: publishCommon4jLibraries
   jobs:
-  - template: assemble&publish.yml
+  - template: ../continuous-delivery/assemble&publish.yml
     parameters:
       repository: common
       project: common
@@ -206,7 +206,7 @@ stages:
   - publishLabApiUtilitiesLibraries
   - publishCommon4jLibraries
   jobs:
-  - template: assemble&publish.yml
+  - template: ../continuous-delivery/assemble&publish.yml
     parameters:
       repository: broker
       project: broker4j
@@ -223,7 +223,7 @@ stages:
   - publishCommonLibraries
   - publishBroker4jLibraries
   jobs:
-  - template: assemble&publish.yml
+  - template: ../continuous-delivery/assemble&publish.yml
     parameters:
       repository: broker
       project: AADAuthenticator
@@ -239,7 +239,7 @@ stages:
   displayName: Msal - Build and publish
   dependsOn: publishCommonLibraries
   jobs:
-  - template: assemble&publish.yml
+  - template: ../continuous-delivery/assemble&publish.yml
     parameters:
       repository: msal
       project: msal
@@ -255,7 +255,7 @@ stages:
   displayName: Adal - Build and publish
   dependsOn: publishCommonLibraries
   jobs:
-  - template: assemble&publish.yml
+  - template: ../continuous-delivery/assemble&publish.yml
     parameters:
       repository: adal
       project: adal
