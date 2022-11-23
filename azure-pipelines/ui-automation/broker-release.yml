@@ -63,9 +63,12 @@ parameters:
 - name: adAccountsVersionPROD
   displayName: Broker PROD Version
   type: string
-- name: adalVersion
+- name: adalVersionRC
   displayName: ADAL Version
   type: string
+- name: adalVersionPROD
+  displayName: ADAL Version
+  type: string  
 - name: firebaseDeviceIdHigh
   displayName: Firebase Device Id (Api 30+)
   type: string
@@ -127,7 +130,7 @@ variables:
     parameters.msalVersionRC: ${{ parameters.customVersionNumber }}
     parameters.commonVersionRC: ${{ parameters.customVersionNumber }}
     parameters.adAccountsVersionRC: ${{ parameters.customVersionNumber }}
-    parameters.adalVersion: ${{ parameters.customVersionNumber }}    
+    parameters.adalVersionRC: ${{ parameters.customVersionNumber }}    
   projVersionParam: -PprojVersion=$(versionNumber)
   labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(versionNumber)
   common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
@@ -298,13 +301,14 @@ stages:
         msalVersion: ${{ parameters.msalVersionPROD }}
         commonVersion: ${{ parameters.commonVersionPROD }}
         adAccountsVersion: ${{ parameters.adAccountsVersionPROD }}        
-        adalVersion: ${{ parameters.adalVersion }}        
+        adalVersion: ${{ parameters.adalVersionPROD }}        
         packageVariant: PROD 
 - stage: 'brokerHostRCRelease'
   dependsOn: 
     - publishCommonLibraries
     - publishMsal
     - publishBrokerLibraries
+    - publishAdal
   displayName: Build BrokerHost RC Release
   jobs:
     - template: ./templates/build-broker-host.yml
@@ -314,13 +318,14 @@ stages:
         msalVersion: ${{ parameters.msalVersionRC }}
         commonVersion: ${{ parameters.commonVersionRC }}
         adAccountsVersion: ${{ parameters.adAccountsVersionRC }}        
-        adalVersion: ${{ parameters.adalVersion }}        
+        adalVersion: ${{ parameters.adalVersionRC }}        
         packageVariant: RC
 - stage: 'brokerHostRCDebug'
   dependsOn:
     - publishMsal
     - publishCommonLibraries
     - publishBrokerLibraries
+    - publishAdal
   displayName: Build BrokerHost RC Debug
   jobs:
     - template: ./templates/build-broker-host.yml
