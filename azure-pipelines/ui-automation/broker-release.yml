@@ -64,10 +64,10 @@ parameters:
   displayName: Broker PROD Version
   type: string
 - name: adalVersionRC
-  displayName: ADAL Version
+  displayName: ADAL RC Version
   type: string
 - name: adalVersionPROD
-  displayName: ADAL Version
+  displayName: ADAL PROD Version
   type: string  
 - name: firebaseDeviceIdHigh
   displayName: Firebase Device Id (Api 30+)
