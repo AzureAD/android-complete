@@ -40,26 +40,11 @@ resources:
     ref: dev
     endpoint: ANDROID_GITHUB  
 
-variables:
-  engineeringProjectId: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'
-  azureSamplePipelineId: 1458
-  brokerHostPipelineId: 1432
-  msazureServiceConnection: AndroidBroker-CI
-  msazureFeedName: Android-Broker
-  msalApp: msalautomationapp-dist-AutoBroker-debug.apk
-  msalTestApp: msalautomationapp-dist-AutoBroker-debug-androidTest.apk
-  brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
-  brokerTestApp: brokerautomationapp-dist-AutoBroker-debug-androidTest.apk
-  companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
-  authenticatorApk: app-production-universal-release-signed.apk
-  oldAuthenticatorApk: Authenticator-4.1.0-RC.apk
-  outlookApk: Outlook.apk
-  teamsApk: Teams.apk
-  wordApk: Word.apk
-  firebaseTimeout: 45m
-  resultsHistoryName: Broker Release
-
 parameters:
+- name: customVersionNumber
+  displayName: Custom Version Number
+  type: string
+  default: Default
 - name: msalVersionRC
   displayName: MSAL RC Version
   type: string
@@ -134,9 +119,156 @@ parameters:
   type: string
   default: package com.microsoft.identity.client.broker.automationapp.testpass, notPackage com.microsoft.identity.client.broker.automationapp.testpass.local.adalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LongUIAutomationTest
 
+variables:
+  ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
+    versionNumber: $(Build.BuildNumber)
+  ${{ else }}:
+    versionNumber:  ${{ parameters.customVersionNumber }}
+    parameters.msalVersionRC: ${{ parameters.customVersionNumber }}
+    parameters.commonVersionRC: ${{ parameters.customVersionNumber }}
+    parameters.adAccountsVersionRC: ${{ parameters.customVersionNumber }}
+    parameters.adalVersion: ${{ parameters.customVersionNumber }}    
+  projVersionParam: -PprojVersion=$(versionNumber)
+  labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(versionNumber)
+  common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
+  broker4jVersionParam: -PdistBroker4jVersion=$(versionNumber)
+  commonVersionParam: -PdistCommonVersion=$(versionNumber)
+  linuxBrokerVersion: -PlinuxBrokerVersion=$(versionNumber)
+  androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
+  javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
+  engineeringProjectId: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'
+  azureSamplePipelineId: 1458
+  brokerHostPipelineId: 1432
+  msazureServiceConnection: AndroidBroker-CI
+  msazureFeedName: Android-Broker
+  msalApp: msalautomationapp-dist-AutoBroker-debug.apk
+  msalTestApp: msalautomationapp-dist-AutoBroker-debug-androidTest.apk
+  brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
+  brokerTestApp: brokerautomationapp-dist-AutoBroker-debug-androidTest.apk
+  companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
+  authenticatorApk: app-production-universal-release-signed.apk
+  oldAuthenticatorApk: Authenticator-4.1.0-RC.apk
+  outlookApk: Outlook.apk
+  teamsApk: Teams.apk
+  wordApk: Word.apk
+  firebaseTimeout: 45m
+  resultsHistoryName: Broker Release
+
 stages:
+# Package generation
+# :LabApiUtilities - Build and publish
+- stage: 'publishLabApiUtilitiesLibraries'
+  displayName: LabApiUtilities - Build and publish
+  jobs:
+  - template: assemble&publish.yml
+    parameters:
+      repository: common
+      project: LabApiUtilities
+      dependencyParams: $(javaProjectDependencyParam)
+      assembleParams: $(projVersionParam)
+      publishParams: $(projVersionParam)
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
+      vstsMvnAndroidAccessToken: mvnAccessToken
+# Common4j - Build and publish
+- stage: 'publishCommon4jLibraries'
+  displayName: Common4j - Build and publish
+  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+  jobs:
+  - template: assemble&publish.yml
+    parameters:
+      repository: common
+      project: common4j
+      dependencyParams: $(javaProjectDependencyParam)
+      assembleParams: $(projVersionParam)
+      publishParams: $(projVersionParam)
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
+      vstsMvnAndroidAccessToken: mvnAccessToken
+# Common - Build and publish
+- stage: 'publishCommonLibraries'
+  displayName: Common - Build and publish
+  dependsOn: publishCommon4jLibraries
+  jobs:
+  - template: assemble&publish.yml
+    parameters:
+      repository: common
+      project: common
+      assembleCmd: assembleDist
+      publishCmd: publishDistReleasePublicationToVsts-maven-adal-androidRepository
+      dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
+      assembleParams: $(projVersionParam) $(common4jVersionParam)
+      publishParams: $(projVersionParam) $(common4jVersionParam)
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
+      vstsMvnAndroidAccessToken: mvnAccessToken
+# Broker4j - Build and publish
+- stage: 'publishBroker4jLibraries'
+  displayName: Broker4j - Build and publish
+  dependsOn: 
+  - publishLabApiUtilitiesLibraries
+  - publishCommon4jLibraries
+  jobs:
+  - template: assemble&publish.yml
+    parameters:
+      repository: broker
+      project: broker4j
+      publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
+      dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
+      assembleParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
+      publishParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
+      vstsMvnAndroidAccessToken: mvnAccessToken
+# Broker - Build and publish
+- stage: 'publishBrokerLibraries'
+  displayName: Android Broker - Build and publish
+  dependsOn: 
+  - publishCommonLibraries
+  - publishBroker4jLibraries
+  jobs:
+  - template: assemble&publish.yml
+    parameters:
+      repository: broker
+      project: AADAuthenticator
+      assembleCmd: assembleDist
+      publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
+      dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
+      assembleParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
+      publishParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
+      vstsMvnAndroidAccessToken: mvnAccessToken
+# Msal - Build and publish      
+- stage: 'publishMsal'
+  displayName: Msal - Build and publish
+  dependsOn: publishCommonLibraries
+  jobs:
+  - template: assemble&publish.yml
+    parameters:
+      repository: msal
+      project: msal
+      assembleCmd: assembleDistRelease
+      publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
+      dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
+      assembleParams: $(projVersionParam) $(commonVersionParam)
+      publishParams: $(projVersionParam) $(commonVersionParam)
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
+      vstsMvnAndroidAccessToken: mvnAccessToken
+# Adal - Build and publish
+- stage: 'publishAdal'
+  displayName: Adal - Build and publish
+  dependsOn: publishCommonLibraries
+  jobs:
+  - template: assemble&publish.yml
+    parameters:
+      repository: adal
+      project: adal
+      assembleCmd: assembleDist
+      publishCmd: publishAdalPublicationToVsts-maven-adal-androidRepository 
+      dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
+      assembleParams: $(projVersionParam) $(commonVersionParam)
+      publishParams: $(projVersionParam) $(commonVersionParam)
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
+      vstsMvnAndroidAccessToken: mvnAccessToken
+# TestApp generation      
 - stage: 'azuresampleappRC'
-  dependsOn: []
+  dependsOn: publishMsal
   displayName: Build Azure Sample App RC
   jobs:
     - template: ./templates/build-azure-sample-app.yml
@@ -169,7 +301,10 @@ stages:
         adalVersion: ${{ parameters.adalVersion }}        
         packageVariant: PROD 
 - stage: 'brokerHostRCRelease'
-  dependsOn: []
+  dependsOn: 
+    - publishCommonLibraries
+    - publishMsal
+    - publishBrokerLibraries
   displayName: Build BrokerHost RC Release
   jobs:
     - template: ./templates/build-broker-host.yml
@@ -182,7 +317,10 @@ stages:
         adalVersion: ${{ parameters.adalVersion }}        
         packageVariant: RC
 - stage: 'brokerHostRCDebug'
-  dependsOn: []
+  dependsOn:
+    - publishMsal
+    - publishCommonLibraries
+    - publishBrokerLibraries
   displayName: Build BrokerHost RC Debug
   jobs:
     - template: ./templates/build-broker-host.yml
@@ -196,7 +334,8 @@ stages:
         packageVariant: RC          
 # msalautomationapp
 - stage: 'msalautomationappRC'
-  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+  dependsOn: 
+    - publishMsal
   displayName: Build MSAL Automation APKs
   jobs:
     - template: ./templates/build-msal-automation-app.yml
@@ -219,7 +358,8 @@ stages:
         packageVariant: PROD           
 # brokerautomationapp
 - stage: 'brokerautomationapp'
-  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+  dependsOn: 
+    - publishAdal
   displayName: Build Broker Automation APKs
   jobs:
     - template: ./templates/build-broker-automation-app.yml
@@ -282,6 +422,7 @@ stages:
     - brokers_azure_sample
     - firstpartyapps
     - azuresampleappRC
+    - brokerHostPROD
   displayName: RC MSAL - PROD Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -309,6 +450,7 @@ stages:
     - brokers_azure_sample
     - firstpartyapps
     - azuresampleappPROD
+    - brokerHostRCRelease
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -335,7 +477,9 @@ stages:
     - msalautomationappRC
     - brokers_azure_sample
     - firstpartyapps
-    - azuresampleappRC    
+    - azuresampleappRC
+    - RCmsal_PRODbroker_low_api
+    - brokerHostPROD
   displayName: RC MSAL - PROD Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -353,7 +497,7 @@ stages:
                       /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk)"
-        firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
+        firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "RC MSAL - PROD Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
         apiLevelTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
@@ -362,7 +506,9 @@ stages:
     - msalautomationappPROD
     - brokers_azure_sample
     - firstpartyapps
-    - azuresampleappPROD    
+    - azuresampleappPROD
+    - PRODmsal_RCbroker_low_api
+    - brokerHostRCRelease
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -380,7 +526,7 @@ stages:
                       /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk)"
-        firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
+        firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
         apiLevelTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"        
