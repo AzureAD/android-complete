@@ -335,7 +335,7 @@ stages:
         msalVersion: ${{ parameters.msalVersionRC }}
         commonVersion: ${{ parameters.commonVersionRC }}
         adAccountsVersion: ${{ parameters.adAccountsVersionRC }}        
-        adalVersion: ${{ parameters.adalVersion }}        
+        adalVersion: ${{ parameters.adalVersionRC }}        
         packageVariant: RC          
 # msalautomationapp
 - stage: 'msalautomationappRC'
