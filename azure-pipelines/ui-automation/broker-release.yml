@@ -167,8 +167,8 @@ stages:
       dependencyParams: $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam)
       publishParams: $(projVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
-      vstsMvnAndroidAccessToken: mvnAccessToken
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
+      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
@@ -181,8 +181,8 @@ stages:
       dependencyParams: $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam)
       publishParams: $(projVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
-      vstsMvnAndroidAccessToken: mvnAccessToken
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
+      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish
@@ -197,8 +197,8 @@ stages:
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam)
       publishParams: $(projVersionParam) $(common4jVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
-      vstsMvnAndroidAccessToken: mvnAccessToken
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
+      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
 # Broker4j - Build and publish
 - stage: 'publishBroker4jLibraries'
   displayName: Broker4j - Build and publish
@@ -214,8 +214,8 @@ stages:
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
       publishParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
-      vstsMvnAndroidAccessToken: mvnAccessToken
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
+      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
@@ -232,8 +232,8 @@ stages:
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
       publishParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
-      vstsMvnAndroidAccessToken: mvnAccessToken
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
+      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
 # Msal - Build and publish      
 - stage: 'publishMsal'
   displayName: Msal - Build and publish
@@ -249,7 +249,7 @@ stages:
       assembleParams: $(projVersionParam) $(commonVersionParam)
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
-      vstsMvnAndroidAccessToken: mvnAccessToken
+      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
 # Adal - Build and publish
 - stage: 'publishAdal'
   displayName: Adal - Build and publish
@@ -264,8 +264,8 @@ stages:
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam)
       publishParams: $(projVersionParam) $(commonVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
-      vstsMvnAndroidAccessToken: mvnAccessToken
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
+      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
 # TestApp generation      
 - stage: 'azuresampleappRC'
   dependsOn: publishMsal
