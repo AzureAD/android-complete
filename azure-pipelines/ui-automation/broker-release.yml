@@ -12,34 +12,6 @@ name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMM
 trigger: none
 pr: none
 
-resources:
-  repositories:
-  - repository: msal
-    type: github
-    name: AzureAD/microsoft-authentication-library-for-android
-    ref: $(msal_branch)
-    endpoint: ANDROID_GITHUB
-  - repository: broker
-    type: github
-    name: AzureAD/ad-accounts-for-android
-    ref: $(broker_branch)
-    endpoint: ANDROID_GITHUB
-  - repository: azuresample
-    type: github
-    name: Azure-Samples/ms-identity-android-java
-    ref: master
-    endpoint: ANDROID_GITHUB
-  - repository: common
-    type: github
-    name: AzureAD/microsoft-authentication-library-common-for-android
-    ref: dev
-    endpoint: ANDROID_GITHUB  
-  - repository: adal
-    type: github
-    name: AzureAD/azure-activedirectory-library-for-android
-    ref: dev
-    endpoint: ANDROID_GITHUB  
-
 parameters:
 - name: customVersionNumber
   displayName: Custom Version Number
@@ -121,6 +93,50 @@ parameters:
   displayName: Test Targets for Broker
   type: string
   default: package com.microsoft.identity.client.broker.automationapp.testpass, notPackage com.microsoft.identity.client.broker.automationapp.testpass.local.adalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LongUIAutomationTest
+- name: msalBranch
+  displayName: MSAL Branch
+  type: string
+  default: 'dev'
+- name: adalBranch
+  displayName: ADAL Branch
+  type: string
+  default: 'dev'
+- name: commonBranch
+  displayName: Common Branch
+  type: string
+  default: 'dev'
+- name: brokerBranch
+  displayName: Broker Branch
+  type: string
+  default: 'dev'
+
+resources:
+  repositories:
+  - repository: msal
+    type: github
+    name: AzureAD/microsoft-authentication-library-for-android
+    ref: ${{ parameters.msalBranch }}
+    endpoint: ANDROID_GITHUB
+  - repository: broker
+    type: github
+    name: AzureAD/ad-accounts-for-android
+    ref: ${{ parameters.brokerBranch }}
+    endpoint: ANDROID_GITHUB
+  - repository: azuresample
+    type: github
+    name: Azure-Samples/ms-identity-android-java
+    ref: master
+    endpoint: ANDROID_GITHUB
+  - repository: common
+    type: github
+    name: AzureAD/microsoft-authentication-library-common-for-android
+    ref: ${{ parameters.commonBranch }}
+    endpoint: ANDROID_GITHUB  
+  - repository: adal
+    type: github
+    name: AzureAD/azure-activedirectory-library-for-android
+    ref: ${{ parameters.adalBranch }}
+    endpoint: ANDROID_GITHUB  
 
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
