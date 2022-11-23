@@ -477,8 +477,7 @@ stages:
     - msalautomationappRC
     - brokers_azure_sample
     - firstpartyapps
-    - azuresampleappRC
-    - RCmsal_PRODbroker_low_api
+    - azuresampleappRC    
     - brokerHostPROD
   displayName: RC MSAL - PROD Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
@@ -497,7 +496,7 @@ stages:
                       /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk)"
-        firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
+        firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "RC MSAL - PROD Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
         apiLevelTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
@@ -506,8 +505,7 @@ stages:
     - msalautomationappPROD
     - brokers_azure_sample
     - firstpartyapps
-    - azuresampleappPROD
-    - PRODmsal_RCbroker_low_api
+    - azuresampleappPROD    
     - brokerHostRCRelease
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
@@ -526,7 +524,7 @@ stages:
                       /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk)"
-        firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
+        firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
         apiLevelTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"        
