@@ -175,7 +175,7 @@ variables:
 
 stages:
 # Package generation
-# :LabApiUtilities - Build and publish
+# LabApiUtilities - Build and publish
 - stage: 'publishLabApiUtilitiesLibraries'
   displayName: LabApiUtilities - Build and publish
   jobs:
@@ -285,7 +285,9 @@ stages:
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
+
 # TestApp generation      
+# AzureSampleApp (RC)
 - stage: 'azuresampleappRC'
   dependsOn: publishMsal
   displayName: Build Azure Sample App RC
@@ -296,6 +298,7 @@ stages:
         signingConfigurations: Release
         msalVersion: ${{ parameters.msalVersionRC }}
         packageVariant: RC
+# AzureSampleApp (PROD)
 - stage: 'azuresampleappPROD'
   dependsOn: []
   displayName: Build Azure Sample App PROD
@@ -305,7 +308,8 @@ stages:
         productFlavors: External
         signingConfigurations: Release
         msalVersion: ${{ parameters.msalVersionPROD }}
-        packageVariant: PROD       
+        packageVariant: PROD  
+# BrokerHost (Prod)     
 - stage: 'brokerHostPROD'
   dependsOn: []
   displayName: Build BrokerHost PROD
@@ -319,6 +323,7 @@ stages:
         adAccountsVersion: ${{ parameters.adAccountsVersionPROD }}        
         adalVersion: ${{ parameters.adalVersionPROD }}        
         packageVariant: PROD 
+# BrokerHost (RC, Release)
 - stage: 'brokerHostRCRelease'
   dependsOn: 
     - publishCommonLibraries
@@ -336,6 +341,7 @@ stages:
         adAccountsVersion: ${{ parameters.adAccountsVersionRC }}        
         adalVersion: ${{ parameters.adalVersionRC }}        
         packageVariant: RC
+# BrokerHost (RC, Debug)
 - stage: 'brokerHostRCDebug'
   dependsOn:
     - publishMsal
@@ -353,7 +359,7 @@ stages:
         adAccountsVersion: ${{ parameters.adAccountsVersionRC }}        
         adalVersion: ${{ parameters.adalVersionRC }}        
         packageVariant: RC          
-# msalautomationapp
+# msalautomationapp (RC)
 - stage: 'msalautomationappRC'
   dependsOn: 
     - publishMsal
@@ -366,6 +372,7 @@ stages:
         brokerSource: LocalApk
         msalVersion: ${{ parameters.msalVersionRC }}        
         packageVariant: RC
+# msalautomationapp (PROD)
 - stage: 'msalautomationappPROD'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
   displayName: Build MSAL Automation APKs
@@ -410,6 +417,8 @@ stages:
         companyPortalVersion: ${{ parameters.companyPortalVersion }}
         brokerHostPipelineId: '$(brokerHostPipelineId)'
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
+
+# Test runs
 # ADAL with Broker Test Plan stage (API 30+)
 - stage: 'adal_with_broker_high_api'
   dependsOn:
@@ -437,6 +446,7 @@ stages:
         testRunTitle: "Broker(ADAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
         apiLevelTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
         flankShards: ${{ parameters.flankShards }}
+# RC MSAL with PROD Broker (API 29-)
 - stage: 'RCmsal_PRODbroker_low_api'
   dependsOn:
     - msalautomationappRC
@@ -465,6 +475,7 @@ stages:
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionLow }}
         testRunTitle: "RC MSAL - PROD Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) # $(Build.BuildNumber)"
         apiLevelTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
+# PROD MSAL with RC Broker (API 29-)
 - stage: 'PRODmsal_RCbroker_low_api'
   dependsOn:
     - msalautomationappPROD
@@ -493,6 +504,7 @@ stages:
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionLow }}
         testRunTitle: "PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) # $(Build.BuildNumber)"
         apiLevelTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
+# RC MSAL with PROD Broker (API 30+)
 - stage: 'RCmsal_PRODbroker_high_api'
   dependsOn:
     - msalautomationappRC
@@ -521,6 +533,7 @@ stages:
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "RC MSAL - PROD Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
         apiLevelTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
+# PROD MSAL with RC Broker (API 30+)
 - stage: 'PRODmsal_RCbroker_high_api'
   dependsOn:
     - msalautomationappPROD
@@ -549,6 +562,7 @@ stages:
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
         apiLevelTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
+# PROD MSAL with RC Broker (API 29-) with BrokerHost Debug
 - stage: 'PRODmsal_RCbroker_low_api_brokerhostDebug'
   dependsOn:
     - msalautomationappPROD
@@ -577,6 +591,7 @@ stages:
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionLow }}
         testRunTitle: "PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) # $(Build.BuildNumber)"
         apiLevelTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
+# PROD MSAL with RC Broker (API 30+) with BrokerHost Debug
 - stage: 'PRODmsal_RCbroker_high_api_brokerhostDebug'
   dependsOn:
     - msalautomationappPROD
