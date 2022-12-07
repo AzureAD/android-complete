@@ -116,27 +116,27 @@ resources:
     type: github
     name: AzureAD/microsoft-authentication-library-for-android
     ref: ${{ parameters.msalBranch }}
-    endpoint: ANDROID_GITHUB
+    endpoint: ANDROID_GITHUB2
   - repository: broker
     type: github
     name: AzureAD/ad-accounts-for-android
     ref: ${{ parameters.brokerBranch }}
-    endpoint: ANDROID_GITHUB
+    endpoint: ANDROID_GITHUB2
   - repository: azuresample
     type: github
     name: Azure-Samples/ms-identity-android-java
     ref: master
-    endpoint: ANDROID_GITHUB
+    endpoint: ANDROID_GITHUB2
   - repository: common
     type: github
     name: AzureAD/microsoft-authentication-library-common-for-android
     ref: ${{ parameters.commonBranch }}
-    endpoint: ANDROID_GITHUB  
+    endpoint: ANDROID_GITHUB2 
   - repository: adal
     type: github
     name: AzureAD/azure-activedirectory-library-for-android
     ref: ${{ parameters.adalBranch }}
-    endpoint: ANDROID_GITHUB  
+    endpoint: ANDROID_GITHUB2  
 
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
