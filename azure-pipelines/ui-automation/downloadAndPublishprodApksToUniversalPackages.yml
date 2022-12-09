@@ -3,18 +3,18 @@ name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMM
 trigger: none
 pr: none
 
-parameters:
-  - name: engineeringProjectId
-    type: string
+parameters:  
   - name: brokerProdPipelineId
-    type: string
-  - name: internalFeedName
-    type: string
+    type: string  
   - name: brokerPackage
     type: string
   - name: brokerVersion
     displayName: Broker Version
     type: string
+
+variables:
+  oneProjectId: d38b6128-1817-4bd0-a589-8dfdfcd0225b
+  internalFeedName: OneProdBrokerApks
 
 jobs:
   - job: 'download_and_publish'
@@ -27,7 +27,7 @@ jobs:
         displayName: 'Download latest Azure Sample'
         inputs:
           buildType: 'specific'
-          project: '${{ parameters.engineeringProjectId }}'
+          project: '$(oneProjectId)'
           definition: '${{ parameters.brokerProdPipelineId }}'
           artifactName: BrokerProdApk
           itemPattern: '**/*.apk'
@@ -39,7 +39,7 @@ jobs:
           command: 'publish'
           downloadDirectory: '$(Build.ArtifactStagingDirectory)/broker/prod'
           feedsToUse: 'internal'
-          vstsFeed: '${{ parameters.internalFeedName }}'
+          vstsFeed: '$(internalFeedName)'
           vstsFeedPackage: '${{ parameters.brokerPackage }}'
           vstsPackageVersion: '${{ parameters.brokerVersion }}'
 ...
