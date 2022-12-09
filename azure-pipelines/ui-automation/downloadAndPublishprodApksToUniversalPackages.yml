@@ -34,12 +34,12 @@ jobs:
           targetPath: '$(Build.ArtifactStagingDirectory)/broker/prod'
           buildVersionToDownload: 'latest'
       - task: UniversalPackages@0
-          displayName: 'Publish Broker Apk'
-          inputs:
-            command: 'publish'
-            downloadDirectory: '$(Build.ArtifactStagingDirectory)/broker/prod'
-            feedsToUse: 'internal'
-            vstsFeed: '${{ parameters.internalFeedName }}'
-            vstsFeedPackage: '${{ parameters.brokerPackage }}'
-            vstsPackageVersion: '${{ parameters.brokerVersion }}'
+        displayName: 'Publish Broker Apk'
+        inputs:
+          command: 'publish'
+          downloadDirectory: '$(Build.ArtifactStagingDirectory)/broker/prod'
+          feedsToUse: 'internal'
+          vstsFeed: '${{ parameters.internalFeedName }}'
+          vstsFeedPackage: '${{ parameters.brokerPackage }}'
+          vstsPackageVersion: '${{ parameters.brokerVersion }}'
 ...
