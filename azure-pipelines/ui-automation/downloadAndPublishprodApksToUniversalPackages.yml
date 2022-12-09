@@ -6,7 +6,7 @@ pr: none
 parameters:  
   - name: brokerProdPipelineId
     type: string  
-    default: Broker Pipeline ID
+    default: 92387
   - name: brokerPackage
     type: string
     default: com.azure.authenticator
