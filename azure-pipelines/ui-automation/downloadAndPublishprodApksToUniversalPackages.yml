@@ -34,16 +34,17 @@ jobs:
           project: '$(oneProjectId)'
           definition: '${{ parameters.brokerProdPipelineId }}'
           artifactName: MicrosoftAuthenticatorAndroid
-          itemPattern: '**/*.apk'
+          itemPattern: '**/app-production-universal-release-signed.apk.apk'
           targetPath: '$(Build.ArtifactStagingDirectory)/broker/prod'
           buildVersionToDownload: 'latest'
       - task: UniversalPackages@0
         displayName: 'Publish Broker Apk'
         inputs:
           command: 'publish'
-          downloadDirectory: '$(Build.ArtifactStagingDirectory)/broker/prod'
-          feedsToUse: 'internal'
-          vstsFeed: '$(internalFeedName)'
-          vstsFeedPackage: '${{ parameters.brokerPackage }}'
+          publishDirectory: '$(Build.ArtifactStagingDirectory)/broker/prod'                   
+          vstsFeedPublish: '$(internalFeedName)'
+          vstsFeedPackagePublish: '${{ parameters.brokerPackage }}'
+          versionOption: custom
           vstsPackageVersion: '${{ parameters.brokerVersion }}'
+          packagePublishDescription: 'Prod Broker APK'
 ...
