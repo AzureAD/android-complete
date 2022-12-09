@@ -34,7 +34,7 @@ jobs:
           project: '$(oneProjectId)'
           definition: '${{ parameters.brokerProdPipelineId }}'
           artifactName: MicrosoftAuthenticatorAndroid
-          itemPattern: '**/app-production-universal-release-signed.apk.apk'
+          itemPattern: '**/app-production-universal-release-signed.apk'
           targetPath: '$(Build.ArtifactStagingDirectory)/broker/prod'
           buildVersionToDownload: 'latest'
       - task: UniversalPackages@0
