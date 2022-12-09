@@ -1,0 +1,45 @@
+name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
+
+trigger: none
+pr: none
+
+parameters:
+  - name: engineeringProjectId
+    type: string
+  - name: brokerProdPipelineId
+    type: string
+  - name: internalFeedName
+    type: string
+  - name: brokerPackage
+    type: string
+  - name: brokerVersion
+    displayName: Broker Version
+    type: string
+
+jobs:
+  - job: 'download_and_publish'
+    displayName: Download And Publish Brokers to Universal Packages
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+      - checkout: none
+      - task: DownloadPipelineArtifact@2
+        displayName: 'Download latest Azure Sample'
+        inputs:
+          buildType: 'specific'
+          project: '${{ parameters.engineeringProjectId }}'
+          definition: '${{ parameters.brokerProdPipelineId }}'
+          artifactName: BrokerProdApk
+          itemPattern: '**/*.apk'
+          targetPath: '$(Build.ArtifactStagingDirectory)/broker/prod'
+          buildVersionToDownload: 'latest'
+      - task: UniversalPackages@0
+          displayName: 'Publish Broker Apk'
+          inputs:
+            command: 'publish'
+            downloadDirectory: '$(Build.ArtifactStagingDirectory)/broker/prod'
+            feedsToUse: 'internal'
+            vstsFeed: '${{ parameters.internalFeedName }}'
+            vstsFeedPackage: '${{ parameters.brokerPackage }}'
+            vstsPackageVersion: '${{ parameters.brokerVersion }}'
+...
