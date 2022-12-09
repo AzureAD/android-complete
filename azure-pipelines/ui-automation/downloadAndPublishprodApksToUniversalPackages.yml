@@ -28,12 +28,12 @@ jobs:
     steps:
       - checkout: none
       - task: DownloadPipelineArtifact@2
-        displayName: 'Download latest Azure Sample'
+        displayName: 'Download latest Prod Broker'
         inputs:
           buildType: 'specific'
           project: '$(oneProjectId)'
           definition: '${{ parameters.brokerProdPipelineId }}'
-          artifactName: BrokerProdApk
+          artifactName: MicrosoftAuthenticatorAndroid
           itemPattern: '**/*.apk'
           targetPath: '$(Build.ArtifactStagingDirectory)/broker/prod'
           buildVersionToDownload: 'latest'
