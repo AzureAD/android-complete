@@ -317,17 +317,17 @@ stages:
             az pipelines run --org=https://msazure.visualstudio.com --project=One --id=237369 --variables AdAccountsVersion=$adAccountsVersion AdalVersion=$adalVersion CommonVersion=$commonVersion MsalVersion=$msalVersion
         env:
           MSAZURE_BUILD_TOKEN: $(MSAZURE_BUILD_TOKEN)
-          msalVersion: ${{ parameters.msalVersionPROD }}
-          commonVersion: ${{ parameters.commonVersionPROD }}
-          adAccountsVersion: ${{ parameters.adAccountsVersionPROD }}        
-          adalVersion: ${{ parameters.adalVersionPROD }}
+          msalVersion: ${{ parameters.msalVersionRC }}
+          commonVersion: ${{ parameters.commonVersionRC }}
+          adAccountsVersion: ${{ parameters.adAccountsVersionRC }}        
+          adalVersion: ${{ parameters.adalVersionRC }}
 - stage: 'waitForAuthenticatorBuildValidation'
   displayName: Wait for Authenticator Manual Validation
-  dependsOn: buildRCAuthenticator 
+  dependsOn: buildRCAuthenticator
   jobs:
   - job: waitForValidation    
     pool: server    
-    timeoutInMinutes: 100 # job times out in 3 days
+    timeoutInMinutes: 100
     displayName: Confirm Authenticator Built Successfully
     steps:
       - task: ManualValidation@0
