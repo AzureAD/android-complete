@@ -320,7 +320,23 @@ stages:
           msalVersion: ${{ parameters.msalVersionPROD }}
           commonVersion: ${{ parameters.commonVersionPROD }}
           adAccountsVersion: ${{ parameters.adAccountsVersionPROD }}        
-          adalVersion: ${{ parameters.adalVersionPROD }}  
+          adalVersion: ${{ parameters.adalVersionPROD }}
+- stage: 'waitForAuthenticatorBuildValidation'
+  displayName: Wait for Authenticator Manual Validation
+  dependsOn: buildRCAuthenticator 
+  jobs:
+  - job: waitForValidation    
+    pool: server    
+    timeoutInMinutes: 100 # job times out in 3 days
+    displayName: Confirm Authenticator Built Successfully
+    steps:
+      - task: ManualValidation@0
+        timeoutInMinutes: 100  
+        inputs:
+          notifyUsers: |
+              swainaina@microsoft.com  
+          instructions: 'Please confirm the build ran as expected'
+          onTimeout: 'resume'        
 # TestApp generation      
 # AzureSampleApp (RC)
 - stage: 'azuresampleappRC'
@@ -459,7 +475,7 @@ stages:
   dependsOn:
   - brokerautomationapp
   - brokers_azure_sample
-  - buildRCAuthenticator
+  - waitForAuthenticatorBuildValidation
   displayName: ADAL with broker and Broker basic validation test plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -519,7 +535,7 @@ stages:
     - firstpartyapps
     - azuresampleappPROD
     - brokerHostRCRelease
-    - buildRCAuthenticator
+    - waitForAuthenticatorBuildValidation
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -578,7 +594,7 @@ stages:
     - firstpartyapps
     - azuresampleappPROD    
     - brokerHostRCRelease
-    - buildRCAuthenticator
+    - waitForAuthenticatorBuildValidation
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -608,7 +624,7 @@ stages:
     - firstpartyapps
     - azuresampleappPROD
     - brokerHostRCDebug
-    - buildRCAuthenticator
+    - waitForAuthenticatorBuildValidation
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) with BrokerHost Debug
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -638,7 +654,7 @@ stages:
     - firstpartyapps
     - azuresampleappPROD    
     - brokerHostRCDebug
-    - buildRCAuthenticator
+    - waitForAuthenticatorBuildValidation
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) with BrokerHost Debug
   jobs:
     - template: ./templates/run-on-firebase.yml
