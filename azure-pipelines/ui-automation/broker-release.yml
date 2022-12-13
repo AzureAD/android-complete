@@ -285,7 +285,42 @@ stages:
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
+- stage: 'buildRCAuthenticator'
+  displayName: Build RC Authenticator
+  dependsOn: publishBrokerLibraries
+  jobs:
+    - job: buildRCAuth
+      displayName: Build and Publish RC Authenticator
+      pool:
+        vmImage: ubuntu-latest
+      steps: 
+      - task: Bash@3
+        inputs:
+          targetType: 'inline'
+          script: |
+            echo 'Calling Authenticator Build on MsAzure in One'
+            set -o errexit
+            
+            # make sure we have the latest version of azure cli
+            apt install curl -y
+            curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+            apt-get update
+            apt-get install azure-cli
 
+            # Add the az devops extension
+            az extension add --name azure-devops
+            
+            #sign in
+            echo $MSAZURE_BUILD_TOKEN | az devops login --organization  https://msazure.visualstudio.com/
+
+            #start the build pipeline
+            az pipelines run --org=https://msazure.visualstudio.com --project=One --id=237369 --variables AdAccountsVersion=$adAccountsVersion AdalVersion=$adalVersion CommonVersion=$commonVersion MsalVersion=$msalVersion
+        env:
+          MSAZURE_BUILD_TOKEN: $(MSAZURE_BUILD_TOKEN)
+          msalVersion: ${{ parameters.msalVersionPROD }}
+          commonVersion: ${{ parameters.commonVersionPROD }}
+          adAccountsVersion: ${{ parameters.adAccountsVersionPROD }}        
+          adalVersion: ${{ parameters.adalVersionPROD }}  
 # TestApp generation      
 # AzureSampleApp (RC)
 - stage: 'azuresampleappRC'
@@ -424,6 +459,7 @@ stages:
   dependsOn:
   - brokerautomationapp
   - brokers_azure_sample
+  - buildRCAuthenticator
   displayName: ADAL with broker and Broker basic validation test plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -483,6 +519,7 @@ stages:
     - firstpartyapps
     - azuresampleappPROD
     - brokerHostRCRelease
+    - buildRCAuthenticator
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -541,6 +578,7 @@ stages:
     - firstpartyapps
     - azuresampleappPROD    
     - brokerHostRCRelease
+    - buildRCAuthenticator
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -570,6 +608,7 @@ stages:
     - firstpartyapps
     - azuresampleappPROD
     - brokerHostRCDebug
+    - buildRCAuthenticator
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) with BrokerHost Debug
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -599,6 +638,7 @@ stages:
     - firstpartyapps
     - azuresampleappPROD    
     - brokerHostRCDebug
+    - buildRCAuthenticator
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) with BrokerHost Debug
   jobs:
     - template: ./templates/run-on-firebase.yml
