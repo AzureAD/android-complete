@@ -149,6 +149,8 @@ stages:
           inputs:
             secureFile: 'mfatest.pfx'
             retryCount: 5
+        - script: |
+            echo $(certificateFile.secureFilePath)
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msalApp)"
