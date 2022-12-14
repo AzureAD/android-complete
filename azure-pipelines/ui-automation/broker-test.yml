@@ -147,7 +147,7 @@ stages:
           displayName: 'Download Certificate File'
           name: certificateFile
           inputs:
-            secureFile: mfatest.pfx
+            secureFile: 'mfatest.pfx'
             retryCount: 5
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
