@@ -40,11 +40,11 @@ jobs:
           secureFile: AndroidFirebaseServiceAccountKey.json
           retryCount: 5
       - task: DownloadSecureFile@1
-          displayName: 'Download Certificate File'
-          name: certificateFile
-          inputs:
-            secureFile: 'mfatest.pfx'
-            retryCount: 5
+        displayName: 'Download Certificate File'
+        name: certificateFile
+        inputs:
+          secureFile: 'mfatest.pfx'
+          retryCount: 5
       - download: current
       - script: gcloud version
         displayName: 'Check gcloud version'
