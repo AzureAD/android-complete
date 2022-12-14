@@ -84,7 +84,7 @@ parameters:
 - name: msalTestTarget
   displayName: Test Targets for MSAL
   type: string
-  default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LongUIAutomationTest
+  default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, package com.microsoft.identity.client.msal.automationapp.testpass.msalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LongUIAutomationTest
 - name: brokerTestTarget
   displayName: Test Targets for Broker
   type: string
@@ -101,6 +101,7 @@ stages:
         brokerApp: AutoBroker
         msalFlavor: Dist
         brokerSource: LocalApk
+        brokerUpdateSource: LocalApk
 # brokerautomationapp
 - stage: 'brokerautomationapp'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
