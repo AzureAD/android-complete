@@ -39,6 +39,12 @@ jobs:
         inputs:
           secureFile: AndroidFirebaseServiceAccountKey.json
           retryCount: 5
+      - task: DownloadSecureFile@1
+          displayName: 'Download Certificate File'
+          name: certificateFile
+          inputs:
+            secureFile: 'mfatest.pfx'
+            retryCount: 5
       - download: current
       - script: gcloud version
         displayName: 'Check gcloud version'
@@ -66,7 +72,8 @@ jobs:
               --record-video \
               --device model=${{ parameters.firebaseDeviceId }},version=${{ parameters.firebaseDeviceAndroidVersion }},locale=en,orientation=portrait \
               --timeout "${{ parameters.firebaseTimeout }}" \
-              --other-files ${{ parameters.otherFiles }} \
+              --other-files "${{ parameters.otherFiles }},\
+                             /storage/self/primary/Download/mfatest.pfx=$(certificateFile.secureFilePath)" \
               --results-dir "${{ parameters.resultsDir }}" \
               --directories-to-pull "/sdcard" \
               --use-orchestrator \
