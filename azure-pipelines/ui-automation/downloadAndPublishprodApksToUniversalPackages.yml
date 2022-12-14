@@ -9,7 +9,7 @@ parameters:
     default: 92387
   - name: brokerPackage
     type: string
-    default: com.azure.authenticator
+    default: com.azure.authenticator.prod
     displayName: Broker Package
   - name: brokerVersion
     displayName: Broker Version
@@ -18,7 +18,7 @@ parameters:
   - name: internalFeedName
     displayName: Internal Feed Name
     type: string
-    default: OneProdBrokerApks  
+    default: Android-Broker  
 
 variables:
   oneProjectId: b32aa71e-8ed2-41b2-9d77-5bc261222004  
