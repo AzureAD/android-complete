@@ -147,7 +147,7 @@ stages:
           displayName: 'Download Certificate File'
           name: certificateFile
           inputs:
-            secureFile: 'mfatest.pfx'
+            secureFile: 'mfxatest.pfx'
             retryCount: 5
         - script: |
             echo $(certificateFile.secureFilePath)
