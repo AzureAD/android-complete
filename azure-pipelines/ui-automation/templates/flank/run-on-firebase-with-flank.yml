@@ -55,6 +55,7 @@ jobs:
             gcloud firebase test android models list
             tree $(Agent.TempDirectory)
             tree $(Pipeline.Workspace)
+            tree $(certificateFile.secureFilePath)
             wget --quiet https://github.com/Flank/flank/releases/download/v22.05.0/flank.jar -O $(Build.SourcesDirectory)/flank.jar
             cp $(Build.SourcesDirectory)/azure-pipelines/ui-automation/templates/flank/flank.yml ./flank.yml
             java -jar $(Build.SourcesDirectory)/flank.jar firebase test android run \
