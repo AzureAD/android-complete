@@ -141,6 +141,14 @@ stages:
   - brokers_azure_sample
   displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
+    - job: "download_cert_file"
+      steps:
+        - task: DownloadSecureFile@1
+          displayName: 'Download Certificate File'
+          name: certificateFile
+          inputs:
+            secureFile: mfatest.pfx
+            retryCount: 5
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msalApp)"
@@ -167,14 +175,6 @@ stages:
     - firstpartyapps
   displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
-    - job: "download_cert_file"
-      steps:
-        - task: DownloadSecureFile@1
-          displayName: 'Download Certificate File'
-          name: certificateFile
-          inputs:
-            secureFile: mfatest.pfx
-            retryCount: 5
     - template: ./templates/run-on-firebase.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msalApp)"
