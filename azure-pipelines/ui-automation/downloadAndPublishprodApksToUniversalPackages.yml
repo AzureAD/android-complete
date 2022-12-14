@@ -15,10 +15,13 @@ parameters:
     displayName: Broker Version
     type: string
     default: 0.0.1
+  - name: internalFeedName
+    displayName: Internal Feed Name
+    type: string
+    default: OneProdBrokerApks  
 
 variables:
-  oneProjectId: b32aa71e-8ed2-41b2-9d77-5bc261222004
-  internalFeedName: OneProdBrokerApks
+  oneProjectId: b32aa71e-8ed2-41b2-9d77-5bc261222004  
 
 jobs:
   - job: 'download_and_publish'
@@ -37,12 +40,21 @@ jobs:
           itemPattern: '**/app-production-universal-release-signed.apk'
           targetPath: '$(Build.ArtifactStagingDirectory)/broker/prod'
           buildVersionToDownload: 'latest'
+      - task: Bash@3
+        displayName: 'Renaming PROD artifact'
+        inputs:
+          targetType: 'inline'       
+          script: |      
+            cd $(Build.ArtifactStagingDirectory)/broker/prod
+            mv app-production-universal-release-signed.apk app-production-universal-release-signed-PROD.apk
+            
+            set -o errexit    
       - task: UniversalPackages@0
         displayName: 'Publish Broker Apk'
         inputs:
           command: 'publish'
           publishDirectory: '$(Build.ArtifactStagingDirectory)/broker/prod'                   
-          vstsFeedPublish: '$(internalFeedName)'
+          vstsFeedPublish: '${{ parameters.internalFeedName }}'
           vstsFeedPackagePublish: '${{ parameters.brokerPackage }}'
           versionOption: custom
           vstsPackageVersion: '${{ parameters.brokerVersion }}'
