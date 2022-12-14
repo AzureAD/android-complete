@@ -55,8 +55,7 @@ jobs:
           command: 'publish'
           publishDirectory: '$(Build.ArtifactStagingDirectory)/broker/prod'                   
           vstsFeedPublish: '${{ parameters.internalFeedName }}'
-          vstsFeedPackagePublish: '${{ parameters.brokerPackage }}'
-          versionOption: custom
+          vstsFeedPackagePublish: '${{ parameters.brokerPackage }}'          
           vstsPackageVersion: '${{ parameters.brokerVersion }}'
           packagePublishDescription: 'Prod Broker APK'
 ...
