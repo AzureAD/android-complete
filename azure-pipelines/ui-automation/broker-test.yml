@@ -167,7 +167,7 @@ stages:
     - firstpartyapps
   displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
-    - job: "Download cert file"
+    - job: "download_cert_file"
       steps:
         - task: DownloadSecureFile@1
           displayName: 'Download Certificate File'
