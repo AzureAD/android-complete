@@ -455,17 +455,18 @@ stages:
 # Download Brokers and Azure Sample
 - stage: 'brokers_azure_sample'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
-  displayName: Brokers and Azure Sample APKs
+  displayName: Download PROD & RC Brokers 
   jobs: 
-    - template: ./templates/download-brokers-and-azure-sample.yml
+    - template: ./templates/download-brokers.yml
       parameters:
-        engineeringProjectId: '$(engineeringProjectId)'
-        azureSamplePipelineId: '$(azureSamplePipelineId)'
+        engineeringProjectId: '$(engineeringProjectId)'        
         msazureServiceConnection: '$(msazureServiceConnection)'
         msazureFeedName: '$(msazureFeedName)'
-        authenticatorVersion: ${{ parameters.authenticatorVersion }}
+        authenticatorVersionRC: ${{ parameters.authenticatorVersion }}
+        authenticatorVersionPROD: ${{ parameters.prodAuthenticatorVersion }}
         oldAuthenticatorVersion: ${{ parameters.oldAuthenticatorVersion }}
-        companyPortalVersion: ${{ parameters.companyPortalVersion }}
+        companyPortalVersionRC: ${{ parameters.companyPortalVersion }}
+        companyPortalVersionPROD: ${{ parameters.prodCompanyPortalVersion }}
         brokerHostPipelineId: '$(brokerHostPipelineId)'
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
 
@@ -515,8 +516,8 @@ stages:
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "RC_MSAL-PROD_Broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
-        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/prod/$(companyPortalApk),\
+                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/prod/$(authenticatorApk),\
                       /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-RC/AzureSample-external-release.apk,\
                       /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-PROD-release/brokerHost-dist-release.apk,\
@@ -574,8 +575,8 @@ stages:
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "RC_MSAL-PROD_Broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
-        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/prod/$(companyPortalApk),\
+                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/prod/$(authenticatorApk),\
                       /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-RC/AzureSample-external-release.apk,\
                       /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-PROD-release/brokerHost-dist-release.apk,\
