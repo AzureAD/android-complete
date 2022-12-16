@@ -25,6 +25,6 @@ jobs:
           script: |
             Write-Host "Starting task"
             Write-Host "Waiting for some time"
-            Start-Sleep -Seconds 180
+            Start-Sleep -Seconds 100
             Write-Host "Finishing task"
 ...
