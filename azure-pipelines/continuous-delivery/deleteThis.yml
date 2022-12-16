@@ -22,6 +22,6 @@ jobs:
       - task: PowerShell@2
         inputs:
           filePath: '$(Build.SourcesDirectory)\azure-pipelines\scripts\queue-build.ps1'
-          arguments: '-OrganizationUrl="https://msazure.visualstudio.com/" -Project="One" -PipelinePAT="$(pipelinepat)" -BuildDefinitionId="301574" -PipelineVariablesJson "{ ''var1'': ''$(Build.BuildNumber)'', ''var2'': ''val2'' }" -Branch "working"'
+          arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(pipelinepat)" -BuildDefinitionId "301574" -PipelineVariablesJson "{ ''var1'': ''$(Build.BuildNumber)'', ''var2'': ''val2'' }" -Branch "working"'
           workingDirectory: '$(Build.SourcesDirectory)'
 ...
