@@ -6,7 +6,7 @@ resources:
   repositories:
     - repository: self
       type: git
-      ref: dev
+      ref: master
 
 pool:
   name: Hosted Windows 2019 with VS2019
@@ -23,4 +23,5 @@ jobs:
         inputs:
           filePath: '/azure-pipelines/scripts/queue-build.ps1'
           arguments: '-OrganizationUrl="https://msazure.visualstudio.com/" -Project="One" -PipelinePAT=$(pipelinepat) -BuildDefinitionId="301574" -PipelineVariablesJson "{ ''var1'': ''$(Build.BuildNumber)'', ''var2'': ''val2'' }" -Branch "working"'
+          workingDirectory: '$(Build.SourcesDirectory)'
 ...
