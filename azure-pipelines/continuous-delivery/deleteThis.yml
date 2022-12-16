@@ -25,6 +25,8 @@ jobs:
           script: |
             Write-Host "Starting task"
             Write-Host "Waiting for some time"
-            Start-Sleep -Seconds 15
+            Start-Sleep -Seconds 5
+            Write-Host "##vso[task.setvariable variable=pipeVar1;]updatedInPipeline"
+            Write-Host "##vso[task.setvariable variable=pipeVar2;]createdInPipeline"
             Write-Host "Finishing task"
 ...
