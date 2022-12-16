@@ -122,7 +122,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
 # Broker - Build and publish
-- stage: 'publishBrokeLibraries'
+- stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
   dependsOn: 
   - publishCommonLibraries
@@ -221,4 +221,23 @@ stages:
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
+# BrokerApk - Queue pipeline
+- stage: 'queueBrokerApkPipeline'
+  displayName: BrokerApk - Queue pipeline
+  dependsOn:
+    - publishMsal
+    - publishAdal
+    - publishCommonLibraries
+    - publishBrokerLibraries
+  jobs:
+    - job: queue_build
+      displayName: Queue Build
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: PowerShell@2
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(pipelinepat)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(Build.BuildNumber)'', ''CommonVersion'': ''$(Build.BuildNumber)'', ''MsalVersion'': ''$(Build.BuildNumber)'', ''AdalVersion'': ''$(Build.BuildNumber)'' }" -Branch "broker/continuous-integration"'
+            workingDirectory: '$(Build.SourcesDirectory)'
 ...
