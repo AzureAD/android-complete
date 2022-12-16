@@ -33,16 +33,42 @@ try {
     $Result = Invoke-RestMethod -Uri $queueBuildUri -Method Post -ContentType "application/json" -Headers $authHeader -Body $requestBody;
 } catch {
     if($_.ErrorDetails.Message){
-
         $errorObject = $_.ErrorDetails.Message | ConvertFrom-Json
-
         foreach($result in $errorObject.customProperties.ValidationResults){
             Write-Warning $result.message
         }
         Write-Error $errorObject.message
     }
-
     throw $_.Exception
 }
 
 Write-Host "Build is queued: $($baseUri)_build/results?buildId=$($Result.id)"
+
+# Wait for build completion
+$getBuildUri="$($baseUri)_apis/build/builds/$($Result.id)?api-version=7.0"
+$BuildStartTime= Get-Date
+do{
+   try {
+       $QueuedBuild = Invoke-RestMethod -Uri $getBuildUri -Method Get -ContentType "application/json" -Headers $authHeader;
+       Write-Host $($QueuedBuild.status)
+       $BuildNotCompleted = ($($QueuedBuild.status) -eq "inProgress") -Or ($($QueuedBuild.status) -eq "notStarted")
+       if($BuildNotCompleted){
+           Start-Sleep -Seconds 300
+       }
+   } catch {
+       if($_.ErrorDetails.Message){
+           $errorObject = $_.ErrorDetails.Message | ConvertFrom-Json
+           foreach($result in $errorObject.customProperties.ValidationResults){
+               Write-Warning $result.message
+           }
+           Write-Error $errorObject.message
+       }
+       throw $_.Exception
+   }
+} while($BuildNotCompleted -and $BuildStartTime.AddMinutes(60) -gt (Get-Date))
+
+if ($BuildNotCompleted) {
+    Write-Error "Timed out waiting for Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) to complete,"
+} else {
+    Write-Host "Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) completed with result $($QueuedBuild.result)"
+}
