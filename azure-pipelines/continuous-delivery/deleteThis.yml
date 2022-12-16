@@ -15,7 +15,7 @@ jobs:
   - job: Testing
     displayName: Trying
     steps:
-      - checkout: self
+      - checkout: none
         clean: true
         submodules: recursive
         persistCredentials: True
@@ -25,6 +25,6 @@ jobs:
           script: |
             Write-Host "Starting task"
             Write-Host "Waiting for some time"
-            Start-Sleep -Seconds 10
+            Start-Sleep -Seconds 180
             Write-Host "Finishing task"
 ...
