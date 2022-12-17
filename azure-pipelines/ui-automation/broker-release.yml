@@ -285,58 +285,22 @@ stages:
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
-- stage: 'buildRCAuthenticator'
-  displayName: Build RC Authenticator
-  dependsOn: publishBrokerLibraries
+- stage: 'queueAuthenticatorBrokerApkPipeline'
+  displayName: BrokerApk - Queue pipeline
+  dependsOn:
+    - publishAdal
+    - publishBrokerLibraries
   jobs:
-    - job: buildRCAuth
-      displayName: Build and Publish RC Authenticator
-      pool:
-        vmImage: ubuntu-latest
-      steps: 
-      - task: Bash@3
-        inputs:
-          targetType: 'inline'
-          script: |
-            echo 'Calling Authenticator Build on MsAzure in One'
-            set -o errexit
-            
-            # make sure we have the latest version of azure cli
-            sudo apt install curl -y
-            sudo curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-            sudo apt-get update
-            sudo apt-get install azure-cli
-
-            # Add the az devops extension
-            az extension add --name azure-devops
-            
-            #sign in
-            echo $MSAZURE_BUILD_TOKEN | az devops login --organization  https://msazure.visualstudio.com/
-
-            #start the build pipeline
-            az pipelines run --org=https://msazure.visualstudio.com --project=One --id=237369 --variables AdAccountsVersion=$adAccountsVersion AdalVersion=$adalVersion CommonVersion=$commonVersion MsalVersion=$msalVersion
-        env:
-          MSAZURE_BUILD_TOKEN: $(MSAZURE_BUILD_TOKEN)
-          msalVersion: ${{ parameters.msalVersionRC }}
-          commonVersion: ${{ parameters.commonVersionRC }}
-          adAccountsVersion: ${{ parameters.adAccountsVersionRC }}        
-          adalVersion: ${{ parameters.adalVersionRC }}
-- stage: 'waitForAuthenticatorBuildValidation'
-  displayName: Wait for Authenticator Manual Validation
-  dependsOn: buildRCAuthenticator
-  jobs:
-  - job: waitForValidation    
-    pool: server    
-    timeoutInMinutes: 100
-    displayName: Confirm Authenticator Built Successfully
-    steps:
-      - task: ManualValidation@0
-        timeoutInMinutes: 100  
-        inputs:
-          notifyUsers: |
-              swainaina@microsoft.com  
-          instructions: 'Please confirm the build ran as expected'
-          onTimeout: 'resume'        
+    - job: queue_build
+      displayName: Queue Build
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: PowerShell@2
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(MSAZURE_BUILD_TOKEN)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': '"${{ parameters.adAccountsVersionRC }}"', ''CommonVersion'': '"${{ parameters.commonVersionRC }}"', ''MsalVersion'': '"${{ parameters.msalVersionRC }}"', ''AdalVersion'': '"${{ parameters.adalVersionRC }}"' }" -Branch "broker/continuous-integration"'
+            workingDirectory: '$(Build.SourcesDirectory)'
 # TestApp generation      
 # AzureSampleApp (RC)
 - stage: 'azuresampleappRC'
@@ -469,14 +433,13 @@ stages:
         companyPortalVersionPROD: ${{ parameters.prodCompanyPortalVersion }}
         brokerHostPipelineId: '$(brokerHostPipelineId)'
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
-
 # Test runs
 # ADAL with Broker Test Plan stage (API 30+)
 - stage: 'adal_with_broker_high_api'
   dependsOn:
   - brokerautomationapp
   - brokers_azure_sample
-  - waitForAuthenticatorBuildValidation
+  - queueAuthenticatorBrokerApkPipeline
   displayName: ADAL with broker and Broker basic validation test plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -536,7 +499,7 @@ stages:
     - firstpartyapps
     - azuresampleappPROD
     - brokerHostRCRelease
-    - waitForAuthenticatorBuildValidation
+    - queueAuthenticatorBrokerApkPipeline
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -595,7 +558,7 @@ stages:
     - firstpartyapps
     - azuresampleappPROD    
     - brokerHostRCRelease
-    - waitForAuthenticatorBuildValidation
+    - queueAuthenticatorBrokerApkPipeline
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -625,7 +588,7 @@ stages:
     - firstpartyapps
     - azuresampleappPROD
     - brokerHostRCDebug
-    - waitForAuthenticatorBuildValidation
+    - queueAuthenticatorBrokerApkPipeline
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) with BrokerHost Debug
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -655,7 +618,7 @@ stages:
     - firstpartyapps
     - azuresampleappPROD    
     - brokerHostRCDebug
-    - waitForAuthenticatorBuildValidation
+    - queueAuthenticatorBrokerApkPipeline
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) with BrokerHost Debug
   jobs:
     - template: ./templates/run-on-firebase.yml
