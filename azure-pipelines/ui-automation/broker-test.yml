@@ -85,11 +85,11 @@ parameters:
 - name: msalTestTarget
   displayName: Test Targets for MSAL
   type: string
-  default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, package com.microsoft.identity.client.msal.automationapp.testpass.msalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LongUIAutomationTest
+  default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, package com.microsoft.identity.client.msal.automationapp.testpass.msalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
 - name: brokerTestTarget
   displayName: Test Targets for Broker
   type: string
-  default: package com.microsoft.identity.client.broker.automationapp.testpass, notPackage com.microsoft.identity.client.broker.automationapp.testpass.local.adalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LongUIAutomationTest
+  default: package com.microsoft.identity.client.broker.automationapp.testpass, notPackage com.microsoft.identity.client.broker.automationapp.testpass.local.adalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
 
 stages:
 # msalautomationapp
@@ -140,6 +140,7 @@ stages:
   dependsOn:
   - msalautomationapp
   - brokers_azure_sample
+  - firstpartyapps
   displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
