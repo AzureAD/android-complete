@@ -44,6 +44,8 @@ try {
 
 Write-Host "Build is queued: $($baseUri)_build/results?buildId=$($Result.id)"
 
+Write-Host "##vso[task.setvariable variable=BrokeBuildId;isoutput=true]$($Result.id)"
+
 # Wait for build completion
 $getBuildUri="$($baseUri)_apis/build/builds/$($Result.id)?api-version=7.0"
 $BuildStartTime= Get-Date
