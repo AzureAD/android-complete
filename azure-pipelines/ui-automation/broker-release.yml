@@ -308,7 +308,7 @@ stages:
           displayName: 'Download Authenticator RC apk'
           inputs:
             buildType: specific
-            project: '$( engineeringProjectId )'
+            project: $(engineeringProjectId)
             definition: $[ dependencies.queueAuthenticatorBrokerApkPipeline.outputs['buildAuthenticator.BrokeBuildId'] ]
             artifactName: MicrosoftAuthenticatorAndroid
             itemPattern: '**/app-production-universal-release-signed.apk'
