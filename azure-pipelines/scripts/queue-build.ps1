@@ -4,7 +4,9 @@ Param (
     [Parameter(Mandatory = $true)][String]$PipelinePAT,
     [Parameter(Mandatory = $true)][String]$BuildDefinitionId,
     [Parameter(Mandatory = $false)][String]$PipelineVariablesJson,
-    [Parameter(Mandatory = $false)][String]$Branch
+    [Parameter(Mandatory = $false)][String]$Branch,
+    [Parameter(Mandatory = $false)][int]$WaitTimeoutInMinutes = 60,
+    [Parameter(Mandatory = $false)][int]$PollingIntervalInSeconds = 5 * 60
 )
 
 #request uri
@@ -53,7 +55,7 @@ do{
        Write-Host $($QueuedBuild.status)
        $BuildNotCompleted = ($($QueuedBuild.status) -eq "inProgress") -Or ($($QueuedBuild.status) -eq "notStarted")
        if($BuildNotCompleted){
-           Start-Sleep -Seconds 300
+           Start-Sleep -Seconds $PollingIntervalInSeconds
        }
    } catch {
        if($_.ErrorDetails.Message){
@@ -65,10 +67,12 @@ do{
        }
        throw $_.Exception
    }
-} while($BuildNotCompleted -and $BuildStartTime.AddMinutes(60) -gt (Get-Date))
+} while($BuildNotCompleted -and $BuildStartTime.AddMinutes($WaitTimeoutInMinutes) -gt (Get-Date))
 
 if ($BuildNotCompleted) {
     Write-Error "Timed out waiting for Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) to complete,"
+} elseif ($($QueuedBuild.result) -eq "succeeded"){
+    Write-Host "Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) completed successfully."
 } else {
-    Write-Host "Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) completed with result $($QueuedBuild.result)"
+    Write-Error "Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) did not complete successfully, BuildResult: $($QueuedBuild.result)."
 }
