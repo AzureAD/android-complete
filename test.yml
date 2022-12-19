@@ -3,17 +3,19 @@
 # Add steps that build, run tests, deploy, and more:
 # https://aka.ms/yaml
 
-trigger:
-- master
+trigger: none
+pr: none
 
 pool:
   vmImage: ubuntu-latest
 
 steps:
-- script: echo Hello, world!
-  displayName: 'Run a one-line script'
-
-- script: |
-    echo Add other tasks to build, test, and deploy your project.
-    echo See https://aka.ms/yaml
-  displayName: 'Run a multi-line script'
+- powershell: |
+     Write-Host "##vso[task.setvariable variable=myJobVar]this is the same job"
+- powershell: |
+    Write-Host "##vso[task.setvariable variable=myOutputJobVar;isoutput=true]this is the same job too"
+  name: setOutput
+- powershell: |
+    Write-Host $(myJobVar) 
+- powershell: |
+    Write-Host $(setOutput.myOutputJobVar)
