@@ -12,21 +12,18 @@ pool:
   name: Hosted Windows 2019 with VS2019
 
 jobs:
-  - job: Testing
-    displayName: Trying
+  - job: queue_build
+    displayName: Queue Build
     steps:
-      - checkout: none
+      - checkout: self
         clean: true
         submodules: recursive
         persistCredentials: True
       - task: PowerShell@2
         inputs:
-          targetType: inline
-          script: |
-            Write-Host "Starting task"
-            Write-Host "Waiting for some time"
-            Start-Sleep -Seconds 5
-            Write-Host "##vso[task.setvariable variable=pipeVar1;]updatedInPipeline"
-            Write-Host "##vso[task.setvariable variable=pipeVar2;]createdInPipeline"
-            Write-Host "Finishing task"
+          filePath: '$(Build.SourcesDirectory)\azure-pipelines\scripts\queue-build.ps1'
+          arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId "1490" -PipelineVariablesJson "{ ''var1'': ''$(Build.BuildNumber)'', ''var2'': ''val2'' }" -Branch "master"'
+          workingDirectory: '$(Build.SourcesDirectory)'
+        env:
+          SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 ...
