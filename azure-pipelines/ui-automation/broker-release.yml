@@ -155,6 +155,7 @@ variables:
   linuxBrokerVersion: -PlinuxBrokerVersion=$(versionNumber)
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
+  oneProjectId: b32aa71e-8ed2-41b2-9d77-5bc261222004
   engineeringProjectId: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'
   azureSamplePipelineId: 1458
   brokerHostPipelineId: 1432
@@ -308,7 +309,7 @@ stages:
           displayName: 'Download Authenticator RC apk'
           inputs:
             buildType: specific
-            project: $(engineeringProjectId)
+            project: $(oneProjectId)
             definition: $(buildAuthenticator.BrokeBuildId)
             artifactName: MicrosoftAuthenticatorAndroid
             itemPattern: '**/app-production-universal-release-signed.apk'
