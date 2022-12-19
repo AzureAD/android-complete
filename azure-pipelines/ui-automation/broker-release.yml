@@ -158,6 +158,7 @@ variables:
   engineeringProjectId: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'
   azureSamplePipelineId: 1458
   brokerHostPipelineId: 1432
+  authenticatorPipelineId: ""
   msazureServiceConnection: AndroidBroker-CI
   msazureFeedName: Android-Broker
   msalApp: msalautomationapp-dist-AutoBroker-debug.apk
@@ -292,7 +293,7 @@ stages:
     - publishBrokerLibraries
   jobs:
     - job: queue_build
-      displayName: Queue Build
+      displayName: Queue Build for Authenticator RC
       steps:
         - checkout: self
           persistCredentials: True
@@ -301,6 +302,17 @@ stages:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(MSAZURE_BUILD_TOKEN)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}'', ''AdalVersion'': ''${{ parameters.adalVersionRC }}'' }" -Branch "broker/continuous-integration"'
             workingDirectory: '$(Build.SourcesDirectory)'
+          name: buildAuthenticator    
+        # Download Authenticator app
+        - task: DownloadPipelineArtifact@2
+          displayName: 'Download Authenticator RC apk'
+          inputs:
+            buildType: specific
+            project: '$( engineeringProjectId )'
+            definition: $[ dependencies.queueAuthenticatorBrokerApkPipeline.outputs['buildAuthenticator.BrokeBuildId'] ]
+            artifactName: MicrosoftAuthenticatorAndroid
+            itemPattern: '**/app-production-universal-release-signed.apk'
+            targetPath: '$(Build.ArtifactStagingDirectory)/brokers'            
 # TestApp generation      
 # AzureSampleApp (RC)
 - stage: 'azuresampleappRC'
@@ -418,7 +430,8 @@ stages:
     - template: ./templates/download-first-party-apps.yml
 # Download Brokers and Azure Sample
 - stage: 'brokers_azure_sample'
-  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+  dependsOn:
+  - queueAuthenticatorBrokerApkPipeline
   displayName: Download PROD & RC Brokers 
   jobs: 
     - template: ./templates/download-brokers.yml
