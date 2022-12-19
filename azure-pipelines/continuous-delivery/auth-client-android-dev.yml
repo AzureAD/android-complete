@@ -254,7 +254,7 @@ stages:
         - task: PowerShell@2
           displayName: Queue and wait for Broker E2E Automation pipeline
           inputs:
-            filePath: '$(Build.SourcesDirectory)\azure-pipelines\scripts\queue-build.ps1'
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
             arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId "1490" -PipelineVariablesJson "{ ''var1'': ''$(Build.BuildNumber)'', ''var2'': ''val2'' }" -Branch "master"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
