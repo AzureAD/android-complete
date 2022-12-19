@@ -14,7 +14,12 @@ parameters:
       - Local
       - Dist
   - name: brokerSource
-    displayName: Broker App Installation Source
+    type: string
+    default: LocalApk
+    values:
+      - LocalApk
+      - PlayStore
+  - name: brokerUpdateSource
     type: string
     default: LocalApk
     values:
@@ -44,7 +49,7 @@ jobs:
       - task: Gradle@2
         displayName: 'Assemble MSAL Automation App'
         inputs:
-          tasks: clean msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=${{ parameters.brokerSource }}
+          tasks: clean msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=${{ parameters.brokerSource }} -PbrokerUpdateSource=${{ parameters.brokerUpdateSource }}
           publishJUnitResults: false
       - task: Gradle@2
         displayName: 'Assemble MSAL Automation App Instrumented Tests'
