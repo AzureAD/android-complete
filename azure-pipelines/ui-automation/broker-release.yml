@@ -309,7 +309,7 @@ stages:
           inputs:
             buildType: specific
             project: $(engineeringProjectId)
-            definition: $[ dependencies.queueAuthenticatorBrokerApkPipeline.outputs['buildAuthenticator.BrokeBuildId'] ]
+            definition: $(buildAuthenticator.BrokeBuildId)
             artifactName: MicrosoftAuthenticatorAndroid
             itemPattern: '**/app-production-universal-release-signed.apk'
             targetPath: '$(Build.ArtifactStagingDirectory)/brokers'            
