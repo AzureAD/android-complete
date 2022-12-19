@@ -223,7 +223,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
 # BrokerApk - Queue pipeline
 - stage: 'queueBrokerApkPipeline'
-  displayName: BrokerApk - Queue pipeline
+  displayName: Broker Apk Generation
   dependsOn:
     - publishMsal
     - publishAdal
@@ -231,13 +231,32 @@ stages:
     - publishBrokerLibraries
   jobs:
     - job: queue_build
-      displayName: Queue Build
+      displayName: BrokerApk - Trigger pipelines
       steps:
         - checkout: self
           persistCredentials: True
         - task: PowerShell@2
+          displayName: Queue and wait for Authenticator Apk generation pipeline
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(pipelinepat)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(Build.BuildNumber)'', ''CommonVersion'': ''$(Build.BuildNumber)'', ''MsalVersion'': ''$(Build.BuildNumber)'', ''AdalVersion'': ''$(Build.BuildNumber)'' }" -Branch "broker/continuous-integration"'
             workingDirectory: '$(Build.SourcesDirectory)'
+  # Broker - E2E Automation
+- stage: 'runBrokerE2EAutomation'
+  displayName: Broker Automation Run
+  dependsOn: queueBrokerApkPipeline
+  jobs:
+    - job: trigger_automation
+      displayName: Trigger Broker Automation Run
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: PowerShell@2
+          displayName: Queue and wait for Broker E2E Automation pipeline
+            inputs:
+              filePath: '$(Build.SourcesDirectory)\azure-pipelines\scripts\queue-build.ps1'
+              arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId "1490" -PipelineVariablesJson "{ ''var1'': ''$(Build.BuildNumber)'', ''var2'': ''val2'' }" -Branch "master"'
+              workingDirectory: '$(Build.SourcesDirectory)'
+            env:
+              SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 ...
