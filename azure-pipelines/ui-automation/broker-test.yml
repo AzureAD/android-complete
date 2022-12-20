@@ -182,7 +182,7 @@ stages:
     - firstpartyapps
   displayName: Running MSAL with Broker Test Plan (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
-    - template: ./templates/flank/run-on-firebase-with-flank.yml
+    - template: ./templates/flank/run-on-firebase.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapksbrokerhost/$(msalAppLocalBrokerHost)"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapksbrokerhost/$(msaltestAppLocalBrokerHost)"
@@ -199,7 +199,6 @@ stages:
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "Broker(MSAL) UI Automation - Build (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
         apiLevelTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
-        flankShards: ${{ parameters.flankShards }}
 # MSAL with Broker Test Plan stage (API 29-)
 - stage: 'msal_with_broker_low_api'
   dependsOn:
