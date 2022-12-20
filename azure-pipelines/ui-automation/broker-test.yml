@@ -108,13 +108,14 @@ stages:
 # msalautomationapplocalbrokerhost
 - stage: 'msalautomationapplocalbrokerhost'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
-  displayName: Build MSAL Automation APKs
+  displayName: Build MSAL Automation APKs (LocalBrokerHost)
   jobs:
     - template: ./templates/build-msal-automation-app.yml
       parameters:
         brokerApp: BrokerHost
         msalFlavor: Local
         brokerSource: LocalApk
+        artifactName: "msalautomationapksbrokerhost"
 # brokerautomationapp
 - stage: 'brokerautomationapp'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
@@ -183,8 +184,8 @@ stages:
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
-        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msalAppLocalBrokerHost)"
-        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msaltestAppLocalBrokerHost)"
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapksbrokerhost/$(msalAppLocalBrokerHost)"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapksbrokerhost/$(msaltestAppLocalBrokerHost)"
         testTargetPackages: "${{ parameters.msalTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "msalautomationapp-testpass-brokerhost-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
