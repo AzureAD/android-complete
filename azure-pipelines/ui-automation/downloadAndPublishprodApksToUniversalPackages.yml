@@ -14,11 +14,15 @@ parameters:
   - name: brokerVersion
     displayName: Broker Version
     type: string
-    default: 0.0.1
+    default: 6.2212.8187
   - name: internalFeedName
     displayName: Internal Feed Name
     type: string
-    default: Android-Broker  
+    default: Android-Broker
+  - name: buildId
+    displayName: Build ID
+    default: 65595652
+    type: string
 
 variables:
   oneProjectId: b32aa71e-8ed2-41b2-9d77-5bc261222004  
@@ -39,16 +43,8 @@ jobs:
           artifactName: MicrosoftAuthenticatorAndroid
           itemPattern: '**/app-production-universal-release-signed.apk'
           targetPath: '$(Build.ArtifactStagingDirectory)/broker/prod'
-          buildVersionToDownload: 'latest'
-      - task: Bash@3
-        displayName: 'Renaming PROD artifact'
-        inputs:
-          targetType: 'inline'       
-          script: |      
-            cd $(Build.ArtifactStagingDirectory)/broker/prod
-            mv app-production-universal-release-signed.apk app-production-universal-release-signed-PROD.apk
-            
-            set -o errexit    
+          pipelineId:  ${{ parameters.buildId }}
+
       - task: UniversalPackages@0
         displayName: 'Publish Broker Apk'
         inputs:
