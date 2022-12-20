@@ -23,6 +23,10 @@ parameters:
     displayName: Build ID
     default: 65595652
     type: string
+  - name: itemPattern
+    displayName: File Name
+    default: app-production-universal-release-signed.apk
+    type: string
 
 variables:
   oneProjectId: b32aa71e-8ed2-41b2-9d77-5bc261222004  
@@ -41,7 +45,7 @@ jobs:
           project: '$(oneProjectId)'
           definition: '${{ parameters.brokerProdPipelineId }}'
           artifactName: MicrosoftAuthenticatorAndroid
-          itemPattern: '**/app-production-universal-release-signed.apk'
+          itemPattern: '**/${{ parameters.itemPattern }}'
           targetPath: '$(Build.ArtifactStagingDirectory)/broker/prod'
           pipelineId:  ${{ parameters.buildId }}
 
