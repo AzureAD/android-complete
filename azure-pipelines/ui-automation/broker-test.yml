@@ -112,7 +112,7 @@ stages:
   jobs:
     - template: ./templates/build-msal-automation-app.yml
       parameters:
-        brokerFlavor: BrokerHost
+        brokerApp: BrokerHost
         msalFlavor: Local
         brokerSource: LocalApk
 # brokerautomationapp
