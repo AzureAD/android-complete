@@ -2,6 +2,7 @@
 ext {
     // SDK
     minSdkVersion = 16
+    brokerProjectMinSdkVersion=24
     automationAppMinSDKVersion = 21
     targetSdkVersion = 30
     compileSdkVersion = 30
@@ -66,7 +67,6 @@ ext {
     yubikitAndroidVersion = "2.1.0"
     yubikitPivVersion = "2.1.0"
     powerliftAndroidVersion="1.0.0"
-    brokerProjectMinSdkVersion=24
 
     // TODO: adal automation test app.
     supportLibraryVersion = "27.1.+"
