@@ -33,6 +33,8 @@ variables:
   msazureFeedName: Android-Broker
   msalApp: msalautomationapp-dist-AutoBroker-debug.apk
   msalTestApp: msalautomationapp-dist-AutoBroker-debug-androidTest.apk
+  msalAppLocalBrokerHost: msalautomationapp-local-BrokerHost-debug.apk
+  msalTestAppLocalBrokerHost: msalautomationapp-local-BrokerHost-debug-androidTest.apk
   brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
   brokerTestApp: brokerautomationapp-dist-AutoBroker-debug-androidTest.apk
   companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
@@ -103,6 +105,16 @@ stages:
         msalFlavor: Dist
         brokerSource: LocalApk
         brokerUpdateSource: LocalApk
+# msalautomationapplocalbrokerhost
+- stage: 'msalautomationapplocalbrokerhost'
+  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+  displayName: Build MSAL Automation APKs
+  jobs:
+    - template: ./templates/build-msal-automation-app.yml
+      parameters:
+        brokerFlavor: BrokerHost
+        msalFlavor: Local
+        brokerSource: LocalApk
 # brokerautomationapp
 - stage: 'brokerautomationapp'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
@@ -159,6 +171,32 @@ stages:
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "Broker(MSAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
+        apiLevelTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
+        flankShards: ${{ parameters.flankShards }}
+# MSAL with Broker Test Plan stage (API 30+)
+- stage: 'msal_with_brokerhost_high_api'
+  dependsOn:
+    - msalautomationapplocalbrokerhost
+    - brokers_azure_sample
+    - firstpartyapps
+  displayName: Running MSAL with Broker Test Plan (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
+  jobs:
+    - template: ./templates/flank/run-on-firebase-with-flank.yml
+      parameters:
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msalAppLocalBrokerHost)"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msaltestAppLocalBrokerHost)"
+        testTargetPackages: "${{ parameters.msalTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
+        resultsHistoryName: "$(resultsHistoryName)"
+        resultsDir: "msalautomationapp-testpass-brokerhost-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
+        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
+                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+                      /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+                      /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
+                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
+                      /data/local/tmp/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
+        firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
+        firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
+        testRunTitle: "Broker(MSAL) UI Automation - Build (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
         apiLevelTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
         flankShards: ${{ parameters.flankShards }}
 # MSAL with Broker Test Plan stage (API 29-)
