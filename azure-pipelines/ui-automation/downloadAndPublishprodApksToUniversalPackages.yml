@@ -9,7 +9,7 @@ parameters:
     default: 92387
   - name: brokerPackage
     type: string
-    default: com.azure.authenticator.prod
+    default: com.azure.authenticator
     displayName: Broker Package
   - name: brokerVersion
     displayName: Broker Version
