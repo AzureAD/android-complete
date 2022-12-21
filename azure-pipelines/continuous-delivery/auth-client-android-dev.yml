@@ -76,7 +76,7 @@ stages:
       repository: common
       project: common4j
       dependencyParams: $(javaProjectDependencyParam)
-      assembleCmd: assemble test
+      assembleCmd: assemble
       assembleParams: $(projVersionParam)
       publishParams: $(projVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
