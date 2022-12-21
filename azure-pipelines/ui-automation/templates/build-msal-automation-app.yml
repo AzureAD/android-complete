@@ -25,6 +25,9 @@ parameters:
     values:
       - LocalApk
       - PlayStore
+  - name: artifactName
+    type: string
+    default: "msalautomationapks"
 
 jobs:
   - job: 'msalautomationapp'
@@ -64,4 +67,4 @@ jobs:
           targetFolder: '$(Build.ArtifactStagingDirectory)/msal'
       - publish: '$(Build.ArtifactStagingDirectory)/msal'
         displayName: 'Publish apks for later use'
-        artifact: msalautomationapks
+        artifact: ${{ parameters.artifactName }}

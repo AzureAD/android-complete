@@ -5,7 +5,7 @@ parameters:
     type: string
   - name: testTargetPackages
     type: string
-  - name: apiLevelTarget
+  - name: extraTarget
     type: string
   - name: resultsHistoryName
     type: string
@@ -69,7 +69,7 @@ jobs:
               --use-orchestrator \
               --environment-variables "clearPackageData=true" \
               --results-history-name "${{ parameters.resultsHistoryName }}" \
-              --test-targets "${{ parameters.testTargetPackages }}, ${{ parameters.apiLevelTarget }}" \
+              --test-targets "${{ parameters.testTargetPackages }}, ${{ parameters.extraTarget }}" \
               --max-test-shards ${{ parameters.flankShards }} \
               --smart-flank-gcs-path "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/smart-flank-xml/broker-ci/JUnitReport.xml"
       - script: gsutil cp "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/${{ parameters.resultsDir }}/JUnitReport.xml" "$(Build.SourcesDirectory)"

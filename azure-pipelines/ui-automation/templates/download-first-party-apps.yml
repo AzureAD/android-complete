@@ -7,19 +7,25 @@ parameters:
     default: 'com.microsoft.office.outlook'
   - name: outlookVersion
     type: string
-    default: '1.0.1'
+    default: '1.0.2'
   - name: teamsPackage
     type: string
     default: 'com.microsoft.teams'
   - name: teamsVersion
     type: string
-    default: '1.0.1'
+    default: '1.0.2'
   - name: wordPackage
     type: string
     default: 'com.microsoft.office.word'
   - name: wordVersion
     type: string
-    default: '1.0.1'
+    default: '1.0.2'
+  - name: edgePackage
+    type: string
+    default: 'com.microsoft.emmx'
+  - name: edgeVersion
+    type: string
+    default: '1.0.2'
 
 jobs:
   - job: 'download_first_party_apps'
@@ -58,6 +64,15 @@ jobs:
           vstsFeed: '${{ parameters.internalFeedName }}'
           vstsFeedPackage: '${{ parameters.wordPackage }}'
           vstsPackageVersion: '${{ parameters.wordVersion }}'
+      - task: UniversalPackages@0
+        displayName: 'Download Edge Apk'
+        inputs:
+          command: 'download'
+          downloadDirectory: '$(Build.ArtifactStagingDirectory)/firstparty'
+          feedsToUse: 'internal'
+          vstsFeed: '${{ parameters.internalFeedName }}'
+          vstsFeedPackage: '${{ parameters.edgePackage }}'
+          vstsPackageVersion: '${{ parameters.edgeVersion }}'
       - publish: $(Build.ArtifactStagingDirectory)/firstparty
         displayName: 'Publish First Party APKs'
         artifact: firstpartyapks
