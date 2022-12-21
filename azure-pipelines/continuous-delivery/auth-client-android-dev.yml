@@ -43,7 +43,7 @@ variables:
     versionNumber: $(Build.BuildNumber)
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
-  projVersionParam: -PprojVersion=$(versionNumber)
+  projVersionParam: -PprojVersion=$(versionNumber) -PshouldSkipLongRunningTest
   labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(versionNumber)
   common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
   broker4jVersionParam: -PdistBroker4jVersion=$(versionNumber)
@@ -76,6 +76,7 @@ stages:
       repository: common
       project: common4j
       dependencyParams: $(javaProjectDependencyParam)
+      assembleCmd: assemble test
       assembleParams: $(projVersionParam)
       publishParams: $(projVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
@@ -89,7 +90,7 @@ stages:
     parameters:
       repository: common
       project: common
-      assembleCmd: assembleDist
+      assembleCmd: assembleDist testDistReleaseUnitTest
       publishCmd: publishDistReleasePublicationToVsts-maven-adal-androidRepository
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam)
@@ -109,6 +110,7 @@ stages:
       project: broker4j
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
+      assembleCmd: assemble test
       assembleParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
       publishParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
@@ -124,7 +126,7 @@ stages:
     parameters:
       repository: broker
       project: AADAuthenticator
-      assembleCmd: assembleDist
+      assembleCmd: assembleDist testDistReleaseUnitTest
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
@@ -190,7 +192,7 @@ stages:
     parameters:
       repository: msal
       project: msal
-      assembleCmd: assembleDistRelease
+      assembleCmd: assembleDistRelease testDistReleaseUnitTest
       publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam)
@@ -206,7 +208,7 @@ stages:
     parameters:
       repository: adal
       project: adal
-      assembleCmd: assembleDist
+      assembleCmd: assembleDist testDistReleaseUnitTest
       publishCmd: publishAdalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam)
