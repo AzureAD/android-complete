@@ -288,7 +288,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
 - stage: 'queueAuthenticatorBrokerApkPipeline'
-  displayName: BrokerApk - Queue pipeline
+  displayName: Authenticator - Queue pipeline
   dependsOn:
     - publishAdal
     - publishBrokerLibraries
@@ -310,10 +310,37 @@ stages:
           inputs:
             buildType: specific
             project: $(oneProjectId)
-            definition: $(buildAuthenticator.BrokeBuildId)
+            definition: $(buildAuthenticator.BrokerBuildId)
             artifactName: MicrosoftAuthenticatorAndroid
             itemPattern: '**/app-production-universal-release-signed.apk'
-            targetPath: '$(Build.ArtifactStagingDirectory)/brokers'            
+            targetPath: '$(Build.ArtifactStagingDirectory)/brokers'
+- stage: 'queueCompanyPortalBrokerApkPipeline'
+  displayName: Company Portal - Queue pipeline
+  dependsOn:
+    - publishAdal
+    - publishBrokerLibraries
+  jobs:
+    - job: queue_build
+      displayName: Queue Build for Company Portal RC
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: PowerShell@2
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(MSAZURE_BUILD_TOKEN)" -BuildDefinitionId "106780" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}'', ''AdalVersion'': ''${{ parameters.adalVersionRC }}'' }" -Branch "broker/continuous-integration"'
+            workingDirectory: '$(Build.SourcesDirectory)'
+          name: buildCompanyPortal   
+        # Download Authenticator app
+        - task: DownloadPipelineArtifact@2
+          displayName: 'Download Authenticator RC apk'
+          inputs:
+            buildType: specific
+            project: $(oneProjectId)
+            definition: $(buildCompanyPortal.BrokerBuildId)
+            artifactName: Apks
+            itemPattern: '**/com.microsoft.windowsintune.companyportal-signed.apk'
+            targetPath: '$(Build.ArtifactStagingDirectory)/brokers'                  
 # TestApp generation      
 # AzureSampleApp (RC)
 - stage: 'azuresampleappRC'
@@ -433,6 +460,7 @@ stages:
 - stage: 'brokers_azure_sample'
   dependsOn:
   - queueAuthenticatorBrokerApkPipeline
+  - queueCompanyPortalBrokerApkPipeline
   displayName: Download PROD & RC Brokers 
   jobs: 
     - template: ./templates/download-brokers.yml
@@ -454,6 +482,7 @@ stages:
   - brokerautomationapp
   - brokers_azure_sample
   - queueAuthenticatorBrokerApkPipeline
+  - queueCompanyPortalBrokerApkPipeline
   displayName: ADAL with broker and Broker basic validation test plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -514,6 +543,7 @@ stages:
     - azuresampleappPROD
     - brokerHostRCRelease
     - queueAuthenticatorBrokerApkPipeline
+    - queueCompanyPortalBrokerApkPipeline
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -573,6 +603,7 @@ stages:
     - azuresampleappPROD    
     - brokerHostRCRelease
     - queueAuthenticatorBrokerApkPipeline
+    - queueCompanyPortalBrokerApkPipeline
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -603,6 +634,7 @@ stages:
     - azuresampleappPROD
     - brokerHostRCDebug
     - queueAuthenticatorBrokerApkPipeline
+    - queueCompanyPortalBrokerApkPipeline
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) with BrokerHost Debug
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -633,6 +665,7 @@ stages:
     - azuresampleappPROD    
     - brokerHostRCDebug
     - queueAuthenticatorBrokerApkPipeline
+    - queueCompanyPortalBrokerApkPipeline
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) with BrokerHost Debug
   jobs:
     - template: ./templates/run-on-firebase.yml
