@@ -304,17 +304,6 @@ stages:
             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(MSAZURE_BUILD_TOKEN)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}'', ''AdalVersion'': ''${{ parameters.adalVersionRC }}'' }" -Branch "broker/continuous-integration"'
             workingDirectory: '$(Build.SourcesDirectory)'
           name: buildAuthenticator    
-        # Download Authenticator app, downloads the latest authenticator application published in the Universal Packages
-        - task: UniversalPackages@0
-          displayName: 'Download com.azure.authenticator RC'
-          inputs:
-            command: 'download'
-            downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
-            feedsToUse: 'external'
-            externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
-            feedDownloadExternal: '${{ parameters.msazureFeedName }}'
-            packageDownloadExternal: 'com.azure.authenticator'
-            versionDownloadExternal: '*'    
 - stage: 'queueCompanyPortalBrokerApkPipeline'
   displayName: Company Portal - Queue pipeline
   dependsOn:
@@ -458,7 +447,7 @@ stages:
   jobs:
     - template: ./templates/download-first-party-apps.yml
 # Download Brokers and Azure Sample
-- stage: 'brokers_azure_sample'
+- stage: 'download_brokers'
   dependsOn:
   - queueAuthenticatorBrokerApkPipeline
   - queueCompanyPortalBrokerApkPipeline
@@ -481,7 +470,7 @@ stages:
 - stage: 'adal_with_broker_high_api'
   dependsOn:
   - brokerautomationapp
-  - brokers_azure_sample
+  - download_brokers
   - queueAuthenticatorBrokerApkPipeline
   - queueCompanyPortalBrokerApkPipeline
   displayName: ADAL with broker and Broker basic validation test plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
@@ -510,7 +499,7 @@ stages:
 - stage: 'RCmsal_PRODbroker_low_api'
   dependsOn:
     - msalautomationappRC
-    - brokers_azure_sample
+    - download_brokers
     - firstpartyapps
     - azuresampleappRC
     - brokerHostPROD
@@ -539,7 +528,7 @@ stages:
 - stage: 'PRODmsal_RCbroker_low_api'
   dependsOn:
     - msalautomationappPROD
-    - brokers_azure_sample
+    - download_brokers
     - firstpartyapps
     - azuresampleappPROD
     - brokerHostRCRelease
@@ -570,7 +559,7 @@ stages:
 - stage: 'RCmsal_PRODbroker_high_api'
   dependsOn:
     - msalautomationappRC
-    - brokers_azure_sample
+    - download_brokers
     - firstpartyapps
     - azuresampleappRC    
     - brokerHostPROD
@@ -599,7 +588,7 @@ stages:
 - stage: 'PRODmsal_RCbroker_high_api'
   dependsOn:
     - msalautomationappPROD
-    - brokers_azure_sample
+    - download_brokers
     - firstpartyapps
     - azuresampleappPROD    
     - brokerHostRCRelease
@@ -630,7 +619,7 @@ stages:
 - stage: 'PRODmsal_RCbroker_low_api_brokerhostDebug'
   dependsOn:
     - msalautomationappPROD
-    - brokers_azure_sample
+    - download_brokers
     - firstpartyapps
     - azuresampleappPROD
     - brokerHostRCDebug
@@ -661,7 +650,7 @@ stages:
 - stage: 'PRODmsal_RCbroker_high_api_brokerhostDebug'
   dependsOn:
     - msalautomationappPROD
-    - brokers_azure_sample
+    - download_brokers
     - firstpartyapps
     - azuresampleappPROD    
     - brokerHostRCDebug
