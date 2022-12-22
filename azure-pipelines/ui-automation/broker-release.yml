@@ -304,16 +304,17 @@ stages:
             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(MSAZURE_BUILD_TOKEN)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}'', ''AdalVersion'': ''${{ parameters.adalVersionRC }}'' }" -Branch "broker/continuous-integration"'
             workingDirectory: '$(Build.SourcesDirectory)'
           name: buildAuthenticator    
-        # Download Authenticator app
-        - task: DownloadPipelineArtifact@2
-          displayName: 'Download Authenticator RC apk'
+        # Download Authenticator app, downloads the latest authenticator application published in the Universal Packages
+        - task: UniversalPackages@0
+          displayName: 'Download com.azure.authenticator RC'
           inputs:
-            buildType: specific
-            project: $(oneProjectId)
-            definition: $(buildAuthenticator.BrokerBuildId)
-            artifactName: MicrosoftAuthenticatorAndroid
-            itemPattern: '**/app-production-universal-release-signed.apk'
-            targetPath: '$(Build.ArtifactStagingDirectory)/brokers'
+            command: 'download'
+            downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
+            feedsToUse: 'external'
+            externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
+            feedDownloadExternal: '${{ parameters.msazureFeedName }}'
+            packageDownloadExternal: 'com.azure.authenticator'
+            versionDownloadExternal: '*'    
 - stage: 'queueCompanyPortalBrokerApkPipeline'
   displayName: Company Portal - Queue pipeline
   dependsOn:
@@ -331,7 +332,7 @@ stages:
             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(MSAZURE_BUILD_TOKEN)" -BuildDefinitionId "237827" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}'', ''AdalVersion'': ''${{ parameters.adalVersionRC }}'' }" -Branch "broker/continuous-integration"'
             workingDirectory: '$(Build.SourcesDirectory)'
           name: buildCompanyPortal   
-        # Download Authenticator app
+        # Download Company Portal app
         - task: DownloadPipelineArtifact@2
           displayName: 'Download Authenticator RC apk'
           inputs:
@@ -340,7 +341,7 @@ stages:
             definition: $(buildCompanyPortal.BrokerBuildId)
             artifactName: Apks
             itemPattern: '**/com.microsoft.windowsintune.companyportal-signed.apk'
-            targetPath: '$(Build.ArtifactStagingDirectory)/brokers'                  
+            targetPath: '$(Build.ArtifactStagingDirectory)/brokers'        
 # TestApp generation      
 # AzureSampleApp (RC)
 - stage: 'azuresampleappRC'
