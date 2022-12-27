@@ -1,7 +1,12 @@
 # run broker UI automation testcases
+# Variable: 'azure_sample_apk' was defined in the Variables tab
+# Variable: 'broker_branch' was defined in the Variables tab
+# Variable: 'brokerhost_apk' was defined in the Variables tab
 # Variable: 'ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME' was defined in the Variables tab
 # Variable: 'gCloudProjectId' was defined in the Variables tab
+# Variable: 'msal_branch' was defined in the Variables tab
 # Variable: 'mvnAccessToken' was defined in the Variables tab
+# https://dev.azure.com/IdentityDivision/Engineering/_build?definitionId=1490&_a=summary
 name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
 
 trigger: none
@@ -23,285 +28,230 @@ resources:
 variables:
   engineeringProjectId: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'
   azureSamplePipelineId: 1458
+  brokerHostPipelineId: 1432
   msazureServiceConnection: AndroidBroker-CI
   msazureFeedName: Android-Broker
   msalApp: msalautomationapp-dist-AutoBroker-debug.apk
   msalTestApp: msalautomationapp-dist-AutoBroker-debug-androidTest.apk
+  msalAppLocalBrokerHost: msalautomationapp-local-BrokerHost-debug.apk
+  msalTestAppLocalBrokerHost: msalautomationapp-local-BrokerHost-debug-androidTest.apk
   brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
   brokerTestApp: brokerautomationapp-dist-AutoBroker-debug-androidTest.apk
-  azureSampleApk: AzureSample-local-debug.apk
   companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
   authenticatorApk: app-production-universal-release-signed.apk
+  oldAuthenticatorApk: Authenticator-4.1.0-RC.apk
+  outlookApk: Outlook.apk
+  teamsApk: Teams.apk
+  wordApk: Word.apk
+  edgeApk: Edge.apk
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
 
 parameters:
-- name: firebaseDeviceId
-  displayName: Firebase Device Id
+- name: firebaseDeviceIdHigh
+  displayName: Firebase Device Id (Api 30+)
+  type: string
+  default: oriole
+- name: firebaseDeviceAndroidVersionHigh
+  displayName: Firebase Device Android Version (Api 30+)
+  type: number
+  default: 32
+- name: firebaseDeviceIdLow
+  displayName: Firebase Device Id (Api 29-)
   type: string
   default: blueline
-- name: firebaseDeviceAndroidVersion
-  displayName: Firebase Device Android Version
+- name: firebaseDeviceAndroidVersionLow
+  displayName: Firebase Device Android Version (Api 29-)
   type: number
   default: 28
+- name: flankShards
+  displayName: Max Number of Flank Shards
+  type: number
+  default: 2
 - name: authenticatorVersion
   displayName: Authenticator Version
   type: string
   default: '*'
+- name: oldAuthenticatorVersion
+  displayName: Old Authenticator Version
+  type: string
+  default: '6.2204.2470'
 - name: companyPortalVersion
   displayName: Company Portal Version
   type: string
   default: '*'
+- name: oldBrokerHostVersion
+  displayName: Old Broker host Version
+  type: string
+  default: '0.0.1'
+- name: msalTestTarget
+  displayName: Test Targets for MSAL
+  type: string
+  default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, package com.microsoft.identity.client.msal.automationapp.testpass.msalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
+- name: brokerTestTarget
+  displayName: Test Targets for Broker
+  type: string
+  default: package com.microsoft.identity.client.broker.automationapp.testpass, notPackage com.microsoft.identity.client.broker.automationapp.testpass.local.adalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
 
 stages:
 # msalautomationapp
 - stage: 'msalautomationapp'
+  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
   displayName: Build MSAL Automation APKs
   jobs:
-  - job: 'msalautomationapp'
-    displayName: Build and Publish MSAL Automation app
-    pool:
-      vmImage: ubuntu-latest
-    steps:
-    - checkout: msal
-      clean: true
-      submodules: recursive
-      persistCredentials: True
-    - bash: |
-        echo "##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN]$(mvnAccessToken)"
-      displayName: Set MVN Access Token in Environment
-    - task: AzureKeyVault@2
-      displayName: 'Get Key vault AndroidAutomationRunnerAppSecret'
-      inputs:
-        azureSubscription: 'MSIDLABS_ANDROID_KV'
-        KeyVaultName: 'ADALTestInfo'
-        SecretsFilter: 'AndroidAutomationRunnerAppSecret'
-        RunAsPreJob: false
-    - task: Gradle@2
-      displayName: 'Assemble MSAL Automation App'
-      inputs:
-        tasks: clean msalautomationapp:assembleDistAutoBrokerDebug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=LocalApk
-        publishJUnitResults: false
-    - task: Gradle@2
-      displayName: 'Assemble MSAL Automation App Instrumented Tests'
-      inputs:
-        tasks: 'msalautomationapp:assembleDistAutoBrokerDebugAndroidTest -PlabSecret=$(AndroidAutomationRunnerAppSecret)'
-        publishJUnitResults: false
-    - task: CopyFiles@2
-      displayName: 'Copy apks for later use in the pipeline'
-      inputs:
-        flattenFolders: true
-        contents: '$(Build.SourcesDirectory)/msalautomationapp/build/outputs/apk/**/*.apk'
-        targetFolder: '$(Build.ArtifactStagingDirectory)/msal'
-    - publish: '$(Build.ArtifactStagingDirectory)/msal'
-      displayName: 'Publish apks for later use'
-      artifact: msalautomationapks
+    - template: ./templates/build-msal-automation-app.yml
+      parameters:
+        brokerApp: AutoBroker
+        msalFlavor: Dist
+        brokerSource: LocalApk
+        brokerUpdateSource: LocalApk
+# msalautomationapplocalbrokerhost
+- stage: 'msalautomationapplocalbrokerhost'
+  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+  displayName: Build MSAL Automation APKs (LocalBrokerHost)
+  jobs:
+    - template: ./templates/build-msal-automation-app.yml
+      parameters:
+        brokerApp: BrokerHost
+        msalFlavor: Local
+        brokerSource: LocalApk
+        artifactName: "msalautomationapksbrokerhost"
 # brokerautomationapp
 - stage: 'brokerautomationapp'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
   displayName: Build Broker Automation APKs
-  jobs: 
-  - job: 'brokerautomationapp'
-    displayName: Build and Publish Broker Automation app
-    pool:
-      vmImage: ubuntu-latest
-    steps:
-    - checkout: broker
-      clean: true
-      submodules: recursive
-      persistCredentials: True
-    - bash: |
-        echo "##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(mvnAccessToken)"
-      displayName: Set MVN Access Token in Environment
-    - task: AzureKeyVault@2
-      displayName: 'Get Key vault AndroidAutomationRunnerAppSecret'
-      inputs:
-        azureSubscription: 'MSIDLABS_ANDROID_KV'
-        KeyVaultName: 'ADALTestInfo'
-        SecretsFilter: 'AndroidAutomationRunnerAppSecret'
-        RunAsPreJob: false
-    - task: Gradle@2
-      displayName: 'Assemble Broker Automation App'
-      inputs:
-        tasks: clean brokerautomationapp:assembleDistAutoBrokerDebug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=LocalApk
-        publishJUnitResults: false
-    - task: Gradle@2
-      displayName: 'Assemble Broker Automation App Instrumented Tests'
-      inputs:
-        tasks: 'brokerautomationapp:assembleDistAutoBrokerDebugAndroidTest -PlabSecret=$(AndroidAutomationRunnerAppSecret)'
-        publishJUnitResults: false
-    - task: CopyFiles@2
-      displayName: 'Copy apks for later use in the pipeline'
-      inputs:
-        flattenFolders: true
-        contents: '$(Build.SourcesDirectory)/brokerautomationapp/build/outputs/apk/**/*.apk'
-        targetFolder: '$(Build.ArtifactStagingDirectory)/broker'
-    - publish: '$(Build.ArtifactStagingDirectory)/broker'
-      displayName: 'Publish apks for later use'
-      artifact: brokerautomationapks
-# Brokers
-- stage: 'brokers'
+  jobs:
+    - template: ./templates/build-broker-automation-app.yml
+      parameters:
+        brokerApp: AutoBroker
+        brokerFlavor: Dist
+        brokerSource: LocalApk
+# Download First Party Apps
+- stage: 'firstpartyapps'
+  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+  displayName: Download First Party Apps (Outlook, Teams, Word)
+  jobs:
+    - template: ./templates/download-first-party-apps.yml
+# Download Brokers and Azure Sample
+- stage: 'brokers_azure_sample'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
   displayName: Brokers and Azure Sample APKs
   jobs: 
-  - job: 'download_brokers'
-    displayName: Download Brokers
-    pool:
-      vmImage: ubuntu-latest
-    steps:
-    - checkout: none
-    - task: DownloadPipelineArtifact@2
-      displayName: 'Download latest Azure Sample'
-      inputs:
-        buildType: 'specific'
-        project: '$(engineeringProjectId)'
-        definition: '$(azureSamplePipelineId)'
-        artifactName: AzureSample
-        itemPattern: '**/*.apk'
-        targetPath: '$(Build.ArtifactStagingDirectory)/azuresample'
-        buildVersionToDownload: 'latest'
-    - script: mkdir cpauth
-      displayName: 'make cpauth dir'
-      workingDirectory: '$(Build.ArtifactStagingDirectory)'
-    - task: UniversalPackages@0
-      displayName: 'Download com.azure.authenticator'
-      inputs:
-        command: 'download'
-        downloadDirectory: '$(Build.ArtifactStagingDirectory)/cpauth'
-        feedsToUse: 'external'
-        externalFeedCredentials: '$(msazureServiceConnection)'
-        feedDownloadExternal: '$(msazureFeedName)'
-        packageDownloadExternal: 'com.azure.authenticator'
-        versionDownloadExternal: '${{ parameters.authenticatorVersion }}'
-    - task: UniversalPackages@0
-      displayName: 'Download com.microsoft.windowsintune.companyportal-signed'
-      inputs:
-        command: 'download'
-        downloadDirectory: '$(Build.ArtifactStagingDirectory)/cpauth'
-        feedsToUse: 'external'
-        externalFeedCredentials: '$(msazureServiceConnection)'
-        feedDownloadExternal: '$(msazureFeedName)'
-        packageDownloadExternal: 'com.microsoft.windowsintune.companyportal-signed'
-        versionDownloadExternal: '${{ parameters.companyPortalVersion }}'
-    - publish: $(Build.ArtifactStagingDirectory)/cpauth
-      displayName: 'Publish Broker apks for later use'
-      artifact: brokerapks
-    - publish: $(Build.ArtifactStagingDirectory)/azuresample
-      displayName: 'Publish Azure Sample apk for later use'
-      artifact: azuresample
-# MSAL with Broker Test Plan stage
-- stage: 'msal_with_broker'
+    - template: ./templates/download-brokers-and-azure-sample.yml
+      parameters:
+        engineeringProjectId: '$(engineeringProjectId)'
+        azureSamplePipelineId: '$(azureSamplePipelineId)'
+        msazureServiceConnection: '$(msazureServiceConnection)'
+        msazureFeedName: '$(msazureFeedName)'
+        authenticatorVersion: ${{ parameters.authenticatorVersion }}
+        oldAuthenticatorVersion: ${{ parameters.oldAuthenticatorVersion }}
+        companyPortalVersion: ${{ parameters.companyPortalVersion }}
+        brokerHostPipelineId: '$(brokerHostPipelineId)'
+        oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
+# MSAL with Broker Test Plan stage (API 30+)
+- stage: 'msal_with_broker_high_api'
   dependsOn:
   - msalautomationapp
-  - brokers
-  displayName: Running MSAL with Broker Test Plan
-  jobs: 
-  - job: 'msal_with_broker'
-    displayName: Running MSAL with Broker Test Plan
-    timeoutInMinutes: 90
-    pool:
-      vmImage: ubuntu-latest
-    variables:
-      resultsDir: "msalautomationapp-testpass-broker-$(Build.BuildId)-$(Build.BuildNumber)"
-    steps:
-    - checkout: none
-    - task: DownloadSecureFile@1
-      displayName: 'Download Firebase Service Account Key File'
-      name: gcServiceAccountKey
-      inputs:
-        secureFile: AndroidFirebaseServiceAccountKey.json
-        retryCount: 5
-    - download: current
-    - script: gcloud version
-      displayName: 'Check gcloud version'
-    - task: Bash@3
-      displayName: Run UI Automation on Firebase
-      inputs:
-        targetType: inline
-        script: |
-          gcloud auth activate-service-account --key-file "$(gcServiceAccountKey.secureFilePath)"
-          gcloud config set project "$(gCloudProjectId)"
-          gcloud firebase test android run \
-            --type instrumentation \
-            --app "$(Pipeline.Workspace)/msalautomationapks/$(msalApp)" \
-            --test "$(Pipeline.Workspace)/msalautomationapks/$(msaltestApp)" \
-            --device "model=${{ parameters.firebaseDeviceId }},version=${{ parameters.firebaseDeviceAndroidVersion }}" \
-            --timeout "$(firebaseTimeout)" \
-            --other-files \
-            "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-            /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-            /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azureSampleApk)" \
-            --results-dir "$(resultsDir)" \
-            --directories-to-pull "/sdcard" \
-            --use-orchestrator \
-            --environment-variables "clearPackageData=true" \
-            --results-history-name "$(resultsHistoryName)" \
-            --test-targets "package com.microsoft.identity.client.msal.automationapp.testpass.broker"
-    - script: gsutil cp "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/$(resultsDir)/${{ parameters.firebaseDeviceId }}-${{ parameters.firebaseDeviceAndroidVersion }}-en-portrait/test_result_1.xml" "$(Build.SourcesDirectory)"
-      displayName: Download Test Result File
-      condition: succeededOrFailed()
-    - task: PublishTestResults@2
-      displayName: Publish Test Results to ADO
-      condition: succeededOrFailed()
-      inputs:
-        testResultsFiles: '*test_result*.xml'
-        searchFolder: $(Build.SourcesDirectory)
-        testRunTitle: 'Broker(MSAL) UI Automation - Build # $(Build.BuildNumber)'
-# ADAL with Broker Test Plan stage
-- stage: 'adal_with_broker'
+  - brokers_azure_sample
+  - firstpartyapps
+  displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
+  jobs:
+    - template: ./templates/flank/run-on-firebase-with-flank.yml
+      parameters:
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msalApp)"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msaltestApp)"
+        testTargetPackages: ${{ parameters.msalTestTarget }}
+        resultsHistoryName: "$(resultsHistoryName)"
+        resultsDir: "msalautomationapp-testpass-broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
+        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
+                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+                      /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+                      /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
+                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
+                      /data/local/tmp/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
+        firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
+        firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
+        testRunTitle: "Broker(MSAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
+        extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
+        flankShards: ${{ parameters.flankShards }}
+# MSAL with Broker Test Plan stage (BrokerHost Tests) (API 30+)
+- stage: 'msal_with_brokerhost_high_api'
+  dependsOn:
+    - msalautomationapplocalbrokerhost
+    - brokers_azure_sample
+    - firstpartyapps
+  displayName: Running MSAL with Broker Test Plan (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
+  jobs:
+    - template: ./templates/run-on-firebase.yml
+      parameters:
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapksbrokerhost/$(msalAppLocalBrokerHost)"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapksbrokerhost/$(msaltestAppLocalBrokerHost)"
+        testTargetPackages: ${{ parameters.msalTestTarget }}
+        resultsHistoryName: "$(resultsHistoryName)"
+        resultsDir: "msalautomationapp-testpass-brokerhost-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
+        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
+                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+                      /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+                      /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
+                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
+                      /data/local/tmp/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
+        firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
+        firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
+        testRunTitle: "Broker(MSAL) UI Automation - Build (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
+        extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus, annotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
+# MSAL with Broker Test Plan stage (API 29-)
+- stage: 'msal_with_broker_low_api'
+  dependsOn:
+    - msalautomationapp
+    - brokers_azure_sample
+    - firstpartyapps
+  displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
+  jobs:
+    - template: ./templates/run-on-firebase.yml
+      parameters:
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msalApp)"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msaltestApp)"
+        testTargetPackages: ${{ parameters.msalTestTarget }}
+        resultsHistoryName: "$(resultsHistoryName)"
+        resultsDir: "msalautomationapp-testpass-broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
+        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
+                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+                      /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+                      /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
+                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
+                      /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
+                      /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
+                      /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
+                      /data/local/tmp/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
+        firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
+        firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionLow }}
+        testRunTitle: "Broker(MSAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) # $(Build.BuildNumber)"
+        extraTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
+# ADAL with Broker Test Plan stage (API 30+)
+- stage: 'adal_with_broker_high_api'
   dependsOn:
   - brokerautomationapp
-  - brokers
-  displayName: ADAL with broker and Broker basic validation test plan
-  jobs: 
-  - job: 'adal_with_broker'
-    displayName: ADAL with broker and Broker basic validation test plan
-    timeoutInMinutes: 90
-    pool:
-      vmImage: ubuntu-latest
-    variables:
-      resultsDir: "brokerautomationapp-testpass-adal&basic-$(Build.BuildId)-$(Build.BuildNumber)"
-    steps:
-    - checkout: none
-    - task: DownloadSecureFile@1
-      displayName: 'Download Firebase Service Account Key File'
-      name: gcServiceAccountKey
-      inputs:
-        secureFile: AndroidFirebaseServiceAccountKey.json
-        retryCount: 5
-    - download: current
-    - script: gcloud version
-      displayName: 'Check gcloud version'
-    - task: Bash@3
-      displayName: Run UI Automation on Firebase
-      inputs:
-        targetType: inline
-        script: |
-          gcloud auth activate-service-account --key-file "$(gcServiceAccountKey.secureFilePath)"
-          gcloud config set project "$(gCloudProjectId)"
-          gcloud firebase test android run \
-            --type instrumentation \
-            --app "$(Pipeline.Workspace)/brokerautomationapks/$(brokerApp)" \
-            --test "$(Pipeline.Workspace)/brokerautomationapks/$(brokertestApp)" \
-            --device "model=${{ parameters.firebaseDeviceId }},version=${{ parameters.firebaseDeviceAndroidVersion }}" \
-            --timeout "$(firebaseTimeout)" \
-            --other-files \
-            "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-            /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-            /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azureSampleApk)" \
-            --results-dir "$(resultsDir)" \
-            --directories-to-pull "/sdcard" \
-            --use-orchestrator \
-            --environment-variables "clearPackageData=true" \
-            --results-history-name "$(resultsHistoryName)" \
-            --test-targets "notPackage com.microsoft.identity.client.broker.automationapp.testpass.local.adal"
-    - script: gsutil cp "gs://test-lab-ffz6x9pu2y62a-is0rq7a7rwdhi/$(resultsDir)/${{ parameters.firebaseDeviceId }}-${{ parameters.firebaseDeviceAndroidVersion }}-en-portrait/test_result_1.xml" "$(Build.SourcesDirectory)"
-      displayName: Download Test Result File
-      condition: succeededOrFailed()
-    - task: PublishTestResults@2
-      displayName: Publish Test Results to ADO
-      condition: succeededOrFailed()
-      inputs:
-        testResultsFiles: '*test_result*.xml'
-        searchFolder: $(Build.SourcesDirectory)
-        testRunTitle: 'Broker(ADAL) UI Automation - Build # $(Build.BuildNumber)'
+  - brokers_azure_sample
+  displayName: ADAL with broker and Broker basic validation test plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
+  jobs:
+    - template: ./templates/flank/run-on-firebase-with-flank.yml
+      parameters:
+        automationAppApkPath: "$(Pipeline.Workspace)/brokerautomationapks/$(brokerApp)"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/brokerautomationapks/$(brokertestApp)"
+        testTargetPackages: ${{ parameters.brokerTestTarget }}
+        resultsHistoryName: "$(resultsHistoryName)"
+        resultsDir: "brokerautomationapp-testpass-adal&basic-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
+        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
+                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+                      /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+                      /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
+                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
+                      /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
+                      /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
+                      /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
+                      /data/local/tmp/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
+        firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
+        firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
+        testRunTitle: "Broker(ADAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
+        extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
+        flankShards: ${{ parameters.flankShards }}

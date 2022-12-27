@@ -3,7 +3,6 @@
 # Variable 'local_msal_branch' was defined in the Variables tab
 # Variable 'msal_version' was defined in the Variables tab
 # Variable: 'ENV_VSTS_MVN_ANDROIDMSAL_ACCESSTOKEN' was defined in the Variables tab
-# Variable: 'mvnAccessToken' was defined in the Variables tab
 # https://docs.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate
 name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
 
@@ -38,12 +37,12 @@ resources:
   - repository: common
     type: github
     name: AzureAD/microsoft-authentication-library-common-for-android
-    ref: $(local_common_branch)
+    ref: dev
     endpoint: ANDROID_GITHUB
   - repository: msal
     type: github
     name: AzureAD/microsoft-authentication-library-for-android
-    ref: $(local_msal_branch)
+    ref: dev
     endpoint: ANDROID_GITHUB
 
 jobs:
@@ -51,6 +50,8 @@ jobs:
   displayName: Build MSAL Test App ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} ${{variables.msal_version}} APK
   pool:
     vmImage: 'windows-latest'
+  variables:
+  - group: AndroidAuthClientVariables
   steps:
   - checkout: self
     clean: true
@@ -79,7 +80,7 @@ jobs:
     displayName: Set MVN AccessToken in Environment
     inputs:
       filename: echo
-      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROID_MSAL_USERNAME]$(mvnAccessToken)'
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(AndroidAuthClientInternalMavenAccessToken)'
   - task: Gradle@1
     name: Gradle1
     displayName: Assemble msalTestApp
