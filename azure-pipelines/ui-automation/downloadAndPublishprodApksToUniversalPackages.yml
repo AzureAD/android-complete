@@ -31,9 +31,10 @@ parameters:
     displayName: Artifact Name
     type: string
     default: MicrosoftAuthenticatorAndroid
-
-variables:
-  oneProjectId: b32aa71e-8ed2-41b2-9d77-5bc261222004  
+  - name: projectId
+    displayName: Project ID
+    type: string
+    default: b32aa71e-8ed2-41b2-9d77-5bc261222004
 
 jobs:
   - job: 'download_and_publish'
@@ -46,7 +47,7 @@ jobs:
         displayName: 'Download latest Prod Broker'
         inputs:
           buildType: 'specific'
-          project: '$(oneProjectId)'
+          project: '$(parameters.projectId)'
           definition: '${{ parameters.brokerProdPipelineId }}'
           artifactName: '${{ parameters.artifactName }}'
           itemPattern: '**/${{ parameters.itemPattern }}'
