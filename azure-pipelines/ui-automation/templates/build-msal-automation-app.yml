@@ -13,8 +13,7 @@ parameters:
     values:
       - Local
       - Dist
-  - name: brokerSource
-    displayName: Broker App Installation Source
+  - name: brokerUpdateSource
     type: string
     default: LocalApk
     values:
@@ -30,6 +29,9 @@ parameters:
     values:
       - PROD
       - RC
+  - name: artifactName
+    type: string
+    default: "msalautomationapks"
 
 jobs:
   - job: 'msalautomationapp'
