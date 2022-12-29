@@ -58,7 +58,7 @@ jobs:
         inputs:
           targetType: inline
           script: |
-            $assembleTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=${{ parameters.brokerSource }}"
+            $assembleTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=${{ parameters.brokerUpdateSource }}"
             if (("${{ parameters.msalVersion }}" -ne "")) {
                 $assembleTask = $assembleTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
             }
@@ -91,4 +91,4 @@ jobs:
           targetFolder: '$(Build.ArtifactStagingDirectory)/msal'
       - publish: '$(Build.ArtifactStagingDirectory)/msal'
         displayName: 'Publish apks for later use'
-        artifact: msalautomationapks-${{ upper(parameters.packageVariant) }}-${{ parameters.brokerSource }}
+        artifact: msalautomationapks-${{ upper(parameters.packageVariant) }}-${{ parameters.brokerUpdateSource }}
