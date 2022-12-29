@@ -312,6 +312,7 @@ stages:
   jobs:
     - job: queue_build
       displayName: Queue Build for Company Portal RC
+      timeoutInMinutes: 90
       steps:
         - checkout: self
           persistCredentials: True
