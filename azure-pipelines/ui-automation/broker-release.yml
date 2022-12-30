@@ -463,7 +463,7 @@ stages:
   - brokerautomationapp
   - download_brokers
   - queueAuthenticatorBrokerApkPipeline
-  - queueCompanyPortalBrokerApkPipeline
+  # - queueCompanyPortalBrokerApkPipeline
   displayName: ADAL with broker and Broker basic validation test plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -524,7 +524,7 @@ stages:
     - azuresampleappPROD
     - brokerHostRCRelease
     - queueAuthenticatorBrokerApkPipeline
-    - queueCompanyPortalBrokerApkPipeline
+    # - queueCompanyPortalBrokerApkPipeline
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -584,7 +584,7 @@ stages:
     - azuresampleappPROD    
     - brokerHostRCRelease
     - queueAuthenticatorBrokerApkPipeline
-    - queueCompanyPortalBrokerApkPipeline
+    # - queueCompanyPortalBrokerApkPipeline
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -615,7 +615,7 @@ stages:
     - azuresampleappPROD
     - brokerHostRCDebug
     - queueAuthenticatorBrokerApkPipeline
-    - queueCompanyPortalBrokerApkPipeline
+    # - queueCompanyPortalBrokerApkPipeline
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) with BrokerHost Debug
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -646,7 +646,7 @@ stages:
     - azuresampleappPROD    
     - brokerHostRCDebug
     - queueAuthenticatorBrokerApkPipeline
-    - queueCompanyPortalBrokerApkPipeline
+    # - queueCompanyPortalBrokerApkPipeline
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) with BrokerHost Debug
   jobs:
     - template: ./templates/run-on-firebase.yml
