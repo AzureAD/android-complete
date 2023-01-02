@@ -638,7 +638,7 @@ stages:
         testRunTitle: "PROD MSAL - RC Broker (BrokerHost tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
         extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus, annotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
 # PROD MSAL with RC Broker (BrokerHost Build Variant Tests, Debug) (API 30+)
-- stage: 'PROD_msal_RC_brokerhost_release'
+- stage: 'PROD_msal_RC_brokerhost_debug'
   dependsOn:
     - msalautomationappPRODlocalbrokerhost
     - download_brokers
