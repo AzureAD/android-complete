@@ -169,7 +169,7 @@ variables:
     adalProjVersionParam: -PprojVersion=${{ parameters.adalVersionRC }}
   # this does not have to be defined manually.
   customValue: $(Date:yyyyMMddHHmmss)
-  labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$( customValue )
+  labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(customValue)
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   oneProjectId: b32aa71e-8ed2-41b2-9d77-5bc261222004
