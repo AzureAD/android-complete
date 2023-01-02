@@ -168,7 +168,8 @@ variables:
     adAccountsProjVersionParam: -PprojVersion=${{ parameters.adAccountsVersionRC }}
     adalProjVersionParam: -PprojVersion=${{ parameters.adalVersionRC }}
   # this does not have to be defined manually.
-  labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$[ format('{0:yyyy}{0:MM}{0:dd}{0:HH}{0:mm}{0:ss}', pipeline.startTime) ]  
+  customValue: $(Date:yyyyMMddHHmmss)
+  labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$( customValue )
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   oneProjectId: b32aa71e-8ed2-41b2-9d77-5bc261222004
