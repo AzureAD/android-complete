@@ -146,7 +146,7 @@ resources:
 
 variables:
   # this does not have to be defined manually.
-  labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(Build.BuildNumber)
+  labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(Date:yyyyMMdd)$(Rev:.r)
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
     versionNumber: $(Build.BuildNumber)    
     common4jProjVersionParam: -PprojVersion=$(versionNumber)
@@ -159,13 +159,13 @@ variables:
     adAccountsProjVersionParam: -PprojVersion=$(versionNumber)
     adalProjVersionParam: -PprojVersion=$(versionNumber)
   ${{ else }}:
-    versionNumber:  ${{ parameters.customVersionNumber }}        
+    versionNumber:  ${{ parameters.customVersionNumber }}
     common4jProjVersionParam: -PprojVersion=${{ parameters.common4jVersionRC }}
     common4jVersionParam: -PdistCommon4jVersion=${{ parameters.common4jVersionRC }}
     broker4jProjVersionParam: -PprojVersion=${{ parameters.broker4jVersionRC }}
     broker4jVersionParam: -PdistBroker4jVersion=${{ parameters.broker4jVersionRC }}
     commonProjVersionParam: -PprojVersion=${{ parameters.commonVersionRC }}
-    commonVersionParam: -PdistCommonVersion=${{ parameters.commonVersionRC }}  
+    commonVersionParam: -PdistCommonVersion=${{ parameters.commonVersionRC }}
     msalProjVersionParam: -PprojVersion=${{ parameters.msalVersionRC }}
     adAccountsProjVersionParam: -PprojVersion=${{ parameters.adAccountsVersionRC }}
     adalProjVersionParam: -PprojVersion=${{ parameters.adalVersionRC }}
