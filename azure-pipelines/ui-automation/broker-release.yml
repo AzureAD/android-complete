@@ -617,7 +617,7 @@ stages:
     - brokerHostRCRelease
   displayName: PROD MSAL - RC Broker (BrokerHost tests, release) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
-    - template: ./templates/frun-on-firebase.yml
+    - template: ./templates/run-on-firebase.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/$(msalApp)"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/$(msaltestApp)"
@@ -647,7 +647,7 @@ stages:
     - brokerHostRCDebug
   displayName: PROD MSAL - RC Broker (BrokerHost tests, debug) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
-    - template: ./templates/frun-on-firebase.yml
+    - template: ./templates/run-on-firebase.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/$(msalApp)"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/$(msaltestApp)"
