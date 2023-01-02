@@ -91,7 +91,7 @@ parameters:
 - name: brokerTestTarget
   displayName: Test Targets for Broker
   type: string
-  default: package com.microsoft.identity.client.broker.automationapp.testpass, notPackage com.microsoft.identity.client.broker.automationapp.testpass.local.adalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
+  default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
 
 stages:
 # msalautomationapp
@@ -227,7 +227,7 @@ stages:
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionLow }}
         testRunTitle: "Broker(MSAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) # $(Build.BuildNumber)"
         extraTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
-# ADAL with Broker Test Plan stage (API 30+)
+# ADAL with Broker (API 30+)
 - stage: 'adal_with_broker_high_api'
   dependsOn:
   - brokerautomationapp

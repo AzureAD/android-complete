@@ -13,6 +13,12 @@ parameters:
     values:
       - Local
       - Dist
+  - name: brokerSource
+    type: string
+    default: LocalApk
+    values:
+      - LocalApk
+      - PlayStore
   - name: brokerUpdateSource
     type: string
     default: LocalApk
@@ -58,7 +64,7 @@ jobs:
         inputs:
           targetType: inline
           script: |
-            $assembleTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=${{ parameters.brokerUpdateSource }}"
+            $assembleTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=${{ parameters.brokerSource }} -PbrokerUpdateSource=${{ parameters.brokerUpdateSource }}"
             if (("${{ parameters.msalVersion }}" -ne "")) {
                 $assembleTask = $assembleTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
             }
@@ -91,4 +97,4 @@ jobs:
           targetFolder: '$(Build.ArtifactStagingDirectory)/msal'
       - publish: '$(Build.ArtifactStagingDirectory)/msal'
         displayName: 'Publish apks for later use'
-        artifact: msalautomationapks-${{ upper(parameters.packageVariant) }}-${{ parameters.brokerUpdateSource }}
+        artifact: msalautomationapks-${{ parameters.brokerApp }}-${{ upper(parameters.packageVariant) }}-${{ parameters.brokerSource }}
