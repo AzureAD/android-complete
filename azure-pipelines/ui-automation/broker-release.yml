@@ -144,9 +144,7 @@ resources:
     ref: ${{ parameters.adalBranch }}
     endpoint: ANDROID_GITHUB
 
-variables:
-  # this does not have to be defined manually.
-  labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(Date:yyyyMMdd)$(Rev:.r)
+variables:  
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
     versionNumber: $(Build.BuildNumber)    
     common4jProjVersionParam: -PprojVersion=$(versionNumber)
@@ -169,6 +167,8 @@ variables:
     msalProjVersionParam: -PprojVersion=${{ parameters.msalVersionRC }}
     adAccountsProjVersionParam: -PprojVersion=${{ parameters.adAccountsVersionRC }}
     adalProjVersionParam: -PprojVersion=${{ parameters.adalVersionRC }}
+  # this does not have to be defined manually.
+  labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$[ format('{0:yyyy}{0:MM}{0:dd}{0:HH}{0:mm}{0:ss}', pipeline.startTime) ]  
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   oneProjectId: b32aa71e-8ed2-41b2-9d77-5bc261222004
