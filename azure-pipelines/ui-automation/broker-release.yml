@@ -160,6 +160,7 @@ variables:
     adAccountsProjVersionParam: -PprojVersion=$(versionNumber)
     adalProjVersionParam: -PprojVersion=$(versionNumber)
     labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(versionNumber)
+    labApiUtilitiesProjVersionParam: -PprojVersion=${{ parameters.labApiUtils }}
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
     common4jProjVersionParam: -PprojVersion=${{ parameters.common4jVersionRC }}
@@ -172,6 +173,7 @@ variables:
     adAccountsProjVersionParam: -PprojVersion=${{ parameters.adAccountsVersionRC }}
     adalProjVersionParam: -PprojVersion=${{ parameters.adalVersionRC }}
     labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=${{ parameters.labApiUtils }}
+    labApiUtilitiesProjVersionParam: -PprojVersion=${{ parameters.labApiUtils }}
   
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
@@ -207,8 +209,8 @@ stages:
       repository: common
       project: LabApiUtilities
       dependencyParams: $(javaProjectDependencyParam)
-      assembleParams: $(labApiUtilitiesVersionParam)
-      publishParams: $(labApiUtilitiesVersionParam)
+      assembleParams: $(labApiUtilitiesProjVersionParam)
+      publishParams: $(labApiUtilitiesProjVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
 # Common4j - Build and publish
