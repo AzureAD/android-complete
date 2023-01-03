@@ -184,8 +184,6 @@ variables:
   authenticatorPipelineId: ""
   msazureServiceConnection: AndroidBroker-CI
   msazureFeedName: Android-Broker
-  msalApp: msalautomationapp-dist-AutoBroker-debug.apk
-  msalTestApp: msalautomationapp-dist-AutoBroker-debug-androidTest.apk
   brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
   brokerTestApp: brokerautomationapp-dist-AutoBroker-debug-androidTest.apk
   companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
@@ -547,8 +545,8 @@ stages:
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
-        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msalApp)"
-        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msaltestApp)"
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/msalautomationapp-dist-AutoBroker-debug.apk"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/msalautomationapp-dist-AutoBroker-debug-androidTest.apk"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "RC_MSAL-PROD_Broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
@@ -578,8 +576,8 @@ stages:
   jobs:
     - template: ./templates/run-on-firebase.yml
       parameters:
-        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msalApp)"
-        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msaltestApp)"
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/msalautomationapp-dist-AutoBroker-debug.apk"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/msalautomationapp-dist-AutoBroker-debug-androidTest.apk"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "RC_MSAL-PROD_Broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
@@ -641,8 +639,8 @@ stages:
   jobs:
     - template: ./templates/run-on-firebase.yml
       parameters:
-        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/$(msalApp)"
-        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/$(msaltestApp)"
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/msalautomationapp-local-BrokerHost-debug.apk"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/msalautomationapp-local-BrokerHost-debug-androidTest.apk"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "PROD-MSAL-RC-BrokerHost-release-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
@@ -671,8 +669,8 @@ stages:
   jobs:
     - template: ./templates/run-on-firebase.yml
       parameters:
-        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/$(msalApp)"
-        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/$(msaltestApp)"
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/msalautomationapp-local-BrokerHost-debug.apk"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/msalautomationapp-local-BrokerHost-debug-androidTest.apk"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "PROD-MSAL-RC-BrokerHost-debug-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
@@ -701,8 +699,8 @@ stages:
   jobs:
     - template: ./templates/run-on-firebase.yml
       parameters:
-        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-PROD-LocalApk/msalautomationapp-local-BrokerHost-debug.apk"
-        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-PROD-LocalApk/msalautomationapp-local-BrokerHost-debug-androidTest.apk"
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-PROD-LocalApk/msalautomationapp-dist-AutoBroker-debug.apk"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-PROD-LocalApk/msalautomationapp-dist-AutoBroker-debug-androidTest.apk"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "RC_MSAL-PROD_Broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
