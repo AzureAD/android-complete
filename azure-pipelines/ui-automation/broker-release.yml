@@ -308,7 +308,42 @@ stages:
       publishParams: $(adalProjVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
-
+#Publish to PreRelease
+- stage: 'publishToPrelease'
+  displayName: Publish Libraries to PreRelease
+  dependsOn:
+    - publishAdal
+    - publishBrokerLibraries
+  jobs:
+    - job: publish_to_prelease
+      displayName: Publish all the libraries to PreRelease
+      timeoutInMinutes: 90
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: PowerShell@2
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
+            arguments: '-PackagingPAT "$(MSAZURE_BUILD_TOKEN)" -common4jVersion "${{ parameters.common4jVersionRC }}" -commonVersion "${{ parameters.commonVersionRC }}" -broker4jVersion "${{ parameters.broker4jVersionRC }}" -adAccountsVersion "${{ parameters.adAccountsVersionRC }}" -msalVersion "${{ parameters.msalVersionRC }}" -adalVersion "${{ parameters.adalVersionRC }}" -PromoteToView "Prerelease"'
+            workingDirectory: '$(Build.SourcesDirectory)'             
+#Publish to Release
+- stage: 'publishToRelease'
+  displayName: Publish Libraries to Release
+  dependsOn:
+    - publishAdal
+    - publishBrokerLibraries
+  jobs:
+    - job: publish_to_release
+      displayName: Publish all the libraries to Release
+      timeoutInMinutes: 90
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: PowerShell@2
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
+            arguments: '-PackagingPAT "$(MSAZURE_BUILD_TOKEN)" -common4jVersion "${{ parameters.common4jVersionRC }}" -commonVersion "${{ parameters.commonVersionRC }}" -broker4jVersion "${{ parameters.broker4jVersionRC }}" -adAccountsVersion "${{ parameters.adAccountsVersionRC }}" -msalVersion "${{ parameters.msalVersionRC }}" -adalVersion "${{ parameters.adalVersionRC }}" -PromoteToView "Release"'
+            workingDirectory: '$(Build.SourcesDirectory)'              
 # Broker app generation
 # Authenticator
 - stage: 'queueAuthenticatorBrokerApkPipeline'
