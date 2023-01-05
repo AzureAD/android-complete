@@ -221,14 +221,40 @@ stages:
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
-# BrokerApk - Queue pipeline
-- stage: 'queueBrokerApkPipeline'
-  displayName: Broker Apk Generation
+# Promote published packages
+- stage: 'promotePackages'
+  displayName: Promote published pacakges
   dependsOn:
     - publishMsal
     - publishAdal
     - publishCommonLibraries
     - publishBrokerLibraries
+  jobs:
+    - job: promote_packages
+      displayName: Promote Packages - Prerelease & Release
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: PowerShell@2
+          displayName: Run script to promote packages - Prerelease
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
+            arguments: '-PackagingPAT "$env:SYSTEM_ACCESSTOKEN" -PackageVersion "$(Build.BuildNumber)"'
+            workingDirectory: '$(Build.SourcesDirectory)'
+          env:
+            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+        - task: PowerShell@2
+          displayName: Run script to promote packages - Release
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
+            arguments: '-PackagingPAT "$env:SYSTEM_ACCESSTOKEN" -PackageVersion "$(Build.BuildNumber)" -PromoteToView "Release"'
+            workingDirectory: '$(Build.SourcesDirectory)'
+          env:
+            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+# BrokerApk - Queue pipeline
+- stage: 'queueBrokerApkPipeline'
+  displayName: Broker Apk Generation
+  dependsOn: promotePackages
   jobs:
     - job: queue_build
       displayName: BrokerApk - Trigger pipelines
@@ -241,7 +267,7 @@ stages:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(pipelinepat)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(Build.BuildNumber)'', ''CommonVersion'': ''$(Build.BuildNumber)'', ''MsalVersion'': ''$(Build.BuildNumber)'', ''AdalVersion'': ''$(Build.BuildNumber)'' }" -Branch "broker/continuous-integration"'
             workingDirectory: '$(Build.SourcesDirectory)'
-  # Broker - E2E Automation
+# Broker - E2E Automation
 - stage: 'runBrokerE2EAutomation'
   displayName: Broker Automation Run
   dependsOn: queueBrokerApkPipeline
