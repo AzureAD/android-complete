@@ -385,8 +385,8 @@ stages:
         adAccountsVersion: ${{ parameters.adAccountsVersionPROD }}        
         adalVersion: ${{ parameters.adalVersionPROD }}        
         packageVariant: PROD 
-# BrokerHost (RC, Release)
-- stage: 'brokerHostRCRelease'
+# BrokerHost (Dist, RC, Release)
+- stage: 'brokerHostDistRCRelease'
   dependsOn: 
     - publishCommonLibraries
     - publishMsal
@@ -403,8 +403,8 @@ stages:
         adAccountsVersion: ${{ parameters.adAccountsVersionRC }}        
         adalVersion: ${{ parameters.adalVersionRC }}        
         packageVariant: RC
-# BrokerHost (RC, Debug)
-- stage: 'brokerHostRCDebug'
+# BrokerHost (Dist, RC, Debug)
+- stage: 'brokerHostDistRCDebug'
   dependsOn:
     - publishMsal
     - publishCommonLibraries
@@ -420,7 +420,43 @@ stages:
         commonVersion: ${{ parameters.commonVersionRC }}
         adAccountsVersion: ${{ parameters.adAccountsVersionRC }}        
         adalVersion: ${{ parameters.adalVersionRC }}        
-        packageVariant: RC          
+        packageVariant: RC
+# BrokerHost (Local, RC, Release)
+- stage: 'brokerHostLocalRCRelease'
+  dependsOn:
+    - publishCommonLibraries
+    - publishMsal
+    - publishBrokerLibraries
+    - publishAdal
+  displayName: Build BrokerHost RC Release
+  jobs:
+    - template: ./templates/build-broker-host.yml
+      parameters:
+        productFlavors: Local
+        signingConfigurations: Release
+        msalVersion: ${{ parameters.msalVersionRC }}
+        commonVersion: ${{ parameters.commonVersionRC }}
+        adAccountsVersion: ${{ parameters.adAccountsVersionRC }}
+        adalVersion: ${{ parameters.adalVersionRC }}
+        packageVariant: RC
+# BrokerHost (Local, RC, Debug)
+- stage: 'brokerHostLocalRCDebug'
+  dependsOn:
+    - publishMsal
+    - publishCommonLibraries
+    - publishBrokerLibraries
+    - publishAdal
+  displayName: Build BrokerHost RC Debug
+  jobs:
+    - template: ./templates/build-broker-host.yml
+      parameters:
+        productFlavors: Local
+        signingConfigurations: Debug
+        msalVersion: ${{ parameters.msalVersionRC }}
+        commonVersion: ${{ parameters.commonVersionRC }}
+        adAccountsVersion: ${{ parameters.adAccountsVersionRC }}
+        adalVersion: ${{ parameters.adalVersionRC }}
+        packageVariant: RC
 # msalautomationapp (RC)
 - stage: 'msalautomationappRC'
   dependsOn: 
@@ -507,7 +543,7 @@ stages:
   - download_brokers
   - firstpartyapps
   - azuresampleappRC
-  - brokerHostRCRelease
+  - brokerHostDistRCRelease
   displayName: ADAL with broker and Broker basic validation test plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -521,7 +557,7 @@ stages:
                       /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-RC/AzureSample-external-release.apk,\
-                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-RC-release/brokerHost-dist-release.apk,\
+                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Dist-RC-release/brokerHost-dist-release.apk,\
                       /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
@@ -554,7 +590,7 @@ stages:
                       /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/prod/$(authenticatorApk),\
                       /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-RC/AzureSample-external-release.apk,\
-                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-PROD-release/brokerHost-dist-release.apk,\
+                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Dist-PROD-release/brokerHost-dist-release.apk,\
                       /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
@@ -585,7 +621,7 @@ stages:
                       /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/prod/$(authenticatorApk),\
                       /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-RC/AzureSample-external-release.apk,\
-                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-PROD-release/brokerHost-dist-release.apk,\
+                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Dist-PROD-release/brokerHost-dist-release.apk,\
                       /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
@@ -603,7 +639,7 @@ stages:
     - download_brokers
     - firstpartyapps
     - azuresampleappPROD
-    - brokerHostRCRelease
+    - brokerHostDistRCRelease
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -617,7 +653,7 @@ stages:
                       /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
-                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-RC-release/brokerHost-dist-release.apk,\
+                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Dist-RC-release/brokerHost-dist-release.apk,\
                       /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
@@ -634,7 +670,7 @@ stages:
     - download_brokers
     - firstpartyapps
     - azuresampleappPROD
-    - brokerHostRCRelease
+    - brokerHostLocalRCRelease
   displayName: PROD MSAL - RC Broker (BrokerHost tests, release) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -648,7 +684,7 @@ stages:
                       /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
-                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-RC-release/brokerHost-dist-release.apk,\
+                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Local-RC-release/brokerHost-local-release.apk,\
                       /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
@@ -664,7 +700,7 @@ stages:
     - download_brokers
     - firstpartyapps
     - azuresampleappPROD
-    - brokerHostRCDebug
+    - brokerHostLocalRCDebug
   displayName: PROD MSAL - RC Broker (BrokerHost tests, debug) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -678,7 +714,7 @@ stages:
                       /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
-                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-RC-debug/brokerHost-dist-debug.apk,\
+                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Local-RC-debug/brokerHost-local-debug.apk,\
                       /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
@@ -694,7 +730,7 @@ stages:
     - download_brokers
     - firstpartyapps
     - azuresampleappPROD
-    - brokerHostRCRelease
+    - brokerHostDistRCRelease
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -708,7 +744,7 @@ stages:
                       /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
-                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-RC-release/brokerHost-dist-release.apk,\
+                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Dist-RC-release/brokerHost-dist-release.apk,\
                       /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
@@ -726,7 +762,7 @@ stages:
 #    - download_brokers
 #    - firstpartyapps
 #    - azuresampleappPROD
-#    - brokerHostRCDebug
+#    - brokerHostDistRCDebug
 #  displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) with BrokerHost Debug
 #  jobs:
 #    - template: ./templates/run-on-firebase.yml
@@ -755,7 +791,7 @@ stages:
 #    - download_brokers
 #    - firstpartyapps
 #    - azuresampleappPROD
-#    - brokerHostRCDebug
+#    - brokerHostDistRCDebug
 #  displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) with BrokerHost Debug
 #  jobs:
 #    - template: ./templates/run-on-firebase.yml
