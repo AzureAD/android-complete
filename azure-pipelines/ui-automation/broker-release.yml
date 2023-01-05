@@ -30,17 +30,17 @@ parameters:
   displayName: Common PROD Version
   type: string
 - name: common4jVersionRC
-  displayName: Common 4j Version
-  type: string  
+  displayName: Common4j RC Version
+  type: string
+- name: broker4jVersionRC
+  displayName: Broker4j RC Version
+  type: string    
 - name: adAccountsVersionRC
   displayName: Broker RC Version
   type: string
 - name: adAccountsVersionPROD
   displayName: Broker PROD Version
   type: string
-- name: broker4jVersionRC
-  displayName: Broker 4j Version
-  type: string  
 - name: adalVersionRC
   displayName: ADAL RC Version
   type: string
@@ -369,6 +369,8 @@ stages:
   dependsOn:
     - publishAdal
     - publishBrokerLibraries
+    - publishToPrelease
+    - publishToRelease
   jobs:
     - job: queue_build
       displayName: Queue Build for Company Portal RC
