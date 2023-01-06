@@ -398,10 +398,10 @@ stages:
       parameters:
         productFlavors: Dist
         signingConfigurations: Release
-        msalVersion: ${{ parameters.msalVersionRC }}
+        msalVersion: ${{ parameters.msalVersionRC }}a
         commonVersion: ${{ parameters.commonVersionRC }}
-        adAccountsVersion: ${{ parameters.adAccountsVersionRC }}        
-        adalVersion: ${{ parameters.adalVersionRC }}        
+        adAccountsVersion: ${{ parameters.adAccountsVersionRC }}
+        adalVersion: ${{ parameters.adalVersionRC }}
         packageVariant: RC
 # BrokerHost (Dist, RC, Debug)
 - stage: 'brokerHostDistRCDebug'
@@ -418,27 +418,27 @@ stages:
         signingConfigurations: Debug
         msalVersion: ${{ parameters.msalVersionRC }}
         commonVersion: ${{ parameters.commonVersionRC }}
-        adAccountsVersion: ${{ parameters.adAccountsVersionRC }}        
-        adalVersion: ${{ parameters.adalVersionRC }}        
-        packageVariant: RC
-# BrokerHost (Local, RC, Release)
-- stage: 'brokerHostLocalRCRelease'
-  dependsOn:
-    - publishCommonLibraries
-    - publishMsal
-    - publishBrokerLibraries
-    - publishAdal
-  displayName: Build BrokerHost RC Release
-  jobs:
-    - template: ./templates/build-broker-host.yml
-      parameters:
-        productFlavors: Local
-        signingConfigurations: Release
-        msalVersion: ${{ parameters.msalVersionRC }}
-        commonVersion: ${{ parameters.commonVersionRC }}
         adAccountsVersion: ${{ parameters.adAccountsVersionRC }}
         adalVersion: ${{ parameters.adalVersionRC }}
         packageVariant: RC
+# BrokerHost (Local, RC, Release)
+#- stage: 'brokerHostLocalRCRelease'
+#  dependsOn:
+#    - publishCommonLibraries
+#    - publishMsal
+#    - publishBrokerLibraries
+#    - publishAdal
+#  displayName: Build BrokerHost RC Release
+#  jobs:
+#    - template: ./templates/build-broker-host.yml
+#      parameters:
+#        productFlavors: Local
+#        signingConfigurations: Release
+#        msalVersion: ${{ parameters.msalVersionRC }}
+#        commonVersion: ${{ parameters.commonVersionRC }}
+#        adAccountsVersion: ${{ parameters.adAccountsVersionRC }}
+#        adalVersion: ${{ parameters.adalVersionRC }}
+#        packageVariant: RC
 # BrokerHost (Local, RC, Debug)
 - stage: 'brokerHostLocalRCDebug'
   dependsOn:
@@ -664,35 +664,35 @@ stages:
         extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
         flankShards: ${{ parameters.flankShards }}
 # PROD MSAL with RC Broker (BrokerHost Build Variant Tests, Release) (API 30+)
-- stage: 'PROD_msal_RC_brokerhost_release'
-  dependsOn:
-    - msalautomationappPRODlocalbrokerhost
-    - download_brokers
-    - firstpartyapps
-    - azuresampleappPROD
-    - brokerHostLocalRCRelease
-  displayName: PROD MSAL - RC Broker (BrokerHost tests, release) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
-  jobs:
-    - template: ./templates/run-on-firebase.yml
-      parameters:
-        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/msalautomationapp-local-BrokerHost-debug.apk"
-        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/msalautomationapp-local-BrokerHost-debug-androidTest.apk"
-        testTargetPackages: ${{ parameters.msalTestTarget }}
-        resultsHistoryName: "$(resultsHistoryName)"
-        resultsDir: "PROD-MSAL-RC-BrokerHost-release-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
-        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-                      /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
-                      /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
-                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Local-RC-release/brokerHost-local-release.apk,\
-                      /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
-                      /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
-                      /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
-                      /data/local/tmp/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
-        firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
-        firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
-        testRunTitle: "PROD MSAL - RC Broker (BrokerHost tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
-        extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus, annotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
+#- stage: 'PROD_msal_RC_brokerhost_release'
+#  dependsOn:
+#    - msalautomationappPRODlocalbrokerhost
+#    - download_brokers
+#    - firstpartyapps
+#    - azuresampleappPROD
+#    - brokerHostLocalRCRelease
+#  displayName: PROD MSAL - RC Broker (BrokerHost tests, release) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
+#  jobs:
+#    - template: ./templates/run-on-firebase.yml
+#      parameters:
+#        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/msalautomationapp-local-BrokerHost-debug.apk"
+#        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/msalautomationapp-local-BrokerHost-debug-androidTest.apk"
+#        testTargetPackages: ${{ parameters.msalTestTarget }}
+#        resultsHistoryName: "$(resultsHistoryName)"
+#        resultsDir: "PROD-MSAL-RC-BrokerHost-release-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
+#        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
+#                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+#                      /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+#                      /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
+#                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Local-RC-release/brokerHost-local-release.apk,\
+#                      /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
+#                      /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
+#                      /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
+#                      /data/local/tmp/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
+#        firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
+#        firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
+#        testRunTitle: "PROD MSAL - RC Broker (BrokerHost tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
+#        extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus, annotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
 # PROD MSAL with RC Broker (BrokerHost Build Variant Tests, Debug) (API 30+)
 - stage: 'PROD_msal_RC_brokerhost_debug'
   dependsOn:
@@ -753,65 +753,3 @@ stages:
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionLow }}
         testRunTitle: "PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) # $(Build.BuildNumber)"
         extraTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
-
-
-# PROD MSAL with RC Broker (API 29-) with BrokerHost Debug
-#- stage: 'PRODmsal_RCbroker_low_api_brokerhostDebug'
-#  dependsOn:
-#    - msalautomationappPROD
-#    - download_brokers
-#    - firstpartyapps
-#    - azuresampleappPROD
-#    - brokerHostDistRCDebug
-#  displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) with BrokerHost Debug
-#  jobs:
-#    - template: ./templates/run-on-firebase.yml
-#      parameters:
-#        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-PROD-LocalApk/$(msalApp)"
-#        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-PROD-LocalApk/$(msaltestApp)"
-#        testTargetPackages: ${{ parameters.msalTestTarget }}
-#        resultsHistoryName: "$(resultsHistoryName)"
-#        resultsDir: "RC_MSAL-PROD_Broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
-#        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-#                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-#                      /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
-#                      /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
-#                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-RC-debug/brokerHost-dist-debug.apk,\
-#                      /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
-#                      /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
-#                      /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk)"
-#        firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
-#        firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionLow }}
-#        testRunTitle: "PROD MSAL - RC Broker With BrokerHost Debug (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) # $(Build.BuildNumber)"
-#        extraTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
-# PROD MSAL with RC Broker (API 30+) with BrokerHost Debug
-#- stage: 'PRODmsal_RCbroker_high_api_brokerhostDebug'
-#  dependsOn:
-#    - msalautomationappPROD
-#    - download_brokers
-#    - firstpartyapps
-#    - azuresampleappPROD
-#    - brokerHostDistRCDebug
-#  displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) with BrokerHost Debug
-#  jobs:
-#    - template: ./templates/run-on-firebase.yml
-#      parameters:
-#        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-PROD-LocalApk/$(msalApp)"
-#        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-PROD-LocalApk/$(msaltestApp)"
-#        testTargetPackages: ${{ parameters.msalTestTarget }}
-#        resultsHistoryName: "$(resultsHistoryName)"
-#        resultsDir: "RC_MSAL-PROD_Broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
-#        otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-#                      /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-#                      /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
-#                      /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
-#                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-RC-debug/brokerHost-dist-debug.apk,\
-#                      /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
-#                      /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
-#                      /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk)"
-#        firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
-#        firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
-#        testRunTitle: "PROD MSAL - RC Broker With BrokerHost Debug (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
-#        extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
-#
-
