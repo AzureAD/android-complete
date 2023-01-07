@@ -435,7 +435,7 @@ stages:
       parameters:
         productFlavors: Dist
         signingConfigurations: Release
-        msalVersion: ${{ parameters.msalVersionRC }}a
+        msalVersion: ${{ parameters.msalVersionRC }}
         commonVersion: ${{ parameters.commonVersionRC }}
         adAccountsVersion: ${{ parameters.adAccountsVersionRC }}
         adalVersion: ${{ parameters.adalVersionRC }}
