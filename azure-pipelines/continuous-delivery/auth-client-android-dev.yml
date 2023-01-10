@@ -98,7 +98,7 @@ stages:
       repository: common
       project: common
       assembleCmd: assembleDist
-      testCmd: testDistReleaseUnitTest
+      testCmd: testLocalDebugUnitTest
       publishCmd: publishDistReleasePublicationToVsts-maven-adal-androidRepository
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam)
@@ -116,6 +116,7 @@ stages:
     parameters:
       repository: broker
       project: broker4j
+      testCmd: broker4jUnitTestCoverageReport
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
@@ -134,7 +135,7 @@ stages:
       repository: broker
       project: AADAuthenticator
       assembleCmd: assembleDist
-      testCmd: testDistReleaseUnitTest
+      testCmd: localDebugAADAuthenticatorUnitTestCoverageReport
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
@@ -153,6 +154,7 @@ stages:
       repository: broker
       project: LinuxBroker
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
+      testCmd: ""
       dependencyParams: $(broker4jVersionParam) $(common4jVersionParam) $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
       publishParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
@@ -201,7 +203,7 @@ stages:
       repository: msal
       project: msal
       assembleCmd: assembleDistRelease
-      testCmd: testDistReleaseUnitTest
+      testCmd: testLocalDebugUnitTest
       publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam)
@@ -218,7 +220,7 @@ stages:
       repository: adal
       project: adal
       assembleCmd: assembleDist
-      testCmd: testDistReleaseUnitTest
+      testCmd: testLocalDebugUnitTest
       publishCmd: publishAdalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam)
