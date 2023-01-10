@@ -223,7 +223,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
 # Promote published packages
 - stage: 'promotePackages'
-  displayName: Promote published pacakges
+  displayName: Promote published packages
   dependsOn:
     - publishMsal
     - publishAdal
@@ -256,8 +256,8 @@ stages:
   displayName: Broker Apk Generation
   dependsOn: promotePackages
   jobs:
-    - job: queue_build
-      displayName: BrokerApk - Trigger pipelines
+    - job: queue_build_authenticator
+      displayName: Generate Authenticator Apk
       steps:
         - checkout: self
           persistCredentials: True
@@ -265,7 +265,18 @@ stages:
           displayName: Queue and wait for Authenticator Apk generation pipeline
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(pipelinepat)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(Build.BuildNumber)'', ''CommonVersion'': ''$(Build.BuildNumber)'', ''MsalVersion'': ''$(Build.BuildNumber)'', ''AdalVersion'': ''$(Build.BuildNumber)'' }" -Branch "broker/continuous-integration"'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(pipelinepat)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(versionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(authenticatorBranch)"'
+            workingDirectory: '$(Build.SourcesDirectory)'
+    - job: queue_build_CompanyPortal
+      displayName: Generate CompanyPortal Apk
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: PowerShell@2
+          displayName: Queue and wait for Company Portal Apk generation pipeline
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(pipelinepat)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "237827" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(versionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(companyPortalBranch)"'
             workingDirectory: '$(Build.SourcesDirectory)'
 # Broker - E2E Automation
 - stage: 'runBrokerE2EAutomation'
