@@ -369,8 +369,8 @@ stages:
   dependsOn:
     - publishAdal
     - publishBrokerLibraries
-    - publishToPrelease
-    - publishToRelease
+    # - publishToPrelease
+    # - publishToRelease
   jobs:
     - job: queue_build
       displayName: Queue Build for Company Portal RC
