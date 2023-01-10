@@ -98,6 +98,7 @@ stages:
       repository: common
       project: common
       assembleCmd: assembleDist
+      testCmd: testDistReleaseUnitTest
       publishCmd: publishDistReleasePublicationToVsts-maven-adal-androidRepository
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam)
@@ -133,6 +134,7 @@ stages:
       repository: broker
       project: AADAuthenticator
       assembleCmd: assembleDist
+      testCmd: testDistReleaseUnitTest
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
@@ -199,6 +201,7 @@ stages:
       repository: msal
       project: msal
       assembleCmd: assembleDistRelease
+      testCmd: testDistReleaseUnitTest
       publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam)
@@ -215,6 +218,7 @@ stages:
       repository: adal
       project: adal
       assembleCmd: assembleDist
+      testCmd: testDistReleaseUnitTest
       publishCmd: publishAdalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam)

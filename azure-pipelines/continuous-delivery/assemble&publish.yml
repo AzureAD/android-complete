@@ -6,6 +6,8 @@ parameters:
 - name: project
 - name: assembleCmd
   default: assemble
+- name: testCmd
+  default: test
 - name: publishCmd
   default: publish
 - name: dependencyParams
@@ -27,6 +29,13 @@ jobs:
   steps:
   - checkout: ${{ parameters.repository }}
     persistCredentials: True
+  - task: AzureKeyVault@2
+    displayName: 'Get Key vault AndroidAutomationRunnerAppSecret'
+    inputs:
+      azureSubscription: 'MSIDLABS_ANDROID_KV'
+      KeyVaultName: 'ADALTestInfo'
+      SecretsFilter: 'AndroidAutomationRunnerAppSecret'
+      RunAsPreJob: false
   - task: Gradle@3
     displayName: Generate Lockfile ${{ parameters.project }}
     inputs:
@@ -35,9 +44,9 @@ jobs:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(AndroidAuthClient-Internal-Maven-Access-Token)
   - task: Gradle@3
-    displayName: Build ${{ parameters.project }}
+    displayName: Build and Run Test ${{ parameters.project }}
     inputs:
-      tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
+      tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.testCmd}} ${{ parameters.assembleParams}} -PlabSecret=$(AndroidAutomationRunnerAppSecret)
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(AndroidAuthClient-Internal-Maven-Access-Token)
