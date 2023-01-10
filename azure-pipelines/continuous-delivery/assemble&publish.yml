@@ -29,13 +29,6 @@ jobs:
   steps:
   - checkout: ${{ parameters.repository }}
     persistCredentials: True
-  - task: AzureKeyVault@2
-    displayName: 'Get Key vault AndroidAutomationRunnerAppSecret'
-    inputs:
-      azureSubscription: 'MSIDLABS_ANDROID_KV'
-      KeyVaultName: 'ADALTestInfo'
-      SecretsFilter: 'AndroidAutomationRunnerAppSecret'
-      RunAsPreJob: false
   - task: Gradle@3
     displayName: Generate Lockfile ${{ parameters.project }}
     inputs:
@@ -44,9 +37,9 @@ jobs:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(AndroidAuthClient-Internal-Maven-Access-Token)
   - task: Gradle@3
-    displayName: Build and Run Test ${{ parameters.project }}
+    displayName: Build ${{ parameters.project }}
     inputs:
-      tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.testCmd}} ${{ parameters.assembleParams}} -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true
+      tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(AndroidAuthClient-Internal-Maven-Access-Token)
@@ -60,3 +53,23 @@ jobs:
   - task: ComponentGovernanceComponentDetection@0
     inputs:
       sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/dependency-locks/
+- job: RunUnitTest${{ parameters.project }}
+  pool:
+    vmImage: windows-2022
+    variables:
+      - group: AndroidAuthClientVariables
+  steps:
+    - checkout: ${{ parameters.repository }}
+      persistCredentials: True
+    - task: AzureKeyVault@2
+      displayName: 'Get Key vault AndroidAutomationRunnerAppSecret'
+      inputs:
+        azureSubscription: 'MSIDLABS_ANDROID_KV'
+        KeyVaultName: 'ADALTestInfo'
+        SecretsFilter: 'AndroidAutomationRunnerAppSecret'
+        RunAsPreJob: false
+    - task: Gradle@3
+      displayName: Run Test ${{ parameters.project }}
+      continueOnError: true
+      inputs:
+        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true

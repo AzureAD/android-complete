@@ -71,7 +71,6 @@ stages:
       project: LabApiUtilities
       dependencyParams: $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam)
-      testCmd: ""
       publishParams: $(projVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
@@ -85,7 +84,6 @@ stages:
       repository: common
       project: common4j
       dependencyParams: $(javaProjectDependencyParam)
-      testCmd: ""
       assembleParams: $(projVersionParam)
       publishParams: $(projVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
