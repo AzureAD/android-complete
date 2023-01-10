@@ -46,7 +46,7 @@ jobs:
   - task: Gradle@3
     displayName: Build and Run Test ${{ parameters.project }}
     inputs:
-      tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.testCmd}} ${{ parameters.assembleParams}} -PlabSecret=$(AndroidAutomationRunnerAppSecret)
+      tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.testCmd}} ${{ parameters.assembleParams}} -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(AndroidAuthClient-Internal-Maven-Access-Token)
