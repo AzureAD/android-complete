@@ -18,6 +18,17 @@ For this, you'll need a Personal Access Token (PAT) under IdentityDivision organ
 
 **Copy this token and save it.  It is your vstsMavenAccessToken, placed in gradle.properties below.**  It is used by your local gradle builds to access artifacts in the microsoft maven repository in visualstudio online.  If you see errors like "Could not HEAD 'https://identitydivision.pkgs.visualstudio.com/_packaging/AndroidADAL/maven/v1/com/microsoft/device/display/display-mask/0.3.0/display-mask-0.3.0.pom'. Received status code 401 from server: Unauthorized" then this token is not set up correctly.
 
+- Office Maven Feed
+For this you'll need a Personal Access Token (PAT) under Office organization.
+1. Login to https://office.visualstudio.com/ with your microsoft credentials.
+2. Click on profile icon, click security from the drop down menu.
+3. Click on Add to add new token. Add a description for your token.
+4. Keep the default value for expires in.
+5. Select All accessible [Microsoft] accounts.
+6. In Authorized scopes select Selected scopes, check only Packaging (read) scope and create token.
+
+**Copy this token and save it. It is your vstsOfficeMavenAccessToken, placed in gradle.properties.** It is used by your local gradle builds to access artifacts in the office maven directory.
+
 - [Private GitHub Repositories](https://repos.opensource.microsoft.com/)
 1. Go to https://repos.opensource.microsoft.com/. You'll need a github account.
 2. Join 'AzureAD' organization (to get an access to Broker) via https://repos.opensource.microsoft.com/AzureAD/join
@@ -32,6 +43,7 @@ Then add the following to your gradle properties (in your user folder on windows
 vstsUsername=VSTS 
 vstsMavenAccessToken=[Insert a PAT for the Android DevX Feed here]
 adoMsazureAuthAppAccessToken=[Insert a PAT for the Authenticator App Feed here] (Only needed if you set up Authenticator App Dependency Feed)
+vstsOfficeMavenAccessToken=[Insert a PAT for Office Feed here]
 ```
 
 >NOTE: By default, this global gradle.properties is located at
