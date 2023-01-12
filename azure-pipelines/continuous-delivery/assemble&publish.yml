@@ -36,6 +36,7 @@ jobs:
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(AndroidAuthClient-Internal-Maven-Access-Token)
+      ENV_VSTS_MVN_OFFICE_ACCESSTOKEN: $(vstsOfficeMavenAccessToken)
   - task: Gradle@3
     displayName: Build ${{ parameters.project }}
     inputs:
@@ -43,6 +44,7 @@ jobs:
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(AndroidAuthClient-Internal-Maven-Access-Token)
+      ENV_VSTS_MVN_OFFICE_ACCESSTOKEN: $(vstsOfficeMavenAccessToken)
   - task: Gradle@3
     displayName: Publish ${{ parameters.project }}
     inputs:
@@ -50,6 +52,7 @@ jobs:
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(AndroidAuthClient-Internal-Maven-Access-Token)
+      ENV_VSTS_MVN_OFFICE_ACCESSTOKEN: $(vstsOfficeMavenAccessToken)
   - task: ComponentGovernanceComponentDetection@0
     inputs:
       sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/dependency-locks/
@@ -72,7 +75,8 @@ jobs:
       displayName: Run Test ${{ parameters.project }}
       continueOnError: true
       inputs:
-        tasks: ${{ parameters.project }}:${{ parameters.testCmd}}  -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PvstsUsername=$(AndroidAuthClient-Internal-Maven-Username) -PvstsMavenAccessToken=$(AndroidAuthClient-Internal-Maven-Access-Token)
+        tasks: ${{ parameters.project }}:${{ parameters.testCmd}}  -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(AndroidAuthClient-Internal-Maven-Access-Token)
+        ENV_VSTS_MVN_OFFICE_ACCESSTOKEN: $(vstsOfficeMavenAccessToken)

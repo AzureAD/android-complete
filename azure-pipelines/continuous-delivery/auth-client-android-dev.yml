@@ -116,7 +116,6 @@ stages:
     parameters:
       repository: broker
       project: broker4j
-      testCmd: broker4jUnitTestCoverageReport
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
