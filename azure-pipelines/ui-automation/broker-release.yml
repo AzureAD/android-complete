@@ -205,6 +205,17 @@ variables:
   resultsHistoryName: Broker Release
 
 stages:
+- stage: 'setOfficeMvnAccessToken'
+  displayName: Set Office Maven Access Token  
+  jobs:
+    - job: 
+      steps:
+      - task: CmdLine@1        
+        displayName: Set Office MVN Access Token in Environment
+        inputs:
+          filename: echo
+          arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_OFFICE_ACCESSTOKEN]$(vstsOfficeMavenAccessToken)' 
+
 # Package generation
 # LabApiUtilities - Build and publish
 - stage: 'publishLabApiUtilitiesLibraries'
