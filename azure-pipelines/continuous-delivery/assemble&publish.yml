@@ -76,3 +76,18 @@ jobs:
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
+#- job: RunInstrumentedTests${{ parameters.project }}
+#  condition: ne(${{ parameters.instrumentedTestBuild }}, ''))
+#  pool:
+#    vmImage: ubuntu-latest
+#    variables:
+#      - group: AndroidAuthClientVariables
+#  steps:
+#    - checkout: self
+#      persistCredentials: True
+#    - task: PowerShell@2
+#      displayName: Queue and wait for Instrumented test pipeline
+#      inputs:
+#        filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+#        arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId "${{parameters.instrumentedTestBuild}}"'
+#        workingDirectory: '$(Build.SourcesDirectory)'
