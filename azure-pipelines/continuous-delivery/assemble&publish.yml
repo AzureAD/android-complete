@@ -36,18 +36,19 @@ jobs:
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(AndroidAuthClient-Internal-Maven-Access-Token)
-      ENV_VSTS_MVN_OFFICE_ACCESSTOKEN: $(vstsOfficeMavenAccessToken)
   - task: Gradle@3
     displayName: Build ${{ parameters.project }}
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
     env:
+      ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: Gradle@3
     displayName: Publish ${{ parameters.project }}
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.publishCmd}} ${{ parameters.publishParams}}
     env:
+      ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: ComponentGovernanceComponentDetection@0
     inputs:
@@ -75,4 +76,3 @@ jobs:
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
-        ENV_VSTS_MVN_OFFICE_ACCESSTOKEN: $(vstsOfficeMavenAccessToken)
