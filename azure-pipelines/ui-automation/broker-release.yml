@@ -20,10 +20,10 @@ parameters:
   values:
     - generated
     - unique
-- name: skipBuild
-  displayName: Skip Building Artifacts?
+- name: buildArtifacts
+  displayName: Building Artifacts?
   type: boolean
-  default: true
+  default: False
 - name: msalVersionRC
   displayName: MSAL RC Version
   type: string
@@ -209,7 +209,7 @@ stages:
 # LabApiUtilities - Build and publish
 - stage: 'publishLabApiUtilitiesLibraries'
   displayName: LabApiUtilities - Build and publish
-  condition: eq(${{ parameters.skipBuild }}, 'false')
+  condition: ${{ parameters.buildArtifacts }}
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -223,7 +223,7 @@ stages:
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
-  condition: eq(${{ parameters.skipBuild }}, 'false')
+  condition: ${{ parameters.buildArtifacts }}
   dependsOn: [] # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
@@ -239,7 +239,7 @@ stages:
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish  
   dependsOn: publishCommon4jLibraries
-  condition: eq(${{ parameters.skipBuild }}, 'false')    
+  condition: ${{ parameters.buildArtifacts }}
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -258,7 +258,7 @@ stages:
   dependsOn: 
   - publishLabApiUtilitiesLibraries
   - publishCommon4jLibraries
-  condition: eq(${{ parameters.skipBuild }}, 'false')
+  condition: ${{ parameters.buildArtifacts }}
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -276,7 +276,7 @@ stages:
   dependsOn: 
   - publishCommonLibraries
   - publishBroker4jLibraries
-  condition: eq(${{ parameters.skipBuild }}, 'false')
+  condition: ${{ parameters.buildArtifacts }}
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -293,7 +293,7 @@ stages:
 - stage: 'publishMsal'
   displayName: Msal - Build and publish  
   dependsOn: publishCommonLibraries
-  condition: eq(${{ parameters.skipBuild }}, 'false')
+  condition: ${{ parameters.buildArtifacts }}
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -310,7 +310,7 @@ stages:
 - stage: 'publishAdal'
   displayName: Adal - Build and publish  
   dependsOn: publishCommonLibraries
-  condition: eq(${{ parameters.skipBuild }}, 'false')
+  condition: ${{ parameters.buildArtifacts }}
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -326,7 +326,7 @@ stages:
 #Publish to PreRelease
 - stage: 'publishToPrelease'
   displayName: Publish Libraries to PreRelease
-  condition: eq(${{ parameters.skipBuild }}, 'false')
+  condition: ${{ parameters.buildArtifacts }}
   dependsOn:
     - publishAdal
     - publishBrokerLibraries
@@ -345,7 +345,7 @@ stages:
 #Publish to Release
 - stage: 'publishToRelease'
   displayName: Publish Libraries to Release
-  condition: eq(${{ parameters.skipBuild }}, 'false')
+  condition: ${{ parameters.buildArtifacts }}
   dependsOn:
     - publishAdal
     - publishBrokerLibraries
@@ -365,7 +365,7 @@ stages:
 # Authenticator
 - stage: 'queueAuthenticatorBrokerApkPipeline'
   displayName: Authenticator - Queue pipeline
-  condition: eq(${{ parameters.skipBuild }}, 'false')
+  condition: ${{ parameters.buildArtifacts }}
   dependsOn:
     - publishAdal
     - publishBrokerLibraries
@@ -384,7 +384,7 @@ stages:
 # Company Portal
 - stage: 'queueCompanyPortalBrokerApkPipeline'
   displayName: Company Portal - Queue pipeline
-  condition: eq(${{ parameters.skipBuild }}, 'false')
+  condition: ${{ parameters.buildArtifacts }}
   dependsOn:
     - publishAdal
     - publishBrokerLibraries
