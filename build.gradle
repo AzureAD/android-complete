@@ -63,15 +63,6 @@ allprojects {
                 password project.vstsMavenAccessToken
             }
         }
-        maven {
-            name "vsts-maven-powerlift-java"
-            url "https://office.pkgs.visualstudio.com/_packaging/PowerLift/maven/v1"
-            credentials {
-                username project.vstsUsername
-                password project.vstsOfficeMavenAccessToken
-            }
-        }
-
     }
 
     gradle.projectsEvaluated {
