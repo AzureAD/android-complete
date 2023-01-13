@@ -85,6 +85,3 @@ if (!project.hasProperty("vstsUsername")) {
 if (!project.hasProperty("vstsMavenAccessToken")) {
     logger.error('vstsMavenAccessToken is missing in gradle.properties')
 }
-if (!project.hasProperty("vstsOfficeMavenAccessToken")) {
-    logger.error('vstsOfficeMavenAccessToken is missing in gradle.properties')
-}
