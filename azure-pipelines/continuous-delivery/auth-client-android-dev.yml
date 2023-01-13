@@ -62,18 +62,18 @@ variables:
 
 stages:
 # :LabApiUtilities - Build and publish
-- stage: 'publishLabApiUtilitiesLibraries'
-  displayName: LabApiUtilities - Build and publish
-  jobs:
-  - template: assemble&publish.yml
-    parameters:
-      repository: common
-      project: LabApiUtilities
-      dependencyParams: $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam)
-      publishParams: $(projVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
-      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+#- stage: 'publishLabApiUtilitiesLibraries'
+#  displayName: LabApiUtilities - Build and publish
+#  jobs:
+#  - template: assemble&publish.yml
+#    parameters:
+#      repository: common
+#      project: LabApiUtilities
+#      dependencyParams: $(javaProjectDependencyParam)
+#      assembleParams: $(projVersionParam)
+#      publishParams: $(projVersionParam)
+#      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
+#      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
@@ -109,7 +109,6 @@ stages:
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
   dependsOn: 
-  - publishLabApiUtilitiesLibraries
   - publishCommon4jLibraries
   jobs:
   - template: assemble&publish.yml
@@ -118,8 +117,8 @@ stages:
       project: broker4j
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
-      publishParams: $(projVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
+      assembleParams: $(projVersionParam) $(common4jVersionParam)
+      publishParams: $(projVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
 # Broker - Build and publish
@@ -134,7 +133,7 @@ stages:
       repository: broker
       project: AADAuthenticator
       assembleCmd: assembleDist
-      testCmd: localDebugAADAuthenticatorUnitTestCoverageReport
+      testCmd: testDistReleaseUnitTest
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
