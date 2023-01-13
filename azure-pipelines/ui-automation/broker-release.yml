@@ -54,9 +54,10 @@ parameters:
 - name: adalVersionPROD
   displayName: ADAL PROD Version
   type: string
-# - name: labApiUtils
-#   displayName: Lab Api Utils Version
-#   type: string  
+- name: labApiUtils
+  displayName: Lab Api Utils Version
+  type: string  
+  default: 
 - name: firebaseDeviceIdHigh
   displayName: Firebase Device Id (Api 30+)
   type: string
@@ -179,7 +180,7 @@ variables:
     msalProjVersionParam: -PprojVersion=${{ parameters.msalVersionRC }}
     adAccountsProjVersionParam: -PprojVersion=${{ parameters.adAccountsVersionRC }}
     adalProjVersionParam: -PprojVersion=${{ parameters.adalVersionRC }}
-    labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(versionNumber)
+    labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=${{ parameters.labApiUtils }}
     labApiUtilitiesProjVersionParam: -PprojVersion=${{ parameters.labApiUtils }}
   
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
