@@ -109,6 +109,26 @@ stages:
     steps:
     - checkout: common
       persistCredentials: True
+    - task: CacheBeta@0
+      displayName: 'Caching System Images for AVD'
+      inputs:
+        key: 'AVD_IMAGES_PIXEL_28'
+        path: '$(ANDROID_HOME)/system-images'
+        cacheHitVar: 'AVD_IMAGES_RESTORED'
+      continueOnError: true
+      condition: succeededOrFailed()
+    - bash: |
+        echo "y" | $ANDROID_HOME/tools/bin/sdkmanager --install 'system-images;android-28;google_apis;x86'
+      displayName: 'Download and install emulator image'
+      condition: ne(variables.AVD_IMAGES_RESTORED, 'true')
+    - bash: |
+        echo "no" | $ANDROID_HOME/tools/bin/avdmanager create avd -n android_emulator -k 'system-images;android-28;google_apis;x86' -d 17 --force
+        echo "Emulator created successfully $(ANDROID_HOME/emulator/emulator -list-avds), launching it"
+        nohup $ANDROID_HOME/emulator/emulator -avd android_emulator -skin 1080x1920 -no-snapshot -no-audio -no-boot-anim -accel auto -gpu auto -qemu -lcd-density 420 > /dev/null 2>&1 &
+        $ANDROID_HOME/platform-tools/adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed | tr -d '\r') ]]; do sleep 1; done'
+        $ANDROID_HOME/platform-tools/adb devices
+        echo "Emulator started"
+      displayName: 'Create and start emulator'
     - task: Gradle@3
       displayName: Run Instrumented Test comon
       continueOnError: true
