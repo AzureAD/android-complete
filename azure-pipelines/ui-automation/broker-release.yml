@@ -54,10 +54,9 @@ parameters:
 - name: adalVersionPROD
   displayName: ADAL PROD Version
   type: string
-- name: labApiUtils
-  displayName: Lab Api Utils Version
-  type: string 
-  default: $(Date:yyyyMMdd)$(Rev:.r) 
+# - name: labApiUtils
+#   displayName: Lab Api Utils Version
+#   type: string  
 - name: firebaseDeviceIdHigh
   displayName: Firebase Device Id (Api 30+)
   type: string
@@ -170,6 +169,7 @@ variables:
     labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(versionNumber)
     labApiUtilitiesProjVersionParam: -PprojVersion=${{ parameters.labApiUtils }}
   ${{ else }}:    
+    versionNumber: $(Build.BuildNumber)    
     common4jProjVersionParam: -PprojVersion=${{ parameters.common4jVersionRC }}
     common4jVersionParam: -PdistCommon4jVersion=${{ parameters.common4jVersionRC }}
     broker4jProjVersionParam: -PprojVersion=${{ parameters.broker4jVersionRC }}
@@ -179,7 +179,7 @@ variables:
     msalProjVersionParam: -PprojVersion=${{ parameters.msalVersionRC }}
     adAccountsProjVersionParam: -PprojVersion=${{ parameters.adAccountsVersionRC }}
     adalProjVersionParam: -PprojVersion=${{ parameters.adalVersionRC }}
-    labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=${{ parameters.labApiUtils }}
+    labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(versionNumber)
     labApiUtilitiesProjVersionParam: -PprojVersion=${{ parameters.labApiUtils }}
   
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
