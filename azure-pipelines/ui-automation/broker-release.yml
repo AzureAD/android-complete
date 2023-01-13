@@ -14,7 +14,7 @@ pr: none
 
 parameters:
 - name: libraryVersioning
-  displayName: Library Versioning Format
+  displayName: Package Versioning Format
   type: string
   default: unique
   values:
