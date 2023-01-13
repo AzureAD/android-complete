@@ -105,6 +105,17 @@ stages:
       publishParams: $(projVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+  - job: InstumentedTest
+    steps:
+    - checkout: common
+      persistCredentials: True
+    - task: Gradle@3
+      displayName: Run Instrumented Test comon
+      continueOnError: true
+      inputs:
+        tasks: "common:connectedLocalDebugAndroidTest -i -Psugar=true"
+      env:
+        ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN: $(System.AccessToken)
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
