@@ -1,3 +1,6 @@
+trigger: none
+pr: none
+
 parameters:
   - name: brokerApp
     type: string
