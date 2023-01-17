@@ -63,15 +63,6 @@ allprojects {
                 password project.vstsMavenAccessToken
             }
         }
-        maven {
-            name "vsts-maven-powerlift-java"
-            url "https://office.pkgs.visualstudio.com/_packaging/PowerLift/maven/v1"
-            credentials {
-                username project.vstsUsername
-                password project.vstsOfficeMavenAccessToken
-            }
-        }
-
     }
 
     gradle.projectsEvaluated {
@@ -93,7 +84,4 @@ if (!project.hasProperty("vstsUsername")) {
 }
 if (!project.hasProperty("vstsMavenAccessToken")) {
     logger.error('vstsMavenAccessToken is missing in gradle.properties')
-}
-if (!project.hasProperty("vstsOfficeMavenAccessToken")) {
-    logger.error('vstsOfficeMavenAccessToken is missing in gradle.properties')
 }
