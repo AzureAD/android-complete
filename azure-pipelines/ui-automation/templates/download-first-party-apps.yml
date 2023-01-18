@@ -1,6 +1,3 @@
-trigger: none
-pr: none
-
 parameters:
   - name: internalFeedName
     type: string

@@ -1,6 +1,3 @@
-trigger: none
-pr: none
-
 parameters:
 - name: productFlavors
   displayName: Product Flavor
