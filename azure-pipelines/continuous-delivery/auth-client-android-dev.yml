@@ -52,7 +52,6 @@ variables:
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
   projVersionParam: -PprojVersion=$(versionNumber)
-  labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(versionNumber)
   common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
   broker4jVersionParam: -PdistBroker4jVersion=$(versionNumber)
   commonVersionParam: -PdistCommonVersion=$(versionNumber)
@@ -283,7 +282,15 @@ stages:
           displayName: Queue and wait for Broker E2E Automation pipeline
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId "1490" -Branch "master"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId "1490" -Branch "master" -BuildIdOutputVar="brokerAutomationBuildId"'
+            workingDirectory: '$(Build.SourcesDirectory)'
+          env:
+            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+        - task: PowerShell@2
+          displayName: Import Broker E2E Automation results
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/import-testResults.ps1'
+            arguments: '-AdoPAT "$env:SYSTEM_ACCESSTOKEN" -SourceBuildId $brokerAutomationBuildId -TargetBuildId $(Build.BuildId)'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)

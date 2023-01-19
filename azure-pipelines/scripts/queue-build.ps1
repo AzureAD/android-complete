@@ -52,6 +52,9 @@ $BuildStartTime= Get-Date
 do{
    try {
        $QueuedBuild = Invoke-RestMethod -Uri $getBuildUri -Method Get -ContentType "application/json" -Headers $authHeader;
+       if($BuildIdOutputVar -ne $null) {
+            Write-Host "##vso[task.setvariable variable=$BuildIdOutputVar;]$($QueuedBuild.id)"
+       }
        Write-Host $($QueuedBuild.status)
        $BuildNotCompleted = ($($QueuedBuild.status) -eq "inProgress") -Or ($($QueuedBuild.status) -eq "notStarted")
        if($BuildNotCompleted){
