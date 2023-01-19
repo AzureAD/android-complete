@@ -5,7 +5,7 @@ Param (
     [Parameter(Mandatory = $true)][String]$BuildDefinitionId,
     [Parameter(Mandatory = $false)][String]$PipelineVariablesJson,
     [Parameter(Mandatory = $false)][String]$Branch,
-    [Parameter(Mandatory = $false)][int]$WaitTimeoutInMinutes = 60,
+    [Parameter(Mandatory = $false)][int]$WaitTimeoutInMinutes = 80,
     [Parameter(Mandatory = $false)][int]$PollingIntervalInSeconds = 5 * 60
 )
 

@@ -73,6 +73,7 @@ jobs:
       continueOnError: true
       inputs:
         tasks: ${{ parameters.project }}:${{ parameters.testCmd}}  -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true
+        testRunTitle: '${{ parameters.project }}_UnitTests'
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
