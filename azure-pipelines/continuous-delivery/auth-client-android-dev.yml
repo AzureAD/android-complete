@@ -248,6 +248,7 @@ stages:
   jobs:
     - job: queue_build_authenticator
       displayName: Generate Authenticator Apk
+      timeoutInMinutes: 120
       steps:
         - checkout: self
           persistCredentials: True
@@ -259,6 +260,7 @@ stages:
             workingDirectory: '$(Build.SourcesDirectory)'
     - job: queue_build_CompanyPortal
       displayName: Generate CompanyPortal Apk
+      timeoutInMinutes: 120
       steps:
         - checkout: self
           persistCredentials: True
@@ -275,6 +277,7 @@ stages:
   jobs:
     - job: trigger_automation
       displayName: Trigger Broker Automation Run
+      timeoutInMinutes: 80
       steps:
         - checkout: self
           persistCredentials: True
