@@ -18,17 +18,6 @@ For this, you'll need a Personal Access Token (PAT) under IdentityDivision organ
 
 **Copy this token and save it.  It is your vstsMavenAccessToken, placed in gradle.properties below.**  It is used by your local gradle builds to access artifacts in the microsoft maven repository in visualstudio online.  If you see errors like "Could not HEAD 'https://identitydivision.pkgs.visualstudio.com/_packaging/AndroidADAL/maven/v1/com/microsoft/device/display/display-mask/0.3.0/display-mask-0.3.0.pom'. Received status code 401 from server: Unauthorized" then this token is not set up correctly.
 
-- Office Maven Feed
-For this you'll need a Personal Access Token (PAT) under Office organization.
-1. Login to https://office.visualstudio.com/ with your microsoft credentials.
-2. Click on profile icon, click security from the drop down menu.
-3. Click on Add to add new token. Add a description for your token.
-4. Keep the default value for expires in.
-5. Select All accessible [Microsoft] accounts.
-6. In Authorized scopes select Selected scopes, check only Packaging (read) scope and create token.
-
-**Copy this token and save it. It is your vstsOfficeMavenAccessToken, placed in gradle.properties.** It is used by your local gradle builds to access artifacts in the office maven directory.
-
 - [Private GitHub Repositories](https://repos.opensource.microsoft.com/)
 1. Go to https://repos.opensource.microsoft.com/. You'll need a github account.
 2. Join 'AzureAD' organization (to get an access to Broker) via https://repos.opensource.microsoft.com/AzureAD/join
