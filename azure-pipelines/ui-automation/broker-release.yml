@@ -1,12 +1,36 @@
-# run broker UI automation testcases
-# Variable: 'azure_sample_apk' was defined in the Variables tab
-# Variable: 'broker_branch' was defined in the Variables tab
-# Variable: 'brokerhost_apk' was defined in the Variables tab
-# Variable: 'ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME' was defined in the Variables tab
-# Variable: 'gCloudProjectId' was defined in the Variables tab
-# Variable: 'msal_branch' was defined in the Variables tab
-# Variable: 'mvnAccessToken' was defined in the Variables tab
-# https://dev.azure.com/IdentityDivision/Engineering/_build?definitionId=1490&_a=summary
+#Runs the ui automation 
+# Variables
+# ---------
+# versionNumber: Generated version number    
+# common4jProjVersionParam: passes common4jVersion in the projVersion param
+# common4jVersionParam: passes Common4jVersion param
+# broker4jProjVersionParam: passes broker4jVersion in the projVersion param
+# broker4jVersionParam: passes Broker4jVersion
+# commonProjVersionParam: passes commonVersion in projVersion param
+# commonVersionParam: passes CommonVersion
+# msalProjVersionParam:  passes msalVersion in projVersion param
+# adAccountsProjVersionParam: passes adAccountsVersion in projVersion param
+# adalProjVersionParam: passes adal Version in projVersion param
+# labApiUtilitiesVersionParam: passes LabApiUtilitiesVersion
+# labApiUtilitiesProjVersionParam: passes LabApiUtilitiesVersion in projVersion
+# androidProjectDependencyParam: extrea android gradle configs
+# javaProjectDependencyParam: extra java gradle configs
+# oneProjectId: One Project ID `b32aa71e-8ed2-41b2-9d77-5bc261222004`
+# engineeringProjectId: engineering project ID which is `fac9d424-53d2-45c0-91b5-ef6ba7a6bf26`
+# msazureServiceConnection: ms azure service connection `AndroidBroker-CI`
+# msazureFeedName: name of msazure feed which is `Android-Broker`
+# brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
+# brokerTestApp: brokerautomationapp-dist-AutoBroker-debug-androidTest.apk
+# companyPortalApk: name of the Company Portal apk which is `com.microsoft.windowsintune.companyportal-signed.apk`
+# authenticatorApk: name of the MS Authenticator apk which is `app-production-universal-release-signed.apk`
+# oldAuthenticatorApk: old version of the authenticator app which is `Authenticator-4.1.0-RC.apk`
+# outlookApk: latest Outlook apk version
+# teamsApk: latest Teams apk version
+# wordApk: latest Word apk version
+# edgeApk: latest Edge apk version
+# firebaseTimeout: firebase timeout 
+# resultsHistoryName: Broker Release
+# https://dev.azure.com/IdentityDivision/Engineering/_build?definitionId=1801&_a=summary
 name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
 
 trigger: none
@@ -186,10 +210,7 @@ variables:
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   oneProjectId: b32aa71e-8ed2-41b2-9d77-5bc261222004
-  engineeringProjectId: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'
-  azureSamplePipelineId: 1458
-  brokerHostPipelineId: 1432
-  authenticatorPipelineId: ""
+  engineeringProjectId: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'    
   msazureServiceConnection: AndroidBroker-CI
   msazureFeedName: Android-Broker
   brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
@@ -600,8 +621,7 @@ stages:
         authenticatorVersionPROD: ${{ parameters.prodAuthenticatorVersion }}
         oldAuthenticatorVersion: ${{ parameters.oldAuthenticatorVersion }}
         companyPortalVersionRC: ${{ parameters.companyPortalVersion }}
-        companyPortalVersionPROD: ${{ parameters.prodCompanyPortalVersion }}
-        brokerHostPipelineId: '$(brokerHostPipelineId)'
+        companyPortalVersionPROD: ${{ parameters.prodCompanyPortalVersion }}        
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
 
 # Test runs
