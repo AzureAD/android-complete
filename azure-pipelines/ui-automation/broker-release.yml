@@ -607,6 +607,12 @@ stages:
   - firstpartyapps
   - azuresampleappRC
   - brokerHostDistRCRelease
+  condition:  |
+    and
+    (
+      in(dependencies.queueAuthenticatorBrokerApkPipeline.result, 'Succeeded', 'Skipped'),
+      in(dependencies.queueCompanyPortalBrokerApkPipeline.result, 'Succeeded', 'Skipped')      
+    )
   displayName: ADAL with broker and Broker basic validation test plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -640,6 +646,12 @@ stages:
     - firstpartyapps
     - azuresampleappRC
     - brokerHostPROD
+  condition:  |
+    and
+    (
+      in(dependencies.queueAuthenticatorBrokerApkPipeline.result, 'Succeeded', 'Skipped'),
+      in(dependencies.queueCompanyPortalBrokerApkPipeline.result, 'Succeeded', 'Skipped')      
+    )  
   displayName: RC MSAL - PROD Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -671,6 +683,12 @@ stages:
     - firstpartyapps
     - azuresampleappRC
     - brokerHostPROD
+  condition:  |
+    and
+    (
+      in(dependencies.queueAuthenticatorBrokerApkPipeline.result, 'Succeeded', 'Skipped'),
+      in(dependencies.queueCompanyPortalBrokerApkPipeline.result, 'Succeeded', 'Skipped')      
+    )  
   displayName: RC MSAL - PROD Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -703,6 +721,12 @@ stages:
     - firstpartyapps
     - azuresampleappPROD
     - brokerHostDistRCRelease
+  condition:  |
+    and
+    (
+      in(dependencies.queueAuthenticatorBrokerApkPipeline.result, 'Succeeded', 'Skipped'),
+      in(dependencies.queueCompanyPortalBrokerApkPipeline.result, 'Succeeded', 'Skipped')      
+    )  
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -734,6 +758,12 @@ stages:
     - firstpartyapps
     - azuresampleappPROD
     - brokerHostLocalRCDebug
+  condition:  |
+    and
+    (
+      in(dependencies.queueAuthenticatorBrokerApkPipeline.result, 'Succeeded', 'Skipped'),
+      in(dependencies.queueCompanyPortalBrokerApkPipeline.result, 'Succeeded', 'Skipped')      
+    )  
   displayName: PROD MSAL - RC Broker (BrokerHost tests, debug) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -764,6 +794,12 @@ stages:
     - firstpartyapps
     - azuresampleappPROD
     - brokerHostDistRCRelease
+  condition:  |
+    and
+    (
+      in(dependencies.queueAuthenticatorBrokerApkPipeline.result, 'Succeeded', 'Skipped'),
+      in(dependencies.queueCompanyPortalBrokerApkPipeline.result, 'Succeeded', 'Skipped')      
+    )  
   displayName: PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
     - template: ./templates/run-on-firebase.yml
