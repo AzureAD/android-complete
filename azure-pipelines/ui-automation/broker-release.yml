@@ -489,32 +489,6 @@ stages:
         adAccountsVersion: ${{ parameters.adAccountsVersionRC }}
         adalVersion: ${{ parameters.adalVersionRC }}
         packageVariant: RC
-# BrokerHost (Dist, RC, Debug)
-- stage: 'brokerHostDistRCDebug'
-  dependsOn:
-    - publishMsal
-    - publishCommonLibraries
-    - publishBrokerLibraries
-    - publishAdal
-  condition:  |
-    and
-    (
-      in(dependencies.publishCommonLibraries.result, 'Succeeded', 'Skipped'),
-      in(dependencies.publishMsal.result, 'Succeeded', 'Skipped'),
-      in(dependencies.publishBrokerLibraries.result, 'Succeeded', 'Skipped'),      
-      in(dependencies.publishAdal.result, 'Succeeded', 'Skipped')      
-    )  
-  displayName: Build BrokerHost RC Debug
-  jobs:
-    - template: ./templates/build-broker-host.yml
-      parameters:
-        productFlavors: Dist
-        signingConfigurations: Debug
-        msalVersion: ${{ parameters.msalVersionRC }}
-        commonVersion: ${{ parameters.commonVersionRC }}
-        adAccountsVersion: ${{ parameters.adAccountsVersionRC }}
-        adalVersion: ${{ parameters.adalVersionRC }}
-        packageVariant: RC
 # BrokerHost (Local, RC, Debug)
 - stage: 'brokerHostLocalRCDebug'
   dependsOn:
