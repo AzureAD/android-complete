@@ -121,7 +121,7 @@ stages:
       repository: broker
       project: AADAuthenticator
       assembleCmd: assembleDist
-      testCmd: distDebugAADAuthenticatorUnitTestCoverageReport
+      testCmd: localDebugAADAuthenticatorUnitTestCoverageReport
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
