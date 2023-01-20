@@ -267,7 +267,7 @@ stages:
       repository: common
       project: common
       assembleCmd: assembleDist
-      publishCmd: publishDistReleasePublicationToVsts-maven-adal-androidRepository
+      publishCmd: publish
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(commonProjVersionParam) $(common4jVersionParam)
       publishParams: $(commonProjVersionParam) $(common4jVersionParam)
