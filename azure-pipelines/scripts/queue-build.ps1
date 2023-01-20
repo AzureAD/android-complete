@@ -6,7 +6,8 @@ Param (
     [Parameter(Mandatory = $false)][String]$PipelineVariablesJson,
     [Parameter(Mandatory = $false)][String]$Branch,
     [Parameter(Mandatory = $false)][int]$WaitTimeoutInMinutes = 120,
-    [Parameter(Mandatory = $false)][int]$PollingIntervalInSeconds = 5 * 60
+    [Parameter(Mandatory = $false)][int]$PollingIntervalInSeconds = 5 * 60,
+    [Parameter(Mandatory = $false)][int]$BuildIdOutputVar=""
 )
 
 #request uri
@@ -52,7 +53,7 @@ $BuildStartTime= Get-Date
 do{
    try {
        $QueuedBuild = Invoke-RestMethod -Uri $getBuildUri -Method Get -ContentType "application/json" -Headers $authHeader;
-       if($BuildIdOutputVar -ne $null) {
+       if($BuildIdOutputVar -ne "") {
             Write-Host "##vso[task.setvariable variable=$BuildIdOutputVar;]$($QueuedBuild.id)"
        }
        Write-Host $($QueuedBuild.status)
