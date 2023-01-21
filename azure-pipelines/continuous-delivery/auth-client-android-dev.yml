@@ -296,7 +296,7 @@ stages:
           displayName: Import Broker E2E Automation results
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/import-testResults.ps1'
-            arguments: '-AdoPAT "$env:SYSTEM_ACCESSTOKEN" -SourceBuildId $brokerAutomationBuildId -TargetBuildId $(Build.BuildId)'
+            arguments: '-AdoPAT "$env:SYSTEM_ACCESSTOKEN" -SourceBuildId $(brokerAutomationBuildId) -TargetBuildId $(Build.BuildId)'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)
