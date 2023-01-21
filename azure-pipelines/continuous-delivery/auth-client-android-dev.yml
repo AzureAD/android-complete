@@ -58,8 +58,7 @@ variables:
   linuxBrokerVersion: -PlinuxBrokerVersion=$(versionNumber)
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
-  brokerAutomationPipelineId: 1382
-  #brokerAutomationPipelineId: 1490 broker-ci
+  brokerAutomationPipelineId: 1490
 
 stages:
 # Common4j - Build and publish
