@@ -53,6 +53,7 @@ jobs:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: ComponentGovernanceComponentDetection@0
+    enabled: false
     inputs:
       sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/dependency-locks/
 - job: RunUnitTest${{ parameters.project }}
