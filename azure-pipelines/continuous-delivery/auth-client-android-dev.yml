@@ -58,6 +58,8 @@ variables:
   linuxBrokerVersion: -PlinuxBrokerVersion=$(versionNumber)
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
+  brokerAutomationPipelineId: 1382
+  #brokerAutomationPipelineId: 1490 broker-ci
 
 stages:
 # Common4j - Build and publish
@@ -288,7 +290,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId "1490" -Branch "master" -BuildIdOutputVar "brokerAutomationBuildId"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)
