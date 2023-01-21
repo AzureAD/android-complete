@@ -59,6 +59,8 @@ variables:
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   brokerAutomationPipelineId: 1490
+  authenticatorBranch: "broker/continuous-integration"
+  companyPortalBranch: "broker/continuous-integration"
 
 stages:
 # Common4j - Build and publish
