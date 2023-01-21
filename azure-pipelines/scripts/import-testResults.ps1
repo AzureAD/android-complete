@@ -12,9 +12,10 @@ $apiVersion = "7.1-preview.3"
 $baseUri = "https://dev.azure.com/$Organization/$Project";
 $testRunUri = "$baseUri/_apis/test/runs?api-version=$apiVersion"
 
-$minLastUpdatedDate = Get-Date (Get-Date).AddHours(-4) -Format "MM/dd/yyyy hh:mm"
-$maxLastUpdatedDate = Get-Date -Format "MM/dd/yyyy hh:mm"
+$minLastUpdatedDate = Get-Date (Get-Date).AddDays(-1) -Format "MM/dd/yyyy"
+$maxLastUpdatedDate = Get-Date (Get-Date).AddDays(1) -Format "MM/dd/yyyy"
 $queryRunsUri = "$baseUri/_apis/test/runs?minLastUpdatedDate=$minLastUpdatedDate&maxLastUpdatedDate=$maxLastUpdatedDate&buildIds=$SourceBuildId&api-version=$apiVersion"
+Write-Host $queryRunsUri
 
 # Auth header
 $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(("token:{0}" -f $AdoPAT)))
