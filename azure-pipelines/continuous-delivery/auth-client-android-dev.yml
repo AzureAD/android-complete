@@ -52,9 +52,9 @@ variables:
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
   projVersionParam: -PprojVersion=$(versionNumber)
-  common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
-  broker4jVersionParam: -PdistBroker4jVersion=$(versionNumber)
-  commonVersionParam: -PdistCommonVersion=$(versionNumber)
+  common4jVersionParam: "" #-PdistCommon4jVersion=$(versionNumber)
+  broker4jVersionParam: "" #-PdistBroker4jVersion=$(versionNumber)
+  commonVersionParam: "" #-PdistCommonVersion=$(versionNumber)
   linuxBrokerVersion: -PlinuxBrokerVersion=$(versionNumber)
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
