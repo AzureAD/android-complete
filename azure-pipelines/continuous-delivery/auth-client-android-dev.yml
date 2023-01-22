@@ -246,9 +246,9 @@ stages:
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)
-# BrokerApk - Queue pipeline
-- stage: 'queueBrokerApkPipeline'
-  displayName: Broker Apk Generation
+# BrokerApk - Authenticator Queue pipeline
+- stage: 'queueAuthenticatorPipeline'
+  displayName: Authenticator Broker Apk Generation
   dependsOn: promotePackages
   jobs:
     - job: queue_build_authenticator
@@ -263,6 +263,11 @@ stages:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(pipelinepat)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(versionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(authenticatorBranch)"'
             workingDirectory: '$(Build.SourcesDirectory)'
+# BrokerApk - Company porta Queue pipeline
+- stage: 'queueCompanyPortalPipeline'
+  displayName: Authenticator Broker Apk Generation
+  dependsOn: promotePackages
+  jobs:
     - job: queue_build_CompanyPortal
       displayName: Generate CompanyPortal Apk
       timeoutInMinutes: 120
@@ -278,7 +283,9 @@ stages:
 # Broker - E2E Automation
 - stage: 'runBrokerE2EAutomation'
   displayName: Broker Automation Run
-  dependsOn: queueBrokerApkPipeline
+  dependsOn:
+    - queueAuthenticatorPipeline
+    - queueCompanyPortalPipeline
   jobs:
     - job: trigger_automation
       displayName: Trigger Broker Automation Run
