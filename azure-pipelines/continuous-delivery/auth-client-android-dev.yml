@@ -310,4 +310,30 @@ stages:
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+  # Msal - Instrumented tests
+- stage: 'runCommonInstrumentedTests'
+  displayName: Common Instrumented Tests
+  jobs:
+    - job:
+      displayName: Trigger Common Instrumented Run
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: PowerShell@2
+          displayName: Queue and wait for Common Instrumented tests pipeline
+          continueOnError: true
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId 1262 -BuildIdOutputVar "commonInstrumentedTestsBuildId"'
+            workingDirectory: '$(Build.SourcesDirectory)'
+          env:
+            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+        - task: PowerShell@2
+          displayName: Import Broker E2E Automation results
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/import-testResults.ps1'
+            arguments: '-AdoPAT "$env:SYSTEM_ACCESSTOKEN" -SourceBuildId $(commonInstrumentedTestsBuildId) -TargetBuildId $(Build.BuildId)'
+            workingDirectory: '$(Build.SourcesDirectory)'
+          env:
+            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 ...
