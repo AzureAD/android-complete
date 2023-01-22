@@ -21,7 +21,7 @@ parameters:
 
 jobs:
 - job: publish${{ parameters.project }}Libraries
-  displayName: ${{ parameters.project }} build & publish for android to internal maven feed
+  displayName: ${{ parameters.project }} build & publish
   pool:
     vmImage: ubuntu-latest
   variables:
@@ -56,6 +56,7 @@ jobs:
     inputs:
       sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/dependency-locks/
 - job: RunUnitTest${{ parameters.project }}
+  displayName: ${{ parameters.project }} UnitTest
   pool:
     vmImage: ubuntu-latest
     variables:
