@@ -52,9 +52,9 @@ variables:
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
   projVersionParam: -PprojVersion=$(versionNumber)
-  common4jVersionParam: "" #-PdistCommon4jVersion=$(versionNumber)
-  broker4jVersionParam: "" #-PdistBroker4jVersion=$(versionNumber)
-  commonVersionParam: "" #-PdistCommonVersion=$(versionNumber)
+  common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
+  broker4jVersionParam: -PdistBroker4jVersion=$(versionNumber)
+  commonVersionParam: -PdistCommonVersion=$(versionNumber)
   linuxBrokerVersion: -PlinuxBrokerVersion=$(versionNumber)
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
@@ -263,9 +263,9 @@ stages:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(pipelinepat)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(versionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(authenticatorBranch)"'
             workingDirectory: '$(Build.SourcesDirectory)'
-# BrokerApk - Company porta Queue pipeline
+# BrokerApk - Company portal Queue pipeline
 - stage: 'queueCompanyPortalPipeline'
-  displayName: Authenticator Broker Apk Generation
+  displayName: Company Portal Broker Apk Generation
   dependsOn: promotePackages
   jobs:
     - job: queue_build_CompanyPortal
