@@ -20,8 +20,6 @@ parameters:
   - name: companyPortalVersionPROD
     displayName: Company Portal Version
     type: string
-  - name: brokerHostPipelineId
-    type: string
   - name: oldBrokerHostVersion
     type: string
   - name: internalFeedName
@@ -87,15 +85,6 @@ jobs:
         feedDownloadExternal: '${{ parameters.msazureFeedName }}'
         packageDownloadExternal: 'com.microsoft.windowsintune.companyportal-signed'
         versionDownloadExternal: '${{ parameters.companyPortalVersionPROD }}'
-    - task: DownloadPipelineArtifact@2
-      displayName: 'Download Broker Host'
-      inputs:
-        buildType: specific
-        project: '${{ parameters.engineeringProjectId }}'
-        definition: '${{ parameters.brokerHostPipelineId }}'
-        artifactName: BrokerHost
-        itemPattern: '**/*.apk'
-        targetPath: '$(Build.ArtifactStagingDirectory)/brokers'
     - task: UniversalPackages@0
       displayName: 'Download old brokerHost version from feed'
       inputs:

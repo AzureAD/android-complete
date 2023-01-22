@@ -87,6 +87,11 @@ jobs:
     inputs:
       filename: echo
       arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(mvnAccessToken)'
+  - task: CmdLine@1
+    displayName: Set Office MVN Access Token in Environment
+    inputs:
+      filename: echo
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_OFFICE_ACCESSTOKEN]$(vstsOfficeMavenAccessToken)'
   - task: Gradle@1
     name: Gradle1
     displayName: Assemble BrokerHost
