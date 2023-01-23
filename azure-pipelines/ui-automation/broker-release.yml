@@ -24,10 +24,10 @@
 # companyPortalApk: name of the Company Portal apk which is `com.microsoft.windowsintune.companyportal-signed.apk`
 # authenticatorApk: name of the MS Authenticator apk which is `app-production-universal-release-signed.apk`
 # oldAuthenticatorApk: old version of the authenticator app which is `Authenticator-4.1.0-RC.apk`
-# outlookApk: latest Outlook apk version
-# teamsApk: latest Teams apk version
-# wordApk: latest Word apk version
-# edgeApk: latest Edge apk version
+# outlookApk: Outlook apk name
+# teamsApk: Teams apk name
+# wordApk: Word apk name
+# edgeApk: Edge apk name
 # firebaseTimeout: firebase timeout 
 # resultsHistoryName: Broker Release
 # https://dev.azure.com/IdentityDivision/Engineering/_build?definitionId=1801&_a=summary
