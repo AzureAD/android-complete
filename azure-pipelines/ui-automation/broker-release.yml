@@ -105,7 +105,7 @@ parameters:
 - name: prodAuthenticatorVersion
   displayName: PROD Authenticator Version
   type: string   
-  default: '$(default_authenticator_prod_version)'
+  default: '${{ variables.default_authenticator_prod_version }}'
 - name: authenticatorVersion
   displayName: Authenticator Version
   type: string
@@ -121,7 +121,7 @@ parameters:
 - name: prodCompanyPortalVersion
   displayName: PROD Company Portal Version
   type: string  
-  default: '$(default_company_portal_prod_version)'
+  default: '${{ variables.default_company_portal_prod_version }}'
 - name: oldBrokerHostVersion
   displayName: Old Broker host Version
   type: string
