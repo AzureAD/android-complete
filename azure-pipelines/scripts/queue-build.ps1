@@ -60,7 +60,6 @@ $BuildStartTime= Get-Date
 do{
    try {
        $QueuedBuild = Invoke-RestMethod -Uri $getBuildUri -Method Get -ContentType "application/json" -Headers $authHeader;
-       
        Write-Host $($QueuedBuild.status)
        $BuildNotCompleted = ($($QueuedBuild.status) -eq "inProgress") -Or ($($QueuedBuild.status) -eq "notStarted")
        if($BuildNotCompleted){
