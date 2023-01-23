@@ -1,0 +1,88 @@
+parameters:
+- name: productFlavors
+  displayName: Product Flavor
+  type: string
+  default: Local
+  values:
+  - Local
+  - External
+- name: signingConfigurations
+  displayName: Signing Configuration
+  type: string
+  default: Debug
+  values:
+  - Debug
+  - Release
+- name: msalVersion
+  displayName: MSAL Version
+  type: string
+- name: packageVariant
+  displayName: Package Variant
+  type: string
+  default: PROD
+  values:
+    - PROD
+    - RC
+
+jobs:
+- job: azure_samples
+  displayName: Build Azure Samples ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
+  pool:
+    vmImage: 'windows-latest'
+  variables:
+  - group: AndroidAuthClientVariables
+  steps:
+  - checkout: self
+    clean: true
+    path: android-complete
+  - checkout: msal
+    clean: true
+    path: android-complete/msal
+  - checkout: common
+    clean: true
+    path: android-complete/common
+  - checkout: azuresample
+    clean: true
+    path: android-complete/azuresample
+  - ${{ if eq(parameters.productFlavors, 'External') }}:
+    - task: PowerShell@2
+      displayName: Generate Assemble External Task
+      inputs:
+        targetType: inline
+        script: |
+          $assembleTask = "assembleExternal${{ parameters.signingConfigurations }}"
+          if (("${{ parameters.msalVersion }}" -ne "")) {
+              $assembleTask = $assembleTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
+          }
+          Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
+  - ${{ if eq(parameters.productFlavors, 'Local') }}:
+    - pwsh: echo "##vso[task.setvariable variable=AssembleTask;]assembleLocal${{ parameters.signingConfigurations }}"
+      displayName: Generate Assemble Local Task
+  - task: CmdLine@1
+    displayName: Set MVN AccessToken in Environment
+    inputs:
+      filename: echo
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(mvnAccessToken)'
+  - task: Gradle@1
+    name: Gradle1
+    displayName: Assemble Azure Sample
+    inputs:
+      tasks: AzureSample:clean AzureSample:$(AssembleTask)
+      publishJUnitResults: false
+      jdkArchitecture: x86
+      sqAnalysisBreakBuildIfQualityGateFailed: false
+      gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
+      cwd: $(Agent.BuildDirectory)/android-complete
+  - task: CopyFiles@2
+    displayName: 'Copy apks for later use in the pipeline'
+    inputs:
+      flattenFolders: true
+      contents: '$(Build.SourcesDirectory)/azuresample/build/outputs/apk/**/*.apk'
+      targetFolder: $(Build.ArtifactStagingDirectory)/azuresample/$(packageVariant)
+  - task: PublishPipelineArtifact@1
+    displayName: Publish Broker Host APK
+    inputs:
+      targetPath: $(Agent.BuildDirectory)/android-complete/azuresample/app/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}
+      artifactName: AzureSample-${{upper(parameters.packageVariant)}}
+      patterns: '**/*.apk'
+...

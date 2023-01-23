@@ -1,0 +1,117 @@
+parameters:
+- name: productFlavors
+  displayName: Product Flavor
+  type: string
+  default: Local
+  values:
+  - Local
+  - Dist
+- name: signingConfigurations
+  displayName: Signing Configuration
+  type: string
+  default: Debug
+  values:
+  - Debug
+  - Release
+- name: adAccountsVersion
+  displayName: Broker Version
+  type: string
+- name: commonVersion
+  displayName: Common Version
+  type: string
+- name: adalVersion
+  displayName: ADAL Version
+  type: string
+- name: msalVersion
+  displayName: MSAL Version
+  type: string
+- name: packageVariant
+  displayName: Package Variant
+  type: string
+  default: PROD
+  values:
+    - PROD
+    - RC
+
+jobs:
+- job: brokerhost
+  displayName: Build BrokerHost ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
+  pool:
+    vmImage: 'windows-latest'
+  variables:
+  - group: AndroidAuthClientVariables
+  steps:
+  - checkout: self
+    clean: true
+    path: android-complete
+  - checkout: common
+    clean: true
+    path: android-complete/common
+  - checkout: msal
+    clean: true
+    submodules: true
+    path: android-complete/msal
+  - checkout: adal
+    clean: true
+    submodules: true
+    path: android-complete/adal
+  - checkout: broker
+    clean: true
+    submodules: true
+    path: android-complete/broker
+  - ${{ if eq(parameters.productFlavors, 'Dist') }}:
+    - task: PowerShell@2
+      displayName: Generate Assemble Dist Task
+      inputs:
+        targetType: inline
+        script: |
+          $assembleTask = "assembleDist${{ parameters.signingConfigurations }}"
+          if (("${{ parameters.commonVersion }}" -ne "")) {
+              $assembleTask = $assembleTask + " -PcommonVersion=" + "${{ parameters.commonVersion }}"
+          }
+          if (("${{ parameters.adAccountsVersion }}" -ne "")) {
+              $assembleTask = $assembleTask + " -PadAccountsVersion=" + "${{ parameters.adAccountsVersion }}"
+          }
+          if (("${{ parameters.adalVersion }}" -ne "")) {
+              $assembleTask = $assembleTask + " -PadalVersion=" + "${{ parameters.adalVersion }}"
+          }
+          if (("${{ parameters.msalVersion }}" -ne "")) {
+              $assembleTask = $assembleTask + " -PmsalVersion=" + "${{ parameters.msalVersion }}"
+          }
+          Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
+  - ${{ if eq(parameters.productFlavors, 'Local') }}:
+    - pwsh: echo "##vso[task.setvariable variable=AssembleTask;]assembleLocal${{ parameters.signingConfigurations }}"
+      displayName: Generate Assemble Local Task
+  - task: CmdLine@1
+    displayName: Set MVN AccessToken in Environment
+    inputs:
+      filename: echo
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(mvnAccessToken)'
+  - task: CmdLine@1
+    displayName: Set Office MVN Access Token in Environment
+    inputs:
+      filename: echo
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_OFFICE_ACCESSTOKEN]$(vstsOfficeMavenAccessToken)'
+  - task: Gradle@1
+    name: Gradle1
+    displayName: Assemble BrokerHost
+    inputs:
+      tasks: brokerHost:clean brokerHost:$(AssembleTask)
+      publishJUnitResults: false
+      jdkArchitecture: x86
+      sqAnalysisBreakBuildIfQualityGateFailed: false
+      gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
+      cwd: $(Agent.BuildDirectory)/android-complete
+  - task: CopyFiles@2
+    inputs:
+      SourceFolder: $(Agent.BuildDirectory)/android-complete/broker/userapp/build/outputs/apk
+      targetFolder: $(Build.ArtifactStagingDirectory)
+      contents: '**/*.apk'
+      flattenFolders: true
+  - task: PublishPipelineArtifact@1
+    displayName: Publish Broker Host APK (Pipeline Artifact)
+    inputs:
+      targetPath: $(Agent.BuildDirectory)/android-complete/broker/userapp/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}
+      artifactName: BrokerHost-${{ parameters.productFlavors }}-${{ upper(parameters.packageVariant) }}-${{ lower(parameters.signingConfigurations) }}
+      patterns: '**/*.apk'
+...

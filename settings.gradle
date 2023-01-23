@@ -95,6 +95,9 @@ project(':broker4j').projectDir = new File('broker/broker4j')
 include(":LinuxBroker")
 project(':LinuxBroker').projectDir = new File('broker/LinuxBroker')
 
+include(":otelexporter")
+project(':otelexporter').projectDir = new File('broker/otelexporter')
+
 include(':LabApiUtilities')
 project(':LabApiUtilities').projectDir = new File('common/LabApiUtilities')
 

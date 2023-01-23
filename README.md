@@ -32,6 +32,7 @@ Then add the following to your gradle properties (in your user folder on windows
 vstsUsername=VSTS 
 vstsMavenAccessToken=[Insert a PAT for the Android DevX Feed here]
 adoMsazureAuthAppAccessToken=[Insert a PAT for the Authenticator App Feed here] (Only needed if you set up Authenticator App Dependency Feed)
+vstsOfficeMavenAccessToken=[Insert a PAT for Office Feed here]
 ```
 
 >NOTE: By default, this global gradle.properties is located at
