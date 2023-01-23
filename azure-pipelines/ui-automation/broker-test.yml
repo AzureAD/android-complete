@@ -106,6 +106,7 @@ stages:
         brokerSource: LocalApk
         brokerUpdateSource: LocalApk
         msalVersion: ""
+        packageVariant: RC
 # msalautomationapplocalbrokerhost
 - stage: 'msalautomationapplocalbrokerhost'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
@@ -116,8 +117,9 @@ stages:
         brokerApp: BrokerHost
         msalFlavor: Local
         brokerSource: LocalApk
-        artifactName: "msalautomationapksbrokerhost"
+        brokerUpdateSource: LocalApk
         msalVersion: ""
+        packageVariant: RC
 # brokerautomationapp
 - stage: 'brokerautomationapp'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
@@ -160,8 +162,8 @@ stages:
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
-        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msalApp)"
-        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msaltestApp)"
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-PROD-LocalApk/$(msalApp)"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-PROD-LocalApk/$(msaltestApp)"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "msalautomationapp-testpass-broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
@@ -186,8 +188,8 @@ stages:
   jobs:
     - template: ./templates/run-on-firebase.yml
       parameters:
-        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapksbrokerhost/$(msalAppLocalBrokerHost)"
-        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapksbrokerhost/$(msaltestAppLocalBrokerHost)"
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-RC-LocalApk/$(msalAppLocalBrokerHost)"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-RC-LocalApk/$(msaltestAppLocalBrokerHost)"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "msalautomationapp-testpass-brokerhost-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
@@ -211,8 +213,8 @@ stages:
   jobs:
     - template: ./templates/run-on-firebase.yml
       parameters:
-        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msalApp)"
-        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msaltestApp)"
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msalApp)"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msaltestApp)"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "msalautomationapp-testpass-broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
