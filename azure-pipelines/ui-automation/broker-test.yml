@@ -105,6 +105,7 @@ stages:
         msalFlavor: Dist
         brokerSource: LocalApk
         brokerUpdateSource: LocalApk
+        msalVersion: ""
 # msalautomationapplocalbrokerhost
 - stage: 'msalautomationapplocalbrokerhost'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
@@ -116,6 +117,7 @@ stages:
         msalFlavor: Local
         brokerSource: LocalApk
         artifactName: "msalautomationapksbrokerhost"
+        msalVersion: ""
 # brokerautomationapp
 - stage: 'brokerautomationapp'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
