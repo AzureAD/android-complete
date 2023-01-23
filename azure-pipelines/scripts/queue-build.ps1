@@ -5,8 +5,9 @@ Param (
     [Parameter(Mandatory = $true)][String]$BuildDefinitionId,
     [Parameter(Mandatory = $false)][String]$PipelineVariablesJson,
     [Parameter(Mandatory = $false)][String]$Branch,
-    [Parameter(Mandatory = $false)][int]$WaitTimeoutInMinutes = 100,
-    [Parameter(Mandatory = $false)][int]$PollingIntervalInSeconds = 5 * 60
+    [Parameter(Mandatory = $false)][int]$WaitTimeoutInMinutes = 120,
+    [Parameter(Mandatory = $false)][int]$PollingIntervalInSeconds = 5 * 60,
+    [Parameter(Mandatory = $false)][String]$BuildIdOutputVar=""
 )
 
 #request uri
@@ -45,8 +46,13 @@ try {
 }
 
 Write-Host "Build is queued: $($baseUri)_build/results?buildId=$($Result.id)"
-
 Write-Host "##vso[task.setvariable variable=BrokeBuildId;isoutput=true]$($Result.id)"
+
+if($BuildIdOutputVar -ne "") {
+    Write-Host "Setting  $BuildIdOutputVar"
+    Write-Host "##vso[task.setvariable variable=$($BuildIdOutputVar);isoutput=true]$($Result.id)"
+    Write-Host "$BuildIdOutputVar = $($QueuedBuild.id)"
+}
 
 # Wait for build completion
 $getBuildUri="$($baseUri)_apis/build/builds/$($Result.id)?api-version=7.0"
