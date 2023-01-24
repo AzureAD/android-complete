@@ -58,7 +58,7 @@ variables:
   linuxBrokerVersion: -PlinuxBrokerVersion=$(versionNumber)
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
-  brokerAutomationPipelineId: 1382 #1490
+  brokerAutomationPipelineId: 1490
   authenticatorBranch: "broker/continuous-integration"
   companyPortalBranch: "broker/continuous-integration"
 
