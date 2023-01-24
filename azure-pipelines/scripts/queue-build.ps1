@@ -50,8 +50,8 @@ Write-Host "##vso[task.setvariable variable=BrokeBuildId;isoutput=true]$($Result
 
 if($BuildIdOutputVar -ne "") {
     Write-Host "Setting  $BuildIdOutputVar"
-    Write-Host "##vso[task.setvariable variable=$($BuildIdOutputVar);isoutput=true]$($Result.id)"
-    Write-Host "$BuildIdOutputVar = $($QueuedBuild.id)"
+    Write-Host "##vso[task.setvariable variable=$($BuildIdOutputVar)]$($Result.id)"
+    Write-Host "$BuildIdOutputVar = $($Result.id)"
 }
 
 # Wait for build completion
