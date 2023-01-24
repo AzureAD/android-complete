@@ -40,7 +40,7 @@ jobs:
     displayName: Set MVN Access Token in Environment
     inputs:
       filename: echo
-      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(AndroidAuthClientInternalMavenAccessToken)'
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
   - task: Gradle@1
     name: Gradle1
     displayName: Build Deb with Java Dependency
