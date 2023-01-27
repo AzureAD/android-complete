@@ -74,10 +74,14 @@ jobs:
       continueOnError: true
       inputs:
 <<<<<<< HEAD
+<<<<<<< HEAD
         tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.assembleParams}} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
 =======
         tasks: ${{ parameters.project }}:${{ parameters.testCmd}}  -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true ${{ parameters.otherParams }}
 >>>>>>> 851bdee (added powerlift api key to the pipeline)
+=======
+        tasks: ${{ parameters.project }}:${{ parameters.testCmd}}  -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true ${{ parameters.testParams }}
+>>>>>>> 86965dc (added assemble params)
         testRunTitle: '${{ parameters.project }}_UnitTests'
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
