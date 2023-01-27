@@ -49,6 +49,7 @@ parameters:
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
     versionNumber: $(Build.BuildNumber)
+    brokerVersionNumber: $[replace(variables['build.buildnumber'], '0.0', '8.1')]
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
   projVersionParam: -PprojVersion=$(versionNumber)
@@ -127,8 +128,8 @@ stages:
       testCmd: distDebugAADAuthenticatorUnitTestCoverageReport
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
-      publishParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
+      assembleParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam)
+      publishParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
 # Linux Broker - Build and publish
