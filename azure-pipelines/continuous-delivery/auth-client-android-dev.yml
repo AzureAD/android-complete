@@ -47,7 +47,6 @@ parameters:
     default: Default
 
 variables:
-- group: AndroidAuthClientVariables
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
     versionNumber: $(Build.BuildNumber)
     brokerVersionNumber: $[replace(variables['build.buildnumber'], '0.0', '8.1')]
