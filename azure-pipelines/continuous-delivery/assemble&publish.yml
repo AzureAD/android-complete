@@ -18,11 +18,6 @@ parameters:
   default: ''
 - name: vstsMvnAndroidUsername
 - name: vstsMvnAndroidAccessToken
-<<<<<<< HEAD
-=======
-- name: otherParams
-  default: ''
->>>>>>> 851bdee (added powerlift api key to the pipeline)
 
 jobs:
 - job: publish${{ parameters.project }}Libraries
