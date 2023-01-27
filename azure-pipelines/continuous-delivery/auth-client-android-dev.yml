@@ -52,29 +52,17 @@ variables:
     versionNumber: $(Build.BuildNumber)
     brokerVersionNumber: $[replace(variables['build.buildnumber'], '0.0', '8.1')]
   ${{ else }}:
-    value:  ${{ parameters.customVersionNumber }}
-- name : projVersionParam
-  value : -PprojVersion=$(versionNumber)
-- name : common4jVersionParam
-  value : -PdistCommon4jVersion=$(versionNumber)
-- name : broker4jVersionParam
-  value : -PdistBroker4jVersion=$(versionNumber)
-- name : commonVersionParam
-  value : -PdistCommonVersion=$(versionNumber)
-- name : linuxBrokerVersion
-  value : -PlinuxBrokerVersion=$(versionNumber)
-- name : androidProjectDependencyParam
-  value : --configuration=distReleaseRuntimeClasspath --write-locks
-- name : javaProjectDependencyParam
-  value : --configuration=runtimeClasspath --write-locks
-- name : brokerAutomationPipelineId
-  value : 1490
-- name : authenticatorBranch
-  value : "broker/continuous-integration"
-- name : companyPortalBranch
-  value : "broker/continuous-integration"
-- name : powerLiftApiKeyParam
-  value : -PpowerLiftApiKey=$(powerliftApiKey)
+    versionNumber:  ${{ parameters.customVersionNumber }}
+  projVersionParam: -PprojVersion=$(versionNumber)
+  common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
+  broker4jVersionParam: -PdistBroker4jVersion=$(versionNumber)
+  commonVersionParam: -PdistCommonVersion=$(versionNumber)
+  linuxBrokerVersion: -PlinuxBrokerVersion=$(versionNumber)
+  androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
+  javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
+  brokerAutomationPipelineId: 1490
+  authenticatorBranch: "broker/continuous-integration"
+  companyPortalBranch: "broker/continuous-integration"
 
 stages:
 # Common4j - Build and publish
@@ -130,6 +118,10 @@ stages:
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
+  variables:
+  - group: AndroidAuthClientVariables
+  - name : powerLiftApiKeyParam
+    value : -PpowerLiftApiKey=$(powerliftApiKey)
   dependsOn: 
   - publishCommonLibraries
   - publishBroke4jLibraries
