@@ -18,6 +18,11 @@ parameters:
   default: ''
 - name: vstsMvnAndroidUsername
 - name: vstsMvnAndroidAccessToken
+<<<<<<< HEAD
+=======
+- name: otherParams
+  default: ''
+>>>>>>> 851bdee (added powerlift api key to the pipeline)
 
 jobs:
 - job: publish${{ parameters.project }}Libraries
@@ -73,7 +78,11 @@ jobs:
       displayName: Run Test ${{ parameters.project }}
       continueOnError: true
       inputs:
+<<<<<<< HEAD
         tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.assembleParams}} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+=======
+        tasks: ${{ parameters.project }}:${{ parameters.testCmd}}  -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true ${{ parameters.otherParams }}
+>>>>>>> 851bdee (added powerlift api key to the pipeline)
         testRunTitle: '${{ parameters.project }}_UnitTests'
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)

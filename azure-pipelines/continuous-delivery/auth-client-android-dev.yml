@@ -109,6 +109,7 @@ stages:
       publishParams: $(projVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+      otherParams: $(powerLiftApiKeyParam)
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
