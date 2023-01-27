@@ -45,6 +45,10 @@ parameters:
     displayName: Version Number
     type: string
     default: Default
+  - name: runUIValidation
+    displayName: Run E2E UI Validation?
+    type: boolean
+    default: False
 
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
@@ -282,10 +286,11 @@ stages:
             workingDirectory: '$(Build.SourcesDirectory)'
 # Broker - E2E Automation
 - stage: 'runBrokerE2EAutomation'
-  displayName: Broker Automation Run
+  displayName: Broker E2E UI Automation Run
   dependsOn:
     - queueAuthenticatorPipeline
     - queueCompanyPortalPipeline
+  condition: or( eq(${{ parameters.runUIValidation }}, 'true'), eq( variables['Build.Reason'], 'Schedule' ))
   jobs:
     - job: trigger_automation
       displayName: Trigger Broker Automation Run
