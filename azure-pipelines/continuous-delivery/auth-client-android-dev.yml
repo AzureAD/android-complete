@@ -49,6 +49,7 @@ parameters:
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
     versionNumber: $(Build.BuildNumber)
+    brokerVersionNumber: $[replace(variables['build.buildnumber'], '0.0', '8.1')]
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
   projVersionParam: -PprojVersion=$(versionNumber)
@@ -127,8 +128,8 @@ stages:
       testCmd: distDebugAADAuthenticatorUnitTestCoverageReport
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
-      publishParams: $(projVersionParam) $(broker4jVersionParam) $(commonVersionParam)
+      assembleParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam)
+      publishParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
 # Linux Broker - Build and publish
@@ -276,6 +277,7 @@ stages:
           persistCredentials: True
         - task: PowerShell@2
           displayName: Queue and wait for Company Portal Apk generation pipeline
+          continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(pipelinepat)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "237827" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(versionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(companyPortalBranch)"'
