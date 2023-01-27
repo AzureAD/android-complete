@@ -18,6 +18,8 @@ parameters:
   default: ''
 - name: vstsMvnAndroidUsername
 - name: vstsMvnAndroidAccessToken
+- name: powerLiftApiKeyParam
+  deafult: ''
 
 jobs:
 - job: publish${{ parameters.project }}Libraries
