@@ -78,12 +78,11 @@ Note: This lombok folder is extracted from Dolphin-2021.3.1.zip
 
 1. Download [The latest release (0.34.1-2019.1)](https://plugins.jetbrains.com/plugin/6317-lombok/versions) and extract.
 2. Navigate to lombok-plugin\lib
-3. Extract lombok-plugin-0.34.1-2019.1.jar
 4. Open META-INF\plugin.xml.
 5. Look for \<idea-version>, under <b>until-build</b>, set to the latest build version. You can get this information from "About Android Studio"
     - For example, set until-build="AI-213.*" for Dolphin
     ![](readme-img/dolphin.png)
-6. after that, make sure that the META-INF folder is in the same folder as lombok-plugin-0.34.1-2019.1.jar, and then execute `jar uf lombok-plugin-0.34.1-2019.1.jar META-INF/plugin.xml`
+6. Execute `jar uf lombok-plugin-0.34.1-2019.1.jar META-INF/plugin.xml`
 7. Rezip the whole lombok-plugin folder.
 8. Don't forget to add it to /lombok subfolder, so that other people can use :)
 
