@@ -181,7 +181,8 @@ resources:
 
 variables:  
   ${{ if eq(parameters.libraryVersioning, 'generated') }}:  
-    versionNumber: $(Build.BuildNumber)    
+    versionNumber: $(Build.BuildNumber)
+    brokerVersionNumber: $[replace(variables['build.buildnumber'], '0.0', '8.1')] 
     common4jProjVersionParam: -PprojVersion=$(versionNumber)
     common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
     broker4jProjVersionParam: -PprojVersion=$(versionNumber)
@@ -189,7 +190,7 @@ variables:
     commonProjVersionParam: -PprojVersion=$(versionNumber)
     commonVersionParam: -PdistCommonVersion=$(versionNumber)
     msalProjVersionParam: -PprojVersion=$(versionNumber)
-    adAccountsProjVersionParam: -PprojVersion=$(versionNumber)
+    adAccountsProjVersionParam: -PprojVersion=$(brokerVersionNumber)
     adalProjVersionParam: -PprojVersion=$(versionNumber)
     labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(versionNumber)
     labApiUtilitiesProjVersionParam: -PprojVersion=${{ parameters.labApiUtils }}
