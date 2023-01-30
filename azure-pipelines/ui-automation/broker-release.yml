@@ -194,6 +194,7 @@ variables:
     adalProjVersionParam: -PprojVersion=$(versionNumber)
     labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(versionNumber)
     labApiUtilitiesProjVersionParam: -PprojVersion=${{ parameters.labApiUtils }}
+    otelAriaIsProdEnv: false
   ${{ else }}:    
     versionNumber: $(Build.BuildNumber)    
     common4jProjVersionParam: -PprojVersion=${{ parameters.common4jVersionRC }}
@@ -207,6 +208,7 @@ variables:
     adalProjVersionParam: -PprojVersion=${{ parameters.adalVersionRC }}
     labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=${{ parameters.labApiUtils }}
     labApiUtilitiesProjVersionParam: -PprojVersion=${{ parameters.labApiUtils }}
+    otelAriaIsProdEnv: true
   
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
@@ -300,6 +302,7 @@ stages:
   - name : powerLiftApiKeyParam
     value : -PpowerLiftApiKey=$(powerliftApiKey)
   - name : brokerOtelAriaTokenParam
+  - ${{ if eq(parameters.otelAriaIsProdEnv, true) }}:
     value : -PotelAriaToken=$(otelAriaToken)
   dependsOn: 
   - publishCommonLibraries
