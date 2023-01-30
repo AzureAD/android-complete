@@ -302,8 +302,11 @@ stages:
   - name : powerLiftApiKeyParam
     value : -PpowerLiftApiKey=$(powerliftApiKey)
   - name : brokerOtelAriaTokenParam
-    ${{ if eq(variables.otelAriaIsProdEnv, true) }}: 
-    value: -PotelAriaToken=$(otelAriaToken)
+    ${{ if eq(variables[otelAriaIsProdEnv], true) }}:
+     value : -PotelAriaToken=$(otelAriaToken)
+  # - name : brokerOtelAriaTokenParam
+  #   ${{ if eq(variables.otelAriaIsProdEnv, true) }}: 
+  #   value: -PotelAriaToken=$(otelAriaToken)
   dependsOn: 
   - publishCommonLibraries
   - publishBroker4jLibraries
