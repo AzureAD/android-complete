@@ -302,7 +302,9 @@ stages:
   - name : powerLiftApiKeyParam
     value : -PpowerLiftApiKey=$(powerliftApiKey)
   - name : brokerOtelAriaTokenParam
-    ${{ if eq(variables[otelAriaIsProdEnv], true) }}:
+    ${{ if eq(parameters.libraryVersioning, 'generated') }}:
+     value : ''
+    ${{else}} : 
      value : -PotelAriaToken=$(otelAriaToken)
   # - name : brokerOtelAriaTokenParam
   #   ${{ if eq(variables.otelAriaIsProdEnv, true) }}: 
