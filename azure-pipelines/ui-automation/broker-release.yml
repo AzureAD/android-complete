@@ -297,7 +297,9 @@ stages:
   variables:
   - group: AndroidAuthClientVariables
   - name : powerLiftApiKeyParam
-    value : -PpowerLiftApiKey=$(powerliftApiKey)  
+    value : -PpowerLiftApiKey=$(powerliftApiKey)
+  - name : brokerOtelAriaTokenParam
+    value : -PotelAriaToken=$(otelAriaToken)
   dependsOn: 
   - publishCommonLibraries
   - publishBroker4jLibraries
@@ -310,7 +312,7 @@ stages:
       assembleCmd: assembleDist
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam)
+      assembleParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(brokerOtelAriaTokenParam) $(powerLiftApiKeyParam)
       publishParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
