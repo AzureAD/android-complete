@@ -11,8 +11,6 @@
 # msalProjVersionParam:  passes msalVersion in projVersion param
 # adAccountsProjVersionParam: passes adAccountsVersion in projVersion param
 # adalProjVersionParam: passes adal Version in projVersion param
-# labApiUtilitiesVersionParam: passes LabApiUtilitiesVersion
-# labApiUtilitiesProjVersionParam: passes LabApiUtilitiesVersion in projVersion
 # androidProjectDependencyParam: extrea android gradle configs
 # javaProjectDependencyParam: extra java gradle configs
 # oneProjectId: One Project ID `b32aa71e-8ed2-41b2-9d77-5bc261222004`
@@ -78,10 +76,6 @@ parameters:
 - name: adalVersionPROD
   displayName: ADAL PROD Version
   type: string
-- name: labApiUtils
-  displayName: Lab Api Utils Version
-  type: string  
-  default: 
 - name: firebaseDeviceIdHigh
   displayName: Firebase Device Id (Api 30+)
   type: string
@@ -192,8 +186,6 @@ variables:
     msalProjVersionParam: -PprojVersion=$(versionNumber)
     adAccountsProjVersionParam: -PprojVersion=$(brokerVersionNumber)
     adalProjVersionParam: -PprojVersion=$(versionNumber)
-    labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(versionNumber)
-    labApiUtilitiesProjVersionParam: -PprojVersion=${{ parameters.labApiUtils }}
     otelAriaIsProdEnv: false
   ${{ else }}:    
     versionNumber: $(Build.BuildNumber)    
@@ -206,8 +198,6 @@ variables:
     msalProjVersionParam: -PprojVersion=${{ parameters.msalVersionRC }}
     adAccountsProjVersionParam: -PprojVersion=${{ parameters.adAccountsVersionRC }}
     adalProjVersionParam: -PprojVersion=${{ parameters.adalVersionRC }}
-    labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=${{ parameters.labApiUtils }}
-    labApiUtilitiesProjVersionParam: -PprojVersion=${{ parameters.labApiUtils }}
     otelAriaIsProdEnv: true
   
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
@@ -230,20 +220,6 @@ variables:
 
 stages:
 # Package generation
-# LabApiUtilities - Build and publish
-- stage: 'publishLabApiUtilitiesLibraries'
-  displayName: LabApiUtilities - Build and publish
-  condition: ${{ parameters.buildArtifacts }}
-  jobs:
-  - template: ../continuous-delivery/assemble&publish.yml
-    parameters:
-      repository: common
-      project: LabApiUtilities
-      dependencyParams: $(javaProjectDependencyParam)
-      assembleParams: $(labApiUtilitiesProjVersionParam)
-      publishParams: $(labApiUtilitiesProjVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
-      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
@@ -280,7 +256,6 @@ stages:
 - stage: 'publishBroker4jLibraries'
   displayName: Broker4j - Build and publish  
   dependsOn: 
-  - publishLabApiUtilitiesLibraries
   - publishCommon4jLibraries
   condition: ${{ parameters.buildArtifacts }}
   jobs:
@@ -290,8 +265,8 @@ stages:
       project: broker4j
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
-      assembleParams: $(broker4jProjVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
-      publishParams: $(broker4jProjVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
+      assembleParams: $(broker4jProjVersionParam) $(common4jVersionParam)
+      publishParams: $(broker4jProjVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
 # Broker - Build and publish
