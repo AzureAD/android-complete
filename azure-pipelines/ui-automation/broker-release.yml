@@ -281,9 +281,6 @@ stages:
      value : ''
     ${{else}} : 
      value : -PotelAriaToken=$(otelAriaToken)
-  # - name : brokerOtelAriaTokenParam
-  #   ${{ if eq(variables.otelAriaIsProdEnv, true) }}: 
-  #   value: -PotelAriaToken=$(otelAriaToken)
   dependsOn: 
   - publishCommonLibraries
   - publishBroker4jLibraries
