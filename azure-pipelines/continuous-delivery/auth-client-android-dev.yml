@@ -235,7 +235,7 @@ stages:
           persistCredentials: True
         - task: reportgenerator@4
           inputs:
-            reports: '$(Build.SourcesDirectory)/*/build/reports/jacoco/*/*.xml'
+            reports: '$(Build.SourcesDirectory)/**/build/reports/jacoco/**/*.xml'
             targetdir: '$(Build.SourcesDirectory)/CoverageResults'
         - task: PublishCodeCoverageResults@1
           displayName: Publish Code Coverage Report
