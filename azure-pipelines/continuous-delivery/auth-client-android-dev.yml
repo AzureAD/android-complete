@@ -220,6 +220,29 @@ stages:
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
+# Combine and Publish Code Coverage
+- stage: 'combineAndPublishCodeCoverage'
+  displayName: Combine and Publish Code Coverage
+  dependsOn:
+    - publishMsal
+    - publishAdal
+    - publishCommonLibraries
+    - publishBrokerLibraries
+  jobs:
+    - job: combine_and_publish_code_coverage
+      displayName: Combine and Publish
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: reportgenerator@4
+          inputs:
+            reports: '$(Build.SourcesDirectory)/**/*.jacoco.xml'
+            targetdir: '$(Build.SourcesDirectory)/CoverageResults'
+        - task: PublishCodeCoverageResults@1
+            displayName: Publish Code Coverage Report
+            inputs:
+              codeCoverageTool: Cobertura
+              summaryFileLocation: '$(Build.SourcesDirectory)/CoverageResults/Cobertura.xml'
 # Promote published packages
 - stage: 'promotePackages'
   displayName: Promote published packages

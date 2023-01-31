@@ -78,8 +78,3 @@ jobs:
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
-    - task: PublishCodeCoverageResults@1
-      displayName: Publish Code Coverage Report
-      inputs:
-        summaryFileLocation: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/${{ parameters.testCmd }}.xml'
-        reportDirectory: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/html'
