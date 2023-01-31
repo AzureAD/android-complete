@@ -227,7 +227,6 @@ stages:
     - publishMsal
     - publishAdal
     - publishCommonLibraries
-    - publishBrokerLibraries
   jobs:
     - job: combine_and_publish_code_coverage
       displayName: Combine and Publish
