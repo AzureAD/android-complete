@@ -11,8 +11,6 @@
 # msalProjVersionParam:  passes msalVersion in projVersion param
 # adAccountsProjVersionParam: passes adAccountsVersion in projVersion param
 # adalProjVersionParam: passes adal Version in projVersion param
-# labApiUtilitiesVersionParam: passes LabApiUtilitiesVersion
-# labApiUtilitiesProjVersionParam: passes LabApiUtilitiesVersion in projVersion
 # androidProjectDependencyParam: extrea android gradle configs
 # javaProjectDependencyParam: extra java gradle configs
 # oneProjectId: One Project ID `b32aa71e-8ed2-41b2-9d77-5bc261222004`
@@ -78,10 +76,6 @@ parameters:
 - name: adalVersionPROD
   displayName: ADAL PROD Version
   type: string
-- name: labApiUtils
-  displayName: Lab Api Utils Version
-  type: string  
-  default: 
 - name: firebaseDeviceIdHigh
   displayName: Firebase Device Id (Api 30+)
   type: string
@@ -181,7 +175,8 @@ resources:
 
 variables:  
   ${{ if eq(parameters.libraryVersioning, 'generated') }}:  
-    versionNumber: $(Build.BuildNumber)    
+    versionNumber: $(Build.BuildNumber)
+    brokerVersionNumber: $[replace(variables['build.buildnumber'], '0.0', '8.1')] 
     common4jProjVersionParam: -PprojVersion=$(versionNumber)
     common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
     broker4jProjVersionParam: -PprojVersion=$(versionNumber)
@@ -189,10 +184,9 @@ variables:
     commonProjVersionParam: -PprojVersion=$(versionNumber)
     commonVersionParam: -PdistCommonVersion=$(versionNumber)
     msalProjVersionParam: -PprojVersion=$(versionNumber)
-    adAccountsProjVersionParam: -PprojVersion=$(versionNumber)
+    adAccountsProjVersionParam: -PprojVersion=$(brokerVersionNumber)
     adalProjVersionParam: -PprojVersion=$(versionNumber)
-    labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=$(versionNumber)
-    labApiUtilitiesProjVersionParam: -PprojVersion=${{ parameters.labApiUtils }}
+    otelAriaIsProdEnv: false
   ${{ else }}:    
     versionNumber: $(Build.BuildNumber)    
     common4jProjVersionParam: -PprojVersion=${{ parameters.common4jVersionRC }}
@@ -204,8 +198,7 @@ variables:
     msalProjVersionParam: -PprojVersion=${{ parameters.msalVersionRC }}
     adAccountsProjVersionParam: -PprojVersion=${{ parameters.adAccountsVersionRC }}
     adalProjVersionParam: -PprojVersion=${{ parameters.adalVersionRC }}
-    labApiUtilitiesVersionParam: -PdistLabApiUtilitiesVersion=${{ parameters.labApiUtils }}
-    labApiUtilitiesProjVersionParam: -PprojVersion=${{ parameters.labApiUtils }}
+    otelAriaIsProdEnv: true
   
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
@@ -227,20 +220,6 @@ variables:
 
 stages:
 # Package generation
-# LabApiUtilities - Build and publish
-- stage: 'publishLabApiUtilitiesLibraries'
-  displayName: LabApiUtilities - Build and publish
-  condition: ${{ parameters.buildArtifacts }}
-  jobs:
-  - template: ../continuous-delivery/assemble&publish.yml
-    parameters:
-      repository: common
-      project: LabApiUtilities
-      dependencyParams: $(javaProjectDependencyParam)
-      assembleParams: $(labApiUtilitiesProjVersionParam)
-      publishParams: $(labApiUtilitiesProjVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
-      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
@@ -251,6 +230,7 @@ stages:
     parameters:
       repository: common
       project: common4j
+      testCmd: common4jUnitTestCoverageReport
       dependencyParams: $(javaProjectDependencyParam)
       assembleParams: $(common4jProjVersionParam)
       publishParams: $(common4jProjVersionParam)
@@ -267,6 +247,7 @@ stages:
       repository: common
       project: common
       assembleCmd: assembleDist
+      testCmd: distDebugCommonUnitTestCoverageReport
       publishCmd: publish
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(commonProjVersionParam) $(common4jVersionParam)
@@ -277,7 +258,6 @@ stages:
 - stage: 'publishBroker4jLibraries'
   displayName: Broker4j - Build and publish  
   dependsOn: 
-  - publishLabApiUtilitiesLibraries
   - publishCommon4jLibraries
   condition: ${{ parameters.buildArtifacts }}
   jobs:
@@ -285,15 +265,25 @@ stages:
     parameters:
       repository: broker
       project: broker4j
+      testCmd: broker4jUnitTestCoverageReport
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
-      assembleParams: $(broker4jProjVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
-      publishParams: $(broker4jProjVersionParam) $(common4jVersionParam) $(labApiUtilitiesVersionParam)
+      assembleParams: $(broker4jProjVersionParam) $(common4jVersionParam)
+      publishParams: $(broker4jProjVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
-  displayName: Android Broker - Build and publish  
+  displayName: Android Broker - Build and publish
+  variables:
+  - group: AndroidAuthClientVariables
+  - name : powerLiftApiKeyParam
+    value : -PpowerLiftApiKey=$(powerliftApiKey)
+  - name : brokerOtelAriaTokenParam
+    ${{ if eq(parameters.libraryVersioning, 'generated') }}:
+     value : ''
+    ${{else}} : 
+     value : -PotelAriaToken=$(otelAriaToken)
   dependsOn: 
   - publishCommonLibraries
   - publishBroker4jLibraries
@@ -303,10 +293,11 @@ stages:
     parameters:
       repository: broker
       project: AADAuthenticator
+      testCmd: distDebugAADAuthenticatorUnitTestCoverageReport
       assembleCmd: assembleDist
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam)
+      assembleParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(brokerOtelAriaTokenParam) $(powerLiftApiKeyParam)
       publishParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
@@ -321,6 +312,7 @@ stages:
       repository: msal
       project: msal
       assembleCmd: assembleDistRelease
+      testCmd: distDebugMsalUnitTestCoverageReport
       publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(msalProjVersionParam) $(commonVersionParam)
@@ -338,6 +330,7 @@ stages:
       repository: adal
       project: adal
       assembleCmd: assembleDist
+      testCmd: testDistDebugUnitTest
       publishCmd: publishAdalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(adalProjVersionParam) $(commonVersionParam)
@@ -419,6 +412,7 @@ stages:
         - checkout: self
           persistCredentials: True
         - task: PowerShell@2
+          continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAZURE_BUILD_TOKEN)" -BuildDefinitionId "237827" -WaitTimeoutInMinutes 100 -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}'', ''AdalVersion'': ''${{ parameters.adalVersionRC }}'' }" -Branch "wainaina/update-auth-improvements"'
