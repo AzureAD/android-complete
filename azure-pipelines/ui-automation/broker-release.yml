@@ -132,6 +132,11 @@ resources:
     name: AzureAD/microsoft-authentication-library-for-android
     ref: ${{ parameters.msalBranch }}
     endpoint: ANDROID_GITHUB
+  - repository: broker-prod
+    type: github
+    name: AzureAD/ad-accounts-for-android
+    ref: release/9.0.0
+    endpoint: ANDROID_GITHUB
   - repository: broker
     type: github
     name: AzureAD/ad-accounts-for-android
@@ -499,8 +504,13 @@ stages:
         productFlavors: External
         signingConfigurations: Release
         msalVersion: ${{ parameters.msalVersionPROD }}
-        packageVariant: PROD
-    - template: ./templates/build-broker-host.yml
+        packageVariant: PROD  
+# BrokerHost (Prod)     
+- stage: 'brokerHostPROD'
+  dependsOn: []
+  displayName: Build BrokerHost PROD
+  jobs:
+    - template: ./templates/build-broker-host-prod.yml
       parameters:
         productFlavors: Dist
         signingConfigurations: Release
