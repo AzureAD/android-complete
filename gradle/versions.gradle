@@ -2,15 +2,17 @@
 ext {
     // SDK
     minSdkVersion = 16
-    brokerProjectMinSdkVersion=24
+    brokerProjectMinSdkVersion = 24
     automationAppMinSDKVersion = 21
     targetSdkVersion = 30
     compileSdkVersion = 30
     buildToolsVersion = "28.0.3"
 
     // Plugins
-    gradleVersion = '4.1.0'
-    androidMavenGradlePluginVersion = "1.4.1"
+    gradleVersion = '4.2.2'
+    kotlinVersion = '1.7.21'
+    spotBugsGradlePluginVersion = '4.7.1'
+    jupiterApiVersion = '5.6.0'
     
     //Java Language Support
     coreLibraryDesugaringVersion = "1.0.9"
@@ -67,6 +69,11 @@ ext {
     yubikitPivVersion = "2.1.0"
     powerliftAndroidVersion="1.0.0"
 
+    // microsoft-diagnostics-uploader app versions
+    powerliftVersion = "0.14.7"
+    cliktVersion = "3.4.2"
+    okhttp3Version = "4.9.3"
+
     // TODO: adal automation test app.
     supportLibraryVersion = "27.1.+"
     adalLegacy = "1.15.0"
@@ -89,8 +96,4 @@ ext {
     mockitoLibraryVersion = "1.2"
     dexMakerLibraryVersion = "1.2"
     //#### The ABOVE are TSL version variables - END
-
-    kotlinVersion = '1.5.30'
-    spotBugsGradlePluginVersion = '4.7.1'
-    jupiterApiVersion = '5.6.0'
 }
