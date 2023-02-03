@@ -233,6 +233,8 @@ stages:
       steps:
         - checkout: self
           persistCredentials: True
+        - download: current
+          artifact: 'Code Coverage Report_$(Build.BuildId)'
         - task: reportgenerator@4
           inputs:
             reports: '$(Pipeline.Workspace)/Code Coverage Report_$(Build.BuildId)/summary$(Build.BuildId)/*.xml'
