@@ -224,8 +224,8 @@ stages:
 - stage: 'combineAndPublishCodeCoverage'
   displayName: Combine and Publish Code Coverage
   dependsOn:
-#    - publishMsal
-    - publishAdal
+    - publishMsal
+#    - publishBrokerLibraries
     - publishCommonLibraries
   jobs:
     - job: combine_and_publish_code_coverage
