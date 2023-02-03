@@ -235,7 +235,7 @@ stages:
           persistCredentials: True
         - download: current
           artifact: Code Coverage Report_$(Build.BuildId)
-          pattern: '**/*.xml'
+          patterns: '**/*.xml'
         - task: reportgenerator@4
           inputs:
             reports: '$(Pipeline.Workspace)/Code Coverage Report_$(Build.BuildId)/summary$(Build.BuildId)/*.xml'
