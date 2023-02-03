@@ -224,7 +224,7 @@ stages:
 - stage: 'combineAndPublishCodeCoverage'
   displayName: Combine and Publish Code Coverage
   dependsOn:
-    - publishMsal
+#    - publishMsal
     - publishAdal
     - publishCommonLibraries
   jobs:
@@ -234,10 +234,10 @@ stages:
         - checkout: self
           persistCredentials: True
         - download: current
-          artifact: CodeCoverage
+          artifact: Code Coverage Report_$(Build.BuildId)
         - task: reportgenerator@4
           inputs:
-            reports: '$(Pipeline.Workspace)/CodeCoverage/Code Coverage Report_$(Build.BuildId)/summary$(Build.BuildId)/*.xml'
+            reports: '$(Pipeline.Workspace)/Code Coverage Report_$(Build.BuildId)/summary$(Build.BuildId)/*.xml'
             targetdir: '$(Build.SourcesDirectory)/CoverageResults'
         - task: PublishCodeCoverageResults@1
           displayName: Publish Code Coverage Report
