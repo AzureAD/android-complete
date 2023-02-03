@@ -234,7 +234,7 @@ stages:
         - checkout: self
           persistCredentials: True
         - download: current
-          artifact: Code Coverage Report_$(Build.BuildId)
+          artifact: Code Coverage Report_$(Build.BuildId)/
           patterns: '**/*.xml'
         - task: reportgenerator@4
           inputs:
