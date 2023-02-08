@@ -426,14 +426,14 @@ stages:
     - publishCommonLibraries
     - publishMsal
     - publishBrokerLibraries
-  condition:  |
-    and
-    (
-      in(dependencies.publishAdal.result, 'Succeeded', 'Skipped'),
-      in(dependencies.publishCommonLibraries.result, 'Succeeded', 'Skipped'),
-      in(dependencies.publishMsal.result, 'Succeeded', 'Skipped'),
-      in(dependencies.publishBrokerLibraries.result, 'Succeeded', 'Skipped')
-    )
+#  condition:  |
+#    and
+#    (
+#      in(dependencies.publishAdal.result, 'Succeeded', 'Skipped'),
+#      in(dependencies.publishCommonLibraries.result, 'Succeeded', 'Skipped'),
+#      in(dependencies.publishMsal.result, 'Succeeded', 'Skipped'),
+#      in(dependencies.publishBrokerLibraries.result, 'Succeeded', 'Skipped')
+#    )
   displayName: Generate Test Apps
   jobs:
     - template: ./templates/build-azure-sample-app.yml
