@@ -22,7 +22,7 @@ parameters:
       - PlayStore
 
 jobs:
-- job: 'brokerautomationapp'
+- job: brokerautomationapp
   displayName: Build and Publish Broker Automation app
   pool:
     vmImage: ubuntu-latest

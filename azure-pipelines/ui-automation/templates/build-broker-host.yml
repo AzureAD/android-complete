@@ -34,8 +34,8 @@ parameters:
     - RC
 
 jobs:
-- job: brokerhost
-  displayName: Build BrokerHost ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
+- job: brokerhost${{ parameters.packageVariant }}${{ parameters.productFlavors }}${{ parameters.signingConfigurations }}
+  displayName: BrokerHost ${{ parameters.packageVariant }} ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
   pool:
     vmImage: 'windows-latest'
   variables:

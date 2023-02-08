@@ -25,8 +25,8 @@ parameters:
     - RC
 
 jobs:
-- job: azure_samples
-  displayName: Build Azure Samples ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
+- job: azure_samples${{ parameters.packageVariant }}${{ parameters.productFlavors }}${{ parameters.signingConfigurations }}
+  displayName: Build Azure Samples ${{ parameters.packageVariant }} ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
   pool:
     vmImage: 'windows-latest'
   variables:
