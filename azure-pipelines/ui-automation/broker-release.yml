@@ -340,7 +340,7 @@ stages:
 
 # Publish Libraries
 - stage: 'publishLibraries'
-  displayName: Publish Libraries to PreRelease
+  displayName: Publish Libraries to Release and PreRelease
   condition: ${{ parameters.buildArtifacts }}
   dependsOn:
     - publishAdal
@@ -375,7 +375,7 @@ stages:
 # Broker app generation
 # Authenticator
 - stage: 'queueAuthenticatorBrokerApkPipeline'
-  displayName: Authenticator - Queue pipeline
+  displayName: Authenticator - Queue Build Pipeline
   condition: ${{ parameters.buildArtifacts }}
   dependsOn:
     - publishLibraries
@@ -393,7 +393,7 @@ stages:
           name: buildAuthenticator
 # Company Portal
 - stage: 'queueCompanyPortalBrokerApkPipeline'
-  displayName: Company Portal - Queue pipeline
+  displayName: Company Portal - Queue Build Pipeline
   condition: ${{ parameters.buildArtifacts }}
   dependsOn:
     - publishLibraries
@@ -542,7 +542,7 @@ stages:
       notIn(dependencies.firstpartyapps.result, 'Failed'),
       notIn(dependencies.download_brokers.result, 'Failed')
     )
-  displayName: ADAL with broker and Broker basic validation test plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
+  displayName: RC ADAL with RC Broker UI Automation (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
