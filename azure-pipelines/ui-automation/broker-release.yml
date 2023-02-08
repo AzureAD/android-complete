@@ -436,7 +436,7 @@ stages:
   displayName: Generate Test Apps
   jobs:
     - job: azuresampleappRC
-    - displayName: Azure Sample RC
+      displayName: Azure Sample RC
     - template: ./templates/build-azure-sample-app.yml
       parameters:
         productFlavors: External
@@ -444,7 +444,7 @@ stages:
         msalVersion: ${{ parameters.msalVersionRC }}
         packageVariant: RC
     - job: azuresampleappPROD
-    - displayName: Azure Sample PROD
+      displayName: Azure Sample PROD
     - template: ./templates/build-azure-sample-app.yml
       parameters:
         productFlavors: External
@@ -452,7 +452,7 @@ stages:
         msalVersion: ${{ parameters.msalVersionPROD }}
         packageVariant: PROD
     - job: brokerHostPROD
-    - displayName: BrokerHost PROD
+      displayName: BrokerHost PROD
     - template: ./templates/build-broker-host.yml
       parameters:
         productFlavors: Dist
@@ -463,7 +463,7 @@ stages:
         adalVersion: ${{ parameters.adalVersionPROD }}
         packageVariant: PROD
     - job: brokerHostDistRCRelease
-    - displayName: BrokerHost Dist Release RC
+      displayName: BrokerHost Dist Release RC
     - template: ./templates/build-broker-host.yml
       parameters:
         productFlavors: Dist
@@ -474,7 +474,7 @@ stages:
         adalVersion: ${{ parameters.adalVersionRC }}
         packageVariant: RC
     - job: brokerHostLocalRCDebug
-    - displayName: BrokerHost Local Debug RC
+      displayName: BrokerHost Local Debug RC
     - template: ./templates/build-broker-host.yml
       parameters:
         productFlavors: Local
@@ -485,7 +485,7 @@ stages:
         adalVersion: ${{ parameters.adalVersionRC }}
         packageVariant: RC
     - job: msalautomationappRC
-    - displayName: MSAL Automation App RC
+      displayName: MSAL Automation App RC
     - template: ./templates/build-msal-automation-app.yml
       parameters:
         brokerApp: AutoBroker
@@ -495,7 +495,7 @@ stages:
         msalVersion: ${{ parameters.msalVersionRC }}
         packageVariant: RC
     - job: msalautomationappPROD
-    - displayName: MSAL Automation App PROD
+      displayName: MSAL Automation App PROD
     - template: ./templates/build-msal-automation-app.yml
       parameters:
         brokerApp: AutoBroker
@@ -505,7 +505,7 @@ stages:
         msalVersion: ${{ parameters.msalVersionPROD }}
         packageVariant: PROD
     - job: msalautomationappPRODlocalbrokerhost
-    - displayName: MSAL Automation App PROD (LocalBrokerHost)
+      displayName: MSAL Automation App PROD (LocalBrokerHost)
     - template: ./templates/build-msal-automation-app.yml
       parameters:
         brokerApp: BrokerHost
@@ -515,7 +515,7 @@ stages:
         msalVersion: ${{ parameters.msalVersionPROD }}
         packageVariant: PROD
     - job: brokerautomationapp
-    - displayName: Broker Automation App
+      displayName: Broker Automation App
     - template: ./templates/build-broker-automation-app.yml
       parameters:
         brokerApp: AutoBroker
@@ -605,7 +605,7 @@ stages:
   displayName: RC MSAL with PROD Broker UI Automation
   jobs:
     - job: RC_msal_PROD_broker_high_api
-    - displayName: (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
+      displayName: (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/msalautomationapp-dist-AutoBroker-debug.apk"
@@ -628,7 +628,7 @@ stages:
         extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
         flankShards: ${{ parameters.flankShards }}
     - job: RC_msal_PROD_broker_low_api
-    - displayName: (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
+      displayName: (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
     - template: ./templates/run-on-firebase.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/msalautomationapp-dist-AutoBroker-debug.apk"
@@ -665,7 +665,7 @@ stages:
   displayName: PROD MSAL with RC Broker UI Automation
   jobs:
     - job: PROD_msal_RC_broker_high_api
-    - displayName: (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
+      displayName: (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-PROD-LocalApk/msalautomationapp-dist-AutoBroker-debug.apk"
@@ -688,7 +688,7 @@ stages:
         extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
         flankShards: ${{ parameters.flankShards }}
     - job: PROD_msal_RC_brokerhost_debug
-    - displayName: (BrokerHost tests, debug) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
+      displayName: (BrokerHost tests, debug) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
     - template: ./templates/run-on-firebase.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/msalautomationapp-local-BrokerHost-debug.apk"
@@ -710,7 +710,7 @@ stages:
         testRunTitle: "PROD MSAL - RC Broker (BrokerHost tests, debug) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
         extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus, annotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
     - job: PROD_msal_RC_broker_low_api
-    - displayName: (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
+      displayName: (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
     - template: ./templates/run-on-firebase.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-PROD-LocalApk/msalautomationapp-dist-AutoBroker-debug.apk"
