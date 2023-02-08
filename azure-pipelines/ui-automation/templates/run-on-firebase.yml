@@ -28,7 +28,7 @@ parameters:
 
 jobs:
   - job: ${{ parameters.jobTitle }}
-    displayName: (API${{ parameters.firebaseDeviceAndroidVersion }}) Running Test Suite on Firebase
+    displayName: (API ${{ parameters.firebaseDeviceAndroidVersion }}) Running Test Suite on Firebase
     timeoutInMinutes: 90
     pool:
       vmImage: ubuntu-latest
