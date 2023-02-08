@@ -436,16 +436,16 @@ stages:
   displayName: Generate Test Apps
   jobs:
     - job: azuresampleappRC
-      displayName: Azure Sample RC
-      template: ./templates/build-azure-sample-app.yml
-          parameters:
-            productFlavors: External
-            signingConfigurations: Release
-            msalVersion: ${{ parameters.msalVersionRC }}
-            packageVariant: RC
+    - displayName: Azure Sample RC
+    - template: ./templates/build-azure-sample-app.yml
+      parameters:
+        productFlavors: External
+        signingConfigurations: Release
+        msalVersion: ${{ parameters.msalVersionRC }}
+        packageVariant: RC
     - job: azuresampleappPROD
-      displayName: Azure Sample PROD
-      template: ./templates/build-azure-sample-app.yml
+    - displayName: Azure Sample PROD
+    - template: ./templates/build-azure-sample-app.yml
       parameters:
         productFlavors: External
         signingConfigurations: Release
