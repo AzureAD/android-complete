@@ -40,8 +40,8 @@ parameters:
     default: "msalautomationapks"
 
 jobs:
-  - job: msalautomationapp${{ parameters.packageVariant }}${{ parameters.msalFlavor }}${{ parameters.signingConfigurations }}
-    displayName: Build and Publish MSAL Automation ${{ parameters.packageVariant }} ${{ parameters.msalFlavor }} ${{ parameters.signingConfigurations }} app
+  - job: msalautomationapp${{ parameters.packageVariant }}${{ parameters.msalFlavor }}
+    displayName: Build and Publish MSAL Automation ${{ parameters.packageVariant }} ${{ parameters.msalFlavor }} app
     pool:
       vmImage: ubuntu-latest
     steps:
