@@ -438,19 +438,19 @@ stages:
     - job: azuresampleappRC
       displayName: Azure Sample RC
       template: ./templates/build-azure-sample-app.yml
-        parameters:
-          productFlavors: External
-          signingConfigurations: Release
-          msalVersion: ${{ parameters.msalVersionRC }}
-          packageVariant: RC
+          parameters:
+            productFlavors: External
+            signingConfigurations: Release
+            msalVersion: ${{ parameters.msalVersionRC }}
+            packageVariant: RC
     - job: azuresampleappPROD
       displayName: Azure Sample PROD
       template: ./templates/build-azure-sample-app.yml
-        parameters:
-          productFlavors: External
-          signingConfigurations: Release
-          msalVersion: ${{ parameters.msalVersionPROD }}
-          packageVariant: PROD
+      parameters:
+        productFlavors: External
+        signingConfigurations: Release
+        msalVersion: ${{ parameters.msalVersionPROD }}
+        packageVariant: PROD
     - job: brokerHostPROD
       displayName: BrokerHost PROD
       template: ./templates/build-broker-host.yml
