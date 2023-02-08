@@ -500,7 +500,8 @@ stages:
         brokerSource: LocalApk
 # Download First Party Apps
 - stage: 'firstpartyapps'
-  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+  dependsOn:
+  - publishLibraries # adding this dependency to improve pipeline readability
   displayName: Download First Party Apps (Outlook, Teams, Word, Edge)
   jobs:
     - template: ./templates/download-first-party-apps.yml
