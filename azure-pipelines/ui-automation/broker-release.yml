@@ -433,10 +433,10 @@ stages:
   condition:  |
     and
     (
-      notIn(dependencies.publishAdal.result, 'Failed'),
-      notIn(dependencies.publishCommonLibraries.result, 'Failed'),
-      notIn(dependencies.publishMsal.result, 'Failed'),
-      notIn(dependencies.publishBrokerLibraries.result, 'Failed')
+      notIn(dependencies.publishAdal.result, 'Failed', 'Canceled'),
+      notIn(dependencies.publishCommonLibraries.result, 'Failed', 'Canceled'),
+      notIn(dependencies.publishMsal.result, 'Failed', 'Canceled'),
+      notIn(dependencies.publishBrokerLibraries.result, 'Failed', 'Canceled')
     )
   displayName: Generate Test Apps
   jobs:
@@ -549,9 +549,9 @@ stages:
   condition:  |
     and
     (
-      notIn(dependencies.testappgeneration.result, 'Failed'),
-      notIn(dependencies.firstpartyapps.result, 'Failed'),
-      notIn(dependencies.download_brokers.result, 'Failed')
+      notIn(dependencies.testappgeneration.result, 'Failed', 'Canceled'),
+      notIn(dependencies.firstpartyapps.result, 'Failed', 'Canceled'),
+      notIn(dependencies.download_brokers.result, 'Failed', 'Canceled')
     )
   displayName: RC ADAL with RC Broker UI Automation (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
@@ -586,9 +586,9 @@ stages:
   condition: |
     and
     (
-      notIn(dependencies.testappgeneration.result, 'Failed'),
-      notIn(dependencies.firstpartyapps.result, 'Failed'),
-      notIn(dependencies.download_brokers.result, 'Failed')
+      notIn(dependencies.testappgeneration.result, 'Failed', 'Canceled'),
+      notIn(dependencies.firstpartyapps.result, 'Failed', 'Canceled'),
+      notIn(dependencies.download_brokers.result, 'Failed', 'Canceled')
     )
   displayName: RC MSAL with PROD Broker UI Automation
   jobs:
@@ -647,9 +647,9 @@ stages:
   condition: |
     and
     (
-      notIn(dependencies.testappgeneration.result, 'Failed'),
-      notIn(dependencies.firstpartyapps.result, 'Failed'),
-      notIn(dependencies.download_brokers.result, 'Failed')
+      notIn(dependencies.testappgeneration.result, 'Failed', 'Canceled'),
+      notIn(dependencies.firstpartyapps.result, 'Failed', 'Canceled'),
+      notIn(dependencies.download_brokers.result, 'Failed', 'Canceled')
     )
   displayName: PROD MSAL with RC Broker UI Automation
   jobs:
