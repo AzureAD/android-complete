@@ -526,13 +526,13 @@ stages:
       in(dependencies.queueAuthenticatorBrokerApkPipeline.result, 'Succeeded', 'Skipped'),
       in(dependencies.queueCompanyPortalBrokerApkPipeline.result, 'Succeeded', 'Skipped')      
     ) 
-  displayName: Download PROD & RC Brokers $[stageDependencies.queueAuthenticatorBrokerApkPipeline.result]
+  displayName: Download PROD & RC Brokers
   jobs: 
     - template: ./templates/download-brokers.yml
       parameters:
         engineeringProjectId: '$(engineeringProjectId)'        
         msazureServiceConnection: '$(msazureServiceConnection)'
-        msazureFeedName: '$(msazureFeedName)'
+        msazureFeedName: $[stageDependencies.queueAuthenticatorBrokerApkPipeline.result]
         authenticatorVersionRC: ${{ parameters.authenticatorVersion }}
         authenticatorVersionPROD: ${{ parameters.prodAuthenticatorVersion }}
         oldAuthenticatorVersion: ${{ parameters.oldAuthenticatorVersion }}
