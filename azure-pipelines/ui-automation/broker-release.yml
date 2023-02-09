@@ -523,8 +523,8 @@ stages:
   condition:  |
     and
     (
-      in(dependencies.queueAuthenticatorBrokerApkPipeline.result, 'Succeeded', 'SucceededWithIssues', 'Skipped'),
-      in(dependencies.queueCompanyPortalBrokerApkPipeline.result, 'Succeeded', 'SucceededWithIssues', 'Skipped')
+      notIn(dependencies.queueAuthenticatorBrokerApkPipeline.result, 'Failed', 'Canceled'),
+      notIn(dependencies.queueCompanyPortalBrokerApkPipeline.result, 'Failed', 'Canceled')
     )
   displayName: Download PROD & RC Brokers
   jobs: 
