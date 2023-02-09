@@ -520,12 +520,12 @@ stages:
   dependsOn:
   - queueAuthenticatorBrokerApkPipeline
   - queueCompanyPortalBrokerApkPipeline
-  condition:  |
-    and
-    (
-      in(dependencies.queueAuthenticatorBrokerApkPipeline.result, 'Succeeded', 'Skipped'),
-      in(dependencies.queueCompanyPortalBrokerApkPipeline.result, 'Succeeded', 'Skipped')      
-    ) 
+#  condition:  |
+#    and
+#    (
+#      in(dependencies.queueAuthenticatorBrokerApkPipeline.result, 'Succeeded', 'Skipped'),
+#      in(dependencies.queueCompanyPortalBrokerApkPipeline.result, 'Succeeded', 'Skipped')
+#    )
   displayName: Download PROD & RC Brokers
   jobs: 
     - template: ./templates/download-brokers.yml
