@@ -46,6 +46,10 @@ parameters:
   displayName: Building Artifacts?
   type: boolean
   default: False
+- name: shouldPublishLibraries
+  displayName: Publish Libraries?
+  type: boolean
+  default: False
 - name: msalVersionRC
   displayName: MSAL RC Version
   type: string
@@ -236,6 +240,7 @@ stages:
       publishParams: $(common4jProjVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+      shouldPublish: ${{ parameters.shouldPublishLibraries }}
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish  
@@ -254,6 +259,7 @@ stages:
       publishParams: $(commonProjVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+      shouldPublish: ${{ parameters.shouldPublishLibraries }}
 # Broker4j - Build and publish
 - stage: 'publishBroker4jLibraries'
   displayName: Broker4j - Build and publish  
@@ -272,6 +278,7 @@ stages:
       publishParams: $(broker4jProjVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+      shouldPublish: ${{ parameters.shouldPublishLibraries }}
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
@@ -301,6 +308,7 @@ stages:
       publishParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+      shouldPublish: ${{ parameters.shouldPublishLibraries }}
 # Msal - Build and publish      
 - stage: 'publishMsal'
   displayName: Msal - Build and publish  
@@ -319,6 +327,7 @@ stages:
       publishParams: $(msalProjVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
+      shouldPublish: ${{ parameters.shouldPublishLibraries }}
 # Adal - Build and publish
 - stage: 'publishAdal'
   displayName: Adal - Build and publish  
@@ -337,9 +346,10 @@ stages:
       publishParams: $(adalProjVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
+      shouldPublish: ${{ parameters.shouldPublishLibraries }}
 
-# Publish Libraries
-- stage: 'publishLibraries'
+# Promote Libraries
+- stage: 'promoteLibraries'
   displayName: Publish Libraries to Release and PreRelease
   condition: ${{ parameters.buildArtifacts }}
   dependsOn:
@@ -347,9 +357,9 @@ stages:
     - publishBrokerLibraries
     - publishMsal
   jobs:
-    # Publish to Pre-Release
-    - job: publish_to_prerelease
-      displayName: Publish all the libraries to PreRelease
+    # Promote to Pre-Release
+    - job: promote_to_prerelease
+      displayName: Promote all the libraries to Pre-Release
       timeoutInMinutes: 90
       steps:
         - checkout: self
@@ -359,9 +369,9 @@ stages:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
             arguments: '-PackagingPAT "$(MSAZURE_BUILD_TOKEN)" -common4jVersion "${{ parameters.common4jVersionRC }}" -commonVersion "${{ parameters.commonVersionRC }}" -broker4jVersion "${{ parameters.broker4jVersionRC }}" -adAccountsVersion "${{ parameters.adAccountsVersionRC }}" -msalVersion "${{ parameters.msalVersionRC }}" -adalVersion "${{ parameters.adalVersionRC }}" -PromoteToView "Prerelease"'
             workingDirectory: '$(Build.SourcesDirectory)'
-    # Publish to Release
-    - job: publish_to_release
-      displayName: Publish all the libraries to Release
+    # Promote to Release
+    - job: promote_to_release
+      displayName: Promote all the libraries to Release
       timeoutInMinutes: 90
       steps:
         - checkout: self
@@ -378,7 +388,7 @@ stages:
   displayName: Authenticator - Queue Build Pipeline
   condition: ${{ parameters.buildArtifacts }}
   dependsOn:
-    - publishLibraries
+    - promoteLibraries
   jobs:
     - job: queue_build
       displayName: Queue Build for Authenticator RC
@@ -396,7 +406,7 @@ stages:
   displayName: Company Portal - Queue Build Pipeline
   condition: ${{ parameters.buildArtifacts }}
   dependsOn:
-    - publishLibraries
+    - promoteLibraries
   jobs:
     - job: queue_build
       displayName: Queue Build for Company Portal RC
@@ -419,7 +429,7 @@ stages:
     - publishCommonLibraries
     - publishMsal
     - publishBrokerLibraries
-    - publishLibraries
+    - promoteLibraries
   condition:  |
     and
     (
@@ -501,7 +511,7 @@ stages:
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn:
-  - publishLibraries # adding this dependency to improve pipeline readability
+  - promoteLibraries # adding this dependency to improve pipeline readability
   displayName: Download First Party Apps (Outlook, Teams, Word, Edge)
   jobs:
     - template: ./templates/download-first-party-apps.yml

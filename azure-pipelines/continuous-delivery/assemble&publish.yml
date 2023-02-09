@@ -18,6 +18,9 @@ parameters:
   default: ''
 - name: vstsMvnAndroidUsername
 - name: vstsMvnAndroidAccessToken
+- name: shouldPublish
+  type: boolean
+  default: True
 
 jobs:
 - job: publish${{ parameters.project }}Libraries
@@ -44,6 +47,7 @@ jobs:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: Gradle@3
+    condition: or( eq(${{ parameters.shouldPublish }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
     displayName: Publish ${{ parameters.project }}
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.publishCmd}} ${{ parameters.publishParams}}
