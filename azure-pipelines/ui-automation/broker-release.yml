@@ -526,7 +526,7 @@ stages:
       in(dependencies.queueAuthenticatorBrokerApkPipeline.result, 'Succeeded', 'Skipped'),
       in(dependencies.queueCompanyPortalBrokerApkPipeline.result, 'Succeeded', 'Skipped')      
     ) 
-  displayName: Download PROD & RC Brokers $[ dependencies.queueAuthenticatorBrokerApkPipeline.result ]
+  displayName: Download PROD & RC Brokers $[stageDependencies.queueAuthenticatorBrokerApkPipeline.result]
   jobs: 
     - template: ./templates/download-brokers.yml
       parameters:
