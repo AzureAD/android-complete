@@ -335,7 +335,13 @@ stages:
   dependsOn:
     - queueAuthenticatorPipeline
     - queueCompanyPortalPipeline
-  condition: or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
+    )
   jobs:
     - job: trigger_automation
       displayName: Trigger Broker Automation Run
