@@ -49,7 +49,7 @@ parameters:
 - name: shouldPublishLibraries
   displayName: Publish Libraries?
   type: boolean
-  default: False
+  default: True
 - name: shouldPromoteLibraries
   displayName: Promote Libraries?
   type: boolean
