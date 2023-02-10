@@ -599,7 +599,7 @@ stages:
   condition: |
     and
     (
-      eq(${{ parameters.shouldRunUiValidation }}, 'True')
+      eq(${{ parameters.shouldRunUiValidation }}, 'True'),
       notIn(dependencies.testappgeneration.result, 'Failed', 'Canceled'),
       notIn(dependencies.firstpartyapps.result, 'Failed', 'Canceled'),
       notIn(dependencies.download_brokers.result, 'Failed', 'Canceled')
@@ -661,7 +661,7 @@ stages:
   condition: |
     and
     (
-      eq(${{ parameters.shouldRunUiValidation }}, 'True')
+      eq(${{ parameters.shouldRunUiValidation }}, 'True'),
       notIn(dependencies.testappgeneration.result, 'Failed', 'Canceled'),
       notIn(dependencies.firstpartyapps.result, 'Failed', 'Canceled'),
       notIn(dependencies.download_brokers.result, 'Failed', 'Canceled')
