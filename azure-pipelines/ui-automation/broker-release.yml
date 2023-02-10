@@ -239,7 +239,13 @@ stages:
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
-  condition: ${{ parameters.shouldBuildLibraries }}
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+    )
   dependsOn: [] # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
@@ -257,7 +263,13 @@ stages:
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish  
   dependsOn: publishCommon4jLibraries
-  condition: ${{ parameters.shouldBuildLibraries }}
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+    )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -277,7 +289,13 @@ stages:
   displayName: Broker4j - Build and publish  
   dependsOn: 
   - publishCommon4jLibraries
-  condition: ${{ parameters.shouldBuildLibraries }}
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+    )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -306,7 +324,13 @@ stages:
   dependsOn: 
   - publishCommonLibraries
   - publishBroker4jLibraries
-  condition: ${{ parameters.shouldBuildLibraries }}
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+    )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -325,7 +349,13 @@ stages:
 - stage: 'publishMsal'
   displayName: Msal - Build and publish  
   dependsOn: publishCommonLibraries
-  condition: ${{ parameters.shouldBuildLibraries }}
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+    )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -344,7 +374,13 @@ stages:
 - stage: 'publishAdal'
   displayName: Adal - Build and publish  
   dependsOn: publishCommonLibraries
-  condition: ${{ parameters.shouldBuildLibraries }}
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+    )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -363,7 +399,13 @@ stages:
 # Promote Libraries
 - stage: 'promoteLibraries'
   displayName: Promote Libraries to Release and PreRelease
-  condition: ${{ parameters.shouldPromoteLibraries }}
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.shouldPromoteLibraries }}, 'True')
+    )
   dependsOn:
     - publishAdal
     - publishBrokerLibraries
@@ -398,7 +440,13 @@ stages:
 # Authenticator
 - stage: 'queueAuthenticatorBrokerApkPipeline'
   displayName: Authenticator - Queue Build Pipeline
-  condition: ${{ parameters.shouldBuildBrokersApks }}
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.shouldBuildBrokersApks }}, 'True')
+    )
   dependsOn:
     - promoteLibraries
   jobs:
@@ -416,7 +464,13 @@ stages:
 # Company Portal
 - stage: 'queueCompanyPortalBrokerApkPipeline'
   displayName: Company Portal - Queue Build Pipeline
-  condition: ${{ parameters.shouldBuildBrokersApks }}
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.shouldBuildBrokersApks }}, 'True')
+    )
   dependsOn:
     - promoteLibraries
   jobs:
@@ -442,12 +496,6 @@ stages:
     - publishMsal
     - publishBrokerLibraries
     - promoteLibraries
-  condition:  |
-    and
-    (
-      not(failed()),
-      not(canceled())
-    )
   displayName: Generate Test Apps
   jobs:
     - template: ./templates/build-azure-sample-app.yml
@@ -531,17 +579,17 @@ stages:
   - queueAuthenticatorBrokerApkPipeline
   - queueCompanyPortalBrokerApkPipeline
   displayName: Download PROD & RC Brokers
-  jobs: 
+  jobs:
     - template: ./templates/download-brokers.yml
       parameters:
-        engineeringProjectId: '$(engineeringProjectId)'        
+        engineeringProjectId: '$(engineeringProjectId)'
         msazureServiceConnection: '$(msazureServiceConnection)'
         msazureFeedName: '$(msazureFeedName)'
         authenticatorVersionRC: ${{ parameters.authenticatorVersion }}
         authenticatorVersionPROD: ${{ parameters.prodAuthenticatorVersion }}
         oldAuthenticatorVersion: ${{ parameters.oldAuthenticatorVersion }}
         companyPortalVersionRC: ${{ parameters.companyPortalVersion }}
-        companyPortalVersionPROD: ${{ parameters.prodCompanyPortalVersion }}        
+        companyPortalVersionPROD: ${{ parameters.prodCompanyPortalVersion }}
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
 
 # ADAL with Broker (API 30+)
