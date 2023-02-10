@@ -58,6 +58,10 @@ parameters:
   displayName: Build Broker Apks? (Authenticator and Company Portal)
   type: boolean
   default: False
+- name: shouldRunUiValidation
+  displayName: Run E2E UI Validation?
+  type: boolean
+  default: False
 - name: msalVersionRC
   displayName: MSAL RC Version
   type: string
@@ -557,6 +561,7 @@ stages:
   condition:  |
     and
     (
+      eq(${{ parameters.shouldRunUiValidation }}, 'True'),
       notIn(dependencies.testappgeneration.result, 'Failed', 'Canceled'),
       notIn(dependencies.firstpartyapps.result, 'Failed', 'Canceled'),
       notIn(dependencies.download_brokers.result, 'Failed', 'Canceled')
@@ -594,6 +599,7 @@ stages:
   condition: |
     and
     (
+      eq(${{ parameters.shouldRunUiValidation }}, 'True')
       notIn(dependencies.testappgeneration.result, 'Failed', 'Canceled'),
       notIn(dependencies.firstpartyapps.result, 'Failed', 'Canceled'),
       notIn(dependencies.download_brokers.result, 'Failed', 'Canceled')
@@ -655,6 +661,7 @@ stages:
   condition: |
     and
     (
+      eq(${{ parameters.shouldRunUiValidation }}, 'True')
       notIn(dependencies.testappgeneration.result, 'Failed', 'Canceled'),
       notIn(dependencies.firstpartyapps.result, 'Failed', 'Canceled'),
       notIn(dependencies.download_brokers.result, 'Failed', 'Canceled')
