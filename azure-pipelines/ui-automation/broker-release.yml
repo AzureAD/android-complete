@@ -445,10 +445,8 @@ stages:
   condition:  |
     and
     (
-      notIn(dependencies.publishAdal.result, 'Failed', 'Canceled'),
-      notIn(dependencies.publishCommonLibraries.result, 'Failed', 'Canceled'),
-      notIn(dependencies.publishMsal.result, 'Failed', 'Canceled'),
-      notIn(dependencies.publishBrokerLibraries.result, 'Failed', 'Canceled')
+      not(failed()),
+      not(canceled()),
     )
   displayName: Generate Test Apps
   jobs:
@@ -532,12 +530,6 @@ stages:
   dependsOn:
   - queueAuthenticatorBrokerApkPipeline
   - queueCompanyPortalBrokerApkPipeline
-  condition:  |
-    and
-    (
-      notIn(dependencies.queueAuthenticatorBrokerApkPipeline.result, 'Failed', 'Canceled'),
-      notIn(dependencies.queueCompanyPortalBrokerApkPipeline.result, 'Failed', 'Canceled')
-    )
   displayName: Download PROD & RC Brokers
   jobs: 
     - template: ./templates/download-brokers.yml
@@ -561,10 +553,9 @@ stages:
   condition:  |
     and
     (
-      eq(${{ parameters.shouldRunUiValidation }}, 'True'),
-      notIn(dependencies.testappgeneration.result, 'Failed', 'Canceled'),
-      notIn(dependencies.firstpartyapps.result, 'Failed', 'Canceled'),
-      notIn(dependencies.download_brokers.result, 'Failed', 'Canceled')
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.shouldRunUiValidation }}, 'True')
     )
   displayName: RC ADAL with RC Broker UI Automation (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
@@ -599,10 +590,9 @@ stages:
   condition: |
     and
     (
-      eq(${{ parameters.shouldRunUiValidation }}, 'True'),
-      notIn(dependencies.testappgeneration.result, 'Failed', 'Canceled'),
-      notIn(dependencies.firstpartyapps.result, 'Failed', 'Canceled'),
-      notIn(dependencies.download_brokers.result, 'Failed', 'Canceled')
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.shouldRunUiValidation }}, 'True')
     )
   displayName: RC MSAL with PROD Broker UI Automation
   jobs:
