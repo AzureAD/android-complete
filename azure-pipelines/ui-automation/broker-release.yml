@@ -43,7 +43,7 @@ parameters:
     - generated
     - unique
 - name: shouldBuildLibraries
-  displayName: Building Libraries?
+  displayName: Build Libraries?
   type: boolean
   default: False
 - name: shouldPublishLibraries
