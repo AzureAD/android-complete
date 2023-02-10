@@ -446,7 +446,7 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
+      not(canceled())
     )
   displayName: Generate Test Apps
   jobs:
