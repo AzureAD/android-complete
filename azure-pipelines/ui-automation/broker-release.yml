@@ -661,10 +661,9 @@ stages:
   condition: |
     and
     (
-      eq(${{ parameters.shouldRunUiValidation }}, 'True'),
-      notIn(dependencies.testappgeneration.result, 'Failed', 'Canceled'),
-      notIn(dependencies.firstpartyapps.result, 'Failed', 'Canceled'),
-      notIn(dependencies.download_brokers.result, 'Failed', 'Canceled')
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.shouldRunUiValidation }}, 'True')
     )
   displayName: PROD MSAL with RC Broker UI Automation
   jobs:
