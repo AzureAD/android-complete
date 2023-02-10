@@ -52,7 +52,7 @@ parameters:
   - name: shouldPublishLibraries
     displayName: Publish Libraries?
     type: boolean
-    default: False
+    default: True
 
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  

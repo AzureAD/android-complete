@@ -42,12 +42,20 @@ parameters:
   values:
     - generated
     - unique
-- name: buildArtifacts
-  displayName: Building Artifacts?
+- name: shouldBuildLibraries
+  displayName: Building Libraries?
   type: boolean
   default: False
 - name: shouldPublishLibraries
   displayName: Publish Libraries?
+  type: boolean
+  default: False
+- name: shouldPromoteLibraries
+  displayName: Promote Libraries?
+  type: boolean
+  default: False
+- name: shouldBuildBrokersApks
+  displayName: Build Broker Apks? (Authenticator and Company Portal)
   type: boolean
   default: False
 - name: msalVersionRC
@@ -227,7 +235,7 @@ stages:
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
-  condition: ${{ parameters.buildArtifacts }}
+  condition: ${{ parameters.shouldBuildLibraries }}
   dependsOn: [] # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
@@ -245,7 +253,7 @@ stages:
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish  
   dependsOn: publishCommon4jLibraries
-  condition: ${{ parameters.buildArtifacts }}
+  condition: ${{ parameters.shouldBuildLibraries }}
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -265,7 +273,7 @@ stages:
   displayName: Broker4j - Build and publish  
   dependsOn: 
   - publishCommon4jLibraries
-  condition: ${{ parameters.buildArtifacts }}
+  condition: ${{ parameters.shouldBuildLibraries }}
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -294,7 +302,7 @@ stages:
   dependsOn: 
   - publishCommonLibraries
   - publishBroker4jLibraries
-  condition: ${{ parameters.buildArtifacts }}
+  condition: ${{ parameters.shouldBuildLibraries }}
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -313,7 +321,7 @@ stages:
 - stage: 'publishMsal'
   displayName: Msal - Build and publish  
   dependsOn: publishCommonLibraries
-  condition: ${{ parameters.buildArtifacts }}
+  condition: ${{ parameters.shouldBuildLibraries }}
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -332,7 +340,7 @@ stages:
 - stage: 'publishAdal'
   displayName: Adal - Build and publish  
   dependsOn: publishCommonLibraries
-  condition: ${{ parameters.buildArtifacts }}
+  condition: ${{ parameters.shouldBuildLibraries }}
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -350,8 +358,8 @@ stages:
 
 # Promote Libraries
 - stage: 'promoteLibraries'
-  displayName: Publish Libraries to Release and PreRelease
-  condition: ${{ parameters.buildArtifacts }}
+  displayName: Promote Libraries to Release and PreRelease
+  condition: ${{ parameters.shouldPromoteLibraries }}
   dependsOn:
     - publishAdal
     - publishBrokerLibraries
@@ -386,7 +394,7 @@ stages:
 # Authenticator
 - stage: 'queueAuthenticatorBrokerApkPipeline'
   displayName: Authenticator - Queue Build Pipeline
-  condition: ${{ parameters.buildArtifacts }}
+  condition: ${{ parameters.shouldBuildBrokersApks }}
   dependsOn:
     - promoteLibraries
   jobs:
@@ -404,7 +412,7 @@ stages:
 # Company Portal
 - stage: 'queueCompanyPortalBrokerApkPipeline'
   displayName: Company Portal - Queue Build Pipeline
-  condition: ${{ parameters.buildArtifacts }}
+  condition: ${{ parameters.shouldBuildBrokersApks }}
   dependsOn:
     - promoteLibraries
   jobs:
@@ -720,42 +728,3 @@ stages:
         testRunTitle: "PROD MSAL - RC Broker (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) # $(Build.BuildNumber)"
         extraTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
         jobTitle: run_on_flank_low_api
-
-## Publish to PreRelease
-#- stage: 'publishToPrelease'
-#  displayName: Publish Libraries to PreRelease
-#  condition: ${{ parameters.buildArtifacts }}
-#  dependsOn:
-#    - publishAdal
-#    - publishBrokerLibraries
-#  jobs:
-#    - job: publish_to_prelease
-#      displayName: Publish all the libraries to PreRelease
-#      timeoutInMinutes: 90
-#      steps:
-#        - checkout: self
-#          persistCredentials: True
-#        - task: PowerShell@2
-#          inputs:
-#            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
-#            arguments: '-PackagingPAT "$(MSAZURE_BUILD_TOKEN)" -common4jVersion "${{ parameters.common4jVersionRC }}" -commonVersion "${{ parameters.commonVersionRC }}" -broker4jVersion "${{ parameters.broker4jVersionRC }}" -adAccountsVersion "${{ parameters.adAccountsVersionRC }}" -msalVersion "${{ parameters.msalVersionRC }}" -adalVersion "${{ parameters.adalVersionRC }}" -PromoteToView "Prerelease"'
-#            workingDirectory: '$(Build.SourcesDirectory)'
-## Publish to Release
-#- stage: 'publishToRelease'
-#  displayName: Publish Libraries to Release
-#  condition: ${{ parameters.buildArtifacts }}
-#  dependsOn:
-#    - publishAdal
-#    - publishBrokerLibraries
-#  jobs:
-#    - job: publish_to_release
-#      displayName: Publish all the libraries to Release
-#      timeoutInMinutes: 90
-#      steps:
-#        - checkout: self
-#          persistCredentials: True
-#        - task: PowerShell@2
-#          inputs:
-#            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
-#            arguments: '-PackagingPAT "$(MSAZURE_BUILD_TOKEN)" -common4jVersion "${{ parameters.common4jVersionRC }}" -commonVersion "${{ parameters.commonVersionRC }}" -broker4jVersion "${{ parameters.broker4jVersionRC }}" -adAccountsVersion "${{ parameters.adAccountsVersionRC }}" -msalVersion "${{ parameters.msalVersionRC }}" -adalVersion "${{ parameters.adalVersionRC }}" -PromoteToView "Release"'
-#            workingDirectory: '$(Build.SourcesDirectory)'
