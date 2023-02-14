@@ -236,6 +236,7 @@ stages:
   dependsOn:
   - brokerautomationapp
   - brokers_azure_sample
+  - firstpartyapps
   displayName: ADAL with broker and Broker basic validation test plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
