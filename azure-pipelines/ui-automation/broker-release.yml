@@ -489,8 +489,8 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-    }
+      not(canceled())
+    )
   jobs:
     - template: ./templates/build-azure-sample-app.yml
       parameters:
@@ -569,8 +569,8 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-    }
+      not(canceled())
+    )
   jobs:
     - template: ./templates/download-first-party-apps.yml
 # Download Brokers
@@ -584,8 +584,8 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-    }
+      not(canceled())
+    )
   jobs:
     - template: ./templates/download-brokers.yml
       parameters:
