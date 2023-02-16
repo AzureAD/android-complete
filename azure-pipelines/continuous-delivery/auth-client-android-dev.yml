@@ -244,7 +244,9 @@ stages:
   dependsOn:
     - publishMsal
     - publishBrokerLibraries
+    - publishLinuxBrokeLibraries
     - publishCommonLibraries
+    - publishAdal
   jobs:
     - job: combine_and_publish_code_coverage
       displayName: Combine and Publish
@@ -272,7 +274,7 @@ stages:
     - publishBrokerLibraries
   jobs:
     - job: promote_packages
-      displayName: Promote Packages - Prerelease & Release
+      displayName: Promote Packages - Prerelease
       steps:
         - checkout: self
           persistCredentials: True
@@ -281,14 +283,6 @@ stages:
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
             arguments: '-PackagingPAT "$env:SYSTEM_ACCESSTOKEN" -PackageVersion "$(versionNumber)" -adAccountsVersion "$(brokerVersionNumber)"'
-            workingDirectory: '$(Build.SourcesDirectory)'
-          env:
-            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
-        - task: PowerShell@2
-          displayName: Run script to promote packages - Release
-          inputs:
-            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
-            arguments: '-PackagingPAT "$env:SYSTEM_ACCESSTOKEN" -PackageVersion "$(versionNumber)" -adAccountsVersion "$(brokerVersionNumber)" -PromoteToView "Release"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)

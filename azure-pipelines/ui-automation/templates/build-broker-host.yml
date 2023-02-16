@@ -114,4 +114,16 @@ jobs:
       targetPath: $(Agent.BuildDirectory)/android-complete/broker/userapp/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}
       artifactName: BrokerHost-${{ parameters.productFlavors }}-${{ upper(parameters.packageVariant) }}-${{ lower(parameters.signingConfigurations) }}
       patterns: '**/*.apk'
+  - ${{ if eq(parameters.packageVariant, 'PROD') }}:
+      - task: UniversalPackages@0
+        displayName: Publishing PROD Brokerhost
+        continueOnError: true
+        inputs:
+          command: publish
+          publishDirectory: '$(Build.ArtifactStagingDirectory)'
+          vstsFeedPublish: 'https://dev.azure.com/IdentityDivision/AndroidADAL'
+          vstsFeedPackagePublish: 'com.microsoft.identity.testuserapp.prod'
+          versionOption: custom
+          versionPublish: '${{ parameters.adAccountsVersion }}'
+          packagePublishDescription: 'Prod BrokerHost Broker version ${{ parameters.adAccountsVersion }}'
 ...
