@@ -663,7 +663,7 @@ stages:
                           /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/prod/$(authenticatorApk),\
                           /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                           /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-RC/AzureSample-external-release.apk,\
-                          /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Dist-PROD-release/brokerHost-dist-release.apk,\
+                          /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/prod/brokerHost-dist-release.apk,\
                           /data/local/tmp/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                           /data/local/tmp/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                           /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
