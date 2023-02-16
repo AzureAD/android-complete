@@ -485,6 +485,12 @@ stages:
     - publishBrokerLibraries
     - promoteLibraries
   displayName: Generate Test Apps
+  condition:
+    and
+    (
+      not(failed()),
+      not(canceled()),
+    }
   jobs:
     - template: ./templates/build-azure-sample-app.yml
       parameters:
@@ -559,6 +565,12 @@ stages:
   dependsOn:
   - promoteLibraries # adding this dependency to improve pipeline readability
   displayName: Download First Party Apps (Outlook, Teams, Word, Edge)
+  condition:
+    and
+    (
+      not(failed()),
+      not(canceled()),
+    }
   jobs:
     - template: ./templates/download-first-party-apps.yml
 # Download Brokers
@@ -568,6 +580,12 @@ stages:
   - queueCompanyPortalBrokerApkPipeline
   - testappgeneration
   displayName: Download PROD & RC Brokers
+  condition:
+    and
+    (
+      not(failed()),
+      not(canceled()),
+    }
   jobs:
     - template: ./templates/download-brokers.yml
       parameters:
