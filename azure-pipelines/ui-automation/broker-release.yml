@@ -566,6 +566,7 @@ stages:
   dependsOn:
   - queueAuthenticatorBrokerApkPipeline
   - queueCompanyPortalBrokerApkPipeline
+  - testappgeneration
   displayName: Download PROD & RC Brokers
   jobs:
     - template: ./templates/download-brokers.yml
