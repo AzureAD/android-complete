@@ -89,7 +89,7 @@ jobs:
       displayName: 'Download PROD brokerHost version from feed'
       inputs:
         command: 'download'
-        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
+        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/prod'
         feedsToUse: 'internal'
         vstsFeed: '${{ parameters.internalFeedName }}'
         vstsFeedPackage: 'com.microsoft.identity.testuserapp.prod'
