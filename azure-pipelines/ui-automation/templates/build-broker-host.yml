@@ -121,7 +121,7 @@ jobs:
         inputs:
           command: publish
           publishDirectory: '$(Build.ArtifactStagingDirectory)'
-          vstsFeedPublish: 'https://dev.azure.com/IdentityDivision/AndroidADAL'
+          vstsFeedPublish: 'https://identitydivision.visualstudio.com/Engineering/_artifacts/feed/AndroidADAL'
           vstsFeedPackagePublish: 'com.microsoft.identity.testuserapp.prod'
           versionOption: custom
           versionPublish: '${{ parameters.adAccountsVersion }}'
