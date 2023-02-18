@@ -45,6 +45,14 @@ parameters:
     displayName: Version Number
     type: string
     default: Default
+  - name: shouldRunUiValidation
+    displayName: Run E2E UI Validation?
+    type: boolean
+    default: False
+  - name: shouldPublishLibraries
+    displayName: Publish Libraries?
+    type: boolean
+    default: True
 
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
@@ -61,8 +69,6 @@ variables:
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   brokerAutomationPipelineId: 1490
-  authenticatorBranch: "broker/continuous-integration"
-  companyPortalBranch: "broker/continuous-integration"
 
 stages:
 # Common4j - Build and publish
@@ -80,6 +86,7 @@ stages:
       publishParams: $(projVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+      shouldPublish: ${{ parameters.shouldPublishLibraries }}
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish
@@ -97,6 +104,7 @@ stages:
       publishParams: $(projVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+      shouldPublish: ${{ parameters.shouldPublishLibraries }}
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
@@ -114,7 +122,7 @@ stages:
       publishParams: $(projVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-
+      shouldPublish: ${{ parameters.shouldPublishLibraries }}
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
@@ -138,6 +146,7 @@ stages:
       publishParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+      shouldPublish: ${{ parameters.shouldPublishLibraries }}
 # Linux Broker - Build and publish
 - stage: 'publishLinuxBrokeLibraries'
   displayName: Linux Broker - Build and publish
@@ -156,6 +165,7 @@ stages:
       publishParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+      shouldPublish: ${{ parameters.shouldPublishLibraries }}
   - job: PublishLinuxBrokerPackage
     dependsOn: publishLinuxBrokerLibraries
     displayName: Publish Linux Broker Package
@@ -206,6 +216,7 @@ stages:
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
+      shouldPublish: ${{ parameters.shouldPublishLibraries }}
 # Adal - Build and publish
 - stage: 'publishAdal'
   displayName: Adal - Build and publish
@@ -223,6 +234,34 @@ stages:
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
+      shouldPublish: ${{ parameters.shouldPublishLibraries }}
+
+# Combine and Publish Code Coverage
+- stage: 'combineAndPublishCodeCoverage'
+  displayName: Combine and Publish Code Coverage
+  dependsOn:
+    - publishMsal
+    - publishBrokerLibraries
+    - publishLinuxBrokeLibraries
+    - publishCommonLibraries
+    - publishAdal
+  jobs:
+    - job: combine_and_publish_code_coverage
+      displayName: Combine and Publish
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - download: current
+        - task: reportgenerator@4
+          inputs:
+            reports: '$(Pipeline.Workspace)/Code Coverage Report_$(Build.BuildId)/summary$(Build.BuildId)/*.xml'
+            targetdir: '$(Build.SourcesDirectory)/CoverageResults'
+        - task: PublishCodeCoverageResults@1
+          displayName: Publish Code Coverage Report
+          inputs:
+            codeCoverageTool: Cobertura
+            summaryFileLocation: '$(Build.SourcesDirectory)/CoverageResults/Cobertura.xml'
+
 # Promote published packages
 - stage: 'promotePackages'
   displayName: Promote published packages
@@ -233,7 +272,7 @@ stages:
     - publishBrokerLibraries
   jobs:
     - job: promote_packages
-      displayName: Promote Packages - Prerelease & Release
+      displayName: Promote Packages - Prerelease
       steps:
         - checkout: self
           persistCredentials: True
@@ -245,14 +284,7 @@ stages:
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)
-        - task: PowerShell@2
-          displayName: Run script to promote packages - Release
-          inputs:
-            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
-            arguments: '-PackagingPAT "$env:SYSTEM_ACCESSTOKEN" -PackageVersion "$(versionNumber)" -adAccountsVersion "$(brokerVersionNumber)" -PromoteToView "Release"'
-            workingDirectory: '$(Build.SourcesDirectory)'
-          env:
-            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
 # BrokerApk - Authenticator Queue pipeline
 - stage: 'queueAuthenticatorPipeline'
   displayName: Authenticator Broker Apk Generation
@@ -288,12 +320,20 @@ stages:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(pipelinepat)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "237827" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(companyPortalBranch)"'
             workingDirectory: '$(Build.SourcesDirectory)'
+
 # Broker - E2E Automation
 - stage: 'runBrokerE2EAutomation'
-  displayName: Broker Automation Run
+  displayName: Broker E2E UI Automation Run
   dependsOn:
     - queueAuthenticatorPipeline
     - queueCompanyPortalPipeline
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
+    )
   jobs:
     - job: trigger_automation
       displayName: Trigger Broker Automation Run
