@@ -1,4 +1,4 @@
-# File: azure-pipelines\auth-client\common-instrumented-test.yml
+# File: azure-pipelines\instrumented-tests\common-instrumented-test.yml
 # Description: Run common instrumented test.
 
 trigger: none
