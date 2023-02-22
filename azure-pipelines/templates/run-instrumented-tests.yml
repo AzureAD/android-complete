@@ -1,4 +1,4 @@
-# File: azure-pipelines\instrumented-tests\run-instrumented-tests.yml
+# File: azure-pipelines\templates\run-instrumented-tests.yml
 # Description: Template to run Instrumented test.
 
 parameters:
