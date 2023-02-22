@@ -1,0 +1,24 @@
+# File: azure-pipelines\auth-client\common-instrumented-test.yml
+# Description: Run common instrumented test.
+
+trigger: none
+
+resources:
+ repositories:
+ - repository: common
+   type: github
+   name: AzureAD/microsoft-authentication-library-common-for-android
+   ref: dev
+   endpoint: ANDROID_GITHUB
+   trigger: 
+     branches:
+       include: 
+       - dev
+       - release/*
+       - pedroro/*
+
+jobs:
+- template: run-instrumented-tests.yml
+  parameters:
+    gitProject: common
+    projectName: common
