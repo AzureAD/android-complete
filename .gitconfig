@@ -154,15 +154,15 @@
             printf '\n' ; git push -u origin release/$2; \
             printf '\n' ; git checkout -b $1/release/$2 dev; \
             printf '\n' ; git push -u origin $1/release/$2; \
-            printf '\n' ;cd $workDir/common/; git checkout -b release/$3 dev; \
+            printf '\n' ; cd $workDir/common/; git checkout -b release/$3 dev; \
             printf '\n' ; git push -u origin release/$3; \
             printf '\n' ; git checkout -b $1/release/$3 dev; \
             printf '\n' ; git push -u origin $1/release/$3; \
-            printf '\n' ;cd $workDir/broker/; git checkout -b release/$4 dev; \
+            printf '\n' ; cd $workDir/broker/; git checkout -b release/$4 dev; \
             printf '\n' ; git push -u origin release/$4; \
             printf '\n' ; git checkout -b $1/release/$4 dev; \
             printf '\n' ; git push -u origin $1/release/$4; \
-            printf '\n' ;cd $workDir/adal/; git checkout -b release/$5 dev; \
+            printf '\n' ; cd $workDir/adal/; git checkout -b release/$5 dev; \
             printf '\n' ; git push -u origin release/$5; \
             printf '\n' ; git checkout -b $1/release/$5 dev; \
             printf '\n' ; git push -u origin $1/release/$5; \
