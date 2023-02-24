@@ -135,7 +135,7 @@
 
     ;Usage git droidStartRelease <release_owner> <msal_version> <common_version> <broker_version> <adal_version>
     ;e.g. git droidStartRelease wainaina 1.0.0 2.0.0 3.0.0 4.0.0
-    ;This will create the release_owner/release/version-RC1 pipeline for the user.droidStartRelease
+    ;This will create the release_owner/release/version pipeline for the user.droidStartRelease
     ;Release branches on origin are non-editable and are better set as editable first then do the final
     ; release on the non editbale release branches.
     droidStartRelease = "!f() { \
@@ -150,17 +150,17 @@
             printf '\n' ; printf '%s' "-----------------------------------------"; printf '%s' "  "; \
             printf '\n' ; printf '%s' "2. CUTTING BRANCHES"; printf '%s': "  "; \
             printf '\n' ; printf '%s' "-----------------------------------------"; printf '%s' "  "; \
-            printf '\n' ; cd $workDir/msal/; git checkout -b $1/release/$2-RC1 dev; \
-            printf '\n' ;cd $workDir/common/; git checkout -b $1/release/$3-RC1 dev; \
-            printf '\n' ;cd $workDir/broker/; git checkout -b $1/release/$4-RC1 dev; \
-            printf '\n' ;cd $workDir/adal/; git checkout -b $1/release/$5-RC1 dev; \
+            printf '\n' ; cd $workDir/msal/; git checkout -b $1/release/$2 dev; \
+            printf '\n' ;cd $workDir/common/; git checkout -b $1/release/$3 dev; \
+            printf '\n' ;cd $workDir/broker/; git checkout -b $1/release/$4 dev; \
+            printf '\n' ;cd $workDir/adal/; git checkout -b $1/release/$5 dev; \
             printf '\n' ; printf '%s' "-----------------------------------------"; printf '%s' "  "; \
             printf '\n' ; printf '%s' "3. PUSHING CUT BRANCHES"; printf '%s': "  "; \
             printf '\n' ; printf '%s' "-----------------------------------------"; printf '%s' "  "; \
-            printf '\n' ;cd $workDir/msal/; git push -u origin $1/release/$2-RC1; \
-            printf '\n' ;cd $workDir/common/; git push -u origin $1/release/$3-RC1; \
-            printf '\n' ;cd $workDir/broker/; git push -u origin $1/release/$4-RC1; \
-            printf '\n' ;cd $workDir/adal/; git push -u origin $1/release/$5-RC1; \
+            printf '\n' ;cd $workDir/msal/; git push -u origin $1/release/$2; \
+            printf '\n' ;cd $workDir/common/; git push -u origin $1/release/$3; \
+            printf '\n' ;cd $workDir/broker/; git push -u origin $1/release/$4; \
+            printf '\n' ;cd $workDir/adal/; git push -u origin $1/release/$5; \
             printf '\n' ; printf '%s' "-----------------------------------------"; printf '%s' "  "; \
             printf '\n' ; printf '%s' "4. LIST OF GENERATED BRANCHES"; printf '%s': "  "; \
             printf '\n' ; cd $workDir/; git droidShowBranches; \
