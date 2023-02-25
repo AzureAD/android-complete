@@ -30,7 +30,7 @@ parameters:
 
 jobs:
   - job: ${{ parameters.jobTitle }}
-    displayName: (API ${{ parameters.firebaseDeviceAndroidVersion }} $(firebaseDeviceAndroidVersionHigh) ${{ variables.firebaseDeviceAndroidVersionHigh }} $[variables.firebaseDeviceAndroidVersionHigh]) Running Test Suite on Firebase With Flank
+    displayName: (API ${{ parameters.firebaseDeviceAndroidVersion }}) Running Test Suite on Firebase With Flank
     timeoutInMinutes: 90
     pool:
       vmImage: ubuntu-latest
@@ -56,6 +56,7 @@ jobs:
             gcloud auth activate-service-account --key-file "$(gcServiceAccountKey.secureFilePath)"
             gcloud config set project "$(gCloudProjectId)"
             gcloud firebase test android models list
+            echo "${{ parameters.firebaseDeviceAndroidVersion }}${{ parameters.firebaseDeviceId }}"
             wget --quiet https://github.com/Flank/flank/releases/download/v22.05.0/flank.jar -O $(Build.SourcesDirectory)/flank.jar
             cp $(Build.SourcesDirectory)/azure-pipelines/ui-automation/templates/flank/flank.yml ./flank.yml
             java -jar $(Build.SourcesDirectory)/flank.jar firebase test android run \
@@ -66,6 +67,7 @@ jobs:
               --record-video \
               --device model=${{ parameters.firebaseDeviceId }},version=${{ parameters.firebaseDeviceAndroidVersion }},locale=en,orientation=portrait \
               --timeout "${{ parameters.firebaseTimeout }}" \
+              --other-files ${{ parameters.otherFiles }} \
               --results-dir "${{ parameters.resultsDir }}" \
               --directories-to-pull "/sdcard" \
               --use-orchestrator \

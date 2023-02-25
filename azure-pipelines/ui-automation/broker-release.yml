@@ -555,7 +555,7 @@ stages:
       not(canceled()),
       eq(${{ parameters.shouldRunUiValidation }}, 'True')
     )
-  displayName: RC ADAL with RC Broker UI Automation (API $(firebaseDeviceAndroidVersionHigh) ${{ variables.firebaseDeviceAndroidVersionHigh }} $[variables.firebaseDeviceAndroidVersionHigh])
+  displayName: RC ADAL with RC Broker UI Automation (API $(firebaseDeviceAndroidVersionHigh))
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
