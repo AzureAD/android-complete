@@ -547,6 +547,9 @@ stages:
   - testappgeneration
   - firstpartyapps
   - download_brokers
+  variables:
+    - name : firebaseDeviceAndroidVersionHigh
+      value : $(firebaseDeviceAndroidVersionHigh)
   condition:  |
     and
     (
