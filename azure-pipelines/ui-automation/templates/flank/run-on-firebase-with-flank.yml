@@ -30,7 +30,7 @@ parameters:
 
 jobs:
   - job: ${{ parameters.jobTitle }}
-    displayName: (API $(firebaseDeviceAndroidVersionHigh) ${{ variables.firebaseDeviceAndroidVersionHigh }} $[variables.firebaseDeviceAndroidVersionHigh]) Running Test Suite on Firebase With Flank
+    displayName: (API ${{ parameters.firebaseDeviceAndroidVersion }} $(firebaseDeviceAndroidVersionHigh) ${{ variables.firebaseDeviceAndroidVersionHigh }} $[variables.firebaseDeviceAndroidVersionHigh]) Running Test Suite on Firebase With Flank
     timeoutInMinutes: 90
     pool:
       vmImage: ubuntu-latest

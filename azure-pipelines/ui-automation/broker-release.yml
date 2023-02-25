@@ -574,7 +574,7 @@ stages:
                       /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
                       /data/local/tmp/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
         firebaseDeviceId: $(firebaseDeviceIdHigh)
-        firebaseDeviceAndroidVersion: $(firebaseDeviceAndroidVersionHigh)
+        firebaseDeviceAndroidVersion: $(firebaseDeviceAndroidVersionHigh)${{ variables.firebaseDeviceAndroidVersionHigh }}$[variables.firebaseDeviceAndroidVersionHigh]
         testRunTitle: "Broker(ADAL) UI Automation - Build (API $(firebaseDeviceAndroidVersionHigh)) # $(Build.BuildNumber)"
         extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
         flankShards: $(flankShards)
