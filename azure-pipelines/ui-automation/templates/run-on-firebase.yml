@@ -19,7 +19,7 @@ parameters:
   - name: firebaseDeviceId
     type: string
   - name: firebaseDeviceAndroidVersion
-    type: number
+    type: string
   - name: testRunTitle
     type: string
   - name: jobTitle

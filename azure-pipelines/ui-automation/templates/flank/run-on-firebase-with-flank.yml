@@ -19,11 +19,11 @@ parameters:
   - name: firebaseDeviceId
     type: string
   - name: firebaseDeviceAndroidVersion
-    type: number
+    type: string
   - name: testRunTitle
     type: string
   - name: flankShards
-    type: number
+    type: string
   - name: jobTitle
     type: string
     default: run_on_firebase_with_flank
