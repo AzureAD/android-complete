@@ -178,6 +178,7 @@ variables:
   edgeApk: Edge.apk
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
+  firebaseTest: $(firebaseDeviceAndroidVersionHigh)
 
 stages:
 # Package generation
@@ -547,9 +548,6 @@ stages:
   - testappgeneration
   - firstpartyapps
   - download_brokers
-  variables:
-    - name : firebaseDeviceAndroidVersionHigh
-      value : $(firebaseDeviceAndroidVersionHigh)
   condition:  |
     and
     (
@@ -557,7 +555,7 @@ stages:
       not(canceled()),
       eq(${{ parameters.shouldRunUiValidation }}, 'True')
     )
-  displayName: RC ADAL with RC Broker UI Automation (API $(firebaseDeviceAndroidVersionHigh))
+  displayName: RC ADAL with RC Broker UI Automation (API $(firebaseTest))
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
