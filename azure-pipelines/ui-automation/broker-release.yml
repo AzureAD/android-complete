@@ -178,7 +178,7 @@ variables:
   edgeApk: Edge.apk
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
-  firebaseTest: $(firebaseDeviceAndroidVersionHigh)
+  firebaseTest:  ${{ variables.firebasetest }}
 
 stages:
 # Package generation
