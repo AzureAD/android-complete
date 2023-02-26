@@ -30,7 +30,7 @@ parameters:
 
 jobs:
   - job: ${{ parameters.jobTitle }}
-    displayName: (API ${{ parameters.firebaseDeviceAndroidVersion }}) Running Test Suite on Firebase With Flank
+    displayName: (API ${{ variables.firebasetest }}) Running Test Suite on Firebase With Flank
     timeoutInMinutes: 90
     pool:
       vmImage: ubuntu-latest
@@ -56,7 +56,6 @@ jobs:
             gcloud auth activate-service-account --key-file "$(gcServiceAccountKey.secureFilePath)"
             gcloud config set project "$(gCloudProjectId)"
             gcloud firebase test android models list
-            echo "${{ parameters.firebaseDeviceAndroidVersion }}${{ parameters.firebaseDeviceId }}"
             wget --quiet https://github.com/Flank/flank/releases/download/v22.05.0/flank.jar -O $(Build.SourcesDirectory)/flank.jar
             cp $(Build.SourcesDirectory)/azure-pipelines/ui-automation/templates/flank/flank.yml ./flank.yml
             java -jar $(Build.SourcesDirectory)/flank.jar firebase test android run \
