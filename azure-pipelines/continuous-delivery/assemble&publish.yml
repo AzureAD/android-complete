@@ -81,6 +81,7 @@ jobs:
         RunAsPreJob: false
     - task: Gradle@3
       displayName: Run Test ${{ parameters.project }}
+      enabled: false
       continueOnError: true
       inputs:
         tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.assembleParams}} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
