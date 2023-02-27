@@ -35,7 +35,7 @@ jobs:
   - task: Gradle@3
     displayName: Generate Lockfile ${{ parameters.project }}
     inputs:
-      tasks: -q ${{ parameters.project }}:dependencies ${{ parameters.dependencyParams }}
+      tasks: -q ${{ parameters.project }}:dependencies --configuration=distReleaseRuntimeClasspath ${{ parameters.dependencyParams }}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
