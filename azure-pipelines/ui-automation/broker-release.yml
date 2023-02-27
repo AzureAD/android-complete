@@ -703,7 +703,7 @@ stages:
         testRunTitle: "PROD MSAL - RC Broker (BrokerHost tests, debug) (API $(firebaseDeviceAndroidVersionHigh)) # $(Build.BuildNumber)"
         extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus, annotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
         jobTitle: run_on_flank_brokerhost_high_api
-        displayNamePrefix: "(API 30+) "
+        displayNamePrefix: "(API 30+, Brokerhost) "
     # PROD MSAL with RC Broker API 29-
     - template: ./templates/run-on-firebase.yml
       parameters:
