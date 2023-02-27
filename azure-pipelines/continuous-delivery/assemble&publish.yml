@@ -33,16 +33,16 @@ jobs:
   - checkout: ${{ parameters.repository }}
     persistCredentials: True
   - task: Gradle@3
-    displayName: Generate Lockfile ${{ parameters.project }}
+    displayName: Build ${{ parameters.project }}
     inputs:
-      tasks: -q ${{ parameters.project }}:dependencies ${{ parameters.dependencyParams }}
+      tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: Gradle@3
-    displayName: Build ${{ parameters.project }}
+    displayName: Generate Lockfile ${{ parameters.project }}
     inputs:
-      tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
+      tasks: -q ${{ parameters.project }}:dependencies ${{ parameters.dependencyParams }}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
