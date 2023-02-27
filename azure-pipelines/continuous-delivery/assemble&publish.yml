@@ -21,12 +21,14 @@ parameters:
 - name: shouldPublish
   type: boolean
   default: True
+- name: agentImage
+  default: ubuntu-latest
 
 jobs:
 - job: publish${{ parameters.project }}Libraries
   displayName: ${{ parameters.project }} build & publish
   pool:
-    vmImage: ubuntu-latest
+    name: ${{ parameters.agentImage }}
   variables:
   - group: AndroidAuthClientVariables
   steps:
