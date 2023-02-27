@@ -283,6 +283,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      agentImage: 1ES-AndroidPool-EOC
 # Msal - Build and publish      
 - stage: 'publishMsal'
   displayName: Msal - Build and publish  
