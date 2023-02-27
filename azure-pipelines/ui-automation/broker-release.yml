@@ -178,7 +178,6 @@ variables:
   edgeApk: Edge.apk
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
-  firebaseTest:  ${{ variables.firebaseDeviceAndroidVersionHigh }}
 
 stages:
 # Package generation
@@ -574,10 +573,11 @@ stages:
                       /data/local/tmp/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
                       /data/local/tmp/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
         firebaseDeviceId: $(firebaseDeviceIdHigh)
-        firebaseDeviceAndroidVersion: ${{ variables.firebaseDeviceAndroidVersionHigh }}
+        firebaseDeviceAndroidVersion: $(firebaseDeviceAndroidVersionHigh)
         testRunTitle: "Broker(ADAL) UI Automation - Build (API $(firebaseDeviceAndroidVersionHigh)) # $(Build.BuildNumber)"
         extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
         flankShards: $(flankShards)
+        displayNamePrefix: "(API 30+) "
 
 # RC MSAL - PROD Broker
 - stage: 'RC_msal_PROD_broker'
@@ -617,6 +617,7 @@ stages:
         extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
         flankShards: $(flankShards)
         jobTitle: run_on_flank_with_flank_high_api
+        displayNamePrefix: "(API 30+) "
     # RC MSAL with PROD Broker API 29-
     - template: ./templates/run-on-firebase.yml
       parameters:
@@ -639,6 +640,7 @@ stages:
         testRunTitle: "RC MSAL - PROD Broker (API $(firebaseDeviceAndroidVersionLow)) # $(Build.BuildNumber)"
         extraTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
         jobTitle: run_on_flank_low_api
+        displayNamePrefix: "(API 29-) "
 
 # PROD MSAL - RC Broker
 - stage: 'PROD_msal_RC_broker'
@@ -678,6 +680,7 @@ stages:
         extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
         flankShards: $(flankShards)
         jobTitle: run_on_flank_with_flank_high_api
+        displayNamePrefix: "(API 30+) "
     # PROD MSAL with RC Broker API 30+ (Brokerhost Build)
     - template: ./templates/run-on-firebase.yml
       parameters:
@@ -700,6 +703,7 @@ stages:
         testRunTitle: "PROD MSAL - RC Broker (BrokerHost tests, debug) (API $(firebaseDeviceAndroidVersionHigh)) # $(Build.BuildNumber)"
         extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus, annotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
         jobTitle: run_on_flank_brokerhost_high_api
+        displayNamePrefix: "(API 30+) "
     # PROD MSAL with RC Broker API 29-
     - template: ./templates/run-on-firebase.yml
       parameters:
@@ -722,3 +726,4 @@ stages:
         testRunTitle: "PROD MSAL - RC Broker (API $(firebaseDeviceAndroidVersionLow)) # $(Build.BuildNumber)"
         extraTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
         jobTitle: run_on_flank_low_api
+        displayNamePrefix: "(API 29-) "

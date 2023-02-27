@@ -25,10 +25,13 @@ parameters:
   - name: jobTitle
     type: string
     default: run_on_firebase
+  - name: displayNamePrefix
+    type: string
+    default: " "
 
 jobs:
   - job: ${{ parameters.jobTitle }}
-    displayName: (API ${{ parameters.firebaseDeviceAndroidVersion }}) Running Test Suite on Firebase
+    displayName: ${{ parameters.displayNamePrefix }} Running Test Suite on Firebase
     timeoutInMinutes: 90
     pool:
       vmImage: ubuntu-latest
