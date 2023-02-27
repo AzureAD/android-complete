@@ -27,11 +27,11 @@ parameters:
 jobs:
 - job: publish${{ parameters.project }}Libraries
   displayName: ${{ parameters.project }} build & publish
-   pool:
-     ${{ if eq(parameters.agentImage, 'none') }}:
-        vmImage: ubuntu-latest
-     ${{ else }}:
-        name: ${{ parameters.agentImage }}
+  pool:
+    ${{ if eq(parameters.agentImage, 'none') }}:
+      vmImage: ubuntu-latest
+    ${{ else }}:
+      name: ${{ parameters.agentImage }}
   variables:
   - group: AndroidAuthClientVariables
   steps:
