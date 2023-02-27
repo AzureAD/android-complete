@@ -22,13 +22,16 @@ parameters:
   type: boolean
   default: True
 - name: agentImage
-  default: ubuntu-latest
+  default: none
 
 jobs:
 - job: publish${{ parameters.project }}Libraries
   displayName: ${{ parameters.project }} build & publish
-  pool:
-    name: ${{ parameters.agentImage }}
+   pool:
+     ${{ if eq(parameters.agentImage, 'none') }}:
+        vmImage: ubuntu-latest
+     ${{ else }}:
+        name: ${{ parameters.agentImage }}
   variables:
   - group: AndroidAuthClientVariables
   steps:
