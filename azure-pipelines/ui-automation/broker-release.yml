@@ -98,10 +98,6 @@ parameters:
   displayName: PROD Company Portal Version
   type: string
   default: '*'
-- name: prodBrokerHostVersion
-  displayName: PROD Broker Host Version
-  type: string
-  default: '*'
 
 # Branch parameters
 - name: msalBranch
@@ -539,7 +535,7 @@ stages:
         oldAuthenticatorVersion: $(oldAuthenticatorVersion)
         companyPortalVersionRC: $(rcCompanyPortalVersion)
         companyPortalVersionPROD: ${{ parameters.prodCompanyPortalVersion }}
-        prodBrokerHostVersion: ${{ parameters.prodBrokerHostVersion }}
+        prodBrokerHostVersion: $(prodBrokerHostVersion)
 
 # ADAL with Broker (API 30+)
 - stage: 'adal_with_broker_high_api'
