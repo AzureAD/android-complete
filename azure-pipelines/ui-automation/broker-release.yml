@@ -40,6 +40,10 @@ parameters:
   displayName: Build Libraries?
   type: boolean
   default: False
+- name: shouldRunUnitTests
+  displayName: Run Unit Tests?
+  type: boolean
+  default: True
 - name: shouldPublishLibraries
   displayName: Publish Libraries?
   type: boolean
@@ -200,6 +204,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish  
@@ -225,6 +230,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
 # Broker4j - Build and publish
 - stage: 'publishBroker4jLibraries'
   displayName: Broker4j - Build and publish  
@@ -250,6 +256,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
@@ -284,6 +291,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       agentImage: 1ES-AndroidPool-EOC
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
 # Msal - Build and publish      
 - stage: 'publishMsal'
   displayName: Msal - Build and publish  
@@ -309,6 +317,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
 # Adal - Build and publish
 - stage: 'publishAdal'
   displayName: Adal - Build and publish  
@@ -334,6 +343,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
 
 # Promote Libraries
 - stage: 'promoteLibraries'
