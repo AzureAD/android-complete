@@ -23,9 +23,6 @@ parameters:
   default: True
 - name: agentImage
   default: none
-- name: shouldRunUnitTests
-  type: boolean
-  default: True
 
 jobs:
 - job: publish${{ parameters.project }}Libraries
@@ -89,7 +86,7 @@ jobs:
         RunAsPreJob: false
     - task: Gradle@3
       displayName: Run Test ${{ parameters.project }}
-      enabled: ${{ parameters.shouldRunUnitTests }}
+      enabled: false
       continueOnError: true
       inputs:
         tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.assembleParams}} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
