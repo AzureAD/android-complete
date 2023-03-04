@@ -6,6 +6,8 @@ parameters:
 - name: project
 - name: assembleCmd
   default: assemble
+- name: testCmd
+  default: test
 - name: publishCmd
   default: publish
 - name: dependencyParams
@@ -16,10 +18,13 @@ parameters:
   default: ''
 - name: vstsMvnAndroidUsername
 - name: vstsMvnAndroidAccessToken
+- name: shouldPublish
+  type: boolean
+  default: True
 
 jobs:
 - job: publish${{ parameters.project }}Libraries
-  displayName: ${{ parameters.project }} build & publish for android to internal maven feed
+  displayName: ${{ parameters.project }} build & publish
   pool:
     vmImage: ubuntu-latest
   variables:
@@ -33,21 +38,58 @@ jobs:
       tasks: -q ${{ parameters.project }}:dependencies ${{ parameters.dependencyParams }}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
-      ${{ parameters.vstsMvnAndroidAccessToken }}: $(AndroidAuthClient-Internal-Maven-Access-Token)
+      ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: Gradle@3
     displayName: Build ${{ parameters.project }}
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
-      ${{ parameters.vstsMvnAndroidAccessToken }}: $(AndroidAuthClient-Internal-Maven-Access-Token)
+      ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: Gradle@3
+    condition: |
+      and
+      (
+        not(failed()),
+        not(canceled()),
+        or( eq(${{ parameters.shouldPublish }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
+      )
     displayName: Publish ${{ parameters.project }}
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.publishCmd}} ${{ parameters.publishParams}}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
-      ${{ parameters.vstsMvnAndroidAccessToken }}: $(AndroidAuthClient-Internal-Maven-Access-Token)
+      ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: ComponentGovernanceComponentDetection@0
     inputs:
       sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/dependency-locks/
+- job: RunUnitTest${{ parameters.project }}
+  displayName: ${{ parameters.project }} UnitTest
+  pool:
+    vmImage: ubuntu-latest
+    variables:
+      - group: AndroidAuthClientVariables
+  steps:
+    - checkout: ${{ parameters.repository }}
+      persistCredentials: True
+    - task: AzureKeyVault@2
+      displayName: 'Get Key vault AndroidAutomationRunnerAppSecret'
+      inputs:
+        azureSubscription: 'MSIDLABS_ANDROID_KV'
+        KeyVaultName: 'ADALTestInfo'
+        SecretsFilter: 'AndroidAutomationRunnerAppSecret'
+        RunAsPreJob: false
+    - task: Gradle@3
+      displayName: Run Test ${{ parameters.project }}
+      continueOnError: true
+      inputs:
+        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.assembleParams}} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+        testRunTitle: '${{ parameters.project }}_UnitTests'
+      env:
+        ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
+        ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
+    - task: PublishCodeCoverageResults@1
+      displayName: Publish Code Coverage Report
+      inputs:
+        summaryFileLocation: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/${{ parameters.testCmd }}.xml'
+        reportDirectory: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/html'

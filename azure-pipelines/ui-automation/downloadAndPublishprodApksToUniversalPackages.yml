@@ -1,0 +1,66 @@
+name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
+
+trigger: none
+pr: none
+
+parameters:  
+  - name: brokerProdPipelineId
+    type: string  
+    default: 92387
+  - name: brokerPackage
+    type: string
+    default: com.azure.authenticator
+    displayName: Broker Package
+  - name: brokerVersion
+    displayName: Broker Version
+    type: string
+    default: 6.2212.8187
+  - name: internalFeedName
+    displayName: Internal Feed Name
+    type: string
+    default: Android-Broker
+  - name: buildId
+    displayName: Build ID
+    default: 65595652
+    type: string
+  - name: itemPattern
+    displayName: File Name
+    default: app-production-universal-release-signed.apk
+    type: string
+  - name: artifactName  
+    displayName: Artifact Name
+    type: string
+    default: MicrosoftAuthenticatorAndroid
+  - name: projectId
+    displayName: Project ID
+    type: string
+    default: b32aa71e-8ed2-41b2-9d77-5bc261222004
+
+jobs:
+  - job: 'download_and_publish'
+    displayName: Download And Publish Brokers to Universal Packages
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+      - checkout: none
+      - task: DownloadPipelineArtifact@2
+        displayName: 'Download latest Prod Broker'
+        inputs:
+          buildType: 'specific'
+          project: '$(parameters.projectId)'
+          definition: '${{ parameters.brokerProdPipelineId }}'
+          artifactName: '${{ parameters.artifactName }}'
+          itemPattern: '**/${{ parameters.itemPattern }}'
+          targetPath: '$(Build.ArtifactStagingDirectory)/broker/prod'
+          pipelineId:  ${{ parameters.buildId }}
+
+      - task: UniversalPackages@0
+        displayName: 'Publish Broker Apk'
+        inputs:
+          command: 'publish'
+          publishDirectory: '$(Build.ArtifactStagingDirectory)/broker/prod'                   
+          vstsFeedPublish: '${{ parameters.internalFeedName }}'
+          vstsFeedPackagePublish: '${{ parameters.brokerPackage }}'          
+          vstsPackageVersion: '${{ parameters.brokerVersion }}'
+          packagePublishDescription: 'Prod Broker APK'
+...

@@ -1,22 +1,3 @@
-# File: azure-pipelines\test-app\broker-host.yml
-# Description: Generate BrokerHost APK
-# use local_<project>_branch variables to build the Local version
-# use dist_<project>_version variables to build the Dist version
-# Variable 'dist_[adal, common, msal, ad_accounts]_version' was defined in the Variables tab
-# Variable: 'ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN' was defined in the Variables tab
-# https://docs.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate
-name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
-
-trigger: none
-pr: none
-
-schedules:
-  - cron: 0 3 * * *
-    branches:
-      include:
-        - master
-    always: true
-
 parameters:
 - name: productFlavors
   displayName: Product Flavor
@@ -32,33 +13,29 @@ parameters:
   values:
   - Debug
   - Release
-
-resources:
-  repositories:
-  - repository: common
-    type: github
-    name: AzureAD/microsoft-authentication-library-common-for-android
-    ref: dev
-    endpoint: ANDROID_GITHUB
-  - repository: msal
-    type: github
-    name: AzureAD/microsoft-authentication-library-for-android
-    ref: dev
-    endpoint: ANDROID_GITHUB
-  - repository: adal
-    type: github
-    name: AzureAD/azure-activedirectory-library-for-android
-    ref: dev
-    endpoint: ANDROID_GITHUB
-  - repository: broker
-    type: github
-    name: AzureAD/ad-accounts-for-android
-    ref: dev
-    endpoint: ANDROID_GITHUB
+- name: adAccountsVersion
+  displayName: Broker Version
+  type: string
+- name: commonVersion
+  displayName: Common Version
+  type: string
+- name: adalVersion
+  displayName: ADAL Version
+  type: string
+- name: msalVersion
+  displayName: MSAL Version
+  type: string
+- name: packageVariant
+  displayName: Package Variant
+  type: string
+  default: PROD
+  values:
+    - PROD
+    - RC
 
 jobs:
-- job: brokerhost
-  displayName: Build BrokerHost ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
+- job: brokerhost${{ parameters.packageVariant }}${{ parameters.productFlavors }}${{ parameters.signingConfigurations }}
+  displayName: BrokerHost ${{ parameters.packageVariant }} ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
   pool:
     vmImage: 'windows-latest'
   variables:
@@ -89,17 +66,17 @@ jobs:
         targetType: inline
         script: |
           $assembleTask = "assembleDist${{ parameters.signingConfigurations }}"
-          if (("$(dist_common_version)" -ne "")) {
-              $assembleTask = $assembleTask + " -PcommonVersion=" + "$(dist_common_version)"
+          if (("${{ parameters.commonVersion }}" -ne "")) {
+              $assembleTask = $assembleTask + " -PcommonVersion=" + "${{ parameters.commonVersion }}"
           }
-          if (("$(dist_ad_accounts_version)" -ne "")) {
-              $assembleTask = $assembleTask + " -PadAccountsVersion=" + "$(dist_ad_accounts_version)"
+          if (("${{ parameters.adAccountsVersion }}" -ne "")) {
+              $assembleTask = $assembleTask + " -PadAccountsVersion=" + "${{ parameters.adAccountsVersion }}"
           }
-          if (("$(dist_adal_version)" -ne "")) {
-              $assembleTask = $assembleTask + " -PadalVersion=" + "$(dist_adal_version)"
+          if (("${{ parameters.adalVersion }}" -ne "")) {
+              $assembleTask = $assembleTask + " -PadalVersion=" + "${{ parameters.adalVersion }}"
           }
-          if (("$(dist_msal_version)" -ne "")) {
-              $assembleTask = $assembleTask + " -PmsalVersion=" + "$(dist_msal_version)"
+          if (("${{ parameters.msalVersion }}" -ne "")) {
+              $assembleTask = $assembleTask + " -PmsalVersion=" + "${{ parameters.msalVersion }}"
           }
           Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
   - ${{ if eq(parameters.productFlavors, 'Local') }}:
@@ -109,7 +86,12 @@ jobs:
     displayName: Set MVN AccessToken in Environment
     inputs:
       filename: echo
-      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(mvnAccessToken)'
+  - task: CmdLine@1
+    displayName: Set Office MVN Access Token in Environment
+    inputs:
+      filename: echo
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_OFFICE_ACCESSTOKEN]$(vstsOfficeMavenAccessToken)'
   - task: Gradle@1
     name: Gradle1
     displayName: Assemble BrokerHost
@@ -130,12 +112,18 @@ jobs:
     displayName: Publish Broker Host APK (Pipeline Artifact)
     inputs:
       targetPath: $(Agent.BuildDirectory)/android-complete/broker/userapp/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}
-      artifactName: BrokerHost
+      artifactName: BrokerHost-${{ parameters.productFlavors }}-${{ upper(parameters.packageVariant) }}-${{ lower(parameters.signingConfigurations) }}
       patterns: '**/*.apk'
-  - task: PublishBuildArtifacts@1
-    displayName: Publish Broker Host APK (Build Artifact)
-    inputs:
-      pathToPublish: $(Build.ArtifactStagingDirectory)
-      artifactName: BrokerHostAPK
-      
+  - ${{ if eq(parameters.packageVariant, 'PROD') }}:
+      - task: UniversalPackages@0
+        displayName: Publishing PROD Brokerhost
+        continueOnError: true
+        inputs:
+          command: publish
+          publishDirectory: '$(Build.ArtifactStagingDirectory)'
+          vstsFeedPublish: 'AndroidADAL'
+          vstsFeedPackagePublish: 'com.microsoft.identity.testuserapp.prod'
+          versionOption: custom
+          versionPublish: '${{ parameters.adAccountsVersion }}'
+          packagePublishDescription: 'Prod BrokerHost Broker version ${{ parameters.adAccountsVersion }}'
 ...

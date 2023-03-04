@@ -31,9 +31,9 @@ buildscript {
         classpath "com.android.tools.build:gradle:${rootProject.ext.gradleVersion}"
         classpath "org.javassist:javassist:${rootProject.ext.javaAssistVersion}"
         classpath "com.microsoft.intune.mam:android-build-plugin:${rootProject.ext.intuneAppSdkVersion}"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:${rootProject.ext.kotlinVersion}"
     //    classpath "net.serenity-bdd:serenity-gradle-plugin:1.9.6"
     //    classpath 'com.google.gms:google-services:3.2.1'
-    //    classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
     //    classpath "androidx.navigation:navigation-safe-args-gradle-plugin:${project.ext.get('androidx_navigation_version')}"
     //    classpath 'com.google.dagger:hilt-android-gradle-plugin:2.28-alpha'
     }
@@ -63,7 +63,6 @@ allprojects {
                 password project.vstsMavenAccessToken
             }
         }
-
     }
 
     gradle.projectsEvaluated {

@@ -91,7 +91,7 @@ parameters:
 - name: brokerTestTarget
   displayName: Test Targets for Broker
   type: string
-  default: package com.microsoft.identity.client.broker.automationapp.testpass, notPackage com.microsoft.identity.client.broker.automationapp.testpass.local.adalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
+  default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
 
 stages:
 # msalautomationapp
@@ -105,6 +105,8 @@ stages:
         msalFlavor: Dist
         brokerSource: LocalApk
         brokerUpdateSource: LocalApk
+        msalVersion: ""
+        packageVariant: RC
 # msalautomationapplocalbrokerhost
 - stage: 'msalautomationapplocalbrokerhost'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
@@ -115,7 +117,9 @@ stages:
         brokerApp: BrokerHost
         msalFlavor: Local
         brokerSource: LocalApk
-        artifactName: "msalautomationapksbrokerhost"
+        brokerUpdateSource: LocalApk
+        msalVersion: ""
+        packageVariant: RC
 # brokerautomationapp
 - stage: 'brokerautomationapp'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
@@ -158,8 +162,8 @@ stages:
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
-        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msalApp)"
-        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msaltestApp)"
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msalApp)"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msaltestApp)"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "msalautomationapp-testpass-broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
@@ -184,8 +188,8 @@ stages:
   jobs:
     - template: ./templates/run-on-firebase.yml
       parameters:
-        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapksbrokerhost/$(msalAppLocalBrokerHost)"
-        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapksbrokerhost/$(msaltestAppLocalBrokerHost)"
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-RC-LocalApk/$(msalAppLocalBrokerHost)"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-RC-LocalApk/$(msaltestAppLocalBrokerHost)"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "msalautomationapp-testpass-brokerhost-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
@@ -209,8 +213,8 @@ stages:
   jobs:
     - template: ./templates/run-on-firebase.yml
       parameters:
-        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msalApp)"
-        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks/$(msaltestApp)"
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msalApp)"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msaltestApp)"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "msalautomationapp-testpass-broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
@@ -227,11 +231,12 @@ stages:
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionLow }}
         testRunTitle: "Broker(MSAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) # $(Build.BuildNumber)"
         extraTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
-# ADAL with Broker Test Plan stage (API 30+)
+# ADAL with Broker (API 30+)
 - stage: 'adal_with_broker_high_api'
   dependsOn:
   - brokerautomationapp
   - brokers_azure_sample
+  - firstpartyapps
   displayName: ADAL with broker and Broker basic validation test plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml

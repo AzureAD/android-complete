@@ -41,7 +41,7 @@ open class CodeCoverageReportExtension {
 
     var includeNoLocationClasses: Boolean = true // To include Robolectric tests in the Jacoco report, flag -> "includeNolocationClasses" is set to true
 
-    var jacocoVersion: String = "0.8.7" // jacoco version
+    var jacocoVersion: String = "0.8.8" // jacoco version
 
     /**
      * get files to exclude
