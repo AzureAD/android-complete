@@ -265,7 +265,7 @@ stages:
           script: |
             echo "Checking if we should push local flights"
             echo "We should only push local flights if this is an RC build"
-            if [ ${{ parameters.broker4jVersionRC }} != *"RC"* ], then
+            if [ ${{ parameters.broker4jVersionRC }} != *"RC"* ]; then
                 exit 1
             else
                 echo "Broker4j version contains RC, push local flights"
