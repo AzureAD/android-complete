@@ -58,13 +58,13 @@ jobs:
                 echo "Local flights boolean set to false, no need to check for RC version."
             else
                 echo "Pass local flights boolean set to true, checking RC in version..."
-                if (( ${{ parameters.broker4jVersion }} != *"RC"* ))
+                if [[ ${{ parameters.broker4jVersion }} == *"RC"* ]]
                 then
-                    echo "RC tag not found in Broker4j Version ${{ parameters.broker4jVersion }}"
-                    exit 1
-                else
                     echo "Version ${{ parameters.broker4jVersion }} contains RC, push local flights"
                     echo "##vso[task.setvariable variable=localFlightsVar;]${{ parameters.localFlightsParamString }}"
+                else
+                    echo "RC tag not found in Broker4j Version ${{ parameters.broker4jVersion }}"
+                    exit 1
                 fi
             fi
       - task: Gradle@3
