@@ -248,35 +248,13 @@ stages:
       eq(${{ parameters.shouldBuildLibraries }}, 'True')
     )
   jobs:
-  - job: validateShouldPushLocalFlights
-    displayName: Validate if we Should Push Local Flights
-    condition: |
-    and
-    (
-      not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldPassLocalFlights }}, 'True')
-    )
-    steps:
-      - checkout: self
-      - task: Bash@3
-        inputs:
-          targetType: inline
-          script: |
-            echo "Checking if we should push local flights"
-            echo "We should only push local flights if this is an RC build"
-            if [ ${{ parameters.broker4jVersionRC }} != *"RC"* ]; then
-                exit 1
-            else
-                echo "Broker4j version contains RC, push local flights"
-            fi
-  - template: ../continuous-delivery/assemble&publish.yml
-    dependsOn:
-    - validateShouldPushLocalFlights
+  - template: ../continuous-delivery/local-flight-assemble&publish.yml
     parameters:
       repository: broker
       project: broker4j
       testCmd: broker4jUnitTestCoverageReport
+      broker4jVersion: ${{ parameters.broker4jVersionRC }}
+      shouldPassLocalFlights: ${{ parameters.shouldPassLocalFlights }}
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
       assembleParams: $(broker4jProjVersionParam) $(common4jVersionParam)
