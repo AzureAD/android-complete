@@ -52,11 +52,13 @@ jobs:
           targetType: inline
           script: |
             echo "Performing security check for pushing local flights..."
-            if [ !${{ parameters.shouldPassLocalFlights }} ], then
+            if [ !${{ parameters.shouldPassLocalFlights }} ]
+            then
                 echo "Local flights boolean set to false, no need to check for RC version."
             else
                 echo "Pass local flights boolean set to true, checking RC in version...
-                if [ ${{ parameters.broker4jVersion }} != *"RC"* ], then
+                if (( ${{ parameters.broker4jVersion }} != *"RC"* ))
+                then
                     echo "RC tag not found in Broker4j Version ${{ parameters.broker4jVersion }}"
                     exit 1
                 else
