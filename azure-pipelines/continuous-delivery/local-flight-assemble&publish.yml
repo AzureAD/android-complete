@@ -53,7 +53,7 @@ jobs:
           script: |
             echo "Performing security check for pushing local flights..."
             echo "Local Flights boolean parameter set to ${{ parameters.shouldPassLocalFlights }}"
-            if (( ${{ parameters.shouldPassLocalFlights }} != "True" ))
+            if [[ ${{ parameters.shouldPassLocalFlights }} != "True" ]]
             then
                 echo "Local flights boolean set to false, no need to check for RC version."
             else
