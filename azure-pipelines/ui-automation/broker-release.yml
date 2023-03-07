@@ -48,6 +48,10 @@ parameters:
   displayName: Publish Libraries?
   type: boolean
   default: True
+- name: shouldPassLocalFlights
+  displayName: Pass Local Flights? (Only available to RC builds)
+  type: boolean
+  default: False
 - name: shouldPromoteLibraries
   displayName: Promote Libraries?
   type: boolean
@@ -244,7 +248,31 @@ stages:
       eq(${{ parameters.shouldBuildLibraries }}, 'True')
     )
   jobs:
+  - job: validateShouldPushLocalFlights
+    displayName: Validate if we Should Push Local Flights
+    condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.shouldPassLocalFlights }}, 'True')
+    )
+    steps:
+      - checkout: self
+      - task: Bash@3
+        inputs:
+          targetType: inline
+          script: |
+            echo "Checking if we should push local flights"
+            echo "We should only push local flights if this is an RC build"
+            if [ ${{ parameters.broker4jVersionRC }} != *"RC"* ], then
+                exit 1
+            else
+                echo "Broker4j version contains RC, push local flights"
+            fi
   - template: ../continuous-delivery/assemble&publish.yml
+    dependsOn:
+    - validateShouldPushLocalFlights
     parameters:
       repository: broker
       project: broker4j
