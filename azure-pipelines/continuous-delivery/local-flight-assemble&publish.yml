@@ -52,9 +52,9 @@ jobs:
           targetType: inline
           script: |
             echo "Performing security check for pushing local flights..."
-            if (( ${{ parameters.shouldPassLocalFlights }} != "true" ))
+            echo "Local Flights boolean parameter set to ${{ parameters.shouldPassLocalFlights }}"
+            if (( ${{ parameters.shouldPassLocalFlights }} != "True" ))
             then
-                echo ${{ parameters.shouldPassLocalFlights }}
                 echo "Local flights boolean set to false, no need to check for RC version."
             else
                 echo "Pass local flights boolean set to true, checking RC in version..."
