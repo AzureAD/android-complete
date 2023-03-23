@@ -165,6 +165,7 @@ project(':AzureSample').projectDir = new File('azuresample/app')
 //project(':RootDetectionLibrary').projectDir = new File('authenticator/PhoneFactor/RootDetectionLibrary')
 
 include ':catalog'
+project(':catalog').projectDir = new File('common/catalog')
 
 dependencyResolutionManagement {
     repositories {
@@ -173,7 +174,7 @@ dependencyResolutionManagement {
 
     versionCatalogs {
         libs {
-            from("com.microsoft.identity:catalog:1")
+            from("com.microsoft.identity:catalog:1.0.0")
         }
     }
 }
