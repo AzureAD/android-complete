@@ -48,10 +48,6 @@ parameters:
   displayName: Publish Libraries?
   type: boolean
   default: True
-- name: shouldPassLocalFlights
-  displayName: Pass Local Flights? (Only available to RC builds)
-  type: boolean
-  default: False
 - name: shouldPromoteLibraries
   displayName: Promote Libraries?
   type: boolean
@@ -248,14 +244,11 @@ stages:
       eq(${{ parameters.shouldBuildLibraries }}, 'True')
     )
   jobs:
-  - template: ../continuous-delivery/local-flight-assemble&publish.yml
+  - template: ../continuous-delivery/assemble&publish.yml
     parameters:
       repository: broker
       project: broker4j
       testCmd: broker4jUnitTestCoverageReport
-      broker4jVersion: ${{ parameters.broker4jVersionRC }}
-      shouldPassLocalFlights: ${{ parameters.shouldPassLocalFlights }}
-      localFlightsParamString: $(localFlights)
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
       assembleParams: $(broker4jProjVersionParam) $(common4jVersionParam)
