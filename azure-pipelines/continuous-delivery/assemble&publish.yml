@@ -21,28 +21,36 @@ parameters:
 - name: shouldPublish
   type: boolean
   default: True
+- name: agentImage
+  default: none
+- name: shouldRunUnitTests
+  type: boolean
+  default: True
 
 jobs:
 - job: publish${{ parameters.project }}Libraries
   displayName: ${{ parameters.project }} build & publish
   pool:
-    vmImage: ubuntu-latest
+    ${{ if eq(parameters.agentImage, 'none') }}:
+      vmImage: ubuntu-latest
+    ${{ else }}:
+      name: ${{ parameters.agentImage }}
   variables:
   - group: AndroidAuthClientVariables
   steps:
   - checkout: ${{ parameters.repository }}
     persistCredentials: True
   - task: Gradle@3
-    displayName: Generate Lockfile ${{ parameters.project }}
+    displayName: Build ${{ parameters.project }}
     inputs:
-      tasks: -q ${{ parameters.project }}:dependencies ${{ parameters.dependencyParams }}
+      tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: Gradle@3
-    displayName: Build ${{ parameters.project }}
+    displayName: Generate Lockfile ${{ parameters.project }}
     inputs:
-      tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
+      tasks: -q ${{ parameters.project }}:dependencies ${{ parameters.dependencyParams }}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
@@ -81,6 +89,7 @@ jobs:
         RunAsPreJob: false
     - task: Gradle@3
       displayName: Run Test ${{ parameters.project }}
+      enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
       inputs:
         tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.assembleParams}} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
