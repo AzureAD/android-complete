@@ -60,6 +60,10 @@ parameters:
   displayName: Run E2E UI Validation?
   type: boolean
   default: False
+- name: shouldBuildTestingLibraries
+  displayName: Build & Publish Testing libs?
+  type: boolean
+  default: False
 
 # Library versioning parameters
 - name: msalVersionRC
@@ -231,6 +235,30 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+
+# Testing Libraries - KeyVault, LabApi, LabApiUtilities, TestUtils, UiAutomationUtilities
+- stage: 'publishCommonUtilities'
+  displayName: Testing Libraries - Build and publish  
+  dependsOn: publishCommonLibraries
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.shouldBuildTestingLibraries }}, 'True')
+    )
+  jobs:
+    - job: queue_build
+      displayName: Update Testing libraries 
+      steps:
+        - task: PowerShell@2
+          displayName: Queue and wait for testing libraries 
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId "1464"  -Branch "${{ parameters.commonVersionRC }}"'
+            workingDirectory: '$(Build.SourcesDirectory)'
+
+
 # Broker4j - Build and publish
 - stage: 'publishBroker4jLibraries'
   displayName: Broker4j - Build and publish  
@@ -389,6 +417,7 @@ stages:
   jobs:
     - job: queue_build
       displayName: Queue Build for Authenticator RC
+      timeoutInMinutes: 90
       steps:
         - checkout: self
           persistCredentials: True
