@@ -170,3 +170,16 @@
             printf '\n' ; printf '%s' "3. LIST OF GENERATED BRANCHES"; printf '%s': "  "; \
             printf '\n' ; cd $workDir/; git droidShowBranches; \
         }; f"
+    droidCheckoutDev = "!f() { \
+              workDir=$(git config --get androidcomplete.workDir); \
+              cd $workDir/adal/; git checkout dev; git fetch; git pull;  git submodule update; \
+              cd $workDir/msal/; git checkout dev; git fetch; git pull;  git submodule update; \
+              cd $workDir/broker/; git checkout dev; git fetch; git pull;  git submodule update; \
+              cd $workDir/common/; git checkout dev; git fetch; git pull; \
+          }; f"
+    droidUpdateSubmodules = "!f() { \
+              workDir=$(git config --get androidcomplete.workDir); \
+              cd $workDir/adal/; git submodule update; \
+              cd $workDir/msal/; git submodule update; \
+              cd $workDir/broker/; git submodule update; \
+          }; f"
