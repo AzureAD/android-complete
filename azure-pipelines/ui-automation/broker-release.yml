@@ -239,7 +239,6 @@ stages:
 # Testing Libraries - KeyVault, LabApi, LabApiUtilities, TestUtils, UiAutomationUtilities
 - stage: 'publishCommonUtilities'
   displayName: Testing Libraries - Build and publish  
-  dependsOn: publishCommonLibraries
   condition: |
     and
     (
