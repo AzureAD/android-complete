@@ -254,7 +254,7 @@ stages:
           displayName: Queue and wait for testing libraries 
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId "1464"  -Branch "${{ parameters.commonVersionRC }}"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$(System.AccessToken)" -BuildDefinitionId "1464"  -Branch "${{ parameters.commonVersionRC }}"'
             workingDirectory: '$(Build.SourcesDirectory)'
 
 
