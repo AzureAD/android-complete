@@ -44,6 +44,13 @@ resources:
     name: AzureAD/microsoft-authentication-library-for-android
     ref: dev
     endpoint: ANDROID_GITHUB
+    # We need broker to get otelexporter
+  - repository: broker
+    type: github
+    name: AzureAD/ad-accounts-for-android
+    ref: dev
+    endpoint: ANDROID_GITHUB
+
 
 jobs:
 - job: msal_test_app
@@ -59,6 +66,9 @@ jobs:
   - checkout: msal
     clean: true
     path: android-complete/msal
+  - checkout: broker
+    clean: true
+    path: android-complete/broker
   - checkout: common
     clean: true
     path: android-complete/common
