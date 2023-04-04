@@ -323,7 +323,7 @@ stages:
             workingDirectory: '$(Build.SourcesDirectory)'
 # BrokerApk - Link to Windows Queue pipeline
 - stage: 'queueLinkToWindowsPipeline'
-  displayName: Company Link To Windows Apk Generation
+  displayName: Link To Windows Apk Generation
   dependsOn: promotePackages
   jobs:
     - job: queue_build_LinkToWindows
