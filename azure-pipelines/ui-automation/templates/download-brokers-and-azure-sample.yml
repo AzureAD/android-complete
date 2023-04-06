@@ -24,8 +24,6 @@ parameters:
   - name: internalFeedName
     type: string
     default: 'AndroidAdal'
-  - name: OSServiceConnection
-    type: string
   - name: LTWFeedName
     type: string
   - name: LTWVersion
@@ -86,7 +84,7 @@ jobs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
         feedsToUse: 'external'
-        externalFeedCredentials: '${{ parameters.OSServiceConnection }}'
+        externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
         feedDownloadExternal: '${{ parameters.LTWFeedName }}'
         packageDownloadExternal: 'com.microsoft.appmanager'
         versionDownloadExternal: '${{ parameters.LTWVersion }}'
