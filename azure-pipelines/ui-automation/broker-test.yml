@@ -46,7 +46,7 @@ variables:
   edgeApk: Edge.apk
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
-
+  LTWFeedName: Android-Auth-Broker-LTW-Build
 parameters:
 - name: firebaseDeviceIdHigh
   displayName: Firebase Device Id (Api 30+)
@@ -84,6 +84,10 @@ parameters:
   displayName: Old Broker host Version
   type: string
   default: '0.0.1'
+- name: LTWVersion
+  displayName: Link to Windows Version
+  type: string
+  default: '*'
 - name: msalTestTarget
   displayName: Test Targets for MSAL
   type: string
