@@ -24,7 +24,13 @@ parameters:
   - name: internalFeedName
     type: string
     default: 'AndroidAdal'
-
+  - name: OSServiceConnection
+    type: string
+  - name: LTWFeedName
+    type: string
+  - name: LTWVersion
+    displayName: Link to Windows Version
+    type: string
 jobs:
 - job: 'download_brokers'
   displayName: Download Brokers
@@ -74,6 +80,16 @@ jobs:
         feedDownloadExternal: '${{ parameters.msazureFeedName }}'
         packageDownloadExternal: 'com.microsoft.windowsintune.companyportal-signed'
         versionDownloadExternal: '${{ parameters.companyPortalVersion }}'
+    - task: UniversalPackages@0
+      displayName: 'Download com.microsoft.appmanager'
+      inputs:
+        command: 'download'
+        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
+        feedsToUse: 'external'
+        externalFeedCredentials: '${{ parameters.OSServiceConnection }}'
+        feedDownloadExternal: '${{ parameters.LTWFeedName }}'
+        packageDownloadExternal: 'com.microsoft.appmanager'
+        versionDownloadExternal: '${{ parameters.LTWVersion }}'
     - task: DownloadPipelineArtifact@2
       displayName: 'Download Broker Host'
       inputs:
