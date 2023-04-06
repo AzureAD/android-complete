@@ -333,11 +333,11 @@ stages:
         - checkout: self
           persistCredentials: True
         - task: PowerShell@2
-          displayName: Queue and wait for Company Portal Apk generation pipeline
+          displayName: Queue and wait for Link to Windows Apk generation pipeline
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "LTWBranch" -WaitTimeoutInMinutes 120 -BuildDefinitionId "44201" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)"'
+            arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "OSPAT" -WaitTimeoutInMinutes 120 -BuildDefinitionId "44201" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)"'
             workingDirectory: '$(Build.SourcesDirectory)'
         - task: PowerShell@2
           inputs:
