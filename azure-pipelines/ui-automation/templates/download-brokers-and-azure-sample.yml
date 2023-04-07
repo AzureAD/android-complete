@@ -26,6 +26,9 @@ parameters:
     default: 'AndroidAdal'
   - name: LTWFeedName
     type: string
+  - name: OSServiceConnection
+    displayName: Link to Windows Service Connection
+    type: string
   - name: LTWVersion
     displayName: Link to Windows Version
     type: string
