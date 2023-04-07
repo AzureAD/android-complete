@@ -151,11 +151,13 @@ stages:
         azureSamplePipelineId: '$(azureSamplePipelineId)'
         msazureServiceConnection: '$(msazureServiceConnection)'
         msazureFeedName: '$(msazureFeedName)'
+        LTWFeedName: '$(LTWFeedName)'
         authenticatorVersion: ${{ parameters.authenticatorVersion }}
         oldAuthenticatorVersion: ${{ parameters.oldAuthenticatorVersion }}
         companyPortalVersion: ${{ parameters.companyPortalVersion }}
         brokerHostPipelineId: '$(brokerHostPipelineId)'
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
+        LTWVersion: ${{ parameters.LTWVersion }}
 # MSAL with Broker Test Plan stage (API 30+)
 - stage: 'msal_with_broker_high_api'
   dependsOn:
