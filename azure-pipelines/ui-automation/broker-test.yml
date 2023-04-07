@@ -47,7 +47,7 @@ variables:
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
   OSServiceConnection: https://microsoft.visualstudio.com/OS
-  LTWFeedName: a4109c16-628c-42a8-9d6e-c2d9b870251a
+  LTWFeedName: Android-Auth-Broker-LTW-Build
   
 parameters:
 - name: firebaseDeviceIdHigh
