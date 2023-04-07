@@ -87,7 +87,7 @@ jobs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
         feedsToUse: 'external'
-        externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
+        externalFeedCredentials: '${{ parameters.OSServiceConnection }}'
         feedDownloadExternal: '${{ parameters.LTWFeedName }}'
         packageDownloadExternal: 'com.microsoft.appmanager'
         versionDownloadExternal: '${{ parameters.LTWVersion }}'
