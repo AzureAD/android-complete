@@ -47,7 +47,7 @@ variables:
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
   OSServiceConnection: LTW-Integration
-  LTWFeedName: Android-Auth-Broker-LTW-Build
+  LTWFeedName: Auth-Broker-Integrated-LTW-Build
   
 parameters:
 - name: firebaseDeviceIdHigh
