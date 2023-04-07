@@ -46,7 +46,7 @@ variables:
   edgeApk: Edge.apk
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
-  OSServiceConnection: https://microsoft.visualstudio.com/OS
+  OSServiceConnection: LTW-Integration
   LTWFeedName: Android-Auth-Broker-LTW-Build
   
 parameters:
