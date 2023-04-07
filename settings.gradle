@@ -170,11 +170,19 @@ project(':catalog').projectDir = new File('common/catalog')
 dependencyResolutionManagement {
     repositories {
         mavenLocal()
+        maven {
+            name "vsts-maven-adal-android"
+            url "https://identitydivision.pkgs.visualstudio.com/_packaging/AndroidADAL/maven/v1"
+            credentials {
+                username System.getenv("ENV_VSTS_MVN_ANDROID_MSAL_USERNAME") != null ? System.getenv("ENV_VSTS_MVN_ANDROID_MSAL_USERNAME") : vstsUsername
+                password System.getenv("ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN") != null ? System.getenv("ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN") : vstsMavenAccessToken
+            }
+        }
     }
 
     versionCatalogs {
         libs {
-            from("com.microsoft.identity:catalog:1.0.0")
+            from("com.microsoft.identity:catalog:1.0.0-alpha01")
         }
     }
 }
