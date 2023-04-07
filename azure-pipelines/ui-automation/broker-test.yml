@@ -46,7 +46,7 @@ variables:
   edgeApk: Edge.apk
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
-  OSServiceConnection: AndroidBroker-CI
+  OSServiceConnection: https://microsoft.visualstudio.com/OS
   LTWFeedName: a4109c16-628c-42a8-9d6e-c2d9b870251a
   
 parameters:
