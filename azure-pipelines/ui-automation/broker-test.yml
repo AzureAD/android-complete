@@ -46,7 +46,9 @@ variables:
   edgeApk: Edge.apk
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
+  OSServiceConnection: AndroidBroker-CI
   LTWFeedName: a4109c16-628c-42a8-9d6e-c2d9b870251a
+  
 parameters:
 - name: firebaseDeviceIdHigh
   displayName: Firebase Device Id (Api 30+)
@@ -151,6 +153,7 @@ stages:
         azureSamplePipelineId: '$(azureSamplePipelineId)'
         msazureServiceConnection: '$(msazureServiceConnection)'
         msazureFeedName: '$(msazureFeedName)'
+        OSServiceConnection: '$(OSServiceConnection)'
         LTWFeedName: '$(LTWFeedName)'
         authenticatorVersion: ${{ parameters.authenticatorVersion }}
         oldAuthenticatorVersion: ${{ parameters.oldAuthenticatorVersion }}
