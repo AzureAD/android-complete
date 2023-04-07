@@ -46,7 +46,7 @@ variables:
   edgeApk: Edge.apk
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
-  LTWFeedName: Android-Auth-Broker-LTW-Build
+  LTWFeedName: a4109c16-628c-42a8-9d6e-c2d9b870251a
 parameters:
 - name: firebaseDeviceIdHigh
   displayName: Firebase Device Id (Api 30+)
