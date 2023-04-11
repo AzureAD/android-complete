@@ -32,6 +32,7 @@ parameters:
   - name: LTWVersion
     displayName: Link to Windows Version
     type: string
+    default: '*'
 jobs:
 - job: 'download_brokers'
   displayName: Download Brokers
