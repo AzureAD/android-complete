@@ -325,7 +325,7 @@ stages:
 - stage: 'queueLinkToWindowsPipeline'
   displayName: Link To Windows Apk Generation
   dependsOn: promotePackages
-  condition: eq(varialbes.LTWIntegrationEnabled, 'true')
+  condition: eq(variables['LTWIntegrationEnabled'], 'true')
   jobs:
     - job: queue_build_LinkToWindows
       displayName: Generate Link To Windows Apk
