@@ -48,6 +48,7 @@ variables:
   resultsHistoryName: Broker Release
   OSServiceConnection: LTW-Integration
   LTWFeedName: Auth-Broker-Integrated-LTW-Build
+  LTWApk: LTW-signed.apk
   
 parameters:
 - name: firebaseDeviceIdHigh
@@ -178,6 +179,7 @@ stages:
         resultsDir: "msalautomationapp-testpass-broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
         otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
                       /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+                      /data/local/tmp/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
                       /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
@@ -204,6 +206,7 @@ stages:
         resultsDir: "msalautomationapp-testpass-brokerhost-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
         otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
                       /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+                      /data/local/tmp/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
                       /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
@@ -229,6 +232,7 @@ stages:
         resultsDir: "msalautomationapp-testpass-broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
         otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
                       /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+                      /data/local/tmp/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
                       /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
@@ -257,6 +261,7 @@ stages:
         resultsDir: "brokerautomationapp-testpass-adal&basic-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
         otherFiles: "/data/local/tmp/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
                       /data/local/tmp/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
+                      /data/local/tmp/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
                       /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
