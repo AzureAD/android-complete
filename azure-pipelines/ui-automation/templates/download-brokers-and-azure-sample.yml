@@ -92,6 +92,9 @@ jobs:
         feedDownloadExternal: '${{ parameters.LTWFeedName }}'
         packageDownloadExternal: 'com.microsoft.appmanager'
         versionDownloadExternal: '${{ parameters.LTWVersion }}'
+    - script: mv ./YPC-*.apk ./LTW-signed.apk
+      displayName: 'Rename LTW build to LTW-signed.apk'
+      workingDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
     - task: DownloadPipelineArtifact@2
       displayName: 'Download Broker Host'
       inputs:
