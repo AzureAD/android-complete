@@ -24,7 +24,15 @@ parameters:
   - name: internalFeedName
     type: string
     default: 'AndroidAdal'
-
+  - name: LTWFeedName
+    type: string
+  - name: OSServiceConnection
+    displayName: Link to Windows Service Connection
+    type: string
+  - name: LTWVersion
+    displayName: Link to Windows Version
+    type: string
+    default: '*'
 jobs:
 - job: 'download_brokers'
   displayName: Download Brokers
@@ -74,6 +82,19 @@ jobs:
         feedDownloadExternal: '${{ parameters.msazureFeedName }}'
         packageDownloadExternal: 'com.microsoft.windowsintune.companyportal-signed'
         versionDownloadExternal: '${{ parameters.companyPortalVersion }}'
+    - task: UniversalPackages@0
+      displayName: 'Download com.microsoft.appmanager'
+      inputs:
+        command: 'download'
+        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
+        feedsToUse: 'external'
+        externalFeedCredentials: '${{ parameters.OSServiceConnection }}'
+        feedDownloadExternal: '${{ parameters.LTWFeedName }}'
+        packageDownloadExternal: 'com.microsoft.appmanager'
+        versionDownloadExternal: '${{ parameters.LTWVersion }}'
+    - script: mv ./YPC-*.apk ./LTW-signed.apk
+      displayName: 'Rename LTW build to LTW-signed.apk'
+      workingDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
     - task: DownloadPipelineArtifact@2
       displayName: 'Download Broker Host'
       inputs:
