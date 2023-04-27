@@ -46,3 +46,5 @@ ehthumbs_vista.db
 [Dd]esktop.ini
 
 out/
+
+plugins/buildsystem/bin
