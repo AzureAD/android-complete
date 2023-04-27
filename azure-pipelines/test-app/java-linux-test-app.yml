@@ -25,6 +25,44 @@ resources:
 
 jobs:
 - job: build_deb
+  displayName: Build & Publish Deb for java-linux-test-app
+  cancelTimeoutInMinutes: 1
+  pool:
+    vmImage: ubuntu-20.04
+  variables:
+    - group: AndroidAuthClientVariables
+  steps:
+    - checkout: broker
+      clean: true
+      submodules: recursive
+      persistCredentials: True
+    - task: CmdLine@1
+      displayName: Set MVN Access Token in Environment
+      inputs:
+        filename: echo
+        arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
+    - task: Gradle@1
+      name: Gradle1
+      displayName: Build Deb with Java Dependency
+      inputs:
+        cwd: $(Build.SourcesDirectory)/broker-java-root
+        tasks: java-linux-test-app:clean java-linux-test-app:buildDeb --build-cache --info
+        publishJUnitResults: false
+        jdkArchitecture: x86
+        sqAnalysisBreakBuildIfQualityGateFailed: false
+    - task: CopyFiles@2
+      name: CopyFiles1
+      displayName: Copy Files to Artifact Staging Directory
+      inputs:
+        SourceFolder: java-linux-test-app/build/distributions
+        TargetFolder: $(build.artifactstagingdirectory)
+    - task: PublishPipelineArtifact@1
+      name: PublishPipelineArtifacts1
+      displayName: 'Publish Artifact: Linux Test App Deb'
+      inputs:
+        ArtifactName: java-linux-test-app Deb Package
+        TargetPath: $(build.artifactstagingdirectory)
+- job: build_rpm
   displayName: Build & Publish Rpm for java-linux-test-app
   cancelTimeoutInMinutes: 1
   pool:
