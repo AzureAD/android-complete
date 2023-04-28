@@ -45,7 +45,7 @@ jobs:
           retryCount: 5
       - download: current
       - script: |
-          gcloud components upgrade --version 426.0.0
+          gcloud components update --version 426.0.0
           gcloud version
         displayName: 'Check gcloud version'
       - task: Bash@3
