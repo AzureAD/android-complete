@@ -44,7 +44,9 @@ jobs:
           secureFile: AndroidFirebaseServiceAccountKey.json
           retryCount: 5
       - download: current
-      - script: gcloud version
+      - script: |
+          sudo apt-get install gcloud=426.0.0
+          gcloud version
         displayName: 'Check gcloud version'
       - task: Bash@3
         name: runUiAutomation

@@ -400,6 +400,18 @@ stages:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
             arguments: '-PackagingPAT "$(System.AccessToken)" -common4jVersion "${{ parameters.common4jVersionRC }}" -commonVersion "${{ parameters.commonVersionRC }}" -broker4jVersion "${{ parameters.broker4jVersionRC }}" -adAccountsVersion "${{ parameters.adAccountsVersionRC }}" -msalVersion "${{ parameters.msalVersionRC }}" -adalVersion "${{ parameters.adalVersionRC }}" -PromoteToView "Prerelease"'
             workingDirectory: '$(Build.SourcesDirectory)'
+    # Promote to Pre-Release
+    - job: promote_to_prerelease
+      displayName: Promote all the libraries to Release
+      timeoutInMinutes: 90
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: PowerShell@2
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
+            arguments: '-PackagingPAT "$(System.AccessToken)" -common4jVersion "${{ parameters.common4jVersionRC }}" -commonVersion "${{ parameters.commonVersionRC }}" -broker4jVersion "${{ parameters.broker4jVersionRC }}" -adAccountsVersion "${{ parameters.adAccountsVersionRC }}" -msalVersion "${{ parameters.msalVersionRC }}" -adalVersion "${{ parameters.adalVersionRC }}" -PromoteToView "Release"'
+            workingDirectory: '$(Build.SourcesDirectory)'
 
 # Broker app generation
 # Authenticator
