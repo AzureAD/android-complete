@@ -46,7 +46,7 @@ jobs:
       - download: current
       - script: |
           sudo apt-get update
-          sudo apt-cache showpkg google-cloud-sdk
+          sudo apt-cache policy google-cloud-sdk
           sudo apt-get install google-cloud-sdk=426.0.0-0
           gcloud version
         displayName: 'Check gcloud version'
