@@ -34,7 +34,7 @@ jobs:
     displayName: ${{ parameters.displayNamePrefix }} Running Test Suite on Firebase
     timeoutInMinutes: 90
     pool:
-      vmImage: ubuntu-latest
+      vmImage: ubuntu-20.04
     steps:
       - checkout: none
       - task: DownloadSecureFile@1
