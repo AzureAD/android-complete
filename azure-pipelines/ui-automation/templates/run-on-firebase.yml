@@ -45,7 +45,9 @@ jobs:
           retryCount: 5
       - download: current
       - script: |
-          sudo apt-get update && sudo apt-get install google-cloud-sdk=426.0.0-0
+          sudo apt-get update
+          sudo apt-show-versions -a -p google-cloud-sdk
+          sudo apt-get install google-cloud-sdk=426.0.0-0
           gcloud version
         displayName: 'Check gcloud version'
       - task: Bash@3
