@@ -48,7 +48,8 @@ jobs:
           curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
           echo "deb https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
           sudo apt-get update
-          sudo apt-get purge google-cloud-sdk
+          sudo apt-get purge man-db
+          sudo apt-get remove google-cloud-sdk
           sudo apt-get install google-cloud-sdk=426.0.0-0
           gcloud version
         displayName: 'Check gcloud version'
