@@ -37,7 +37,7 @@ variables:
   msalTestAppLocalBrokerHost: msalautomationapp-local-BrokerHost-debug-androidTest.apk
   brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
   brokerTestApp: brokerautomationapp-dist-AutoBroker-debug-androidTest.apk
-  companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
+  companyPortalApk: com.microsoft.windowsintusne.companyportal-signed.apk
   authenticatorApk: app-production-universal-release-signed.apk
   oldAuthenticatorApk: Authenticator-4.1.0-RC.apk
   outlookApk: Outlook.apk
