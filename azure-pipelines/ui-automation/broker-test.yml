@@ -209,7 +209,7 @@ stages:
                       /data/local/tmp/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
                       /data/local/tmp/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /data/local/tmp/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
-                      /data/local/tmp/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
+                      /data/local/tmp/BrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
                       /data/local/tmp/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
