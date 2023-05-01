@@ -181,7 +181,7 @@ stages:
       displayName: Build and publish linux broker package
       env:
         ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME: $(AndroidAuthClient-Internal-Maven-Username)
-        ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN: $(AndroidAuthClient-Internal-Maven-Access-Token)
+        ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN: $(System.AccessToken)
       inputs:
         cwd: $(Build.SourcesDirectory)/broker-java-root
         tasks: LinuxBrokerPackage:clean LinuxBrokerPackage:buildDeb $(linuxBrokerVersion) --build-cache --info
