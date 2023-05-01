@@ -77,7 +77,7 @@ jobs:
               --timeout "${{ parameters.firebaseTimeout }}" \
               --other-files ${{ parameters.otherFiles }} \
               --results-dir "${{ parameters.resultsDir }}" \
-              --directories-to-pull "/sdcard" \
+              --directories-to-pull /sdcard,/data/local/tmp \
               --use-orchestrator \
               --environment-variables "clearPackageData=true" \
               --results-history-name "${{ parameters.resultsHistoryName }}" \
