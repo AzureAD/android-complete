@@ -52,6 +52,7 @@ jobs:
         inputs:
           targetType: inline
           script: |
+            gcloud version
             gcloud auth activate-service-account --key-file "$(gcServiceAccountKey.secureFilePath)"
             gcloud config set project "$(gCloudProjectId)"
             gcloud firebase test android models list
@@ -64,7 +65,7 @@ jobs:
               --timeout "${{ parameters.firebaseTimeout }}" \
               --other-files ${{ parameters.otherFiles }} \
               --results-dir "${{ parameters.resultsDir }}" \
-              --directories-to-pull "/sdcard" \
+              --directories-to-pull /sdcard,/data/local/tmp \
               --use-orchestrator \
               --environment-variables "clearPackageData=true" \
               --results-history-name "${{ parameters.resultsHistoryName }}" \
