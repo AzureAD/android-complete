@@ -375,7 +375,7 @@ stages:
 
 # Promote Libraries
 - stage: 'promoteLibraries'
-  displayName: Promote Libraries to PreRelease
+  displayName: Promote Libraries to PreRelease and Release
   condition: |
     and
     (
