@@ -176,7 +176,7 @@ stages:
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msaltestApp)"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
-        resultsDir: "msalautomationapp-testpass-broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
+        resultsDir: "msalautomationapp-testpass-broker-highapi-$(Build.BuildId)-AndroidBrokerCI"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
                       /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
@@ -231,7 +231,7 @@ stages:
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msaltestApp)"
         testTargetPackages: ${{ parameters.msalTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
-        resultsDir: "msalautomationapp-testpass-broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
+        resultsDir: "msalautomationapp-testpass-broker-lowapi-$(Build.BuildId)-AndroidBrokerCI"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
                       /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
@@ -260,7 +260,7 @@ stages:
         automationAppTestApkPath: "$(Pipeline.Workspace)/brokerautomationapks/$(brokertestApp)"
         testTargetPackages: ${{ parameters.brokerTestTarget }}
         resultsHistoryName: "$(resultsHistoryName)"
-        resultsDir: "brokerautomationapp-testpass-adal&basic-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
+        resultsDir: "brokerautomationapp-testpass-adal&basic-highapi-$(Build.BuildId)-AndroidBrokerCI"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
                       /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
