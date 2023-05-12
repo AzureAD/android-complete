@@ -92,7 +92,6 @@ jobs:
         RunAsPreJob: false
     - task: Bash@3
       condition: ne(shouldRunLinuxInlineScript,false)
-        retryCountOnTaskFailure: 3
         displayName: Linux Testing Setup
         inputs:
           workingDirectory: $(Build.SourcesDirectory)/broker-java-root
