@@ -160,7 +160,7 @@ stages:
       repository: broker
       project: LinuxBroker
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
-      testCmd: linuxBrokerUnitTestCoverageReport
+      testCmd: linuxBrokerUnitTestCoverageReport -Psystemd_mode_enabled=false --build-cache --info
       dependencyParams: $(broker4jVersionParam) $(common4jVersionParam) $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
       publishParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
