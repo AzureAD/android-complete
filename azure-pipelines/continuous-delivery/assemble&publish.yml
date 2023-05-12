@@ -91,7 +91,7 @@ jobs:
         SecretsFilter: 'AndroidAutomationRunnerAppSecret'
         RunAsPreJob: false
     - task: Bash@3
-      condition: ne(${{ parameters.shouldRunLinuxInlineScript }}, 'False')
+      condition: eq(${{ parameters.shouldRunLinuxInlineScript }}, 'True')
       retryCountOnTaskFailure: 3
       displayName: Linux Testing Setup
       inputs:
