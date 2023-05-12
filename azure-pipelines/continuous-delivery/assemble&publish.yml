@@ -92,20 +92,20 @@ jobs:
         RunAsPreJob: false
     - task: Bash@3
       condition: ne(${{ parameters.shouldRunLinuxInlineScript }}, 'False')
-        retryCountOnTaskFailure: 3
-        displayName: Linux Testing Setup
-        inputs:
-          workingDirectory: $(Build.SourcesDirectory)/broker-java-root
-          targetType: 'inline'
-          script: |
-            sudo apt-get install -y dbus-x11
-            sudo apt-get install -y dos2unix
-            dos2unix gradlew
-            chmod +x gradlew
-            export DISPLAY=:0.0
-            eval $(dbus-launch --sh-syntax)
-            sudo apt install gnome-keyring
-            /usr/bin/gnome-keyring-daemon --start --components=secrets
+      retryCountOnTaskFailure: 3
+      displayName: Linux Testing Setup
+      inputs:
+        workingDirectory: $(Build.SourcesDirectory)/broker-java-root
+        targetType: 'inline'
+        script: |
+          sudo apt-get install -y dbus-x11
+          sudo apt-get install -y dos2unix
+          dos2unix gradlew
+          chmod +x gradlew
+          export DISPLAY=:0.0
+          eval $(dbus-launch --sh-syntax)
+          sudo apt install gnome-keyring
+          /usr/bin/gnome-keyring-daemon --start --components=secrets
     - task: Gradle@3
       displayName: Run Test ${{ parameters.project }}
       enabled: ${{ parameters.shouldRunUnitTests }}
