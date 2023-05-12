@@ -167,6 +167,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunLinuxInlineScript: True
   - job: PublishLinuxBrokerPackage
     dependsOn: publishLinuxBrokerLibraries
     displayName: Publish Linux Broker Package
