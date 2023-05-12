@@ -73,6 +73,7 @@ jobs:
               --results-dir "${{ parameters.resultsDir }}" \
               --directories-to-pull /sdcard,/data/local/tmp \
               --use-orchestrator \
+              --fail-fast \
               --environment-variables "clearPackageData=true" \
               --results-history-name "${{ parameters.resultsHistoryName }}" \
               --test-targets "${{ parameters.testTargetPackages }}, ${{ parameters.extraTarget }}"
