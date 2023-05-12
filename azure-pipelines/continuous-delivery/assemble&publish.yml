@@ -91,7 +91,8 @@ jobs:
         SecretsFilter: 'AndroidAutomationRunnerAppSecret'
         RunAsPreJob: false
     - task: Bash@3
-      condition: ne(shouldRunLinuxInlineScript,false)
+      condition: ne(${{ parameters.shouldRunLinuxInlineScript }}, 'False')
+        retryCountOnTaskFailure: 3
         displayName: Linux Testing Setup
         inputs:
           workingDirectory: $(Build.SourcesDirectory)/broker-java-root
