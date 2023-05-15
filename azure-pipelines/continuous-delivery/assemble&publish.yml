@@ -123,7 +123,7 @@ jobs:
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
       inputs:
-        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.assembleParams}} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true ${{ parameters.linuxParams}}
+        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} -PdistCommon4jVersion="0.0.+" -PdistBroker4jVersion="0.0.+" -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
         testRunTitle: '${{ parameters.project }}_UnitTests'
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
