@@ -108,7 +108,9 @@ jobs:
           eval $(dbus-launch --sh-syntax)
           sudo apt install gnome-keyring
           /usr/bin/gnome-keyring-daemon --start --components=secrets
+          ./gradlew LinuxBroker:linuxBrokerUnitTestCoverageReport -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
     - task: Gradle@3
+      condition: neq(${{ parameters.shouldRunLinuxInlineScript }}, 'True')
       displayName: Run Test ${{ parameters.project }}
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
