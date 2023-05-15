@@ -44,7 +44,13 @@ jobs:
           secureFile: AndroidFirebaseServiceAccountKey.json
           retryCount: 5
       - download: current
-      - script: gcloud version
+      - script: |
+          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+          echo "deb https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+          sudo apt-get update
+          sudo apt-get purge man-db
+          sudo apt-get --allow-downgrades install google-cloud-sdk=417.0.1-0
+          gcloud version
         displayName: 'Check gcloud version'
       - task: Bash@3
         name: runUiAutomation
@@ -67,6 +73,7 @@ jobs:
               --results-dir "${{ parameters.resultsDir }}" \
               --directories-to-pull /sdcard,/data/local/tmp \
               --use-orchestrator \
+              --fail-fast \
               --environment-variables "clearPackageData=true" \
               --results-history-name "${{ parameters.resultsHistoryName }}" \
               --test-targets "${{ parameters.testTargetPackages }}, ${{ parameters.extraTarget }}"
