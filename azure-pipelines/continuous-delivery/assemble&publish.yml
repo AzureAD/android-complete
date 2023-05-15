@@ -101,6 +101,7 @@ jobs:
       condition: eq(${{ parameters.shouldRunLinuxInlineScript }}, 'True')
       retryCountOnTaskFailure: 3
       displayName: Linux Testing Setup
+      continueOnError: true
       inputs:
         workingDirectory: $(Build.SourcesDirectory)/broker-java-root
         targetType: 'inline'
