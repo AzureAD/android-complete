@@ -111,7 +111,7 @@ jobs:
           /usr/bin/gnome-keyring-daemon --start --components=secrets
           ./gradlew LinuxBroker:linuxBrokerUnitTestCoverageReport -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
     - task: Gradle@3
-      condition: neq(${{ parameters.shouldRunLinuxInlineScript }}, 'True')
+      condition: eq(${{ parameters.shouldRunLinuxInlineScript }}, 'False')
       displayName: Run Test ${{ parameters.project }}
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
