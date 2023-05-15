@@ -27,4 +27,4 @@ flank:
   # infrastructure issue is detected. This feature is for latency sensitive workloads. The
   # incidence of execution failures may be significantly greater for fail-fast matrices and support
   # is more limited because of that expectation.
-  fail-fast: false
+  fail-fast: true
