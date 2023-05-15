@@ -170,39 +170,39 @@ stages:
       linuxParams: -Psystemd_mode_enabled=false --build-cache --info
       shouldRunLinuxInlineScript: True
       shouldRunUnitTests: False
-  - job: PublishLinuxBrokerPackage
-    dependsOn: publishLinuxBrokerLibraries
-    displayName: Publish Linux Broker Package
-    pool:
-      vmImage: ubuntu-latest
-    variables:
-    - group: AndroidAuthClientVariables
-    steps:
-    - checkout: broker
-      persistCredentials: True
-    - task: Gradle@3
-      displayName: Build and publish linux broker package
-      env:
-        ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME: $(AndroidAuthClient-Internal-Maven-Username)
-        ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN: $(System.AccessToken)
-      inputs:
-        cwd: $(Build.SourcesDirectory)/broker-java-root
-        tasks: LinuxBrokerPackage:clean LinuxBrokerPackage:buildDeb $(linuxBrokerVersion) --build-cache --info
-        publishJUnitResults: false
-        jdkArchitecture: x86
-        sqAnalysisBreakBuildIfQualityGateFailed: false
-    - task: CopyFiles@2
-      name: CopyFiles1
-      displayName: Copy Files to Artifact Staging Directory
-      inputs:
-        SourceFolder: LinuxBrokerPackage/build/distributions
-        TargetFolder: $(build.artifactstagingdirectory)
-    - task: PublishPipelineArtifact@1
-      name: PublishPipelineArtifacts1
-      displayName: 'Publish Artifact: LinuxBrokerPackage Linux Test App Deb'
-      inputs:
-        ArtifactName: LinuxBrokerPackage Deb Package
-        TargetPath: $(build.artifactstagingdirectory)
+#  - job: PublishLinuxBrokerPackage
+#    dependsOn: publishLinuxBrokerLibraries
+#    displayName: Publish Linux Broker Package
+#    pool:
+#      vmImage: ubuntu-latest
+#    variables:
+#    - group: AndroidAuthClientVariables
+#    steps:
+#    - checkout: broker
+#      persistCredentials: True
+#    - task: Gradle@3
+#      displayName: Build and publish linux broker package
+#      env:
+#        ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME: $(AndroidAuthClient-Internal-Maven-Username)
+#        ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN: $(System.AccessToken)
+#      inputs:
+#        cwd: $(Build.SourcesDirectory)/broker-java-root
+#        tasks: LinuxBrokerPackage:clean LinuxBrokerPackage:buildDeb $(linuxBrokerVersion) --build-cache --info
+#        publishJUnitResults: false
+#        jdkArchitecture: x86
+#        sqAnalysisBreakBuildIfQualityGateFailed: false
+#    - task: CopyFiles@2
+#      name: CopyFiles1
+#      displayName: Copy Files to Artifact Staging Directory
+#      inputs:
+#        SourceFolder: LinuxBrokerPackage/build/distributions
+#        TargetFolder: $(build.artifactstagingdirectory)
+#    - task: PublishPipelineArtifact@1
+#      name: PublishPipelineArtifacts1
+#      displayName: 'Publish Artifact: LinuxBrokerPackage Linux Test App Deb'
+#      inputs:
+#        ArtifactName: LinuxBrokerPackage Deb Package
+#        TargetPath: $(build.artifactstagingdirectory)
 # Msal - Build and publish      
 - stage: 'publishMsal'
   displayName: Msal - Build and publish
