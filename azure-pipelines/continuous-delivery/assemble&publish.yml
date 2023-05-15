@@ -34,7 +34,7 @@ parameters:
   
 jobs:
 - job: publish${{ parameters.project }}Libraries
-  condition: eq(${{ parameters.shouldRunLinuxInlineScript }}, 'abc')
+  condition: eq(${{ parameters.shouldRunLinuxInlineScript }}, 'False')
   displayName: ${{ parameters.project }} build & publish
   pool:
     ${{ if eq(parameters.agentImage, 'none') }}:
