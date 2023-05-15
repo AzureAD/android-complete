@@ -47,6 +47,7 @@ jobs:
     persistCredentials: True
   - task: Gradle@3
     displayName: Build ${{ parameters.project }}
+    enabled: false
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
     env:
@@ -113,6 +114,9 @@ jobs:
           sudo apt install gnome-keyring
           /usr/bin/gnome-keyring-daemon --start --components=secrets
           ./gradlew LinuxBroker:linuxBrokerUnitTestCoverageReport -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
+      env:
+        ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
+        ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
     - task: Gradle@3
       condition: eq(${{ parameters.shouldRunLinuxInlineScript }}, 'False')
       displayName: Run Test ${{ parameters.project }}
