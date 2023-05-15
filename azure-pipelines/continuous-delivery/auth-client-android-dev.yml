@@ -169,6 +169,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       linuxParams: -Psystemd_mode_enabled=false --build-cache --info
       shouldRunLinuxInlineScript: True
+      shouldRunUnitTests: False
   - job: PublishLinuxBrokerPackage
     dependsOn: publishLinuxBrokerLibraries
     displayName: Publish Linux Broker Package
