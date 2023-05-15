@@ -160,13 +160,14 @@ stages:
       repository: broker
       project: LinuxBroker
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
-      testCmd: linuxBrokerUnitTestCoverageReport -Psystemd_mode_enabled=false --build-cache --info
+      testCmd: linuxBrokerUnitTestCoverageReport
       dependencyParams: $(broker4jVersionParam) $(common4jVersionParam) $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
       publishParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      linuxParams: -Psystemd_mode_enabled=false --build-cache --info
       shouldRunLinuxInlineScript: True
   - job: PublishLinuxBrokerPackage
     dependsOn: publishLinuxBrokerLibraries
