@@ -46,7 +46,6 @@ jobs:
   - checkout: ${{ parameters.repository }}
     persistCredentials: True
   - task: Gradle@3
-    enabled: false
     displayName: Build ${{ parameters.project }}
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
