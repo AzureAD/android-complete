@@ -33,50 +33,6 @@ parameters:
   default: ''
   
 jobs:
-- job: publish${{ parameters.project }}Libraries
-  enabled: false
-  displayName: ${{ parameters.project }} build & publish
-  pool:
-    ${{ if eq(parameters.agentImage, 'none') }}:
-      vmImage: ubuntu-latest
-    ${{ else }}:
-      name: ${{ parameters.agentImage }}
-  variables:
-  - group: AndroidAuthClientVariables
-  steps:
-  - checkout: ${{ parameters.repository }}
-    persistCredentials: True
-  - task: Gradle@3
-    displayName: Build ${{ parameters.project }}
-    inputs:
-      tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
-    env:
-      ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
-      ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
-  - task: Gradle@3
-    displayName: Generate Lockfile ${{ parameters.project }}
-    inputs:
-      tasks: -q ${{ parameters.project }}:dependencies ${{ parameters.dependencyParams }}
-    env:
-      ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
-      ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
-  - task: Gradle@3
-    condition: |
-      and
-      (
-        not(failed()),
-        not(canceled()),
-        or( eq(${{ parameters.shouldPublish }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
-      )
-    displayName: Publish ${{ parameters.project }}
-    inputs:
-      tasks: ${{ parameters.project }}:${{ parameters.publishCmd}} ${{ parameters.publishParams}}
-    env:
-      ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
-      ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
-  - task: ComponentGovernanceComponentDetection@0
-    inputs:
-      sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/dependency-locks/
 - job: RunUnitTest${{ parameters.project }}
   displayName: ${{ parameters.project }} UnitTest
   pool:
