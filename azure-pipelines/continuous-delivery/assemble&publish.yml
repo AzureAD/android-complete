@@ -29,7 +29,9 @@ parameters:
 - name: shouldRunLinuxInlineScript
   type: boolean
   default: False
-
+- name: linuxParams
+  default: ''
+  
 jobs:
 - job: publish${{ parameters.project }}Libraries
   displayName: ${{ parameters.project }} build & publish
@@ -111,7 +113,7 @@ jobs:
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
       inputs:
-        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.assembleParams}} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.assembleParams}} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true ${{ parameters.linuxParams}}
         testRunTitle: '${{ parameters.project }}_UnitTests'
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
