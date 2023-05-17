@@ -242,8 +242,8 @@ stages:
   displayName: Combine and Publish Code Coverage
   dependsOn:
     - publishMsal
-    - publishBrokerLibraries
-    - publishLinuxBrokeLibraries
+#     - publishBrokerLibraries
+#     - publishLinuxBrokeLibraries
     - publishCommonLibraries
     - publishAdal
   jobs:
@@ -270,7 +270,7 @@ stages:
     - publishMsal
     - publishAdal
     - publishCommonLibraries
-    - publishBrokerLibraries
+#     - publishBrokerLibraries
   jobs:
     - job: promote_packages
       displayName: Promote Packages - Prerelease
