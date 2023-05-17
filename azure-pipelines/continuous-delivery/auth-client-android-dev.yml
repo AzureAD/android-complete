@@ -356,7 +356,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$(pipelinepat)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "1338" -PipelineVariablesJson "{ ''local_msal_branch'': ''$(resources.repositories.msal.ref)'', ''msal_version'': ''$(versionNumber)'' }"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$(pipelinepat)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "1338" -PipelineVariablesJson "{ ''msal_version'': ''$(versionNumber)'' }" -Branch "${Build.SourceBranchName}"'
             workingDirectory: '$(Build.SourcesDirectory)'
 # Broker - E2E Automation
 - stage: 'runBrokerE2EAutomation'
