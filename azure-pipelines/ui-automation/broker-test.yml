@@ -147,7 +147,7 @@ stages:
   displayName: Build MSAL Test App APK
   jobs:
     - template: ../test-app/msal-test-app.yml
-      variables:
+      parameters:
         msal_version: ${{ parameters.msalSdkVersion }}
 # Download First Party Apps
 - stage: 'firstpartyapps'
