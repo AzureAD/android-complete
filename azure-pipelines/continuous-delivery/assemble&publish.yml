@@ -110,11 +110,23 @@ jobs:
           sudo apt install gnome-keyring
           /usr/bin/gnome-keyring-daemon --start --components=secrets
     - task: Gradle@3
+      condition: eq(${{ parameters.shouldRunLinuxInlineScript }}, 'True')
       displayName: Run Test ${{ parameters.project }}
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
       inputs:
         tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}}
+        testRunTitle: '${{ parameters.project }}_UnitTests'
+      env:
+        ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
+        ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
+    - task: Gradle@3
+      condition: eq(${{ parameters.shouldRunLinuxInlineScript }}, 'False')
+      displayName: Run Test ${{ parameters.project }}
+      enabled: ${{ parameters.shouldRunUnitTests }}
+      continueOnError: true
+      inputs:
+        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.assembleParams}} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
         testRunTitle: '${{ parameters.project }}_UnitTests'
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
