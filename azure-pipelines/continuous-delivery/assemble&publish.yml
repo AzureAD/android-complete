@@ -29,7 +29,7 @@ parameters:
 - name: shouldRunLinuxInlineScript
   type: boolean
   default: False
-- name: linuxParams
+- name: testParams
   default: ''
   
 jobs:
@@ -54,7 +54,6 @@ jobs:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: Gradle@3
-    enabled: false
     displayName: Generate Lockfile ${{ parameters.project }}
     inputs:
       tasks: -q ${{ parameters.project }}:dependencies ${{ parameters.dependencyParams }}
@@ -70,14 +69,12 @@ jobs:
         or( eq(${{ parameters.shouldPublish }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
       )
     displayName: Publish ${{ parameters.project }}
-    enabled: false
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.publishCmd}} ${{ parameters.publishParams}}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: ComponentGovernanceComponentDetection@0
-    enabled: false
     inputs:
       sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/dependency-locks/
 - job: RunUnitTest${{ parameters.project }}
@@ -114,17 +111,12 @@ jobs:
           eval $(dbus-launch --sh-syntax)
           sudo apt install gnome-keyring
           /usr/bin/gnome-keyring-daemon --start --components=secrets
-          ./gradlew LinuxBroker:linuxBrokerUnitTestCoverageReport -PdistCommon4jVersion=0.0.20230517-dev.8 -PdistBroker4jVersion=0.0.20230517-dev.8 -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
-      env:
-        ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
-        ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
     - task: Gradle@3
-      condition: eq(${{ parameters.shouldRunLinuxInlineScript }}, 'False')
       displayName: Run Test ${{ parameters.project }}
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
       inputs:
-        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} -PdistCommon4jVersion=0.0.20230517-dev.8 -PdistBroker4jVersion=0.0.20230517-dev.8 -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
+        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}}
         testRunTitle: '${{ parameters.project }}_UnitTests'
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
