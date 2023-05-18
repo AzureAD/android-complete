@@ -114,7 +114,7 @@ jobs:
           eval $(dbus-launch --sh-syntax)
           sudo apt install gnome-keyring
           /usr/bin/gnome-keyring-daemon --start --components=secrets
-          ./gradlew LinuxBroker:linuxBrokerUnitTestCoverageReport -PdistCommon4jVersion=0.0.+ -PdistBroker4jVersion=0.0.+ -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
+          ./gradlew LinuxBroker:linuxBrokerUnitTestCoverageReport -PdistCommon4jVersion=0.0.20230517-dev.8 -PdistBroker4jVersion=0.0.20230517-dev.8 -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
@@ -124,7 +124,7 @@ jobs:
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
       inputs:
-        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} -PdistCommon4jVersion=0.0.+ -PdistBroker4jVersion=0.0.+ -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
+        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} -PdistCommon4jVersion=0.0.20230517-dev.8 -PdistBroker4jVersion=0.0.20230517-dev.8 -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
         testRunTitle: '${{ parameters.project }}_UnitTests'
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
