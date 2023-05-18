@@ -159,6 +159,8 @@ stages:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
             arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -WaitTimeoutInMinutes 120 -BuildDefinitionId "1338" -PipelineVariablesJson "{ ''msal_version'': ''${parameters.msalSdkVersion}'' }" -Branch "${Build.SourceBranchName}"'
             workingDirectory: '$(Build.SourcesDirectory)'
+          env:
+            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
