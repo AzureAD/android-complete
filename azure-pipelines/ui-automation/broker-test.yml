@@ -173,6 +173,9 @@ stages:
             targetPath: '$(Build.ArtifactStagingDirectory)/msaltestapp'
             buildVersionToDownload: 'specific'
             pipelineId: '$(buildApk.BrokeBuildId)'
+        - publish: $(Build.ArtifactStagingDirectory)/msaltestapp
+          displayName: 'Publish Msal Test apk for later use'
+          artifact: msalTestApp
             
 # Download First Party Apps
 - stage: 'firstpartyapps'
