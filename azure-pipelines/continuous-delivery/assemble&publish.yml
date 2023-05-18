@@ -47,7 +47,6 @@ jobs:
     persistCredentials: True
   - task: Gradle@3
     displayName: Build ${{ parameters.project }}
-    enabled: false
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
     env:
@@ -88,7 +87,6 @@ jobs:
       persistCredentials: True
     - task: AzureKeyVault@2
       displayName: 'Get Key vault AndroidAutomationRunnerAppSecret'
-      enabled: false
       inputs:
         azureSubscription: 'MSIDLABS_ANDROID_KV'
         KeyVaultName: 'ADALTestInfo'
