@@ -143,7 +143,7 @@ stages:
         brokerSource: LocalApk
 # TestAppApk - MsalTestApp Queue pipeline
 - stage: 'queueMsalTestAppPipeline'
-  displayName: Msal Test App Apk Generation
+  displayName: Build Msal Test App Apk
   dependsOn: []   # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
     - job: queue_build_MsalTestApp
@@ -154,6 +154,7 @@ stages:
           persistCredentials: True
         - task: PowerShell@2
           displayName: Queue and wait for Msal Test App Apk generation pipeline
+          name: buildApk
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
@@ -161,6 +162,18 @@ stages:
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+        - task: DownloadPipelineArtifact@2
+          displayName: 'Download New Built msal test app'
+          inputs:
+            buildType: 'specific'
+            project: '${{ variables.engineeringProjectId }}'
+            definition: '1338'
+            artifactName: msalTestApp
+            itemPattern: '**/*.apk'
+            targetPath: '$(Build.ArtifactStagingDirectory)/msaltestapp'
+            buildVersionToDownload: 'specific'
+            pipelineId: '$(buildApk.BrokeBuildId)'
+            
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
