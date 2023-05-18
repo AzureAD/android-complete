@@ -99,6 +99,10 @@ parameters:
   displayName: Test Targets for Broker
   type: string
   default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
+- name: msalSdkVersion
+  displayName: MSAL SDK Version
+  type: string
+  default: '*'
 
 stages:
 # msalautomationapp
@@ -137,6 +141,14 @@ stages:
         brokerApp: AutoBroker
         brokerFlavor: Dist
         brokerSource: LocalApk
+# msaltestapp
+- stage: 'msaltestapp'
+  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+  displayName: Build MSAL Test App APK
+  jobs:
+    - template: ../test-app/msal-test-app.yml
+      variables:
+        msal_version: ${{ parameters.msalSdkVersion }}
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
