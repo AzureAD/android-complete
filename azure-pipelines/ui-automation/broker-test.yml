@@ -141,14 +141,24 @@ stages:
         brokerApp: AutoBroker
         brokerFlavor: Dist
         brokerSource: LocalApk
-# msaltestapp
-- stage: 'msaltestapp'
-  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
-  displayName: Build MSAL Test App APK
+# TestAppApk - MsalTestApp Queue pipeline
+- stage: 'queueMsalTestAppPipeline'
+  displayName: Msal Test App Apk Generation
+  dependsOn: []   # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
-    - template: ../test-app/msal-test-app.yml
-      parameters:
-        msal_version: ${{ parameters.msalSdkVersion }}
+    - job: queue_build_MsalTestApp
+      displayName: Generate Msal Test App Apk
+      timeoutInMinutes: 120
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: PowerShell@2
+          displayName: Queue and wait for Msal Test App Apk generation pipeline
+          continueOnError: true
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -WaitTimeoutInMinutes 120 -BuildDefinitionId "1338" -PipelineVariablesJson "{ ''msal_version'': ''${parameters.msalSdkVersion}'' }" -Branch "${Build.SourceBranchName}"'
+            workingDirectory: '$(Build.SourcesDirectory)'
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
