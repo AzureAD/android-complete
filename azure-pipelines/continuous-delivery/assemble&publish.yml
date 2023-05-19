@@ -125,7 +125,7 @@ jobs:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
     - task: Gradle@3
-      condition: eq(${{ parameters.shouldRunLinuxInlineScript }}, 'False')
+      condition: ne(${{ parameters.shouldRunLinuxInlineScript }}, 'True')
       displayName: Run Test ${{ parameters.project }}
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
