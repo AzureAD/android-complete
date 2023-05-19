@@ -29,7 +29,7 @@ $MavenPackagesBatchRequest = New-Object PSObject -Property @{
             @{ artifact = "common4j"; group = "com.microsoft.identity"; version = $common4jVersion},
             @{ artifact = "common"; group = "com.microsoft.identity"; version = $commonVersion},
             @{ artifact = "broker4j"; group = "com.microsoft.identity"; version = $broker4jVersion}
-#             @{ artifact = "ad-accounts-for-android"; group = "com.microsoft.workplace"; version = $adAccountsVersion}
+            @{ artifact = "ad-accounts-for-android"; group = "com.microsoft.workplace"; version = $adAccountsVersion}
             @{ artifact = "msal"; group = "com.microsoft.identity.client"; version = $msalVersion}
             @{ artifact = "adal"; group = "com.microsoft.aad"; version = $adalVersion}
         )
