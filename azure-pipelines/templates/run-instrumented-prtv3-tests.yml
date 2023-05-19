@@ -79,7 +79,7 @@ jobs:
     inputs:
       gradleWrapperFile: 'gradlew'
       options: ${{ parameters.gradleOptions }}
-      tasks: '${{ parameters.projectName }}:connected${{ parameters.projectVariantName }}AndroidTest --tests PrtV3NetworkAndroidInstrumentedTest'
+      tasks: '${{ parameters.projectName }}:connected${{ parameters.projectVariantName }}AndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.microsoft.identity.broker.PrtV3NetworkAndroidInstrumentedTest'
       publishJUnitResults: true
       testResultsFiles: '**/TEST-*.xml'
       javaHomeOption: 'JDKVersion'
