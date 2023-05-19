@@ -152,6 +152,7 @@ stages:
       steps:
         - checkout: self
           persistCredentials: True
+        - script: echo "The current user is $(Build.RequestedFor)"
         - task: PowerShell@2
           displayName: Queue and wait for Msal Test App Apk generation pipeline
           name: buildApk
