@@ -152,7 +152,7 @@ stages:
       steps:
         - checkout: self
           persistCredentials: True
-        - script: echo "The current user is $(Build.RequestedFor)"
+        - script: echo "The current user is $(Build.RequestedFor) $(Build.RequestedForId)"
         - task: PowerShell@2
           displayName: Queue and wait for Msal Test App Apk generation pipeline
           name: buildApk
@@ -177,6 +177,7 @@ stages:
         - publish: $(Build.ArtifactStagingDirectory)/msaltestapp
           displayName: 'Publish Msal Test apk for later use'
           artifact: msalTestApp
+          overwrite: true
         - task: UniversalPackages@0
           displayName: 'Publish Msal Test apk to internal feed'
           inputs:
