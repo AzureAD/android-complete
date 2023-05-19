@@ -110,6 +110,9 @@ jobs:
           sudo apt install gnome-keyring
           /usr/bin/gnome-keyring-daemon --start --components=secrets
           ./gradlew LinuxBroker:linuxBrokerUnitTestCoverageReport -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
+       env:
+        ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
+        ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
     - task: Gradle@3
       condition: eq(${{ parameters.shouldRunLinuxInlineScript }}, 'True')
       displayName: Run Test ${{ parameters.project }}
