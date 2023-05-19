@@ -26,9 +26,6 @@ parameters:
 - name: shouldRunUnitTests
   type: boolean
   default: True
-- name: shouldRunLinuxInlineScript
-  type: boolean
-  default: False
 - name: testParams
   default: ''
   
@@ -93,7 +90,7 @@ jobs:
         SecretsFilter: 'AndroidAutomationRunnerAppSecret'
         RunAsPreJob: false
     - task: Bash@3
-      condition: eq(${{ parameters.shouldRunLinuxInlineScript }}, 'True')
+      condition: eq(${{ parameters.project }}, 'LinuxBroker')
       retryCountOnTaskFailure: 3
       displayName: Linux Testing Setup
       continueOnError: true
@@ -114,12 +111,11 @@ jobs:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
     - task: Gradle@3
-      condition: ne(${{ parameters.shouldRunLinuxInlineScript }}, 'True')
       displayName: Run Test ${{ parameters.project }}
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
       inputs:
-        ${{ if eq(${{ parameters.shouldRunLinuxInlineScript }}, 'True') }}:
+        ${{ if eq(${{ parameters.project }}, 'LinuxBroker') }}:
           tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}}
         ${{ else }}:
           tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.assembleParams}} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
