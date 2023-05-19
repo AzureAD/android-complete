@@ -142,8 +142,8 @@ stages:
         brokerFlavor: Dist
         brokerSource: LocalApk
 # TestAppApk - MsalTestApp Queue pipeline
-- stage: 'buildMsalTestApp'
-  displayName: Build Msal Test App Apk
+- stage: 'msalTestApp'
+  displayName: Prepare Msal Test App Apks
   dependsOn: []   # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
     - job: queue_build_MsalTestApp
