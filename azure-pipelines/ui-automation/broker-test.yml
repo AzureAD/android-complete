@@ -142,7 +142,7 @@ stages:
         brokerFlavor: Dist
         brokerSource: LocalApk
 # TestAppApk - MsalTestApp Queue pipeline
-- stage: 'queueMsalTestAppPipeline'
+- stage: 'buildMsalTestApp'
   displayName: Build Msal Test App Apk
   dependsOn: []   # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
@@ -208,7 +208,7 @@ stages:
   - msalautomationapp
   - brokers_azure_sample
   - firstpartyapps
-  - queueMsalTestAppPipeline
+  - buildMsalTestApp
   displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -237,7 +237,7 @@ stages:
     - msalautomationapplocalbrokerhost
     - brokers_azure_sample
     - firstpartyapps
-    - queueMsalTestAppPipeline
+    - buildMsalTestApp
   displayName: Running MSAL with Broker Test Plan (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -267,7 +267,7 @@ stages:
     - msalautomationapp
     - brokers_azure_sample
     - firstpartyapps
-    - queueMsalTestAppPipeline
+    - buildMsalTestApp
   displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
     - template: ./templates/run-on-firebase.yml
