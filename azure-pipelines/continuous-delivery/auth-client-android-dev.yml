@@ -167,7 +167,6 @@ stages:
       testCmd: linuxBrokerUnitTestCoverageReport
       dependencyParams: $(broker4jVersionParam) $(common4jVersionParam) $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
-      testParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
