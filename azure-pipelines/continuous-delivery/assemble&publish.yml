@@ -4,7 +4,6 @@
 parameters:
 - name: repository
 - name: project
-  type: string
 - name: assembleCmd
   default: assemble
 - name: testCmd
