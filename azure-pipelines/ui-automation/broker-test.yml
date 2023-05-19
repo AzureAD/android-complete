@@ -177,12 +177,12 @@ stages:
           displayName: 'Publish Msal Test apk for later use'
           artifact: msalTestApp
         - task: UniversalPackages@0
-          displayName: 'Publish Msal Test apk to internal feed'
+          displayName: 'Promote Msal Test apk to internal feed'
           inputs:
             command: 'publish'
             publishDirectory: '$(Build.ArtifactStagingDirectory)/msaltestapp'
             feedsToUsePublish: 'internal'
-            vstsFeedPublish: 'Engineering/MsalTestApp'
+            vstsFeedPublish: 'Engineering/AndroidADAL'
             packagePublishDescription: 'Msal SDK version: ${parameters.msalSdkVersion}'
             packagePublishName: 'com.microsoft.identity.client.testapp'
             versionOption: 'custom'
