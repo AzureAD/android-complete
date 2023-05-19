@@ -183,7 +183,7 @@ stages:
             command: 'publish'
             publishDirectory: '$(Build.ArtifactStagingDirectory)/msaltestapp'
             packagePublishDescription: 'Msal SDK version: ${parameters.msalSdkVersion}'
-            vstsFeedPublish: 'Engineering/AndroidADAL'
+            vstsFeedPublish: 'Engineering/MsalTestApp'
             vstsFeedPackagePublish: 'com.microsoft.identity.client.testapp'
             versionOption: 'custom'
             versionPublish: '${parameters.msalSdkVersion}'
