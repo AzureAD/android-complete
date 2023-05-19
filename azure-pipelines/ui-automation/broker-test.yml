@@ -153,6 +153,7 @@ stages:
         - checkout: self
           persistCredentials: True
         - script: echo "The current user is $(Build.RequestedFor) $(Build.RequestedForId)"
+        - script: echo "The current msal version is ${parameters.msalSdkVersion}/$(parameters.msalSdkVersion)/${{ parameters.msalSdkVersion }}"
         - task: PowerShell@2
           displayName: Queue and wait for Msal Test App Apk generation pipeline
           name: buildApk
@@ -182,11 +183,11 @@ stages:
           inputs:
             command: 'publish'
             publishDirectory: '$(Build.ArtifactStagingDirectory)/msaltestapp'
-            packagePublishDescription: 'Msal SDK version: $(parameters.msalSdkVersion)'
+            packagePublishDescription: 'Msal SDK version: ${{ parameters.msalSdkVersion }}'
             vstsFeedPublish: 'Engineering/MsalTestApp'
             vstsFeedPackagePublish: 'com.microsoft.identity.client.testapp'
             versionOption: 'custom'
-            versionPublish: '$(parameters.msalSdkVersion)'
+            versionPublish: ${{ parameters.msalSdkVersion }}
 
   # Download First Party Apps
 - stage: 'firstpartyapps'
