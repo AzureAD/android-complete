@@ -182,11 +182,11 @@ stages:
           inputs:
             command: 'publish'
             publishDirectory: '$(Build.ArtifactStagingDirectory)/msaltestapp'
-            packagePublishDescription: 'Msal SDK version: ${parameters.msalSdkVersion}'
+            packagePublishDescription: 'Msal SDK version: $(parameters.msalSdkVersion)'
             vstsFeedPublish: 'Engineering/MsalTestApp'
             vstsFeedPackagePublish: 'com.microsoft.identity.client.testapp'
             versionOption: 'custom'
-            versionPublish: '${parameters.msalSdkVersion}'
+            versionPublish: '$(parameters.msalSdkVersion)'
 
   # Download First Party Apps
 - stage: 'firstpartyapps'
