@@ -109,7 +109,7 @@ jobs:
           eval $(dbus-launch --sh-syntax)
           sudo apt install gnome-keyring
           /usr/bin/gnome-keyring-daemon --start --components=secrets
-          ./gradlew LinuxBroker:linuxBrokerUnitTestCoverageReport -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
+          ./gradlew LinuxBroker:linuxBrokerUnitTestCoverageReport ${{ parameters.testParams}}
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
