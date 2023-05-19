@@ -28,7 +28,7 @@ parameters:
   type: boolean
   default: True
 - name: testParams
-  default: ' ${{ parameters.assembleParams}} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true'
+  default: ''
   
 jobs:
 - job: publish${{ parameters.project }}Libraries
