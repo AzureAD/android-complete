@@ -4,6 +4,7 @@
 parameters:
 - name: repository
 - name: project
+  type: string
 - name: assembleCmd
   default: assemble
 - name: testCmd
@@ -115,7 +116,7 @@ jobs:
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
       inputs:
-        ${{ if eq('variables['parameters.project']', 'LinuxBroker') }}:
+        ${{ if eq(variables['parameters.project'], 'LinuxBroker') }}:
           tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}}
         ${{ else }}:
           tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.assembleParams}} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
