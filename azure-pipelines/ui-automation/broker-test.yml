@@ -182,7 +182,7 @@ stages:
             command: 'publish'
             publishDirectory: '$(Build.ArtifactStagingDirectory)/msaltestapp'
             feedsToUsePublish: 'internal'
-            vstsFeedPublish: 'MsalTestApp'
+            vstsFeedPublish: 'Engineering/MsalTestApp'
             packagePublishDescription: 'Msal SDK version: ${parameters.msalSdkVersion}'
             packagePublishName: 'com.microsoft.identity.client.testapp'
             versionOption: 'custom'
