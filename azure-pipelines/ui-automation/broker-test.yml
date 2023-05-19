@@ -153,7 +153,7 @@ stages:
         - checkout: self
           persistCredentials: True
         - script: echo "The current user is $(Build.RequestedFor) $(Build.RequestedForId)"
-        - script: echo "The current msal version is {{ parameters.msalSdkVersion }}"
+        - script: echo "The current msal version is ${{ parameters.msalSdkVersion }}"
         - task: PowerShell@2
           displayName: Queue and wait for Msal Test App Apk generation pipeline
           name: buildApk
