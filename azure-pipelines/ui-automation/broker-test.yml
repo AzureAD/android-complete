@@ -177,7 +177,6 @@ stages:
         - publish: $(Build.ArtifactStagingDirectory)/msaltestapp
           displayName: 'Publish Msal Test apk for later use'
           artifact: msalTestApp
-          overwrite: true
         - task: UniversalPackages@0
           displayName: 'Publish Msal Test apk to internal feed'
           inputs:
