@@ -102,7 +102,7 @@ parameters:
 - name: msalSdkVersion
   displayName: MSAL SDK Version
   type: string
-  default: '*'
+  default: ''
 
 stages:
 # msalautomationapp
@@ -176,8 +176,19 @@ stages:
         - publish: $(Build.ArtifactStagingDirectory)/msaltestapp
           displayName: 'Publish Msal Test apk for later use'
           artifact: msalTestApp
-            
-# Download First Party Apps
+        - task: UniversalPackages@0
+          displayName: 'Publish Msal Test apk to internal feed'
+          inputs:
+            command: 'publish'
+            publishDirectory: '$(Build.ArtifactStagingDirectory)/msaltestapp'
+            feedsToUsePublish: 'internal'
+            vstsFeedPublish: 'MsalTestApp'
+            packagePublishDescription: 'Msal SDK version: ${parameters.msalSdkVersion}'
+            packagePublishName: 'com.microsoft.identity.client.testapp'
+            versionOption: 'custom'
+            versionPublish: '${parameters.msalSdkVersion}'
+
+  # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
   displayName: Download First Party Apps (Outlook, Teams, Word)
