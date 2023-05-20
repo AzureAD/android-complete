@@ -30,6 +30,7 @@ $Build = New-Object PSObject -Property @{
     }
 
 $requestBody = $Build | ConvertTo-Json
+Write-Host "Build request body: $requestBody"
 
 # Call ADO Rest API
 try {
