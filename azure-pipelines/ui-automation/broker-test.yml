@@ -49,6 +49,7 @@ variables:
   OSServiceConnection: LTW-Integration
   LTWFeedName: Auth-Broker-Integrated-LTW-Build
   LTWApk: LTW-signed.apk
+  msalSdkVersion: 0.0.20230517-dev.8
   
 parameters:
 - name: firebaseDeviceIdHigh
@@ -149,14 +150,14 @@ stages:
         - checkout: self
           persistCredentials: True
         - script: echo "The current user is $(Build.RequestedFor) $(Build.RequestedForId)"
-        - script: echo "The current msal version is ${{ variables['msalSdkVersion'] }}"
+        - script: echo "The current msal version is $(variables.msalSdkVersion)"
         - task: PowerShell@2
           displayName: Queue and wait for Msal Test App Apk generation pipeline
           name: buildApk
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -WaitTimeoutInMinutes 120 -BuildDefinitionId "1338" -PipelineVariablesJson "{ ''msal_version'': ''${parameters.msalSdkVersion}'' }" -Branch "${Build.SourceBranchName}"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -WaitTimeoutInMinutes 120 -BuildDefinitionId "1338" -PipelineVariablesJson "{ ''msal_version'': ''$(variables.msalSdkVersion)'' }" -Branch "${Build.SourceBranchName}"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)
@@ -179,11 +180,11 @@ stages:
           inputs:
             command: 'publish'
             publishDirectory: '$(Build.ArtifactStagingDirectory)/msaltestapp'
-            packagePublishDescription: 'Msal SDK version: ${{ variables['msalSdkVersion'] }}'
+            packagePublishDescription: 'Msal SDK version: $(variables.msalSdkVersion)'
             vstsFeedPublish: 'Engineering/MsalTestApp'
             vstsFeedPackagePublish: 'com.microsoft.identity.client.testapp'
             versionOption: 'custom'
-            versionPublish: ${{ variables['msalSdkVersion'] }}
+            versionPublish: $(variables.msalSdkVersion)
 
   # Download First Party Apps
 - stage: 'firstpartyapps'
