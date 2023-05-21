@@ -182,9 +182,19 @@ stages:
             publishDirectory: '$(Build.ArtifactStagingDirectory)/msaltestapp'
             packagePublishDescription: 'Msal SDK version: $(msal_sdk_version)'
             vstsFeedPublish: 'Engineering/MsalTestApp'
-            vstsFeedPackagePublish: 'com.microsoft.identity.client.testapp'
+            vstsFeedPackagePublish: com.microsoft.identity.client.testapp
             versionOption: 'custom'
             versionPublish: $(msal_sdk_version)
+        - task: UniversalPackages@0
+          displayName: 'Publish Msal Test apk to Broker Feed'
+          inputs:
+            command: publish
+            publishDirectory: '$(Build.ArtifactStagingDirectory)/msaltestapp'
+            vstsFeedPublish: $(msazureFeedName)
+            vstsFeedPackagePublish: com.microsoft.identity.client.testapp
+            versionOption: custom
+            versionPublish: $(msal_sdk_version)
+            packagePublishDescription: 'Msal SDK version: $(msal_sdk_version)'
 
   # Download First Party Apps
 - stage: 'firstpartyapps'
