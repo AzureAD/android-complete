@@ -16,6 +16,9 @@ parameters:
   - name: companyPortalVersion
     displayName: Company Portal Version
     type: string
+  - name: oldCompanyPortalVersion
+    displayName: Old Company Portal Version
+    type: string
   - name: brokerHostPipelineId
     type: string
   - name: oldBrokerHostVersion
@@ -85,6 +88,16 @@ jobs:
         feedDownloadExternal: '${{ parameters.msazureFeedName }}'
         packageDownloadExternal: 'com.microsoft.windowsintune.companyportal-signed'
         versionDownloadExternal: '${{ parameters.companyPortalVersion }}'
+    - task: UniversalPackages@0
+      displayName: 'Download Old com.microsoft.windowsintune.companyportal-signed'
+      inputs:
+        command: 'download'
+        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
+        feedsToUse: 'external'
+        externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
+        feedDownloadExternal: '${{ parameters.msazureFeedName }}'
+        packageDownloadExternal: 'com.microsoft.windowsintune.companyportal-signed'
+        versionDownloadExternal: '${{ parameters.oldCompanyPortalVersion }}'
     - task: UniversalPackages@0
       displayName: 'Download com.microsoft.appmanager'
       inputs:

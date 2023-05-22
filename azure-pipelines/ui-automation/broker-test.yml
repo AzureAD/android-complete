@@ -38,6 +38,7 @@ variables:
   brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
   brokerTestApp: brokerautomationapp-dist-AutoBroker-debug-androidTest.apk
   companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
+  oldCompanyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
   authenticatorApk: app-production-universal-release-signed.apk
   oldAuthenticatorApk: Authenticator-4.1.0-RC.apk
   outlookApk: Outlook.apk
@@ -84,6 +85,10 @@ parameters:
   displayName: Company Portal Version
   type: string
   default: '*'
+- name: oldCompanyPortalVersion
+  displayName: Old Company Portal Version
+  type: string
+  default: '5.0.5729'
 - name: oldBrokerHostVersion
   displayName: Old Broker host Version
   type: string
@@ -164,6 +169,7 @@ stages:
         authenticatorVersion: ${{ parameters.authenticatorVersion }}
         oldAuthenticatorVersion: ${{ parameters.oldAuthenticatorVersion }}
         companyPortalVersion: ${{ parameters.companyPortalVersion }}
+        oldCompanyPortalVersion: ${{ parameters.oldCompanyPortalVersion }}
         brokerHostPipelineId: '$(brokerHostPipelineId)'
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
         LTWVersion: ${{ parameters.LTWVersion }}
@@ -184,6 +190,7 @@ stages:
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "msalautomationapp-testpass-broker-highapi-$(Build.BuildId)-AndroidBrokerCI"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
+                      /sdcard/OldCompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/$(oldCompanyPortalApk),\
                       /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
                       /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/$(OldLTWApk),\
@@ -212,6 +219,7 @@ stages:
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "msalautomationapp-testpass-brokerhost-highapi-$(Build.BuildId)-AndroidBrokerCI"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
+                      /sdcard/OldCompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/$(oldCompanyPortalApk),\
                       /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
                       /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/$(OldltwApk),\
@@ -241,6 +249,7 @@ stages:
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "msalautomationapp-testpass-broker-lowapi-$(Build.BuildId)-AndroidBrokerCI"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
+                      /sdcard/OldCompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/$(oldCompanyPortalApk),\
                       /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
                       /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/$(OldltwApk),\
@@ -271,6 +280,7 @@ stages:
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "brokerautomationapp-testpass-adal&basic-highapi-$(Build.BuildId)-AndroidBrokerCI"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
+                      /sdcard/OldCompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/$(oldCompanyPortalApk),\
                       /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
                       /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/$(OldltwApk),\
