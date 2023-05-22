@@ -141,7 +141,7 @@ stages:
         brokerSource: LocalApk
 # TestAppApk - MsalTestApp Queue pipeline
 - stage: 'msalTestApp'
-  displayName: Prepare Msal Test App Apks
+  displayName: Build Msal Test App Apks
   dependsOn: []   # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
     - job: queue_build_MsalTestApp
@@ -150,7 +150,6 @@ stages:
       steps:
         - checkout: self
           persistCredentials: True
-        - script: echo "The current user is $(Build.RequestedFor) $(Build.RequestedForId)"
         - script: echo "The current msal version is $(msal_sdk_version)"
         - task: PowerShell@2
           displayName: Queue and wait for Msal Test App Apk generation pipeline
