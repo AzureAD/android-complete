@@ -30,6 +30,7 @@ variables:
   engineeringProjectId: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'
   azureSamplePipelineId: 1458
   brokerHostPipelineId: 1432
+  msalTestAppPipelineId: 1338
   msazureServiceConnection: AndroidBroker-CI
   msazureFeedName: Android-Broker
   msalApp: msalautomationapp-dist-AutoBroker-debug.apk
@@ -157,7 +158,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -WaitTimeoutInMinutes 120 -BuildDefinitionId "1338" -PipelineVariablesJson "{ ''msal_version'': ''$(msal_sdk_version)'' }" -Branch "$(Build.SourceBranch)"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(msalTestAppPipelineId)" -PipelineVariablesJson "{ ''msal_version'': ''$(msal_sdk_version)'' }" -Branch "$(Build.SourceBranch)"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)
@@ -166,7 +167,7 @@ stages:
           inputs:
             buildType: 'specific'
             project: '${{ variables.engineeringProjectId }}'
-            definition: '1338'
+            definition: '$(msalTestAppPipelineId)'
             artifactName: msalTestApp
             itemPattern: '**/*.apk'
             targetPath: '$(Build.ArtifactStagingDirectory)/msaltestapp'
@@ -181,7 +182,7 @@ stages:
             command: 'publish'
             publishDirectory: '$(Build.ArtifactStagingDirectory)/msaltestapp'
             packagePublishDescription: 'Msal SDK version: $(msal_sdk_version)'
-            vstsFeedPublish: 'Engineering/MsalTestApp'
+            vstsFeedPublish: 'Engineering/BrokerTestApps'
             vstsFeedPackagePublish: com.microsoft.identity.client.testapp
             versionOption: 'custom'
             versionPublish: $(msal_sdk_version)
