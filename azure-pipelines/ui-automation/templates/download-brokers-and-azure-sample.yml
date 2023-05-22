@@ -102,7 +102,7 @@ jobs:
       displayName: 'Download old com.microsoft.appmanager'
       inputs:
         command: 'download'
-        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
+        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
         feedsToUse: 'external'
         externalFeedCredentials: '${{ parameters.OSServiceConnection }}'
         feedDownloadExternal: '${{ parameters.LTWFeedName }}'
@@ -110,7 +110,7 @@ jobs:
         versionDownloadExternal: '${{ parameters.OldLTWVersion }}'
     - script: mv ./YPC-*.apk ./OldLTW-signed.apk
       displayName: 'Rename Old LTW build to OldLTW-signed.apk'
-      workingDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
+      workingDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
     - task: DownloadPipelineArtifact@2
       displayName: 'Download Broker Host'
       inputs:
