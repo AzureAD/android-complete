@@ -33,6 +33,9 @@ parameters:
     displayName: Link to Windows Version
     type: string
     default: '*'
+  - name: oldLTWVersion
+    displayName: Old Link to Windows Version
+    type: string
 jobs:
 - job: 'download_brokers'
   displayName: Download Brokers
@@ -94,6 +97,19 @@ jobs:
         versionDownloadExternal: '${{ parameters.LTWVersion }}'
     - script: mv ./YPC-*.apk ./LTW-signed.apk
       displayName: 'Rename LTW build to LTW-signed.apk'
+      workingDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
+    - task: UniversalPackages@0
+      displayName: 'Download old com.microsoft.appmanager'
+      inputs:
+        command: 'download'
+        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
+        feedsToUse: 'external'
+        externalFeedCredentials: '${{ parameters.OSServiceConnection }}'
+        feedDownloadExternal: '${{ parameters.LTWFeedName }}'
+        packageDownloadExternal: 'com.microsoft.appmanager'
+        versionDownloadExternal: '${{ parameters.OldLTWVersion }}'
+    - script: mv ./YPC-*.apk ./OldLTW-signed.apk
+      displayName: 'Rename Old LTW build to OldLTW-signed.apk'
       workingDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
     - task: DownloadPipelineArtifact@2
       displayName: 'Download Broker Host'

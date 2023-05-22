@@ -49,6 +49,7 @@ variables:
   OSServiceConnection: LTW-Integration
   LTWFeedName: Auth-Broker-Integrated-LTW-Build
   LTWApk: LTW-signed.apk
+  oldLTWApk: OldLTW-signed.apk
   
 parameters:
 - name: firebaseDeviceIdHigh
@@ -91,6 +92,10 @@ parameters:
   displayName: Link to Windows Version
   type: string
   default: '*'
+- name: oldLTWVersion
+  displayName: Old Link to Windows Version
+  type: string
+  default: '1.23051.78'
 - name: msalTestTarget
   displayName: Test Targets for MSAL
   type: string
@@ -162,6 +167,7 @@ stages:
         brokerHostPipelineId: '$(brokerHostPipelineId)'
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
         LTWVersion: ${{ parameters.LTWVersion }}
+        oldLTWVersion: ${{ parameters.oldLTWVersion }}
 # MSAL with Broker Test Plan stage (API 30+)
 - stage: 'msal_with_broker_high_api'
   dependsOn:
@@ -180,6 +186,7 @@ stages:
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
                       /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
+                      /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/$(OldLTWApk),\
                       /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
@@ -207,6 +214,7 @@ stages:
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
                       /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
+                      /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/$(OldLTWApk),\
                       /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
@@ -235,6 +243,7 @@ stages:
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
                       /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
+                      /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/$(OldLTWApk),\
                       /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
@@ -264,6 +273,7 @@ stages:
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
                       /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
+                      /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/$(OldLTWApk),\
                       /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
