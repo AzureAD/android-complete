@@ -182,7 +182,7 @@ stages:
             command: 'publish'
             publishDirectory: '$(Build.ArtifactStagingDirectory)/msaltestapp'
             packagePublishDescription: 'Msal SDK version: $(msal_sdk_version)'
-            vstsFeedPublish: 'Engineering/BrokerTestApps'
+            vstsFeedPublish: 'Engineering/BrokerE2ETestApps'
             vstsFeedPackagePublish: com.microsoft.identity.client.testapp
             versionOption: 'custom'
             versionPublish: $(msal_sdk_version)
