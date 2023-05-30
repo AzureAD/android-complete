@@ -168,7 +168,7 @@ stages:
             buildType: 'specific'
             project: '${{ variables.engineeringProjectId }}'
             definition: '$(msalE2ETestAppPipelineId)'
-            artifactName: msalE2ETestApp
+            artifactName: msalTestApp
             itemPattern: '**/*.apk'
             targetPath: '$(Build.ArtifactStagingDirectory)/msale2etestapp'
             buildVersionToDownload: 'specific'
