@@ -79,7 +79,7 @@ jobs:
         vstsFeedPackage: 'com.azure.authenticator'
         vstsPackageVersion: '${{ parameters.oldAuthenticatorVersion }}'
     - task: UniversalPackages@0
-      displayName: 'Download com.microsoft.windowsintune.companyportal-signed'
+      displayName: 'Download Latest CompanyPortal Apk'
       inputs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
@@ -89,7 +89,7 @@ jobs:
         packageDownloadExternal: 'com.microsoft.windowsintune.companyportal-signed'
         versionDownloadExternal: '${{ parameters.companyPortalVersion }}'
     - task: UniversalPackages@0
-      displayName: 'Download Old com.microsoft.windowsintune.companyportal-signed'
+      displayName: 'Download Old CompanyPortal Apk'
       inputs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
@@ -99,7 +99,7 @@ jobs:
         packageDownloadExternal: 'com.microsoft.windowsintune.companyportal-signed'
         versionDownloadExternal: '${{ parameters.oldCompanyPortalVersion }}'
     - task: UniversalPackages@0
-      displayName: 'Download com.microsoft.appmanager'
+      displayName: 'Download Latest LTW Apk'
       inputs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
@@ -112,7 +112,7 @@ jobs:
       displayName: 'Rename LTW build to LTW-signed.apk'
       workingDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
     - task: UniversalPackages@0
-      displayName: 'Download old com.microsoft.appmanager'
+      displayName: 'Download Old LTW Apk'
       inputs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
