@@ -30,11 +30,12 @@ variables:
   engineeringProjectId: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'
   azureSamplePipelineId: 1458
   brokerHostPipelineId: 1432
-  msalTestAppPipelineId: 1338
+  msalE2ETestAppPipelineId: 1338
   msazureServiceConnection: AndroidBroker-CI
   msazureFeedName: Android-Broker
   msalApp: msalautomationapp-dist-AutoBroker-debug.apk
-  msalTestApp: msalTestApp-local-debug.apk
+  msalTestApp: msalautomationapp-dist-AutoBroker-debug-androidTest.apk
+  msalE2ETestApp: msalTestApp-local-debug.apk
   msalAppLocalBrokerHost: msalautomationapp-local-BrokerHost-debug.apk
   msalTestAppLocalBrokerHost: msalautomationapp-local-BrokerHost-debug-androidTest.apk
   brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
@@ -139,13 +140,13 @@ stages:
         brokerApp: AutoBroker
         brokerFlavor: Dist
         brokerSource: LocalApk
-# TestAppApk - MsalTestApp Queue pipeline
-- stage: 'msalTestApp'
-  displayName: Build Msal Test App Apks
+# TestAppApk - MsalE2ETestApp Queue pipeline
+- stage: 'msalE2ETestApp'
+  displayName: Build Msal E2E Test App Apk
   dependsOn: []   # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
-    - job: queue_build_MsalTestApp
-      displayName: Generate Msal Test App Apk
+    - job: queue_build_MsalE2ETestApp
+      displayName: Generate Msal E2E Test App Apk
       timeoutInMinutes: 120
       steps:
         - checkout: self
@@ -157,29 +158,29 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(msalTestAppPipelineId)" -PipelineVariablesJson "{ ''msal_version'': ''$(msal_sdk_version)'' }" -Branch "$(Build.SourceBranch)"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(msalE2ETestAppPipelineId)" -PipelineVariablesJson "{ ''msal_version'': ''$(msal_sdk_version)'' }" -Branch "$(Build.SourceBranch)"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)
         - task: DownloadPipelineArtifact@2
-          displayName: 'Download New Built msal test app'
+          displayName: 'Download New Built msal e2e test app'
           inputs:
             buildType: 'specific'
             project: '${{ variables.engineeringProjectId }}'
-            definition: '$(msalTestAppPipelineId)'
-            artifactName: msalTestApp
+            definition: '$(msalE2ETestAppPipelineId)'
+            artifactName: msalE2ETestApp
             itemPattern: '**/*.apk'
-            targetPath: '$(Build.ArtifactStagingDirectory)/msaltestapp'
+            targetPath: '$(Build.ArtifactStagingDirectory)/msale2etestapp'
             buildVersionToDownload: 'specific'
             pipelineId: '$(buildApk.BrokeBuildId)'
-        - publish: $(Build.ArtifactStagingDirectory)/msaltestapp
+        - publish: $(Build.ArtifactStagingDirectory)/msale2etestapp
           displayName: 'Publish Msal Test apk for later use'
-          artifact: msalTestApp
+          artifact: msalE2ETestApp
         - task: UniversalPackages@0
-          displayName: 'Publish Msal Test apk to internal feed'
+          displayName: 'Publish Msal E2E Test apk to internal feed'
           inputs:
             command: 'publish'
-            publishDirectory: '$(Build.ArtifactStagingDirectory)/msaltestapp'
+            publishDirectory: '$(Build.ArtifactStagingDirectory)/msale2etestapp'
             packagePublishDescription: 'Msal SDK version: $(msal_sdk_version)'
             vstsFeedPublish: 'Engineering/BrokerE2ETestApps'
             vstsFeedPackagePublish: com.microsoft.identity.client.testapp
@@ -217,7 +218,7 @@ stages:
   - msalautomationapp
   - brokers_azure_sample
   - firstpartyapps
-  - msalTestApp
+  - msalE2ETestApp
   displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -234,7 +235,7 @@ stages:
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
-                      /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp/$(msalTestApp)"
+                      /sdcard/MsalE2ETestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "Broker(MSAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
@@ -246,7 +247,7 @@ stages:
     - msalautomationapplocalbrokerhost
     - brokers_azure_sample
     - firstpartyapps
-    - msalTestApp
+    - msalE2ETestApp
   displayName: Running MSAL with Broker Test Plan (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -265,7 +266,7 @@ stages:
                       /data/local/tmp/test/DirectPushBrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
                       /data/local/tmp/DirectPushBrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
-                      /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp/$(msalTestApp)"
+                      /sdcard/MsalE2ETestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "Broker(MSAL) UI Automation - Build (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
@@ -276,7 +277,7 @@ stages:
     - msalautomationapp
     - brokers_azure_sample
     - firstpartyapps
-    - msalTestApp
+    - msalE2ETestApp
   displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -296,7 +297,7 @@ stages:
                       /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
-                      /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp/$(msalTestApp)"
+                      /sdcard/MsalE2ETestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionLow }}
         testRunTitle: "Broker(MSAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) # $(Build.BuildNumber)"
