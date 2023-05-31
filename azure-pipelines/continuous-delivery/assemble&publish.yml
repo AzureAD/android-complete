@@ -125,3 +125,8 @@ jobs:
       inputs:
         summaryFileLocation: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/${{ parameters.testCmd }}.xml'
         reportDirectory: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/html'
+- ${{ if and(ne(parameters.project, 'LinuxBroker'), ne(parameters.project, 'common4j'), ne(parameters.project, 'broker4j')) }}:
+  - template: ../templates/run-instrumented-tests.yml
+    parameters:
+      gitProject: ${{ parameters.repository }}
+      projectName: ${{ parameters.project }}
