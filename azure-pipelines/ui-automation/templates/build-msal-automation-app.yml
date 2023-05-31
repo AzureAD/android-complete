@@ -72,7 +72,7 @@ jobs:
                 $assembleTask = $assembleTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
             }
             if ((${{ parameters.preinstallLtw }})) {
-                $assembleTestTask = $assembleTestTask + " -PpreinstallLtw=true"
+                $assembleTask = $assembleTask + " -PpreinstallLtw=true"
             }
             Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
       - task: Gradle@2
