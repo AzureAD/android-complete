@@ -27,7 +27,7 @@ parameters:
   default: none
 - name: continueOnError
   type: boolean
-  default: True
+  default: False
 
 jobs:
 - job:
