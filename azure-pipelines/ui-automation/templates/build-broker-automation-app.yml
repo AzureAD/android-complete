@@ -53,7 +53,7 @@ jobs:
         targetType: inline
         script: |
           $assembleTask = clean brokerautomationapp:assemble${{ parameters.brokerFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=${{ parameters.brokerSource }}
-          if (${{ parameters.preinstallLtw }}) {
+          if (parameters.preinstallLtw) {
               $assembleTask = $assembleTask + " -PpreinstallLtw=true"
           }
           Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
@@ -68,7 +68,7 @@ jobs:
         targetType: inline
         script: |
           $assembleTask = brokerautomationapp:assemble${{ parameters.brokerFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(AndroidAutomationRunnerAppSecret)
-          if (${{ parameters.preinstallLtw }}) {
+          if (parameters.preinstallLtw) {
               $assembleTask = $assembleTask + " -PpreinstallLtw=true"
           }
           Write-Host "##vso[task.setvariable variable=AssembleTestTask;]$assembleTask"
