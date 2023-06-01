@@ -40,6 +40,7 @@ jobs:
     value: system-images;android-${{ parameters.androidAPIlevel }};${{ parameters.androidVariant }};${{ parameters.androidABI }}
   - name: project.variant
     value: ${{ parameters.projectVariantName }}
+  - group: AndroidAuthClientAutomationSecrets
   steps:
   - checkout: ${{ parameters.gitProject }}
     clean: true
