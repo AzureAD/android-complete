@@ -138,6 +138,7 @@ stages:
         brokerFlavor: Dist
         brokerSource: LocalApk
         adalVersion: "0.0.+"
+        commonVersion: "0.0.+"
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel

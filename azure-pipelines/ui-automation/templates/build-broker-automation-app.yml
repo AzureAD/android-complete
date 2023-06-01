@@ -24,6 +24,10 @@ parameters:
     displayName: ADAL Version
     type: string
     default: ""
+  - name: commonVersion
+    displayName: Common Version
+    type: string
+    default: ""
 
 jobs:
 - job: brokerautomationapp
@@ -57,6 +61,9 @@ jobs:
           if (("${{ parameters.adalVersion }}" -ne "")) {
               $assembleTask = $assembleTask + " -PdistAdalVersion=" + "${{ parameters.adalVersion }}"
           }
+          if (("${{ parameters.commonVersion }}" -ne "")) {
+              $assembleTask = $assembleTask + " -PdistCommonVersion=" + "${{ parameters.commonVersion }}"
+          }
           Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
     - task: Gradle@2
       displayName: 'Assemble Broker Automation App'
@@ -71,6 +78,9 @@ jobs:
           $assembleTestTask = "brokerautomationapp:assemble${{ parameters.brokerFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(AndroidAutomationRunnerAppSecret)"
           if (("${{ parameters.adalVersion }}" -ne "")) {
               $assembleTestTask = $assembleTestTask + " -PdistAdalVersion=" + "${{ parameters.adalVersion }}"
+          }
+          if (("${{ parameters.commonVersion }}" -ne "")) {
+              $assembleTestTask = $assembleTestTask + " -PdistCommonVersion=" + "${{ parameters.commonVersion }}"
           }
           Write-Host "##vso[task.setvariable variable=AssembleTestTask;]$assembleTestTask"
     - task: Gradle@2
