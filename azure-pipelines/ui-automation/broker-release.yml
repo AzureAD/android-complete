@@ -556,6 +556,8 @@ stages:
         brokerApp: AutoBroker
         brokerFlavor: Dist
         brokerSource: LocalApk
+        adalVersion: ${{ parameters.adalVersionRC }}
+        commonVersion: ${{ parameters.commonVersionRC }}
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn:
