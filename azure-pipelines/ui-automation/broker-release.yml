@@ -504,7 +504,7 @@ stages:
         productFlavors: External
         signingConfigurations: Release
         msalVersion: ${{ parameters.msalVersionPROD }}
-        packageVariant: PROD  
+        packageVariant: PROD
     - template: ./templates/build-broker-host-prod.yml
       parameters:
         productFlavors: Dist
