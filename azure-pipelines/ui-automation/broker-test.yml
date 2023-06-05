@@ -115,7 +115,7 @@ stages:
         msalFlavor: Dist
         brokerSource: LocalApk
         brokerUpdateSource: LocalApk
-        msalVersion: ""
+        msalVersion: "0.0.+"
         packageVariant: RC
 # msalautomationapplocalbrokerhost
 - stage: 'msalautomationapplocalbrokerhost'
@@ -128,7 +128,7 @@ stages:
         msalFlavor: Local
         brokerSource: LocalApk
         brokerUpdateSource: LocalApk
-        msalVersion: ""
+        msalVersion: "0.0.+"
         packageVariant: RC
 # brokerautomationapp
 - stage: 'brokerautomationapp'
@@ -140,6 +140,8 @@ stages:
         brokerApp: AutoBroker
         brokerFlavor: Dist
         brokerSource: LocalApk
+        adalVersion: "0.0.+"
+        commonVersion: "0.0.+"
 # TestAppApk - MsalE2ETestApp Queue pipeline
 - stage: 'msalE2ETestApp'
   displayName: Build Msal E2E Test App Apk
@@ -187,7 +189,7 @@ stages:
             versionOption: 'custom'
             versionPublish: $(msal_sdk_version)
 
-  # Download First Party Apps
+# Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
   displayName: Download First Party Apps (Outlook, Teams, Word)
@@ -212,6 +214,7 @@ stages:
         brokerHostPipelineId: '$(brokerHostPipelineId)'
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
         LTWVersion: ${{ parameters.LTWVersion }}
+
 # MSAL with Broker Test Plan stage (API 30+)
 - stage: 'msal_with_broker_high_api'
   dependsOn:
@@ -261,6 +264,7 @@ stages:
                       /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                       /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
                       /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+                      /sdcard/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhost_apk),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
                       /data/local/tmp/test/DirectPushBrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
