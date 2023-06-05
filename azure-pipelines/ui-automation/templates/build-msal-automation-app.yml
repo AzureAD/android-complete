@@ -28,6 +28,7 @@ parameters:
   - name: msalVersion
     displayName: MSAL Version
     type: string
+    default: ""
   - name: packageVariant
     displayName: Package Variant
     type: string
