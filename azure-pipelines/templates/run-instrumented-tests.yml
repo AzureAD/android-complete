@@ -25,6 +25,9 @@ parameters:
 # Key used to store the access token, AT for the Android DevX Feed.
 - name: accessTokenKey
   default: none
+- name: continueOnError
+  type: boolean
+  default: False
 
 jobs:
 - job:
@@ -37,6 +40,7 @@ jobs:
     value: system-images;android-${{ parameters.androidAPIlevel }};${{ parameters.androidVariant }};${{ parameters.androidABI }}
   - name: project.variant
     value: ${{ parameters.projectVariantName }}
+  - group: AndroidAuthClientAutomationSecrets
   steps:
   - checkout: ${{ parameters.gitProject }}
     clean: true
@@ -75,6 +79,8 @@ jobs:
       echo "Emulator started"
     displayName: 'Starting android emulator'
   - task: Gradle@3
+    displayName: Run Instrumented Test ${{ parameters.projectName }}
+    continueOnError: ${{ parameters.continueOnError }}
     inputs:
       gradleWrapperFile: 'gradlew'
       options: ${{ parameters.gradleOptions }}
