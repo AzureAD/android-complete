@@ -135,7 +135,7 @@ resources:
   - repository: broker-prod
     type: github
     name: AzureAD/ad-accounts-for-android
-    ref: release/9.0.0
+    ref: release/10.3.1
     endpoint: ANDROID_GITHUB
   - repository: broker
     type: github
