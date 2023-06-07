@@ -16,9 +16,11 @@ parameters:
   - name: companyPortalVersion
     displayName: Company Portal Version
     type: string
+    default: '*'
   - name: oldCompanyPortalVersion
     displayName: Old Company Portal Version
     type: string
+    default: '5.0.5729'
   - name: brokerHostPipelineId
     type: string
   - name: oldBrokerHostVersion
@@ -39,6 +41,7 @@ parameters:
   - name: oldLTWVersion
     displayName: Old Link to Windows Version
     type: string
+    default: '1.23051.78'
 jobs:
 - job: 'download_brokers'
   displayName: Download Brokers
