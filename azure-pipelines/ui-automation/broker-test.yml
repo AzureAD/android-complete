@@ -99,7 +99,7 @@ parameters:
   displayName: Test Targets for Broker
   type: string
   default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
-- name: preinstallLtw
+- name: preInstallLtw
   displayName: Preinstall Link to Windows
   type: boolean
   default: false
@@ -118,7 +118,7 @@ stages:
         brokerUpdateSource: LocalApk
         msalVersion: "0.0.+"
         packageVariant: RC
-        preinstallLtw: ${{ parameters.preinstallLtw }}
+        preInstallLtw: ${{ parameters.preInstallLtw }}
 # msalautomationapplocalbrokerhost
 - stage: 'msalautomationapplocalbrokerhost'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
@@ -132,7 +132,7 @@ stages:
         brokerUpdateSource: LocalApk
         msalVersion: "0.0.+"
         packageVariant: RC
-        preinstallLtw: ${{ parameters.preinstallLtw }}
+        preInstallLtw: ${{ parameters.preInstallLtw }}
 # brokerautomationapp
 - stage: 'brokerautomationapp'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
@@ -145,7 +145,7 @@ stages:
         brokerSource: LocalApk
         adalVersion: "0.0.+"
         commonVersion: "0.0.+"
-        preinstallLtw: ${{ parameters.preinstallLtw }}
+        preInstallLtw: ${{ parameters.preInstallLtw }}
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
