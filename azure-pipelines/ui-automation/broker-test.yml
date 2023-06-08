@@ -101,14 +101,6 @@ parameters:
   displayName: Old Link to Windows Version
   type: string
   default: '1.23051.78'
-- name: msalTestTarget
-  displayName: Test Targets for MSAL
-  type: string
-  default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, package com.microsoft.identity.client.msal.automationapp.testpass.msalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
-- name: brokerTestTarget
-  displayName: Test Targets for Broker
-  type: string
-  default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
 - name: preInstallLtw
   displayName: Preinstall Link to Windows
   type: boolean
@@ -196,7 +188,7 @@ stages:
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msalApp)"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msaltestApp)"
-        testTargetPackages: $(parameters.msalTestTarget)
+        testTargetPackages: $(msalTestTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "msalautomationapp-testpass-broker-highapi-$(Build.BuildId)-AndroidBrokerCI"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
@@ -225,7 +217,7 @@ stages:
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-RC-LocalApk/$(msalAppLocalBrokerHost)"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-RC-LocalApk/$(msaltestAppLocalBrokerHost)"
-        testTargetPackages: $(parameters.msalTestTarget)
+        testTargetPackages: $(msalTestTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "msalautomationapp-testpass-brokerhost-highapi-$(Build.BuildId)-AndroidBrokerCI"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
@@ -256,7 +248,7 @@ stages:
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msalApp)"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msaltestApp)"
-        testTargetPackages: $(parameters.msalTestTarget)
+        testTargetPackages: $(msalTestTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "msalautomationapp-testpass-broker-lowapi-$(Build.BuildId)-AndroidBrokerCI"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
@@ -287,7 +279,7 @@ stages:
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/brokerautomationapks/$(brokerApp)"
         automationAppTestApkPath: "$(Pipeline.Workspace)/brokerautomationapks/$(brokertestApp)"
-        testTargetPackages: $(parameters.brokerTestTarget)
+        testTargetPackages: $(brokerTestTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "brokerautomationapp-testpass-adal&basic-highapi-$(Build.BuildId)-AndroidBrokerCI"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
