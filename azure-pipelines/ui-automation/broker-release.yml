@@ -67,11 +67,14 @@ parameters:
 - name: shouldBuildBroker
   displayName: Build & publish broker?
   type: boolean
-  default: false
+  default: False
 - name: enablePrtv3
   displayName: Should enable PRTv3?
-  type: boolean
-  default: False
+  type: string
+  default: 'false'
+  values:
+    - 'true'
+    - 'false'
 
 # Library versioning parameters
 - name: msalVersionRC
