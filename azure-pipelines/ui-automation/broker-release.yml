@@ -64,8 +64,8 @@ parameters:
   displayName: Build & Publish Testing libs?
   type: boolean
   default: False
-- name: shouldBuildBroker4j
-  displayName: Build & publish broker4j?
+- name: shouldBuildBroker
+  displayName: Build & publish broker?
   type: boolean
   default: false
 - name: enablePrtv3
@@ -282,7 +282,7 @@ stages:
     (
       not(failed()),
       not(canceled()),
-      or(eq(${{ parameters.shouldBuildLibraries }}, 'True'), eq(${{ parameters.shouldBuildBroker4j }}, 'True'))
+      or(eq(${{ parameters.shouldBuildLibraries }}, 'True'), eq(${{ parameters.shouldBuildBroker }}, 'True'))
     )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
@@ -317,7 +317,7 @@ stages:
     (
       not(failed()),
       not(canceled()),
-      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+      or(eq(${{ parameters.shouldBuildLibraries }}, 'True'), eq(${{ parameters.shouldBuildBroker }}, 'True'))
     )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
