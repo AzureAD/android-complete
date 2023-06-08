@@ -16,6 +16,11 @@ parameters:
   - name: companyPortalVersion
     displayName: Company Portal Version
     type: string
+    default: '*'
+  - name: oldCompanyPortalVersion
+    displayName: Old Company Portal Version
+    type: string
+    default: '5.0.5729'
   - name: brokerHostPipelineId
     type: string
   - name: oldBrokerHostVersion
@@ -33,6 +38,10 @@ parameters:
     displayName: Link to Windows Version
     type: string
     default: '*'
+  - name: oldLTWVersion
+    displayName: Old Link to Windows Version
+    type: string
+    default: '1.23051.78'
 jobs:
 - job: 'download_brokers'
   displayName: Download Brokers
@@ -73,7 +82,7 @@ jobs:
         vstsFeedPackage: 'com.azure.authenticator'
         vstsPackageVersion: '${{ parameters.oldAuthenticatorVersion }}'
     - task: UniversalPackages@0
-      displayName: 'Download com.microsoft.windowsintune.companyportal-signed'
+      displayName: 'Download Latest CompanyPortal Apk'
       inputs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
@@ -83,7 +92,17 @@ jobs:
         packageDownloadExternal: 'com.microsoft.windowsintune.companyportal-signed'
         versionDownloadExternal: '${{ parameters.companyPortalVersion }}'
     - task: UniversalPackages@0
-      displayName: 'Download com.microsoft.appmanager'
+      displayName: 'Download Old CompanyPortal Apk'
+      inputs:
+        command: 'download'
+        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
+        feedsToUse: 'external'
+        externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
+        feedDownloadExternal: '${{ parameters.msazureFeedName }}'
+        packageDownloadExternal: 'com.microsoft.windowsintune.companyportal-signed'
+        versionDownloadExternal: '${{ parameters.oldCompanyPortalVersion }}'
+    - task: UniversalPackages@0
+      displayName: 'Download Latest LTW Apk'
       inputs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
@@ -95,6 +114,19 @@ jobs:
     - script: mv ./YPC-*.apk ./LTW-signed.apk
       displayName: 'Rename LTW build to LTW-signed.apk'
       workingDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
+    - task: UniversalPackages@0
+      displayName: 'Download Old LTW Apk'
+      inputs:
+        command: 'download'
+        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
+        feedsToUse: 'external'
+        externalFeedCredentials: '${{ parameters.OSServiceConnection }}'
+        feedDownloadExternal: '${{ parameters.LTWFeedName }}'
+        packageDownloadExternal: 'com.microsoft.appmanager'
+        versionDownloadExternal: '${{ parameters.OldLTWVersion }}'
+    - script: mv ./YPC-*.apk ./OldLTW-signed.apk
+      displayName: 'Rename Old LTW build to OldLTW-signed.apk'
+      workingDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
     - task: DownloadPipelineArtifact@2
       displayName: 'Download Broker Host'
       inputs:
