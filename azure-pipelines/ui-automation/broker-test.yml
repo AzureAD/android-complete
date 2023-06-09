@@ -200,8 +200,8 @@ stages:
     - template: ./templates/download-old-test-apps.yml
       parameters:
         feedName: '$(testAppsFeedName)'
-        oldMsalTestAppVersion: '$(oldMsalTestAppVersion)'
-        oldOneAuthTestAppVersion: '$(oldOneAuthTestAppVersion)'
+        oldMsalTestAppVersion: ${{ parameters.oldMsalTestAppVersion }}
+        oldOneAuthTestAppVersion: ${{ parameters.oldOneAuthTestAppVersion }}
 # MSAL with Broker Test Plan stage (API 30+)
 - stage: 'msal_with_broker_high_api'
   dependsOn:
