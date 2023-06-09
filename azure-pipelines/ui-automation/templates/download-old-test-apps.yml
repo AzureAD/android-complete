@@ -1,7 +1,7 @@
 parameters:
   - name: feedName
     type: string
-    default: 'BrokerE2ETestApps'
+    default: 'Engineering/BrokerE2ETestApps'
   - name: oldMsalTestAppVersion
     displayName: Old MSAL Test App Version
     type: string

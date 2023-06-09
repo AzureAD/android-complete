@@ -51,7 +51,7 @@ variables:
   LTWFeedName: Auth-Broker-Integrated-LTW-Build
   LTWApk: LTW-signed.apk
   oldLTWApk: OldLTW-signed.apk
-  testAppsFeedName: BrokerE2ETestApps
+  testAppsFeedName: Engineering/BrokerE2ETestApps
   
 parameters:
 - name: firebaseDeviceIdHigh
