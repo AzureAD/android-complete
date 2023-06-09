@@ -297,7 +297,7 @@ stages:
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
       assembleParams: $(broker4jProjVersionParam) $(common4jVersionParam) $(broker4jEnablePrtv3Param)
       testParams: $(broker4jProjVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(broker4jProjVersionParam) $(common4jVersionParam)
+      publishParams: $(broker4jProjVersionParam) $(common4jVersionParam) $(broker4jEnablePrtv3Param)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
