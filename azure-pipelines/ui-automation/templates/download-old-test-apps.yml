@@ -1,0 +1,44 @@
+parameters:
+  - name: feedName
+    type: string
+    default: 'BrokerE2ETestApps'
+  - name: oldMsalTestAppVersion
+    displayName: Old MSAL Test App Version
+    type: string
+    default: '4.5.0'
+  - name: oldOneAuthTestAppVersion
+    displayName: Old OneAuth Test App Version
+    type: string
+    default: '1.0.0'
+
+jobs:
+  - job: 'download_old_test_apps'
+    displayName: Download Old Test Apps
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+      - checkout: none
+      - script: mkdir oldTestApps
+        displayName: 'Make oldTestApps dir'
+        workingDirectory: '$(Build.ArtifactStagingDirectory)'
+      - task: UniversalPackages@0
+        displayName: 'Download Old Msal Test App Apk'
+        inputs:
+          command: 'download'
+          downloadDirectory: '$(Build.ArtifactStagingDirectory)/oldTestApps'
+          feedsToUse: 'internal'
+          vstsFeed: '${{ parameters.feedName }}'
+          vstsFeedPackage: 'com.microsoft.identity.client.testapp'
+          vstsPackageVersion: '${{ parameters.oldMsalTestAppVersion }}'
+      - task: UniversalPackages@0
+        displayName: 'Download Old OneAuth Test App Apk'
+        inputs:
+          command: 'download'
+          downloadDirectory: '$(Build.ArtifactStagingDirectory)/oldTestApps'
+          feedsToUse: 'internal'
+          vstsFeed: '${{ parameters.feedName }}'
+          vstsFeedPackage: 'com.microsoft.oneauth.testapp'
+          vstsPackageVersion: '${{ parameters.oldOneAuthTestAppVersion }}'
+      - publish: $(Build.ArtifactStagingDirectory)/oldTestApps
+        displayName: 'Publish Old Test App APKs'
+        artifact: oldTestApps
