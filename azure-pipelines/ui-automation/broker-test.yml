@@ -223,6 +223,8 @@ stages:
                       /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
                       /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/$(OldLTWApk),\
                       /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+                      /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp),\
+                      /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
@@ -253,6 +255,8 @@ stages:
                       /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/$(OldltwApk),\
                       /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /sdcard/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhost_apk),\
+                      /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp),\
+                      /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
                       /data/local/tmp/test/DirectPushBrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
@@ -283,6 +287,8 @@ stages:
                       /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
                       /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/$(OldltwApk),\
                       /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+                      /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp),\
+                      /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
                       /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\

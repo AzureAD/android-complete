@@ -25,7 +25,7 @@ jobs:
         displayName: 'Download Old Msal Test App Apk'
         inputs:
           command: 'download'
-          downloadDirectory: '$(Build.ArtifactStagingDirectory)/oldTestApps'
+          downloadDirectory: '$(Build.ArtifactStagingDirectory)/oldtestapps'
           feedsToUse: 'internal'
           vstsFeed: '${{ parameters.feedName }}'
           vstsFeedPackage: 'com.microsoft.identity.client.testapp'
@@ -34,11 +34,11 @@ jobs:
         displayName: 'Download Old OneAuth Test App Apk'
         inputs:
           command: 'download'
-          downloadDirectory: '$(Build.ArtifactStagingDirectory)/oldTestApps'
+          downloadDirectory: '$(Build.ArtifactStagingDirectory)/oldtestapps'
           feedsToUse: 'internal'
           vstsFeed: '${{ parameters.feedName }}'
           vstsFeedPackage: 'com.microsoft.oneauth.testapp'
           vstsPackageVersion: '${{ parameters.oldOneAuthTestAppVersion }}'
-      - publish: $(Build.ArtifactStagingDirectory)/oldTestApps
+      - publish: $(Build.ArtifactStagingDirectory)/oldtestapps
         displayName: 'Publish Old Test App APKs'
-        artifact: oldTestApps
+        artifact: oldtestapps
