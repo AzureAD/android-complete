@@ -163,7 +163,7 @@ stages:
         adalVersion: "0.0.+"
         commonVersion: "0.0.+"
         preInstallLtw: ${{ parameters.preInstallLtw }}
-  # TestAppApk - MsalE2ETestApp Queue pipeline
+# TestAppApk - MsalE2ETestApp Queue pipeline
 - stage: 'msalE2ETestApp'
   displayName: Build Msal E2E Test App Apk
   dependsOn: []   # this removes the implicit dependency on previous stage and causes this to run in parallel
