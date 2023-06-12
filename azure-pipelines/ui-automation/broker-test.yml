@@ -58,6 +58,7 @@ variables:
   LTWFeedName: Auth-Broker-Integrated-LTW-Build
   LTWApk: LTW-signed.apk
   oldLTWApk: OldLTW-signed.apk
+  oneAuthServiceConnection: OneAuth-Integration
   
 parameters:
 - name: firebaseDeviceIdHigh
@@ -229,18 +230,15 @@ stages:
             arguments: '-OrganizationUrl "https://office.visualstudio.com/" -Project "OneAuth" -PipelinePAT "$(OfficePAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(oneAuthTestAppPipelineId)"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
-            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
-        - task: DownloadPipelineArtifact@2
+            SYSTEM_ACCESSTOKEN: $(System.AccessToken)\
+        - task: DownloadExternalBuildArtifacts@15
           displayName: 'Download New Built OneAuth test app'
           inputs:
-            buildType: 'specific'
-            project: '${{ variables.oneAuthProjectId }}'
+            connection: '$(oneAuthServiceConnection)'
+            project: '$(oneAuthProjectId)'
             definition: '$(oneAuthTestAppPipelineId)'
-            artifactName: android.AndroidTestApp
-            itemPattern: '**/*.apk'
-            targetPath: '$(Build.ArtifactStagingDirectory)/oneauthtestapp'
-            buildVersionToDownload: 'specific'
-            pipelineId: '$(buildApk.BrokeBuildId)'
+            version: '$(buildApk.BrokeBuildId)'
+            downloadPath: '$(System.ArtifactsDirectory)'
         - publish: $(Build.ArtifactStagingDirectory)/oneauthtestapp
           displayName: 'Publish OneAuth Test apk for later use'
           artifact: oneauthtestapp
