@@ -209,7 +209,7 @@ stages:
             vstsFeedPackagePublish: com.microsoft.identity.client.testapp
             versionOption: 'custom'
             versionPublish: $(msal_sdk_version)
-  # TestAppApk - OneAuthTestApp Queue pipeline
+# TestAppApk - OneAuthTestApp Queue pipeline
 - stage: 'oneAuthTestApp'
   displayName: Build OneAuth Test App Apk
   dependsOn: []   # this removes the implicit dependency on previous stage and causes this to run in parallel
