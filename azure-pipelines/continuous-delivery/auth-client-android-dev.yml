@@ -62,7 +62,7 @@ parameters:
     type: string
     default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
   - name: testEmptyParam
-    displayName: Test Targets for Broker
+    displayName: Test empty param check
     type: string
 
 variables:
@@ -80,6 +80,8 @@ variables:
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   brokerAutomationPipelineId: 1490
+  ${{ if parameters.testEmptyParam }}:
+    echo : "success detecting empty param"
 
 stages:
 # Common4j - Build and publish
