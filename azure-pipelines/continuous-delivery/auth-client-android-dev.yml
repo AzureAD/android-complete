@@ -103,8 +103,6 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
         ${{ if parameters.testEmptyParam }}:
           print('succeeded')
-        ${{ if eq(parameters.testEmptyParam, ' ') }}:
-          print('succeeded with space!')
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish
