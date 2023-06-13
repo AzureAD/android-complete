@@ -84,7 +84,7 @@ variables:
   ${{ if parameters.testEmptyParam }}:
     print('succeeded')
   ${{ if eq(parameters.testEmptyParam, ' ') }}:
-  print('succeeded ')
+    print('succeeded ')
 
 
 stages:
