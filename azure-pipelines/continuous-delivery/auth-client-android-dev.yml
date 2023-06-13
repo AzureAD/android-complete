@@ -118,7 +118,7 @@ stages:
         vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
         shouldPublish: ${{ parameters.shouldPublishLibraries }}
 - ${{ if ne(parameters.testEmptyParam, ' ') }}:
-  - stage: 'publishCommonLibraries'
+  - stage: 'publishCommonLibraries2'
     displayName: Dummy stage 2
     jobs:
     - template: assemble&publish.yml
