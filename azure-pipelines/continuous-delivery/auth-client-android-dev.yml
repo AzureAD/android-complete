@@ -81,10 +81,6 @@ variables:
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   brokerAutomationPipelineId: 1490
-  ${{ if parameters.testEmptyParam }}:
-    print('succeeded')
-  ${{ if eq(parameters.testEmptyParam, ' ') }}:
-    print('succeeded ')
 
 
 stages:
@@ -105,6 +101,10 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+        ${{ if parameters.testEmptyParam }}:
+          print('succeeded')
+        ${{ if eq(parameters.testEmptyParam, ' ') }}:
+          print('succeeded with space!')
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish
