@@ -84,7 +84,7 @@ variables:
 
 
 stages:
-- ${{ if ne(parameters.testEmptyParam, ' ') }}:
+- ${{ if eq(parameters.testEmptyParam, ' ') }}:
   - stage: 'dummyStage1'
     displayName: Dummy stage 1
     jobs:
