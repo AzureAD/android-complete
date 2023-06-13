@@ -104,10 +104,35 @@ stages:
 - ${{ if parameters.testEmptyParam }}:
   - stage: 'publishCommonLibraries1'
     displayName: Dummy stage 1
+    jobs:
+    - template: assemble&publish.yml
+      parameters:
+        repository: common
+        project: common4j
+        testCmd: common4jUnitTestCoverageReport
+        dependencyParams: $(javaProjectDependencyParam)
+        assembleParams: $(projVersionParam)
+        testParams: $(projVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+        publishParams: $(projVersionParam)
+        vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
+        vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+        shouldPublish: ${{ parameters.shouldPublishLibraries }}
 - ${{ if eq(parameters.testEmptyParam, ' ') }}:
   - stage: 'publishCommonLibraries'
     displayName: Dummy stage 2
-    
+    jobs:
+    - template: assemble&publish.yml
+      parameters:
+        repository: common
+        project: common4j
+        testCmd: common4jUnitTestCoverageReport
+        dependencyParams: $(javaProjectDependencyParam)
+        assembleParams: $(projVersionParam)
+        testParams: $(projVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+        publishParams: $(projVersionParam)
+        vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
+        vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+        shouldPublish: ${{ parameters.shouldPublishLibraries }}
 
 # Common - Build and publish
 - stage: 'publishCommonLibraries2'
