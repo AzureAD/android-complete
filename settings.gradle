@@ -110,6 +110,18 @@ project(':LinuxBrokerPackage').projectDir = new File('/broker/LinuxBrokerPackage
 include(":AzureSample")
 project(':AzureSample').projectDir = new File('azuresample/app')
 
+include(":mockauthapp")
+project(':mockauthapp').projectDir = new File('broker/mockbrokers/mockauthapp')
+
+include(":mockcp")
+project(':mockcp').projectDir = new File('broker/mockbrokers/mockcp')
+
+include(":mockltw")
+project(':mockltw').projectDir = new File('broker/mockbrokers/mockltw')
+
+include(":mockbrokerapplib")
+project(':mockbrokerapplib').projectDir = new File('broker/mockbrokers/mockbrokerapplib')
+
 //include(":tsl")
 //project(':tsl').projectDir = new File('tsl/tokenshare')
 
