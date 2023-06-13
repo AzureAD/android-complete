@@ -102,7 +102,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
 - ${{ if parameters.testEmptyParam }}:
-  - stage: 'publishCommonLibraries'
+  - stage: 'publishCommonLibraries1'
     displayName: Dummy stage 1
 - ${{ if eq(parameters.testEmptyParam, ' ') }}:
   - stage: 'publishCommonLibraries'
@@ -110,7 +110,7 @@ stages:
     
 
 # Common - Build and publish
-- stage: 'publishCommonLibraries'
+- stage: 'publishCommonLibraries2'
   displayName: Common - Build and publish
   dependsOn: publishCommon4jLibraries
   jobs:
