@@ -61,6 +61,9 @@ parameters:
     displayName: Test Targets for Broker
     type: string
     default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
+  - name: testEmptyParam
+    displayName: Test Targets for Broker
+    type: string
 
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
