@@ -82,9 +82,9 @@ variables:
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   brokerAutomationPipelineId: 1490
   ${{ if parameters.testEmptyParam }}:
-    echo : "success detecting empty param"
+    echo 'success detecting empty param'
   ${{ if eq(parameters.testEmptyParam, ' ') }}:
-    echo : "success detecting empty param with space!"
+    echo 'success detecting empty param with space!'
 
 stages:
 # Common4j - Build and publish
