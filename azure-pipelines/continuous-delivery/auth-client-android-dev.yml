@@ -64,6 +64,7 @@ parameters:
   - name: testEmptyParam
     displayName: Test empty param check
     type: string
+    default:""
 
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
