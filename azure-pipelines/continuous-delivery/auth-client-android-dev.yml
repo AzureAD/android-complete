@@ -84,22 +84,6 @@ variables:
 
 
 stages:
-- ${{ if eq(parameters.testEmptyParam, ' ') }}:
-  - stage: 'dummyStage2'
-    displayName: Dummy stage 2
-    jobs:
-    - template: assemble&publish.yml
-      parameters:
-        repository: common
-        project: common4j
-        testCmd: common4jUnitTestCoverageReport
-        dependencyParams: $(javaProjectDependencyParam)
-        assembleParams: $(projVersionParam)
-        testParams: $(projVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-        publishParams: $(projVersionParam)
-        vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
-        vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-        shouldPublish: ${{ parameters.shouldPublishLibraries }}
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
