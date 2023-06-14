@@ -239,10 +239,10 @@ stages:
             definition: '$(oneAuthTestAppPipelineId)'
             version: '$(buildApk.BrokeBuildId)'
             itemPattern: '**/*.apk'
-            downloadPath: '$(Build.ArtifactStagingDirectory)/oneauthtestapp'
+            downloadPath: '$(System.ArtifactsDirectory)'
         - publish: $(Build.ArtifactStagingDirectory)/oneauthtestapp
           displayName: 'Publish OneAuth Test apk for later use'
-          artifact: oneauthtestapp
+          artifact: android.AndroidTestApp
         - task: UniversalPackages@0
           displayName: 'Publish OneAuth Test apk to internal feed'
           inputs:
