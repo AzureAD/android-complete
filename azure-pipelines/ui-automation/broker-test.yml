@@ -201,7 +201,7 @@ stages:
           displayName: 'Publish Msal Test apk for later use'
           artifact: msalE2ETestApp
         - task: UniversalPackages@0
-          displayName: 'Publish Msal E2E Test apk to internal feed'
+          displayName: 'Push Msal E2E Test apk to internal feed'
           inputs:
             command: 'publish'
             publishDirectory: '$(Build.ArtifactStagingDirectory)/msale2etestapp'
@@ -231,6 +231,9 @@ stages:
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)\
+        - script: mkdir oneauthtestapp
+            displayName: 'Make oneauthtestapp dir'
+            workingDirectory: '$(Build.ArtifactStagingDirectory)'
         - task: DownloadExternalBuildArtifacts@15
           displayName: 'Download New Built OneAuth test app'
           inputs:
@@ -238,13 +241,12 @@ stages:
             project: '$(oneAuthProjectId)'
             definition: '$(oneAuthTestAppPipelineId)'
             version: '$(buildApk.BrokeBuildId)'
-            itemPattern: '**/*.apk'
-            downloadPath: '$(System.ArtifactsDirectory)'
+            downloadPath: '$(Build.ArtifactStagingDirectory)/oneauthtestapp'
         - publish: $(Build.ArtifactStagingDirectory)/oneauthtestapp
           displayName: 'Publish OneAuth Test apk for later use'
-          artifact: android.AndroidTestApp
+          artifact: oneauthtestapp
         - task: UniversalPackages@0
-          displayName: 'Publish OneAuth Test apk to internal feed'
+          displayName: 'Push OneAuth Test apk to internal feed'
           inputs:
             command: 'publish'
             publishDirectory: '$(Build.ArtifactStagingDirectory)/oneauthtestapp'
