@@ -238,7 +238,8 @@ stages:
             project: '$(oneAuthProjectId)'
             definition: '$(oneAuthTestAppPipelineId)'
             version: '$(buildApk.BrokeBuildId)'
-            downloadPath: '$(System.ArtifactsDirectory)'
+            itemPattern: '**/*.apk'
+            downloadPath: '$(Build.ArtifactStagingDirectory)/oneauthtestapp'
         - publish: $(Build.ArtifactStagingDirectory)/oneauthtestapp
           displayName: 'Publish OneAuth Test apk for later use'
           artifact: oneauthtestapp
