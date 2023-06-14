@@ -241,7 +241,7 @@ stages:
             version: '20752958'
             downloadPath: '$(System.ArtifactsDirectory)'
         - powershell: |
-            $SEARCH_PATH=$(System.ArtifactsDirectory)
+            $SEARCH_PATH="$(System.ArtifactsDirectory)"
             Write-Host "##[debug] Found directories"
             ForEach ($Dir in $SEARCH_PATH -split ";") {
               Write-Host "$Dir"
