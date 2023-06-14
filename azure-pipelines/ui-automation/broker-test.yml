@@ -241,10 +241,20 @@ stages:
             version: '20752958'
             downloadPath: '$(Build.ArtifactStagingDirectory)/oneauthtestapp'
         - powershell: |
-            Write-Host "List all files in ArtifactStagingDirectory:"
-            Get-ChildItem -Path "$(System.ArtifactsDirectory)" -Recurse
-          displayName: 'Debug: List Files in ArtifactsDirectory'
-        - publish: $(Build.ArtifactStagingDirectory)/oneauthtestapps
+            $SEARCH_PATH=$Env:Path
+            Write-Host "##[debug] Found directories"
+            ForEach ($Dir in $SEARCH_PATH -split ";") {
+              Write-Host "$Dir"
+            }
+            Write-Host ""
+            Write-Host ""
+            Write-Host "##[debug] Found files"
+            ForEach ($Dir in $SEARCH_PATH -split ";") {
+              Get-ChildItem $Dir -File -ErrorAction Continue | ForEach-Object -Process {
+                Write-Host $_.FullName
+              }
+            }
+        - publish: $(Build.ArtifactStagingDirectory)
           displayName: 'Publish OneAuth Test apk for later use'
           artifact: oneauthE2ETestApp
         - task: UniversalPackages@0
