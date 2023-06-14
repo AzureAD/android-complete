@@ -239,11 +239,11 @@ stages:
             project: '$(oneAuthProjectId)'
             definition: '$(oneAuthTestAppPipelineId)'
             version: '20752958'
-            downloadPath: '$(Build.ArtifactStagingDirectory)'
+            downloadPath: '$(System.ArtifactsDirectory)'
         - powershell: |
             Write-Host "List all files in ArtifactStagingDirectory:"
-            Get-ChildItem -Path "$(Build.ArtifactStagingDirectory)" -Recurse
-          displayName: 'Debug: List Files in ArtifactStagingDirectory'
+            Get-ChildItem -Path "'$(System.ArtifactsDirectory)'" -Recurse
+          displayName: 'Debug: List Files in ArtifactsDirectory'
         - publish: $(Build.ArtifactStagingDirectory)/oneauthtestapp/android.AndroidTestApp
           displayName: 'Publish OneAuth Test apk for later use'
           artifact: oneauthE2ETestApp
