@@ -239,7 +239,7 @@ stages:
             project: '$(oneAuthProjectId)'
             definition: '$(oneAuthTestAppPipelineId)'
             version: '20752958'
-            downloadPath: '$(System.ArtifactsDirectory)'
+            downloadPath: '$(Build.ArtifactStagingDirectory)/oneauthtestapp'
         - powershell: |
             Write-Host "List all files in ArtifactStagingDirectory:"
             Get-ChildItem -Path "$(System.ArtifactsDirectory)" -Recurse
