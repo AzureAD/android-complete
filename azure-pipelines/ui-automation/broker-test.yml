@@ -242,6 +242,10 @@ stages:
             definition: '$(oneAuthTestAppPipelineId)'
             version: '$(buildApk.BrokeBuildId)'
             downloadPath: '$(Build.ArtifactStagingDirectory)/oneauthtestapp'
+        - powershell: |
+            Write-Host "List all files in ArtifactStagingDirectory:"
+            Get-ChildItem -Path "$(Build.ArtifactStagingDirectory)" -Recurse
+          displayName: 'Debug: List Files in ArtifactStagingDirectory'
         - publish: $(Build.ArtifactStagingDirectory)/oneauthtestapp/android.AndroidTestApp
           displayName: 'Publish OneAuth Test apk for later use'
           artifact: oneauthE2ETestApp
@@ -249,7 +253,7 @@ stages:
           displayName: 'Push OneAuth Test apk to internal feed'
           inputs:
             command: 'publish'
-            publishDirectory: '$(Build.ArtifactStagingDirectory)/oneauthtestapp/android.AndroidTestApp'
+            publishDirectory: '$(Build.ArtifactStagingDirectory)/android.AndroidTestApp'
             packagePublishDescription: 'OneAuth Test apk'
             vstsFeedPublish: 'Engineering/BrokerE2ETestApps'
             vstsFeedPackagePublish: com.microsoft.oneauth.testapp
