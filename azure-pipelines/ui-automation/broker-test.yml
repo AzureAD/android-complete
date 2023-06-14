@@ -239,6 +239,7 @@ stages:
             project: '$(oneAuthProjectId)'
             definition: '$(oneAuthTestAppPipelineId)'
             version: '20754022'
+            itemPattern: '**/*.apk'
             downloadPath: '$(Build.ArtifactStagingDirectory)'
         - powershell: |
             $SEARCH_PATH="$(Build.ArtifactStagingDirectory)"
