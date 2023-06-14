@@ -232,8 +232,8 @@ stages:
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)\
         - script: mkdir oneauthtestapp
-            displayName: 'Make oneauthtestapp dir'
-            workingDirectory: '$(Build.ArtifactStagingDirectory)'
+          displayName: 'Make oneauthtestapp dir'
+          workingDirectory: '$(Build.ArtifactStagingDirectory)'
         - task: DownloadExternalBuildArtifacts@15
           displayName: 'Download New Built OneAuth test app'
           inputs:
