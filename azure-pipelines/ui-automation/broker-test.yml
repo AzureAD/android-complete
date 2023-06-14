@@ -239,9 +239,9 @@ stages:
             project: '$(oneAuthProjectId)'
             definition: '$(oneAuthTestAppPipelineId)'
             version: '20752958'
-            downloadPath: '$(System.ArtifactsDirectory)'
+            downloadPath: '$(Build.ArtifactStagingDirectory)'
         - powershell: |
-            $SEARCH_PATH="$(System.ArtifactsDirectory)"
+            $SEARCH_PATH="$(Build.ArtifactStagingDirectory)"
             Write-Host "##[debug] Found directories"
             ForEach ($Dir in $SEARCH_PATH -split ";") {
               Write-Host "$Dir"
@@ -254,14 +254,14 @@ stages:
                 Write-Host $_.FullName
               }
             }
-        - publish: $(System.ArtifactsDirectory)/android.AndroidTestApp
+        - publish: $(Build.ArtifactStagingDirectory)/android.AndroidTestApp
           displayName: 'Publish OneAuth Test apk for later use'
           artifact: oneauthE2ETestApp
         - task: UniversalPackages@0
           displayName: 'Push OneAuth Test apk to internal feed'
           inputs:
             command: 'publish'
-            publishDirectory: '$(System.ArtifactsDirectory)/android.AndroidTestApp'
+            publishDirectory: '$(Build.ArtifactStagingDirectory)/android.AndroidTestApp'
             packagePublishDescription: 'OneAuth Test apk'
             vstsFeedPublish: 'Engineering/BrokerE2ETestApps'
             vstsFeedPackagePublish: com.microsoft.oneauth.testapp
