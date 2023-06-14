@@ -244,7 +244,7 @@ stages:
             Write-Host "List all files in ArtifactStagingDirectory:"
             Get-ChildItem -Path "$(System.ArtifactsDirectory)" -Recurse
           displayName: 'Debug: List Files in ArtifactsDirectory'
-        - publish: $(Build.ArtifactStagingDirectory)/oneauthtestapp/android.AndroidTestApp
+        - publish: $(Build.ArtifactStagingDirectory)/oneauthtestapps
           displayName: 'Publish OneAuth Test apk for later use'
           artifact: oneauthE2ETestApp
         - task: UniversalPackages@0
