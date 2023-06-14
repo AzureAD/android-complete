@@ -238,7 +238,7 @@ stages:
             connection: '$(oneAuthServiceConnection)'
             project: '$(oneAuthProjectId)'
             definition: '$(oneAuthTestAppPipelineId)'
-            version: '20752958'
+            version: '20754022'
             downloadPath: '$(Build.ArtifactStagingDirectory)'
         - powershell: |
             $SEARCH_PATH="$(Build.ArtifactStagingDirectory)"
