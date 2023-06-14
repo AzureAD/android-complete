@@ -251,14 +251,14 @@ stages:
                 Write-Host $_.FullName
               }
             }
-        - publish: $(Build.ArtifactStagingDirectory)/android.AndroidTestApp
+        - publish: $(Build.ArtifactStagingDirectory)/OneAuthTestApp
           displayName: 'Publish OneAuth Test apk for later use'
           artifact: oneauthE2ETestApp
         - task: UniversalPackages@0
           displayName: 'Push OneAuth Test apk to internal feed'
           inputs:
             command: 'publish'
-            publishDirectory: '$(Build.ArtifactStagingDirectory)/android.AndroidTestApp'
+            publishDirectory: '$(Build.ArtifactStagingDirectory)/OneAuthTestApp'
             packagePublishDescription: 'OneAuth Test apk'
             vstsFeedPublish: 'Engineering/BrokerE2ETestApps'
             vstsFeedPackagePublish: com.microsoft.oneauth.testapp
