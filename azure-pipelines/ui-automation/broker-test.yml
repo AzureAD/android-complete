@@ -242,14 +242,14 @@ stages:
             definition: '$(oneAuthTestAppPipelineId)'
             version: '$(buildApk.BrokeBuildId)'
             downloadPath: '$(Build.ArtifactStagingDirectory)/oneauthtestapp'
-        - publish: $(Build.ArtifactStagingDirectory)/oneauthtestapp
+        - publish: $(Build.ArtifactStagingDirectory)/oneauthtestapp/android.AndroidTestApp
           displayName: 'Publish OneAuth Test apk for later use'
-          artifact: oneauthtestapp
+          artifact: oneauthE2ETestApp
         - task: UniversalPackages@0
           displayName: 'Push OneAuth Test apk to internal feed'
           inputs:
             command: 'publish'
-            publishDirectory: '$(Build.ArtifactStagingDirectory)/oneauthtestapp'
+            publishDirectory: '$(Build.ArtifactStagingDirectory)/oneauthtestapp/android.AndroidTestApp'
             packagePublishDescription: 'OneAuth Test apk'
             vstsFeedPublish: 'Engineering/BrokerE2ETestApps'
             vstsFeedPackagePublish: com.microsoft.oneauth.testapp
