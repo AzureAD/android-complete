@@ -263,7 +263,7 @@ stages:
             vstsFeedPublish: 'Engineering/BrokerE2ETestApps'
             vstsFeedPackagePublish: com.microsoft.oneauth.testapp
             versionOption: 'custom'
-            versionPublish: $(Date:yyyyMMdd)$(Rev:.r)
+            versionPublish: '$(Date:yyyyMMdd)$(Rev:.r)'
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
