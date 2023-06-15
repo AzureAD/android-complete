@@ -112,7 +112,7 @@ parameters:
 - name: oldOneAuthTestAppVersion
   displayName: Old OneAuth Test App Version
   type: string
-  default: '1.0.0'
+  default: '0.20230614.1'
 - name: msalTestTarget
   displayName: Test Targets for MSAL
   type: string
