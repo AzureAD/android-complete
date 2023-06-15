@@ -221,22 +221,21 @@ stages:
       steps:
         - checkout: self
           persistCredentials: True
-#        - task: PowerShell@2
-#          displayName: Queue and wait for OneAuth Test App Apk generation pipeline
-#          name: buildApk
-#          continueOnError: true
-#          inputs:
-#            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-#            arguments: '-OrganizationUrl "https://office.visualstudio.com/" -Project "OneAuth" -PipelinePAT "$(OfficePAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(oneAuthTestAppPipelineId)"'
-#            workingDirectory: '$(Build.SourcesDirectory)'
+        - task: PowerShell@2
+          displayName: Queue and wait for OneAuth Test App Apk generation pipeline
+          name: buildApk
+          continueOnError: true
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+            arguments: '-OrganizationUrl "https://office.visualstudio.com/" -Project "OneAuth" -PipelinePAT "$(OfficePAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(oneAuthTestAppPipelineId)"'
+            workingDirectory: '$(Build.SourcesDirectory)'
         - task: DownloadExternalBuildArtifacts@15
           displayName: 'Download New Built OneAuth test app'
           inputs:
             connection: '$(oneAuthServiceConnection)'
             project: '$(oneAuthProjectId)'
             definition: '$(oneAuthTestAppPipelineId)'
-            version: '20763910'
-#            version: '$(buildApk.BrokeBuildId)'
+            version: '$(buildApk.BrokeBuildId)'
             downloadPath: '$(Build.ArtifactStagingDirectory)'
         - task: PowerShell@2
           name: createOneAuthTestAppVersion
