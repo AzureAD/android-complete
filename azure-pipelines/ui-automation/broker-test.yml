@@ -250,7 +250,7 @@ stages:
               Write-Host "##vso[task.setvariable variable=OneAuthTestAppVersion;isOutput=true]$version"
         - publish: $(Build.ArtifactStagingDirectory)/OneAuthTestApp
           displayName: 'Publish OneAuth Test apk for later use'
-          artifact: oneauthE2ETestApp
+          artifact: oneauthtestapp
         - task: UniversalPackages@0
           displayName: 'Push OneAuth Test apk to internal feed'
           inputs:
