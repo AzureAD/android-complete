@@ -59,7 +59,6 @@ variables:
   LTWApk: LTW-signed.apk
   oldLTWApk: OldLTW-signed.apk
   oneAuthServiceConnection: OneAuth-Integration
-  oneAuthTestAppVersion: $[format('0.{0:yyyyMMdd}.{1}', pipeline.startTime, Build.BuildId)]
   
 parameters:
 - name: firebaseDeviceIdHigh
@@ -238,8 +237,20 @@ stages:
             definition: '$(oneAuthTestAppPipelineId)'
             version: '20763910'
             downloadPath: '$(Build.ArtifactStagingDirectory)'
-        - powershell: |
-              echo "OneAuthTestApp version: ${{ variables.oneAuthTestAppVersion }}"
+        - task: PowerShell@2
+          name: createOneAuthTestAppVersion
+          inputs:
+            targetType: 'inline'
+            script: |
+              $currentDate = Get-Date -Format "yyyyMMdd"
+              $revision = "$(Build.BuildNumber)"
+
+              $version = "0.$currentDate.$revision"
+
+              echo "Version: $version"
+
+              # Set the version as a pipeline variable
+              Write-Host "##vso[task.setvariable variable=OneAuthTestAppVersion;isOutput=true]$version"
         - publish: $(Build.ArtifactStagingDirectory)/OneAuthTestApp
           displayName: 'Publish OneAuth Test apk for later use'
           artifact: oneauthE2ETestApp
@@ -252,7 +263,7 @@ stages:
             vstsFeedPublish: 'Engineering/BrokerE2ETestApps'
             vstsFeedPackagePublish: com.microsoft.oneauth.testapp
             versionOption: 'custom'
-            versionPublish: ${{ variables.oneAuthTestAppVersion }}
+            versionPublish: ${{ createOneAuthTestAppVersion.oneAuthTestAppVersion }}
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
