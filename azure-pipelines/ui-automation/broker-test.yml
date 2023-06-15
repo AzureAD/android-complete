@@ -235,7 +235,8 @@ stages:
             connection: '$(oneAuthServiceConnection)'
             project: '$(oneAuthProjectId)'
             definition: '$(oneAuthTestAppPipelineId)'
-            version: '$(buildApk.BrokeBuildId)'
+            version: '20763910'
+#            version: '$(buildApk.BrokeBuildId)'
             downloadPath: '$(Build.ArtifactStagingDirectory)'
         - task: PowerShell@2
           name: createOneAuthTestAppVersion
@@ -243,8 +244,9 @@ stages:
             targetType: 'inline'
             script: |
               $currentDate = Get-Date -Format "yyyyMMdd"
-              $buildId = "$(Build.BuildId)"
-              $version = "0.$currentDate.$buildId"
+              $brokerBuildId = "$(Build.BuildId)"
+              $oneAuthBuildId = "$(buildApk.BrokeBuildId)"
+              $version = "$currentDate.$brokerBuildId.$oneAuthBuildId"
               echo "Version: $version"
               # Set the version as a pipeline variable
               Write-Host "##vso[task.setvariable variable=OneAuthTestAppVersion;isOutput=true]$version"
