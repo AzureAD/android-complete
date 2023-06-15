@@ -239,7 +239,7 @@ stages:
             version: '20763910'
             downloadPath: '$(Build.ArtifactStagingDirectory)'
         - powershell: |
-              echo "OneAuthTestApp version: $(oneAuthTestAppVersion)"
+              echo "OneAuthTestApp version: ${{ variables.oneAuthTestAppVersion }}"
         - publish: $(Build.ArtifactStagingDirectory)/OneAuthTestApp
           displayName: 'Publish OneAuth Test apk for later use'
           artifact: oneauthE2ETestApp
