@@ -252,7 +252,7 @@ stages:
             vstsFeedPublish: 'Engineering/BrokerE2ETestApps'
             vstsFeedPackagePublish: com.microsoft.oneauth.testapp
             versionOption: 'custom'
-            versionPublish: $(oneAuthTestAppVersion)
+            versionPublish: ${{ variables.oneAuthTestAppVersion }}
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
