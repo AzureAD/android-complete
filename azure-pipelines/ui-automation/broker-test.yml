@@ -59,7 +59,7 @@ variables:
   LTWApk: LTW-signed.apk
   oldLTWApk: OldLTW-signed.apk
   oneAuthServiceConnection: OneAuth-Integration
-  oneAuthTestAppVersion: '0.$(Date:yyyyMMdd).$(Rev:.r)'
+  oneAuthTestAppVersion: $[format('0.{0:yyyyMMdd}.{1}', pipeline.startTime, Build.BuildId)]
   
 parameters:
 - name: firebaseDeviceIdHigh
@@ -252,7 +252,7 @@ stages:
             vstsFeedPublish: 'Engineering/BrokerE2ETestApps'
             vstsFeedPackagePublish: com.microsoft.oneauth.testapp
             versionOption: 'custom'
-            versionPublish: '0.20230614.1'
+            versionPublish: $(oneAuthTestAppVersion)
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
