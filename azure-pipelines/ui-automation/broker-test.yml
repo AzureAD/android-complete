@@ -243,9 +243,9 @@ stages:
             targetType: 'inline'
             script: |
               $currentDate = Get-Date -Format "yyyyMMdd"
-              $revision = "$(Build.BuildNumber)"
+              $buildId = "$(Build.BuildId)"
 
-              $version = "0.$currentDate.$revision"
+              $version = "0.$currentDate.$buildId"
 
               echo "Version: $version"
 
@@ -263,7 +263,7 @@ stages:
             vstsFeedPublish: 'Engineering/BrokerE2ETestApps'
             vstsFeedPackagePublish: com.microsoft.oneauth.testapp
             versionOption: 'custom'
-            versionPublish: '(createOneAuthTestAppVersion.oneAuthTestAppVersion)'
+            versionPublish: '$(createOneAuthTestAppVersion.oneAuthTestAppVersion)'
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
