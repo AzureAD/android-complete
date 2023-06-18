@@ -86,7 +86,7 @@ stages:
   displayName: Common4j - Build and publish
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
   variables:
-    ${{ if testC }}:
+    ${{ if variables.testC }}:
       jobs:
       - template: assemble&publish.yml
         parameters:
