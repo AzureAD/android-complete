@@ -83,7 +83,7 @@ variables:
 stages:
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries1'
-  ${{ if testC }}:
+  ${{ if variables.testC }}:
     displayName: Common4j - Build and publish
   ${{ else }}:
     displayName: Common4j - Build and publish haha ${testC}
