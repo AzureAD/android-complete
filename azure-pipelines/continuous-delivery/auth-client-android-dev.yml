@@ -101,317 +101,317 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
-- stage: 'publishCommon4jLibraries'
-  displayName: Common4j - Build and publish
-  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
-  jobs:
-  - template: assemble&publish.yml
-    parameters:
-      repository: common
-      project: common4j
-      testCmd: common4jUnitTestCoverageReport
-      dependencyParams: $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam)
-      testParams: $(projVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(projVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
-      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-# Common - Build and publish
-- stage: 'publishCommonLibraries'
-  displayName: Common - Build and publish
-  dependsOn: publishCommon4jLibraries
-  jobs:
-  - template: assemble&publish.yml
-    parameters:
-      repository: common
-      project: common
-      assembleCmd: assembleDist
-      testCmd: distDebugCommonUnitTestCoverageReport
-      publishCmd: publishDistReleasePublicationToVsts-maven-adal-androidRepository
-      dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(common4jVersionParam)
-      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(projVersionParam) $(common4jVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
-      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-# Broker4j - Build and publish
-- stage: 'publishBroke4jLibraries'
-  displayName: Broker4j - Build and publish
-  dependsOn: 
-  - publishCommon4jLibraries
-  jobs:
-  - template: assemble&publish.yml
-    parameters:
-      repository: broker
-      project: broker4j
-      testCmd: broker4jUnitTestCoverageReport
-      publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
-      dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(common4jVersionParam)
-      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(projVersionParam) $(common4jVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
-      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-# Broker - Build and publish
-- stage: 'publishBrokerLibraries'
-  displayName: Android Broker - Build and publish
-  variables:
-  - group: AndroidAuthClientVariables
-  - name : powerLiftApiKeyParam
-    value : -PpowerLiftApiKey=$(powerliftApiKey)
-  dependsOn: 
-  - publishCommonLibraries
-  - publishBroke4jLibraries
-  jobs:
-  - template: assemble&publish.yml
-    parameters:
-      repository: broker
-      project: AADAuthenticator
-      assembleCmd: assembleDist
-      testCmd: distDebugAADAuthenticatorUnitTestCoverageReport
-      publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
-      dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam)
-      testParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
-      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      agentImage: 1ES-AndroidPool-EOC
-# Linux Broker - Build and publish
-- stage: 'publishLinuxBrokeLibraries'
-  displayName: Linux Broker - Build and publish
-  dependsOn: 
-  - publishCommon4jLibraries
-  - publishBroke4jLibraries
-  jobs:
-  - template: assemble&publish.yml
-    parameters:
-      repository: broker
-      project: LinuxBroker
-      publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
-      testCmd: linuxBrokerUnitTestCoverageReport
-      dependencyParams: $(broker4jVersionParam) $(common4jVersionParam) $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
-      publishParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
-      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
-  - job: PublishLinuxBrokerPackage
-    dependsOn: publishLinuxBrokerLibraries
-    displayName: Publish Linux Broker Package
-    pool:
-      vmImage: ubuntu-latest
-    variables:
-    - group: AndroidAuthClientVariables
-    steps:
-    - checkout: broker
-      persistCredentials: True
-    - task: Gradle@3
-      displayName: Build and publish linux broker package
-      env:
-        ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME: $(AndroidAuthClient-Internal-Maven-Username)
-        ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN: $(System.AccessToken)
-      inputs:
-        cwd: $(Build.SourcesDirectory)/broker-java-root
-        tasks: LinuxBrokerPackage:clean LinuxBrokerPackage:buildDeb $(linuxBrokerVersion) --build-cache --info
-        publishJUnitResults: false
-        jdkArchitecture: x86
-        sqAnalysisBreakBuildIfQualityGateFailed: false
-    - task: CopyFiles@2
-      name: CopyFiles1
-      displayName: Copy Files to Artifact Staging Directory
-      inputs:
-        SourceFolder: LinuxBrokerPackage/build/distributions
-        TargetFolder: $(build.artifactstagingdirectory)
-    - task: PublishPipelineArtifact@1
-      name: PublishPipelineArtifacts1
-      displayName: 'Publish Artifact: LinuxBrokerPackage Linux Test App Deb'
-      inputs:
-        ArtifactName: LinuxBrokerPackage Deb Package
-        TargetPath: $(build.artifactstagingdirectory)
-# Msal - Build and publish      
-- stage: 'publishMsal'
-  displayName: Msal - Build and publish
-  dependsOn: publishCommonLibraries
-  jobs:
-  - template: assemble&publish.yml
-    parameters:
-      repository: msal
-      project: msal
-      assembleCmd: assembleDistRelease
-      testCmd: distDebugMsalUnitTestCoverageReport
-      publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
-      dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(commonVersionParam)
-      testParams: $(projVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(projVersionParam) $(commonVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
-      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-# Adal - Build and publish
-- stage: 'publishAdal'
-  displayName: Adal - Build and publish
-  dependsOn: publishCommonLibraries
-  jobs:
-  - template: assemble&publish.yml
-    parameters:
-      repository: adal
-      project: adal
-      assembleCmd: assembleDist
-      testCmd: testDistDebugUnitTest
-      publishCmd: publishAdalPublicationToVsts-maven-adal-androidRepository 
-      dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(commonVersionParam)
-      testParams: $(projVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(projVersionParam) $(commonVersionParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
-      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
+# - stage: 'publishCommon4jLibraries'
+#   displayName: Common4j - Build and publish
+#   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+#   jobs:
+#   - template: assemble&publish.yml
+#     parameters:
+#       repository: common
+#       project: common4j
+#       testCmd: common4jUnitTestCoverageReport
+#       dependencyParams: $(javaProjectDependencyParam)
+#       assembleParams: $(projVersionParam)
+#       testParams: $(projVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+#       publishParams: $(projVersionParam)
+#       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
+#       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+#       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+# # Common - Build and publish
+# - stage: 'publishCommonLibraries'
+#   displayName: Common - Build and publish
+#   dependsOn: publishCommon4jLibraries
+#   jobs:
+#   - template: assemble&publish.yml
+#     parameters:
+#       repository: common
+#       project: common
+#       assembleCmd: assembleDist
+#       testCmd: distDebugCommonUnitTestCoverageReport
+#       publishCmd: publishDistReleasePublicationToVsts-maven-adal-androidRepository
+#       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
+#       assembleParams: $(projVersionParam) $(common4jVersionParam)
+#       testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+#       publishParams: $(projVersionParam) $(common4jVersionParam)
+#       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
+#       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+#       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+# # Broker4j - Build and publish
+# - stage: 'publishBroke4jLibraries'
+#   displayName: Broker4j - Build and publish
+#   dependsOn: 
+#   - publishCommon4jLibraries
+#   jobs:
+#   - template: assemble&publish.yml
+#     parameters:
+#       repository: broker
+#       project: broker4j
+#       testCmd: broker4jUnitTestCoverageReport
+#       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
+#       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
+#       assembleParams: $(projVersionParam) $(common4jVersionParam)
+#       testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+#       publishParams: $(projVersionParam) $(common4jVersionParam)
+#       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
+#       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+#       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+# # Broker - Build and publish
+# - stage: 'publishBrokerLibraries'
+#   displayName: Android Broker - Build and publish
+#   variables:
+#   - group: AndroidAuthClientVariables
+#   - name : powerLiftApiKeyParam
+#     value : -PpowerLiftApiKey=$(powerliftApiKey)
+#   dependsOn: 
+#   - publishCommonLibraries
+#   - publishBroke4jLibraries
+#   jobs:
+#   - template: assemble&publish.yml
+#     parameters:
+#       repository: broker
+#       project: AADAuthenticator
+#       assembleCmd: assembleDist
+#       testCmd: distDebugAADAuthenticatorUnitTestCoverageReport
+#       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
+#       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
+#       assembleParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam)
+#       testParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+#       publishParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam)
+#       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
+#       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+#       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+#       agentImage: 1ES-AndroidPool-EOC
+# # Linux Broker - Build and publish
+# - stage: 'publishLinuxBrokeLibraries'
+#   displayName: Linux Broker - Build and publish
+#   dependsOn: 
+#   - publishCommon4jLibraries
+#   - publishBroke4jLibraries
+#   jobs:
+#   - template: assemble&publish.yml
+#     parameters:
+#       repository: broker
+#       project: LinuxBroker
+#       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
+#       testCmd: linuxBrokerUnitTestCoverageReport
+#       dependencyParams: $(broker4jVersionParam) $(common4jVersionParam) $(javaProjectDependencyParam)
+#       assembleParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
+#       publishParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
+#       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
+#       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+#       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+#       testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
+#   - job: PublishLinuxBrokerPackage
+#     dependsOn: publishLinuxBrokerLibraries
+#     displayName: Publish Linux Broker Package
+#     pool:
+#       vmImage: ubuntu-latest
+#     variables:
+#     - group: AndroidAuthClientVariables
+#     steps:
+#     - checkout: broker
+#       persistCredentials: True
+#     - task: Gradle@3
+#       displayName: Build and publish linux broker package
+#       env:
+#         ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME: $(AndroidAuthClient-Internal-Maven-Username)
+#         ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN: $(System.AccessToken)
+#       inputs:
+#         cwd: $(Build.SourcesDirectory)/broker-java-root
+#         tasks: LinuxBrokerPackage:clean LinuxBrokerPackage:buildDeb $(linuxBrokerVersion) --build-cache --info
+#         publishJUnitResults: false
+#         jdkArchitecture: x86
+#         sqAnalysisBreakBuildIfQualityGateFailed: false
+#     - task: CopyFiles@2
+#       name: CopyFiles1
+#       displayName: Copy Files to Artifact Staging Directory
+#       inputs:
+#         SourceFolder: LinuxBrokerPackage/build/distributions
+#         TargetFolder: $(build.artifactstagingdirectory)
+#     - task: PublishPipelineArtifact@1
+#       name: PublishPipelineArtifacts1
+#       displayName: 'Publish Artifact: LinuxBrokerPackage Linux Test App Deb'
+#       inputs:
+#         ArtifactName: LinuxBrokerPackage Deb Package
+#         TargetPath: $(build.artifactstagingdirectory)
+# # Msal - Build and publish      
+# - stage: 'publishMsal'
+#   displayName: Msal - Build and publish
+#   dependsOn: publishCommonLibraries
+#   jobs:
+#   - template: assemble&publish.yml
+#     parameters:
+#       repository: msal
+#       project: msal
+#       assembleCmd: assembleDistRelease
+#       testCmd: distDebugMsalUnitTestCoverageReport
+#       publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
+#       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
+#       assembleParams: $(projVersionParam) $(commonVersionParam)
+#       testParams: $(projVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+#       publishParams: $(projVersionParam) $(commonVersionParam)
+#       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
+#       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
+#       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+# # Adal - Build and publish
+# - stage: 'publishAdal'
+#   displayName: Adal - Build and publish
+#   dependsOn: publishCommonLibraries
+#   jobs:
+#   - template: assemble&publish.yml
+#     parameters:
+#       repository: adal
+#       project: adal
+#       assembleCmd: assembleDist
+#       testCmd: testDistDebugUnitTest
+#       publishCmd: publishAdalPublicationToVsts-maven-adal-androidRepository 
+#       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
+#       assembleParams: $(projVersionParam) $(commonVersionParam)
+#       testParams: $(projVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+#       publishParams: $(projVersionParam) $(commonVersionParam)
+#       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
+#       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
+#       shouldPublish: ${{ parameters.shouldPublishLibraries }}
 
-# Combine and Publish Code Coverage
-- stage: 'combineAndPublishCodeCoverage'
-  displayName: Combine and Publish Code Coverage
-  dependsOn:
-    - publishMsal
-    - publishBrokerLibraries
-    - publishLinuxBrokeLibraries
-    - publishCommonLibraries
-    - publishAdal
-  jobs:
-    - job: combine_and_publish_code_coverage
-      displayName: Combine and Publish
-      steps:
-        - checkout: self
-          persistCredentials: True
-        - download: current
-        - task: reportgenerator@4
-          inputs:
-            reports: '$(Pipeline.Workspace)/Code Coverage Report_$(Build.BuildId)/summary$(Build.BuildId)/*.xml'
-            targetdir: '$(Build.SourcesDirectory)/CoverageResults'
-        - task: PublishCodeCoverageResults@1
-          displayName: Publish Code Coverage Report
-          inputs:
-            codeCoverageTool: Cobertura
-            summaryFileLocation: '$(Build.SourcesDirectory)/CoverageResults/Cobertura.xml'
+# # Combine and Publish Code Coverage
+# - stage: 'combineAndPublishCodeCoverage'
+#   displayName: Combine and Publish Code Coverage
+#   dependsOn:
+#     - publishMsal
+#     - publishBrokerLibraries
+#     - publishLinuxBrokeLibraries
+#     - publishCommonLibraries
+#     - publishAdal
+#   jobs:
+#     - job: combine_and_publish_code_coverage
+#       displayName: Combine and Publish
+#       steps:
+#         - checkout: self
+#           persistCredentials: True
+#         - download: current
+#         - task: reportgenerator@4
+#           inputs:
+#             reports: '$(Pipeline.Workspace)/Code Coverage Report_$(Build.BuildId)/summary$(Build.BuildId)/*.xml'
+#             targetdir: '$(Build.SourcesDirectory)/CoverageResults'
+#         - task: PublishCodeCoverageResults@1
+#           displayName: Publish Code Coverage Report
+#           inputs:
+#             codeCoverageTool: Cobertura
+#             summaryFileLocation: '$(Build.SourcesDirectory)/CoverageResults/Cobertura.xml'
 
-# Promote published packages
-- stage: 'promotePackages'
-  displayName: Promote published packages
-  dependsOn:
-    - publishMsal
-    - publishAdal
-    - publishCommonLibraries
-    - publishBrokerLibraries
-  jobs:
-    - job: promote_packages
-      displayName: Promote Packages - Prerelease
-      steps:
-        - checkout: self
-          persistCredentials: True
-        - task: PowerShell@2
-          displayName: Run script to promote packages - Prerelease
-          inputs:
-            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
-            arguments: '-PackagingPAT "$env:SYSTEM_ACCESSTOKEN" -PackageVersion "$(versionNumber)" -adAccountsVersion "$(brokerVersionNumber)"'
-            workingDirectory: '$(Build.SourcesDirectory)'
-          env:
-            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+# # Promote published packages
+# - stage: 'promotePackages'
+#   displayName: Promote published packages
+#   dependsOn:
+#     - publishMsal
+#     - publishAdal
+#     - publishCommonLibraries
+#     - publishBrokerLibraries
+#   jobs:
+#     - job: promote_packages
+#       displayName: Promote Packages - Prerelease
+#       steps:
+#         - checkout: self
+#           persistCredentials: True
+#         - task: PowerShell@2
+#           displayName: Run script to promote packages - Prerelease
+#           inputs:
+#             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
+#             arguments: '-PackagingPAT "$env:SYSTEM_ACCESSTOKEN" -PackageVersion "$(versionNumber)" -adAccountsVersion "$(brokerVersionNumber)"'
+#             workingDirectory: '$(Build.SourcesDirectory)'
+#           env:
+#             SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 
-# BrokerApk - Authenticator Queue pipeline
-- stage: 'queueAuthenticatorPipeline'
-  displayName: Authenticator Broker Apk Generation
-  dependsOn: promotePackages
-  jobs:
-    - job: queue_build_authenticator
-      displayName: Generate Authenticator Apk
-      timeoutInMinutes: 120
-      steps:
-        - checkout: self
-          persistCredentials: True
-        - task: PowerShell@2
-          displayName: Queue and wait for Authenticator Apk generation pipeline
-          inputs:
-            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(pipelinepat)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(authenticatorBranch)"'
-            workingDirectory: '$(Build.SourcesDirectory)'
-# BrokerApk - Company portal Queue pipeline
-- stage: 'queueCompanyPortalPipeline'
-  displayName: Company Portal Broker Apk Generation
-  dependsOn: promotePackages
-  jobs:
-    - job: queue_build_CompanyPortal
-      displayName: Generate CompanyPortal Apk
-      timeoutInMinutes: 120
-      steps:
-        - checkout: self
-          persistCredentials: True
-        - task: PowerShell@2
-          displayName: Queue and wait for Company Portal Apk generation pipeline
-          continueOnError: true
-          inputs:
-            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(pipelinepat)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "237827" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(companyPortalBranch)"'
-            workingDirectory: '$(Build.SourcesDirectory)'
-# BrokerApk - Link to Windows Queue pipeline
-- stage: 'queueLinkToWindowsPipeline'
-  displayName: Link To Windows Apk Generation
-  dependsOn: promotePackages
-  condition: eq(variables['LTWIntegrationEnabled'], 'true')
-  jobs:
-    - job: queue_build_LinkToWindows
-      displayName: Generate Link To Windows Apk
-      timeoutInMinutes: 120
-      steps:
-        - checkout: self
-          persistCredentials: True
-        - task: PowerShell@2
-          displayName: Queue and wait for Link to Windows Apk generation pipeline
-          continueOnError: true
-          inputs:
-            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(OSPAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "44201" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)"'
-            workingDirectory: '$(Build.SourcesDirectory)'
+# # BrokerApk - Authenticator Queue pipeline
+# - stage: 'queueAuthenticatorPipeline'
+#   displayName: Authenticator Broker Apk Generation
+#   dependsOn: promotePackages
+#   jobs:
+#     - job: queue_build_authenticator
+#       displayName: Generate Authenticator Apk
+#       timeoutInMinutes: 120
+#       steps:
+#         - checkout: self
+#           persistCredentials: True
+#         - task: PowerShell@2
+#           displayName: Queue and wait for Authenticator Apk generation pipeline
+#           inputs:
+#             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+#             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(pipelinepat)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(authenticatorBranch)"'
+#             workingDirectory: '$(Build.SourcesDirectory)'
+# # BrokerApk - Company portal Queue pipeline
+# - stage: 'queueCompanyPortalPipeline'
+#   displayName: Company Portal Broker Apk Generation
+#   dependsOn: promotePackages
+#   jobs:
+#     - job: queue_build_CompanyPortal
+#       displayName: Generate CompanyPortal Apk
+#       timeoutInMinutes: 120
+#       steps:
+#         - checkout: self
+#           persistCredentials: True
+#         - task: PowerShell@2
+#           displayName: Queue and wait for Company Portal Apk generation pipeline
+#           continueOnError: true
+#           inputs:
+#             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+#             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(pipelinepat)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "237827" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(companyPortalBranch)"'
+#             workingDirectory: '$(Build.SourcesDirectory)'
+# # BrokerApk - Link to Windows Queue pipeline
+# - stage: 'queueLinkToWindowsPipeline'
+#   displayName: Link To Windows Apk Generation
+#   dependsOn: promotePackages
+#   condition: eq(variables['LTWIntegrationEnabled'], 'true')
+#   jobs:
+#     - job: queue_build_LinkToWindows
+#       displayName: Generate Link To Windows Apk
+#       timeoutInMinutes: 120
+#       steps:
+#         - checkout: self
+#           persistCredentials: True
+#         - task: PowerShell@2
+#           displayName: Queue and wait for Link to Windows Apk generation pipeline
+#           continueOnError: true
+#           inputs:
+#             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+#             arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(OSPAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "44201" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)"'
+#             workingDirectory: '$(Build.SourcesDirectory)'
 
-# Broker - E2E Automation
-- stage: 'runBrokerE2EAutomation'
-  displayName: Broker E2E UI Automation Run
-  dependsOn:
-    - queueAuthenticatorPipeline
-    - queueCompanyPortalPipeline
-  condition: |
-    and
-    (
-      not(failed()),
-      not(canceled()),
-      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
-    )
-  jobs:
-    - job: trigger_automation
-      displayName: Trigger Broker Automation Run
-      timeoutInMinutes: 80
-      steps:
-        - checkout: self
-          persistCredentials: True
-        - task: PowerShell@2
-          displayName: Queue and wait for Broker E2E Automation pipeline
-          continueOnError: true
-          inputs:
-            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}'' , ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
-            workingDirectory: '$(Build.SourcesDirectory)'
-          env:
-            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
-        - task: PowerShell@2
-          displayName: Import Broker E2E Automation results
-          inputs:
-            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/import-testResults.ps1'
-            arguments: '-AdoPAT "$env:SYSTEM_ACCESSTOKEN" -SourceBuildId $(brokerAutomationBuildId) -TargetBuildId $(Build.BuildId)'
-            workingDirectory: '$(Build.SourcesDirectory)'
-          env:
-            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
-...
+# # Broker - E2E Automation
+# - stage: 'runBrokerE2EAutomation'
+#   displayName: Broker E2E UI Automation Run
+#   dependsOn:
+#     - queueAuthenticatorPipeline
+#     - queueCompanyPortalPipeline
+#   condition: |
+#     and
+#     (
+#       not(failed()),
+#       not(canceled()),
+#       or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
+#     )
+#   jobs:
+#     - job: trigger_automation
+#       displayName: Trigger Broker Automation Run
+#       timeoutInMinutes: 80
+#       steps:
+#         - checkout: self
+#           persistCredentials: True
+#         - task: PowerShell@2
+#           displayName: Queue and wait for Broker E2E Automation pipeline
+#           continueOnError: true
+#           inputs:
+#             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+#             arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}'' , ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
+#             workingDirectory: '$(Build.SourcesDirectory)'
+#           env:
+#             SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+#         - task: PowerShell@2
+#           displayName: Import Broker E2E Automation results
+#           inputs:
+#             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/import-testResults.ps1'
+#             arguments: '-AdoPAT "$env:SYSTEM_ACCESSTOKEN" -SourceBuildId $(brokerAutomationBuildId) -TargetBuildId $(Build.BuildId)'
+#             workingDirectory: '$(Build.SourcesDirectory)'
+#           env:
+#             SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+# ...
