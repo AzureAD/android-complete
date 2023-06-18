@@ -44,7 +44,7 @@ parameters:
   - name: customVersionNumber
     displayName: Version Number
     type: string
-    default: ''
+    default: Default
   - name: shouldRunUiValidation
     displayName: Run E2E UI Validation?
     type: boolean
@@ -63,12 +63,14 @@ parameters:
     default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
 
 variables:
-  ${{ if parameters.customVersionNumber }}:  
+  ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
     versionNumber: $(Build.BuildNumber)
     brokerVersionNumber: $[replace(variables['build.buildnumber'], '0.0', '8.1')]
+    testC: ''
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
     brokerVersionNumber: ${{ parameters.customVersionNumber }}
+    testC: 'common'
   projVersionParam: -PprojVersion=$(versionNumber)
   common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
   broker4jVersionParam: -PdistBroker4jVersion=$(versionNumber)
@@ -81,7 +83,7 @@ variables:
 stages:
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries1'
-  displayName: Common4j - Build and publish $(brokerVersionNumber)
+  displayName: Common4j - Build and publish
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
   - template: assemble&publish.yml
