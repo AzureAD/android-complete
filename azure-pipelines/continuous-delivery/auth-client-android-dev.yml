@@ -92,7 +92,7 @@ stages:
       project: common4j
       testCmd: common4jUnitTestCoverageReport
       dependencyParams: $(javaProjectDependencyParam)
-      ${{if variables.testC}}:
+      ${{if not(variables.testC)}}:
         assembleParams: $(projVersionParam)
       ${{else}}:
         assembleParams: ''
