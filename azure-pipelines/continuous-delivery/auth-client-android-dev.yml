@@ -44,7 +44,7 @@ parameters:
   - name: customVersionNumber
     displayName: Version Number
     type: string
-    default: Default
+    default: ''
   - name: shouldRunUiValidation
     displayName: Run E2E UI Validation?
     type: boolean
@@ -63,7 +63,7 @@ parameters:
     default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
 
 variables:
-  ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
+  ${{ if parameters.customVersionNumber }}:  
     versionNumber: $(Build.BuildNumber)
     brokerVersionNumber: $[replace(variables['build.buildnumber'], '0.0', '8.1')]
   ${{ else }}:
@@ -80,6 +80,22 @@ variables:
 
 stages:
 # Common4j - Build and publish
+- stage: 'publishCommon4jLibraries1'
+  displayName: Common4j - Build and publish $(brokerVersionNumber)
+  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+  jobs:
+  - template: assemble&publish.yml
+    parameters:
+      repository: common
+      project: common4j
+      testCmd: common4jUnitTestCoverageReport
+      dependencyParams: $(javaProjectDependencyParam)
+      assembleParams: $(projVersionParam)
+      testParams: $(projVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      publishParams: $(projVersionParam)
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
+      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+      shouldPublish: ${{ parameters.shouldPublishLibraries }}
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
