@@ -80,25 +80,27 @@ variables:
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   brokerAutomationPipelineId: 1490
 
-${{ if variables.testC }}:
-  stages:
-  # Common4j - Build and publish
-  - stage: 'publishCommon4jLibraries1'
-    displayName: Common4j - Build and publish
-    dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
-    jobs:
-    - template: assemble&publish.yml
-      parameters:
-        repository: common
-        project: common4j
-        testCmd: common4jUnitTestCoverageReport
-        dependencyParams: $(javaProjectDependencyParam)
+stages:
+# Common4j - Build and publish
+- stage: 'publishCommon4jLibraries1'
+  displayName: Common4j - Build and publish
+  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+  jobs:
+  - template: assemble&publish.yml
+    parameters:
+      repository: common
+      project: common4j
+      testCmd: common4jUnitTestCoverageReport
+      dependencyParams: $(javaProjectDependencyParam)
+      ${{if variables.testC}}:
         assembleParams: $(projVersionParam)
-        testParams: $(projVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-        publishParams: $(projVersionParam)
-        vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
-        vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-        shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      ${{else}}:
+        assembleParams: ''
+      testParams: $(projVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      publishParams: $(projVersionParam)
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
+      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+      shouldPublish: ${{ parameters.shouldPublishLibraries }}
 # - stage: 'publishCommon4jLibraries'
 #   displayName: Common4j - Build and publish
 #   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
