@@ -221,52 +221,47 @@ stages:
       steps:
         - checkout: self
           persistCredentials: True
-#        - task: PowerShell@2
-#          displayName: Queue and wait for OneAuth Test App Apk generation pipeline
-#          name: buildApk
-#          continueOnError: true
-#          inputs:
-#            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-#            arguments: '-OrganizationUrl "https://office.visualstudio.com/" -Project "OneAuth" -PipelinePAT "$(OfficePAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(oneAuthTestAppPipelineId)"'
-#            workingDirectory: '$(Build.SourcesDirectory)'
-        - script: mkdir oneauthtestapp
-          displayName: 'Make oneauthtestapp dir'
-          workingDirectory: '$(Build.ArtifactStagingDirectory)'
+        - task: PowerShell@2
+          displayName: Queue and wait for OneAuth Test App Apk generation pipeline
+          name: buildApk
+          continueOnError: true
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+            arguments: '-OrganizationUrl "https://office.visualstudio.com/" -Project "OneAuth" -PipelinePAT "$(OfficePAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(oneAuthTestAppPipelineId)"'
+            workingDirectory: '$(Build.SourcesDirectory)'
         - task: DownloadExternalBuildArtifacts@15
           displayName: 'Download OneAuth test app'
           inputs:
             connection: '$(oneAuthServiceConnection)'
             project: '$(oneAuthProjectId)'
             definition: '$(oneAuthTestAppPipelineId)'
-            version: '20754022'
+            version: '$(buildApk.BrokeBuildId)'
             downloadPath: '$(Build.ArtifactStagingDirectory)'
-        - powershell: |
-            $SEARCH_PATH="$(Build.ArtifactStagingDirectory)"
-            Write-Host "##[debug] Found directories"
-            ForEach ($Dir in $SEARCH_PATH -split ";") {
-              Write-Host "$Dir"
-            }
-            Write-Host ""
-            Write-Host ""
-            Write-Host "##[debug] Found files"
-            ForEach ($Dir in $SEARCH_PATH -split ";") {
-              Get-ChildItem $Dir -File -ErrorAction Continue | ForEach-Object -Process {
-                Write-Host $_.FullName
-              }
-            }
-        - publish: $(Build.ArtifactStagingDirectory)/android.AndroidTestApp
+        - task: PowerShell@2
+          name: createOneAuthTestAppVersion
+          inputs:
+            targetType: 'inline'
+            script: |
+              $currentDate = Get-Date -Format "yyyyMMdd"
+              $brokerBuildId = "$(Build.BuildId)"
+              $oneAuthBuildId = "$(buildApk.BrokeBuildId)"
+              $version = "$currentDate.$brokerBuildId.$oneAuthBuildId"
+              echo "Version: $version"
+              # Set the version as a pipeline variable
+              Write-Host "##vso[task.setvariable variable=OneAuthTestAppVersion;isOutput=true]$version"
+        - publish: $(Build.ArtifactStagingDirectory)/OneAuthTestApp
           displayName: 'Publish OneAuth Test apk for later use'
-          artifact: oneauthE2ETestApp
+          artifact: oneauthtestapp
         - task: UniversalPackages@0
           displayName: 'Push OneAuth Test apk to internal feed'
           inputs:
             command: 'publish'
-            publishDirectory: '$(Build.ArtifactStagingDirectory)/android.AndroidTestApp'
+            publishDirectory: '$(Build.ArtifactStagingDirectory)/OneAuthTestApp'
             packagePublishDescription: 'OneAuth Test apk'
             vstsFeedPublish: 'Engineering/BrokerE2ETestApps'
             vstsFeedPackagePublish: com.microsoft.oneauth.testapp
             versionOption: 'custom'
-            versionPublish: $(Date:yyyyMMdd)$(Rev:.r)
+            versionPublish: '$(createOneAuthTestAppVersion.oneAuthTestAppVersion)'
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
