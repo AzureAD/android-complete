@@ -190,6 +190,7 @@ stages:
           artifact: msalE2ETestApp
         - task: UniversalPackages@0
           displayName: 'Publish Msal E2E Test apk to internal feed'
+          continueOnError: true
           inputs:
             command: 'publish'
             publishDirectory: '$(Build.ArtifactStagingDirectory)/msale2etestapp'
