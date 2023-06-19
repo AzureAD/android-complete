@@ -233,7 +233,7 @@ stages:
           displayName: 'Make oneauthtestapp dir'
           workingDirectory: '$(Build.ArtifactStagingDirectory)'
         - task: DownloadExternalBuildArtifacts@15
-          displayName: 'Download New Built OneAuth test app'
+          displayName: 'Download OneAuth test app'
           inputs:
             connection: '$(oneAuthServiceConnection)'
             project: '$(oneAuthProjectId)'
