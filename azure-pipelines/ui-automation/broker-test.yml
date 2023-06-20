@@ -54,6 +54,7 @@ variables:
   LTWFeedName: Auth-Broker-Integrated-LTW-Build
   LTWApk: LTW-signed.apk
   oldLTWApk: OldLTW-signed.apk
+  testAppsFeedName: Engineering/BrokerE2ETestApps
   
 parameters:
 - name: firebaseDeviceIdHigh
@@ -241,8 +242,7 @@ stages:
   jobs:
     - template: ./templates/download-old-test-apps.yml
       parameters:
-        feedName: '$(msazureFeedName)'
-        serviceConnection: '$(msazureServiceConnection)'
+        feedName: '$(testAppsFeedName)'
         oldMsalTestAppVersion: ${{ parameters.oldMsalTestAppVersion }}
         oldOneAuthTestAppVersion: ${{ parameters.oldOneAuthTestAppVersion }}
 # MSAL with Broker Test Plan stage (API 30+)
