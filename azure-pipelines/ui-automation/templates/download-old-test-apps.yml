@@ -1,7 +1,10 @@
 parameters:
   - name: feedName
     type: string
-    default: 'Engineering/BrokerE2ETestApps'
+    default: 'AndroidBroker-Broker'
+  - name: serviceConnection
+    type: string
+    default: 'AndroidBroker-CI'
   - name: oldMsalTestAppVersion
     displayName: Old MSAL Test App Version
     type: string
@@ -26,19 +29,21 @@ jobs:
         inputs:
           command: 'download'
           downloadDirectory: '$(Build.ArtifactStagingDirectory)/oldtestapps'
-          feedsToUse: 'internal'
-          vstsFeed: '${{ parameters.feedName }}'
-          vstsFeedPackage: 'com.microsoft.identity.client.testapp'
-          vstsPackageVersion: '${{ parameters.oldMsalTestAppVersion }}'
+          feedsToUse: 'external'
+          externalFeedCredentials: '${{ parameters.serviceConnection }}'
+          feedDownloadExternal: '${{ parameters.feedName }}'
+          packageDownloadExternal: 'com.microsoft.identity.client.testapp'
+          versionDownloadExternal: '${{ parameters.oldMsalTestAppVersion }}'
       - task: UniversalPackages@0
         displayName: 'Download Old OneAuth Test App Apk'
         inputs:
           command: 'download'
           downloadDirectory: '$(Build.ArtifactStagingDirectory)/oldtestapps'
-          feedsToUse: 'internal'
-          vstsFeed: '${{ parameters.feedName }}'
-          vstsFeedPackage: 'com.microsoft.oneauth.testapp'
-          vstsPackageVersion: '${{ parameters.oldOneAuthTestAppVersion }}'
+          feedsToUse: 'external'
+          externalFeedCredentials: '${{ parameters.serviceConnection }}'
+          feedDownloadExternal: '${{ parameters.feedName }}'
+          packageDownloadExternal: 'com.microsoft.oneauth.testapp'
+          versionDownloadExternal: '${{ parameters.oldOneAuthTestAppVersion }}'
       - publish: $(Build.ArtifactStagingDirectory)/oldtestapps
         displayName: 'Publish Old Test App APKs'
         artifact: oldtestapps
