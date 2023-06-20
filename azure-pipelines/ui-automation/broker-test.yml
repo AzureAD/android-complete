@@ -6,6 +6,7 @@
 # Variable: 'gCloudProjectId' was defined in the Variables tab
 # Variable: 'msal_branch' was defined in the Variables tab
 # Variable: 'mvnAccessToken' was defined in the Variables tab
+# Variable: 'OfficePAT' was defined in the Variables tab
 # Variable: 'msal_sdk_version' was defined in the Variables tab
 # https://dev.azure.com/IdentityDivision/Engineering/_build?definitionId=1490&_a=summary
 name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
@@ -28,13 +29,16 @@ resources:
 
 variables:
   engineeringProjectId: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'
+  oneAuthProjectId: 'a4d3949e-967a-4298-8b6d-53f45f6b0704'
   azureSamplePipelineId: 1458
   brokerHostPipelineId: 1432
+  oneAuthTestAppPipelineId: 6332
   msalE2ETestAppPipelineId: 1338
   msazureServiceConnection: AndroidBroker-CI
   msazureFeedName: Android-Broker
   msalApp: msalautomationapp-dist-AutoBroker-debug.apk
   msalTestApp: msalautomationapp-dist-AutoBroker-debug-androidTest.apk
+  oneAuthTestApp: app-dist-AutoBroker-release-unsigned.apk
   msalE2ETestApp: msalTestApp-local-debug.apk
   msalAppLocalBrokerHost: msalautomationapp-local-BrokerHost-debug.apk
   msalTestAppLocalBrokerHost: msalautomationapp-local-BrokerHost-debug-androidTest.apk
@@ -54,6 +58,7 @@ variables:
   LTWFeedName: Auth-Broker-Integrated-LTW-Build
   LTWApk: LTW-signed.apk
   oldLTWApk: OldLTW-signed.apk
+  oneAuthServiceConnection: OneAuth-Integration
   
 parameters:
 - name: firebaseDeviceIdHigh
@@ -151,7 +156,6 @@ stages:
         adalVersion: "0.0.+"
         commonVersion: "0.0.+"
         preInstallLtw: ${{ parameters.preInstallLtw }}
-
 # TestAppApk - MsalE2ETestApp Queue pipeline
 - stage: 'msalE2ETestApp'
   displayName: Build Msal E2E Test App Apk
@@ -188,18 +192,36 @@ stages:
         - publish: $(Build.ArtifactStagingDirectory)/msale2etestapp
           displayName: 'Publish Msal Test apk for later use'
           artifact: msalE2ETestApp
-        - task: UniversalPackages@0
-          displayName: 'Publish Msal E2E Test apk to internal feed'
+# TestAppApk - OneAuthTestApp Queue pipeline
+- stage: 'oneAuthTestApp'
+  displayName: Build OneAuth Test App Apk
+  dependsOn: []   # this removes the implicit dependency on previous stage and causes this to run in parallel
+  jobs:
+    - job: queue_build_OneAuthTestApp
+      displayName: Generate OneAuth Test App Apk
+      timeoutInMinutes: 120
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: PowerShell@2
+          displayName: Queue and wait for OneAuth Test App Apk generation pipeline
+          name: buildApk
           continueOnError: true
           inputs:
-            command: 'publish'
-            publishDirectory: '$(Build.ArtifactStagingDirectory)/msale2etestapp'
-            packagePublishDescription: 'Msal SDK version: $(msal_sdk_version)'
-            vstsFeedPublish: 'Engineering/BrokerE2ETestApps'
-            vstsFeedPackagePublish: com.microsoft.identity.client.testapp
-            versionOption: 'custom'
-            versionPublish: $(msal_sdk_version)
-
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+            arguments: '-OrganizationUrl "https://office.visualstudio.com/" -Project "OneAuth" -PipelinePAT "$(OfficePAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(oneAuthTestAppPipelineId)"'
+            workingDirectory: '$(Build.SourcesDirectory)'
+        - task: DownloadExternalBuildArtifacts@15
+          displayName: 'Download OneAuth test app'
+          inputs:
+            connection: '$(oneAuthServiceConnection)'
+            project: '$(oneAuthProjectId)'
+            definition: '$(oneAuthTestAppPipelineId)'
+            version: '$(buildApk.BrokeBuildId)'
+            downloadPath: '$(Build.ArtifactStagingDirectory)'
+        - publish: $(Build.ArtifactStagingDirectory)/OneAuthTestApp
+          displayName: 'Publish OneAuth Test apk for later use'
+          artifact: oneauthtestapp
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
@@ -234,6 +256,7 @@ stages:
   - msalautomationapp
   - brokers_azure_sample
   - firstpartyapps
+  - oneAuthTestApp
   - msalE2ETestApp
   displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
@@ -252,6 +275,7 @@ stages:
                       /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
+                      /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/$(oneAuthTestApp),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                       /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
@@ -265,6 +289,7 @@ stages:
     - msalautomationapplocalbrokerhost
     - brokers_azure_sample
     - firstpartyapps
+    - oneAuthTestApp
     - msalE2ETestApp
   displayName: Running MSAL with Broker Test Plan (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
@@ -286,6 +311,7 @@ stages:
                       /sdcard/BrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
                       /data/local/tmp/test/DirectPushBrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
                       /data/local/tmp/DirectPushBrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
+                      /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/$(oneAuthTestApp),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                       /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
@@ -298,6 +324,7 @@ stages:
     - msalautomationapp
     - brokers_azure_sample
     - firstpartyapps
+    - oneAuthTestApp
     - msalE2ETestApp
   displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
@@ -319,6 +346,7 @@ stages:
                       /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
+                      /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/$(oneAuthTestApp),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                       /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
