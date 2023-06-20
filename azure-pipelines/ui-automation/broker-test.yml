@@ -192,16 +192,6 @@ stages:
         - publish: $(Build.ArtifactStagingDirectory)/msale2etestapp
           displayName: 'Publish Msal Test apk for later use'
           artifact: msalE2ETestApp
-        - task: UniversalPackages@0
-          displayName: 'Push Msal E2E Test apk to internal feed'
-          inputs:
-            command: 'publish'
-            publishDirectory: '$(Build.ArtifactStagingDirectory)/msale2etestapp'
-            packagePublishDescription: 'Msal SDK version: $(msal_sdk_version)'
-            vstsFeedPublish: 'Engineering/BrokerE2ETestApps'
-            vstsFeedPackagePublish: com.microsoft.identity.client.testapp
-            versionOption: 'custom'
-            versionPublish: $(msal_sdk_version)
 # TestAppApk - OneAuthTestApp Queue pipeline
 - stage: 'oneAuthTestApp'
   displayName: Build OneAuth Test App Apk
@@ -229,31 +219,9 @@ stages:
             definition: '$(oneAuthTestAppPipelineId)'
             version: '$(buildApk.BrokeBuildId)'
             downloadPath: '$(Build.ArtifactStagingDirectory)'
-        - task: PowerShell@2
-          name: createOneAuthTestAppVersion
-          inputs:
-            targetType: 'inline'
-            script: |
-              $currentDate = Get-Date -Format "yyyyMMdd"
-              $brokerBuildId = "$(Build.BuildId)"
-              $oneAuthBuildId = "$(buildApk.BrokeBuildId)"
-              $version = "$currentDate.$brokerBuildId.$oneAuthBuildId"
-              echo "Version: $version"
-              # Set the version as a pipeline variable
-              Write-Host "##vso[task.setvariable variable=OneAuthTestAppVersion;isOutput=true]$version"
         - publish: $(Build.ArtifactStagingDirectory)/OneAuthTestApp
           displayName: 'Publish OneAuth Test apk for later use'
           artifact: oneauthtestapp
-        - task: UniversalPackages@0
-          displayName: 'Push OneAuth Test apk to internal feed'
-          inputs:
-            command: 'publish'
-            publishDirectory: '$(Build.ArtifactStagingDirectory)/OneAuthTestApp'
-            packagePublishDescription: 'OneAuth Test apk'
-            vstsFeedPublish: 'Engineering/BrokerE2ETestApps'
-            vstsFeedPackagePublish: com.microsoft.oneauth.testapp
-            versionOption: 'custom'
-            versionPublish: '$(createOneAuthTestAppVersion.oneAuthTestAppVersion)'
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
