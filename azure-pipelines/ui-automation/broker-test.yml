@@ -59,7 +59,7 @@ variables:
   LTWApk: LTW-signed.apk
   oldLTWApk: OldLTW-signed.apk
   oneAuthServiceConnection: OneAuth-Integration
-  testAppsFeedName: Engineering/BrokerE2ETestApps
+  testAppsFeedName: AndroidADAL
   
 parameters:
 - name: firebaseDeviceIdHigh
@@ -117,7 +117,7 @@ parameters:
 - name: oldOneAuthTestAppVersion
   displayName: Old OneAuth Test App Version
   type: string
-  default: '0.20230614.1'
+  default: '0.1118843.20854054'
 - name: preInstallLtw
   displayName: Preinstall Link to Windows
   type: boolean

@@ -1,7 +1,7 @@
 parameters:
   - name: feedName
     type: string
-    default: 'Engineering/BrokerE2ETestApps'
+    default: 'AndroidADAL'
   - name: oldMsalTestAppVersion
     displayName: Old MSAL Test App Version
     type: string
@@ -9,7 +9,7 @@ parameters:
   - name: oldOneAuthTestAppVersion
     displayName: Old OneAuth Test App Version
     type: string
-    default: '0.20230614.1'
+    default: '0.1118843.20854054'
 
 jobs:
   - job: 'download_old_test_apps'
