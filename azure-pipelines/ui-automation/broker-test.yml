@@ -276,6 +276,7 @@ stages:
   - firstpartyapps
   - oneAuthTestApp
   - msalE2ETestApp
+  - old_test_apps
   displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -311,6 +312,7 @@ stages:
     - firstpartyapps
     - oneAuthTestApp
     - msalE2ETestApp
+    - old_test_apps
   displayName: Running MSAL with Broker Test Plan (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/run-on-firebase.yml
@@ -348,6 +350,7 @@ stages:
     - firstpartyapps
     - oneAuthTestApp
     - msalE2ETestApp
+    - old_test_apps
   displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
     - template: ./templates/run-on-firebase.yml
