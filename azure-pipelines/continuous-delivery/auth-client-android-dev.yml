@@ -83,7 +83,7 @@ variables:
   brokerAutomationPipelineId: 1490
   ${{ if parameters.shouldEnableBrokerSelectionFlag }}:
     enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
-  $ {{ else }}:
+  ${{ else }}:
     enableBrokerSelectionParam: ''
 
 stages:
