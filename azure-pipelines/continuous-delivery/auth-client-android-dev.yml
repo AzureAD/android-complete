@@ -98,7 +98,7 @@ stages:
       project: common4j
       testCmd: common4jUnitTestCoverageReport
       dependencyParams: $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(enableBrokerSelectionParam)
+      assembleParams: $(projVersionParam)
       testParams: $(projVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: $(projVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
@@ -161,8 +161,8 @@ stages:
       testCmd: distDebugAADAuthenticatorUnitTestCoverageReport
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam)
-      testParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      assembleParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) $(enableBrokerSelectionParam)
+      testParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) $(enableBrokerSelectionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
