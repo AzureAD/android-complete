@@ -81,7 +81,7 @@ variables:
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   brokerAutomationPipelineId: 1490
-  ${{ if parameters.shouldEnableBrokerSelectionFlag }}:
+  ${{ if parameters.shouldEnableBrokerSelectionAndDiscoveryFlag }}:
     enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
     enableBrokerDiscoveryParam: -PnewBrokerDiscoveryEnabledFlag
   ${{ else }}:
