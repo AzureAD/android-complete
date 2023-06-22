@@ -53,6 +53,10 @@ parameters:
     displayName: Publish Libraries?
     type: boolean
     default: True
+  - name: shouldEnableBrokerSelectionFlag
+    displayName: Should enable broker selection?
+    type: boolean
+    default: False
   - name: msalTestTarget
     displayName: Test Targets for MSAL
     type: string
@@ -77,6 +81,10 @@ variables:
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   brokerAutomationPipelineId: 1490
+  ${{ if parameters.shouldEnableBrokerSelectionFlag }}:
+    enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
+  $ {{ else }}:
+    enableBrokerSelectionParam: ''
 
 stages:
 # Common4j - Build and publish
@@ -90,7 +98,7 @@ stages:
       project: common4j
       testCmd: common4jUnitTestCoverageReport
       dependencyParams: $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam)
+      assembleParams: $(projVersionParam) $(enableBrokerSelectionParam)
       testParams: $(projVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: $(projVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
