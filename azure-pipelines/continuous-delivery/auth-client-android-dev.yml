@@ -53,8 +53,8 @@ parameters:
     displayName: Publish Libraries?
     type: boolean
     default: True
-  - name: shouldEnableBrokerSelectionFlag
-    displayName: Should enable broker selection?
+  - name: shouldEnableBrokerSelectionAndDiscoveryFlag
+    displayName: Should enable broker selection & discovery?
     type: boolean
     default: False
   - name: msalTestTarget
@@ -83,8 +83,10 @@ variables:
   brokerAutomationPipelineId: 1490
   ${{ if parameters.shouldEnableBrokerSelectionFlag }}:
     enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
+    enableBrokerDiscoveryParam: -PnewBrokerDiscoveryEnabledFlag
   ${{ else }}:
     enableBrokerSelectionParam: ''
+    enableBrokerDiscoveryParam: ''
 
 stages:
 # Common4j - Build and publish
@@ -118,7 +120,7 @@ stages:
       publishCmd: publishDistReleasePublicationToVsts-maven-adal-androidRepository
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam)
-      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(enableBrokerDiscoveryParam)
       publishParams: $(projVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
