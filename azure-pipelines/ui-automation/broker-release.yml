@@ -574,8 +574,6 @@ stages:
 # Download Brokers
 - stage: 'download_brokers'
   dependsOn:
-  - queueAuthenticatorBrokerApkPipeline
-  - queueCompanyPortalBrokerApkPipeline
   - testappgeneration
   displayName: Download PROD & RC Brokers
   condition:
