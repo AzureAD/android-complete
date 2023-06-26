@@ -576,11 +576,7 @@ stages:
   dependsOn:
   - testappgeneration
   displayName: Download PROD & RC Brokers
-  condition:
-    and
-    (
-      not(canceled())
-    )
+  condition: not(canceled())
   jobs:
     - template: ./templates/download-brokers.yml
       parameters:
