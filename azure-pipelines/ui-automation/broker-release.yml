@@ -574,9 +574,16 @@ stages:
 # Download Brokers
 - stage: 'download_brokers'
   dependsOn:
+  - queueAuthenticatorBrokerApkPipeline
+  - queueCompanyPortalBrokerApkPipeline
   - testappgeneration
   displayName: Download PROD & RC Brokers
-  condition: not(canceled())
+  condition:
+    and
+    (
+      not(failed()),
+      not(canceled())
+    )
   jobs:
     - template: ./templates/download-brokers.yml
       parameters:
