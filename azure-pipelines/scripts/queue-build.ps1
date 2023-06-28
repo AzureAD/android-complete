@@ -27,9 +27,6 @@ $Build = New-Object PSObject -Property @{
         sourceBranch = $Branch
         reason = "userCreated"
         parameters = $PipelineVariablesJson
-        templateParameters = @{
-            androidCommonVersion = "13.0.1"
-        }
     }
 
 $requestBody = $Build | ConvertTo-Json
