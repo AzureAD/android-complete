@@ -30,7 +30,7 @@ $Build = New-Object PSObject -Property @{
         }
         sourceBranch = $Branch
         reason = "userCreated"
-        parameters = $PipelineVariablesJson
+        parameters = $json
         templateParameters = $json
     }
 
