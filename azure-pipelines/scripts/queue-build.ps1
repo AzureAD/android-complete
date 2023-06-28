@@ -40,14 +40,7 @@ echo $requestBody
 try {
     $Result = Invoke-RestMethod -Uri $queueBuildUri -Method Post -ContentType "application/json" -Headers $authHeader -Body $requestBody;
 } catch {
-    if($_.ErrorDetails.Message){
-        $errorObject = $_.ErrorDetails.Message | ConvertFrom-Json
-        foreach($result in $errorObject.customProperties.ValidationResults){
-           
-        }
-        Write-Error $errorObject.message
-    }
-    throw $_.Exception
+
 }
 
 
