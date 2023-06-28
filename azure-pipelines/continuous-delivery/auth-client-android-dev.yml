@@ -391,7 +391,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}'' , ''commonVersion'' : ''$(versionNumber)'' ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}'' , ''commonVersion'' : ''$(versionNumber)'', ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)
