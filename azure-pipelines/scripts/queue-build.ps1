@@ -30,7 +30,7 @@ $Build = New-Object PSObject -Property @{
         reason = "userCreated"
         parameters = @{
             productFlavors = "Dist"
-        }
+        } | ConvertFrom-Json
         templateParameters = @{
             productFlavors = "Dist"
         }
