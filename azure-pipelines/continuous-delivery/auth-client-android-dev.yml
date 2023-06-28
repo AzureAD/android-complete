@@ -117,7 +117,7 @@ stages:
       project: common
       assembleCmd: assembleDist
       testCmd: distDebugCommonUnitTestCoverageReport
-      publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
+      publishCmd: publish
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam)
       testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(enableBrokerDiscoveryParam)
