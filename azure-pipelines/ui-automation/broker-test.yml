@@ -60,7 +60,6 @@ variables:
   oldLTWApk: OldLTW-signed.apk
   oneAuthServiceConnection: OneAuth-Integration
   testAppsFeedName: AndroidADAL
-  commonVersion: '13.0.1'
   
 parameters:
 - name: firebaseDeviceIdHigh
