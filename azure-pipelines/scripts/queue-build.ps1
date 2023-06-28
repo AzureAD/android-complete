@@ -12,7 +12,7 @@ Param (
 
 #request uri
 $baseUri = "$($OrganizationUrl)/$($Project)/";
-$queueBuild = "_apis/build/builds?api-version=7.0"
+$queueBuild = "_apis/build/builds?api-version=7.1"
 $queueBuildUri = "$($baseUri)$($queueBuild)"
 
 # Auth header
@@ -27,7 +27,7 @@ $Build = New-Object PSObject -Property @{
         sourceBranch = $Branch
         reason = "userCreated"
         parameters = $PipelineVariablesJson
-        templateParameters = $PipelineVariablesJson
+        templateParameters = "{\"productFlavors\" :  \"Dist\"}"
     }
 
 $requestBody = $Build | ConvertTo-Json
