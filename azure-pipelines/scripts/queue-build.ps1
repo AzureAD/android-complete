@@ -16,12 +16,7 @@ $queueBuild = "_apis/build/builds?api-version=7.0"
 $queueBuildUri = "$($baseUri)$($queueBuild)"
 $json = @"
 {
-"Pit Target Temp": $pitTargettemp,
-"Fan % Output": $pitfan_output,
-"Food 1 Target": $food1targettemp,
-"Pit Temp": $pittemp,
-"Food1 Temp": $food1temp,
-"Cook Name": "$cook"
+"productFlavors": "Dist"
 }
 "@
 # Auth header
