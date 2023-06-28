@@ -32,6 +32,8 @@ $Build = New-Object PSObject -Property @{
 
 $requestBody = $Build | ConvertTo-Json
 
+echo $requestBody
+
 # Call ADO Rest API
 try {
     $Result = Invoke-RestMethod -Uri $queueBuildUri -Method Post -ContentType "application/json" -Headers $authHeader -Body $requestBody;
@@ -45,6 +47,8 @@ try {
     }
     throw $_.Exception
 }
+
+
 
 Write-Host "Build is queued: $($baseUri)_build/results?buildId=$($Result.id)"
 Write-Host "##vso[task.setvariable variable=BrokeBuildId;isoutput=true]$($Result.id)"
