@@ -28,7 +28,7 @@ $Build = New-Object PSObject -Property @{
         }
         sourceBranch = $Branch
         reason = "userCreated"
-        parameters = $json | ConvertFrom-Json
+        parameters = {"productFlavors": "Dist"}
         templateParameters = @{
             productFlavors = "Dist"
         }
