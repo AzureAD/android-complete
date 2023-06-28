@@ -60,6 +60,7 @@ variables:
   oldLTWApk: OldLTW-signed.apk
   oneAuthServiceConnection: OneAuth-Integration
   testAppsFeedName: AndroidADAL
+  commonVersion: '13.0.1'
   
 parameters:
 - name: firebaseDeviceIdHigh
@@ -218,7 +219,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://office.visualstudio.com/" -Project "OneAuth" -PipelinePAT "$(OfficePAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(oneAuthTestAppPipelineId)"'
+            arguments: '-OrganizationUrl "https://office.visualstudio.com/" -Project "OneAuth" -PipelinePAT "$(OfficePAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(oneAuthTestAppPipelineId)" -TemplateParams "{''androidCommonVersion'': ''$commonVersion''}"'
             workingDirectory: '$(Build.SourcesDirectory)'
         - task: DownloadExternalBuildArtifacts@15
           displayName: 'Download OneAuth test app'
