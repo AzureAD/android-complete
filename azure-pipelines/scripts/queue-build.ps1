@@ -14,9 +14,7 @@ Param (
 $baseUri = "$($OrganizationUrl)/$($Project)/";
 $queueBuild = "_apis/build/builds?api-version=7.0"
 $queueBuildUri = "$($baseUri)$($queueBuild)"
-$json = @"
-{"productFlavors": "Dist"}
-"@
+
 # Auth header
 $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(("token:{0}" -f $PipelinePAT)))
 $authHeader = @{Authorization = ("Basic {0}" -f $base64AuthInfo)};
@@ -30,7 +28,7 @@ $Build = New-Object PSObject -Property @{
         reason = "userCreated"
         parameters = $PipelineVariablesJson
         templateParameters = @{
-            productFlavors = "Dist"
+            androidCommonVersion = "13.0.1"
         }
     }
 
