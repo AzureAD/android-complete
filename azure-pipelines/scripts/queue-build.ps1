@@ -12,7 +12,7 @@ Param (
 
 #request uri
 $baseUri = "$($OrganizationUrl)/$($Project)/";
-$queueBuild = "_apis/build/builds?api-version=7.1"
+$queueBuild = "_apis/build/builds?api-version=7.0"
 $queueBuildUri = "$($baseUri)$($queueBuild)"
 $json = @"
 {
