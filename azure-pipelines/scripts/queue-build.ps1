@@ -26,7 +26,9 @@ $Build = New-Object PSObject -Property @{
         }
         sourceBranch = $Branch
         reason = "userCreated"
-        parameters = $PipelineVariablesJson
+        templateParameters = @{
+            androidCommonVersion = "13.0.1"
+        }
     }
 
 $requestBody = $Build | ConvertTo-Json
@@ -37,7 +39,14 @@ echo $requestBody
 try {
     $Result = Invoke-RestMethod -Uri $queueBuildUri -Method Post -ContentType "application/json" -Headers $authHeader -Body $requestBody;
 } catch {
-
+    if($_.ErrorDetails.Message){
+        $errorObject = $_.ErrorDetails.Message | ConvertFrom-Json
+        foreach($result in $errorObject.customProperties.ValidationResults){
+            Write-Warning $result.message
+        }
+        Write-Error $errorObject.message
+    }
+    throw $_.Exception
 }
 
 
