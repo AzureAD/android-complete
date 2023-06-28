@@ -509,6 +509,7 @@ stages:
         adAccountsVersion: ${{ parameters.adAccountsVersionRC }}
         adalVersion: ${{ parameters.adalVersionRC }}
         packageVariant: RC
+        publishToProdFeed: True
     - template: ./templates/build-broker-host.yml
       parameters:
         productFlavors: Local
