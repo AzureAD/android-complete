@@ -27,7 +27,7 @@ $Build = New-Object PSObject -Property @{
         }
         sourceBranch = $Branch
         reason = "userCreated"
-        templateParameters = $TemplateParams
+        templateParameters = $TemplateParams | ConvertFrom-Json
     }
 
 $requestBody = $Build | ConvertTo-Json
