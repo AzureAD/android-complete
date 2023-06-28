@@ -15,9 +15,7 @@ $baseUri = "$($OrganizationUrl)/$($Project)/";
 $queueBuild = "_apis/build/builds?api-version=7.0"
 $queueBuildUri = "$($baseUri)$($queueBuild)"
 $json = @"
-{
-"productFlavors": "Dist"
-}
+{"productFlavors": "Dist"}
 "@
 # Auth header
 $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(("token:{0}" -f $PipelinePAT)))
@@ -30,8 +28,12 @@ $Build = New-Object PSObject -Property @{
         }
         sourceBranch = $Branch
         reason = "userCreated"
-        parameters = $json
-        templateParameters = $json
+        parameters = @ {
+            productFlavors = "Dist"
+        }
+        templateParameters = @ {
+            productFlavors = "Dist"
+        }
     }
 
 $requestBody = $Build | ConvertTo-Json
