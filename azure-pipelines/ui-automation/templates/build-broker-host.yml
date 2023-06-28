@@ -25,6 +25,10 @@ parameters:
 - name: msalVersion
   displayName: MSAL Version
   type: string
+- name: brokerBranch
+  displayName: Broker Branch alias
+  type: string
+  default: broker
 - name: packageVariant
   displayName: Package Variant
   type: string
@@ -55,7 +59,7 @@ jobs:
     clean: true
     submodules: true
     path: android-complete/adal
-  - checkout: broker
+  - checkout: ${{ parameters.brokerBranch }}
     clean: true
     submodules: true
     path: android-complete/broker

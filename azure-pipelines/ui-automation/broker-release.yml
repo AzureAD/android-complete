@@ -124,6 +124,10 @@ parameters:
   displayName: Broker Branch
   type: string
   default: 'dev'
+- name: prodBrokerBranch
+  displayName: PROD Broker Branch
+  type: string
+  default: 'dev'
 
 resources:
   repositories:
@@ -136,6 +140,11 @@ resources:
     type: github
     name: AzureAD/ad-accounts-for-android
     ref: ${{ parameters.brokerBranch }}
+    endpoint: ANDROID_GITHUB
+  - repository: broker-prod
+    type: github
+    name: AzureAD/ad-accounts-for-android
+    ref: ${{ parameters.prodBrokerBranch }}
     endpoint: ANDROID_GITHUB
   - repository: azuresample
     type: github
@@ -500,6 +509,7 @@ stages:
         signingConfigurations: Release
         msalVersion: ${{ parameters.msalVersionPROD }}
         packageVariant: PROD
+        brokerBranch: broker-prod
     - template: ./templates/build-broker-host.yml
       parameters:
         productFlavors: Dist
