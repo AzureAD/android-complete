@@ -25,10 +25,10 @@ parameters:
 - name: msalVersion
   displayName: MSAL Version
   type: string
-- name: brokerBranch
-  displayName: Broker Branch alias
-  type: string
-  default: broker
+- name: publishToProdFeed
+  displayName: Publish to Prod Feed?
+  type: boolean
+  default: False
 - name: packageVariant
   displayName: Package Variant
   type: string
@@ -59,7 +59,7 @@ jobs:
     clean: true
     submodules: true
     path: android-complete/adal
-  - checkout: ${{ parameters.brokerBranch }}
+  - checkout: broker
     clean: true
     submodules: true
     path: android-complete/broker
@@ -118,7 +118,7 @@ jobs:
       targetPath: $(Agent.BuildDirectory)/android-complete/broker/userapp/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}
       artifactName: BrokerHost-${{ parameters.productFlavors }}-${{ upper(parameters.packageVariant) }}-${{ lower(parameters.signingConfigurations) }}
       patterns: '**/*.apk'
-  - ${{ if eq(parameters.packageVariant, 'PROD') }}:
+  - ${{ if eq(parameters.publishToProdFeed, 'True') }}:
       - task: UniversalPackages@0
         displayName: Publishing PROD Brokerhost
         continueOnError: true
