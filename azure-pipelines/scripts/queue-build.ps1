@@ -43,7 +43,7 @@ try {
     if($_.ErrorDetails.Message){
         $errorObject = $_.ErrorDetails.Message | ConvertFrom-Json
         foreach($result in $errorObject.customProperties.ValidationResults){
-            Write-Warning $result.message
+           
         }
         Write-Error $errorObject.message
     }
