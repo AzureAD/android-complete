@@ -27,7 +27,7 @@ $Build = New-Object PSObject -Property @{
         sourceBranch = $Branch
         reason = "userCreated"
         parameters = $PipelineVariablesJson
-        templateParameters = "{\"productFlavors\" :  \"Dist\"}"
+        templateParameters = "{"productFlavors" :  "Dist"}"
     }
 
 $requestBody = $Build | ConvertTo-Json
