@@ -509,7 +509,6 @@ stages:
         signingConfigurations: Release
         msalVersion: ${{ parameters.msalVersionPROD }}
         packageVariant: PROD
-        brokerBranch: broker-prod
     - template: ./templates/build-broker-host.yml
       parameters:
         productFlavors: Dist
@@ -519,6 +518,7 @@ stages:
         adAccountsVersion: ${{ parameters.adAccountsVersionPROD }}
         adalVersion: ${{ parameters.adalVersionPROD }}
         packageVariant: PROD
+        brokerBranch: broker-prod
     - template: ./templates/build-broker-host.yml
       parameters:
         productFlavors: Dist
