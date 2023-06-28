@@ -137,11 +137,6 @@ resources:
     name: AzureAD/ad-accounts-for-android
     ref: ${{ parameters.brokerBranch }}
     endpoint: ANDROID_GITHUB
-  - repository: broker-prod
-    type: github
-    name: AzureAD/ad-accounts-for-android
-    ref: ${{ parameters.prodBrokerBranch }}
-    endpoint: ANDROID_GITHUB
   - repository: azuresample
     type: github
     name: Azure-Samples/ms-identity-android-java
