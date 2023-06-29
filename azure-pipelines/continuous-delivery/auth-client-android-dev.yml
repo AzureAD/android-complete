@@ -57,6 +57,10 @@ parameters:
     displayName: Should enable broker selection & discovery?
     type: boolean
     default: False
+  - name: enablePrtv3
+    displayName: Should enable PRTv3 in broker?
+    type: boolean
+    default: False
   - name: msalTestTarget
     displayName: Test Targets for MSAL
     type: string
@@ -87,6 +91,10 @@ variables:
   ${{ else }}:
     enableBrokerSelectionParam: ''
     enableBrokerDiscoveryParam: ''
+  ${{ if parameters.enablePrtv3 }}:
+    enablePrtv3Param: -PenablePrtv3=true
+  ${{ else }}:
+    enablePrtv3Param: ''
 
 stages:
 # Common4j - Build and publish
@@ -138,9 +146,9 @@ stages:
       testCmd: broker4jUnitTestCoverageReport
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(common4jVersionParam)
+      assembleParams: $(projVersionParam) $(common4jVersionParam) $(enablePrtv3Param)
       testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(projVersionParam) $(common4jVersionParam)
+      publishParams: $(projVersionParam) $(common4jVersionParam) $(enablePrtv3Param)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
