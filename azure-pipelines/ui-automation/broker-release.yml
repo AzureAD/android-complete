@@ -312,7 +312,7 @@ stages:
       project: AADAuthenticator
       testCmd: distDebugAADAuthenticatorUnitTestCoverageReport
       assembleCmd: assembleDist
-      publishCmd: publish
+      publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(brokerOtelAriaTokenParam) $(powerLiftApiKeyParam)
       testParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
