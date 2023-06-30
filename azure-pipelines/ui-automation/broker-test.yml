@@ -183,7 +183,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(msalE2ETestAppPipelineId)" -PipelineVariablesJson "{ ''msal_version'': ''$(msal_sdk_version)'' }" -TemplateParams "{''signingConfigurations'': ''Release''}" -Branch "$(Build.SourceBranch)"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(msalE2ETestAppPipelineId)" -PipelineVariablesJson "{ ''msal_version'': ''$(msal_sdk_version)'' }" -TemplateParams "{''signingConfigurations'': ''Release'', ''productFlavors'': ''Dist''}" -Branch "$(Build.SourceBranch)"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)
