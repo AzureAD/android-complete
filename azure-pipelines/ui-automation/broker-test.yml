@@ -39,7 +39,7 @@ variables:
   msalApp: msalautomationapp-dist-AutoBroker-debug.apk
   msalTestApp: msalautomationapp-dist-AutoBroker-debug-androidTest.apk
   oneAuthTestApp: app-dist-AutoBroker-release-unsigned.apk
-  msalE2ETestApp: msalTestApp-local-debug.apk
+  msalE2ETestApp: msalTestApp-dist-release.apk
   msalAppLocalBrokerHost: msalautomationapp-local-BrokerHost-debug.apk
   msalTestAppLocalBrokerHost: msalautomationapp-local-BrokerHost-debug-androidTest.apk
   brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
