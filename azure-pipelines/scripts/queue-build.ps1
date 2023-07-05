@@ -4,6 +4,7 @@ Param (
     [Parameter(Mandatory = $true)][String]$PipelinePAT,
     [Parameter(Mandatory = $true)][String]$BuildDefinitionId,
     [Parameter(Mandatory = $false)][String]$PipelineVariablesJson,
+    [Parameter(Mandatory = $false)][String]$TemplateParams,
     [Parameter(Mandatory = $false)][String]$Branch,
     [Parameter(Mandatory = $false)][int]$WaitTimeoutInMinutes = 120,
     [Parameter(Mandatory = $false)][int]$PollingIntervalInSeconds = 5 * 60,
@@ -27,6 +28,7 @@ $Build = New-Object PSObject -Property @{
         sourceBranch = $Branch
         reason = "userCreated"
         parameters = $PipelineVariablesJson
+        templateParameters = $TemplateParams | ConvertFrom-Json
     }
 
 $requestBody = $Build | ConvertTo-Json

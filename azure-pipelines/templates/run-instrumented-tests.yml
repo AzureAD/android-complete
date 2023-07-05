@@ -28,10 +28,13 @@ parameters:
 - name: continueOnError
   type: boolean
   default: False
+# Allows a limit to be set for the job execution time.
+- name: timeout
+  default: 120
 
 jobs:
 - job:
-  timeoutInMinutes: 120
+  timeoutInMinutes: ${{ parameters.timeout }}
   displayName: Run ${{ parameters.projectName }} ${{ parameters.projectVariantName }} instrumented test
   pool:
     vmImage: macOS-latest

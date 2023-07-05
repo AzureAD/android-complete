@@ -504,20 +504,12 @@ stages:
       parameters:
         productFlavors: Dist
         signingConfigurations: Release
-        msalVersion: ${{ parameters.msalVersionPROD }}
-        commonVersion: ${{ parameters.commonVersionPROD }}
-        adAccountsVersion: ${{ parameters.adAccountsVersionPROD }}
-        adalVersion: ${{ parameters.adalVersionPROD }}
-        packageVariant: PROD
-    - template: ./templates/build-broker-host.yml
-      parameters:
-        productFlavors: Dist
-        signingConfigurations: Release
         msalVersion: ${{ parameters.msalVersionRC }}
         commonVersion: ${{ parameters.commonVersionRC }}
         adAccountsVersion: ${{ parameters.adAccountsVersionRC }}
         adalVersion: ${{ parameters.adalVersionRC }}
         packageVariant: RC
+        publishToProdFeed: True
     - template: ./templates/build-broker-host.yml
       parameters:
         productFlavors: Local
@@ -595,7 +587,7 @@ stages:
         oldAuthenticatorVersion: $(oldAuthenticatorVersion)
         companyPortalVersionRC: $(rcCompanyPortalVersion)
         companyPortalVersionPROD: ${{ parameters.prodCompanyPortalVersion }}
-        prodBrokerHostVersion: $(prodBrokerHostVersion)
+        prodBrokerHostVersion: ${{ parameters.adAccountsVersionPROD}}
 
 # ADAL with Broker (API 30+)
 - stage: 'adal_with_broker_high_api'
