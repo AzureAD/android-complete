@@ -39,6 +39,9 @@ parameters:
   - name: artifactName
     type: string
     default: "msalautomationapks"
+  - name: preInstallLtw
+    type: boolean
+    default: false
 
 jobs:
   - job: msalautomationapp${{ parameters.packageVariant }}${{ parameters.msalFlavor }}
@@ -69,6 +72,9 @@ jobs:
             if (("${{ parameters.msalVersion }}" -ne "")) {
                 $assembleTask = $assembleTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
             }
+            if ("${{ parameters.preInstallLtw }}" -eq "True") {
+                $assembleTask = $assembleTask + " -PpreInstallLtw=true"
+            }
             Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
       - task: Gradle@2
         displayName: 'Assemble MSAL Automation App'
@@ -83,6 +89,9 @@ jobs:
             $assembleTestTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(AndroidAutomationRunnerAppSecret)"
             if (("${{ parameters.msalVersion }}" -ne "")) {
                 $assembleTestTask = $assembleTestTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
+            }
+            if ("${{ parameters.preInstallLtw }}" -eq "True") {
+                $assembleTestTask = $assembleTestTask + " -PpreInstallLtw=true"
             }
             Write-Host "##vso[task.setvariable variable=AssembleTestTask;]$assembleTestTask"
       - task: Gradle@2

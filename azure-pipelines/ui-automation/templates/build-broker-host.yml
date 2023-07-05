@@ -25,6 +25,10 @@ parameters:
 - name: msalVersion
   displayName: MSAL Version
   type: string
+- name: publishToProdFeed
+  displayName: Publish to Prod Feed?
+  type: boolean
+  default: False
 - name: packageVariant
   displayName: Package Variant
   type: string
@@ -114,7 +118,7 @@ jobs:
       targetPath: $(Agent.BuildDirectory)/android-complete/broker/userapp/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}
       artifactName: BrokerHost-${{ parameters.productFlavors }}-${{ upper(parameters.packageVariant) }}-${{ lower(parameters.signingConfigurations) }}
       patterns: '**/*.apk'
-  - ${{ if eq(parameters.packageVariant, 'PROD') }}:
+  - ${{ if eq(parameters.publishToProdFeed, 'True') }}:
       - task: UniversalPackages@0
         displayName: Publishing PROD Brokerhost
         continueOnError: true
