@@ -64,6 +64,17 @@ parameters:
   displayName: Build & Publish Testing libs?
   type: boolean
   default: False
+- name: shouldBuildBroker
+  displayName: Build & publish broker?
+  type: boolean
+  default: False
+- name: enablePrtv3
+  displayName: Should enable PRTv3?
+  type: string
+  default: 'false'
+  values:
+    - 'true'
+    - 'false'
 
 # Library versioning parameters
 - name: msalVersionRC
@@ -159,6 +170,7 @@ variables:
   common4jVersionParam: -PdistCommon4jVersion=${{ parameters.common4jVersionRC }}
   broker4jProjVersionParam: -PprojVersion=${{ parameters.broker4jVersionRC }}
   broker4jVersionParam: -PdistBroker4jVersion=${{ parameters.broker4jVersionRC }}
+  broker4jEnablePrtv3Param: -PenablePrtv3=${{ parameters.enablePrtv3 }}
   commonProjVersionParam: -PprojVersion=${{ parameters.commonVersionRC }}
   commonVersionParam: -PdistCommonVersion=${{ parameters.commonVersionRC }}
   msalProjVersionParam: -PprojVersion=${{ parameters.msalVersionRC }}
@@ -268,7 +280,7 @@ stages:
     (
       not(failed()),
       not(canceled()),
-      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+      or(eq(${{ parameters.shouldBuildLibraries }}, 'True'), eq(${{ parameters.shouldBuildBroker }}, 'True'))
     )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
@@ -278,9 +290,9 @@ stages:
       testCmd: broker4jUnitTestCoverageReport
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
-      assembleParams: $(broker4jProjVersionParam) $(common4jVersionParam)
+      assembleParams: $(broker4jProjVersionParam) $(common4jVersionParam) $(broker4jEnablePrtv3Param)
       testParams: $(broker4jProjVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(broker4jProjVersionParam) $(common4jVersionParam)
+      publishParams: $(broker4jProjVersionParam) $(common4jVersionParam) $(broker4jEnablePrtv3Param)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
@@ -303,7 +315,7 @@ stages:
     (
       not(failed()),
       not(canceled()),
-      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+      or(eq(${{ parameters.shouldBuildLibraries }}, 'True'), eq(${{ parameters.shouldBuildBroker }}, 'True'))
     )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
