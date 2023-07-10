@@ -73,7 +73,7 @@ variables:
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
     brokerVersionNumber: ${{ parameters.customVersionNumber }}
-  projVersionParam: -PprojVersion=$(versionNumber)
+  projVersionParam: -PprojVersion=$(versionNumber) -Pslice=TestSlice
   common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
   broker4jVersionParam: -PdistBroker4jVersion=$(versionNumber)
   commonVersionParam: -PdistCommonVersion=$(versionNumber)
