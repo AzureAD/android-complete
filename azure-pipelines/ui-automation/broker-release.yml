@@ -480,7 +480,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAZURE_BUILD_TOKEN)" -BuildDefinitionId "237827" -WaitTimeoutInMinutes 100 -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}'', ''AdalVersion'': ''${{ parameters.adalVersionRC }}'' }" -Branch "$(companyPortalBranch)"'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAZURE_BUILD_TOKEN)" -BuildDefinitionId "237827" -WaitTimeoutInMinutes 100 -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}''}" -Branch "$(companyPortalBranch)"'
             workingDirectory: '$(Build.SourcesDirectory)'
           name: buildCompanyPortal
 
@@ -752,6 +752,7 @@ stages:
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
                           /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
                           /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+                          /sdcard/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/brokerHost-local-debug.apk,\
                           /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
                           /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Local-RC-debug/brokerHost-local-debug.apk,\
                           /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
