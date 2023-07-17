@@ -113,7 +113,7 @@ parameters:
 - name: oldMsalTestAppVersion
   displayName: Old MSAL Test App Version
   type: string
-  default: '4.5.0'
+  default: '4.5.1'
 - name: oldOneAuthTestAppVersion
   displayName: Old OneAuth Test App Version
   type: string
