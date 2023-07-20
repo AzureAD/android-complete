@@ -61,13 +61,13 @@ jobs:
           SourceFolder: microsoft-identity-diagnostics/build/distributions
           TargetFolder: $(build.artifactstagingdirectory)
       - task: PublishPipelineArtifact@1
-        name: PublishPipelineArtifacts1
+        name: PublishPipelineArtifacts2
         displayName: 'Publish Artifact: microsoft-identity-diagnostics App Deb'
         inputs:
           ArtifactName: microsoft-identity-diagnostics Deb Package
           TargetPath: $(build.artifactstagingdirectory)
       - task: Gradle@1
-        name: Gradle1
+        name: Gradle2
         displayName: Build Rpm with Java Dependency
         inputs:
           cwd: $(Build.SourcesDirectory)/broker-java-root
@@ -76,13 +76,13 @@ jobs:
           jdkArchitecture: x86
           sqAnalysisBreakBuildIfQualityGateFailed: false
       - task: CopyFiles@2
-        name: CopyFiles1
+        name: CopyFiles2
         displayName: Copy Files to Artifact Staging Directory
         inputs:
           SourceFolder: microsoft-identity-diagnostics/build/distributions
           TargetFolder: $(build.artifactstagingdirectory)
       - task: PublishPipelineArtifact@1
-        name: PublishPipelineArtifacts1
+        name: PublishPipelineArtifacts2
         displayName: 'Publish Artifact: microsoft-identity-diagnostics App Rpm'
         inputs:
           ArtifactName: microsoft-identity-diagnostics Rpm Package
