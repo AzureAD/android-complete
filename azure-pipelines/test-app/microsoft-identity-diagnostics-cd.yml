@@ -71,7 +71,7 @@ jobs:
         displayName: Build Rpm with Java Dependency
         inputs:
           cwd: $(Build.SourcesDirectory)/broker-java-root
-          tasks: microsoft-identity-diagnostics:clean microsoft-identity-diagnostics:buildRpm--build-cache --info
+          tasks: microsoft-identity-diagnostics:clean microsoft-identity-diagnostics:buildRpm --build-cache --info
           publishJUnitResults: false
           jdkArchitecture: x86
           sqAnalysisBreakBuildIfQualityGateFailed: false
