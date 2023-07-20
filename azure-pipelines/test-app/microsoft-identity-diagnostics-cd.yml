@@ -61,7 +61,7 @@ jobs:
           SourceFolder: microsoft-identity-diagnostics/build/distributions
           TargetFolder: $(build.artifactstagingdirectory)
       - task: PublishPipelineArtifact@1
-        name: PublishPipelineArtifacts2
+        name: PublishPipelineArtifacts1
         displayName: 'Publish Artifact: microsoft-identity-diagnostics App Deb'
         inputs:
           ArtifactName: microsoft-identity-diagnostics Deb Package
