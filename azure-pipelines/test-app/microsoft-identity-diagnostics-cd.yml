@@ -66,6 +66,28 @@ jobs:
         inputs:
           ArtifactName: microsoft-identity-diagnostics Deb Package
           TargetPath: $(build.artifactstagingdirectory)
+  - job: build_rpm
+    workspace:
+      clean: "all"
+    displayName: Build & Publish Rpm for microsoft-identity-diagnostics-app
+    cancelTimeoutInMinutes: 1
+    pool:
+      vmImage: ubuntu-20.04
+    steps:
+      - checkout: broker
+        clean: true
+        submodules: recursive
+        persistCredentials: True
+      - task: CmdLine@1
+        displayName: Set MVN Access Token in Environment
+        inputs:
+          filename: echo
+          arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
+      - task: CmdLine@1
+        displayName: Set Office MVN Access Token in Environment
+        inputs:
+          filename: echo
+          arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_OFFICE_ACCESSTOKEN]$(OFFICE_MVN_ACCESS_TOKEN)'
       - task: Gradle@1
         name: Gradle2
         displayName: Build Rpm with Java Dependency
