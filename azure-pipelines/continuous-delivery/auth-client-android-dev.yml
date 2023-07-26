@@ -169,6 +169,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunUnitTests : false
       agentImage: 1ES-AndroidPool-EOC
 # Linux Broker - Build and publish
 - stage: 'publishLinuxBrokeLibraries'
