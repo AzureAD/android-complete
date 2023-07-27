@@ -125,7 +125,7 @@ jobs:
       inputs:
         summaryFileLocation: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/${{ parameters.testCmd }}.xml'
         reportDirectory: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/html'
-- ${{if or(eq(parameters.project, 'common'), eq(parameters.project, 'msal'), eq(parameters.project, 'adal'), eq(parameters.project, 'AADAuthenticator'))}}:
+- ${{if or(eq(parameters.project, 'common'),  eq(parameters.project, 'adal'))}}:
     - template: ../templates/run-instrumented-tests.yml
       parameters:
         gitProject: ${{ parameters.repository }}
