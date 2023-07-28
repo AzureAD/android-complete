@@ -15,7 +15,7 @@ ext {
     jupiterApiVersion = '5.6.0'
     
     //Java Language Support
-    coreLibraryDesugaringVersion = "1.1.1"
+    coreLibraryDesugaringVersion = "1.1.5"
 
     // Libraries
     androidxTestRunnerVersion = "1.4.0"
