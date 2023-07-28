@@ -74,14 +74,17 @@ jobs:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: ComponentGovernanceComponentDetection@0
+    continueOnError: true
     inputs:
       sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/dependency-locks/
   - task: ManifestGeneratorTask@0
     displayName: 'Generate SBOM manifest file'
+    continueOnError: true
     inputs:
       BuildDropPath: $(Build.SourcesDirectory)/${{ parameters.project }}/build/
   - task: PublishPipelineArtifact@1
     displayName: 'Publish Artifact: dependencies lockfile'
+    continueOnError: true
     inputs:
       targetPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/dependency-locks
       ArtifactName: ${{ parameters.project }}_dependencies
