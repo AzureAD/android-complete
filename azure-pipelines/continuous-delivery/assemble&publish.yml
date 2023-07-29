@@ -47,6 +47,7 @@ jobs:
     persistCredentials: True
   - task: Gradle@3
     displayName: Build ${{ parameters.project }}
+    jdkVersionOption: 11
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
     env:
