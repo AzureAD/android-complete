@@ -55,12 +55,14 @@ jobs:
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: Gradle@3
     displayName: Generate Lockfile ${{ parameters.project }}
+    jdkVersionOption: 11
     inputs:
       tasks: -q ${{ parameters.project }}:dependencies ${{ parameters.dependencyParams }}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: Gradle@3
+    jdkVersionOption: 11
     condition: |
       and
       (
