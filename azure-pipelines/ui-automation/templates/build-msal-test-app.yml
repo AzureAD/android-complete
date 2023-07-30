@@ -1,0 +1,75 @@
+parameters:
+  - name: productFlavors
+    displayName: Product Flavor
+    type: string
+    default: Local
+    values:
+      - Local
+      - Dist
+  - name: signingConfigurations
+    displayName: Signing Configuration
+    type: string
+    default: Debug
+    values:
+      - Debug
+      - Release
+  - name: msalVersion
+    displayName: MSAL Version
+    type: string
+  - name: packageVariant
+    displayName: Package Variant
+    type: string
+    default: PROD
+    values:
+      - PROD
+      - RC
+
+jobs:
+- job: msal_test_app${{ parameters.packageVariant }}${{ parameters.productFlavors }}${{ parameters.signingConfigurations }}
+  displayName: Build MSAL Test App ${{ parameters.packageVariant }} ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
+  pool:
+    vmImage: 'windows-latest'
+  variables:
+    - group: AndroidAuthClientVariables
+  steps:
+  - checkout: self
+    clean: true
+    path: android-complete
+  - checkout: msal
+    clean: true
+    path: android-complete/adal
+  - ${{ if eq(parameters.productFlavors, 'Dist') }}:
+    - task: PowerShell@2
+      displayName: Generate Assemble Dist Task
+      inputs:
+        targetType: inline
+        script: |
+          $assembleTask = "assembleDist${{ parameters.signingConfigurations }}"
+          if (("${{ parameters.msalVersion }}" -ne "")) {
+              $assembleTask = $assembleTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
+          }
+          Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
+  - ${{ if eq(parameters.productFlavors, 'Local') }}:
+    - pwsh: echo "##vso[task.setvariable variable=AssembleTask;]assembleLocal${{ parameters.signingConfigurations }}"
+      displayName: Generate Assemble Local Task
+  - task: CmdLine@1
+    displayName: Set MVN AccessToken in Environment
+    inputs:
+      filename: echo
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
+  - task: Gradle@1
+    name: Gradle1
+    displayName: Assemble msalTestApp
+    inputs:
+      tasks: msalTestApp:clean msalTestApp:$(AssembleTask)
+      publishJUnitResults: false
+      jdkArchitecture: x86
+      sqAnalysisBreakBuildIfQualityGateFailed: false
+      gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
+      cwd: $(Agent.BuildDirectory)/android-complete
+  - task: PublishPipelineArtifact@1
+    displayName: Publish MSAL Test App
+    inputs:
+      targetPath: $(Agent.BuildDirectory)/android-complete/msal/testapps/testapp/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}
+      artifactName: msalTestApp
+      patterns: '**/*.apk''

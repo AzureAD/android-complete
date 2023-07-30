@@ -49,6 +49,10 @@ parameters:
     displayName: Run E2E UI Validation?
     type: boolean
     default: False
+  - name: shouldRunUnitTests
+    displayName: Run Unit Tests?
+    type: boolean
+    default: True
   - name: shouldPublishLibraries
     displayName: Publish Libraries?
     type: boolean
@@ -106,6 +110,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish
@@ -125,6 +130,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
@@ -144,6 +150,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
@@ -170,6 +177,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       agentImage: 1ES-AndroidPool-EOC
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
 # Linux Broker - Build and publish
 - stage: 'publishLinuxBrokeLibraries'
   displayName: Linux Broker - Build and publish
@@ -190,6 +198,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
   - job: PublishLinuxBrokerPackage
     dependsOn: publishLinuxBrokerLibraries
     displayName: Publish Linux Broker Package
@@ -242,6 +251,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
 # Adal - Build and publish
 - stage: 'publishAdal'
   displayName: Adal - Build and publish
@@ -261,6 +271,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
 
 # Combine and Publish Code Coverage
 - stage: 'combineAndPublishCodeCoverage'
@@ -365,6 +376,56 @@ stages:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
             arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(OSPAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "44201" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)"'
             workingDirectory: '$(Build.SourcesDirectory)'
+
+# TestApp generation
+- stage: 'testappgeneration'
+  dependsOn:
+    - publishAdal
+    - publishCommonLibraries
+    - publishMsal
+    - publishBrokerLibraries
+    - promoteLibraries
+  displayName: Generate Test Apps
+  condition:
+    and
+    (
+    not(failed()),
+    not(canceled())
+    )
+  jobs:
+    - template: ./templates/build-azure-sample-app.yml
+      parameters:
+        productFlavors: Local
+        signingConfigurations: Debug
+        msalVersion: $(versionNumber)
+        packageVariant: RC
+    - template: ./templates/build-azure-sample-app-standalone.yml
+      parameters:
+        signingConfigurations: Debug
+        msalVersion: $(versionNumber)
+        packageVariant: RC
+    - template: ./templates/build-broker-host.yml
+      parameters:
+        productFlavors: Local
+        signingConfigurations: Debug
+        msalVersion: $(versionNumber)
+        commonVersion: $(versionNumber)
+        adAccountsVersion: $(brokerVersionNumber)
+        adalVersion: $(versionNumber)
+        packageVariant: RC
+    - template: ./templates/build-msal-test-app.yml
+      parameters:
+        productFlavors: Dist
+        signingConfigurations: Debug
+        msalVersion: $(versionNumber)
+        packageVariant: RC
+    - template: ./templates/build-adal-test-app.yml
+      parameters:
+        productFlavors: Dist
+        signingConfigurations: Debug
+        commonVersion: $(versionNumber)
+        adalVersion: $(versionNumber)
+        packageVariant: RC
 
 # Broker - E2E Automation
 - stage: 'runBrokerE2EAutomation'
