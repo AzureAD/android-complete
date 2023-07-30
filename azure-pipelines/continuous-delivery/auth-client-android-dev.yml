@@ -393,18 +393,18 @@ stages:
     not(canceled())
     )
   jobs:
-    - template: ../uiautomation/templates/build-azure-sample-app.yml
+    - template: ../ui-automation/templates/build-azure-sample-app.yml
       parameters:
         productFlavors: Local
         signingConfigurations: Debug
         msalVersion: $(versionNumber)
         packageVariant: RC
-    - template: ../uiautomation/templates/build-azure-sample-app-standalone.yml
+    - template: ../ui-automation/templates/build-azure-sample-app-standalone.yml
       parameters:
         signingConfigurations: Debug
         msalVersion: $(versionNumber)
         packageVariant: RC
-    - template: ../uiautomation/templates/build-broker-host.yml
+    - template: ../ui-automation/templates/build-broker-host.yml
       parameters:
         productFlavors: Local
         signingConfigurations: Debug
@@ -413,13 +413,13 @@ stages:
         adAccountsVersion: $(brokerVersionNumber)
         adalVersion: $(versionNumber)
         packageVariant: RC
-    - template: ../uiautomation/templates/build-msal-test-app.yml
+    - template: ../ui-automation/templates/build-msal-test-app.yml
       parameters:
         productFlavors: Dist
         signingConfigurations: Debug
         msalVersion: $(versionNumber)
         packageVariant: RC
-    - template: ../uiautomation/templates/build-adal-test-app.yml
+    - template: ../ui-automation/templates/build-adal-test-app.yml
       parameters:
         productFlavors: Dist
         signingConfigurations: Debug
