@@ -39,6 +39,11 @@ resources:
       name: AzureAD/azure-activedirectory-library-for-android
       ref: dev
       endpoint: ANDROID_GITHUB
+    - repository: azuresample
+      type: github
+      name: Azure-Samples/ms-identity-android-java
+      ref: master
+      endpoint: ANDROID_GITHUB
 
 parameters:
   - name: customVersionNumber
