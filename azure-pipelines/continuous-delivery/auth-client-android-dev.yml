@@ -389,7 +389,7 @@ stages:
     - publishCommonLibraries
     - publishMsal
     - publishBrokerLibraries
-    - promoteLibraries
+    - promotePackages
   displayName: Generate Test Apps
   condition:
     and
