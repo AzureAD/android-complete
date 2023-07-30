@@ -79,3 +79,4 @@ jobs:
       targetPath: $(Agent.BuildDirectory)/android-complete/adal/userappwithbroker/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}
       artifactName: adalTestApp
       patterns: '**/*.apk'
+...
