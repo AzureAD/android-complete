@@ -51,8 +51,8 @@ jobs:
           publishJUnitResults: false
           jdkArchitecture: x86
           sqAnalysisBreakBuildIfQualityGateFailed: false
-          gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
-          cwd: $(Agent.BuildDirectory)/android-complete
+          gradleWrapperFile: $(Agent.BuildDirectory)/ms-identity-android-java/gradlew
+          cwd: $(Agent.BuildDirectory)/ms-identity-android-java
       - task: CopyFiles@2
         displayName: 'Copy apks for later use in the pipeline'
         inputs:
@@ -62,7 +62,7 @@ jobs:
       - task: PublishPipelineArtifact@1
         displayName: Publish Azure Sample (Standalone) APK
         inputs:
-          targetPath: $(Agent.BuildDirectory)/android-complete/azuresample/app/build/outputs/apk/standalone/external/${{ lower(parameters.signingConfigurations) }}
+          targetPath: $(Agent.BuildDirectory)/ms-identity-android-java/azuresample/app/build/outputs/apk/standalone/external/${{ lower(parameters.signingConfigurations) }}
           artifactName: AzureSample-standalone-${{upper(parameters.packageVariant)}}
           patterns: '**/*.apk'
 ...
