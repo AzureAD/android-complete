@@ -420,6 +420,7 @@ stages:
         signingConfigurations: Debug
         msalVersion: $(versionNumber)
         packageVariant: RC
+        continueOnError: True
     - template: ../ui-automation/templates/build-broker-host.yml
       parameters:
         productFlavors: Local

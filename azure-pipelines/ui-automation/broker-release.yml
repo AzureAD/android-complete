@@ -550,6 +550,19 @@ stages:
         brokerSource: LocalApk
         adalVersion: ${{ parameters.adalVersionRC }}
         commonVersion: ${{ parameters.commonVersionRC }}
+    - template: ./templates/build-msal-test-app.yml
+      parameters:
+        productFlavors: Dist
+        signingConfigurations: Debug
+        msalVersion: $(versionNumber)
+        packageVariant: RC
+    - template: ./templates/build-adal-test-app.yml
+      parameters:
+        productFlavors: Dist
+        signingConfigurations: Debug
+        commonVersion: $(versionNumber)
+        adalVersion: $(versionNumber)
+        packageVariant: RC
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn:

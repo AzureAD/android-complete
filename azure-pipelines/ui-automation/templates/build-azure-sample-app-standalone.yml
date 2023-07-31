@@ -16,6 +16,9 @@ parameters:
     values:
       - PROD
       - RC
+  - name: continueOnError
+    type: boolean
+    default: False
 
 jobs:
   - job: azure_samples_standalone${{ parameters.packageVariant }}External${{ parameters.signingConfigurations }}
@@ -46,6 +49,7 @@ jobs:
       - task: Gradle@1
         name: Gradle1
         displayName: Assemble Azure Sample
+        continueOnError: ${{ parameters.continueOnError }}
         inputs:
           tasks: AzureSample:clean AzureSample:$(AssembleTask)
           publishJUnitResults: false
@@ -55,12 +59,14 @@ jobs:
           cwd: $(Agent.BuildDirectory)/ms-identity-android-java
       - task: CopyFiles@2
         displayName: 'Copy apks for later use in the pipeline'
+        continueOnError: ${{ parameters.continueOnError }}
         inputs:
           flattenFolders: true
           contents: '$(Build.SourcesDirectory)/azuresample/build/outputs/apk/**/*.apk'
           targetFolder: $(Build.ArtifactStagingDirectory)/azuresample/$(packageVariant)
       - task: PublishPipelineArtifact@1
         displayName: Publish Azure Sample (Standalone) APK
+        continueOnError: ${{ parameters.continueOnError }}
         inputs:
           targetPath: $(Agent.BuildDirectory)/ms-identity-android-java/azuresample/app/build/outputs/apk/standalone/external/${{ lower(parameters.signingConfigurations) }}
           artifactName: AzureSample-standalone-${{upper(parameters.packageVariant)}}
