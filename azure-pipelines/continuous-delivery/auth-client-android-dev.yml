@@ -58,6 +58,10 @@ parameters:
     displayName: Run Unit Tests?
     type: boolean
     default: True
+  - name: shouldRunInstrumentedTests
+    displayName: Run Instrumented Tests?
+    type: boolean
+    default: True
   - name: shouldPublishLibraries
     displayName: Publish Libraries?
     type: boolean
@@ -116,6 +120,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish
@@ -136,6 +141,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
@@ -156,6 +162,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
@@ -183,6 +190,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       agentImage: 1ES-AndroidPool-EOC
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 # Linux Broker - Build and publish
 - stage: 'publishLinuxBrokeLibraries'
   displayName: Linux Broker - Build and publish
@@ -204,6 +212,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
   - job: PublishLinuxBrokerPackage
     dependsOn: publishLinuxBrokerLibraries
     displayName: Publish Linux Broker Package
@@ -257,6 +266,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 # Adal - Build and publish
 - stage: 'publishAdal'
   displayName: Adal - Build and publish
@@ -277,6 +287,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 
 # Combine and Publish Code Coverage
 - stage: 'combineAndPublishCodeCoverage'
