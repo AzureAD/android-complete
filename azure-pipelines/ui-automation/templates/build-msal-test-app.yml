@@ -37,7 +37,7 @@ jobs:
     path: android-complete
   - checkout: msal
     clean: true
-    path: android-complete/adal
+    path: android-complete/msal
   - ${{ if eq(parameters.productFlavors, 'Dist') }}:
     - task: PowerShell@2
       displayName: Generate Assemble Dist Task
