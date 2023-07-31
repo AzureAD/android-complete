@@ -38,6 +38,12 @@ jobs:
   - checkout: msal
     clean: true
     path: android-complete/msal
+  - checkout: broker
+    clean: true
+    path: android-complete/broker
+  - checkout: common
+    clean: true
+    path: android-complete/common
   - ${{ if eq(parameters.productFlavors, 'Dist') }}:
     - task: PowerShell@2
       displayName: Generate Assemble Dist Task
