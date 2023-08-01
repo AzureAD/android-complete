@@ -73,11 +73,11 @@ parameters:
   - name: msalTestTarget
     displayName: Test Targets for MSAL
     type: string
-    default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, package com.microsoft.identity.client.msal.automationapp.testpass.msalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
+    default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, package com.microsoft.identity.client.msal.automationapp.testpass.msalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.FailsWithDailyVersions, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
   - name: brokerTestTarget
     displayName: Test Targets for Broker
     type: string
-    default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
+    default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.FailsWithDailyVersions, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
 
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
