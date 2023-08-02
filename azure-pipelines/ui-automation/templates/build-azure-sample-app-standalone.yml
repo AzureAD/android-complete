@@ -45,12 +45,16 @@ jobs:
         inputs:
           filename: echo
           arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
+      - task: CmdLine@2
+        displayName: print file structure
+        inputs:
+          script: tree $(Agent.WorkFolder)\1 /f
       - task: Gradle@1
         name: Gradle1
         displayName: Assemble Azure Sample
         continueOnError: ${{ parameters.continueOnError }}
         inputs:
-          tasks: AzureSample:clean AzureSample:$(AssembleTask)
+          tasks: app:clean app:$(AssembleTask)
           publishJUnitResults: false
           jdkArchitecture: x86
           sqAnalysisBreakBuildIfQualityGateFailed: false
