@@ -59,7 +59,7 @@ jobs:
           jdkArchitecture: x86
           sqAnalysisBreakBuildIfQualityGateFailed: false
           gradleWrapperFile: $(Agent.BuildDirectory)
-          cwd: $(Agent.BuildDirectory)
+          cwd: $(Agent.BuildDirectory)/gradlew
       - task: CopyFiles@2
         displayName: 'Copy apks for later use in the pipeline'
         continueOnError: ${{ parameters.continueOnError }}
