@@ -30,7 +30,6 @@ jobs:
     steps:
       - checkout: azuresample
         clean: true
-        path: android-complete/azuresample
       - task: PowerShell@2
         displayName: Generate Assemble External Task
         inputs:
