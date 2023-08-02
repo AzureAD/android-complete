@@ -72,6 +72,6 @@ jobs:
         continueOnError: ${{ parameters.continueOnError }}
         inputs:
           targetPath: $(Agent.BuildDirectory)/s/app/build/outputs/apk/external/${{ lower(parameters.signingConfigurations) }}
-          artifactName: AzureSample-${{upper(parameters.packageVariant)}}
+          artifactName: AzureSample-Standalone-${{upper(parameters.packageVariant)}}
           patterns: '**/*.apk'
 ...
