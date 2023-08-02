@@ -44,7 +44,7 @@ jobs:
         displayName: Set MVN AccessToken in Environment
         inputs:
           filename: echo
-          arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
+          arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN]$(System.AccessToken)'
       - task: CmdLine@2
         displayName: print file structure
         inputs:
