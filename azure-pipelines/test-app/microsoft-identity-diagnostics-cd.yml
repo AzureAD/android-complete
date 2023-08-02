@@ -30,8 +30,6 @@ jobs:
     cancelTimeoutInMinutes: 1
     pool:
       vmImage: ubuntu-20.04
-    variables:
-    - group: AndroidAuthClientVariables
     steps:
       - checkout: broker
         clean: true
@@ -41,12 +39,12 @@ jobs:
         displayName: Set MVN Access Token in Environment
         inputs:
           filename: echo
-          arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(AndroidAuthClientInternalMavenAccessToken)'
+          arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
       - task: CmdLine@1
         displayName: Set Office MVN Access Token in Environment
         inputs:
           filename: echo
-          arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_OFFICE_ACCESSTOKEN]$(AndroidAuthClient-Office-Maven-Access-Token)'
+          arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_OFFICE_ACCESSTOKEN]$(OFFICE_MVN_ACCESS_TOKEN)'
       - task: Gradle@1
         name: Gradle1
         displayName: Build Deb with Java Dependency
@@ -67,5 +65,48 @@ jobs:
         displayName: 'Publish Artifact: microsoft-identity-diagnostics App Deb'
         inputs:
           ArtifactName: microsoft-identity-diagnostics Deb Package
+          TargetPath: $(build.artifactstagingdirectory)
+  - job: build_rpm
+    workspace:
+      clean: "all"
+    displayName: Build & Publish Rpm for microsoft-identity-diagnostics-app
+    cancelTimeoutInMinutes: 1
+    pool:
+      vmImage: ubuntu-20.04
+    steps:
+      - checkout: broker
+        clean: true
+        submodules: recursive
+        persistCredentials: True
+      - task: CmdLine@1
+        displayName: Set MVN Access Token in Environment
+        inputs:
+          filename: echo
+          arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
+      - task: CmdLine@1
+        displayName: Set Office MVN Access Token in Environment
+        inputs:
+          filename: echo
+          arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_OFFICE_ACCESSTOKEN]$(OFFICE_MVN_ACCESS_TOKEN)'
+      - task: Gradle@1
+        name: Gradle2
+        displayName: Build Rpm with Java Dependency
+        inputs:
+          cwd: $(Build.SourcesDirectory)/broker-java-root
+          tasks: microsoft-identity-diagnostics:clean microsoft-identity-diagnostics:buildRpm --build-cache --info
+          publishJUnitResults: false
+          jdkArchitecture: x86
+          sqAnalysisBreakBuildIfQualityGateFailed: false
+      - task: CopyFiles@2
+        name: CopyFiles2
+        displayName: Copy Files to Artifact Staging Directory
+        inputs:
+          SourceFolder: microsoft-identity-diagnostics/build/distributions
+          TargetFolder: $(build.artifactstagingdirectory)
+      - task: PublishPipelineArtifact@1
+        name: PublishPipelineArtifacts2
+        displayName: 'Publish Artifact: microsoft-identity-diagnostics App Rpm'
+        inputs:
+          ArtifactName: microsoft-identity-diagnostics Rpm Package
           TargetPath: $(build.artifactstagingdirectory)
 ...
