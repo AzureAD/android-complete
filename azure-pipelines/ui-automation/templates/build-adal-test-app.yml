@@ -63,6 +63,11 @@ jobs:
     inputs:
       filename: echo
       arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
+  - task: CmdLine@2
+    displayName: print file structure
+    inputs:
+      script: |
+      tree $(Agent.BuildDirectory)
   - task: Gradle@1
     name: Gradle1
     displayName: Assemble adalTestApp
