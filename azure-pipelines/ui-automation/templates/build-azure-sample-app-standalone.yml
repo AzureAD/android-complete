@@ -71,7 +71,7 @@ jobs:
         displayName: Publish Azure Sample (Standalone) APK
         continueOnError: ${{ parameters.continueOnError }}
         inputs:
-          targetPath: $(Agent.BuildDirectory)/ms-identity-android-java/azuresample/app/build/outputs/apk/standalone/external/${{ lower(parameters.signingConfigurations) }}
+          targetPath: $(Agent.BuildDirectory)/ms-identity-android-java/azuresample/app/build/outputs/apk/$(packageVariant)/${{ lower(parameters.signingConfigurations) }}
           artifactName: AzureSample-standalone-${{upper(parameters.packageVariant)}}
           patterns: '**/*.apk'
 ...
