@@ -72,6 +72,6 @@ jobs:
         continueOnError: ${{ parameters.continueOnError }}
         inputs:
           targetPath: $(Agent.BuildDirectory)/ms-identity-android-java/azuresample/app/build/outputs/apk/${{ parameters.packageVariant }}/${{ lower(parameters.signingConfigurations) }}
-          artifactName: AzureSample-standalone-${{upper(parameters.packageVariant)}}
+          artifactName: AzureSample-${{upper(parameters.packageVariant)}}
           patterns: '**/*.apk'
 ...
