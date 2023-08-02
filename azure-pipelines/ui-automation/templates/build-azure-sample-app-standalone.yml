@@ -66,12 +66,12 @@ jobs:
         inputs:
           flattenFolders: true
           contents: '$(Build.SourcesDirectory)/azuresample/build/outputs/apk/**/*.apk'
-          targetFolder: $(Build.ArtifactStagingDirectory)/azuresample/$(packageVariant)
+          targetFolder: $(Build.ArtifactStagingDirectory)/azuresample/${{ parameters.packageVariant }}
       - task: PublishPipelineArtifact@1
         displayName: Publish Azure Sample (Standalone) APK
         continueOnError: ${{ parameters.continueOnError }}
         inputs:
-          targetPath: $(Agent.BuildDirectory)/ms-identity-android-java/azuresample/app/build/outputs/apk/$(packageVariant)/${{ lower(parameters.signingConfigurations) }}
+          targetPath: $(Agent.BuildDirectory)/ms-identity-android-java/azuresample/app/build/outputs/apk/${{ parameters.packageVariant }}/${{ lower(parameters.signingConfigurations) }}
           artifactName: AzureSample-standalone-${{upper(parameters.packageVariant)}}
           patterns: '**/*.apk'
 ...
