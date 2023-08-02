@@ -48,7 +48,7 @@ jobs:
       - task: CmdLine@2
         displayName: print file structure
         inputs:
-          script: tree $(Agent.BuildDirectory) /f
+          script: tree $(Agent.BuildDirectory)/s /f
       - task: Gradle@1
         name: Gradle1
         displayName: Assemble Azure Sample
@@ -58,8 +58,8 @@ jobs:
           publishJUnitResults: false
           jdkArchitecture: x86
           sqAnalysisBreakBuildIfQualityGateFailed: false
-          gradleWrapperFile: $(Agent.BuildDirectory)/gradlew
-          cwd: $(Agent.BuildDirectory)
+          gradleWrapperFile: $(Agent.BuildDirectory)/s/gradlew
+          cwd: $(Agent.BuildDirectory)/s
       - task: CopyFiles@2
         displayName: 'Copy apks for later use in the pipeline'
         continueOnError: ${{ parameters.continueOnError }}
