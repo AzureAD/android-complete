@@ -26,6 +26,9 @@ parameters:
 - name: shouldRunUnitTests
   type: boolean
   default: True
+- name: shouldRunInstrumentedTests
+  type: boolean
+  default: True
 - name: testParams
   default: ''
   
@@ -139,7 +142,7 @@ jobs:
       inputs:
         summaryFileLocation: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/${{ parameters.testCmd }}.xml'
         reportDirectory: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/html'
-- ${{if or(eq(parameters.project, 'common'), eq(parameters.project, 'msal'), eq(parameters.project, 'adal'), eq(parameters.project, 'AADAuthenticator'))}}:
+- ${{if and(eq(parameters.shouldRunInstrumentedTests, 'True'), or(eq(parameters.project, 'common'), eq(parameters.project, 'msal'), eq(parameters.project, 'adal'), eq(parameters.project, 'AADAuthenticator')))}}:
     - template: ../templates/run-instrumented-tests.yml
       parameters:
         gitProject: ${{ parameters.repository }}
