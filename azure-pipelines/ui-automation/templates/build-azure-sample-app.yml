@@ -78,9 +78,9 @@ jobs:
     inputs:
       flattenFolders: true
       contents: '$(Build.SourcesDirectory)/azuresample/build/outputs/apk/**/*.apk'
-      targetFolder: $(Build.ArtifactStagingDirectory)/azuresample/$(packageVariant)
+      targetFolder: $(Build.ArtifactStagingDirectory)/azuresample/${{ parameters.packageVariant }}
   - task: PublishPipelineArtifact@1
-    displayName: Publish Broker Host APK
+    displayName: Publish Azure Sample APK
     inputs:
       targetPath: $(Agent.BuildDirectory)/android-complete/azuresample/app/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}
       artifactName: AzureSample-${{upper(parameters.packageVariant)}}
