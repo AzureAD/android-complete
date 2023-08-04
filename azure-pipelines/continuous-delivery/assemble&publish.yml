@@ -75,7 +75,7 @@ jobs:
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: ComponentGovernanceComponentDetection@0
     inputs:
-      sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/dependency-locks/
+      sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/
   - task: ManifestGeneratorTask@0
     displayName: 'Generate SBOM manifest file'
     inputs:
