@@ -49,6 +49,7 @@ jobs:
     displayName: Build ${{ parameters.project }}
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
+      jdkVersionOption: 11
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
@@ -70,6 +71,7 @@ jobs:
     displayName: Publish ${{ parameters.project }}
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.publishCmd}} ${{ parameters.publishParams}}
+      jdkVersionOption: 11
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
@@ -134,6 +136,7 @@ jobs:
       inputs:
         tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}}
         testRunTitle: '${{ parameters.project }}_UnitTests'
+        jdkVersionOption: 11
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
