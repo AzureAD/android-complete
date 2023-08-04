@@ -85,7 +85,7 @@ jobs:
   - task: PublishPipelineArtifact@1
     displayName: 'Publish Artifact: dependencies lockfile'
     inputs:
-      targetPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/dependency-locks
+      targetPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/
       ArtifactName: ${{ parameters.project }}_dependencies
   - task: PublishPipelineArtifact@1
     displayName: 'Publish Artifact: ${{ parameters.project }} Release'
