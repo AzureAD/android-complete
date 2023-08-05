@@ -6,7 +6,7 @@ ext {
     automationAppMinSDKVersion = 21
     targetSdkVersion = 30
     compileSdkVersion = 33
-    buildToolsVersion = "28.0.3"
+    buildToolsVersion = "30.0.3"
 
     // Plugins
     gradleVersion = '7.4.2'
@@ -60,7 +60,7 @@ ext {
     junitVintageEngineVersion = "5.7.2"
     dbusJavaVersion = "3.3.0"
     dbusJavaUtilsVersion = "3.3.0"
-    bouncyCastleVersion = "1.70"
+    bouncyCastleVersion = "1.67"
     oshiCoreVersion = "5.7.5"
     tokenShare = "1.6.5"
     intuneAppSdkVersion = "8.6.3"
