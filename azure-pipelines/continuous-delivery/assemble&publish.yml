@@ -134,6 +134,7 @@ jobs:
       inputs:
         tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}}
         testRunTitle: '${{ parameters.project }}_UnitTests'
+        javaHomeOption: 'JDKVersion'
         jdkVersionOption : '1.11'
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
