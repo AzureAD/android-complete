@@ -26,6 +26,9 @@ parameters:
 - name: shouldRunUnitTests
   type: boolean
   default: True
+- name: shouldRunInstrumentedTests
+  type: boolean
+  default: True
 - name: testParams
   default: ''
   
@@ -73,6 +76,20 @@ jobs:
   - task: ComponentGovernanceComponentDetection@0
     inputs:
       sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/dependency-locks/
+  - task: ManifestGeneratorTask@0
+    displayName: 'Generate SBOM manifest file'
+    inputs:
+      BuildDropPath: $(Build.SourcesDirectory)/${{ parameters.project }}/build/
+  - task: PublishPipelineArtifact@1
+    displayName: 'Publish Artifact: dependencies lockfile'
+    inputs:
+      targetPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/dependency-locks
+      ArtifactName: ${{ parameters.project }}_dependencies
+  - task: PublishPipelineArtifact@1
+    displayName: 'Publish Artifact: ${{ parameters.project }} Release'
+    inputs:
+      TargetPath:  $(Build.SourcesDirectory)/${{ parameters.project }}/build/
+      ArtifactName: ${{ parameters.project }}_Release
 - job: RunUnitTest${{ parameters.project }}
   displayName: ${{ parameters.project }} UnitTest
   pool:
