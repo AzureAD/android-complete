@@ -128,11 +128,21 @@ jobs:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
     - task: Gradle@3
-      displayName: Run Test ${{ parameters.project }}
+      displayName: Print deps ${{ parameters.project }}
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
       inputs:
         tasks: ${{ parameters.project }}:dependencies ${{ parameters.testParams}}
+        testRunTitle: '${{ parameters.project }}_Deps'
+      env:
+        ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
+        ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
+    - task: Gradle@3
+      displayName: Run Test ${{ parameters.project }}
+      enabled: ${{ parameters.shouldRunUnitTests }}
+      continueOnError: true
+      inputs:
+        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}}
         testRunTitle: '${{ parameters.project }}_UnitTests'
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
