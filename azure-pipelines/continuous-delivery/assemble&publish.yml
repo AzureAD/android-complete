@@ -49,7 +49,6 @@ jobs:
     displayName: Build ${{ parameters.project }} check if this is getting reflected!
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
-      jdkVersionOption: 11
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
@@ -57,7 +56,6 @@ jobs:
     displayName: Generate Lockfile ${{ parameters.project }}
     inputs:
       tasks: -q ${{ parameters.project }}:dependencies ${{ parameters.dependencyParams }}
-      jdkVersionOption: 11
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
@@ -72,14 +70,13 @@ jobs:
     displayName: Publish ${{ parameters.project }}
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.publishCmd}} ${{ parameters.publishParams}}
-      jdkVersionOption: 11
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: ComponentGovernanceComponentDetection@0
     continueOnError: true
     inputs:
-      sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/dependency-locks/
+      sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/
   - task: ManifestGeneratorTask@0
     displayName: 'Generate SBOM manifest file'
     continueOnError: true
@@ -89,7 +86,7 @@ jobs:
     displayName: 'Publish Artifact: dependencies lockfile'
     continueOnError: true
     inputs:
-      targetPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/dependency-locks
+      targetPath: $(Build.SourcesDirectory)/${{ parameters.project }}/
       ArtifactName: ${{ parameters.project }}_dependencies
   - task: PublishPipelineArtifact@1
     displayName: 'Publish Artifact: ${{ parameters.project }} Release'
@@ -140,7 +137,6 @@ jobs:
       inputs:
         tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}}
         testRunTitle: '${{ parameters.project }}_UnitTests'
-        jdkVersionOption: 11
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)

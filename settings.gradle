@@ -47,7 +47,7 @@ project(':adalTestApp').projectDir = new File('adal/userappwithbroker')
 
 include(":msalTestApp")
 project(':msalTestApp').projectDir = new File('msal/testapps/testapp')
-
+//
 include(":package-inspector")
 project(':package-inspector').projectDir = new File('msal/package-inspector')
 
@@ -94,19 +94,19 @@ project(':broker4j').projectDir = new File('broker/broker4j')
 
 include(":LinuxBroker")
 project(':LinuxBroker').projectDir = new File('broker/LinuxBroker')
-
+//
 include(":otelexporter")
 project(':otelexporter').projectDir = new File('broker/otelexporter')
-
+//
 include(':LabApiUtilities')
 project(':LabApiUtilities').projectDir = new File('common/LabApiUtilities')
-
+//
 include(':java-linux-test-app')
 project(':java-linux-test-app').projectDir = new File('broker/java-linux-test-app')
-
+//
 include(":LinuxBrokerPackage")
 project(':LinuxBrokerPackage').projectDir = new File('/broker/LinuxBrokerPackage')
-
+//
 include(":AzureSample")
 project(':AzureSample').projectDir = new File('azuresample/app')
 
