@@ -37,18 +37,18 @@ resources:
   - repository: common
     type: github
     name: AzureAD/microsoft-authentication-library-common-for-android
-    ref: dev
+    ref: somalaya/testAGP
     endpoint: ANDROID_GITHUB
   - repository: msal
     type: github
     name: AzureAD/microsoft-authentication-library-for-android
-    ref: dev
+    ref: somalaya/testAGP
     endpoint: ANDROID_GITHUB
     # We need broker to get otelexporter
   - repository: broker
     type: github
     name: AzureAD/ad-accounts-for-android
-    ref: dev
+    ref: somalaya/testAGP
     endpoint: ANDROID_GITHUB
 
 
