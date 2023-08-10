@@ -24,25 +24,6 @@ parameters:
       - PROD
       - RC
 
-resources:
-  repositories:
-  - repository: common
-    type: github
-    name: AzureAD/microsoft-authentication-library-common-for-android
-    ref: somalaya/testAGP
-    endpoint: ANDROID_GITHUB
-  - repository: msal
-    type: github
-    name: AzureAD/microsoft-authentication-library-for-android
-    ref: somalaya/testAGP
-    endpoint: ANDROID_GITHUB
-    # We need broker to get otelexporter
-  - repository: broker
-    type: github
-    name: AzureAD/ad-accounts-for-android
-    ref: somalaya/testAGP
-    endpoint: ANDROID_GITHUB
-
 
 jobs:
 - job: msal_test_app${{ parameters.packageVariant }}${{ parameters.productFlavors }}${{ parameters.signingConfigurations }}
@@ -83,14 +64,13 @@ jobs:
     inputs:
       filename: echo
       arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
-  - task: Gradle@1
-    name: Gradle1
+  - task: Gradle@3
+    name: Gradle3
     displayName: Assemble msalTestApp
     inputs:
       tasks: msalTestApp:clean msalTestApp:$(AssembleTask)
       publishJUnitResults: false
-      jdkArchitecture: x86
-      sqAnalysisBreakBuildIfQualityGateFailed: false
+      jdkVersionOption: 11
       gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
       cwd: $(Agent.BuildDirectory)/android-complete
   - task: PublishPipelineArtifact@1
