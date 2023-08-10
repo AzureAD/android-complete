@@ -24,9 +24,29 @@ parameters:
       - PROD
       - RC
 
+resources:
+  repositories:
+  - repository: common
+    type: github
+    name: AzureAD/microsoft-authentication-library-common-for-android
+    ref: somalaya/testAGP
+    endpoint: ANDROID_GITHUB
+  - repository: msal
+    type: github
+    name: AzureAD/microsoft-authentication-library-for-android
+    ref: somalaya/testAGP
+    endpoint: ANDROID_GITHUB
+    # We need broker to get otelexporter
+  - repository: broker
+    type: github
+    name: AzureAD/ad-accounts-for-android
+    ref: somalaya/testAGP
+    endpoint: ANDROID_GITHUB
+
+
 jobs:
 - job: msal_test_app${{ parameters.packageVariant }}${{ parameters.productFlavors }}${{ parameters.signingConfigurations }}
-  displayName: Build MSAL Test App ${{ parameters.packageVariant }} ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
+  displayName: Build MSAL Test App ${{ parameters.packageVariant }} ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK ${{ parameters.msalVersion }}
   pool:
     vmImage: 'windows-latest'
   variables:
