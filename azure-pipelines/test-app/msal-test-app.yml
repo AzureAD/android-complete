@@ -92,12 +92,13 @@ jobs:
       filename: echo
       arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
   - task: Gradle@3
-    name: Gradle1
+    name: Gradle3
     displayName: Assemble msalTestApp
     inputs:
       tasks: msalTestApp:clean msalTestApp:$(AssembleTask)
       publishJUnitResults: false
       gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
+      jdkVersionOption: "1.11"
       cwd: $(Agent.BuildDirectory)/android-complete
   - task: PublishPipelineArtifact@1
     displayName: Publish MSAL Test App
