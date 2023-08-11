@@ -49,15 +49,14 @@ jobs:
         displayName: print file structure
         inputs:
           script: tree $(Agent.BuildDirectory)/s /f
-      - task: Gradle@1
-        name: Gradle1
+      - task: Gradle@3
+        name: Gradle3
         displayName: Assemble Azure Sample
         continueOnError: ${{ parameters.continueOnError }}
         inputs:
           tasks: app:clean app:$(AssembleTask)
           publishJUnitResults: false
-          jdkArchitecture: x86
-          sqAnalysisBreakBuildIfQualityGateFailed: false
+          jdkVersionOption: 11
           gradleWrapperFile: $(Agent.BuildDirectory)/s/gradlew
           cwd: $(Agent.BuildDirectory)/s
       - task: CopyFiles@2
