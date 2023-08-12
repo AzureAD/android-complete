@@ -15,7 +15,7 @@ parameters:
   default: -Psugar=true
 # https://developer.android.com/studio/releases/platforms
 - name: androidAPILevel
-  default: 30
+  default: 34
 # https://developer.android.com/ndk/guides/abis
 - name: androidABI
   default: x86_64
@@ -90,4 +90,3 @@ jobs:
       tasks: '${{ parameters.projectName }}:connected${{ parameters.projectVariantName }}AndroidTest'
       publishJUnitResults: true
       testResultsFiles: '**/TEST-*.xml'
-      jdkVersionOption: 11

@@ -73,7 +73,6 @@ jobs:
     inputs:
       tasks: adalTestApp:clean adalTestApp:$(AssembleTask)
       publishJUnitResults: false
-      jdkVersionOption: 11
       gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
       cwd: $(Agent.BuildDirectory)/android-complete
   - task: PublishPipelineArtifact@1
