@@ -46,7 +46,7 @@ jobs:
   - checkout: ${{ parameters.repository }}
     persistCredentials: True
   - task: Gradle@3
-    displayName: Build ${{ parameters.project }} check if this is getting reflected!
+    displayName: Build ${{ parameters.project }}
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
     env:
@@ -74,17 +74,14 @@ jobs:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
   - task: ComponentGovernanceComponentDetection@0
-    continueOnError: true
     inputs:
       sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/
   - task: ManifestGeneratorTask@0
     displayName: 'Generate SBOM manifest file'
-    continueOnError: true
     inputs:
       BuildDropPath: $(Build.SourcesDirectory)/${{ parameters.project }}/build/
   - task: PublishPipelineArtifact@1
     displayName: 'Publish Artifact: dependencies lockfile'
-    continueOnError: true
     inputs:
       targetPath: $(Build.SourcesDirectory)/${{ parameters.project }}/
       ArtifactName: ${{ parameters.project }}_dependencies
