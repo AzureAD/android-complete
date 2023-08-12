@@ -47,7 +47,7 @@ project(':adalTestApp').projectDir = new File('adal/userappwithbroker')
 
 include(":msalTestApp")
 project(':msalTestApp').projectDir = new File('msal/testapps/testapp')
-
+//
 include(":package-inspector")
 project(':package-inspector').projectDir = new File('msal/package-inspector')
 

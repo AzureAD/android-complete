@@ -90,4 +90,4 @@ jobs:
       tasks: '${{ parameters.projectName }}:connected${{ parameters.projectVariantName }}AndroidTest'
       publishJUnitResults: true
       testResultsFiles: '**/TEST-*.xml'
-      javaHomeOption: 'JDKVersion'
+      jdkVersionOption: 11

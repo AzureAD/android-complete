@@ -24,9 +24,10 @@ parameters:
       - PROD
       - RC
 
+
 jobs:
 - job: msal_test_app${{ parameters.packageVariant }}${{ parameters.productFlavors }}${{ parameters.signingConfigurations }}
-  displayName: Build MSAL Test App ${{ parameters.packageVariant }} ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
+  displayName: Build MSAL Test App ${{ parameters.packageVariant }} ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK ${{ parameters.msalVersion }}
   pool:
     vmImage: 'windows-latest'
   variables:
@@ -63,14 +64,13 @@ jobs:
     inputs:
       filename: echo
       arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
-  - task: Gradle@1
-    name: Gradle1
+  - task: Gradle@3
+    name: Gradle3
     displayName: Assemble msalTestApp
     inputs:
       tasks: msalTestApp:clean msalTestApp:$(AssembleTask)
       publishJUnitResults: false
-      jdkArchitecture: x86
-      sqAnalysisBreakBuildIfQualityGateFailed: false
+      jdkVersionOption: 11
       gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
       cwd: $(Agent.BuildDirectory)/android-complete
   - task: PublishPipelineArtifact@1
