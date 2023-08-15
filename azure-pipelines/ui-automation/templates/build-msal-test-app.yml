@@ -70,7 +70,7 @@ jobs:
     inputs:
       tasks: msalTestApp:clean msalTestApp:$(AssembleTask)
       publishJUnitResults: false
-      jdkVersionOption: 11
+      jdkVersionOption: "1.11"
       gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
       cwd: $(Agent.BuildDirectory)/android-complete
   - task: PublishPipelineArtifact@1

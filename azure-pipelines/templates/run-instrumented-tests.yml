@@ -15,7 +15,7 @@ parameters:
   default: -Psugar=true
 # https://developer.android.com/studio/releases/platforms
 - name: androidAPILevel
-  default: 34
+  default: 33
 # https://developer.android.com/ndk/guides/abis
 - name: androidABI
   default: x86_64
