@@ -117,7 +117,7 @@ jobs:
       tasks: brokerHost:clean brokerHost:$(AssembleTask)
       publishJUnitResults: false
       jdkArchitecture: x86
-      sqAnalysisBreakBuildIfQualityGateFailed: false
+      jdkVersionOption: "1.11"
       gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
       cwd: $(Agent.BuildDirectory)/android-complete
   - task: CopyFiles@2

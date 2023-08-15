@@ -102,7 +102,7 @@ jobs:
     inputs:
       tasks: brokerHost:clean brokerHost:$(AssembleTask)
       publishJUnitResults: false
-      jdkVersionOption: 11
+      jdkVersionOption: "1.11"
       gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
       cwd: $(Agent.BuildDirectory)/android-complete
   - task: CopyFiles@2

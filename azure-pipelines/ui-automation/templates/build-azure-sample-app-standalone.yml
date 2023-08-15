@@ -56,7 +56,7 @@ jobs:
         inputs:
           tasks: app:clean app:$(AssembleTask)
           publishJUnitResults: false
-          jdkVersionOption: 11
+          jdkVersionOption: "1.11"
           gradleWrapperFile: $(Agent.BuildDirectory)/s/gradlew
           cwd: $(Agent.BuildDirectory)/s
       - task: CopyFiles@2
