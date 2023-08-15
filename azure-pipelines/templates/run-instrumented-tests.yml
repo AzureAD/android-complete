@@ -86,6 +86,8 @@ jobs:
     continueOnError: ${{ parameters.continueOnError }}
     inputs:
       gradleWrapperFile: 'gradlew'
+      javaHomeOption: 'JDKVersion'
+      dkVersionOption: '1.11'
       options: ${{ parameters.gradleOptions }}
       tasks: '${{ parameters.projectName }}:connected${{ parameters.projectVariantName }}AndroidTest'
       publishJUnitResults: true
