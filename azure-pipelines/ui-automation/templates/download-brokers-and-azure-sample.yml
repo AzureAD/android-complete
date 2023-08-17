@@ -160,6 +160,7 @@ jobs:
         feedDownloadExternal: '${{ parameters.msazureFeedName }}'
         packageDownloadExternal: 'broker-host'
         versionDownloadExternal: '${{ parameters.oldBrokerHostVersion }}'
+    - script: mv ./broker-host.apk ./BrokerHostWithoutBrokerSelection.apk
     - publish: $(Build.ArtifactStagingDirectory)/brokers
       displayName: 'Publish Authenticator/Company Portal Broker apks for later use'
       artifact: brokerapks
