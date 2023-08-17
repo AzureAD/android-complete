@@ -186,26 +186,6 @@ variables:
 stages:
 # Package generation
 # Testing Libraries - KeyVault, LabApi, LabApiUtilities, TestUtils, UiAutomationUtilities
-- stage: 'publishCommonUtilities'
-  displayName: Testing Libraries - Build and publish
-  dependsOn: [] # this removes the implicit dependency on previous stage and causes this to run in parallel
-  condition: |
-    and
-    (
-      not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildTestingLibraries }}, 'True')
-    )
-  jobs:
-    - job: queue_build
-      displayName: Update Testing libraries 
-      steps:
-        - task: PowerShell@2
-          displayName: Queue and wait for testing libraries 
-          inputs:
-            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$(System.AccessToken)" -BuildDefinitionId "1464"  -Branch "${{ parameters.commonBranch }}"'
-            workingDirectory: '$(Build.SourcesDirectory)'
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
