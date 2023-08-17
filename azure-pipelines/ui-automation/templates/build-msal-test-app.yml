@@ -24,7 +24,6 @@ parameters:
       - PROD
       - RC
 
-
 jobs:
 - job: msal_test_app${{ parameters.packageVariant }}${{ parameters.productFlavors }}${{ parameters.signingConfigurations }}
   displayName: Build MSAL Test App ${{ parameters.packageVariant }} ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
