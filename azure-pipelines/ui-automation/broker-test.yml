@@ -102,6 +102,10 @@ parameters:
   displayName: Old Broker host Version
   type: string
   default: '0.0.1'
+- name: brokerHostWithoutBrokerSelectionLogicVersion
+  displayName: brokerHost without broker selection logic version
+  type: string
+  default: '0.0.3'
 - name: LTWVersion
   displayName: Link to Windows Version
   type: string
@@ -256,6 +260,7 @@ stages:
         oldCompanyPortalVersion: ${{ parameters.oldCompanyPortalVersion }}
         brokerHostPipelineId: '$(brokerHostPipelineId)'
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
+        brokerHostWithoutBrokerSelectionLogicVersion: ${{ parameters.brokerHostWithoutBrokerSelectionLogicVersion }}
         LTWVersion: ${{ parameters.LTWVersion }}
         oldLTWVersion: ${{ parameters.oldLTWVersion }}
 # Download Old Test Apps
