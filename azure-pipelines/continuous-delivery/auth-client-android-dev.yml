@@ -132,7 +132,7 @@ stages:
       project: common
       assembleCmd: assembleDist
       testCmd: distDebugCommonUnitTestCoverageReport
-      publishCmd: publish
+      publishCmd: publishDistReleasePublicationToVsts-maven-adal-androidRepository
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam)
       testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(enableBrokerDiscoveryParam)
@@ -142,6 +142,12 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+  - task: Gradle@3
+    name: Gradle3
+    displayName: Publish common to internal maven feed
+    inputs:
+      tasks: publishDistReleasePublicationToVsts-maven-androidRepository
+      publishJUnitResults: false
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
