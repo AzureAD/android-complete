@@ -142,7 +142,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
-  -job:
+  - job:
     - task: Gradle@3
       name: Gradle3
       displayName: Publish common to internal maven feed
