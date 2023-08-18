@@ -126,22 +126,23 @@ stages:
   displayName: Common - Build and publish
   dependsOn: publishCommon4jLibraries
   jobs:
-  - template: assemble&publish.yml
-    parameters:
-      repository: common
-      project: common
-      assembleCmd: assembleDist
-      testCmd: distDebugCommonUnitTestCoverageReport
-      publishCmd: publishDistReleasePublicationToVsts-maven-adal-androidRepository
-      dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam)
-      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(enableBrokerDiscoveryParam)
-      publishParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam)
-      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
-      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+  - job:
+    - template: assemble&publish.yml
+      parameters:
+        repository: common
+        project: common
+        assembleCmd: assembleDist
+        testCmd: distDebugCommonUnitTestCoverageReport
+        publishCmd: publishDistReleasePublicationToVsts-maven-adal-androidRepository
+        dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
+        assembleParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam)
+        testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(enableBrokerDiscoveryParam)
+        publishParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam)
+        vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
+        vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+        shouldPublish: ${{ parameters.shouldPublishLibraries }}
+        shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+        shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
   - job:
     - task: Gradle@3
       name: Gradle3
