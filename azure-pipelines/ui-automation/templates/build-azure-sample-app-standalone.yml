@@ -56,6 +56,7 @@ jobs:
         inputs:
           tasks: app:clean app:$(AssembleTask)
           publishJUnitResults: false
+          jdkArchitecture: x64
           jdkVersionOption: "1.11"
           gradleWrapperFile: $(Agent.BuildDirectory)/s/gradlew
           cwd: $(Agent.BuildDirectory)/s

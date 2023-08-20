@@ -69,6 +69,7 @@ jobs:
     inputs:
       tasks: AzureSample:clean AzureSample:$(AssembleTask)
       publishJUnitResults: false
+      jdkArchitecture: x64
       jdkVersionOption: "1.11"
       gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
       cwd: $(Agent.BuildDirectory)/android-complete

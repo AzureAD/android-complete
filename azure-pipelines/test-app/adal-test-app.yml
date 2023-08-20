@@ -91,7 +91,7 @@ jobs:
     inputs:
       tasks: adalTestApp:clean adalTestApp:$(AssembleTask)
       publishJUnitResults: false
-      jdkArchitecture: x86
+      jdkArchitecture: x64
       jdkVersionOption: "1.11"
       gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
       cwd: $(Agent.BuildDirectory)/android-complete
