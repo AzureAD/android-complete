@@ -86,7 +86,7 @@ jobs:
       cwd: $(Build.SourcesDirectory)/broker-java-root
       tasks: java-linux-test-app:clean java-linux-test-app:buildRpm --build-cache --info
       publishJUnitResults: false
-      jdkArchitecture: x86
+      jdkArchitecture: x64
       jdkVersionOption: "1.11"
   - task: CopyFiles@2
     name: CopyFiles1
