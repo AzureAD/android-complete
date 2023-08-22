@@ -179,8 +179,7 @@ stages:
       repository: broker
       project: AADAuthenticator
       assembleCmd: assembleDist
-      testCmd: distDebugAADAuthenticatorUnitTestCoverageReport
-      publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
+      testCmd: testLocalDebugUnitTest --tests "com.microsoft.workaccount.workplacejoin.protocol.executor.contentprovider.*"
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) $(enableBrokerSelectionParam)
       testParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) $(enableBrokerSelectionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
