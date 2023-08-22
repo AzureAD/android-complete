@@ -8,6 +8,7 @@
 # Variable: 'mvnAccessToken' was defined in the Variables tab
 # Variable: 'OfficePAT' was defined in the Variables tab
 # Variable: 'msal_sdk_version' was defined in the Variables tab
+# Variable: 'dailyVersion' was defined in the Variables tab
 # https://dev.azure.com/IdentityDivision/Engineering/_build?definitionId=1490&_a=summary
 name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
 
@@ -135,7 +136,7 @@ stages:
         msalFlavor: Dist
         brokerSource: LocalApk
         brokerUpdateSource: LocalApk
-        msalVersion: "0.0.+"
+        msalVersion: $(dailyVersion)
         packageVariant: RC
         preInstallLtw: ${{ parameters.preInstallLtw }}
 # msalautomationapplocalbrokerhost
@@ -149,7 +150,7 @@ stages:
         msalFlavor: Local
         brokerSource: LocalApk
         brokerUpdateSource: LocalApk
-        msalVersion: "0.0.+"
+        msalVersion: $(dailyVersion)
         packageVariant: RC
         preInstallLtw: ${{ parameters.preInstallLtw }}
 # brokerautomationapp
@@ -162,8 +163,8 @@ stages:
         brokerApp: AutoBroker
         brokerFlavor: Dist
         brokerSource: LocalApk
-        adalVersion: "0.0.+"
-        commonVersion: "0.0.+"
+        adalVersion: $(dailyVersion)
+        commonVersion: $(dailyVersion)
         preInstallLtw: ${{ parameters.preInstallLtw }}
 # TestAppApk - MsalE2ETestApp Queue pipeline
 - stage: 'msalE2ETestApp'
@@ -218,7 +219,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://office.visualstudio.com/" -Project "OneAuth" -PipelinePAT "$(OfficePAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(oneAuthTestAppPipelineId)" -Branch "android/common-ingestion" -TemplateParams "{''androidCommonVersion'': ''$(commonVersion)''}"'
+            arguments: '-OrganizationUrl "https://office.visualstudio.com/" -Project "OneAuth" -PipelinePAT "$(OfficePAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(oneAuthTestAppPipelineId)" -Branch "android/common-ingestion" -TemplateParams "{''androidCommonVersion'': ''$(dailyVersion)''}"'
             workingDirectory: '$(Build.SourcesDirectory)'
         - task: DownloadExternalBuildArtifacts@15
           displayName: 'Download OneAuth test app'
