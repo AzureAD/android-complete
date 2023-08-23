@@ -29,7 +29,7 @@ parameters:
   - name: brokerHostWithoutBrokerSelectionLogicVersion
     displayName: brokerHost without broker selection logic version
     type: string
-    default: '0.0.3'
+    default: '0.0.4'
   - name: internalFeedName
     type: string
     default: 'AndroidAdal'
