@@ -100,9 +100,8 @@ jobs:
         Write-Host "No lockfiles found. No artifacts to publish."
         exit 0
       }
-  displayName: 'Filter and Publish Lockfile Artifacts'
-
   - task: PublishPipelineArtifact@1
+    displayName: 'Filter and Publish Lockfile Artifacts'
     inputs:
       targetPath: '$(Pipeline.Workspace)/lockfile_artifacts'
       artifact: ${{ parameters.project }}_dependencies
