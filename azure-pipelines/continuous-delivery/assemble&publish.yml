@@ -85,8 +85,7 @@ jobs:
     inputs:
       targetPath: $(Build.SourcesDirectory)/${{ parameters.project }}/
       ArtifactName: ${{ parameters.project }}_dependencies
-      condition: |
-        exists('$(Pipeline.Workspace)/artifacts/*.lockfile')
+      patterns: '*.lockfile'
   - task: PublishPipelineArtifact@1
     displayName: 'Publish Artifact: ${{ parameters.project }} Release'
     inputs:
