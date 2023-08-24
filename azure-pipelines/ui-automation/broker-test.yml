@@ -103,6 +103,10 @@ parameters:
   displayName: Old Broker host Version
   type: string
   default: '0.0.1'
+- name: brokerHostWithoutBrokerSelectionLogicVersion
+  displayName: brokerHost without broker selection logic version
+  type: string
+  default: '0.0.4'
 - name: LTWVersion
   displayName: Link to Windows Version
   type: string
@@ -257,6 +261,7 @@ stages:
         oldCompanyPortalVersion: ${{ parameters.oldCompanyPortalVersion }}
         brokerHostPipelineId: '$(brokerHostPipelineId)'
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
+        brokerHostWithoutBrokerSelectionLogicVersion: ${{ parameters.brokerHostWithoutBrokerSelectionLogicVersion }}
         LTWVersion: ${{ parameters.LTWVersion }}
         oldLTWVersion: ${{ parameters.oldLTWVersion }}
 # Download Old Test Apps
@@ -297,6 +302,7 @@ stages:
                       /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
+                      /sdcard/BrokerHostWithoutBrokerSelection.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhostWithoutBrokerSelectionEnabled_apk),\
                       /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/$(oneAuthTestApp),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                       /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
@@ -333,6 +339,7 @@ stages:
                       /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/$(OldltwApk),\
                       /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /sdcard/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhost_apk),\
+                      /sdcard/BrokerHostWithoutBrokerSelection.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhostWithoutBrokerSelectionEnabled_apk),\
                       /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp),\
                       /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
@@ -372,6 +379,7 @@ stages:
                       /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp),\
                       /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
+                      /sdcard/BrokerHostWithoutBrokerSelection.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhostWithoutBrokerSelectionEnabled_apk),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
                       /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
@@ -405,6 +413,7 @@ stages:
                       /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/$(LTWApk),\
                       /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/$(OldltwApk),\
                       /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+                      /sdcard/BrokerHostWithoutBrokerSelection.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhostWithoutBrokerSelectionEnabled_apk),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
                       /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
