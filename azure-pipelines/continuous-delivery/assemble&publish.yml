@@ -85,15 +85,15 @@ jobs:
       $lockfiles = Get-ChildItem -Path $sourcePath -Filter "*.lockfile" -File
       Write-Host "Current Directory: $sourcePath"
       if ($lockfiles.Count -gt 0) {
-        Write-Host "Lockfiles found. Publishing artifacts."
+        Write-Host "Lockfiles found."
       } else {
         Write-Host "No lockfiles found. No artifacts to publish."
         exit 0
       }
   - task: PublishPipelineArtifact@1
-    displayName: 'Filter and Publish Lockfile Artifacts'
+    displayName: 'Publish Lockfile Artifacts'
     inputs:
-      targetPath: '$(Pipeline.Workspace)/lockfile_artifacts'
+      targetPath: $(Build.SourcesDirectory)/${{ parameters.project }}/
       artifact: ${{ parameters.project }}_dependencies
 
   - task: PublishPipelineArtifact@1
