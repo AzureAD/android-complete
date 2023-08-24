@@ -83,13 +83,9 @@ jobs:
   - powershell: |
       $sourcePath = "$(Build.SourcesDirectory)/${{ parameters.project }}/"
       $lockfiles = Get-ChildItem -Path $sourcePath -Filter "*.lockfile" -File
-
+      Write-Host "Current Directory: $sourcePath"
       if ($lockfiles.Count -gt 0) {
         Write-Host "Lockfiles found. Publishing artifacts."
-        $lockfiles | ForEach-Object {
-          $targetPath = Join-Path -Path $(Pipeline.Workspace)/lockfile_artifacts -ChildPath $_.Name
-          Copy-Item -Path $_.FullName -Destination $targetPath -Force
-        }
       } else {
         Write-Host "No lockfiles found. No artifacts to publish."
         exit 0
