@@ -102,10 +102,10 @@ jobs:
       }
   displayName: 'Filter and Publish Lockfile Artifacts'
 
-- task: PublishPipelineArtifact@1
-  inputs:
-    targetPath: '$(Pipeline.Workspace)/lockfile_artifacts'
-    artifact: ${{ parameters.project }}_dependencies
+  - task: PublishPipelineArtifact@1
+    inputs:
+      targetPath: '$(Pipeline.Workspace)/lockfile_artifacts'
+      artifact: ${{ parameters.project }}_dependencies
 
   - task: PublishPipelineArtifact@1
     displayName: 'Publish Artifact: ${{ parameters.project }} Release'
