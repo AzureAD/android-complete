@@ -87,19 +87,19 @@ jobs:
   #     ArtifactName: ${{ parameters.project }}_dependencies
   #     patterns: '**/*.lockfile'
   - powershell: |
-    $sourcePath = "$(Pipeline.Workspace)/artifacts"
-    $lockfiles = Get-ChildItem -Path $sourcePath -Filter "*.lockfile" -File
+      $sourcePath = "$(Pipeline.Workspace)/artifacts"
+      $lockfiles = Get-ChildItem -Path $sourcePath -Filter "*.lockfile" -File
 
-    if ($lockfiles.Count -gt 0) {
-      Write-Host "Lockfiles found. Publishing artifacts."
-      $lockfiles | ForEach-Object {
-        $targetPath = Join-Path -Path $(Pipeline.Workspace)/lockfile_artifacts -ChildPath $_.Name
-        Copy-Item -Path $_.FullName -Destination $targetPath -Force
+      if ($lockfiles.Count -gt 0) {
+        Write-Host "Lockfiles found. Publishing artifacts."
+        $lockfiles | ForEach-Object {
+          $targetPath = Join-Path -Path $(Pipeline.Workspace)/lockfile_artifacts -ChildPath $_.Name
+          Copy-Item -Path $_.FullName -Destination $targetPath -Force
+        }
+      } else {
+        Write-Host "No lockfiles found. No artifacts to publish."
+        exit 0
       }
-    } else {
-      Write-Host "No lockfiles found. No artifacts to publish."
-      exit 0
-    }
   displayName: 'Filter and Publish Lockfile Artifacts'
 
 - task: PublishPipelineArtifact@1
