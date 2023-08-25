@@ -110,14 +110,14 @@ jobs:
     inputs:
       filename: echo
       arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
-  - task: Gradle@1
-    name: Gradle1
+  - task: Gradle@3
+    name: Gradle3
     displayName: Assemble BrokerHost
     inputs:
       tasks: brokerHost:clean brokerHost:$(AssembleTask)
       publishJUnitResults: false
-      jdkArchitecture: x86
-      sqAnalysisBreakBuildIfQualityGateFailed: false
+      jdkArchitecture: x64
+      jdkVersionOption: "1.11"
       gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
       cwd: $(Agent.BuildDirectory)/android-complete
   - task: CopyFiles@2

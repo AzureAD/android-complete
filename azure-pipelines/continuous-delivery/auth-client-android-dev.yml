@@ -4,7 +4,7 @@
 # Variable: 'mvnUserName' user name to access internal maven feed
 # Variable: 'mvnAccessToken' access token to access internal maven feed
 
-name: 0.0.$(Date:yyyyMMdd)-dev$(Rev:.r) # $(Build.BuildNumber) = name
+name: 1.0.$(Date:yyyyMMdd)-dev$(Rev:.r) # $(Build.BuildNumber) = name
 
 pr: none
 trigger: none
@@ -82,7 +82,7 @@ parameters:
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
     versionNumber: $(Build.BuildNumber)
-    brokerVersionNumber: $[replace(variables['build.buildnumber'], '0.0', '8.1')]
+    brokerVersionNumber: $[replace(variables['build.buildnumber'], '1.0.', '8.1.')]
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
     brokerVersionNumber: ${{ parameters.customVersionNumber }}
@@ -468,7 +468,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}'' , ''commonVersion'' : ''$(versionNumber)'', ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}'' , ''dailyVersion'' : ''$(versionNumber)'', ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)

@@ -86,8 +86,8 @@ jobs:
       cwd: $(Build.SourcesDirectory)/broker-java-root
       tasks: java-linux-test-app:clean java-linux-test-app:buildRpm --build-cache --info
       publishJUnitResults: false
-      jdkArchitecture: x86
-      sqAnalysisBreakBuildIfQualityGateFailed: false
+      jdkArchitecture: x64
+      jdkVersionOption: "1.11"
   - task: CopyFiles@2
     name: CopyFiles1
     displayName: Copy Files to Artifact Staging Directory
