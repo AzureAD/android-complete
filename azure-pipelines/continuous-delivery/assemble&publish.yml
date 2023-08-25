@@ -79,7 +79,7 @@ jobs:
   - task: ManifestGeneratorTask@0
     displayName: 'Generate SBOM manifest file'
     inputs:
-    BuildDropPath: $(Build.SourcesDirectory)/${{ parameters.project }}/build/
+      BuildDropPath: $(Build.SourcesDirectory)/${{ parameters.project }}/build/
   - task: CopyFiles@2
     inputs:
       SourceFolder: '$(Build.SourcesDirectory)/${{ parameters.project }}'
