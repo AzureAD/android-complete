@@ -78,20 +78,20 @@ jobs:
       sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/
   - task: ManifestGeneratorTask@0
     displayName: 'Generate SBOM manifest file'
-    inputs:
-      BuildDropPath: $(Build.SourcesDirectory)/${{ parameters.project }}/build/
   - task: CopyFiles@2
     inputs:
-      SourceFolder: '$(Build.SourcesDirectory)/${{ parameters.project }}' # Source folder containing the files
-      Contents: '**/*.lockfile'     # Replace with your file format (e.g., **/*.txt)
+      SourceFolder: '$(Build.SourcesDirectory)/${{ parameters.project }}'
+      Contents: '**/*.lockfile'
       TargetFolder: '$(Build.SourcesDirectory)/${{ parameters.project }}/LockfileFolder'
-      OverWrite: true                          # Overwrite files if they already exist in the target folder
-      flattenFolders: false                    # Maintain folder structure
+      OverWrite: true
+      flattenFolders: false
   - task: PublishPipelineArtifact@1
     displayName: 'Publish Artifact: dependencies lockfile'
     inputs:
       targetPath: $(Build.SourcesDirectory)/${{ parameters.project }}/LockfileFolder
       ArtifactName: ${{ parameters.project }}_dependencies
+    inputs:
+      BuildDropPath: $(Build.SourcesDirectory)/${{ parameters.project }}/build/
   - task: PublishPipelineArtifact@1
     displayName: 'Publish Artifact: ${{ parameters.project }} Release'
     inputs:
