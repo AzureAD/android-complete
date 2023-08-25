@@ -78,6 +78,8 @@ jobs:
       sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/
   - task: ManifestGeneratorTask@0
     displayName: 'Generate SBOM manifest file'
+    inputs:
+    BuildDropPath: $(Build.SourcesDirectory)/${{ parameters.project }}/build/
   - task: CopyFiles@2
     inputs:
       SourceFolder: '$(Build.SourcesDirectory)/${{ parameters.project }}'
@@ -90,8 +92,6 @@ jobs:
     inputs:
       targetPath: $(Build.SourcesDirectory)/${{ parameters.project }}/dependencies
       ArtifactName: ${{ parameters.project }}_dependencies
-    inputs:
-      BuildDropPath: $(Build.SourcesDirectory)/${{ parameters.project }}/build/
   - task: PublishPipelineArtifact@1
     displayName: 'Publish Artifact: ${{ parameters.project }} Release'
     inputs:
