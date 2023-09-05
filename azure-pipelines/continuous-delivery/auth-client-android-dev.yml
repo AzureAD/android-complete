@@ -3,6 +3,8 @@
 #  Libraries include common4j, common, broker4j, linux broker, broker, msal and adal
 # Variable: 'mvnUserName' user name to access internal maven feed
 # Variable: 'mvnAccessToken' access token to access internal maven feed
+# Variable: 'MSAL_LTW_Branch' MSAL branch to be passed to LTW UI Automation
+# Variable: 'Broker_LTW_Branch' Broker Branch to be passed to LTW UI Automation
 
 name: 1.0.$(Date:yyyyMMdd)-dev$(Rev:.r) # $(Build.BuildNumber) = name
 
