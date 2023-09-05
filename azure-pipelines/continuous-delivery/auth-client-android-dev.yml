@@ -73,11 +73,11 @@ parameters:
   - name: msalTestTarget
     displayName: Test Targets for MSAL
     type: string
-    default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, package com.microsoft.identity.client.msal.automationapp.testpass.msalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.FailsWithDailyVersions, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
+    default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, package com.microsoft.identity.client.msal.automationapp.testpass.msalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.FailsWithDailyVersions, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
   - name: brokerTestTarget
     displayName: Test Targets for Broker
     type: string
-    default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.FailsWithDailyVersions, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
+    default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.FailsWithDailyVersions, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
 
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
@@ -443,7 +443,7 @@ stages:
         adalVersion: $(versionNumber)
         packageVariant: RC
 
-# Broker - E2E Automation
+# Broker - E2E Automation (NON LTW)
 - stage: 'runBrokerE2EAutomation'
   displayName: Broker E2E UI Automation Run
   dependsOn:
@@ -459,7 +459,7 @@ stages:
   jobs:
     - job: trigger_automation
       displayName: Trigger Broker Automation Run
-      timeoutInMinutes: 80
+      timeoutInMinutes: 120
       steps:
         - checkout: self
           persistCredentials: True
@@ -468,7 +468,44 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}'' , ''dailyVersion'' : ''$(versionNumber)'', ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Non-LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'' , ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
+            workingDirectory: '$(Build.SourcesDirectory)'
+          env:
+            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+        - task: PowerShell@2
+          displayName: Import Broker E2E Automation results
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/import-testResults.ps1'
+            arguments: '-AdoPAT "$env:SYSTEM_ACCESSTOKEN" -SourceBuildId $(brokerAutomationBuildId) -TargetBuildId $(Build.BuildId)'
+            workingDirectory: '$(Build.SourcesDirectory)'
+          env:
+            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+- stage: 'runBrokerLTWE2EAutomation'
+  displayName: Broker LTW E2E UI Automation Run
+  dependsOn:
+    - queueAuthenticatorPipeline
+    - queueCompanyPortalPipeline
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
+    )
+  jobs:
+    - job: trigger_automation
+      displayName: Trigger Broker Automation Run
+      timeoutInMinutes: 120
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: PowerShell@2
+          displayName: Queue and wait for Broker E2E Automation pipeline
+          continueOnError: true
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_branch'' : ''$(MSAL_LTW_Branch)'', ''broker_branch'' : ''$(Broker_LTW_Branch)'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)

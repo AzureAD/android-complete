@@ -26,7 +26,7 @@ $Build = New-Object PSObject -Property @{
             id = $BuildDefinitionId
         }
         sourceBranch = $Branch
-        reason = "userCreated"
+        reason = "ResourceTrigger"
         parameters = $PipelineVariablesJson
         templateParameters = $TemplateParams | ConvertFrom-Json
     }
