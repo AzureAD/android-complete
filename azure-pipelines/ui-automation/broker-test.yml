@@ -9,6 +9,7 @@
 # Variable: 'OfficePAT' was defined in the Variables tab
 # Variable: 'msal_sdk_version' was defined in the Variables tab
 # Variable: 'dailyVersion' was defined in the Variables tab
+# Variable: 'test_run_prefix' prefix to add onto the beginning of the test result name
 # https://dev.azure.com/IdentityDivision/Engineering/_build?definitionId=1490&_a=summary
 name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
 
@@ -311,7 +312,7 @@ stages:
                       /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
-        testRunTitle: "Broker(MSAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
+        testRunTitle: "$(test_run_prefix)Broker(MSAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
         extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
         flankShards: ${{ parameters.flankShards }}
 # MSAL with Broker Test Plan stage (BrokerHost Tests) (API 30+)
@@ -351,7 +352,7 @@ stages:
                       /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
-        testRunTitle: "Broker(MSAL) UI Automation - Build (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
+        testRunTitle: "$(test_run_prefix)Broker(MSAL) UI Automation - Build (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
         extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus, annotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
 # MSAL with Broker Test Plan stage (API 29-)
 - stage: 'msal_with_broker_low_api'
@@ -390,7 +391,7 @@ stages:
                       /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionLow }}
-        testRunTitle: "Broker(MSAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) # $(Build.BuildNumber)"
+        testRunTitle: "$(test_run_prefix)Broker(MSAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) # $(Build.BuildNumber)"
         extraTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
 # ADAL with Broker (API 30+)
 - stage: 'adal_with_broker_high_api'
@@ -422,6 +423,6 @@ stages:
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
-        testRunTitle: "Broker(ADAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
+        testRunTitle: "$(test_run_prefix)Broker(ADAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
         extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
         flankShards: ${{ parameters.flankShards }}
