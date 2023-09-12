@@ -280,7 +280,7 @@ stages:
     (
       not(failed()),
       not(canceled()),
-      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+      or(eq(${{ parameters.shouldBuildLibraries }}, 'True'), eq(${{ parameters.shouldBuildBroker }}, 'True'))
     )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
