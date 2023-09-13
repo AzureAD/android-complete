@@ -420,6 +420,7 @@ stages:
                       /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
+                      /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/$(oneAuthTestApp),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
