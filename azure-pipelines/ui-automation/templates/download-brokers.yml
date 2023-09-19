@@ -25,6 +25,10 @@ parameters:
   - name: internalFeedName
     type: string
     default: 'AndroidAdal'
+  - name: oldBrokerHostVersion
+    displayName: Old Broker host Version
+    type: string
+    default: '0.0.1'
 
 jobs:
 - job: 'download_brokers'
@@ -94,6 +98,16 @@ jobs:
         vstsFeed: '${{ parameters.internalFeedName }}'
         vstsFeedPackage: 'com.microsoft.identity.testuserapp.prod'
         vstsPackageVersion: '${{ parameters.prodBrokerHostVersion }}'
+    - task: UniversalPackages@0
+      displayName: 'Download old brokerHost version from feed'
+      inputs:
+        command: 'download'
+        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
+        feedsToUse: 'external'
+        externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
+        feedDownloadExternal: '${{ parameters.msazureFeedName }}'
+        packageDownloadExternal: 'broker-host'
+        versionDownloadExternal: '${{ parameters.oldBrokerHostVersion }}'
     - publish: $(Build.ArtifactStagingDirectory)/brokers
       displayName: 'Publish Broker apks for later use'
       artifact: brokerapks

@@ -1,0 +1,86 @@
+parameters:
+  - name: productFlavors
+    displayName: Product Flavor
+    type: string
+    default: Local
+    values:
+      - Local
+      - Dist
+  - name: signingConfigurations
+    displayName: Signing Configuration
+    type: string
+    default: Debug
+    values:
+      - Debug
+      - Release
+  - name: adalVersion
+    displayName: ADAL Version
+    type: string
+  - name: commonVersion
+    displayName: Common Version
+    type: string
+  - name: packageVariant
+    displayName: Package Variant
+    type: string
+    default: PROD
+    values:
+      - PROD
+      - RC
+
+jobs:
+- job: adal_test_app${{ parameters.packageVariant }}${{ parameters.productFlavors }}${{ parameters.signingConfigurations }}
+  displayName: Build ADAL Test App ${{ parameters.packageVariant }} ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
+  pool:
+    vmImage: 'windows-latest'
+  variables:
+  - group: AndroidAuthClientVariables
+  steps:
+  - checkout: self
+    clean: true
+    path: android-complete
+  - checkout: adal
+    clean: true
+    path: android-complete/adal
+  - ${{ if eq(parameters.productFlavors, 'Dist') }}:
+    - task: PowerShell@2
+      displayName: Generate Assemble Dist Task
+      inputs:
+        targetType: inline
+        script: |
+          $assembleTask = "assembleDist${{ parameters.signingConfigurations }}"
+          if (("${{ parameters.commonVersion }}" -ne "")) {
+              $assembleTask = $assembleTask + " -PdistCommonVersion=" + "${{ parameters.commonVersion }}"
+          }
+          if (("${{ parameters.adalVersion }}" -ne "")) {
+              $assembleTask = $assembleTask + " -PdistAdalVersion=" + "${{ parameters.adalVersion }}"
+          }
+          Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
+  - ${{ if eq(parameters.productFlavors, 'Local') }}:
+      - pwsh: echo "##vso[task.setvariable variable=AssembleTask;]assembleLocal${{ parameters.signingConfigurations }}"
+        displayName: Generate Assemble Local Task
+  - task: CmdLine@1
+    displayName: Set MVN AccessToken in Environment
+    inputs:
+      filename: echo
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
+  - task: CmdLine@2
+    displayName: print file structure
+    inputs:
+      script: tree $(Agent.BuildDirectory)
+  - task: Gradle@3
+    name: Gradle3
+    displayName: Assemble adalTestApp
+    inputs:
+      tasks: adalTestApp:clean adalTestApp:$(AssembleTask)
+      publishJUnitResults: false
+      jdkArchitecture: x64
+      jdkVersionOption: "1.11"
+      gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
+      cwd: $(Agent.BuildDirectory)/android-complete
+  - task: PublishPipelineArtifact@1
+    displayName: Publish Adal Host APK
+    inputs:
+      targetPath: $(Agent.BuildDirectory)/android-complete/adal/userappwithbroker/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}
+      artifactName: adalTestApp
+      patterns: '**/*.apk'
+...

@@ -4,12 +4,12 @@ ext {
     minSdkVersion = 16
     brokerProjectMinSdkVersion = 24
     automationAppMinSDKVersion = 21
-    targetSdkVersion = 33
-    compileSdkVersion = 34
+    targetSdkVersion = 30
+    compileSdkVersion = 30
     buildToolsVersion = "28.0.3"
 
     // Plugins
-    gradleVersion = '7.4.2'
+    gradleVersion = '4.2.2'
     kotlinVersion = '1.7.21'
     spotBugsGradlePluginVersion = '4.7.1'
     jupiterApiVersion = '5.6.0'
@@ -42,7 +42,7 @@ ext {
     powerMockVersion = "2.0.9"
     runnerVersion = "1.2.0"
     rulesVersion = "1.2.0"
-    robolectricVersion = "4.9.2"
+    robolectricVersion = "4.5.1"
     uiAutomatorVersion = "2.2.0"
     flatBuffersJavaVersion = "1.12.0"
     daggerVersion = "2.31.2"
@@ -60,14 +60,14 @@ ext {
     junitVintageEngineVersion = "5.7.2"
     dbusJavaVersion = "3.3.0"
     dbusJavaUtilsVersion = "3.3.0"
-    bouncyCastleVersion = "1.69"
+    bouncyCastleVersion = "1.67"
     oshiCoreVersion = "5.7.5"
     tokenShare = "1.6.5"
     intuneAppSdkVersion = "8.6.3"
     javaAssistVersion = "3.27.0-GA"
-    yubikitAndroidVersion = "2.3.0"
-    yubikitPivVersion = "2.3.0"
-    powerliftAndroidVersion="1.0.3"
+    yubikitAndroidVersion = "2.1.0"
+    yubikitPivVersion = "2.1.0"
+    powerliftAndroidVersion="1.0.0"
     kotlinxSerializationVersion = "1.4.1"
 
     // microsoft-diagnostics-uploader app versions

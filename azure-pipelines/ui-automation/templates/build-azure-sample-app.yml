@@ -62,15 +62,15 @@ jobs:
     displayName: Set MVN AccessToken in Environment
     inputs:
       filename: echo
-      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(mvnAccessToken)'
-  - task: Gradle@1
-    name: Gradle1
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
+  - task: Gradle@3
+    name: Gradle3
     displayName: Assemble Azure Sample
     inputs:
       tasks: AzureSample:clean AzureSample:$(AssembleTask)
       publishJUnitResults: false
-      jdkArchitecture: x86
-      sqAnalysisBreakBuildIfQualityGateFailed: false
+      jdkArchitecture: x64
+      jdkVersionOption: "1.11"
       gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
       cwd: $(Agent.BuildDirectory)/android-complete
   - task: CopyFiles@2
@@ -78,9 +78,9 @@ jobs:
     inputs:
       flattenFolders: true
       contents: '$(Build.SourcesDirectory)/azuresample/build/outputs/apk/**/*.apk'
-      targetFolder: $(Build.ArtifactStagingDirectory)/azuresample/$(packageVariant)
+      targetFolder: $(Build.ArtifactStagingDirectory)/azuresample/${{ parameters.packageVariant }}
   - task: PublishPipelineArtifact@1
-    displayName: Publish Broker Host APK
+    displayName: Publish Azure Sample APK
     inputs:
       targetPath: $(Agent.BuildDirectory)/android-complete/azuresample/app/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}
       artifactName: AzureSample-${{upper(parameters.packageVariant)}}

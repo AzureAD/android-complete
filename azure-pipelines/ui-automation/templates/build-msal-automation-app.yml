@@ -28,6 +28,7 @@ parameters:
   - name: msalVersion
     displayName: MSAL Version
     type: string
+    default: ""
   - name: packageVariant
     displayName: Package Variant
     type: string
@@ -38,6 +39,9 @@ parameters:
   - name: artifactName
     type: string
     default: "msalautomationapks"
+  - name: preInstallLtw
+    type: boolean
+    default: false
 
 jobs:
   - job: msalautomationapp${{ parameters.packageVariant }}${{ parameters.msalFlavor }}
@@ -50,7 +54,7 @@ jobs:
         submodules: recursive
         persistCredentials: True
       - bash: |
-          echo "##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN]$(mvnAccessToken)"
+          echo "##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN]$(System.AccessToken)"
         displayName: Set MVN Access Token in Environment
       - task: AzureKeyVault@2
         displayName: 'Get Key vault AndroidAutomationRunnerAppSecret'
@@ -68,6 +72,9 @@ jobs:
             if (("${{ parameters.msalVersion }}" -ne "")) {
                 $assembleTask = $assembleTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
             }
+            if ("${{ parameters.preInstallLtw }}" -eq "True") {
+                $assembleTask = $assembleTask + " -PpreInstallLtw=true"
+            }
             Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
       - task: Gradle@2
         displayName: 'Assemble MSAL Automation App'
@@ -82,6 +89,9 @@ jobs:
             $assembleTestTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(AndroidAutomationRunnerAppSecret)"
             if (("${{ parameters.msalVersion }}" -ne "")) {
                 $assembleTestTask = $assembleTestTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
+            }
+            if ("${{ parameters.preInstallLtw }}" -eq "True") {
+                $assembleTestTask = $assembleTestTask + " -PpreInstallLtw=true"
             }
             Write-Host "##vso[task.setvariable variable=AssembleTestTask;]$assembleTestTask"
       - task: Gradle@2

@@ -1,0 +1,77 @@
+parameters:
+  - name: signingConfigurations
+    displayName: Signing Configuration
+    type: string
+    default: Debug
+    values:
+      - Debug
+      - Release
+  - name: msalVersion
+    displayName: MSAL Version
+    type: string
+  - name: packageVariant
+    displayName: Package Variant
+    type: string
+    default: PROD
+    values:
+      - PROD
+      - RC
+  - name: continueOnError
+    type: boolean
+    default: False
+
+jobs:
+  - job: azure_samples_standalone${{ parameters.packageVariant }}External${{ parameters.signingConfigurations }}
+    displayName: Build Azure Samples (Azure Sample Repo) ${{ parameters.packageVariant }} External ${{ parameters.signingConfigurations }} APK
+    pool:
+      vmImage: 'windows-latest'
+    variables:
+      - group: AndroidAuthClientVariables
+    steps:
+      - checkout: azuresample
+        clean: true
+      - task: PowerShell@2
+        displayName: Generate Assemble External Task
+        inputs:
+          targetType: inline
+          script: |
+            $assembleTask = "assembleExternal${{ parameters.signingConfigurations }}"
+            if (("${{ parameters.msalVersion }}" -ne "")) {
+                $assembleTask = $assembleTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
+            }
+            Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
+      - task: CmdLine@1
+        displayName: Set MVN AccessToken in Environment
+        inputs:
+          filename: echo
+          arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN]$(System.AccessToken)'
+      - task: CmdLine@2
+        displayName: print file structure
+        inputs:
+          script: tree $(Agent.BuildDirectory)/s /f
+      - task: Gradle@3
+        name: Gradle3
+        displayName: Assemble Azure Sample
+        continueOnError: ${{ parameters.continueOnError }}
+        inputs:
+          tasks: app:clean app:$(AssembleTask)
+          publishJUnitResults: false
+          jdkArchitecture: x64
+          jdkVersionOption: "1.11"
+          gradleWrapperFile: $(Agent.BuildDirectory)/s/gradlew
+          cwd: $(Agent.BuildDirectory)/s
+      - task: CopyFiles@2
+        displayName: 'Copy apks for later use in the pipeline'
+        continueOnError: ${{ parameters.continueOnError }}
+        inputs:
+          flattenFolders: true
+          contents: '$(Build.SourcesDirectory)/azuresample/build/outputs/apk/**/*.apk'
+          targetFolder: $(Build.ArtifactStagingDirectory)/azuresample/${{ parameters.packageVariant }}
+      - task: PublishPipelineArtifact@1
+        displayName: Publish Azure Sample (Standalone) APK
+        continueOnError: ${{ parameters.continueOnError }}
+        inputs:
+          targetPath: $(Agent.BuildDirectory)/s/app/build/outputs/apk/external/${{ lower(parameters.signingConfigurations) }}
+          artifactName: AzureSample-Standalone-${{upper(parameters.packageVariant)}}
+          patterns: '**/*.apk'
+...

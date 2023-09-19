@@ -20,6 +20,17 @@ parameters:
     values:
       - LocalApk
       - PlayStore
+  - name: preInstallLtw
+    type: boolean
+    default: false
+  - name: adalVersion
+    displayName: ADAL Version
+    type: string
+    default: ""
+  - name: commonVersion
+    displayName: Common Version
+    type: string
+    default: ""
 
 jobs:
 - job: brokerautomationapp
@@ -32,7 +43,7 @@ jobs:
       submodules: recursive
       persistCredentials: True
     - bash: |
-        echo "##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(mvnAccessToken)"
+        echo "##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)"
       displayName: Set MVN Access Token in Environment
     - bash: |
         echo "##vso[task.setvariable variable=ENV_VSTS_MVN_OFFICE_ACCESSTOKEN]$(vstsOfficeMavenAccessToken)"
@@ -44,15 +55,47 @@ jobs:
         KeyVaultName: 'ADALTestInfo'
         SecretsFilter: 'AndroidAutomationRunnerAppSecret'
         RunAsPreJob: false
+    - task: PowerShell@2
+      displayName: Generate Assemble Dist Task
+      inputs:
+        targetType: inline
+        script: |
+          $assembleTask = "brokerautomationapp:assemble${{ parameters.brokerFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=${{ parameters.brokerSource }}"
+          if (("${{ parameters.adalVersion }}" -ne "")) {
+              $assembleTask = $assembleTask + " -PdistAdalVersion=" + "${{ parameters.adalVersion }}"
+          }
+          if (("${{ parameters.commonVersion }}" -ne "")) {
+              $assembleTask = $assembleTask + " -PdistCommonVersion=" + "${{ parameters.commonVersion }}"
+          }
+          if ("${{ parameters.preInstallLtw }}" -eq "True") {
+              $assembleTask = $assembleTask + " -PpreInstallLtw=true"
+          }
+          Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
     - task: Gradle@2
       displayName: 'Assemble Broker Automation App'
       inputs:
-        tasks: clean brokerautomationapp:assemble${{ parameters.brokerFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=${{ parameters.brokerSource }}
+        tasks: brokerautomationapp:clean $(AssembleTask)
         publishJUnitResults: false
+    - task: PowerShell@2
+      displayName: Generate Assemble Test Task
+      inputs:
+        targetType: inline
+        script: |
+          $assembleTestTask = "brokerautomationapp:assemble${{ parameters.brokerFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(AndroidAutomationRunnerAppSecret)"
+          if (("${{ parameters.adalVersion }}" -ne "")) {
+              $assembleTestTask = $assembleTestTask + " -PdistAdalVersion=" + "${{ parameters.adalVersion }}"
+          }
+          if (("${{ parameters.commonVersion }}" -ne "")) {
+              $assembleTestTask = $assembleTestTask + " -PdistCommonVersion=" + "${{ parameters.commonVersion }}"
+          }
+          if ("${{ parameters.preInstallLtw }}" -eq "True") {
+              $assembleTestTask = $assembleTestTask + " -PpreInstallLtw=true"
+          }
+          Write-Host "##vso[task.setvariable variable=AssembleTestTask;]$assembleTestTask"
     - task: Gradle@2
       displayName: 'Assemble Broker Automation App Instrumented Tests'
       inputs:
-        tasks: brokerautomationapp:assemble${{ parameters.brokerFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(AndroidAutomationRunnerAppSecret)
+        tasks: $(AssembleTestTask)
         publishJUnitResults: false
     - task: CopyFiles@2
       displayName: 'Copy apks for later use in the pipeline'

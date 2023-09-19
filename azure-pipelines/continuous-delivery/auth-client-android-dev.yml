@@ -3,8 +3,10 @@
 #  Libraries include common4j, common, broker4j, linux broker, broker, msal and adal
 # Variable: 'mvnUserName' user name to access internal maven feed
 # Variable: 'mvnAccessToken' access token to access internal maven feed
+# Variable: 'MSAL_LTW_Branch' MSAL branch to be passed to LTW UI Automation
+# Variable: 'Broker_LTW_Branch' Broker Branch to be passed to LTW UI Automation
 
-name: 0.0.$(Date:yyyyMMdd)-dev$(Rev:.r) # $(Build.BuildNumber) = name
+name: 1.0.$(Date:yyyyMMdd)-dev$(Rev:.r) # $(Build.BuildNumber) = name
 
 pr: none
 trigger: none
@@ -39,6 +41,11 @@ resources:
       name: AzureAD/azure-activedirectory-library-for-android
       ref: dev
       endpoint: ANDROID_GITHUB
+    - repository: azuresample
+      type: github
+      name: Azure-Samples/ms-identity-android-java
+      ref: master
+      endpoint: ANDROID_GITHUB
 
 parameters:
   - name: customVersionNumber
@@ -49,15 +56,35 @@ parameters:
     displayName: Run E2E UI Validation?
     type: boolean
     default: False
+  - name: shouldRunUnitTests
+    displayName: Run Unit Tests?
+    type: boolean
+    default: True
+  - name: shouldRunInstrumentedTests
+    displayName: Run Instrumented Tests?
+    type: boolean
+    default: True
   - name: shouldPublishLibraries
     displayName: Publish Libraries?
     type: boolean
     default: True
+  - name: shouldEnableBrokerSelectionAndDiscoveryFlag
+    displayName: Should enable broker selection & discovery?
+    type: boolean
+    default: False
+  - name: msalTestTarget
+    displayName: Test Targets for MSAL
+    type: string
+    default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, package com.microsoft.identity.client.msal.automationapp.testpass.msalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.FailsWithDailyVersions, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
+  - name: brokerTestTarget
+    displayName: Test Targets for Broker
+    type: string
+    default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.FailsWithDailyVersions, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
 
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:  
     versionNumber: $(Build.BuildNumber)
-    brokerVersionNumber: $[replace(variables['build.buildnumber'], '0.0', '8.1')]
+    brokerVersionNumber: $[replace(variables['build.buildnumber'], '1.0.', '8.1.')]
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
     brokerVersionNumber: ${{ parameters.customVersionNumber }}
@@ -69,6 +96,12 @@ variables:
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   brokerAutomationPipelineId: 1490
+  ${{ if parameters.shouldEnableBrokerSelectionAndDiscoveryFlag }}:
+    enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
+    enableBrokerDiscoveryParam: -PnewBrokerDiscoveryEnabledFlag
+  ${{ else }}:
+    enableBrokerSelectionParam: ''
+    enableBrokerDiscoveryParam: ''
 
 stages:
 # Common4j - Build and publish
@@ -83,10 +116,13 @@ stages:
       testCmd: common4jUnitTestCoverageReport
       dependencyParams: $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam)
+      testParams: $(projVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: $(projVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish
@@ -98,13 +134,16 @@ stages:
       project: common
       assembleCmd: assembleDist
       testCmd: distDebugCommonUnitTestCoverageReport
-      publishCmd: publishDistReleasePublicationToVsts-maven-adal-androidRepository
+      publishCmd: publish
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(common4jVersionParam)
-      publishParams: $(projVersionParam) $(common4jVersionParam)
+      assembleParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam)
+      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(enableBrokerDiscoveryParam)
+      publishParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
@@ -119,10 +158,13 @@ stages:
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam)
+      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: $(projVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
@@ -142,12 +184,15 @@ stages:
       testCmd: distDebugAADAuthenticatorUnitTestCoverageReport
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam)
+      assembleParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) $(enableBrokerSelectionParam)
+      testParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) $(enableBrokerSelectionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       agentImage: 1ES-AndroidPool-EOC
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 # Linux Broker - Build and publish
 - stage: 'publishLinuxBrokeLibraries'
   displayName: Linux Broker - Build and publish
@@ -167,6 +212,9 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
   - job: PublishLinuxBrokerPackage
     dependsOn: publishLinuxBrokerLibraries
     displayName: Publish Linux Broker Package
@@ -181,7 +229,7 @@ stages:
       displayName: Build and publish linux broker package
       env:
         ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME: $(AndroidAuthClient-Internal-Maven-Username)
-        ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN: $(AndroidAuthClient-Internal-Maven-Access-Token)
+        ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN: $(System.AccessToken)
       inputs:
         cwd: $(Build.SourcesDirectory)/broker-java-root
         tasks: LinuxBrokerPackage:clean LinuxBrokerPackage:buildDeb $(linuxBrokerVersion) --build-cache --info
@@ -214,10 +262,13 @@ stages:
       publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam)
+      testParams: $(projVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 # Adal - Build and publish
 - stage: 'publishAdal'
   displayName: Adal - Build and publish
@@ -232,10 +283,13 @@ stages:
       publishCmd: publishAdalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam)
+      testParams: $(projVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 
 # Combine and Publish Code Coverage
 - stage: 'combineAndPublishCodeCoverage'
@@ -316,13 +370,82 @@ stages:
           persistCredentials: True
         - task: PowerShell@2
           displayName: Queue and wait for Company Portal Apk generation pipeline
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(pipelinepat)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "237827" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)''}" -Branch "$(companyPortalBranch)"'
+            workingDirectory: '$(Build.SourcesDirectory)'
+# BrokerApk - Link to Windows Queue pipeline
+- stage: 'queueLinkToWindowsPipeline'
+  displayName: Link To Windows Apk Generation
+  dependsOn: promotePackages
+  condition: eq(variables['LTWIntegrationEnabled'], 'true')
+  jobs:
+    - job: queue_build_LinkToWindows
+      displayName: Generate Link To Windows Apk
+      timeoutInMinutes: 120
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: PowerShell@2
+          displayName: Queue and wait for Link to Windows Apk generation pipeline
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(pipelinepat)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "237827" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(companyPortalBranch)"'
+            arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(OSPAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "44201" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)"'
             workingDirectory: '$(Build.SourcesDirectory)'
 
-# Broker - E2E Automation
+# TestApp generation
+- stage: 'testappgeneration'
+  dependsOn:
+    - publishAdal
+    - publishCommonLibraries
+    - publishMsal
+    - publishBrokerLibraries
+    - promotePackages
+  displayName: Generate Test Apps
+  condition:
+    and
+    (
+    not(failed()),
+    not(canceled())
+    )
+  jobs:
+    - template: ../ui-automation/templates/build-azure-sample-app.yml
+      parameters:
+        productFlavors: Local
+        signingConfigurations: Debug
+        msalVersion: $(versionNumber)
+        packageVariant: RC
+    - template: ../ui-automation/templates/build-azure-sample-app-standalone.yml
+      parameters:
+        signingConfigurations: Debug
+        msalVersion: $(versionNumber)
+        packageVariant: RC
+        continueOnError: True
+    - template: ../ui-automation/templates/build-broker-host.yml
+      parameters:
+        productFlavors: Local
+        signingConfigurations: Debug
+        msalVersion: $(versionNumber)
+        commonVersion: $(versionNumber)
+        adAccountsVersion: $(brokerVersionNumber)
+        adalVersion: $(versionNumber)
+        packageVariant: RC
+    - template: ../ui-automation/templates/build-msal-test-app.yml
+      parameters:
+        productFlavors: Dist
+        signingConfigurations: Debug
+        msalVersion: $(versionNumber)
+        packageVariant: RC
+    - template: ../ui-automation/templates/build-adal-test-app.yml
+      parameters:
+        productFlavors: Dist
+        signingConfigurations: Debug
+        commonVersion: $(versionNumber)
+        adalVersion: $(versionNumber)
+        packageVariant: RC
+
+# Broker - E2E Automation (NON LTW)
 - stage: 'runBrokerE2EAutomation'
   displayName: Broker E2E UI Automation Run
   dependsOn:
@@ -338,7 +461,7 @@ stages:
   jobs:
     - job: trigger_automation
       displayName: Trigger Broker Automation Run
-      timeoutInMinutes: 80
+      timeoutInMinutes: 120
       steps:
         - checkout: self
           persistCredentials: True
@@ -347,7 +470,44 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Non-LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'' , ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
+            workingDirectory: '$(Build.SourcesDirectory)'
+          env:
+            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+        - task: PowerShell@2
+          displayName: Import Broker E2E Automation results
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/import-testResults.ps1'
+            arguments: '-AdoPAT "$env:SYSTEM_ACCESSTOKEN" -SourceBuildId $(brokerAutomationBuildId) -TargetBuildId $(Build.BuildId)'
+            workingDirectory: '$(Build.SourcesDirectory)'
+          env:
+            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+- stage: 'runBrokerLTWE2EAutomation'
+  displayName: Broker LTW E2E UI Automation Run
+  dependsOn:
+    - queueAuthenticatorPipeline
+    - queueCompanyPortalPipeline
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
+    )
+  jobs:
+    - job: trigger_automation
+      displayName: Trigger Broker Automation Run
+      timeoutInMinutes: 120
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: PowerShell@2
+          displayName: Queue and wait for Broker E2E Automation pipeline
+          continueOnError: true
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_branch'' : ''$(MSAL_LTW_Branch)'', ''broker_branch'' : ''$(Broker_LTW_Branch)'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)

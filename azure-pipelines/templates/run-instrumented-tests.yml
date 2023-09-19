@@ -15,7 +15,7 @@ parameters:
   default: -Psugar=true
 # https://developer.android.com/studio/releases/platforms
 - name: androidAPILevel
-  default: 30
+  default: 33
 # https://developer.android.com/ndk/guides/abis
 - name: androidABI
   default: x86_64
@@ -25,10 +25,16 @@ parameters:
 # Key used to store the access token, AT for the Android DevX Feed.
 - name: accessTokenKey
   default: none
+- name: continueOnError
+  type: boolean
+  default: False
+# Allows a limit to be set for the job execution time.
+- name: timeout
+  default: 120
 
 jobs:
 - job:
-  timeoutInMinutes: 120
+  timeoutInMinutes: ${{ parameters.timeout }}
   displayName: Run ${{ parameters.projectName }} ${{ parameters.projectVariantName }} instrumented test
   pool:
     vmImage: macOS-latest
@@ -37,6 +43,7 @@ jobs:
     value: system-images;android-${{ parameters.androidAPIlevel }};${{ parameters.androidVariant }};${{ parameters.androidABI }}
   - name: project.variant
     value: ${{ parameters.projectVariantName }}
+  - group: AndroidAuthClientAutomationSecrets
   steps:
   - checkout: ${{ parameters.gitProject }}
     clean: true
@@ -75,10 +82,13 @@ jobs:
       echo "Emulator started"
     displayName: 'Starting android emulator'
   - task: Gradle@3
+    displayName: Run Instrumented Test ${{ parameters.projectName }}
+    continueOnError: ${{ parameters.continueOnError }}
     inputs:
       gradleWrapperFile: 'gradlew'
+      javaHomeOption: 'JDKVersion'
+      jdkVersionOption: "1.11"
       options: ${{ parameters.gradleOptions }}
       tasks: '${{ parameters.projectName }}:connected${{ parameters.projectVariantName }}AndroidTest'
       publishJUnitResults: true
       testResultsFiles: '**/TEST-*.xml'
-      javaHomeOption: 'JDKVersion'
