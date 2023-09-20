@@ -5,7 +5,7 @@
 # Variable: 'mvnAccessToken' access token to access internal maven feed
 # Variable: 'MSAL_LTW_Branch' MSAL branch to be passed to LTW UI Automation
 # Variable: 'Broker_LTW_Branch' Broker Branch to be passed to LTW UI Automation
-# Variable: 'broker4j_flights' flights to be passed to broker4j
+# Variable: 'broker4j_flights' flights to be passed to broker4j (Expects format {"TestFlight":"hello"})
 # Variable: 'broker4j_extra_flags' additional flags to be passed to broker4j
 
 name: 1.0.$(Date:yyyyMMdd)-dev$(Rev:.r) # $(Build.BuildNumber) = name
@@ -157,8 +157,8 @@ stages:
       repository: broker
       project: broker4j
       testCmd: broker4jUnitTestCoverageReport
-      localFlightsParamString: ${broker4j_flights}
-      flagsParamString: ${broker4j_extra_flags)
+      localFlightsParamString: $(broker4j_flights)
+      flagsParamString: $(broker4j_extra_flags)
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam)
