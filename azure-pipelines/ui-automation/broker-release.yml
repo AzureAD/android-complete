@@ -48,10 +48,6 @@ parameters:
   displayName: Publish Libraries?
   type: boolean
   default: True
-- name: shouldPassLocalFlights
-  displayName: Pass Local Flights? (Only available to RC builds)
-  type: boolean
-  default: False
 - name: shouldPromoteLibraries
   displayName: Promote Libraries?
   type: boolean
