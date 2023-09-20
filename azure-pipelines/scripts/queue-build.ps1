@@ -8,7 +8,7 @@ Param (
     [Parameter(Mandatory = $false)][String]$Branch,
     [Parameter(Mandatory = $false)][int]$WaitTimeoutInMinutes = 120,
     [Parameter(Mandatory = $false)][int]$PollingIntervalInSeconds = 5 * 60,
-    [Parameter(Mandatory = $false)][String]$BuildIdOutputVar=""
+    [Parameter(Mandatory = $false)][String]$BuildIdOutputVar="",
     [Parameter(Mandatory = $false)][String]$BuildReason="ResourceTrigger"
 )
 
