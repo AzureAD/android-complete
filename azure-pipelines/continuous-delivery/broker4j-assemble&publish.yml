@@ -1,0 +1,144 @@
+# File: azure-pipelines/continuous-delivery/assemble&publish.yml
+# Description: Template to assemble & publish dev builds of auth client android sdk libraries to internal maven feed
+
+parameters:
+- name: repository
+- name: project
+- name: assembleCmd
+  default: assemble
+- name: testCmd
+  default: test
+- name: localFlightsParamString
+  type: string
+  default: ''
+- name: flagsParamString
+  type: string
+  default: ''
+- name: publishCmd
+  default: publish
+- name: dependencyParams
+  default: ''
+- name: assembleParams
+  default: ''
+- name: publishParams
+  default: ''
+- name: vstsMvnAndroidUsername
+- name: vstsMvnAndroidAccessToken
+- name: shouldPublish
+  type: boolean
+  default: True
+- name: agentImage
+  default: none
+- name: shouldRunUnitTests
+  type: boolean
+  default: True
+- name: shouldRunInstrumentedTests
+  type: boolean
+  default: True
+- name: testParams
+  default: ''
+
+jobs:
+- job: publish${{ parameters.project }}Libraries
+  displayName: ${{ parameters.project }} build & publish
+  pool:
+    ${{ if eq(parameters.agentImage, 'none') }}:
+      vmImage: ubuntu-latest
+    ${{ else }}:
+      name: ${{ parameters.agentImage }}
+  variables:
+  - group: AndroidAuthClientVariables
+  steps:
+  - checkout: ${{ parameters.repository }}
+    persistCredentials: True
+  - task: Gradle@3
+    displayName: Build ${{ parameters.project }}
+    inputs:
+      tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}} ${{ parameters.flagsParamString }} -PlocalFlights=${{ parameters.localFlightsParamString }}
+    env:
+      ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
+      ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
+  - task: Gradle@3
+    displayName: Generate Lockfile ${{ parameters.project }}
+    inputs:
+      tasks: -q ${{ parameters.project }}:dependencies ${{ parameters.dependencyParams }}
+    env:
+      ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
+      ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
+  - task: Gradle@3
+    condition: |
+      and
+      (
+        not(failed()),
+        not(canceled()),
+        or( eq(${{ parameters.shouldPublish }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
+      )
+    displayName: Publish ${{ parameters.project }}
+    inputs:
+      tasks: ${{ parameters.project }}:${{ parameters.publishCmd}} ${{ parameters.publishParams}}
+    env:
+      ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
+      ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
+  - task: ComponentGovernanceComponentDetection@0
+    inputs:
+      sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/gradle/dependency-locks/
+  - task: ManifestGeneratorTask@0
+    displayName: 'Generate SBOM manifest file'
+    inputs:
+      BuildDropPath: $(Build.SourcesDirectory)/${{ parameters.project }}/build/
+  - task: CopyFiles@2
+    inputs:
+      SourceFolder: '$(Build.SourcesDirectory)/${{ parameters.project }}'
+      Contents: '**/*.lockfile'
+      TargetFolder: '$(Build.SourcesDirectory)/${{ parameters.project }}/dependencies'
+      OverWrite: true
+      flattenFolders: false
+  - task: PublishPipelineArtifact@1
+    displayName: 'Publish Artifact: dependencies lockfile'
+    inputs:
+      targetPath: $(Build.SourcesDirectory)/${{ parameters.project }}/dependencies
+      ArtifactName: ${{ parameters.project }}_dependencies
+  - task: PublishPipelineArtifact@1
+    displayName: 'Publish Artifact: ${{ parameters.project }} Release'
+    inputs:
+      TargetPath:  $(Build.SourcesDirectory)/${{ parameters.project }}/build/
+      ArtifactName: ${{ parameters.project }}_Release
+- job: RunUnitTest${{ parameters.project }}
+  displayName: ${{ parameters.project }} UnitTest
+  pool:
+    vmImage: ubuntu-latest
+    variables:
+      - group: AndroidAuthClientVariables
+  steps:
+    - checkout: ${{ parameters.repository }}
+      persistCredentials: True
+    - task: AzureKeyVault@2
+      displayName: 'Get Key vault AndroidAutomationRunnerAppSecret'
+      inputs:
+        azureSubscription: 'MSIDLABS_ANDROID_KV'
+        KeyVaultName: 'ADALTestInfo'
+        SecretsFilter: 'AndroidAutomationRunnerAppSecret'
+        RunAsPreJob: false
+    - task: Gradle@3
+      displayName: Run Test ${{ parameters.project }}
+      enabled: ${{ parameters.shouldRunUnitTests }}
+      continueOnError: true
+      inputs:
+        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}}
+        testRunTitle: '${{ parameters.project }}_UnitTests'
+      env:
+        ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
+        ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
+    - task: PublishCodeCoverageResults@1
+      displayName: Publish Code Coverage Report
+      inputs:
+        summaryFileLocation: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/${{ parameters.testCmd }}.xml'
+        reportDirectory: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/html'
+- ${{if and(eq(parameters.shouldRunInstrumentedTests, 'True'), or(eq(parameters.project, 'common'), eq(parameters.project, 'msal'), eq(parameters.project, 'adal'), eq(parameters.project, 'AADAuthenticator')))}}:
+    - template: ../templates/run-instrumented-tests.yml
+      parameters:
+        gitProject: ${{ parameters.repository }}
+        projectName: ${{ parameters.project }}
+        accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+        gradleOptions: -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret)
+        continueOnError: True
