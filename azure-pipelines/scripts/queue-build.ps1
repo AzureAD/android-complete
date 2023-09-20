@@ -9,6 +9,7 @@ Param (
     [Parameter(Mandatory = $false)][int]$WaitTimeoutInMinutes = 120,
     [Parameter(Mandatory = $false)][int]$PollingIntervalInSeconds = 5 * 60,
     [Parameter(Mandatory = $false)][String]$BuildIdOutputVar=""
+    [Parameter(Mandatory = $false)][String]$BuildReason="ResourceTrigger"
 )
 
 #request uri
@@ -26,7 +27,7 @@ $Build = New-Object PSObject -Property @{
             id = $BuildDefinitionId
         }
         sourceBranch = $Branch
-        reason = "ResourceTrigger"
+        reason = $BuildReason
         parameters = $PipelineVariablesJson
         templateParameters = $TemplateParams | ConvertFrom-Json
     }
