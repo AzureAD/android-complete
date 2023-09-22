@@ -152,17 +152,15 @@ stages:
   dependsOn: 
   - publishCommon4jLibraries
   jobs:
-  - template: broker4j-assemble&publish.yml
+  - template: assemble&publish.yml
     parameters:
       repository: broker
       project: broker4j
       testCmd: broker4jUnitTestCoverageReport
-      localFlightsParamString: $(broker4j_flights)
-      flagsParamString: $(broker4j_extra_flags)
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(common4jVersionParam)
-      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      assembleParams: $(projVersionParam) $(common4jVersionParam) $(broker4j_extra_flags) -PlocalFlights=$(broker4j_flights)
+      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(broker4j_extra_flags) -PlocalFlights=$(broker4j_flights)
       publishParams: $(projVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
