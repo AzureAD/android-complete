@@ -45,6 +45,7 @@ jobs:
   steps:
   - checkout: ${{ parameters.repository }}
     persistCredentials: True
+  - bash: echo $(Build.CronSchedule)
   - task: Gradle@3
     displayName: Build ${{ parameters.project }}
     inputs:
@@ -113,7 +114,6 @@ jobs:
         KeyVaultName: 'ADALTestInfo'
         SecretsFilter: 'AndroidAutomationRunnerAppSecret'
         RunAsPreJob: false
-    - bash: echo $(Build.CronSchedule)
     - task: Bash@3
       condition: eq('${{ parameters.project }}', 'LinuxBroker')
       retryCountOnTaskFailure: 3
