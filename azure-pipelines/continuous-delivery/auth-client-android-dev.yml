@@ -8,7 +8,7 @@
 # Variable: 'broker4j_flights' flights to be passed to broker4j (Expects format {"TestFlight":"hello"})
 # Variable: 'broker4j_extra_flags' additional flags to be passed to broker4j
 
-name: 1.0.$(Date:yyyyMMdd)-dev$(Rev:.r) # $(Build.BuildNumber) = name
+name: 1.0.$(Date:yyyyMMdd)-dev$(nameFlightSuffix)$(Rev:.r) # $(Build.BuildNumber) = name
 
 pr: none
 trigger: none
@@ -214,7 +214,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true -Psystemd_mode_enabled=false --build-cache --info
+      testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -Psystemd_mode_enabled=false --build-cache --info
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
   - job: PublishLinuxBrokerPackage
