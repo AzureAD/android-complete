@@ -358,7 +358,7 @@ stages:
           displayName: Queue and wait for Authenticator Apk generation pipeline
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(pipelinepat)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(authenticatorBranch)"'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(MSAzure-PAT)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(authenticatorBranch)"'
             workingDirectory: '$(Build.SourcesDirectory)'
 # BrokerApk - Company portal Queue pipeline
 - stage: 'queueCompanyPortalPipeline'
@@ -375,7 +375,7 @@ stages:
           displayName: Queue and wait for Company Portal Apk generation pipeline
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(pipelinepat)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "237827" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)''}" -Branch "$(companyPortalBranch)"'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAzure-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "237827" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)''}" -Branch "$(companyPortalBranch)"'
             workingDirectory: '$(Build.SourcesDirectory)'
 # BrokerApk - Link to Windows Queue pipeline
 - stage: 'queueLinkToWindowsPipeline'
@@ -394,7 +394,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(OSPAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "44201" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)"'
+            arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(LTW-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "44201" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)"'
             workingDirectory: '$(Build.SourcesDirectory)'
 
 # TestApp generation
