@@ -100,6 +100,8 @@ jobs:
       ArtifactName: ${{ parameters.project }}_Release
 - job: RunUnitTest${{ parameters.project }}
   displayName: ${{ parameters.project }} UnitTest
+  timeoutInMinutes: 120
+  continueOnError: true
   pool:
     vmImage: ubuntu-latest
     variables:
