@@ -85,12 +85,8 @@ parameters:
 
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:
-    ${{ if contains(Build.BuildNumber, 'flight') }}:
-      versionNumber: $[replace(variables['build.buildnumber'], '1.0.', '1.1.')]
-      brokerVersionNumber: $[replace(variables['build.buildnumber'], '1.0.', '8.2.')]
-    $ {{ else }}:
-      versionNumber: $(Build.BuildNumber)
-      brokerVersionNumber: $[replace(variables['build.buildnumber'], '1.0.', '8.1.')]
+    versionNumber: $(Build.BuildNumber)
+    brokerVersionNumber: $[replace(variables['build.buildnumber'], '1.0.', '8.1.')]
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
     brokerVersionNumber: ${{ parameters.customVersionNumber }}
