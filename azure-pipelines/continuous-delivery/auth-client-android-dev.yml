@@ -296,7 +296,6 @@ stages:
 # Combine and Publish Code Coverage
 - stage: 'combineAndPublishCodeCoverage'
   displayName: Combine and Publish Code Coverage
-  continueOnError: true
   dependsOn:
     - publishMsal
     - publishBrokerLibraries
@@ -306,6 +305,7 @@ stages:
   jobs:
     - job: combine_and_publish_code_coverage
       displayName: Combine and Publish
+      continueOnError: true
       steps:
         - checkout: self
           persistCredentials: True
