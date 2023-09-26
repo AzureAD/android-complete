@@ -7,8 +7,9 @@
 # Variable: 'Broker_LTW_Branch' Broker Branch to be passed to LTW UI Automation
 # Variable: 'broker4j_flights' flights to be passed to broker4j (Expects format {"TestFlight":"hello"})
 # Variable: 'broker4j_extra_flags' additional flags to be passed to broker4j
+# Variable: 'nameSuffix' suffix to distinguish build names between pipelines
 
-name: 1.0.$(Date:yyyyMMdd)-dev$(nameFlightSuffix)$(Rev:.r) # $(Build.BuildNumber) = name
+name: 1.0.$(Date:yyyyMMdd)-dev$(nameSuffix)$(Rev:.r) # $(Build.BuildNumber) = name
 
 pr: none
 trigger: none

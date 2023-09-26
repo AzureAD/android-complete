@@ -45,7 +45,6 @@ jobs:
   steps:
   - checkout: ${{ parameters.repository }}
     persistCredentials: True
-  - bash: echo $(Build.CronSchedule)
   - task: Gradle@3
     displayName: Build ${{ parameters.project }}
     inputs:
