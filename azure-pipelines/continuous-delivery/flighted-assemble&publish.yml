@@ -32,9 +32,6 @@ parameters:
 - name: testParams
   default: ''
 
-variables:
-  - group: AndroidAuthClientVariables
-
 jobs:
 - job: publish${{ parameters.project }}Libraries
   displayName: ${{ parameters.project }} build & publish
@@ -43,6 +40,8 @@ jobs:
       vmImage: ubuntu-latest
     ${{ else }}:
       name: ${{ parameters.agentImage }}
+  variables:
+  - group: AndroidAuthClientVariables
   steps:
   - checkout: ${{ parameters.repository }}
     persistCredentials: True
@@ -104,6 +103,8 @@ jobs:
   continueOnError: true
   pool:
     vmImage: ubuntu-latest
+    variables:
+      - group: AndroidAuthClientVariables
   steps:
     - checkout: ${{ parameters.repository }}
       persistCredentials: True
