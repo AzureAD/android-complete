@@ -85,8 +85,6 @@ parameters:
     default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.FailsWithDailyVersions, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
 
 variables:
-  - group: AndroidAuthClientAutomationSecrets
-  - group: AndroidAuthClientVariables
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:
     versionNumber: $(Build.BuildNumber)
     brokerVersionNumber: $[replace(variables['build.buildnumber'], '1.0.', '8.1.')]
@@ -174,6 +172,7 @@ stages:
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
   variables:
+  - group: AndroidAuthClientVariables
   - name : powerLiftApiKeyParam
     value : -PpowerLiftApiKey=$(powerliftApiKey)
   dependsOn: 
@@ -224,6 +223,8 @@ stages:
     displayName: Publish Linux Broker Package
     pool:
       vmImage: ubuntu-latest
+    variables:
+    - group: AndroidAuthClientVariables
     steps:
     - checkout: broker
       persistCredentials: True
@@ -345,6 +346,8 @@ stages:
 
 # BrokerApk - Authenticator Queue pipeline
 - stage: 'queueAuthenticatorPipeline'
+  variables:
+    - group: AndroidAuthClientAutomationSecrets
   displayName: Authenticator Broker Apk Generation
   dependsOn: promotePackages
   jobs:
@@ -362,6 +365,8 @@ stages:
             workingDirectory: '$(Build.SourcesDirectory)'
 # BrokerApk - Company portal Queue pipeline
 - stage: 'queueCompanyPortalPipeline'
+  variables:
+    - group: AndroidAuthClientAutomationSecrets
   displayName: Company Portal Broker Apk Generation
   dependsOn: promotePackages
   jobs:
@@ -379,6 +384,8 @@ stages:
             workingDirectory: '$(Build.SourcesDirectory)'
 # BrokerApk - Link to Windows Queue pipeline
 - stage: 'queueLinkToWindowsPipeline'
+  variables:
+    - group: AndroidAuthClientAutomationSecrets
   displayName: Link To Windows Apk Generation
   dependsOn: promotePackages
   condition: eq(variables['LTWIntegrationEnabled'], 'true')
@@ -488,6 +495,7 @@ stages:
           env:
             SYSTEM_ACCESSTOKEN: $(FadiPAT)
 
+# Brokre - E2E Automation (LTW)
 - stage: 'runBrokerLTWE2EAutomation'
   displayName: Broker LTW E2E UI Automation Run
   dependsOn:
