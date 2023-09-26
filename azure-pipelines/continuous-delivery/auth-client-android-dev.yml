@@ -433,6 +433,8 @@ stages:
         adAccountsVersion: $(brokerVersionNumber)
         adalVersion: $(versionNumber)
         packageVariant: RC
+        flagsParamString: $(broker4j_extra_flags)
+        localFlightsParamString: $(broker4j_flights)
     - template: ../ui-automation/templates/build-msal-test-app.yml
       parameters:
         productFlavors: Dist
