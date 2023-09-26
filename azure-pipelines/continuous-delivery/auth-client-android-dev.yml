@@ -83,6 +83,8 @@ parameters:
     default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.FailsWithDailyVersions, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
 
 variables:
+  - group: AndroidAuthClientAutomationSecrets
+  - group: AndroidAuthClientVariables
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:
     versionNumber: $(Build.BuildNumber)
     brokerVersionNumber: $[replace(variables['build.buildnumber'], '1.0.', '8.1.')]
@@ -170,7 +172,6 @@ stages:
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
   variables:
-  - group: AndroidAuthClientVariables
   - name : powerLiftApiKeyParam
     value : -PpowerLiftApiKey=$(powerliftApiKey)
   dependsOn: 
@@ -221,8 +222,6 @@ stages:
     displayName: Publish Linux Broker Package
     pool:
       vmImage: ubuntu-latest
-    variables:
-    - group: AndroidAuthClientVariables
     steps:
     - checkout: broker
       persistCredentials: True
