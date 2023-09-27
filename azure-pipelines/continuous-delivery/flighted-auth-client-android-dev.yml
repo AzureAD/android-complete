@@ -74,7 +74,7 @@ parameters:
   - name: shouldEnableBrokerSelectionAndDiscoveryFlag
     displayName: Should enable broker selection & discovery?
     type: boolean
-    default: False
+    default: True
   - name: msalTestTarget
     displayName: Test Targets for MSAL
     type: string
