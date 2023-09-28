@@ -115,7 +115,7 @@ stages:
     displayName: Add tags for flights
     steps:
     - task: PowerShell@2
-      displayName: Generate Assemble Dist Task
+      displayName: Run Tagging Script
       inputs:
         targetType: inline
         script: |
