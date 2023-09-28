@@ -90,7 +90,7 @@ variables:
     brokerVersionNumber: $[replace(variables['build.buildnumber'], '1.0.', '8.1.')]
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
-    brokerVersionNumber: ${{ parameters.customVersionNumber }}
+    brokerVersionNumber: $[replace(${{ parameters.customVersionNumber }}, '1.0.', '8.1.')]
   projVersionParam: -PprojVersion=$(versionNumber)
   common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
   broker4jVersionParam: -PdistBroker4jVersion=$(versionNumber)
@@ -111,18 +111,18 @@ stages:
   displayName: Tag Pipeline
   dependsOn: []
   jobs:
-    - job: addTags
-      displayName: Add tags for flights
-      steps:
-        - task: PowerShell@2
-          displayName: Generate Assemble Dist Task
-          inputs:
-            targetType: inline
-            script: |
-              Write-Host "##vso[build.addbuildtag]Android_Broker_Version_$(brokerVersionNumber)"
-              Write-Host "##vso[build.addbuildtag]Other_Library_Versions_$(versionNumber)"
-              Write-Host "##vso[build.addbuildtag]Flags_$(enableBrokerDiscoveryParam)_$(enableBrokerSelectionParam)_$(broker4j_extra_flags)"
-              Write-Host "##vso[build.addbuildtag]Flights_$(broker4j_flights)"
+  - job: addTags
+    displayName: Add tags for flights
+    steps:
+    - task: PowerShell@2
+      displayName: Generate Assemble Dist Task
+      inputs:
+        targetType: inline
+        script: |
+          Write-Host "##vso[build.addbuildtag]Android_Broker_Version_$(brokerVersionNumber)"
+          Write-Host "##vso[build.addbuildtag]Other_Library_Versions_$(versionNumber)"
+          Write-Host "##vso[build.addbuildtag]Flags_$(enableBrokerDiscoveryParam)_$(enableBrokerSelectionParam)_$(broker4j_extra_flags)"
+          Write-Host "##vso[build.addbuildtag]Flights_$(broker4j_flights)"
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
