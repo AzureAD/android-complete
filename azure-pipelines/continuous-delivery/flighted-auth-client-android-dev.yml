@@ -111,8 +111,8 @@ stages:
   displayName: Tag Pipeline
   dependsOn: []
   variables:
-    - name : flightsTag
-      value : $[replace(variables['broker4j_flights'], ':', ' ')]
+    - name: flightsTag
+      value: $[replace(variables['broker4j_flights'], ':', ' ')]
   jobs:
   - job: addTags
     displayName: Add tags for flights
@@ -145,7 +145,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
-      tokenSelection: 'FadiPAT'
+      tokenSelection: 'mvnPAT'
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish
@@ -167,7 +167,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
-      tokenSelection: 'FadiPAT'
+      tokenSelection: 'mvnPAT'
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
@@ -189,7 +189,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
-      tokenSelection: 'FadiPAT'
+      tokenSelection: 'mvnPAT'
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
@@ -218,7 +218,7 @@ stages:
       agentImage: 1ES-AndroidPool-EOC
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
-      tokenSelection: 'FadiPAT'
+      tokenSelection: 'mvnPAT'
 # Linux Broker - Build and publish
 - stage: 'publishLinuxBrokeLibraries'
   displayName: Linux Broker - Build and publish
@@ -241,7 +241,7 @@ stages:
       testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -Psystemd_mode_enabled=false --build-cache --info
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
-      tokenSelection: 'FadiPAT'
+      tokenSelection: 'mvnPAT'
   - job: PublishLinuxBrokerPackage
     dependsOn: publishLinuxBrokerLibraries
     displayName: Publish Linux Broker Package
@@ -256,7 +256,7 @@ stages:
       displayName: Build and publish linux broker package
       env:
         ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME: $(AndroidAuthClient-Internal-Maven-Username)
-        ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN: $(FadiPAT)
+        ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN: $(mvnPAT)
       inputs:
         cwd: $(Build.SourcesDirectory)/broker-java-root
         tasks: LinuxBrokerPackage:clean LinuxBrokerPackage:buildDeb $(linuxBrokerVersion) --build-cache --info
@@ -296,7 +296,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
-      tokenSelection: 'FadiPAT'
+      tokenSelection: 'mvnPAT'
 # Adal - Build and publish
 - stage: 'publishAdal'
   displayName: Adal - Build and publish
@@ -318,7 +318,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
-      tokenSelection: 'FadiPAT'
+      tokenSelection: 'mvnPAT'
 
 # Combine and Publish Code Coverage
 - stage: 'combineAndPublishCodeCoverage'
@@ -365,10 +365,10 @@ stages:
           displayName: Run script to promote packages - Prerelease
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
-            arguments: '-PackagingPAT "$(FadiPAT)" -PackageVersion "$(versionNumber)" -adAccountsVersion "$(brokerVersionNumber)"'
+            arguments: '-PackagingPAT "$(mvnPAT)" -PackageVersion "$(versionNumber)" -adAccountsVersion "$(brokerVersionNumber)"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
-            SYSTEM_ACCESSTOKEN: $(FadiPAT)
+            SYSTEM_ACCESSTOKEN: $(mvnPAT)
 
 # BrokerApk - Authenticator Queue pipeline
 - stage: 'queueAuthenticatorPipeline'
@@ -511,7 +511,7 @@ stages:
             arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Non-LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'' , ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
-            SYSTEM_ACCESSTOKEN: $(FadiPAT)
+            SYSTEM_ACCESSTOKEN: $(mvnPAT)
         - task: PowerShell@2
           displayName: Import Broker E2E Automation results
           inputs:
@@ -519,7 +519,7 @@ stages:
             arguments: '-AdoPAT "$env:SYSTEM_ACCESSTOKEN" -SourceBuildId $(brokerAutomationBuildId) -TargetBuildId $(Build.BuildId)'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
-            SYSTEM_ACCESSTOKEN: $(FadiPAT)
+            SYSTEM_ACCESSTOKEN: $(mvnPAT)
 
 # Broker - E2E Automation (LTW)
 - stage: 'runBrokerLTWE2EAutomation'
@@ -549,7 +549,7 @@ stages:
             arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_branch'' : ''$(MSAL_LTW_Branch)'', ''broker_branch'' : ''$(Broker_LTW_Branch)'', ''msal_sdk_version'': ''$(versionNumber)'', ''commonVersion'': ''$(versionNumber)'' }"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
-            SYSTEM_ACCESSTOKEN: $(FadiPAT)
+            SYSTEM_ACCESSTOKEN: $(mvnPAT)
         - task: PowerShell@2
           displayName: Import Broker E2E Automation results
           inputs:
@@ -557,5 +557,5 @@ stages:
             arguments: '-AdoPAT "$env:SYSTEM_ACCESSTOKEN" -SourceBuildId $(brokerAutomationBuildId) -TargetBuildId $(Build.BuildId)'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
-            SYSTEM_ACCESSTOKEN: $(FadiPAT)
+            SYSTEM_ACCESSTOKEN: $(mvnPAT)
 ...
