@@ -112,6 +112,7 @@ stages:
   - job: addTags
     displayName: Add tags for flights
     steps:
+      targetType: inline
       script: |
         echo "##vso[build.addbuildtag]Android Broker Version: $(brokerVersionNumber)"
         echo "##vso[build.addbuildtag]Other Library Version: $(versionNumber)"
