@@ -74,7 +74,7 @@ parameters:
   - name: shouldEnableBrokerSelectionAndDiscoveryFlag
     displayName: Should enable broker selection & discovery?
     type: boolean
-    default: $(LTWIntegrationEnabled)
+    default: True
   - name: msalTestTarget
     displayName: Test Targets for MSAL
     type: string
@@ -107,12 +107,24 @@ variables:
     enableBrokerDiscoveryParam: ''
 
 stages:
+- stage: 'addTags'
+  displayName: Tag Pipeline
+  dependsOn: []
+  jobs:
+    - job: addTags
+      displayName: Add tags for flights
+      steps:
+        script: |
+          echo "##vso[build.addbuildtag]Android Broker Version: $(brokerVersionNumber)"
+          echo "##vso[build.addbuildtag]Other Library Version: $(versionNumber)"
+          echo "##vso[build.addbuildtag]Flags: $(enableBrokerDiscoveryParam) $(enableBrokerSelectionParam) $(broker4j_extra_flags)"
+          echo "##vso[build.addbuildtag]Flights: $(broker4j_flights)"
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
-  - template: flighted-assemble&publish.yml
+  - template: assemble&publish.yml
     parameters:
       repository: common
       project: common4j
@@ -126,12 +138,13 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      tokenSelection: 'FadiPAT'
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish
   dependsOn: publishCommon4jLibraries
   jobs:
-  - template: flighted-assemble&publish.yml
+  - template: assemble&publish.yml
     parameters:
       repository: common
       project: common
@@ -147,13 +160,14 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      tokenSelection: 'FadiPAT'
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
   dependsOn: 
   - publishCommon4jLibraries
   jobs:
-  - template: flighted-assemble&publish.yml
+  - template: assemble&publish.yml
     parameters:
       repository: broker
       project: broker4j
@@ -168,6 +182,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      tokenSelection: 'FadiPAT'
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
@@ -179,7 +194,7 @@ stages:
   - publishCommonLibraries
   - publishBroke4jLibraries
   jobs:
-  - template: flighted-assemble&publish.yml
+  - template: assemble&publish.yml
     parameters:
       repository: broker
       project: AADAuthenticator
@@ -196,6 +211,7 @@ stages:
       agentImage: 1ES-AndroidPool-EOC
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      tokenSelection: 'FadiPAT'
 # Linux Broker - Build and publish
 - stage: 'publishLinuxBrokeLibraries'
   displayName: Linux Broker - Build and publish
@@ -203,7 +219,7 @@ stages:
   - publishCommon4jLibraries
   - publishBroke4jLibraries
   jobs:
-  - template: flighted-assemble&publish.yml
+  - template: assemble&publish.yml
     parameters:
       repository: broker
       project: LinuxBroker
@@ -218,6 +234,7 @@ stages:
       testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -Psystemd_mode_enabled=false --build-cache --info
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      tokenSelection: 'FadiPAT'
   - job: PublishLinuxBrokerPackage
     dependsOn: publishLinuxBrokerLibraries
     displayName: Publish Linux Broker Package
@@ -256,7 +273,7 @@ stages:
   displayName: Msal - Build and publish
   dependsOn: publishCommonLibraries
   jobs:
-  - template: flighted-assemble&publish.yml
+  - template: assemble&publish.yml
     parameters:
       repository: msal
       project: msal
@@ -272,12 +289,13 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      tokenSelection: 'FadiPAT'
 # Adal - Build and publish
 - stage: 'publishAdal'
   displayName: Adal - Build and publish
   dependsOn: publishCommonLibraries
   jobs:
-  - template: flighted-assemble&publish.yml
+  - template: assemble&publish.yml
     parameters:
       repository: adal
       project: adal
@@ -293,6 +311,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      tokenSelection: 'FadiPAT'
 
 # Combine and Publish Code Coverage
 - stage: 'combineAndPublishCodeCoverage'

@@ -88,7 +88,7 @@ variables:
     brokerVersionNumber: $[replace(variables['build.buildnumber'], '1.0.', '8.1.')]
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
-    brokerVersionNumber: ${{ parameters.customVersionNumber }}
+    brokerVersionNumber: $[replace(${{ parameters.customVersionNumber }}, '1.0.', '8.1.')]
   projVersionParam: -PprojVersion=$(versionNumber)
   common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
   broker4jVersionParam: -PdistBroker4jVersion=$(versionNumber)
@@ -105,6 +105,18 @@ variables:
     enableBrokerDiscoveryParam: ''
 
 stages:
+- stage: 'addTags'
+  displayName: Tag Pipeline
+  dependsOn: []
+  jobs:
+  - job: addTags
+    displayName: Add tags for flights
+    steps:
+      script: |
+        echo "##vso[build.addbuildtag]Android Broker Version: $(brokerVersionNumber)"
+        echo "##vso[build.addbuildtag]Other Library Version: $(versionNumber)"
+        echo "##vso[build.addbuildtag]Flags: $(enableBrokerDiscoveryParam) $(enableBrokerSelectionParam) $(broker4j_extra_flags)"
+        echo "##vso[build.addbuildtag]Flights: $(broker4j_flights)"
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
