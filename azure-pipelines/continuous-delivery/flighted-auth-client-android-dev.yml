@@ -122,6 +122,9 @@ stages:
       inputs:
         targetType: inline
         script: |
+          Write-Host "##vso[build.addbuildtag]Android_Broker_Version_$(brokerVersionNumber)"
+          Write-Host "##vso[build.addbuildtag]Other_Library_Versions_$(versionNumber)"
+          Write-Host "##vso[build.addbuildtag]Flags_$(enableBrokerDiscoveryParam)_$(enableBrokerSelectionParam)_$(broker4j_extra_flags)"
           Write-Host "##vso[build.addbuildtag]Flights_$(flightsTag)"
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
