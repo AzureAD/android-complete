@@ -112,12 +112,15 @@ stages:
   - job: addTags
     displayName: Add tags for flights
     steps:
-      targetType: inline
-      script: |
-        echo "##vso[build.addbuildtag]Android Broker Version: $(brokerVersionNumber)"
-        echo "##vso[build.addbuildtag]Other Library Version: $(versionNumber)"
-        echo "##vso[build.addbuildtag]Flags: $(enableBrokerDiscoveryParam) $(enableBrokerSelectionParam) $(broker4j_extra_flags)"
-        echo "##vso[build.addbuildtag]Flights: $(broker4j_flights)"
+    - task: Bash@3
+      displayName: Run Tagging Script
+      inputs:
+        targetType: inline
+        script: |
+          echo "##vso[build.addbuildtag]Android Broker Version: $(brokerVersionNumber)"
+          echo "##vso[build.addbuildtag]Other Library Version: $(versionNumber)"
+          echo "##vso[build.addbuildtag]Flags: $(enableBrokerDiscoveryParam) $(enableBrokerSelectionParam) $(broker4j_extra_flags)"
+          echo "##vso[build.addbuildtag]Flights: $(broker4j_flights)"
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
