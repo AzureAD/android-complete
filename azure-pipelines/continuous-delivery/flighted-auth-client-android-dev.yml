@@ -110,6 +110,9 @@ stages:
 - stage: 'addTags'
   displayName: Tag Pipeline
   dependsOn: []
+  variables:
+    - name : flightsTag
+      value : $[replace(variables['broker4j_flights'], ':', ' ')]
   jobs:
   - job: addTags
     displayName: Add tags for flights
@@ -119,7 +122,7 @@ stages:
       inputs:
         targetType: inline
         script: |
-          Write-Host "##vso[build.addbuildtag]Flights_$[replace(variables['broker4j_flights'], ':', ' ')]"
+          Write-Host "##vso[build.addbuildtag]Flights_$(flightsTag)"
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
