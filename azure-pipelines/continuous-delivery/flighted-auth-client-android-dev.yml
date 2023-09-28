@@ -114,11 +114,15 @@ stages:
     - job: addTags
       displayName: Add tags for flights
       steps:
-        script: |
-          echo "##vso[build.addbuildtag]Android Broker Version: $(brokerVersionNumber)"
-          echo "##vso[build.addbuildtag]Other Library Version: $(versionNumber)"
-          echo "##vso[build.addbuildtag]Flags: $(enableBrokerDiscoveryParam) $(enableBrokerSelectionParam) $(broker4j_extra_flags)"
-          echo "##vso[build.addbuildtag]Flights: $(broker4j_flights)"
+        - task: PowerShell@2
+          displayName: Generate Assemble Dist Task
+          inputs:
+            targetType: inline
+            script: |
+              Write-Host "##vso[build.addbuildtag]Android_Broker_Version_$(brokerVersionNumber)"
+              Write-Host "##vso[build.addbuildtag]Other_Library_Versions_$(versionNumber)"
+              Write-Host "##vso[build.addbuildtag]Flags_$(enableBrokerDiscoveryParam)_$(enableBrokerSelectionParam)_$(broker4j_extra_flags)"
+              Write-Host "##vso[build.addbuildtag]Flights_$(broker4j_flights)"
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
