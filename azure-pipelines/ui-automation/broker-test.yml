@@ -11,7 +11,7 @@
 # Variable: 'dailyVersion' was defined in the Variables tab
 # Variable: 'test_run_prefix' prefix to add onto the beginning of the test result name
 # https://dev.azure.com/IdentityDivision/Engineering/_build?definitionId=1490&_a=summary
-name: $(Build.BuildId)_$(test_run_prefix)_($(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
+name: $(Build.BuildId)_$(test_run_prefix)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
 
 trigger: none
 pr: none
