@@ -120,6 +120,7 @@ jobs:
     - task: Bash@3
       condition: eq('${{ parameters.project }}', 'LinuxBroker')
       retryCountOnTaskFailure: 3
+      enabled: ${{ parameters.shouldRunUnitTests }}
       displayName: Linux Testing Setup
       continueOnError: true
       inputs:
