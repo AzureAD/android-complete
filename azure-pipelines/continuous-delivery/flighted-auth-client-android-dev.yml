@@ -56,7 +56,11 @@ parameters:
     type: string
     default: Default
   - name: shouldRunUiValidation
-    displayName: Run E2E UI Validation?
+    displayName: Run E2E Non-LTW UI Validation?
+    type: boolean
+    default: True
+  - name: shouldRunLTWUiValidation
+    displayName: Run E2E LTW UI Validation?
     type: boolean
     default: True
   - name: shouldRunUnitTests
@@ -511,7 +515,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Non-LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'' , ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Flighted, Non-LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'' , ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(mvnPAT)
@@ -535,7 +539,7 @@ stages:
     (
       not(failed()),
       not(canceled()),
-      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
+      or( eq(${{ parameters.shouldRunLTWUiValidation }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
     )
   jobs:
     - job: trigger_automation
@@ -549,7 +553,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_branch'' : ''$(MSAL_LTW_Branch)'', ''broker_branch'' : ''$(Broker_LTW_Branch)'', ''msal_sdk_version'': ''$(versionNumber)'', ''commonVersion'': ''$(versionNumber)'' }"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Flighted, LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_branch'' : ''$(MSAL_LTW_Branch)'', ''broker_branch'' : ''$(Broker_LTW_Branch)'', ''msal_sdk_version'': ''$(versionNumber)'', ''commonVersion'': ''$(versionNumber)'' }"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(mvnPAT)
