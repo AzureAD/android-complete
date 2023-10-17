@@ -36,6 +36,12 @@ parameters:
   values:
     - PROD
     - RC
+- name: localFlightsParamString
+  type: string
+  default: ''
+- name: flagsParamString
+  type: string
+  default: ''
 
 jobs:
 - job: brokerhost${{ parameters.packageVariant }}${{ parameters.productFlavors }}${{ parameters.signingConfigurations }}
@@ -84,7 +90,7 @@ jobs:
           }
           Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
   - ${{ if eq(parameters.productFlavors, 'Local') }}:
-    - pwsh: echo "##vso[task.setvariable variable=AssembleTask;]assembleLocal${{ parameters.signingConfigurations }}"
+    - pwsh: echo "##vso[task.setvariable variable=AssembleTask;]assembleLocal${{ parameters.signingConfigurations }} ${{ parameters.flagsParamString }} -PlocalFlights=${{ parameters.localFlightsParamString }}"
       displayName: Generate Assemble Local Task
   - task: CmdLine@1
     displayName: Set MVN AccessToken in Environment

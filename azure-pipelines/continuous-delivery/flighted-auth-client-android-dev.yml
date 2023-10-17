@@ -2,9 +2,11 @@
 # Description: Assemble & publish dev builds of auth client android sdk libraries to internal maven feed
 #  Libraries include common4j, common, broker4j, linux broker, broker, msal and adal
 # Variable: 'mvnUserName' user name to access internal maven feed
-# Variable: 'mvnAccessToken' access token to access internal maven feed
+# Variable: 'mvnPAT' access token to access internal maven feed
 # Variable: 'MSAL_LTW_Branch' MSAL branch to be passed to LTW UI Automation
 # Variable: 'Broker_LTW_Branch' Broker Branch to be passed to LTW UI Automation
+# Variable: 'broker4j_flights' flights to be passed to broker4j (Expects format {"TestFlight":"hello"})
+# Variable: 'broker4j_extra_flags' additional flags to be passed to broker4j
 # Variable: 'nameSuffix' suffix to distinguish build names between pipelines
 
 name: 1.0.$(Date:yyyyMMdd)-dev$(nameSuffix)$(Rev:.r) # $(Build.BuildNumber) = name
@@ -54,9 +56,13 @@ parameters:
     type: string
     default: Default
   - name: shouldRunUiValidation
-    displayName: Run E2E UI Validation?
+    displayName: Run E2E Non-LTW UI Validation?
     type: boolean
-    default: False
+    default: True
+  - name: shouldRunLTWUiValidation
+    displayName: Run E2E LTW UI Validation?
+    type: boolean
+    default: True
   - name: shouldRunUnitTests
     displayName: Run Unit Tests?
     type: boolean
@@ -72,7 +78,7 @@ parameters:
   - name: shouldEnableBrokerSelectionAndDiscoveryFlag
     displayName: Should enable broker selection & discovery?
     type: boolean
-    default: False
+    default: True
   - name: msalTestTarget
     displayName: Test Targets for MSAL
     type: string
@@ -146,6 +152,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      tokenSelection: 'mvnPAT'
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish
@@ -167,6 +174,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      tokenSelection: 'mvnPAT'
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
@@ -188,6 +196,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      tokenSelection: 'mvnPAT'
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
@@ -216,6 +225,7 @@ stages:
       agentImage: 1ES-AndroidPool-EOC
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      tokenSelection: 'mvnPAT'
 # Linux Broker - Build and publish
 - stage: 'publishLinuxBrokeLibraries'
   displayName: Linux Broker - Build and publish
@@ -238,6 +248,7 @@ stages:
       testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -Psystemd_mode_enabled=false --build-cache --info
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      tokenSelection: 'mvnPAT'
   - job: PublishLinuxBrokerPackage
     dependsOn: publishLinuxBrokerLibraries
     displayName: Publish Linux Broker Package
@@ -252,7 +263,7 @@ stages:
       displayName: Build and publish linux broker package
       env:
         ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME: $(AndroidAuthClient-Internal-Maven-Username)
-        ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN: $(System.AccessToken)
+        ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN: $(mvnPAT)
       inputs:
         cwd: $(Build.SourcesDirectory)/broker-java-root
         tasks: LinuxBrokerPackage:clean LinuxBrokerPackage:buildDeb $(linuxBrokerVersion) --build-cache --info
@@ -292,6 +303,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      tokenSelection: 'mvnPAT'
 # Adal - Build and publish
 - stage: 'publishAdal'
   displayName: Adal - Build and publish
@@ -313,6 +325,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      tokenSelection: 'mvnPAT'
 
 # Combine and Publish Code Coverage
 - stage: 'combineAndPublishCodeCoverage'
@@ -359,10 +372,10 @@ stages:
           displayName: Run script to promote packages - Prerelease
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
-            arguments: '-PackagingPAT "$env:SYSTEM_ACCESSTOKEN" -PackageVersion "$(versionNumber)" -adAccountsVersion "$(brokerVersionNumber)"'
+            arguments: '-PackagingPAT "$(mvnPAT)" -PackageVersion "$(versionNumber)" -adAccountsVersion "$(brokerVersionNumber)"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
-            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+            SYSTEM_ACCESSTOKEN: $(mvnPAT)
 
 # BrokerApk - Authenticator Queue pipeline
 - stage: 'queueAuthenticatorPipeline'
@@ -502,10 +515,10 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Non-LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'' , ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Flighted, Non-LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'' , ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
-            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+            SYSTEM_ACCESSTOKEN: $(mvnPAT)
         - task: PowerShell@2
           displayName: Import Broker E2E Automation results
           inputs:
@@ -513,7 +526,7 @@ stages:
             arguments: '-AdoPAT "$env:SYSTEM_ACCESSTOKEN" -SourceBuildId $(brokerAutomationBuildId) -TargetBuildId $(Build.BuildId)'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
-            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+            SYSTEM_ACCESSTOKEN: $(mvnPAT)
 
 # Broker - E2E Automation (LTW)
 - stage: 'runBrokerLTWE2EAutomation'
@@ -526,7 +539,7 @@ stages:
     (
       not(failed()),
       not(canceled()),
-      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
+      or( eq(${{ parameters.shouldRunLTWUiValidation }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
     )
   jobs:
     - job: trigger_automation
@@ -540,10 +553,10 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_branch'' : ''$(MSAL_LTW_Branch)'', ''broker_branch'' : ''$(Broker_LTW_Branch)'', ''msal_sdk_version'': ''$(versionNumber)'', ''commonVersion'': ''$(versionNumber)'' }"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Flighted, LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_branch'' : ''$(MSAL_LTW_Branch)'', ''broker_branch'' : ''$(Broker_LTW_Branch)'', ''msal_sdk_version'': ''$(versionNumber)'', ''commonVersion'': ''$(versionNumber)'' }"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
-            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+            SYSTEM_ACCESSTOKEN: $(mvnPAT)
         - task: PowerShell@2
           displayName: Import Broker E2E Automation results
           inputs:
@@ -551,5 +564,5 @@ stages:
             arguments: '-AdoPAT "$env:SYSTEM_ACCESSTOKEN" -SourceBuildId $(brokerAutomationBuildId) -TargetBuildId $(Build.BuildId)'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
-            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+            SYSTEM_ACCESSTOKEN: $(mvnPAT)
 ...

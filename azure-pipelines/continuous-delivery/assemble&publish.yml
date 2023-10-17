@@ -31,7 +31,9 @@ parameters:
   default: True
 - name: testParams
   default: ''
-  
+- name: tokenSelection
+  default: 'System.AccessToken'
+
 jobs:
 - job: publish${{ parameters.project }}Libraries
   displayName: ${{ parameters.project }} build & publish
@@ -51,14 +53,14 @@ jobs:
       tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
-      ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
+      ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
   - task: Gradle@3
     displayName: Generate Lockfile ${{ parameters.project }}
     inputs:
       tasks: -q ${{ parameters.project }}:dependencies ${{ parameters.dependencyParams }}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
-      ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
+      ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
   - task: Gradle@3
     condition: |
       and
@@ -72,7 +74,7 @@ jobs:
       tasks: ${{ parameters.project }}:${{ parameters.publishCmd}} ${{ parameters.publishParams}}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
-      ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
+      ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
   - task: ComponentGovernanceComponentDetection@0
     inputs:
       sourceScanPath: $(Build.SourcesDirectory)/${{ parameters.project }}/
@@ -99,6 +101,8 @@ jobs:
       ArtifactName: ${{ parameters.project }}_Release
 - job: RunUnitTest${{ parameters.project }}
   displayName: ${{ parameters.project }} UnitTest
+  timeoutInMinutes: 120
+  continueOnError: true
   pool:
     vmImage: ubuntu-latest
     variables:
@@ -116,6 +120,7 @@ jobs:
     - task: Bash@3
       condition: eq('${{ parameters.project }}', 'LinuxBroker')
       retryCountOnTaskFailure: 3
+      enabled: ${{ parameters.shouldRunUnitTests }}
       displayName: Linux Testing Setup
       continueOnError: true
       inputs:
@@ -133,7 +138,7 @@ jobs:
           ./gradlew LinuxBroker:linuxBrokerUnitTestCoverageReport ${{ parameters.testParams}}
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
-        ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
+        ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
     - task: Gradle@3
       displayName: Run Test ${{ parameters.project }}
       enabled: ${{ parameters.shouldRunUnitTests }}
@@ -143,7 +148,8 @@ jobs:
         testRunTitle: '${{ parameters.project }}_UnitTests'
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
-        ${{ parameters.vstsMvnAndroidAccessToken }}: $(System.AccessToken)
+
+        ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
     - task: PublishCodeCoverageResults@1
       displayName: Publish Code Coverage Report
       inputs:
