@@ -474,7 +474,7 @@ stages:
         adAccountsVersion: $(brokerVersionNumber)
         adalVersion: $(versionNumber)
         packageVariant: RC
-        flagsParamString: $(broker4j_extra_flags)
+        flagsParamString: $(broker4j_extra_flags) $(enableBrokerDiscoveryParam)
         localFlightsParamString: $(broker4j_flights)
     - template: ../ui-automation/templates/build-msal-test-app.yml
       parameters:
