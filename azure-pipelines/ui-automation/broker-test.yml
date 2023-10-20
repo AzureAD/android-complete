@@ -103,7 +103,7 @@ parameters:
 - name: oldBrokerHostVersion
   displayName: Old Broker host Version
   type: string
-  default: '0.0.1'
+  default: '0.0.2'
 - name: brokerHostWithoutBrokerSelectionLogicVersion
   displayName: brokerHost without broker selection logic version
   type: string
