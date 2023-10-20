@@ -103,7 +103,7 @@ parameters:
 - name: oldBrokerHostVersion
   displayName: Old Broker host Version
   type: string
-  default: '0.0.2'
+  default: '0.0.1'
 - name: brokerHostWithoutBrokerSelectionLogicVersion
   displayName: brokerHost without broker selection logic version
   type: string
@@ -123,7 +123,7 @@ parameters:
 - name: oldOneAuthTestAppVersion
   displayName: Old OneAuth Test App Version
   type: string
-  default: '0.1118843.20854054'
+  default: '0.0.2'
 - name: preInstallLtw
   displayName: Preinstall Link to Windows
   type: boolean
