@@ -25,10 +25,13 @@ parameters:
 - name: msalVersion
   displayName: MSAL Version
   type: string
-- name: publishToProdFeed
+- name: publishToFeed
   displayName: Publish to Prod Feed?
   type: boolean
   default: False
+- name: publishingPackageName
+  type: String
+  default: "com.microsoft.identity.testuserapp"
 - name: packageVariant
   displayName: Package Variant
   type: string
@@ -124,15 +127,15 @@ jobs:
       targetPath: $(Agent.BuildDirectory)/android-complete/broker/userapp/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}
       artifactName: BrokerHost-${{ parameters.productFlavors }}-${{ upper(parameters.packageVariant) }}-${{ lower(parameters.signingConfigurations) }}
       patterns: '**/*.apk'
-  - ${{ if eq(parameters.publishToProdFeed, 'True') }}:
+  - ${{ if eq(parameters.publishToFeed, 'True') }}:
       - task: UniversalPackages@0
-        displayName: Publishing PROD Brokerhost
+        displayName: Publishing Brokerhost to feed
         continueOnError: true
         inputs:
           command: publish
           publishDirectory: '$(Build.ArtifactStagingDirectory)'
           vstsFeedPublish: 'AndroidADAL'
-          vstsFeedPackagePublish: 'com.microsoft.identity.testuserapp.prod'
+          vstsFeedPackagePublish: '${{ parameters.publishingPackageName }}'
           versionOption: custom
           versionPublish: '${{ parameters.adAccountsVersion }}'
           packagePublishDescription: 'Prod BrokerHost Broker version ${{ parameters.adAccountsVersion }}'
