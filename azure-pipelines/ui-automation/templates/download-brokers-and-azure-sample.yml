@@ -21,8 +21,10 @@ parameters:
     displayName: Old Company Portal Version
     type: string
     default: '5.0.5729'
-  - name: brokerHostPipelineId
+  - name: brokerHostVersion
+    displayName: BrokerHost Version
     type: string
+    default: '*'
   - name: oldBrokerHostVersion
     displayName: Old Broker host Version
     type: string
@@ -131,15 +133,15 @@ jobs:
     - script: mv ./YPC-*.apk ./OldLTW-signed.apk
       displayName: 'Rename Old LTW build to OldLTW-signed.apk'
       workingDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
-    - task: DownloadPipelineArtifact@2
-      displayName: 'Download Broker Host'
+    - task: UniversalPackages@0
+      displayName: 'Download BrokerHost from Feed'
       inputs:
-        buildType: specific
-        project: '${{ parameters.engineeringProjectId }}'
-        definition: '${{ parameters.brokerHostPipelineId }}'
-        artifactName: BrokerHost
-        itemPattern: '**/*.apk'
-        targetPath: '$(Build.ArtifactStagingDirectory)/brokers'
+        command: 'download'
+        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
+        feedsToUse: 'internal'
+        vstsFeed: '${{ parameters.internalFeedName }}'
+        vstsFeedPackage: 'com.microsoft.identity.testuserapp.prod'
+        vstsPackageVersion: '${{ parameters.brokerHostVersion }}'
     - task: UniversalPackages@0
       displayName: 'Download old brokerHost version from feed'
       inputs:
