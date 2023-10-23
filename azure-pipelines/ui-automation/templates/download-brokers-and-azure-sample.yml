@@ -151,7 +151,7 @@ jobs:
         externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
         feedDownloadExternal: '${{ parameters.msazureFeedName }}'
         packageDownloadExternal: 'broker-host'
-        versionDownloadExternal: '${{ parameters.oldBrokerHost }}'
+        versionDownloadExternal: '${{ parameters.oldBrokerHostVersion }}'
     - task: UniversalPackages@0
       displayName: 'Download brokerHost without broker selection logic from feed'
       inputs:

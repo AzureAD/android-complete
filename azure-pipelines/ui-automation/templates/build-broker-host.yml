@@ -138,5 +138,5 @@ jobs:
           vstsFeedPackagePublish: '${{ parameters.publishingPackageName }}'
           versionOption: custom
           versionPublish: '${{ parameters.adAccountsVersion }}'
-          packagePublishDescription: 'Prod BrokerHost Broker version ${{ parameters.adAccountsVersion }}'
+          packagePublishDescription: 'BrokerHost Broker version ${{ parameters.adAccountsVersion }}'
 ...
