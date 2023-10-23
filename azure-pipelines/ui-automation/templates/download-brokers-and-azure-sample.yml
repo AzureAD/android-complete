@@ -151,7 +151,7 @@ jobs:
         externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
         feedDownloadExternal: '${{ parameters.msazureFeedName }}'
         packageDownloadExternal: 'broker-host'
-        versionDownloadExternal: '${{ parameters.brokerHostWithoutBrokerSelectionLogicVersion }}'
+        versionDownloadExternal: '${{ parameters.oldBrokerHost }}'
     - task: UniversalPackages@0
       displayName: 'Download brokerHost without broker selection logic from feed'
       inputs:
@@ -161,7 +161,7 @@ jobs:
         externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
         feedDownloadExternal: '${{ parameters.msazureFeedName }}'
         packageDownloadExternal: 'broker-host'
-        versionDownloadExternal: '${{ parameters.oldBrokerHostVersion }}'
+        versionDownloadExternal: '${{ parameters.brokerHostWithoutBrokerSelectionLogicVersion }}'
     - publish: $(Build.ArtifactStagingDirectory)/brokers
       displayName: 'Publish Authenticator/Company Portal Broker apks for later use'
       artifact: brokerapks
