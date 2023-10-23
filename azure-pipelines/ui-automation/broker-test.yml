@@ -99,7 +99,7 @@ parameters:
 - name: oldCompanyPortalVersion
   displayName: Old Company Portal Version
   type: string
-  default: '5.0.5729'
+  default: '5.0.604010354'
 - name: oldBrokerHostVersion
   displayName: Old Broker host Version
   type: string
