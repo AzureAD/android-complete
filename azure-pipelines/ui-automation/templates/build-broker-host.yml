@@ -30,7 +30,7 @@ parameters:
   type: boolean
   default: False
 - name: publishingPackageName
-  type: String
+  type: string
   default: "com.microsoft.identity.testuserapp"
 - name: packageVariant
   displayName: Package Variant
