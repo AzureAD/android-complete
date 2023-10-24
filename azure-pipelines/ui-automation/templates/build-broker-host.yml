@@ -45,6 +45,8 @@ parameters:
 - name: flagsParamString
   type: string
   default: ''
+- name: tokenSelection
+  default: 'System.AccessToken'
 
 jobs:
 - job: brokerhost${{ parameters.packageVariant }}${{ parameters.productFlavors }}${{ parameters.signingConfigurations }}
@@ -99,7 +101,7 @@ jobs:
     displayName: Set MVN AccessToken in Environment
     inputs:
       filename: echo
-      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(${{ parameters.tokenSelection }})'
   - task: CmdLine@1
     displayName: Set Office MVN Access Token in Environment
     inputs:

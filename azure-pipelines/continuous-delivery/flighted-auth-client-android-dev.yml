@@ -477,6 +477,7 @@ stages:
         flagsParamString: $(broker4j_extra_flags) $(enableBrokerDiscoveryParam) $(enableBrokerSelectionParam)
         localFlightsParamString: $(broker4j_flights)
         publishToFeed: True
+        tokenSelection: 'mvnPAT'
     - template: ../ui-automation/templates/build-msal-test-app.yml
       parameters:
         productFlavors: Dist
