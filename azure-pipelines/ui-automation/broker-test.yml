@@ -100,6 +100,10 @@ parameters:
   displayName: Old Company Portal Version
   type: string
   default: '5.0.604010354'
+- name: brokerHostVersion
+  displayName: BrokerHost Version
+  type: string
+  default: '*'
 - name: oldBrokerHostVersion
   displayName: Old Broker host Version
   type: string
@@ -260,7 +264,7 @@ stages:
         oldAuthenticatorVersion: ${{ parameters.oldAuthenticatorVersion }}
         companyPortalVersion: ${{ parameters.companyPortalVersion }}
         oldCompanyPortalVersion: ${{ parameters.oldCompanyPortalVersion }}
-        brokerHostPipelineId: '$(brokerHostPipelineId)'
+        brokerHostVersion:  ${{ parameters.brokerHostVersion }}
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
         brokerHostWithoutBrokerSelectionLogicVersion: ${{ parameters.brokerHostWithoutBrokerSelectionLogicVersion }}
         LTWVersion: ${{ parameters.LTWVersion }}

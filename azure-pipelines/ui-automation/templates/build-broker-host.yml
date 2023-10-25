@@ -25,10 +25,13 @@ parameters:
 - name: msalVersion
   displayName: MSAL Version
   type: string
-- name: publishToProdFeed
+- name: publishToFeed
   displayName: Publish to Prod Feed?
   type: boolean
   default: False
+- name: publishingPackageName
+  type: string
+  default: "com.microsoft.identity.testuserapp"
 - name: packageVariant
   displayName: Package Variant
   type: string
@@ -42,6 +45,8 @@ parameters:
 - name: flagsParamString
   type: string
   default: ''
+- name: tokenSelection
+  default: 'System.AccessToken'
 
 jobs:
 - job: brokerhost${{ parameters.packageVariant }}${{ parameters.productFlavors }}${{ parameters.signingConfigurations }}
@@ -96,7 +101,7 @@ jobs:
     displayName: Set MVN AccessToken in Environment
     inputs:
       filename: echo
-      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(${{ parameters.tokenSelection }})'
   - task: CmdLine@1
     displayName: Set Office MVN Access Token in Environment
     inputs:
@@ -124,16 +129,16 @@ jobs:
       targetPath: $(Agent.BuildDirectory)/android-complete/broker/userapp/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}
       artifactName: BrokerHost-${{ parameters.productFlavors }}-${{ upper(parameters.packageVariant) }}-${{ lower(parameters.signingConfigurations) }}
       patterns: '**/*.apk'
-  - ${{ if eq(parameters.publishToProdFeed, 'True') }}:
+  - ${{ if eq(parameters.publishToFeed, 'True') }}:
       - task: UniversalPackages@0
-        displayName: Publishing PROD Brokerhost
+        displayName: Publishing Brokerhost to feed
         continueOnError: true
         inputs:
           command: publish
           publishDirectory: '$(Build.ArtifactStagingDirectory)'
           vstsFeedPublish: 'AndroidADAL'
-          vstsFeedPackagePublish: 'com.microsoft.identity.testuserapp.prod'
+          vstsFeedPackagePublish: '${{ parameters.publishingPackageName }}'
           versionOption: custom
           versionPublish: '${{ parameters.adAccountsVersion }}'
-          packagePublishDescription: 'Prod BrokerHost Broker version ${{ parameters.adAccountsVersion }}'
+          packagePublishDescription: 'BrokerHost Broker version ${{ parameters.adAccountsVersion }}'
 ...
