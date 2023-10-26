@@ -32,6 +32,9 @@ parameters:
 - name: publishingPackageName
   type: string
   default: "com.microsoft.identity.testuserapp"
+- name: feedToPublishTo
+  type: string
+  default: "AndroidADAL"
 - name: packageVariant
   displayName: Package Variant
   type: string
@@ -136,7 +139,7 @@ jobs:
         inputs:
           command: publish
           publishDirectory: '$(Build.ArtifactStagingDirectory)'
-          vstsFeedPublish: 'AndroidADAL'
+          vstsFeedPublish: '${{ parameters.feedToPublishTo }}'
           vstsFeedPackagePublish: '${{ parameters.publishingPackageName }}'
           versionOption: custom
           versionPublish: '${{ parameters.adAccountsVersion }}'

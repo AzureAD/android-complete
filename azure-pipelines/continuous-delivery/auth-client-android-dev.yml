@@ -464,6 +464,8 @@ stages:
         flagsParamString: $(broker4j_extra_flags)
         localFlightsParamString: $(broker4j_flights)
         publishToFeed: True
+        feedToPublishTo: $(brokerHostPublishFeed)
+        publishingPackageName: "com.microsoft.identity.testuserapp"
     - template: ../ui-automation/templates/build-msal-test-app.yml
       parameters:
         productFlavors: Dist
