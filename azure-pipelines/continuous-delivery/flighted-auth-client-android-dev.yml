@@ -451,7 +451,7 @@ stages:
         localFlightsParamString: $(broker4j_flights)
         publishToFeed: True
         tokenSelection: 'mvnPAT'
-        feedToPublishTo: 'Android-Broker'
+        feedToPublishTo: 'AndroidADAL'
         publishingPackageName: "com.microsoft.identity.testuserapp.flighted"
     - template: ../ui-automation/templates/build-msal-test-app.yml
       parameters:

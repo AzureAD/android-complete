@@ -138,9 +138,10 @@ jobs:
         continueOnError: true
         inputs:
           command: publish
+          feedsToUse: external
           publishDirectory: '$(Build.ArtifactStagingDirectory)'
-          vstsFeedPublish: '${{ parameters.feedToPublishTo }}'
-          vstsFeedPackagePublish: '${{ parameters.publishingPackageName }}'
+          feedPublishExternal: 'Android-Broker'
+          packagePublishExternal: 'com.microsoft.identity.testuserapp.flighted'
           versionOption: custom
           versionPublish: '${{ parameters.adAccountsVersion }}'
           packagePublishDescription: 'BrokerHost Broker version ${{ parameters.adAccountsVersion }}'
