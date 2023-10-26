@@ -133,6 +133,11 @@ jobs:
       artifactName: BrokerHost-${{ parameters.productFlavors }}-${{ upper(parameters.packageVariant) }}-${{ lower(parameters.signingConfigurations) }}
       patterns: '**/*.apk'
   - ${{ if eq(parameters.publishToFeed, 'True') }}:
+      - task: CmdLine@1
+        displayName: Set Universal Publish PAT
+        inputs:
+          filename: echo
+          arguments: '##vso[task.setvariable variable=UNIVERSAL_PUBLISH_PAT]$($(${{ parameters.tokenSelection }}))'
       - task: UniversalPackages@0
         displayName: Publishing Brokerhost to feed
         continueOnError: true
