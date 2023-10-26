@@ -25,6 +25,10 @@ parameters:
     displayName: BrokerHost Version
     type: string
     default: '*'
+  - name: brokerHostFeedPackageName
+    displayName: BrokerHost package feed name
+    type: string
+    default: 'com.microsoft.identity.testuserapp'
   - name: oldBrokerHostVersion
     displayName: Old Broker host Version
     type: string

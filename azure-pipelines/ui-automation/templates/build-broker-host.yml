@@ -51,6 +51,10 @@ parameters:
 - name: tokenSelection
   default: 'System.AccessToken'
 
+variables:
+  - name: brokerHostPackageVersionCounter
+    value: $[counter(1, 10000)]
+
 jobs:
 - job: brokerhost${{ parameters.packageVariant }}${{ parameters.productFlavors }}${{ parameters.signingConfigurations }}
   displayName: BrokerHost ${{ parameters.packageVariant }} ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
@@ -147,6 +151,12 @@ jobs:
           vstsFeedPublish: '${{ parameters.feedToPublishTo }}'
           vstsFeedPackagePublish: '${{ parameters.publishingPackageName }}'
           versionOption: custom
-          versionPublish: '${{ parameters.adAccountsVersion }}'
+          versionPublish: '$(brokerHostPackageVersionCounter)'
           packagePublishDescription: 'BrokerHost Broker version ${{ parameters.adAccountsVersion }}'
+      - task: PowerShell@2
+        displayName: Add BrokerHost Version Tag
+        inputs:
+          targetType: inline
+          script: |
+            Write-Host "##vso[build.addbuildtag]Flights($(brokerHostPackageVersionCounter))"
 ...
