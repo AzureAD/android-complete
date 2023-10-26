@@ -327,33 +327,6 @@ stages:
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
       tokenSelection: 'mvnPAT'
 
-# Combine and Publish Code Coverage
-- stage: 'combineAndPublishCodeCoverage'
-  displayName: Combine and Publish Code Coverage
-  dependsOn:
-    - publishMsal
-    - publishBrokerLibraries
-    - publishLinuxBrokeLibraries
-    - publishCommonLibraries
-    - publishAdal
-  jobs:
-    - job: combine_and_publish_code_coverage
-      displayName: Combine and Publish
-      continueOnError: true
-      steps:
-        - checkout: self
-          persistCredentials: True
-        - download: current
-        - task: reportgenerator@4
-          inputs:
-            reports: '$(Pipeline.Workspace)/Code Coverage Report_$(Build.BuildId)/summary$(Build.BuildId)/*.xml'
-            targetdir: '$(Build.SourcesDirectory)/CoverageResults'
-        - task: PublishCodeCoverageResults@1
-          displayName: Publish Code Coverage Report
-          inputs:
-            codeCoverageTool: Cobertura
-            summaryFileLocation: '$(Build.SourcesDirectory)/CoverageResults/Cobertura.xml'
-
 # Promote published packages
 - stage: 'promotePackages'
   displayName: Promote published packages
