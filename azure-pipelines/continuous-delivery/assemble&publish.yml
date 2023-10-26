@@ -104,7 +104,10 @@ jobs:
   timeoutInMinutes: 120
   continueOnError: true
   pool:
-    vmImage: ubuntu-latest
+    ${{ if eq(parameters.agentImage, 'none') }}:
+      vmImage: ubuntu-latest
+    ${{ else }}:
+      name: ${{ parameters.agentImage }}
     variables:
       - group: AndroidAuthClientVariables
   steps:
