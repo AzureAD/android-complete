@@ -112,6 +112,7 @@ variables:
   ${{ else }}:
     enableBrokerSelectionParam: ''
     enableBrokerDiscoveryParam: ''
+  brokerHostPackageVersionCounter: $[counter(1, 10000)]
 
 stages:
 - stage: 'addTags'
@@ -451,8 +452,8 @@ stages:
         localFlightsParamString: $(broker4j_flights)
         publishToFeed: True
         tokenSelection: 'mvnPAT'
-        feedToPublishTo: 'AndroidADAL'
         publishingPackageName: "com.microsoft.identity.testuserapp.flighted"
+        publishVersion: $(brokerHostPackageVersionCounter)
     - template: ../ui-automation/templates/build-msal-test-app.yml
       parameters:
         productFlavors: Dist

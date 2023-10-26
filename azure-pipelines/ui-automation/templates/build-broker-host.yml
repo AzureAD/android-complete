@@ -29,12 +29,12 @@ parameters:
   displayName: Publish to Prod Feed?
   type: boolean
   default: False
+- name: publishVersion
+  type: string
+  default: "0.0.0"
 - name: publishingPackageName
   type: string
   default: "com.microsoft.identity.testuserapp"
-- name: feedToPublishTo
-  type: string
-  default: "AndroidADAL"
 - name: packageVariant
   displayName: Package Variant
   type: string
@@ -50,10 +50,6 @@ parameters:
   default: ''
 - name: tokenSelection
   default: 'System.AccessToken'
-
-variables:
-  - name: brokerHostPackageVersionCounter
-    value: $[counter(1, 10000)]
 
 jobs:
 - job: brokerhost${{ parameters.packageVariant }}${{ parameters.productFlavors }}${{ parameters.signingConfigurations }}
@@ -148,10 +144,10 @@ jobs:
         inputs:
           command: publish
           publishDirectory: '$(Build.ArtifactStagingDirectory)'
-          vstsFeedPublish: '${{ parameters.feedToPublishTo }}'
+          vstsFeedPublish: 'AndroidADAL'
           vstsFeedPackagePublish: '${{ parameters.publishingPackageName }}'
           versionOption: custom
-          versionPublish: '$(brokerHostPackageVersionCounter)'
+          versionPublish: '${{ parameters.publishVersion }}'
           packagePublishDescription: 'BrokerHost Broker version ${{ parameters.adAccountsVersion }}'
       - task: PowerShell@2
         displayName: Add BrokerHost Version Tag
