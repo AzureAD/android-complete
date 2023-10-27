@@ -453,7 +453,7 @@ stages:
         publishToFeed: True
         tokenSelection: 'mvnPAT'
         publishingPackageName: "com.microsoft.identity.testuserapp.flighted"
-        publishVersion: $(brokerHostPackageVersionCounter)
+        publishVersion: "1.0.$(brokerHostPackageVersionCounter)"
     - template: ../ui-automation/templates/build-msal-test-app.yml
       parameters:
         productFlavors: Dist

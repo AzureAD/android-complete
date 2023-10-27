@@ -440,7 +440,7 @@ stages:
         publishToFeed: True
         feedToPublishTo: 'AndroidADAL'
         publishingPackageName: "com.microsoft.identity.testuserapp"
-        publishVersion: $(brokerHostPackageVersionCounter)
+        publishVersion: "1.0.$(brokerHostPackageVersionCounter)"
     - template: ../ui-automation/templates/build-msal-test-app.yml
       parameters:
         productFlavors: Dist
