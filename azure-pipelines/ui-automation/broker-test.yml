@@ -99,7 +99,11 @@ parameters:
 - name: oldCompanyPortalVersion
   displayName: Old Company Portal Version
   type: string
-  default: '5.0.5729'
+  default: '5.0.604010354'
+- name: brokerHostVersion
+  displayName: BrokerHost Version
+  type: string
+  default: '*'
 - name: oldBrokerHostVersion
   displayName: Old Broker host Version
   type: string
@@ -123,7 +127,7 @@ parameters:
 - name: oldOneAuthTestAppVersion
   displayName: Old OneAuth Test App Version
   type: string
-  default: '0.1118843.20854054'
+  default: '0.0.2'
 - name: preInstallLtw
   displayName: Preinstall Link to Windows
   type: boolean
@@ -260,7 +264,7 @@ stages:
         oldAuthenticatorVersion: ${{ parameters.oldAuthenticatorVersion }}
         companyPortalVersion: ${{ parameters.companyPortalVersion }}
         oldCompanyPortalVersion: ${{ parameters.oldCompanyPortalVersion }}
-        brokerHostPipelineId: '$(brokerHostPipelineId)'
+        brokerHostVersion:  ${{ parameters.brokerHostVersion }}
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
         brokerHostWithoutBrokerSelectionLogicVersion: ${{ parameters.brokerHostWithoutBrokerSelectionLogicVersion }}
         LTWVersion: ${{ parameters.LTWVersion }}
@@ -424,7 +428,8 @@ stages:
                       /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
-                      /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
+                      /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
+                      /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "$(test_run_prefix)Broker(ADAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
