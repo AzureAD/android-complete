@@ -88,7 +88,7 @@ variables:
     brokerVersionNumber: $[replace(variables['build.buildnumber'], '1.0.', '8.1.')]
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
-    brokerVersionNumber: $[replace(${{ parameters.customVersionNumber }}, '1.0.', '8.1.')]
+    brokerVersionNumber: $[replace('${{ parameters.customVersionNumber }}', '1.0.', '8.1.')]
   projVersionParam: -PprojVersion=$(versionNumber)
   common4jVersionParam: -PdistCommon4jVersion=$(versionNumber)
   broker4jVersionParam: -PdistBroker4jVersion=$(versionNumber)
