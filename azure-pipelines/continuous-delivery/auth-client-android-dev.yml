@@ -438,7 +438,6 @@ stages:
         flagsParamString: $(broker4j_extra_flags)
         localFlightsParamString: $(broker4j_flights)
         publishToFeed: True
-        feedToPublishTo: 'AndroidADAL'
         publishingPackageName: "com.microsoft.identity.testuserapp"
         publishVersion: "1.0.$(brokerHostPackageVersionCounter)"
     - template: ../ui-automation/templates/build-msal-test-app.yml
