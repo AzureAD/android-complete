@@ -266,6 +266,7 @@ stages:
         oldCompanyPortalVersion: ${{ parameters.oldCompanyPortalVersion }}
         brokerHostVersion:  ${{ parameters.brokerHostVersion }}
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
+        brokerHostFeedPackageName: $(BrokerHostFeedPackageName)
         brokerHostWithoutBrokerSelectionLogicVersion: ${{ parameters.brokerHostWithoutBrokerSelectionLogicVersion }}
         LTWVersion: ${{ parameters.LTWVersion }}
         oldLTWVersion: ${{ parameters.oldLTWVersion }}

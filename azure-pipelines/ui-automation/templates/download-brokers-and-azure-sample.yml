@@ -25,6 +25,10 @@ parameters:
     displayName: BrokerHost Version
     type: string
     default: '*'
+  - name: brokerHostFeedPackageName
+    displayName: BrokerHost package feed name
+    type: string
+    default: 'com.microsoft.identity.testuserapp'
   - name: oldBrokerHostVersion
     displayName: Old Broker host Version
     type: string
@@ -140,7 +144,7 @@ jobs:
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
         feedsToUse: 'internal'
         vstsFeed: '${{ parameters.internalFeedName }}'
-        vstsFeedPackage: 'com.microsoft.identity.testuserapp'
+        vstsFeedPackage: '${{ parameters.brokerHostFeedPackageName }}'
         vstsPackageVersion: '${{ parameters.brokerHostVersion }}'
     - task: UniversalPackages@0
       displayName: 'Download old brokerHost version from feed'
