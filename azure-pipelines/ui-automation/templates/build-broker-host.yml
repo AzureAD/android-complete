@@ -29,6 +29,9 @@ parameters:
   displayName: Publish to Prod Feed?
   type: boolean
   default: False
+- name: publishVersion
+  type: string
+  default: "0.0.0"
 - name: publishingPackageName
   type: string
   default: "com.microsoft.identity.testuserapp"
@@ -130,6 +133,11 @@ jobs:
       artifactName: BrokerHost-${{ parameters.productFlavors }}-${{ upper(parameters.packageVariant) }}-${{ lower(parameters.signingConfigurations) }}
       patterns: '**/*.apk'
   - ${{ if eq(parameters.publishToFeed, 'True') }}:
+      - task: CmdLine@1
+        displayName: Set Universal Publish PAT
+        inputs:
+          filename: echo
+          arguments: '##vso[task.setvariable variable=UNIVERSAL_PUBLISH_PAT]$($(${{ parameters.tokenSelection }}))'
       - task: UniversalPackages@0
         displayName: Publishing Brokerhost to feed
         continueOnError: true
@@ -139,6 +147,12 @@ jobs:
           vstsFeedPublish: 'AndroidADAL'
           vstsFeedPackagePublish: '${{ parameters.publishingPackageName }}'
           versionOption: custom
-          versionPublish: '${{ parameters.adAccountsVersion }}'
+          versionPublish: '${{ parameters.publishVersion }}'
           packagePublishDescription: 'BrokerHost Broker version ${{ parameters.adAccountsVersion }}'
+      - task: PowerShell@2
+        displayName: Add BrokerHost Version Tag
+        inputs:
+          targetType: inline
+          script: |
+            Write-Host "##vso[build.addbuildtag]Flights($(brokerHostPackageVersionCounter))"
 ...

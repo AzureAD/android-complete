@@ -511,6 +511,7 @@ stages:
         packageVariant: RC
         publishToFeed: True
         publishingPackageName: "com.microsoft.identity.testuserapp.prod"
+        publishVersion: ${{ parameters.adAccountsVersionRC }}
     - template: ./templates/build-broker-host.yml
       parameters:
         productFlavors: Local

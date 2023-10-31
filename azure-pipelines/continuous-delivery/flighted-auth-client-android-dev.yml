@@ -112,6 +112,7 @@ variables:
   ${{ else }}:
     enableBrokerSelectionParam: ''
     enableBrokerDiscoveryParam: ''
+  brokerHostPackageVersionCounter: $[counter(1, 10000)]
 
 stages:
 - stage: 'addTags'
@@ -327,33 +328,6 @@ stages:
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
       tokenSelection: 'mvnPAT'
 
-# Combine and Publish Code Coverage
-- stage: 'combineAndPublishCodeCoverage'
-  displayName: Combine and Publish Code Coverage
-  dependsOn:
-    - publishMsal
-    - publishBrokerLibraries
-    - publishLinuxBrokeLibraries
-    - publishCommonLibraries
-    - publishAdal
-  jobs:
-    - job: combine_and_publish_code_coverage
-      displayName: Combine and Publish
-      continueOnError: true
-      steps:
-        - checkout: self
-          persistCredentials: True
-        - download: current
-        - task: reportgenerator@4
-          inputs:
-            reports: '$(Pipeline.Workspace)/Code Coverage Report_$(Build.BuildId)/summary$(Build.BuildId)/*.xml'
-            targetdir: '$(Build.SourcesDirectory)/CoverageResults'
-        - task: PublishCodeCoverageResults@1
-          displayName: Publish Code Coverage Report
-          inputs:
-            codeCoverageTool: Cobertura
-            summaryFileLocation: '$(Build.SourcesDirectory)/CoverageResults/Cobertura.xml'
-
 # Promote published packages
 - stage: 'promotePackages'
   displayName: Promote published packages
@@ -478,6 +452,8 @@ stages:
         localFlightsParamString: $(broker4j_flights)
         publishToFeed: True
         tokenSelection: 'mvnPAT'
+        publishingPackageName: "com.microsoft.identity.testuserapp.flighted"
+        publishVersion: "1.0.$(brokerHostPackageVersionCounter)"
     - template: ../ui-automation/templates/build-msal-test-app.yml
       parameters:
         productFlavors: Dist
@@ -517,7 +493,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Flighted, Non-LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'' , ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_sdk_version'': ''$(versionNumber)'' }"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Flighted, Non-LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'' , ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_sdk_version'': ''$(versionNumber)'' , ''BrokerHostFeedPackageName'': ''com.microsoft.identity.testuserapp.flighted''}"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(mvnPAT)
@@ -555,7 +531,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Flighted, LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_branch'' : ''$(MSAL_LTW_Branch)'', ''broker_branch'' : ''$(Broker_LTW_Branch)'', ''msal_sdk_version'': ''$(versionNumber)'', ''commonVersion'': ''$(versionNumber)'' }"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Flighted, LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_branch'' : ''$(MSAL_LTW_Branch)'', ''broker_branch'' : ''$(Broker_LTW_Branch)'', ''msal_sdk_version'': ''$(versionNumber)'', ''commonVersion'': ''$(versionNumber)'', ''BrokerHostFeedPackageName'': ''com.microsoft.identity.testuserapp.flighted''}"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(mvnPAT)
