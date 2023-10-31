@@ -146,6 +146,7 @@ jobs:
       inputs:
         tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}}
         testRunTitle: '${{ parameters.project }}_UnitTests'
+      gradleOptions: '-Xmx2048m -XX:MaxPermSize=512m -XX:+HeapDumpOnOutOfMemoryError' 
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
 
