@@ -141,10 +141,10 @@ jobs:
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
     - task: Gradle@3
       displayName: Run Test ${{ parameters.project }}
-      gradleOptions: '-Xmx2048m -XX:MaxPermSize=512m -XX:+HeapDumpOnOutOfMemoryError' 
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
       inputs:
+        gradleOptions: '-Xmx2048m -XX:MaxPermSize=512m -XX:+HeapDumpOnOutOfMemoryError' 
         tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}}
         testRunTitle: '${{ parameters.project }}_UnitTests'
       env:
