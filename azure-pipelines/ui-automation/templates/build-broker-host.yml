@@ -154,5 +154,5 @@ jobs:
         inputs:
           targetType: inline
           script: |
-            Write-Host "##vso[build.addbuildtag]Flights($(brokerHostPackageVersionCounter))"
+            Write-Host "##vso[build.addbuildtag]BrokerHotFeedVersion(${{ parameters.publishVersion }})"
 ...
