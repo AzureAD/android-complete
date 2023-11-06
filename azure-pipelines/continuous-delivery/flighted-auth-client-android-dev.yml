@@ -79,6 +79,10 @@ parameters:
     displayName: Should enable broker selection & discovery?
     type: boolean
     default: True
+  - name: shouldTrustDebugBroker
+    displayName: Always trust debug broker apps. (Required for working with DEBUG CP/LTW/AuthApp)
+    type: boolean
+    default: False 
   - name: msalTestTarget
     displayName: Test Targets for MSAL
     type: string
@@ -113,6 +117,10 @@ variables:
     enableBrokerSelectionParam: ''
     enableBrokerDiscoveryParam: ''
   brokerHostPackageVersionCounter: $[counter(1, 10000)]
+  ${{ if parameters.shouldTrustDebugBroker }}:
+    trustDebugBrokerParam: -PtrustDebugBrokerFlag
+  ${{ else }}:
+    trustDebugBrokerParam: ''
 
 stages:
 - stage: 'addTags'
@@ -132,7 +140,7 @@ stages:
         script: |
           Write-Host "##vso[build.addbuildtag]Android_Broker_Version_$(brokerVersionNumber)"
           Write-Host "##vso[build.addbuildtag]Other_Library_Versions_$(versionNumber)"
-          Write-Host "##vso[build.addbuildtag]Flags_$(enableBrokerDiscoveryParam)_$(enableBrokerSelectionParam)_$(broker4j_extra_flags)"
+          Write-Host "##vso[build.addbuildtag]Flags_$(enableBrokerDiscoveryParam)_$(enableBrokerSelectionParam)_$(trustDebugBrokerParam)_$(broker4j_extra_flags)"
           Write-Host "##vso[build.addbuildtag]Flights_$(flightsTag)"
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
@@ -167,9 +175,9 @@ stages:
       testCmd: distDebugCommonUnitTestCoverageReport
       publishCmd: publish
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam)
-      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(enableBrokerDiscoveryParam)
-      publishParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam)
+      assembleParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam) $(trustDebugBrokerParam)
+      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(enableBrokerDiscoveryParam) $(trustDebugBrokerParam)
+      publishParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam) $(trustDebugBrokerParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
