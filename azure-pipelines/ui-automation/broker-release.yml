@@ -44,6 +44,10 @@ parameters:
   displayName: Run Unit Tests?
   type: boolean
   default: True
+- name: shouldRunInstrumentedTests
+  displayName: Run Instrumented Tests?
+  type: boolean
+  default: True
 - name: shouldPublishLibraries
   displayName: Publish Libraries?
   type: boolean
@@ -243,6 +247,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish  
@@ -270,6 +275,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 # Broker4j - Build and publish
 - stage: 'publishBroker4jLibraries'
   displayName: Broker4j - Build and publish  
@@ -297,6 +303,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
@@ -334,6 +341,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       agentImage: 1ES-AndroidPool-EOC
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 # Msal - Build and publish      
 - stage: 'publishMsal'
   displayName: Msal - Build and publish  
@@ -363,6 +371,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 # Adal - Build and publish
 - stage: 'publishAdal'
   displayName: Adal - Build and publish  
@@ -390,6 +399,7 @@ stages:
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
 
 # Promote Libraries
 - stage: 'promoteLibraries'
@@ -477,7 +487,6 @@ stages:
         - checkout: self
           persistCredentials: True
         - task: PowerShell@2
-          continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAZURE_BUILD_TOKEN)" -BuildDefinitionId "237827" -WaitTimeoutInMinutes 100 -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}''}" -Branch "$(companyPortalBranch)"'
@@ -521,7 +530,9 @@ stages:
         adAccountsVersion: ${{ parameters.adAccountsVersionRC }}
         adalVersion: ${{ parameters.adalVersionRC }}
         packageVariant: RC
-        publishToProdFeed: True
+        publishToFeed: True
+        publishingPackageName: "com.microsoft.identity.testuserapp.prod"
+        publishVersion: ${{ parameters.adAccountsVersionRC }}
     - template: ./templates/build-broker-host.yml
       parameters:
         productFlavors: Local

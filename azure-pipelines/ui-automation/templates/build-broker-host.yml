@@ -25,10 +25,16 @@ parameters:
 - name: msalVersion
   displayName: MSAL Version
   type: string
-- name: publishToProdFeed
+- name: publishToFeed
   displayName: Publish to Prod Feed?
   type: boolean
   default: False
+- name: publishVersion
+  type: string
+  default: "0.0.0"
+- name: publishingPackageName
+  type: string
+  default: "com.microsoft.identity.testuserapp"
 - name: packageVariant
   displayName: Package Variant
   type: string
@@ -36,6 +42,14 @@ parameters:
   values:
     - PROD
     - RC
+- name: localFlightsParamString
+  type: string
+  default: ''
+- name: flagsParamString
+  type: string
+  default: ''
+- name: tokenSelection
+  default: 'System.AccessToken'
 
 jobs:
 - job: brokerhost${{ parameters.packageVariant }}${{ parameters.productFlavors }}${{ parameters.signingConfigurations }}
@@ -84,13 +98,13 @@ jobs:
           }
           Write-Host "##vso[task.setvariable variable=AssembleTask;]$assembleTask"
   - ${{ if eq(parameters.productFlavors, 'Local') }}:
-    - pwsh: echo "##vso[task.setvariable variable=AssembleTask;]assembleLocal${{ parameters.signingConfigurations }}"
+    - pwsh: echo "##vso[task.setvariable variable=AssembleTask;]assembleLocal${{ parameters.signingConfigurations }} ${{ parameters.flagsParamString }} -PlocalFlights=${{ parameters.localFlightsParamString }}"
       displayName: Generate Assemble Local Task
   - task: CmdLine@1
     displayName: Set MVN AccessToken in Environment
     inputs:
       filename: echo
-      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)'
+      arguments: '##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(${{ parameters.tokenSelection }})'
   - task: CmdLine@1
     displayName: Set Office MVN Access Token in Environment
     inputs:
@@ -118,16 +132,27 @@ jobs:
       targetPath: $(Agent.BuildDirectory)/android-complete/broker/userapp/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}
       artifactName: BrokerHost-${{ parameters.productFlavors }}-${{ upper(parameters.packageVariant) }}-${{ lower(parameters.signingConfigurations) }}
       patterns: '**/*.apk'
-  - ${{ if eq(parameters.publishToProdFeed, 'True') }}:
+  - ${{ if eq(parameters.publishToFeed, 'True') }}:
+      - task: CmdLine@1
+        displayName: Set Universal Publish PAT
+        inputs:
+          filename: echo
+          arguments: '##vso[task.setvariable variable=UNIVERSAL_PUBLISH_PAT]$($(${{ parameters.tokenSelection }}))'
       - task: UniversalPackages@0
-        displayName: Publishing PROD Brokerhost
+        displayName: Publishing Brokerhost to feed
         continueOnError: true
         inputs:
           command: publish
           publishDirectory: '$(Build.ArtifactStagingDirectory)'
           vstsFeedPublish: 'AndroidADAL'
-          vstsFeedPackagePublish: 'com.microsoft.identity.testuserapp.prod'
+          vstsFeedPackagePublish: '${{ parameters.publishingPackageName }}'
           versionOption: custom
-          versionPublish: '${{ parameters.adAccountsVersion }}'
-          packagePublishDescription: 'Prod BrokerHost Broker version ${{ parameters.adAccountsVersion }}'
+          versionPublish: '${{ parameters.publishVersion }}'
+          packagePublishDescription: 'BrokerHost Broker version ${{ parameters.adAccountsVersion }}'
+      - task: PowerShell@2
+        displayName: Add BrokerHost Version Tag
+        inputs:
+          targetType: inline
+          script: |
+            Write-Host "##vso[build.addbuildtag]BrokerHotFeedVersion(${{ parameters.publishVersion }})"
 ...

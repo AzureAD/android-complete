@@ -11,7 +11,7 @@
 # Variable: 'dailyVersion' was defined in the Variables tab
 # Variable: 'test_run_prefix' prefix to add onto the beginning of the test result name
 # https://dev.azure.com/IdentityDivision/Engineering/_build?definitionId=1490&_a=summary
-name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
+name: $(Build.BuildId)_$(test_run_prefix)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
 
 trigger: none
 pr: none
@@ -99,7 +99,11 @@ parameters:
 - name: oldCompanyPortalVersion
   displayName: Old Company Portal Version
   type: string
-  default: '5.0.5729'
+  default: '5.0.604010354'
+- name: brokerHostVersion
+  displayName: BrokerHost Version
+  type: string
+  default: '*'
 - name: oldBrokerHostVersion
   displayName: Old Broker host Version
   type: string
@@ -123,7 +127,7 @@ parameters:
 - name: oldOneAuthTestAppVersion
   displayName: Old OneAuth Test App Version
   type: string
-  default: '0.1118843.20854054'
+  default: '0.0.2'
 - name: preInstallLtw
   displayName: Preinstall Link to Windows
   type: boolean
@@ -260,8 +264,9 @@ stages:
         oldAuthenticatorVersion: ${{ parameters.oldAuthenticatorVersion }}
         companyPortalVersion: ${{ parameters.companyPortalVersion }}
         oldCompanyPortalVersion: ${{ parameters.oldCompanyPortalVersion }}
-        brokerHostPipelineId: '$(brokerHostPipelineId)'
+        brokerHostVersion:  ${{ parameters.brokerHostVersion }}
         oldBrokerHostVersion: ${{ parameters.oldBrokerHostVersion }}
+        brokerHostFeedPackageName: $(BrokerHostFeedPackageName)
         brokerHostWithoutBrokerSelectionLogicVersion: ${{ parameters.brokerHostWithoutBrokerSelectionLogicVersion }}
         LTWVersion: ${{ parameters.LTWVersion }}
         oldLTWVersion: ${{ parameters.oldLTWVersion }}
@@ -304,7 +309,7 @@ stages:
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
                       /sdcard/BrokerHostWithoutBrokerSelection.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhostWithoutBrokerSelectionEnabled_apk),\
-                      /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/$(oneAuthTestApp),\
+                      /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                       /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
@@ -347,7 +352,7 @@ stages:
                       /sdcard/BrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
                       /data/local/tmp/test/DirectPushBrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
                       /data/local/tmp/DirectPushBrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
-                      /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/$(oneAuthTestApp),\
+                      /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                       /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
@@ -386,7 +391,7 @@ stages:
                       /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
-                      /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/$(oneAuthTestApp),\
+                      /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                       /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
@@ -399,6 +404,8 @@ stages:
   - brokerautomationapp
   - brokers_azure_sample
   - firstpartyapps
+  - oneAuthTestApp
+  - old_test_apps
   displayName: ADAL with broker and Broker basic validation test plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -417,10 +424,13 @@ stages:
                       /sdcard/BrokerHostWithoutBrokerSelection.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhostWithoutBrokerSelectionEnabled_apk),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
+                      /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
+                      /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
                       /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
-                      /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
+                      /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
+                      /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "$(test_run_prefix)Broker(ADAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"

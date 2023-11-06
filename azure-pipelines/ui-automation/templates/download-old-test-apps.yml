@@ -9,7 +9,7 @@ parameters:
   - name: oldOneAuthTestAppVersion
     displayName: Old OneAuth Test App Version
     type: string
-    default: '0.1118843.20854054'
+    default: '0.0.2'
 
 jobs:
   - job: 'download_old_test_apps'
