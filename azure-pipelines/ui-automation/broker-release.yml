@@ -541,6 +541,7 @@ stages:
         commonVersion: ${{ parameters.commonVersionRC }}
         adAccountsVersion: ${{ parameters.adAccountsVersionRC }}
         adalVersion: ${{ parameters.adalVersionRC }}
+        flagsParamString: $(broker4jEnablePrtv3Param)
         packageVariant: RC
     - template: ./templates/build-msal-automation-app.yml
       parameters:
