@@ -497,7 +497,8 @@ stages:
               Write-Host "toad"
               Write-Host "$(toad)"
               Write-Host "$(rawLtwPipelineBuildNumber)"
-              Write-Host "$(ltwApkVersion)"
+              Write-Host "LTW: $(ltwApkVersion)"
+              Write-Host "CP: $(companyPortalApkVersion)"
 
 # Broker - E2E Automation (NON LTW)
 - stage: 'runBrokerE2EAutomation'
