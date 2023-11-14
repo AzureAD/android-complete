@@ -379,7 +379,7 @@ stages:
             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAzure-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(companyPortalPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)''}" -Branch "$(companyPortalBranch)" -BuildNumberOutputOnSuccessVar "companyPortalApkVersion"'
             workingDirectory: '$(Build.SourcesDirectory)'
         - script: echo $(companyPortalApkVersion)
-          displayName: 'print fetched version"
+          displayName: 'print fetched version'
         - template: ../templates/universal-packages/pull-company-portal-from-feed.yml
 # BrokerApk - Link to Windows Queue pipeline
 - stage: 'queueLinkToWindowsPipeline'
