@@ -97,11 +97,11 @@ variables:
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   authenticatorPipelineId: 237369
-  authenticatorApkVersion: "*"
+  authenticatorApkVersion: "*1"
   companyPortalPipelineId: 237827
-  companyPortalApkVersion: "testing"
+  companyPortalApkVersion: "*1"
   ltwPipelineId: 44201
-  ltwApkVersion: "*"
+  ltwApkVersion: "*1"
   brokerAutomationPipelineId: 1490
   ${{ if parameters.shouldEnableBrokerSelectionAndDiscoveryFlag }}:
     enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
@@ -491,7 +491,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Non-LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'' , ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_sdk_version'': ''$(versionNumber)'' }" -TemplateParams "{ ''companyPortalVersion'': ''$(companyPortalApkVersion)'' }"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Non-LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'' , ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_sdk_version'': ''$(versionNumber)'' }" -TemplateParams "{ ''authenticatorVersion'': ''$(authenticatorApkVersion)'', ''companyPortalVersion'': ''$(companyPortalApkVersion)'',  ''LTWVersion'': ''$(ltwApkVersion)''}"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(System.AccessToken)
