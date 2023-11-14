@@ -601,7 +601,7 @@ stages:
       not(canceled())
     )
   jobs:
-    - template: ./templates/download-prod-brokers.yml
+    - template: ./templates/download-brokers.yml
       parameters:
         engineeringProjectId: '$(engineeringProjectId)'
         msazureServiceConnection: '$(msazureServiceConnection)'
