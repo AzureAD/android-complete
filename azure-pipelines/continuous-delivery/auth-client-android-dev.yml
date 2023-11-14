@@ -101,7 +101,7 @@ variables:
   companyPortalPipelineId: 237827
   companyPortalApkVersion: "*1"
   ltwPipelineId: 44201
-  rawLtwPipelineBuildNumber: "1.23092.400.0.UserCreated"
+  rawLtwPipelineBuildNumber: ""
   ltwApkVersion: "*"
   brokerAutomationPipelineId: 1490
   ${{ if parameters.shouldEnableBrokerSelectionAndDiscoveryFlag }}:
@@ -401,7 +401,6 @@ stages:
         - checkout: self
           persistCredentials: True
         - task: PowerShell@2
-          enabled: false
           displayName: Queue and wait for Link to Windows Apk generation pipeline
           continueOnError: true
           inputs:
@@ -497,6 +496,7 @@ stages:
             script: |
               Write-Host "toad"
               Write-Host "$(toad)"
+              Write-Host "$(rawLtwPipelineBuildNumber)"
               Write-Host "$(ltwApkVersion)"
 
 # Broker - E2E Automation (NON LTW)
