@@ -80,6 +80,8 @@ do{
    }
 } while($BuildNotCompleted -and $BuildStartTime.AddMinutes($WaitTimeoutInMinutes) -gt (Get-Date))
 
+Write-Host "$($QueuedBuild)"
+Write-Host "TOAD"
 Write-Host "$($QueuedBuild.Properties)"
 
 if ($BuildNotCompleted) {
