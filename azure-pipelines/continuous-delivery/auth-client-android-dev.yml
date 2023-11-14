@@ -417,7 +417,8 @@ stages:
               # The version of APK published to feed is (versionMajor).(versionMinor).(versionBuild)
               # We use regex to remove the last two segments so we get the correct version number
               Write-Host "raw number: $(rawLtwPipelineBuildNumber)"
-              $trimmedVersion = $(rawLtwPipelineBuildNumber) -replace "\.\d+\.\w+$",""
+              Write-Host "$(rawLtwPipelineBuildNumber)" -replace "\.\d+\.\w+$",""
+              $trimmedVersion = "$(rawLtwPipelineBuildNumber)" -replace "\.\d+\.\w+$",""
               Write-Host "trimmed number: $trimmedVersion"
               Write-Host "##vso[task.setvariable variable=ltwApkVersion;]$trimmedVersion"
             pwsh: true
