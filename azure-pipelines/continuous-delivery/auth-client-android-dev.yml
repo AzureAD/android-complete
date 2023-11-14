@@ -98,7 +98,7 @@ variables:
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   authenticatorPipelineId: 237369
   companyPortalPipelineId: 237827
-  companyPortalApkVersion: *
+  companyPortalApkVersion: "*"
   ltwPipelineId: 44201
   brokerAutomationPipelineId: 1490
   ${{ if parameters.shouldEnableBrokerSelectionAndDiscoveryFlag }}:
