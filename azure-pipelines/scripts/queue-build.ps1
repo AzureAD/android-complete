@@ -9,6 +9,7 @@ Param (
     [Parameter(Mandatory = $false)][int]$WaitTimeoutInMinutes = 120,
     [Parameter(Mandatory = $false)][int]$PollingIntervalInSeconds = 5 * 60,
     [Parameter(Mandatory = $false)][String]$BuildIdOutputVar="",
+    [Parameter(Mandatory = $false)][String]$BuildNumberOutputOnSuccessVar="",
     [Parameter(Mandatory = $false)][String]$BuildReason="ResourceTrigger"
 )
 
@@ -88,6 +89,11 @@ if ($BuildNotCompleted) {
     Write-Error "Timed out waiting for Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) to complete,"
 } elseif ($($QueuedBuild.result) -eq "succeeded"){
     Write-Host "Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) completed successfully."
+    if($BuildNumberOutputOnSuccessVar -ne "") {
+        Write-Host "Setting  $BuildNumberOutputOnSuccessVar"
+        Write-Host "##vso[task.setvariable variable=$($BuildNumberOutputOnSuccessVar)]$($QueuedBuild.buildNumber)"
+        Write-Host "$BuildNumberOutputOnSuccessVar = $($QueuedBuild.buildNumber)"
+    }
 } else {
     Write-Error "Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) did not complete successfully, BuildResult: $($QueuedBuild.result)."
 }
