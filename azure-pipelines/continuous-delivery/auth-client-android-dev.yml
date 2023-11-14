@@ -416,7 +416,9 @@ stages:
               # LTW pipeline build number is structured like (versionMajor).(versionMinor).(versionBuild).(versionRevision).(build.reason)
               # The version of APK published to feed is (versionMajor).(versionMinor).(versionBuild)
               # We use regex to remove the last two segments so we get the correct version number
+              Write-Host "raw number: $rawLtwPipelineBuildNumber"
               $trimmedVersion = $rawLtwPipelineBuildNumber -replace "\.\d+\.\w+$",""
+              Write-Host "trimmed number: $trimmedVersion"
               Write-Host "##vso[task.setvariable variable=ltwApkVersion;]$trimmedVersion"
             pwsh: true
         - template: ../templates/universal-packages/pull-ltw-from-feed.yml
