@@ -483,6 +483,9 @@ stages:
 - stage: 'test'
   displayName: test
   dependsOn:
+    - testappgeneration
+    - queueAuthenticatorPipeline
+    - queueCompanyPortalPipeline
     - queueLinkToWindowsPipeline
   jobs:
     - job: test2
