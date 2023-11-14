@@ -29,3 +29,6 @@ steps:
       feedDownloadExternal: '${{ parameters.msazureFeedName }}'
       packageDownloadExternal: '${{ parameters.packageName }}'
       versionDownloadExternal: '${{ parameters.companyPortalVersion }}'
+  - publish: $(Build.ArtifactStagingDirectory)/brokers
+    displayName: 'Publish as Artifact'
+    artifact: brokerapks

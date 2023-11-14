@@ -35,3 +35,6 @@ steps:
   - script: mv ./YPC-*.apk ./${{ parameters.apkName }}
     displayName: 'Rename LTW apk (${{parameters.apkName}})'
     workingDirectory: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}'
+  - publish: $(Build.ArtifactStagingDirectory)/brokers
+    displayName: 'Publish as Artifact'
+    artifact: brokerapks
