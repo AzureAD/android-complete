@@ -492,8 +492,10 @@ stages:
 - stage: 'runBrokerE2EAutomation'
   displayName: Broker E2E UI Automation Run
   dependsOn:
+    - testappgeneration
     - queueAuthenticatorPipeline
     - queueCompanyPortalPipeline
+    - queueLinkToWindowsPipeline
   condition: |
     and
     (
@@ -530,8 +532,10 @@ stages:
 - stage: 'runBrokerLTWE2EAutomation'
   displayName: Broker LTW E2E UI Automation Run
   dependsOn:
+    - testappgeneration
     - queueAuthenticatorPipeline
     - queueCompanyPortalPipeline
+    - queueLinkToWindowsPipeline
   condition: |
     and
     (
