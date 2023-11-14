@@ -102,7 +102,7 @@ variables:
   companyPortalApkVersion: "*1"
   ltwPipelineId: 44201
   rawLtwPipelineBuildNumber: "1.23092.400.0.UserCreated"
-  ltwApkVersion: "*1"
+  ltwApkVersion: "*"
   brokerAutomationPipelineId: 1490
   ${{ if parameters.shouldEnableBrokerSelectionAndDiscoveryFlag }}:
     enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
@@ -419,7 +419,8 @@ stages:
               Write-Host "Raw Build Number: $(rawLtwPipelineBuildNumber)"
               $trimmedVersion = "$(rawLtwPipelineBuildNumber)" -replace "\.\d+\.\w+$",""
               Write-Host "Trimmed Version Number: $trimmedVersion"
-              Write-Host "##vso[task.setvariable variable=ltwApkVersion;isOutput=true]$trimmedVersion"
+              Write-Host "##vso[task.setvariable variable=testOutput;isOutput=true]$trimmedVersion"
+            name: yesScript
         - template: ../templates/universal-packages/pull-ltw-from-feed.yml
           parameters:
             LTWVersion: $(ltwApkVersion)
@@ -486,12 +487,16 @@ stages:
     - queueLinkToWindowsPipeline
   jobs:
     - job: test2
+      variables:
+        toad: stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['yesScript.testOutput']
       steps:
         - task: PowerShell@2
           displayName: 'Print ltw version'
           inputs:
             targetType: inline
             script: |
+              Write-Host "toad"
+              Write-Host "$(toad)"
               Write-Host "$(ltwApkVersion)"
 
 # Broker - E2E Automation (NON LTW)
