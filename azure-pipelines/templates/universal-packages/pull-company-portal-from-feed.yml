@@ -44,4 +44,4 @@ steps:
     inputs:
       targetType: inline
       script: |
-        Write-Host "##vso[build.addbuildtag]PulledCompanyPortal(${{ parameters.companyPortalVersion }})"
+        Write-Host "##vso[build.addbuildtag]CompanyPortal-apk-version(${{ parameters.companyPortalVersion }})"

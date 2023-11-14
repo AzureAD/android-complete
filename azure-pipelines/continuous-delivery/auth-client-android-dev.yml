@@ -416,12 +416,10 @@ stages:
               # LTW pipeline build number is structured like (versionMajor).(versionMinor).(versionBuild).(versionRevision).(build.reason)
               # The version of APK published to feed is (versionMajor).(versionMinor).(versionBuild)
               # We use regex to remove the last two segments so we get the correct version number
-              Write-Host "raw number: $(rawLtwPipelineBuildNumber)"
-              Write-Host "$(rawLtwPipelineBuildNumber)" -replace "\.\d+\.\w+$",""
+              Write-Host "Raw Build Number: $(rawLtwPipelineBuildNumber)"
               $trimmedVersion = "$(rawLtwPipelineBuildNumber)" -replace "\.\d+\.\w+$",""
-              Write-Host "trimmed number: $trimmedVersion"
+              Write-Host "Trimmed Version Number: $trimmedVersion"
               Write-Host "##vso[task.setvariable variable=ltwApkVersion;]$trimmedVersion"
-            pwsh: true
         - template: ../templates/universal-packages/pull-ltw-from-feed.yml
           parameters:
             LTWVersion: $(ltwApkVersion)
@@ -481,6 +479,20 @@ stages:
         commonVersion: $(versionNumber)
         adalVersion: $(versionNumber)
         packageVariant: RC
+
+- stage: 'test'
+  displayName: test
+  dependsOn:
+    - queueLinkToWindowsPipeline
+  jobs:
+    - job: test2
+      steps:
+        - task: PowerShell@2
+          displayName: 'Print ltw version'
+          inputs:
+            targetType: inline
+            script: |
+              Write-Host "$(ltwApkVersion)"
 
 # Broker - E2E Automation (NON LTW)
 - stage: 'runBrokerE2EAutomation'

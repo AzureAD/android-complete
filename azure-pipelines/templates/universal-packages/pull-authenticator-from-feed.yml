@@ -44,4 +44,4 @@ steps:
     inputs:
       targetType: inline
       script: |
-        Write-Host "##vso[build.addbuildtag]PulledAuthenticator(${{ parameters.authenticatorVersion }})"
+        Write-Host "##vso[build.addbuildtag]Authenticator-apk-version(${{ parameters.authenticatorVersion }})"
