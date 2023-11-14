@@ -1,0 +1,31 @@
+parameters:
+  - name: msazureServiceConnection
+    type: string
+    default: 'AndroidBroker-CI'
+  - name: msazureFeedName
+    type: string
+    default: 'Android-Broker'
+  - name: artifactPath
+    type: string
+    default: 'brokers'
+  - name: companyPortalVersion
+    type: string
+    default: '*'
+  - name: packageName
+    type: string
+    default: 'com.microsoft.windowsintune.companyportal-signed'
+
+steps:
+  - script: mkdir -p brokers
+    displayName: 'make brokers dir'
+    workingDirectory: '$(Build.ArtifactStagingDirectory)'
+  - task: UniversalPackages@0
+    displayName: 'Download CompanyPortal (${{ parameters.companyPortalVersion }})'
+    inputs:
+      command: 'download'
+      downloadDirectory: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}'
+      feedsToUse: 'external'
+      externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
+      feedDownloadExternal: '${{ parameters.msazureFeedName }}'
+      packageDownloadExternal: '${{ parameters.packageName }}'
+      versionDownloadExternal: '${{ parameters.companyPortalVersion }}'

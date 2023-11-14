@@ -1,0 +1,37 @@
+parameters:
+  - name: OSServiceConnection
+    type: string
+    default: 'LTW-Integration'
+  - name: LTWFeedName
+    type: string
+    default: 'Auth-Broker-Integrated-LTW-Build'
+  - name: LTWVersion
+    type: string
+    default: '*'
+  - name: artifactPath
+    type: string
+    default: 'brokers'
+  - name: packageName
+    type: string
+    default: 'com.microsoft.appmanager'
+  - name: apkName
+    type: string
+    default: 'LTW-signed.apk'
+
+steps:
+  - script: mkdir -p brokers
+    displayName: 'make brokers dir'
+    workingDirectory: '$(Build.ArtifactStagingDirectory)'
+  - task: UniversalPackages@0
+    displayName: 'Download LTW (${{ parameters.LTWVersion }})'
+    inputs:
+      command: 'download'
+      downloadDirectory: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}'
+      feedsToUse: 'external'
+      externalFeedCredentials: '${{ parameters.OSServiceConnection }}'
+      feedDownloadExternal: '${{ parameters.LTWFeedName }}'
+      packageDownloadExternal: '${{ parameters.packageName }}'
+      versionDownloadExternal: '${{ parameters.LTWVersion }}'
+  - script: mv ./YPC-*.apk ./${{ parameters.apkName }}
+    displayName: 'Rename LTW apk (${{parameters.apkName}})'
+    workingDirectory: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}'
