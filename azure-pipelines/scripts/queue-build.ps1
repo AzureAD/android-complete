@@ -81,10 +81,6 @@ do{
    }
 } while($BuildNotCompleted -and $BuildStartTime.AddMinutes($WaitTimeoutInMinutes) -gt (Get-Date))
 
-Write-Host "$($QueuedBuild)"
-Write-Host "TOAD"
-Write-Host "$($QueuedBuild.Properties)"
-
 if ($BuildNotCompleted) {
     Write-Error "Timed out waiting for Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) to complete,"
 } elseif ($($QueuedBuild.result) -eq "succeeded"){
