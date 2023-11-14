@@ -39,3 +39,9 @@ steps:
     enabled: ${{ parameters.shouldPublishArtifact }}
     displayName: 'Publish as Artifact'
     artifact: ${{ parameters.artifactName }}
+  - task: PowerShell@2
+    displayName: Add Authenticator Version Tag
+    inputs:
+      targetType: inline
+      script: |
+        Write-Host "##vso[build.addbuildtag]PulledAuthenticator(${{ parameters.authenticatorVersion }})"

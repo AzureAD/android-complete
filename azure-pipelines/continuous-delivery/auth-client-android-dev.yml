@@ -101,6 +101,7 @@ variables:
   companyPortalPipelineId: 237827
   companyPortalApkVersion: "*1"
   ltwPipelineId: 44201
+  rawLtwPipelineBuildNumber: "1.23092.400.0.UserCreated"
   ltwApkVersion: "*1"
   brokerAutomationPipelineId: 1490
   ${{ if parameters.shouldEnableBrokerSelectionAndDiscoveryFlag }}:
@@ -400,12 +401,24 @@ stages:
         - checkout: self
           persistCredentials: True
         - task: PowerShell@2
+          enabled: false
           displayName: Queue and wait for Link to Windows Apk generation pipeline
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(LTW-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(ltwPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)" -BuildReason "UserCreated" -BuildNumberOutputOnSuccessVar "ltwApkVersion"'
+            arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(LTW-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(ltwPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)" -BuildReason "UserCreated" -BuildNumberOutputOnSuccessVar "rawLtwPipelineBuildNumber"'
             workingDirectory: '$(Build.SourcesDirectory)'
+        - task: PowerShell@2
+          displayName: 'Trim LTW build number to get apk version'
+          inputs:
+            targetType: inline
+            script: |
+              # LTW pipeline build number is structured like (versionMajor).(versionMinor).(versionBuild).(versionRevision).(build.reason)
+              # The version of APK published to feed is (versionMajor).(versionMinor).(versionBuild)
+              # We use regex to remove the last two segments so we get the correct version number
+              $trimmedVersion = $rawLtwPipelineBuildNumber -replace "\.\d+\.\w+$",""
+              Write-Host "##vso[task.setvariable variable=ltwApkVersion;]trimmedVersion"
+            pwsh: true
         - template: ../templates/universal-packages/pull-ltw-from-feed.yml
           parameters:
             LTWVersion: $(ltwApkVersion)
