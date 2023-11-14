@@ -37,4 +37,4 @@ steps:
     workingDirectory: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}'
   - publish: $(Build.ArtifactStagingDirectory)/brokers
     displayName: 'Publish as Artifact'
-    artifact: broker-apks/LTW
+#    artifact: broker-apks/LTW

@@ -31,4 +31,4 @@ steps:
       versionDownloadExternal: '${{ parameters.authenticatorVersion }}'
   - publish: $(Build.ArtifactStagingDirectory)/brokers
     displayName: 'Publish as Artifact'
-    artifact: broker-apks/Authenticator
+#    artifact: broker-apks/Authenticator
