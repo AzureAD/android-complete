@@ -14,6 +14,12 @@ parameters:
   - name: packageName
     type: string
     default: 'broker-host'
+  - name: artifactName
+    type: string
+    default: "BrokerHost"
+  - name: shouldPublishArtifact
+    type: boolean
+    default: true
 
 steps:
   - script: mkdir -p brokers
@@ -29,3 +35,7 @@ steps:
       feedDownloadExternal: '${{ parameters.msazureFeedName }}'
       packageDownloadExternal: '${{ parameters.packageName }}'
       versionDownloadExternal: '${{ parameters.brokerHostVersion }}'
+  - publish: $(Build.ArtifactStagingDirectory)/brokers
+    enabled: ${{ parameters.shouldPublishArtifact }}
+    displayName: 'Publish as Artifact'
+    artifact: ${{ parameters.artifactName }}

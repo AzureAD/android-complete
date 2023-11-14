@@ -20,6 +20,9 @@ parameters:
   - name: artifactName
     type: string
     default: "LTW"
+  - name: shouldPublishArtifact
+    type: boolean
+    default: true
 
 steps:
   - script: mkdir -p brokers
@@ -39,5 +42,6 @@ steps:
     displayName: 'Rename LTW apk (${{parameters.apkName}})'
     workingDirectory: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}'
   - publish: $(Build.ArtifactStagingDirectory)/brokers
+    enabled: ${{ parameters.shouldPublishArtifact }}
     displayName: 'Publish as Artifact'
     artifact: ${{ parameters.artifactName }}

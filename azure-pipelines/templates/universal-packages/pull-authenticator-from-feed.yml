@@ -17,6 +17,9 @@ parameters:
   - name: artifactName
     type: string
     default: "Authenticator"
+  - name: shouldPublishArtifact
+    type: boolean
+    default: true
 
 steps:
   - script: mkdir -p brokers
@@ -33,5 +36,6 @@ steps:
       packageDownloadExternal: '${{ parameters.packageName }}'
       versionDownloadExternal: '${{ parameters.authenticatorVersion }}'
   - publish: $(Build.ArtifactStagingDirectory)/brokers
+    enabled: ${{ parameters.shouldPublishArtifact }}
     displayName: 'Publish as Artifact'
     artifact: ${{ parameters.artifactName }}

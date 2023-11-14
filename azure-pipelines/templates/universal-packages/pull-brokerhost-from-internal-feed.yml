@@ -11,6 +11,12 @@ parameters:
   - name: packageName
     type: string
     default: 'com.microsoft.identity.testuserapp'
+  - name: artifactName
+    type: string
+    default: "BrokerHost"
+  - name: shouldPublishArtifact
+    type: boolean
+    default: true
 
 steps:
   - script: mkdir -p brokers
@@ -25,3 +31,7 @@ steps:
       vstsFeed: '${{ parameters.feedName }}'
       vstsFeedPackage: '${{ parameters.packageName }}'
       vstsPackageVersion: '${{ parameters.brokerHostVersion }}'
+  - publish: $(Build.ArtifactStagingDirectory)/brokers
+    enabled: ${{ parameters.shouldPublishArtifact }}
+    displayName: 'Publish as Artifact'
+    artifact: ${{ parameters.artifactName }}
