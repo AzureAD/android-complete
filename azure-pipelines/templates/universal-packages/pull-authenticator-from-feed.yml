@@ -14,6 +14,9 @@ parameters:
   - name: packageName
     type: string
     default: 'com.azure.authenticator'
+  - name: artifactName
+    type: string
+    default: "Authenticator"
 
 steps:
   - script: mkdir -p brokers
@@ -31,4 +34,4 @@ steps:
       versionDownloadExternal: '${{ parameters.authenticatorVersion }}'
   - publish: $(Build.ArtifactStagingDirectory)/brokers
     displayName: 'Publish as Artifact'
-#    artifact: broker-apks/Authenticator
+    artifact: ${{ parameters.artifactName }}

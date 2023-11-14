@@ -17,6 +17,9 @@ parameters:
   - name: apkName
     type: string
     default: 'LTW-signed.apk'
+  - name: artifactName
+    type: string
+    default: "LTW"
 
 steps:
   - script: mkdir -p brokers
@@ -37,4 +40,4 @@ steps:
     workingDirectory: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}'
   - publish: $(Build.ArtifactStagingDirectory)/brokers
     displayName: 'Publish as Artifact'
-#    artifact: broker-apks/LTW
+    artifact: ${{ parameters.artifactName }}

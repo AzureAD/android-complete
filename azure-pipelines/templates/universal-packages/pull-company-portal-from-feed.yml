@@ -14,6 +14,9 @@ parameters:
   - name: packageName
     type: string
     default: 'com.microsoft.windowsintune.companyportal-signed'
+  - name: artifactName
+    type: string
+    default: "CompanyPortal"
 
 steps:
   - script: mkdir -p brokers
@@ -31,4 +34,4 @@ steps:
       versionDownloadExternal: '${{ parameters.companyPortalVersion }}'
   - publish: $(Build.ArtifactStagingDirectory)/brokers
     displayName: 'Publish as Artifact'
-#    artifact: broker-apks/CompanyPortal
+    artifact: ${{ parameters.artifactName }}
