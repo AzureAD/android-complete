@@ -31,4 +31,4 @@ steps:
       versionDownloadExternal: '${{ parameters.companyPortalVersion }}'
   - publish: $(Build.ArtifactStagingDirectory)/brokers
     displayName: 'Publish as Artifact'
-    artifact: brokerapks
+    artifact: broker-apks/CompanyPortal
