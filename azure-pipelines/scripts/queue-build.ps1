@@ -24,8 +24,8 @@ $authHeader = @{Authorization = ("Basic {0}" -f $base64AuthInfo)};
 
 $testVar = $TemplateParams | ConvertFrom-Json -AsHashtable
 Write-Host "$testVar"
-$testVar.Value = @($testVar.Value | Where-Object { $_.psobject.Properties.Count -gt 0 })
-Write-Host "$testVar"
+# $testVar.Value = @($testVar.Value | Where-Object { $_.psobject.Properties.Count -gt 0 })
+# Write-Host "$testVar"
 
 # Request Body
 $Build = New-Object PSObject -Property @{
