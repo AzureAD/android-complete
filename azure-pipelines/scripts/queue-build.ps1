@@ -22,12 +22,12 @@ $queueBuildUri = "$($baseUri)$($queueBuild)"
 $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(("token:{0}" -f $PipelinePAT)))
 $authHeader = @{Authorization = ("Basic {0}" -f $base64AuthInfo)};
 
-$TemplateParams
-
+# Filter out empty parameters, to avoid throwing an error
 if ($TemplateParams -ne "") {
     $paramTable = $TemplateParams | ConvertFrom-Json -AsHashtable
     ($paramTable.GetEnumerator() | ? { -not $_.Value }) | % {
         $currentParam = $_.Name
+        # Write a message to let script runner know we are removing the empty parameter
         Write-Host "Parameter $currentParam has an empty input, removing it to avoid error"
         $paramTable.Remove($_.Name)
     }
