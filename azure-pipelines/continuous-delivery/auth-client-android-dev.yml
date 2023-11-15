@@ -102,7 +102,6 @@ variables:
   companyPortalApkVersion: "*1"
   ltwPipelineId: 44201
   rawLtwPipelineBuildNumber: "1.23092.400.0.UserCreated"
-  ltwApkVersion: "*1"
   brokerAutomationPipelineId: 1490
   ${{ if parameters.shouldEnableBrokerSelectionAndDiscoveryFlag }}:
     enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
@@ -418,11 +417,11 @@ stages:
               Write-Host "Raw Build Number: $(rawLtwPipelineBuildNumber)"
               $trimmedVersion = "$(rawLtwPipelineBuildNumber)" -replace "\.\d+\.\w+$",""
               Write-Host "Trimmed Version Number: $trimmedVersion"
-              Write-Host "##vso[task.setvariable variable=version;isOutput=true]$trimmedVersion"
+              Write-Host "##vso[task.setvariable variable=ltwApkVersion;isOutput=true]$trimmedVersion"
             name: ltwVersionScript
         - template: ../templates/universal-packages/pull-ltw-from-feed.yml
           parameters:
-            LTWVersion: $(ltwApkVersion)
+            LTWVersion: $(ltwVersionScript.ltwApkVersion)
 
 # TestApp generation
 - stage: 'testappgeneration'
@@ -490,7 +489,8 @@ stages:
   jobs:
     - job: test2
       variables:
-        toad: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.version'] ]
+        toad: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
+        toad2: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.nope'] ]
       steps:
         - task: PowerShell@2
           displayName: 'Print ltw version'
@@ -499,7 +499,7 @@ stages:
             script: |
               Write-Host "toad"
               Write-Host "$(toad)"
-              Write-Host "$(rawLtwPipelineBuildNumber)"
+              Write-Host "$(toad2)"
               Write-Host "LTW: $(ltwApkVersion)"
               Write-Host "CP: $(companyPortalApkVersion)"
 
