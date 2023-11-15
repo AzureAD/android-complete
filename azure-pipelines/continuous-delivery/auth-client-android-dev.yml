@@ -521,7 +521,8 @@ stages:
     - job: trigger_automation
       displayName: Trigger Broker Automation Run
       timeoutInMinutes: 120
-      ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
+      variables:
+        ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
       steps:
         - checkout: self
           persistCredentials: True
