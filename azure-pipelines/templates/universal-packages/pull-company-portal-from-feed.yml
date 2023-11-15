@@ -44,4 +44,4 @@ steps:
     inputs:
       targetType: inline
       script: |
-        Write-Host "##vso[build.addbuildtag]CompanyPortal-apk-version(${{ parameters.companyPortalVersion }})"
+        Write-Host "##vso[build.addbuildtag]CompanyPortal-APK-Version=${{ parameters.companyPortalVersion }}"

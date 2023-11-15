@@ -50,4 +50,4 @@ steps:
     inputs:
       targetType: inline
       script: |
-        Write-Host "##vso[build.addbuildtag]LTW-apk-version(${{ parameters.LTWVersion }})"
+        Write-Host "##vso[build.addbuildtag]LTW-APK-Version=${{ parameters.LTWVersion }}"

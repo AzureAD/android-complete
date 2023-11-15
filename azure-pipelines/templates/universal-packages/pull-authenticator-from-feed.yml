@@ -44,4 +44,4 @@ steps:
     inputs:
       targetType: inline
       script: |
-        Write-Host "##vso[build.addbuildtag]Authenticator-apk-version(${{ parameters.authenticatorVersion }})"
+        Write-Host "##vso[build.addbuildtag]Authenticator-APK-Version=${{ parameters.authenticatorVersion }}"
