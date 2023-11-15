@@ -25,12 +25,10 @@ $authHeader = @{Authorization = ("Basic {0}" -f $base64AuthInfo)};
 $TemplateParams
 
 if ($TemplateParams -ne "") {
-#     $paramJson = $TemplateParams | ConvertFrom-Json
     $paramTable = $TemplateParams | ConvertFrom-Json -AsHashtable
     ($paramTable.GetEnumerator() | ? { -not $_.Value }) | % {
-        $_.Name
-        Write-Host $_.Name
-        Write-Host "Parameter $_.Name has an empty input, removing it to avoid error"
+        $currentParam = $_.Name
+        Write-Host "Parameter $currentParam has an empty input, removing it to avoid error"
         $paramTable.Remove($_.Name)
     }
 
