@@ -22,6 +22,9 @@ $queueBuildUri = "$($baseUri)$($queueBuild)"
 $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(("token:{0}" -f $PipelinePAT)))
 $authHeader = @{Authorization = ("Basic {0}" -f $base64AuthInfo)};
 
+$testVar = $TemplateParams | ConvertFrom-Json
+Write-Host "$testVar"
+
 # Request Body
 $Build = New-Object PSObject -Property @{
         definition = New-Object PSObject -Property @{
@@ -87,7 +90,7 @@ if ($BuildNotCompleted) {
     Write-Host "Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) completed successfully."
     if($BuildNumberOutputOnSuccessVar -ne "") {
         Write-Host "Setting  $BuildNumberOutputOnSuccessVar"
-        Write-Host "##vso[task.setvariable variable=$($BuildNumberOutputOnSuccessVar)]$($QueuedBuild.buildNumber)"
+        Write-Host "##vso[task.setvariable variable=$($BuildNumberOutputOnSuccessVar);isOutput=true]$($QueuedBuild.buildNumber)"
         Write-Host "$BuildNumberOutputOnSuccessVar = $($QueuedBuild.buildNumber)"
     }
 } else {
