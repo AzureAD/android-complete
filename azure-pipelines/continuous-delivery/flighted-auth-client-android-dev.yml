@@ -82,7 +82,11 @@ parameters:
   - name: shouldTrustDebugBroker
     displayName: Always trust debug broker apps. (Required for working with DEBUG CP/LTW/AuthApp)
     type: boolean
-    default: False 
+    default: False
+  - name: publishLibraryArtifacts
+    displayName: Should publish library artifacts? (lockfiles and release artifacts)
+    type: boolean
+    default: false
   - name: msalTestTarget
     displayName: Test Targets for MSAL
     type: string
@@ -107,11 +111,8 @@ variables:
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
   authenticatorPipelineId: 237369
-  authenticatorApkVersion: "*1"
   companyPortalPipelineId: 237827
-  companyPortalApkVersion: "*1"
   ltwPipelineId: 44201
-  ltwApkVersion: "*1"
   brokerAutomationPipelineId: 1490
   ${{ if parameters.shouldEnableBrokerSelectionAndDiscoveryFlag }}:
     enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
@@ -165,6 +166,7 @@ stages:
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
       tokenSelection: 'mvnPAT'
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish
@@ -187,6 +189,7 @@ stages:
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
       tokenSelection: 'mvnPAT'
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
@@ -209,6 +212,7 @@ stages:
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
       tokenSelection: 'mvnPAT'
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
@@ -238,6 +242,7 @@ stages:
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
       tokenSelection: 'mvnPAT'
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Linux Broker - Build and publish
 - stage: 'publishLinuxBrokeLibraries'
   displayName: Linux Broker - Build and publish
@@ -261,6 +266,7 @@ stages:
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
       tokenSelection: 'mvnPAT'
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
   - job: PublishLinuxBrokerPackage
     dependsOn: publishLinuxBrokerLibraries
     displayName: Publish Linux Broker Package
@@ -290,6 +296,7 @@ stages:
         TargetFolder: $(build.artifactstagingdirectory)
     - task: PublishPipelineArtifact@1
       name: PublishPipelineArtifacts1
+      enabled: ${{ parameters.publishLibraryArtifacts }}
       displayName: 'Publish Artifact: LinuxBrokerPackage Linux Test App Deb'
       inputs:
         ArtifactName: LinuxBrokerPackage Deb Package
@@ -315,6 +322,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
       tokenSelection: 'mvnPAT'
 # Adal - Build and publish
 - stage: 'publishAdal'
@@ -337,6 +345,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
       tokenSelection: 'mvnPAT'
 
 # Promote published packages
@@ -381,9 +390,10 @@ stages:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(MSAzure-PAT)" -BuildDefinitionId "$(authenticatorPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(authenticatorBranch)"  -BuildNumberOutputOnSuccessVar "authenticatorApkVersion"'
             workingDirectory: '$(Build.SourcesDirectory)'
+          name: authenticatorPipelineScript
         - template: ../templates/universal-packages/pull-authenticator-from-feed.yml
           parameters:
-            authenticatorVersion: $(authenticatorApkVersion)
+            authenticatorVersion: $(authenticatorPipelineScript.authenticatorApkVersion)
 # BrokerApk - Company portal Queue pipeline
 - stage: 'queueCompanyPortalPipeline'
   variables:
@@ -403,9 +413,10 @@ stages:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAzure-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(companyPortalPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)''}" -Branch "$(companyPortalBranch)" -BuildNumberOutputOnSuccessVar "companyPortalApkVersion"'
             workingDirectory: '$(Build.SourcesDirectory)'
+          name: companyPortalPipelineScript
         - template: ../templates/universal-packages/pull-company-portal-from-feed.yml
           parameters:
-            companyPortalVersion: $(companyPortalApkVersion)
+            companyPortalVersion: $(companyPortalPipelineScript.companyPortalApkVersion)
 # BrokerApk - Link to Windows Queue pipeline
 - stage: 'queueLinkToWindowsPipeline'
   variables:
@@ -422,14 +433,27 @@ stages:
           persistCredentials: True
         - task: PowerShell@2
           displayName: Queue and wait for Link to Windows Apk generation pipeline
-          continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(LTW-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(ltwPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)" -BuildReason "UserCreated" -BuildNumberOutputOnSuccessVar "ltwApkVersion"'
+            arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(LTW-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(ltwPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)" -BuildReason "UserCreated" -BuildNumberOutputOnSuccessVar "rawLtwPipelineBuildNumber"'
             workingDirectory: '$(Build.SourcesDirectory)'
+          name: ltwPipelineScript
+        - task: PowerShell@2
+          displayName: 'Trim LTW build number to get apk version'
+          inputs:
+            targetType: inline
+            script: |
+              # LTW pipeline build number is structured like (versionMajor).(versionMinor).(versionBuild).(versionRevision).(build.reason)
+              # The version of APK published to feed is (versionMajor).(versionMinor).(versionBuild)
+              # We use regex to remove the last two segments so we get the correct version number
+              Write-Host "Raw Build Number: $(ltwPipelineScript.rawLtwPipelineBuildNumber)"
+              $trimmedVersion = "$(ltwPipelineScript.rawLtwPipelineBuildNumber)" -replace "\.\d+\.\w+$",""
+              Write-Host "Trimmed Version Number: $trimmedVersion"
+              Write-Host "##vso[task.setvariable variable=ltwApkVersion;isOutput=true]$trimmedVersion"
+          name: ltwVersionScript
         - template: ../templates/universal-packages/pull-ltw-from-feed.yml
           parameters:
-            LTWVersion: $(ltwApkVersion)
+            LTWVersion: $(ltwVersionScript.ltwApkVersion)
 
 # TestApp generation
 - stage: 'testappgeneration'
@@ -474,6 +498,15 @@ stages:
         tokenSelection: 'mvnPAT'
         publishingPackageName: "com.microsoft.identity.testuserapp.flighted"
         publishVersion: "1.0.$(brokerHostPackageVersionCounter)"
+    - job: brokerhostVersionJob
+      steps:
+      - task: PowerShell@2
+        displayName: 'Output BrokerHost Version Variable'
+        inputs:
+          targetType: inline
+          script: |
+            Write-Host "##vso[task.setvariable variable=brokerhostApkVersion;isOutput=true]1.0.$(brokerHostPackageVersionCounter)"
+        name: brokerhostVersionScript
     - template: ../ui-automation/templates/build-msal-test-app.yml
       parameters:
         productFlavors: Dist
@@ -507,6 +540,11 @@ stages:
     - job: trigger_automation
       displayName: Trigger Broker Automation Run
       timeoutInMinutes: 120
+      variables:
+        authenticatorApkVersion: $[ stageDependencies.queueAuthenticatorPipeline.queue_build_authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
+        companyPortalApkVersion: $[ stageDependencies.queueCompanyPortalPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalApkVersion'] ]
+        ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
+        brokerhostApkVersion: $[ stageDependencies.testappgeneration.brokerhostVersionJob.outputs['brokerhostVersionScript.brokerhostApkVersion'] ]
       steps:
         - checkout: self
           persistCredentials: True
@@ -515,7 +553,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Flighted, Non-LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'' , ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_sdk_version'': ''$(versionNumber)'' , ''BrokerHostFeedPackageName'': ''com.microsoft.identity.testuserapp.flighted''}" -TemplateParams "{ ''authenticatorVersion'': ''$(authenticatorApkVersion)'', ''companyPortalVersion'': ''$(companyPortalApkVersion)'',  ''LTWVersion'': ''$(ltwApkVersion)''}"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Flighted, Non-LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'' , ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_sdk_version'': ''$(versionNumber)'' , ''BrokerHostFeedPackageName'': ''com.microsoft.identity.testuserapp.flighted''}" -TemplateParams "{ ''authenticatorVersion'': ''$(authenticatorApkVersion)'', ''companyPortalVersion'': ''$(companyPortalApkVersion)'',  ''LTWVersion'': ''$(ltwApkVersion)'', ''brokerHostVersion'': ''$(brokerhostApkVersion)'' }"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(mvnPAT)
@@ -547,6 +585,11 @@ stages:
     - job: trigger_automation
       displayName: Trigger Broker Automation Run
       timeoutInMinutes: 120
+      variables:
+        authenticatorApkVersion: $[ stageDependencies.queueAuthenticatorPipeline.queue_build_authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
+        companyPortalApkVersion: $[ stageDependencies.queueCompanyPortalPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalApkVersion'] ]
+        ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
+        brokerhostApkVersion: $[ stageDependencies.testappgeneration.brokerhostVersionJob.outputs['brokerhostVersionScript.brokerhostApkVersion'] ]
       steps:
         - checkout: self
           persistCredentials: True
@@ -555,7 +598,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Flighted, LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_branch'' : ''$(MSAL_LTW_Branch)'', ''broker_branch'' : ''$(Broker_LTW_Branch)'', ''msal_sdk_version'': ''$(versionNumber)'', ''commonVersion'': ''$(versionNumber)'', ''BrokerHostFeedPackageName'': ''com.microsoft.identity.testuserapp.flighted'' }" -TemplateParams "{ ''authenticatorVersion'': ''$(authenticatorApkVersion)'', ''companyPortalVersion'': ''$(companyPortalApkVersion)'',  ''LTWVersion'': ''$(ltwApkVersion)'' }"'
+            arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(brokerAutomationPipelineId) -BuildIdOutputVar "brokerAutomationBuildId" -Branch  "$(Build.SourceBranch)" -PipelineVariablesJson "{ ''dailyVersion'' : ''$(versionNumber)'', ''test_run_prefix'' : ''(Flighted, LTW) '', ''msalTestTarget'' : ''${{ parameters.msalTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''brokerTestTarget'' : ''${{ parameters.brokerTestTarget }}, annotation com.microsoft.identity.client.ui.automation.annotations.LTWTests'', ''msal_branch'' : ''$(MSAL_LTW_Branch)'', ''broker_branch'' : ''$(Broker_LTW_Branch)'', ''msal_sdk_version'': ''$(versionNumber)'', ''commonVersion'': ''$(versionNumber)'', ''BrokerHostFeedPackageName'': ''com.microsoft.identity.testuserapp.flighted'' }" -TemplateParams "{ ''authenticatorVersion'': ''$(authenticatorApkVersion)'', ''companyPortalVersion'': ''$(companyPortalApkVersion)'',  ''LTWVersion'': ''$(ltwApkVersion)'', ''brokerHostVersion'': ''$(brokerhostApkVersion)'' }"'
             workingDirectory: '$(Build.SourcesDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(mvnPAT)
