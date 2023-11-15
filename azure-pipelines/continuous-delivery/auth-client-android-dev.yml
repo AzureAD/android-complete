@@ -73,6 +73,10 @@ parameters:
     displayName: Should enable broker selection & discovery?
     type: boolean
     default: False
+  - name: publishLibraryArtifacts
+    displayName: Should publish library artifacts? (lockfiles and release artifacts)
+    type: boolean
+    default: false
   - name: msalTestTarget
     displayName: Test Targets for MSAL
     type: string
@@ -147,6 +151,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish
@@ -168,6 +173,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
@@ -189,6 +195,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
@@ -217,6 +224,7 @@ stages:
       agentImage: 1ES-AndroidPool-EOC
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Linux Broker - Build and publish
 - stage: 'publishLinuxBrokeLibraries'
   displayName: Linux Broker - Build and publish
@@ -239,6 +247,7 @@ stages:
       testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -Psystemd_mode_enabled=false --build-cache --info
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
   - job: PublishLinuxBrokerPackage
     dependsOn: publishLinuxBrokerLibraries
     displayName: Publish Linux Broker Package
@@ -268,6 +277,7 @@ stages:
         TargetFolder: $(build.artifactstagingdirectory)
     - task: PublishPipelineArtifact@1
       name: PublishPipelineArtifacts1
+      enabled: ${{ parameters.publishLibraryArtifacts }}
       displayName: 'Publish Artifact: LinuxBrokerPackage Linux Test App Deb'
       inputs:
         ArtifactName: LinuxBrokerPackage Deb Package
@@ -293,6 +303,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Adal - Build and publish
 - stage: 'publishAdal'
   displayName: Adal - Build and publish
@@ -314,6 +325,7 @@ stages:
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 
 # Promote published packages
 - stage: 'promotePackages'
