@@ -478,29 +478,6 @@ stages:
         adalVersion: $(versionNumber)
         packageVariant: RC
 
-- stage: 'test'
-  displayName: test
-  dependsOn:
-    - testappgeneration
-    - queueAuthenticatorPipeline
-    - queueCompanyPortalPipeline
-    - queueLinkToWindowsPipeline
-  jobs:
-    - job: test2
-      variables:
-        authenticatorApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_Authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
-        companyPortalApkVersion: $[ stageDependencies.queueCompanyPortalPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalApkVersion'] ]
-        ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
-      steps:
-        - task: PowerShell@2
-          displayName: 'Print ltw version'
-          inputs:
-            targetType: inline
-            script: |
-              Write-Host "Authenticator: $(authenticatorPortalApkVersion)"
-              Write-Host "CP: $(companyPortalApkVersion)"
-              Write-Host "LTW: $(ltwApkVersion)"
-
 # Broker - E2E Automation (NON LTW)
 - stage: 'runBrokerE2EAutomation'
   displayName: Broker E2E UI Automation Run
@@ -521,7 +498,7 @@ stages:
       displayName: Trigger Broker Automation Run
       timeoutInMinutes: 120
       variables:
-        authenticatorApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_Authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
+        authenticatorApkVersion: $[ stageDependencies.queueAuthenticatorPipeline.queue_build_authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
         companyPortalApkVersion: $[ stageDependencies.queueCompanyPortalPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalApkVersion'] ]
         ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
       steps:
