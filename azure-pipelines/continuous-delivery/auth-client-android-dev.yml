@@ -422,7 +422,7 @@ stages:
         - script: echo "$(ltwVersionScript.ltwApkVersion)"
         - template: ../templates/universal-packages/pull-ltw-from-feed.yml
           parameters:
-            LTWVersion: $(ltwApkVersion)
+            LTWVersion: $(ltwVersionScript.ltwApkVersion)
 
 # TestApp generation
 - stage: 'testappgeneration'
