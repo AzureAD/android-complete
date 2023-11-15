@@ -522,7 +522,7 @@ stages:
       displayName: Trigger Broker Automation Run
       timeoutInMinutes: 120
       variables:
-        authenticatorApkVersion: *
+        authenticatorApkVersion: "*"
         companyPortalApkVersion: $[ stageDependencies.queueCompanyPortalPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalApkVersion'] ]
         ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
       steps:
