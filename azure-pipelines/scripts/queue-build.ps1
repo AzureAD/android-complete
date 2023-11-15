@@ -28,8 +28,9 @@ if ($TemplateParams -ne "") {
 #     $paramJson = $TemplateParams | ConvertFrom-Json
     $paramTable = $TemplateParams | ConvertFrom-Json -AsHashtable
     ($paramTable.GetEnumerator() | ? { -not $_.Value }) | % {
-        echo $_.Name
-        echo "Parameter $_.Name has an empty input, removing it to avoid error"
+        $_.Name
+        Write-Host $_.Name
+        Write-Host "Parameter $_.Name has an empty input, removing it to avoid error"
         $paramTable.Remove($_.Name)
     }
 
