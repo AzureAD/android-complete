@@ -522,6 +522,8 @@ stages:
       displayName: Trigger Broker Automation Run
       timeoutInMinutes: 120
       variables:
+        authenticatorApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_Authenticator.outputs['authenticatorPipelineScript.ltwApkVersion'] ]
+        companyPortalApkVersion: $[ stageDependencies.queueCompanyPortalPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.ltwApkVersion'] ]
         ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
       steps:
         - checkout: self
