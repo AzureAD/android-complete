@@ -27,7 +27,10 @@ $TemplateParams
 if ($TemplateParams -ne "") {
 #     $paramJson = $TemplateParams | ConvertFrom-Json
     $paramTable = $TemplateParams | ConvertFrom-Json -AsHashtable
-    ($paramTable.GetEnumerator() | ? { -not $_.Value }) | % { $paramTable.Remove($_.Name) }
+    ($paramTable.GetEnumerator() | ? { -not $_.Value }) | % {
+        echo "Parameter $_.Name has an empty input, removing it to avoid error"
+        $paramTable.Remove($_.Name)
+    }
     $paramTable
 
     $TemplateParams = $paramTable | ConvertTo-Json
