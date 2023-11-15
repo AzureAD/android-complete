@@ -419,9 +419,10 @@ stages:
               Write-Host "Trimmed Version Number: $trimmedVersion"
               Write-Host "##vso[task.setvariable variable=ltwApkVersion;isOutput=true]$trimmedVersion"
             name: ltwVersionScript
+        - script: echo "$(ltwVersionScript.ltwApkVersion)"
         - template: ../templates/universal-packages/pull-ltw-from-feed.yml
           parameters:
-            LTWVersion: $(ltwVersionScript.ltwApkVersion)
+            LTWVersion: $(ltwApkVersion)
 
 # TestApp generation
 - stage: 'testappgeneration'
