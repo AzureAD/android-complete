@@ -101,8 +101,8 @@ variables:
   companyPortalPipelineId: 237827
   companyPortalApkVersion: "*1"
   ltwPipelineId: 44201
-  rawLtwPipelineBuildNumber: ""
-  ltwApkVersion: "*"
+  rawLtwPipelineBuildNumber: "1.23092.400.0.UserCreated"
+  ltwApkVersion: "*1"
   brokerAutomationPipelineId: 1490
   ${{ if parameters.shouldEnableBrokerSelectionAndDiscoveryFlag }}:
     enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
@@ -396,13 +396,13 @@ stages:
   jobs:
     - job: queue_build_LinkToWindows
       displayName: Generate Link To Windows Apk
-      continueOnError: true
       timeoutInMinutes: 120
       steps:
         - checkout: self
           persistCredentials: True
         - task: PowerShell@2
           displayName: Queue and wait for Link to Windows Apk generation pipeline
+          enabled: false
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
             arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(LTW-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(ltwPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)" -BuildReason "UserCreated" -BuildNumberOutputOnSuccessVar "rawLtwPipelineBuildNumber"'
@@ -418,8 +418,8 @@ stages:
               Write-Host "Raw Build Number: $(rawLtwPipelineBuildNumber)"
               $trimmedVersion = "$(rawLtwPipelineBuildNumber)" -replace "\.\d+\.\w+$",""
               Write-Host "Trimmed Version Number: $trimmedVersion"
-              Write-Host "##vso[task.setvariable variable=testOutput;isOutput=true]$trimmedVersion"
-            name: yesScript
+              Write-Host "##vso[task.setvariable variable=version;isOutput=true]$trimmedVersion"
+            name: ltwVersionScript
         - template: ../templates/universal-packages/pull-ltw-from-feed.yml
           parameters:
             LTWVersion: $(ltwApkVersion)
@@ -490,7 +490,7 @@ stages:
   jobs:
     - job: test2
       variables:
-        toad: stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['yesScript.testOutput']
+        toad: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.version'] ]
       steps:
         - task: PowerShell@2
           displayName: 'Print ltw version'
