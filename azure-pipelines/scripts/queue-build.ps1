@@ -22,12 +22,18 @@ $queueBuildUri = "$($baseUri)$($queueBuild)"
 $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(("token:{0}" -f $PipelinePAT)))
 $authHeader = @{Authorization = ("Basic {0}" -f $base64AuthInfo)};
 
-$testVar = $TemplateParams | ConvertFrom-Json -AsHashtable
-$testVar
+$TemplateParams
 
-$testVar.keys
-# $testVar.Value = @($testVar.Value | Where-Object { $_.psobject.Properties.Count -gt 0 })
-# Write-Host "$testVar"
+if ($TemplateParams -ne "") {
+#     $paramJson = $TemplateParams | ConvertFrom-Json
+    $paramTable = $TemplateParams | ConvertFrom-Json -AsHashtable
+    ($paramTable.GetEnumerator() | ? { -not $_.Value }) | % { $paramTable.Remove($_.Name) }
+    $paramTable
+
+    $TemplateParams = $paramTable | ConvertTo-Json
+}
+
+$TemplateParams
 
 # Request Body
 $Build = New-Object PSObject -Property @{
