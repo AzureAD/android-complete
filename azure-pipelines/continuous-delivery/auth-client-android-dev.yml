@@ -419,7 +419,6 @@ stages:
               Write-Host "Trimmed Version Number: $trimmedVersion"
               Write-Host "##vso[task.setvariable variable=ltwApkVersion;isOutput=true]$trimmedVersion"
           name: ltwVersionScript
-        - script: echo "$(ltwVersionScript.ltwApkVersion)"
         - template: ../templates/universal-packages/pull-ltw-from-feed.yml
           parameters:
             LTWVersion: $(ltwVersionScript.ltwApkVersion)
@@ -490,8 +489,7 @@ stages:
   jobs:
     - job: test2
       variables:
-        toad: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
-        toad2: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.nope'] ]
+        ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
       steps:
         - task: PowerShell@2
           displayName: 'Print ltw version'
@@ -523,6 +521,7 @@ stages:
     - job: trigger_automation
       displayName: Trigger Broker Automation Run
       timeoutInMinutes: 120
+      ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
       steps:
         - checkout: self
           persistCredentials: True
