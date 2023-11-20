@@ -9,6 +9,7 @@ Param (
     [Parameter(Mandatory = $false)][int]$WaitTimeoutInMinutes = 120,
     [Parameter(Mandatory = $false)][int]$PollingIntervalInSeconds = 5 * 60,
     [Parameter(Mandatory = $false)][String]$BuildIdOutputVar="",
+    [Parameter(Mandatory = $false)][String]$BuildNumberOutputOnSuccessVar="",
     [Parameter(Mandatory = $false)][String]$BuildReason="ResourceTrigger"
 )
 
@@ -20,6 +21,19 @@ $queueBuildUri = "$($baseUri)$($queueBuild)"
 # Auth header
 $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(("token:{0}" -f $PipelinePAT)))
 $authHeader = @{Authorization = ("Basic {0}" -f $base64AuthInfo)};
+
+# Filter out empty parameters, to avoid throwing an error
+if ($TemplateParams -ne "") {
+    $paramTable = $TemplateParams | ConvertFrom-Json -AsHashtable
+    ($paramTable.GetEnumerator() | ? { -not $_.Value }) | % {
+        $currentParam = $_.Name
+        # Write a message to let script runner know we are removing the empty parameter
+        Write-Host "Parameter $currentParam has an empty input, removing it to avoid error"
+        $paramTable.Remove($_.Name)
+    }
+
+    $TemplateParams = $paramTable | ConvertTo-Json
+}
 
 # Request Body
 $Build = New-Object PSObject -Property @{
@@ -84,6 +98,11 @@ if ($BuildNotCompleted) {
     Write-Error "Timed out waiting for Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) to complete,"
 } elseif ($($QueuedBuild.result) -eq "succeeded"){
     Write-Host "Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) completed successfully."
+    if($BuildNumberOutputOnSuccessVar -ne "") {
+        Write-Host "Setting  $BuildNumberOutputOnSuccessVar"
+        Write-Host "##vso[task.setvariable variable=$($BuildNumberOutputOnSuccessVar);isOutput=true]$($QueuedBuild.buildNumber)"
+        Write-Host "$BuildNumberOutputOnSuccessVar = $($QueuedBuild.buildNumber)"
+    }
 } else {
     Write-Error "Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) did not complete successfully, BuildResult: $($QueuedBuild.result)."
 }
