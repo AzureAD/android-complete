@@ -210,19 +210,19 @@ stages:
       inputs:
         targetType: inline
         script: |
-          Write-Host "##vso[build.addbuildtag]PROD_MSAL:(${{ parameters.msalVersionPROD }})-->RC_MSAL:${{ parameters.msalVersionRC }}"
+          Write-Host "##vso[build.addbuildtag]PROD_MSAL=(${{ parameters.msalVersionPROD }})-->RC_MSAL=${{ parameters.msalVersionRC }}"
           
-          Write-Host "##vso[build.addbuildtag]PROD_Common:(${{ parameters.commonVersionPROD }})-->RC_Common:${{ parameters.commonVersionRC }}"
-          Write-Host "##vso[build.addbuildtag]RC_Common4j:${{ parameters.common4jVersionRC }}"
+          Write-Host "##vso[build.addbuildtag]PROD_Common=(${{ parameters.commonVersionPROD }})-->RC_Common=${{ parameters.commonVersionRC }}"
+          Write-Host "##vso[build.addbuildtag]RC_Common4j=${{ parameters.common4jVersionRC }}"
           
-          Write-Host "##vso[build.addbuildtag]PROD_AADAuthenticator:(${{ parameters.adAccountsVersionPROD }})-->RC_AADAuthenticator:${{ parameters.adAccountsVersionRC }}"
-          Write-Host "##vso[build.addbuildtag]RC_Broker4j:${{ parameters.broker4jVersionRC }}"
+          Write-Host "##vso[build.addbuildtag]PROD_AADAuthenticator=(${{ parameters.adAccountsVersionPROD }})-->RC_AADAuthenticator=${{ parameters.adAccountsVersionRC }}"
+          Write-Host "##vso[build.addbuildtag]RC_Broker4j=${{ parameters.broker4jVersionRC }}"
           
-          Write-Host "##vso[build.addbuildtag]RC_ADAL:(${{ parameters.adalVersionRC }})"
+          Write-Host "##vso[build.addbuildtag]RC_ADAL=(${{ parameters.adalVersionRC }})"
           
           if ('${{ parameters.flightingSelection }}' -eq "Local") {
             Write-Host "##vso[build.addbuildtag]Local_Flighting"
-            Write-Host "##vso[build.addbuildtag]Flights_Passed:$(flightsTag)"
+            Write-Host "##vso[build.addbuildtag]Flights_Passed=$(flightsTag)"
           } else {
             Write-Host "##vso[build.addbuildtag]ECS_Flighting"
           }
@@ -230,7 +230,7 @@ stages:
           if ('${{ parameters.flagsValue }}' -eq " ") {
             Write-Host "##vso[build.addbuildtag]No Additional Flags Passed"
           } else {
-            Write-Host "##vso[build.addbuildtag]Flags Passed: ${{ parameters.flagsValue }}"
+            Write-Host "##vso[build.addbuildtag]Flags Passed=${{ parameters.flagsValue }}"
           }
 
 # Package generation
