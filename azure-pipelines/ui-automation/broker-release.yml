@@ -210,19 +210,17 @@ stages:
       inputs:
         targetType: inline
         script: |
-          Write-Host "##vso[build.addbuildtag]PROD MSAL=(${{ parameters.msalVersionPROD }}) RC MSAL=${{ parameters.msalVersionRC }}"
+          Write-Host "##vso[build.addbuildtag]PROD MSAL=(${{ parameters.msalVersionPROD }}) RC MSAL=(${{ parameters.msalVersionRC }})"
           
-          Write-Host "##vso[build.addbuildtag]PROD Common=(${{ parameters.commonVersionPROD }}) RC Common=${{ parameters.commonVersionRC }}"
-          Write-Host "##vso[build.addbuildtag]RC Common4j=${{ parameters.common4jVersionRC }}"
+          Write-Host "##vso[build.addbuildtag]PROD Common=(${{ parameters.commonVersionPROD }}) RC Common=(${{ parameters.commonVersionRC }}) RC Common4j=(${{ parameters.common4jVersionRC }})"
           
-          Write-Host "##vso[build.addbuildtag]PROD AADAuthenticator=(${{ parameters.adAccountsVersionPROD }}) RC AADAuthenticator=${{ parameters.adAccountsVersionRC }}"
-          Write-Host "##vso[build.addbuildtag]RC Broker4j=${{ parameters.broker4jVersionRC }}"
+          Write-Host "##vso[build.addbuildtag]PROD AADAuthenticator=(${{ parameters.adAccountsVersionPROD }}) RC AADAuthenticator=(${{ parameters.adAccountsVersionRC }}) RC Broker4j=(${{ parameters.broker4jVersionRC }})"
           
           Write-Host "##vso[build.addbuildtag]RC ADAL=(${{ parameters.adalVersionRC }})"
           
           if ('${{ parameters.flightingSelection }}' -eq "Local") {
             Write-Host "##vso[build.addbuildtag]Local Flighting"
-            Write-Host "##vso[build.addbuildtag]Flights_Passed=$(flightsTag)"
+            Write-Host "##vso[build.addbuildtag]Flights Passed=$(flightsTag)"
           } else {
             Write-Host "##vso[build.addbuildtag]ECS Flighting"
           }
