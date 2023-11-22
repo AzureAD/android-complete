@@ -1,7 +1,6 @@
-#Runs the ui automation 
+# Monthly Release Pipeline
 # Variables
 # ---------
-# versionNumber: Generated version number    
 # common4jProjVersionParam: passes common4jVersion in the projVersion param
 # common4jVersionParam: passes Common4jVersion param
 # broker4jProjVersionParam: passes broker4jVersion in the projVersion param
@@ -13,8 +12,6 @@
 # adalProjVersionParam: passes adal Version in projVersion param
 # androidProjectDependencyParam: extrea android gradle configs
 # javaProjectDependencyParam: extra java gradle configs
-# oneProjectId: One Project ID `b32aa71e-8ed2-41b2-9d77-5bc261222004`
-# engineeringProjectId: engineering project ID which is `fac9d424-53d2-45c0-91b5-ef6ba7a6bf26`
 # msazureServiceConnection: ms azure service connection `AndroidBroker-CI`
 # msazureFeedName: name of msazure feed which is `Android-Broker`
 # brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
@@ -26,7 +23,6 @@
 # teamsApk: Teams apk name
 # wordApk: Word apk name
 # edgeApk: Edge apk name
-# firebaseTimeout: firebase timeout 
 # resultsHistoryName: Broker Release
 # https://dev.azure.com/IdentityDivision/Engineering/_build?definitionId=1801&_a=summary
 name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
@@ -69,36 +65,52 @@ parameters:
   type: boolean
   default: False
 
-# Library versioning parameters
+# Flighting Parameters
+- name: flightingSelection
+  displayName: Flighting
+  type: String
+  default: "ECS"
+  values:
+    - Local
+    - ECS
+- name: flightingValue
+  displayName: Flight Json-String (not active with ECS flighting)
+  type: String
+  default: ""
+- name: flagsValue
+  displayName: Flags to Pass
+  type: String
+  default: ""
+
+# RC Library Versioning Parameters
 - name: msalVersionRC
   displayName: MSAL RC Version
-  type: string
-- name: msalVersionPROD
-  displayName: MSAL PROD Version
   type: string
 - name: commonVersionRC
   displayName: Common RC Version
   type: string
-- name: commonVersionPROD
-  displayName: Common PROD Version
-  type: string
 - name: common4jVersionRC
   displayName: Common4j RC Version
   type: string
-- name: broker4jVersionRC
-  displayName: Broker4j RC Version
-  type: string    
 - name: adAccountsVersionRC
   displayName: Broker RC Version
   type: string
-- name: adAccountsVersionPROD
-  displayName: Broker PROD Version
+- name: broker4jVersionRC
+  displayName: Broker4j RC Version
   type: string
 - name: adalVersionRC
   displayName: ADAL RC Version
   type: string
-- name: adalVersionPROD
-  displayName: ADAL PROD Version
+
+# PROD Library Versioning Parameters
+- name: msalVersionPROD
+  displayName: MSAL PROD Version
+  type: string
+- name: commonVersionPROD
+  displayName: Common PROD Version
+  type: string
+- name: adAccountsVersionPROD
+  displayName: Broker PROD Version
   type: string
 
 # PROD versioning parameters
@@ -158,7 +170,6 @@ resources:
     endpoint: ANDROID_GITHUB
 
 variables:
-  versionNumber: $(Build.BuildNumber)
   common4jProjVersionParam: -PprojVersion=${{ parameters.common4jVersionRC }}
   common4jVersionParam: -PdistCommon4jVersion=${{ parameters.common4jVersionRC }}
   broker4jProjVersionParam: -PprojVersion=${{ parameters.broker4jVersionRC }}
@@ -168,11 +179,8 @@ variables:
   msalProjVersionParam: -PprojVersion=${{ parameters.msalVersionRC }}
   adAccountsProjVersionParam: -PprojVersion=${{ parameters.adAccountsVersionRC }}
   adalProjVersionParam: -PprojVersion=${{ parameters.adalVersionRC }}
-  otelAriaIsProdEnv: true
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
-  oneProjectId: b32aa71e-8ed2-41b2-9d77-5bc261222004
-  engineeringProjectId: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'    
   msazureServiceConnection: AndroidBroker-CI
   msazureFeedName: Android-Broker
   brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
@@ -184,10 +192,47 @@ variables:
   teamsApk: Teams.apk
   wordApk: Word.apk
   edgeApk: Edge.apk
-  firebaseTimeout: 45m
   resultsHistoryName: Broker Release
 
 stages:
+- stage: 'addTags'
+  displayName: Tag Pipeline
+  dependsOn: []
+  variables:
+    - name: flightsTag
+      value: $[replace(parameters['broker4j_flights'], ':', ' ')]
+  jobs:
+  - job: addTags
+    displayName: Add tags for flights
+    steps:
+    - task: PowerShell@2
+      displayName: Run Tagging Script
+      inputs:
+        targetType: inline
+        script: |
+          Write-Host "##vso[build.addbuildtag]PROD_MSAL:(${{ parameters.msalVersionPROD }})-->RC_MSAL:${{ parameters.msalVersionRC }}"
+          
+          Write-Host "##vso[build.addbuildtag]PROD_Common:(${{ parameters.commonVersionPROD }})-->RC_Common:${{ parameters.commonVersionRC }}"
+          Write-Host "##vso[build.addbuildtag]RC_Common4j:${{ parameters.common4jVersionRC }}"
+          
+          Write-Host "##vso[build.addbuildtag]PROD_AADAuthenticator:(${{ parameters.adAccountsVersionPROD }})-->RC_AADAuthenticator:${{ parameters.adAccountsVersionRC }}"
+          Write-Host "##vso[build.addbuildtag]RC_Broker4j:${{ parameters.broker4jVersionRC }}"
+          
+          Write-Host "##vso[build.addbuildtag]RC_ADAL:(${{ parameters.adalVersionRC }})"
+          
+          if (${{ parameters.flightingSelection }} -eq "Local") {
+            Write-Host "##vso[build.addbuildtag]Local_Flighting"
+            Write-Host "##vso[build.addbuildtag]Flights_Passed:$(flightsTag)"
+          } else {
+            Write-Host "##vso[build.addbuildtag]ECS_Flighting"
+          }
+          
+          if (${{ parameters.flagsValue }} -eq "") {
+            Write-Host "##vso[build.addbuildtag]No Additional Flags Passed"
+          } else {
+            Write-Host "##vso[build.addbuildtag]Flags Passed: ${{ parameters.flagsValue }}"
+          }
+
 # Package generation
 # Testing Libraries - KeyVault, LabApi, LabApiUtilities, TestUtils, UiAutomationUtilities
 - stage: 'publishCommonUtilities'
@@ -603,7 +648,6 @@ stages:
   jobs:
     - template: ./templates/download-brokers.yml
       parameters:
-        engineeringProjectId: '$(engineeringProjectId)'
         msazureServiceConnection: '$(msazureServiceConnection)'
         msazureFeedName: '$(msazureFeedName)'
         authenticatorVersionRC: $(rcAuthenticatorVersion)

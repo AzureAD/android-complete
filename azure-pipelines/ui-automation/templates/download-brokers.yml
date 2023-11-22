@@ -1,6 +1,4 @@
 parameters:
-  - name: engineeringProjectId
-    type: string
   - name: msazureServiceConnection
     type: string
   - name: msazureFeedName
