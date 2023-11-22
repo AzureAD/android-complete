@@ -68,18 +68,18 @@ parameters:
 # Flighting Parameters
 - name: flightingSelection
   displayName: Flighting
-  type: String
+  type: string
   default: "ECS"
   values:
     - Local
     - ECS
 - name: flightingValue
   displayName: Flight Json-String (not active with ECS flighting)
-  type: String
+  type: string
   default: ""
 - name: flagsValue
   displayName: Flags to Pass
-  type: String
+  type: string
   default: ""
 
 # RC Library Versioning Parameters
