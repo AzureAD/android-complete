@@ -220,14 +220,14 @@ stages:
           
           Write-Host "##vso[build.addbuildtag]RC_ADAL:(${{ parameters.adalVersionRC }})"
           
-          if (${{ parameters.flightingSelection }} -eq "Local") {
+          if ('${{ parameters.flightingSelection }}' -eq "Local") {
             Write-Host "##vso[build.addbuildtag]Local_Flighting"
             Write-Host "##vso[build.addbuildtag]Flights_Passed:$(flightsTag)"
           } else {
             Write-Host "##vso[build.addbuildtag]ECS_Flighting"
           }
           
-          if (${{ parameters.flagsValue }} -eq " ") {
+          if ('${{ parameters.flagsValue }}' -eq " ") {
             Write-Host "##vso[build.addbuildtag]No Additional Flags Passed"
           } else {
             Write-Host "##vso[build.addbuildtag]Flags Passed: ${{ parameters.flagsValue }}"
