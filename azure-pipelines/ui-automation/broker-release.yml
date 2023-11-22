@@ -200,7 +200,7 @@ stages:
   dependsOn: []
   variables:
     - name: flightsTag
-      value: $[replace(parameters.flightingValue, ':', ' ')]
+      value: $[replace('${{ parameters.flightingValue }}', ':', ' ')]
   jobs:
   - job: addTags
     displayName: Add tags for flights
