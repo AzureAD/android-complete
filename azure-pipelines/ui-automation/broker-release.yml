@@ -76,11 +76,11 @@ parameters:
 - name: flightingValue
   displayName: Flight Json-String (not active with ECS flighting)
   type: string
-  default: ""
+  default: " "
 - name: flagsValue
   displayName: Flags to Pass
   type: string
-  default: ""
+  default: " "
 
 # RC Library Versioning Parameters
 - name: msalVersionRC
@@ -227,7 +227,7 @@ stages:
             Write-Host "##vso[build.addbuildtag]ECS_Flighting"
           }
           
-          if (${{ parameters.flagsValue }} -eq "") {
+          if (${{ parameters.flagsValue }} -eq " ") {
             Write-Host "##vso[build.addbuildtag]No Additional Flags Passed"
           } else {
             Write-Host "##vso[build.addbuildtag]Flags Passed: ${{ parameters.flagsValue }}"
