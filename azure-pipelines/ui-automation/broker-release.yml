@@ -237,11 +237,61 @@ stages:
             Write-Host "##vso[build.addbuildtag]Flags Passed=${{ parameters.flagsValue }}"
           }
 
+- stage: 'checkVersionAndFlighting'
+  displayName: Fail If Official Version and Local Flighting
+  dependsOn: []
+  jobs:
+    - job: checkVersionAndFlighting
+      displayName: Fail If Official Version and Local Flighting
+      steps:
+        - task: PowerShell@2
+          displayName: Checking If Official Version and Local Flighting
+          inputs:
+            targetType: inline
+            script: |
+              # Regex ^\d+\.\d+\.\d+$ will match an official release version (digits only, delimited with '.', exactly 3 segments)
+              Write-Host "Checking if we have an official release version (Ex:4.9.0) for any of the Release library versions."
+              $regex = '^\d+\.\d+\.\d+$'
+              
+              # Check if any of the versions match the "official version" regex
+              
+              Write-Host "Msal RC: $(msalVersionRC)"
+              Write-Host "Common RC: $(commonVersionRC)"
+              Write-Host "Common4j RC: $(common4jVersionRC)"
+              Write-Host "Broker RC: $(adAccountsVersionRC)"
+              Write-Host "Broker4j RC: $(broker4jVersionRC)"
+              Write-Host "ADAL RC: $(adalVersionRC)"
+              
+              if ('$(msalVersionRC)' -match $regex -or
+                  '$(commonVersionRC)' -match $regex -or
+                  '$(common4jVersionRC)' -match $regex -or
+                  '$(adAccountsVersionRC)' -match $regex -or
+                  '$(broker4jVersionRC)' -match $regex -or
+                  '$(adalVersionRC)' -match $regex)
+              {
+                Write-Host "At least one version is an official release version (EX: 4.9.0, digits only, delimited with '.', exactly 3 segments)"
+                Write-Host "Checking if we are using Local flight provider. If so, fail this pipeline run..."
+                
+                if ('${{ parameters.flightingSelection }}' -eq "Local") {
+                  Write-Host "Detected we are using local flight provider with a release version. Failing pipeline run..."
+                  exit 1
+                } else {
+                  Write-Host "We are not using local flight provider, can proceed with official release versions!"
+                }
+              
+                # TODO: Should we also add a check if a flag is being passed and fail it with release versions?
+  
+              } else {
+                Write-Host "None of the library versions are official release versions, proceed with run!"
+              }
+
 # Package generation
 # Testing Libraries - KeyVault, LabApi, LabApiUtilities, TestUtils, UiAutomationUtilities
 - stage: 'publishCommonUtilities'
   displayName: Testing Libraries - Build and publish
-  dependsOn: [] # this removes the implicit dependency on previous stage and causes this to run in parallel
+  dependsOn:
+  - addTags
+  - checkVersionAndFlighting
   condition: |
     and
     (
@@ -269,7 +319,9 @@ stages:
       not(canceled()),
       eq(${{ parameters.shouldBuildLibraries }}, 'True')
     )
-  dependsOn: [] # this removes the implicit dependency on previous stage and causes this to run in parallel
+  dependsOn:
+  - addTags
+  - checkVersionAndFlighting
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
