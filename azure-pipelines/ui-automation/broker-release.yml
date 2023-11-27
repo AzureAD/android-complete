@@ -32,34 +32,10 @@ pr: none
 
 parameters:
 # Stage control boolean parameters
-- name: shouldBuildLibraries
-  displayName: Build Libraries?
-  type: boolean
-  default: False
-- name: shouldRunUnitTests
-  displayName: Run Unit Tests?
+- name: shouldRunUnitAndInstrumentedTests
+  displayName: Run Unit And Instrumented Tests?
   type: boolean
   default: True
-- name: shouldRunInstrumentedTests
-  displayName: Run Instrumented Tests?
-  type: boolean
-  default: True
-- name: shouldPublishLibraries
-  displayName: Publish Libraries?
-  type: boolean
-  default: True
-- name: shouldPromoteLibraries
-  displayName: Promote Libraries?
-  type: boolean
-  default: False
-- name: shouldBuildBrokersApks
-  displayName: Build Broker Apks? (Authenticator and Company Portal)
-  type: boolean
-  default: False
-- name: shouldRunUiValidation
-  displayName: Run E2E UI Validation?
-  type: boolean
-  default: False
 - name: shouldBuildTestingLibraries
   displayName: Build & Publish Testing libs?
   type: boolean
@@ -102,18 +78,7 @@ parameters:
   displayName: ADAL RC Version
   type: string
 
-# PROD Library Versioning Parameters
-- name: msalVersionPROD
-  displayName: MSAL PROD Version
-  type: string
-- name: commonVersionPROD
-  displayName: Common PROD Version
-  type: string
-- name: adAccountsVersionPROD
-  displayName: Broker PROD Version
-  type: string
-
-# PROD versioning parameters
+# PROD Broker APK versioning parameters
 - name: prodAuthenticatorVersion
   displayName: PROD Authenticator Version
   type: string
@@ -188,6 +153,7 @@ variables:
   companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
   authenticatorApk: app-production-universal-release-signed.apk
   oldAuthenticatorApk: Authenticator-4.1.0-RC.apk
+  oldAuthenticatorVersion: 6.2204.2470
   outlookApk: Outlook.apk
   teamsApk: Teams.apk
   wordApk: Word.apk
@@ -216,11 +182,11 @@ stages:
       inputs:
         targetType: inline
         script: |
-          Write-Host "##vso[build.addbuildtag]PROD MSAL=(${{ parameters.msalVersionPROD }}) RC MSAL=(${{ parameters.msalVersionRC }})"
+          Write-Host "##vso[build.addbuildtag]PROD MSAL=($(MSAL-PROD-Version)) RC MSAL=(${{ parameters.msalVersionRC }})"
           
-          Write-Host "##vso[build.addbuildtag]PROD Common=(${{ parameters.commonVersionPROD }}) RC Common=(${{ parameters.commonVersionRC }}) RC Common4j=(${{ parameters.common4jVersionRC }})"
+          Write-Host "##vso[build.addbuildtag]RC Common=(${{ parameters.commonVersionRC }}) RC Common4j=(${{ parameters.common4jVersionRC }})"
           
-          Write-Host "##vso[build.addbuildtag]PROD AADAuthenticator=(${{ parameters.adAccountsVersionPROD }}) RC AADAuthenticator=(${{ parameters.adAccountsVersionRC }}) RC Broker4j=(${{ parameters.broker4jVersionRC }})"
+          Write-Host "##vso[build.addbuildtag]PROD AADAuthenticator=($(Broker-PROD-Version)) RC AADAuthenticator=(${{ parameters.adAccountsVersionRC }}) RC Broker4j=(${{ parameters.broker4jVersionRC }})"
           
           Write-Host "##vso[build.addbuildtag]RC ADAL=(${{ parameters.adalVersionRC }})"
           
@@ -316,8 +282,7 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+      not(canceled())
     )
   dependsOn:
   - addTags
@@ -334,9 +299,8 @@ stages:
       publishParams: $(common4jProjVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish  
@@ -347,8 +311,7 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+      not(canceled())
     )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
@@ -364,9 +327,8 @@ stages:
       publishParams: $(commonProjVersionParam) $(common4jVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
 # Broker4j - Build and publish
 - stage: 'publishBroker4jLibraries'
   displayName: Broker4j - Build and publish  
@@ -377,8 +339,7 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+      not(canceled())
     )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
@@ -393,9 +354,8 @@ stages:
       publishParams: $(broker4jProjVersionParam) $(common4jVersionParam) $(flagVariable) $(flightValueVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
@@ -412,8 +372,7 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+      not(canceled())
     )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
@@ -429,10 +388,9 @@ stages:
       publishParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
       agentImage: 1ES-AndroidPool-EOC
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
 # Msal - Build and publish      
 - stage: 'publishMsal'
   displayName: Msal - Build and publish  
@@ -442,8 +400,7 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+      not(canceled())
     )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
@@ -459,9 +416,8 @@ stages:
       publishParams: $(msalProjVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
 # Adal - Build and publish
 - stage: 'publishAdal'
   displayName: Adal - Build and publish  
@@ -470,8 +426,7 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+      not(canceled())
     )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
@@ -487,9 +442,8 @@ stages:
       publishParams: $(adalProjVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
 
 # Promote Libraries
 - stage: 'promoteLibraries'
@@ -498,8 +452,7 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldPromoteLibraries }}, 'True')
+      not(canceled())
     )
   dependsOn:
     - publishAdal
@@ -539,8 +492,7 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildBrokersApks }}, 'True')
+      not(canceled())
     )
   dependsOn:
     - promoteLibraries
@@ -564,8 +516,7 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildBrokersApks }}, 'True')
+      not(canceled())
     )
   dependsOn:
     - promoteLibraries
@@ -609,7 +560,7 @@ stages:
       parameters:
         productFlavors: External
         signingConfigurations: Release
-        msalVersion: ${{ parameters.msalVersionPROD }}
+        msalVersion: $(MSAL-PROD-Version)
         packageVariant: PROD
     - template: ./templates/build-broker-host.yml
       parameters:
@@ -648,7 +599,7 @@ stages:
         msalFlavor: Dist
         brokerSource: LocalApk
         brokerUpdateSource: LocalApk
-        msalVersion: ${{ parameters.msalVersionPROD }}
+        msalVersion: $(MSAL-PROD-Version)
         packageVariant: PROD
     - template: ./templates/build-msal-automation-app.yml
       parameters:
@@ -656,7 +607,7 @@ stages:
         msalFlavor: Local
         brokerSource: LocalApk
         brokerUpdateSource: LocalApk
-        msalVersion: ${{ parameters.msalVersionPROD }}
+        msalVersion: $(MSAL-PROD-Version)
         packageVariant: PROD
     - template: ./templates/build-broker-automation-app.yml
       parameters:
@@ -714,7 +665,7 @@ stages:
         oldAuthenticatorVersion: $(oldAuthenticatorVersion)
         companyPortalVersionRC: $(rcCompanyPortalVersion)
         companyPortalVersionPROD: ${{ parameters.prodCompanyPortalVersion }}
-        prodBrokerHostVersion: ${{ parameters.adAccountsVersionPROD}}
+        prodBrokerHostVersion: $(Broker-PROD-Version)
 
 # ADAL with Broker (API 30+)
 - stage: 'adal_with_broker_high_api'
@@ -726,8 +677,7 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldRunUiValidation }}, 'True')
+      not(canceled())
     )
   displayName: RC ADAL with RC Broker UI Automation
   jobs:
@@ -764,8 +714,7 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldRunUiValidation }}, 'True')
+      not(canceled())
     )
   displayName: RC MSAL with PROD Broker UI Automation
   jobs:
@@ -827,8 +776,7 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldRunUiValidation }}, 'True')
+      not(canceled())
     )
   displayName: PROD MSAL with RC Broker UI Automation
   jobs:
