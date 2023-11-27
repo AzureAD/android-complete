@@ -76,11 +76,11 @@ parameters:
 - name: flightingValueParameter
   displayName: Broker Flight Json-String (not active with ECS flighting)
   type: string
-  default: " "
+  default: ''
 - name: flagsValue
   displayName: Flags to Pass (passed to all libraries)
   type: string
-  default: " "
+  default: ''
 
 # RC Library Versioning Parameters
 - name: msalVersionRC
@@ -194,9 +194,9 @@ variables:
   edgeApk: Edge.apk
   resultsHistoryName: Broker Release
   ${{ if eq(parameters.flightingSelection, 'Local') }}:
-    flightValueVariable: ' '
-  ${{ else }}:
     flightValueVariable: -PlocalFlights=${{ parameters.flightingValueParameter }}
+  ${{ else }}:
+    flightValueVariable: ''
   flagVariable: ${{ parameters.flagsValue }}
 
 
@@ -231,7 +231,7 @@ stages:
             Write-Host "##vso[build.addbuildtag]ECS Flighting"
           }
           
-          if ('${{ parameters.flagsValue }}' -eq " ") {
+          if ('${{ parameters.flagsValue }}' -eq '') {
             Write-Host "##vso[build.addbuildtag]No Additional Flags Passed"
           } else {
             Write-Host "##vso[build.addbuildtag]Flags Passed=${{ parameters.flagsValue }}"
@@ -255,19 +255,19 @@ stages:
               
               # Check if any of the versions match the "official version" regex
               
-              Write-Host "Msal RC: $(msalVersionRC)"
-              Write-Host "Common RC: $(commonVersionRC)"
-              Write-Host "Common4j RC: $(common4jVersionRC)"
-              Write-Host "Broker RC: $(adAccountsVersionRC)"
-              Write-Host "Broker4j RC: $(broker4jVersionRC)"
-              Write-Host "ADAL RC: $(adalVersionRC)"
+              Write-Host "Msal RC: ${{ parameters.msalVersionRC }}"
+              Write-Host "Common RC: ${{ parameters.commonVersionRC }}"
+              Write-Host "Common4j RC: ${{ parameters.common4jVersionRC }}"
+              Write-Host "Broker RC: ${{ parameters.adAccountsVersionRC }}"
+              Write-Host "Broker4j RC: ${{ parameters.broker4jVersionRC }}"
+              Write-Host "ADAL RC: ${{ parameters.adalVersionRC }}"
               
-              if ('$(msalVersionRC)' -match $regex -or
-                  '$(commonVersionRC)' -match $regex -or
-                  '$(common4jVersionRC)' -match $regex -or
-                  '$(adAccountsVersionRC)' -match $regex -or
-                  '$(broker4jVersionRC)' -match $regex -or
-                  '$(adalVersionRC)' -match $regex)
+              if ('${{ parameters.msalVersionRC }}' -match $regex -or
+                  '${{ parameters.commonVersionRC }}' -match $regex -or
+                  '${{ parameters.common4jVersionRC }}' -match $regex -or
+                  '${{ parameters.adAccountsVersionRC }}' -match $regex -or
+                  '${{ parameters.broker4jVersionRC }}' -match $regex -or
+                  '${{ parameters.adalVersionRC }}' -match $regex)
               {
                 Write-Host "At least one version is an official release version (EX: 4.9.0, digits only, delimited with '.', exactly 3 segments)"
                 Write-Host "Checking if we are using Local flight provider. If so, fail this pipeline run..."
