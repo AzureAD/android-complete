@@ -340,7 +340,9 @@ stages:
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish  
-  dependsOn: publishCommon4jLibraries
+  dependsOn:
+  - publishCommonUtilities
+  - publishCommon4jLibraries
   condition: |
     and
     (
@@ -368,7 +370,8 @@ stages:
 # Broker4j - Build and publish
 - stage: 'publishBroker4jLibraries'
   displayName: Broker4j - Build and publish  
-  dependsOn: 
+  dependsOn:
+  - publishCommonUtilities
   - publishCommon4jLibraries
   condition: |
     and
@@ -405,7 +408,6 @@ stages:
   dependsOn: 
   - publishCommonLibraries
   - publishBroker4jLibraries
-  - publishCommonUtilities
   condition: |
     and
     (
@@ -436,7 +438,6 @@ stages:
   displayName: Msal - Build and publish  
   dependsOn: 
   - publishCommonLibraries
-  - publishCommonUtilities
   condition: |
     and
     (
