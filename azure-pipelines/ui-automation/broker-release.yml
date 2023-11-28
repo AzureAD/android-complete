@@ -726,21 +726,27 @@ stages:
         ltwRCPipelineVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwRCPipelineVersion'] ]
       steps:
         - task: PowerShell@2
-          displayName: 'Broker APK Versioning Script'
+          displayName: 'Check if We Ran Broker APK Builds'
           inputs:
             targetType: inline
             script: |
-              if ('$(companyPortalRCPipelineVersion)' -eq '') {
-                Write-Host "Fail"
-              } else {
-                      Write-Host "##vso[task.setvariable variable=rcCompanyPortalVersion]$(companyPortalRCPipelineVersion)"
+              if ('$(authenticatorRCPipelineVersion)' -ne '') {
+                Write-Host "##vso[task.setvariable variable=rcAuthenticatorVersion]$(authenticatorRCPipelineVersion)"
+              }
+              if ('$(companyPortalRCPipelineVersion)' -ne '') {
+                Write-Host "##vso[task.setvariable variable=rcCompanyPortalVersion]$(companyPortalRCPipelineVersion)"
+              }          
+              if ('$(ltwRCPipelineVersion)' -ne '') {
+                Write-Host "##vso[task.setvariable variable=rcLTWVersion]$(ltwRCPipelineVersion)"
               }
         - task: PowerShell@2
-          displayName: 'Broker APK Versioning Script'
+          displayName: 'Create Tags for Broker APK Versions'
           inputs:
             targetType: inline
             script: |
-              Write-Host "CP version RC: $(rcCompanyPortalVersion)"
+              Write-Host "##vso[build.addbuildtag]RC-Authenticator-APK-Version=$(rcAuthenticatorVersion)"
+              Write-Host "##vso[build.addbuildtag]RC-CompanyPortal-APK-Version=$(rcCompanyPortalVersion)"
+              Write-Host "##vso[build.addbuildtag]RC-LTW-APK-Version=$(rcLTWVersion)"
 #        - template: ./templates/download-brokers.yml
 #          parameters:
 #            msazureServiceConnection: '$(msazureServiceConnection)'
