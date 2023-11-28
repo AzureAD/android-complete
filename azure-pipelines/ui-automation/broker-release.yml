@@ -733,7 +733,15 @@ stages:
               Write-Host "##vso[build.addbuildtag]Authenticator-Version=$(authenticatorApkVersion)"
               Write-Host "##vso[build.addbuildtag]CP-Version=$(companyPortalApkVersion)"
               Write-Host "##vso[build.addbuildtag]LTW-APK-Version=$(ltwApkVersion)"
-              if ($(authenticatorApkVersion) -eq "") {
+              if ('$(authenticatorApkVersion)' -eq '') {
+                Write-Host "Success"
+              } else {
+                Write-Host "Fail"
+              }
+              
+              if ('$(companyPortalApkVersion)' -eq '') {
+                Write-Host "Fail"
+              } else {
                 Write-Host "Success"
               }
 #        - template: ./templates/download-brokers.yml
