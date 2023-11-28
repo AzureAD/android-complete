@@ -730,10 +730,6 @@ stages:
           inputs:
             targetType: inline
             script: |
-#              Write-Host "##vso[build.addbuildtag]Authenticator-Version=$(authenticatorRCPipelineVersion)"
-#              Write-Host "##vso[build.addbuildtag]CP-Version=$(companyPortalRCPipelineVersion)"
-#              Write-Host "##vso[build.addbuildtag]LTW-APK-Version=$(ltwRCPipelineVersion)"
-              
               if ('$(companyPortalRCPipelineVersion)' -eq '') {
                 Write-Host "Fail"
               } else {
