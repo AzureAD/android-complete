@@ -378,7 +378,7 @@ stages:
   displayName: Authenticator Broker Apk Generation
   dependsOn: promotePackages
   jobs:
-    - job: queue_build_authenticator
+    - job: queue_build_Authenticator
       displayName: Generate Authenticator Apk
       timeoutInMinutes: 120
       steps:
@@ -541,7 +541,7 @@ stages:
       displayName: Trigger Broker Automation Run
       timeoutInMinutes: 120
       variables:
-        authenticatorApkVersion: $[ stageDependencies.queueAuthenticatorPipeline.queue_build_authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
+        authenticatorApkVersion: $[ stageDependencies.queueAuthenticatorPipeline.queue_build_Authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
         companyPortalApkVersion: $[ stageDependencies.queueCompanyPortalPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalApkVersion'] ]
         ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
         brokerhostApkVersion: $[ stageDependencies.testappgeneration.brokerhostVersionJob.outputs['brokerhostVersionScript.brokerhostApkVersion'] ]
@@ -586,7 +586,7 @@ stages:
       displayName: Trigger Broker Automation Run
       timeoutInMinutes: 120
       variables:
-        authenticatorApkVersion: $[ stageDependencies.queueAuthenticatorPipeline.queue_build_authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
+        authenticatorApkVersion: $[ stageDependencies.queueAuthenticatorPipeline.queue_build_Authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
         companyPortalApkVersion: $[ stageDependencies.queueCompanyPortalPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalApkVersion'] ]
         ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
         brokerhostApkVersion: $[ stageDependencies.testappgeneration.brokerhostVersionJob.outputs['brokerhostVersionScript.brokerhostApkVersion'] ]

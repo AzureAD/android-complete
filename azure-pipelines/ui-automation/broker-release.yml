@@ -40,6 +40,10 @@ parameters:
   displayName: Build & Publish Testing libs?
   type: boolean
   default: False
+- name: buildLTW
+  displayName: Build LTW? (Must pass Broker Discovery Flag)
+  type: boolean
+  default: False
 
 # Flighting Parameters
 - name: flightingSelection
@@ -496,19 +500,21 @@ stages:
     )
   dependsOn:
     - promoteLibraries
+  variables:
+    - group: AndroidAuthClientAutomationSecrets
   jobs:
-    - job: queue_build
+    - job: queue_build_Authenticator
       displayName: Queue Build for Authenticator RC
-      timeoutInMinutes: 90
+      timeoutInMinutes: 120
       steps:
         - checkout: self
           persistCredentials: True
         - task: PowerShell@2
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(MSAZURE_BUILD_TOKEN)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}'', ''AdalVersion'': ''${{ parameters.adalVersionRC }}'' }" -Branch "$(authenticatorBranch)"'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(MSAzure-PAT)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}'', ''AdalVersion'': ''${{ parameters.adalVersionRC }}'' }" -Branch "$(authenticatorBranch)" -BuildNumberOutputOnSuccessVar "authenticatorApkVersion"'
             workingDirectory: '$(Build.SourcesDirectory)'
-          name: buildAuthenticator
+          name: authenticatorPipelineScript
 # Company Portal
 - stage: 'queueCompanyPortalBrokerApkPipeline'
   displayName: Company Portal - Queue Build Pipeline
@@ -520,19 +526,62 @@ stages:
     )
   dependsOn:
     - promoteLibraries
+  variables:
+    - group: AndroidAuthClientAutomationSecrets
   jobs:
-    - job: queue_build
+    - job: queue_build_CompanyPortal
       displayName: Queue Build for Company Portal RC
-      timeoutInMinutes: 90
+      timeoutInMinutes: 120
+      steps:
+        - checkout: self
+          persistCredentials: True
+#        - task: PowerShell@2
+#          inputs:
+#            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+#            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAzure-PAT)" -BuildDefinitionId "237827" -WaitTimeoutInMinutes 100 -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}''}" -Branch "$(companyPortalBranch)" -BuildNumberOutputOnSuccessVar "companyPortalApkVersion"'
+#            workingDirectory: '$(Build.SourcesDirectory)'
+#          name: companyPortalPipelineScript
+        - task: PowerShell@2
+          displayName: 'Trim LTW build number to get apk version'
+          inputs:
+            targetType: inline
+            script: |
+              Write-Host "##vso[task.setvariable variable=companyPortalApkVersion;isOutput=true]1234"
+          name: companyPortalPipelineScript
+# BrokerApk - Link to Windows Queue pipeline
+- stage: 'queueLinkToWindowsPipeline'
+  variables:
+    - group: AndroidAuthClientAutomationSecrets
+  displayName: Link To Windows Apk Generation
+  dependsOn: promotePackages
+  condition: eq(${{ parameters.buildLTW }}, 'True')
+  jobs:
+    - job: queue_build_LinkToWindows
+      displayName: Generate Link To Windows Apk
+      timeoutInMinutes: 120
       steps:
         - checkout: self
           persistCredentials: True
         - task: PowerShell@2
+          displayName: Queue and wait for Link to Windows Apk generation pipeline
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAZURE_BUILD_TOKEN)" -BuildDefinitionId "237827" -WaitTimeoutInMinutes 100 -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}''}" -Branch "$(companyPortalBranch)"'
+            arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(LTW-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(ltwPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)" -BuildReason "UserCreated" -BuildNumberOutputOnSuccessVar "rawLtwPipelineBuildNumber"'
             workingDirectory: '$(Build.SourcesDirectory)'
-          name: buildCompanyPortal
+          name: ltwPipelineScript
+        - task: PowerShell@2
+          displayName: 'Trim LTW build number to get apk version'
+          inputs:
+            targetType: inline
+            script: |
+              # LTW pipeline build number is structured like (versionMajor).(versionMinor).(versionBuild).(versionRevision).(build.reason)
+              # The version of APK published to feed is (versionMajor).(versionMinor).(versionBuild)
+              # We use regex to remove the last two segments so we get the correct version number
+              Write-Host "Raw Build Number: $(ltwPipelineScript.rawLtwPipelineBuildNumber)"
+              $trimmedVersion = "$(ltwPipelineScript.rawLtwPipelineBuildNumber)" -replace "\.\d+\.\w+$",""
+              Write-Host "Trimmed Version Number: $trimmedVersion"
+              Write-Host "##vso[task.setvariable variable=ltwApkVersion;isOutput=true]$trimmedVersion"
+          name: ltwVersionScript
 
 # TestApp generation
 - stage: 'testappgeneration'
@@ -647,6 +696,7 @@ stages:
   dependsOn:
   - queueAuthenticatorBrokerApkPipeline
   - queueCompanyPortalBrokerApkPipeline
+  - queueLinkToWindowsPipeline
   - testappgeneration
   displayName: Download PROD & RC Brokers
   condition:
@@ -656,16 +706,33 @@ stages:
       not(canceled())
     )
   jobs:
-    - template: ./templates/download-brokers.yml
-      parameters:
-        msazureServiceConnection: '$(msazureServiceConnection)'
-        msazureFeedName: '$(msazureFeedName)'
-        authenticatorVersionRC: $(rcAuthenticatorVersion)
-        authenticatorVersionPROD: ${{ parameters.prodAuthenticatorVersion }}
-        oldAuthenticatorVersion: $(oldAuthenticatorVersion)
-        companyPortalVersionRC: $(rcCompanyPortalVersion)
-        companyPortalVersionPROD: ${{ parameters.prodCompanyPortalVersion }}
-        prodBrokerHostVersion: $(Broker-PROD-Version)
+    - job: 'download_brokers'
+      displayName: Download Brokers
+      pool:
+        vmImage: ubuntu-latest
+      variables:
+        authenticatorApkVersion: $[ stageDependencies.queueAuthenticatorBrokerApkPipeline.queue_build_Authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
+        companyPortalApkVersion: $[ stageDependencies.queueCompanyPortalBrokerApkPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalApkVersion'] ]
+        ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
+      steps:
+        - task: PowerShell@2
+          displayName: 'Broker APK Versioning Script'
+          inputs:
+            targetType: inline
+            script: |
+              Write-Host "##vso[build.addbuildtag]LTW-APK-Version=$(authenticatorApkVersion)"
+              Write-Host "##vso[build.addbuildtag]LTW-APK-Version=$(companyPortalApkVersion)"
+              Write-Host "##vso[build.addbuildtag]LTW-APK-Version=$(ltwApkVersion)"
+#        - template: ./templates/download-brokers.yml
+#          parameters:
+#            msazureServiceConnection: '$(msazureServiceConnection)'
+#            msazureFeedName: '$(msazureFeedName)'
+#            authenticatorVersionRC: $(rcAuthenticatorVersion)
+#            authenticatorVersionPROD: ${{ parameters.prodAuthenticatorVersion }}
+#            oldAuthenticatorVersion: $(oldAuthenticatorVersion)
+#            companyPortalVersionRC: $(rcCompanyPortalVersion)
+#            companyPortalVersionPROD: ${{ parameters.prodCompanyPortalVersion }}
+#            prodBrokerHostVersion: $(Broker-PROD-Version)
 
 # ADAL with Broker (API 30+)
 - stage: 'adal_with_broker_high_api'
