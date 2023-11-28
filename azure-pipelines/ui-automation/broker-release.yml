@@ -744,8 +744,8 @@ stages:
           inputs:
             targetType: inline
             script: |
-              Write-Host "##vso[build.addbuildtag]RC-Authenticator-APK-Version=$(rcAuthenticatorVersion)"
-              Write-Host "##vso[build.addbuildtag]RC-CompanyPortal-APK-Version=$(rcCompanyPortalVersion)"
+              Write-Host "##vso[build.addbuildtag]RC-Authenticator-APK-Version=$(rcAuthenticatorVersion) PROD-Authenticator-APK-Version=${{ parameters.prodAuthenticatorVersion }}"
+              Write-Host "##vso[build.addbuildtag]RC-CompanyPortal-APK-Version=$(rcCompanyPortalVersion) PROD-CompanyPortal-APK-Version=${{ parameters.prodCompanyPortalVersion }}"
               Write-Host "##vso[build.addbuildtag]RC-LTW-APK-Version=$(rcLTWVersion)"
 #        - template: ./templates/download-brokers.yml
 #          parameters:
