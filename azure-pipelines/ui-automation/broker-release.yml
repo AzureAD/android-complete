@@ -552,9 +552,16 @@ stages:
 - stage: 'queueLinkToWindowsPipeline'
   variables:
     - group: AndroidAuthClientAutomationSecrets
-  displayName: Link To Windows Apk Generation
-  dependsOn: promotePackages
-  condition: eq(${{ parameters.buildLTW }}, 'True')
+  displayName: Link To Windows - Queue Build Pipeline
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.buildLTW }}, 'True')
+    )
+  dependsOn:
+    - promoteLibraries
   jobs:
     - job: queue_build_LinkToWindows
       displayName: Generate Link To Windows Apk
@@ -706,7 +713,7 @@ stages:
       not(canceled())
     )
   jobs:
-    - job: 'download_brokers'
+    - job: 'download_brokers_job'
       displayName: Download Brokers
       pool:
         vmImage: ubuntu-latest
