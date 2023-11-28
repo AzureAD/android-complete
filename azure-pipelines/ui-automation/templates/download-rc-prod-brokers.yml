@@ -153,7 +153,7 @@ steps:
       versionDownloadExternal: '${{ parameters.LTWVersionRC }}'
   - script: mv ./YPC-*.apk ./LTW-signed.apk
     displayName: 'Rename LTW build to LTW-signed.apk'
-    workingDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
+    workingDirectory: '$(Build.ArtifactStagingDirectory)/brokers/RC'
   - task: UniversalPackages@0
     displayName: 'Download Old LTW Apk'
     inputs:
