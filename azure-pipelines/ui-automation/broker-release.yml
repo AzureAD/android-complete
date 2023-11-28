@@ -720,9 +720,12 @@ stages:
           inputs:
             targetType: inline
             script: |
-              Write-Host "##vso[build.addbuildtag]LTW-APK-Version=$(authenticatorApkVersion)"
-              Write-Host "##vso[build.addbuildtag]LTW-APK-Version=$(companyPortalApkVersion)"
+              Write-Host "##vso[build.addbuildtag]Authenticator-Version=$(authenticatorApkVersion)"
+              Write-Host "##vso[build.addbuildtag]CP-Version=$(companyPortalApkVersion)"
               Write-Host "##vso[build.addbuildtag]LTW-APK-Version=$(ltwApkVersion)"
+              if ($(authenticatorApkVersion) -eq "") {
+                Write-Host "Success"
+              }
 #        - template: ./templates/download-brokers.yml
 #          parameters:
 #            msazureServiceConnection: '$(msazureServiceConnection)'
