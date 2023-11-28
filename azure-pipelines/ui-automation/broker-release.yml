@@ -36,6 +36,10 @@ parameters:
   displayName: Run Unit And Instrumented Tests?
   type: boolean
   default: True
+- name: shouldRunUiValidation
+  displayName: Run E2E UI Validation?
+  type: boolean
+  default: False
 - name: shouldBuildTestingLibraries
   displayName: Build & Publish Testing libs?
   type: boolean
@@ -746,7 +750,7 @@ stages:
               Write-Host "##vso[build.addbuildtag]RC Authenticator APK Version=($rcAuthenticatorVersionTag) PROD Authenticator APK Version=($prodAuthenticatorVersionTag)"
               Write-Host "##vso[build.addbuildtag]RC CompanyPortal APK Version=($rcCompanyPortalVersionTag) PROD CompanyPortal APK Version=($prodCompanyPortalVersionTag)"
               Write-Host "##vso[build.addbuildtag]RC LTW APK Version=($rcLTWVersionTag)"
-        - template: ./templates/download-brokers.yml
+        - template: ./templates/download-rc-prod-brokers.yml
           parameters:
             msazureServiceConnection: '$(msazureServiceConnection)'
             msazureFeedName: '$(msazureFeedName)'
@@ -767,7 +771,8 @@ stages:
     and
     (
       not(failed()),
-      not(canceled())
+      not(canceled()),
+      eq(${{ parameters.shouldRunUiValidation }}, 'True')
     )
   displayName: RC ADAL with RC Broker UI Automation
   jobs:
@@ -778,9 +783,9 @@ stages:
         testTargetPackages: $(brokerTestTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "brokerautomationapp-testpass-adal&basic-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
-        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-                      /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-                      /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/RC/$(companyPortalApk),\
+                      /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/RC/$(authenticatorApk),\
+                      /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(oldAuthenticatorApk),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-RC/AzureSample-external-release.apk,\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Dist-RC-release/brokerHost-dist-release.apk,\
                       /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
@@ -804,7 +809,8 @@ stages:
     and
     (
       not(failed()),
-      not(canceled())
+      not(canceled()),
+      eq(${{ parameters.shouldRunUiValidation }}, 'True')
     )
   displayName: RC MSAL with PROD Broker UI Automation
   jobs:
@@ -816,10 +822,10 @@ stages:
         testTargetPackages: $(msalTestTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "RC_MSAL-PROD_Broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
-        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/prod/$(companyPortalApk),\
-                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/prod/$(authenticatorApk),\
-                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
-                          /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/prod/brokerHost-dist-release.apk,\
+        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/PROD/$(companyPortalApk),\
+                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/PROD/$(authenticatorApk),\
+                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(oldAuthenticatorApk),\
+                          /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/PROD/brokerHost-dist-release.apk,\
                           /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-RC/AzureSample-external-release.apk,\
                           /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                           /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
@@ -840,10 +846,10 @@ stages:
         testTargetPackages: $(msalTestTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "RC_MSAL-PROD_Broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
-        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/prod/$(companyPortalApk),\
-                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/prod/$(authenticatorApk),\
-                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
-                          /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/prod/brokerHost-dist-release.apk,\
+        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/PROD/$(companyPortalApk),\
+                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/PROD/$(authenticatorApk),\
+                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(oldAuthenticatorApk),\
+                          /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/PROD/brokerHost-dist-release.apk,\
                           /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-RC/AzureSample-external-release.apk,\
                           /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                           /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
@@ -866,7 +872,8 @@ stages:
     and
     (
       not(failed()),
-      not(canceled())
+      not(canceled()),
+      eq(${{ parameters.shouldRunUiValidation }}, 'True')
     )
   displayName: PROD MSAL with RC Broker UI Automation
   jobs:
@@ -878,9 +885,9 @@ stages:
         testTargetPackages: $(msalTestTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "PROD-MSAL-RC-Broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
-        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/RC/$(companyPortalApk),\
+                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/RC/$(authenticatorApk),\
+                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(oldAuthenticatorApk),\
                           /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
                           /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Dist-RC-release/brokerHost-dist-release.apk,\
                           /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
@@ -902,10 +909,10 @@ stages:
         testTargetPackages: $(msalTestTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "PROD-MSAL-RC-BrokerHost-debug-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
-        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
-                          /sdcard/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/brokerHost-local-debug.apk,\
+        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/RC/$(companyPortalApk),\
+                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/RC/$(authenticatorApk),\
+                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(oldAuthenticatorApk),\
+                          /sdcard/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/brokerHost-local-debug.apk,\
                           /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
                           /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Local-RC-debug/brokerHost-local-debug.apk,\
                           /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
@@ -926,9 +933,9 @@ stages:
         testTargetPackages: $(msalTestTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "RC_MSAL-PROD_Broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
-        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/RC/$(companyPortalApk),\
+                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/RC/$(authenticatorApk),\
+                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(oldAuthenticatorApk),\
                           /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
                           /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Dist-RC-release/brokerHost-dist-release.apk,\
                           /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
