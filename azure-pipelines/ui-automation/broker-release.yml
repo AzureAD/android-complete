@@ -515,7 +515,7 @@ stages:
         - task: PowerShell@2
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(MSAzure-PAT)" -BuildDefinitionId "$(authenticatorPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}'', ''AdalVersion'': ''${{ parameters.adalVersionRC }}'' }" -Branch "$(authenticatorBranch)" -BuildNumberOutputOnSuccessVar "authenticatorApkVersion"'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(MSAzure-PAT)" -BuildDefinitionId "$(authenticatorPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}'', ''AdalVersion'': ''${{ parameters.adalVersionRC }}'' }" -Branch "$(authenticatorBranch)" -BuildNumberOutputOnSuccessVar "authenticatorRCPipelineVersion"'
             workingDirectory: '$(Build.SourcesDirectory)'
           name: authenticatorPipelineScript
 # Company Portal
@@ -541,7 +541,7 @@ stages:
 #        - task: PowerShell@2
 #          inputs:
 #            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-#            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAzure-PAT)" -BuildDefinitionId "$(companyPortalPipelineId)" -WaitTimeoutInMinutes 100 -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}''}" -Branch "$(companyPortalBranch)" -BuildNumberOutputOnSuccessVar "companyPortalApkVersion"'
+#            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAzure-PAT)" -BuildDefinitionId "$(companyPortalPipelineId)" -WaitTimeoutInMinutes 100 -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}''}" -Branch "$(companyPortalBranch)" -BuildNumberOutputOnSuccessVar "companyPortalRCPipelineVersion"'
 #            workingDirectory: '$(Build.SourcesDirectory)'
 #          name: companyPortalPipelineScript
         - task: PowerShell@2
@@ -549,7 +549,7 @@ stages:
           inputs:
             targetType: inline
             script: |
-              Write-Host "##vso[task.setvariable variable=companyPortalApkVersion;isOutput=true]1234"
+              Write-Host "##vso[task.setvariable variable=companyPortalRCPipelineVersion;isOutput=true]1234"
           name: companyPortalPipelineScript
 # BrokerApk - Link to Windows Queue pipeline
 - stage: 'queueLinkToWindowsPipeline'
@@ -590,7 +590,7 @@ stages:
               Write-Host "Raw Build Number: $(ltwPipelineScript.rawLtwPipelineBuildNumber)"
               $trimmedVersion = "$(ltwPipelineScript.rawLtwPipelineBuildNumber)" -replace "\.\d+\.\w+$",""
               Write-Host "Trimmed Version Number: $trimmedVersion"
-              Write-Host "##vso[task.setvariable variable=ltwApkVersion;isOutput=true]$trimmedVersion"
+              Write-Host "##vso[task.setvariable variable=ltwRCPipelineVersion;isOutput=true]$trimmedVersion"
           name: ltwVersionScript
 
 # TestApp generation
@@ -721,29 +721,30 @@ stages:
       pool:
         vmImage: ubuntu-latest
       variables:
-        authenticatorApkVersion: $[ stageDependencies.queueAuthenticatorBrokerApkPipeline.queue_build_Authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
-        companyPortalApkVersion: $[ stageDependencies.queueCompanyPortalBrokerApkPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalApkVersion'] ]
-        ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
+        authenticatorRCPipelineVersion: $[ stageDependencies.queueAuthenticatorBrokerApkPipeline.queue_build_Authenticator.outputs['authenticatorPipelineScript.authenticatorRCPipelineVersion'] ]
+        companyPortalRCPipelineVersion: $[ stageDependencies.queueCompanyPortalBrokerApkPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalRCPipelineVersion'] ]
+        ltwRCPipelineVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwRCPipelineVersion'] ]
       steps:
         - task: PowerShell@2
           displayName: 'Broker APK Versioning Script'
           inputs:
             targetType: inline
             script: |
-              Write-Host "##vso[build.addbuildtag]Authenticator-Version=$(authenticatorApkVersion)"
-              Write-Host "##vso[build.addbuildtag]CP-Version=$(companyPortalApkVersion)"
-              Write-Host "##vso[build.addbuildtag]LTW-APK-Version=$(ltwApkVersion)"
-              if ('$(authenticatorApkVersion)' -eq '') {
-                Write-Host "Success"
-              } else {
-                Write-Host "Fail"
-              }
+#              Write-Host "##vso[build.addbuildtag]Authenticator-Version=$(authenticatorRCPipelineVersion)"
+#              Write-Host "##vso[build.addbuildtag]CP-Version=$(companyPortalRCPipelineVersion)"
+#              Write-Host "##vso[build.addbuildtag]LTW-APK-Version=$(ltwRCPipelineVersion)"
               
-              if ('$(companyPortalApkVersion)' -eq '') {
+              if ('$(companyPortalRCPipelineVersion)' -eq '') {
                 Write-Host "Fail"
               } else {
-                Write-Host "Success"
+                      Write-Host "##vso[task.setvariable variable=rcCompanyPortalVersion]$(companyPortalRCPipelineVersion)"
               }
+        - task: PowerShell@2
+          displayName: 'Broker APK Versioning Script'
+          inputs:
+            targetType: inline
+            script: |
+              Write-Host "CP version RC: $(rcCompanyPortalVersion)"
 #        - template: ./templates/download-brokers.yml
 #          parameters:
 #            msazureServiceConnection: '$(msazureServiceConnection)'
