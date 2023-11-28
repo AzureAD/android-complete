@@ -744,9 +744,15 @@ stages:
           inputs:
             targetType: inline
             script: |
-              Write-Host "##vso[build.addbuildtag]RC-Authenticator-APK-Version=$(rcAuthenticatorVersion) PROD-Authenticator-APK-Version=${{ parameters.prodAuthenticatorVersion }}"
-              Write-Host "##vso[build.addbuildtag]RC-CompanyPortal-APK-Version=$(rcCompanyPortalVersion) PROD-CompanyPortal-APK-Version=${{ parameters.prodCompanyPortalVersion }}"
-              Write-Host "##vso[build.addbuildtag]RC-LTW-APK-Version=$(rcLTWVersion)"
+              $rcAuthenticatorVersionTag = "$(rcAuthenticatorVersion)" -replace "*","Latest In Feed"
+              $prodAuthenticatorVersionTag = "${{ parameters.prodAuthenticatorVersion }}" -replace "*","Latest In Feed"
+              $rcCompanyPortalVersionTag = "$(rcCompanyPortalVersion)" -replace "*","Latest In Feed"
+              $prodCompanyPortalVersionTag = "${{ parameters.prodCompanyPortalVersion }}" -replace "*","Latest In Feed"
+              $rcLTWVersionTag = "$(rcLTWVersion)" -replace "*","Latest In Feed"
+              
+              Write-Host "##vso[build.addbuildtag]RC Authenticator APK Version=$rcAuthenticatorVersionTag PROD Authenticator APK Version=$prodAuthenticatorVersionTag"
+              Write-Host "##vso[build.addbuildtag]RC CompanyPortal APK Version=$rcCompanyPortalVersionTag PROD CompanyPortal APK Version=$prodCompanyPortalVersionTag"
+              Write-Host "##vso[build.addbuildtag]RC LTW APK Version=$rcLTWVersionTag"
 #        - template: ./templates/download-brokers.yml
 #          parameters:
 #            msazureServiceConnection: '$(msazureServiceConnection)'
