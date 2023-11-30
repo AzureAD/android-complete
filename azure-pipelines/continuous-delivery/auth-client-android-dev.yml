@@ -143,7 +143,7 @@ stages:
           $localFlightFalseDays = "Tuesday","Thursday"
           $ecsFlightDays = "Saturday"
           
-          if ($(buildingOnSchedule)) {
+          if ("$(buildingOnSchedule)" -eq "True") {
             Write-Host "This run is scheduled on a ($(DayOfWeek))"
           
             # Local Flights, set to true days
