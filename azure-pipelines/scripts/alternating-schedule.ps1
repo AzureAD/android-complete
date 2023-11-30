@@ -2,7 +2,7 @@ Param (
     [Parameter(Mandatory = $false)][String]$OutputVariable="DayOfWeek"
 )
 
-$WeekDay = ( get-date ).DayOfWeek.value__
+$WeekDay = ( get-date ).DayOfWeek
 
 Write-Host "Setting  $OutputVariable"
 Write-Host "$BuildNumberOutputOnSuccessVar = $WeekDay"
