@@ -137,13 +137,13 @@ stages:
         targetType: inline
         script: |
           #If this is a scheduled run, set up flight/flags variables based on day of the week
-          Write-Host "Running on Schedule: $buildingOnSchedule"
+          Write-Host "Running on Schedule: $(buildingOnSchedule)"
           
           $localFlightTrueDays = "Monday","Wednesday","Friday"
           $localFlightFalseDays = "Tuesday","Thursday"
           $ecsFlightDays = "Saturday"
           
-          if ($buildingOnSchedule) {
+          if ($(buildingOnSchedule)) {
             Write-Host "This run is scheduled on a ($(DayOfWeek))"
           
             # Local Flights, set to true days
