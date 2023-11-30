@@ -127,7 +127,7 @@ parameters:
 - name: oldOneAuthTestAppVersion
   displayName: Old OneAuth Test App Version
   type: string
-  default: '0.0.3'
+  default: '0.0.4'
 - name: preInstallLtw
   displayName: Preinstall Link to Windows
   type: boolean
