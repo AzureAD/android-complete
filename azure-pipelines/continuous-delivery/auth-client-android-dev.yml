@@ -120,7 +120,7 @@ stages:
     - name: flightsTag
       value: $[replace(variables['broker4j_flights'], ':', ' ')]
     - name: buildingOnSchedule
-      value: eq( variables['Build.Reason'], 'Schedule')
+      value: $[eq( variables['Build.Reason'], 'Schedule')]
   jobs:
   - job: alternateSchedule
     displayName: Set up alternating schedule
