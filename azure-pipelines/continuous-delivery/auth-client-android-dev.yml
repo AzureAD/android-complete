@@ -119,6 +119,8 @@ stages:
   variables:
     - name: flightsTag
       value: $[replace(variables['broker4j_flights'], ':', ' ')]
+    - name: buildingOnSchedule
+      value: eq( variables['Build.Reason'], 'Schedule')
   jobs:
   - job: alternateSchedule
     displayName: Set up alternating schedule
@@ -134,7 +136,40 @@ stages:
       inputs:
         targetType: inline
         script: |
-          Write-Host "Current Day: $(DayOfWeek)"
+          #If this is a scheduled run, set up flight/flags variables based on day of the week
+          Write-Host "Running on Schedule: $buildingOnSchedule"
+          
+          $localFlightTrueDays = "Monday","Wednesday","Friday"
+          $localFlightFalseDays = "Tuesday","Thursday"
+          $ecsFlightDays = "Saturday"
+          
+          if ($buildingOnSchedule) {
+            Write-Host "This run is scheduled on a ($(DayOfWeek))"
+          
+            # Local Flights, set to true days
+            if ( $localFlightTrueDays.Contains("$(DayOfWeek)") ) {
+              Write-Host "Scheduled: use local flights with true values
+            }
+            
+            # Local Flights, set to false days
+            elif ( $localFlightFalseDays.Contains("$(DayOfWeek)") ) {
+              Write-Host "Scheduled: use local flights with false values
+            }
+            
+            # ECS Flight Days
+            elif ( $ecsFlightDays.Contains("($DayOfWeek)") ) {
+              Write-Host "Scheduled: use ECS flights"
+            }
+          
+            # Default behavior if day does not have a defined behavior
+            else {
+              Write-Host "This day doesn't have defined behavior"
+              exit 1
+            }
+          
+          } else {
+            Write-Host "This is not a scheduled run, proceed without altering variables."
+          }
   - job: addTags
     displayName: Add tags for flights
     steps:
@@ -143,10 +178,10 @@ stages:
       inputs:
         targetType: inline
         script: |
-          Write-Host "##vso[build.addbuildtag]Android_Broker_Version_$(brokerVersionNumber)"
-          Write-Host "##vso[build.addbuildtag]Other_Library_Versions_$(versionNumber)"
-          Write-Host "##vso[build.addbuildtag]Flags_$(enableBrokerDiscoveryParam)_$(enableBrokerSelectionParam)_$(broker4j_extra_flags)"
-          Write-Host "##vso[build.addbuildtag]Flights_$(flightsTag)"
+          Write-Host "##vso[build.addbuildtag]Android Broker Version=$(brokerVersionNumber)"
+          Write-Host "##vso[build.addbuildtag]Other Library Versions=$(versionNumber)"
+          Write-Host "##vso[build.addbuildtag]Flags ($(enableBrokerDiscoveryParam)_$(enableBrokerSelectionParam)_$(broker4j_extra_flags))"
+          Write-Host "##vso[build.addbuildtag]Flights ($(flightsTag))"
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
