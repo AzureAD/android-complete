@@ -113,13 +113,28 @@ variables:
   brokerHostPackageVersionCounter: $[counter(1, 10000)]
 
 stages:
-- stage: 'addTags'
-  displayName: Tag Pipeline
+- stage: 'setupStage'
+  displayName: Setup Stage
   dependsOn: []
   variables:
     - name: flightsTag
       value: $[replace(variables['broker4j_flights'], ':', ' ')]
   jobs:
+  - job: alternateSchedule
+    displayName: Set up alternating schedule
+    steps:
+    - task: PowerShell@2
+      displayName: Get Day of Week
+      inputs:
+        filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/alternating-schedule.ps1'
+        workingDirectory: '$(Build.SourcesDirectory)'
+      name: dayOfWeekScript
+    - task: PowerShell@2
+      displayName: Configure Variables Based on Day
+      inputs:
+        targetType: inline
+        script: |
+          Write-Host "Current Day: $(DayOfWeek)"
   - job: addTags
     displayName: Add tags for flights
     steps:
@@ -135,7 +150,8 @@ stages:
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
-  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+  dependsOn:
+    - setupStage
   jobs:
   - template: assemble&publish.yml
     parameters:
