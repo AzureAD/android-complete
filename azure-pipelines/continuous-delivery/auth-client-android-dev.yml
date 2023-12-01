@@ -115,7 +115,7 @@ stages:
   dependsOn: []
   variables:
     - name: buildingOnSchedule
-      value: $[eq( variables['Build.Reason'], 'Schedule')]
+      value: $[eq( variables['Build.Reason'], 'Manual')]
   jobs:
   - job: alternateSchedule
     displayName: Set up alternating schedule
