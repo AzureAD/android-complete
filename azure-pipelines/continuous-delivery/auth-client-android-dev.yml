@@ -141,14 +141,16 @@ stages:
           Write-Host "##vso[build.addbuildtag]Android Broker Version=($(brokerVersionNumber))"
           Write-Host "##vso[build.addbuildtag]Other Library Versions=($(versionNumber))"
 
-          if ($(setupConfigurationScript.FlightOutput) -eq "") {
+          if ("$(setupConfigurationScript.FlightOutput)" -eq "") {
+            $FlightTag = "$(setupConfigurationScript.FlightOutput)" -replace ":"," "
+            
             Write-Host "##vso[build.addbuildtag]Local Flighting"
-            Write-Host "##vso[build.addbuildtag]Flights Passed=$(setupConfigurationScript.FlightOutput)"
+            Write-Host "##vso[build.addbuildtag]Flights Passed=$FlightTag"
           } else {
             Write-Host "##vso[build.addbuildtag]ECS Flighting"
           }
 
-          if ($(setupConfigurationScript.FlagOutput) -eq "") {
+          if ("$(setupConfigurationScript.FlagOutput)" -eq "") {
             Write-Host "##vso[build.addbuildtag]No Library Flags Passed"
           } else {
             Write-Host "##vso[build.addbuildtag]Flags passed= $(setupConfigurationScript.FlagOutput)"
