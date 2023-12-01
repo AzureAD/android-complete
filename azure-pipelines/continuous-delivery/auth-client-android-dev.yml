@@ -142,12 +142,12 @@ stages:
           Write-Host "##vso[build.addbuildtag]Other Library Versions=($(versionNumber))"
 
           if ("$(setupConfigurationScript.FlightOutput)" -eq "") {
+            Write-Host "##vso[build.addbuildtag]ECS Flighting"
+          } else {
             $FlightTag = "$(setupConfigurationScript.FlightOutput)" -replace ":"," "
-            
+          
             Write-Host "##vso[build.addbuildtag]Local Flighting"
             Write-Host "##vso[build.addbuildtag]Flights Passed=$FlightTag"
-          } else {
-            Write-Host "##vso[build.addbuildtag]ECS Flighting"
           }
 
           if ("$(setupConfigurationScript.FlagOutput)" -eq "") {
