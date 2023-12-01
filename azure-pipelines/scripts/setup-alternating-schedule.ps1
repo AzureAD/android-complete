@@ -4,7 +4,7 @@ Param (
     [Parameter(Mandatory = $true)][String]$FlightInput,
     [Parameter(Mandatory = $true)][String]$FlightSelection,
     [Parameter(Mandatory = $true)][String]$FlagInput,
-    [Parameter(Mandatory = $true)][String]$BuildNumberInput
+    [Parameter(Mandatory = $true)][String]$BuildNumberInput,
     [Parameter(Mandatory = $false)][String]$FlightOutputVar="FlightOutput",
     [Parameter(Mandatory = $false)][String]$FlagOutputVar="FlagOutput"
 )
