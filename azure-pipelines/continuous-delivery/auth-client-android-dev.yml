@@ -91,7 +91,7 @@ parameters:
 
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:
-    versionNumber: $(Build.BuildNumber)
+    versionNumber: "$(Build.BuildNumber)"
     brokerVersionNumber: $[replace(variables['build.buildnumber'], '1.0.', '8.1.')]
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
