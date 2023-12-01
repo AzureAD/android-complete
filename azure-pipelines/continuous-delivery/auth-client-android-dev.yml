@@ -53,26 +53,29 @@ parameters:
     displayName: Version Number
     type: string
     default: Default
+  - name: flightingSelection
+    displayName: Broker Flight Provider (ECS is used in PROD)
+    type: string
+    default: "Local"
+    values:
+      - Local
+      - ECS
+  - name: flightingValueParameter
+    displayName: Broker Local Flight Json-String (not active with ECS flighting)
+    type: string
+    default: '{EnablePrtV3:true,EnableBrokerPowerLiftLogging:true}'
+  - name: flagsValue
+    displayName: Flags to Pass (passed to all libraries)
+    type: string
+    default: '-PbrokerSelectionEnabledFlag -PnewBrokerDiscoveryEnabledFlag'
   - name: shouldRunUiValidation
     displayName: Run E2E UI Validation?
     type: boolean
     default: False
-  - name: shouldRunUnitTests
-    displayName: Run Unit Tests?
+  - name: shouldRunUnitAndInstrumentedTests
+    displayName: Run Unit and Instrumented Tests?
     type: boolean
     default: True
-  - name: shouldRunInstrumentedTests
-    displayName: Run Instrumented Tests?
-    type: boolean
-    default: True
-  - name: shouldPublishLibraries
-    displayName: Publish Libraries?
-    type: boolean
-    default: True
-  - name: shouldEnableBrokerSelectionAndDiscoveryFlag
-    displayName: Should enable broker selection & discovery?
-    type: boolean
-    default: False
   - name: publishLibraryArtifacts
     displayName: Should publish library artifacts? (lockfiles and release artifacts)
     type: boolean
@@ -104,12 +107,6 @@ variables:
   companyPortalPipelineId: 237827
   ltwPipelineId: 44201
   brokerAutomationPipelineId: 1490
-  ${{ if parameters.shouldEnableBrokerSelectionAndDiscoveryFlag }}:
-    enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
-    enableBrokerDiscoveryParam: -PnewBrokerDiscoveryEnabledFlag
-  ${{ else }}:
-    enableBrokerSelectionParam: ''
-    enableBrokerDiscoveryParam: ''
   brokerHostPackageVersionCounter: $[counter(1, 10000)]
 
 stages:
@@ -117,8 +114,6 @@ stages:
   displayName: Setup Stage
   dependsOn: []
   variables:
-    - name: flightsTag
-      value: $[replace(variables['broker4j_flights'], ':', ' ')]
     - name: buildingOnSchedule
       value: $[eq( variables['Build.Reason'], 'Schedule')]
   jobs:
@@ -128,60 +123,37 @@ stages:
     - task: PowerShell@2
       displayName: Get Day of Week
       inputs:
-        filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/alternating-schedule.ps1'
+        filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/day-of-week.ps1'
         workingDirectory: '$(Build.SourcesDirectory)'
       name: dayOfWeekScript
     - task: PowerShell@2
       displayName: Configure Variables Based on Day
       inputs:
-        targetType: inline
-        script: |
-          #If this is a scheduled run, set up flight/flags variables based on day of the week
-          Write-Host "Running on Schedule: $(buildingOnSchedule)"
-          
-          $localFlightTrueDays = "Monday","Wednesday","Friday"
-          $localFlightFalseDays = "Tuesday","Thursday"
-          $ecsFlightDays = "Saturday"
-          
-          if ("$(buildingOnSchedule)" -eq "True") {
-            Write-Host "This run is scheduled on a ($(DayOfWeek))"
-          
-            # Local Flights, set to true days
-            if ( $localFlightTrueDays.Contains("$(DayOfWeek)") ) {
-              Write-Host "Scheduled: use local flights with true values
-            }
-            
-            # Local Flights, set to false days
-            elif ( $localFlightFalseDays.Contains("$(DayOfWeek)") ) {
-              Write-Host "Scheduled: use local flights with false values
-            }
-            
-            # ECS Flight Days
-            elif ( $ecsFlightDays.Contains("($DayOfWeek)") ) {
-              Write-Host "Scheduled: use ECS flights"
-            }
-          
-            # Default behavior if day does not have a defined behavior
-            else {
-              Write-Host "This day doesn't have defined behavior"
-              exit 1
-            }
-          
-          } else {
-            Write-Host "This is not a scheduled run, proceed without altering variables."
-          }
-  - job: addTags
-    displayName: Add tags for flights
-    steps:
+        filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/setup-alternating-schedule.ps1'
+        arguments: '-BuildingOnSchedule "$(buildingOnSchedule)" -DayOfWeek "$(DayOfWeek)" -FlightInput "${{ parameters.flightingValueParameter }}" -FlightSelection "${{ parameters.flightingSelection }}" -FlagInput "${{ parameters.flagsValue }}" -BuildNumberInput "$(Build.BuildNumber)" -FlightOutputVar "FlightOutput" -FlagOutputVar "FlagOutput"'
+        workingDirectory: '$(Build.SourcesDirectory)'
+      name: setupConfigurationScript
     - task: PowerShell@2
       displayName: Run Tagging Script
       inputs:
         targetType: inline
         script: |
-          Write-Host "##vso[build.addbuildtag]Android Broker Version=$(brokerVersionNumber)"
-          Write-Host "##vso[build.addbuildtag]Other Library Versions=$(versionNumber)"
-          Write-Host "##vso[build.addbuildtag]Flags ($(enableBrokerDiscoveryParam)_$(enableBrokerSelectionParam)_$(broker4j_extra_flags))"
-          Write-Host "##vso[build.addbuildtag]Flights ($(flightsTag))"
+          Write-Host "##vso[build.addbuildtag]Android Broker Version=($(brokerVersionNumber))"
+          Write-Host "##vso[build.addbuildtag]Other Library Versions=($(versionNumber))"
+
+          if ($(FlightOutput) -eq "") {
+            Write-Host "##vso[build.addbuildtag]Local Flighting"
+            Write-Host "##vso[build.addbuildtag]Flights Passed=$(setupConfigurationScript.FlightOutput)"
+          } else {
+            Write-Host "##vso[build.addbuildtag]ECS Flighting"
+          }
+
+          if ($(FlagOutput) -eq "") {
+            Write-Host "##vso[build.addbuildtag]No Library Flags Passed"
+          } else {
+            Write-Host "##vso[build.addbuildtag]Flags passed= $(setupConfigurationScript.FlagOutput)"
+          }
+
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
@@ -199,9 +171,8 @@ stages:
       publishParams: $(projVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
@@ -221,9 +192,8 @@ stages:
       publishParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
@@ -243,9 +213,8 @@ stages:
       publishParams: $(projVersionParam) $(common4jVersionParam) $(broker4j_extra_flags) -PlocalFlights=$(broker4j_flights)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
@@ -271,10 +240,9 @@ stages:
       publishParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
       agentImage: 1ES-AndroidPool-EOC
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Linux Broker - Build and publish
 - stage: 'publishLinuxBrokeLibraries'
@@ -294,10 +262,9 @@ stages:
       publishParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
       testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -Psystemd_mode_enabled=false --build-cache --info
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
   - job: PublishLinuxBrokerPackage
     dependsOn: publishLinuxBrokerLibraries
@@ -351,9 +318,8 @@ stages:
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Adal - Build and publish
 - stage: 'publishAdal'
@@ -373,9 +339,8 @@ stages:
       publishParams: $(projVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 
 # Promote published packages
