@@ -28,25 +28,25 @@ if ("$BuildingOnSchedule" -eq "True") {
         $FlightValue = $FlightInput -ireplace "false","true"
         $FlagValue = $FlagInput
 
-        Write-Host "##vso[build.updatebuildnumber]$BuildNumberInput--[Local Flights Set True With Flags]"
+        Write-Host "##vso[build.updatebuildnumber]$BuildNumberInput  [Local Flights Set True With Flags]"
     }
 
     # Local Flights, set to false, don't pass flags days
-    elif ( $LocalFlightFalseDays.Contains("$DayOfWeek") ) {
+    elseif ( $LocalFlightFalseDays.Contains("$DayOfWeek") ) {
         Write-Host "Scheduled: use local flights with false values, no flags passed"
         $FlightValue = $FlightInput -ireplace "true","false"
         $FlagValue = ""
 
-        Write-Host "##vso[build.updatebuildnumber]$BuildNumberInput--[Local Flights Set False No Flags]"
+        Write-Host "##vso[build.updatebuildnumber]$BuildNumberInput  [Local Flights Set False No Flags]"
     }
 
     # ECS Flight Days
-    elif ( $EcsFlightDays.Contains("$DayOfWeek") ) {
+    elseif ( $EcsFlightDays.Contains("$DayOfWeek") ) {
         Write-Host "Scheduled: use ECS flights"
         $FlightValue = ""
         $FlagValue = ""
 
-        Write-Host "##vso[build.updatebuildnumber]$BuildNumberInput--[ECS Flights No Flags]"
+        Write-Host "##vso[build.updatebuildnumber]$BuildNumberInput  [ECS Flights No Flags]"
     }
 
     # Default behavior if day does not have a defined behavior
