@@ -161,7 +161,6 @@ stages:
   displayName: Common4j - Build and publish
   dependsOn: setupStage
   variables:
-    flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlightOutput'] ]
     flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
   jobs:
   - template: assemble&publish.yml
@@ -183,7 +182,6 @@ stages:
   displayName: Common - Build and publish
   dependsOn: publishCommon4jLibraries
   variables:
-    flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlightOutput'] ]
     flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
   jobs:
   - template: assemble&publish.yml
@@ -262,7 +260,6 @@ stages:
   - publishCommon4jLibraries
   - publishBroke4jLibraries
   variables:
-    flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlightOutput'] ]
     flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
   jobs:
   - template: assemble&publish.yml
@@ -319,7 +316,6 @@ stages:
   displayName: Msal - Build and publish
   dependsOn: publishCommonLibraries
   variables:
-    flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlightOutput'] ]
     flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
   jobs:
   - template: assemble&publish.yml
@@ -343,7 +339,6 @@ stages:
   displayName: Adal - Build and publish
   dependsOn: publishCommonLibraries
   variables:
-    flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlightOutput'] ]
     flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
   jobs:
   - template: assemble&publish.yml
