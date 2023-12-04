@@ -433,7 +433,13 @@ stages:
     - group: AndroidAuthClientAutomationSecrets
   displayName: Link To Windows Apk Generation
   dependsOn: promotePackages
-  condition: eq(variables['LTWIntegrationEnabled'], 'true')
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(variables['LTWIntegrationEnabled'], 'true')
+    )
   jobs:
     - job: queue_build_LinkToWindows
       displayName: Generate Link To Windows Apk
