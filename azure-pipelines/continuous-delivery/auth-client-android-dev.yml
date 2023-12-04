@@ -115,7 +115,7 @@ stages:
   dependsOn: []
   variables:
     - name: buildingOnSchedule
-      value: $[eq( variables['Build.Reason'], 'Manual')]
+      value: $[eq( variables['Build.Reason'], 'Schedule')]
   jobs:
   - job: alternateSchedule
     displayName: Set up alternating schedule
@@ -127,7 +127,7 @@ stages:
         workingDirectory: '$(Build.SourcesDirectory)'
       name: dayOfWeekScript
     - task: PowerShell@2
-      displayName: Configure Variables Based on Day
+      displayName: Configure Flight/Flag Variables Based on Day
       inputs:
         filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/setup-alternating-schedule.ps1'
         arguments: '-BuildingOnSchedule "$(buildingOnSchedule)" -DayOfWeek "$(DayOfWeek)" -FlightInput "${{ parameters.flightingValueParameter }}" -FlightSelection "${{ parameters.flightingSelection }}" -FlagInput "${{ parameters.flagsValue }}" -BuildNumberInput "$(Build.BuildNumber)" -FlightOutputVar "FlightOutput" -FlagOutputVar "FlagOutput"'
