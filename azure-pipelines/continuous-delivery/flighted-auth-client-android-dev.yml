@@ -84,7 +84,7 @@ parameters:
     type: boolean
     default: false
   - name: treatTestAppAsPartOfTSL
-    displayName: (FOR DEBUGGING) Force Broker to treat OneAuthTestApp and MSALTestApp as first party app. (Required for testing with 1st party app registration) 
+    displayName: (FOR DEBUGGING) Force Broker to treat OneAuthTestApp/MSALTestApp as first party app. (Required for testing with 1st party app registration) 
     type: boolean
     default: False
   - name: publishLibraryArtifacts
