@@ -80,11 +80,11 @@ parameters:
     type: boolean
     default: True
   - name: shouldTrustDebugBroker
-    displayName: Always trust debug broker apps. (Required for working with DEBUG CP/LTW/AuthApp)
+    displayName: (FOR DEBUGGING) Always trust debug broker apps. (Required for working with DEBUG CP/LTW/AuthApp)
     type: boolean
-    default: False
-  - name: bypassRedirectUriCheck
-    displayName: Disable Redirect URI Validation in Broker (Required for testing with 1st party app redirect URI via OneAuth/MSAL test apps)
+    default: false
+  - name: treatTestAppAsPartOfTSL
+    displayName: (FOR DEBUGGING) Force Broker to treat OneAuthTestApp and MSALTestApp as first party app. (Required for testing with 1st party app registration via OneAuth/MSAL test apps) 
     type: boolean
     default: False
   - name: publishLibraryArtifacts
@@ -129,10 +129,12 @@ variables:
     trustDebugBrokerParam: -PtrustDebugBrokerFlag
   ${{ else }}:
     trustDebugBrokerParam: ''
-  ${{ if parameters.bypassRedirectUriCheck }}:
+  ${{ if parameters.treatTestAppAsPartOfTSL }}:
     bypassRedirectUriCheckParam: -PbypassRedirectUriCheck
+    treatTestAppAsPartOfTSLParam: -PtreatTestAppAsPartOfTSL
   ${{ else }}:
     bypassRedirectUriCheckParam: ''
+    treatTestAppAsPartOfTSLParam: ''
 
 stages:
 - stage: 'addTags'
@@ -152,7 +154,7 @@ stages:
         script: |
           Write-Host "##vso[build.addbuildtag]Android_Broker_Version_$(brokerVersionNumber)"
           Write-Host "##vso[build.addbuildtag]Other_Library_Versions_$(versionNumber)"
-          Write-Host "##vso[build.addbuildtag]Flags_$(enableBrokerDiscoveryParam)_$(enableBrokerSelectionParam)_$(trustDebugBrokerParam)_$(bypassRedirectUriCheckParam)_$(broker4j_extra_flags)"
+          Write-Host "##vso[build.addbuildtag]Flags_$(enableBrokerDiscoveryParam)_$(enableBrokerSelectionParam)_$(trustDebugBrokerParam)_$(bypassRedirectUriCheckParam)_$(treatTestAppAsPartOfTSLParam)_$(broker4j_extra_flags)"
           Write-Host "##vso[build.addbuildtag]Flights_$(flightsTag)"
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
@@ -240,7 +242,7 @@ stages:
       testCmd: distDebugAADAuthenticatorUnitTestCoverageReport
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) $(enableBrokerSelectionParam)
+      assembleParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) $(enableBrokerSelectionParam) $(treatTestAppAsPartOfTSLParam)
       testParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) $(enableBrokerSelectionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
@@ -500,7 +502,7 @@ stages:
         adAccountsVersion: $(brokerVersionNumber)
         adalVersion: $(versionNumber)
         packageVariant: RC
-        flagsParamString: $(broker4j_extra_flags) $(enableBrokerDiscoveryParam) $(enableBrokerSelectionParam) $(bypassRedirectUriCheckParam)
+        flagsParamString: $(broker4j_extra_flags) $(enableBrokerDiscoveryParam) $(enableBrokerSelectionParam) $(bypassRedirectUriCheckParam) $(treatTestAppAsPartOfTSLParam)
         localFlightsParamString: $(broker4j_flights)
         publishToFeed: True
         tokenSelection: 'mvnPAT'
