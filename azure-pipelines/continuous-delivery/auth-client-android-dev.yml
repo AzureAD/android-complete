@@ -112,7 +112,7 @@ variables:
   ltwPipelineId: 44201
   brokerAutomationPipelineId: 1490
   # We add these flags during scheduled runs, they will be dropped depending on the day of the week
-  ${{ if or(parameters.shouldEnableBrokerSelectionAndDiscoveryFlag, eq( variables['Build.Reason'], 'Manual')) }}:
+  ${{ if or(parameters.shouldEnableBrokerSelectionAndDiscoveryFlag, eq( variables['Build.Reason'], 'Schedule')) }}:
     enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
     enableBrokerDiscoveryParam: -PnewBrokerDiscoveryEnabledFlag
   ${{ else }}:
@@ -126,7 +126,7 @@ stages:
   dependsOn: []
   variables:
     - name: buildingOnSchedule
-      value: $[eq( variables['Build.Reason'], 'Manual')]
+      value: $[eq( variables['Build.Reason'], 'Schedule')]
   jobs:
   - job: alternateSchedule
     displayName: Set up alternating schedule
