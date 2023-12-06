@@ -153,27 +153,36 @@ stages:
           Write-Host "##vso[build.addbuildtag]Android Broker Version=($(brokerVersionNumber))"
           Write-Host "##vso[build.addbuildtag]Other Library Versions=($(versionNumber))"
 
-          if ("$(setupConfigurationScript.FlightOutput)" -eq "") {
+          # If the local flights are empty, we use ECS flight provider
+          if ("$(setupConfigurationScript.FlightOutput)" -eq "" -or "$(setupConfigurationScript.FlightOutput)" -eq "{}") {
             Write-Host "##vso[build.addbuildtag]ECS Flight Provider"
+          
+            Write-Host "##vso[task.setvariable variable=finalFlight;isOutput=true]"
           } else {
             $FlightTag = "$(setupConfigurationScript.FlightOutput)" -replace ":"," "
-          
             Write-Host "##vso[build.addbuildtag]Local Flight Provider"
             Write-Host "##vso[build.addbuildtag]Flights Passed=$FlightTag"
+          
+            Write-Host "##vso[task.setvariable variable=finalFlight;isOutput=true]-PlocalFlights=$FlightValue"
           }
 
-          if ("$(setupConfigurationScript.FlagOutput)" -eq "") {
+          if ("$(setupConfigurationScript.FlagOutput)" -eq "" -or "$(setupConfigurationScript.FlagOutput)" -eq " ") {
             Write-Host "##vso[build.addbuildtag]No Library Flags Passed"
+          
+            Write-Host "##vso[task.setvariable variable=finalFlag;isOutput=true]"
           } else {
             Write-Host "##vso[build.addbuildtag]Flags passed= $(setupConfigurationScript.FlagOutput)"
+          
+            Write-Host "##vso[task.setvariable variable=finalFlag;isOutput=true]$(setupConfigurationScript.FlagOutput)"
           }
+        name: finalSetupScript
 
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
   dependsOn: setupStage
   variables:
-    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
+    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -196,7 +205,7 @@ stages:
   - publishCommon4jLibraries
   - setupStage
   variables:
-    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
+    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -221,8 +230,8 @@ stages:
   - publishCommon4jLibraries
   - setupStage
   variables:
-    flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlightOutput'] ]
-    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
+    flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlight'] ]
+    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -231,9 +240,9 @@ stages:
       testCmd: broker4jUnitTestCoverageReport
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable) -PlocalFlights=$(flightVariable)
-      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) $(flagVariable) -PlocalFlights=$(flightVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable) -PlocalFlights=$(flightVariable)
+      assembleParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable) $(flightVariable)
+      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) $(flagVariable) $(flightVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      publishParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable) $(flightVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
@@ -247,7 +256,7 @@ stages:
   - name : powerLiftApiKeyParam
     value : -PpowerLiftApiKey=$(powerliftApiKey)
   - name: flagVariable
-    value: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
+    value: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   dependsOn: 
   - publishCommonLibraries
   - publishBroke4jLibraries
@@ -278,7 +287,7 @@ stages:
   - publishBroke4jLibraries
   - setupStage
   variables:
-    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
+    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -336,7 +345,7 @@ stages:
   - publishCommonLibraries
   - setupStage
   variables:
-    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
+    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -361,7 +370,7 @@ stages:
   - publishCommonLibraries
   - setupStage
   variables:
-    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
+    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -503,8 +512,8 @@ stages:
     - promotePackages
     - setupStage
   variables:
-    flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlightOutput'] ]
-    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
+    flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlight'] ]
+    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   displayName: Generate Test Apps
   condition:
     and

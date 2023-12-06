@@ -493,7 +493,7 @@ stages:
         adalVersion: $(versionNumber)
         packageVariant: RC
         flagsParamString: $(broker4j_extra_flags) $(enableBrokerDiscoveryParam) $(enableBrokerSelectionParam)
-        localFlightsParamString: $(broker4j_flights)
+        localFlightsParamString: -PlocalFlights=$(broker4j_flights)
         publishToFeed: True
         tokenSelection: 'mvnPAT'
         publishingPackageName: "com.microsoft.identity.testuserapp.flighted"
