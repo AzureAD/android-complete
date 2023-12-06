@@ -67,7 +67,7 @@ parameters:
   - name: flagsValue
     displayName: Flags to Pass (passed to all libraries)
     type: string
-    default: '-PbrokerSelectionEnabledFlag -PnewBrokerDiscoveryEnabledFlag'
+    default: ' '
   - name: shouldRunUiValidation
     displayName: Run E2E UI Validation?
     type: boolean
@@ -76,6 +76,10 @@ parameters:
     displayName: Run Unit and Instrumented Tests?
     type: boolean
     default: True
+  - name: shouldEnableBrokerSelectionAndDiscoveryFlag
+    displayName: Should enable broker selection & discovery?
+    type: boolean
+    default: False
   - name: publishLibraryArtifacts
     displayName: Should publish library artifacts? (lockfiles and release artifacts)
     type: boolean
@@ -107,6 +111,12 @@ variables:
   companyPortalPipelineId: 237827
   ltwPipelineId: 44201
   brokerAutomationPipelineId: 1490
+  ${{ if or(parameters.shouldEnableBrokerSelectionAndDiscoveryFlag, eq( variables['Build.Reason'], 'Schedule')) }}:
+    enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
+    enableBrokerDiscoveryParam: -PnewBrokerDiscoveryEnabledFlag
+  ${{ else }}:
+    enableBrokerSelectionParam: ''
+    enableBrokerDiscoveryParam: ''
   brokerHostPackageVersionCounter: $[counter(1, 10000)]
 
 stages:
@@ -130,7 +140,7 @@ stages:
       displayName: Configure Flight/Flag Variables Based on Day
       inputs:
         filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/setup-alternating-schedule.ps1'
-        arguments: '-BuildingOnSchedule "$(buildingOnSchedule)" -DayOfWeek "$(DayOfWeek)" -FlightInput "${{ parameters.flightingValueParameter }}" -FlightSelection "${{ parameters.flightingSelection }}" -FlagInput "${{ parameters.flagsValue }}" -BuildNumberInput "$(Build.BuildNumber)" -FlightOutputVar "FlightOutput" -FlagOutputVar "FlagOutput"'
+        arguments: '-BuildingOnSchedule "$(buildingOnSchedule)" -DayOfWeek "$(DayOfWeek)" -FlightInput "${{ parameters.flightingValueParameter }}" -FlightSelection "${{ parameters.flightingSelection }}" -FlagInput "${{ parameters.flagsValue }} $(enableBrokerSelectionParam) $(enableBrokerDiscoveryParam)" -BuildNumberInput "$(Build.BuildNumber)" -FlightOutputVar "FlightOutput" -FlagOutputVar "FlagOutput"'
         workingDirectory: '$(Build.SourcesDirectory)'
       name: setupConfigurationScript
     - task: PowerShell@2
@@ -180,7 +190,9 @@ stages:
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish
-  dependsOn: publishCommon4jLibraries
+  dependsOn:
+  - publishCommon4jLibraries
+  - setupStage
   variables:
     flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
   jobs:
@@ -203,7 +215,9 @@ stages:
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
-  dependsOn: publishCommon4jLibraries
+  dependsOn:
+  - publishCommon4jLibraries
+  - setupStage
   variables:
     flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlightOutput'] ]
     flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
@@ -235,6 +249,7 @@ stages:
   dependsOn: 
   - publishCommonLibraries
   - publishBroke4jLibraries
+  - setupStage
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -259,6 +274,7 @@ stages:
   dependsOn: 
   - publishCommon4jLibraries
   - publishBroke4jLibraries
+  - setupStage
   variables:
     flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
   jobs:
@@ -314,7 +330,9 @@ stages:
 # Msal - Build and publish      
 - stage: 'publishMsal'
   displayName: Msal - Build and publish
-  dependsOn: publishCommonLibraries
+  dependsOn:
+  - publishCommonLibraries
+  - setupStage
   variables:
     flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
   jobs:
@@ -337,7 +355,9 @@ stages:
 # Adal - Build and publish
 - stage: 'publishAdal'
   displayName: Adal - Build and publish
-  dependsOn: publishCommonLibraries
+  dependsOn:
+  - publishCommonLibraries
+  - setupStage
   variables:
     flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
   jobs:
@@ -479,6 +499,7 @@ stages:
     - publishMsal
     - publishBrokerLibraries
     - promotePackages
+    - setupStage
   variables:
     flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlightOutput'] ]
     flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.FlagOutput'] ]
