@@ -55,8 +55,8 @@ parameters:
   type: string
   default: "ECS"
   values:
-    - Local
     - ECS
+    - Local
 - name: flightingValueParameter
   displayName: Broker Flight Json-String (not active with ECS flighting)
   type: string
