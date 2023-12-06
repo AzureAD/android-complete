@@ -175,7 +175,7 @@ stages:
           
             Write-Host "##vso[task.setvariable variable=finalFlag;isOutput=true]$(setupConfigurationScript.FlagOutput)"
           }
-        name: finalSetupScript
+      name: finalSetupScript
 
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
