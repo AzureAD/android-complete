@@ -163,7 +163,7 @@ stages:
             Write-Host "##vso[build.addbuildtag]Local Flight Provider"
             Write-Host "##vso[build.addbuildtag]Flights Passed=$FlightTag"
           
-            Write-Host "##vso[task.setvariable variable=finalFlight;isOutput=true]-PlocalFlights=$FlightValue"
+            Write-Host "##vso[task.setvariable variable=finalFlight;isOutput=true]-PlocalFlights=$(setupConfigurationScript.FlightOutput)"
           }
 
           if ("$(setupConfigurationScript.FlagOutput)" -eq "" -or "$(setupConfigurationScript.FlagOutput)" -eq " ") {
