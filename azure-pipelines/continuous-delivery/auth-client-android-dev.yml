@@ -111,6 +111,7 @@ variables:
   companyPortalPipelineId: 237827
   ltwPipelineId: 44201
   brokerAutomationPipelineId: 1490
+  # We add these flags during scheduled runs, they will be dropped depending on the day of the week
   ${{ if or(parameters.shouldEnableBrokerSelectionAndDiscoveryFlag, eq( variables['Build.Reason'], 'Schedule')) }}:
     enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
     enableBrokerDiscoveryParam: -PnewBrokerDiscoveryEnabledFlag
@@ -134,6 +135,7 @@ stages:
       displayName: Get Day of Week
       inputs:
         filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/day-of-week.ps1'
+        arguments: '-OutputVariable "DayOfWeek"'
         workingDirectory: '$(Build.SourcesDirectory)'
       name: dayOfWeekScript
     - task: PowerShell@2
