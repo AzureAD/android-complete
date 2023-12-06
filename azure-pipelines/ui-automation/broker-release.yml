@@ -211,7 +211,7 @@ stages:
             Write-Host "##vso[build.addbuildtag]ECS Flighting"
           }
           
-          if ( ( '${{ parameters.flagsValue }}' -eq ' ' ) -and ( '${{ parameters.flagsValue }}' -eq 'false' ) ) {
+          if ( ( '${{ parameters.flagsValue }}' -eq ' ' ) -and ( '${{ parameters.shouldEnableBrokerSelectionAndDiscoveryFlag }}' -eq 'false' ) ) {
             Write-Host "##vso[build.addbuildtag]No Library Flags Passed"
           } else {
             Write-Host "##vso[build.addbuildtag]Flags Passed=${{ parameters.flagsValue }} $(enableBrokerDiscoveryParam) $(enableBrokerSelectionParam)"
