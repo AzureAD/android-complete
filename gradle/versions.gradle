@@ -37,6 +37,7 @@ ext {
     materialVersion = "1.0.0"
     mockitoCoreVersion = "3.6.28"
     mockitoAndroidVersion = "3.6.28"
+    mockkVersion = "1.11.0"
     multidexVersion = "2.0.1"
     nimbusVersion = "9.9"
     powerMockVersion = "2.0.9"
@@ -68,6 +69,10 @@ ext {
     yubikitAndroidVersion = "2.3.0"
     yubikitPivVersion = "2.3.0"
     powerliftAndroidVersion="1.0.3"
+    openTelemetryVersion = "1.18.0"
+    spotBugsAnnotationVersion = "4.3.0"
+    jetpackDataStoreVersion = "1.0.0"
+    jcipAnnotationVersion = "1.0-1"
 
     // Native auth additions
     kotlinXCoroutinesVersion = "1.3.9"
