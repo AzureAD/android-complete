@@ -4,7 +4,7 @@ Param (
     [Parameter(Mandatory = $true)][String]$PipelinePAT,
     [Parameter(Mandatory = $true)][String]$BuildDefinitionId,
     [Parameter(Mandatory = $false)][String]$PipelineVariablesJson,
-    [Parameter(Mandatory = $false)][String]$TemplateParams,
+    [Parameter(Mandatory = $false)][String]$TemplateParams="",
     [Parameter(Mandatory = $false)][String]$Branch,
     [Parameter(Mandatory = $false)][int]$WaitTimeoutInMinutes = 120,
     [Parameter(Mandatory = $false)][int]$PollingIntervalInSeconds = 5 * 60,
@@ -24,6 +24,7 @@ $authHeader = @{Authorization = ("Basic {0}" -f $base64AuthInfo)};
 
 # Filter out empty parameters, to avoid throwing an error
 if ($TemplateParams -ne "") {
+    Write-Host "Checking for empty parameters in TemplateParams"
     $paramTable = $TemplateParams | ConvertFrom-Json -AsHashtable
     ($paramTable.GetEnumerator() | ? { -not $_.Value }) | % {
         $currentParam = $_.Name
@@ -52,7 +53,9 @@ $requestBody = $Build | ConvertTo-Json
 try {
     $Result = Invoke-RestMethod -Uri $queueBuildUri -Method Post -ContentType "application/json" -Headers $authHeader -Body $requestBody;
 } catch {
-    if($_.ErrorDetails.Message){
+    $errorMessage = $_.ErrorDetails.Message
+    if($errorMessage){
+        Write-Host "Error Message: $errorMessage"
         $errorObject = $_.ErrorDetails.Message | ConvertFrom-Json
         foreach($result in $errorObject.customProperties.ValidationResults){
             Write-Warning $result.message
