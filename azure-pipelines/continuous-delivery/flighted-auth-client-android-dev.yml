@@ -80,7 +80,11 @@ parameters:
     type: boolean
     default: True
   - name: shouldTrustDebugBroker
-    displayName: Always trust debug broker apps. (Required for working with DEBUG CP/LTW/AuthApp)
+    displayName: (FOR DEBUGGING) Always trust debug broker apps. (Required for working with DEBUG CP/LTW/AuthApp)
+    type: boolean
+    default: false
+  - name: treatTestAppAsPartOfTSL
+    displayName: (FOR DEBUGGING) Force Broker to treat OneAuthTestApp/MSALTestApp as first party app. (Required for testing with 1st party app registration) 
     type: boolean
     default: False
   - name: publishLibraryArtifacts
@@ -125,6 +129,12 @@ variables:
     trustDebugBrokerParam: -PtrustDebugBrokerFlag
   ${{ else }}:
     trustDebugBrokerParam: ''
+  ${{ if parameters.treatTestAppAsPartOfTSL }}:
+    bypassRedirectUriCheckParam: -PbypassRedirectUriCheck
+    treatTestAppAsPartOfTSLParam: -PtreatTestAppAsPartOfTSL
+  ${{ else }}:
+    bypassRedirectUriCheckParam: ''
+    treatTestAppAsPartOfTSLParam: ''
 
 stages:
 - stage: 'addTags'
@@ -144,7 +154,7 @@ stages:
         script: |
           Write-Host "##vso[build.addbuildtag]Android_Broker_Version_$(brokerVersionNumber)"
           Write-Host "##vso[build.addbuildtag]Other_Library_Versions_$(versionNumber)"
-          Write-Host "##vso[build.addbuildtag]Flags_$(enableBrokerDiscoveryParam)_$(enableBrokerSelectionParam)_$(trustDebugBrokerParam)_$(broker4j_extra_flags)"
+          Write-Host "##vso[build.addbuildtag]Flags_$(enableBrokerDiscoveryParam)_$(enableBrokerSelectionParam)_$(trustDebugBrokerParam)_$(bypassRedirectUriCheckParam)_$(treatTestAppAsPartOfTSLParam)_$(broker4j_extra_flags)"
           Write-Host "##vso[build.addbuildtag]Flights_$(flightsTag)"
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
@@ -180,9 +190,9 @@ stages:
       testCmd: distDebugCommonUnitTestCoverageReport
       publishCmd: publish
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam) $(trustDebugBrokerParam)
-      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(enableBrokerDiscoveryParam) $(trustDebugBrokerParam)
-      publishParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam) $(trustDebugBrokerParam)
+      assembleParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam) $(trustDebugBrokerParam) $(bypassRedirectUriCheckParam)
+      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      publishParams: $(projVersionParam) $(common4jVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldPublish: ${{ parameters.shouldPublishLibraries }}
@@ -232,7 +242,7 @@ stages:
       testCmd: distDebugAADAuthenticatorUnitTestCoverageReport
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) $(enableBrokerSelectionParam)
+      assembleParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) $(enableBrokerSelectionParam) $(treatTestAppAsPartOfTSLParam)
       testParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) $(enableBrokerSelectionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
@@ -378,7 +388,7 @@ stages:
   displayName: Authenticator Broker Apk Generation
   dependsOn: promotePackages
   jobs:
-    - job: queue_build_authenticator
+    - job: queue_build_Authenticator
       displayName: Generate Authenticator Apk
       timeoutInMinutes: 120
       steps:
@@ -492,8 +502,8 @@ stages:
         adAccountsVersion: $(brokerVersionNumber)
         adalVersion: $(versionNumber)
         packageVariant: RC
-        flagsParamString: $(broker4j_extra_flags) $(enableBrokerDiscoveryParam) $(enableBrokerSelectionParam)
-        localFlightsParamString: $(broker4j_flights)
+        flagsParamString: $(broker4j_extra_flags) $(enableBrokerDiscoveryParam) $(enableBrokerSelectionParam) $(bypassRedirectUriCheckParam) $(treatTestAppAsPartOfTSLParam)
+        localFlightsParamString: -PlocalFlights=$(broker4j_flights)
         publishToFeed: True
         tokenSelection: 'mvnPAT'
         publishingPackageName: "com.microsoft.identity.testuserapp.flighted"
@@ -541,7 +551,7 @@ stages:
       displayName: Trigger Broker Automation Run
       timeoutInMinutes: 120
       variables:
-        authenticatorApkVersion: $[ stageDependencies.queueAuthenticatorPipeline.queue_build_authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
+        authenticatorApkVersion: $[ stageDependencies.queueAuthenticatorPipeline.queue_build_Authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
         companyPortalApkVersion: $[ stageDependencies.queueCompanyPortalPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalApkVersion'] ]
         ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
         brokerhostApkVersion: $[ stageDependencies.testappgeneration.brokerhostVersionJob.outputs['brokerhostVersionScript.brokerhostApkVersion'] ]
@@ -586,7 +596,7 @@ stages:
       displayName: Trigger Broker Automation Run
       timeoutInMinutes: 120
       variables:
-        authenticatorApkVersion: $[ stageDependencies.queueAuthenticatorPipeline.queue_build_authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
+        authenticatorApkVersion: $[ stageDependencies.queueAuthenticatorPipeline.queue_build_Authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
         companyPortalApkVersion: $[ stageDependencies.queueCompanyPortalPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalApkVersion'] ]
         ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
         brokerhostApkVersion: $[ stageDependencies.testappgeneration.brokerhostVersionJob.outputs['brokerhostVersionScript.brokerhostApkVersion'] ]
