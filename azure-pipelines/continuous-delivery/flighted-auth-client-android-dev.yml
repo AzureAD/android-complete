@@ -9,7 +9,7 @@
 # Variable: 'broker4j_extra_flags' additional flags to be passed to broker4j
 # Variable: 'nameSuffix' suffix to distinguish build names between pipelines
 
-name: 1.0.$(Date:yyyyMMdd)-dev$(nameSuffix)$(Rev:.r) # $(Build.BuildNumber) = name
+name: 1.0.$(Date:yyyyMMdd)-dev$(Rev:.r)$(nameSuffix) # $(Build.BuildNumber) = name
 
 pr: none
 trigger: none
