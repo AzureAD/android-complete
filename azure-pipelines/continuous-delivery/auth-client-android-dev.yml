@@ -530,8 +530,11 @@ stages:
     - promotePackages
     - setupStage
   variables:
-    flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlight'] ]
-    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
+    - group: AndroidAuthClientVariables
+    - name: flagVariable
+      value: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
+    - name: flightVariable
+      value: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlight'] ]
   displayName: Generate Test Apps
   condition:
     and
@@ -575,6 +578,11 @@ stages:
           script: |
             Write-Host "##vso[task.setvariable variable=brokerhostApkVersion;isOutput=true]1.0.$(brokerHostPackageVersionCounter)"
         name: brokerhostVersionScript
+    - template: ../ui-automation/templates/build-one-auth-test-app.yml
+      parameters:
+        tokenVariableName: Office-PAT
+        commonVersion: $(versionNumber)
+        branch: $(OneAuthBranch)
     - template: ../ui-automation/templates/build-msal-test-app.yml
       parameters:
         productFlavors: Dist

@@ -1,0 +1,41 @@
+parameters:
+  - name: tokenVariableName
+    type: string
+  - name: commonVersion
+    type: string
+  - name: branch
+    type: string
+    default: dev
+  - name: BuildDefinitionId
+    type: string
+    default: 6332
+  - name: project
+    type: string
+    default: OneAuth
+  - name: timeoutInMinutes
+    type: 120
+    default: 120
+  - name: scriptPathFromSource
+    type: string
+    default: /azure-pipelines/scripts/queue-build.ps1
+
+variables:
+  project: OneAuth
+  definitionId: 6332
+  url: https://office.visualstudio.com/
+
+jobs:
+  - job: queueOneAuthTestApp
+    displayName: Build and Download OneAuth Test App
+    timeoutInMinutes: ${{ parameters.timeoutInMinutes }}
+    steps:
+      - checkout: self
+        persistCredentials: True
+      - task: PowerShell@2
+        displayName: Queue and wait for OneAuth Test App Apk generation pipeline
+        name: buildApk
+        continueOnError: true
+        inputs:
+          filePath: '$(Build.SourcesDirectory)${{ parameters.scriptPathFromSource }}'
+          arguments: '-OrganizationUrl "$(url)" -Project "$(project)" -PipelinePAT "$(${{ parameters.tokenVariableName }})" -WaitTimeoutInMinutes ${{ parameters.timeoutInMinutes }} -BuildDefinitionId "$(definitionId)" -Branch "${{ parameters.branch }}" -TemplateParams "{''androidCommonVersion'': ''${{ parameters.commonVersion }}''}"'
+          workingDirectory: '$(Build.SourcesDirectory)'
