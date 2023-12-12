@@ -166,6 +166,7 @@ stages:
             Write-Host "##vso[task.setvariable variable=finalFlight;isOutput=true]-PlocalFlights=$(setupConfigurationScript.FlightOutput)"
           }
 
+          Write-Host "Flags passed: ($(setupConfigurationScript.FlagOutput))"
           if ("$(setupConfigurationScript.FlagOutput)" -eq "" -or "$(setupConfigurationScript.FlagOutput)" -eq " ") {
             Write-Host "##vso[build.addbuildtag]No Library Flags Passed"
           
