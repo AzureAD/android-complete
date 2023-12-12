@@ -118,6 +118,12 @@ variables:
   ${{ else }}:
     enableBrokerSelectionParam: ''
     enableBrokerDiscoveryParam: ''
+  ${{ if or(parameters.treatTestAppAsPartOfTSL, eq( variables['Build.Reason'], 'Schedule')) }}:
+    bypassRedirectUriCheckParam: -PbypassRedirectUriCheck
+    treatTestAppAsPartOfTSLParam: -PtreatTestAppAsPartOfTSL
+  ${{ else }}:
+    bypassRedirectUriCheckParam: ''
+    treatTestAppAsPartOfTSLParam: ''
   brokerHostPackageVersionCounter: $[counter(1, 10000)]
 
 stages:
@@ -142,7 +148,7 @@ stages:
       displayName: Configure Flight/Flag Variables Based on Day
       inputs:
         filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/setup-alternating-schedule.ps1'
-        arguments: '-BuildingOnSchedule "$(buildingOnSchedule)" -DayOfWeek "$(DayOfWeek)" -FlightInput "${{ parameters.flightingValueParameter }}" -FlightSelection "${{ parameters.flightingSelection }}" -FlagInput "${{ parameters.flagsValue }} $(enableBrokerSelectionParam) $(enableBrokerDiscoveryParam)" -BuildNumberInput "$(Build.BuildNumber)" -FlightOutputVar "FlightOutput" -FlagOutputVar "FlagOutput"'
+        arguments: '-BuildingOnSchedule "$(buildingOnSchedule)" -DayOfWeek "$(DayOfWeek)" -FlightInput "${{ parameters.flightingValueParameter }}" -FlightSelection "${{ parameters.flightingSelection }}" -FlagInput "${{ parameters.flagsValue }} $(enableBrokerSelectionParam) $(enableBrokerDiscoveryParam) $(bypassRedirectUriCheckParam) $(treatTestAppAsPartOfTSLParam)" -BuildNumberInput "$(Build.BuildNumber)" -FlightOutputVar "FlightOutput" -FlagOutputVar "FlagOutput"'
         workingDirectory: '$(Build.SourcesDirectory)'
       name: setupConfigurationScript
     - task: PowerShell@2
@@ -167,7 +173,7 @@ stages:
           }
 
           Write-Host "Flags passed: ($(setupConfigurationScript.FlagOutput))"
-          if ("$(setupConfigurationScript.FlagOutput)" -eq "" -or "$(setupConfigurationScript.FlagOutput)" -eq " ") {
+          if ("$(setupConfigurationScript.FlagOutput)" -eq "") {
             Write-Host "##vso[build.addbuildtag]No Library Flags Passed"
           
             Write-Host "##vso[task.setvariable variable=finalFlag;isOutput=true]"
