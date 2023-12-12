@@ -12,6 +12,9 @@ Param (
 #If this is a scheduled run, set up flight/flags variables based on day of the week
 Write-Host "Running on Schedule? [$BuildingOnSchedule]"
 
+# Trim any white space at the end of the flag input
+$FlagInput = $FlagInput -replace "\s+$", ""
+
 $LocalFlightTrueDays = "Monday","Wednesday","Friday"
 $LocalFlightFalseDays = "Tuesday","Thursday"
 $EcsFlightDays = "Saturday"
