@@ -80,6 +80,14 @@ parameters:
     displayName: Should enable broker selection & discovery?
     type: boolean
     default: False
+  - name: shouldTrustDebugBroker
+    displayName: (FOR DEBUGGING) Always trust debug broker apps. (Required for working with DEBUG CP/LTW/AuthApp)
+    type: boolean
+    default: false
+  - name: treatTestAppAsPartOfTSL
+    displayName: (FOR DEBUGGING) Force Broker to treat OneAuthTestApp/MSALTestApp as first party app. (Required for testing with 1st party app registration)
+    type: boolean
+    default: False
   - name: publishLibraryArtifacts
     displayName: Should publish library artifacts? (lockfiles and release artifacts)
     type: boolean
@@ -118,6 +126,16 @@ variables:
   ${{ else }}:
     enableBrokerSelectionParam: ''
     enableBrokerDiscoveryParam: ''
+  ${{ if or(parameters.shouldTrustDebugBroker, eq( variables['Build.Reason'], 'Schedule')) }}:
+    trustDebugBrokerParam: -PtrustDebugBrokerFlag
+  ${{ else }}:
+    trustDebugBrokerParam: ''
+  ${{ if or(parameters.treatTestAppAsPartOfTSL, eq( variables['Build.Reason'], 'Schedule')) }}:
+    bypassRedirectUriCheckParam: -PbypassRedirectUriCheck
+    treatTestAppAsPartOfTSLParam: -PtreatTestAppAsPartOfTSL
+  ${{ else }}:
+    bypassRedirectUriCheckParam: ''
+    treatTestAppAsPartOfTSLParam: ''
   brokerHostPackageVersionCounter: $[counter(1, 10000)]
 
 stages:
@@ -142,7 +160,7 @@ stages:
       displayName: Configure Flight/Flag Variables Based on Day
       inputs:
         filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/setup-alternating-schedule.ps1'
-        arguments: '-BuildingOnSchedule "$(buildingOnSchedule)" -DayOfWeek "$(DayOfWeek)" -FlightInput "${{ parameters.flightingValueParameter }}" -FlightSelection "${{ parameters.flightingSelection }}" -FlagInput "${{ parameters.flagsValue }} $(enableBrokerSelectionParam) $(enableBrokerDiscoveryParam)" -BuildNumberInput "$(Build.BuildNumber)" -FlightOutputVar "FlightOutput" -FlagOutputVar "FlagOutput"'
+        arguments: '-BuildingOnSchedule "$(buildingOnSchedule)" -DayOfWeek "$(DayOfWeek)" -FlightInput "${{ parameters.flightingValueParameter }}" -FlightSelection "${{ parameters.flightingSelection }}" -FlagInput "${{ parameters.flagsValue }} $(enableBrokerSelectionParam) $(enableBrokerDiscoveryParam) $(trustDebugBrokerParam) $(bypassRedirectUriCheckParam) $(treatTestAppAsPartOfTSLParam)" -BuildNumberInput "$(Build.BuildNumber)" -FlightOutputVar "FlightOutput" -FlagOutputVar "FlagOutput"'
         workingDirectory: '$(Build.SourcesDirectory)'
       name: setupConfigurationScript
     - task: PowerShell@2
@@ -166,7 +184,7 @@ stages:
             Write-Host "##vso[task.setvariable variable=finalFlight;isOutput=true]-PlocalFlights=$(setupConfigurationScript.FlightOutput)"
           }
 
-          if ("$(setupConfigurationScript.FlagOutput)" -eq "" -or "$(setupConfigurationScript.FlagOutput)" -eq " ") {
+          if ("$(setupConfigurationScript.FlagOutput)" -eq "") {
             Write-Host "##vso[build.addbuildtag]No Library Flags Passed"
           
             Write-Host "##vso[task.setvariable variable=finalFlag;isOutput=true]"
