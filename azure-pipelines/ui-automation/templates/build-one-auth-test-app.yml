@@ -1,20 +1,9 @@
 parameters:
-  - name: tokenVariableName
-    type: string
   - name: commonVersion
     type: string
   - name: branch
     type: string
     default: dev
-  - name: BuildDefinitionId
-    type: string
-    default: 6332
-  - name: project
-    type: string
-    default: OneAuth
-  - name: timeoutInMinutes
-    type: string
-    default: 120
   - name: scriptPathFromSource
     type: string
     default: /azure-pipelines/scripts/queue-build.ps1
@@ -24,9 +13,15 @@ jobs:
     displayName: Build and Download OneAuth Test App
     timeoutInMinutes: ${{ parameters.timeoutInMinutes }}
     variables:
-      project: OneAuth
-      definitionId: 6332
-      url: https://office.visualstudio.com/
+      - group: AndroidAuthClientVariables
+      - name: project
+        value: OneAuth
+      - name: definitionId
+        value: 6332
+      - name: url
+        value: https://office.visualstudio.com/
+      - name: timeout
+        value: 120
     steps:
       - checkout: self
         persistCredentials: True
@@ -36,5 +31,5 @@ jobs:
         continueOnError: true
         inputs:
           filePath: '$(Build.SourcesDirectory)${{ parameters.scriptPathFromSource }}'
-          arguments: '-OrganizationUrl "$(url)" -Project "$(project)" -PipelinePAT "$(${{ parameters.tokenVariableName }})" -WaitTimeoutInMinutes ${{ parameters.timeoutInMinutes }} -BuildDefinitionId "$(definitionId)" -Branch "${{ parameters.branch }}" -TemplateParams "{''androidCommonVersion'': ''${{ parameters.commonVersion }}''}"'
+          arguments: '-OrganizationUrl "$(url)" -Project "$(project)" -PipelinePAT "$(Office-PAT)" -WaitTimeoutInMinutes $(timeout) -BuildDefinitionId "$(definitionId)" -Branch "${{ parameters.branch }}" -TemplateParams "{''androidCommonVersion'': ''${{ parameters.commonVersion }}''}"'
           workingDirectory: '$(Build.SourcesDirectory)'
