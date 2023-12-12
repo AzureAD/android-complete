@@ -13,21 +13,20 @@ parameters:
     type: string
     default: OneAuth
   - name: timeoutInMinutes
-    type: 120
+    type: string
     default: 120
   - name: scriptPathFromSource
     type: string
     default: /azure-pipelines/scripts/queue-build.ps1
 
-variables:
-  project: OneAuth
-  definitionId: 6332
-  url: https://office.visualstudio.com/
-
 jobs:
   - job: queueOneAuthTestApp
     displayName: Build and Download OneAuth Test App
     timeoutInMinutes: ${{ parameters.timeoutInMinutes }}
+    variables:
+      project: OneAuth
+      definitionId: 6332
+      url: https://office.visualstudio.com/
     steps:
       - checkout: self
         persistCredentials: True
