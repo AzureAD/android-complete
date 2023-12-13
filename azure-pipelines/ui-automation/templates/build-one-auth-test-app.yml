@@ -12,12 +12,8 @@ jobs:
   - job: queueOneAuthTestApp
     displayName: Build and Download OneAuth Test App
     variables:
-      - name: project
-        value: OneAuth
       - name: definitionId
         value: 6332
-      - name: url
-        value: https://office.visualstudio.com/
       - name: timeout
         value: 120
     timeoutInMinutes: 120
@@ -30,5 +26,5 @@ jobs:
         continueOnError: true
         inputs:
           filePath: '$(Build.SourcesDirectory)${{ parameters.scriptPathFromSource }}'
-          arguments: '-OrganizationUrl "$(url)" -Project "$(project)" -PipelinePAT "$(Office-PAT)" -WaitTimeoutInMinutes $(timeout) -BuildDefinitionId "$(definitionId)" -Branch "${{ parameters.branch }}" -TemplateParams "{''androidCommonVersion'': ''${{ parameters.commonVersion }}''}"'
+          arguments: '-OrganizationUrl "https://office.visualstudio.com/" -Project "OneAuth" -PipelinePAT "$(Office-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "6332" -Branch "${{ parameters.branch }}" -TemplateParams "{''androidCommonVersion'': ''${{ parameters.commonVersion }}''}"'
           workingDirectory: '$(Build.SourcesDirectory)'
