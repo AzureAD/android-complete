@@ -31,7 +31,5 @@ jobs:
         continueOnError: true
         inputs:
           filePath: '$(Build.SourcesDirectory)${{ parameters.scriptPathFromSource }}'
-          arguments: '-OrganizationUrl "$(url)" -Project "$(project)" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -WaitTimeoutInMinutes $(timeout) -BuildDefinitionId "$(definitionId)" -Branch "${{ parameters.branch }}" -TemplateParams "{''androidCommonVersion'': ''${{ parameters.commonVersion }}''}"'
+          arguments: '-OrganizationUrl "$(url)" -Project "$(project)" -PipelinePAT "$(New-Office-PAT)" -WaitTimeoutInMinutes $(timeout) -BuildDefinitionId "$(definitionId)" -Branch "${{ parameters.branch }}" -TemplateParams "{''androidCommonVersion'': ''${{ parameters.commonVersion }}''}"'
           workingDirectory: '$(Build.SourcesDirectory)'
-        env:
-          SYSTEM_ACCESSTOKEN: $(New-Office-PAT)
