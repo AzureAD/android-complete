@@ -214,11 +214,11 @@ stages:
 # TestAppApk - OneAuthTestApp Queue pipeline
 - stage: 'oneAuthTestApp'
   displayName: Build OneAuth Test App Apk
-  enabled: false
   dependsOn: []   # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
     - job: queue_build_OneAuthTestApp
       displayName: Generate OneAuth Test App Apk
+      enabled: false
       timeoutInMinutes: 120
       steps:
         - checkout: self
