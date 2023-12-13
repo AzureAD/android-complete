@@ -230,6 +230,12 @@ stages:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
             arguments: '-OrganizationUrl "https://office.visualstudio.com/" -Project "OneAuth" -PipelinePAT "$(OfficePAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(oneAuthTestAppPipelineId)" -Branch "android/common-ingestion" -TemplateParams "{''androidCommonVersion'': ''$(dailyVersion)''}"'
             workingDirectory: '$(Build.SourcesDirectory)'
+        - task: DownloadPipelineArtifact@2
+          inputs:
+            buildType: 'specific'
+            project: 'OneAuth'
+            definition: $(oneAuthTestAppPipelineId)
+            buildVersionToDownload: 'latest'
         - task: DownloadExternalBuildArtifacts@15
           displayName: 'Download OneAuth test app'
           inputs:
