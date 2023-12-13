@@ -214,6 +214,7 @@ stages:
 # TestAppApk - OneAuthTestApp Queue pipeline
 - stage: 'oneAuthTestApp'
   displayName: Build OneAuth Test App Apk
+  enabled: false
   dependsOn: []   # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
     - job: queue_build_OneAuthTestApp
@@ -225,7 +226,6 @@ stages:
         - task: PowerShell@2
           displayName: Queue and wait for OneAuth Test App Apk generation pipeline
           name: buildApk
-          enabled: false
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
@@ -291,7 +291,6 @@ stages:
   - msalautomationapp
   - brokers_azure_sample
   - firstpartyapps
-  - oneAuthTestApp
   - msalE2ETestApp
   - old_test_apps
   displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
@@ -310,11 +309,9 @@ stages:
                       /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/$(OldLTWApk),\
                       /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp),\
-                      /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
                       /sdcard/BrokerHostWithoutBrokerSelection.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhostWithoutBrokerSelectionEnabled_apk),\
-                      /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                       /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
@@ -331,7 +328,6 @@ stages:
     - msalautomationapplocalbrokerhost
     - brokers_azure_sample
     - firstpartyapps
-    - oneAuthTestApp
     - msalE2ETestApp
     - old_test_apps
   displayName: Running MSAL with Broker Test Plan (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
@@ -352,12 +348,10 @@ stages:
                       /sdcard/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhost_apk),\
                       /sdcard/BrokerHostWithoutBrokerSelection.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhostWithoutBrokerSelectionEnabled_apk),\
                       /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp),\
-                      /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
                       /data/local/tmp/test/DirectPushBrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
                       /data/local/tmp/DirectPushBrokerHost.apk=/home/vsts/work/1/brokerapks/$(brokerhost_apk),\
-                      /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                       /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
@@ -370,7 +364,6 @@ stages:
     - msalautomationapp
     - brokers_azure_sample
     - firstpartyapps
-    - oneAuthTestApp
     - msalE2ETestApp
     - old_test_apps
   displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
@@ -389,14 +382,12 @@ stages:
                       /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/$(OldltwApk),\
                       /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
                       /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp),\
-                      /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
                       /sdcard/BrokerHostWithoutBrokerSelection.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhostWithoutBrokerSelectionEnabled_apk),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
                       /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
-                      /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                       /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp)"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
@@ -409,7 +400,6 @@ stages:
   - brokerautomationapp
   - brokers_azure_sample
   - firstpartyapps
-  - oneAuthTestApp
   - old_test_apps
   displayName: ADAL with broker and Broker basic validation test plan (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
@@ -429,8 +419,6 @@ stages:
                       /sdcard/BrokerHostWithoutBrokerSelection.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(brokerhostWithoutBrokerSelectionEnabled_apk),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/azuresample/$(azure_sample_apk),\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/$(brokerhost_apk),\
-                      /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
-                      /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
                       /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
