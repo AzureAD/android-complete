@@ -11,7 +11,6 @@ parameters:
 jobs:
   - job: queueOneAuthTestApp
     displayName: Build and Download OneAuth Test App
-    timeoutInMinutes: ${{ parameters.timeoutInMinutes }}
     variables:
       - group: AndroidAuthClientVariables
       - name: project
@@ -22,6 +21,7 @@ jobs:
         value: https://office.visualstudio.com/
       - name: timeout
         value: 120
+    timeoutInMinutes: 120
     steps:
       - checkout: self
         persistCredentials: True
