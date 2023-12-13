@@ -142,6 +142,7 @@ stages:
 - stage: 'setupStage'
   displayName: Setup Stage
   dependsOn: []
+  condition: always() # Stage will always run
   variables:
     - name: buildingOnSchedule
       value: $[eq( variables['Build.Reason'], 'Schedule')]
