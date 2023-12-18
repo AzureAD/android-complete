@@ -238,13 +238,13 @@ stages:
             connection: '$(oneAuthServiceConnection)'
             project: '$(oneAuthProjectId)'
             definition: '$(oneAuthTestAppPipelineId)'
-            version: '24872218'
+            version: '$(buildApk.BrokeBuildId)'
             downloadPath: '$(Build.ArtifactStagingDirectory)'
           env:
             SYSTEM_ACCESSTOKEN: $(OfficePAT)
-#        - publish: $(Build.ArtifactStagingDirectory)/OneAuthTestApp
-#          displayName: 'Publish OneAuth Test apk for later use'
-#          artifact: oneauthtestapp
+        - publish: $(Build.ArtifactStagingDirectory)/OneAuthTestApp
+          displayName: 'Publish OneAuth Test apk for later use'
+          artifact: oneauthtestapp
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
