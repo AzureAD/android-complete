@@ -39,10 +39,10 @@ jobs:
       - task: DownloadExternalBuildArtifacts@15
         displayName: 'Download OneAuth test app'
         inputs:
-          connection: '$(oneAuthServiceConnection)'
-          project: '$(oneAuthProjectId)'
-          definition: '$(definitionId)'
-          version: '$(buildApk.BrokeBuildId)'
+          connection: $(oneAuthServiceConnection)
+          project: $(oneAuthProjectId)
+          definition: $(definitionId)
+          version: $(buildApk.BrokeBuildId)
           downloadPath: '$(Build.ArtifactStagingDirectory)'
       - publish: $(Build.ArtifactStagingDirectory)/OneAuthTestApp
         displayName: 'Publish OneAuth Test apk for later use'
