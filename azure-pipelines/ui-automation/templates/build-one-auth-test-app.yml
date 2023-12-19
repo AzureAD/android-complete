@@ -20,6 +20,10 @@ jobs:
         value: https://office.visualstudio.com/
       - name: timeout
         value: 120
+      - name: oneAuthProjectId
+        value : 'a4d3949e-967a-4298-8b6d-53f45f6b0704'
+      - name: oneAuthServiceConnection
+        value: OneAuthServiceConnection_3
     timeoutInMinutes: 120
     steps:
       - checkout: self
@@ -32,3 +36,14 @@ jobs:
           filePath: '$(Build.SourcesDirectory)${{ parameters.scriptPathFromSource }}'
           arguments: '-OrganizationUrl "$(url)" -Project "$(project)" -PipelinePAT "$(Office-PAT)" -WaitTimeoutInMinutes $(timeout) -BuildDefinitionId "$(definitionId)" -Branch "${{ parameters.branch }}" -TemplateParams "{''androidCommonVersion'': ''${{ parameters.commonVersion }}''}"'
           workingDirectory: '$(Build.SourcesDirectory)'
+      - task: DownloadExternalBuildArtifacts@15
+        displayName: 'Download OneAuth test app'
+        inputs:
+          connection: '$(oneAuthServiceConnection)'
+          project: '$(oneAuthProjectId)'
+          definition: '$(definitionId)'
+          version: '$(buildApk.BrokeBuildId)'
+          downloadPath: '$(Build.ArtifactStagingDirectory)'
+      - publish: $(Build.ArtifactStagingDirectory)/OneAuthTestApp
+        displayName: 'Publish OneAuth Test apk for later use'
+        artifact: oneauthtestapp

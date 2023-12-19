@@ -675,6 +675,10 @@ stages:
         brokerSource: LocalApk
         adalVersion: ${{ parameters.adalVersionRC }}
         commonVersion: ${{ parameters.commonVersionRC }}
+    - template: ../ui-automation/templates/build-one-auth-test-app.yml
+      parameters:
+        commonVersion: ${{ parameters.commonVersionRC }}
+        branch: $(OneAuthBranch)
     - template: ./templates/build-msal-test-app.yml
       parameters:
         productFlavors: Dist
