@@ -164,6 +164,9 @@ steps:
       feedDownloadExternal: '${{ parameters.LTWFeedName }}'
       packageDownloadExternal: 'com.microsoft.appmanager'
       versionDownloadExternal: '${{ parameters.OldLTWVersion }}'
+  - script: mv ./YPC-*.apk ./OldLTW-signed.apk
+    displayName: 'Rename Old LTW build to OldLTW-signed.apk'
+    workingDirectory: '$(Build.ArtifactStagingDirectory)/brokers/OldAPKs'
   - publish: $(Build.ArtifactStagingDirectory)/brokers
     displayName: 'Publish Broker apks for later use'
     artifact: brokerapks

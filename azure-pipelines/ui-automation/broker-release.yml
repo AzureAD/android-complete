@@ -712,7 +712,7 @@ stages:
   - queueCompanyPortalBrokerApkPipeline
   - queueLinkToWindowsPipeline
   - testappgeneration
-  displayName: Download PROD & RC Brokers
+  displayName: Download PROD, RC, and Old Brokers
   condition:
     and
     (
