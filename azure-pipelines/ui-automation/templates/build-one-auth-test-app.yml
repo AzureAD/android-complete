@@ -19,10 +19,10 @@ jobs:
       - name: url
         value: https://office.visualstudio.com/
       - name: timeout
-        value: 120
+        value: 60
       - name: oneAuthProjectId
         value : 'a4d3949e-967a-4298-8b6d-53f45f6b0704'
-    timeoutInMinutes: 120
+    timeoutInMinutes: 60
     steps:
       - checkout: self
         persistCredentials: True
