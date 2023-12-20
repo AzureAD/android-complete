@@ -154,7 +154,7 @@ variables:
   companyPortalPipelineId: 237827
   ltwPipelineId: 44201
   oneAuthTestApp: app-dist-AutoBroker-release-unsigned.apk
-  msalE2ETestApp: msalTestApp-dist-release.apk
+  msalE2ETestApp: msalTestApp-dist-debug.apk
   oldMsalTestAppVersion: '4.5.1'
   oldOneAuthTestAppVersion: '0.0.4'
   brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
@@ -692,6 +692,12 @@ stages:
         signingConfigurations: Debug
         msalVersion: ${{ parameters.msalVersionRC }}
         packageVariant: RC
+    - template: ./templates/build-msal-test-app.yml
+      parameters:
+        productFlavors: Dist
+        signingConfigurations: Debug
+        msalVersion: $(MSAL-PROD-Version)
+        packageVariant: PROD
     - template: ./templates/build-adal-test-app.yml
       parameters:
         productFlavors: Dist
@@ -838,7 +844,7 @@ stages:
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                       /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                       /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
-                      /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp/$(msalE2ETestApp)"
+                      /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp-RC/$(msalE2ETestApp)"
         firebaseDeviceId: $(firebaseDeviceIdHigh)
         firebaseDeviceAndroidVersion: $(firebaseDeviceAndroidVersionHigh)
         testRunTitle: "Broker(ADAL) UI Automation - Build (API $(firebaseDeviceAndroidVersionHigh)) # $(Build.BuildNumber)"
@@ -954,7 +960,7 @@ stages:
                           /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                           /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                           /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
-                          /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp/$(msalE2ETestApp),\
+                          /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp-PROD/$(msalE2ETestApp),\
                           /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp)"
         firebaseDeviceId: $(firebaseDeviceIdHigh)
         firebaseDeviceAndroidVersion: $(firebaseDeviceAndroidVersionHigh)
@@ -987,7 +993,7 @@ stages:
                           /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                           /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                           /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
-                          /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp/$(msalE2ETestApp),\
+                          /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp-PROD/$(msalE2ETestApp),\
                           /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp)"
         firebaseDeviceId: $(firebaseDeviceIdHigh)
         firebaseDeviceAndroidVersion: $(firebaseDeviceAndroidVersionHigh)
@@ -1018,7 +1024,7 @@ stages:
                           /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                           /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                           /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
-                          /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp/$(msalE2ETestApp),\
+                          /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp-PROD/$(msalE2ETestApp),\
                           /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp)"
         firebaseDeviceId: $(firebaseDeviceIdLow)
         firebaseDeviceAndroidVersion: $(firebaseDeviceAndroidVersionLow)

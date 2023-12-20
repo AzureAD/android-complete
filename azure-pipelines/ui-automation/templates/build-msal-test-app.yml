@@ -77,6 +77,6 @@ jobs:
     displayName: Publish MSAL Test App
     inputs:
       targetPath: $(Agent.BuildDirectory)/android-complete/msal/testapps/testapp/build/outputs/apk/${{ lower(parameters.productFlavors) }}/${{ lower(parameters.signingConfigurations) }}
-      artifactName: msalTestApp
+      artifactName: msalTestApp-${{ parameters.packageVariant }}
       patterns: '**/*.apk'
 ...
