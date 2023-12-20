@@ -155,6 +155,7 @@ variables:
   ltwPipelineId: 44201
   oneAuthTestApp: app-dist-AutoBroker-release-unsigned.apk
   msalE2ETestApp: msalTestApp-dist-debug.apk
+  oldMsalE2ETestApp: msalTestApp-dist-release.apk
   oldMsalTestAppVersion: '4.5.1'
   oldOneAuthTestAppVersion: '0.0.4'
   brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
@@ -961,7 +962,7 @@ stages:
                           /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                           /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
                           /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp-PROD/$(msalE2ETestApp),\
-                          /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp)"
+                          /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oldMsalE2ETestApp)"
         firebaseDeviceId: $(firebaseDeviceIdHigh)
         firebaseDeviceAndroidVersion: $(firebaseDeviceAndroidVersionHigh)
         testRunTitle: "PROD MSAL - RC Broker (API $(firebaseDeviceAndroidVersionHigh)) # $(Build.BuildNumber)"
@@ -994,7 +995,7 @@ stages:
                           /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                           /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
                           /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp-PROD/$(msalE2ETestApp),\
-                          /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp)"
+                          /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oldMsalE2ETestApp)"
         firebaseDeviceId: $(firebaseDeviceIdHigh)
         firebaseDeviceAndroidVersion: $(firebaseDeviceAndroidVersionHigh)
         testRunTitle: "PROD MSAL - RC Broker (BrokerHost tests, debug) (API $(firebaseDeviceAndroidVersionHigh)) # $(Build.BuildNumber)"
@@ -1025,7 +1026,7 @@ stages:
                           /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                           /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
                           /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp-PROD/$(msalE2ETestApp),\
-                          /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp)"
+                          /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oldMsalE2ETestApp)"
         firebaseDeviceId: $(firebaseDeviceIdLow)
         firebaseDeviceAndroidVersion: $(firebaseDeviceAndroidVersionLow)
         testRunTitle: "PROD MSAL - RC Broker (API $(firebaseDeviceAndroidVersionLow)) # $(Build.BuildNumber)"
