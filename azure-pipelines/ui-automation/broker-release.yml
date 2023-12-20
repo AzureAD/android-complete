@@ -173,6 +173,7 @@ variables:
   wordApk: Word.apk
   edgeApk: Edge.apk
   resultsHistoryName: Broker Release
+  testAppsFeedName: AndroidADAL
   ${{ if eq(parameters.flightingSelection, 'Local') }}:
     flightValueVariable: -PlocalFlights=${{ parameters.flightingValueParameter }}
   ${{ else }}:
