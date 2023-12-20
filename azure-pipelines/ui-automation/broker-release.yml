@@ -944,9 +944,10 @@ stages:
     ${{ else }}:
       testTarget: $(msalTestTarget), notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
     ${{ if eq(variables['skipOneAuth'], 'False') }}:
-      oneAuthFile: /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
+      oneAuthFile: "/sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
+                    /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp)"
     ${{ else }}:
-      oneAuthFile: ''
+      oneAuthFile: "/sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp)"
   jobs:
     # PROD MSAL with RC Broker API 30+
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -969,8 +970,7 @@ stages:
                           /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                           /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
                           /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
-                          $(oneAuthFile)
-                          /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
+                          $(oneAuthFile),\
                           /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp-PROD/$(msalE2ETestApp),\
                           /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oldMsalE2ETestApp)"
         firebaseDeviceId: $(firebaseDeviceIdHigh)
@@ -1002,8 +1002,7 @@ stages:
                           /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                           /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
                           /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
-                          $(oneAuthFile)
-                          /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
+                          $(oneAuthFile),\
                           /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp-PROD/$(msalE2ETestApp),\
                           /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oldMsalE2ETestApp)"
         firebaseDeviceId: $(firebaseDeviceIdHigh)
@@ -1033,8 +1032,7 @@ stages:
                           /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                           /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
                           /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
-                          $(oneAuthFile)
-                          /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
+                          $(oneAuthFile),\
                           /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp-PROD/$(msalE2ETestApp),\
                           /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oldMsalE2ETestApp)"
         firebaseDeviceId: $(firebaseDeviceIdLow)
