@@ -48,10 +48,10 @@ parameters:
   displayName: Build and UI Test LTW? (Must pass Broker Discovery Flag)
   type: boolean
   default: False
-- name: skipOneAuth
-  displayName: Skip One Auth Test App? (Required for LTW tests)
+- name: buildOneAuth
+  displayName: Build One Auth Test App? (Required for LTW tests)
   type: boolean
-  default: False
+  default: True
 
 # Flighting / Flagging Parameters
 - name: flightingSelection
@@ -706,7 +706,7 @@ stages:
         adalVersion: ${{ parameters.adalVersionRC }}
         commonVersion: ${{ parameters.commonVersionRC }}
         packageVariant: RC
-    - ${{ if eq(parameters.skipOneAuth, 'False') }}:
+    - ${{ if eq(parameters.buildOneAuth, 'False') }}:
       - template: ../ui-automation/templates/build-one-auth-test-app.yml
         parameters:
           commonVersion: ${{ parameters.commonVersionRC }}
@@ -828,7 +828,7 @@ stages:
       testTarget: $[replace('$(brokerTestTarget)', ', notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests', '')]
     ${{ else }}:
       testTarget: $(brokerTestTarget), notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
-    ${{ if eq(parameters.skipOneAuth, 'False') }}:
+    ${{ if eq(parameters.buildOneAuth, 'False') }}:
       oneAuthFile: "/sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                     /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp)"
     ${{ else }}:
@@ -947,7 +947,7 @@ stages:
       testTarget: $[replace('$(msalTestTarget)', ', notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests', '')]
     ${{ else }}:
       testTarget: $(msalTestTarget), notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
-    ${{ if eq(parameters.skipOneAuth, 'False') }}:
+    ${{ if eq(parameters.buildOneAuth, 'False') }}:
       oneAuthFile: "/sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                     /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp)"
     ${{ else }}:
