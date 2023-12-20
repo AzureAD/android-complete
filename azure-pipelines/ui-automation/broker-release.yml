@@ -702,7 +702,7 @@ stages:
         adalVersion: ${{ parameters.adalVersionRC }}
         commonVersion: ${{ parameters.commonVersionRC }}
         packageVariant: RC
-    - ${{ if ne(variables['skipOneAuth'], 'True') }}:
+    - ${{ if eq(variables['skipOneAuth'], 'False') }}:
       - template: ../ui-automation/templates/build-one-auth-test-app.yml
         parameters:
           commonVersion: ${{ parameters.commonVersionRC }}
