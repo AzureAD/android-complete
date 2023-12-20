@@ -819,7 +819,7 @@ stages:
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/brokerautomationapks/$(brokerApp)"
         automationAppTestApkPath: "$(Pipeline.Workspace)/brokerautomationapks/$(brokertestApp)"
-        testTargetPackages: $(brokerTestTarget)
+        testTargetPackages: $(testTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "brokerautomationapp-testpass-adal&basic-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/RC/$(companyPortalApk),\
@@ -866,7 +866,7 @@ stages:
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/msalautomationapp-dist-AutoBroker-debug.apk"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/msalautomationapp-dist-AutoBroker-debug-androidTest.apk"
-        testTargetPackages: $(msalTestTarget)
+        testTargetPackages: $(msalTestTarget), notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "RC_MSAL-PROD_Broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/PROD/$(companyPortalApk),\
@@ -890,7 +890,7 @@ stages:
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/msalautomationapp-dist-AutoBroker-debug.apk"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/msalautomationapp-dist-AutoBroker-debug-androidTest.apk"
-        testTargetPackages: $(msalTestTarget)
+        testTargetPackages: $(msalTestTarget), notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "RC_MSAL-PROD_Broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/PROD/$(companyPortalApk),\
@@ -935,7 +935,7 @@ stages:
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-PROD-LocalApk/msalautomationapp-dist-AutoBroker-debug.apk"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-PROD-LocalApk/msalautomationapp-dist-AutoBroker-debug-androidTest.apk"
-        testTargetPackages: $(msalTestTarget)
+        testTargetPackages: $(testTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "PROD-MSAL-RC-Broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/RC/$(companyPortalApk),\
@@ -967,7 +967,7 @@ stages:
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/msalautomationapp-local-BrokerHost-debug.apk"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-PROD-LocalApk/msalautomationapp-local-BrokerHost-debug-androidTest.apk"
-        testTargetPackages: $(msalTestTarget)
+        testTargetPackages: $(testTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "PROD-MSAL-RC-BrokerHost-debug-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/RC/$(companyPortalApk),\
@@ -999,7 +999,7 @@ stages:
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-PROD-LocalApk/msalautomationapp-dist-AutoBroker-debug.apk"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-PROD-LocalApk/msalautomationapp-dist-AutoBroker-debug-androidTest.apk"
-        testTargetPackages: $(msalTestTarget)
+        testTargetPackages: $(testTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "RC_MSAL-PROD_Broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/RC/$(companyPortalApk),\
