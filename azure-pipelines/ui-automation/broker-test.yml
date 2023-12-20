@@ -59,7 +59,7 @@ variables:
   OSServiceConnection: LTW-Integration
   LTWFeedName: Auth-Broker-Integrated-LTW-Build
   LTWApk: LTW-signed.apk
-  oldLTWApk: OldLTW-signed.apk
+  OldLTWApk: OldLTW-signed.apk
   oneAuthServiceConnection: OneAuthServiceConnection_3
   testAppsFeedName: AndroidADAL
   

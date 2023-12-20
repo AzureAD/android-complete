@@ -44,8 +44,8 @@ parameters:
   displayName: Build & Publish Testing libs?
   type: boolean
   default: False
-- name: buildLTW
-  displayName: Build LTW? (Must pass Broker Discovery Flag)
+- name: buildAndTestLTW
+  displayName: Build and UI Test LTW? (Must pass Broker Discovery Flag)
   type: boolean
   default: False
 
@@ -153,15 +153,21 @@ variables:
   authenticatorPipelineId: 237369
   companyPortalPipelineId: 237827
   ltwPipelineId: 44201
+  oneAuthTestApp: app-dist-AutoBroker-release-unsigned.apk
+  msalE2ETestApp: msalTestApp-dist-release.apk
+  oldMsalTestAppVersion: '4.5.1'
+  oldOneAuthTestAppVersion: '0.0.4'
   brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
   brokerTestApp: brokerautomationapp-dist-AutoBroker-debug-androidTest.apk
   companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
+  oldCompanyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
   authenticatorApk: app-production-universal-release-signed.apk
   oldAuthenticatorApk: Authenticator-4.1.0-RC.apk
   oldAuthenticatorVersion: 6.2204.2470
   OSServiceConnection: LTW-Integration
   LTWFeedName: Auth-Broker-Integrated-LTW-Build
   LTWApk: LTW-signed.apk
+  OldLTWApk: OldLTW-signed.apk
   outlookApk: Outlook.apk
   teamsApk: Teams.apk
   wordApk: Word.apk
@@ -561,7 +567,7 @@ stages:
     (
       not(failed()),
       not(canceled()),
-      eq(${{ parameters.buildLTW }}, 'True')
+      eq(${{ parameters.buildAndTestLTW }}, 'True')
     )
   dependsOn:
     - promoteLibraries
@@ -770,6 +776,23 @@ stages:
             OSServiceConnection: '$(OSServiceConnection)'
             LTWFeedName: '$(LTWFeedName)'
             LTWVersionRC: $(rcLTWVersion)
+# Download Old Test Apps
+- stage: 'old_test_apps'
+  dependsOn:
+    - promoteLibraries # adding this dependency to improve pipeline readability
+  condition:
+    and
+    (
+      not(failed()),
+      not(canceled())
+    )
+  displayName: Download Old Test Apps
+  jobs:
+    - template: ./templates/download-old-test-apps.yml
+      parameters:
+        feedName: '$(testAppsFeedName)'
+        oldMsalTestAppVersion: ${{ parameters.oldMsalTestAppVersion }}
+        oldOneAuthTestAppVersion: ${{ parameters.oldOneAuthTestAppVersion }}
 
 # ADAL with Broker (API 30+)
 - stage: 'adal_with_broker_high_api'
@@ -777,6 +800,7 @@ stages:
   - testappgeneration
   - firstpartyapps
   - download_brokers
+  - old_test_apps
   condition:  |
     and
     (
@@ -785,6 +809,11 @@ stages:
       eq(${{ parameters.shouldRunUiValidation }}, 'True')
     )
   displayName: RC ADAL with RC Broker UI Automation
+  variables:
+  ${{ if eq(parameters.buildAndTestLTW, 'True') }}:
+    testTarget: $[replace('$(brokerTestTarget)', ', notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests', '')]
+  ${{ else }}:
+    testTarget: $(brokerTestTarget), notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
@@ -794,14 +823,21 @@ stages:
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "brokerautomationapp-testpass-adal&basic-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/RC/$(companyPortalApk),\
+                      /sdcard/OldCompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/OldAPKs/$(oldCompanyPortalApk),\
                       /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/RC/$(authenticatorApk),\
                       /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(oldAuthenticatorApk),\
+                      /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/RC/$(LTWApk),\
+                      /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/OldAPKs/$(OldltwApk),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-RC/AzureSample-external-release.apk,\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Dist-RC-release/brokerHost-dist-release.apk,\
+                      /sdcard/BrokerHostWithoutBrokerSelection.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(brokerhostWithoutBrokerSelectionEnabled_apk),\
                       /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                       /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
-                      /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
+                      /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
+                      /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
+                      /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
+                      /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp/$(msalE2ETestApp)"
         firebaseDeviceId: $(firebaseDeviceIdHigh)
         firebaseDeviceAndroidVersion: $(firebaseDeviceAndroidVersionHigh)
         testRunTitle: "Broker(ADAL) UI Automation - Build (API $(firebaseDeviceAndroidVersionHigh)) # $(Build.BuildNumber)"
@@ -815,6 +851,7 @@ stages:
   - testappgeneration
   - firstpartyapps
   - download_brokers
+  - old_test_apps
   condition: |
     and
     (
@@ -878,6 +915,7 @@ stages:
   - testappgeneration
   - firstpartyapps
   - download_brokers
+  - old_test_apps
   condition: |
     and
     (
@@ -886,6 +924,11 @@ stages:
       eq(${{ parameters.shouldRunUiValidation }}, 'True')
     )
   displayName: PROD MSAL with RC Broker UI Automation
+  variables:
+  ${{ if eq(parameters.buildAndTestLTW, 'True') }}:
+    testTarget: $[replace('$(msalTestTarget)', ', notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests', '')]
+  ${{ else }}:
+    testTarget: $(msalTestTarget), notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
   jobs:
     # PROD MSAL with RC Broker API 30+
     - template: ./templates/flank/run-on-firebase-with-flank.yml
@@ -896,14 +939,22 @@ stages:
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "PROD-MSAL-RC-Broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/RC/$(companyPortalApk),\
+                          /sdcard/OldCompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/OldAPKs/$(oldCompanyPortalApk),\
                           /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/RC/$(authenticatorApk),\
                           /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(oldAuthenticatorApk),\
+                          /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/RC/$(LTWApk),\
+                          /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/OldAPKs/$(OldltwApk),\
                           /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
                           /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Dist-RC-release/brokerHost-dist-release.apk,\
+                          /sdcard/BrokerHostWithoutBrokerSelection.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(brokerhostWithoutBrokerSelectionEnabled_apk),\
                           /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                           /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                           /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
-                          /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
+                          /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
+                          /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
+                          /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
+                          /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp/$(msalE2ETestApp),\
+                          /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp)"
         firebaseDeviceId: $(firebaseDeviceIdHigh)
         firebaseDeviceAndroidVersion: $(firebaseDeviceAndroidVersionHigh)
         testRunTitle: "PROD MSAL - RC Broker (API $(firebaseDeviceAndroidVersionHigh)) # $(Build.BuildNumber)"
@@ -920,15 +971,23 @@ stages:
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "PROD-MSAL-RC-BrokerHost-debug-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/RC/$(companyPortalApk),\
+                          /sdcard/OldCompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/OldAPKs/$(oldCompanyPortalApk),\
                           /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/RC/$(authenticatorApk),\
                           /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(oldAuthenticatorApk),\
-                          /sdcard/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/brokerHost-local-debug.apk,\
+                          /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/RC/$(LTWApk),\
+                          /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/OldAPKs/$(OldltwApk),\
                           /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
                           /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Local-RC-debug/brokerHost-local-debug.apk,\
+                          /sdcard/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/brokerHost-local-debug.apk,\
+                          /sdcard/BrokerHostWithoutBrokerSelection.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(brokerhostWithoutBrokerSelectionEnabled_apk),\
                           /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                           /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                           /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
-                          /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
+                          /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
+                          /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
+                          /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
+                          /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp/$(msalE2ETestApp),\
+                          /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp)"
         firebaseDeviceId: $(firebaseDeviceIdHigh)
         firebaseDeviceAndroidVersion: $(firebaseDeviceAndroidVersionHigh)
         testRunTitle: "PROD MSAL - RC Broker (BrokerHost tests, debug) (API $(firebaseDeviceAndroidVersionHigh)) # $(Build.BuildNumber)"
@@ -944,14 +1003,22 @@ stages:
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "RC_MSAL-PROD_Broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
         otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/RC/$(companyPortalApk),\
+                          /sdcard/OldCompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/OldAPKs/$(oldCompanyPortalApk),\
                           /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/RC/$(authenticatorApk),\
                           /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(oldAuthenticatorApk),\
+                          /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/RC/$(LTWApk),\
+                          /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/OldAPKs/$(OldltwApk),\
                           /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
                           /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Dist-RC-release/brokerHost-dist-release.apk,\
+                          /sdcard/BrokerHostWithoutBrokerSelection.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(brokerhostWithoutBrokerSelectionEnabled_apk),\
                           /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                           /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                           /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
-                          /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk)"
+                          /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
+                          /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
+                          /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
+                          /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp/$(msalE2ETestApp),\
+                          /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(msalE2ETestApp)"
         firebaseDeviceId: $(firebaseDeviceIdLow)
         firebaseDeviceAndroidVersion: $(firebaseDeviceAndroidVersionLow)
         testRunTitle: "PROD MSAL - RC Broker (API $(firebaseDeviceAndroidVersionLow)) # $(Build.BuildNumber)"
