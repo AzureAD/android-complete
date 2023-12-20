@@ -824,10 +824,10 @@ stages:
       testTarget: $[replace('$(brokerTestTarget)', ', notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests', '')]
     ${{ else }}:
       testTarget: $(brokerTestTarget), notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
-    ${{ if eq(variables['skipOneAuth'], 'True') }}:
-      oneAuthFile: ''
-    ${{ else }}:
+    ${{ if eq(variables['skipOneAuth'], 'False') }}:
       oneAuthFile: /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
+    ${{ else }}:
+      oneAuthFile: ''
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
@@ -943,10 +943,10 @@ stages:
       testTarget: $[replace('$(msalTestTarget)', ', notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests', '')]
     ${{ else }}:
       testTarget: $(msalTestTarget), notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
-    ${{ if eq(variables['skipOneAuth'], 'True') }}:
-      oneAuthFile: ''
-    ${{ else }}:
+    ${{ if eq(variables['skipOneAuth'], 'False') }}:
       oneAuthFile: /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
+    ${{ else }}:
+      oneAuthFile: ''
   jobs:
     # PROD MSAL with RC Broker API 30+
     - template: ./templates/flank/run-on-firebase-with-flank.yml
