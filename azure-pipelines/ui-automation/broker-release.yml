@@ -825,7 +825,7 @@ stages:
     ${{ else }}:
       testTarget: $(brokerTestTarget), notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
     ${{ if eq(variables['skipOneAuth'], 'False') }}:
-      oneAuthFile: "/sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\\"
+      oneAuthFile: "/sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp)"
     ${{ else }}:
       oneAuthFile: ""
   jobs:
@@ -849,7 +849,7 @@ stages:
                       /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
-                      $(oneAuthFile)
+                      $(oneAuthFile),\
                       /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp),\
                       /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp-RC/$(msalE2ETestApp)"
         firebaseDeviceId: $(firebaseDeviceIdHigh)
