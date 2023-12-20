@@ -810,10 +810,10 @@ stages:
     )
   displayName: RC ADAL with RC Broker UI Automation
   variables:
-  ${{ if eq(parameters.buildAndTestLTW, 'True') }}:
-    testTarget: $[replace('$(brokerTestTarget)', ', notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests', '')]
-  ${{ else }}:
-    testTarget: $(brokerTestTarget), notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
+    ${{ if eq(parameters.buildAndTestLTW, 'True') }}:
+      testTarget: $[replace('$(brokerTestTarget)', ', notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests', '')]
+    ${{ else }}:
+      testTarget: $(brokerTestTarget), notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
@@ -925,10 +925,10 @@ stages:
     )
   displayName: PROD MSAL with RC Broker UI Automation
   variables:
-  ${{ if eq(parameters.buildAndTestLTW, 'True') }}:
-    testTarget: $[replace('$(msalTestTarget)', ', notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests', '')]
-  ${{ else }}:
-    testTarget: $(msalTestTarget), notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
+    ${{ if eq(parameters.buildAndTestLTW, 'True') }}:
+      testTarget: $[replace('$(msalTestTarget)', ', notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests', '')]
+    ${{ else }}:
+      testTarget: $(msalTestTarget), notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
   jobs:
     # PROD MSAL with RC Broker API 30+
     - template: ./templates/flank/run-on-firebase-with-flank.yml
