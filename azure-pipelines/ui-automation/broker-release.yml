@@ -791,8 +791,8 @@ stages:
     - template: ./templates/download-old-test-apps.yml
       parameters:
         feedName: '$(testAppsFeedName)'
-        oldMsalTestAppVersion: ${{ parameters.oldMsalTestAppVersion }}
-        oldOneAuthTestAppVersion: ${{ parameters.oldOneAuthTestAppVersion }}
+        oldMsalTestAppVersion: $(oldMsalTestAppVersion)
+        oldOneAuthTestAppVersion: $(oldOneAuthTestAppVersion)
 
 # ADAL with Broker (API 30+)
 - stage: 'adal_with_broker_high_api'
