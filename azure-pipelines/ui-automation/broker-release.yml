@@ -827,7 +827,7 @@ stages:
     ${{ if eq(variables['skipOneAuth'], 'False') }}:
       oneAuthFile: "/sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\\"
     ${{ else }}:
-      oneAuthFile: "
+      oneAuthFile: ""
   jobs:
     - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
