@@ -706,7 +706,7 @@ stages:
         adalVersion: ${{ parameters.adalVersionRC }}
         commonVersion: ${{ parameters.commonVersionRC }}
         packageVariant: RC
-    - ${{ if eq(parameters.buildOneAuth, 'False') }}:
+    - ${{ if parameters.buildOneAuth }}:
       - template: ../ui-automation/templates/build-one-auth-test-app.yml
         parameters:
           commonVersion: ${{ parameters.commonVersionRC }}
@@ -828,7 +828,7 @@ stages:
       testTarget: $[replace('$(brokerTestTarget)', ', notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests', '')]
     ${{ else }}:
       testTarget: $(brokerTestTarget), notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
-    ${{ if eq(parameters.buildOneAuth, 'False') }}:
+    ${{ if parameters.buildOneAuth }}:
       oneAuthFile: "/sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                     /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp)"
     ${{ else }}:
@@ -947,7 +947,7 @@ stages:
       testTarget: $[replace('$(msalTestTarget)', ', notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests', '')]
     ${{ else }}:
       testTarget: $(msalTestTarget), notAnnotation com.microsoft.identity.client.ui.automation.annotations.LTWTests
-    ${{ if eq(parameters.buildOneAuth, 'False') }}:
+    ${{ if parameters.buildOneAuth }}:
       oneAuthFile: "/sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                     /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/$(oneAuthTestApp)"
     ${{ else }}:
