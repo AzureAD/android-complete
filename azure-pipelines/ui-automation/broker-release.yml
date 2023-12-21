@@ -563,7 +563,7 @@ stages:
             arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAzure-PAT)" -BuildDefinitionId "$(companyPortalPipelineId)" -WaitTimeoutInMinutes 100 -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}''}" -Branch "$(companyPortalBranch)" -BuildNumberOutputOnSuccessVar "companyPortalRCPipelineVersion"'
             workingDirectory: '$(Build.SourcesDirectory)'
           name: companyPortalPipelineScript
-# BrokerApk - Link to Windows Queue pipeline
+# Link to Windows (LTW)
 - stage: 'queueLinkToWindowsPipeline'
   variables:
     - group: AndroidAuthClientAutomationSecrets
