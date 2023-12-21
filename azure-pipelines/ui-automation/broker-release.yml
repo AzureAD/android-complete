@@ -72,7 +72,7 @@ parameters:
 - name: shouldEnableBrokerSelectionAndDiscoveryFlag
   displayName: Should enable broker selection & discovery?
   type: boolean
-  default: True
+  default: False
 
 # RC Library Versioning Parameters
 - name: msalVersionRC
