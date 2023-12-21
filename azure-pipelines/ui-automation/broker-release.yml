@@ -39,7 +39,7 @@ parameters:
 - name: shouldRunUiValidation
   displayName: Run E2E UI Validation?
   type: boolean
-  default: False
+  default: True
 - name: shouldBuildTestingLibraries
   displayName: Build & Publish Testing libs?
   type: boolean
@@ -47,7 +47,7 @@ parameters:
 - name: buildAndTestLTW
   displayName: Build and UI Test LTW? (Must pass Broker Discovery Flag)
   type: boolean
-  default: False
+  default: True
 - name: buildOneAuth
   displayName: Build One Auth Test App? (Required for LTW tests)
   type: boolean
@@ -72,7 +72,7 @@ parameters:
 - name: shouldEnableBrokerSelectionAndDiscoveryFlag
   displayName: Should enable broker selection & discovery?
   type: boolean
-  default: False
+  default: True
 
 # RC Library Versioning Parameters
 - name: msalVersionRC
