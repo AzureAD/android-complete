@@ -6,7 +6,7 @@
   </vendor>
   <resource-bundle>messages.LombokBundle</resource-bundle>
   <version>0.34.1-2019.1</version>
-  <idea-version since-build="191.6183" until-build="AI-999.*"/>
+  <idea-version since-build="191.6183" until-build="AI-231.*"/>
   <description>&lt;h1&gt;IntelliJ Lombok plugin&lt;/h1&gt;
 &lt;br/&gt;
 &lt;a href="https://github.com/mplushnikov/lombok-intellij-plugin"&gt;GitHub&lt;/a&gt; |
