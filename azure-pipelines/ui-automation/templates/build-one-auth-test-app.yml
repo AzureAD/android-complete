@@ -1,0 +1,47 @@
+parameters:
+  - name: commonVersion
+    type: string
+  - name: branch
+    type: string
+    default: dev
+  - name: scriptPathFromSource
+    type: string
+    default: /azure-pipelines/scripts/queue-build.ps1
+
+jobs:
+  - job: queueOneAuthTestApp
+    displayName: Build and Download OneAuth Test App
+    variables:
+      - name: project
+        value: OneAuth
+      - name: definitionId
+        value: 6332
+      - name: url
+        value: https://office.visualstudio.com/
+      - name: timeout
+        value: 60
+      - name: oneAuthProjectId
+        value : 'a4d3949e-967a-4298-8b6d-53f45f6b0704'
+    timeoutInMinutes: 60
+    steps:
+      - checkout: self
+        persistCredentials: True
+      - task: PowerShell@2
+        displayName: Queue and wait for OneAuth Test App Apk generation pipeline
+        name: buildApk
+        continueOnError: true
+        inputs:
+          filePath: '$(Build.SourcesDirectory)${{ parameters.scriptPathFromSource }}'
+          arguments: '-OrganizationUrl "$(url)" -Project "$(project)" -PipelinePAT "$(Office-PAT)" -WaitTimeoutInMinutes $(timeout) -BuildDefinitionId "$(definitionId)" -Branch "${{ parameters.branch }}" -TemplateParams "{''androidCommonVersion'': ''${{ parameters.commonVersion }}''}"'
+          workingDirectory: '$(Build.SourcesDirectory)'
+      - task: DownloadExternalBuildArtifacts@15
+        displayName: 'Download OneAuth test app'
+        inputs:
+          connection: OneAuthServiceConnection_3
+          project: $(oneAuthProjectId)
+          definition: $(definitionId)
+          version: $(buildApk.BrokeBuildId)
+          downloadPath: '$(Build.ArtifactStagingDirectory)'
+      - publish: $(Build.ArtifactStagingDirectory)/OneAuthTestApp
+        displayName: 'Publish OneAuth Test apk for later use'
+        artifact: oneauthtestapp

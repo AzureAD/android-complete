@@ -1,7 +1,6 @@
-#Runs the ui automation 
+# Monthly Release Pipeline
 # Variables
 # ---------
-# versionNumber: Generated version number    
 # common4jProjVersionParam: passes common4jVersion in the projVersion param
 # common4jVersionParam: passes Common4jVersion param
 # broker4jProjVersionParam: passes broker4jVersion in the projVersion param
@@ -13,8 +12,6 @@
 # adalProjVersionParam: passes adal Version in projVersion param
 # androidProjectDependencyParam: extrea android gradle configs
 # javaProjectDependencyParam: extra java gradle configs
-# oneProjectId: One Project ID `b32aa71e-8ed2-41b2-9d77-5bc261222004`
-# engineeringProjectId: engineering project ID which is `fac9d424-53d2-45c0-91b5-ef6ba7a6bf26`
 # msazureServiceConnection: ms azure service connection `AndroidBroker-CI`
 # msazureFeedName: name of msazure feed which is `Android-Broker`
 # brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
@@ -26,7 +23,6 @@
 # teamsApk: Teams apk name
 # wordApk: Word apk name
 # edgeApk: Edge apk name
-# firebaseTimeout: firebase timeout 
 # resultsHistoryName: Broker Release
 # https://dev.azure.com/IdentityDivision/Engineering/_build?definitionId=1801&_a=summary
 name: $(Build.BuildId)_$(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
@@ -36,30 +32,10 @@ pr: none
 
 parameters:
 # Stage control boolean parameters
-- name: shouldBuildLibraries
-  displayName: Build Libraries?
-  type: boolean
-  default: False
-- name: shouldRunUnitTests
-  displayName: Run Unit Tests?
+- name: shouldRunUnitAndInstrumentedTests
+  displayName: Run Unit And Instrumented Tests?
   type: boolean
   default: True
-- name: shouldRunInstrumentedTests
-  displayName: Run Instrumented Tests?
-  type: boolean
-  default: True
-- name: shouldPublishLibraries
-  displayName: Publish Libraries?
-  type: boolean
-  default: True
-- name: shouldPromoteLibraries
-  displayName: Promote Libraries?
-  type: boolean
-  default: False
-- name: shouldBuildBrokersApks
-  displayName: Build Broker Apks? (Authenticator and Company Portal)
-  type: boolean
-  default: False
 - name: shouldRunUiValidation
   displayName: Run E2E UI Validation?
   type: boolean
@@ -68,48 +44,51 @@ parameters:
   displayName: Build & Publish Testing libs?
   type: boolean
   default: False
+- name: buildLTW
+  displayName: Build LTW? (Must pass Broker Discovery Flag)
+  type: boolean
+  default: False
 
-# Library versioning parameters
+# Flighting / Flagging Parameters
+- name: flightingSelection
+  displayName: Broker Flight Provider
+  type: string
+  default: "ECS"
+  values:
+    - ECS
+    - Local
+- name: flightingValueParameter
+  displayName: Broker Flight Json-String (not active with ECS flighting)
+  type: string
+  default: '{EnablePrtV3:true,EnableBrokerPowerLiftLogging:true}'
+- name: flagsValue
+  displayName: Flags to Pass (passed to all libraries)
+  type: string
+  default: ' '
+- name: shouldEnableBrokerSelectionAndDiscoveryFlag
+  displayName: Should enable broker selection & discovery?
+  type: boolean
+  default: False
+
+# RC Library Versioning Parameters
 - name: msalVersionRC
   displayName: MSAL RC Version
-  type: string
-- name: msalVersionPROD
-  displayName: MSAL PROD Version
   type: string
 - name: commonVersionRC
   displayName: Common RC Version
   type: string
-- name: commonVersionPROD
-  displayName: Common PROD Version
-  type: string
 - name: common4jVersionRC
   displayName: Common4j RC Version
   type: string
-- name: broker4jVersionRC
-  displayName: Broker4j RC Version
-  type: string    
 - name: adAccountsVersionRC
   displayName: Broker RC Version
   type: string
-- name: adAccountsVersionPROD
-  displayName: Broker PROD Version
+- name: broker4jVersionRC
+  displayName: Broker4j RC Version
   type: string
 - name: adalVersionRC
   displayName: ADAL RC Version
   type: string
-- name: adalVersionPROD
-  displayName: ADAL PROD Version
-  type: string
-
-# PROD versioning parameters
-- name: prodAuthenticatorVersion
-  displayName: PROD Authenticator Version
-  type: string
-  default: '*'
-- name: prodCompanyPortalVersion
-  displayName: PROD Company Portal Version
-  type: string
-  default: '*'
 
 # Branch parameters
 - name: msalBranch
@@ -158,7 +137,6 @@ resources:
     endpoint: ANDROID_GITHUB
 
 variables:
-  versionNumber: $(Build.BuildNumber)
   common4jProjVersionParam: -PprojVersion=${{ parameters.common4jVersionRC }}
   common4jVersionParam: -PdistCommon4jVersion=${{ parameters.common4jVersionRC }}
   broker4jProjVersionParam: -PprojVersion=${{ parameters.broker4jVersionRC }}
@@ -168,31 +146,132 @@ variables:
   msalProjVersionParam: -PprojVersion=${{ parameters.msalVersionRC }}
   adAccountsProjVersionParam: -PprojVersion=${{ parameters.adAccountsVersionRC }}
   adalProjVersionParam: -PprojVersion=${{ parameters.adalVersionRC }}
-  otelAriaIsProdEnv: true
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
-  oneProjectId: b32aa71e-8ed2-41b2-9d77-5bc261222004
-  engineeringProjectId: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'    
   msazureServiceConnection: AndroidBroker-CI
   msazureFeedName: Android-Broker
+  authenticatorPipelineId: 237369
+  companyPortalPipelineId: 237827
+  ltwPipelineId: 44201
   brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
   brokerTestApp: brokerautomationapp-dist-AutoBroker-debug-androidTest.apk
   companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
   authenticatorApk: app-production-universal-release-signed.apk
   oldAuthenticatorApk: Authenticator-4.1.0-RC.apk
+  oldAuthenticatorVersion: 6.2204.2470
+  OSServiceConnection: LTW-Integration
+  LTWFeedName: Auth-Broker-Integrated-LTW-Build
+  LTWApk: LTW-signed.apk
   outlookApk: Outlook.apk
   teamsApk: Teams.apk
   wordApk: Word.apk
   edgeApk: Edge.apk
-  firebaseTimeout: 45m
   resultsHistoryName: Broker Release
+  ${{ if eq(parameters.flightingSelection, 'Local') }}:
+    flightValueVariable: -PlocalFlights=${{ parameters.flightingValueParameter }}
+  ${{ else }}:
+    flightValueVariable: ''
+  flagVariable: ${{ parameters.flagsValue }}
+  ${{ if parameters.shouldEnableBrokerSelectionAndDiscoveryFlag }}:
+    enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
+    enableBrokerDiscoveryParam: -PnewBrokerDiscoveryEnabledFlag
+  ${{ else }}:
+    enableBrokerSelectionParam: ''
+    enableBrokerDiscoveryParam: ''
+
 
 stages:
+- stage: 'addTags'
+  displayName: Tag Pipeline
+  dependsOn: []
+  variables:
+    - name: flightsTag
+      value: $[replace('${{ parameters.flightingValueParameter }}', ':', ' ')]
+  jobs:
+  - job: addTags
+    displayName: Add tags for flights
+    steps:
+    - task: PowerShell@2
+      displayName: Run Tagging Script
+      inputs:
+        targetType: inline
+        script: |
+          Write-Host "##vso[build.addbuildtag]PROD MSAL=($(MSAL-PROD-Version)) RC MSAL=(${{ parameters.msalVersionRC }})"
+          
+          Write-Host "##vso[build.addbuildtag]RC Common=(${{ parameters.commonVersionRC }}) RC Common4j=(${{ parameters.common4jVersionRC }})"
+          
+          Write-Host "##vso[build.addbuildtag]PROD AADAuthenticator=($(Broker-PROD-Version)) RC AADAuthenticator=(${{ parameters.adAccountsVersionRC }}) RC Broker4j=(${{ parameters.broker4jVersionRC }})"
+          
+          Write-Host "##vso[build.addbuildtag]RC ADAL=(${{ parameters.adalVersionRC }})"
+          
+          if ('${{ parameters.flightingSelection }}' -eq "Local") {
+            Write-Host "##vso[build.addbuildtag]Local Flighting"
+            Write-Host "##vso[build.addbuildtag]Flights Passed=$(flightsTag)"
+          } else {
+            Write-Host "##vso[build.addbuildtag]ECS Flighting"
+          }
+          
+          if ( ( '${{ parameters.flagsValue }}' -eq ' ' ) -and ( '${{ parameters.shouldEnableBrokerSelectionAndDiscoveryFlag }}' -eq 'false' ) ) {
+            Write-Host "##vso[build.addbuildtag]No Library Flags Passed"
+          } else {
+            Write-Host "##vso[build.addbuildtag]Flags Passed=${{ parameters.flagsValue }} $(enableBrokerDiscoveryParam) $(enableBrokerSelectionParam)"
+          }
+
+- stage: 'checkVersionAndFlighting'
+  displayName: Fail If Official Version and Local Flighting
+  dependsOn: []
+  jobs:
+    - job: checkVersionAndFlighting
+      displayName: Fail If Official Version and Local Flighting
+      steps:
+        - task: PowerShell@2
+          displayName: Checking If Official Version and Local Flighting
+          inputs:
+            targetType: inline
+            script: |
+              # Regex ^\d+\.\d+\.\d+$ will match an official release version (digits only, delimited with '.', exactly 3 segments)
+              Write-Host "Checking if we have an official release version (Ex:4.9.0) for any of the Release library versions."
+              $regex = '^\d+\.\d+\.\d+$'
+              
+              # Check if any of the versions match the "official version" regex
+              
+              Write-Host "Msal RC: ${{ parameters.msalVersionRC }}"
+              Write-Host "Common RC: ${{ parameters.commonVersionRC }}"
+              Write-Host "Common4j RC: ${{ parameters.common4jVersionRC }}"
+              Write-Host "Broker RC: ${{ parameters.adAccountsVersionRC }}"
+              Write-Host "Broker4j RC: ${{ parameters.broker4jVersionRC }}"
+              Write-Host "ADAL RC: ${{ parameters.adalVersionRC }}"
+              
+              if ('${{ parameters.msalVersionRC }}' -match $regex -or
+                  '${{ parameters.commonVersionRC }}' -match $regex -or
+                  '${{ parameters.common4jVersionRC }}' -match $regex -or
+                  '${{ parameters.adAccountsVersionRC }}' -match $regex -or
+                  '${{ parameters.broker4jVersionRC }}' -match $regex -or
+                  '${{ parameters.adalVersionRC }}' -match $regex)
+              {
+                Write-Host "At least one version is an official release version (EX: 4.9.0, digits only, delimited with '.', exactly 3 segments)"
+                Write-Host "Checking if we are using Local flight provider. If so, fail this pipeline run..."
+                
+                if ('${{ parameters.flightingSelection }}' -eq "Local") {
+                  Write-Host "Detected we are using local flight provider with a release version. Failing pipeline run..."
+                  exit 1
+                } else {
+                  Write-Host "We are not using local flight provider, can proceed with official release versions!"
+                }
+              
+                # TODO: Should we also add a check if a flag is being passed and fail it with release versions?
+  
+              } else {
+                Write-Host "None of the library versions are official release versions, proceed with run!"
+              }
+
 # Package generation
 # Testing Libraries - KeyVault, LabApi, LabApiUtilities, TestUtils, UiAutomationUtilities
 - stage: 'publishCommonUtilities'
   displayName: Testing Libraries - Build and publish
-  dependsOn: [] # this removes the implicit dependency on previous stage and causes this to run in parallel
+  dependsOn:
+  - addTags
+  - checkVersionAndFlighting
   condition: |
     and
     (
@@ -217,10 +296,11 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+      not(canceled())
     )
-  dependsOn: [] # this removes the implicit dependency on previous stage and causes this to run in parallel
+  dependsOn:
+  - addTags
+  - checkVersionAndFlighting
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
     parameters:
@@ -228,24 +308,24 @@ stages:
       project: common4j
       testCmd: common4jUnitTestCoverageReport
       dependencyParams: $(javaProjectDependencyParam)
-      assembleParams: $(common4jProjVersionParam)
-      testParams: $(common4jProjVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(common4jProjVersionParam)
+      assembleParams: $(common4jProjVersionParam) $(flagVariable)
+      testParams: $(common4jProjVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable)
+      publishParams: $(common4jProjVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish  
-  dependsOn: publishCommon4jLibraries
+  dependsOn:
+  - publishCommonUtilities
+  - publishCommon4jLibraries
   condition: |
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+      not(canceled())
     )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
@@ -256,25 +336,24 @@ stages:
       testCmd: distDebugCommonUnitTestCoverageReport
       publishCmd: publish
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(commonProjVersionParam) $(common4jVersionParam)
-      testParams: $(commonProjVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(commonProjVersionParam) $(common4jVersionParam)
+      assembleParams: $(commonProjVersionParam) $(common4jVersionParam) $(flagVariable) $(enableBrokerDiscoveryParam)
+      testParams: $(commonProjVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable) $(enableBrokerDiscoveryParam)
+      publishParams: $(commonProjVersionParam) $(common4jVersionParam) $(flagVariable) $(enableBrokerDiscoveryParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
 # Broker4j - Build and publish
 - stage: 'publishBroker4jLibraries'
   displayName: Broker4j - Build and publish  
-  dependsOn: 
+  dependsOn:
+  - publishCommonUtilities
   - publishCommon4jLibraries
   condition: |
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+      not(canceled())
     )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
@@ -284,14 +363,13 @@ stages:
       testCmd: broker4jUnitTestCoverageReport
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
-      assembleParams: $(broker4jProjVersionParam) $(common4jVersionParam)
-      testParams: $(broker4jProjVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(broker4jProjVersionParam) $(common4jVersionParam)
+      assembleParams: $(broker4jProjVersionParam) $(common4jVersionParam) $(flagVariable) $(flightValueVariable)
+      testParams: $(broker4jProjVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable) $(flightValueVariable)
+      publishParams: $(broker4jProjVersionParam) $(common4jVersionParam) $(flagVariable) $(flightValueVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
@@ -304,13 +382,11 @@ stages:
   dependsOn: 
   - publishCommonLibraries
   - publishBroker4jLibraries
-  - publishCommonUtilities
   condition: |
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+      not(canceled())
     )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
@@ -321,27 +397,24 @@ stages:
       assembleCmd: assembleDist
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(brokerOtelAriaTokenParam) $(powerLiftApiKeyParam)
-      testParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam)
+      assembleParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(brokerOtelAriaTokenParam) $(powerLiftApiKeyParam) $(flagVariable) $(enableBrokerSelectionParam)
+      testParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable) $(enableBrokerSelectionParam)
+      publishParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(flagVariable) $(enableBrokerSelectionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
       agentImage: 1ES-AndroidPool-EOC
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
 # Msal - Build and publish      
 - stage: 'publishMsal'
   displayName: Msal - Build and publish  
   dependsOn: 
   - publishCommonLibraries
-  - publishCommonUtilities
   condition: |
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+      not(canceled())
     )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
@@ -352,14 +425,13 @@ stages:
       testCmd: distDebugMsalUnitTestCoverageReport
       publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(msalProjVersionParam) $(commonVersionParam)
-      testParams: $(msalProjVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(msalProjVersionParam) $(commonVersionParam)
+      assembleParams: $(msalProjVersionParam) $(commonVersionParam) $(flagVariable)
+      testParams: $(msalProjVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable)
+      publishParams: $(msalProjVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
 # Adal - Build and publish
 - stage: 'publishAdal'
   displayName: Adal - Build and publish  
@@ -368,8 +440,7 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildLibraries }}, 'True')
+      not(canceled())
     )
   jobs:
   - template: ../continuous-delivery/assemble&publish.yml
@@ -380,14 +451,13 @@ stages:
       testCmd: testDistDebugUnitTest
       publishCmd: publishAdalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(adalProjVersionParam) $(commonVersionParam)
-      testParams: $(adalProjVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(adalProjVersionParam) $(commonVersionParam)
+      assembleParams: $(adalProjVersionParam) $(commonVersionParam) $(flagVariable)
+      testParams: $(adalProjVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable)
+      publishParams: $(adalProjVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
 
 # Promote Libraries
 - stage: 'promoteLibraries'
@@ -396,8 +466,7 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldPromoteLibraries }}, 'True')
+      not(canceled())
     )
   dependsOn:
     - publishAdal
@@ -437,24 +506,25 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildBrokersApks }}, 'True')
+      not(canceled())
     )
   dependsOn:
     - promoteLibraries
+  variables:
+    - group: AndroidAuthClientAutomationSecrets
   jobs:
-    - job: queue_build
+    - job: queue_build_Authenticator
       displayName: Queue Build for Authenticator RC
-      timeoutInMinutes: 90
+      timeoutInMinutes: 120
       steps:
         - checkout: self
           persistCredentials: True
         - task: PowerShell@2
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(MSAZURE_BUILD_TOKEN)" -BuildDefinitionId "237369" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}'', ''AdalVersion'': ''${{ parameters.adalVersionRC }}'' }" -Branch "$(authenticatorBranch)"'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(MSAzure-PAT)" -BuildDefinitionId "$(authenticatorPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}'', ''AdalVersion'': ''${{ parameters.adalVersionRC }}'' }" -Branch "$(authenticatorBranch)" -BuildNumberOutputOnSuccessVar "authenticatorRCPipelineVersion"'
             workingDirectory: '$(Build.SourcesDirectory)'
-          name: buildAuthenticator
+          name: authenticatorPipelineScript
 # Company Portal
 - stage: 'queueCompanyPortalBrokerApkPipeline'
   displayName: Company Portal - Queue Build Pipeline
@@ -462,24 +532,66 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      eq(${{ parameters.shouldBuildBrokersApks }}, 'True')
+      not(canceled())
     )
   dependsOn:
     - promoteLibraries
+  variables:
+    - group: AndroidAuthClientAutomationSecrets
   jobs:
-    - job: queue_build
+    - job: queue_build_CompanyPortal
       displayName: Queue Build for Company Portal RC
-      timeoutInMinutes: 90
+      timeoutInMinutes: 120
       steps:
         - checkout: self
           persistCredentials: True
         - task: PowerShell@2
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAZURE_BUILD_TOKEN)" -BuildDefinitionId "237827" -WaitTimeoutInMinutes 100 -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}''}" -Branch "$(companyPortalBranch)"'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAzure-PAT)" -BuildDefinitionId "$(companyPortalPipelineId)" -WaitTimeoutInMinutes 100 -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}''}" -Branch "$(companyPortalBranch)" -BuildNumberOutputOnSuccessVar "companyPortalRCPipelineVersion"'
             workingDirectory: '$(Build.SourcesDirectory)'
-          name: buildCompanyPortal
+          name: companyPortalPipelineScript
+# BrokerApk - Link to Windows Queue pipeline
+- stage: 'queueLinkToWindowsPipeline'
+  variables:
+    - group: AndroidAuthClientAutomationSecrets
+  displayName: Link To Windows - Queue Build Pipeline
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.buildLTW }}, 'True')
+    )
+  dependsOn:
+    - promoteLibraries
+  jobs:
+    - job: queue_build_LinkToWindows
+      displayName: Generate Link To Windows Apk
+      timeoutInMinutes: 120
+      steps:
+        - checkout: self
+          persistCredentials: True
+        - task: PowerShell@2
+          displayName: Queue and wait for Link to Windows Apk generation pipeline
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+            arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(LTW-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(ltwPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.adAccountsVersionRC }}'', ''CommonVersion'': ''${{ parameters.commonVersionRC }}'', ''MsalVersion'': ''${{ parameters.msalVersionRC }}'', ''AdalVersion'': ''${{ parameters.adalVersionRC }}''}" -Branch "$(LTWBranch)" -BuildReason "UserCreated" -BuildNumberOutputOnSuccessVar "rawLtwPipelineBuildNumber"'
+            workingDirectory: '$(Build.SourcesDirectory)'
+          name: ltwPipelineScript
+        - task: PowerShell@2
+          displayName: 'Trim LTW build number to get apk version'
+          inputs:
+            targetType: inline
+            script: |
+              # LTW pipeline build number is structured like (versionMajor).(versionMinor).(versionBuild).(versionRevision).(build.reason)
+              # The version of APK published to feed is (versionMajor).(versionMinor).(versionBuild)
+              # We use regex to remove the last two segments so we get the correct version number
+              Write-Host "Raw Build Number: $(ltwPipelineScript.rawLtwPipelineBuildNumber)"
+              $trimmedVersion = "$(ltwPipelineScript.rawLtwPipelineBuildNumber)" -replace "\.\d+\.\w+$",""
+              Write-Host "Trimmed Version Number: $trimmedVersion"
+              Write-Host "##vso[task.setvariable variable=ltwRCPipelineVersion;isOutput=true]$trimmedVersion"
+          name: ltwVersionScript
 
 # TestApp generation
 - stage: 'testappgeneration'
@@ -507,7 +619,7 @@ stages:
       parameters:
         productFlavors: External
         signingConfigurations: Release
-        msalVersion: ${{ parameters.msalVersionPROD }}
+        msalVersion: $(MSAL-PROD-Version)
         packageVariant: PROD
     - template: ./templates/build-broker-host.yml
       parameters:
@@ -530,6 +642,8 @@ stages:
         adAccountsVersion: ${{ parameters.adAccountsVersionRC }}
         adalVersion: ${{ parameters.adalVersionRC }}
         packageVariant: RC
+        flagsParamString: $(flagVariable)
+        localFlightsParamString: $(flightValueVariable)
     - template: ./templates/build-msal-automation-app.yml
       parameters:
         brokerApp: AutoBroker
@@ -544,7 +658,7 @@ stages:
         msalFlavor: Dist
         brokerSource: LocalApk
         brokerUpdateSource: LocalApk
-        msalVersion: ${{ parameters.msalVersionPROD }}
+        msalVersion: $(MSAL-PROD-Version)
         packageVariant: PROD
     - template: ./templates/build-msal-automation-app.yml
       parameters:
@@ -552,7 +666,7 @@ stages:
         msalFlavor: Local
         brokerSource: LocalApk
         brokerUpdateSource: LocalApk
-        msalVersion: ${{ parameters.msalVersionPROD }}
+        msalVersion: $(MSAL-PROD-Version)
         packageVariant: PROD
     - template: ./templates/build-broker-automation-app.yml
       parameters:
@@ -561,6 +675,10 @@ stages:
         brokerSource: LocalApk
         adalVersion: ${{ parameters.adalVersionRC }}
         commonVersion: ${{ parameters.commonVersionRC }}
+    - template: ../ui-automation/templates/build-one-auth-test-app.yml
+      parameters:
+        commonVersion: ${{ parameters.commonVersionRC }}
+        branch: $(OneAuthBranch)
     - template: ./templates/build-msal-test-app.yml
       parameters:
         productFlavors: Dist
@@ -592,6 +710,7 @@ stages:
   dependsOn:
   - queueAuthenticatorBrokerApkPipeline
   - queueCompanyPortalBrokerApkPipeline
+  - queueLinkToWindowsPipeline
   - testappgeneration
   displayName: Download PROD & RC Brokers
   condition:
@@ -601,17 +720,56 @@ stages:
       not(canceled())
     )
   jobs:
-    - template: ./templates/download-brokers.yml
-      parameters:
-        engineeringProjectId: '$(engineeringProjectId)'
-        msazureServiceConnection: '$(msazureServiceConnection)'
-        msazureFeedName: '$(msazureFeedName)'
-        authenticatorVersionRC: $(rcAuthenticatorVersion)
-        authenticatorVersionPROD: ${{ parameters.prodAuthenticatorVersion }}
-        oldAuthenticatorVersion: $(oldAuthenticatorVersion)
-        companyPortalVersionRC: $(rcCompanyPortalVersion)
-        companyPortalVersionPROD: ${{ parameters.prodCompanyPortalVersion }}
-        prodBrokerHostVersion: ${{ parameters.adAccountsVersionPROD}}
+    - job: 'download_brokers_job'
+      displayName: Download Brokers
+      pool:
+        vmImage: ubuntu-latest
+      variables:
+        authenticatorRCPipelineVersion: $[ stageDependencies.queueAuthenticatorBrokerApkPipeline.queue_build_Authenticator.outputs['authenticatorPipelineScript.authenticatorRCPipelineVersion'] ]
+        companyPortalRCPipelineVersion: $[ stageDependencies.queueCompanyPortalBrokerApkPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalRCPipelineVersion'] ]
+        ltwRCPipelineVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwRCPipelineVersion'] ]
+      steps:
+        - task: PowerShell@2
+          displayName: 'Check if We Ran Broker APK Builds'
+          inputs:
+            targetType: inline
+            script: |
+              if ('$(authenticatorRCPipelineVersion)' -ne '') {
+                Write-Host "##vso[task.setvariable variable=rcAuthenticatorVersion]$(authenticatorRCPipelineVersion)"
+              }
+              if ('$(companyPortalRCPipelineVersion)' -ne '') {
+                Write-Host "##vso[task.setvariable variable=rcCompanyPortalVersion]$(companyPortalRCPipelineVersion)"
+              }          
+              if ('$(ltwRCPipelineVersion)' -ne '') {
+                Write-Host "##vso[task.setvariable variable=rcLTWVersion]$(ltwRCPipelineVersion)"
+              }
+        - task: PowerShell@2
+          displayName: 'Create Tags for Broker APK Versions'
+          inputs:
+            targetType: inline
+            script: |
+              $rcAuthenticatorVersionTag = "$(rcAuthenticatorVersion)" -replace "\*","Latest In Feed"
+              $prodAuthenticatorVersionTag = "$(Authenticator-APK-PROD-Version)" -replace "\*","Latest In Feed"
+              $rcCompanyPortalVersionTag = "$(rcCompanyPortalVersion)" -replace "\*","Latest In Feed"
+              $prodCompanyPortalVersionTag = "$(CompanyPortal-APK-PROD-Version)" -replace "\*","Latest In Feed"
+              $rcLTWVersionTag = "$(rcLTWVersion)" -replace "\*","Latest In Feed"
+              
+              Write-Host "##vso[build.addbuildtag]RC Authenticator APK Version=($rcAuthenticatorVersionTag) PROD Authenticator APK Version=($prodAuthenticatorVersionTag)"
+              Write-Host "##vso[build.addbuildtag]RC CompanyPortal APK Version=($rcCompanyPortalVersionTag) PROD CompanyPortal APK Version=($prodCompanyPortalVersionTag)"
+              Write-Host "##vso[build.addbuildtag]RC LTW APK Version=($rcLTWVersionTag)"
+        - template: ./templates/download-rc-prod-brokers.yml
+          parameters:
+            msazureServiceConnection: '$(msazureServiceConnection)'
+            msazureFeedName: '$(msazureFeedName)'
+            authenticatorVersionRC: $(rcAuthenticatorVersion)
+            authenticatorVersionPROD: $(Authenticator-APK-PROD-Version)
+            oldAuthenticatorVersion: $(oldAuthenticatorVersion)
+            companyPortalVersionRC: $(rcCompanyPortalVersion)
+            companyPortalVersionPROD: $(CompanyPortal-APK-PROD-Version)
+            prodBrokerHostVersion: $(Broker-PROD-Version)
+            OSServiceConnection: '$(OSServiceConnection)'
+            LTWFeedName: '$(LTWFeedName)'
+            LTWVersionRC: $(rcLTWVersion)
 
 # ADAL with Broker (API 30+)
 - stage: 'adal_with_broker_high_api'
@@ -635,9 +793,9 @@ stages:
         testTargetPackages: $(brokerTestTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "brokerautomationapp-testpass-adal&basic-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
-        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-                      /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-                      /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/RC/$(companyPortalApk),\
+                      /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/RC/$(authenticatorApk),\
+                      /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(oldAuthenticatorApk),\
                       /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-RC/AzureSample-external-release.apk,\
                       /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Dist-RC-release/brokerHost-dist-release.apk,\
                       /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
@@ -674,10 +832,10 @@ stages:
         testTargetPackages: $(msalTestTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "RC_MSAL-PROD_Broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
-        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/prod/$(companyPortalApk),\
-                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/prod/$(authenticatorApk),\
-                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
-                          /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/prod/brokerHost-dist-release.apk,\
+        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/PROD/$(companyPortalApk),\
+                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/PROD/$(authenticatorApk),\
+                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(oldAuthenticatorApk),\
+                          /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/PROD/brokerHost-dist-release.apk,\
                           /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-RC/AzureSample-external-release.apk,\
                           /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                           /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
@@ -698,10 +856,10 @@ stages:
         testTargetPackages: $(msalTestTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "RC_MSAL-PROD_Broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
-        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/prod/$(companyPortalApk),\
-                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/prod/$(authenticatorApk),\
-                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
-                          /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/prod/brokerHost-dist-release.apk,\
+        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/PROD/$(companyPortalApk),\
+                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/PROD/$(authenticatorApk),\
+                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(oldAuthenticatorApk),\
+                          /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/PROD/brokerHost-dist-release.apk,\
                           /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-RC/AzureSample-external-release.apk,\
                           /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
                           /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
@@ -737,9 +895,9 @@ stages:
         testTargetPackages: $(msalTestTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "PROD-MSAL-RC-Broker-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
-        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/RC/$(companyPortalApk),\
+                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/RC/$(authenticatorApk),\
+                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(oldAuthenticatorApk),\
                           /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
                           /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Dist-RC-release/brokerHost-dist-release.apk,\
                           /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
@@ -761,10 +919,10 @@ stages:
         testTargetPackages: $(msalTestTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "PROD-MSAL-RC-BrokerHost-debug-highapi-$(Build.BuildId)-$(Build.BuildNumber)"
-        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
-                          /sdcard/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/brokerHost-local-debug.apk,\
+        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/RC/$(companyPortalApk),\
+                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/RC/$(authenticatorApk),\
+                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(oldAuthenticatorApk),\
+                          /sdcard/OldBrokerHost.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/brokerHost-local-debug.apk,\
                           /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
                           /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Local-RC-debug/brokerHost-local-debug.apk,\
                           /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\
@@ -785,9 +943,9 @@ stages:
         testTargetPackages: $(msalTestTarget)
         resultsHistoryName: "$(resultsHistoryName)"
         resultsDir: "RC_MSAL-PROD_Broker-lowapi-$(Build.BuildId)-$(Build.BuildNumber)"
-        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/$(companyPortalApk),\
-                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/$(authenticatorApk),\
-                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/$(oldAuthenticatorApk),\
+        otherFiles: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/RC/$(companyPortalApk),\
+                          /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/RC/$(authenticatorApk),\
+                          /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/OldAPKs/$(oldAuthenticatorApk),\
                           /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-PROD/AzureSample-external-release.apk,\
                           /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Dist-RC-release/brokerHost-dist-release.apk,\
                           /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(outlookApk),\

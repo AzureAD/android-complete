@@ -53,24 +53,39 @@ parameters:
     displayName: Version Number
     type: string
     default: Default
+  - name: flightingSelection
+    displayName: Broker Flight Provider (ECS is used in PROD)
+    type: string
+    default: "Local"
+    values:
+      - Local
+      - ECS
+  - name: flightingValueParameter
+    displayName: Broker Local Flight Json-String (not active with ECS flighting)
+    type: string
+    default: '{EnablePrtV3:true,EnableBrokerPowerLiftLogging:true}'
+  - name: flagsValue
+    displayName: Flags to Pass (passed to all libraries)
+    type: string
+    default: ' '
   - name: shouldRunUiValidation
     displayName: Run E2E UI Validation?
     type: boolean
     default: False
-  - name: shouldRunUnitTests
-    displayName: Run Unit Tests?
-    type: boolean
-    default: True
-  - name: shouldRunInstrumentedTests
-    displayName: Run Instrumented Tests?
-    type: boolean
-    default: True
-  - name: shouldPublishLibraries
-    displayName: Publish Libraries?
+  - name: shouldRunUnitAndInstrumentedTests
+    displayName: Run Unit and Instrumented Tests?
     type: boolean
     default: True
   - name: shouldEnableBrokerSelectionAndDiscoveryFlag
     displayName: Should enable broker selection & discovery?
+    type: boolean
+    default: False
+  - name: shouldTrustDebugBroker
+    displayName: (FOR DEBUGGING) Always trust debug broker apps. (Required for working with DEBUG CP/LTW/AuthApp)
+    type: boolean
+    default: false
+  - name: treatTestAppAsPartOfTSL
+    displayName: (FOR DEBUGGING) Force Broker to treat OneAuthTestApp/MSALTestApp as first party app. (Required for testing with 1st party app registration)
     type: boolean
     default: False
   - name: publishLibraryArtifacts
@@ -88,7 +103,7 @@ parameters:
 
 variables:
   ${{ if eq(parameters.customVersionNumber, 'Default') }}:
-    versionNumber: $(Build.BuildNumber)
+    versionNumber: $[variables['build.buildnumber']]
     brokerVersionNumber: $[replace(variables['build.buildnumber'], '1.0.', '8.1.')]
   ${{ else }}:
     versionNumber:  ${{ parameters.customVersionNumber }}
@@ -104,38 +119,89 @@ variables:
   companyPortalPipelineId: 237827
   ltwPipelineId: 44201
   brokerAutomationPipelineId: 1490
-  ${{ if parameters.shouldEnableBrokerSelectionAndDiscoveryFlag }}:
+  # We add these flags during scheduled runs, they will be dropped depending on the day of the week
+  ${{ if or(parameters.shouldEnableBrokerSelectionAndDiscoveryFlag, eq( variables['Build.Reason'], 'Schedule')) }}:
     enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
     enableBrokerDiscoveryParam: -PnewBrokerDiscoveryEnabledFlag
   ${{ else }}:
     enableBrokerSelectionParam: ''
     enableBrokerDiscoveryParam: ''
+  ${{ if or(parameters.shouldTrustDebugBroker, eq( variables['Build.Reason'], 'Schedule')) }}:
+    trustDebugBrokerParam: -PtrustDebugBrokerFlag
+  ${{ else }}:
+    trustDebugBrokerParam: ''
+  ${{ if or(parameters.treatTestAppAsPartOfTSL, eq( variables['Build.Reason'], 'Schedule')) }}:
+    bypassRedirectUriCheckParam: -PbypassRedirectUriCheck
+    treatTestAppAsPartOfTSLParam: -PtreatTestAppAsPartOfTSL
+  ${{ else }}:
+    bypassRedirectUriCheckParam: ''
+    treatTestAppAsPartOfTSLParam: ''
   brokerHostPackageVersionCounter: $[counter(1, 10000)]
 
 stages:
-- stage: 'addTags'
-  displayName: Tag Pipeline
+- stage: 'setupStage'
+  displayName: Setup Stage
   dependsOn: []
+  condition: always() # Stage will always run
   variables:
-    - name: flightsTag
-      value: $[replace(variables['broker4j_flights'], ':', ' ')]
+    - name: buildingOnSchedule
+      value: $[eq( variables['Build.Reason'], 'Schedule')]
   jobs:
-  - job: addTags
-    displayName: Add tags for flights
+  - job: alternateSchedule
+    displayName: Set up alternating schedule
     steps:
+    - task: PowerShell@2
+      displayName: Get Day of Week
+      inputs:
+        filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/day-of-week.ps1'
+        arguments: '-OutputVariable "DayOfWeek"'
+        workingDirectory: '$(Build.SourcesDirectory)'
+      name: dayOfWeekScript
+    - task: PowerShell@2
+      displayName: Configure Flight/Flag Variables Based on Day
+      inputs:
+        filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/setup-alternating-schedule.ps1'
+        arguments: '-BuildingOnSchedule "$(buildingOnSchedule)" -DayOfWeek "$(DayOfWeek)" -FlightInput "${{ parameters.flightingValueParameter }}" -FlightSelection "${{ parameters.flightingSelection }}" -FlagInput "${{ parameters.flagsValue }} $(enableBrokerSelectionParam) $(enableBrokerDiscoveryParam) $(trustDebugBrokerParam) $(bypassRedirectUriCheckParam) $(treatTestAppAsPartOfTSLParam)" -BuildNumberInput "$(Build.BuildNumber)" -FlightOutputVar "FlightOutput" -FlagOutputVar "FlagOutput"'
+        workingDirectory: '$(Build.SourcesDirectory)'
+      name: setupConfigurationScript
     - task: PowerShell@2
       displayName: Run Tagging Script
       inputs:
         targetType: inline
         script: |
-          Write-Host "##vso[build.addbuildtag]Android_Broker_Version_$(brokerVersionNumber)"
-          Write-Host "##vso[build.addbuildtag]Other_Library_Versions_$(versionNumber)"
-          Write-Host "##vso[build.addbuildtag]Flags_$(enableBrokerDiscoveryParam)_$(enableBrokerSelectionParam)_$(broker4j_extra_flags)"
-          Write-Host "##vso[build.addbuildtag]Flights_$(flightsTag)"
+          Write-Host "##vso[build.addbuildtag]Android Broker Version=($(brokerVersionNumber))"
+          Write-Host "##vso[build.addbuildtag]Other Library Versions=($(versionNumber))"
+
+          # If the local flights are empty, we use ECS flight provider
+          if ("$(setupConfigurationScript.FlightOutput)" -eq "" -or "$(setupConfigurationScript.FlightOutput)" -eq "{}") {
+            Write-Host "##vso[build.addbuildtag]ECS Flight Provider"
+          
+            Write-Host "##vso[task.setvariable variable=finalFlight;isOutput=true]"
+          } else {
+            $FlightTag = "$(setupConfigurationScript.FlightOutput)" -replace ":"," "
+            Write-Host "##vso[build.addbuildtag]Local Flight Provider"
+            Write-Host "##vso[build.addbuildtag]Flights Passed=$FlightTag"
+          
+            Write-Host "##vso[task.setvariable variable=finalFlight;isOutput=true]-PlocalFlights=$(setupConfigurationScript.FlightOutput)"
+          }
+
+          if ("$(setupConfigurationScript.FlagOutput)" -eq "") {
+            Write-Host "##vso[build.addbuildtag]No Library Flags Passed"
+          
+            Write-Host "##vso[task.setvariable variable=finalFlag;isOutput=true]"
+          } else {
+            Write-Host "##vso[build.addbuildtag]Flags passed= $(setupConfigurationScript.FlagOutput)"
+          
+            Write-Host "##vso[task.setvariable variable=finalFlag;isOutput=true]$(setupConfigurationScript.FlagOutput)"
+          }
+      name: finalSetupScript
+
 # Common4j - Build and publish
 - stage: 'publishCommon4jLibraries'
   displayName: Common4j - Build and publish
-  dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
+  dependsOn: setupStage
+  variables:
+    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -143,19 +209,22 @@ stages:
       project: common4j
       testCmd: common4jUnitTestCoverageReport
       dependencyParams: $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam)
-      testParams: $(projVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(projVersionParam)
+      assembleParams: $(projVersionParam) $(flagVariable)
+      testParams: $(projVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      publishParams: $(projVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
   displayName: Common - Build and publish
-  dependsOn: publishCommon4jLibraries
+  dependsOn:
+  - publishCommon4jLibraries
+  - setupStage
+  variables:
+    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -165,20 +234,23 @@ stages:
       testCmd: distDebugCommonUnitTestCoverageReport
       publishCmd: publish
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam)
-      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(enableBrokerDiscoveryParam)
-      publishParams: $(projVersionParam) $(common4jVersionParam) $(enableBrokerDiscoveryParam)
+      assembleParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable)
+      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      publishParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
   displayName: Broker4j - Build and publish
-  dependsOn: 
+  dependsOn:
   - publishCommon4jLibraries
+  - setupStage
+  variables:
+    flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlight'] ]
+    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -187,14 +259,13 @@ stages:
       testCmd: broker4jUnitTestCoverageReport
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(common4jVersionParam) $(broker4j_extra_flags) -PlocalFlights=$(broker4j_flights)
-      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(broker4j_extra_flags) -PlocalFlights=$(broker4j_flights)
-      publishParams: $(projVersionParam) $(common4jVersionParam) $(broker4j_extra_flags) -PlocalFlights=$(broker4j_flights)
+      assembleParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable) $(flightVariable)
+      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) $(flagVariable) $(flightVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      publishParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable) $(flightVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
@@ -203,9 +274,12 @@ stages:
   - group: AndroidAuthClientVariables
   - name : powerLiftApiKeyParam
     value : -PpowerLiftApiKey=$(powerliftApiKey)
+  - name: flagVariable
+    value: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   dependsOn: 
   - publishCommonLibraries
   - publishBroke4jLibraries
+  - setupStage
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -215,15 +289,14 @@ stages:
       testCmd: distDebugAADAuthenticatorUnitTestCoverageReport
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) $(enableBrokerSelectionParam)
-      testParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) $(enableBrokerSelectionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam)
+      assembleParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) $(flagVariable)
+      testParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) $(flagVariable) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      publishParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
       agentImage: 1ES-AndroidPool-EOC
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Linux Broker - Build and publish
 - stage: 'publishLinuxBrokeLibraries'
@@ -231,6 +304,9 @@ stages:
   dependsOn: 
   - publishCommon4jLibraries
   - publishBroke4jLibraries
+  - setupStage
+  variables:
+    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -239,14 +315,13 @@ stages:
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       testCmd: linuxBrokerUnitTestCoverageReport
       dependencyParams: $(broker4jVersionParam) $(common4jVersionParam) $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
-      publishParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam)
+      assembleParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam) $(flagVariable)
+      publishParams: $(projVersionParam) $(broker4jVersionParam) $(common4jVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -Psystemd_mode_enabled=false --build-cache --info
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) $(flagVariable) -Psystemd_mode_enabled=false --build-cache --info
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
   - job: PublishLinuxBrokerPackage
     dependsOn: publishLinuxBrokerLibraries
@@ -285,7 +360,11 @@ stages:
 # Msal - Build and publish      
 - stage: 'publishMsal'
   displayName: Msal - Build and publish
-  dependsOn: publishCommonLibraries
+  dependsOn:
+  - publishCommonLibraries
+  - setupStage
+  variables:
+    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -295,19 +374,22 @@ stages:
       testCmd: distDebugMsalUnitTestCoverageReport
       publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(commonVersionParam)
-      testParams: $(projVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(projVersionParam) $(commonVersionParam)
+      assembleParams: $(projVersionParam) $(commonVersionParam) $(flagVariable)
+      testParams: $(projVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      publishParams: $(projVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Adal - Build and publish
 - stage: 'publishAdal'
   displayName: Adal - Build and publish
-  dependsOn: publishCommonLibraries
+  dependsOn:
+  - publishCommonLibraries
+  - setupStage
+  variables:
+    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -317,14 +399,13 @@ stages:
       testCmd: testDistDebugUnitTest
       publishCmd: publishAdalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(commonVersionParam)
-      testParams: $(projVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
-      publishParams: $(projVersionParam) $(commonVersionParam)
+      assembleParams: $(projVersionParam) $(commonVersionParam) $(flagVariable)
+      testParams: $(projVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      publishParams: $(projVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
-      shouldPublish: ${{ parameters.shouldPublishLibraries }}
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 
 # Promote published packages
@@ -402,7 +483,13 @@ stages:
     - group: AndroidAuthClientAutomationSecrets
   displayName: Link To Windows Apk Generation
   dependsOn: promotePackages
-  condition: eq(variables['LTWIntegrationEnabled'], 'true')
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(variables['LTWIntegrationEnabled'], 'true')
+    )
   jobs:
     - job: queue_build_LinkToWindows
       displayName: Generate Link To Windows Apk
@@ -442,6 +529,10 @@ stages:
     - publishMsal
     - publishBrokerLibraries
     - promotePackages
+    - setupStage
+  variables:
+    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
+    flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlight'] ]
   displayName: Generate Test Apps
   condition:
     and
@@ -471,8 +562,8 @@ stages:
         adAccountsVersion: $(brokerVersionNumber)
         adalVersion: $(versionNumber)
         packageVariant: RC
-        flagsParamString: $(broker4j_extra_flags)
-        localFlightsParamString: $(broker4j_flights)
+        flagsParamString: $(flagVariable)
+        localFlightsParamString: $(flightVariable)
         publishToFeed: True
         publishingPackageName: "com.microsoft.identity.testuserapp"
         publishVersion: "1.0.$(brokerHostPackageVersionCounter)"
@@ -485,6 +576,10 @@ stages:
           script: |
             Write-Host "##vso[task.setvariable variable=brokerhostApkVersion;isOutput=true]1.0.$(brokerHostPackageVersionCounter)"
         name: brokerhostVersionScript
+    - template: ../ui-automation/templates/build-one-auth-test-app.yml
+      parameters:
+        commonVersion: $(versionNumber)
+        branch: $(OneAuthBranch)
     - template: ../ui-automation/templates/build-msal-test-app.yml
       parameters:
         productFlavors: Dist
