@@ -49,7 +49,7 @@ variables:
   companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
   oldCompanyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
   authenticatorApk: app-production-universal-release-signed.apk
-  oldAuthenticatorApk: Authenticator-4.1.0-RC.apk
+  oldAuthenticatorApk: OldAuthenticator.apk
   outlookApk: Outlook.apk
   teamsApk: Teams.apk
   wordApk: Word.apk
