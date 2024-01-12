@@ -88,4 +88,4 @@ We are going to need login credentials for our Google / Firebase credentials to 
    - Verify with phone
    - Verify with recovery email
 5. Please select verify with recovery email. The recovery email is already put in Google account and it is following the email: [droididautomation@microsoft.com](mailto:droididautomation@microsoft.com)
-6. If not done already, please join the [droididautomation@microsoft.com](mailto:droididautomation@microsoft.com) Distribution List so you can receive the confirmation code that arrives on that email alias.
+6. If not done already, please join the [droididautomation@microsoft.com](mailto:androididentity@microsoft.com) Distribution List so you can receive the confirmation code that arrives on that email alias.
