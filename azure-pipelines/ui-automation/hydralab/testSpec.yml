@@ -1,0 +1,14 @@
+
+testSpec:
+  device:
+    deviceActions: # <Optional>
+      setUp: # <Array>
+        - deviceType: "Android"
+          method: "pushFileToDevice"
+          args: # <Array>
+            - '\TestFiles\apks\.'
+            - '/data/local/tmp/'
+  runningType: "INSTRUMENTATION"
+  pkgName: "com.msft.identity.client.sample.local"
+  testPkgName: "com.msft.identity.client.sample.local.test"
+  attachmentConfigPath: "azure-pipelines/ui-automation/hydralab/attachmentConfig.json"
