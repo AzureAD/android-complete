@@ -61,5 +61,19 @@
      "fileType":"COMMON",
      "loadType":"COPY",
      "loadDir":"TestFiles/apks"
+   },
+   {
+     "fileName":"OneAuthTestApp.apk",
+     "filePath":"buildArtifacts/oneauthtestapp/arm64-v8a_signed_APK/app-dist-AutoBroker-release-unsigned.apk",
+     "fileType":"COMMON",
+     "loadType":"COPY",
+     "loadDir":"TestFiles/apks"
+   },
+   {
+     "fileName":"OldOneAuthTestApp.apk",
+     "filePath":"buildArtifacts/oldtestapps/app-dist-AutoBroker-release-unsigned.apk",
+     "fileType":"COMMON",
+     "loadType":"COPY",
+     "loadDir":"TestFiles/apks"
    }
  ]
