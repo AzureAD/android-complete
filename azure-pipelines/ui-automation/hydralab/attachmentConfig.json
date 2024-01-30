@@ -75,5 +75,12 @@
      "fileType":"COMMON",
      "loadType":"COPY",
      "loadDir":"TestFiles/apks"
+   },
+   {
+     "fileName":"MsalAuthTestApp.apk",
+     "filePath":"buildArtifacts/msalE2ETestApp/msalTestApp-dist-release.apk",
+     "fileType":"COMMON",
+     "loadType":"COPY",
+     "loadDir":"TestFiles/apks"
    }
  ]
