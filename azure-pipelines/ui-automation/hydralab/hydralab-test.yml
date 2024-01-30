@@ -81,10 +81,12 @@ stages:
             buildType: 'specific'
             project: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'
             definition: '1490'
-            buildVersionToDownload: 'latest'
+            buildVersionToDownload: 'latestFromBranch'
+            branchName: 'refs/heads/master'
+            tags: $(artifactsTag)
             allowPartiallySucceededBuilds: true
             allowFailedBuilds: true
-            targetPath: "$(buildArtifactsDir)"
+            targetPath: '$(buildArtifactsDir)'
 
         - bash: |
             echo "##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)"
