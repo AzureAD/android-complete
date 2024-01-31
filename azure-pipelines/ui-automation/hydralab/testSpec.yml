@@ -8,6 +8,14 @@ testSpec:
           args: # <Array>
             - '\TestFiles\apks\.'
             - '/data/local/tmp/'
+        - deviceType: "Android"
+          method: "execCommandOnDevice"
+          args:
+            - 'am set-debug-app --persistent com.android.chrome'
+        - deviceType: "Android"
+          method: "execCommandOnDevice"
+          args:
+            - 'echo "chrome --disable-fre --no-default-browser-check --no-first-run" > /data/local/tmp/chrome-command-line'
   runningType: "INSTRUMENTATION"
   pkgName: "com.msft.identity.client.sample.local"
   testPkgName: "com.msft.identity.client.sample.local.test"
