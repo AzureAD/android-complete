@@ -1,3 +1,5 @@
+# For details on different fields supported in the yml config refer to
+# https://github.com/microsoft/HydraLab/blob/main/gradle_plugin/template/testSpec.yml
 
 testSpec:
   device:
@@ -20,3 +22,4 @@ testSpec:
   pkgName: "com.msft.identity.client.sample.local"
   testPkgName: "com.msft.identity.client.sample.local.test"
   attachmentConfigPath: "azure-pipelines/ui-automation/hydralab/attachmentConfig.json"
+  enableTestOrchestrator: "true"

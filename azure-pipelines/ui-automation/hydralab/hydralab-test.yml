@@ -80,10 +80,9 @@ stages:
           inputs:
             buildType: 'specific'
             project: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'
-            definition: '1490'
-            buildVersionToDownload: 'latestFromBranch'
-            branchName: 'refs/heads/master'
-            tags: $(artifactsTag)
+            definition: $(sourceBuildDefinitionId)
+            buildVersionToDownload: 'latest'
+            tags: $(sourceBuildTag)
             allowPartiallySucceededBuilds: true
             allowFailedBuilds: true
             targetPath: '$(buildArtifactsDir)'
@@ -93,7 +92,7 @@ stages:
           displayName: Set MVN Access Token in Environment
 
         - task: Gradle@2
-          displayName: Trigger UI automation run $(testSuiteName)
+          displayName: "Trigger UI automation run: ${{ parameters.testSuiteName }}"
           continueOnError: True
           inputs:
             gradleWrapperFile: "gradlew"
@@ -106,5 +105,5 @@ stages:
           displayName: "Publish Test Results"
           inputs:
             testResultsFiles: "$(build.sourcesdirectory)/build/testResult/**/hydra_result_*.xml"
-            testRunTitle: "Test-Result"
+            testRunTitle: "${{ parameters.testSuiteName }}"
             failTaskOnFailedTests: false
