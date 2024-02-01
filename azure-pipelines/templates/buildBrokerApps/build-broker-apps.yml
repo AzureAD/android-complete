@@ -1,0 +1,69 @@
+# File: azure-pipelines/templates/buildBrokerApps/build-broker-apps.yml
+# Description: Template to build and publish apks for broker hosting applications
+
+parameters:
+  - name: versionNumber
+  - name: brokerVersionNumber
+  - name: authenticatorPipelineId
+    default: 237369
+  - name: companyPortalPipelineId
+    default: 237827
+  - name: ltwPipelineId
+    default: 44201
+  - name: authenticatorBranch
+    default: "working"
+  - name: companyPortalBranch
+    default: "develop"
+  - name: ltwBranch
+    default: "develop"
+
+stages:
+  # BrokerApk - Authenticator Queue pipeline
+  - stage: 'queueAuthenticatorPipeline'
+    variables:
+      - group: AndroidAuthClientAutomationSecrets
+    displayName: Authenticator Broker Apk Generation
+    dependsOn: promotePackages
+    jobs:
+      - template: build-authenticator.yml
+        parameters:
+          versionNumber: ${{ parameters.versionNumber }}
+          brokerVersionNumber: ${{ parameters.brokerVersionNumber }}
+          authenticatorBranch: ${{ parameters.authenticatorBranch }}
+          artifactName: brokerApks
+
+  # BrokerApk - Company portal Queue pipeline
+  - stage: 'queueCompanyPortalPipeline'
+    variables:
+      - group: AndroidAuthClientAutomationSecrets
+    displayName: Company Portal Broker Apk Generation
+    dependsOn: promotePackages
+    jobs:
+      - template: build-companyportal.yml
+        parameters:
+          versionNumber: ${{ parameters.versionNumber }}
+          brokerVersionNumber: ${{ parameters.brokerVersionNumber }}
+          companyPortalBranch: ${{ parameters.companyPortalBranch }}
+          artifactName: brokerApks
+
+  # BrokerApk - Link to Windows Queue pipeline
+  - stage: 'queueLinkToWindowsPipeline'
+    variables:
+      - group: AndroidAuthClientAutomationSecrets
+    displayName: Link To Windows Apk Generation
+    dependsOn: promotePackages
+    condition: |
+      and
+      (
+        not(failed()),
+        not(canceled()),
+        eq(variables['LTWIntegrationEnabled'], 'true')
+      )
+    jobs:
+      - template: build-ltw.yml
+        parameters:
+          versionNumber: ${{ parameters.versionNumber }}
+          brokerVersionNumber: ${{ parameters.brokerVersionNumber }}
+          ltwBranch: ${{ parameters.ltwBranch }}
+          artifactName: brokerApks
+

@@ -1,0 +1,132 @@
+# File: azure-pipelines/templates/buildProduct/build-and-publish-auth-android-libs.yml
+# Description: Template to build & publish all android auth SDK libraries to internal maven feed
+
+parameters:
+  - name: versionNumber
+  - name: brokerVersionNumber
+  - name: buildFlags
+  - name: flightFlags
+  - name: powerliftApiKey
+  - name: shouldRunUnitAndInstrumentedTests
+    default: True
+
+stages:
+  # Common4j - Build and publish
+  - stage: 'publishCommon4jLibraries'
+    displayName: Common4j - Build and publish
+    dependsOn: setupStage
+    variables:
+      flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
+    jobs:
+      - template: build-and-publish-common4j.yml
+        parameters:
+          versionNumber: ${{ parameters.versionNumber }}
+          buildFlags: $(flagVariable)
+          shouldRunUnitAndInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+  # Common - Build and publish
+  - stage: 'publishCommonLibraries'
+    displayName: Common - Build and publish
+    dependsOn:
+      - publishCommon4jLibraries
+      - setupStage
+    variables:
+      flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
+    jobs:
+      - template: build-and-publish-common.yml
+        parameters:
+          versionNumber: ${{ parameters.versionNumber }}
+          common4jVersionNumber: ${{ parameters.versionNumber }}
+          buildFlags: $(flagVariable)
+          shouldRunUnitAndInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+  # Broker4j - Build and publish
+  - stage: 'publishBroke4jLibraries'
+    displayName: Broker4j - Build and publish
+    dependsOn:
+      - publishCommon4jLibraries
+      - setupStage
+    variables:
+      flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlight'] ]
+      flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
+    jobs:
+      - template: build-and-publish-broker4j.yml
+        parameters:
+          versionNumber: ${{ parameters.versionNumber }}
+          common4jVersionNumber: ${{ parameters.versionNumber }}
+          buildFlags: $(flagVariable)
+          buildFlights: $(flightVariable)
+          shouldRunUnitAndInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+  # Broker - Build and publish
+  - stage: 'publishBrokerLibraries'
+    displayName: Android Broker - Build and publish
+    dependsOn:
+      - publishCommonLibraries
+      - publishBroke4jLibraries
+      - setupStage
+    variables:
+      - group: AndroidAuthClientVariables
+      - name: powerLiftApiKeyParam
+        value: -PpowerLiftApiKey=${{ parameters.powerliftApiKey }}
+      - name: flagVariable
+        value: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
+    jobs:
+      - template: build-and-publish-broker.yml
+        parameters:
+          versionNumber: ${{ parameters.brokerVersionNumber }}
+          broker4jVersionNumber: ${{ parameters.versionNumber }}
+          commonVersionNumber: ${{ parameters.versionNumber }}
+          buildFlags: $(flagVariable)
+          powerLiftApiKeyParam: $(powerLiftApiKeyParam)
+          shouldRunUnitAndInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+  # Msal - Build and publish
+  - stage: 'publishMsal'
+    displayName: Msal - Build and publish
+    dependsOn:
+      - publishCommonLibraries
+      - setupStage
+    variables:
+      flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
+    jobs:
+      - template: build-and-publish-msal.yml
+        parameters:
+          versionNumber: ${{ parameters.versionNumber }}
+          commonVersionNumber: ${{ parameters.versionNumber }}
+          buildFlags: $(flagVariable)
+          shouldRunUnitAndInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+  # Adal - Build and publish
+  - stage: 'publishAdal'
+    displayName: Adal - Build and publish
+    dependsOn:
+      - publishCommonLibraries
+      - setupStage
+    variables:
+      flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
+    jobs:
+      - template: build-and-publish-adal.yml
+        parameters:
+          versionNumber: ${{ parameters.versionNumber }}
+          commonVersionNumber: ${{ parameters.versionNumber }}
+          buildFlags: $(flagVariable)
+          shouldRunUnitAndInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+
+  # Promote published packages
+  - stage: 'promotePackages'
+    displayName: Promote published packages
+    dependsOn:
+      - publishMsal
+      - publishAdal
+      - publishCommonLibraries
+      - publishBrokerLibraries
+    jobs:
+      - job: promote_packages
+        displayName: Promote Packages - Prerelease
+        steps:
+          - checkout: self
+            persistCredentials: True
+          - task: PowerShell@2
+            displayName: Run script to promote packages - Prerelease
+            inputs:
+              filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
+              arguments: '-PackagingPAT "$env:SYSTEM_ACCESSTOKEN" -PackageVersion "${{ parameters.versionNumber }}" -adAccountsVersion "${{ parameters.brokerVersionNumber }}"'
+              workingDirectory: '$(Build.SourcesDirectory)'
+            env:
+              SYSTEM_ACCESSTOKEN: $(System.AccessToken)

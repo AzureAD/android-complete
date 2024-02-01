@@ -1,0 +1,100 @@
+# File: azure-pipelines/templates/buildTestApps/build-test-Apps.yml
+# Description: Template to build & publish all test apps used for testing and automation
+
+parameters:
+  - name: versionNumber
+  - name: brokerVersionNumber
+  - name: buildFlags
+  - name: flightFlags
+  - name: brokerHostPackageCounter
+  - name: oldMsalTestAppVersion
+    default: '4.5.1'
+  - name: oldOneAuthTestAppVersion
+    default: '0.0.4'
+  - name: testAppsFeedName
+    default: AndroidADAL
+  - name: oneAuthBranch
+    default: 'android/fixIntegrationBranch'
+
+jobs:
+  - template: ../../ui-automation/templates/build-azure-sample-app.yml
+    parameters:
+      productFlavors: Local
+      signingConfigurations: Debug
+      msalVersion: ${{ parameters.versionNumber }}
+      packageVariant: RC
+  - template: ../../ui-automation/templates/build-azure-sample-app-standalone.yml
+    parameters:
+      signingConfigurations: Debug
+      msalVersion: ${{ parameters.versionNumber }}
+      packageVariant: RC
+      continueOnError: True
+  - template: ../../ui-automation/templates/build-broker-host.yml
+    parameters:
+      productFlavors: Local
+      signingConfigurations: Debug
+      msalVersion: ${{ parameters.versionNumber }}
+      commonVersion: ${{ parameters.versionNumber }}
+      adAccountsVersion: ${{ parameters.brokerVersionNumber }}
+      adalVersion: ${{ parameters.versionNumber }}
+      packageVariant: RC
+      flagsParamString: ${{ parameters.buildFlags }}
+      localFlightsParamString: ${{ parameters.flightFlags }}
+      publishToFeed: True
+      publishingPackageName: "com.microsoft.identity.testuserapp"
+      publishVersion: "1.0.${{ parameters.brokerHostPackageCounter }}"
+  - job: brokerhostVersionJob
+    steps:
+      - task: PowerShell@2
+        displayName: 'Output BrokerHost Version Variable'
+        inputs:
+          targetType: inline
+          script: |
+            Write-Host "##vso[task.setvariable variable=brokerhostApkVersion;isOutput=true]1.0.${{ parameters.brokerHostPackageCounter }}"
+        name: brokerhostVersionScript
+  - template: ../../ui-automation/templates/build-one-auth-test-app.yml
+    parameters:
+      commonVersion: ${{ parameters.versionNumber }}
+      branch: ${{ parameters.oneAuthBranch }}
+  - template: ../../ui-automation/templates/build-msal-test-app.yml
+    parameters:
+      productFlavors: Dist
+      signingConfigurations: Debug
+      msalVersion: ${{ parameters.versionNumber }}
+      packageVariant: RC
+  - template: ../../ui-automation/templates/build-adal-test-app.yml
+    parameters:
+      productFlavors: Dist
+      signingConfigurations: Debug
+      commonVersion: ${{ parameters.versionNumber }}
+      adalVersion: ${{ parameters.versionNumber }}
+      packageVariant: RC
+  - template: ../../ui-automation/templates/build-msal-automation-app.yml
+    parameters:
+      brokerApp: AutoBroker
+      msalFlavor: Dist
+      brokerSource: LocalApk
+      brokerUpdateSource: LocalApk
+      msalVersion: ${{ parameters.versionNumber }}
+      packageVariant: RC
+  - template: ../../ui-automation/templates/build-msal-automation-app.yml
+    parameters:
+      brokerApp: BrokerHost
+      msalFlavor: Local
+      brokerSource: LocalApk
+      brokerUpdateSource: LocalApk
+      msalVersion: ${{ parameters.versionNumber }}
+      packageVariant: RC
+  - template: ../../ui-automation/templates/build-broker-automation-app.yml
+    parameters:
+      brokerApp: AutoBroker
+      brokerFlavor: Dist
+      brokerSource: LocalApk
+      adalVersion: ${{ parameters.versionNumber }}
+      commonVersion: ${{ parameters.versionNumber }}
+  - template: ../../ui-automation/templates/download-old-test-apps.yml
+    parameters:
+      feedName: ${{ parameters.testAppsFeedName }}
+      oldMsalTestAppVersion: ${{ parameters.oldMsalTestAppVersion }}
+      oldOneAuthTestAppVersion: ${{ parameters.oldOneAuthTestAppVersion }}
+  - template: ../../ui-automation/templates/download-first-party-apps.yml

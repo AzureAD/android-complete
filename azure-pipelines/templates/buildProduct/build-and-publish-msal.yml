@@ -1,0 +1,29 @@
+# File: azure-pipelines/templates/buildProduct/build-and-publish-msal.yml
+# Description: Template to build & publish msal library to internal maven feed
+
+parameters:
+  - name: versionNumber
+  - name: commonVersionNumber
+  - name: buildFlags
+  - name: shouldRunUnitAndInstrumentedTests
+    default: true
+  - name: publishLibraryArtifacts
+    default: true
+
+jobs:
+  - template: build-and-publish.yml
+    parameters:
+      repository: msal
+      project: msal
+      assembleCmd: assembleDistRelease
+      testCmd: distDebugMsalUnitTestCoverageReport
+      publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository
+      dependencyParams: -PdistCommonVersion=${{ parameters.commonVersionNumber }} --configuration=distReleaseRuntimeClasspath --write-locks
+      assembleParams: -PprojVersion=${{ parameters.versionNumber }} -PdistCommonVersion=${{ parameters.commonVersionNumber }} ${{ parameters.buildFlags }}
+      testParams: -PprojVersion=${{ parameters.versionNumber }} -PdistCommonVersion=${{ parameters.commonVersionNumber }} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) ${{ parameters.buildFlags }} -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      publishParams: -PprojVersion=${{ parameters.versionNumber }} -PdistCommonVersion=${{ parameters.commonVersionNumber }} ${{ parameters.buildFlags }}
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
+      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
