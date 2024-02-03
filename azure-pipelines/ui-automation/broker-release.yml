@@ -338,7 +338,7 @@ stages:
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(commonProjVersionParam) $(common4jVersionParam) $(flagVariable) $(enableBrokerDiscoveryParam) -PtrustDebugBrokerFlag
       testParams: $(commonProjVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable) $(enableBrokerDiscoveryParam)
-      publishParams: $(commonProjVersionParam) $(common4jVersionParam) $(flagVariable) $(enableBrokerDiscoveryParam)
+      publishParams: $(commonProjVersionParam) $(common4jVersionParam) $(flagVariable) $(enableBrokerDiscoveryParam) -PtrustDebugBrokerFlag
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
