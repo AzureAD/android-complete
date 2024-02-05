@@ -339,8 +339,8 @@ stages:
       assembleParams: $(commonProjVersionParam) $(common4jVersionParam) $(flagVariable) $(enableBrokerDiscoveryParam)
       testParams: $(commonProjVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable) $(enableBrokerDiscoveryParam)
       publishParams: $(commonProjVersionParam) $(common4jVersionParam) $(flagVariable) $(enableBrokerDiscoveryParam)
-      vstsMvnAndroidUsername: $(AndroidAuthClient-Internal-Maven-Username)
-      vstsMvnAndroidAccessToken: $(System.AccessToken)
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
+      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
       shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
   - job: Publish_common_for_Broker_test
@@ -350,8 +350,8 @@ stages:
       inputs:
         tasks: common:publish -PprojVersion=${{ parameters.commonVersionRC }}-test $(common4jVersionParam) $(flagVariable) $(enableBrokerDiscoveryParam) -PtrustDebugBrokerFlag
       env:
-        ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
-        ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+        ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME: : $(AndroidAuthClient-Internal-Maven-Username)
+        ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN: $(System.AccessToken)
 
 # Broker4j - Build and publish
 - stage: 'publishBroker4jLibraries'
