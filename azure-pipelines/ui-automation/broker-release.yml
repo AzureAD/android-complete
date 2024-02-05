@@ -353,11 +353,6 @@ stages:
       displayName: Publish common for Broker test
       inputs:
         tasks: common:publish -PprojVersion=${{ parameters.commonVersionRC }}-test $(common4jVersionParam) $(flagVariable) $(enableBrokerDiscoveryParam) -PtrustDebugBrokerFlag
-      env:
-        ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
-        ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN:  $(System.AccessToken)
-
-      
 # Broker4j - Build and publish
 - stage: 'publishBroker4jLibraries'
   displayName: Broker4j - Build and publish  
@@ -413,7 +408,7 @@ stages:
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(brokerOtelAriaTokenParam) $(powerLiftApiKeyParam) $(flagVariable) $(enableBrokerSelectionParam)
-      testParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable) $(enableBrokerSelectionParam)
+      testParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) -PdistCommonVersion=${{ parameters.commonVersionRC }}-test $(powerLiftApiKeyParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable) $(enableBrokerSelectionParam)
       publishParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(flagVariable) $(enableBrokerSelectionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
