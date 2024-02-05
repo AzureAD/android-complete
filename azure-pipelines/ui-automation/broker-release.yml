@@ -349,9 +349,6 @@ stages:
       displayName: Publish common for Broker test
       inputs:
         tasks: common:publish -PprojVersion=${{ parameters.commonVersionRC }}-test $(common4jVersionParam) $(flagVariable) $(enableBrokerDiscoveryParam) -PtrustDebugBrokerFlag
-      env:
-        ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME: $(AndroidAuthClient-Internal-Maven-Username)
-        ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN: $(System.AccessToken)
 
 # Broker4j - Build and publish
 - stage: 'publishBroker4jLibraries'
