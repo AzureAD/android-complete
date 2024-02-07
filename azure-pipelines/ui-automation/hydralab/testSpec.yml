@@ -1,0 +1,25 @@
+# For details on different fields supported in the yml config refer to
+# https://github.com/microsoft/HydraLab/blob/main/gradle_plugin/template/testSpec.yml
+
+testSpec:
+  device:
+    deviceActions: # <Optional>
+      setUp: # <Array>
+        - deviceType: "Android"
+          method: "pushFileToDevice"
+          args: # <Array>
+            - '\TestFiles\apks\.'
+            - '/data/local/tmp/'
+        - deviceType: "Android"
+          method: "execCommandOnDevice"
+          args:
+            - 'am set-debug-app --persistent com.android.chrome'
+        - deviceType: "Android"
+          method: "execCommandOnDevice"
+          args:
+            - 'echo "chrome --disable-fre --no-default-browser-check --no-first-run" > /data/local/tmp/chrome-command-line'
+  runningType: "INSTRUMENTATION"
+  pkgName: "com.msft.identity.client.sample.local"
+  testPkgName: "com.msft.identity.client.sample.local.test"
+  attachmentConfigPath: "azure-pipelines/ui-automation/hydralab/attachmentConfig.json"
+  enableTestOrchestrator: "true"
