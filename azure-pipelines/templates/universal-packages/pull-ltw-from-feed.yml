@@ -1,7 +1,7 @@
 parameters:
   - name: OSServiceConnection
     type: string
-    default: 'LTW-Integration'
+    default: 'LTW-Integration-2'
   - name: LTWFeedName
     type: string
     default: 'Auth-Broker-Integrated-LTW-Build'

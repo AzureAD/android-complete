@@ -36,7 +36,7 @@ variables:
   brokerHostPipelineId: 1432
   oneAuthTestAppPipelineId: 6332
   msalE2ETestAppPipelineId: 1338
-  msazureServiceConnection: AndroidBroker-CI
+  msazureServiceConnection: AndroidBroker-CI-2
   msazureFeedName: Android-Broker
   msalApp: msalautomationapp-dist-AutoBroker-debug.apk
   msalTestApp: msalautomationapp-dist-AutoBroker-debug-androidTest.apk
@@ -56,7 +56,7 @@ variables:
   edgeApk: Edge.apk
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
-  OSServiceConnection: LTW-Integration
+  OSServiceConnection: LTW-Integration-2
   LTWFeedName: Auth-Broker-Integrated-LTW-Build
   LTWApk: LTW-signed.apk
   oldLTWApk: OldLTW-signed.apk
