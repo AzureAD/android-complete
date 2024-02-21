@@ -1,7 +1,7 @@
 parameters:
   - name: msazureServiceConnection
     type: string
-    default: 'AndroidBroker-CI'
+    default: 'AndroidBroker-CI-2'
   - name: msazureFeedName
     type: string
     default: 'Android-Broker'

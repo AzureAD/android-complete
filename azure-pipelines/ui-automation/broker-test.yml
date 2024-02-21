@@ -36,7 +36,7 @@ variables:
   brokerHostPipelineId: 1432
   oneAuthTestAppPipelineId: 6332
   msalE2ETestAppPipelineId: 1338
-  msazureServiceConnection: AndroidBroker-CI
+  msazureServiceConnection: AndroidBroker-CI-2
   msazureFeedName: Android-Broker
   msalApp: msalautomationapp-dist-AutoBroker-debug.apk
   msalTestApp: msalautomationapp-dist-AutoBroker-debug-androidTest.apk
