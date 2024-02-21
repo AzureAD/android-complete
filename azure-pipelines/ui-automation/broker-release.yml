@@ -159,7 +159,7 @@ variables:
   authenticatorApk: app-production-universal-release-signed.apk
   oldAuthenticatorApk: Authenticator-4.1.0-RC.apk
   oldAuthenticatorVersion: 6.2204.2470
-  OSServiceConnection: LTW-Integration
+  OSServiceConnection: LTW-Integration-2
   LTWFeedName: Auth-Broker-Integrated-LTW-Build
   LTWApk: LTW-signed.apk
   outlookApk: Outlook.apk
