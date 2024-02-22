@@ -1,0 +1,209 @@
+# File: azure-pipelines/continuous-delivery/auth-client-android-daily.yml
+# Description: pipeline to generate daily versions of auth client android libraries
+
+name: 1.0.$(Date:yyyyMMdd)-test$(Rev:.r) # $(Build.BuildNumber) = name
+
+pr: none
+trigger: none
+
+resources:
+  repositories:
+    - repository: common
+      type: github
+      name: AzureAD/microsoft-authentication-library-common-for-android
+      ref: dev
+      endpoint: ANDROID_GITHUB
+    - repository: broker
+      type: github
+      name: AzureAD/ad-accounts-for-android
+      ref: dev
+      endpoint: ANDROID_GITHUB
+    - repository: msal
+      type: github
+      name: AzureAD/microsoft-authentication-library-for-android
+      ref: dev
+      endpoint: ANDROID_GITHUB
+    - repository: adal
+      type: github
+      name: AzureAD/azure-activedirectory-library-for-android
+      ref: dev
+      endpoint: ANDROID_GITHUB
+    - repository: azuresample
+      type: github
+      name: Azure-Samples/ms-identity-android-java
+      ref: master
+      endpoint: ANDROID_GITHUB
+
+parameters:
+  - name: LibraryVersions
+    displayName: LibraryVersions (default - auto generated from pipeline)
+    type: object
+    default:
+        common4jVersionNumber: 'default'
+        commonVersionNumber: 'default'
+        broker4jVersionNumber: 'default'
+        brokerVersionNumber: 'default'
+        msalVersionNumber: 'default'
+        adalVersionNumber: 'default'
+  - name: BrokerApkVersions
+    displayName: BrokerApkVersions (default - build broker apps from the pipeline)
+    type: object
+    default:
+        authenticatorApkVersion: 'default'
+        companyPortalApkVersion: 'default'
+        ltwApkVersion: 'default'
+  - name: flightingSelection
+    displayName: Broker Flight Provider (ECS is used in PROD)
+    type: string
+    default: "Local"
+    values:
+      - Local
+      - ECS
+  - name: flightingValueParameter
+    displayName: Broker Local Flights Json-String (not active with ECS flighting)
+    type: string
+    default: '{}'
+  - name: flagsValue
+    displayName: Flags to Pass (passed to all libraries)
+    type: string
+    default: ' '
+  - name: shouldRunUiValidation
+    displayName: Run E2E UI Validation?
+    type: boolean
+    default: False
+  - name: shouldRunUnitAndInstrumentedTests
+    displayName: Run Unit and Instrumented Tests?
+    type: boolean
+    default: True
+  - name: shouldEnableBrokerSelectionAndDiscoveryFlag
+    displayName: Should enable broker selection & discovery?
+    type: boolean
+    default: False
+  - name: shouldTrustDebugBroker
+    displayName: (FOR DEBUGGING) Always trust debug broker apps. (Required for working with DEBUG CP/LTW/AuthApp)
+    type: boolean
+    default: false
+  - name: treatTestAppAsPartOfTSL
+    displayName: (FOR DEBUGGING) Force Broker to treat OneAuthTestApp/MSALTestApp as first party app. (Required for testing with 1st party app registration)
+    type: boolean
+    default: False
+  - name: publishLibraryArtifacts
+    displayName: Should publish library artifacts? (lockfiles and release artifacts)
+    type: boolean
+    default: false
+  - name: msalTestTarget
+    displayName: Test Targets for MSAL
+    type: string
+    default: package com.microsoft.identity.client.msal.automationapp.testpass.broker, package com.microsoft.identity.client.msal.automationapp.testpass.msalonly, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.FailsWithDailyVersions, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
+  - name: brokerTestTarget
+    displayName: Test Targets for Broker
+    type: string
+    default: package com.microsoft.identity.client.broker.automationapp.testpass, notAnnotation org.junit.Ignore, notAnnotation com.microsoft.identity.client.ui.automation.annotations.FailsWithDailyVersions, notAnnotation com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline
+
+variables: # Global variables
+  - template: ../templates/variables/global-variables.yml
+    parameters:
+      shouldEnableBrokerSelectionAndDiscoveryFlag: ${{ parameters.shouldEnableBrokerSelectionAndDiscoveryFlag }}
+      common4jVersionNumber: ${{ parameters.LibraryVersions.common4jVersionNumber }}
+      broker4jVersionNumber: ${{ parameters.LibraryVersions.broker4jVersionNumber }}
+      commonVersionNumber:  ${{ parameters.LibraryVersions.commonVersionNumber }}
+      brokerVersionNumber: ${{ parameters.LibraryVersions.brokerVersionNumber }}
+      msalVersion: ${{ parameters.LibraryVersions.msalVersionNumber }}
+      adalVersion: ${{ parameters.LibraryVersions.adalVersionNumber }}
+      shouldTrustDebugBroker: ${{ parameters.shouldTrustDebugBroker }}
+      treatTestAppAsPartOfTSL: ${{ parameters.treatTestAppAsPartOfTSL }}
+      flightingSelection: ${{ parameters.flightingSelection }}
+      flightingValueParameter: ${{ parameters.flightingValueParameter }}
+      flagsValue: ${{ parameters.flagsValue }}
+      nameSuffix: "test"
+
+stages:
+- stage: 'setupStage'
+  displayName: Setup Stage
+  dependsOn: []
+  condition: always() # Stage will always run
+  jobs:
+    - template: ../templates/tagBuild/tag-daily-build.yml
+      parameters:
+        flightingValueParameter: $(localFlightsJson)
+        flightingSelection: $(flightProvider)
+        flagsValue: $(buildFlags)
+        versionNumber: $(common4jVersion)
+        brokerVersionNumber: $(brokerVersion)
+        buildingOnSchedule: $[eq( variables['Build.Reason'], 'Schedule')]
+        DayOfWeek: $(DayOfWeek)
+        enableBrokerSelectionParam: $(enableBrokerSelectionParam)
+        enableBrokerDiscoveryParam: $(enableBrokerDiscoveryParam)
+        trustDebugBrokerParam: $(trustDebugBrokerParam)
+        bypassRedirectUriCheckParam: $(bypassRedirectUriCheckParam)
+        treatTestAppAsPartOfTSLParam: $(treatTestAppAsPartOfTSLParam)
+
+# Build and publish libraries
+- template: ../templates/buildProduct/build-and-publish-auth-android-libs.yml
+  parameters:
+    common4jVersion: $(common4jVersion)
+    commonVersion: $(commonVersion)
+    broker4jVersion: $(broker4jVersion)
+    brokerVersion: $(brokerVersion)
+    msalVersion: $(msalVersion)
+    adalVersion: $(adalVersion)
+    buildFlags: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
+    flightFlags: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlight'] ]
+    powerliftApiKey: $(powerliftApiKey)
+    shouldRunUnitAndInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+    publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
+    DependsOn: setupStage
+    promotePackagesStageName: 'promotePackages'
+
+# Build and publish broker apps
+- template: ../templates/buildBrokerApps/build-and-download-broker-apps.yml
+  parameters:
+    commonVersion: $(commonVersion)
+    brokerVersion: $(brokerVersion)
+    msalVersion: $(msalVersion)
+    adalVersion: $(adalVersion)
+    authenticatorBranch: $(authenticatorBranch)
+    companyPortalBranch: $(companyPortalBranch)
+    ltwBranch: $(ltwBranch)
+    ${{ if ne( parameters.BrokerApkVersions.authenticatorApkVersion, 'default') }}:
+      authenticatorApkVersion: ${{ parameters.BrokerApkVersions.authenticatorApkVersion }}
+    ${{ if ne( parameters.BrokerApkVersions.companyPortalApkVersion, 'default') }}:
+      companyPortalApkVersion: ${{ parameters.BrokerApkVersions.companyPortalApkVersion }}
+    ${{ if ne( parameters.BrokerApkVersions.ltwApkVersion, 'default') }}:
+      ltwApkVersion: ${{ parameters.BrokerApkVersions.ltwApkVersion }}
+    artifactName: brokerapks
+    DependsOn: promotePackages
+    pullBrokerApksFromFeedStageName: 'pullBrokerApksFromFeed'
+
+# Build and publish test apps
+- stage: 'testAppGeneration'
+  dependsOn:
+    - promotePackages
+    - setupStage
+  displayName: Generate Test Apps
+  condition: and(not(failed()), not(canceled()))
+  variables:
+    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
+    flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlight'] ]
+  jobs:
+    - template: ../templates/buildTestApps/build-test-apps.yml
+      parameters:
+        commonVersion: $(commonVersion)
+        brokerVersion: $(brokerVersion)
+        msalVersion: $(msalVersion)
+        adalVersion: $(adalVersion)
+        brokerHostPackageCounter: $(brokerHostPackageVersionCounter)
+        buildFlags: $(flagVariable)
+        flightFlags: $(flightVariable)
+
+- ${{if eq(parameters.shouldRunUiValidation, 'True') }}:
+  # Run Daily UI Automation Tests
+  - template : ../templates/runTests/run-daily-ui-automation.yml
+    parameters:
+      msalTestTarget: ${{ parameters.msalTestTarget }}
+      brokerTestTarget: ${{ parameters.brokerTestTarget }}
+      testRunPrefix: ""
+      DependsOn:
+       - testAppGeneration
+       - pullBrokerApksFromFeed
+...

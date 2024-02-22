@@ -1,0 +1,42 @@
+# File: azure-pipelines/templates/buildBrokerApps/build-ltw.yml
+# Description: Template to build and publish LTW apk
+
+parameters:
+  - name: msalVersion
+  - name: adalVersion
+  - name: commonVersion
+  - name: brokerVersion
+  - name: ltwPipelineId
+    default: 44201
+  - name: ltwBranch
+    default: "develop"
+  - name : artifactName
+    default: brokerapks
+
+jobs:
+  - job: queue_build_LinkToWindows
+    displayName: Generate Link To Windows Apk
+    timeoutInMinutes: 120
+    steps:
+      - checkout: self
+        persistCredentials: True
+      - task: PowerShell@2
+        displayName: Queue and wait for Link to Windows Apk generation pipeline
+        inputs:
+          filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+          arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(LTW-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "${{ parameters.ltwPipelineId }}" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.brokerVersion }}'', ''CommonVersion'': ''${{ parameters.commonVersion }}'', ''MsalVersion'': ''${{ parameters.msalVersion }}'', ''AdalVersion'': ''${{ parameters.adalVersion }}'' }" -Branch "${{ parameters.ltwBranch }}" -BuildReason "UserCreated" -BuildNumberOutputOnSuccessVar "rawLtwPipelineBuildNumber"'
+          workingDirectory: '$(Build.SourcesDirectory)'
+        name: ltwPipelineScript
+      - task: PowerShell@2
+        displayName: 'Trim LTW build number to get apk version'
+        inputs:
+          targetType: inline
+          script: |
+            # LTW pipeline build number is structured like (versionMajor).(versionMinor).(versionBuild).(versionRevision).(build.reason)
+            # The version of APK published to feed is (versionMajor).(versionMinor).(versionBuild)
+            # We use regex to remove the last two segments so we get the correct version number
+            Write-Host "Raw Build Number: $(ltwPipelineScript.rawLtwPipelineBuildNumber)"
+            $trimmedVersion = "$(ltwPipelineScript.rawLtwPipelineBuildNumber)" -replace "\.\d+\.\w+$",""
+            Write-Host "Trimmed Version Number: $trimmedVersion"
+            Write-Host "##vso[task.setvariable variable=ltwApkVersion;isOutput=true]$trimmedVersion"
+        name: ltwVersionScript

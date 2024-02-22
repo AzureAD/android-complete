@@ -1,0 +1,29 @@
+# File: azure-pipelines/templates/buildBrokerApps/build-authenticator.yml
+# Description: Template to build and publish Authenticator apk
+
+parameters:
+  - name: msalVersion
+  - name: adalVersion
+  - name: commonVersion
+  - name: brokerVersion
+  - name: authenticatorPipelineId
+    default: 237369
+  - name: authenticatorBranch
+    default: "working"
+  - name : artifactName
+    default: brokerapks
+
+jobs:
+  - job: queue_build_authenticator
+    displayName: Generate Authenticator Apk
+    timeoutInMinutes: 120
+    steps:
+      - checkout: self
+        persistCredentials: True
+      - task: PowerShell@2
+        displayName: Queue and wait for Authenticator Apk generation pipeline
+        inputs:
+          filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+          arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(MSAzure-PAT)" -BuildDefinitionId "${{ parameters.authenticatorPipelineId }}" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.brokerVersion }}'', ''CommonVersion'': ''${{ parameters.commonVersion }}'', ''MsalVersion'': ''${{ parameters.msalversion }}'', ''AdalVersion'': ''${{ parameters.adalVersion }}'' }" -Branch "${{ parameters.authenticatorBranch }}"  -BuildNumberOutputOnSuccessVar "authenticatorApkVersion"'
+          workingDirectory: '$(Build.SourcesDirectory)'
+        name: authenticatorPipelineScript
