@@ -36,7 +36,7 @@ variables:
   brokerHostPipelineId: 1432
   oneAuthTestAppPipelineId: 6332
   msalE2ETestAppPipelineId: 1338
-  msazureServiceConnection: AndroidBroker-CI
+  msazureServiceConnection: AndroidBroker-CI-2
   msazureFeedName: Android-Broker
   msalApp: msalautomationapp-dist-AutoBroker-debug.apk
   msalTestApp: msalautomationapp-dist-AutoBroker-debug-androidTest.apk
@@ -49,14 +49,14 @@ variables:
   companyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
   oldCompanyPortalApk: com.microsoft.windowsintune.companyportal-signed.apk
   authenticatorApk: app-production-universal-release-signed.apk
-  oldAuthenticatorApk: Authenticator-4.1.0-RC.apk
+  oldAuthenticatorApk: OldAuthenticator.apk
   outlookApk: Outlook.apk
   teamsApk: Teams.apk
   wordApk: Word.apk
   edgeApk: Edge.apk
   firebaseTimeout: 45m
   resultsHistoryName: Broker Release
-  OSServiceConnection: LTW-Integration
+  OSServiceConnection: LTW-Integration-2
   LTWFeedName: Auth-Broker-Integrated-LTW-Build
   LTWApk: LTW-signed.apk
   oldLTWApk: OldLTW-signed.apk
@@ -91,7 +91,7 @@ parameters:
 - name: oldAuthenticatorVersion
   displayName: Old Authenticator Version
   type: string
-  default: '6.2204.2470'
+  default: '6.2401.69'
 - name: companyPortalVersion
   displayName: Company Portal Version
   type: string
@@ -228,7 +228,7 @@ stages:
           continueOnError: true
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://office.visualstudio.com/" -Project "OneAuth" -PipelinePAT "$(OfficePAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(oneAuthTestAppPipelineId)" -Branch "android/common-ingestion-with-compile-34" -TemplateParams "{''androidCommonVersion'': ''$(dailyVersion)''}"'
+            arguments: '-OrganizationUrl "https://office.visualstudio.com/" -Project "OneAuth" -PipelinePAT "$(OfficePAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(oneAuthTestAppPipelineId)" -Branch "$(OneAuthBranch)" -TemplateParams "{''androidCommonVersion'': ''$(dailyVersion)''}"'
             workingDirectory: '$(Build.SourcesDirectory)'
         - task: DownloadExternalBuildArtifacts@15
           displayName: 'Download OneAuth test app'

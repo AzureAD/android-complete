@@ -1,0 +1,109 @@
+# Runs UI automation testcases with Hydra lab
+
+name: $(Build.DefinitionName)_$(Build.BuildId)
+
+trigger: none
+pr: none
+
+parameters:
+  - name: automationApp
+    displayName: Choose Automation App
+    type: string
+    default: "BrokerAutomationApp"
+    values:
+      - BrokerAutomationApp
+      - MsalAutomationApp-AutoBroker
+      - MsalAutomationApp-BrokerHost
+  - name: testSuiteName
+    displayName: Test Suite/Package to Run
+    type: string
+    default: "com.microsoft.identity.client.broker.automationapp.testpass.adal"
+  - name: testScope
+    displayName: Test suite Scope
+    type: string
+    default: "PACKAGE"
+    values:
+      - PACKAGE
+      - CLASS
+  - name: testRunArgs
+    displayName: Test Run Args
+    type: string
+    default: "notAnnotation=org.junit.Ignore,notAnnotation=com.microsoft.identity.client.ui.automation.annotations.DoNotRunOnPipeline"
+  - name: testGroupType
+    displayName: Devices in device group to trigger tests
+    type: string
+    default: "SINGLE"
+    values:
+      - SINGLE
+      - REST
+      - ALL
+  - name: runTimeOutSeconds
+    displayName: Run Timeout
+    type: string
+    default: "3600"
+
+variables:
+  buildArtifactsDir: "$(Build.SourcesDirectory)/buildArtifacts"
+  ${{ if eq(parameters.automationApp, 'MsalAutomationApp-BrokerHost') }}:
+    automationAppApk: "$(buildArtifactsDir)/msalautomationapks-BrokerHost-RC-LocalApk/msalautomationapp-local-BrokerHost-debug.apk"
+    automationAppTestApk: "$(buildArtifactsDir)/msalautomationapks-BrokerHost-RC-LocalApk/msalautomationapp-local-BrokerHost-debug-androidTest.apk"
+  ${{ elseif eq(parameters.automationApp, 'MsalAutomationApp-AutoBroker') }}:
+    automationAppApk: "$(buildArtifactsDir)/msalautomationapks-AutoBroker-RC-LocalApk/msalautomationapp-dist-AutoBroker-debug.apk"
+    automationAppTestApk: "$(buildArtifactsDir)/msalautomationapks-AutoBroker-RC-LocalApk/msalautomationapp-dist-AutoBroker-debug-androidTest.apk"
+  ${{ else }}:
+    automationAppApk: "$(buildArtifactsDir)/brokerautomationapks/brokerautomationapp-dist-AutoBroker-debug.apk"
+    automationAppTestApk: "$(buildArtifactsDir)/brokerautomationapks/brokerautomationapp-dist-AutoBroker-debug-androidTest.apk"
+  ymlConfigFile: "$(Build.SourcesDirectory)/azure-pipelines/ui-automation/hydralab/testSpec.yml"
+  pkgName: "com.msft.identity.client.sample.local"
+  testPkgName: "com.msft.identity.client.sample.local.test"
+  runTimeOutSeconds: ${{ parameters.runTimeOutSeconds }}
+  testScope: ${{ parameters.testScope }}
+  testRunArgs: ${{ parameters.testRunArgs }}
+  testGroupType: ${{ parameters.testGroupType }}
+
+stages:
+- stage: 'run_hydra_lab_tests'
+  displayName: Hydra lab Automation Run
+  jobs:
+    - job: runHydraLabTest
+      displayName: Hydra lab Automation Run Job
+      timeoutInMinutes: 120
+      pool:
+        vmImage: ubuntu-latest
+      steps:
+        - checkout: self
+          clean: true
+          persistCredentials: True
+
+        - task: DownloadPipelineArtifact@2
+          displayName: Download build Artifacts
+          inputs:
+            buildType: 'specific'
+            project: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'
+            definition: $(sourceBuildDefinitionId)
+            buildVersionToDownload: 'latest'
+            tags: $(sourceBuildTag)
+            allowPartiallySucceededBuilds: true
+            allowFailedBuilds: true
+            targetPath: '$(buildArtifactsDir)'
+
+        - bash: |
+            echo "##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)"
+          displayName: Set MVN Access Token in Environment
+
+        - task: Gradle@2
+          displayName: "Trigger UI automation run: ${{ parameters.testSuiteName }}"
+          continueOnError: True
+          inputs:
+            gradleWrapperFile: "gradlew"
+            tasks: "requestHydraLabTest -PymlConfigFile=$(ymlConfigFile) -PhydraLabAPIHost=$(hydraLabAPIHost) -PauthToken=$(authToken) -PdeviceIdentifier=$(deviceIdentifier) -PgroupTestType=$(testGroupType) -PappPath=$(automationAppApk) -PtestAppPath=$(automationAppTestApk) -PtestScope=$(testScope) -PtestSuiteName=${{ parameters.testSuiteName }} -PtestRunArgs=$(testRunArgs) -PrunTimeOutSeconds=$(runTimeOutSeconds) -PqueueTimeOutSeconds=3600"
+            javaHomeOption: "JDKVersion"
+            jdkVersionOption: "1.11"
+            publishJUnitResults: true
+
+        - task: PublishTestResults@2
+          displayName: "Publish Test Results"
+          inputs:
+            testResultsFiles: "$(build.sourcesdirectory)/build/testResult/**/hydra_result_*.xml"
+            testRunTitle: "${{ parameters.testSuiteName }}"
+            failTaskOnFailedTests: false
