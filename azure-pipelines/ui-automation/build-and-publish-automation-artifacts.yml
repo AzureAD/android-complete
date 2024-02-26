@@ -8,13 +8,6 @@ parameters:
   - name: oldOneAuthTestAppVersion
     default: '0.0.4'
 
-variables:
-  flagVariable: ${{ parameters.buildFlags }}
-  flightVariable: ${{ parameters.flightFlags }}
-  versionNumber: ${{ parameters.versionNumber }}
-  brokerVersionNumber: ${{ parameters.brokerVersionNumber }}
-  testAppsFeedName: AndroidADAL
-
 stages:
   - template: ./templates/build-broker-apps.yml
   - stage: 'testappgeneration'

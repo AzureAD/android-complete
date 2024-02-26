@@ -28,9 +28,9 @@ parameters:
               /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/Outlook.apk,\
               /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/Teams.apk,\
               /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/Word.apk,\
+              /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/LTW-signed.apk,\
+              /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/app-dist-AutoBroker-release-unsigned.apk,\
               /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp/msalTestApp-dist-debug.apk"
-              #/sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/LTW-signed.apk,\
-              #/sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/app-dist-AutoBroker-release-unsigned.apk,\
 
 jobs:
 - ${{if eq(parameters.flankShards, 0)}}:

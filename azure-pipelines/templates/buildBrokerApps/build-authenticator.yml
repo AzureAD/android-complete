@@ -10,8 +10,6 @@ parameters:
     default: 237369
   - name: authenticatorBranch
     default: "working"
-  - name : artifactName
-    default: brokerapks
 
 jobs:
   - job: queue_build_authenticator

@@ -1,4 +1,4 @@
-# File: azure-pipelines/templates/tagBuild/tag-daily-build.yml
+# File: azure-pipelines/templates/tagBuild/setup-daily-build-flags.yml.yml
 # Description: Template to tag and determine the flights and flags passed to daily builds
 
 parameters:

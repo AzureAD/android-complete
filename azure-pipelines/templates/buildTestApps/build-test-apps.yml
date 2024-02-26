@@ -54,10 +54,10 @@ jobs:
           script: |
             Write-Host "##vso[task.setvariable variable=brokerhostApkVersion;isOutput=true]1.0.${{ parameters.brokerHostPackageCounter }}"
         name: brokerhostVersionScript
-#  - template: ../../ui-automation/templates/build-one-auth-test-app.yml
-#    parameters:
-#      commonVersion: ${{ parameters.commonVersion }}
-#      branch: ${{ parameters.oneAuthBranch }}
+  - template: ../../ui-automation/templates/build-one-auth-test-app.yml
+    parameters:
+      commonVersion: ${{ parameters.commonVersion }}
+      branch: ${{ parameters.oneAuthBranch }}
   - template: ../../ui-automation/templates/build-msal-test-app.yml
     parameters:
       productFlavors: Dist

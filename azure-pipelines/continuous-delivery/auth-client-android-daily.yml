@@ -123,7 +123,7 @@ stages:
   dependsOn: []
   condition: always() # Stage will always run
   jobs:
-    - template: ../templates/tagBuild/tag-daily-build.yml
+    - template: ../templates/tagBuild/setup-daily-build-flags.yml
       parameters:
         flightingValueParameter: $(localFlightsJson)
         flightingSelection: $(flightProvider)

@@ -10,8 +10,6 @@ parameters:
     default: 237827
   - name: companyPortalBranch
     default: "develop"
-  - name : artifactName
-    default: brokerapks
 
 jobs:
   - job: queue_build_CompanyPortal

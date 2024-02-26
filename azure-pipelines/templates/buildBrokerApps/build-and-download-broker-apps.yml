@@ -43,7 +43,6 @@ stages:
             commonVersion: ${{ parameters.commonVersion }}
             brokerVersion: ${{ parameters.brokerVersion }}
             authenticatorBranch: ${{ parameters.authenticatorBranch }}
-            artifactName: ${{ parameters.artifactName }}
 
   - ${{if eq(parameters.companyPortalApkVersion, 'buildAndGenerate') }}:
     # BrokerApk - Company portal Queue pipeline
@@ -61,7 +60,6 @@ stages:
             commonVersion: ${{ parameters.commonVersion }}
             brokerVersion: ${{ parameters.brokerVersion }}
             companyPortalBranch: ${{ parameters.companyPortalBranch }}
-            artifactName: ${{ parameters.artifactName }}
 
   - ${{if eq(parameters.ltwApkVersion, 'buildAndGenerate') }}:
     # BrokerApk - Link to Windows Queue pipeline
@@ -80,7 +78,6 @@ stages:
             commonVersion: ${{ parameters.commonVersion }}
             brokerVersion: ${{ parameters.brokerVersion }}
             ltwBranch: ${{ parameters.ltwBranch }}
-            artifactName: ${{ parameters.artifactName }}
 
     # BrokerApk - Pull from feed
   - stage: '${{ parameters.pullBrokerApksFromFeedStageName }}'

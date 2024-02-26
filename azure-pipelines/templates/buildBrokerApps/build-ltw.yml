@@ -10,8 +10,6 @@ parameters:
     default: 44201
   - name: ltwBranch
     default: "develop"
-  - name : artifactName
-    default: brokerapks
 
 jobs:
   - job: queue_build_LinkToWindows

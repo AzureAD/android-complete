@@ -1,5 +1,5 @@
 # File: azure-pipelines\templates\parameters\common-params.yml
-# Description: This file contains common the parameters for the pipeline
+# Description: This file contains the common parameters for the pipeline
 
 - name: customVersionNumber
   displayName: Version Number
