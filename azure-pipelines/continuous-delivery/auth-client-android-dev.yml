@@ -647,16 +647,17 @@ stages:
     - queueAuthenticatorPipeline
     - queueCompanyPortalPipeline
     - queueLinkToWindowsPipeline
+    - setupStage
   condition: |
     and
     (
       not(failed()),
       not(canceled()),
-      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
+      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), and(eq( variables['Build.Reason'], 'Schedule'), ne( $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.LTWDayOutputVar'] ], 'false' )) )
     )
   jobs:
     - job: trigger_automation
-      displayName: Trigger Broker Automation Run
+      displayName: Trigger Broker Automation Run   $(setupConfigurationScript.FlightOutput)
       timeoutInMinutes: 120
       variables:
         authenticatorApkVersion: $[ stageDependencies.queueAuthenticatorPipeline.queue_build_authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
