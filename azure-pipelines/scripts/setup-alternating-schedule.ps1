@@ -78,4 +78,4 @@ else {
 
 Write-Host "##vso[task.setvariable variable=$FlightOutputVar;isOutput=true]$FlightValue"
 Write-Host "##vso[task.setvariable variable=$FlagOutputVar;isOutput=true]$FlagValue"
-Write-Host "##vso[task.setvariable variable=$LTWDayOutputVar;isOutput=true]$LTWDay"
+Write-Host "##vso[task.setvariable variable=LTWDayOutputVar;isOutput=true]$LTWDay"
