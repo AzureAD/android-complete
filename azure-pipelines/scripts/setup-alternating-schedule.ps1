@@ -6,7 +6,8 @@ Param (
     [Parameter(Mandatory = $true)][String]$FlagInput,
     [Parameter(Mandatory = $true)][String]$BuildNumberInput,
     [Parameter(Mandatory = $false)][String]$FlightOutputVar="FlightOutput",
-    [Parameter(Mandatory = $false)][String]$FlagOutputVar="FlagOutput"
+    [Parameter(Mandatory = $false)][String]$FlagOutputVar="FlagOutput",
+    [Parameter(Mandatory = $false)][String]$LTWDayOutputVar="LTWDayOutput"
 )
 
 #If this is a scheduled run, set up flight/flags variables based on day of the week
@@ -20,7 +21,7 @@ $LocalFlightFalseDays = "Tuesday","Thursday"
 $EcsFlightDays = "Saturday"
 $FlightValue = ""
 $FlagValue = ""
-$LTWDay = "true"
+$LTWDay = "false"
 
 # Check if this is a scheduled run
 if ("$BuildingOnSchedule" -eq "True") {
@@ -78,4 +79,4 @@ else {
 
 Write-Host "##vso[task.setvariable variable=$FlightOutputVar;isOutput=true]$FlightValue"
 Write-Host "##vso[task.setvariable variable=$FlagOutputVar;isOutput=true]$FlagValue"
-Write-Host "##vso[task.setvariable variable=LTWDayOutputVar;isOutput=true]$LTWDay"
+Write-Host "##vso[task.setvariable variable=$LTWDayOutputVar;isOutput=true]$LTWDay"

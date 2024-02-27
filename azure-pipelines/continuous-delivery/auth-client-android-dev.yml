@@ -161,7 +161,7 @@ stages:
       displayName: Configure Flight/Flag Variables Based on Day
       inputs:
         filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/setup-alternating-schedule.ps1'
-        arguments: '-BuildingOnSchedule "$(buildingOnSchedule)" -DayOfWeek "$(DayOfWeek)" -FlightInput "${{ parameters.flightingValueParameter }}" -FlightSelection "${{ parameters.flightingSelection }}" -FlagInput "${{ parameters.flagsValue }} $(enableBrokerSelectionParam) $(enableBrokerDiscoveryParam) $(trustDebugBrokerParam) $(bypassRedirectUriCheckParam) $(treatTestAppAsPartOfTSLParam)" -BuildNumberInput "$(Build.BuildNumber)" -FlightOutputVar "FlightOutput" -FlagOutputVar "FlagOutput"'
+        arguments: '-BuildingOnSchedule "$(buildingOnSchedule)" -DayOfWeek "$(DayOfWeek)" -FlightInput "${{ parameters.flightingValueParameter }}" -FlightSelection "${{ parameters.flightingSelection }}" -FlagInput "${{ parameters.flagsValue }} $(enableBrokerSelectionParam) $(enableBrokerDiscoveryParam) $(trustDebugBrokerParam) $(bypassRedirectUriCheckParam) $(treatTestAppAsPartOfTSLParam)" -BuildNumberInput "$(Build.BuildNumber)" -FlightOutputVar "FlightOutput" -FlagOutputVar "FlagOutput" -LTWDayOutputVar "LTWDayOutput"'
         workingDirectory: '$(Build.SourcesDirectory)'
       name: setupConfigurationScript
     - task: PowerShell@2
@@ -194,8 +194,6 @@ stages:
           
             Write-Host "##vso[task.setvariable variable=finalFlag;isOutput=true]$(setupConfigurationScript.FlagOutput)"
           }
-          
-          Write-Host "##vso[task.setvariable variable=shouldRunLTWFromSchedule;isOutput=true]$(setupConfigurationScript.LTWDayOutputVar)"
       name: finalSetupScript
 
 # Common4j - Build and publish
@@ -650,14 +648,12 @@ stages:
     - queueCompanyPortalPipeline
     - queueLinkToWindowsPipeline
     - setupStage
-  variables:
-    shouldRunLTWFromSchedule: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   condition: |
     and
     (
       not(failed()),
-      not(canceled())
-      
+      not(canceled()),
+      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), eq( variables['Build.Reason'], 'Schedule'))
     )
   jobs:
     - job: trigger_automation
@@ -668,7 +664,8 @@ stages:
         companyPortalApkVersion: $[ stageDependencies.queueCompanyPortalPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalApkVersion'] ]
         ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
         brokerhostApkVersion: $[ stageDependencies.testappgeneration.brokerhostVersionJob.outputs['brokerhostVersionScript.brokerhostApkVersion'] ]
-      condition: ne( variables['shouldRunLTWFromSchedule'], 'true')
+        LTWDayOutput: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.LTWDayOutput'] ]
+      condition: ne( variables['LTWDayOutput'], 'false')
       steps:
         - checkout: self
           persistCredentials: True
