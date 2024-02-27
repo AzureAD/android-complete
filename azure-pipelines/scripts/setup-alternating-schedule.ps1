@@ -21,7 +21,7 @@ $LocalFlightFalseDays = "Tuesday","Thursday"
 $EcsFlightDays = "Saturday"
 $FlightValue = ""
 $FlagValue = ""
-$LTWDay = "false"
+$LTWDay = "True"
 
 # Check if this is a scheduled run
 if ("$BuildingOnSchedule" -eq "True") {
@@ -41,7 +41,7 @@ if ("$BuildingOnSchedule" -eq "True") {
         Write-Host "Scheduled: use local flights with false values, no flags passed"
         $FlightValue = $FlightInput -ireplace "true","false"
         $FlagValue = ""
-        $LTWDay = "false"
+        $LTWDay = "False"
 
         Write-Host "##vso[build.updatebuildnumber]$BuildNumberInput  [Scheduled $DayOfWeek, Local Flights Set to False, No Flags]"
     }
@@ -51,7 +51,7 @@ if ("$BuildingOnSchedule" -eq "True") {
         Write-Host "Scheduled: use ECS flights"
         $FlightValue = ""
         $FlagValue = ""
-        $LTWDay = "false"
+        $LTWDay = "False"
 
         Write-Host "##vso[build.updatebuildnumber]$BuildNumberInput  [Scheduled $DayOfWeek, ECS Flights, No Flags]"
     }

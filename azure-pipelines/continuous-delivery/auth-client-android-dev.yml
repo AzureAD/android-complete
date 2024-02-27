@@ -665,7 +665,7 @@ stages:
         ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
         brokerhostApkVersion: $[ stageDependencies.testappgeneration.brokerhostVersionJob.outputs['brokerhostVersionScript.brokerhostApkVersion'] ]
         LTWDayOutput: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.LTWDayOutput'] ]
-      condition: ne( variables['LTWDayOutput'], 'false')
+      condition: ne( variables['LTWDayOutput'], 'False')
       steps:
         - checkout: self
           persistCredentials: True
