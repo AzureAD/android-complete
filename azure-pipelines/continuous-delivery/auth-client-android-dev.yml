@@ -657,7 +657,7 @@ stages:
     (
       not(failed()),
       not(canceled()),
-      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), ne( dependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'], '') )
+      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), ne( dependencies.setupStage.outputs['alternateSchedule.finalSetupScript.finalFlag'], '') )
     )
   jobs:
     - job: trigger_automation
