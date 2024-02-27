@@ -664,7 +664,7 @@ stages:
         companyPortalApkVersion: $[ stageDependencies.queueCompanyPortalPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalApkVersion'] ]
         ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
         brokerhostApkVersion: $[ stageDependencies.testappgeneration.brokerhostVersionJob.outputs['brokerhostVersionScript.brokerhostApkVersion'] ]
-        LTWDayOutput: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.LTWDayOutput'] ]
+        LTWDayOutput: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.LTWDayOutput'] ]
       condition: ne( variables['LTWDayOutput'], 'False')
       steps:
         - checkout: self
