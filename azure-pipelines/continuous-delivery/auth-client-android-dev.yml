@@ -651,7 +651,7 @@ stages:
     - queueLinkToWindowsPipeline
     - setupStage
   variables:
-    shouldRunLTWFromSchedule: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.shouldRunLTWFromSchedule'] ]
+    shouldRunLTWFromSchedule: "true"
   condition: |
     and
     (
