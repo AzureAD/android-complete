@@ -657,7 +657,7 @@ stages:
     (
       not(failed()),
       not(canceled()),
-      ne( variables['shouldRunLTWFromSchedule'], 'true')
+      ne( variables['shouldRunLTWFromSchedule'], '')
     )
   jobs:
     - job: trigger_automation
