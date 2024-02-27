@@ -668,7 +668,7 @@ stages:
         companyPortalApkVersion: $[ stageDependencies.queueCompanyPortalPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalApkVersion'] ]
         ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
         brokerhostApkVersion: $[ stageDependencies.testappgeneration.brokerhostVersionJob.outputs['brokerhostVersionScript.brokerhostApkVersion'] ]
-      condition: ne( variables['authenticatorApkVersion'], '')
+      condition: ne( variables['shouldRunLTWFromSchedule'], '')
       steps:
         - checkout: self
           persistCredentials: True
