@@ -656,8 +656,7 @@ stages:
     and
     (
       not(failed()),
-      not(canceled()),
-      ne( dependencies.setupStage.outputs['alternateSchedule.finalSetupScript.shouldRunLTWFromSchedule'], 'true')
+      not(canceled())
     )
   jobs:
     - job: trigger_automation
