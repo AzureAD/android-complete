@@ -653,7 +653,7 @@ stages:
     (
       not(failed()),
       not(canceled()),
-      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), and(eq( variables['Build.Reason'], 'Manual'), ne( stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.LTWDayOutputVar'], 'false' )) )
+      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), and(eq( variables['Build.Reason'], 'Manual'), eq( stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.LTWDayOutputVar'], 'true' )) )
     )
   jobs:
     - job: trigger_automation

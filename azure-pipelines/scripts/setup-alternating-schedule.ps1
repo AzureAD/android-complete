@@ -20,7 +20,7 @@ $LocalFlightFalseDays = "Tuesday","Thursday"
 $EcsFlightDays = "Saturday"
 $FlightValue = ""
 $FlagValue = ""
-$LTWDay = "false"
+$LTWDay = "true"
 
 # Check if this is a scheduled run
 if ("$BuildingOnSchedule" -eq "True") {
