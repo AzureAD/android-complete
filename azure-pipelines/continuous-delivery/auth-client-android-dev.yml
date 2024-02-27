@@ -651,13 +651,13 @@ stages:
     - queueLinkToWindowsPipeline
     - setupStage
   variables:
-    shouldRunLTWFromSchedule: "true"
+    shouldRunLTWFromSchedule: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.shouldRunLTWFromSchedule'] ]
   condition: |
     and
     (
       not(failed()),
       not(canceled()),
-      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), and(eq( variables['Build.Reason'], 'Schedule'), eq( variables['shouldRunLTWFromSchedule'], 'true' )) )
+      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), and(eq( variables['Build.Reason'], 'Schedule'), eq( dependencies.setupStage.alternateSchedule.outputs['finalSetupScript.shouldRunLTWFromSchedule'], 'true' )) )
     )
   jobs:
     - job: trigger_automation
