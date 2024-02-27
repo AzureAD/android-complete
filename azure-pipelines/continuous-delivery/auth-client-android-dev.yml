@@ -194,6 +194,8 @@ stages:
           
             Write-Host "##vso[task.setvariable variable=finalFlag;isOutput=true]$(setupConfigurationScript.FlagOutput)"
           }
+          
+          Write-Host "##vso[task.setvariable variable=shouldRunLTWFromSchedule;isOutput=true]$(setupConfigurationScript.LTWDayOutputVar)"
       name: finalSetupScript
 
 # Common4j - Build and publish
@@ -649,17 +651,17 @@ stages:
     - queueLinkToWindowsPipeline
     - setupStage
   variables:
-    LTWDayOutputVar: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.LTWDayOutputVar'] ]
+    shouldRunLTWFromSchedule: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.shouldRunLTWFromSchedule'] ]
   condition: |
     and
     (
       not(failed()),
       not(canceled()),
-      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), and(eq( variables['Build.Reason'], 'Schedule'), eq( '$(LTWDayOutputVar)', 'true' )) )
+      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), and(eq( variables['Build.Reason'], 'Schedule'), eq( variables['shouldRunLTWFromSchedule'], 'true' )) )
     )
   jobs:
     - job: trigger_automation
-      displayName: Trigger Broker Automation Run   $(setupConfigurationScript.FlightOutput)
+      displayName: Trigger Broker Automation Run
       timeoutInMinutes: 120
       variables:
         authenticatorApkVersion: $[ stageDependencies.queueAuthenticatorPipeline.queue_build_authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
