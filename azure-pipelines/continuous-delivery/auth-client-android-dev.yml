@@ -650,12 +650,15 @@ stages:
     - setupStage
   variables:
     LTWDayOutputVar: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.LTWDayOutputVar'] ]
+  variables:
+    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
+    flightVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlight'] ]
   condition: |
     and
     (
       not(failed()),
       not(canceled()),
-      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), and(eq( variables['Build.Reason'], 'Schedule'), eq( variables['LTWDayOutputVar'], 'true' )) )
+      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), and(eq( variables['Build.Reason'], 'Schedule'), eq( '$(LTWDayOutputVar)', 'true' )) )
     )
   jobs:
     - job: trigger_automation
