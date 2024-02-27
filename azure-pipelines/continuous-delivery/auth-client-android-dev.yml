@@ -651,12 +651,13 @@ stages:
     - queueLinkToWindowsPipeline
     - setupStage
   variables:
-    shouldRunLTWFromSchedule: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.shouldRunLTWFromSchedule'] ]
+    shouldRunLTWFromSchedule: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   condition: |
     and
     (
       not(failed()),
-      not(canceled())
+      not(canceled()),
+      ne( $(shouldRunLTWFromSchedule), 'true')
     )
   jobs:
     - job: trigger_automation
