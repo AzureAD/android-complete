@@ -648,12 +648,14 @@ stages:
     - queueCompanyPortalPipeline
     - queueLinkToWindowsPipeline
     - setupStage
+  variables:
+    LTWDayOutputVar: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.LTWDayOutputVar'] ]
   condition: |
     and
     (
       not(failed()),
       not(canceled()),
-      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), and(eq( variables['Build.Reason'], 'Manual'), eq( stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.LTWDayOutputVar'], 'true' )) )
+      or( eq(${{ parameters.shouldRunUiValidation }}, 'True'), and(eq( variables['Build.Reason'], 'Schedule'), eq( variables['LTWDayOutputVar'], 'true' )) )
     )
   jobs:
     - job: trigger_automation
