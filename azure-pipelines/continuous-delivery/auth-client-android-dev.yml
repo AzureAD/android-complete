@@ -161,7 +161,7 @@ stages:
       displayName: Configure Flight/Flag Variables Based on Day
       inputs:
         filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/setup-alternating-schedule.ps1'
-        arguments: '-BuildingOnSchedule "$(buildingOnSchedule)" -DayOfWeek "$(DayOfWeek)" -FlightInput "${{ parameters.flightingValueParameter }}" -FlightSelection "${{ parameters.flightingSelection }}" -FlagInput "${{ parameters.flagsValue }} $(enableBrokerSelectionParam) $(enableBrokerDiscoveryParam) $(trustDebugBrokerParam) $(bypassRedirectUriCheckParam) $(treatTestAppAsPartOfTSLParam)" -BuildNumberInput "$(Build.BuildNumber)" -FlightOutputVar "FlightOutput" -FlagOutputVar "FlagOutput"'
+        arguments: '-BuildingOnSchedule "$(buildingOnSchedule)" -DayOfWeek "$(DayOfWeek)" -FlightInput "${{ parameters.flightingValueParameter }}" -FlightSelection "${{ parameters.flightingSelection }}" -FlagInput "${{ parameters.flagsValue }} $(enableBrokerSelectionParam) $(enableBrokerDiscoveryParam) $(trustDebugBrokerParam) $(bypassRedirectUriCheckParam) $(treatTestAppAsPartOfTSLParam)" -BuildNumberInput "$(Build.BuildNumber)" -FlightOutputVar "FlightOutput" -FlagOutputVar "FlagOutput" -LTWOutputVar "ShouldRunLtwTests"'
         workingDirectory: '$(Build.SourcesDirectory)'
       name: setupConfigurationScript
     - task: PowerShell@2
@@ -647,6 +647,7 @@ stages:
     - queueAuthenticatorPipeline
     - queueCompanyPortalPipeline
     - queueLinkToWindowsPipeline
+    - setupStage
   condition: |
     and
     (
@@ -663,6 +664,8 @@ stages:
         companyPortalApkVersion: $[ stageDependencies.queueCompanyPortalPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalApkVersion'] ]
         ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
         brokerhostApkVersion: $[ stageDependencies.testappgeneration.brokerhostVersionJob.outputs['brokerhostVersionScript.brokerhostApkVersion'] ]
+        ShouldRunLtwTests: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.ShouldRunLtwTests'] ]
+      condition: ne( variables['ShouldRunLtwTests'], 'False')
       steps:
         - checkout: self
           persistCredentials: True

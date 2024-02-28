@@ -6,7 +6,8 @@ Param (
     [Parameter(Mandatory = $true)][String]$FlagInput,
     [Parameter(Mandatory = $true)][String]$BuildNumberInput,
     [Parameter(Mandatory = $false)][String]$FlightOutputVar="FlightOutput",
-    [Parameter(Mandatory = $false)][String]$FlagOutputVar="FlagOutput"
+    [Parameter(Mandatory = $false)][String]$FlagOutputVar="FlagOutput",
+    [Parameter(Mandatory = $false)][String]$LTWOutputVar="ShouldRunLtwTests"
 )
 
 #If this is a scheduled run, set up flight/flags variables based on day of the week
@@ -20,6 +21,7 @@ $LocalFlightFalseDays = "Tuesday","Thursday"
 $EcsFlightDays = "Saturday"
 $FlightValue = ""
 $FlagValue = ""
+$ShouldRunLtwTests = "True"
 
 # Check if this is a scheduled run
 if ("$BuildingOnSchedule" -eq "True") {
@@ -39,6 +41,7 @@ if ("$BuildingOnSchedule" -eq "True") {
         Write-Host "Scheduled: use local flights with false values, no flags passed"
         $FlightValue = $FlightInput -ireplace "true","false"
         $FlagValue = ""
+        $ShouldRunLtwTests = "False"
 
         Write-Host "##vso[build.updatebuildnumber]$BuildNumberInput  [Scheduled $DayOfWeek, Local Flights Set to False, No Flags]"
     }
@@ -48,6 +51,7 @@ if ("$BuildingOnSchedule" -eq "True") {
         Write-Host "Scheduled: use ECS flights"
         $FlightValue = ""
         $FlagValue = ""
+        $ShouldRunLtwTests = "False"
 
         Write-Host "##vso[build.updatebuildnumber]$BuildNumberInput  [Scheduled $DayOfWeek, ECS Flights, No Flags]"
     }
@@ -75,3 +79,4 @@ else {
 
 Write-Host "##vso[task.setvariable variable=$FlightOutputVar;isOutput=true]$FlightValue"
 Write-Host "##vso[task.setvariable variable=$FlagOutputVar;isOutput=true]$FlagValue"
+Write-Host "##vso[task.setvariable variable=$LTWOutputVar;isOutput=true]$ShouldRunLtwTests"
