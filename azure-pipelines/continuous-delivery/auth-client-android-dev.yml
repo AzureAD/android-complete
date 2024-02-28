@@ -161,7 +161,7 @@ stages:
       displayName: Configure Flight/Flag Variables Based on Day
       inputs:
         filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/setup-alternating-schedule.ps1'
-        arguments: '-BuildingOnSchedule "$(buildingOnSchedule)" -DayOfWeek "$(DayOfWeek)" -FlightInput "${{ parameters.flightingValueParameter }}" -FlightSelection "${{ parameters.flightingSelection }}" -FlagInput "${{ parameters.flagsValue }} $(enableBrokerSelectionParam) $(enableBrokerDiscoveryParam) $(trustDebugBrokerParam) $(bypassRedirectUriCheckParam) $(treatTestAppAsPartOfTSLParam)" -BuildNumberInput "$(Build.BuildNumber)" -FlightOutputVar "FlightOutput" -FlagOutputVar "FlagOutput" -LTWDayOutputVar "ShouldRunLtwTests"'
+        arguments: '-BuildingOnSchedule "$(buildingOnSchedule)" -DayOfWeek "$(DayOfWeek)" -FlightInput "${{ parameters.flightingValueParameter }}" -FlightSelection "${{ parameters.flightingSelection }}" -FlagInput "${{ parameters.flagsValue }} $(enableBrokerSelectionParam) $(enableBrokerDiscoveryParam) $(trustDebugBrokerParam) $(bypassRedirectUriCheckParam) $(treatTestAppAsPartOfTSLParam)" -BuildNumberInput "$(Build.BuildNumber)" -FlightOutputVar "FlightOutput" -FlagOutputVar "FlagOutput" -LTWOutputVar "ShouldRunLtwTests"'
         workingDirectory: '$(Build.SourcesDirectory)'
       name: setupConfigurationScript
     - task: PowerShell@2
@@ -665,7 +665,7 @@ stages:
         ltwApkVersion: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
         brokerhostApkVersion: $[ stageDependencies.testappgeneration.brokerhostVersionJob.outputs['brokerhostVersionScript.brokerhostApkVersion'] ]
         ShouldRunLtwTests: $[ stageDependencies.setupStage.alternateSchedule.outputs['setupConfigurationScript.ShouldRunLtwTests'] ]
-      condition: ne( variables['LTWDayOutput'], 'False')
+      condition: ne( variables['ShouldRunLtwTests'], 'False')
       steps:
         - checkout: self
           persistCredentials: True
