@@ -1,0 +1,98 @@
+# File: azure-pipelines\templates\buildBrokerApps\download-broker-apks.yml
+# Description: Template to download broker apks from the broker feed
+
+steps:
+  - script: mkdir -p $(artifactName)
+    displayName: 'make $(artifactName) dir'
+    workingDirectory: '$(Build.ArtifactStagingDirectory)'
+  - task: UniversalPackages@0
+    displayName: 'Download Authenticator from Feed'
+    inputs:
+      command: 'download'
+      downloadDirectory: $(brokerApkDownloadDirectory)
+      feedsToUse: 'external'
+      externalFeedCredentials: 'AndroidBroker-CI'
+      feedDownloadExternal: 'Android-Broker'
+      packageDownloadExternal: 'com.azure.authenticator'
+      versionDownloadExternal: $(authenticatorApkVersion)
+  - task: UniversalPackages@0
+    displayName: 'Download Company Portal from Feed'
+    inputs:
+      command: 'download'
+      downloadDirectory: $(brokerApkDownloadDirectory)
+      feedsToUse: 'external'
+      externalFeedCredentials: 'AndroidBroker-CI'
+      feedDownloadExternal: 'Android-Broker'
+      packageDownloadExternal: 'com.microsoft.windowsintune.companyportal-signed'
+      versionDownloadExternal: $(companyPortalApkVersion)
+  - task: UniversalPackages@0
+    displayName: 'Download LTW from Feed'
+    condition: and(not(failed()), not(canceled()), eq(variables['LTWIntegrationEnabled'], 'true'))
+    inputs:
+      command: 'download'
+      downloadDirectory: $(brokerApkDownloadDirectory)
+      feedsToUse: 'external'
+      externalFeedCredentials: 'LTW-Integration'
+      feedDownloadExternal: 'Auth-Broker-Integrated-LTW-Build'
+      packageDownloadExternal: 'com.microsoft.appmanager'
+      versionDownloadExternal: $(ltwApkVersion)
+  - script: mv ./YPC-*.apk ./LTW-signed.apk
+    displayName: 'Rename LTW build to LTW-signed.apk'
+    condition: and(not(failed()), not(canceled()), eq(variables['LTWIntegrationEnabled'], 'true'))
+    workingDirectory: $(brokerApkDownloadDirectory)
+  - task: UniversalPackages@0
+    displayName: 'Download old authenticator version from feed'
+    inputs:
+      command: 'download'
+      downloadDirectory: $(oldBrokerApkDownloadDirectory)
+      feedsToUse: 'external'
+      externalFeedCredentials: 'AndroidBroker-CI'
+      feedDownloadExternal: 'Android-Broker'
+      packageDownloadExternal: 'com.azure.authenticator'
+      versionDownloadExternal: $(oldAuthenticatorApkVersion)
+  - task: UniversalPackages@0
+    displayName: 'Download Old CompanyPortal Apk'
+    inputs:
+      command: 'download'
+      downloadDirectory: $(oldBrokerApkDownloadDirectory)
+      feedsToUse: 'external'
+      externalFeedCredentials: 'AndroidBroker-CI'
+      feedDownloadExternal: 'Android-Broker'
+      packageDownloadExternal: 'com.microsoft.windowsintune.companyportal-signed'
+      versionDownloadExternal: $(oldCompanyPortalApkVersion)
+  - task: UniversalPackages@0
+    displayName: 'Download Old LTW Apk'
+    inputs:
+      command: 'download'
+      downloadDirectory: $(oldBrokerApkDownloadDirectory)
+      feedsToUse: 'external'
+      externalFeedCredentials: 'LTW-Integration'
+      feedDownloadExternal: 'Auth-Broker-Integrated-LTW-Build'
+      packageDownloadExternal: 'com.microsoft.appmanager'
+      versionDownloadExternal: $(oldLTWApkVersion)
+  - script: mv ./YPC-*.apk ./OldLTW-signed.apk
+    displayName: 'Rename Old LTW build to OldLTW-signed.apk'
+    workingDirectory: $(oldBrokerApkDownloadDirectory)
+  - task: UniversalPackages@0
+    displayName: 'Download old brokerHost version from feed'
+    inputs:
+      command: 'download'
+      downloadDirectory: $(oldBrokerApkDownloadDirectory)
+      feedsToUse: 'external'
+      externalFeedCredentials: 'AndroidBroker-CI'
+      feedDownloadExternal: 'Android-Broker'
+      packageDownloadExternal: 'broker-host'
+      versionDownloadExternal: $(oldBrokerHostApkVersion)
+  - task: UniversalPackages@0
+    displayName: 'Download brokerHost without broker selection logic from feed'
+    inputs:
+      command: 'download'
+      downloadDirectory: $(oldBrokerApkDownloadDirectory)
+      feedsToUse: 'external'
+      externalFeedCredentials: 'AndroidBroker-CI'
+      feedDownloadExternal: 'Android-Broker'
+      packageDownloadExternal: 'broker-host'
+      versionDownloadExternal: $(brokerHostWithoutBrokerSelectionLogicVersion)
+  - publish: '$(brokerApkDownloadDirectory)'
+    displayName: 'Publish Broker Apks'
+    artifact: $(artifactName)

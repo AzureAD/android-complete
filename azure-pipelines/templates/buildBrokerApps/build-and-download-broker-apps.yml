@@ -1,0 +1,135 @@
+# File: azure-pipelines/templates/buildBrokerApps/build-and-download-broker-apps.yml
+# Description: Template to build and publish apks for broker hosting applications
+
+parameters:
+  - name: msalVersion
+  - name: adalVersion
+  - name: commonVersion
+  - name: brokerVersion
+  - name: authenticatorBranch
+    default: "working"
+  - name: companyPortalBranch
+    default: "develop"
+  - name: ltwBranch
+    default: "develop"
+  - name: authenticatorApkVersion
+    default: 'buildAndGenerate' # generated from the pipeline
+  - name: companyPortalApkVersion
+    default: 'buildAndGenerate' # generated from the pipeline
+  - name: ltwApkVersion
+    default: 'buildAndGenerate' # generated from the pipeline
+  - name : artifactName
+    default: brokerapks
+  - name: DependsOn
+    type: object
+  - name: pullBrokerApksFromFeedStageName
+    type: string
+    default: 'pullBrokerApksFromFeed'
+
+stages:
+  - ${{if eq(parameters.authenticatorApkVersion, 'buildAndGenerate') }}:
+    # BrokerApk - Authenticator Queue pipeline
+    - stage: 'queueAuthenticatorPipeline'
+      variables:
+        - group: AndroidAuthClientAutomationSecrets
+      displayName: Authenticator Broker Apk Generation
+      ${{ if parameters.DependsOn }}:
+        dependsOn: '${{ parameters.DependsOn }}'
+      jobs:
+        - template: build-authenticator.yml
+          parameters:
+            adalVersion: ${{ parameters.adalVersion }}
+            msalVersion: ${{ parameters.msalVersion }}
+            commonVersion: ${{ parameters.commonVersion }}
+            brokerVersion: ${{ parameters.brokerVersion }}
+            authenticatorBranch: ${{ parameters.authenticatorBranch }}
+
+  - ${{if eq(parameters.companyPortalApkVersion, 'buildAndGenerate') }}:
+    # BrokerApk - Company portal Queue pipeline
+    - stage: 'queueCompanyPortalPipeline'
+      variables:
+        - group: AndroidAuthClientAutomationSecrets
+      displayName: Company Portal Broker Apk Generation
+      ${{ if parameters.DependsOn }}:
+        dependsOn: '${{ parameters.DependsOn }}'
+      jobs:
+        - template: build-companyportal.yml
+          parameters:
+            adalVersion: ${{ parameters.adalVersion }}
+            msalVersion: ${{ parameters.msalVersion }}
+            commonVersion: ${{ parameters.commonVersion }}
+            brokerVersion: ${{ parameters.brokerVersion }}
+            companyPortalBranch: ${{ parameters.companyPortalBranch }}
+
+  - ${{if eq(parameters.ltwApkVersion, 'buildAndGenerate') }}:
+    # BrokerApk - Link to Windows Queue pipeline
+    - stage: 'queueLinkToWindowsPipeline'
+      variables:
+        - group: AndroidAuthClientAutomationSecrets
+      displayName: Link To Windows Apk Generation
+      ${{ if parameters.DependsOn }}:
+        dependsOn: '${{ parameters.DependsOn }}'
+      condition: and(not(failed()), not(canceled()), eq(variables['LTWIntegrationEnabled'], 'true'))
+      jobs:
+        - template: build-ltw.yml
+          parameters:
+            adalVersion: ${{ parameters.adalVersion }}
+            msalVersion: ${{ parameters.msalVersion }}
+            commonVersion: ${{ parameters.commonVersion }}
+            brokerVersion: ${{ parameters.brokerVersion }}
+            ltwBranch: ${{ parameters.ltwBranch }}
+
+    # BrokerApk - Pull from feed
+  - stage: '${{ parameters.pullBrokerApksFromFeedStageName }}'
+    displayName: Pull Broker Apks from feed
+    dependsOn:
+      - ${{if eq(parameters.authenticatorApkVersion, 'buildAndGenerate') }}:
+        - queueAuthenticatorPipeline
+      - ${{if eq(parameters.companyPortalApkVersion, 'buildAndGenerate') }}:
+        - queueCompanyPortalPipeline
+      - ${{if eq(parameters.ltwApkVersion, 'buildAndGenerate') }}:
+        - queueLinkToWindowsPipeline
+    variables:
+      - group: AndroidAuthClientAutomationSecrets
+    jobs:
+      - job:
+        displayName: 'Download Broker Apks from Feed'
+        variables:
+          - name: authenticatorApkVersion
+            ${{ if eq(parameters.authenticatorApkVersion, 'buildAndGenerate') }}:
+              value: $[ stageDependencies.queueAuthenticatorPipeline.queue_build_authenticator.outputs['authenticatorPipelineScript.authenticatorApkVersion'] ]
+            ${{ else }}:
+              value: ${{ parameters.authenticatorApkVersion }}
+          - name: companyPortalApkVersion
+            ${{ if eq(parameters.companyPortalApkVersion, 'buildAndGenerate') }}:
+              value: $[ stageDependencies.queueCompanyPortalPipeline.queue_build_CompanyPortal.outputs['companyPortalPipelineScript.companyPortalApkVersion'] ]
+            ${{ else }}:
+              value: ${{ parameters.companyPortalApkVersion }}
+          - name: ltwApkVersion
+            ${{ if eq(parameters.ltwApkVersion, 'buildAndGenerate') }}:
+              value: $[ stageDependencies.queueLinkToWindowsPipeline.queue_build_LinkToWindows.outputs['ltwVersionScript.ltwApkVersion'] ]
+            ${{ else }}:
+              value: ${{ parameters.ltwApkVersion }}
+          - name: oldAuthenticatorApkVersion
+            value: '6.2401.69'
+          - name: oldCompanyPortalApkVersion
+            value: '5.0.604010354'
+          - name: oldLTWApkVersion
+            value: '1.23051.78'
+          - name: oldBrokerHostApkVersion
+            value: '0.0.1'
+          - name: brokerHostWithoutBrokerSelectionLogicVersion
+            value: '0.0.4'
+          - name: msazureServiceConnection
+            value: 'AndroidBroker-CI'
+          - name: msazureFeedName
+            value: 'Android-Broker'
+          - name: brokerApkDownloadDirectory
+            value: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactName }}'
+          - name: oldBrokerApkDownloadDirectory
+            value: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactName }}/oldAPKs'
+          - name: artifactName
+            value: ${{ parameters.artifactName }}
+        steps:
+        - checkout: none
+        - template: download-broker-apks.yml

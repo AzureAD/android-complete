@@ -1,0 +1,20 @@
+parameters:
+  - name: versionNumber
+  - name: brokerVersionNumber
+  - name: buildFlags
+  - name: flightFlags
+  - name: oldMsalTestAppVersion
+    default: '4.5.1'
+  - name: oldOneAuthTestAppVersion
+    default: '0.0.4'
+
+stages:
+  - template: ./templates/build-broker-apps.yml
+  - stage: 'testappgeneration'
+    jobs:
+      - template: ./templates/build-test-apps.yml
+        parameters:
+          flagVariable: ${{ parameters.buildFlags }}
+          flightVariable: ${{ parameters.flightFlags }}
+          versionNumber: ${{ parameters.versionNumber }}
+          brokerVersionNumber: ${{ parameters.brokerVersionNumber }}

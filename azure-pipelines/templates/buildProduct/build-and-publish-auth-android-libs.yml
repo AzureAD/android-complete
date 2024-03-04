@@ -1,0 +1,152 @@
+# File: azure-pipelines/templates/buildProduct/build-and-publish-auth-android-libs.yml
+# Description: Template to build & publish all android auth SDK libraries to internal maven feed
+
+parameters:
+  - name: common4jVersion
+  - name: commonVersion
+  - name: broker4jVersion
+  - name: brokerVersion
+  - name: msalVersion
+  - name: adalVersion
+  - name: buildFlags
+  - name: flightFlags
+  - name: powerliftApiKey
+  - name: publishLibraryArtifacts
+    default: True
+  - name: shouldRunUnitAndInstrumentedTests
+    type: boolean
+    default: True
+  - name: DependsOn
+    type: object
+  - name: promotePackagesStageName
+    type: string
+    default: 'promotePackages'
+
+stages:
+  # Common4j - Build and publish
+  - stage: 'publishCommon4jLibraries'
+    displayName: Common4j - Build and publish
+    variables:
+      buildFlags: ${{ parameters.buildFlags }}
+      flightFlags: ${{ parameters.flightFlags }}
+    ${{ if parameters.DependsOn }}:
+      dependsOn: '${{ parameters.DependsOn }}'
+    jobs:
+      - template: build-and-publish-common4j.yml
+        parameters:
+          version: ${{ parameters.common4jVersion }}
+          buildFlags: $(buildFlags)
+          shouldRunUnitAndInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+          publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
+  # Common - Build and publish
+  - stage: 'publishCommonLibraries'
+    displayName: Common - Build and publish
+    variables:
+      buildFlags: ${{ parameters.buildFlags }}
+      flightFlags: ${{ parameters.flightFlags }}
+    dependsOn:
+      - publishCommon4jLibraries
+    jobs:
+      - template: build-and-publish-common.yml
+        parameters:
+          version: ${{ parameters.commonVersion }}
+          common4jVersion: ${{ parameters.common4jVersion }}
+          buildFlags: $(buildFlags)
+          shouldRunUnitAndInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+          publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
+  # Broker4j - Build and publish
+  - stage: 'publishBroke4jLibraries'
+    displayName: Broker4j - Build and publish
+    variables:
+      buildFlags: ${{ parameters.buildFlags }}
+      flightFlags: ${{ parameters.flightFlags }}
+    dependsOn:
+      - publishCommon4jLibraries
+    jobs:
+      - template: build-and-publish-broker4j.yml
+        parameters:
+          version: ${{ parameters.broker4jVersion }}
+          common4jVersion: ${{ parameters.common4jVersion }}
+          buildFlags: $(buildFlags)
+          buildFlights: $(flightFlags)
+          shouldRunUnitAndInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+          publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
+  # Broker - Build and publish
+  - stage: 'publishBrokerLibraries'
+    displayName: Android Broker - Build and publish
+    dependsOn:
+      - publishCommonLibraries
+      - publishBroke4jLibraries
+    variables:
+      - group: AndroidAuthClientVariables
+      - name: powerLiftApiKeyParam
+        value: -PpowerLiftApiKey=${{ parameters.powerliftApiKey }}
+      - name: buildFlags
+        value : ${{ parameters.buildFlags }}
+      - name: flightFlags
+        value: ${{ parameters.flightFlags }}
+    jobs:
+      - template: build-and-publish-broker.yml
+        parameters:
+          version: ${{ parameters.brokerVersion }}
+          broker4jVersion: ${{ parameters.broker4jVersion }}
+          commonVersion: ${{ parameters.commonVersion }}
+          buildFlags: $(buildFlags)
+          powerLiftApiKeyParam: $(powerLiftApiKeyParam)
+          shouldRunUnitAndInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+          publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
+  # Msal - Build and publish
+  - stage: 'publishMsal'
+    displayName: Msal - Build and publish
+    variables:
+      buildFlags: ${{ parameters.buildFlags }}
+      flightFlags: ${{ parameters.flightFlags }}
+    dependsOn:
+      - publishCommonLibraries
+    jobs:
+      - template: build-and-publish-msal.yml
+        parameters:
+          version: ${{ parameters.msalVersion }}
+          commonVersion: ${{ parameters.commonVersion }}
+          buildFlags: $(buildFlags)
+          shouldRunUnitAndInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+          publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
+  # Adal - Build and publish
+  - stage: 'publishAdal'
+    displayName: Adal - Build and publish
+    variables:
+      buildFlags: ${{ parameters.buildFlags }}
+      flightFlags: ${{ parameters.flightFlags }}
+    dependsOn:
+      - publishCommonLibraries
+    jobs:
+      - template: build-and-publish-adal.yml
+        parameters:
+          version: ${{ parameters.adalVersion }}
+          commonVersion: ${{ parameters.commonVersion }}
+          buildFlags: $(buildFlags)
+          shouldRunUnitAndInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+          publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
+
+  # Promote published packages
+  - stage: '${{ parameters.promotePackagesStageName }}'
+    displayName: Promote published packages
+    dependsOn:
+      - publishMsal
+      - publishAdal
+      - publishCommonLibraries
+      - publishBrokerLibraries
+    jobs:
+      - job: promote_packages
+        displayName: Promote Packages - Prerelease
+        steps:
+          - checkout: self
+            persistCredentials: True
+          - task: PowerShell@2
+            displayName: Run script to promote packages - Prerelease
+            inputs:
+              filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/promote-packages.ps1'
+              arguments: '-PackagingPAT "$env:SYSTEM_ACCESSTOKEN" -common4jVersion "${{ parameters.common4jVersion }}" -commonVersion "${{ parameters.commonVersion }}" -broker4jVersion "${{ parameters.broker4jVersion }}" -adAccountsVersion "${{ parameters.brokerVersion }}" -msalVersion "${{ parameters.msalVersion }}" -adalVersion "${{ parameters.adalVersion }}"'
+              workingDirectory: '$(Build.SourcesDirectory)'
+            env:
+              SYSTEM_ACCESSTOKEN: $(System.AccessToken)

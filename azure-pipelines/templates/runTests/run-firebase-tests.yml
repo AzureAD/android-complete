@@ -1,0 +1,62 @@
+# File: azure-pipelines/templates/runTests/run-firebase-tests.yml
+# Description: Template to run tests in firebase lab
+
+parameters:
+  - name: automationAppApkPath
+  - name: automationAppTestApkPath
+  - name: testTargets
+  - name: extraTarget
+  - name: testRunTitle
+  - name: resultsHistoryName
+  - name: resultsDir
+  - name: firebaseDeviceId
+  - name: firebaseDeviceAndroidVersion
+  - name: flankShards
+    default: 0
+  - name: otherFiles
+    default: "/sdcard/CompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/com.microsoft.windowsintune.companyportal-signed.apk,\
+              /sdcard/OldCompanyPortal.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/com.microsoft.windowsintune.companyportal-signed.apk,\
+              /sdcard/Authenticator.apk=$(Pipeline.Workspace)/brokerapks/app-production-universal-release-signed.apk,\
+              /sdcard/OldAuthenticator.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/app-production-universal-release-signed.apk,\
+              /sdcard/OldMsalTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/msalTestApp-dist-release.apk,\
+              /sdcard/AzureSample.apk=$(Pipeline.Workspace)/AzureSample-RC/AzureSample-local-debug.apk,\
+              /sdcard/BrokerHost.apk=$(Pipeline.WorkSpace)/BrokerHost-Local-RC-debug/brokerHost-local-debug.apk,\
+              /sdcard/BrokerHostWithoutBrokerSelection.apk=$(Pipeline.WorkSpace)/brokerapks/oldAPKs/brokerhostWithoutBrokerSelectionEnabled.apk,\
+              /sdcard/OldOneAuthTestApp.apk=$(Pipeline.WorkSpace)/oldtestapps/app-dist-AutoBroker-release-unsigned.apk,\
+              /sdcard/OldLTW.apk=$(Pipeline.Workspace)/brokerapks/oldAPKs/OldLTW-signed.apk,\
+              /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/Edge.apk,\
+              /sdcard/Outlook.apk=$(Pipeline.WorkSpace)/firstpartyapks/Outlook.apk,\
+              /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/Teams.apk,\
+              /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/Word.apk,\
+              /sdcard/LTW.apk=$(Pipeline.Workspace)/brokerapks/LTW-signed.apk,\
+              /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/app-dist-AutoBroker-release-unsigned.apk,\
+              /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalTestApp/msalTestApp-dist-debug.apk"
+
+jobs:
+- ${{if eq(parameters.flankShards, 0)}}:
+  - template: ../../ui-automation/templates/run-on-firebase.yml
+    parameters:
+      automationAppApkPath: ${{ parameters.automationAppApkPath }}
+      automationAppTestApkPath: ${{ parameters.automationAppTestApkPath }}
+      testTargetPackages: ${{ parameters.testTargets }}
+      resultsHistoryName: ${{ parameters.resultsHistoryName }}
+      resultsDir: ${{ parameters.resultsDir }}
+      otherFiles: ${{ parameters.otherFiles }}
+      firebaseDeviceId: ${{ parameters.firebaseDeviceId }}
+      firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersion }}
+      testRunTitle: ${{ parameters.testRunTitle }}
+      extraTarget: ${{ parameters.extraTarget }}
+- ${{else}}:
+  - template: ../../ui-automation/templates/flank/run-on-firebase-with-flank.yml
+    parameters:
+      automationAppApkPath: ${{ parameters.automationAppApkPath }}
+      automationAppTestApkPath: ${{ parameters.automationAppTestApkPath }}
+      testTargetPackages: ${{ parameters.testTargets }}
+      resultsHistoryName: ${{ parameters.resultsHistoryName }}
+      resultsDir: ${{ parameters.resultsDir }}
+      otherFiles: ${{ parameters.otherFiles }}
+      firebaseDeviceId: ${{ parameters.firebaseDeviceId }}
+      firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersion }}
+      testRunTitle: ${{ parameters.testRunTitle }}
+      extraTarget: ${{ parameters.extraTarget }}
+      flankShards: ${{ parameters.flankShards }}

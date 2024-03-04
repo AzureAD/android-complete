@@ -1,0 +1,31 @@
+# File: azure-pipelines/templates/buildProduct/build-and-publish-broker4j.yml
+# Description: Template to build & publish broker4j library to internal maven feed
+
+parameters:
+  - name: version
+  - name: common4jVersion
+  - name: buildFlags
+  - name: buildFlights
+  - name: shouldRunUnitAndInstrumentedTests
+    type: boolean
+    default: true
+  - name: publishLibraryArtifacts
+    type: boolean
+    default: true
+
+jobs:
+  - template: build-and-publish.yml
+    parameters:
+      repository: broker
+      project: broker4j
+      testCmd: broker4jUnitTestCoverageReport
+      publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
+      dependencyParams: -PdistCommon4jVersion=${{ parameters.common4jVersion }} --configuration=runtimeClasspath --write-locks
+      assembleParams: -PprojVersion=${{ parameters.version }} -PdistCommon4jVersion=${{ parameters.common4jVersion }} ${{ parameters.buildFlags }} ${{ parameters.buildFlights }}
+      testParams: -PprojVersion=${{ parameters.version }} -PdistCommon4jVersion=${{ parameters.common4jVersion }} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) ${{ parameters.buildFlags }} ${{ parameters.buildFlights }} -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      publishParams: -PprojVersion=${{ parameters.version }} -PdistCommon4jVersion=${{ parameters.common4jVersion }} ${{ parameters.buildFlags }} ${{ parameters.buildFlights }}
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
+      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
