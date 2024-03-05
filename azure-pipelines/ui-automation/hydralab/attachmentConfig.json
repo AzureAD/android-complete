@@ -63,8 +63,29 @@
      "loadDir":"TestFiles/apks"
    },
    {
-     "fileName":"OneAuthTestApp.apk",
-     "filePath":"buildArtifacts/oneauthtestapp/arm64-v8a_signed_APK/app-dist-AutoBroker-release-unsigned.apk",
+     "fileName":"OldBrokerHost.apk",
+     "filePath":"buildArtifacts/brokerapks/oldAPKs/brokerHost-local-debug.apk",
+     "fileType":"COMMON",
+     "loadType":"COPY",
+     "loadDir":"TestFiles/apks"
+   },
+   {
+     "fileName":"OldAuthenticator.apk",
+     "filePath":"buildArtifacts/brokerapks/oldAPKs/OldAuthenticator.apk",
+     "fileType":"COMMON",
+     "loadType":"COPY",
+     "loadDir":"TestFiles/apks"
+   },
+   {
+     "fileName":"OldCompanyPortal.apk",
+     "filePath":"buildArtifacts/brokerapks/oldAPKs/com.microsoft.windowsintune.companyportal-signed.apk",
+     "fileType":"COMMON",
+     "loadType":"COPY",
+     "loadDir":"TestFiles/apks"
+   },
+   {
+     "fileName":"OldLTW.apk",
+     "filePath":"buildArtifacts/brokerapks/oldAPKs/OldLTW-signed.apk",
      "fileType":"COMMON",
      "loadType":"COPY",
      "loadDir":"TestFiles/apks"
@@ -77,8 +98,15 @@
      "loadDir":"TestFiles/apks"
    },
    {
-     "fileName":"MsalAuthTestApp.apk",
+     "fileName":"MsalTestApp.apk",
      "filePath":"buildArtifacts/msalE2ETestApp/msalTestApp-dist-release.apk",
+     "fileType":"COMMON",
+     "loadType":"COPY",
+     "loadDir":"TestFiles/apks"
+   },
+   {
+     "fileName":"OldMsalTestApp.apk",
+     "filePath":"buildArtifacts/oldtestapps/msalTestApp-dist-release.apk",
      "fileType":"COMMON",
      "loadType":"COPY",
      "loadDir":"TestFiles/apks"
