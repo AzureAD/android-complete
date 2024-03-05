@@ -21,6 +21,7 @@ parameters:
     default: "test"
 
 variables:
+  - group: AndroidAuthClientAutomationSecrets
   - name : common4jVersion
     ${{ if eq(parameters.common4jVersionNumber, 'default') }}:
       value: $[variables['build.buildnumber']]
