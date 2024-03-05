@@ -195,6 +195,7 @@ stages:
         brokerHostPackageCounter: $(brokerHostPackageVersionCounter)
         buildFlags: $(flagVariable)
         flightFlags: $(flightVariable)
+        oneAuthBranch: $(oneAuthBranch)
 
 - ${{if eq(parameters.shouldRunUiValidation, 'True') }}:
   # Run Daily UI Automation Tests

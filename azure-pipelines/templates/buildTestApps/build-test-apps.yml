@@ -16,7 +16,7 @@ parameters:
   - name: testAppsFeedName
     default: AndroidADAL
   - name: oneAuthBranch
-    default: 'android/fixIntegrationBranch'
+    default: 'dev'
 
 jobs:
   - template: ../../ui-automation/templates/build-azure-sample-app.yml
