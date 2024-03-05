@@ -53,7 +53,7 @@ variables:
   ${{ else }}:
     automationAppApk: "$(buildArtifactsDir)/brokerautomationapks/brokerautomationapp-dist-AutoBroker-debug.apk"
     automationAppTestApk: "$(buildArtifactsDir)/brokerautomationapks/brokerautomationapp-dist-AutoBroker-debug-androidTest.apk"
-  ymlConfigFile: "$(Build.SourcesDirectory)/azure-pipelines/ui-automation/hydralab/testSpec.yml"
+  ymlConfigFile: "$(testSpecFile)"
   pkgName: "com.msft.identity.client.sample.local"
   testPkgName: "com.msft.identity.client.sample.local.test"
   runTimeOutSeconds: ${{ parameters.runTimeOutSeconds }}
