@@ -48,8 +48,8 @@ variables:
     automationAppApk: "$(buildArtifactsDir)/msalautomationapks-BrokerHost-RC-LocalApk/msalautomationapp-local-BrokerHost-debug.apk"
     automationAppTestApk: "$(buildArtifactsDir)/msalautomationapks-BrokerHost-RC-LocalApk/msalautomationapp-local-BrokerHost-debug-androidTest.apk"
   ${{ elseif eq(parameters.automationApp, 'MsalAutomationApp-AutoBroker') }}:
-    automationAppApk: "$(buildArtifactsDir)/msalautomationapks-AutoBroker-RC-LocalApk/msalautomationapp-dist-AutoBroker-debug.apk"
-    automationAppTestApk: "$(buildArtifactsDir)/msalautomationapks-AutoBroker-RC-LocalApk/msalautomationapp-dist-AutoBroker-debug-androidTest.apk"
+    automationAppApk: "$(buildArtifactsDir)/msalautomationapks-AutoBroker-PROD-LocalApk/msalautomationapp-dist-AutoBroker-debug.apk"
+    automationAppTestApk: "$(buildArtifactsDir)/msalautomationapks-AutoBroker-PROD-LocalApk/msalautomationapp-dist-AutoBroker-debug-androidTest.apk"
   ${{ else }}:
     automationAppApk: "$(buildArtifactsDir)/brokerautomationapks/brokerautomationapp-dist-AutoBroker-debug.apk"
     automationAppTestApk: "$(buildArtifactsDir)/brokerautomationapks/brokerautomationapp-dist-AutoBroker-debug-androidTest.apk"
