@@ -1,0 +1,30 @@
+# File: azure-pipelines/templates/buildProduct/build-and-publish-common.yml
+# Description: Template to build & publish common library to internal maven feed
+
+parameters:
+  - name: version
+  - name: common4jVersion
+  - name: buildFlags
+  - name: shouldRunUnitAndInstrumentedTests
+    type: boolean
+    default: true
+  - name: publishLibraryArtifacts
+    type: boolean
+    default: true
+
+jobs:
+  - template: build-and-publish.yml
+    parameters:
+      repository: common
+      project: common
+      assembleCmd: assembleDist
+      testCmd: distDebugCommonUnitTestCoverageReport
+      dependencyParams:  -PdistCommon4jVersion=${{ parameters.common4jVersion }} --configuration=distReleaseRuntimeClasspath --write-locks
+      assembleParams: -PprojVersion=${{ parameters.version }} -PdistCommon4jVersion=${{ parameters.common4jVersion }} ${{ parameters.buildFlags }}
+      testParams: -PprojVersion=${{ parameters.version }} -PdistCommon4jVersion=${{ parameters.common4jVersion }} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) ${{ parameters.buildFlags }} -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      publishParams: -PprojVersion=${{ parameters.version }} -PdistCommon4jVersion=${{ parameters.common4jVersion }} ${{ parameters.buildFlags }}
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
+      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}

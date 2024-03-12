@@ -1,0 +1,27 @@
+# File: azure-pipelines/templates/buildBrokerApps/build-companyportal.yml
+# Description: Template to build and publish CompanyPortal apk
+
+parameters:
+  - name: msalVersion
+  - name: adalVersion
+  - name: commonVersion
+  - name: brokerVersion
+  - name: companyPortalPipelineId
+    default: 237827
+  - name: companyPortalBranch
+    default: "develop"
+
+jobs:
+  - job: queue_build_CompanyPortal
+    displayName: Generate CompanyPortal Apk
+    timeoutInMinutes: 120
+    steps:
+      - checkout: self
+        persistCredentials: True
+      - task: PowerShell@2
+        displayName: Queue and wait for Company Portal Apk generation pipeline
+        inputs:
+          filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+          arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAzure-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "${{ parameters.companyPortalPipelineId }}" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''${{ parameters.brokerVersion }}'', ''CommonVersion'': ''${{ parameters.commonVersion }}'', ''MsalVersion'': ''${{ parameters.msalVersion }}''}" -Branch "${{ parameters.companyPortalBranch }}" -BuildNumberOutputOnSuccessVar "companyPortalApkVersion"'
+          workingDirectory: '$(Build.SourcesDirectory)'
+        name: companyPortalPipelineScript

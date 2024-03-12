@@ -1,0 +1,66 @@
+# File: azure-pipelines/templates/tagBuild/setup-daily-build-flags.yml.yml
+# Description: Template to tag and determine the flights and flags passed to daily builds
+
+parameters:
+  - name: flightingValueParameter
+  - name: flightingSelection
+  - name: flagsValue
+  - name: versionNumber
+  - name: brokerVersionNumber
+  - name: buildingOnSchedule
+  - name: DayOfWeek
+  - name: enableBrokerSelectionParam
+  - name: enableBrokerDiscoveryParam
+  - name: trustDebugBrokerParam
+  - name: bypassRedirectUriCheckParam
+  - name: treatTestAppAsPartOfTSLParam
+
+jobs:
+  - job: alternateSchedule
+    displayName: Set up alternating schedule
+    steps:
+      - task: PowerShell@2
+        displayName: Get Day of Week
+        inputs:
+          filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/day-of-week.ps1'
+          arguments: '-OutputVariable "DayOfWeek"'
+          workingDirectory: '$(Build.SourcesDirectory)'
+        name: dayOfWeekScript
+      - task: PowerShell@2
+        displayName: Configure Flight/Flag Variables Based on Day
+        inputs:
+          filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/setup-alternating-schedule.ps1'
+          arguments: '-BuildingOnSchedule "${{ parameters.buildingOnSchedule }}" -DayOfWeek "${{ parameters.DayOfWeek }}" -FlightInput "${{ parameters.flightingValueParameter }}" -FlightSelection "${{ parameters.flightingSelection }}" -FlagInput "${{ parameters.flagsValue }} ${{ parameters.enableBrokerSelectionParam }} ${{ parameters.enableBrokerDiscoveryParam }} ${{ parameters.trustDebugBrokerParam }} ${{ parameters.bypassRedirectUriCheckParam }} ${{ parameters.treatTestAppAsPartOfTSLParam }}" -BuildNumberInput "$(Build.BuildNumber)" -FlightOutputVar "FlightOutput" -FlagOutputVar "FlagOutput"'
+          workingDirectory: '$(Build.SourcesDirectory)'
+        name: setupConfigurationScript
+      - task: PowerShell@2
+        displayName: Run Tagging Script
+        inputs:
+          targetType: inline
+          script: |
+            Write-Host "##vso[build.addbuildtag]Android Broker Version=(${{ parameters.brokerVersionNumber }})"
+            Write-Host "##vso[build.addbuildtag]Other Library Versions=(${{ parameters.versionNumber }})"
+            
+            # If the local flights are empty, we use ECS flight provider
+            if ("$(setupConfigurationScript.FlightOutput)" -eq "" -or "$(setupConfigurationScript.FlightOutput)" -eq "{}") {
+              Write-Host "##vso[build.addbuildtag]ECS Flight Provider"
+            
+              Write-Host "##vso[task.setvariable variable=finalFlight;isOutput=true]"
+            } else {
+              $FlightTag = "$(setupConfigurationScript.FlightOutput)" -replace ":"," "
+              Write-Host "##vso[build.addbuildtag]Local Flight Provider"
+              Write-Host "##vso[build.addbuildtag]Flights Passed=$FlightTag"
+            
+              Write-Host "##vso[task.setvariable variable=finalFlight;isOutput=true]-PlocalFlights=$(setupConfigurationScript.FlightOutput)"
+            }
+            
+            if ("$(setupConfigurationScript.FlagOutput)" -eq "") {
+              Write-Host "##vso[build.addbuildtag]No Library Flags Passed"
+            
+              Write-Host "##vso[task.setvariable variable=finalFlag;isOutput=true]"
+            } else {
+              Write-Host "##vso[build.addbuildtag]Flags passed= $(setupConfigurationScript.FlagOutput)"
+            
+              Write-Host "##vso[task.setvariable variable=finalFlag;isOutput=true]$(setupConfigurationScript.FlagOutput)"
+            }
+        name: finalSetupScript

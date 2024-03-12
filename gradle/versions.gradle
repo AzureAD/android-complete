@@ -39,7 +39,7 @@ ext {
     mockitoAndroidVersion = "3.6.28"
     mockkVersion = "1.11.0"
     multidexVersion = "2.0.1"
-    nimbusVersion = "9.37.3"
+    nimbusVersion = "9.9"
     powerMockVersion = "2.0.9"
     runnerVersion = "1.2.0"
     rulesVersion = "1.2.0"

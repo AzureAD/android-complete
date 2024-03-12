@@ -1,0 +1,95 @@
+# File: azure-pipelines/templates/varaibles/global-variables.yml
+# Description: Global variables for the pipeline
+
+parameters:
+  - name: shouldEnableBrokerSelectionAndDiscoveryFlag
+    type: boolean
+  - name: common4jVersionNumber
+  - name: broker4jVersionNumber
+  - name: commonVersionNumber
+  - name: brokerVersionNumber
+  - name: msalVersion
+  - name: adalVersion
+  - name: shouldTrustDebugBroker
+    type: boolean
+  - name: treatTestAppAsPartOfTSL
+    type: boolean
+  - name: flightingSelection
+  - name: flightingValueParameter
+  - name: flagsValue
+  - name: nameSuffix
+    default: "test"
+
+variables:
+  - group: AndroidAuthClientAutomationSecrets
+  - name : common4jVersion
+    ${{ if eq(parameters.common4jVersionNumber, 'default') }}:
+      value: $[variables['build.buildnumber']]
+    ${{ else }}:
+      value: ${{ parameters.common4jVersionNumber }}
+  - name : broker4jVersion
+    ${{ if eq(parameters.broker4jVersionNumber, 'default') }}:
+      value: $[variables['build.buildnumber']]
+    ${{ else }}:
+      value: ${{ parameters.broker4jVersionNumber }}
+  - name : commonVersion
+    ${{ if eq(parameters.commonVersionNumber, 'default') }}:
+      value: $[variables['build.buildnumber']]
+    ${{ else }}:
+        value: ${{ parameters.commonVersionNumber }}
+  - name : brokerVersion
+    ${{ if eq(parameters.brokerVersionNumber, 'default') }}:
+      value: $[replace(variables['build.buildnumber'], '1.0.', '8.1.')]
+    ${{ else }}:
+      value: ${{ parameters.brokerVersionNumber }}
+  - name : msalVersion
+    ${{ if eq(parameters.msalVersion, 'default') }}:
+      value: $[variables['build.buildnumber']]
+    ${{ else }}:
+      value: ${{ parameters.msalVersion }}
+  - name : adalVersion
+    ${{ if eq(parameters.adalVersion, 'default') }}:
+      value: $[variables['build.buildnumber']]
+    ${{ else }}:
+      value: ${{ parameters.adalVersion }}
+  - name: common4jVersionParam
+    value: -PdistCommon4jVersion=$(common4jVersion)
+  - name: broker4jVersionParam
+    value: -PdistBroker4jVersion=$(broker4jVersion)
+  - name: commonVersionParam
+    value: -PdistCommonVersion=$(commonVersion)
+  - name: enableBrokerSelectionParam
+    ${{ if or(parameters.shouldEnableBrokerSelectionAndDiscoveryFlag, eq( variables['Build.Reason'], 'Schedule')) }}:
+      value: -PbrokerSelectionEnabledFlag
+    ${{ else }}:
+      value: ''
+  - name: enableBrokerDiscoveryParam
+    ${{ if or(parameters.shouldEnableBrokerSelectionAndDiscoveryFlag, eq( variables['Build.Reason'], 'Schedule')) }}:
+      value: -PnewBrokerDiscoveryEnabledFlag
+    ${{ else }}:
+      value: ''
+  - name: trustDebugBrokerParam
+    ${{ if or(parameters.shouldTrustDebugBroker, eq( variables['Build.Reason'], 'Schedule')) }}:
+      value: -PtrustDebugBrokerFlag
+    ${{ else }}:
+      value: ''
+  - name: bypassRedirectUriCheckParam
+    ${{ if or(parameters.treatTestAppAsPartOfTSL, eq( variables['Build.Reason'], 'Schedule')) }}:
+        value: -PbypassRedirectUriCheck
+    ${{ else }}:
+        value: ''
+  - name: treatTestAppAsPartOfTSLParam
+    ${{ if or(parameters.treatTestAppAsPartOfTSL, eq( variables['Build.Reason'], 'Schedule')) }}:
+      value: -PtreatTestAppAsPartOfTSL
+    ${{ else }}:
+      value: ''
+  - name: brokerHostPackageVersionCounter
+    value: $[counter(1, 10000)]
+  - name: flightProvider
+    value: ${{ parameters.flightingSelection }}
+  - name: localFlightsJson
+    value: ${{ parameters.flightingValueParameter }}
+  - name: buildFlags
+    value: ${{ parameters.flagsValue }}
+  - name: nameSuffix
+    value: ${{ parameters.nameSuffix }}
