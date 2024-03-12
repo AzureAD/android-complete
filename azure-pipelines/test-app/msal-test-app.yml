@@ -37,18 +37,18 @@ resources:
   - repository: common
     type: github
     name: AzureAD/microsoft-authentication-library-common-for-android
-    ref: dev
+    ref: rapong/release/17.1.2
     endpoint: ANDROID_GITHUB
   - repository: msal
     type: github
     name: AzureAD/microsoft-authentication-library-for-android
-    ref: dev
+    ref: release/5.1.0
     endpoint: ANDROID_GITHUB
     # We need broker to get otelexporter
   - repository: broker
     type: github
     name: AzureAD/ad-accounts-for-android
-    ref: dev
+    ref: rapong/release/17.1.2
     endpoint: ANDROID_GITHUB
 
 
