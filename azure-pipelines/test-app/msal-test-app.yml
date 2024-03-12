@@ -48,7 +48,7 @@ resources:
   - repository: broker
     type: github
     name: AzureAD/ad-accounts-for-android
-    ref: rapong/release/17.1.2
+    ref: rapong/release/13.1.2
     endpoint: ANDROID_GITHUB
 
 
