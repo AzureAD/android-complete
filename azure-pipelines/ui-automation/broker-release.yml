@@ -377,7 +377,7 @@ stages:
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
       assembleParams: $(broker4jProjVersionParam) $(common4jVersionParam) $(flagVariable) $(flightValueVariable)
-      testParams: $(broker4jProjVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable) 
+      testParams: $(broker4jProjVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable) $(flightValueVariable)
       publishParams: $(broker4jProjVersionParam) $(common4jVersionParam) $(flagVariable) $(flightValueVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
