@@ -120,7 +120,7 @@ include(":mockbrokerapplib")
 project(':mockbrokerapplib').projectDir = new File('broker/mockbrokers/mockbrokerapplib')
 
 include(":NativeAuthSample")
-project(':NativeAuthSample').projectDir = new File('nativeauthsample/app')
+project(':NativeAuthSample').projectDir = new File('ms-identity-ciam-native-auth-android-sample/app')
 
 //include(":tsl")
 //project(':tsl').projectDir = new File('tsl/tokenshare')
