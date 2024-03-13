@@ -22,7 +22,7 @@
 		git clone -b dev https://github.com/AzureAD/ad-accounts-for-android.git broker; \
 		git clone -b working https://msazure.visualstudio.com/DefaultCollection/One/_git/AD-MFA-phonefactor-phoneApp-android authenticator; \
         git clone -b master https://github.com/Azure-Samples/ms-identity-android-java.git azuresample; \
-        git clone -b main git@github.com:Azure-Samples/ms-identity-ciam-native-auth-android-sample.git nativeauthsample; \
+        git clone -b main https://github.com:Azure-Samples/ms-identity-ciam-native-auth-android-sample.git nativeauthsample; \
         git clone -b dev https://office.visualstudio.com/DefaultCollection/OneAuth/_git/OneAuth oneauth; \
         git clone -b develop https://github.com/AzureAD/microsoft-authentication-library-for-cpp.git msalcpp; \
         git clone -b master https://onedrive.visualstudio.com/DefaultCollection/SkyDrive/_git/AndroidTokenShare tsl; \
