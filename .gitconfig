@@ -38,7 +38,7 @@
 		git clone -b dev https://github.com/AzureAD/microsoft-authentication-library-common-for-android.git common; \
 		git clone -b dev https://github.com/AzureAD/azure-activedirectory-library-for-android.git adal; \
         git clone -b master https://github.com/Azure-Samples/ms-identity-android-java.git azuresample; \
-        git clone -b main git@github.com:Azure-Samples/ms-identity-ciam-native-auth-android-sample.git nativeauthsample; \
+        git clone -b main https://github.com:Azure-Samples/ms-identity-ciam-native-auth-android-sample.git nativeauthsample; \
 		cd msal; git submodule init; git submodule update; cd ..; \
 		cd adal; git submodule init; git submodule update; cd ..; \
 		workDir=$(pwd); \
