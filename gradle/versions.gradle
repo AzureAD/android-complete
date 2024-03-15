@@ -37,7 +37,6 @@ ext {
     materialVersion = "1.0.0"
     mockitoCoreVersion = "3.6.28"
     mockitoAndroidVersion = "3.6.28"
-    mockkVersion = "1.11.0"
     multidexVersion = "2.0.1"
     nimbusVersion = "9.9"
     powerMockVersion = "2.0.9"
