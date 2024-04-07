@@ -117,11 +117,11 @@ jobs:
       - checkout: ${{ parameters.repository }}
         persistCredentials: True
       - task: AzureKeyVault@2
-        displayName: 'Get Key vault AndroidAutomationRunnerAppSecret'
+        displayName: 'Get Key vault LabVaultAppSecret'
         inputs:
-          azureSubscription: 'MSIDLABS_ANDROID_KV'
-          KeyVaultName: 'ADALTestInfo'
-          SecretsFilter: 'AndroidAutomationRunnerAppSecret'
+          azureSubscription: 'AuthSdkResourceManager'
+          KeyVaultName: 'MSIDLABS'
+          SecretsFilter: 'LabVaultAppSecret'
           RunAsPreJob: false
       - task: Bash@3
         condition: eq('${{ parameters.project }}', 'LinuxBroker')
@@ -165,5 +165,5 @@ jobs:
         gitProject: ${{ parameters.repository }}
         projectName: ${{ parameters.project }}
         accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-        gradleOptions: -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret)
+        gradleOptions: -Psugar=true -PlabSecret=$(LabVaultAppSecret)
         continueOnError: True
