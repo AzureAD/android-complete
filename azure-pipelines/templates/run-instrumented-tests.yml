@@ -49,6 +49,12 @@ jobs:
     clean: true
     persistCredentials: True
     submodules: recursive
+  - task: AzureKeyVault@2
+    displayName: 'Get Key vault LabVaultAppSecret'
+    inputs:
+      azureSubscription: 'AuthSdkResourceManager'
+      KeyVaultName: 'MSIDLABS'
+      SecretsFilter: 'LabVaultAppSecret'
   - script: echo "##vso[build.addbuildtag]projectVariant=$(project.variant) AndroidSystemImage=$(android.system.image)"
     displayName: Create tag
   - ${{ if ne(parameters.accessTokenKey, 'none') }}:
