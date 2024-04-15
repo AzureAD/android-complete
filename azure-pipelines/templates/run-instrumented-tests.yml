@@ -44,6 +44,7 @@ jobs:
   - name: project.variant
     value: ${{ parameters.projectVariantName }}
   - group: AndroidAuthClientAutomationSecrets
+  - group: MSIDLABVARS
   steps:
   - checkout: ${{ parameters.gitProject }}
     clean: true

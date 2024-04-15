@@ -48,6 +48,8 @@ jobs:
     displayName: Build and Publish MSAL Automation ${{ parameters.packageVariant }} ${{ parameters.msalFlavor }} app
     pool:
       vmImage: ubuntu-latest
+    variables:
+      - group: MSIDLABVARS
     steps:
       - checkout: msal
         clean: true
@@ -56,19 +58,12 @@ jobs:
       - bash: |
           echo "##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN]$(System.AccessToken)"
         displayName: Set MVN Access Token in Environment
-      - task: AzureKeyVault@2
-        displayName: 'Get Key vault AndroidAutomationRunnerAppSecret'
-        inputs:
-          azureSubscription: 'MSIDLABS_ANDROID_KV'
-          KeyVaultName: 'ADALTestInfo'
-          SecretsFilter: 'AndroidAutomationRunnerAppSecret'
-          RunAsPreJob: false
       - task: PowerShell@2
         displayName: Generate Assemble Dist Task
         inputs:
           targetType: inline
           script: |
-            $assembleTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PbrokerSource=${{ parameters.brokerSource }} -PbrokerUpdateSource=${{ parameters.brokerUpdateSource }}"
+            $assembleTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(LabVaultAppSecret) -PbrokerSource=${{ parameters.brokerSource }} -PbrokerUpdateSource=${{ parameters.brokerUpdateSource }}"
             if (("${{ parameters.msalVersion }}" -ne "")) {
                 $assembleTask = $assembleTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
             }
@@ -86,7 +81,7 @@ jobs:
         inputs:
           targetType: inline
           script: |
-            $assembleTestTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(AndroidAutomationRunnerAppSecret)"
+            $assembleTestTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(LabVaultAppSecret)"
             if (("${{ parameters.msalVersion }}" -ne "")) {
                 $assembleTestTask = $assembleTestTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
             }

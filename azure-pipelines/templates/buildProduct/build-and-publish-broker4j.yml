@@ -22,7 +22,7 @@ jobs:
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: -PdistCommon4jVersion=${{ parameters.common4jVersion }} --configuration=runtimeClasspath --write-locks
       assembleParams: -PprojVersion=${{ parameters.version }} -PdistCommon4jVersion=${{ parameters.common4jVersion }} ${{ parameters.buildFlags }} ${{ parameters.buildFlights }}
-      testParams: -PprojVersion=${{ parameters.version }} -PdistCommon4jVersion=${{ parameters.common4jVersion }} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) ${{ parameters.buildFlags }} ${{ parameters.buildFlights }} -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      testParams: -PprojVersion=${{ parameters.version }} -PdistCommon4jVersion=${{ parameters.common4jVersion }} -Psugar=true -PlabSecret=$(LabVaultAppSecret) ${{ parameters.buildFlags }} ${{ parameters.buildFlights }} -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: -PprojVersion=${{ parameters.version }} -PdistCommon4jVersion=${{ parameters.common4jVersion }} ${{ parameters.buildFlags }} ${{ parameters.buildFlights }}
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
