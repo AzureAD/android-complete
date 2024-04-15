@@ -48,6 +48,8 @@ jobs:
     displayName: Build and Publish MSAL Automation ${{ parameters.packageVariant }} ${{ parameters.msalFlavor }} app
     pool:
       vmImage: ubuntu-latest
+    variables:
+      - group: MSIDLABVARS
     steps:
       - checkout: msal
         clean: true
@@ -56,13 +58,6 @@ jobs:
       - bash: |
           echo "##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN]$(System.AccessToken)"
         displayName: Set MVN Access Token in Environment
-      - task: AzureKeyVault@2
-        displayName: 'Get Key vault LabVaultAppSecret'
-        inputs:
-          azureSubscription: 'AuthSdkResourceManager'
-          KeyVaultName: 'MSIDLABS'
-          SecretsFilter: 'LabVaultAppSecret'
-          RunAsPreJob: false
       - task: PowerShell@2
         displayName: Generate Assemble Dist Task
         inputs:
