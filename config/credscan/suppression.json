@@ -8,6 +8,6 @@
     {
         "file": "java-complete/gradle/debug.keystore", 
         "_justification": "Not production keystore"
-    },
+    }
     ]
 }   
