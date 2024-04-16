@@ -110,9 +110,9 @@ jobs:
   continueOnError: true
   pool:
     vmImage: ubuntu-latest
-    variables:
-      - group: AndroidAuthClientVariables
-      - group: MSIDLABVARS
+  variables:
+    - group: AndroidAuthClientVariables
+    - group: MSIDLABVARS
   steps:
     - checkout: ${{ parameters.repository }}
       persistCredentials: True
