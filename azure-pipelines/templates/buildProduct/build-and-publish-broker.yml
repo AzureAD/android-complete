@@ -1,0 +1,34 @@
+# File: azure-pipelines/templates/buildProduct/build-and-publish-broker.yml
+# Description: Template to build & publish broker library to internal maven feed
+
+parameters:
+  - name: version
+  - name: broker4jVersion
+  - name: commonVersion
+  - name: buildFlags
+  - name: powerLiftApiKeyParam
+  - name: shouldRunUnitAndInstrumentedTests
+    type: boolean
+    default: true
+  - name: publishLibraryArtifacts
+    type: boolean
+    default: true
+
+jobs:
+  - template: build-and-publish.yml
+    parameters:
+      repository: broker
+      project: AADAuthenticator
+      assembleCmd: assembleDist
+      testCmd: distDebugAADAuthenticatorUnitTestCoverageReport
+      publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
+      dependencyParams: -PdistBroker4jVersion=${{ parameters.broker4jVersion }} -PdistCommonVersion=${{ parameters.commonVersion }} --configuration=distReleaseRuntimeClasspath --write-locks
+      assembleParams: -PprojVersion=${{ parameters.version }} -PdistBroker4jVersion=${{ parameters.broker4jVersion }} -PdistCommonVersion=${{ parameters.commonVersion }} ${{ parameters.powerLiftApiKeyParam }} ${{ parameters.buildFlags }}
+      testParams: -PprojVersion=${{ parameters.version }} -PdistBroker4jVersion=${{ parameters.broker4jVersion }} -PdistCommonVersion=${{ parameters.commonVersion }} ${{ parameters.powerLiftApiKeyParam }} ${{ parameters.buildFlags }} -Psugar=true -PlabSecret=$(LabVaultAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      publishParams: -PprojVersion=${{ parameters.version }} -PdistBroker4jVersion=${{ parameters.broker4jVersion }} -PdistCommonVersion=${{ parameters.commonVersion }} ${{ parameters.buildFlags }}
+      vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
+      vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+      agentImage: 1ES-AndroidPool-EOC
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}

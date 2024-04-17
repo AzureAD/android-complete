@@ -12,7 +12,7 @@
 # adalProjVersionParam: passes adal Version in projVersion param
 # androidProjectDependencyParam: extrea android gradle configs
 # javaProjectDependencyParam: extra java gradle configs
-# msazureServiceConnection: ms azure service connection `AndroidBroker-CI`
+# msazureServiceConnection: ms azure service connection `AndroidBroker-CI-2`
 # msazureFeedName: name of msazure feed which is `Android-Broker`
 # brokerApp: brokerautomationapp-dist-AutoBroker-debug.apk
 # brokerTestApp: brokerautomationapp-dist-AutoBroker-debug-androidTest.apk
@@ -60,7 +60,7 @@ parameters:
 - name: flightingValueParameter
   displayName: Broker Flight Json-String (not active with ECS flighting)
   type: string
-  default: '{EnablePrtV3:true,EnableBrokerPowerLiftLogging:true}'
+  default: '{}'
 - name: flagsValue
   displayName: Flags to Pass (passed to all libraries)
   type: string
@@ -148,7 +148,7 @@ variables:
   adalProjVersionParam: -PprojVersion=${{ parameters.adalVersionRC }}
   androidProjectDependencyParam: --configuration=distReleaseRuntimeClasspath --write-locks
   javaProjectDependencyParam: --configuration=runtimeClasspath --write-locks
-  msazureServiceConnection: AndroidBroker-CI
+  msazureServiceConnection: AndroidBroker-CI-2
   msazureFeedName: Android-Broker
   authenticatorPipelineId: 237369
   companyPortalPipelineId: 237827
@@ -159,7 +159,7 @@ variables:
   authenticatorApk: app-production-universal-release-signed.apk
   oldAuthenticatorApk: Authenticator-4.1.0-RC.apk
   oldAuthenticatorVersion: 6.2204.2470
-  OSServiceConnection: LTW-Integration
+  OSServiceConnection: LTW-Integration-2
   LTWFeedName: Auth-Broker-Integrated-LTW-Build
   LTWApk: LTW-signed.apk
   outlookApk: Outlook.apk
@@ -309,7 +309,7 @@ stages:
       testCmd: common4jUnitTestCoverageReport
       dependencyParams: $(javaProjectDependencyParam)
       assembleParams: $(common4jProjVersionParam) $(flagVariable)
-      testParams: $(common4jProjVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable)
+      testParams: $(common4jProjVersionParam) -Psugar=true -PlabSecret=$(LabVaultAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable)
       publishParams: $(common4jProjVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
@@ -337,7 +337,7 @@ stages:
       publishCmd: publish
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(commonProjVersionParam) $(common4jVersionParam) $(flagVariable) $(enableBrokerDiscoveryParam)
-      testParams: $(commonProjVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable) $(enableBrokerDiscoveryParam)
+      testParams: $(commonProjVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(LabVaultAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable) $(enableBrokerDiscoveryParam)
       publishParams: $(commonProjVersionParam) $(common4jVersionParam) $(flagVariable) $(enableBrokerDiscoveryParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
@@ -364,7 +364,7 @@ stages:
       publishCmd: publishAarPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(common4jVersionParam) $(javaProjectDependencyParam)
       assembleParams: $(broker4jProjVersionParam) $(common4jVersionParam) $(flagVariable) $(flightValueVariable)
-      testParams: $(broker4jProjVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable) $(flightValueVariable)
+      testParams: $(broker4jProjVersionParam) $(common4jVersionParam) -Psugar=true -PlabSecret=$(LabVaultAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable)
       publishParams: $(broker4jProjVersionParam) $(common4jVersionParam) $(flagVariable) $(flightValueVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
@@ -398,7 +398,7 @@ stages:
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: $(broker4jVersionParam) $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(brokerOtelAriaTokenParam) $(powerLiftApiKeyParam) $(flagVariable) $(enableBrokerSelectionParam)
-      testParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable) $(enableBrokerSelectionParam)
+      testParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(powerLiftApiKeyParam) -Psugar=true -PlabSecret=$(LabVaultAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable) $(enableBrokerSelectionParam) $(common4jVersionParam)
       publishParams: $(adAccountsProjVersionParam) $(broker4jVersionParam) $(commonVersionParam) $(flagVariable) $(enableBrokerSelectionParam)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
@@ -426,7 +426,7 @@ stages:
       publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(msalProjVersionParam) $(commonVersionParam) $(flagVariable)
-      testParams: $(msalProjVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable)
+      testParams: $(msalProjVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(LabVaultAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable)
       publishParams: $(msalProjVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
@@ -452,7 +452,7 @@ stages:
       publishCmd: publishAdalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(adalProjVersionParam) $(commonVersionParam) $(flagVariable)
-      testParams: $(adalProjVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable)
+      testParams: $(adalProjVersionParam) $(commonVersionParam) -Psugar=true -PlabSecret=$(LabVaultAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true $(flagVariable)
       publishParams: $(adalProjVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN

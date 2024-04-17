@@ -119,6 +119,9 @@ project(':mockltw').projectDir = new File('broker/mockbrokers/mockltw')
 include(":mockbrokerapplib")
 project(':mockbrokerapplib').projectDir = new File('broker/mockbrokers/mockbrokerapplib')
 
+include(":NativeAuthSample")
+project(':NativeAuthSample').projectDir = new File('nativeauthsample/app')
+
 //include(":tsl")
 //project(':tsl').projectDir = new File('tsl/tokenshare')
 

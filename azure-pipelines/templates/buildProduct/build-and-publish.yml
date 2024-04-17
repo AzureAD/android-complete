@@ -1,5 +1,5 @@
-# File: azure-pipelines/continuous-delivery/assemble&publish.yml
-# Description: Template to assemble & publish dev builds of auth client android sdk libraries to internal maven feed
+# File: azure-pipelines/templates/buildProduct/build-and-publish.yml
+# Description: Template to build & publish any auth client android sdk library to internal maven feed
 
 parameters:
 - name: repository
@@ -104,59 +104,57 @@ jobs:
     inputs:
       TargetPath:  $(Build.SourcesDirectory)/${{ parameters.project }}/build/
       ArtifactName: ${{ parameters.project }}_Release
-- job: RunUnitTest${{ parameters.project }}
-  displayName: ${{ parameters.project }} UnitTest
-  timeoutInMinutes: 120
-  continueOnError: true
-  pool:
-    vmImage: ubuntu-latest
-  variables:
-    - group: AndroidAuthClientVariables
-    - group: MSIDLABVARS
-  steps:
-    - checkout: ${{ parameters.repository }}
-      persistCredentials: True
-    - task: Bash@3
-      condition: eq('${{ parameters.project }}', 'LinuxBroker')
-      retryCountOnTaskFailure: 3
-      enabled: ${{ parameters.shouldRunUnitTests }}
-      displayName: Linux Testing Setup
-      continueOnError: true
-      inputs:
-        workingDirectory: $(Build.SourcesDirectory)/broker-java-root
-        targetType: 'inline'
-        script: |
-          sudo apt-get install -y dbus-x11
-          sudo apt-get install -y dos2unix
-          dos2unix gradlew
-          chmod +x gradlew
-          export DISPLAY=:0.0
-          eval $(dbus-launch --sh-syntax)
-          sudo apt install gnome-keyring
-          /usr/bin/gnome-keyring-daemon --start --components=secrets
-          ./gradlew LinuxBroker:linuxBrokerUnitTestCoverageReport ${{ parameters.testParams}}
-      env:
-        ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
-        ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
-    - task: Gradle@3
-      displayName: Run Test ${{ parameters.project }}
-      enabled: ${{ parameters.shouldRunUnitTests }}
-      continueOnError: true
-      inputs:
-        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}}
-        testRunTitle: '${{ parameters.project }}_UnitTests'
-      env:
-        ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
+- ${{if eq(parameters.shouldRunUnitTests, 'True')}}:
+  - job: RunUnitTest${{ parameters.project }}
+    displayName: ${{ parameters.project }} UnitTest
+    timeoutInMinutes: 120
+    continueOnError: true
+    pool:
+      vmImage: ubuntu-latest
+      variables:
+        - group: AndroidAuthClientVariables
+        - group: MSIDLABVARS
+    steps:
+      - checkout: ${{ parameters.repository }}
+        persistCredentials: True
+      - task: Bash@3
+        condition: eq('${{ parameters.project }}', 'LinuxBroker')
+        retryCountOnTaskFailure: 3
+        displayName: Linux Testing Setup
+        continueOnError: true
+        inputs:
+          workingDirectory: $(Build.SourcesDirectory)/broker-java-root
+          targetType: 'inline'
+          script: |
+            sudo apt-get install -y dbus-x11
+            sudo apt-get install -y dos2unix
+            dos2unix gradlew
+            chmod +x gradlew
+            export DISPLAY=:0.0
+            eval $(dbus-launch --sh-syntax)
+            sudo apt install gnome-keyring
+            /usr/bin/gnome-keyring-daemon --start --components=secrets
+            ./gradlew LinuxBroker:linuxBrokerUnitTestCoverageReport ${{ parameters.testParams}}
+        env:
+          ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
+          ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
+      - task: Gradle@3
+        displayName: Run Test ${{ parameters.project }}
+        continueOnError: true
+        inputs:
+          tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}}
+          testRunTitle: '${{ parameters.project }}_UnitTests'
+        env:
+          ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
 
-        ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
-    - task: PublishCodeCoverageResults@1
-      enabled: ${{ parameters.shouldRunUnitTests }}
-      displayName: Publish Code Coverage Report
-      inputs:
-        summaryFileLocation: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/${{ parameters.testCmd }}.xml'
-        reportDirectory: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/html'
+          ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
+      - task: PublishCodeCoverageResults@1
+        displayName: Publish Code Coverage Report
+        inputs:
+          summaryFileLocation: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/${{ parameters.testCmd }}.xml'
+          reportDirectory: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/html'
 - ${{if and(eq(parameters.shouldRunInstrumentedTests, 'True'), or(eq(parameters.project, 'common'), eq(parameters.project, 'msal'), eq(parameters.project, 'adal'), eq(parameters.project, 'AADAuthenticator')))}}:
-    - template: ../templates/run-instrumented-tests.yml
+    - template: ../run-instrumented-tests.yml
       parameters:
         gitProject: ${{ parameters.repository }}
         projectName: ${{ parameters.project }}
