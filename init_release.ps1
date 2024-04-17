@@ -41,7 +41,7 @@ Write-Host "New broker version: '$brokerRCVersion' and broker4j version: '$broke
 Update-ChangelogHeader  -changelogFile $BROKER_CHANGELOG_FILE -newVersion $brokerRCVersion -changelogConstants $brokerChangelogConstants -newCommonVersion $commonRCVersion   
 
 Update-VersionNumber -versioningFile $BROKER_VERSIONING_FILE -newVersion $brokerRCVersion   
-Update-VersionNumber -versioningFile $BROKER4j_VERSIONING_FILE  newVersion $broker4jRCVersion 
+Update-VersionNumber -versioningFile $BROKER4j_VERSIONING_FILE -newVersion $broker4jRCVersion 
 
 Update-GradeFile -gradleFile $BROKER4J_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON4J_VAR  -newVersion $common4JRCVersion   
 
