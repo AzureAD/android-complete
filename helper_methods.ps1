@@ -32,7 +32,7 @@ function Update-VersionNumber {
     )
 
     if (-not (Test-Path $versioningFile -PathType Leaf)) {
-        Write-Host "Input file '$versioningFile' not found."
+        Write-Host "Input file '$versioningFile' not found."  -ForegroundColor Red
         return
     }
 
@@ -42,7 +42,13 @@ function Update-VersionNumber {
         $_ -replace $searchPattern, "versionName=$newVersion"
     } | Set-Content $versioningFile
 
-    Write-Host "Version updated to $newVersion in '$versioningFile'."
+    $results = Select-String -Path $versioningFile -Pattern $searchPattern
+    if ($results) {
+        Write-Host "$versioningFile updated successfully."
+    } else {
+        Write-Host "No match found on $searchPattern" -ForegroundColor Red
+    }
+    
 }
 
 function Update-ChangelogHeader {
@@ -55,7 +61,7 @@ function Update-ChangelogHeader {
 
     
     if (-not (Test-Path $changelogFile -PathType Leaf)) {
-        Write-Host "Input file '$changelogFile' not found."
+        Write-Host "Input file '$changelogFile' not found." -ForegroundColor Red
         return
     }
     # search this haeder to be replaced
@@ -79,7 +85,7 @@ function Update-ChangelogHeader {
         Write-Host "$changelogFile updated successfully."
     }
     else {
-        Write-Host "Pattern not found in the $changelogFile"
+        Write-Host "Pattern not found in the $changelogFile, File format was changed."  -ForegroundColor Red
     }
 }
 
@@ -91,7 +97,7 @@ function Update-GradeFile {
     )
 
     if (-not (Test-Path $gradleFile -PathType Leaf)) {
-        Write-Host "Input file '$gradleFile' not found."
+        Write-Host "Input file '$gradleFile' not found."  -ForegroundColor Red
         return
     }
 
@@ -100,8 +106,13 @@ function Update-GradeFile {
     (Get-Content $gradleFile) | ForEach-Object {
         $_ -replace $searchPattern, "def $variableToUpdate = `"$newVersion`""
     } | Set-Content $gradleFile
-
-    Write-Host "$variableToUpdate updated to $newVersion in '$gradleFile'."
+    $results = Select-String -Path $gradleFile -Pattern $searchPattern
+    if ($results) {
+        Write-Host "$gradleFile updated successfully."
+    } else {
+        Write-Host "No match found for $variableToUpdate on $gradleFile" -ForegroundColor Red
+    }
+    
 }
 
 function Update-AllRCVersionsInFile {
@@ -129,14 +140,13 @@ function Update-AllRCVersionsInFile {
 
             # Replace the old version with the updated version
             $content = $content -replace [regex]::Escape($match.Value), $updatedVersion
+            Write-Host "$filePath  $match change to $updatedVersion"
         }
 
         # Write the updated content back to the file
         Set-Content -Path $filePath -Value $content -NoNewline
-
-        Write-Host "Updated all versions in file to: $updatedVersion"
     } else {
-        Write-Host "No matches found for the pattern in the file."
+        Write-Host "No matches found in $filePath, File format was changed." -ForegroundColor Red
     }
 }
 
@@ -163,9 +173,9 @@ function Remove-AllRCVersionsInFile {
         # Write the updated content back to the file
         Set-Content -Path $filePath -Value $content -NoNewline
 
-        Write-Host "Updated all versions in file to: $ $baseVersion"
+        Write-Host "Updated all versions in $filePat to  $baseVersion"
     } else {
-        Write-Host "No matches found for the pattern in the file."
+        Write-Host "No matches found for the pattern in $filePath." -ForegroundColor Red
     }
 }
 

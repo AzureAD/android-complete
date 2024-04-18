@@ -21,7 +21,7 @@ $Common4jRCVersion = "$Common4jVersion-RC1"
 $broker4jRCVersion = "$broker4jVersion-RC1"
 
 # we need to add the RC in some var
-Write-Host "New common version: '$commonRCVersion' and common4j version: '$common4jRCVersion' ."
+Write-Host "New common version: '$commonRCVersion' and common4j version: '$common4jRCVersion' ." -ForegroundColor Green
 Update-ChangelogHeader -changelogFile  $COMMON_CHANGELOG_FILE    -newVersion $commonRCVersion  -changelogConstants $commonChangelogConstants
 
 Update-VersionNumber -versioningFile $COMMON4J_VERSIONING_FILE -newVersion $common4jRCVersion
@@ -29,7 +29,7 @@ Update-VersionNumber -versioningFile $COMMON_VERSIONING_FILE -newVersion $common
 
 Update-GradeFile -gradleFile $COMMON_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON4J_VAR -newVersion $common4jRCVersion 
 
-Write-Host "New msal version: '$msalRCVersion'."
+Write-Host "New msal version: '$msalRCVersion'." -ForegroundColor Green
 Update-ChangelogHeader -changelogFile  $MSAL_CHANGELOG_FILE -newVersion $msalRCVersion -changelogConstants $msalChangelogConstants -newCommonVersion $commonRCVersion
 
 Update-VersionNumber -versioningFile $MSAL_VERSIONING_FILE -newVersion $msalRCVersion    
@@ -37,7 +37,7 @@ Update-VersionNumber -versioningFile $MSAL_VERSIONING_FILE -newVersion $msalRCVe
 Update-GradeFile -gradleFile $MSAL_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON4J_VAR -newVersion $common4jRCVersion   
 Update-GradeFile -gradleFile $MSAL_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON_VAR -newVersion $commonRCVersion    
 
-Write-Host "New broker version: '$brokerRCVersion' and broker4j version: '$broker4jRCVersion' ."
+Write-Host "New broker version: '$brokerRCVersion' and broker4j version: '$broker4jRCVersion' ." -ForegroundColor Green
 Update-ChangelogHeader  -changelogFile $BROKER_CHANGELOG_FILE -newVersion $brokerRCVersion -changelogConstants $brokerChangelogConstants -newCommonVersion $commonRCVersion   
 
 Update-VersionNumber -versioningFile $BROKER_VERSIONING_FILE -newVersion $brokerRCVersion   
@@ -49,7 +49,7 @@ Update-GradeFile -gradleFile $BROKER_BUILD_GRADLE_FILE -variableToUpdate $GRADLE
 Update-GradeFile -gradleFile $BROKER_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_BROKER4J_VAR -newVersion $broker4jRCVersion  
 Update-GradeFile -gradleFile $BROKER_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON4J_VAR -newVersion $common4JRCVersion    
 
-Write-Host "New adal version: '$msalRCVersion'."
+Write-Host "New adal version: '$msalRCVersion'." -ForegroundColor Green
 Update-ChangelogHeader -changelogFile $ADAL_CHANGELOG_FILE -newVersion $adalRCVersion -changelogConstants $adalChangelogConstants -newCommonVersion $commonRCVersion 
 
 Update-VersionNumber -versioningFile $ADAL_VERSIONING_FILE -newVersion $adalRCVersion     
@@ -60,18 +60,21 @@ Update-GradeFile -gradleFile $ADAL_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_C
 
 if ($isMajorMsalChange)
 {
-    Write-Host "Major change, update automation apps" -ForegroundColor Yellow
+    Write-Host "Major MSAL change, update msalautomationapp" -ForegroundColor Yellow
     # Upadte msal automation app
     $majorMsalVersion = [regex]::Match($msalVersion, '\d+').Value
     Update-GradeFile -gradleFile $MSALAUTOMATIONAPP_BUILD_GRADLE_FILE   -variableToUpdate $GRADLE_MSAL_VAR   -newVersion "$majorMsalVersion.+" 
 }
 if ($isMajorBrokerChange) {
     #Update broker automation app
+    Write-Host "Major BROKER change, update brokerautomationapp" -ForegroundColor Yellow
+
     $majorCommonVersion = [regex]::Match($CommonVersion, '\d+').Value
     Update-GradeFile -gradleFile $BROKERAUTOMATIONAPP_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON_VAR -newVersion "$majorCommonVersion.+" 
 }
 if ($isMajorAdalChange)
 {
+    Write-Host "Major ADAL change, update brokerautomationapp" -ForegroundColor Yellow
     $majorAdalVersion = [regex]::Match($adalVersion, '\d+').Value
     Update-GradeFile -gradleFile $BROKERAUTOMATIONAPP_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_ADAL_VAR   -newVersion "$majorAdalVersion.+"
 
