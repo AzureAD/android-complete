@@ -54,7 +54,6 @@ Update-ChangelogHeader -changelogFile $ADAL_CHANGELOG_FILE -newVersion $adalRCVe
 
 Update-VersionNumber -versioningFile $ADAL_VERSIONING_FILE -newVersion $adalRCVersion     
 
-Update-GradeFile -gradleFile $ADAL_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON4J_VAR -newVersion $common4jRCVersion   
 Update-GradeFile -gradleFile $ADAL_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON_VAR -newVersion $commonRCVersion   
 
 
