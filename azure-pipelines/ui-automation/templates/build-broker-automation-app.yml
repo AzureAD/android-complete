@@ -39,6 +39,8 @@ jobs:
     vmImage: ubuntu-latest
   variables:
     - group: MSIDLABVARS
+    - name: LabAppCert
+      value: "/data/local/tmp/LabVaultAccessCert.pfx"
   steps:
     - checkout: broker
       clean: true
@@ -55,7 +57,7 @@ jobs:
       inputs:
         targetType: inline
         script: |
-          $assembleTask = "brokerautomationapp:assemble${{ parameters.brokerFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(LabVaultAppSecret) -PbrokerSource=${{ parameters.brokerSource }}"
+          $assembleTask = "brokerautomationapp:assemble${{ parameters.brokerFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(LabAppCert) -PbrokerSource=${{ parameters.brokerSource }}"
           if (("${{ parameters.adalVersion }}" -ne "")) {
               $assembleTask = $assembleTask + " -PdistAdalVersion=" + "${{ parameters.adalVersion }}"
           }
@@ -76,7 +78,7 @@ jobs:
       inputs:
         targetType: inline
         script: |
-          $assembleTestTask = "brokerautomationapp:assemble${{ parameters.brokerFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(LabVaultAppSecret)"
+          $assembleTestTask = "brokerautomationapp:assemble${{ parameters.brokerFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(LabAppCert)"
           if (("${{ parameters.adalVersion }}" -ne "")) {
               $assembleTestTask = $assembleTestTask + " -PdistAdalVersion=" + "${{ parameters.adalVersion }}"
           }
