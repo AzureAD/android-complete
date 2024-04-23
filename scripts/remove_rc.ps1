@@ -2,6 +2,9 @@
 . ./constants.ps1
 . ./helper_methods.ps1
 
+# Move to root folder. (android complete)
+Set-Location ..
+
 Write-Host "New common version." -ForegroundColor Green
 Remove-AllRCVersionsInFile -filePath $COMMON4J_VERSIONING_FILE
 Remove-AllRCVersionsInFile -filePath $COMMON_VERSIONING_FILE
@@ -24,3 +27,6 @@ Write-Host "New adal version." -ForegroundColor Green
 Remove-AllRCVersionsInFile -filePath $ADAL_VERSIONING_FILE
 Remove-AllRCVersionsInFile -filePath $ADAL_BUILD_GRADLE_FILE
 Remove-AllRCVersionsInFile -filePath $ADAL_CHANGELOG_FILE
+
+# Return to scripts folder
+Set-Location .\scripts

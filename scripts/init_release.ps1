@@ -20,9 +20,12 @@ $CommonRCVersion = "$CommonVersion-RC1"
 $Common4jRCVersion = "$Common4jVersion-RC1"
 $broker4jRCVersion = "$broker4jVersion-RC1"
 
+# Move to root folder. (android complete)
+Set-Location ..
+
 # we need to add the RC in some var
 Write-Host "New common version: '$commonRCVersion' and common4j version: '$common4jRCVersion' ." -ForegroundColor Green
-Update-ChangelogHeader -changelogFile  $COMMON_CHANGELOG_FILE    -newVersion $commonRCVersion  -changelogConstants $commonChangelogConstants
+Update-ChangelogHeader -changelogFile  $COMMON_CHANGELOG_FILE    -newVersion $commonRCVersion  -changelogConstants $changelogConstants
 
 Update-VersionNumber -versioningFile $COMMON4J_VERSIONING_FILE -newVersion $common4jRCVersion
 Update-VersionNumber -versioningFile $COMMON_VERSIONING_FILE -newVersion $commonRCVersion   
@@ -30,7 +33,7 @@ Update-VersionNumber -versioningFile $COMMON_VERSIONING_FILE -newVersion $common
 Update-GradeFile -gradleFile $COMMON_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON4J_VAR -newVersion $common4jRCVersion 
 
 Write-Host "New msal version: '$msalRCVersion'." -ForegroundColor Green
-Update-ChangelogHeader -changelogFile  $MSAL_CHANGELOG_FILE -newVersion $msalRCVersion -changelogConstants $msalChangelogConstants -newCommonVersion $commonRCVersion
+Update-ChangelogHeader -changelogFile  $MSAL_CHANGELOG_FILE -newVersion $msalRCVersion -changelogConstants $changelogConstants -newCommonVersion $commonRCVersion
 
 Update-VersionNumber -versioningFile $MSAL_VERSIONING_FILE -newVersion $msalRCVersion    
 
@@ -38,7 +41,7 @@ Update-GradeFile -gradleFile $MSAL_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_C
 Update-GradeFile -gradleFile $MSAL_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON_VAR -newVersion $commonRCVersion    
 
 Write-Host "New broker version: '$brokerRCVersion' and broker4j version: '$broker4jRCVersion' ." -ForegroundColor Green
-Update-ChangelogHeader  -changelogFile $BROKER_CHANGELOG_FILE -newVersion $brokerRCVersion -changelogConstants $brokerChangelogConstants -newCommonVersion $commonRCVersion   
+Update-ChangelogHeader  -changelogFile $BROKER_CHANGELOG_FILE -newVersion $brokerRCVersion -changelogConstants $changelogConstants -newCommonVersion $commonRCVersion   
 
 Update-VersionNumber -versioningFile $BROKER_VERSIONING_FILE -newVersion $brokerRCVersion   
 Update-VersionNumber -versioningFile $BROKER4j_VERSIONING_FILE -newVersion $broker4jRCVersion 
@@ -50,7 +53,7 @@ Update-GradeFile -gradleFile $BROKER_BUILD_GRADLE_FILE -variableToUpdate $GRADLE
 Update-GradeFile -gradleFile $BROKER_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON4J_VAR -newVersion $common4JRCVersion    
 
 Write-Host "New adal version: '$msalRCVersion'." -ForegroundColor Green
-Update-ChangelogHeader -changelogFile $ADAL_CHANGELOG_FILE -newVersion $adalRCVersion -changelogConstants $adalChangelogConstants -newCommonVersion $commonRCVersion 
+Update-ChangelogHeader -changelogFile $ADAL_CHANGELOG_FILE -newVersion $adalRCVersion -changelogConstants $changelogConstants -newCommonVersion $commonRCVersion 
 
 Update-VersionNumber -versioningFile $ADAL_VERSIONING_FILE -newVersion $adalRCVersion     
 
@@ -78,3 +81,6 @@ if ($isMajorAdalChange)
     Update-GradeFile -gradleFile $BROKERAUTOMATIONAPP_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_ADAL_VAR   -newVersion "$majorAdalVersion.+"
 
 }
+
+# Return to scripts folder
+Set-Location .\scripts

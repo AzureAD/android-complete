@@ -5,6 +5,9 @@ param(
 . ./constants.ps1
 . ./helper_methods.ps1
 
+# Move to root folder. (android complete)
+Set-Location ..
+
 Write-Host "Update common and common4j." -ForegroundColor Green
 Update-AllRCVersionsInFile -newRCVersion $rc -filePath $COMMON4J_VERSIONING_FILE
 Update-AllRCVersionsInFile -newRCVersion $rc -filePath $COMMON_VERSIONING_FILE
@@ -27,3 +30,6 @@ Write-Host "Update adal." -ForegroundColor Green
 Update-AllRCVersionsInFile -newRCVersion $rc -filePath $ADAL_VERSIONING_FILE
 Update-AllRCVersionsInFile -newRCVersion $rc -filePath $ADAL_BUILD_GRADLE_FILE
 Update-AllRCVersionsInFile -newRCVersion $rc -filePath $ADAL_CHANGELOG_FILE
+
+# Return to scripts folder
+Set-Location .\scripts

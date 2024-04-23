@@ -26,26 +26,9 @@ New-Variable -Name MSAL_CHANGELOG_FILE -Value "msal/changelog" -Option Constant
 New-Variable -Name ADAL_CHANGELOG_FILE -Value "adal/changelog.txt" -Option Constant
 
 
-$msalChangelogConstants = @{
-    "VnextFormat" = "vNext"
-    "separator" = "----------"
-    "versionFormat" = "Version "
-}
-
-$adalChangelogConstants = @{
-    "VnextFormat" = "Version Next"
-    "separator" = "-------------"
-    "versionFormat" = "Version "
-}
-
-$commonChangelogConstants = @{
+$changelogConstants = @{
     "VnextFormat" = "V.Next"
     "separator" = "---------"
-    "versionFormat" = "V."
+    "versionFormat" = "Version "
 }
 
-$brokerChangelogConstants = @{
-    "VnextFormat" = "vNext"
-    "separator" = "============"
-    "versionFormat" = "v"
-}
