@@ -21,7 +21,7 @@ jobs:
       testCmd: distDebugCommonUnitTestCoverageReport
       dependencyParams:  -PdistCommon4jVersion=${{ parameters.common4jVersion }} --configuration=distReleaseRuntimeClasspath --write-locks
       assembleParams: -PprojVersion=${{ parameters.version }} -PdistCommon4jVersion=${{ parameters.common4jVersion }} ${{ parameters.buildFlags }}
-      testParams: -PprojVersion=${{ parameters.version }} -PdistCommon4jVersion=${{ parameters.common4jVersion }} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) ${{ parameters.buildFlags }} -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      testParams: -PprojVersion=${{ parameters.version }} -PdistCommon4jVersion=${{ parameters.common4jVersion }} -Psugar=true -PlabSecret=$(LabVaultAppSecret) ${{ parameters.buildFlags }} -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: -PprojVersion=${{ parameters.version }} -PdistCommon4jVersion=${{ parameters.common4jVersion }} ${{ parameters.buildFlags }}
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN

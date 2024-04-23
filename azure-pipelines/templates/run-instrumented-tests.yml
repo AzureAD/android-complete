@@ -44,6 +44,7 @@ jobs:
   - name: project.variant
     value: ${{ parameters.projectVariantName }}
   - group: AndroidAuthClientAutomationSecrets
+  - group: MSIDLABVARS
   steps:
   - checkout: ${{ parameters.gitProject }}
     clean: true
@@ -92,3 +93,4 @@ jobs:
       tasks: '${{ parameters.projectName }}:connected${{ parameters.projectVariantName }}AndroidTest'
       publishJUnitResults: true
       testResultsFiles: '**/TEST-*.xml'
+      testRunTitle: '${{ parameters.projectName }}_InstrumentedTests'

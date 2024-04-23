@@ -24,7 +24,7 @@ jobs:
       publishCmd: publishAdAccountsPublicationToVsts-maven-adal-androidRepository
       dependencyParams: -PdistBroker4jVersion=${{ parameters.broker4jVersion }} -PdistCommonVersion=${{ parameters.commonVersion }} --configuration=distReleaseRuntimeClasspath --write-locks
       assembleParams: -PprojVersion=${{ parameters.version }} -PdistBroker4jVersion=${{ parameters.broker4jVersion }} -PdistCommonVersion=${{ parameters.commonVersion }} ${{ parameters.powerLiftApiKeyParam }} ${{ parameters.buildFlags }}
-      testParams: -PprojVersion=${{ parameters.version }} -PdistBroker4jVersion=${{ parameters.broker4jVersion }} -PdistCommonVersion=${{ parameters.commonVersion }} ${{ parameters.powerLiftApiKeyParam }} ${{ parameters.buildFlags }} -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      testParams: -PprojVersion=${{ parameters.version }} -PdistBroker4jVersion=${{ parameters.broker4jVersion }} -PdistCommonVersion=${{ parameters.commonVersion }} ${{ parameters.powerLiftApiKeyParam }} ${{ parameters.buildFlags }} -Psugar=true -PlabSecret=$(LabVaultAppSecret) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: -PprojVersion=${{ parameters.version }} -PdistBroker4jVersion=${{ parameters.broker4jVersion }} -PdistCommonVersion=${{ parameters.commonVersion }} ${{ parameters.buildFlags }}
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN

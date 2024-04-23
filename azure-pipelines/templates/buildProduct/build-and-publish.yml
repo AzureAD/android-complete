@@ -113,16 +113,10 @@ jobs:
       vmImage: ubuntu-latest
       variables:
         - group: AndroidAuthClientAutomationSecrets
+        - group: MSIDLABVARS
     steps:
       - checkout: ${{ parameters.repository }}
         persistCredentials: True
-      - task: AzureKeyVault@2
-        displayName: 'Get Key vault AndroidAutomationRunnerAppSecret'
-        inputs:
-          azureSubscription: 'MSIDLABS_ANDROID_KV'
-          KeyVaultName: 'ADALTestInfo'
-          SecretsFilter: 'AndroidAutomationRunnerAppSecret'
-          RunAsPreJob: false
       - task: Bash@3
         condition: eq('${{ parameters.project }}', 'LinuxBroker')
         retryCountOnTaskFailure: 3
@@ -165,5 +159,5 @@ jobs:
         gitProject: ${{ parameters.repository }}
         projectName: ${{ parameters.project }}
         accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-        gradleOptions: -Psugar=true -PlabSecret=$(AndroidAutomationRunnerAppSecret)
+        gradleOptions: -Psugar=true -PlabSecret=$(LabVaultAppSecret)
         continueOnError: True
