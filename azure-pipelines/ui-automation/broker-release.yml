@@ -374,7 +374,7 @@ stages:
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
   variables:
-  - group: AndroidAuthClientVariables
+  - group: AndroidAuthClientAutomationSecrets
   - name : powerLiftApiKeyParam
     value : -PpowerLiftApiKey=$(powerliftApiKey)
   - name : brokerOtelAriaTokenParam

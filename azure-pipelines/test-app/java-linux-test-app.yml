@@ -30,7 +30,7 @@ jobs:
   pool:
     vmImage: ubuntu-20.04
   variables:
-    - group: AndroidAuthClientVariables
+    - group: AndroidAuthClientAutomationSecrets
   steps:
     - checkout: broker
       clean: true
@@ -68,7 +68,7 @@ jobs:
   pool:
     vmImage: ubuntu-20.04
   variables:
-  - group: AndroidAuthClientVariables
+  - group: AndroidAuthClientAutomationSecrets
   steps:
   - checkout: broker
     clean: true
