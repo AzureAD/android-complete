@@ -78,7 +78,7 @@ stages:
       - publishCommonLibraries
       - publishBroke4jLibraries
     variables:
-      - group: AndroidAuthClientVariables
+      - group: AndroidAuthClientAutomationSecrets
       - name: powerLiftApiKeyParam
         value: -PpowerLiftApiKey=${{ parameters.powerliftApiKey }}
       - name: buildFlags

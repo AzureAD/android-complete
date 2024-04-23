@@ -46,7 +46,7 @@ jobs:
     ${{ else }}:
       name: ${{ parameters.agentImage }}
   variables:
-  - group: AndroidAuthClientVariables
+  - group: AndroidAuthClientAutomationSecrets
   steps:
   - checkout: ${{ parameters.repository }}
     persistCredentials: True
@@ -55,14 +55,14 @@ jobs:
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
     env:
-      ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
+      ${{ parameters.vstsMvnAndroidUsername }}: VSTS
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
   - task: Gradle@3
     displayName: Generate Lockfile ${{ parameters.project }}
     inputs:
       tasks: -q ${{ parameters.project }}:dependencies ${{ parameters.dependencyParams }}
     env:
-      ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
+      ${{ parameters.vstsMvnAndroidUsername }}: VSTS
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
   - task: Gradle@3
     condition: |
@@ -76,7 +76,7 @@ jobs:
     inputs:
       tasks: ${{ parameters.project }}:${{ parameters.publishCmd}} ${{ parameters.publishParams}}
     env:
-      ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
+      ${{ parameters.vstsMvnAndroidUsername }}: VSTS
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
   - task: ComponentGovernanceComponentDetection@0
     inputs:
@@ -112,7 +112,7 @@ jobs:
     pool:
       vmImage: ubuntu-latest
       variables:
-        - group: AndroidAuthClientVariables
+        - group: AndroidAuthClientAutomationSecrets
         - group: MSIDLABVARS
     steps:
       - checkout: ${{ parameters.repository }}
@@ -136,7 +136,7 @@ jobs:
             /usr/bin/gnome-keyring-daemon --start --components=secrets
             ./gradlew LinuxBroker:linuxBrokerUnitTestCoverageReport ${{ parameters.testParams}}
         env:
-          ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
+          ${{ parameters.vstsMvnAndroidUsername }}: VSTS
           ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
       - task: Gradle@3
         displayName: Run Test ${{ parameters.project }}
@@ -145,7 +145,7 @@ jobs:
           tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}}
           testRunTitle: '${{ parameters.project }}_UnitTests'
         env:
-          ${{ parameters.vstsMvnAndroidUsername }}: $(AndroidAuthClient-Internal-Maven-Username)
+          ${{ parameters.vstsMvnAndroidUsername }}: VSTS
 
           ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
       - task: PublishCodeCoverageResults@1

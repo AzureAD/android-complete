@@ -219,7 +219,7 @@ stages:
 - stage: 'publishBrokerLibraries'
   displayName: Android Broker - Build and publish
   variables:
-  - group: AndroidAuthClientVariables
+  - group: AndroidAuthClientAutomationSecrets
   - name : powerLiftApiKeyParam
     value : -PpowerLiftApiKey=$(powerliftApiKey)
   dependsOn: 
@@ -275,14 +275,14 @@ stages:
     pool:
       vmImage: ubuntu-latest
     variables:
-    - group: AndroidAuthClientVariables
+    - group: AndroidAuthClientAutomationSecrets
     steps:
     - checkout: broker
       persistCredentials: True
     - task: Gradle@3
       displayName: Build and publish linux broker package
       env:
-        ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME: $(AndroidAuthClient-Internal-Maven-Username)
+        ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME: VSTS
         ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN: $(mvnPAT)
       inputs:
         cwd: $(Build.SourcesDirectory)/broker-java-root

@@ -1,0 +1,13 @@
+{
+    "tool": "Credential Scanner",
+    "suppressions": [
+    {
+        "file": "gradle/debug.keystore", 
+        "_justification": "Not production keystore"
+    },
+    {
+        "file": "java-complete/gradle/debug.keystore", 
+        "_justification": "Not production keystore"
+    }
+    ]
+}   

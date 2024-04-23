@@ -33,7 +33,7 @@ jobs:
   pool:
     vmImage: 'windows-latest'
   variables:
-  - group: AndroidAuthClientVariables
+  - group: AndroidAuthClientAutomationSecrets
   steps:
   - checkout: self
     clean: true
