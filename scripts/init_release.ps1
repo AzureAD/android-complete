@@ -23,7 +23,7 @@ $broker4jRCVersion = "$broker4jVersion-RC1"
 # Move to root folder. (android complete)
 Set-Location ..
 
-# we need to add the RC in some var
+# Update COMMON and COMMON4J version
 Write-Host "New common version: '$commonRCVersion' and common4j version: '$common4jRCVersion' ." -ForegroundColor Green
 Update-ChangelogHeader -changelogFile  $COMMON_CHANGELOG_FILE    -newVersion $commonRCVersion  -changelogConstants $changelogConstants
 
@@ -32,6 +32,7 @@ Update-VersionNumber -versioningFile $COMMON_VERSIONING_FILE -newVersion $common
 
 Update-GradeFile -gradleFile $COMMON_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON4J_VAR -newVersion $common4jRCVersion 
 
+# Update MSAL version
 Write-Host "New msal version: '$msalRCVersion'." -ForegroundColor Green
 Update-ChangelogHeader -changelogFile  $MSAL_CHANGELOG_FILE -newVersion $msalRCVersion -changelogConstants $changelogConstants -newCommonVersion $commonRCVersion
 
@@ -40,6 +41,7 @@ Update-VersionNumber -versioningFile $MSAL_VERSIONING_FILE -newVersion $msalRCVe
 Update-GradeFile -gradleFile $MSAL_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON4J_VAR -newVersion $common4jRCVersion   
 Update-GradeFile -gradleFile $MSAL_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON_VAR -newVersion $commonRCVersion    
 
+# Update BROKER and BROKER4J version
 Write-Host "New broker version: '$brokerRCVersion' and broker4j version: '$broker4jRCVersion' ." -ForegroundColor Green
 Update-ChangelogHeader  -changelogFile $BROKER_CHANGELOG_FILE -newVersion $brokerRCVersion -changelogConstants $changelogConstants -newCommonVersion $commonRCVersion   
 
@@ -52,7 +54,8 @@ Update-GradeFile -gradleFile $BROKER_BUILD_GRADLE_FILE -variableToUpdate $GRADLE
 Update-GradeFile -gradleFile $BROKER_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_BROKER4J_VAR -newVersion $broker4jRCVersion  
 Update-GradeFile -gradleFile $BROKER_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON4J_VAR -newVersion $common4JRCVersion    
 
-Write-Host "New adal version: '$msalRCVersion'." -ForegroundColor Green
+# Update ADAL version
+Write-Host "New adal version: '$adalRCVersion'." -ForegroundColor Green
 Update-ChangelogHeader -changelogFile $ADAL_CHANGELOG_FILE -newVersion $adalRCVersion -changelogConstants $changelogConstants -newCommonVersion $commonRCVersion 
 
 Update-VersionNumber -versioningFile $ADAL_VERSIONING_FILE -newVersion $adalRCVersion     
