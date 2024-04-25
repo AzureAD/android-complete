@@ -50,6 +50,7 @@ jobs:
     clean: true
     persistCredentials: True
     submodules: recursive
+  - script: java -version
   - script: echo "##vso[build.addbuildtag]projectVariant=$(project.variant) AndroidSystemImage=$(android.system.image)"
     displayName: Create tag
   - ${{ if ne(parameters.accessTokenKey, 'none') }}:
