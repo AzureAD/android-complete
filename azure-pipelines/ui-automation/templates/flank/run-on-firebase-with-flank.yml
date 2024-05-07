@@ -39,6 +39,7 @@ jobs:
       vmImage: ubuntu-latest
     steps:
       - checkout: self
+      - template: ../../../templates/automation-cert.yml
       - task: DownloadSecureFile@1
         displayName: 'Download Firebase Service Account Key File'
         name: gcServiceAccountKey

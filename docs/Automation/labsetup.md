@@ -53,3 +53,44 @@ To run tests with client secret, you would have to pass the following command li
 This can also be achieved from within Android Studio as follows:
 
 ![Android Studio Command Line Parameters](images/android_studio_cmd_params.png "Android Studio Command Line Parameters")
+
+### With Client Assertion (Certificate)
+
+Client assertion uses a certificate, therefore we need to have a certificate installed on our local machine for us to be able to successfully create a client_assertion and be able to obtain the access token for the Lab Api. 
+This certificate is stored securely in a KeyVault that all Microsoft employees can get access to, and from there they can download it onto their local machines. 
+Read through the steps below to obtain the certificate required for the lab automation.
+
+**How to get the certificate for accessing Lab Api:**
+
+1. Go to Azure Portal: https://portal.azure.com/ and login with MS credentials
+2. Switch to the Microsoft directory (if not already there)
+3. Search for the KeyVault named "**MSIDLABS**" (be sure to select "all" for the subcription, location etc filters)
+4. Click into the **MSIDLABS** keyvault
+5. Under Objects, click on certificates
+6. Click on the **LabVaultAccessCert** to open the cert in detail view
+7. Click on the current version to view details about the current version
+8. Download it on your local machine in the PFX format
+9. After download, double click on the cert file to install on your machine
+10. When prompted for location of installation, select CurrentUser and for certificate store select Personal
+11. If prompted for password, you can optionally enter one but it is not required.
+12. Proceed through the steps to finish the installation.
+
+**How to run the tests with this certificate:**
+
+To run tests with certificate, you would have to pass the following command line parameters when building/running tests.
+`-PlabSecret="<path-to-cert-pfx-file>"`
+
+**Example test execution**
+
+If running UI Automation on the Android device push the certificate pfx file to the device before running the tests:
+`./gradlew msalautomationapp:connectedLocalBrokerHostDebugAndroidTest -PlabSecret="<path-to-cert-pfx-file-on-device>"`
+
+If running JVM tests, you can install the certificate on the machine and then run the tests without passing specific build flag:
+`./gradlew :common:testLocalDebugUnitTest
+
+**From within Android Studio**
+
+This can also be achieved from within Android Studio as follows:
+
+![Android Studio Command Line Parameters](images/android_studio_cmd_params.png "Android Studio Command Line Parameters")
+
