@@ -66,8 +66,8 @@ Read through the steps below to obtain the certificate required for the lab auto
 2. Switch to the Microsoft directory (if not already there)
 3. Search for the KeyVault named "**MSIDLABS**" (be sure to select "all" for the subcription, location etc filters)
 4. Click into the **MSIDLABS** keyvault
-5. Under settings, click on certificates
-6. Click on the "LabVaultAccessCert" to open the cert in detail view
+5. Under Objects, click on certificates
+6. Click on the **LabVaultAccessCert** to open the cert in detail view
 7. Click on the current version to view details about the current version
 8. Download it on your local machine in the PFX format
 9. After download, double click on the cert file to install on your machine
@@ -83,7 +83,7 @@ To run tests with certificate, you would have to pass the following command line
 **Example test execution**
 
 If running UI Automation on the Android device push the certificate pfx file to the device before running the tests:
-`./gradlew msalautomationapp:connectedLocalBrokerHostDebugAndroidTest -PlabSecret="<path-to-cert-pfx-file>"`
+`./gradlew msalautomationapp:connectedLocalBrokerHostDebugAndroidTest -PlabSecret="<path-to-cert-pfx-file-on-device>"`
 
 If running JVM tests, you can install the certificate on the machine and then run the tests without passing specific build flag:
 `./gradlew :common:testLocalDebugUnitTest
