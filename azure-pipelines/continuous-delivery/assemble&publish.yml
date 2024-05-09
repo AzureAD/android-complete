@@ -167,5 +167,5 @@ jobs:
         gitProject: ${{ parameters.repository }}
         projectName: ${{ parameters.project }}
         accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-        gradleOptions: -Psugar=true -PlabSecret=$(LabVaultAppSecret)
+        gradleOptions: -Psugar=true -PlabSecret=${{variables.LabVaultAppCert}}
         continueOnError: True
