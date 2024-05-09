@@ -83,9 +83,9 @@ jobs:
       echo "Emulator started"
     displayName: 'Starting android emulator'
   - script: |
-    #!/usr/bin/env bash
-    echo Push certificate to emulator
-    adb push 'LabVaultAccessCert.pfx' '/data/local/tmp/LabVaultAccessCert.pfx'
+      #!/usr/bin/env bash
+      echo Push certificate to emulator
+      adb push 'LabVaultAccessCert.pfx' '/data/local/tmp/LabVaultAccessCert.pfx'
     displayName: 'Push certificate to emulator'
   - task: Gradle@3
     displayName: Run Instrumented Test ${{ parameters.projectName }}
