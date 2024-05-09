@@ -24,9 +24,13 @@ steps:
       $pfxPath = '$(Build.SourcesDirectory)' + "/LabVaultAccessCert.pfx"
 
       [System.IO.File]::WriteAllBytes($pfxPath, $protectedCertificateBytes)
+
+      $certPathVar = $pfxPath -replace "\\", "/"
       
       if([System.IO.File]::Exists($pfxPath)) {
         Write-Host "PFX file created successfully at $pfxPath"
       } else {
         Write-Error "Failed to create PFX file at $pfxPath"
-      }    
+      } 
+
+      Write-Host "##vso[task.setvariable variable=LabVaultAppCert]$certPathVar"    

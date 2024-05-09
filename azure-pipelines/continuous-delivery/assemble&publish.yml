@@ -135,21 +135,13 @@ jobs:
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: VSTS
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
-    - task: PowerShell@2
-      name: setvarStep
-      displayName: Set cert path
-      inputs:
-        targetType: inline
-        script: |
-          $pfxCertPath = '$(Build.SourcesDirectory)' + "\LabVaultAccessCert.pfx"
-          $certPathVar = $pfxCertPath -replace "\\", "\\\\"
-          Write-Host "##vso[task.setvariable variable=LabVaultAppCert]$($certPathVar)"  
+    
     - task: Gradle@3
       displayName: Run Test ${{ parameters.project }}
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
       inputs:
-        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}} -PlabSecret=${{variables.LabVaultAppCert}}
+        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}} -PlabSecret=$(LabVaultAppCert)
         testRunTitle: '${{ parameters.project }}_UnitTests'
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: VSTS
@@ -167,5 +159,5 @@ jobs:
         gitProject: ${{ parameters.repository }}
         projectName: ${{ parameters.project }}
         accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-        gradleOptions: -Psugar=true -PlabSecret=${{variables.LabVaultAppCert}}
+        gradleOptions: -Psugar=true -PlabSecret=$(LabVaultAppCert)
         continueOnError: True
