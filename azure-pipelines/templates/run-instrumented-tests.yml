@@ -50,6 +50,7 @@ jobs:
     clean: true
     persistCredentials: True
     submodules: recursive
+  - template: ../templates/automation-cert.yml
   - script: echo "##vso[build.addbuildtag]projectVariant=$(project.variant) AndroidSystemImage=$(android.system.image)"
     displayName: Create tag
   - ${{ if ne(parameters.accessTokenKey, 'none') }}:
@@ -82,6 +83,11 @@ jobs:
 
       echo "Emulator started"
     displayName: 'Starting android emulator'
+  - script: |
+      #!/usr/bin/env bash
+      echo Push certificate to emulator
+      adb push 'LabVaultAccessCert.pfx' '/data/local/tmp/LabVaultAccessCert.pfx'
+    displayName: 'Push certificate to emulator'
   - task: Gradle@3
     displayName: Run Instrumented Test ${{ parameters.projectName }}
     continueOnError: ${{ parameters.continueOnError }}

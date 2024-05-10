@@ -135,12 +135,13 @@ jobs:
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: VSTS
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
+    - template: ../templates/automation-cert.yml
     - task: Gradle@3
       displayName: Run Test ${{ parameters.project }}
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
       inputs:
-        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}}
+        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}} -PlabSecret=$(LabVaultAppCert)
         testRunTitle: '${{ parameters.project }}_UnitTests'
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: VSTS
@@ -158,5 +159,5 @@ jobs:
         gitProject: ${{ parameters.repository }}
         projectName: ${{ parameters.project }}
         accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-        gradleOptions: -Psugar=true -PlabSecret=$(LabVaultAppSecret)
+        gradleOptions: -Psugar=true -PlabSecret=$(LabVaultAppCert)
         continueOnError: True
