@@ -33,6 +33,9 @@ jobs:
           scriptLocation: 'inlineScript'
           inlineScript: |
             az upgrade
+            az version
+            Write-Host az version
+            
             $accessToken = az account get-access-token --query accessToken --resource https://office.visualstudio.com/ -o tsv
 
             # Set the access token as a secret, so it doesn't get leaked in the logs
