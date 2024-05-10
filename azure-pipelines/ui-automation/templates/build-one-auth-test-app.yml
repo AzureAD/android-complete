@@ -26,13 +26,24 @@ jobs:
     steps:
       - checkout: self
         persistCredentials: True
+      - task: AzureCLI@2
+        inputs:
+          azureSubscription: Android-SDK-WIF
+          scriptType: 'pscore'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            $accessToken = az account get-access-token --query accessToken --resource https://office.visualstudio.com/ -o tsv
+
+            # Set the access token as a secret, so it doesn't get leaked in the logs
+            Write-Host "##vso[task.setsecret]$accessToken"
+            Write-Host "##vso[task.setvariable variable=Test-PAT]$accessToken"
       - task: PowerShell@2
         displayName: Queue and wait for OneAuth Test App Apk generation pipeline
         name: buildApk
         continueOnError: true
         inputs:
           filePath: '$(Build.SourcesDirectory)${{ parameters.scriptPathFromSource }}'
-          arguments: '-OrganizationUrl "$(url)" -Project "$(project)" -PipelinePAT "$(Office-PAT)" -WaitTimeoutInMinutes $(timeout) -BuildDefinitionId "$(definitionId)" -Branch "${{ parameters.branch }}" -TemplateParams "{''androidCommonVersion'': ''${{ parameters.commonVersion }}''}"'
+          arguments: '-OrganizationUrl "$(url)" -Project "$(project)" -PipelinePAT "$(Test-PAT)" -WaitTimeoutInMinutes $(timeout) -BuildDefinitionId "$(definitionId)" -Branch "${{ parameters.branch }}" -TemplateParams "{''androidCommonVersion'': ''${{ parameters.commonVersion }}''}"'
           workingDirectory: '$(Build.SourcesDirectory)'
       - task: DownloadExternalBuildArtifacts@15
         displayName: 'Download OneAuth test app'
