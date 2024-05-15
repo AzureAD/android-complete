@@ -29,14 +29,14 @@ jobs:
       - task: AzureCLI@2
         inputs:
           azureSubscription: AuthSdkResourceManager
-          scriptType: 'bash'
+          scriptType: 'pscore'
           scriptLocation: 'inlineScript'
           inlineScript: |
             # if this fails, check out this bash script that includes diagnostics:
             # https://gist.github.com/johnterickson/19f80a3e969e39f1000d118739176e62
             
             # Note that the resoruce is specified to limit the token to Azure DevOps
-            aadToken=$(az account get-access-token --query accessToken --resource 499b84ac-1321-427f-aa17-267ca6975798 -o tsv)
+            $accessToken = az account get-access-token --query accessToken --resource 499b84ac-1321-427f-aa17-267ca6975798 -o tsv
 
             # Set the access token as a secret, so it doesn't get leaked in the logs
             Write-Host "##vso[task.setsecret]aadToken"
