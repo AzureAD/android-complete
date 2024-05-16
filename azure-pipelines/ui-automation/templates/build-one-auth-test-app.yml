@@ -28,7 +28,7 @@ jobs:
         persistCredentials: True
       - task: AzureCLI@2
         inputs:
-          azureSubscription: Managed-Identity-WIF-Connection
+          azureSubscription: AuthSdkResourceManager
           scriptType: 'pscore'
           scriptLocation: 'inlineScript'
           inlineScript: |
