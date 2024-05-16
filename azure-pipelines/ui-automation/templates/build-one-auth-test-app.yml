@@ -27,6 +27,7 @@ jobs:
       - checkout: self
         persistCredentials: True
       - task: AzureCLI@2
+        displayName: Set up Access Token For OneAuth Pipeline Call
         inputs:
           azureSubscription: AuthSdkResourceManager
           scriptType: 'pscore'
@@ -44,19 +45,22 @@ jobs:
       - task: PowerShell@2
         displayName: Queue and wait for OneAuth Test App Apk generation pipeline
         name: buildApk
-        continueOnError: true
         inputs:
           filePath: '$(Build.SourcesDirectory)${{ parameters.scriptPathFromSource }}'
-          arguments: '-OrganizationUrl "$(url)" -Project "$(project)" -PipelinePAT "$(Test-Token)" -WaitTimeoutInMinutes $(timeout) -BuildDefinitionId "$(definitionId)" -Branch "${{ parameters.branch }}"'
+          arguments: '-OrganizationUrl "$(url)" -Project "$(project)" -PipelinePAT "$(Test-Token)" -WaitTimeoutInMinutes $(timeout) -BuildDefinitionId "$(definitionId)" -Branch "${{ parameters.branch }}" -BuildIdOutputVar "oneAuthBuildId"'
           workingDirectory: '$(Build.SourcesDirectory)'
-      - task: DownloadExternalBuildArtifacts@15
-        displayName: 'Download OneAuth test app'
+      - task: AzureCLI@2
+        displayName: Download OneAuth Artifact
         inputs:
-          connection: AuthSdkResourceManager
-          project: $(oneAuthProjectId)
-          definition: $(definitionId)
-          version: $(buildApk.BrokeBuildId)
-          downloadPath: '$(Build.ArtifactStagingDirectory)'
+          azureSubscription: AuthSdkResourceManager
+          scriptType: 'pscore'
+          scriptLocation: 'inlineScript'
+          inlineScript: |
+            az pipelines runs artifact download --artifact-name OneAuthTestApp
+                                                --path $(Build.ArtifactStagingDirectory)
+                                                --run-id $(oneAuthBuildId)
+                                                --org $(url)
+                                                --project $(project)
       - publish: $(Build.ArtifactStagingDirectory)/OneAuthTestApp
         displayName: 'Publish OneAuth Test apk for later use'
         artifact: oneauthtestapp
