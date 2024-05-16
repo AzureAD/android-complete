@@ -28,7 +28,7 @@ jobs:
         persistCredentials: True
       - task: AzureCLI@2
         inputs:
-          azureSubscription: Managed-Identity-WIF-Connection
+          azureSubscription: AuthSdkResourceManager
           scriptType: 'pscore'
           scriptLocation: 'inlineScript'
           inlineScript: |
@@ -52,7 +52,7 @@ jobs:
       - task: DownloadExternalBuildArtifacts@15
         displayName: 'Download OneAuth test app'
         inputs:
-          connection: OneAuthServiceConnection_3
+          connection: AuthSdkResourceManager
           project: $(oneAuthProjectId)
           definition: $(definitionId)
           version: $(buildApk.BrokeBuildId)
