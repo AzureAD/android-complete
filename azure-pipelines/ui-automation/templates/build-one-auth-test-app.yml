@@ -7,6 +7,10 @@ parameters:
   - name: scriptPathFromSource
     type: string
     default: /azure-pipelines/scripts/queue-build.ps1
+  - name: serviceConnection
+    type: string
+    default: AuthSdkResourceManager
+#    default: Managed-Identity-WIF-Connection
 
 jobs:
   - job: queueOneAuthTestApp
@@ -29,7 +33,7 @@ jobs:
       - task: AzureCLI@2
         displayName: Set up Access Token For OneAuth Pipeline Call
         inputs:
-          azureSubscription: Managed-Identity-WIF-Connection
+          azureSubscription: ${{ parameters.serviceConnection }}
           scriptType: 'pscore'
           scriptLocation: 'inlineScript'
           inlineScript: |
@@ -52,7 +56,7 @@ jobs:
       - task: AzureCLI@2
         displayName: Download OneAuth Artifact with AzureCLI
         inputs:
-          azureSubscription: Managed-Identity-WIF-Connection
+          azureSubscription: ${{ parameters.serviceConnection }}
           scriptType: 'pscore'
           scriptLocation: 'inlineScript'
           inlineScript: |
