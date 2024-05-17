@@ -56,7 +56,7 @@ jobs:
           scriptType: 'pscore'
           scriptLocation: 'inlineScript'
           inlineScript: |
-            az pipelines runs artifact download --artifact-name Non-Container-OneAuthTestApp-arm64-v8a --path $(Build.ArtifactStagingDirectory)/OneAuthTestApp --run-id $(oneAuthBuildId) --org $(url) --project $(project)
+            az pipelines runs artifact download --artifact-name Non-Container-OneAuthTestApp-arm64-v8a --path $(Build.ArtifactStagingDirectory)/OneAuthTestApp --run-id 28434250 --org $(url) --project $(project)
       - publish: $(Build.ArtifactStagingDirectory)/OneAuthTestApp
         displayName: 'Publish OneAuth Test apk for later use'
         artifact: oneauthtestapp
