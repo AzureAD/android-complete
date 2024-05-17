@@ -9,8 +9,8 @@ parameters:
     default: /azure-pipelines/scripts/queue-build.ps1
   - name: serviceConnection
     type: string
-    default: AuthSdkResourceManager
-#    default: Managed-Identity-WIF-Connection
+#    default: AuthSdkResourceManager
+    default: Managed-Identity-WIF-Connection
 
 jobs:
   - job: queueOneAuthTestApp
