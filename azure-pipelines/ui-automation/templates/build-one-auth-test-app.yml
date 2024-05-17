@@ -38,7 +38,7 @@ jobs:
           scriptType: 'bash'
           scriptLocation: 'inlineScript'
           inlineScript: |
-            orgName=https://office.visualstudio.com/
+            orgName=office
             projectName=OneAuth
             repoName=OneAuth
 
