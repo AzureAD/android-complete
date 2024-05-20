@@ -29,13 +29,13 @@ jobs:
       - template: ../../templates/token-from-service-connection.yml
         parameters:
           serviceConnection: Managed-Identity-WIF-Connection
-          tokenVariableName: SC-PAT
+          tokenVariableName: SC-Token
       - task: PowerShell@2
         displayName: Queue and wait for OneAuth Test App Apk generation pipeline
         name: buildApk
         inputs:
           filePath: '$(Build.SourcesDirectory)${{ parameters.scriptPathFromSource }}'
-          arguments: '-OrganizationUrl "$(url)" -Project "$(project)" -PipelinePAT "$(Test-Token)" -WaitTimeoutInMinutes $(timeout) -BuildDefinitionId "$(definitionId)" -Branch "${{ parameters.branch }}" -BuildIdOutputVar "oneAuthBuildId"'
+          arguments: '-OrganizationUrl "$(url)" -Project "$(project)" -PipelinePAT "$(SC-Token)" -WaitTimeoutInMinutes $(timeout) -BuildDefinitionId "$(definitionId)" -Branch "${{ parameters.branch }}" -TemplateParams "{''androidCommonVersion'': ''${{ parameters.commonVersion }}''}" -BuildIdOutputVar "oneAuthBuildId"'
           workingDirectory: '$(Build.SourcesDirectory)'
       - task: AzureCLI@2
         displayName: Download OneAuth Artifact with AzureCLI

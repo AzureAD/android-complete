@@ -1,3 +1,5 @@
+# A template used to generate an access token corresponding to a given service connection
+
 parameters:
   - name: serviceConnection
     type: string
