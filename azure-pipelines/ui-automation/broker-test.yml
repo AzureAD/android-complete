@@ -216,7 +216,7 @@ stages:
   displayName: Build OneAuth Test App Apk
   dependsOn: []   # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
-    - template: /templates/build-one-auth-test-app.yml
+    - template: ./templates/build-one-auth-test-app.yml
       parameters:
         commonVersion: $(dailyVersion)
         branch: $(OneAuthBranch)
