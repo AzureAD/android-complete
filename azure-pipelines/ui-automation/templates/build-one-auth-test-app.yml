@@ -48,7 +48,7 @@ jobs:
           scriptLocation: 'inlineScript'
           inlineScript: |
             Write-Host "Downloading artifact from build id $(oneAuthBuildId)"
-            az pipelines runs artifact download --artifact-name Non-Container-OneAuthTestApp-arm64-v8a --path $(Build.ArtifactStagingDirectory)/OneAuthTestApp --run-id $(oneAuthBuildId) --org $(url) --project $(project)
+            az pipelines runs artifact download --artifact-name OneAuthTestApp-arm64-v8a --path $(Build.ArtifactStagingDirectory)/OneAuthTestApp --run-id $(oneAuthBuildId) --org $(url) --project $(project)
       - publish: $(Build.ArtifactStagingDirectory)/OneAuthTestApp
         displayName: 'Publish OneAuth Test apk for later use'
         artifact: oneauthtestapp
