@@ -110,7 +110,6 @@ jobs:
     vmImage: ubuntu-latest
   variables:
     - group: MSIDLABVARS
-    - group: devex-ciam-test
   steps:
     - checkout: ${{ parameters.repository }}
       persistCredentials: True
@@ -142,7 +141,7 @@ jobs:
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
       inputs:
-        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}} -PlabSecret=$(LabVaultAppCert) -PmockApiUrl=$(MOCK_API_URL)
+        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}} -PlabSecret=$(LabVaultAppCert)
         testRunTitle: '${{ parameters.project }}_UnitTests'
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: VSTS
