@@ -216,31 +216,10 @@ stages:
   displayName: Build OneAuth Test App Apk
   dependsOn: []   # this removes the implicit dependency on previous stage and causes this to run in parallel
   jobs:
-    - job: queue_build_OneAuthTestApp
-      displayName: Generate OneAuth Test App Apk
-      timeoutInMinutes: 120
-      steps:
-        - checkout: self
-          persistCredentials: True
-        - task: PowerShell@2
-          displayName: Queue and wait for OneAuth Test App Apk generation pipeline
-          name: buildApk
-          continueOnError: true
-          inputs:
-            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://office.visualstudio.com/" -Project "OneAuth" -PipelinePAT "$(OfficePAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(oneAuthTestAppPipelineId)" -Branch "$(OneAuthBranch)" -TemplateParams "{''androidCommonVersion'': ''$(dailyVersion)''}"'
-            workingDirectory: '$(Build.SourcesDirectory)'
-        - task: DownloadExternalBuildArtifacts@15
-          displayName: 'Download OneAuth test app'
-          inputs:
-            connection: '$(oneAuthServiceConnection)'
-            project: '$(oneAuthProjectId)'
-            definition: '$(oneAuthTestAppPipelineId)'
-            version: '$(buildApk.BrokeBuildId)'
-            downloadPath: '$(Build.ArtifactStagingDirectory)'
-        - publish: $(Build.ArtifactStagingDirectory)/OneAuthTestApp
-          displayName: 'Publish OneAuth Test apk for later use'
-          artifact: oneauthtestapp
+    - template: ./templates/build-one-auth-test-app.yml
+      parameters:
+        commonVersion: $(dailyVersion)
+        branch: $(OneAuthBranch)
 # Download First Party Apps
 - stage: 'firstpartyapps'
   dependsOn: []    # this removes the implicit dependency on previous stage and causes this to run in parallel
