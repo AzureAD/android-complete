@@ -12,7 +12,7 @@ parameters:
   default: LocalDebug
   # Specifies the command line options that will be passed to the Gradle wrapper.
 - name: gradleOptions
-  default: -Psugar=true -PmockApiUrl=$(MOCK_API_URL)
+  default: -Psugar=true
 # https://developer.android.com/studio/releases/platforms
 - name: androidAPILevel
   default: 33
@@ -45,7 +45,6 @@ jobs:
     value: ${{ parameters.projectVariantName }}
   - group: AndroidAuthClientAutomationSecrets
   - group: MSIDLABVARS
-  - group: devex-ciam-test
   steps:
   - checkout: ${{ parameters.gitProject }}
     clean: true
