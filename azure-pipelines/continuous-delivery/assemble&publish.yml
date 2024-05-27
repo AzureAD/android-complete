@@ -45,13 +45,15 @@ jobs:
       vmImage: ubuntu-latest
     ${{ else }}:
       name: ${{ parameters.agentImage }}
+  variables:
+  - group: devex-ciam-test
   steps:
   - checkout: ${{ parameters.repository }}
     persistCredentials: True
   - task: Gradle@3
     displayName: Build ${{ parameters.project }}
     inputs:
-      tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
+      tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}} -PmockApiUrl=$(MOCK_API_URL)
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: VSTS
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
