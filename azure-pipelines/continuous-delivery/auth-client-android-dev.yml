@@ -233,10 +233,10 @@ stages:
       assembleCmd: assembleDist
       testCmd: distDebugCommonUnitTestCoverageReport
       publishCmd: publish
-      dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam) -PmockApiUrl=https://native-auth-mock-api.azurewebsites.net/
-      assembleParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable) -PmockApiUrl=https://native-auth-mock-api.azurewebsites.net/
+      dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
+      assembleParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable)
       testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=https://native-auth-mock-api.azurewebsites.net/
-      publishParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable) -PmockApiUrl=https://native-auth-mock-api.azurewebsites.net/
+      publishParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
