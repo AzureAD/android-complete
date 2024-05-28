@@ -209,9 +209,9 @@ stages:
       project: common4j
       testCmd: common4jUnitTestCoverageReport
       dependencyParams: $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(flagVariable)
+      assembleParams: $(projVersionParam) $(flagVariable) -PmockApiUrl=https://native-auth-mock-api.azurewebsites.net/
       testParams: $(projVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=https://native-auth-mock-api.azurewebsites.net/
-      publishParams: $(projVersionParam) $(flagVariable)
+      publishParams: $(projVersionParam) $(flagVariable) -PmockApiUrl=https://native-auth-mock-api.azurewebsites.net/
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
@@ -233,10 +233,10 @@ stages:
       assembleCmd: assembleDist
       testCmd: distDebugCommonUnitTestCoverageReport
       publishCmd: publish
-      dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable)
+      dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam) -PmockApiUrl=https://native-auth-mock-api.azurewebsites.net/
+      assembleParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable) -PmockApiUrl=https://native-auth-mock-api.azurewebsites.net/
       testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=https://native-auth-mock-api.azurewebsites.net/
-      publishParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable)
+      publishParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable) -PmockApiUrl=https://native-auth-mock-api.azurewebsites.net/
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
