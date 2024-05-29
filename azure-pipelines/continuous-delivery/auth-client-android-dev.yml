@@ -202,10 +202,9 @@ stages:
   dependsOn: setupStage
   variables:
     flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
+    group: devex-ciam-test
   jobs:
   - template: assemble&publish.yml
-    variables:
-      - group: devex-ciam-test
     parameters:
       repository: common
       project: common4j
@@ -227,10 +226,9 @@ stages:
   - setupStage
   variables:
     flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
+    group: devex-ciam-test
   jobs:
   - template: assemble&publish.yml
-    variables:
-      - group: devex-ciam-test
     parameters:
       repository: common
       project: common
@@ -367,10 +365,9 @@ stages:
   - setupStage
   variables:
     flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
+    group: devex-ciam-test
   jobs:
   - template: assemble&publish.yml
-    variables:
-      - group: devex-ciam-test
     parameters:
       repository: msal
       project: msal
