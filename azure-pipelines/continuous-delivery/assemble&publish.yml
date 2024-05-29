@@ -137,6 +137,12 @@ jobs:
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
     - template: ../templates/automation-cert.yml
     - task: Gradle@3
+      displayName: Print dependency graph
+      enabled: true
+      continueOnError: true
+      inputs:
+        tasks: ${{ parameters.project }}:dependencyInsight
+    - task: Gradle@3
       displayName: Run Test ${{ parameters.project }}
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true

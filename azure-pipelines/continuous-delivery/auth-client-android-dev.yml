@@ -209,9 +209,9 @@ stages:
       project: common4j
       testCmd: common4jUnitTestCoverageReport
       dependencyParams: $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(flagVariable) -PmockApiUrl=https://native-auth-mock-api.azurewebsites.net/
-      testParams: $(projVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=https://native-auth-mock-api.azurewebsites.net/
-      publishParams: $(projVersionParam) $(flagVariable) -PmockApiUrl=https://native-auth-mock-api.azurewebsites.net/
+      assembleParams: $(projVersionParam) $(flagVariable) -PmockApiUrl=$(MOCK_API_URL)
+      testParams: $(projVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=$(MOCK_API_URL)
+      publishParams: $(projVersionParam) $(flagVariable) -PmockApiUrl=$(MOCK_API_URL)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
@@ -235,7 +235,7 @@ stages:
       publishCmd: publish
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable)
-      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=https://native-auth-mock-api.azurewebsites.net/
+      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=$(MOCK_API_URL)
       publishParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
@@ -373,7 +373,7 @@ stages:
       publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam) $(flagVariable)
-      testParams: $(projVersionParam) $(commonVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=https://native-auth-mock-api.azurewebsites.net/
+      testParams: $(projVersionParam) $(commonVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=$(MOCK_API_URL)
       publishParams: $(projVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
