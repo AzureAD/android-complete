@@ -210,9 +210,9 @@ stages:
       project: common4j
       testCmd: common4jUnitTestCoverageReport
       dependencyParams: $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(flagVariable) -PmockApiUrl=$(MOCK_API_URL)
-      testParams: $(projVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=$(MOCK_API_URL)
-      publishParams: $(projVersionParam) $(flagVariable) -PmockApiUrl=$(MOCK_API_URL)
+      assembleParams: $(projVersionParam) $(flagVariable)
+      testParams: $(projVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      publishParams: $(projVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
       shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
@@ -237,7 +237,7 @@ stages:
       publishCmd: publish
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable)
-      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=$(MOCK_API_URL)
+      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
@@ -365,7 +365,6 @@ stages:
   - setupStage
   variables:
     flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
-    group: devex-ciam-test
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -376,7 +375,7 @@ stages:
       publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam) $(flagVariable)
-      testParams: $(projVersionParam) $(commonVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=$(MOCK_API_URL)
+      testParams: $(projVersionParam) $(commonVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: $(projVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
