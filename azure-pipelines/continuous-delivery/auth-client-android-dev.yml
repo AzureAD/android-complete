@@ -201,8 +201,9 @@ stages:
   displayName: Common4j - Build and publish
   dependsOn: setupStage
   variables:
-    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
-    group: devex-ciam-test
+    - group: devex-ciam-test
+    - name: flagVariable
+      value: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -210,8 +211,8 @@ stages:
       project: common4j
       testCmd: common4jUnitTestCoverageReport
       dependencyParams: $(javaProjectDependencyParam)
-      assembleParams: $(projVersionParam) $(flagVariable)
-      testParams: $(projVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      assembleParams: $(projVersionParam) $(flagVariable) -PmockApiUrl=$(MOCK_API_URL)
+      testParams: $(projVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=$(MOCK_API_URL)
       publishParams: $(projVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
@@ -225,8 +226,9 @@ stages:
   - publishCommon4jLibraries
   - setupStage
   variables:
-    flagVariable: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
-    group: devex-ciam-test
+    - group: devex-ciam-test
+    - name: flagVariable
+      value: $[ stageDependencies.setupStage.alternateSchedule.outputs['finalSetupScript.finalFlag'] ]
   jobs:
   - template: assemble&publish.yml
     parameters:
@@ -237,7 +239,7 @@ stages:
       publishCmd: publish
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable)
-      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=$(MOCK_API_URL)
       publishParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN

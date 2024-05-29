@@ -45,15 +45,13 @@ jobs:
       vmImage: ubuntu-latest
     ${{ else }}:
       name: ${{ parameters.agentImage }}
-  variables:
-    - group: devex-ciam-test
   steps:
   - checkout: ${{ parameters.repository }}
     persistCredentials: True
   - task: Gradle@3
     displayName: Build ${{ parameters.project }}
     inputs:
-      tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}} -PmockApiUrl=$(MOCK_API_URL)
+      tasks: ${{ parameters.project }}:${{ parameters.assembleCmd}} ${{ parameters.assembleParams}}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: VSTS
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
@@ -74,7 +72,7 @@ jobs:
       )
     displayName: Publish ${{ parameters.project }}
     inputs:
-      tasks: ${{ parameters.project }}:${{ parameters.publishCmd}} ${{ parameters.publishParams}} -PmockApiUrl=$(MOCK_API_URL)
+      tasks: ${{ parameters.project }}:${{ parameters.publishCmd}} ${{ parameters.publishParams}}
     env:
       ${{ parameters.vstsMvnAndroidUsername }}: VSTS
       ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
@@ -112,7 +110,6 @@ jobs:
     vmImage: ubuntu-latest
   variables:
     - group: MSIDLABVARS
-    - group: devex-ciam-test
   steps:
     - checkout: ${{ parameters.repository }}
       persistCredentials: True
@@ -140,17 +137,11 @@ jobs:
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
     - template: ../templates/automation-cert.yml
     - task: Gradle@3
-      displayName: Print dependency graph
-      enabled: true
-      continueOnError: true
-      inputs:
-        tasks: ${{ parameters.project }}:dependencyInsight
-    - task: Gradle@3
       displayName: Run Test ${{ parameters.project }}
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
       inputs:
-        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}} -PlabSecret=$(LabVaultAppCert) -PmockApiUrl=$(MOCK_API_URL)
+        tasks: ${{ parameters.project }}:${{ parameters.testCmd}} ${{ parameters.testParams}} -PlabSecret=$(LabVaultAppCert)
         testRunTitle: '${{ parameters.project }}_UnitTests'
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: VSTS
