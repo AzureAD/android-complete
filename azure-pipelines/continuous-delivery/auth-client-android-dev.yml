@@ -380,7 +380,7 @@ stages:
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam) $(flagVariable)
       testParams: $(projVersionParam) $(commonVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=$(MOCK_API_URL)
-      publishParams: $(projVersionParam) $(commonVersionParam) $(flagVariable)
+      publishParams: $(projVersionParam) $(commonVersionParam) $(flagVariable) -PmockApiUrl=$(MOCK_API_URL)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
       shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
