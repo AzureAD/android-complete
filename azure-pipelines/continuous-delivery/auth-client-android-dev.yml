@@ -461,8 +461,8 @@ stages:
           name: authenticatorPipelineScript
         - template: ../templates/universal-packages/pull-authenticator-from-feed.yml
           parameters:
-            msazureServiceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
-            authenticatorVersion: $(authenticatorPipelineScript.authenticatorApkVersion)
+#            msazureServiceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
+#            authenticatorVersion: $(authenticatorPipelineScript.authenticatorApkVersion)
 # BrokerApk - Company portal Queue pipeline
 - stage: 'queueCompanyPortalPipeline'
   variables:
@@ -489,8 +489,8 @@ stages:
           name: companyPortalPipelineScript
         - template: ../templates/universal-packages/pull-company-portal-from-feed.yml
           parameters:
-            msazureServiceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
-            companyPortalVersion: $(companyPortalPipelineScript.companyPortalApkVersion)
+#            msazureServiceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
+#            companyPortalVersion: $(companyPortalPipelineScript.companyPortalApkVersion)
 # BrokerApk - Link to Windows Queue pipeline
 - stage: 'queueLinkToWindowsPipeline'
   variables:
@@ -537,8 +537,8 @@ stages:
           name: ltwVersionScript
         - template: ../templates/universal-packages/pull-ltw-from-feed.yml
           parameters:
-            OSServiceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
-            LTWVersion: $(ltwVersionScript.ltwApkVersion)
+#            OSServiceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
+#            LTWVersion: $(ltwVersionScript.ltwApkVersion)
 
 # TestApp generation
 - stage: 'testappgeneration'

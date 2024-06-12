@@ -1,10 +1,7 @@
 parameters:
-  - name: msazureServiceConnection
+  - name: feedName
     type: string
-    default: 'AndroidBroker-CI-2'
-  - name: msazureFeedName
-    type: string
-    default: 'Android-Broker'
+    default: 'AndroidAdal'
   - name: artifactPath
     type: string
     default: 'brokers'
@@ -30,11 +27,10 @@ steps:
     inputs:
       command: 'download'
       downloadDirectory: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}'
-      feedsToUse: 'external'
-      externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
-      feedDownloadExternal: '${{ parameters.msazureFeedName }}'
-      packageDownloadExternal: '${{ parameters.packageName }}'
-      versionDownloadExternal: '${{ parameters.authenticatorVersion }}'
+      feedsToUse: 'internal'
+      vstsFeed: '${{ parameters.feedName }}'
+      vstsFeedPackage: '${{ parameters.packageName }}'
+      vstsPackageVersion: '${{ parameters.authenticatorVersion }}'
   - publish: $(Build.ArtifactStagingDirectory)/brokers
     enabled: ${{ parameters.shouldPublishArtifact }}
     displayName: 'Publish as Artifact'
