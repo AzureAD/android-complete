@@ -460,7 +460,7 @@ stages:
             workingDirectory: '$(Build.SourcesDirectory)'
           name: authenticatorPipelineScript
         - template: ../templates/universal-packages/pull-authenticator-from-feed.yml
-          parameters:
+#          parameters:
 #            msazureServiceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
 #            authenticatorVersion: $(authenticatorPipelineScript.authenticatorApkVersion)
 # BrokerApk - Company portal Queue pipeline
@@ -488,7 +488,7 @@ stages:
             workingDirectory: '$(Build.SourcesDirectory)'
           name: companyPortalPipelineScript
         - template: ../templates/universal-packages/pull-company-portal-from-feed.yml
-          parameters:
+#          parameters:
 #            msazureServiceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
 #            companyPortalVersion: $(companyPortalPipelineScript.companyPortalApkVersion)
 # BrokerApk - Link to Windows Queue pipeline
@@ -536,7 +536,7 @@ stages:
               Write-Host "##vso[task.setvariable variable=ltwApkVersion;isOutput=true]$trimmedVersion"
           name: ltwVersionScript
         - template: ../templates/universal-packages/pull-ltw-from-feed.yml
-          parameters:
+#          parameters:
 #            OSServiceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
 #            LTWVersion: $(ltwVersionScript.ltwApkVersion)
 
