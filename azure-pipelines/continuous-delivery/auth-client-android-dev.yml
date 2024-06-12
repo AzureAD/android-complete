@@ -452,13 +452,13 @@ stages:
           parameters:
             serviceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
             tokenVariableName: SC-Token
-#        - task: PowerShell@2
-#          displayName: Queue and wait for Authenticator Apk generation pipeline
-#          inputs:
-#            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-#            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(SC-Token)" -BuildDefinitionId "$(authenticatorPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(authenticatorBranch)"  -BuildNumberOutputOnSuccessVar "authenticatorApkVersion"'
-#            workingDirectory: '$(Build.SourcesDirectory)'
-#          name: authenticatorPipelineScript
+        - task: PowerShell@2
+          displayName: Queue and wait for Authenticator Apk generation pipeline
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(SC-Token)" -BuildDefinitionId "$(authenticatorPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(authenticatorBranch)"  -BuildNumberOutputOnSuccessVar "authenticatorApkVersion"'
+            workingDirectory: '$(Build.SourcesDirectory)'
+          name: authenticatorPipelineScript
         - template: ../templates/universal-packages/pull-authenticator-from-feed.yml
 #          parameters:
 #            msazureServiceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
