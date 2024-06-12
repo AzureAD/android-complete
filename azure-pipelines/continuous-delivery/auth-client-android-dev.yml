@@ -448,15 +448,20 @@ stages:
       steps:
         - checkout: self
           persistCredentials: True
+        - template: ../templates/token-from-service-connection.yml
+          parameters:
+            serviceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
+            tokenVariableName: SC-Token
         - task: PowerShell@2
           displayName: Queue and wait for Authenticator Apk generation pipeline
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(MSAzure-PAT)" -BuildDefinitionId "$(authenticatorPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(authenticatorBranch)"  -BuildNumberOutputOnSuccessVar "authenticatorApkVersion"'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(SC-Token)" -BuildDefinitionId "$(authenticatorPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(authenticatorBranch)"  -BuildNumberOutputOnSuccessVar "authenticatorApkVersion"'
             workingDirectory: '$(Build.SourcesDirectory)'
           name: authenticatorPipelineScript
         - template: ../templates/universal-packages/pull-authenticator-from-feed.yml
           parameters:
+            msazureServiceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
             authenticatorVersion: $(authenticatorPipelineScript.authenticatorApkVersion)
 # BrokerApk - Company portal Queue pipeline
 - stage: 'queueCompanyPortalPipeline'
@@ -471,15 +476,20 @@ stages:
       steps:
         - checkout: self
           persistCredentials: True
+        - template: ../templates/token-from-service-connection.yml
+          parameters:
+            serviceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
+            tokenVariableName: SC-Token
         - task: PowerShell@2
           displayName: Queue and wait for Company Portal Apk generation pipeline
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAzure-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(companyPortalPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)''}" -Branch "$(companyPortalBranch)" -BuildNumberOutputOnSuccessVar "companyPortalApkVersion"'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(SC-Token)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(companyPortalPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)''}" -Branch "$(companyPortalBranch)" -BuildNumberOutputOnSuccessVar "companyPortalApkVersion"'
             workingDirectory: '$(Build.SourcesDirectory)'
           name: companyPortalPipelineScript
         - template: ../templates/universal-packages/pull-company-portal-from-feed.yml
           parameters:
+            msazureServiceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
             companyPortalVersion: $(companyPortalPipelineScript.companyPortalApkVersion)
 # BrokerApk - Link to Windows Queue pipeline
 - stage: 'queueLinkToWindowsPipeline'
@@ -501,11 +511,15 @@ stages:
       steps:
         - checkout: self
           persistCredentials: True
+        - template: ../templates/token-from-service-connection.yml
+          parameters:
+            serviceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
+            tokenVariableName: SC-Token
         - task: PowerShell@2
           displayName: Queue and wait for Link to Windows Apk generation pipeline
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(LTW-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(ltwPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)" -BuildReason "UserCreated" -BuildNumberOutputOnSuccessVar "rawLtwPipelineBuildNumber"'
+            arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(SC-Token)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(ltwPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)" -BuildReason "UserCreated" -BuildNumberOutputOnSuccessVar "rawLtwPipelineBuildNumber"'
             workingDirectory: '$(Build.SourcesDirectory)'
           name: ltwPipelineScript
         - task: PowerShell@2
@@ -523,6 +537,7 @@ stages:
           name: ltwVersionScript
         - template: ../templates/universal-packages/pull-ltw-from-feed.yml
           parameters:
+            OSServiceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
             LTWVersion: $(ltwVersionScript.ltwApkVersion)
 
 # TestApp generation
