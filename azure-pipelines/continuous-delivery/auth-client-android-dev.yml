@@ -460,9 +460,8 @@ stages:
             workingDirectory: '$(Build.SourcesDirectory)'
           name: authenticatorPipelineScript
         - template: ../templates/universal-packages/pull-authenticator-from-feed.yml
-#          parameters:
-#            msazureServiceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
-#            authenticatorVersion: $(authenticatorPipelineScript.authenticatorApkVersion)
+          parameters:
+            authenticatorVersion: $(authenticatorPipelineScript.authenticatorApkVersion)
 # BrokerApk - Company portal Queue pipeline
 - stage: 'queueCompanyPortalPipeline'
   variables:
