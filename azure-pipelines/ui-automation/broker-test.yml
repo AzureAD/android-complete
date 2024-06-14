@@ -235,10 +235,6 @@ stages:
       parameters:
         engineeringProjectId: '$(engineeringProjectId)'
         azureSamplePipelineId: '$(azureSamplePipelineId)'
-        msazureServiceConnection: '$(msazureServiceConnection)'
-        msazureFeedName: '$(msazureFeedName)'
-        OSServiceConnection: '$(OSServiceConnection)'
-        LTWFeedName: '$(LTWFeedName)'
         authenticatorVersion: ${{ parameters.authenticatorVersion }}
         oldAuthenticatorVersion: ${{ parameters.oldAuthenticatorVersion }}
         companyPortalVersion: ${{ parameters.companyPortalVersion }}

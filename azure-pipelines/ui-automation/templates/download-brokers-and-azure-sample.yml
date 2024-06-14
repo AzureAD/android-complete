@@ -3,10 +3,6 @@ parameters:
     type: string
   - name: azureSamplePipelineId
     type: string
-  - name: msazureServiceConnection
-    type: string
-  - name: msazureFeedName
-    type: string
   - name: authenticatorVersion
     displayName: Authenticator Version
     type: string
@@ -39,11 +35,6 @@ parameters:
   - name: internalFeedName
     type: string
     default: 'AndroidAdal'
-  - name: LTWFeedName
-    type: string
-  - name: OSServiceConnection
-    displayName: Link to Windows Service Connection
-    type: string
   - name: LTWVersion
     displayName: Link to Windows Version
     type: string
@@ -77,11 +68,10 @@ jobs:
       inputs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
-        feedsToUse: 'external'
-        externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
-        feedDownloadExternal: '${{ parameters.msazureFeedName }}'
-        packageDownloadExternal: 'com.azure.authenticator'
-        versionDownloadExternal: '${{ parameters.authenticatorVersion }}'
+        feedsToUse: 'internal'
+        vstsFeed: '${{ parameters.internalFeedName }}'
+        vstsFeedPackage: 'com.azure.authenticator'
+        vstsPackageVersion: '${{ parameters.authenticatorVersion }}'
     - task: UniversalPackages@0
       displayName: 'Download old authenticator (Pre v5 Broker) version from feed'
       inputs:
@@ -96,31 +86,28 @@ jobs:
       inputs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
-        feedsToUse: 'external'
-        externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
-        feedDownloadExternal: '${{ parameters.msazureFeedName }}'
-        packageDownloadExternal: 'com.microsoft.windowsintune.companyportal-signed'
-        versionDownloadExternal: '${{ parameters.companyPortalVersion }}'
+        feedsToUse: 'internal'
+        vstsFeed: '${{ parameters.internalFeedName }}'
+        vstsFeedPackage: 'com.microsoft.windowsintune.companyportal-signed'
+        vstsPackageVersion: '${{ parameters.companyPortalVersion }}'
     - task: UniversalPackages@0
       displayName: 'Download Old CompanyPortal Apk'
       inputs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
-        feedsToUse: 'external'
-        externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
-        feedDownloadExternal: '${{ parameters.msazureFeedName }}'
-        packageDownloadExternal: 'com.microsoft.windowsintune.companyportal-signed'
-        versionDownloadExternal: '${{ parameters.oldCompanyPortalVersion }}'
+        feedsToUse: 'internal'
+        vstsFeed: '${{ parameters.internalFeedName }}'
+        vstsFeedPackage: 'com.microsoft.windowsintune.companyportal-signed'
+        vstsPackageVersion: '${{ parameters.oldCompanyPortalVersion }}'
     - task: UniversalPackages@0
       displayName: 'Download Latest LTW Apk'
       inputs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
-        feedsToUse: 'external'
-        externalFeedCredentials: '${{ parameters.OSServiceConnection }}'
-        feedDownloadExternal: '${{ parameters.LTWFeedName }}'
-        packageDownloadExternal: 'com.microsoft.appmanager'
-        versionDownloadExternal: '${{ parameters.LTWVersion }}'
+        feedsToUse: 'internal'
+        vstsFeed: '${{ parameters.internalFeedName }}'
+        vstsFeedPackage: 'com.microsoft.appmanager'
+        vstsPackageVersion: '${{ parameters.LTWVersion }}'
     - script: mv ./YPC-*.apk ./LTW-signed.apk
       displayName: 'Rename LTW build to LTW-signed.apk'
       workingDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
@@ -129,11 +116,10 @@ jobs:
       inputs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
-        feedsToUse: 'external'
-        externalFeedCredentials: '${{ parameters.OSServiceConnection }}'
-        feedDownloadExternal: '${{ parameters.LTWFeedName }}'
-        packageDownloadExternal: 'com.microsoft.appmanager'
-        versionDownloadExternal: '${{ parameters.OldLTWVersion }}'
+        feedsToUse: 'internal'
+        vstsFeed: '${{ parameters.internalFeedName }}'
+        vstsFeedPackage: 'com.microsoft.appmanager'
+        vstsPackageVersion: '${{ parameters.OldLTWVersion }}'
     - script: mv ./YPC-*.apk ./OldLTW-signed.apk
       displayName: 'Rename Old LTW build to OldLTW-signed.apk'
       workingDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
@@ -151,21 +137,19 @@ jobs:
       inputs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
-        feedsToUse: 'external'
-        externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
-        feedDownloadExternal: '${{ parameters.msazureFeedName }}'
-        packageDownloadExternal: 'broker-host'
-        versionDownloadExternal: '${{ parameters.oldBrokerHostVersion }}'
+        feedsToUse: 'internal'
+        vstsFeed: '${{ parameters.internalFeedName }}'
+        vstsFeedPackage: 'broker-host'
+        vstsPackageVersion: '${{ parameters.oldBrokerHostVersion }}'
     - task: UniversalPackages@0
       displayName: 'Download brokerHost without broker selection logic from feed'
       inputs:
         command: 'download'
         downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers/oldAPKs'
-        feedsToUse: 'external'
-        externalFeedCredentials: '${{ parameters.msazureServiceConnection }}'
-        feedDownloadExternal: '${{ parameters.msazureFeedName }}'
-        packageDownloadExternal: 'broker-host'
-        versionDownloadExternal: '${{ parameters.brokerHostWithoutBrokerSelectionLogicVersion }}'
+        feedsToUse: 'internal'
+        vstsFeed: '${{ parameters.internalFeedName }}'
+        vstsFeedPackage: 'broker-host'
+        vstsPackageVersion: '${{ parameters.brokerHostWithoutBrokerSelectionLogicVersion }}'
     - publish: $(Build.ArtifactStagingDirectory)/brokers
       displayName: 'Publish Authenticator/Company Portal Broker apks for later use'
       artifact: brokerapks
