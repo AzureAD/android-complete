@@ -8,6 +8,9 @@ parameters:
   - name: packageName
     type: string
     default: 'com.microsoft.appmanager'
+  - name: serviceConnection
+    type: string
+    default: 'AuthClientAndroid-Managed-Identity-WIF-Connection'
   - name: apkName
     type: string
     default: 'LTW-signed.apk'
@@ -25,7 +28,7 @@ steps:
   - task: AzureCLI@2
     displayName: Download LTW from External feed with Service Connection
     inputs:
-      azureSubscription: AuthClientAndroid-Managed-Identity-WIF-Connection
+      azureSubscription: ${{ parameters.serviceConnection }}
       scriptType: 'pscore'
       scriptLocation: 'inlineScript'
       inlineScript: |

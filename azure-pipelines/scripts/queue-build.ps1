@@ -102,7 +102,6 @@ if ($BuildNotCompleted) {
     Write-Error "Timed out waiting for Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) to complete,"
 } elseif ($($QueuedBuild.result) -eq "succeeded"){
     Write-Host "Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) completed successfully."
-
     if($BuildNumberOutputOnSuccessVar -ne "") {
         Write-Host "Setting  $BuildNumberOutputOnSuccessVar"
         Write-Host "##vso[task.setvariable variable=$($BuildNumberOutputOnSuccessVar);isOutput=true]$($QueuedBuild.buildNumber)"

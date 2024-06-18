@@ -5,6 +5,9 @@ parameters:
   - name: companyPortalVersion
     type: string
     default: '*'
+  - name: serviceConnection
+    type: string
+    default: 'AuthClientAndroid-Managed-Identity-WIF-Connection'
   - name: packageName
     type: string
     default: 'com.microsoft.windowsintune.companyportal-signed'
@@ -22,7 +25,7 @@ steps:
   - task: AzureCLI@2
     displayName: Download CP from External feed with Service Connection
     inputs:
-      azureSubscription: AuthClientAndroid-Managed-Identity-WIF-Connection
+      azureSubscription: ${{ parameters.serviceConnection }}
       scriptType: 'pscore'
       scriptLocation: 'inlineScript'
       inlineScript: |
