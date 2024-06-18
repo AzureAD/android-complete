@@ -22,15 +22,23 @@ steps:
   - script: mkdir -p brokers
     displayName: 'make brokers dir'
     workingDirectory: '$(Build.ArtifactStagingDirectory)'
-  - task: UniversalPackages@0
-    displayName: 'Download CompanyPortal from Feed'
+  - task: AzureCLI@2
+    displayName: Download CP from External feed with Service Connection
     inputs:
-      command: 'download'
-      downloadDirectory: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}'
-      feedsToUse: 'internal'
-      vstsFeed: '${{ parameters.feedName }}'
-      vstsFeedPackage: '${{ parameters.packageName }}'
-      vstsPackageVersion: '${{ parameters.companyPortalVersion }}'
+      azureSubscription: AuthClientAndroid-Managed-Identity-WIF-Connection
+      scriptType: 'pscore'
+      scriptLocation: 'inlineScript'
+      inlineScript: |
+        az artifacts universal download --organization https://msazure.visualstudio.com/ --feed Android-Broker --name ${{ parameters.packageName }} --version 5.0.628211147 --path $(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}
+#  - task: UniversalPackages@0
+#    displayName: 'Download CompanyPortal from Feed'
+#    inputs:
+#      command: 'download'
+#      downloadDirectory: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}'
+#      feedsToUse: 'internal'
+#      vstsFeed: '${{ parameters.feedName }}'
+#      vstsFeedPackage: '${{ parameters.packageName }}'
+#      vstsPackageVersion: '${{ parameters.companyPortalVersion }}'
   - publish: $(Build.ArtifactStagingDirectory)/brokers
     enabled: ${{ parameters.shouldPublishArtifact }}
     displayName: 'Publish as Artifact'
