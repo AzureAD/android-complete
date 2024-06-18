@@ -35,6 +35,12 @@ parameters:
   - name: internalFeedName
     type: string
     default: 'AndroidAdal'
+  - name: msazureFeedName
+    type: string
+    default: 'Android-Broker'
+  - name: LTWFeedName
+    type: string
+    default: 'Auth-Broker-Integrated-LTW-Build'
   - name: LTWVersion
     displayName: Link to Windows Version
     type: string
@@ -43,6 +49,10 @@ parameters:
     displayName: Old Link to Windows Version
     type: string
     default: '1.23051.78'
+  - name: serviceConnection
+    type: string
+    default: 'AuthClientAndroid-Managed-Identity-WIF-Connection'
+
 jobs:
 - job: 'download_brokers'
   displayName: Download Brokers
@@ -63,15 +73,14 @@ jobs:
     - script: mkdir brokers
       displayName: 'make brokers dir'
       workingDirectory: '$(Build.ArtifactStagingDirectory)'
-    - task: UniversalPackages@0
-      displayName: 'Download com.azure.authenticator'
+    - task: AzureCLI@2
+      displayName: Download Authenticator from External feed with Service Connection
       inputs:
-        command: 'download'
-        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
-        feedsToUse: 'internal'
-        vstsFeed: '${{ parameters.internalFeedName }}'
-        vstsFeedPackage: 'com.azure.authenticator'
-        vstsPackageVersion: '${{ parameters.authenticatorVersion }}'
+        azureSubscription: ${{ parameters.serviceConnection }}
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az artifacts universal download --organization https://msazure.visualstudio.com/ --feed ${{ parameters.msazureFeedName }} --name com.azure.authenticator --version ${{ parameters.authenticatorVersion }} --path $(Build.ArtifactStagingDirectory)/brokers
     - task: UniversalPackages@0
       displayName: 'Download old authenticator (Pre v5 Broker) version from feed'
       inputs:
@@ -81,15 +90,14 @@ jobs:
         vstsFeed: '${{ parameters.internalFeedName }}'
         vstsFeedPackage: 'com.azure.authenticator'
         vstsPackageVersion: '${{ parameters.oldAuthenticatorVersion }}'
-    - task: UniversalPackages@0
-      displayName: 'Download Latest CompanyPortal Apk'
+    - task: AzureCLI@2
+      displayName: Download CP from External feed with Service Connection
       inputs:
-        command: 'download'
-        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
-        feedsToUse: 'internal'
-        vstsFeed: '${{ parameters.internalFeedName }}'
-        vstsFeedPackage: 'com.microsoft.windowsintune.companyportal-signed'
-        vstsPackageVersion: '${{ parameters.companyPortalVersion }}'
+        azureSubscription: ${{ parameters.serviceConnection }}
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az artifacts universal download --organization https://msazure.visualstudio.com/ --feed ${{ parameters.msazureFeedName }} --name com.microsoft.windowsintune.companyportal-signed --version ${{ parameters.companyPortalVersion }} --path $(Build.ArtifactStagingDirectory)/brokers
     - task: UniversalPackages@0
       displayName: 'Download Old CompanyPortal Apk'
       inputs:
@@ -99,15 +107,14 @@ jobs:
         vstsFeed: '${{ parameters.internalFeedName }}'
         vstsFeedPackage: 'com.microsoft.windowsintune.companyportal-signed'
         vstsPackageVersion: '${{ parameters.oldCompanyPortalVersion }}'
-    - task: UniversalPackages@0
-      displayName: 'Download Latest LTW Apk'
+    - task: AzureCLI@2
+      displayName: Download LTW from External feed with Service Connection
       inputs:
-        command: 'download'
-        downloadDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
-        feedsToUse: 'internal'
-        vstsFeed: '${{ parameters.internalFeedName }}'
-        vstsFeedPackage: 'com.microsoft.appmanager'
-        vstsPackageVersion: '${{ parameters.LTWVersion }}'
+        azureSubscription: ${{ parameters.serviceConnection }}
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az artifacts universal download --organization https://microsoft.visualstudio.com/ --feed ${{ parameters.LTWFeedName }} --name com.microsoft.appmanager --version ${{ parameters.LTWVersion }} --path $(Build.ArtifactStagingDirectory)/brokers
     - script: mv ./YPC-*.apk ./LTW-signed.apk
       displayName: 'Rename LTW build to LTW-signed.apk'
       workingDirectory: '$(Build.ArtifactStagingDirectory)/brokers'
