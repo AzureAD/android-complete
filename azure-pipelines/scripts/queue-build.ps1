@@ -10,7 +10,8 @@ Param (
     [Parameter(Mandatory = $false)][int]$PollingIntervalInSeconds = 5 * 60,
     [Parameter(Mandatory = $false)][String]$BuildIdOutputVar="",
     [Parameter(Mandatory = $false)][String]$BuildNumberOutputOnSuccessVar="",
-    [Parameter(Mandatory = $false)][String]$BuildReason="ResourceTrigger"
+    [Parameter(Mandatory = $false)][String]$BuildReason="ResourceTrigger",
+    [Parameter(Mandatory = $false)][bool]$PostCompletionWait=$false
 )
 
 #request uri
@@ -97,6 +98,12 @@ do{
        throw $_.Exception
    }
 } while($BuildNotCompleted -and $BuildStartTime.AddMinutes($WaitTimeoutInMinutes) -gt (Get-Date))
+
+# Since switching to upstream feeds, noticed an issue where new version pushed to Android-Broker Feed are not available right away, causing
+# an error if we try to pull the specific version we just created.
+if ($PostCompletionWait) {
+    Start-Sleep -Seconds $PollingIntervalInSeconds
+}
 
 if ($BuildNotCompleted) {
     Write-Error "Timed out waiting for Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) to complete,"
