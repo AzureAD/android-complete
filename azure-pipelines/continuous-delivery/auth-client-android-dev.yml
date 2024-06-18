@@ -456,7 +456,7 @@ stages:
           displayName: Queue and wait for Authenticator Apk generation pipeline
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(SC-Token)" -BuildDefinitionId "$(authenticatorPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(authenticatorBranch)"  -BuildNumberOutputOnSuccessVar "authenticatorApkVersion" -PostCompletionWait $true'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "One" -PipelinePAT "$(SC-Token)" -BuildDefinitionId "$(authenticatorPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(authenticatorBranch)"  -BuildNumberOutputOnSuccessVar "authenticatorApkVersion"'
             workingDirectory: '$(Build.SourcesDirectory)'
           name: authenticatorPipelineScript
         - template: ../templates/universal-packages/pull-authenticator-from-feed.yml
@@ -475,13 +475,13 @@ stages:
       steps:
         - checkout: self
           persistCredentials: True
-#        - task: PowerShell@2
-#          displayName: Queue and wait for Company Portal Apk generation pipeline
-#          inputs:
-#            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-#            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAzure-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(companyPortalPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)''}" -Branch "$(companyPortalBranch)" -BuildNumberOutputOnSuccessVar "companyPortalApkVersion" -PostCompletionWait $true'
-#            workingDirectory: '$(Build.SourcesDirectory)'
-#          name: companyPortalPipelineScript
+        - task: PowerShell@2
+          displayName: Queue and wait for Company Portal Apk generation pipeline
+          inputs:
+            filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAzure-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(companyPortalPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)''}" -Branch "$(companyPortalBranch)" -BuildNumberOutputOnSuccessVar "companyPortalApkVersion"'
+            workingDirectory: '$(Build.SourcesDirectory)'
+          name: companyPortalPipelineScript
         - template: ../templates/universal-packages/pull-company-portal-from-feed.yml
           parameters:
             companyPortalVersion: $(companyPortalPipelineScript.companyPortalApkVersion)
@@ -513,7 +513,7 @@ stages:
           displayName: Queue and wait for Link to Windows Apk generation pipeline
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(SC-Token)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(ltwPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)" -BuildReason "UserCreated" -BuildNumberOutputOnSuccessVar "rawLtwPipelineBuildNumber" -PostCompletionWait $true'
+            arguments: '-OrganizationUrl "https://microsoft.visualstudio.com/" -Project "OS" -PipelinePAT "$(SC-Token)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(ltwPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)'', ''AdalVersion'': ''$(versionNumber)'' }" -Branch "$(LTWBranch)" -BuildReason "UserCreated" -BuildNumberOutputOnSuccessVar "rawLtwPipelineBuildNumber"'
             workingDirectory: '$(Build.SourcesDirectory)'
           name: ltwPipelineScript
         - task: PowerShell@2

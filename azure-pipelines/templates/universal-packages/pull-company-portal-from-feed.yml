@@ -1,7 +1,4 @@
 parameters:
-  - name: feedName
-    type: string
-    default: 'AndroidAdal'
   - name: artifactPath
     type: string
     default: 'brokers'
@@ -29,16 +26,7 @@ steps:
       scriptType: 'pscore'
       scriptLocation: 'inlineScript'
       inlineScript: |
-        az artifacts universal download --organization https://msazure.visualstudio.com/ --feed Android-Broker --name ${{ parameters.packageName }} --version 5.0.628211147 --path $(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}
-#  - task: UniversalPackages@0
-#    displayName: 'Download CompanyPortal from Feed'
-#    inputs:
-#      command: 'download'
-#      downloadDirectory: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}'
-#      feedsToUse: 'internal'
-#      vstsFeed: '${{ parameters.feedName }}'
-#      vstsFeedPackage: '${{ parameters.packageName }}'
-#      vstsPackageVersion: '${{ parameters.companyPortalVersion }}'
+        az artifacts universal download --organization https://msazure.visualstudio.com/ --feed Android-Broker --name ${{ parameters.packageName }} --version ${{ parameters.companyPortalVersion }} --path $(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}
   - publish: $(Build.ArtifactStagingDirectory)/brokers
     enabled: ${{ parameters.shouldPublishArtifact }}
     displayName: 'Publish as Artifact'
