@@ -99,16 +99,18 @@ do{
    }
 } while($BuildNotCompleted -and $BuildStartTime.AddMinutes($WaitTimeoutInMinutes) -gt (Get-Date))
 
-# Since switching to upstream feeds, noticed an issue where new version pushed to Android-Broker Feed are not available right away, causing
-# an error if we try to pull the specific version we just created.
-if ($PostCompletionWait) {
-    Start-Sleep -Seconds $PollingIntervalInSeconds
-}
-
 if ($BuildNotCompleted) {
     Write-Error "Timed out waiting for Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) to complete,"
 } elseif ($($QueuedBuild.result) -eq "succeeded"){
     Write-Host "Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) completed successfully."
+
+    # Since switching to upstream feeds, noticed an issue where new version pushed to Android-Broker Feed are not available right away, causing
+    # an error if we try to pull the specific version we just created.
+    if ($PostCompletionWait) {
+        Write-Host "Post completion wait..."
+        Start-Sleep -Seconds $PollingIntervalInSeconds
+    }
+
     if($BuildNumberOutputOnSuccessVar -ne "") {
         Write-Host "Setting  $BuildNumberOutputOnSuccessVar"
         Write-Host "##vso[task.setvariable variable=$($BuildNumberOutputOnSuccessVar);isOutput=true]$($QueuedBuild.buildNumber)"
