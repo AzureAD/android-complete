@@ -1,10 +1,4 @@
 parameters:
-  - name: OSServiceConnection
-    type: string
-    default: 'LTW-Integration-2'
-  - name: LTWFeedName
-    type: string
-    default: 'Auth-Broker-Integrated-LTW-Build'
   - name: LTWVersion
     type: string
     default: '*'
@@ -14,6 +8,9 @@ parameters:
   - name: packageName
     type: string
     default: 'com.microsoft.appmanager'
+  - name: serviceConnection
+    type: string
+    default: 'AuthClientAndroid-Managed-Identity-WIF-Connection'
   - name: apkName
     type: string
     default: 'LTW-signed.apk'
@@ -28,16 +25,14 @@ steps:
   - script: mkdir -p brokers
     displayName: 'make brokers dir'
     workingDirectory: '$(Build.ArtifactStagingDirectory)'
-  - task: UniversalPackages@0
-    displayName: 'Download LTW from Feed'
+  - task: AzureCLI@2
+    displayName: Download LTW from External feed with Service Connection
     inputs:
-      command: 'download'
-      downloadDirectory: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}'
-      feedsToUse: 'external'
-      externalFeedCredentials: '${{ parameters.OSServiceConnection }}'
-      feedDownloadExternal: '${{ parameters.LTWFeedName }}'
-      packageDownloadExternal: '${{ parameters.packageName }}'
-      versionDownloadExternal: '${{ parameters.LTWVersion }}'
+      azureSubscription: ${{ parameters.serviceConnection }}
+      scriptType: 'pscore'
+      scriptLocation: 'inlineScript'
+      inlineScript: |
+        az artifacts universal download --organization https://microsoft.visualstudio.com/ --feed Auth-Broker-Integrated-LTW-Build --name ${{ parameters.packageName }} --version ${{ parameters.LTWVersion }} --path $(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}
   - script: mv ./YPC-*.apk ./${{ parameters.apkName }}
     displayName: 'Rename LTW apk (${{parameters.apkName}})'
     workingDirectory: '$(Build.ArtifactStagingDirectory)/${{ parameters.artifactPath }}'
