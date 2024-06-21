@@ -16,7 +16,10 @@ steps:
         echo "Decoding and exporting certificate"
         
         # Decode base64 encoded certificate
-        echo "$LabVaultAccessCert" | base64 -d > $(Build.SourcesDirectory)/LabVaultAccessCert.pfx
+        kvSecretBytes=$(echo "$(LabVaultAccessCert)" | base64 --decode)
+
+        # Export certificate to PKCS#12 format
+        openssl pkcs12 -export -out LabVaultAccessCert.pfx -in <(echo "$kvSecretBytes")
         
         # Verify the certificate file creation
         if [ -f "$(Build.SourcesDirectory)/LabVaultAccessCert.pfx" ]; then
