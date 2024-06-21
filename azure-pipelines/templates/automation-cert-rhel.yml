@@ -18,12 +18,15 @@ steps:
         # Decode base64 encoded certificate
         echo "$LabVaultAccessCert" | base64 -d > $(Build.SourcesDirectory)/LabVaultAccessCert.pfx
         
-        cert_path=$(Build.SourcesDirectory)/LabVaultAccessCert.pfx
-        
-        if [ -f "$cert_path" ]; then
-          echo "PFX file created successfully at certpath : $cert_path"
-          echo "##vso[task.setvariable variable=LabVaultAppCert;isOutput=true]$cert_path"
+        # Verify the certificate file creation
+        if [ -f "$(Build.SourcesDirectory)/LabVaultAccessCert.pfx" ]; then
+          echo "The needed PFX file created successfully at $(Build.SourcesDirectory)/LabVaultAccessCert.pfx"
         else
-          echo "Failed to create PFX file at $cert_path"
+          echo "Failed to create the needed PFX file at $(Build.SourcesDirectory)/LabVaultAccessCert.pfx"
           exit 1
         fi
+  
+        # Set the certificate path as an environment variable for later steps
+        certPathVar=$(Build.SourcesDirectory)/LabVaultAccessCert.pfx
+        echo "##vso[task.setvariable variable=LabVaultAppCert]$certPathVar"
+        echo "##vso[task.setvariable variable=LabVaultAppCert;isOutput=true]$certPathVar"
