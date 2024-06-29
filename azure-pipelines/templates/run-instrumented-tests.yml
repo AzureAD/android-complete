@@ -32,14 +32,6 @@ parameters:
 - name: timeout
   default: 120
 
-resources:
-  repositories:
-    - repository: common
-      type: github
-      name: AzureAD/microsoft-authentication-library-common-for-android
-      ref: dev
-      endpoint: ANDROID_GITHUB
-
 jobs:
 - job:
   timeoutInMinutes: ${{ parameters.timeout }}

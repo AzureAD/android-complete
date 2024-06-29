@@ -37,14 +37,6 @@ parameters:
 - name: tokenSelection
   default: 'System.AccessToken'
 
-resources:
-  repositories:
-    - repository: common
-      type: github
-      name: AzureAD/microsoft-authentication-library-common-for-android
-      ref: dev
-      endpoint: ANDROID_GITHUB
-
 jobs:
 - job: publish${{ parameters.project }}Libraries
   displayName: ${{ parameters.project }} build & publish
