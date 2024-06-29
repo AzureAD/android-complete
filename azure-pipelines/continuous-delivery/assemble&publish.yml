@@ -42,7 +42,7 @@ jobs:
   displayName: ${{ parameters.project }} build & publish
   pool:
     ${{ if eq(parameters.agentImage, 'none') }}:
-      vmImage: Hosted Windows 2019 with VS2019
+      vmImage: ubuntu-latest
     ${{ else }}:
       name: ${{ parameters.agentImage }}
   steps:
@@ -107,7 +107,7 @@ jobs:
   timeoutInMinutes: 120
   continueOnError: true
   pool:
-    vmImage: ubuntu-latest
+    name: Hosted Windows 2019 with VS2019
   variables:
     - group: MSIDLABVARS
   steps:

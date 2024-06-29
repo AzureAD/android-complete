@@ -42,7 +42,7 @@ jobs:
     displayName: ${{ parameters.displayNamePrefix }} Running Test Suite on Firebase
     timeoutInMinutes: 90
     pool:
-      vmImage: Hosted Windows 2019 with VS2019
+      name: Hosted Windows 2019 with VS2019
     steps:
       - checkout: none
       - template: azure-pipelines/templates/steps/automation-cert.yml@common
