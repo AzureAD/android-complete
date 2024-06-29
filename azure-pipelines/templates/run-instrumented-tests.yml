@@ -32,6 +32,14 @@ parameters:
 - name: timeout
   default: 120
 
+resources:
+  repositories:
+    - repository: common
+      type: github
+      name: AzureAD/microsoft-authentication-library-common-for-android
+      ref: dev
+      endpoint: ANDROID_GITHUB
+
 jobs:
 - job:
   timeoutInMinutes: ${{ parameters.timeout }}
@@ -50,7 +58,7 @@ jobs:
     clean: true
     persistCredentials: True
     submodules: recursive
-  - template: ../templates/automation-cert.yml
+  - template: azure-pipelines/templates/steps/automation-cert.yml@common
   - script: echo "##vso[build.addbuildtag]projectVariant=$(project.variant) AndroidSystemImage=$(android.system.image)"
     displayName: Create tag
   - ${{ if ne(parameters.accessTokenKey, 'none') }}:
@@ -86,7 +94,7 @@ jobs:
   - script: |
       #!/usr/bin/env bash
       echo Push certificate to emulator
-      adb push 'LabVaultAccessCert.pfx' '/data/local/tmp/LabVaultAccessCert.pfx'
+      adb push 'LabAuth.pfx' '/data/local/tmp/LabAuth.pfx'
     displayName: 'Push certificate to emulator'
   - task: Gradle@3
     displayName: Run Instrumented Test ${{ parameters.projectName }}

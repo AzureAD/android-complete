@@ -37,6 +37,14 @@ parameters:
 - name: tokenSelection
   default: 'System.AccessToken'
 
+resources:
+  repositories:
+    - repository: common
+      type: github
+      name: AzureAD/microsoft-authentication-library-common-for-android
+      ref: dev
+      endpoint: ANDROID_GITHUB
+
 jobs:
 - job: publish${{ parameters.project }}Libraries
   displayName: ${{ parameters.project }} build & publish
@@ -135,7 +143,7 @@ jobs:
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: VSTS
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
-    - template: ../templates/automation-cert.yml
+    - template: azure-pipelines/templates/steps/automation-cert.yml@common
     - task: Gradle@3
       displayName: Run Test ${{ parameters.project }}
       enabled: ${{ parameters.shouldRunUnitTests }}
@@ -159,5 +167,5 @@ jobs:
         gitProject: ${{ parameters.repository }}
         projectName: ${{ parameters.project }}
         accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-        gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabVaultAccessCert.pfx
+        gradleOptions: -Psugar=true -PlabSecret=$(LabVaultAppCert)
         continueOnError: True

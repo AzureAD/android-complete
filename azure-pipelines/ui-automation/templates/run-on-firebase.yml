@@ -29,6 +29,14 @@ parameters:
     type: string
     default: " "
 
+resources:
+  repositories:
+    - repository: common
+      type: github
+      name: AzureAD/microsoft-authentication-library-common-for-android
+      ref: dev
+      endpoint: ANDROID_GITHUB
+
 jobs:
   - job: ${{ parameters.jobTitle }}
     displayName: ${{ parameters.displayNamePrefix }} Running Test Suite on Firebase
@@ -37,7 +45,7 @@ jobs:
       vmImage: ubuntu-latest
     steps:
       - checkout: none
-      - template: ../../templates/automation-cert.yml
+      - template: azure-pipelines/templates/steps/automation-cert.yml@common
       - task: DownloadSecureFile@1
         displayName: 'Download Firebase Service Account Key File'
         name: gcServiceAccountKey
