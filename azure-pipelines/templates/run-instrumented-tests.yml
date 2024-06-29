@@ -50,7 +50,7 @@ jobs:
     clean: true
     persistCredentials: True
     submodules: recursive
-  - template: azure-pipelines/templates/steps/automation-cert.yml@common
+  - template: ../templates/automation-cert.yml
   - script: echo "##vso[build.addbuildtag]projectVariant=$(project.variant) AndroidSystemImage=$(android.system.image)"
     displayName: Create tag
   - ${{ if ne(parameters.accessTokenKey, 'none') }}:

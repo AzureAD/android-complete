@@ -107,7 +107,7 @@ jobs:
   timeoutInMinutes: 120
   continueOnError: true
   pool:
-    name: Hosted Windows 2019 with VS2019
+    vmImage: ubuntu-latest
   variables:
     - group: MSIDLABVARS
   steps:
@@ -135,7 +135,7 @@ jobs:
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: VSTS
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
-    - template: azure-pipelines/templates/steps/automation-cert.yml@common
+    - template: ../templates/automation-cert.yml
     - task: Gradle@3
       displayName: Run Test ${{ parameters.project }}
       enabled: ${{ parameters.shouldRunUnitTests }}
@@ -159,5 +159,5 @@ jobs:
         gitProject: ${{ parameters.repository }}
         projectName: ${{ parameters.project }}
         accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-        gradleOptions: -Psugar=true -PlabSecret=$(LabVaultAppCert)
+        gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
         continueOnError: True
