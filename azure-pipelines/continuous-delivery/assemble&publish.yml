@@ -42,7 +42,7 @@ jobs:
   displayName: ${{ parameters.project }} build & publish
   pool:
     ${{ if eq(parameters.agentImage, 'none') }}:
-      vmImage: ubuntu-latest
+      vmImage: Hosted Windows 2019 with VS2019
     ${{ else }}:
       name: ${{ parameters.agentImage }}
   steps:
