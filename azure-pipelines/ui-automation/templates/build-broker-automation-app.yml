@@ -40,7 +40,7 @@ jobs:
   variables:
     - group: MSIDLABVARS
     - name: LabAppCert
-      value: "/data/local/tmp/LabVaultAccessCert.pfx"
+      value: "/data/local/tmp/LabAuth.pfx"
   steps:
     - checkout: broker
       clean: true
