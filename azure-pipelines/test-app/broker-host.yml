@@ -61,6 +61,8 @@ jobs:
   displayName: Build BrokerHost ${{ parameters.productFlavors }} ${{ parameters.signingConfigurations }} APK
   pool:
     vmImage: 'windows-latest'
+  variables:
+  - group: AndroidAuthClientAutomationSecrets
   steps:
   - checkout: self
     clean: true
