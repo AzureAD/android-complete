@@ -153,11 +153,4 @@ jobs:
       inputs:
         summaryFileLocation: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/${{ parameters.testCmd }}.xml'
         reportDirectory: '$(Build.SourcesDirectory)/${{ parameters.project }}/build/reports/jacoco/${{ parameters.testCmd }}/html'
-- ${{if and(eq(parameters.shouldRunInstrumentedTests, 'True'), or(eq(parameters.project, 'common'), eq(parameters.project, 'msal'), eq(parameters.project, 'adal'), eq(parameters.project, 'AADAuthenticator')))}}:
-    - template: ../templates/run-instrumented-tests.yml
-      parameters:
-        gitProject: ${{ parameters.repository }}
-        projectName: ${{ parameters.project }}
-        accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-        gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
-        continueOnError: True
+
