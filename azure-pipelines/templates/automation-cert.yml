@@ -7,13 +7,13 @@ steps:
     azureSubscription: 'AuthSdkResourceManager'
     KeyVaultName: 'msidlabs'
     #setting secrets filter to fetch only MSIDLABCertificate cert from the vault
-    SecretsFilter: 'LabVaultAccessCert'
+    SecretsFilter: 'LabAuth'
 - task: PowerShell@2
   displayName: Install Automation Cert
   inputs:
     targetType: inline
     script: >
-      $kvSecretBytes = [System.Convert]::FromBase64String('$(LabVaultAccessCert)')
+      $kvSecretBytes = [System.Convert]::FromBase64String('$(LabAuth)')
 
       $certCollection = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
 
@@ -21,7 +21,7 @@ steps:
 
       $protectedCertificateBytes = $certCollection.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12)
 
-      $pfxPath = '$(Build.SourcesDirectory)' + "/LabVaultAccessCert.pfx"
+      $pfxPath = '$(Build.SourcesDirectory)' + "/LabAuth.pfx"
 
       [System.IO.File]::WriteAllBytes($pfxPath, $protectedCertificateBytes)
 
