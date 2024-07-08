@@ -14,19 +14,19 @@ steps:
     targetType: inline
     script: >
       $kvSecretBytes = [System.Convert]::FromBase64String('$(LabAuth)')
-      Write-Host "Secret Bytes"
+      Write-Output "Secret Bytes"
 
       $certCollection = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
-      Write-Host "Cert Collection"
+      Write-Output "Cert Collection"
 
       $certCollection.Import($kvSecretBytes, $null, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
-      Write-Host "Import"
+      Write-Output "Import"
 
       $protectedCertificateBytes = $certCollection.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12)
-      Write-Host "Protected Bytes"
+      Write-Output "Protected Bytes"
 
       $pfxPath = '$(Build.SourcesDirectory)' + "/LabAuth.pfx"
-      Write-Host "Set Pfx Path"
+      Write-Output "Set Pfx Path"
 
       [System.IO.File]::WriteAllBytes($pfxPath, $protectedCertificateBytes)
       Write-Host "Wrote to System IO"
