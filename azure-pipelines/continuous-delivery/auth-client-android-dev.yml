@@ -63,7 +63,7 @@ parameters:
   - name: flightingValueParameter
     displayName: Broker Local Flight Json-String (not active with ECS flighting)
     type: string
-    default: '{}'
+    default: '{EnableFipsSupportForPrtV2WpjFlowRollOutV3:true}'
   - name: flagsValue
     displayName: Flags to Pass (passed to all libraries)
     type: string

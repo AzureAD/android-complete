@@ -15,23 +15,23 @@ steps:
     script: >
       $kvSecretBytes = [System.Convert]::FromBase64String('$(LabAuth)')
       
-      Write-Output 'Secret Bytes'
+      Write-Host 'Secret Bytes'
 
       $certCollection = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
       
-      Write-Output 'Cert Collection'
+      Write-Host 'Cert Collection'
 
       $certCollection.Import($kvSecretBytes, $null, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
       
-      Write-Output "Import"
+      Write-Host "Import"
 
       $protectedCertificateBytes = $certCollection.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12)
       
-      Write-Output "Protected Bytes"
+      Write-Host "Protected Bytes"
 
       $pfxPath = '$(Build.SourcesDirectory)' + "/LabAuth.pfx"
       
-      Write-Output "Set Pfx Path"
+      Write-Host "Set Pfx Path"
 
       [System.IO.File]::WriteAllBytes($pfxPath, $protectedCertificateBytes)
       
@@ -40,9 +40,9 @@ steps:
       $certPathVar = $pfxPath -replace "\\", "/"
       
       if([System.IO.File]::Exists($pfxPath)) {
-        Write-Host "PFX file created successfully at $pfxPath"
+        Write-Host "PFX file created successfully at $certPathVar"
       } else {
-        Write-Error "Failed to create PFX file at $pfxPath"
+        Write-Error "Failed to create PFX file at $certPathVar"
       } 
 
       Write-Host "##vso[task.setvariable variable=LabVaultAppCert]$certPathVar"    
