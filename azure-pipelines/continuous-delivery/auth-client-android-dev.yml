@@ -424,37 +424,34 @@ stages:
       eq(${{ parameters.shouldRunInstrumentedTests }}, 'True')
     )
   jobs:
-    - job: run_instrumented_tests
-      displayName: Promote Packages - Prerelease
-      steps:
-        - template: ../templates/run-instrumented-tests.yml
-          parameters:
-            gitProject: msal
-            projectName: msal
-            accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-            gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
-            continueOnError: True
-        - template: ../templates/run-instrumented-tests.yml
-          parameters:
-            gitProject: common
-            projectName: common
-            accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-            gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
-            continueOnError: True
-        - template: ../templates/run-instrumented-tests.yml
-          parameters:
-            gitProject: broker
-            projectName: AADAuthenticator
-            accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-            gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
-            continueOnError: True
-        - template: ../templates/run-instrumented-tests.yml
-          parameters:
-            gitProject: adal
-            projectName: adal
-            accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-            gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
-            continueOnError: True
+    - template: ../templates/run-instrumented-tests.yml
+      parameters:
+        gitProject: msal
+        projectName: msal
+        accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+        gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
+        continueOnError: True
+    - template: ../templates/run-instrumented-tests.yml
+      parameters:
+        gitProject: common
+        projectName: common
+        accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+        gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
+        continueOnError: True
+    - template: ../templates/run-instrumented-tests.yml
+      parameters:
+        gitProject: broker
+        projectName: AADAuthenticator
+        accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+        gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
+        continueOnError: True
+    - template: ../templates/run-instrumented-tests.yml
+      parameters:
+        gitProject: adal
+        projectName: adal
+        accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+        gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
+        continueOnError: True
 
 # Promote published packages
 - stage: 'promotePackages'
