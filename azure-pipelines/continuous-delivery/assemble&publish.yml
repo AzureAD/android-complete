@@ -26,9 +26,6 @@ parameters:
 - name: shouldRunUnitTests
   type: boolean
   default: True
-- name: shouldRunInstrumentedTests
-  type: boolean
-  default: True
 - name: testParams
   default: ''
 - name: publishLibraryArtifacts
