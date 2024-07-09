@@ -409,7 +409,7 @@ stages:
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 
 # Run Instrumented Tests
-- stage: 'promotePackages'
+- stage: 'runInstrumentedTests'
   displayName: Run Instrumented Tests
   dependsOn:
     - publishMsal
