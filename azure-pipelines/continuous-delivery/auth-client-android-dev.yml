@@ -72,8 +72,12 @@ parameters:
     displayName: Run E2E UI Validation?
     type: boolean
     default: False
-  - name: shouldRunUnitAndInstrumentedTests
-    displayName: Run Unit and Instrumented Tests?
+  - name: shouldRunUnitTests
+    displayName: Run Unit Tests?
+    type: boolean
+    default: True
+  - name: shouldRunInstrumentedTests
+    displayName: Run Instrumented Tests?
     type: boolean
     default: True
   - name: shouldEnableBrokerSelectionAndDiscoveryFlag
@@ -216,8 +220,7 @@ stages:
       publishParams: $(projVersionParam) $(flagVariable) -PmockApiUrl=$(MOCK_API_URL)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
@@ -243,8 +246,7 @@ stages:
       publishParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
@@ -268,8 +270,7 @@ stages:
       publishParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable) $(flightVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
@@ -298,8 +299,7 @@ stages:
       publishParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Linux Broker - Build and publish
 - stage: 'publishLinuxBrokeLibraries'
@@ -323,8 +323,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true $(flagVariable) -Psystemd_mode_enabled=false --build-cache --info
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
   - job: PublishLinuxBrokerPackage
     dependsOn: publishLinuxBrokerLibraries
@@ -382,8 +381,7 @@ stages:
       publishParams: $(projVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Adal - Build and publish
 - stage: 'publishAdal'
@@ -407,9 +405,49 @@ stages:
       publishParams: $(projVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
+
+# Run Instrumented Tests
+- stage: 'runInstrumentedTests'
+  displayName: Run Instrumented Tests
+  dependsOn: setupStage
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.shouldRunInstrumentedTests }}, 'True')
+    )
+  jobs:
+    - template: ../templates/run-instrumented-tests.yml
+      parameters:
+        gitProject: msal
+        projectName: msal
+        accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+        gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
+        continueOnError: True
+    - template: ../templates/run-instrumented-tests.yml
+      parameters:
+        gitProject: common
+        projectName: common
+        accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+        gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
+        continueOnError: True
+    - template: ../templates/run-instrumented-tests.yml
+      parameters:
+        gitProject: broker
+        projectName: AADAuthenticator
+        accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+        gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
+        continueOnError: True
+    - template: ../templates/run-instrumented-tests.yml
+      parameters:
+        gitProject: adal
+        projectName: adal
+        accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+        gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
+        continueOnError: True
 
 # Promote published packages
 - stage: 'promotePackages'
