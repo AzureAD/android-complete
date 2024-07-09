@@ -411,11 +411,7 @@ stages:
 # Run Instrumented Tests
 - stage: 'runInstrumentedTests'
   displayName: Run Instrumented Tests
-  dependsOn:
-    - publishMsal
-    - publishAdal
-    - publishCommonLibraries
-    - publishBrokerLibraries
+  dependsOn: setupStage
   condition: |
     and
     (
