@@ -303,7 +303,7 @@ stages:
     - old_test_apps
   displayName: Running MSAL with Broker Test Plan (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
-    - template: ./templates/run-on-firebase-with-flank.yml
+    - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-RC-LocalApk/$(msalAppLocalBrokerHost)"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-RC-LocalApk/$(msaltestAppLocalBrokerHost)"
@@ -344,7 +344,7 @@ stages:
     - old_test_apps
   displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
-    - template: ./templates/run-on-firebase-with-flank.yml
+    - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msalApp)"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msaltestApp)"
