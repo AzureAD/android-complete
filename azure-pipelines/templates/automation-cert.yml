@@ -7,30 +7,42 @@ steps:
     azureSubscription: 'AuthSdkResourceManager'
     KeyVaultName: 'msidlabs'
     #setting secrets filter to fetch only MSIDLABCertificate cert from the vault
-    SecretsFilter: 'LabVaultAccessCert'
+    SecretsFilter: 'LabAuth'
 - task: PowerShell@2
   displayName: Install Automation Cert
   inputs:
     targetType: inline
     script: >
-      $kvSecretBytes = [System.Convert]::FromBase64String('$(LabVaultAccessCert)')
+      $kvSecretBytes = [System.Convert]::FromBase64String('$(LabAuth)')
+      
+      Write-Host 'Secret Bytes'
 
       $certCollection = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2Collection
+      
+      Write-Host 'Cert Collection'
 
       $certCollection.Import($kvSecretBytes, $null, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
+      
+      Write-Host "Import"
 
       $protectedCertificateBytes = $certCollection.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pkcs12)
+      
+      Write-Host "Protected Bytes"
 
-      $pfxPath = '$(Build.SourcesDirectory)' + "/LabVaultAccessCert.pfx"
+      $pfxPath = '$(Build.SourcesDirectory)' + "/LabAuth.pfx"
+      
+      Write-Host "Set Pfx Path"
 
       [System.IO.File]::WriteAllBytes($pfxPath, $protectedCertificateBytes)
+      
+      Write-Host "Wrote to System IO"
 
       $certPathVar = $pfxPath -replace "\\", "/"
       
       if([System.IO.File]::Exists($pfxPath)) {
-        Write-Host "PFX file created successfully at $pfxPath"
+        Write-Host "PFX file created successfully at $certPathVar"
       } else {
-        Write-Error "Failed to create PFX file at $pfxPath"
+        Write-Error "Failed to create PFX file at $certPathVar"
       } 
 
       Write-Host "##vso[task.setvariable variable=LabVaultAppCert]$certPathVar"    

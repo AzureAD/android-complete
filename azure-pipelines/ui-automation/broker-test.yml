@@ -79,7 +79,7 @@ parameters:
 - name: flankShards
   displayName: Max Number of Flank Shards
   type: number
-  default: 2
+  default: 3
 - name: authenticatorVersion
   displayName: Authenticator Version
   type: string
@@ -123,7 +123,7 @@ parameters:
 - name: oldOneAuthTestAppVersion
   displayName: Old OneAuth Test App Version
   type: string
-  default: '0.0.4'
+  default: '0.0.5'
 - name: preInstallLtw
   displayName: Preinstall Link to Windows
   type: boolean
@@ -286,7 +286,7 @@ stages:
                       /sdcard/Teams.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(teamsApk),\
                       /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
                       /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp),\
-                      /data/local/tmp/LabVaultAccessCert.pfx=$(Build.SourcesDirectory)/LabVaultAccessCert.pfx"
+                      /data/local/tmp/LabAuth.pfx=$(Build.SourcesDirectory)/LabAuth.pfx"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "$(test_run_prefix)Broker(MSAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
@@ -303,7 +303,7 @@ stages:
     - old_test_apps
   displayName: Running MSAL with Broker Test Plan (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }})
   jobs:
-    - template: ./templates/run-on-firebase.yml
+    - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-RC-LocalApk/$(msalAppLocalBrokerHost)"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-BrokerHost-RC-LocalApk/$(msaltestAppLocalBrokerHost)"
@@ -327,11 +327,12 @@ stages:
                       /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                       /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp),\
-                      /data/local/tmp/LabVaultAccessCert.pfx=$(Build.SourcesDirectory)/LabVaultAccessCert.pfx"
+                      /data/local/tmp/LabAuth.pfx=$(Build.SourcesDirectory)/LabAuth.pfx"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "$(test_run_prefix)Broker(MSAL) UI Automation - Build (BrokerHost Tests) (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"
         extraTarget: "notAnnotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus, annotation com.microsoft.identity.client.ui.automation.annotations.LocalBrokerHostDebugUiTest"
+        flankShards: ${{ parameters.flankShards }}
 # MSAL with Broker Test Plan stage (API 29-)
 - stage: 'msal_with_broker_low_api'
   dependsOn:
@@ -343,7 +344,7 @@ stages:
     - old_test_apps
   displayName: Running MSAL with Broker Test Plan (API ${{ parameters.firebaseDeviceAndroidVersionLow }})
   jobs:
-    - template: ./templates/run-on-firebase.yml
+    - template: ./templates/flank/run-on-firebase-with-flank.yml
       parameters:
         automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msalApp)"
         automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msaltestApp)"
@@ -367,11 +368,12 @@ stages:
                       /sdcard/OneAuthTestApp.apk=$(Pipeline.WorkSpace)/oneauthtestapp/arm64-v8a_signed_APK/$(oneAuthTestApp),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                       /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp),\
-                      /data/local/tmp/LabVaultAccessCert.pfx=$(Build.SourcesDirectory)/LabVaultAccessCert.pfx"
+                      /data/local/tmp/LabAuth.pfx=$(Build.SourcesDirectory)/LabAuth.pfx"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdLow }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionLow }}
         testRunTitle: "$(test_run_prefix)Broker(MSAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionLow }}) # $(Build.BuildNumber)"
         extraTarget: "annotation com.microsoft.identity.client.ui.automation.annotations.RunOnAPI29Minus"
+        flankShards: ${{ parameters.flankShards }}
 # ADAL with Broker (API 30+)
 - stage: 'adal_with_broker_high_api'
   dependsOn:
@@ -405,7 +407,7 @@ stages:
                       /sdcard/Word.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(wordApk),\
                       /sdcard/Edge.apk=$(Pipeline.WorkSpace)/firstpartyapks/$(edgeApk),\
                       /sdcard/MsalTestApp.apk=$(Pipeline.WorkSpace)/msalE2ETestApp/$(msalE2ETestApp),\
-                      /data/local/tmp/LabVaultAccessCert.pfx=$(Build.SourcesDirectory)/LabVaultAccessCert.pfx"
+                      /data/local/tmp/LabAuth.pfx=$(Build.SourcesDirectory)/LabAuth.pfx"
         firebaseDeviceId: ${{ parameters.firebaseDeviceIdHigh }}
         firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersionHigh }}
         testRunTitle: "$(test_run_prefix)Broker(ADAL) UI Automation - Build (API ${{ parameters.firebaseDeviceAndroidVersionHigh }}) # $(Build.BuildNumber)"

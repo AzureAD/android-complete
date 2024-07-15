@@ -63,7 +63,7 @@ parameters:
   - name: flightingValueParameter
     displayName: Broker Local Flight Json-String (not active with ECS flighting)
     type: string
-    default: '{}'
+    default: '{EnableFipsSupportForPrtV2WpjFlowRollOutV3:true}'
   - name: flagsValue
     displayName: Flags to Pass (passed to all libraries)
     type: string
@@ -72,8 +72,12 @@ parameters:
     displayName: Run E2E UI Validation?
     type: boolean
     default: False
-  - name: shouldRunUnitAndInstrumentedTests
-    displayName: Run Unit and Instrumented Tests?
+  - name: shouldRunUnitTests
+    displayName: Run Unit Tests?
+    type: boolean
+    default: True
+  - name: shouldRunInstrumentedTests
+    displayName: Run Instrumented Tests?
     type: boolean
     default: True
   - name: shouldEnableBrokerSelectionAndDiscoveryFlag
@@ -212,12 +216,11 @@ stages:
       testCmd: common4jUnitTestCoverageReport
       dependencyParams: $(javaProjectDependencyParam)
       assembleParams: $(projVersionParam) $(flagVariable) -PmockApiUrl=$(MOCK_API_URL)
-      testParams: $(projVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=$(MOCK_API_URL)
+      testParams: $(projVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=$(MOCK_API_URL) -PnativeAuthSSPRTestsUsernameValue=$(NativeAuthSSPRTestsUsernameValue) -PnativeAuthSignInTestsUsernameValue=$(NativeAuthSignInTestsUsernameValue) -PnativeAuthLabsEmailPasswordAppIdValue=$(NativeAuthLabsEmailPasswordAppId) -PnativeAuthLabsAuthorityUrlValue=$(NativeAuthLabsAuthorityUrlValue) -PnativeAuthEmployeeWriteAllScopeValue=$(NativeAuthEmployeeWriteAllScopeValue) -PnativeAuthEmployeeReadAllScopeValue=$(NativeAuthEmployeeReadAllScopeValue) -PnativeAuthCustomerWriteAllScopeValue=$(NativeAuthCustomerWriteAllScopeValue) -PnativeAuthCustomerReadAllScopeValue=$(NativeAuthCustomerReadAllScopeValue) -PnativeAuthInvalidScopeValue=$(NativeAuthInvalidValue)
       publishParams: $(projVersionParam) $(flagVariable) -PmockApiUrl=$(MOCK_API_URL)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Common - Build and publish
 - stage: 'publishCommonLibraries'
@@ -239,12 +242,11 @@ stages:
       publishCmd: publish
       dependencyParams:  $(common4jVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable)
-      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=$(MOCK_API_URL)
+      testParams: $(projVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=$(MOCK_API_URL) -PnativeAuthSSPRTestsUsernameValue=$(NativeAuthSSPRTestsUsernameValue) -PnativeAuthSignInTestsUsernameValue=$(NativeAuthSignInTestsUsernameValue) -PnativeAuthLabsEmailPasswordAppIdValue=$(NativeAuthLabsEmailPasswordAppId) -PnativeAuthLabsAuthorityUrlValue=$(NativeAuthLabsAuthorityUrlValue) -PnativeAuthEmployeeWriteAllScopeValue=$(NativeAuthEmployeeWriteAllScopeValue) -PnativeAuthEmployeeReadAllScopeValue=$(NativeAuthEmployeeReadAllScopeValue) -PnativeAuthCustomerWriteAllScopeValue=$(NativeAuthCustomerWriteAllScopeValue) -PnativeAuthCustomerReadAllScopeValue=$(NativeAuthCustomerReadAllScopeValue) -PnativeAuthInvalidScopeValue=$(NativeAuthInvalidValue)
       publishParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDCOMMON_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDCOMMON_ACCESSTOKEN
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Broker4j - Build and publish
 - stage: 'publishBroke4jLibraries'
@@ -268,8 +270,7 @@ stages:
       publishParams: $(projVersionParam) $(common4jVersionParam) $(flagVariable) $(flightVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Broker - Build and publish
 - stage: 'publishBrokerLibraries'
@@ -298,9 +299,7 @@ stages:
       publishParams: -PprojVersion=$(brokerVersionNumber) $(broker4jVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
-      agentImage: 1ES-AndroidPool-EOC
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Linux Broker - Build and publish
 - stage: 'publishLinuxBrokeLibraries'
@@ -324,8 +323,7 @@ stages:
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADACCOUNTS_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
       testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true $(flagVariable) -Psystemd_mode_enabled=false --build-cache --info
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
   - job: PublishLinuxBrokerPackage
     dependsOn: publishLinuxBrokerLibraries
@@ -379,12 +377,11 @@ stages:
       publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository 
       dependencyParams: $(commonVersionParam) $(androidProjectDependencyParam)
       assembleParams: $(projVersionParam) $(commonVersionParam) $(flagVariable)
-      testParams: $(projVersionParam) $(commonVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=$(MOCK_API_URL)
+      testParams: $(projVersionParam) $(commonVersionParam) $(common4jVersionParam) -Psugar=true $(flagVariable) -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true -PmockApiUrl=$(MOCK_API_URL) -PnativeAuthSSPRTestsUsernameValue=$(NativeAuthSSPRTestsUsernameValue) -PnativeAuthSignInTestsUsernameValue=$(NativeAuthSignInTestsUsernameValue) -PnativeAuthLabsEmailPasswordAppIdValue=$(NativeAuthLabsEmailPasswordAppId) -PnativeAuthLabsAuthorityUrlValue=$(NativeAuthLabsAuthorityUrlValue) -PnativeAuthEmployeeWriteAllScopeValue=$(NativeAuthEmployeeWriteAllScopeValue) -PnativeAuthEmployeeReadAllScopeValue=$(NativeAuthEmployeeReadAllScopeValue) -PnativeAuthCustomerWriteAllScopeValue=$(NativeAuthCustomerWriteAllScopeValue) -PnativeAuthCustomerReadAllScopeValue=$(NativeAuthCustomerReadAllScopeValue) -PnativeAuthInvalidScopeValue=$(NativeAuthInvalidValue)
       publishParams: $(projVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 # Adal - Build and publish
 - stage: 'publishAdal'
@@ -408,9 +405,49 @@ stages:
       publishParams: $(projVersionParam) $(commonVersionParam) $(flagVariable)
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROIDADAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROIDADAL_ACCESSTOKEN
-      shouldRunUnitTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
-      shouldRunInstrumentedTests: ${{ parameters.shouldRunUnitAndInstrumentedTests }}
+      shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
+
+# Run Instrumented Tests
+- stage: 'runInstrumentedTests'
+  displayName: Run Instrumented Tests
+  dependsOn: setupStage
+  condition: |
+    and
+    (
+      not(failed()),
+      not(canceled()),
+      eq(${{ parameters.shouldRunInstrumentedTests }}, 'True')
+    )
+  jobs:
+    - template: ../templates/run-instrumented-tests.yml
+      parameters:
+        gitProject: msal
+        projectName: msal
+        accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+        gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
+        continueOnError: True
+    - template: ../templates/run-instrumented-tests.yml
+      parameters:
+        gitProject: common
+        projectName: common
+        accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+        gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
+        continueOnError: True
+    - template: ../templates/run-instrumented-tests.yml
+      parameters:
+        gitProject: broker
+        projectName: AADAuthenticator
+        accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+        gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
+        continueOnError: True
+    - template: ../templates/run-instrumented-tests.yml
+      parameters:
+        gitProject: adal
+        projectName: adal
+        accessTokenKey: ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN
+        gradleOptions: -Psugar=true -PlabSecret=/data/local/tmp/LabAuth.pfx
+        continueOnError: True
 
 # Promote published packages
 - stage: 'promotePackages'
@@ -475,11 +512,15 @@ stages:
       steps:
         - checkout: self
           persistCredentials: True
+        - template: ../templates/token-from-service-connection.yml
+          parameters:
+            serviceConnection: AuthClientAndroid-Managed-Identity-WIF-Connection
+            tokenVariableName: SC-Token
         - task: PowerShell@2
           displayName: Queue and wait for Company Portal Apk generation pipeline
           inputs:
             filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
-            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(MSAzure-PAT)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(companyPortalPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)''}" -Branch "$(companyPortalBranch)" -BuildNumberOutputOnSuccessVar "companyPortalApkVersion"'
+            arguments: '-OrganizationUrl "https://msazure.visualstudio.com/" -Project "Intune" -PipelinePAT "$(SC-Token)" -WaitTimeoutInMinutes 120 -BuildDefinitionId "$(companyPortalPipelineId)" -PipelineVariablesJson "{ ''AdAccountsVersion'': ''$(brokerVersionNumber)'', ''CommonVersion'': ''$(versionNumber)'', ''MsalVersion'': ''$(versionNumber)''}" -Branch "$(companyPortalBranch)" -BuildNumberOutputOnSuccessVar "companyPortalApkVersion"'
             workingDirectory: '$(Build.SourcesDirectory)'
           name: companyPortalPipelineScript
         - template: ../templates/universal-packages/pull-company-portal-from-feed.yml

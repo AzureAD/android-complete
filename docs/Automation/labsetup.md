@@ -40,7 +40,7 @@ Read through the steps below to obtain the certificate required for the lab auto
 3. Search for the KeyVault named "**MSIDLABS**" (be sure to select "all" for the subcription, location etc filters)
 4. Click into the **MSIDLABS** keyvault
 5. Under Objects, click on certificates
-6. Click on the **LabVaultAccessCert** to open the cert in detail view
+6. Click on the **LabAuth** to open the cert in detail view
 7. Click on the current version to view details about the current version
 8. Download it on your local machine in the PFX format
 9. After download, double click on the cert file to install on your machine
