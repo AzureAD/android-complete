@@ -6,7 +6,7 @@ steps:
     inputs:
       azureSubscription: 'AuthSdkResourceManager'
       KeyVaultName: 'msidlabs'
-      SecretsFilter: 'LabVaultAccessCert'
+      SecretsFilter: 'LabAuth'
 
   - task: Bash@3
     displayName: Install Automation Cert
@@ -16,24 +16,24 @@ steps:
         echo "Decoding and exporting certificate"
         
         # Decode base64 encoded certificate
-         kvSecretBytes=$(echo "$(LabVaultAccessCert)" | tr -d '\r' | base64 -d)
+         kvSecretBytes=$(echo "$(LabAuth)" | tr -d '\r' | base64 -d)
 
         # Write decoded bytes to a temporary file
-        echo "$kvSecretBytes" > LabVaultAccessCert.pem
+        echo "$kvSecretBytes" > LabAuth.pem
   
         # Export certificate to PKCS#12 format
-        openssl pkcs12 -export -out LabVaultAccessCert.pfx -inkey LabVaultAccessCert.pem -in LabVaultAccessCert.pem -passout pass:
+        openssl pkcs12 -export -out LabAuth.pfx -inkey LabAuth.pem -in LabAuth.pem -passout pass:
         
       
         # Verify the certificate file creation
-        if [ -f "$(Build.SourcesDirectory)/LabVaultAccessCert.pfx" ]; then
-          echo "The needed PFX file created successfully at $(Build.SourcesDirectory)/LabVaultAccessCert.pfx"
+        if [ -f "$(Build.SourcesDirectory)/LabAuth.pfx" ]; then
+          echo "The needed PFX file created successfully at $(Build.SourcesDirectory)/LabAuth.pfx"
         else
-          echo "Failed to create the needed PFX file at $(Build.SourcesDirectory)/LabVaultAccessCert.pfx"
+          echo "Failed to create the needed PFX file at $(Build.SourcesDirectory)/LabAuth.pfx"
           exit 1
         fi
   
         # Set the certificate path as an environment variable for later steps
-        certPathVar=$(Build.SourcesDirectory)/LabVaultAccessCert.pfx
+        certPathVar=$(Build.SourcesDirectory)/LabAuth.pfx
         echo "##vso[task.setvariable variable=LabVaultAppCert]$certPathVar"
         echo "##vso[task.setvariable variable=LabVaultAppCert;isOutput=true]$certPathVar"
