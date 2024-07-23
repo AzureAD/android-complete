@@ -134,11 +134,13 @@ variables:
     trustDebugBrokerParam: -PtrustDebugBrokerFlag
   ${{ else }}:
     trustDebugBrokerParam: ''
-  ${{ if parameters.treatTestAppAsPartOfTSL }}:
+  ${{ if or(parameters.treatTestAppAsPartOfTSL, eq( variables['Build.Reason'], 'Schedule')) }}:
     bypassRedirectUriCheckParam: -PbypassRedirectUriCheck
-    treatTestAppAsPartOfTSLParam: -PtreatTestAppAsPartOfTSL
   ${{ else }}:
     bypassRedirectUriCheckParam: ''
+  ${{ if parameters.treatTestAppAsPartOfTSL }}:
+    treatTestAppAsPartOfTSLParam: -PtreatTestAppAsPartOfTSL
+  ${{ else }}:
     treatTestAppAsPartOfTSLParam: ''
   brokerHostPackageVersionCounter: $[counter(1, 10000)]
 
