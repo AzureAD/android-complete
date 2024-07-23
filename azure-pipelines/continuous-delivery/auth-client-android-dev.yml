@@ -130,11 +130,11 @@ variables:
   ${{ else }}:
     enableBrokerSelectionParam: ''
     enableBrokerDiscoveryParam: ''
-  ${{ if or(parameters.shouldTrustDebugBroker, eq( variables['Build.Reason'], 'Schedule')) }}:
+  ${{ if parameters.shouldTrustDebugBroker }}:
     trustDebugBrokerParam: -PtrustDebugBrokerFlag
   ${{ else }}:
     trustDebugBrokerParam: ''
-  ${{ if or(parameters.treatTestAppAsPartOfTSL, eq( variables['Build.Reason'], 'Schedule')) }}:
+  ${{ if parameters.treatTestAppAsPartOfTSL }}:
     bypassRedirectUriCheckParam: -PbypassRedirectUriCheck
     treatTestAppAsPartOfTSLParam: -PtreatTestAppAsPartOfTSL
   ${{ else }}:
