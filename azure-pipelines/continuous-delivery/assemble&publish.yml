@@ -110,6 +110,7 @@ jobs:
   steps:
     - checkout: ${{ parameters.repository }}
       persistCredentials: True
+    - template: ../templates/automation-cert.yml
     - task: Bash@3
       condition: eq('${{ parameters.project }}', 'LinuxBroker')
       retryCountOnTaskFailure: 3
@@ -132,8 +133,8 @@ jobs:
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: VSTS
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
-    - template: ../templates/automation-cert.yml
     - task: Gradle@3
+      condition: ne('${{ parameters.project }}', 'LinuxBroker')
       displayName: Run Test ${{ parameters.project }}
       enabled: ${{ parameters.shouldRunUnitTests }}
       continueOnError: true
