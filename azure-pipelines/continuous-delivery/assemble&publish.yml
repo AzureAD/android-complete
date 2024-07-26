@@ -129,10 +129,16 @@ jobs:
           eval $(dbus-launch --sh-syntax)
           sudo apt install gnome-keyring
           /usr/bin/gnome-keyring-daemon --start --components=secrets
-          ./gradlew LinuxBroker:linuxBrokerUnitTestCoverageReport ${{ parameters.testParams}}
+          ./gradlew LinuxBroker:linuxBrokerUnitTestCoverageReport ${{ parameters.testParams}} -PlabSecret=$(LabVaultAppCert)
       env:
         ${{ parameters.vstsMvnAndroidUsername }}: VSTS
         ${{ parameters.vstsMvnAndroidAccessToken }}: $(${{ parameters.tokenSelection }})
+    - task: PublishTestResults@2
+      condition: and(succeededOrFailed(), eq('${{ parameters.project }}', 'LinuxBroker'))
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/TEST-*.xml'
+        searchFolder: 'LinuxBroker'
     - task: Gradle@3
       condition: ne('${{ parameters.project }}', 'LinuxBroker')
       displayName: Run Test ${{ parameters.project }}
