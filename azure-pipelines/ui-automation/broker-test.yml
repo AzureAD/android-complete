@@ -294,7 +294,7 @@ stages:
         flankShards: ${{ parameters.flankShards }}
 # MSAL with Broker Test Plan stage (BrokerHost Tests) (API 30+)
 - stage: 'msal_with_brokerhost_high_api'
-  condition: eq(variables['test_run_prefix'], 'false')
+  condition: eq(variables['test_run_prefix'], 'true')
   dependsOn:
     - msalautomationapplocalbrokerhost
     - brokers_azure_sample
