@@ -50,7 +50,6 @@ jobs:
     clean: true
     persistCredentials: True
     submodules: recursive
-  - template: ../templates/automation-cert.yml
   - script: echo "##vso[build.addbuildtag]projectVariant=$(project.variant) AndroidSystemImage=$(android.system.image)"
     displayName: Create tag
   - ${{ if ne(parameters.accessTokenKey, 'none') }}:
@@ -83,6 +82,7 @@ jobs:
 
       echo "Emulator started"
     displayName: 'Starting android emulator'
+  - template: ../templates/automation-cert.yml
   - script: |
       #!/usr/bin/env bash
       echo Push certificate to emulator
