@@ -123,6 +123,7 @@ variables:
   companyPortalPipelineId: 237827
   ltwPipelineId: 44201
   brokerAutomationPipelineId: 1490
+  linuxE2EPipelineId: 2595
   # We add these flags during scheduled runs, they will be dropped depending on the day of the week
   ${{ if or(parameters.shouldEnableBrokerSelectionAndDiscoveryFlag, eq( variables['Build.Reason'], 'Schedule')) }}:
     enableBrokerSelectionParam: -PbrokerSelectionEnabledFlag
@@ -327,8 +328,32 @@ stages:
       testParams: $(common4jVersionParam) $(broker4jVersionParam) -PcodeCoverageEnabled=true $(flagVariable) -Psystemd_mode_enabled=false --build-cache --info
       shouldRunUnitTests: ${{ parameters.shouldRunUnitTests }}
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
+  - job: LinuxE2EValidation
+    displayName: Run Linux E2E Pipeline
+    condition: ${{ parameters.shouldRunUnitTests }}
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+      - checkout: self
+        persistCredentials: True
+      - task: PowerShell@2
+        displayName: Queue and wait for Broker E2E Automation pipeline
+        continueOnError: true
+        inputs:
+          filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/queue-build.ps1'
+          arguments: '-OrganizationUrl "https://identitydivision.visualstudio.com/" -Project "Engineering" -PipelinePAT "$env:SYSTEM_ACCESSTOKEN" -BuildDefinitionId $(linuxE2EPipelineId) -BuildIdOutputVar "linuxE2EBuildId"'
+          workingDirectory: '$(Build.SourcesDirectory)'
+        env:
+          SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      - task: PowerShell@2
+        displayName: Import Linux E2E Automation Results
+        inputs:
+          filePath: '$(Build.SourcesDirectory)/azure-pipelines/scripts/import-testResults.ps1'
+          arguments: '-AdoPAT "$env:SYSTEM_ACCESSTOKEN" -SourceBuildId $(linuxE2EBuildId) -TargetBuildId $(Build.BuildId)'
+          workingDirectory: '$(Build.SourcesDirectory)'
+        env:
+          SYSTEM_ACCESSTOKEN: $(System.AccessToken)
   - job: PublishLinuxBrokerPackage
-    dependsOn: publishLinuxBrokerLibraries
     displayName: Publish Linux Broker Package
     pool:
       vmImage: ubuntu-latest
