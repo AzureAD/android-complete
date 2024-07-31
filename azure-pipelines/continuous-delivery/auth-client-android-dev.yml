@@ -22,6 +22,11 @@ schedules:
 
 resources:
   repositories:
+    - repository: android-complete
+      type: github
+      name: AzureAD/android-complete
+      ref: master
+      endpoint: ANDROID_GITHUB
     - repository: common
       type: github
       name: AzureAD/microsoft-authentication-library-common-for-android
