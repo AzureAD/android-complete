@@ -30,7 +30,7 @@ resources:
     - repository: broker
       type: github
       name: AzureAD/ad-accounts-for-android
-      ref: dev
+      ref: fadi/linux-pipe
       endpoint: ANDROID_GITHUB
     - repository: msal
       type: github
