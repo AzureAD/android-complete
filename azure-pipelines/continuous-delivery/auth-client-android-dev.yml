@@ -334,7 +334,7 @@ stages:
       publishLibraryArtifacts: ${{ parameters.publishLibraryArtifacts }}
 
   # Run Linux E2E if boolean is set to true
-  ${{ if parameters.shouldRunLinuxE2ETests }}:
+  - ${{ if parameters.shouldRunLinuxE2ETests }}:
     - checkout: broker
       persistCredentials: True
     - template: azure-pipelines/templates/produce-deb.yml@broker
