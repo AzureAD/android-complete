@@ -352,7 +352,6 @@ stages:
         vmImage: ubuntu-20.04
         installProdBrokerFromLocalFile: False
         dependsOn: [ build_deb_ubuntu20 ]
-        certScriptPath: azure-pipelines/templates/automation-cert.yml
     - template: azure-pipelines/templates/produce-deb.yml@broker
       parameters:
         project: LinuxBrokerPackage
@@ -365,7 +364,6 @@ stages:
         vmImage: ubuntu-22.04
         installProdBrokerFromLocalFile: False
         dependsOn: [ build_deb_ubuntu22 ]
-        certScriptPath: azure-pipelines/templates/automation-cert.yml
 
     # End of Linux E2E If Statement
 
