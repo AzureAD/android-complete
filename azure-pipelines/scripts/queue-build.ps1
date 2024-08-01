@@ -100,7 +100,7 @@ do{
 
 if ($BuildNotCompleted) {
     Write-Error "Timed out waiting for Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) to complete,"
-} elseif ($($QueuedBuild.result) -eq "succeeded"){
+} elseif (($($QueuedBuild.result) -eq "succeeded") -Or ($($QueuedBuild.result) -eq "partiallySucceeded")){
     Write-Host "Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) completed successfully."
     if($BuildNumberOutputOnSuccessVar -ne "") {
         Write-Host "Setting  $BuildNumberOutputOnSuccessVar"
