@@ -10,6 +10,7 @@ Param (
     [Parameter(Mandatory = $false)][int]$PollingIntervalInSeconds = 5 * 60,
     [Parameter(Mandatory = $false)][String]$BuildIdOutputVar="",
     [Parameter(Mandatory = $false)][String]$BuildNumberOutputOnSuccessVar="",
+    [Parameter(Mandatory = $false)][bool]$AllowPartialSuccess=$false,
     [Parameter(Mandatory = $false)][String]$BuildReason="ResourceTrigger"
 )
 
@@ -100,7 +101,7 @@ do{
 
 if ($BuildNotCompleted) {
     Write-Error "Timed out waiting for Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) to complete,"
-} elseif ($($QueuedBuild.result) -eq "succeeded"){
+} elseif ( ($($QueuedBuild.result) -eq "succeeded") -or ( ($AllowPartialSuccess) -and ($($QueuedBuild.result) -eq "partiallySucceeded") ){
     Write-Host "Build $($baseUri)_build/results?buildId=$($QueuedBuild.id) completed successfully."
     if($BuildNumberOutputOnSuccessVar -ne "") {
         Write-Host "Setting  $BuildNumberOutputOnSuccessVar"
