@@ -15,7 +15,7 @@ schedules:
   - cron: 0 3 * * *
     branches:
       include:
-        - test/automation
+        - master
     always: true
 
 parameters:
@@ -44,7 +44,7 @@ resources:
   - repository: azuresample
     type: github
     name: Azure-Samples/ms-identity-android-java
-    ref: master
+    ref: test/automation
     endpoint: ANDROID_GITHUB
   - repository: common
     type: github
