@@ -15,7 +15,7 @@ schedules:
   - cron: 0 3 * * *
     branches:
       include:
-        - master
+        - test/automation
     always: true
 
 parameters:
