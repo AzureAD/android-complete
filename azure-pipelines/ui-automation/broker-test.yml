@@ -182,7 +182,7 @@ stages:
       steps:
         - checkout: self
           persistCredentials: True
-        - script: echo "The current msal version is $(msal_sdk_version) and prefix is $(test_run_prefix)"
+        - script: echo "The current msal version is $(msal_sdk_version)"
         - task: PowerShell@2
           displayName: Queue and wait for Msal Test App Apk generation pipeline
           name: buildApk
