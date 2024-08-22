@@ -2,7 +2,9 @@
 
 name: mark-branch-as-ready
 
-on: [push]
+on:
+  issue_comment:                                     
+    types: [created, edited, deleted]
 # Controls when the workflow will run
 #on:
 #  # Triggers the workflow when a new issue comment is created
