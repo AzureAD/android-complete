@@ -1,0 +1,12 @@
+name: 'Description contains AB# with a valid work item id'
+on: # rebuild any PRs for main branch changes
+  pull_request:
+    types: [opened, reopened, edited]
+    branches:
+      - main 
+jobs:
+  create-edit-comment:
+    name: check   
+    runs-on: ubuntu-latest
+    steps:
+      - uses: danhellem/github-actions-pr-is-linked-to-work-item@main
