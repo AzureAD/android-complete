@@ -1,12 +1,16 @@
+# Check that a PR has a valid ADO item in the description
 name: 'Description contains AB# with a valid work item id'
-on: # rebuild any PRs for main branch changes
+
+on: 
   pull_request:
     types: [opened, reopened, edited]
     branches:
       - main 
+
 jobs:
   create-edit-comment:
     name: check   
     runs-on: ubuntu-latest
+    if: "!contains(github.event.issue.labels.*.name, 'skip AB ID validation')"
     steps:
       - uses: danhellem/github-actions-pr-is-linked-to-work-item@main
