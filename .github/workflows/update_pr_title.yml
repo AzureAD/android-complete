@@ -1,0 +1,66 @@
+# This workflow detects if the AB validation check has succeeded. 
+# If a success message has been posted, the workflow will extract the AB ID from the message and update the PR title adding ',Fixed AB#ID' at the end.
+# This action will mark the PR to automatically resolve the associated ADO item when the PR is completed.
+# For more details about the AB validation, see: https://github.com/marketplace/actions/azure-boards-check-for-ab
+
+# if the message has been posted the action will ex
+name: "Append 'Fix AB#ID' to PR title"
+
+# Triggers the workflow when a new issue comment is created
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  append_AB_ID_to_pr_title:
+  # Checks if the comment is on a pull request and contains the string 'lcc-200'
+    runs-on: ubuntu-latest
+    if: github.event.issue.pull_request && contains(github.event.comment.body, 'lcc-200')
+    steps:
+      - name: Check if comment with approval has been generated 
+        run: | 
+          echo "PR ready"
+  # Extracts the AB ID from the comment body using regex and sets it as an environment variable
+      - name: Set enviroment variable with AB ID
+        run: |
+          result=$(echo "${{ github.event.comment.body }}" | grep -oP '(?<=#)\d+')
+          echo "AB_ID=${result}" >> $GITHUB_ENV
+  # Extracts the pull request number
+      - name: Extract pull request number
+        id: pr
+        run: echo "PR_NUMBER=${{ github.event.issue.number }}" >> $GITHUB_ENV
+  # Get current PR title
+      - name: Get the current PR title
+        id: current-title
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_TITLE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/pulls/${{ env.PR_NUMBER }} \
+            | jq -r .title)
+          echo "CURRENT_PR_TITLE=$PR_TITLE" >> $GITHUB_ENV
+    # Generate new PR title
+      - name: Generate new PR title
+        id: new-title
+        run: |
+          NEW_TITLE="$CURRENT_PR_TITLE, Fixes AB#$AB_ID"
+          echo "NEW_TITLE=${NEW_TITLE}" >> $GITHUB_ENV
+    # check point 
+      - name: Print env.vars (check point)
+        run: |
+          echo "Check env.vars"
+          echo "$AB_ID"
+          echo "$PR_NUMBER"
+          echo "$CURRENT_PR_TITLE"
+          echo "$NEW_TITLE"
+    # Update new title
+      - name: Update the pull request title
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -X PATCH \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/pulls/${{ env.PR_NUMBER }} \
+            -d '{"title":"'"${{ env.NEW_TITLE }}"'"}'
