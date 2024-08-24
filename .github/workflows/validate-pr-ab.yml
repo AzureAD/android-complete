@@ -4,8 +4,6 @@ name: 'Description contains AB# with a valid work item id'
 on: 
   pull_request:
     types: [opened, reopened, edited]
-    branches:
-      - main 
 
 jobs:
   create-edit-comment:
