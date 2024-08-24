@@ -12,3 +12,5 @@ jobs:
     if: "!contains(github.event.issue.labels.*.name, 'skip AB ID validation')"
     steps:
       - uses: danhellem/github-actions-pr-is-linked-to-work-item@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
