@@ -115,7 +115,7 @@ jobs:
     steps:
       - name: Update the pull request title
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.ACTIONS_TOKEN }}
           PR_ID: ${{ needs.get_pr_id.outputs.prid }}
           NEW_TITLE:  ${{ needs.check_if_title_needs_to_be_updated.outputs.new_pr_title }}
         run: |
