@@ -7,10 +7,12 @@ on:
 
 jobs:
   create-edit-comment:
-    name: check   
+    name: Check if PR has a valid ADO ID
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     runs-on: ubuntu-latest
     if: "!contains(github.event.issue.labels.*.name, 'skip AB ID validation')"
     steps:
       - uses: danhellem/github-actions-pr-is-linked-to-work-item@main
-        env:
-          GITHUB_TOKEN: ${{ secrets.ACTIONS_TOKEN }}
