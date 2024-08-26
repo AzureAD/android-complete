@@ -21,6 +21,7 @@ jobs:
   # 2- The comment contains the string 'lcc-200'
   # 3- The PR does not contains the 'skip AB ID validation' label 
   validation:
+    name: Validation
     runs-on: ubuntu-latest
     if: |
       github.event.issue.pull_request &&
@@ -32,6 +33,7 @@ jobs:
         
   # Get AB#ID
   get_ab_id:
+    name: Get AB ID
     runs-on: ubuntu-latest
     needs: validation
     outputs:
@@ -46,6 +48,7 @@ jobs:
 
   # Get Pull request ID
   get_pr_id:
+    name: Get PR ID
     runs-on: ubuntu-latest
     needs: validation
     outputs:
@@ -58,6 +61,7 @@ jobs:
 
   # Get Pull request title
   get_pr_title:
+    name: Get PR title
     runs-on: ubuntu-latest
     needs: get_pr_id
     outputs:
@@ -79,6 +83,7 @@ jobs:
   # Checks if the Pull request contains Fixed AB#ID in the title,
   # if not cretaes a new title appending ',Fixed AB#ID' to the current title
   check_if_title_needs_to_be_updated:
+    name: Check if title needs to be updated
     runs-on: ubuntu-latest
     needs: [get_pr_title, get_ab_id]
     outputs:
@@ -109,13 +114,18 @@ jobs:
 
   # Update new title
   update_title:
+    name: Update title
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     runs-on: ubuntu-latest
     needs: [check_if_title_needs_to_be_updated, get_pr_id]
     if: needs.check_if_title_needs_to_be_updated.outputs.update_required == 'true'
     steps:
       - name: Update the pull request title
         env:
-          GITHUB_TOKEN: ${{ secrets.ACTIONS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_ID: ${{ needs.get_pr_id.outputs.prid }}
           NEW_TITLE:  ${{ needs.check_if_title_needs_to_be_updated.outputs.new_pr_title }}
         run: |
