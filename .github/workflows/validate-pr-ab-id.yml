@@ -1,35 +1,25 @@
-# This workflow detects if the AB validation check has succeeded
-# (It is considered a success when a comment is posted with the code lcc-200),
-# If a success message has been posted by the plugin (https://github.com/marketplace/actions/azure-boards-check-for-ab),
-# The workflow will extract the AB ID from the message
+# This workflow checks if an ADO ID (AB#ID) has been set successfully (https://github.com/marketplace/actions/azure-boards-check-for-ab)
+# If so, the workflow will extract the AB ID from the message
 # then it will update the PR title adding ',Fixed AB#ID' at the end.
 # Why?
 # Adding ',Fixed AB#ID' to the PR title will make the PR to automatically resolve the associated ADO item when the PR is completed.
-
-
-name: "Append 'Fix AB#ID' to PR title"
-
-# Triggers the workflow when a new issue comment is created
-on:
-  issue_comment:
-    types: [created]
+name: 'AB#ID Check'
+on: 
+  pull_request:
+    types: [opened, reopened, edited]
 
 jobs:
-
-  # This job assert that:
-  # 1- The comment is on a pull request
-  # 2- The comment contains the string 'lcc-200'
-  # 3- The PR does not contains the 'skip AB ID validation' label 
+# This action checks your pull request to make sure it is linked to a work item using AB# before you can merge.
   validation:
-    name: Validation
+    name: Check if PR has a valid ADO ID
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
     runs-on: ubuntu-latest
-    if: |
-      github.event.issue.pull_request &&
-      contains(github.event.comment.body, 'lcc-200') &&
-      !contains(github.event.issue.labels.*.name, 'skip AB ID validation')
+    if: "!contains(github.event.pull_request.labels.*.name, 'skip AB ID validation')"
     steps:
-      - name: Check if workflow needs to be triggered
-        run: echo "Trigger workflow"
+      - uses: danhellem/github-actions-pr-is-linked-to-work-item@main
         
   # Get AB#ID
   get_ab_id:
@@ -39,11 +29,11 @@ jobs:
     outputs:
       abid: ${{ steps.get.outputs.id }}
     steps:
-  # Extracts the AB ID from the comment body using regex and store the result using outputs 
+  # Extracts the AB ID from the pull_request body using regex and store the result using outputs 
       - name: Get AB ID from comment
         id: get
         run: |
-          result=$(echo "${{ github.event.comment.body }}" | grep -oP '(?<=#)\d+')
+          result=$(echo "${{ github.event.pull_request.body }}" | grep -oP '(?<=#)\d+')
           echo "id=${result}" >> "$GITHUB_OUTPUT"
 
   # Get Pull request ID
@@ -54,10 +44,10 @@ jobs:
     outputs:
       prid: ${{ steps.pr.outputs.id }}
     steps:
-  # Extracts the pull request number and store the result using outputs 
-      - name: Extract pull request number
+  # Extracts the pull request id and store the result using outputs 
+      - name: Extract pull request id
         id: pr
-        run: echo "id=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+        run: echo "id=${{ github.event.pull_request.id }}" >> $GITHUB_OUTPUT
 
   # Get Pull request title
   get_pr_title:
