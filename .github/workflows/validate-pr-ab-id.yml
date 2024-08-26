@@ -47,7 +47,7 @@ jobs:
   # Extracts the pull request id and store the result using outputs 
       - name: Extract pull request id
         id: pr
-        run: echo "id=${{ github.event.pull_request.id }}" >> $GITHUB_OUTPUT
+        run: echo "id=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
 
   # Get Pull request title
   get_pr_title:
