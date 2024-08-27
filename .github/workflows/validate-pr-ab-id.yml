@@ -3,6 +3,7 @@
 # then it will update the PR title adding ',Fixed AB#ID' at the end.
 # Why?
 # Adding ',Fixed AB#ID' to the PR title will make the PR to automatically resolve the associated ADO item when the PR is completed.
+
 name: 'AB#ID Check'
 on: 
   pull_request:
