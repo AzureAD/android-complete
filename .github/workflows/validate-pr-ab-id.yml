@@ -1,6 +1,5 @@
 # This workflow checks if an ADO ID (AB#ID) has been set successfully (https://github.com/marketplace/actions/azure-boards-check-for-ab)
-# If so, the workflow will extract the AB ID from the message
-# then it will update the PR title adding ',Fixed AB#ID' at the end.
+# If so, the workflow will extract the AB ID from the description of the PR and update the PR title with ',Fixed AB#ID' at the end.
 # Why?
 # Adding ',Fixed AB#ID' to the PR title will make the PR to automatically resolve the associated ADO item when the PR is completed.
 
