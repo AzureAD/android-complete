@@ -42,14 +42,14 @@ project(':AADAuthenticator').projectDir = new File('broker/AADAuthenticator')
 include(":brokerHost")
 project(':brokerHost').projectDir = new File('broker/userapp')
 
-include(":adalTestApp")
-project(':adalTestApp').projectDir = new File('adal/userappwithbroker')
+//include(":adalTestApp")
+//project(':adalTestApp').projectDir = new File('adal/userappwithbroker')
 
 include(":msalTestApp")
 project(':msalTestApp').projectDir = new File('msal/testapps/testapp')
 
-include(":package-inspector")
-project(':package-inspector').projectDir = new File('msal/package-inspector')
+//include(":package-inspector")
+//project(':package-inspector').projectDir = new File('msal/package-inspector')
 
 
 //include(":pop-benchmarker")
@@ -57,15 +57,15 @@ project(':package-inspector').projectDir = new File('msal/package-inspector')
 
 include(":testutils")
 project(':testutils').projectDir = new File('common/testutils')
-
-include(":msalautomationapp")
-project(':msalautomationapp').projectDir = new File('msal/msalautomationapp')
-
+//
+//include(":msalautomationapp")
+//project(':msalautomationapp').projectDir = new File('msal/msalautomationapp')
+//
 include(":uiautomationutilities")
 project(':uiautomationutilities').projectDir = new File('common/uiautomationutilities')
-
-include(":brokerautomationapp")
-project(':brokerautomationapp').projectDir = new File('broker/brokerautomationapp')
+//
+//include(":brokerautomationapp")
+//project(':brokerautomationapp').projectDir = new File('broker/brokerautomationapp')
 
 //include(":oneauth")
 //project(':oneauth').projectDir = new File('oneauth/sources/android/gradle')
@@ -86,41 +86,41 @@ project(':labapi').projectDir = new File('common/labapi')
 include(":keyvault")
 project(':keyvault').projectDir = new File('common/keyvault')
 
-include(":AcaPlugin")
-project(':AcaPlugin').projectDir = new File('plugins/buildsystem')
+//include(":AcaPlugin")
+//project(':AcaPlugin').projectDir = new File('plugins/buildsystem')
 
 include(":broker4j")
 project(':broker4j').projectDir = new File('broker/broker4j')
 
-include(":LinuxBroker")
-project(':LinuxBroker').projectDir = new File('broker/LinuxBroker')
-
+//include(":LinuxBroker")
+//project(':LinuxBroker').projectDir = new File('broker/LinuxBroker')
+//
 include(':LabApiUtilities')
 project(':LabApiUtilities').projectDir = new File('common/LabApiUtilities')
-
-include(':java-linux-test-app')
-project(':java-linux-test-app').projectDir = new File('broker/java-linux-test-app')
-
-include(":LinuxBrokerPackage")
-project(':LinuxBrokerPackage').projectDir = new File('/broker/LinuxBrokerPackage')
-
-include(":AzureSample")
-project(':AzureSample').projectDir = new File('azuresample/app')
-
-include(":mockauthapp")
-project(':mockauthapp').projectDir = new File('broker/mockbrokers/mockauthapp')
-
-include(":mockcp")
-project(':mockcp').projectDir = new File('broker/mockbrokers/mockcp')
-
-include(":mockltw")
-project(':mockltw').projectDir = new File('broker/mockbrokers/mockltw')
-
-include(":mockbrokerapplib")
-project(':mockbrokerapplib').projectDir = new File('broker/mockbrokers/mockbrokerapplib')
-
-include(":NativeAuthSample")
-project(':NativeAuthSample').projectDir = new File('nativeauthsample/app')
+//
+//include(':java-linux-test-app')
+//project(':java-linux-test-app').projectDir = new File('broker/java-linux-test-app')
+//
+//include(":LinuxBrokerPackage")
+//project(':LinuxBrokerPackage').projectDir = new File('/broker/LinuxBrokerPackage')
+//
+//include(":AzureSample")
+//project(':AzureSample').projectDir = new File('azuresample/app')
+//
+//include(":mockauthapp")
+//project(':mockauthapp').projectDir = new File('broker/mockbrokers/mockauthapp')
+//
+//include(":mockcp")
+//project(':mockcp').projectDir = new File('broker/mockbrokers/mockcp')
+//
+//include(":mockltw")
+//project(':mockltw').projectDir = new File('broker/mockbrokers/mockltw')
+//
+//include(":mockbrokerapplib")
+//project(':mockbrokerapplib').projectDir = new File('broker/mockbrokers/mockbrokerapplib')
+//
+//include(":NativeAuthSample")
+//project(':NativeAuthSample').projectDir = new File('nativeauthsample/app')
 
 //include(":tsl")
 //project(':tsl').projectDir = new File('tsl/tokenshare')
