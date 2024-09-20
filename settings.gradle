@@ -176,3 +176,11 @@ project(':LabApiUtilities').projectDir = new File('common/LabApiUtilities')
 //include(":RootDetectionLibrary")
 //project(':RootDetectionLibrary').projectDir = new File('authenticator/PhoneFactor/RootDetectionLibrary')
 
+include ':Broker SDK Runtime'
+project(':Broker SDK Runtime').projectDir = new File('broker/Broker SDK Runtime')
+
+include ':BrokerSDKBundle'
+project(':BrokerSDKBundle').projectDir = new File('broker/BrokerSDKBundle')
+
+include ':existingbrokersdk'
+project(':existingbrokersdk').projectDir = new File('broker/existingbrokersdk')
