@@ -37,7 +37,7 @@ jobs:
   timeoutInMinutes: ${{ parameters.timeout }}
   displayName: Run ${{ parameters.projectName }} ${{ parameters.projectVariantName }} instrumented test
   pool:
-    vmImage: macOS-latest
+    vmImage: macOS-12
   variables:
   - name: android.system.image
     value: system-images;android-${{ parameters.androidAPIlevel }};${{ parameters.androidVariant }};${{ parameters.androidABI }}
