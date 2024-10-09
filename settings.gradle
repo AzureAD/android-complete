@@ -51,7 +51,6 @@ project(':msalTestApp').projectDir = new File('msal/testapps/testapp')
 include(":package-inspector")
 project(':package-inspector').projectDir = new File('msal/package-inspector')
 
-
 //include(":pop-benchmarker")
 //project(':pop-benchmarker').projectDir = new File('msal/pop-benchmarker')
 
@@ -121,58 +120,3 @@ project(':mockbrokerapplib').projectDir = new File('broker/mockbrokers/mockbroke
 
 include(":NativeAuthSample")
 project(':NativeAuthSample').projectDir = new File('nativeauthsample/app')
-
-//include(":tsl")
-//project(':tsl').projectDir = new File('tsl/tokenshare')
-
-
-// Authenticator projects
-
-//include(":app")
-//project(':app').projectDir = new File('authenticator/PhoneFactor/app')
-//
-//include(":NgcProviderLibrary")
-//project(':NgcProviderLibrary').projectDir = new File('authenticator/PhoneFactor/NgcProviderLibrary')
-//
-//include(":AadRemoteNgcLibrary")
-//project(':AadRemoteNgcLibrary').projectDir = new File('authenticator/PhoneFactor/AadRemoteNgcLibrary')
-//
-//include(":SharedCoreLibrary")
-//project(':SharedCoreLibrary').projectDir = new File('authenticator/PhoneFactor/SharedCoreLibrary')
-//
-//include(":TestUtilitiesLibrary")
-//project(':TestUtilitiesLibrary').projectDir = new File('authenticator/PhoneFactor/TestUtilitiesLibrary')
-//
-//include(":3rdparty")
-//project(':3rdparty').projectDir = new File('authenticator/PhoneFactor/3rdparty')
-//
-//include(":MfaLibrary")
-//project(':MfaLibrary').projectDir = new File('authenticator/PhoneFactor/MfaLibrary')
-//
-//include(":MsaAccountLibrary")
-//project(':MsaAccountLibrary').projectDir = new File('authenticator/PhoneFactor/MsaAccountLibrary/')
-//
-//include(":VerifiableCredential-SDK")
-//project(':VerifiableCredential-SDK').projectDir = new File('authenticator/PhoneFactor/VerifiableCredential-SDK/sdk')
-//
-//include(":VerifiableCredential-Wallet")
-//project(':VerifiableCredential-Wallet').projectDir = new File('authenticator/PhoneFactor/VerifiableCredential-Wallet')
-//
-//include(":CommonUiLibrary")
-//project(':CommonUiLibrary').projectDir = new File('authenticator/PhoneFactor/CommonUiLibrary')
-//
-//include(":ReactNativeLibrary")
-//project(':ReactNativeLibrary').projectDir = new File('authenticator/PhoneFactor/ReactNativeLibrary')
-//
-//include(":GraphClient")
-//project(':GraphClient').projectDir = new File('authenticator/PhoneFactor/GraphClient')
-//
-//include(":LocationLibrary")
-//project(':LocationLibrary').projectDir = new File('authenticator/PhoneFactor/LocationLibrary')
-//
-//include(":Brooklyn")
-//project(':Brooklyn').projectDir = new File('authenticator/PhoneFactor/Brooklyn')
-//
-//include(":RootDetectionLibrary")
-//project(':RootDetectionLibrary').projectDir = new File('authenticator/PhoneFactor/RootDetectionLibrary')
-
