@@ -22,7 +22,7 @@ jobs:
       publishCmd: publishMsalPublicationToVsts-maven-adal-androidRepository
       dependencyParams: -PdistCommonVersion=${{ parameters.commonVersion }} --configuration=distReleaseRuntimeClasspath --write-locks
       assembleParams: -PprojVersion=${{ parameters.version }} -PdistCommonVersion=${{ parameters.commonVersion }} ${{ parameters.buildFlags }}
-      testParams: -PprojVersion=${{ parameters.version }} -PdistCommonVersion=${{ parameters.commonVersion }} -Psugar=true -PlabSecret=$(LabVaultAppSecret) ${{ parameters.buildFlags }} -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
+      testParams: -PprojVersion=${{ parameters.version }} -PdistCommonVersion=${{ parameters.commonVersion }} -Psugar=true -PlabSecret=$(LabAuth) ${{ parameters.buildFlags }} -PshouldSkipLongRunningTest=true -PcodeCoverageEnabled=true
       publishParams: -PprojVersion=${{ parameters.version }} -PdistCommonVersion=${{ parameters.commonVersion }} ${{ parameters.buildFlags }}
       vstsMvnAndroidUsername: ENV_VSTS_MVN_ANDROID_MSAL_USERNAME
       vstsMvnAndroidAccessToken: ENV_VSTS_MVN_ANDROID_MSAL_ACCESSTOKEN
