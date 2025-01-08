@@ -99,7 +99,7 @@ jobs:
       publishJUnitResults: false
       gradleWrapperFile: $(Agent.BuildDirectory)/android-complete/gradlew
       jdkArchitecture: x64
-      jdkVersionOption: "1.11"
+      jdkVersionOption: "1.17"
       cwd: $(Agent.BuildDirectory)/android-complete
   - task: PublishPipelineArtifact@1
     displayName: Publish MSAL Test App

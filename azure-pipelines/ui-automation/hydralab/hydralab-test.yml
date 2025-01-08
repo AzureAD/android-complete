@@ -98,7 +98,7 @@ stages:
             gradleWrapperFile: "gradlew"
             tasks: "requestHydraLabTest -PymlConfigFile=$(ymlConfigFile) -PhydraLabAPIHost=$(hydraLabAPIHost) -PauthToken=$(authToken) -PdeviceIdentifier=$(deviceIdentifier) -PgroupTestType=$(testGroupType) -PappPath=$(automationAppApk) -PtestAppPath=$(automationAppTestApk) -PtestScope=$(testScope) -PtestSuiteName=${{ parameters.testSuiteName }} -PtestRunArgs=$(testRunArgs) -PrunTimeOutSeconds=$(runTimeOutSeconds) -PqueueTimeOutSeconds=3600"
             javaHomeOption: "JDKVersion"
-            jdkVersionOption: "1.11"
+            jdkVersionOption: "1.17"
             publishJUnitResults: true
 
         - task: PublishTestResults@2

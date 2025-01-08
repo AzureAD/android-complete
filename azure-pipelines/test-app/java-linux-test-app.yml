@@ -87,7 +87,7 @@ jobs:
       tasks: java-linux-test-app:clean java-linux-test-app:buildRpm --build-cache --info
       publishJUnitResults: false
       jdkArchitecture: x64
-      jdkVersionOption: "1.11"
+      jdkVersionOption: "1.17"
   - task: CopyFiles@2
     name: CopyFiles1
     displayName: Copy Files to Artifact Staging Directory
