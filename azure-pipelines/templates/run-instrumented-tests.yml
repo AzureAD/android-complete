@@ -37,7 +37,7 @@ jobs:
   timeoutInMinutes: ${{ parameters.timeout }}
   displayName: Run ${{ parameters.projectName }} ${{ parameters.projectVariantName }} instrumented test
   pool:
-    vmImage: macOS-12
+    vmImage: 'ubuntu-latest'
   variables:
   - name: android.system.image
     value: system-images;android-${{ parameters.androidAPIlevel }};${{ parameters.androidVariant }};${{ parameters.androidABI }}
@@ -65,22 +65,33 @@ jobs:
       echo See https://developer.android.com/studio/command-line/adb
 
       # Install AVD files
-      echo "y" | $ANDROID_HOME/tools/bin/sdkmanager --install $ANDROID_SYSTEM_IMAGE
+      #echo "y" | $ANDROID_HOME/tools/bin/sdkmanager --install $ANDROID_SYSTEM_IMAGE
 
       # Create emulator
-      echo "no" | $ANDROID_HOME/tools/bin/avdmanager create avd -n android_emulator -k $ANDROID_SYSTEM_IMAGE --force
+      #echo "no" | $ANDROID_HOME/tools/bin/avdmanager create avd -n android_emulator -k $ANDROID_SYSTEM_IMAGE --force
 
-      $ANDROID_HOME/emulator/emulator -list-avds
+      #$ANDROID_HOME/emulator/emulator -list-avds
 
-      echo "Starting emulator"
+      #echo "Starting emulator"
 
       # Start emulator in background
-      nohup $ANDROID_HOME/emulator/emulator -avd android_emulator -no-window -no-audio -wipe-data -no-snapshot > /dev/null 2>&1 &
-      $ANDROID_HOME/platform-tools/adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed | tr -d '\r') ]]; do sleep 1; done; input keyevent 82'
+      #nohup $ANDROID_HOME/emulator/emulator -avd android_emulator -no-window -no-audio -wipe-data -no-snapshot > /dev/null 2>&1 &
+      #$ANDROID_HOME/platform-tools/adb wait-for-device shell 'while [[ -z $(getprop sys.boot_completed | tr -d '\r') ]]; do sleep 1; done; input keyevent 82'
 
-      $ANDROID_HOME/platform-tools/adb devices
+      #$ANDROID_HOME/platform-tools/adb devices
 
-      echo "Emulator started"
+      #echo "Emulator started"
+
+      echo "Installing emulator"
+      sdkmanager "system-images;android-30;google_apis;x86_64"
+      echo "Creating AVD"
+      echo no | avdmanager create avd -n test -k "system-images;android-30;google_apis;x86_64"
+      echo "Starting Emulator"
+      emulator -avd test -no-snapshot-load -no-window &
+      adb wait-for-device
+      adb shell input keyevent 82
+
+      
     displayName: 'Starting android emulator'
   - template: ../templates/automation-cert.yml
   - script: |
