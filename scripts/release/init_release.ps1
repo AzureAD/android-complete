@@ -1,27 +1,37 @@
 param(
     [Parameter(Mandatory=$true)][string]$msalVersion,
     [Parameter(Mandatory=$true)][string]$brokerVersion,
-    [Parameter(Mandatory=$true)][string]$adalVersion,
+#    [Parameter(Mandatory=$true)][string]$adalVersion,
     [Parameter(Mandatory=$true)][string]$CommonVersion,
     [Parameter(Mandatory=$true)][string]$Common4jVersion,
-    [Parameter(Mandatory=$true)][string]$broker4jVersion,
-    [Parameter(Mandatory=$true)][Bool]$isMajorMsalChange,
-    [Parameter(Mandatory=$true)][Bool]$isMajorAdalChange,
-    [Parameter(Mandatory=$true)][Bool]$isMajorBrokerChange
+    [Parameter(Mandatory=$true)][string]$broker4jVersion
+#    [Parameter(Mandatory=$true)][Bool]$isMajorMsalChange,
+#    [Parameter(Mandatory=$true)][Bool]$isMajorAdalChange,
+#    [Parameter(Mandatory=$true)][Bool]$isMajorBrokerChange
 )
 
-. ./constants.ps1
-. ./helper_methods.ps1
+
+# Get the path of the current script
+$scriptPath = $PSScriptRoot
+
+# Get all PS1 files in a specific folder
+$filesToInclude = Get-ChildItem -Path "$scriptPath/libs" -Filter "*.ps1" -Recurse 
+
+# Dot-source each file
+foreach ($file in $filesToInclude) {
+    . $file.FullName
+}
+
 
 $msalRCVersion = "$msalVersion-RC1"
 $brokerRCVersion = "$brokerVersion-RC1"
-$adalRCVersion = "$adalVersion-RC1"
+#$adalRCVersion = "$adalVersion-RC1"
 $CommonRCVersion = "$CommonVersion-RC1"
 $Common4jRCVersion = "$Common4jVersion-RC1"
 $broker4jRCVersion = "$broker4jVersion-RC1"
 
 # Move to root folder. (android complete)
-Set-Location ..
+#Set-Location ..
 
 # Update COMMON and COMMON4J version
 Write-Host "New common version: '$commonRCVersion' and common4j version: '$common4jRCVersion' ." -ForegroundColor Green
@@ -55,35 +65,33 @@ Update-GradeFile -gradleFile $BROKER_BUILD_GRADLE_FILE -variableToUpdate $GRADLE
 Update-GradeFile -gradleFile $BROKER_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON4J_VAR -newVersion $common4JRCVersion    
 
 # Update ADAL version
-Write-Host "New adal version: '$adalRCVersion'." -ForegroundColor Green
-Update-ChangelogHeader -changelogFile $ADAL_CHANGELOG_FILE -newVersion $adalRCVersion -changelogConstants $changelogConstants -newCommonVersion $commonRCVersion 
+#Write-Host "New adal version: '$adalRCVersion'." -ForegroundColor Green
+#Update-ChangelogHeader -changelogFile $ADAL_CHANGELOG_FILE -newVersion $adalRCVersion -changelogConstants $changelogConstants -newCommonVersion $commonRCVersion 
 
-Update-VersionNumber -versioningFile $ADAL_VERSIONING_FILE -newVersion $adalRCVersion     
+#Update-VersionNumber -versioningFile $ADAL_VERSIONING_FILE -newVersion $adalRCVersion     
 
-Update-GradeFile -gradleFile $ADAL_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON_VAR -newVersion $commonRCVersion   
+#Update-GradeFile -gradleFile $ADAL_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON_VAR -newVersion $commonRCVersion   
 
 
-if ($isMajorMsalChange)
-{
-    Write-Host "Major MSAL change, update msalautomationapp" -ForegroundColor Yellow
-    # Upadte msal automation app
-    $majorMsalVersion = [regex]::Match($msalVersion, '\d+').Value
-    Update-GradeFile -gradleFile $MSALAUTOMATIONAPP_BUILD_GRADLE_FILE   -variableToUpdate $GRADLE_MSAL_VAR   -newVersion "$majorMsalVersion.+" 
-}
-if ($isMajorBrokerChange) {
-    #Update broker automation app
-    Write-Host "Major BROKER change, update brokerautomationapp" -ForegroundColor Yellow
+#if ($isMajorMsalChange)
+#{
+#    Write-Host "Major MSAL change, update msalautomationapp" -ForegroundColor Yellow
+#    # Upadte msal automation app
+#    $majorMsalVersion = [regex]::Match($msalVersion, '\d+').Value
+#    Update-GradeFile -gradleFile $MSALAUTOMATIONAPP_BUILD_GRADLE_FILE   -variableToUpdate $GRADLE_MSAL_VAR   -newVersion "$majorMsalVersion.+" 
+#}
+#if ($isMajorBrokerChange) {
+#    #Update broker automation app
+#    Write-Host "Major BROKER change, update brokerautomationapp" -ForegroundColor Yellow
+#
+#    $majorCommonVersion = [regex]::Match($CommonVersion, '\d+').Value
+#    Update-GradeFile -gradleFile $BROKERAUTOMATIONAPP_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON_VAR -newVersion "$majorCommonVersion.+" 
+#}
+#if ($isMajorAdalChange)
+#{
+#    Write-Host "Major ADAL change, update brokerautomationapp" -ForegroundColor Yellow
+#    $majorAdalVersion = [regex]::Match($adalVersion, '\d+').Value
+#    Update-GradeFile -gradleFile $BROKERAUTOMATIONAPP_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_ADAL_VAR   -newVersion "$majorAdalVersion.+"
+#
+#}
 
-    $majorCommonVersion = [regex]::Match($CommonVersion, '\d+').Value
-    Update-GradeFile -gradleFile $BROKERAUTOMATIONAPP_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_COMMON_VAR -newVersion "$majorCommonVersion.+" 
-}
-if ($isMajorAdalChange)
-{
-    Write-Host "Major ADAL change, update brokerautomationapp" -ForegroundColor Yellow
-    $majorAdalVersion = [regex]::Match($adalVersion, '\d+').Value
-    Update-GradeFile -gradleFile $BROKERAUTOMATIONAPP_BUILD_GRADLE_FILE -variableToUpdate $GRADLE_ADAL_VAR   -newVersion "$majorAdalVersion.+"
-
-}
-
-# Return to scripts folder
-Set-Location .\scripts

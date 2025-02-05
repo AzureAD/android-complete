@@ -2,11 +2,20 @@ param(
     [Parameter(Mandatory=$true)][UInt32]$rc
 )
 
-. ./constants.ps1
-. ./helper_methods.ps1
+# Get the path of the current script
+$scriptPath = $PSScriptRoot
+
+# Get all PS1 files in a specific folder
+$filesToInclude = Get-ChildItem -Path "$scriptPath/libs" -Filter "*.ps1" -Recurse 
+
+# Dot-source each file
+foreach ($file in $filesToInclude) {
+    . $file.FullName
+}
+
 
 # Move to root folder. (android complete)
-Set-Location ..
+#Set-Location ..
 
 Write-Host "Update common and common4j." -ForegroundColor Green
 Update-AllRCVersionsInFile -newRCVersion $rc -filePath $COMMON4J_VERSIONING_FILE
@@ -26,10 +35,10 @@ Update-AllRCVersionsInFile -newRCVersion $rc -filePath $BROKER_BUILD_GRADLE_FILE
 Update-AllRCVersionsInFile -newRCVersion $rc -filePath $BROKER4J_BUILD_GRADLE_FILE  
 Update-AllRCVersionsInFile -newRCVersion $rc -filePath $BROKER_CHANGELOG_FILE 
 
-Write-Host "Update adal." -ForegroundColor Green
-Update-AllRCVersionsInFile -newRCVersion $rc -filePath $ADAL_VERSIONING_FILE
-Update-AllRCVersionsInFile -newRCVersion $rc -filePath $ADAL_BUILD_GRADLE_FILE
-Update-AllRCVersionsInFile -newRCVersion $rc -filePath $ADAL_CHANGELOG_FILE
+#Write-Host "Update adal." -ForegroundColor Green
+#Update-AllRCVersionsInFile -newRCVersion $rc -filePath $ADAL_VERSIONING_FILE
+#Update-AllRCVersionsInFile -newRCVersion $rc -filePath $ADAL_BUILD_GRADLE_FILE
+#Update-AllRCVersionsInFile -newRCVersion $rc -filePath $ADAL_CHANGELOG_FILE
 
 # Return to scripts folder
-Set-Location .\scripts
+#Set-Location .\scripts
