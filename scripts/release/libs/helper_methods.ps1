@@ -85,7 +85,7 @@ function Update-ChangelogHeader {
         Write-Host "$changelogFile updated successfully."
     }
     else {
-        Write-Host "Pattern not found in the $changelogFile, File format was not changed."  -ForegroundColor Red
+        Write-Host "Pattern ($changelogHeader) not found in the $changelogFile, File format was not changed."  -ForegroundColor Red
     }
 }
 
