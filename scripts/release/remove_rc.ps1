@@ -9,7 +9,6 @@ foreach ($file in $filesToInclude) {
     . $file.FullName
 }
 
-
 Write-Host "New common version." -ForegroundColor Green
 Remove-AllRCVersionsInFile -filePath $COMMON4J_VERSIONING_FILE
 Remove-AllRCVersionsInFile -filePath $COMMON_VERSIONING_FILE
@@ -27,9 +26,3 @@ Remove-AllRCVersionsInFile -filePath $BROKER4j_VERSIONING_FILE
 Remove-AllRCVersionsInFile -filePath $BROKER4j_BUILD_GRADLE_FILE  
 Remove-AllRCVersionsInFile -filePath $BROKER_BUILD_GRADLE_FILE  
 Remove-AllRCVersionsInFile -filePath $BROKER_CHANGELOG_FILE 
-
-#Write-Host "New adal version." -ForegroundColor Green
-#Remove-AllRCVersionsInFile -filePath $ADAL_VERSIONING_FILE
-#Remove-AllRCVersionsInFile -filePath $ADAL_BUILD_GRADLE_FILE
-#Remove-AllRCVersionsInFile -filePath $ADAL_CHANGELOG_FILE
-
