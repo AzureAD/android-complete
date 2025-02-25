@@ -27,8 +27,8 @@ New-Variable -Name ADAL_CHANGELOG_FILE -Value "adal/changelog.txt" -Option Const
 
 
 $changelogConstants = @{
-    "VnextFormat" = "V.Next"
-    "separator" = "---------"
+    "VnextFormat" = "vNext"
+    "separator" = "----------"
     "versionFormat" = "Version "
 }
 

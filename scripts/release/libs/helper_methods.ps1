@@ -3,7 +3,8 @@ function Get-VNextHeader {
     param(
         [Hashtable]$changelogConstants
     )
-    return "{0}`r`n{1}" -f $changelogConstants["VnextFormat"], $changelogConstants["separator"]
+    return "{0}{1}{2}" -f $changelogConstants["VnextFormat"], [System.Environment]::NewLine, $changelogConstants["separator"]
+
 }
 
 function Get-ReplacementtHeader {
@@ -12,14 +13,14 @@ function Get-ReplacementtHeader {
         [String]$newVersion = "",
         [string]$newCommonVersion
     )
-    $changelogHeader = "{0}`r`n{1}" -f $changelogConstants["VnextFormat"], $changelogConstants["separator"]
-    $newVersionHeader =  "{0}{1}`r`n{2}" -f $changelogConstants["versionFormat"], $newVersion, $changelogConstants["separator"]
-    $vnextAndNewHeader = "{0}`r`n`r`n{1}" -f $changelogHeader, $newVersionHeader
+    $changelogHeader = "{0}{1}{2}" -f $changelogConstants["VnextFormat"], [System.Environment]::NewLine, $changelogConstants["separator"]
+    $newVersionHeader = "{0}{1}{2}{3}" -f $changelogConstants["versionFormat"], $newVersion, [System.Environment]::NewLine, $changelogConstants["separator"]
+    $vnextAndNewHeader = "{0}{1}{1}{2}" -f $changelogHeader, [System.Environment]::NewLine, $newVersionHeader    
 
     # Check if the newCommonVersion is not empty, if not add common update to the changelog
     if ($newCommonVersion -ne "") {
         # Append the common version used
-        return "$vnextAndNewHeader`r`n- [PATCH] Update common @$newCommonVersion"
+        return "$vnextAndNewHeader$([System.Environment]::NewLine)- [PATCH] Update common @$newCommonVersion"
     } else {
         return $vnextAndNewHeader
     }
@@ -85,7 +86,7 @@ function Update-ChangelogHeader {
         Write-Host "$changelogFile updated successfully."
     }
     else {
-        Write-Host "Pattern not found in the $changelogFile, File format was changed."  -ForegroundColor Red
+        Write-Host "Pattern ($changelogHeader) not found in the $changelogFile, File format was not changed."  -ForegroundColor Red
     }
 }
 
