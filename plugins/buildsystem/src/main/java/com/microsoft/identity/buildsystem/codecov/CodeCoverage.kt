@@ -186,9 +186,6 @@ object CodeCoverage {
     private fun configureReport(project: Project, reportTask: JacocoReport, taskName: String) {
         reportTask.reports { task ->
 //            // set the outputs enabled according to configs
-//            task.html.isEnabled = reportExtension.html.enabled
-//            task.xml.isEnabled = reportExtension.xml.enabled
-//            task.csv.isEnabled = reportExtension.csv.enabled
             task.html.required.set(reportExtension.html.enabled)
             task.xml.required.set(reportExtension.xml.enabled)
             task.csv.required.set(reportExtension.csv.enabled)
