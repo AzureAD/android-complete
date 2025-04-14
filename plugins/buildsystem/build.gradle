@@ -10,16 +10,16 @@ plugins {
 }
 
 group 'com.microsoft.identity'
-version '0.2.4'
+version '0.2.5'
 
 tasks.withType(JavaCompile) {
-    sourceCompatibility = '17'
-    targetCompatibility = '17'
+    sourceCompatibility = '11'
+    targetCompatibility = '11'
 }
 
 tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).all {
     kotlinOptions {
-        jvmTarget = '17'
+        jvmTarget = '11'
     }
 }
 
