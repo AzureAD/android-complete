@@ -29,7 +29,7 @@ rootProject.name = 'android_auth'
 // Android DevX Projects
 include ':adal'
 project(':adal').projectDir = new File('adal/adal')
-
+//
 include(':msal')
 project(':msal').projectDir = new File('msal/msal')
 
@@ -44,10 +44,10 @@ project(':brokerHost').projectDir = new File('broker/userapp')
 
 include(":adalTestApp")
 project(':adalTestApp').projectDir = new File('adal/userappwithbroker')
-
+//
 include(":msalTestApp")
 project(':msalTestApp').projectDir = new File('msal/testapps/testapp')
-
+//
 include(":package-inspector")
 project(':package-inspector').projectDir = new File('msal/package-inspector')
 
@@ -71,7 +71,6 @@ project(':brokerautomationapp').projectDir = new File('broker/brokerautomationap
 //
 //include(":oneauthtestapp")
 //project(':oneauthtestapp').projectDir = new File('oneauth/testapps/android/oneauthtestapp/app')
-//
 //include(":msalcpptesthost")
 //project(':msalcpptesthost').projectDir = new File('msalcpp/test/android/testhost/app')
 
@@ -84,7 +83,7 @@ project(':labapi').projectDir = new File('common/labapi')
 
 include(":keyvault")
 project(':keyvault').projectDir = new File('common/keyvault')
-
+//
 include(":AcaPlugin")
 project(':AcaPlugin').projectDir = new File('plugins/buildsystem')
 
@@ -108,13 +107,13 @@ project(':AzureSample').projectDir = new File('azuresample/app')
 
 include(":mockauthapp")
 project(':mockauthapp').projectDir = new File('broker/mockbrokers/mockauthapp')
-
+//
 include(":mockcp")
 project(':mockcp').projectDir = new File('broker/mockbrokers/mockcp')
 
 include(":mockltw")
 project(':mockltw').projectDir = new File('broker/mockbrokers/mockltw')
-
+//
 include(":mockbrokerapplib")
 project(':mockbrokerapplib').projectDir = new File('broker/mockbrokers/mockbrokerapplib')
 
