@@ -50,7 +50,7 @@ jobs:
         displayName: Build Deb with Java Dependency
         inputs:
           cwd: $(Build.SourcesDirectory)/broker-java-root
-          tasks: microsoft-identity-diagnostics:clean microsoft-identity-diagnostics:buildDebian --build-cache --info
+          tasks: microsoft-identity-diagnostics:clean microsoft-identity-diagnostics:buildDeb --build-cache --info
           publishJUnitResults: false
           jdkArchitecture: x86
           sqAnalysisBreakBuildIfQualityGateFailed: false
@@ -93,7 +93,7 @@ jobs:
         displayName: Build Rpm with Java Dependency
         inputs:
           cwd: $(Build.SourcesDirectory)/broker-java-root
-          tasks: microsoft-identity-diagnostics:clean microsoft-identity-diagnostics:buildRpmDiag --build-cache --info
+          tasks: microsoft-identity-diagnostics:clean microsoft-identity-diagnostics:buildRpm --build-cache --info
           publishJUnitResults: false
           jdkArchitecture: x86
           sqAnalysisBreakBuildIfQualityGateFailed: false
