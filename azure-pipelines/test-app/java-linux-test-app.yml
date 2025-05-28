@@ -46,7 +46,7 @@ jobs:
       displayName: Build Deb with Java Dependency
       inputs:
         cwd: $(Build.SourcesDirectory)/broker-java-root
-        tasks: java-linux-test-app:clean java-linux-test-app:buildDeb --build-cache --info
+        tasks: java-linux-test-app:clean java-linux-test-app:buildDebian --build-cache --info
         publishJUnitResults: false
         jdkArchitecture: x86
         sqAnalysisBreakBuildIfQualityGateFailed: false
@@ -84,7 +84,7 @@ jobs:
     displayName: Build Rpm with Java Dependency
     inputs:
       cwd: $(Build.SourcesDirectory)/broker-java-root
-      tasks: java-linux-test-app:clean java-linux-test-app:buildRpm --build-cache --info
+      tasks: java-linux-test-app:clean java-linux-test-app:buildRpmtestapp --build-cache --info
       publishJUnitResults: false
       jdkArchitecture: x64
       jdkVersionOption: "1.11"
