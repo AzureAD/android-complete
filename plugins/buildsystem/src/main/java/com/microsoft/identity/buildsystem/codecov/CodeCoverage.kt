@@ -186,10 +186,9 @@ object CodeCoverage {
     private fun configureReport(project: Project, reportTask: JacocoReport, taskName: String) {
         reportTask.reports { task ->
             // set the outputs enabled according to configs
-            task.html.isEnabled = reportExtension.html.enabled
-            task.xml.isEnabled = reportExtension.xml.enabled
-            task.csv.isEnabled = reportExtension.csv.enabled
-
+            task.html.required.set(reportExtension.html.enabled)
+            task.xml.required.set(reportExtension.xml.enabled)
+            task.csv.required.set(reportExtension.csv.enabled)
             // default reports path
             val defaultCommonPath = "${project.buildDir}/reports/jacoco/$taskName"
             val configuredDestination = reportExtension.destination
@@ -197,19 +196,21 @@ object CodeCoverage {
             // configure destination for html code coverage output
             if (reportExtension.html.enabled) {
                 val path = File(if (configuredDestination.isNullOrBlank()) "$defaultCommonPath/html" else "${configuredDestination.trim()}/html")
-                task.html.destination = path
+                task.html.outputLocation.set(path)
+
             }
 
             // configure destination for xml code coverage output
             if (reportExtension.xml.enabled) {
                 val path = File(if (configuredDestination.isNullOrBlank()) "$defaultCommonPath/${taskName}.xml" else "${configuredDestination.trim()}/${taskName}.xml")
-                task.xml.destination = path
+                task.xml.outputLocation.set(path)
+
             }
 
             // configure destination for csv code coverage output
             if (reportExtension.csv.enabled) {
                 val path = File(if (configuredDestination.isNullOrBlank()) "$defaultCommonPath/${taskName}.csv" else "${configuredDestination.trim()}/${taskName}.csv")
-                task.csv.destination = path
+                task.csv.outputLocation.set(path)
             }
         }
     }

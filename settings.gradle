@@ -71,7 +71,6 @@ project(':brokerautomationapp').projectDir = new File('broker/brokerautomationap
 //
 //include(":oneauthtestapp")
 //project(':oneauthtestapp').projectDir = new File('oneauth/testapps/android/oneauthtestapp/app')
-//
 //include(":msalcpptesthost")
 //project(':msalcpptesthost').projectDir = new File('msalcpp/test/android/testhost/app')
 
