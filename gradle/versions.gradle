@@ -2,8 +2,6 @@
 ext {
     // SDK
     minSdkVersion = 24
-    brokerProjectMinSdkVersion = 24
-    automationAppMinSDKVersion = 21
     targetSdkVersion = 35
     compileSdkVersion = 35
     buildToolsVersion = "35.0.0"
