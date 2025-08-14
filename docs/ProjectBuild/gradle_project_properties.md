@@ -43,6 +43,7 @@ We currently support the following gradle properties via command line across the
 | adAccountsVersion      | brokerHost                                    | The version of ad-accounts library that should be used while building the dist variant of the brokerHost app. |
 | adalVersion            | brokerHost                                    | The version of adal that should be used while building the dist variant of the brokerHost app. |
 | msalVersion            | brokerHost                                    | The version of msal that should be used while building the dist variant of the brokerHost app. |
+| includeWolfCryptTest   | AADAuthenticator                              | This enables WolfCrypt Test in AADAuthenticator (Broker). This includes including libjnisample.so in the library and WolfCrypt test can be run by calling WolfSSLNativeHelper.testWolfCryptSafe() |
 
 **NOTE:** Please note that above table only indicates the original module that declared the property, however, any other modules that depend on this module are also eligible to accept these properties and pass them along to actual module that's meant to use it. For example, the property `slice` is present on `common`, however, this property of common can also be supplied while building any consumer of common. In that case it will propagate the value all the way to common.
 
