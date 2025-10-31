@@ -62,31 +62,7 @@ git droidSetup
 
 ## Installing Lombok to Android Studio
 
-Since Android Studio officially dropped Lombok Support, you will need to manually install Lombok by yourself for each Android Studio update.
-
-There are 2 ways to do this. 
-
-### 1. Copy lombok to the default plugin folder (Preferred) 
-1. under /lombok subfolder, copy the <b>/lombok/lombok-plugin</b> folder to Android Studio/plugins (Windows), or Android Studio -> Show Package Contents -> Contents -> plugins (OSX).
-    - The folder structure should be plugins/lombok-plugin/lib/..
-
-Note: This lombok folder is extracted from Dolphin-2021.3.1.zip
-
-### 2. Modify and manually install via plugin settings
-<b>We've provided the zipped plugin for you already under /lombok subfolder.</b>
- If the build for your android version is not there, you can follow the steps below to generate your own compatible lombok.
-
-1. Download [The latest release (0.34.1-2019.1)](https://plugins.jetbrains.com/plugin/6317-lombok/versions) and extract.
-2. Navigate to lombok-plugin\lib
-4. Open META-INF\plugin.xml.
-5. Look for \<idea-version>, under <b>until-build</b>, set to the latest build version. You can get this information from "About Android Studio"
-    - For example, set until-build="AI-213.*" for Dolphin
-    ![](readme-img/dolphin.png)
-6. Execute `jar uf lombok-plugin-0.34.1-2019.1.jar META-INF/plugin.xml`
-7. Rezip the whole lombok-plugin folder.
-8. Don't forget to add it to /lombok subfolder, so that other people can use :)
-
-After that, go to Android Studio's plugins page (Under preferences), choose "Install plugin from disk", and select the compatible plugin zip file.
+Lombok plugin is usually loaded automatically. If not, install it by following the official guide: : https://projectlombok.org/setup/android
 
 ## Build Variants
 
