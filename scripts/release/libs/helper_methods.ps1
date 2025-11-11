@@ -90,6 +90,86 @@ function Update-ChangelogHeader {
     }
 }
 
+function Update-ChangelogHeaderForHotfix {
+    param(
+        [Hashtable]$changelogConstants,
+        [string]$newVersion,
+        [string]$newCommonVersion = "",
+        [string]$changelogFile
+    )
+
+    if (-not (Test-Path $changelogFile -PathType Leaf)) {
+        Write-Host "Input file '$changelogFile' not found." -ForegroundColor Red
+        return
+    }
+
+    # Read the content of the file
+    $fileContent = Get-Content -Path $changelogFile -Raw
+
+    # Create the new version header
+    $newVersionHeader = "{0}{1}{2}" -f $changelogConstants["versionFormat"], $newVersion, [System.Environment]::NewLine, $changelogConstants["separator"]
+    
+    # Create the entry content
+    $entryContent = "- [PATCH] Update common @$newCommonVersion"
+    
+    # Complete new section
+    $newSection = "$newVersionHeader$($changelogConstants["separator"])$([System.Environment]::NewLine)$entryContent$([System.Environment]::NewLine)$([System.Environment]::NewLine)"
+
+    # Find the first version section pattern (Version X.X.X followed by separator)
+    $versionPattern = "(?m)^(Version \d+\.\d+\.\d+)\s*$\s*^([-=]{5,})\s*$"
+    
+    if ($fileContent -match $versionPattern) {
+        # Insert the new section before the first existing version
+        $newContent = $fileContent -replace $versionPattern, "$newSection`$1`$([System.Environment]::NewLine)`$2"
+        
+        # Write the updated content back to the file
+        Set-Content -Path $changelogFile -Value $newContent -NoNewline
+
+        Write-Host "$changelogFile updated successfully with hotfix version $newVersion."
+    }
+    else {
+        Write-Host "Could not find existing version pattern in $changelogFile. File format may be different than expected." -ForegroundColor Red
+    }
+}
+
+function Update-ChangelogHeaderForCommonHotfix {
+    param(
+        [Hashtable]$changelogConstants,
+        [string]$newVersion,
+        [string]$changelogFile
+    )
+
+    if (-not (Test-Path $changelogFile -PathType Leaf)) {
+        Write-Host "Input file '$changelogFile' not found." -ForegroundColor Red
+        return
+    }
+
+    # Read the content of the file
+    $fileContent = Get-Content -Path $changelogFile -Raw
+
+    # Create the new version header with no entries
+    $newVersionHeader = "{0}{1}{2}" -f $changelogConstants["versionFormat"], $newVersion, [System.Environment]::NewLine, $changelogConstants["separator"]
+    
+    # Complete new section (just header and separator, no entries)
+    $newSection = "$newVersionHeader$($changelogConstants["separator"])$([System.Environment]::NewLine)$([System.Environment]::NewLine)"
+
+    # Find the first version section pattern (Version X.X.X followed by separator)
+    $versionPattern = "(?m)^(Version \d+\.\d+\.\d+)\s*$\s*^([-=]{5,})\s*$"
+    
+    if ($fileContent -match $versionPattern) {
+        # Insert the new section before the first existing version
+        $newContent = $fileContent -replace $versionPattern, "$newSection`$1`$([System.Environment]::NewLine)`$2"
+        
+        # Write the updated content back to the file
+        Set-Content -Path $changelogFile -Value $newContent -NoNewline
+
+        Write-Host "$changelogFile updated successfully with hotfix version $newVersion (header only)."
+    }
+    else {
+        Write-Host "Could not find existing version pattern in $changelogFile. File format may be different than expected." -ForegroundColor Red
+    }
+}
+
 function Update-GradeFile {
     param(
         [string]$newVersion,
