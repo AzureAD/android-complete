@@ -107,25 +107,31 @@ function Update-ChangelogHeaderForHotfix {
     $fileContent = Get-Content -Path $changelogFile -Raw
 
     # Create the new version header
-    $newVersionHeader = "{0}{1}{2}" -f $changelogConstants["versionFormat"], $newVersion, [System.Environment]::NewLine, $changelogConstants["separator"]
+    $newVersionHeader = $changelogConstants["versionFormat"] -f $newVersion
     
     # Create the entry content
     $entryContent = "- [PATCH] Update common @$newCommonVersion"
     
-    # Complete new section
-    $newSection = "$newVersionHeader$($changelogConstants["separator"])$([System.Environment]::NewLine)$entryContent$([System.Environment]::NewLine)$([System.Environment]::NewLine)"
+    # Complete new section with proper newlines
+    $newSection = "$newVersionHeader`r`n$($changelogConstants["separator"])`r`n$entryContent`r`n`r`n"
 
-    # Find the first version section pattern (Version X.X.X followed by separator)
-    $versionPattern = "(?m)^(Version \d+\.\d+\.\d+)\s*$\s*^([-=]{5,})\s*$"
+    # Find the first version section pattern (Version X.X.X followed by separator) - only match the FIRST occurrence
+    $versionPattern = "(?m)^Version \d+\.\d+\.\d+"
     
     if ($fileContent -match $versionPattern) {
-        # Insert the new section before the first existing version
-        $newContent = $fileContent -replace $versionPattern, "$newSection`$1`$([System.Environment]::NewLine)`$2"
-        
-        # Write the updated content back to the file
-        Set-Content -Path $changelogFile -Value $newContent -NoNewline
+        # Get the position of the first match
+        $match = [regex]::Match($fileContent, $versionPattern)
+        if ($match.Success) {
+            # Insert the new section before the first existing version
+            $beforeMatch = $fileContent.Substring(0, $match.Index)
+            $afterMatch = $fileContent.Substring($match.Index)
+            $newContent = $beforeMatch + $newSection + $afterMatch
+            
+            # Write the updated content back to the file
+            Set-Content -Path $changelogFile -Value $newContent -NoNewline
 
-        Write-Host "$changelogFile updated successfully with hotfix version $newVersion."
+            Write-Host "$changelogFile updated successfully with hotfix version $newVersion."
+        }
     }
     else {
         Write-Host "Could not find existing version pattern in $changelogFile. File format may be different than expected." -ForegroundColor Red
