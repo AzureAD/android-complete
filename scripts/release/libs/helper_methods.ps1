@@ -106,8 +106,8 @@ function Update-ChangelogHeaderForHotfix {
     # Read the content of the file
     $fileContent = Get-Content -Path $changelogFile -Raw
 
-    # Create the new version header
-    $newVersionHeader = $changelogConstants["versionFormat"] -f $newVersion
+    # Create the new version header with the version number
+    $newVersionHeader = "Version $newVersion"
     
     # Create the entry content
     $entryContent = "- [PATCH] Update common @$newCommonVersion"
