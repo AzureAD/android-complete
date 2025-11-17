@@ -13,7 +13,7 @@ The **android-complete** repository contains multiple sub-repositories as separa
 * **ADAL** - Azure Active Directory Authentication Library (legacy)
 * **Broker** - Brokered authentication service
 * **Common** - Shared utilities, helpers, and IPC logic
-* **OneAuth** - Third-party library owned by another team (consumed by 1P apps like Teams, Outlook)
+* **OneAuth** - Library owned by another team (consumed by 1P apps like Teams, Outlook)
 
 **Important:** When asked a question, **always search across ALL repositories** to provide comprehensive answers. Code may be duplicated or shared across these sub-repos.
 
@@ -201,8 +201,8 @@ Look in: Adapter classes, controller classes
 
 ### 13.1 Cluster Information
 * **Primary Cluster:** `https://idsharedeus2.kusto.windows.net/`
-* **Production Database:** `f9614845898c42639bce0e2b8794b519`
-* **Sandbox Database:** `53df561b1e5543419dda72e556c22de1`
+* **Production Database:** `ad-accounts-android-otel`
+* **Sandbox Database:** `android-broker-otel-sandbox`
 * **Available Tables:**
   - `android_spans` - Android authentication telemetry spans (primary table, most commonly used)
     - **Data Retention:** 30 days
