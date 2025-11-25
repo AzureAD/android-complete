@@ -81,11 +81,8 @@ When users ask for:
 **⚠️ DO NOT skip this step. DO NOT assume you know the answer. ALWAYS query DRI Copilot MCP tools FIRST.**
 
 #### Available DRI Copilot Tools:
-Look for MCP tools with these patterns in their names:
-<!-- 1. **Authenticator DRI Copilot** (tools containing `Authenticator_DRI_Copilot`)
-   - Use for: Authenticator app questions, design docs, TSGs, past incidents -->
-   
-2. **Broker DRI Copilot** (tools containing `Broker_DRI_Copilot`)
+Look for MCP tools with these patterns in their names:  
+1. **Broker DRI Copilot** (tools containing `Broker_DRI_Copilot`)
    - Use for: Broker-related questions, PRT, device registration, brokered auth flows, TSGs, past incidents
 
 The exact tool names will vary based on the MCP server name configured in `.vscode/mcp.json`.
