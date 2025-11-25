@@ -4,6 +4,24 @@ These instructions guide GitHub Copilot to provide suggestions and responses ali
 
 ---
 
+## ⚠️ MANDATORY INCIDENT INVESTIGATION CHECKLIST
+
+**When user reports an authentication/enrollment issue, incident, or troubleshooting request:**
+
+- [ ] **STEP 1**: Query DRI Copilot MCP tool (`Broker_DRI_Copilot` ) with symptoms
+- [ ] **STEP 2**: Analyze logs/evidence - extract correlation IDs, error codes, timestamps
+- [ ] **STEP 3**: Search codebase for error handling and implementation
+- [ ] **STEP 4**: Synthesize diagnosis, stating ONLY what evidence shows (not assumptions)
+- [ ] **STEP 5**: Clearly state what evidence is MISSING
+
+**DO NOT:**
+- ❌ Skip DRI Copilot query
+- ❌ Make claims without log evidence
+- ❌ Diagnose based on "common issues" without seeing actual error
+- ❌ Assume authentication/enrollment happened if logs don't show it
+
+---
+
 ## 1. Repository Structure & Architecture
 
 ### 1.1 Repository Organization
@@ -46,6 +64,116 @@ Client App
 - **OneAuth Specifics:** OneAuth is consumed by 1P Microsoft apps (Teams, Outlook, etc.). We don't own this code. OneAuth flows start by calling methods from the `BrokerMsalController` class
 - **Common Module:** Contains all IPC (Inter-Process Communication) logic. MSAL/OneAuth use Common layer to send requests to Broker over IPC
 - **Broker Module:** Handles the actual authentication logic, communicates with eSTS, and returns tokens
+
+### 1.3 DRI Copilot MCP Server Usage
+
+**🔴 MANDATORY: Query DRI Copilot MCP tools FIRST for ANY troubleshooting or incident investigation request.**
+
+When users ask for:
+- **Troubleshooting** ANY authentication or enrollment issue
+- **Investigating** customer-reported problems or IcM incidents
+- **Documentation** (design docs, architecture docs, API docs)
+- **Troubleshooting guides** (TSGs)
+- **Past incidents** or incident resolution
+- **Error explanations** or common issues
+- **Onboarding information**
+
+**⚠️ DO NOT skip this step. DO NOT assume you know the answer. ALWAYS query DRI Copilot MCP tools FIRST.**
+
+#### Available DRI Copilot Tools:
+Look for MCP tools with these patterns in their names:
+<!-- 1. **Authenticator DRI Copilot** (tools containing `Authenticator_DRI_Copilot`)
+   - Use for: Authenticator app questions, design docs, TSGs, past incidents -->
+   
+2. **Broker DRI Copilot** (tools containing `Broker_DRI_Copilot`)
+   - Use for: Broker-related questions, PRT, device registration, brokered auth flows, TSGs, past incidents
+
+The exact tool names will vary based on the MCP server name configured in `.vscode/mcp.json`.
+
+#### Mandatory Workflow (NO EXCEPTIONS):
+1. **FIRST**: Query DRI Copilot MCP tool (Broker_DRI_Copilot)
+   - Include: user symptoms, error messages, and any log evidence
+   - Get: TSG steps, past incidents, known issues, troubleshooting guidance
+2. **SECOND**: Analyze provided logs/evidence (see Section 1.4)
+   - Extract: correlation IDs, error codes, timestamps
+   - Identify: what operations occurred, what's missing
+3. **THIRD**: Search codebase for relevant implementation
+   - Find: error handling, code paths, known bugs
+4. **FINALLY**: Synthesize diagnosis combining all three sources
+
+#### Example Queries:
+- "What is PRT?" → Query Broker DRI Copilot
+- "How to troubleshoot auth_cancelled_by_sdk?" → Query both MCP servers
+- "Authenticator onboarding documentation" → Query Authenticator DRI Copilot
+- "Past incidents related to [issue]" → Query relevant MCP server(s)
+
+### 1.4 Incident Investigation Guidelines (IcM/Customer-Reported Issues)
+
+**🔴 CRITICAL: Follow this EXACT sequence for ALL incident investigations:**
+
+**STEP 0 (MANDATORY FIRST STEP):**
+- **Query DRI Copilot MCP tools** with user symptoms and error messages
+- Get TSG guidance, past incidents, and known issues
+- This step CANNOT be skipped
+
+**STEP 1: Analyze Provided Evidence**
+When investigating customer-reported incidents or IcM tickets, follow this **evidence-first approach**:
+
+#### **Priority Hierarchy:**
+1. **Direct Evidence from Logs/Data** (Highest Priority)
+   - Actual log files, stack traces, error codes, correlation IDs
+   - Telemetry data from Kusto (android_spans, eSTS logs)
+   - Concrete timestamps, device IDs, user IDs
+   - Network traces, API responses, HTTP status codes
+
+2. **Code Analysis** (High Priority)
+   - Current implementation in the codebase
+   - Recent code changes or commits related to the issue
+   - Known bugs or limitations in the code
+
+3. **Documentation & TSGs** (Supporting Priority)
+   - Use documentation to **augment and explain** what you observe in evidence
+   - Reference TSGs for **additional troubleshooting steps**, not as primary diagnosis
+   - Documentation provides context, not conclusions
+
+#### **Critical Rules:**
+- **NEVER make claims without evidence**: If logs don't show something happened, state "logs don't show X" rather than claiming X occurred
+- **Distinguish observation from inference**: Clearly label when you're inferring vs. observing
+  - ✅ "Logs show `Number of Microsoft Accounts: 0`, suggesting no enrollment completed"
+  - ❌ "Enrollment failed after authentication" (when logs don't show the enrollment attempt)
+- **Challenge documentation against evidence**: If documentation says X should happen, but logs show Y, trust the evidence
+- **State what's missing**: If critical evidence is absent (e.g., no correlation IDs, no error codes), explicitly state what additional data is needed
+
+#### **Investigation Workflow:**
+1. **Analyze provided evidence first** (logs, errors, telemetry)
+   - Extract: correlation IDs, timestamps, error codes, device/user identifiers
+   - Identify: actual operations performed, their outcomes, any exceptions
+   - Note: what evidence is present and what is missing
+
+2. **Search codebase for relevant implementation**
+   - Find the code paths that should have executed
+   - Check for known issues, error handling, logging statements
+
+3. **Query documentation/TSGs** to augment understanding
+   - Use to explain error codes, suggest additional diagnostics
+   - Reference common patterns, but validate against actual evidence
+
+4. **Formulate diagnosis**
+   - State what evidence supports each hypothesis
+   - Rank hypotheses by strength of evidence (not by documentation frequency)
+   - Clearly separate proven facts from educated guesses
+
+5. **Recommend next steps**
+   - Prioritize actions that gather missing evidence
+   - Suggest diagnostics based on what the evidence shows, not just what's common
+
+#### **Example - Good vs. Bad Analysis:**
+
+**❌ Bad (Documentation-First):**
+> "Based on TSG documentation, device cap is the most common cause (60% of cases), so this is likely a device cap issue."
+
+**✅ Good (Evidence-First):**
+> "Logs show `GetBrokerAccounts` returning 0 accounts, but no enrollment attempt is captured. Without correlation IDs or eSTS error codes, I cannot determine the root cause. The TSG indicates device cap is common (60%), but we need enrollment attempt logs to confirm. Next step: Collect logs with correlation IDs during reproduction."
 
 ## 2. Core Principles
 
@@ -199,7 +327,7 @@ Look in: Adapter classes, controller classes
 
 ## 13. Telemetry & Analytics with Azure Data Explorer (Kusto)
 
-### 13.1 Cluster Information
+### 13.1 Cluster Information for Android broker/common/MSAL libraries.
 * **Primary Cluster:** `https://idsharedeus2.kusto.windows.net/`
 * **Production Database:** `ad-accounts-android-otel`
 * **Sandbox Database:** `android-broker-otel-sandbox`
@@ -437,5 +565,187 @@ android_spans
 - **Performance:** Queries spanning more than 7 days may timeout; break into smaller time windows
 - **MCP Server:** Use the `mcp_my-mcp-server_execute_query` tool to run Kusto queries from Copilot
 - **Schema Discovery:** Use `mcp_my-mcp-server_get_table_schema` to explore available fields in tables
+
+---
+
+## 14. eSTS (Token Service) Investigations with Azure Data Explorer (Kusto)
+
+### 14.1 Cluster Information
+* **eSTS Cluster:** `https://estswus2.kusto.windows.net/`
+* **Database:** `ESTS`
+* **Primary Table:** `AllPerRequestTable` - Union view spanning multiple Kusto clusters (estsfrc, estssec, estsdb3, etc.)
+  - Contains all token service request/response data across global eSTS deployments
+  - Queries fan out to physical `PerRequestTableIfx` tables in each cluster
+  - Use `AllPerRequestTable` for comprehensive cross-cluster queries
+* **Purpose:** eSTS is Microsoft's token service. Android team is a client of eSTS, so we investigate Android-related authentication requests and responses
+
+### 14.2 Android-Specific Filtering
+**ALWAYS filter by Android platform when investigating Android issues:**
+```kql
+PerRequestTableIfx
+| where env_time >= ago(7d)
+| where DevicePlatformForUI == "Android"  // Primary Android filter
+```
+
+**Alternative Android platform fields:**
+- `DevicePlatform` - Raw device platform string
+- `DevicePlatformForUI` - User-friendly platform name (preferred for filtering)
+
+### 14.3 Key Fields for Android Investigations
+
+**Request Identification:**
+- `CorrelationId` - Correlates request across Android client → Broker → eSTS
+- `RequestId` - Unique identifier for the eSTS request
+- `env_time` - Request timestamp
+
+**Request Type & Flow:**
+- `Call` - Type of authentication call (e.g., "token", "authorize", "common/oauth2/v2.0/token")
+- `IsInteractive` - Boolean indicating if user interaction was required
+- `Prompt` - Prompt type (e.g., "none", "login", "consent")
+
+**Authentication Status:**
+- `Result` - Overall result status (e.g., "Success", "Failure")
+- `ErrorCode` - Error code if request failed
+- `ErrorNo` - Numeric error code
+- `HttpStatusCode` - HTTP status code of the response
+- `SubErrorCode` - Additional error details
+
+**PRT (Primary Refresh Token) Information:**
+- `PrtData` - Contains PRT-related data (check if PRT was sent in request)
+  - Parse this JSON field to determine if PRT was used
+  - Example: `| extend HasPRT = isnotempty(PrtData)`
+
+**Device & Client Information:**
+- `DeviceId` - Unique device identifier
+- `ApplicationId` - Client application ID
+- `UserAgent` - Browser/client user agent string
+
+**Timing Information:**
+- `ResponseTime` - Total response time in milliseconds
+- `StsProcessingTime` - eSTS processing time
+
+**User & Account Information:**
+- `TenantId` - Tenant identifier
+- `UserTenantId` - User's home tenant identifier
+- `UserPrincipalObjectID` - User's object ID in Entra ID (unique identifier for the user)
+- `AccountType` - Type of account (AAD, MSA, etc.)
+- `UserType` - Type of user
+
+### 14.4 Common Query Patterns
+
+**Find requests by CorrelationId:**
+```kql
+AllPerRequestTable
+| where env_time >= ago(7d)
+| where DevicePlatformForUI == "Android"
+| where CorrelationId == "your-correlation-id-here"
+| project env_time, CorrelationId, Call, Result, ErrorCode, IsInteractive, PrtData, ResponseTime
+```
+
+**Check if PRT was used in requests:**
+```kql
+AllPerRequestTable
+| where env_time >= ago(7d)
+| where DevicePlatformForUI == "Android"
+| extend HasPRT = isnotempty(PrtData)
+| summarize 
+    total_requests = count(),
+    prt_requests = countif(HasPRT),
+    success_rate = round(100.0 * countif(Result == "Success") / count(), 2)
+    by HasPRT
+```
+
+**Analyze error patterns:**
+```kql
+AllPerRequestTable
+| where env_time >= ago(7d)
+| where DevicePlatformForUI == "Android"
+| where Result != "Success"
+| summarize error_count = count() by ErrorCode, SubErrorCode, Call
+| order by error_count desc
+| take 20
+```
+
+**Interactive vs Silent requests:**
+```kql
+AllPerRequestTable
+| where env_time >= ago(7d)
+| where DevicePlatformForUI == "Android"
+| summarize 
+    count = count(),
+    success_rate = round(100.0 * countif(Result == "Success") / count(), 2),
+    avg_response_time = avg(ResponseTime)
+    by IsInteractive
+```
+
+**Requests by application:**
+```kql
+AllPerRequestTable
+| where env_time >= ago(7d)
+| where DevicePlatformForUI == "Android"
+| summarize 
+    request_count = count(),
+    error_count = countif(Result != "Success"),
+    avg_response_time = avg(ResponseTime)
+    by ApplicationId
+| extend error_rate = round(100.0 * error_count / request_count, 2)
+| order by request_count desc
+```
+
+**Analyze users and devices:**
+```kql
+AllPerRequestTable
+| where env_time >= ago(7d)
+| where DevicePlatformForUI == "Android"
+| where ApplicationId == "your-app-id-here"
+| summarize 
+    request_count = count(),
+    unique_devices = dcount(DeviceId),
+    first_seen = min(env_time),
+    last_seen = max(env_time)
+    by UserPrincipalObjectID, PUID, TenantId
+| order by request_count desc
+```
+
+### 14.5 Correlating Android Spans with eSTS Requests
+
+**To trace a complete flow (Android client → Broker → eSTS):**
+
+1. **Start with Android span:**
+```kql
+// In android-broker-otel-sandbox or ad-accounts-android-otel database
+android_spans
+| where EventInfo_Time >= ago(7d)
+| where span_name == "AcquireTokenInteractive"
+| where error_code == "some_error"
+| project correlation_id, span_id, EventInfo_Time, error_code
+| take 100
+```
+
+2. **Find corresponding eSTS requests:**
+```kql
+// In ESTS database
+AllPerRequestTable
+| where env_time >= ago(7d)
+| where DevicePlatformForUI == "Android"
+| where CorrelationId in ("correlation-id-1", "correlation-id-2", ...)  // From step 1
+| project env_time, CorrelationId, Call, Result, ErrorCode, PrtData, ResponseTime
+```
+
+### 14.6 Query Optimization Tips
+
+1. **Always filter by time first** - Use `| where env_time >= ago(Xd)` at the start
+2. **Filter by Android platform early** - Add `| where DevicePlatformForUI == "Android"` immediately after time filter
+3. **Use `take` for exploration** - Limit results with `| take 1000` to avoid timeouts
+4. **Project early** - Select only needed columns with `| project` to reduce data transfer
+5. **Check field population** - Use `isnotempty()` before parsing fields like `PrtData`
+
+### 14.7 Important Notes
+
+- **Data Retention:** Check with eSTS team for current retention policy
+- **Sensitive Data:** Many fields are hashed or scrubbed for privacy (e.g., PUID, UserNameHash)
+- **Cross-Cluster Queries:** Cannot directly join Android telemetry cluster with eSTS cluster; must correlate via CorrelationId manually
+- **PrtData Parsing:** `PrtData` is a JSON string; use `parse_json()` or `extend` to extract specific fields
+- **MCP Server:** Use `mcp_my-mcp-server_execute_query` with cluster URL `https://estswus2.kusto.windows.net` and database `ESTS`
 
 ---
