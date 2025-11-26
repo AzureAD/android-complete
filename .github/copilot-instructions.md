@@ -70,15 +70,14 @@ Client App
 **🔴 MANDATORY: Query DRI Copilot MCP tools FIRST for ANY troubleshooting or incident investigation request.**
 
 When users ask for:
-- **Troubleshooting** ANY authentication or enrollment issue
+- **Troubleshooting** ANY authentication or enrollment issue reported in the incident
 - **Investigating** customer-reported problems or IcM incidents
 - **Documentation** (design docs, architecture docs, API docs)
 - **Troubleshooting guides** (TSGs)
 - **Past incidents** or incident resolution
-- **Error explanations** or common issues
 - **Onboarding information**
 
-**⚠️ DO NOT skip this step. DO NOT assume you know the answer. ALWAYS query DRI Copilot MCP tools FIRST.**
+**⚠️ DO NOT skip this step. DO NOT assume you know the answer. ALWAYS query DRI Copilot MCP tools FIRST if any of the above questions are asked.**
 
 #### Available DRI Copilot Tools:
 Look for MCP tools with these patterns in their names:  
@@ -98,11 +97,23 @@ The exact tool names will vary based on the MCP server name configured in `.vsco
    - Find: error handling, code paths, known bugs
 4. **FINALLY**: Synthesize diagnosis combining all three sources
 
-#### Example Queries:
-- "What is PRT?" → Query Broker DRI Copilot
-- "How to troubleshoot auth_cancelled_by_sdk?" → Query both MCP servers
-- "Authenticator onboarding documentation" → Query Authenticator DRI Copilot
-- "Past incidents related to [issue]" → Query relevant MCP server(s)
+#### When to Use DRI Copilot - Examples:
+
+**✅ USE DRI Copilot MCP for:**
+- Investigate incident <incidentId/incidentUrl> → Query relevant MCP server(s) (incident investigation)
+- "How to troubleshoot auth_cancelled_by_sdk?" → Query DRI Copilot (TSG/error troubleshooting)
+- "Past incidents related to [issue]" → Query relevant MCP server(s) (incident history)
+- 
+**❌ DO NOT use DRI Copilot MCP for:**
+- "What does flight ENABLE_XYZ do when enabled?" → Search codebase/changelogs directly
+- "Explain this code snippet" → Analyze code directly
+- "How does this algorithm work?" → Read code implementation
+- "What parameters does this function take?" → Check code/comments
+- "What values can this enum have?" → Search codebase for enum definition
+
+**Rule of Thumb:**
+- **Troubleshooting/Incidents/TSGs/Design Docs** → Use DRI Copilot
+- **Code Understanding/Implementation Details** → Search codebase directly
 
 ### 1.4 Incident Investigation Guidelines (IcM/Customer-Reported Issues)
 
@@ -117,7 +128,7 @@ The exact tool names will vary based on the MCP server name configured in `.vsco
 When investigating customer-reported incidents or IcM tickets, follow this **evidence-first approach**:
 
 #### **Priority Hierarchy:**
-1. **Direct Evidence from Logs/Data** (Highest Priority)
+1. **Direct Evidence from Logs/Data if provided** (Highest Priority)
    - Actual log files, stack traces, error codes, correlation IDs
    - Telemetry data from Kusto (android_spans, eSTS logs)
    - Concrete timestamps, device IDs, user IDs
