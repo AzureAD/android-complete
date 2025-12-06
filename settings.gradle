@@ -9,8 +9,8 @@
 pluginManagement {
     repositories {
         mavenLocal()
-        // If you don't have access to the package feed below, uncomment these repositories
-//        google()
+        google()
+        // If you don't have access to the package feed below, uncomment the maven central repo
 //        mavenCentral()
         gradlePluginPortal()
         maven {

@@ -16,7 +16,7 @@ buildscript {
     repositories {
         mavenLocal()
         maven {
-            // msazure and aria are consumed via upstream sources of the AndroidADAL feed.
+            // msazure and aria are consumed via upstream sources of the NewAndroid feed.
             name "vsts-maven-new-android"
             url "https://identitydivision.pkgs.visualstudio.com/_packaging/NewAndroid/maven/v1"
             credentials {
@@ -45,12 +45,14 @@ plugins {
 
 project.ext.vstsUsername = System.getenv("ENV_VSTS_MVN_ANDROID_MSAL_USERNAME") != null ? System.getenv("ENV_VSTS_MVN_ANDROID_MSAL_USERNAME") : project.findProperty("vstsUsername")
 project.ext.vstsMavenAccessToken = System.getenv("ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN") != null ? System.getenv("ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN") : project.findProperty("vstsMavenAccessToken")
+// Also declare password, so libraries have access to it
+project.ext.vstsPassword = project.vstsMavenAccessToken
 
 allprojects {
     repositories {
         mavenLocal()
-        // If you don't have access to the package feed uncomment these repositories
-        //  google()
+        google()
+        // If you don't have access to the package feed uncomment the maven central repo
         //  mavenCentral()
         maven {
             // msazure and aria are consumed via upstream sources of the NewAndroid feed.
