@@ -15,6 +15,7 @@ buildscript {
 
     repositories {
         mavenLocal()
+        google()
         maven {
             // msazure and aria are consumed via upstream sources of the NewAndroid feed.
             name "vsts-maven-new-android"

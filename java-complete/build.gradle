@@ -4,9 +4,10 @@ buildscript {
     apply from: rootProject.file("../gradle/versions.gradle")
     
     repositories {
+        google()
         maven {
             // msazure and aria are consumed via upstream sources of the NewAndroid feed.
-            name "vsts-maven-adal-android"
+            name "vsts-maven-new-android"
             url "https://identitydivision.pkgs.visualstudio.com/_packaging/NewAndroid/maven/v1"
             credentials {
                 username project.vstsUsername
@@ -23,8 +24,9 @@ buildscript {
 allprojects {
     repositories {
         mavenLocal()
+        google()
         maven {
-            name "vsts-maven-adal-android"
+            name "vsts-maven-new-android"
             url "https://identitydivision.pkgs.visualstudio.com/_packaging/NewAndroid/maven/v1"
             credentials {
                 username project.vstsUsername
