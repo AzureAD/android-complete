@@ -59,16 +59,18 @@ Android SharedPreferences (encrypted XML file)
 - ✅ Broker mode uses **UID-sequestered** caches per app
 
 ### Key Code Locations
-- Entry point: `BaseController.saveTokens()` (line 903)
+- Entry point: `BaseController.saveTokens()` (~line 903)
 - Cache logic: `MsalOAuth2TokenCache.java`
 - Key generation: `CacheKeyValueDelegate.java`
 - Storage: `SharedPreferencesFileManager.java`
 - DTOs: `dto/` package (AccountRecord, AccessTokenRecord, etc.)
 
+*Note: Line numbers are approximate and may change as code evolves*
+
 ### Special Files
-- **FOCI Cache**: `...cache.foci-1` (Family Refresh Tokens)
+- **FOCI Cache**: `...cache.foci-1` (Family Refresh Tokens - FOCI = Family of Client IDs)
 - **UID Cache**: `...cache.uid-{uid}` (Per-app broker cache)
 
 ---
 
-📖 **Full Documentation**: [TOKEN_STORAGE_DOCUMENTATION.md](TOKEN_STORAGE_DOCUMENTATION.md)
+📖 **Full Documentation**: See [TOKEN_STORAGE_DOCUMENTATION.md](./TOKEN_STORAGE_DOCUMENTATION.md) for comprehensive details
