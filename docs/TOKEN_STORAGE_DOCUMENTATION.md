@@ -695,6 +695,6 @@ When running with a broker (Company Portal, Authenticator):
 ---
 
 **Document Version**: 1.0  
-**Last Updated**: December 8, 2024  
+**Created**: December 2024  
 **Applicable to**: MSAL Android, Common Library  
 **Note**: Line numbers in code references are approximate and may change as the codebase evolves. Use them as a starting point for code exploration.
