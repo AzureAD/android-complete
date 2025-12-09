@@ -16,8 +16,8 @@ pluginManagement {
             name "vsts-maven-new-android"
             url "https://identitydivision.pkgs.visualstudio.com/_packaging/NewAndroid/maven/v1"
             credentials {
-                username System.getenv("ENV_VSTS_MVN_ANDROID_MSAL_USERNAME") != null ? System.getenv("ENV_VSTS_MVN_ANDROID_MSAL_USERNAME") : vstsUsername
-                password System.getenv("ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN") != null ? System.getenv("ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN") : vstsMavenAccessToken
+                username System.getenv("ENV_VSTS_MVN_CRED_USERNAME") != null ? System.getenv("ENV_VSTS_MVN_CRED_USERNAME") : vstsUsername
+                password System.getenv("ENV_VSTS_MVN_CRED_ACCESSTOKEN") != null ? System.getenv("ENV_VSTS_MVN_CRED_ACCESSTOKEN") : vstsMavenAccessToken
             }
         }
     }
@@ -52,4 +52,3 @@ project(':java-linux-test-app').projectDir = new File('../broker/java-linux-test
 
 include(':LabApiUtilities')
 project(':LabApiUtilities').projectDir = new File('../common/LabApiUtilities')
-
