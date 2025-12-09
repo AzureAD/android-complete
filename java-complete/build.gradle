@@ -4,6 +4,8 @@ buildscript {
     apply from: rootProject.file("../gradle/versions.gradle")
     
     repositories {
+        // If you don't have access to the package feed below, uncomment the maven central repo
+        // mavenCentral()
         google()
         maven {
             // msazure and aria are consumed via upstream sources of the NewAndroid feed.
@@ -23,6 +25,8 @@ buildscript {
 
 allprojects {
     repositories {
+        // If you don't have access to the package feed below, uncomment the maven central repo
+        // mavenCentral()
         mavenLocal()
         google()
         maven {
