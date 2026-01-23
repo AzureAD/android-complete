@@ -74,8 +74,8 @@ We are going to need login credentials for our Google / Firebase credentials to 
 
 1. Go to Azure Portal: [Microsoft Azure](https://portal.azure.com/) and login with MS credentials
 2. Switch to the Microsoft directory (if not already there)
-3. Search for the KeyVault named `AdalTestInfo` (be sure to select "all" for the subcription, location etc filters)
-4. Click into the `AdalTestInfo` keyvault (if you don't see this KeyVault, make sure you follow the above steps to get access to the KeyVault)
+3. Search for the KeyVault named `MobileBuildVault ` (be sure to select "all" for the subcription, location etc filters)
+4. Click into the `MobileBuildVault ` keyvault (if you don't see this KeyVault, make sure you follow the above steps to get access to the KeyVault)
 5. Under settings, click on secrets
 6. Grab the `AndroidFirebaseUsername` - this is username of the Google account
 7. Grab the `AndroidFirebasePassword` - this is password of the Google account
