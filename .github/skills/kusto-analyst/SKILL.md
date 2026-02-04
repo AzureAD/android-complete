@@ -229,6 +229,18 @@ android_spans
 
 ---
 
+## MATS telemetry
+
+### Cluster Information
+| Property | Value |
+|----------|-------|
+| **Cluster URL** | `https://idsharedeus2.kusto.windows.net/` |
+| **Database** | `MATS_Office` |
+| **Database ID** | `faab4ead691e451eb230afc98a28e0f2` |
+
+
+---
+
 ## eSTS (Token Service) Cluster
 
 ### Cluster Information
