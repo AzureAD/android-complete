@@ -36,8 +36,8 @@ We currently support the following gradle properties via command line across the
 | dc                     | common                                        | Send all ESTS requests to specific DC                        |
 | writeTestResultsToCsv  | testutils                                     | Determines whether to write results of tests to a CSV file (required for Kusto ingest by server validation pipeline) |
 | robolectricSdkVersion  | msal, AADAuthenticator                        | Sets the target sdk version to the version that we want to use for Robolectric tests. |
-| distAdalVersion        | adalTestApp, brokerautomationapp              | The version of ADAL that should be used while building the dist variant of an adal test app. |
-| distCommonVersion      | adalTestApp, brokerautomationapp              | The version of Common that should be used while building the dist variant of an adal test app. |
+| distAdalVersion        | adalTestApp                                   | The version of ADAL that should be used while building the dist variant of an adal test app. |
+| distCommonVersion      | adalTestApp                                   | The version of Common that should be used while building the dist variant of an adal test app. |
 | distMsalVersion        | AzureSample, MSAL Test App, msalautomationapp | The version of MSAL that should be used while building the dist variant of an msal test app. |
 | commonVersion          | brokerHost                                    | The version of common that should be used while building the dist variant of the brokerHost app. |
 | adAccountsVersion      | brokerHost                                    | The version of ad-accounts library that should be used while building the dist variant of the brokerHost app. |

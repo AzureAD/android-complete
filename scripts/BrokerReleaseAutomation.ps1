@@ -67,29 +67,9 @@ Write-Output "Installing MSAL Automation app connected tests on the device..."
 
 ./gradlew msalautomationapp:installDistAutoBrokerDebugAndroidTest
 
-Write-Output "Running MSAL with Broker Test Plan..."
+Write-Output "Running Broker Test Plan..."
 
 adb shell CLASSPATH=$(adb shell pm path androidx.test.services) app_process / androidx.test.services.shellexecutor.ShellMain am instrument -r -w -e targetInstrumentation com.msft.identity.client.sample.local.test/androidx.test.runner.AndroidJUnitRunner -e clearPackageData true   -e debug false -e package 'com.microsoft.identity.client.msal.automationapp.testpass.broker' androidx.test.orchestrator/androidx.test.orchestrator.AndroidTestOrchestrator
-
-Write-Output "MSAL with broker test plan completed."
-
-Write-Output "Installing Broker Automation app on the device..."
-
-./gradlew brokerautomationapp:installDistAutoBrokerDebug -PbrokerSource="LocalApk" -PlabSecret="$labSecret"
-
-Write-Output "Installing Broker Automation app connected tests on the device..."
-
-./gradlew brokerautomationapp:installDistAutoBrokerDebugAndroidTest
-
-Write-Output "Running ADAL with broker test plan..."
-
-adb shell CLASSPATH=$(adb shell pm path androidx.test.services) app_process / androidx.test.services.shellexecutor.ShellMain am instrument -r -w -e targetInstrumentation com.msft.identity.client.sample.local.test/androidx.test.runner.AndroidJUnitRunner -e clearPackageData true   -e debug false -e package 'com.microsoft.identity.client.broker.automationapp.testpass.adal' androidx.test.orchestrator/androidx.test.orchestrator.AndroidTestOrchestrator
-
-Write-Output "ADAL with broker test plan completed."
-
-Write-Output "Running Broker basic validation test plan that uses first party apps..."
-
-adb shell CLASSPATH=$(adb shell pm path androidx.test.services) app_process / androidx.test.services.shellexecutor.ShellMain am instrument -r -w -e targetInstrumentation com.msft.identity.client.sample.local.test/androidx.test.runner.AndroidJUnitRunner -e clearPackageData true   -e debug false -e package 'com.microsoft.identity.client.broker.automationapp.testpass.basic' androidx.test.orchestrator/androidx.test.orchestrator.AndroidTestOrchestrator
 
 Write-Output "Broker basic validation test plan completed."
 

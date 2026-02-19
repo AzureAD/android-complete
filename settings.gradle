@@ -64,9 +64,6 @@ project(':msalautomationapp').projectDir = new File('msal/msalautomationapp')
 include(":uiautomationutilities")
 project(':uiautomationutilities').projectDir = new File('common/uiautomationutilities')
 
-include(":brokerautomationapp")
-project(':brokerautomationapp').projectDir = new File('broker/brokerautomationapp')
-
 //include(":oneauth")
 //project(':oneauth').projectDir = new File('oneauth/sources/android/gradle')
 //

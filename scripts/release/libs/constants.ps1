@@ -18,7 +18,6 @@ New-Variable -Name ADAL_BUILD_GRADLE_FILE -Value "adal/adal/build.gradle" -Optio
 New-Variable -Name BROKER_BUILD_GRADLE_FILE -Value "broker/AADAuthenticator/build.gradle" -Option Constant
 New-Variable -Name BROKER4J_BUILD_GRADLE_FILE -Value "broker/broker4j/build.gradle" -Option Constant
 New-Variable -Name MSALAUTOMATIONAPP_BUILD_GRADLE_FILE -Value "msal/msalautomationapp/build.gradle" -Option Constant
-New-Variable -Name BROKERAUTOMATIONAPP_BUILD_GRADLE_FILE -Value "broker/brokerautomationapp/build.gradle" -Option Constant
 
 New-Variable -Name COMMON_CHANGELOG_FILE -Value "common/changelog.txt" -Option Constant
 New-Variable -Name BROKER_CHANGELOG_FILE -Value "broker/changes.txt" -Option Constant

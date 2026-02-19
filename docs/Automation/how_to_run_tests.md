@@ -161,7 +161,7 @@ We can also achieve this from within Android Studio using [Device File Explore](
 
 The UI Automation can be run against a variety of flavors across the auth library being useds as well as the broker being used.
 
-See `./gradlew msalautomationapp:tasks` or `./gradlew brokerautomationapp:tasks` for a complete list of tasks.
+See `./gradlew msalautomationapp:tasks` for a complete list of tasks.
 
 ##### MSAL / ADAL
 
