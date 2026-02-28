@@ -14,6 +14,7 @@ azuresample
 oneauth
 tsl
 msalcpp
+design-docs
 
 # Gradle files
 .gradle/
@@ -29,6 +30,9 @@ build/
 # Local configuration file (sdk path, etc)
 gradle.properties
 local.properties
+
+# Developer-local config (GitHub accounts, personal settings — never commit)
+.github/developer-local.json
 
 #nodejs
 node_modules
