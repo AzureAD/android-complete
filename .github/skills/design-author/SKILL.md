@@ -93,40 +93,15 @@ Use the standard template sections. For the **Solution options** section:
 - List concrete pros/cons
 - Make a clear recommendation in the Solution Decision section
 
-### Step 5: Push as Draft PR for Review
+### Step 5: Present Design for Review
 
-Immediately after writing the spec, create a branch, push, and open a **draft PR** so the
-developer can use ADO's inline commenting UI for real review feedback.
-
-```bash
-cd design-docs/
-git checkout -b design/<feature-name-kebab-case>
-git add "[Android] <Feature Name>"
-git commit -m "Add design spec: <Feature Name>"
-git push origin design/<feature-name-kebab-case>
-```
-
-Open a draft PR:
-
-**Option A — Via ADO MCP Server** (if `repositories` tools are available):
-Use the ADO MCP repository tools to create a pull request in the `DevEx` project,
-`AuthLibrariesApiReview` repo, targeting the `main` branch. Set it as draft if the API supports it.
-
-**Option B — Via Azure DevOps web UI**:
-Provide the developer with a direct link:
-```
-https://dev.azure.com/IdentityDivision/DevEx/_git/AuthLibrariesApiReview/pullrequestcreate?sourceRef=design/<feature-name>&targetRef=main
-```
-Remind the developer to mark it as **Draft** when creating.
-
-### Step 6: Present Summary to Developer
+After writing the spec, **STOP and present choices to the developer**. Do NOT auto-create
+a PR or auto-proceed. Present the design summary and these explicit options:
 
 ```markdown
-## Design Spec Draft PR Opened: [Feature Name]
+## Design Spec Written: [Feature Name]
 
 **Local file**: `design-docs/[Android] <Feature Name>/<spec-name>.md`
-**Branch**: `design/<feature-name>`
-**Draft PR**: [link to PR]
 
 ### Summary
 [2-3 sentence summary of the proposed design]
@@ -134,18 +109,89 @@ Remind the developer to mark it as **Draft** when creating.
 ### Recommended Solution
 [Brief description of the recommended option and why]
 
-### How to Review
-1. Open the draft PR link above
-2. Use ADO's inline commenting to leave feedback on specific lines
-3. When done, say: **"address my design review comments"**
-4. I'll read the PR comments via the ADO MCP server and update the spec accordingly
+---
 
-When the team approves, say: **"Design is approved, proceed with implementation"**
+### What would you like to do?
+
+1. **Review locally first** — I'll open the spec in the editor for you. Use the **+
+   icons in the gutter** to add review comments on specific lines, then click the
+   **status bar button** (bottom right) to submit them.
+
+2. **Approve and skip PR** — Move directly to PBI planning without creating a design PR.
+   Say: **"design approved, plan the PBIs"**
+
+3. **Approve and open draft PR** — Push to AuthLibrariesApiReview repo as a **draft** PR
+   for team review.
+   Say: **"open a draft PR"**
+
+4. **Approve and publish PR** — Push and open a **published** (non-draft) PR for team review.
+   Say: **"open and publish the PR"**
+
+5. **Request changes** — Tell me what to change and I'll update the spec.
 ```
 
-### Step 7: Address PR Review Comments
+**MANDATORY**: Wait for the developer to explicitly choose one of these options.
+Do NOT auto-select any option.
 
-When the developer asks to address review comments:
+### Step 5a: Local Review Workflow (if developer chooses option 1)
+
+Open the spec file in the editor for the developer:
+```powershell
+code "design-docs/[Android] <Feature Name>/<spec-name>.md"
+```
+
+Then tell the developer:
+> "The spec is open in the editor. Here's how to review:
+> 1. Click the **+ icon** in the gutter next to any line to add a comment
+> 2. Type your comment and click **Add Comment**
+> 3. Comments auto-collapse — click the line indicator to expand
+> 4. When done, click the **status bar button** at the bottom right
+>    (it shows ‘💬 N Review Comments — Click to Submit’)
+> 5. This sends your comments to chat and I'll address each one"
+
+When the developer submits review comments (via the status bar), the design-reviewer
+skill will be triggered automatically. After addressing, return to Step 5
+(present choices again).
+
+### Step 5b: Push and Create PR (if developer chooses option 3 or 4)
+
+**Branch naming**: Use the developer's alias (discovered from `git config user.email` or
+`.github/developer-local.json`) as the branch prefix:
+```powershell
+$alias = (git config user.email) -replace '@.*', ''
+git checkout -b "$alias/design-<feature-name-kebab-case>"
+```
+
+```bash
+cd design-docs/
+git add "[Android] <Feature Name>"
+git commit -m "Add design spec: <Feature Name>"
+git push origin $BRANCH_NAME
+```
+
+**Create PR via ADO MCP Server** (if `repositories` tools are available):
+- Set `isDraft: true` for option 3 (draft), `isDraft: false` for option 4 (published)
+- **PR description**: Use actual line breaks or HTML formatting, NOT literal `\n` escape sequences
+- Target branch: `main` (or `dev` depending on the repo's default)
+
+Present the PR link and review instructions:
+```markdown
+### PR Created
+**PR**: [link to PR]
+**Status**: Draft / Published
+
+### How to Review
+1. Open the PR link above
+2. Use ADO's inline commenting to leave feedback
+3. When done, say: **"address my design review comments"**
+4. I'll read the PR comments via the ADO MCP server and update the spec
+
+When the team approves, say: **"design approved, plan the PBIs"**
+```
+
+### Step 6: Address PR Review Comments
+
+When the developer asks to address review comments (from ADO PR):
 
 1. Use the ADO MCP Server repository tools to read PR thread comments
 2. For each comment:
@@ -154,8 +200,9 @@ When the developer asks to address review comments:
    - Reply to the PR thread confirming the resolution
 3. Commit and push the updates to the same branch
 4. Report a summary of changes made
+5. Return to Step 5 (present choices again)
 
-### Step 8: Proceed to Implementation (on approval)
+### Step 7: Proceed to Implementation (on approval)
 
 When the developer confirms the design is approved:
 1. The PR can be completed/merged in ADO
