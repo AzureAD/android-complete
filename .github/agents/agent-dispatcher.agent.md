@@ -2,10 +2,6 @@
 name: agent-dispatcher
 description: Dispatch Azure DevOps PBIs to GitHub Copilot coding agent for implementation.
 user-invokable: false
-tools:
-  - readFile
-  - runInTerminal
-  - ado/*
 ---
 
 # Agent Dispatcher
