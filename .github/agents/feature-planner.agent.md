@@ -2,12 +2,6 @@
 name: feature-planner
 description: Decompose features into repo-targeted PBIs for the Android Auth project. Produces a structured plan for developer review.
 user-invokable: false
-tools:
-  - search
-  - readFile
-  - listFiles
-  - findTextInFiles
-  - findFiles
 ---
 
 # Feature Planner
