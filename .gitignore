@@ -23,10 +23,7 @@ build/
 # IntelliJ
 *.iml
 .idea
-.vscode/*
-!.vscode/mcp.json
-extensions/feature-orchestrator/.vscode/
-extensions/feature-orchestrator/*.vsix
+.vscode
 .settings
 .project
 
@@ -36,9 +33,6 @@ local.properties
 
 # Developer-local config (GitHub accounts, personal settings — never commit)
 .github/developer-local.json
-
-# Design review comments (personal, per-developer)
-.github/design-reviews/
 
 #nodejs
 node_modules
