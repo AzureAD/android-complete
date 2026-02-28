@@ -25,14 +25,7 @@ Read the feature plan from the chat context. Extract for each PBI:
 - **Priority** — from the metadata table `Priority` field (P1→1, P2→2, P3→3)
 - **Depends on** — from the metadata table `Depends on` field (PBI-N references)
 - **Tags** — from the metadata table `Tags` field
-- **Description** — from the `##### Description` section (in plain markdown).
-  **Convert to HTML** before setting as `System.Description` in ADO:
-  - `## Heading` → `<h2>Heading</h2>`
-  - `**bold**` → `<strong>bold</strong>`
-  - `- item` → `<ul><li>item</li></ul>`
-  - `` `code` `` → `<code>code</code>`
-  - Paragraphs → `<p>text</p>`
-  - Or use a simple approach: wrap the entire markdown in `<pre>` tags if conversion is complex.
+- **HTML Description** — from the `<details>` block (the full HTML content)
 
 If a feature plan is not found in context, ask the developer:
 > "I don't see a feature plan in our conversation. Either:
@@ -53,81 +46,42 @@ options and avoid path errors.
    - `System.AssignedTo` → use as default assignee
 4. Call `mcp_ado_work_list_iterations` with **`depth: 6`** (monthly sprints are at depth 6;
    `depth: 4` will miss them).
-5. Filter iterations to **current month or future only** — discard any iteration whose end date
-   is in the past. Compare iteration dates against today's date. For monthly iterations with
-   names like `CY26Q1_M2_Feb`, parse the month/year and exclude months before the current one.
-   **Never suggest past iterations as options.**
+5. Filter to upcoming/current iterations matching the discovered format.
 
 ### Step 3: Present Options for Confirmation
 
-**MANDATORY**: You MUST present options and wait for the developer to confirm before proceeding.
-Do NOT make assumptions. Do NOT auto-select defaults. Always ask.
-**Use the `askQuestion` tool** to present clickable MCQ-style options whenever possible.
+Present the discovered options to the developer. Use `ask_questions` with selections:
 
-**Batch ALL questions into a SINGLE `askQuestion` call** with multiple questions.
-This gives the user a smooth flow where answering one immediately shows the next.
-Do NOT make separate `askQuestion` calls for each question — combine them all into one call
-with 4 questions (Area Path, Iteration, Assignee, Parent). Example:
+**Area path:**
+- If multiple unique area paths found, present them as options with frequency counts.
+- If only one found, show as recommended default.
+- Example:
+  > "Your recent work items use these area paths:
+  > 1. `Engineering\Auth Client\Broker\Android` (3 items) ← recommended
+  > 2. `Engineering\Auth Client\MSAL\Android` (1 item)
+  > Which area path for these PBIs?"
 
-```
-askQuestion({
-  questions: [
-    {
-      header: "Area Path",
-      question: "Which area path for these PBIs?",
-      options: [
-        { label: "Engineering\\Auth Client\\Broker\\Android", description: "Your most recent work items use this path", recommended: true },
-        { label: "Engineering\\Auth Client\\MSAL\\Android" }
-      ],
-      allowFreeformInput: true
-    },
-    {
-      header: "Iteration",
-      question: "Which iteration? (Current date: <today>)",
-      options: [
-        { label: "CY26Q2_M4_Apr (next month)", description: "Engineering\\CY26\\CY26H1\\CY26Q2\\Monthly\\CY26Q2_M4_Apr", recommended: true },
-        { label: "CY26Q2_M5_May", description: "Engineering\\CY26\\CY26H1\\CY26Q2\\Monthly\\CY26Q2_M5_May" }
-      ],
-      allowFreeformInput: true
-    },
-    {
-      header: "Assignee",
-      question: "Who should be assigned?",
-      options: [
-        { label: "shjameel@microsoft.com", description: "Discovered from recent work items", recommended: true }
-      ],
-      allowFreeformInput: true
-    },
-    {
-      header: "Parent",
-      question: "Link PBIs to a parent Feature work item?",
-      options: [
-        { label: "Create new Feature", description: "Create a new Feature work item titled '<feature name>'" },
-        { label: "No parent", description: "No parent Feature — standalone PBIs" }
-      ],
-      allowFreeformInput: true
-    }
-  ]
-})
-```
+**Iteration:**
+- Show upcoming iterations that match the discovered format.
+- Example:
+  > "Available upcoming iterations:
+  > 1. `Engineering\CY26\CY26H1\CY26Q2\Monthly\CY26Q2_M4_Apr`
+  > 2. `Engineering\CY26\CY26H1\CY26Q2\Monthly\CY26Q2_M5_May`
+  > Which iteration?"
 
-### Question details:
+**Assignee:**
+- Show the discovered assignee as recommended default.
 
-**Area Path** (ALWAYS ask, even if only one found):
-- Show all unique area paths discovered from recent work items with frequency counts
-- Mark the most common one as `recommended: true`
+### Step 3.5: Parent Feature Work Item
 
-**Iteration** (ALWAYS present a list — never assume):
-Only show iterations for the **current month or later**. Never include past months.
-- Mark the current/next month as `recommended: true`
+Before creating PBIs, ask the developer if the PBIs should be parented to a Feature work item.
+This keeps the ADO backlog organized and makes sprint planning easier.
 
-**Assignee** (confirm):
-- Show the discovered assignee as `recommended: true`
-
-**Parent Feature**:
-- Offer to create a new Feature, link to an existing one, or no parent
-
-Wait for all answers before proceeding to Step 4.
+**Ask the developer:**
+> "Should these PBIs be parented to a Feature work item?"
+> 1. **Link to existing Feature** — "Provide the Feature AB# ID (e.g., AB#12345)"
+> 2. **Create a new Feature** — I'll create one titled '[Feature Name]' and parent all PBIs to it
+> 3. **No parent** — create PBIs as standalone items
 
 **If creating a new Feature:**
 Use `mcp_ado_wit_create_work_item` with:

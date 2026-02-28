@@ -147,7 +147,7 @@ PBI-1 (common) → PBI-2 (broker) + PBI-3 (msal) [parallel after PBI-1]
 3. After PBI-2 merges → dispatch **PBI-4**
 ```
 
-**5. PBI details** — one block per PBI with metadata header + full description:
+**5. PBI details** — one block per PBI with metadata header + collapsible HTML description:
 
 Each PBI detail block MUST have this structure:
 
@@ -164,25 +164,21 @@ Each PBI detail block MUST have this structure:
 | **Depends on** | None / PBI-X |
 | **Tags** | `ai-generated; copilot-agent-ready; [feature-tag]` |
 
-##### Description
+<details>
+<summary>Full Description (click to expand)</summary>
 
-[Write the full PBI description here in PLAIN MARKDOWN — NOT HTML.
-This section should contain: Objective, Context, Technical Requirements,
-Acceptance Criteria, Files to Modify, Dependencies — per pbi-template.md.
-The pbi-creator skill will convert this to HTML when creating ADO work items.]
+{paste the full HTML description here, per pbi-template.md}
+
+</details>
 ```
 
 **Why this structure?**
-- The **metadata table** above the description lets the developer quickly scan each PBI.
-- The **description in plain markdown** renders cleanly in VS Code chat (unlike HTML tags
-  like `<details>` or `<h2>` which show as raw text in chat).
-- The `pbi-creator` skill converts the markdown description to HTML when creating ADO work items.
+- The **metadata table** above the `<details>` block lets the developer quickly scan each PBI
+  without expanding the full description.
+- The **`<details>` block** contains the complete HTML description that the `pbi-creator` skill
+  will extract verbatim and set as `System.Description` in ADO.
 - The **Summary Table** gives the developer a bird's eye view to approve the breakdown before
   seeing any details.
-
-**IMPORTANT**: Do NOT use HTML tags (`<details>`, `<summary>`, `<h2>`, `<p>`, `<ul>`, etc.)
-in the plan output. VS Code chat renders markdown only — HTML tags appear as raw text and
-make the output unreadable. Use standard markdown formatting instead.
 
 **6. Notes** (cross-repo coordination, external team notifications, etc.):
 
