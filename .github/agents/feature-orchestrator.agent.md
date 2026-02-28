@@ -152,9 +152,11 @@ Start with:
 **Pipeline**: ✅ Design → ✅ Plan → ✅ Create → ✅ Dispatch → 📡 **Monitor**
 ```
 
-Check agent PR status by running terminal commands:
+Check agent PR status by running terminal commands.
+First discover the developer's GitHub username (check `.github/developer-local.json`,
+fall back to `gh auth status`, then prompt if needed):
 ```bash
-gh auth switch --user shahzaibj
+gh auth switch --user <discovered_public_username>
 gh pr list --repo "AzureAD/microsoft-authentication-library-common-for-android" --author "copilot-swe-agent[bot]" --state all --limit 5
 gh pr list --repo "AzureAD/microsoft-authentication-library-for-android" --author "copilot-swe-agent[bot]" --state all --limit 5
 ```
