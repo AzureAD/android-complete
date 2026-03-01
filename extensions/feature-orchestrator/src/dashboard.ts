@@ -63,9 +63,9 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
                     vscode.env.openExternal(vscode.Uri.parse(message.url));
                     break;
                 case 'openAgent': {
-                    // Open a new chat with the custom agent (not the old @orchestrator participant)
+                    // Open a new chat with a prompt file
                     await vscode.commands.executeCommand('workbench.action.chat.newChat');
-                    const query = `@feature-orchestrator ${message.prompt || ''}`.trim();
+                    const query = `/${message.promptFile || 'feature-continue'} ${message.context || ''}`.trim();
                     vscode.commands.executeCommand('workbench.action.chat.open', { query });
                     break;
                 }
@@ -146,26 +146,26 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         }
 
         // Map next step to a notification message + button label + chat prompt
-        const stepActions: Record<string, { message: string; button: string; prompt: string }> = {
+        const stepActions: Record<string, { message: string; button: string; promptFile: string }> = {
             'design_review': {
                 message: `✅ Design spec written for "${feature.name}". Ready to plan PBIs.`,
                 button: '📋 Plan PBIs',
-                prompt: 'The design has been approved. Break it down into PBIs.',
+                promptFile: 'feature-plan',
             },
             'plan_review': {
                 message: `✅ PBI plan created for "${feature.name}". Review and create in ADO.`,
                 button: '✅ Create in ADO',
-                prompt: 'Plan approved. Create the PBIs in ADO.',
+                promptFile: 'feature-backlog',
             },
             'backlog_review': {
                 message: `✅ PBIs backlogged in ADO for "${feature.name}". Ready to dispatch.`,
                 button: '🚀 Dispatch to Agent',
-                prompt: 'PBIs approved. Dispatch to Copilot coding agent.',
+                promptFile: 'feature-dispatch',
             },
             'monitoring': {
                 message: `✅ PBIs dispatched for "${feature.name}". Agents are working.`,
                 button: '📡 Check Status',
-                prompt: 'Check agent status.',
+                promptFile: 'feature-status',
             },
         };
 
@@ -173,11 +173,11 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         if (!cfg) { return; }
 
         // Show VS Code notification with clickable button
-        vscode.window.showInformationMessage(cfg.message, cfg.button).then(selection => {
+        vscode.window.showInformationMessage(cfg.message, cfg.button).then(async selection => {
             if (selection === cfg.button) {
-                // Open chat with the next-step prompt pre-filled
+                await vscode.commands.executeCommand('workbench.action.chat.newChat');
                 vscode.commands.executeCommand('workbench.action.chat.open', {
-                    query: `@feature-orchestrator ${cfg.prompt}`,
+                    query: `/${cfg.promptFile} Feature: "${feature.name}"`,
                 });
             }
         });
@@ -240,16 +240,16 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
     }
 
     private getHtml(state: OrchestratorState, agentPrs: AgentPr[]): string {
-        const stepConfig: Record<string, { icon: string; label: string; nextAgent?: string; nextLabel?: string; nextPrompt?: string }> = {
-            'idle': { icon: '⏳', label: 'Ready', nextAgent: 'design-author', nextLabel: '▶ Start Design', nextPrompt: '' },
+        const stepConfig: Record<string, { icon: string; label: string; nextPromptFile?: string; nextLabel?: string; nextContext?: string }> = {
+            'idle': { icon: '⏳', label: 'Ready', nextPromptFile: 'feature-design', nextLabel: '▶ Start Design', nextContext: '' },
             'designing': { icon: '📝', label: 'Writing Design...' },
-            'design_review': { icon: '👀', label: 'Awaiting Design Approval', nextAgent: 'feature-planner', nextLabel: '📋 Approve → Plan PBIs', nextPrompt: 'The design spec has been approved. Break it down into PBIs.' },
+            'design_review': { icon: '👀', label: 'Awaiting Design Approval', nextPromptFile: 'feature-plan', nextLabel: '📋 Approve → Plan PBIs', nextContext: '' },
             'planning': { icon: '📋', label: 'Planning PBIs...' },
-            'plan_review': { icon: '👀', label: 'Awaiting Plan Approval', nextAgent: 'pbi-creator', nextLabel: '✅ Approve → Backlog in ADO', nextPrompt: 'Plan approved. Create the PBIs in Azure DevOps.' },
+            'plan_review': { icon: '👀', label: 'Awaiting Plan Approval', nextPromptFile: 'feature-backlog', nextLabel: '✅ Approve → Backlog in ADO', nextContext: '' },
             'backlogging': { icon: '📝', label: 'Adding to Backlog...' },
-            'backlog_review': { icon: '👀', label: 'PBIs Backlogged — Review', nextAgent: 'agent-dispatcher', nextLabel: '🚀 Dispatch to Agent', nextPrompt: 'PBIs approved. Dispatch to Copilot coding agent.' },
+            'backlog_review': { icon: '👀', label: 'PBIs Backlogged — Review', nextPromptFile: 'feature-dispatch', nextLabel: '🚀 Dispatch to Agent', nextContext: '' },
             'dispatching': { icon: '🚀', label: 'Dispatching...' },
-            'monitoring': { icon: '📡', label: 'Agents Working', nextAgent: 'agent-monitor', nextLabel: '👁 Check Status', nextPrompt: 'Check the status of all agent PRs.' },
+            'monitoring': { icon: '📡', label: 'Agents Working', nextPromptFile: 'feature-status', nextLabel: '👁 Check Status', nextContext: '' },
             'done': { icon: '✅', label: 'Complete' },
         };
 
@@ -270,7 +270,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
             ? `<div class="empty-state">
                  <div class="empty-icon">🚀</div>
                  <p><strong>No features tracked</strong></p>
-                 <p class="muted">Click <strong>+</strong> above or type <code>@feature-orchestrator</code> in chat</p>
+                 <p class="muted">Click <strong>+</strong> above or type <code>/feature-design</code> in chat</p>
                </div>`
             : state.features.map(f => {
                 const normalizedStep = stepAliases[f.step] || f.step;
@@ -282,8 +282,18 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
                     `<div class="dot ${i < currentIdx ? 'done' : i === currentIdx ? 'active' : ''}"></div>`
                 ).join('');
 
-                const actionBtn = cfg.nextAgent
-                    ? `<button class="action-btn" onclick="event.stopPropagation(); openAgent('${cfg.nextAgent}', '${this.escapeAttr(cfg.nextPrompt || '')}')">${cfg.nextLabel}</button>`
+                // Build action button — use prompt files for all actions
+                let actionContext = `Feature: "${f.name}"`;
+                if (normalizedStep === 'monitoring') {
+                    const agentPrs = (f as any).artifacts?.agentPrs || f.agentSessions || [];
+                    if (agentPrs.length > 0) {
+                        const prList = agentPrs.map((pr: any) => `${pr.repo || ''} #${pr.prNumber || pr.number || '?'}`).join(', ');
+                        actionContext += `. Tracked PRs: ${prList}`;
+                    }
+                }
+
+                const actionBtn = cfg.nextPromptFile
+                    ? `<button class="action-btn" onclick="event.stopPropagation(); openPrompt('${cfg.nextPromptFile}', '${this.escapeAttr(actionContext)}')">${cfg.nextLabel}</button>`
                     : `<div class="step-status">${cfg.icon} ${cfg.label}</div>`;
 
                 // Artifact summary counts
@@ -370,7 +380,8 @@ hr { border: none; border-top: 1px solid var(--vscode-widget-border); margin: 12
     const vscode = acquireVsCodeApi();
     function openUrl(url) { vscode.postMessage({ command: 'openUrl', url }); }
     function removeFeature(id) { vscode.postMessage({ command: 'removeFeature', featureId: id }); }
-    function openAgent(agent, prompt) { vscode.postMessage({ command: 'openAgent', agent, prompt }); }
+    function openAgent(agent, prompt) { vscode.postMessage({ command: 'openAgent', promptFile: agent, context: prompt }); }
+    function openPrompt(promptFile, context) { vscode.postMessage({ command: 'openAgent', promptFile, context }); }
     function openDetail(id) { vscode.postMessage({ command: 'openFeatureDetail', featureId: id }); }
   </script>
 </body></html>`;

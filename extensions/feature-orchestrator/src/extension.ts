@@ -34,10 +34,10 @@ export function activate(context: vscode.ExtensionContext) {
             panel.webview.onDidReceiveMessage(async (message) => {
                 if (message.command === 'submit') {
                     panel.dispose();
-                    // Open the custom agent (not the old @orchestrator participant)
+                    // Open chat with the design prompt file
                     await vscode.commands.executeCommand('workbench.action.chat.newChat');
                     vscode.commands.executeCommand('workbench.action.chat.open', {
-                        query: `@feature-orchestrator ${message.prompt}`,
+                        query: `/feature-design ${message.prompt}`,
                     });
                 }
             });
