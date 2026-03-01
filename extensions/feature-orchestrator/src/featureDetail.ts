@@ -916,12 +916,16 @@ body {
 .badge-draft { background: #8b949e30; color: #8b949e; }
 .badge-in-review { background: #d2992230; color: #d29922; }
 .badge-approved { background: #3fb95030; color: #3fb950; }
-.badge-new { background: #58a6ff30; color: #58a6ff; }
-.badge-committed { background: #d2992230; color: #d29922; }
-.badge-in-progress { background: #f7883030; color: #f78830; }
-.badge-active { background: #3fb95030; color: #3fb950; }
-.badge-resolved { background: #8957e530; color: #8957e5; }
-.badge-closed { background: #8b949e30; color: #8b949e; }
+.badge-new { background: #b2b2b230; color: #b2b2b2; }
+.badge-approved { background: #b2b2b230; color: #b2b2b2; }
+.badge-committed { background: #58a6ff25; color: #58a6ff; }
+.badge-in-review { background: #fbd14430; color: #c9a300; }
+.badge-in-progress { background: #e3b34130; color: #e3b341; }
+.badge-blocked { background: #da363330; color: #da3633; }
+.badge-extension { background: #1b478b30; color: #3b7bd6; }
+.badge-resolved { background: #33993330; color: #339933; }
+.badge-done { background: #33993330; color: #339933; }
+.badge-removed { background: #8b949e30; color: #8b949e; }
 
 a { color: var(--vscode-textLink-foreground); text-decoration: none; cursor: pointer; }
 a:hover { text-decoration: underline; }
