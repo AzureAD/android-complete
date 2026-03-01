@@ -114,6 +114,19 @@ switch (command) {
         console.log(JSON.stringify(readState(), null, 2));
         break;
     }
+    case 'list-features': {
+        const state = readState();
+        const features = state.features.map(f => ({
+            id: f.id,
+            name: f.name,
+            step: f.step,
+            pbis: (f.artifacts?.pbis || f.pbis || []).length,
+            prs: (f.artifacts?.agentPrs || f.agentSessions || []).length,
+            updatedAt: new Date(f.updatedAt).toISOString(),
+        }));
+        console.log(JSON.stringify(features, null, 2));
+        break;
+    }
     case 'get-feature': {
         const state = readState();
         const feature = findFeature(state, args[0]);
@@ -249,6 +262,6 @@ switch (command) {
         break;
     }
     default:
-        console.error('Usage: state-utils.js <get|get-feature|set-step|add-feature|set-agent-info|set-design|add-pbi|add-agent-pr> [args]');
+        console.error('Usage: state-utils.js <get|list-features|get-feature|set-step|add-feature|set-agent-info|set-design|add-pbi|add-agent-pr> [args]');
         process.exit(1);
 }
