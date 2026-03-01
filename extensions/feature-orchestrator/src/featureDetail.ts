@@ -95,24 +95,27 @@ export class FeatureDetailPanel {
                     break;
                 }
                 case 'continueInChat': {
-                    // Build a context-rich prompt summarizing the feature's current state
                     const freshState2 = FeatureDetailPanel.readState();
                     const feat = freshState2.features?.find((f: any) => f.id === featureId);
-                    let contextPrompt = `Continue working on feature: "${feat?.name || 'Unknown'}".\n`;
-                    contextPrompt += `Current step: ${feat?.step || 'unknown'}.\n`;
-                    // Include PBI context if available
-                    const pbiList = feat?.artifacts?.pbis || feat?.pbis || [];
-                    if (pbiList.length > 0) {
-                        contextPrompt += `PBIs: ${pbiList.map((p: any) => `${p.id || 'AB#' + p.adoId} (${p.title})`).join(', ')}.\n`;
-                    }
-                    // Include design doc path if available
-                    const designPath = feat?.artifacts?.design?.docPath || feat?.designDocPath;
-                    if (designPath) {
-                        contextPrompt += `Design doc: ${designPath}\n`;
-                    }
+                    const featureName = feat?.name || 'Unknown';
+                    const step = feat?.step || 'unknown';
+
+                    // Map current step to the appropriate prompt file
+                    const stepToPromptFile: Record<string, string> = {
+                        'designing': 'feature-design',
+                        'design_review': 'feature-plan',
+                        'planning': 'feature-plan',
+                        'plan_review': 'feature-backlog',
+                        'backlogging': 'feature-backlog',
+                        'backlog_review': 'feature-dispatch',
+                        'dispatching': 'feature-dispatch',
+                        'monitoring': 'feature-status',
+                    };
+                    const promptFile = stepToPromptFile[step] || 'feature-continue';
+
                     await vscode.commands.executeCommand('workbench.action.chat.newChat');
                     vscode.commands.executeCommand('workbench.action.chat.open', {
-                        query: `@feature-orchestrator ${contextPrompt}`,
+                        query: `/${promptFile} Feature: "${featureName}"`,
                     });
                     break;
                 }
