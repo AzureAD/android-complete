@@ -114,19 +114,6 @@ switch (command) {
         console.log(JSON.stringify(readState(), null, 2));
         break;
     }
-    case 'list-features': {
-        const state = readState();
-        const features = state.features.map(f => ({
-            id: f.id,
-            name: f.name,
-            step: f.step,
-            pbis: (f.artifacts?.pbis || f.pbis || []).length,
-            prs: (f.artifacts?.agentPrs || f.agentSessions || []).length,
-            updatedAt: new Date(f.updatedAt).toISOString(),
-        }));
-        console.log(JSON.stringify(features, null, 2));
-        break;
-    }
     case 'get-feature': {
         const state = readState();
         const feature = findFeature(state, args[0]);
@@ -139,9 +126,6 @@ switch (command) {
         if (feature) {
             feature.step = args[1];
             feature.updatedAt = Date.now();
-            // Record phase timestamp for duration tracking
-            if (!feature.phaseTimestamps) { feature.phaseTimestamps = {}; }
-            feature.phaseTimestamps[args[1]] = Date.now();
             writeState(state);
             console.log(JSON.stringify({ ok: true, id: args[0], step: args[1] }));
         } else {
@@ -165,10 +149,7 @@ switch (command) {
         if (idx >= 0) {
             state.features[idx] = { ...state.features[idx], ...feature, updatedAt: Date.now() };
         } else {
-            // Record initial phase timestamp
-            const initialStep = feature.step || 'idle';
-            const phaseTimestamps = { [initialStep]: Date.now() };
-            state.features.push({ ...feature, startedAt: Date.now(), updatedAt: Date.now(), phaseTimestamps });
+            state.features.push({ ...feature, startedAt: Date.now(), updatedAt: Date.now() });
         }
         writeState(state);
         console.log(JSON.stringify({ ok: true, id: feature.id }));
@@ -268,6 +249,6 @@ switch (command) {
         break;
     }
     default:
-        console.error('Usage: state-utils.js <get|list-features|get-feature|set-step|add-feature|set-agent-info|set-design|add-pbi|add-agent-pr> [args]');
+        console.error('Usage: state-utils.js <get|get-feature|set-step|add-feature|set-agent-info|set-design|add-pbi|add-agent-pr> [args]');
         process.exit(1);
 }
