@@ -12,6 +12,7 @@ export function runCommand(command: string, cwd?: string, timeoutMs?: number): P
             cwd: cwd ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
             maxBuffer: 1024 * 1024, // 1MB
             timeout: timeoutMs ?? 60000,
+            encoding: 'utf-8',
         };
 
         cp.exec(command, options, (error, stdout, stderr) => {

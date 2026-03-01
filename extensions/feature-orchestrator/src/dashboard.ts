@@ -2,7 +2,17 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { getAgentPRs, switchGhAccount } from './tools';
+import { runCommand, switchGhAccount } from './tools';
+
+interface OpenPr {
+    repo: string;
+    number: number;
+    title: string;
+    url: string;
+    isDraft: boolean;
+    author: string;
+    createdAt: string;
+}
 
 interface FeatureState {
     id: string;
@@ -28,21 +38,16 @@ interface OrchestratorState {
     lastUpdated: number;
 }
 
-interface AgentPr {
-    repo: string;
-    number: number;
-    title: string;
-    state: string;
-    url: string;
-    createdAt: string;
-}
-
 export class DashboardViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'orchestrator.dashboard';
 
     private view?: vscode.WebviewView;
     private refreshInterval?: NodeJS.Timeout;
     private fileWatcher?: vscode.FileSystemWatcher;
+    private cachedOpenPrs: OpenPr[] = [];
+    private prsFetching = false;
+    private prsLastFetched = 0;
+    private prsEverFetched = false;
 
     constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -58,6 +63,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
             switch (message.command) {
                 case 'refresh':
                     await this.refresh();
+                    this.fetchOpenPrsInBackground();
                     break;
                 case 'openUrl':
                     vscode.env.openExternal(vscode.Uri.parse(message.url));
@@ -81,7 +87,10 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
 
         this.refresh();
 
-        // Auto-refresh every 30 seconds
+        // Fetch open PRs in background on initial load
+        this.fetchOpenPrsInBackground();
+
+        // Auto-refresh every 30 seconds (state only, not PRs)
         this.refreshInterval = setInterval(() => this.refresh(), 30000);
 
         // Watch state file for changes (hooks write to it)
@@ -117,12 +126,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         if (!this.view) { return; }
 
         const state = this.readStateFile();
-        let agentPrs: AgentPr[] = [];
-        try {
-            agentPrs = await this.fetchAllAgentPrs();
-        } catch { /* ignore */ }
-
-        this.view.webview.html = this.getHtml(state, agentPrs);
+        this.view.webview.html = this.getHtml(state);
     }
 
     /**
@@ -216,30 +220,106 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         fs.writeFileSync(filePath, JSON.stringify(state, null, 2), 'utf-8');
     }
 
-    private async fetchAllAgentPrs(): Promise<AgentPr[]> {
-        const repos = [
-            { slug: 'AzureAD/microsoft-authentication-library-common-for-android', label: 'common' },
-            { slug: 'AzureAD/microsoft-authentication-library-for-android', label: 'msal' },
-            { slug: 'AzureAD/azure-activedirectory-library-for-android', label: 'adal' },
-        ];
-        const allPrs: AgentPr[] = [];
-        for (const repo of repos) {
-            try {
-                await switchGhAccount(repo.slug);
-                const json = await getAgentPRs(repo.slug);
-                const prs = JSON.parse(json);
-                for (const pr of prs) {
-                    allPrs.push({
-                        repo: repo.label, number: pr.number, title: pr.title,
-                        state: pr.state, url: pr.url, createdAt: pr.createdAt,
-                    });
-                }
-            } catch { /* skip */ }
-        }
-        return allPrs;
+    private async fetchAllAgentPrs(): Promise<void> {
+        // No-op — Agent PRs are tracked per-feature in artifacts
     }
 
-    private getHtml(state: OrchestratorState, agentPrs: AgentPr[]): string {
+    /**
+     * Fetch open PRs authored by the user or by copilot-swe-agent across all repos.
+     * Runs in background and updates the cached list, then re-renders.
+     */
+    private async fetchOpenPrsInBackground(): Promise<void> {
+        // Don't double-fetch
+        if (this.prsFetching) { return; }
+        this.prsFetching = true;
+
+        // Re-render immediately to show loading state
+        await this.refresh();
+
+        try {
+            const repos = [
+                { slug: 'AzureAD/microsoft-authentication-library-common-for-android', label: 'common' },
+                { slug: 'AzureAD/microsoft-authentication-library-for-android', label: 'msal' },
+                { slug: 'identity-authnz-teams/ad-accounts-for-android', label: 'broker' },
+            ];
+
+            const allPrs: OpenPr[] = [];
+
+            // Group by org to minimize account switches
+            const orgRepos: Record<string, Array<{ slug: string; label: string }>> = {};
+            for (const repo of repos) {
+                const org = repo.slug.split('/')[0];
+                if (!orgRepos[org]) { orgRepos[org] = []; }
+                orgRepos[org].push(repo);
+            }
+
+            for (const [, repoList] of Object.entries(orgRepos)) {
+                // Discover the GitHub username for this org
+                let ghUsername = '';
+                try {
+                    await switchGhAccount(repoList[0].slug);
+                    const statusOutput = await runCommand('gh api user --jq .login', undefined, 10000).catch(() => '');
+                    ghUsername = statusOutput.trim();
+                } catch {
+                    continue;
+                }
+
+                for (const repo of repoList) {
+                    try {
+                        // Fetch user's own PRs
+                        const userPrsJson = await runCommand(
+                            `gh pr list --repo "${repo.slug}" --author "@me" --state open --limit 10 --json number,title,url,isDraft,author,createdAt`,
+                            undefined, 15000
+                        ).catch(() => '[]');
+
+                        // Fetch agent PRs assigned to this user (agent PRs are assigned to the triggering user)
+                        const agentPrsJson = ghUsername
+                            ? await runCommand(
+                                `gh pr list --repo "${repo.slug}" --author "copilot-swe-agent[bot]" --assignee "${ghUsername}" --state open --limit 10 --json number,title,url,isDraft,author,createdAt`,
+                                undefined, 15000
+                            ).catch(() => '[]')
+                            : '[]';
+
+                        for (const json of [userPrsJson, agentPrsJson]) {
+                            try {
+                                const prs = JSON.parse(json);
+                                for (const pr of prs) {
+                                    // Dedupe by number+repo
+                                    if (!allPrs.some(p => p.number === pr.number && p.repo === repo.label)) {
+                                        allPrs.push({
+                                            repo: repo.label,
+                                            number: pr.number,
+                                            title: pr.title || '',
+                                            url: pr.url || '',
+                                            isDraft: pr.isDraft || false,
+                                            author: pr.author?.login || '',
+                                            createdAt: pr.createdAt || '',
+                                        });
+                                    }
+                                }
+                            } catch { /* skip parse errors */ }
+                        }
+                    } catch { /* skip repo errors */ }
+                }
+            }
+
+            // Sort by most recent first
+            allPrs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+            this.cachedOpenPrs = allPrs;
+            this.prsLastFetched = Date.now();
+            this.prsEverFetched = true;
+
+            // Re-render with fresh PR data
+            await this.refresh();
+        } catch (e) {
+            console.error('[Dashboard] Failed to fetch open PRs:', e);
+        } finally {
+            this.prsFetching = false;
+        }
+    }
+
+    private getHtml(state: OrchestratorState): string {
         const stepConfig: Record<string, { icon: string; label: string; nextPromptFile?: string; nextLabel?: string; nextContext?: string }> = {
             'idle': { icon: '⏳', label: 'Ready', nextPromptFile: 'feature-design', nextLabel: '▶ Start Design', nextContext: '' },
             'designing': { icon: '📝', label: 'Writing Design...' },
@@ -253,7 +333,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
             'done': { icon: '✅', label: 'Complete' },
         };
 
-        // Normalize step names: map aliases/past-tense/legacy names to canonical keys
+        // Normalize step names
         const stepAliases: Record<string, string> = {
             'designed': 'design_review', 'design_complete': 'design_review',
             'planned': 'plan_review', 'plan_complete': 'plan_review',
@@ -262,82 +342,153 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
             'complete': 'done', 'completed': 'done',
         };
 
-        const stateColors: Record<string, string> = {
-            'OPEN': '#238636', 'MERGED': '#8957e5', 'CLOSED': '#da3633',
-        };
+        // Split features into active vs completed
+        const activeFeatures = state.features.filter(f => {
+            const ns = stepAliases[f.step] || f.step;
+            return ns !== 'done';
+        });
+        const completedFeatures = state.features.filter(f => {
+            const ns = stepAliases[f.step] || f.step;
+            return ns === 'done';
+        });
 
-        const featuresHtml = state.features.length === 0
-            ? `<div class="empty-state">
-                 <div class="empty-icon">🚀</div>
-                 <p><strong>No features tracked</strong></p>
-                 <p class="muted">Click <strong>+</strong> above or type <code>/feature-design</code> in chat</p>
-               </div>`
-            : state.features.map(f => {
-                const normalizedStep = stepAliases[f.step] || f.step;
-                const cfg = stepConfig[normalizedStep] || stepConfig['idle'];
-                const progressSteps = ['designing', 'design_review', 'planning', 'plan_review', 'backlogging', 'backlog_review', 'dispatching', 'monitoring', 'done'];
-                const currentIdx = progressSteps.indexOf(normalizedStep);
+        // Compute metrics
+        const totalFeatures = state.features.length;
+        const totalPbis = state.features.reduce((sum, f) => {
+            return sum + ((f as any).artifacts?.pbis?.length || f.pbis?.length || 0);
+        }, 0);
+        const totalPrs = state.features.reduce((sum, f) => {
+            return sum + ((f as any).artifacts?.agentPrs?.length || f.agentSessions?.length || 0);
+        }, 0);
+        const mergedPrs = state.features.reduce((sum, f) => {
+            const prs = (f as any).artifacts?.agentPrs || f.agentSessions || [];
+            return sum + prs.filter((pr: any) => (pr.status || pr.state || '').toLowerCase() === 'merged').length;
+        }, 0);
 
-                const progressDots = progressSteps.map((_s, i) =>
-                    `<div class="dot ${i < currentIdx ? 'done' : i === currentIdx ? 'active' : ''}"></div>`
-                ).join('');
+        const metricsHtml = totalFeatures > 0
+            ? `<div class="metrics">
+                <div class="metric"><span class="metric-value">${activeFeatures.length}</span><span class="metric-label">Active</span></div>
+                <div class="metric"><span class="metric-value">${completedFeatures.length}</span><span class="metric-label">Done</span></div>
+                <div class="metric"><span class="metric-value">${totalPbis}</span><span class="metric-label">PBIs</span></div>
+                <div class="metric"><span class="metric-value">${mergedPrs}/${totalPrs}</span><span class="metric-label">PRs Merged</span></div>
+              </div>`
+            : '';
 
-                // Build action button — use prompt files for all actions
-                let actionContext = `Feature: "${f.name}"`;
-                if (normalizedStep === 'monitoring') {
-                    const agentPrs = (f as any).artifacts?.agentPrs || f.agentSessions || [];
-                    if (agentPrs.length > 0) {
-                        const prList = agentPrs.map((pr: any) => `${pr.repo || ''} #${pr.prNumber || pr.number || '?'}`).join(', ');
-                        actionContext += `. Tracked PRs: ${prList}`;
-                    }
-                }
+        // Render a feature card
+        const renderCard = (f: FeatureState, compact: boolean = false) => {
+            const normalizedStep = stepAliases[f.step] || f.step;
+            const cfg = stepConfig[normalizedStep] || stepConfig['idle'];
+            const progressSteps = ['designing', 'design_review', 'planning', 'plan_review', 'backlogging', 'backlog_review', 'dispatching', 'monitoring', 'done'];
+            const currentIdx = progressSteps.indexOf(normalizedStep);
 
-                const actionBtn = cfg.nextPromptFile
-                    ? `<button class="action-btn" onclick="event.stopPropagation(); openPrompt('${cfg.nextPromptFile}', '${this.escapeAttr(actionContext)}')">${cfg.nextLabel}</button>`
-                    : `<div class="step-status">${cfg.icon} ${cfg.label}</div>`;
+            const progressDots = progressSteps.map((_s, i) =>
+                `<div class="dot ${i < currentIdx ? 'done' : i === currentIdx ? 'active' : ''}"></div>`
+            ).join('');
 
-                // Artifact summary counts
-                const artifacts = (f as any).artifacts;
-                const pbiCount = artifacts?.pbis?.length || f.pbis?.length || 0;
-                const prCount = artifacts?.agentPrs?.length || f.agentSessions?.length || 0;
-                const hasDesign = !!artifacts?.design || !!f.designDocPath;
-                const artifactPills: string[] = [];
-                if (hasDesign) { artifactPills.push('📄 Design'); }
-                if (pbiCount > 0) { artifactPills.push(`📋 ${pbiCount} PBI${pbiCount > 1 ? 's' : ''}`); }
-                if (prCount > 0) { artifactPills.push(`🤖 ${prCount} PR${prCount > 1 ? 's' : ''}`); }
-                const artifactSummary = artifactPills.length > 0
-                    ? `<div class="artifact-summary">${artifactPills.join(' · ')}</div>`
-                    : '';
+            // Artifact summary
+            const artifacts = (f as any).artifacts;
+            const pbiCount = artifacts?.pbis?.length || f.pbis?.length || 0;
+            const prCount = artifacts?.agentPrs?.length || f.agentSessions?.length || 0;
+            const hasDesign = !!artifacts?.design || !!f.designDocPath;
+            const artifactPills: string[] = [];
+            if (hasDesign) { artifactPills.push('📄 Design'); }
+            if (pbiCount > 0) { artifactPills.push(`📋 ${pbiCount} PBI${pbiCount > 1 ? 's' : ''}`); }
+            if (prCount > 0) { artifactPills.push(`🤖 ${prCount} PR${prCount > 1 ? 's' : ''}`); }
+            const artifactSummary = artifactPills.length > 0
+                ? `<div class="artifact-summary">${artifactPills.join(' · ')}</div>`
+                : '';
 
+            if (compact) {
+                // Completed feature card — minimal
                 return `
-                <div class="feature-card" onclick="openDetail('${f.id}')" title="Click to view details">
+                <div class="feature-card compact" onclick="openDetail('${f.id}')" title="Click to view details">
                   <div class="feature-header">
-                    <span class="step-icon">${cfg.icon}</span>
-                    <strong class="feature-name" title="${this.escapeHtml(f.prompt || f.name)}">${this.escapeHtml(f.name)}</strong>
+                    <span class="step-icon">✅</span>
+                    <strong class="feature-name">${this.escapeHtml(f.name)}</strong>
                     <button class="x-btn" onclick="event.stopPropagation(); removeFeature('${f.id}')" title="Remove">✕</button>
                   </div>
-                  <div class="progress-bar">${progressDots}</div>
-                  ${actionBtn}
                   ${artifactSummary}
                   <div class="feature-time">${this.timeAgo(f.updatedAt)}</div>
                 </div>`;
-            }).join('');
+            }
 
-        const prsHtml = agentPrs.length === 0
-            ? '<p class="muted center">No agent PRs found</p>'
-            : agentPrs.slice(0, 10).map(pr => `
-                <div class="pr-row">
-                  <span class="pr-dot" style="background:${stateColors[pr.state] || '#8b949e'}"></span>
-                  <a href="#" onclick="openUrl('${pr.url}')">${pr.repo} #${pr.number}</a>
-                  <span class="pr-title">${this.escapeHtml(pr.title).substring(0, 30)}</span>
-                </div>`).join('');
+            // Active feature card — full
+            let actionContext = `Feature: "${f.name}"`;
+            if (normalizedStep === 'monitoring') {
+                const fPrs = (f as any).artifacts?.agentPrs || f.agentSessions || [];
+                if (fPrs.length > 0) {
+                    const prList = fPrs.map((pr: any) => `${pr.repo || ''} #${pr.prNumber || pr.number || '?'}`).join(', ');
+                    actionContext += `. Tracked PRs: ${prList}`;
+                }
+            }
+
+            const actionBtn = cfg.nextPromptFile
+                ? `<button class="action-btn" onclick="event.stopPropagation(); openPrompt('${cfg.nextPromptFile}', '${this.escapeAttr(actionContext)}')">${cfg.nextLabel}</button>`
+                : `<div class="step-status">${cfg.icon} ${cfg.label}</div>`;
+
+            return `
+            <div class="feature-card" onclick="openDetail('${f.id}')" title="Click to view details">
+              <div class="feature-header">
+                <span class="step-icon">${cfg.icon}</span>
+                <strong class="feature-name" title="${this.escapeHtml(f.prompt || f.name)}">${this.escapeHtml(f.name)}</strong>
+                <button class="x-btn" onclick="event.stopPropagation(); removeFeature('${f.id}')" title="Remove">✕</button>
+              </div>
+              <div class="progress-bar">${progressDots}</div>
+              ${actionBtn}
+              ${artifactSummary}
+              <div class="feature-time">${this.timeAgo(f.updatedAt)}</div>
+            </div>`;
+        };
+
+        const activeFeaturesHtml = activeFeatures.length === 0
+            ? `<div class="empty-state">
+                 <div class="empty-icon">🚀</div>
+                 <p><strong>No active features</strong></p>
+                 <p class="muted">Click <strong>+</strong> above or type <code>/feature-design</code> in chat</p>
+               </div>`
+            : activeFeatures.map(f => renderCard(f)).join('');
+
+        const completedFeaturesHtml = completedFeatures.length > 0
+            ? completedFeatures.map(f => renderCard(f, true)).join('')
+            : '<p class="muted center">No completed features yet</p>';
+
+        // Build "My Open PRs" section
+        let openPrsHtml: string;
+        if (this.prsFetching || !this.prsEverFetched) {
+            openPrsHtml = '<div class="loading-spinner"><div class="spinner"></div> Loading PRs...</div>';
+        } else if (this.cachedOpenPrs.length === 0) {
+            openPrsHtml = '<p class="muted center">No open PRs</p>';
+        } else {
+            openPrsHtml = this.cachedOpenPrs.map(pr => {
+                const age = this.timeAgo(new Date(pr.createdAt).getTime());
+                const draftBadge = pr.isDraft ? '<span class="badge-draft-pr">Draft</span> ' : '';
+                const isAgent = pr.author === 'app/copilot-swe-agent' || pr.author === 'copilot-swe-agent[bot]' || pr.author === 'copilot-swe-agent';
+                const agentBadge = isAgent ? '<span class="badge-ai">AI</span> ' : '';
+                return `<div class="pr-row">
+                  <span class="pr-dot open"></span>
+                  <a href="#" onclick="openUrl('${this.escapeAttr(pr.url)}')">${pr.repo} #${pr.number}</a>
+                  ${agentBadge}${draftBadge}<span class="pr-title">${this.escapeHtml(pr.title).substring(0, 40)}</span>
+                  <span class="pr-age">${age}</span>
+                </div>`;
+            }).join('');
+        }
 
         return `<!DOCTYPE html>
-<html><head><style>
+<html><head><meta charset="utf-8"><style>
 body { font-family: var(--vscode-font-family); font-size: 12px; color: var(--vscode-foreground); padding: 0 8px; margin: 0; }
 h3 { margin: 14px 0 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--vscode-descriptionForeground); }
+
+/* Metrics banner */
+.metrics { display: flex; justify-content: space-around; padding: 10px 4px; margin-bottom: 4px; background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-widget-border); border-radius: 8px; }
+.metric { text-align: center; }
+.metric-value { display: block; font-size: 18px; font-weight: 700; color: var(--vscode-foreground); }
+.metric-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--vscode-descriptionForeground); }
+
+/* Feature cards */
 .feature-card { background: var(--vscode-editor-background); border: 1px solid var(--vscode-widget-border); border-radius: 8px; padding: 12px; margin-bottom: 8px; cursor: pointer; transition: border-color 0.2s; }
 .feature-card:hover { border-color: var(--vscode-focusBorder); }
+.feature-card.compact { padding: 8px 12px; }
+.feature-card.compact .feature-time { margin-top: 4px; }
 .feature-header { display: flex; align-items: center; gap: 6px; }
 .feature-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .step-icon { font-size: 14px; }
@@ -350,16 +501,8 @@ h3 { margin: 14px 0 6px; font-size: 10px; text-transform: uppercase; letter-spac
 .action-btn { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 4px; padding: 6px 12px; font-size: 11px; cursor: pointer; font-weight: 600; width: 100%; margin: 4px 0; }
 .action-btn:hover { background: var(--vscode-button-hoverBackground); }
 .step-status { font-size: 11px; color: var(--vscode-descriptionForeground); font-style: italic; text-align: center; padding: 4px 0; }
-.pbi-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-.pbi-item { font-size: 10px; display: flex; align-items: center; gap: 3px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); padding: 2px 6px; border-radius: 10px; }
-.pbi-dot { width: 5px; height: 5px; border-radius: 50%; }
-.pbi-dot.pending { background: #8b949e; } .pbi-dot.dispatched { background: #238636; }
-.pbi-dot.blocked { background: #da3633; } .pbi-dot.merged { background: #8957e5; }
 .feature-time { font-size: 10px; color: var(--vscode-descriptionForeground); margin-top: 6px; text-align: right; }
 .artifact-summary { font-size: 10px; color: var(--vscode-descriptionForeground); margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
-.pr-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 11px; }
-.pr-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.pr-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--vscode-descriptionForeground); }
 a { color: var(--vscode-textLink-foreground); text-decoration: none; cursor: pointer; } a:hover { text-decoration: underline; }
 .empty-state { text-align: center; padding: 24px 8px; }
 .empty-icon { font-size: 36px; margin-bottom: 8px; }
@@ -367,20 +510,39 @@ a { color: var(--vscode-textLink-foreground); text-decoration: none; cursor: poi
 code { background: var(--vscode-textCodeBlock-background); padding: 1px 4px; border-radius: 3px; font-size: 11px; }
 hr { border: none; border-top: 1px solid var(--vscode-widget-border); margin: 12px 0; }
 .footer { text-align: center; font-size: 10px; color: var(--vscode-descriptionForeground); padding: 4px 0; }
+
+/* Loading spinner */
+.loading-spinner { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px; font-size: 11px; color: var(--vscode-descriptionForeground); }
+.spinner { width: 14px; height: 14px; border: 2px solid var(--vscode-widget-border); border-top-color: var(--vscode-progressBar-background); border-radius: 50%; animation: spin 0.8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* PR rows */
+.pr-row { display: flex; align-items: center; gap: 5px; padding: 4px 0; font-size: 11px; border-bottom: 1px solid var(--vscode-widget-border, transparent); }
+.pr-row:last-child { border-bottom: none; }
+.pr-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.pr-dot.open { background: #3fb950; }
+.pr-dot.draft { background: #8b949e; }
+.pr-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--vscode-descriptionForeground); }
+.pr-age { font-size: 10px; color: var(--vscode-descriptionForeground); white-space: nowrap; }
+.badge-draft-pr { font-size: 9px; padding: 1px 4px; border-radius: 3px; background: #8b949e30; color: #8b949e; }
+.badge-ai { font-size: 9px; padding: 1px 5px; border-radius: 3px; background: #8957e530; color: #8957e5; font-weight: 600; letter-spacing: 0.3px; }
 </style></head>
 <body>
-  <h3>Features</h3>
-  ${featuresHtml}
+  ${metricsHtml}
+  <h3>Active Features</h3>
+  ${activeFeaturesHtml}
   <hr>
-  <h3>Agent PRs</h3>
-  ${prsHtml}
+  <h3>Completed</h3>
+  ${completedFeaturesHtml}
+  <hr>
+  <h3>My Open PRs</h3>
+  ${openPrsHtml}
   <hr>
   <div class="footer">Auto-refreshes · ${new Date().toLocaleTimeString()}</div>
   <script>
     const vscode = acquireVsCodeApi();
     function openUrl(url) { vscode.postMessage({ command: 'openUrl', url }); }
     function removeFeature(id) { vscode.postMessage({ command: 'removeFeature', featureId: id }); }
-    function openAgent(agent, prompt) { vscode.postMessage({ command: 'openAgent', promptFile: agent, context: prompt }); }
     function openPrompt(promptFile, context) { vscode.postMessage({ command: 'openAgent', promptFile, context }); }
     function openDetail(id) { vscode.postMessage({ command: 'openFeatureDetail', featureId: id }); }
   </script>
