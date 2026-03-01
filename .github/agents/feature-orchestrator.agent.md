@@ -268,7 +268,7 @@ askQuestion({
 ```
 
 ### Monitor Phase
-When the user says "status" or "check":
+When the user says "status", "check", or asks about PR status:
 
 Start with:
 ```
@@ -277,14 +277,37 @@ Start with:
 **Pipeline**: ✅ Design → ✅ Plan → ✅ Backlog → ✅ Dispatch → 📡 **Monitor**
 ```
 
-Check agent PR status by running terminal commands.
-First discover the developer's GitHub username (check `.github/developer-local.json`,
-fall back to `gh auth status`, then prompt if needed):
-```bash
-gh auth switch --user <discovered_public_username>
-gh pr list --repo "AzureAD/microsoft-authentication-library-common-for-android" --author "copilot-swe-agent[bot]" --state all --limit 5
-gh pr list --repo "AzureAD/microsoft-authentication-library-for-android" --author "copilot-swe-agent[bot]" --state all --limit 5
+**Step 1: Read feature state** — get the tracked PRs from `state-utils.js`:
+```powershell
+node .github/hooks/state-utils.js get-feature "<feature name>"
 ```
+This returns the feature's `artifacts.agentPrs` array with repo, PR number, URL, and status.
+**Only check the PRs listed in the feature state — do NOT scan all repos for all PRs.**
+
+**Step 2: Check each tracked PR** via `gh`:
+First discover the developer's GitHub username (check `.github/developer-local.json`,
+fall back to `gh auth status`, then prompt if needed).
+
+For each PR in `artifacts.agentPrs`:
+```powershell
+gh auth switch --user <discovered_username>
+gh pr view <prNumber> --repo "<full-repo-slug>" --json state,title,url,statusCheckRollup,additions,deletions,changedFiles,isDraft
+```
+
+Repo slug mapping:
+- `common` → `AzureAD/microsoft-authentication-library-common-for-android`
+- `msal` → `AzureAD/microsoft-authentication-library-for-android`
+- `broker` → `identity-authnz-teams/ad-accounts-for-android`
+- `adal` → `AzureAD/azure-activedirectory-library-for-android`
+
+**Step 3: Present results** as a table with: PR #, repo, title, status, checks, +/- lines.
+
+**Step 4: Update state** with latest PR statuses:
+```powershell
+node .github/hooks/state-utils.js add-agent-pr "<feature name>" '{"repo":"...","prNumber":<n>,"prUrl":"...","status":"<open|merged|closed>","title":"..."}'
+```
+
+End with: "Use `@copilot` in PR comments to iterate with the coding agent."
 
 ## File Path Handling
 
