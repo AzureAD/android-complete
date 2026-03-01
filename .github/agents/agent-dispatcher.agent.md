@@ -42,4 +42,12 @@ Read the skill file at `.github/skills/pbi-dispatcher/SKILL.md` and follow its w
 
 5. **Respect dependencies** — don't dispatch if dependent PBIs haven't been implemented yet
 
-6. Return the dispatch summary with AB# IDs, repos, PR numbers (if available), and status
+6. **Report dispatch results** back in detail. For each dispatched PBI, include:
+   - The AB# ID
+   - The target repo
+   - The PR number and URL (if available from the `gh agent-task create` output)
+   - The session URL (if available)
+   
+   The orchestrator will use this information to update dashboard state and artifacts.
+
+7. Return the dispatch summary with AB# IDs, repos, PR numbers (if available), and status

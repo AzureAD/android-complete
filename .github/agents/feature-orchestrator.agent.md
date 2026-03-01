@@ -62,16 +62,19 @@ Re-summarizing loses the details that make subsequent steps successful.
   choices, area path selection, iteration selection, etc.), use the `askQuestion` tool
   to show a clickable MCQ-style UI. Do NOT present options as plain text with "Say X".
   Use `askQuestion` for ALL user choices.
-- **Next-step callout**: Always end your response with a visible next-step prompt.
-  The `SessionStart` hook injects a `NEXT_STEP_PROMPT` instruction via `additionalContext`
-  that tells you exactly what to render. If present, follow it. If not, use:
-  
-  ```markdown
-  ---
-  > **Next step**: Say **"[next action phrase]"** to continue.
+- **Stage transitions**: After completing a stage and presenting the summary, use the
+  `askQuestion` tool to offer the user a clear, clickable choice to proceed. Example:
   ```
-  
-  This gives users a clear, clickable-looking instruction in chat for what to say next.
+  askQuestion({
+    question: "Design spec is ready. What would you like to do?",
+    options: [
+      { label: "📋 Plan PBIs", description: "Decompose the design into repo-targeted work items" },
+      { label: "✏️ Revise Design", description: "Make changes to the design spec first" }
+    ]
+  })
+  ```
+  **NEVER** end a stage with a plain-text instruction like `> Say "plan"`. Always use
+  `askQuestion` so the user gets a clickable UI to advance to the next stage.
 
 ## Commands (detected from user prompt)
 
@@ -88,9 +91,31 @@ When the user describes a feature:
 **Step 0: Register the feature in orchestrator state** (for dashboard tracking):
 Run this terminal command FIRST, before any subagents:
 ```powershell
-node .github/hooks/state-utils.js add-feature "{\"name\": \"<short feature name>\", \"step\": \"designing\"}"
+node .github/hooks/state-utils.js add-feature '{"name": "<short feature name>", "step": "designing"}'
 ```
 This creates the feature entry so the dashboard shows it immediately.
+
+### State Tracking Commands
+
+Use `state-utils.js` to keep the dashboard in sync. The feature identifier can be the
+**feature name** (e.g., "IPC Retry with Exponential Backoff") — no need to track the auto-generated ID.
+
+**IMPORTANT**: When running these commands in PowerShell, always use **single quotes** around
+JSON arguments. Do NOT use `\"` escaped double quotes — PowerShell mangles them.
+Use: `'{"key": "value"}'` NOT `"{\"key\": \"value\"}"`.
+
+| When | Command |
+|------|---------|
+| **Design done** | `node .github/hooks/state-utils.js set-step "<feature name>" design_review` |
+| | `node .github/hooks/state-utils.js set-design "<feature name>" '{"docPath":"<path>","status":"approved"}'` |
+| **Plan done** | `node .github/hooks/state-utils.js set-step "<feature name>" plan_review` |
+| **Backlog done** | `node .github/hooks/state-utils.js set-step "<feature name>" backlog_review` |
+| | For each PBI: `node .github/hooks/state-utils.js add-pbi "<feature name>" '{"adoId":<id>,"title":"...","module":"...","status":"Committed","dependsOn":[<dep-ids>]}'` |
+| **Dispatch done** | `node .github/hooks/state-utils.js set-step "<feature name>" monitoring` |
+| | For each PR: `node .github/hooks/state-utils.js add-agent-pr "<feature name>" '{"repo":"...","prNumber":<n>,"prUrl":"...","status":"open"}'` |
+
+**Run these commands after each phase completes** so the sidebar dashboard and feature detail
+panel stay up to date with the correct step and artifacts.
 
 Start with:
 ```
@@ -161,11 +186,15 @@ Start with:
 3. The planner produces a structured plan with Summary Table + PBI Details
 4. **Present the plan and STOP** — wait for developer approval before creating in ADO
 
-End with:
+After presenting the plan summary, use `askQuestion` to gate the next stage:
 ```
-### Next Step
-
-> Review the plan above. When ready, say **"backlog the PBIs"** to create them in Azure DevOps.
+askQuestion({
+  question: "PBI plan is ready for review. What next?",
+  options: [
+    { label: "✅ Backlog in ADO", description: "Create these PBIs as work items in Azure DevOps" },
+    { label: "✏️ Revise Plan", description: "Adjust the PBI breakdown before creating" }
+  ]
+})
 ```
 
 ### Creation Phase
@@ -197,11 +226,15 @@ Start with:
    - Link dependencies and mark as Committed
 3. Present the creation summary with AB# IDs
 
-End with:
+After presenting the AB# summary, use `askQuestion` to gate the next stage:
 ```
-### Next Step
-
-> Say **"dispatch"** to send PBI-1 to Copilot coding agent.
+askQuestion({
+  question: "PBIs are backlogged in ADO. What next?",
+  options: [
+    { label: "🚀 Dispatch to Copilot Agent", description: "Send PBI-1 to Copilot coding agent for implementation" },
+    { label: "⏸ Pause", description: "I'll dispatch later" }
+  ]
+})
 ```
 
 ### Dispatch Phase
@@ -215,6 +248,24 @@ Start with:
 ```
 
 Run the `agent-dispatcher` subagent to dispatch PBIs to Copilot coding agent.
+
+**After the dispatcher finishes**, update state and record each dispatched PR:
+```powershell
+node .github/hooks/state-utils.js set-step "<feature name>" monitoring
+# For each dispatched PBI that created a PR/session:
+node .github/hooks/state-utils.js add-agent-pr "<feature name>" '{"repo":"<repo-label>","prNumber":<n>,"prUrl":"<url>","status":"open","title":"<pr-title>"}'
+```
+
+Then use `askQuestion` to gate the next stage:
+```
+askQuestion({
+  question: "PBIs dispatched to Copilot coding agent. What next?",
+  options: [
+    { label: "📡 Monitor Agent PRs", description: "Check the status of agent-created pull requests" },
+    { label: "⏸ Done for now", description: "I'll check status later" }
+  ]
+})
+```
 
 ### Monitor Phase
 When the user says "status" or "check":
