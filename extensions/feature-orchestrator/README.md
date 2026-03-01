@@ -1,51 +1,45 @@
 # Feature Orchestrator Extension
 
-VS Code extension for the AI-driven feature development pipeline. Provides the dashboard UI,
-feature detail panel, and design review system.
+VS Code Chat Participant (`@orchestrator`) for AI-driven feature development across the Android Auth multi-repo project.
 
-For the full developer guide, see [AI Driven Development Guide](../../AI%20Driven%20Development%20Guide.md).
+## Usage
 
-## What This Extension Provides
+In VS Code Copilot Chat (Agent Mode):
 
-- **Dashboard sidebar** (rocket icon) — metrics, active/completed features, open PRs
-- **Feature detail panel** — artifacts, PBI table with dispatch buttons, PR actions, phase durations
-- **Design review system** — inline comments via gutter icons + status bar submit button
-- **Manual artifact entry** — add design specs, PBIs, or PRs via + buttons
-- **Live refresh** — fetches latest PBI status from ADO and PR status from GitHub
-- **Auto-completion** — detects when all PBIs are resolved and marks feature as done
-
-## Installation
-
-Run the setup script (builds and installs automatically):
-```powershell
-.\scripts\setup-ai-orchestrator.ps1
+```
+@orchestrator implement IPC retry logic for broker communication
 ```
 
-Or build manually:
+Or use individual commands:
+
+```
+@orchestrator /design add retry logic to IPC calls
+@orchestrator /plan
+@orchestrator /dispatch
+@orchestrator /status
+```
+
+## Flow
+
+1. `@orchestrator <feature description>` — runs the full flow: design → plan → dispatch
+2. `@orchestrator /design <prompt>` — just write a design spec
+3. `@orchestrator /plan` — break approved design into PBIs (uses ADO MCP)
+4. `@orchestrator /dispatch` — dispatch PBIs to Copilot coding agent
+5. `@orchestrator /status` — check agent PR status across repos
+
+## Development
+
 ```bash
 cd extensions/feature-orchestrator
 npm install
 npm run compile
-npx @vscode/vsce package --no-dependencies --allow-missing-repository
-code --install-extension feature-orchestrator-latest.vsix --force
 ```
+
+Then press F5 to launch the Extension Development Host.
 
 ## Architecture
 
-| File | Purpose |
-|------|---------|
-| `extension.ts` | Entry point — registers dashboard, commands |
-| `dashboard.ts` | Sidebar webview — feature cards, metrics, open PRs |
-| `featureDetail.ts` | Detail panel — artifacts, durations, dispatch, iterate, checkout |
-| `designReview.ts` | CodeLens-based design review commenting |
-| `tools.ts` | CLI helpers — `runCommand`, `switchGhAccount` |
-
-## State
-
-Feature state is stored at `~/.android-auth-orchestrator/state.json` (per-developer, not in repo).
-Managed by `.github/hooks/state-utils.js`.
-
-## Works Without This Extension
-
-The entire pipeline (agents, prompt files, hooks, state) works without this extension.
-It only provides the visual dashboard and review UI.
+- `participant.ts` — Chat Participant handler, routes commands to workflow steps
+- `workflow.ts` — State machine: idle → designing → design_review → planning → plan_review → dispatching → monitoring → done
+- `skills.ts` — Reads `.github/skills/` files and builds LLM prompts
+- `tools.ts` — Wrappers for `gh` CLI, account switching, agent dispatch
