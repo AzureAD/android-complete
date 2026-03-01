@@ -53,7 +53,10 @@ options and avoid path errors.
    - `System.AssignedTo` → use as default assignee
 4. Call `mcp_ado_work_list_iterations` with **`depth: 6`** (monthly sprints are at depth 6;
    `depth: 4` will miss them).
-5. Filter to upcoming/current iterations matching the discovered format.
+5. Filter iterations to **current month or future only** — discard any iteration whose end date
+   is in the past. Compare iteration dates against today's date. For monthly iterations with
+   names like `CY26Q1_M2_Feb`, parse the month/year and exclude months before the current one.
+   **Never suggest past iterations as options.**
 
 ### Step 3: Present Options for Confirmation
 
@@ -76,9 +79,10 @@ Use `askQuestion` with options like:
 WAIT for answer before proceeding.
 
 **Question 2 — Iteration** (ALWAYS present a list — never assume):
+Only show iterations for the **current month or later**. Never include past months.
 Use `askQuestion` with options like:
-- `Engineering\CY26\CY26H1\CY26Q2\Monthly\CY26Q2_M4_Apr`
-- `Engineering\CY26\CY26H1\CY26Q2\Monthly\CY26Q2_M5_May`
+- `Engineering\CY26\CY26H1\CY26Q2\Monthly\CY26Q2_M4_Apr`: Current month
+- `Engineering\CY26\CY26H1\CY26Q2\Monthly\CY26Q2_M5_May`: Next month
 - `Engineering\CY26\CY26H1\CY26Q2\Monthly\CY26Q2_M6_Jun`
 - Other
 
