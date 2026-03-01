@@ -132,6 +132,18 @@ export class FeatureDetailPanel {
                         }
                     }
                     break;
+
+                case 'addDesign':
+                    await FeatureDetailPanel.handleAddDesign(featureId, panel);
+                    break;
+
+                case 'addPbi':
+                    await FeatureDetailPanel.handleAddPbi(featureId, panel);
+                    break;
+
+                case 'addAgentPr':
+                    await FeatureDetailPanel.handleAddAgentPr(featureId, panel);
+                    break;
             }
         });
 
@@ -316,6 +328,244 @@ export class FeatureDetailPanel {
         }
     }
 
+    // ---- Manual artifact entry handlers ----
+
+    /**
+     * Let user manually add a design spec — browse for a local file or paste an ADO PR URL.
+     */
+    private static async handleAddDesign(featureId: string, panel: vscode.WebviewPanel): Promise<void> {
+        const choice = await vscode.window.showQuickPick(
+            [
+                { label: '📄 Browse for local file', description: 'Select a markdown file from design-docs/', value: 'file' },
+                { label: '🔗 Enter ADO PR URL', description: 'Paste a design review PR link', value: 'pr' },
+            ],
+            { placeHolder: 'How do you want to add the design spec?' }
+        );
+        if (!choice) { return; }
+
+        const state = FeatureDetailPanel.readState();
+        const feature = state.features?.find((f: any) => f.id === featureId);
+        if (!feature) { return; }
+        if (!feature.artifacts) { feature.artifacts = { pbis: [], agentPrs: [] }; }
+
+        if (choice.value === 'file') {
+            const folders = vscode.workspace.workspaceFolders;
+            const defaultUri = folders
+                ? vscode.Uri.file(path.join(folders[0].uri.fsPath, 'design-docs'))
+                : undefined;
+
+            const uris = await vscode.window.showOpenDialog({
+                defaultUri,
+                canSelectMany: false,
+                filters: { 'Markdown': ['md'] },
+                title: 'Select Design Spec',
+            });
+            if (!uris || uris.length === 0) { return; }
+
+            // Make path workspace-relative
+            let docPath = uris[0].fsPath;
+            if (folders) {
+                const wsRoot = folders[0].uri.fsPath;
+                if (docPath.startsWith(wsRoot)) {
+                    docPath = docPath.substring(wsRoot.length + 1).replace(/\\/g, '/');
+                }
+            }
+
+            feature.artifacts.design = {
+                docPath,
+                status: feature.artifacts.design?.status || 'approved',
+                prUrl: feature.artifacts.design?.prUrl,
+            };
+            feature.designDocPath = docPath;
+        } else {
+            const prUrl = await vscode.window.showInputBox({
+                prompt: 'Paste the ADO PR URL for the design review',
+                placeHolder: 'https://dev.azure.com/IdentityDivision/Engineering/_git/AuthLibrariesApiReview/pullrequest/...',
+            });
+            if (!prUrl) { return; }
+
+            if (!feature.artifacts.design) {
+                // Ask for the doc path too
+                const docPath = await vscode.window.showInputBox({
+                    prompt: 'Design doc path (workspace-relative, or leave empty)',
+                    placeHolder: 'design-docs/[Android] Feature Name/spec.md',
+                });
+                feature.artifacts.design = {
+                    docPath: docPath || '',
+                    prUrl,
+                    status: 'in-review',
+                };
+                if (docPath) { feature.designDocPath = docPath; }
+            } else {
+                feature.artifacts.design.prUrl = prUrl;
+            }
+            feature.designPrUrl = prUrl;
+        }
+
+        feature.updatedAt = Date.now();
+        FeatureDetailPanel.writeState(state);
+        // Re-render
+        const fresh = FeatureDetailPanel.readState().features?.find((f: any) => f.id === featureId);
+        if (fresh) { panel.webview.html = FeatureDetailPanel.getHtml(fresh); }
+    }
+
+    /**
+     * Let user manually add a PBI by AB# ID — fetches details from ADO.
+     */
+    private static async handleAddPbi(featureId: string, panel: vscode.WebviewPanel): Promise<void> {
+        const idInput = await vscode.window.showInputBox({
+            prompt: 'Enter the ADO work item ID (AB# number)',
+            placeHolder: 'e.g., 3531353',
+            validateInput: (v) => /^\d+$/.test(v.replace(/^AB#/i, '')) ? null : 'Enter a numeric ID (e.g., 3531353)',
+        });
+        if (!idInput) { return; }
+
+        const adoId = parseInt(idInput.replace(/^AB#/i, ''), 10);
+
+        const state = FeatureDetailPanel.readState();
+        const feature = state.features?.find((f: any) => f.id === featureId);
+        if (!feature) { return; }
+        if (!feature.artifacts) { feature.artifacts = { pbis: [], agentPrs: [] }; }
+        if (!feature.artifacts.pbis) { feature.artifacts.pbis = []; }
+
+        // Check for duplicate
+        if (feature.artifacts.pbis.some((p: any) => p.adoId === adoId)) {
+            vscode.window.showInformationMessage(`AB#${adoId} is already tracked.`);
+            return;
+        }
+
+        // Try to fetch details from ADO
+        let title = `Work Item ${adoId}`;
+        let pbiStatus = 'New';
+        let module = '';
+
+        try {
+            const json = await runCommand(
+                `az boards work-item show --id ${adoId} --org "https://dev.azure.com/IdentityDivision" --only-show-errors -o json`,
+                undefined, 15000
+            );
+            const wi = JSON.parse(json);
+            const fields = wi.fields || {};
+            title = fields['System.Title'] || title;
+            pbiStatus = fields['System.State'] || pbiStatus;
+            // Try to infer module from tags or area path
+            const tags: string = fields['System.Tags'] || '';
+            const areaPath: string = fields['System.AreaPath'] || '';
+            if (areaPath.includes('Broker')) { module = 'broker'; }
+            else if (areaPath.includes('MSAL')) { module = 'msal'; }
+            else if (areaPath.includes('Common') || areaPath.includes('common')) { module = 'common'; }
+            else if (tags.toLowerCase().includes('common')) { module = 'common'; }
+        } catch {
+            // az CLI not available — ask user for details
+            const userTitle = await vscode.window.showInputBox({
+                prompt: `Could not fetch from ADO. Enter the PBI title:`,
+                placeHolder: 'PBI title',
+            });
+            if (userTitle) { title = userTitle; }
+
+            const userModule = await vscode.window.showQuickPick(
+                ['common', 'msal', 'broker', 'adal'],
+                { placeHolder: 'Which repo/module?' }
+            );
+            if (userModule) { module = userModule; }
+        }
+
+        feature.artifacts.pbis.push({
+            adoId,
+            title,
+            module,
+            targetRepo: module,
+            status: pbiStatus,
+            adoUrl: `https://dev.azure.com/IdentityDivision/Engineering/_workitems/edit/${adoId}`,
+        });
+
+        // Also add to legacy pbis
+        if (!feature.pbis) { feature.pbis = []; }
+        feature.pbis.push({ adoId, title, targetRepo: module, status: pbiStatus });
+
+        feature.updatedAt = Date.now();
+        FeatureDetailPanel.writeState(state);
+        const fresh = FeatureDetailPanel.readState().features?.find((f: any) => f.id === featureId);
+        if (fresh) { panel.webview.html = FeatureDetailPanel.getHtml(fresh); }
+        vscode.window.showInformationMessage(`Added AB#${adoId}: ${title}`);
+    }
+
+    /**
+     * Let user manually add an agent PR by repo + PR number — fetches details from GitHub.
+     */
+    private static async handleAddAgentPr(featureId: string, panel: vscode.WebviewPanel): Promise<void> {
+        const repoChoice = await vscode.window.showQuickPick(
+            [
+                { label: 'common', description: 'AzureAD/microsoft-authentication-library-common-for-android', value: 'AzureAD/microsoft-authentication-library-common-for-android' },
+                { label: 'msal', description: 'AzureAD/microsoft-authentication-library-for-android', value: 'AzureAD/microsoft-authentication-library-for-android' },
+                { label: 'broker', description: 'identity-authnz-teams/ad-accounts-for-android', value: 'identity-authnz-teams/ad-accounts-for-android' },
+                { label: 'adal', description: 'AzureAD/azure-activedirectory-library-for-android', value: 'AzureAD/azure-activedirectory-library-for-android' },
+            ],
+            { placeHolder: 'Which repo is the PR in?' }
+        );
+        if (!repoChoice) { return; }
+
+        const prInput = await vscode.window.showInputBox({
+            prompt: 'Enter the PR number',
+            placeHolder: 'e.g., 2922',
+            validateInput: (v) => /^\d+$/.test(v.replace(/^#/, '')) ? null : 'Enter a numeric PR number',
+        });
+        if (!prInput) { return; }
+
+        const prNumber = parseInt(prInput.replace(/^#/, ''), 10);
+
+        const state = FeatureDetailPanel.readState();
+        const feature = state.features?.find((f: any) => f.id === featureId);
+        if (!feature) { return; }
+        if (!feature.artifacts) { feature.artifacts = { pbis: [], agentPrs: [] }; }
+        if (!feature.artifacts.agentPrs) { feature.artifacts.agentPrs = []; }
+
+        // Check for duplicate
+        if (feature.artifacts.agentPrs.some((p: any) => p.prNumber === prNumber && (p.repo === repoChoice.label || p.repo === repoChoice.value))) {
+            vscode.window.showInformationMessage(`PR #${prNumber} in ${repoChoice.label} is already tracked.`);
+            return;
+        }
+
+        // Try to fetch details from GitHub
+        let prTitle = `PR #${prNumber}`;
+        let prStatus = 'open';
+        let prUrl = `https://github.com/${repoChoice.value}/pull/${prNumber}`;
+
+        try {
+            await switchGhAccount(repoChoice.value);
+            const json = await runCommand(
+                `gh pr view ${prNumber} --repo "${repoChoice.value}" --json state,title,url`,
+                undefined, 15000
+            );
+            const prData = JSON.parse(json);
+            const stateMap: Record<string, string> = { 'OPEN': 'open', 'MERGED': 'merged', 'CLOSED': 'closed' };
+            prTitle = prData.title || prTitle;
+            prStatus = stateMap[prData.state] || prData.state?.toLowerCase() || prStatus;
+            prUrl = prData.url || prUrl;
+        } catch {
+            // gh CLI not available — use defaults
+            const userTitle = await vscode.window.showInputBox({
+                prompt: 'Could not fetch from GitHub. Enter the PR title:',
+                placeHolder: 'PR title',
+            });
+            if (userTitle) { prTitle = userTitle; }
+        }
+
+        feature.artifacts.agentPrs.push({
+            repo: repoChoice.label,
+            prNumber,
+            prUrl,
+            status: prStatus,
+            title: prTitle,
+        });
+
+        feature.updatedAt = Date.now();
+        FeatureDetailPanel.writeState(state);
+        const fresh = FeatureDetailPanel.readState().features?.find((f: any) => f.id === featureId);
+        if (fresh) { panel.webview.html = FeatureDetailPanel.getHtml(fresh); }
+        vscode.window.showInformationMessage(`Added PR #${prNumber}: ${prTitle}`);
+    }
+
     private static getHtml(feature: any): string {
         const artifacts: FeatureArtifacts = feature.artifacts || { pbis: [], agentPrs: [] };
         const design = artifacts.design;
@@ -393,7 +643,7 @@ export class FeatureDetailPanel {
         // Design section
         const designHtml = design
             ? `<div class="artifact-card">
-                <div class="artifact-header">📄 Design Spec</div>
+                <div class="artifact-header">📄 Design Spec <button class="add-btn" onclick="addDesign()" title="Change design spec">✏️</button></div>
                 <div class="artifact-body">
                   ${design.docPath ? `<div class="artifact-row"><span class="label">Document:</span> <a href="#" onclick="openFile('${escapeAttr(design.docPath)}')">${escapeHtml(design.docPath)}</a></div>` : ''}
                   ${design.prUrl ? `<div class="artifact-row"><span class="label">PR:</span> <a href="#" onclick="openUrl('${escapeAttr(design.prUrl)}')">View in ADO</a></div>` : ''}
@@ -402,13 +652,13 @@ export class FeatureDetailPanel {
               </div>`
             : (feature.designDocPath
                 ? `<div class="artifact-card">
-                    <div class="artifact-header">📄 Design Spec</div>
+                    <div class="artifact-header">📄 Design Spec <button class="add-btn" onclick="addDesign()" title="Change design spec">✏️</button></div>
                     <div class="artifact-body">
                       <div class="artifact-row"><span class="label">Document:</span> <a href="#" onclick="openFile('${escapeAttr(feature.designDocPath)}')">${escapeHtml(feature.designDocPath)}</a></div>
                       ${feature.designPrUrl ? `<div class="artifact-row"><span class="label">PR:</span> <a href="#" onclick="openUrl('${escapeAttr(feature.designPrUrl)}')">View in ADO</a></div>` : ''}
                     </div>
                   </div>`
-                : '<div class="artifact-card muted-card"><div class="artifact-header">📄 Design Spec</div><div class="artifact-body"><p class="muted">Not yet created</p></div></div>');
+                : '<div class="artifact-card muted-card"><div class="artifact-header">📄 Design Spec <button class="add-btn" onclick="addDesign()" title="Add design spec">+</button></div><div class="artifact-body"><p class="muted">Not yet created</p></div></div>');
 
         // PBIs section
         const hasDeps = pbis.some((p: any) => p.dependsOn && p.dependsOn.length > 0);
@@ -438,7 +688,7 @@ export class FeatureDetailPanel {
 
         const pbisHtml = pbis.length > 0
             ? `<div class="artifact-card">
-                <div class="artifact-header">📋 Product Backlog Items <span class="count">${pbis.length}</span></div>
+                <div class="artifact-header">📋 Product Backlog Items <span class="count">${pbis.length}</span> <button class="add-btn" onclick="addPbi()" title="Add a PBI">+</button></div>
                 <div class="artifact-body">
                   <table class="artifact-table">
                     <thead><tr><th>Order</th><th>AB#</th><th>Title</th><th>Repo</th>${hasDeps ? '<th>Depends On</th>' : ''}<th>Status</th></tr></thead>
@@ -462,12 +712,12 @@ export class FeatureDetailPanel {
                   </table>
                 </div>
               </div>`
-            : '<div class="artifact-card muted-card"><div class="artifact-header">📋 Product Backlog Items</div><div class="artifact-body"><p class="muted">No PBIs yet</p></div></div>';
+            : '<div class="artifact-card muted-card"><div class="artifact-header">📋 Product Backlog Items <button class="add-btn" onclick="addPbi()" title="Add a PBI">+</button></div><div class="artifact-body"><p class="muted">No PBIs yet</p></div></div>';
 
         // Agent PRs section
         const prsHtml = agentPrs.length > 0
             ? `<div class="artifact-card">
-                <div class="artifact-header">🤖 Agent Pull Requests <span class="count">${agentPrs.length}</span></div>
+                <div class="artifact-header">🤖 Agent Pull Requests <span class="count">${agentPrs.length}</span> <button class="add-btn" onclick="addAgentPr()" title="Add a PR">+</button></div>
                 <div class="artifact-body">
                   <table class="artifact-table">
                     <thead><tr><th>PR</th><th>Repo</th><th>Title</th><th>Comments</th><th>Status</th></tr></thead>
@@ -492,7 +742,7 @@ export class FeatureDetailPanel {
                   </table>
                 </div>
               </div>`
-            : '<div class="artifact-card muted-card"><div class="artifact-header">🤖 Agent Pull Requests</div><div class="artifact-body"><p class="muted">No agent PRs yet</p></div></div>';
+            : '<div class="artifact-card muted-card"><div class="artifact-header">🤖 Agent Pull Requests <button class="add-btn" onclick="addAgentPr()" title="Add a PR">+</button></div><div class="artifact-body"><p class="muted">No agent PRs yet</p></div></div>';
 
         const timeAgo = (ts: number) => {
             if (!ts) return 'unknown';
@@ -608,6 +858,19 @@ body {
     align-items: center;
     gap: 8px;
 }
+.add-btn {
+    margin-left: auto;
+    background: none;
+    border: 1px solid var(--vscode-widget-border);
+    color: var(--vscode-descriptionForeground);
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-size: 12px;
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+}
+.add-btn:hover { opacity: 1; border-color: var(--vscode-focusBorder); color: var(--vscode-foreground); }
 .artifact-body { padding: 12px 14px; }
 .artifact-row { margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
 .label { color: var(--vscode-descriptionForeground); font-size: 11px; min-width: 70px; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -716,6 +979,9 @@ a:hover { text-decoration: underline; }
     function openUrl(url) { vscode.postMessage({ command: 'openUrl', url }); }
     function openFile(p) { vscode.postMessage({ command: 'openFile', path: p }); }
     function continueInChat() { vscode.postMessage({ command: 'continueInChat' }); }
+    function addDesign() { vscode.postMessage({ command: 'addDesign' }); }
+    function addPbi() { vscode.postMessage({ command: 'addPbi' }); }
+    function addAgentPr() { vscode.postMessage({ command: 'addAgentPr' }); }
     function refresh() {
       const btn = document.getElementById('refreshBtn');
       if (btn) { btn.textContent = '↻ Refreshing...'; btn.disabled = true; }
