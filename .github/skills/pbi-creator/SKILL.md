@@ -64,44 +64,70 @@ options and avoid path errors.
 Do NOT make assumptions. Do NOT auto-select defaults. Always ask.
 **Use the `askQuestion` tool** to present clickable MCQ-style options whenever possible.
 
-Present the discovered options to the developer using `ask_questions` or clear prompts:
+**Batch ALL questions into a SINGLE `askQuestion` call** with multiple questions.
+This gives the user a smooth flow where answering one immediately shows the next.
+Do NOT make separate `askQuestion` calls for each question — combine them all into one call
+with 4 questions (Area Path, Iteration, Assignee, Parent). Example:
 
-**Ask ONE question at a time** using the `askQuestion` tool. Do NOT batch multiple
-settings into a single question. Present each as a separate clickable prompt,
-wait for the answer, then ask the next one.
+```
+askQuestion({
+  questions: [
+    {
+      header: "Area Path",
+      question: "Which area path for these PBIs?",
+      options: [
+        { label: "Engineering\\Auth Client\\Broker\\Android", description: "Your most recent work items use this path", recommended: true },
+        { label: "Engineering\\Auth Client\\MSAL\\Android" }
+      ],
+      allowFreeformInput: true
+    },
+    {
+      header: "Iteration",
+      question: "Which iteration? (Current date: <today>)",
+      options: [
+        { label: "CY26Q2_M4_Apr (next month)", description: "Engineering\\CY26\\CY26H1\\CY26Q2\\Monthly\\CY26Q2_M4_Apr", recommended: true },
+        { label: "CY26Q2_M5_May", description: "Engineering\\CY26\\CY26H1\\CY26Q2\\Monthly\\CY26Q2_M5_May" }
+      ],
+      allowFreeformInput: true
+    },
+    {
+      header: "Assignee",
+      question: "Who should be assigned?",
+      options: [
+        { label: "shjameel@microsoft.com", description: "Discovered from recent work items", recommended: true }
+      ],
+      allowFreeformInput: true
+    },
+    {
+      header: "Parent",
+      question: "Link PBIs to a parent Feature work item?",
+      options: [
+        { label: "Create new Feature", description: "Create a new Feature work item titled '<feature name>'" },
+        { label: "No parent", description: "No parent Feature — standalone PBIs" }
+      ],
+      allowFreeformInput: true
+    }
+  ]
+})
+```
 
-**Question 1 — Area path** (ALWAYS ask, even if only one found):
-Use `askQuestion` with options like:
-- `Engineering\Auth Client\Broker\Android` (3 items)
-- `Engineering\Auth Client\MSAL\Android` (1 item)
-- Other (enter custom)
+### Question details:
 
-WAIT for answer before proceeding.
+**Area Path** (ALWAYS ask, even if only one found):
+- Show all unique area paths discovered from recent work items with frequency counts
+- Mark the most common one as `recommended: true`
 
-**Question 2 — Iteration** (ALWAYS present a list — never assume):
+**Iteration** (ALWAYS present a list — never assume):
 Only show iterations for the **current month or later**. Never include past months.
-Use `askQuestion` with options like:
-- `Engineering\CY26\CY26H1\CY26Q2\Monthly\CY26Q2_M4_Apr`: Current month
-- `Engineering\CY26\CY26H1\CY26Q2\Monthly\CY26Q2_M5_May`: Next month
-- `Engineering\CY26\CY26H1\CY26Q2\Monthly\CY26Q2_M6_Jun`
-- Other
+- Mark the current/next month as `recommended: true`
 
-WAIT for answer before proceeding.
+**Assignee** (confirm):
+- Show the discovered assignee as `recommended: true`
 
-**Question 3 — Assignee** (confirm):
-Use `askQuestion` with options like:
-- `shjameel@microsoft.com` (discovered from recent work items)
-- Someone else
+**Parent Feature**:
+- Offer to create a new Feature, link to an existing one, or no parent
 
-WAIT for answer before proceeding.
-
-**Question 4 — Parent Feature**:
-Use `askQuestion` with options:
-- Link to existing Feature (provide AB# ID)
-- Create a new Feature titled '[Feature Name]'
-- No parent — standalone PBIs
-
-WAIT for answer before proceeding to Step 4.
+Wait for all answers before proceeding to Step 4.
 
 **If creating a new Feature:**
 Use `mcp_ado_wit_create_work_item` with:
