@@ -333,6 +333,47 @@ export class FeatureDetailPanel {
             feature.updatedAt = Date.now();
             FeatureDetailPanel.writeState(state);
         }
+
+        // --- Auto-completion detection ---
+        // If all PBIs are Done/Resolved (primary), or no PBIs but all PRs merged (secondary),
+        // auto-advance the feature to "done" and notify the user.
+        if (feature.step !== 'done') {
+            const allPbis = feature.artifacts?.pbis || [];
+            const allPrs = feature.artifacts?.agentPrs || [];
+            const completedStates = new Set(['done', 'resolved', 'closed', 'removed']);
+
+            let shouldComplete = false;
+
+            if (allPbis.length > 0) {
+                // Primary: all PBIs are in a completed state
+                shouldComplete = allPbis.every((p: any) =>
+                    completedStates.has((p.status || '').toLowerCase())
+                );
+            } else if (allPrs.length > 0) {
+                // Secondary: no PBIs tracked, but all PRs are merged
+                shouldComplete = allPrs.every((pr: any) =>
+                    (pr.status || '').toLowerCase() === 'merged'
+                );
+            }
+
+            if (shouldComplete) {
+                feature.step = 'done';
+                feature.updatedAt = Date.now();
+                FeatureDetailPanel.writeState(state);
+
+                vscode.window.showInformationMessage(
+                    `🎉 Feature "${feature.name}" is complete! All work items are resolved.`,
+                    'View Details'
+                ).then(selection => {
+                    if (selection === 'View Details') {
+                        FeatureDetailPanel.show(
+                            undefined as any, // context not needed for existing panel
+                            featureId
+                        );
+                    }
+                });
+            }
+        }
     }
 
     // ---- Manual artifact entry handlers ----
@@ -662,8 +703,9 @@ export class FeatureDetailPanel {
         const pipelineHtml = pipelineStages.map((stage, i) => {
             // Each stage maps to 2 entries in stageOrder (active + review), roughly at i*2+1
             const stageIdx = i * 2 + 1;
-            const isActive = currentIdx >= stageIdx && currentIdx < stageIdx + 2;
-            const isDone = currentIdx >= stageIdx + 2;
+            const isComplete = normalizedStep === 'done';
+            const isActive = !isComplete && currentIdx >= stageIdx && currentIdx < stageIdx + 2;
+            const isDone = isComplete || currentIdx >= stageIdx + 2;
             const cls = isDone ? 'stage done' : isActive ? 'stage active' : 'stage';
             return `<div class="${cls}">${isDone ? '✅' : isActive ? '🔵' : '○'} ${stage.label}</div>`;
         }).join('<div class="stage-arrow">→</div>');
