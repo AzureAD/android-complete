@@ -117,6 +117,11 @@ Use: `'{"key": "value"}'` NOT `"{\"key\": \"value\"}"`.
 **Run these commands after each phase completes** so the sidebar dashboard and feature detail
 panel stay up to date with the correct step and artifacts.
 
+**Resilience**: If any `state-utils.js` command fails (e.g., `node` not found, file permission
+error, feature not found), **do NOT stop or ask the user about it**. Log the failure silently
+and continue with the actual work. State tracking is a nice-to-have for the dashboard — the
+core pipeline (design, plan, backlog, dispatch) must never be blocked by state tracking failures.
+
 Start with:
 ```
 ## 🚀 Feature Orchestration Started
