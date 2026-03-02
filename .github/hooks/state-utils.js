@@ -139,6 +139,9 @@ switch (command) {
         if (feature) {
             feature.step = args[1];
             feature.updatedAt = Date.now();
+            // Record phase timestamp for duration tracking
+            if (!feature.phaseTimestamps) { feature.phaseTimestamps = {}; }
+            feature.phaseTimestamps[args[1]] = Date.now();
             writeState(state);
             console.log(JSON.stringify({ ok: true, id: args[0], step: args[1] }));
         } else {
@@ -162,7 +165,10 @@ switch (command) {
         if (idx >= 0) {
             state.features[idx] = { ...state.features[idx], ...feature, updatedAt: Date.now() };
         } else {
-            state.features.push({ ...feature, startedAt: Date.now(), updatedAt: Date.now() });
+            // Record initial phase timestamp
+            const initialStep = feature.step || 'idle';
+            const phaseTimestamps = { [initialStep]: Date.now() };
+            state.features.push({ ...feature, startedAt: Date.now(), updatedAt: Date.now(), phaseTimestamps });
         }
         writeState(state);
         console.log(JSON.stringify({ ok: true, id: feature.id }));
