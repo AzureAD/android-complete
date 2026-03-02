@@ -761,6 +761,62 @@ export class FeatureDetailPanel {
             return `<div class="${cls}">${isDone ? '✅' : isActive ? '🔵' : '○'} ${stage.label}</div>`;
         }).join('<div class="stage-arrow">→</div>');
 
+        // Phase duration tracking
+        const phaseTs: Record<string, number> = feature.phaseTimestamps || {};
+        const phaseSequence = [
+            { key: 'designing',      label: 'Design' },
+            { key: 'design_review',  label: 'Review' },
+            { key: 'planning',       label: 'Plan' },
+            { key: 'plan_review',    label: 'Review' },
+            { key: 'backlogging',    label: 'Backlog' },
+            { key: 'backlog_review', label: 'Review' },
+            { key: 'dispatching',    label: 'Dispatch' },
+            { key: 'monitoring',     label: 'Monitor' },
+            { key: 'done',           label: 'Done' },
+        ];
+
+        const formatDuration = (ms: number): string => {
+            if (ms < 60000) { return `${Math.floor(ms / 1000)}s`; }
+            if (ms < 3600000) { return `${Math.floor(ms / 60000)}m`; }
+            if (ms < 86400000) { return `${Math.round(ms / 3600000 * 10) / 10}h`; }
+            return `${Math.round(ms / 86400000 * 10) / 10}d`;
+        };
+
+        // Build phase durations: time between consecutive phase timestamps
+        const phaseDurations: Array<{ label: string; duration: string }> = [];
+        let totalDuration = 0;
+        for (let i = 0; i < phaseSequence.length; i++) {
+            const ts = phaseTs[phaseSequence[i].key];
+            if (!ts) { continue; }
+            // Find the next phase that has a timestamp
+            let nextTs: number | null = null;
+            for (let j = i + 1; j < phaseSequence.length; j++) {
+                if (phaseTs[phaseSequence[j].key]) {
+                    nextTs = phaseTs[phaseSequence[j].key];
+                    break;
+                }
+            }
+            if (nextTs) {
+                const dur = nextTs - ts;
+                totalDuration += dur;
+                phaseDurations.push({ label: phaseSequence[i].label, duration: formatDuration(dur) });
+            } else if (normalizedStep !== 'done') {
+                // Current active phase — show elapsed time
+                const dur = Date.now() - ts;
+                totalDuration += dur;
+                phaseDurations.push({ label: phaseSequence[i].label, duration: `${formatDuration(dur)}...` });
+            }
+        }
+
+        const phaseDurationHtml = phaseDurations.length > 0
+            ? `<div class="phase-durations">
+                <div class="phase-durations-title">Phase Durations${totalDuration > 0 ? ` <span class="total-duration">(Total: ${formatDuration(totalDuration)})</span>` : ''}</div>
+                <div class="phase-bars">
+                  ${phaseDurations.map(p => `<div class="phase-bar-item"><span class="phase-bar-label">${p.label}</span><span class="phase-bar-value">${p.duration}</span></div>`).join('')}
+                </div>
+              </div>`
+            : '';
+
         // Design section
         const designHtml = design
             ? `<div class="artifact-card">
@@ -1156,6 +1212,21 @@ a:hover { text-decoration: underline; }
     word-break: break-word;
 }
 
+/* Phase durations */
+.phase-durations {
+    background: var(--vscode-editorWidget-background);
+    border: 1px solid var(--vscode-widget-border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+}
+.phase-durations-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--vscode-descriptionForeground); margin-bottom: 8px; }
+.total-duration { text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--vscode-foreground); }
+.phase-bars { display: flex; gap: 12px; flex-wrap: wrap; }
+.phase-bar-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.phase-bar-label { font-size: 10px; color: var(--vscode-descriptionForeground); }
+.phase-bar-value { font-size: 13px; font-weight: 700; color: var(--vscode-foreground); }
+
 .section-title {
     font-size: 10px;
     text-transform: uppercase;
@@ -1184,6 +1255,8 @@ a:hover { text-decoration: underline; }
   <div class="status-bar">
     <div class="status-indicator">${cfg.icon} ${cfg.label}</div>
   </div>
+
+  ${phaseDurationHtml}
 
   <div class="section-title">Artifacts</div>
   ${designHtml}
