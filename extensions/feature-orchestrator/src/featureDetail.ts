@@ -147,6 +147,10 @@ export class FeatureDetailPanel {
                 case 'addAgentPr':
                     await FeatureDetailPanel.handleAddAgentPr(featureId, panel);
                     break;
+
+                case 'dispatchPbi':
+                    await FeatureDetailPanel.handleDispatchPbi(featureId, message.adoId, panel);
+                    break;
             }
         });
 
@@ -569,6 +573,27 @@ export class FeatureDetailPanel {
         vscode.window.showInformationMessage(`Added PR #${prNumber}: ${prTitle}`);
     }
 
+    /**
+     * Dispatch a specific PBI to Copilot coding agent via prompt file.
+     */
+    private static async handleDispatchPbi(featureId: string, adoId: number, panel: vscode.WebviewPanel): Promise<void> {
+        const state = FeatureDetailPanel.readState();
+        const feature = state.features?.find((f: any) => f.id === featureId);
+        if (!feature) { return; }
+
+        const pbi = feature.artifacts?.pbis?.find((p: any) => p.adoId === adoId);
+        if (!pbi) {
+            vscode.window.showWarningMessage(`PBI AB#${adoId} not found in feature state.`);
+            return;
+        }
+
+        // Open a new chat with the dispatch prompt, scoped to this specific PBI
+        await vscode.commands.executeCommand('workbench.action.chat.newChat');
+        vscode.commands.executeCommand('workbench.action.chat.open', {
+            query: `/feature-dispatch Feature: "${feature.name}". Dispatch ONLY PBI AB#${adoId}: "${pbi.title}" to repo "${pbi.module || pbi.targetRepo}".`,
+        });
+    }
+
     private static getHtml(feature: any): string {
         const artifacts: FeatureArtifacts = feature.artifacts || { pbis: [], agentPrs: [] };
         const design = artifacts.design;
@@ -689,12 +714,51 @@ export class FeatureDetailPanel {
             }
         }
 
+        // Determine which PBIs are dispatchable
+        // A PBI is dispatchable if:
+        // 1. Status is "Committed" (case-insensitive)
+        // 2. Not already dispatched (no matching agent PR by adoId in title/body, or no dispatched flag)
+        // 3. All dependencies are resolved/done/merged (or no dependencies)
+        const agentPrTitles = agentPrs.map((pr: any) => (pr.title || '').toLowerCase());
+        const resolvedStates = new Set(['resolved', 'done', 'closed', 'removed']);
+
+        const isDispatched = (p: any): boolean => {
+            if (p.dispatched) { return true; }
+            // Check if any agent PR references this PBI's AB# ID
+            const idStr = String(p.adoId);
+            return agentPrTitles.some((t: string) => t.includes(`ab#${idStr}`) || t.includes(idStr));
+        };
+
+        const areDepsResolved = (p: any): boolean => {
+            if (!p.dependsOn || p.dependsOn.length === 0) { return true; }
+            return p.dependsOn.every((depId: string) => {
+                const depPbi = pbis.find((d: any) => String(d.adoId) === String(depId));
+                if (!depPbi) { return true; } // Unknown dep — assume resolved
+                return resolvedStates.has((depPbi.status || '').toLowerCase());
+            });
+        };
+
+        const isDispatchable = (p: any): boolean => {
+            return (p.status || '').toLowerCase() === 'committed'
+                && !isDispatched(p)
+                && areDepsResolved(p);
+        };
+
+        const getBlockingDeps = (p: any): string[] => {
+            if (!p.dependsOn || p.dependsOn.length === 0) { return []; }
+            return p.dependsOn.filter((depId: string) => {
+                const depPbi = pbis.find((d: any) => String(d.adoId) === String(depId));
+                if (!depPbi) { return false; }
+                return !resolvedStates.has((depPbi.status || '').toLowerCase());
+            });
+        };
+
         const pbisHtml = pbis.length > 0
             ? `<div class="artifact-card">
                 <div class="artifact-header">📋 Product Backlog Items <span class="count">${pbis.length}</span> <button class="add-btn" onclick="addPbi()" title="Add a PBI">+</button></div>
                 <div class="artifact-body">
                   <table class="artifact-table">
-                    <thead><tr><th>Order</th><th>AB#</th><th>Title</th><th>Repo</th>${hasDeps ? '<th>Depends On</th>' : ''}<th>Status</th></tr></thead>
+                    <thead><tr><th>Order</th><th>AB#</th><th>Title</th><th>Repo</th>${hasDeps ? '<th>Depends On</th>' : ''}<th>Status</th><th>Action</th></tr></thead>
                     <tbody>
                       ${pbis.map((p: any) => {
                         const statusClass = (p.status || 'new').toLowerCase().replace(/\s/g, '-');
@@ -702,6 +766,20 @@ export class FeatureDetailPanel {
                             ? `<td>${(p.dependsOn || []).map((d: string) => `<a href="#" onclick="openUrl('https://dev.azure.com/${ADO_ORG}/${ADO_PROJECT}/_workitems/edit/${d}')">AB#${d}</a>`).join(', ') || '—'}</td>`
                             : '';
                         const orderNum = pbiOrder.get(String(p.adoId)) || '—';
+                        let actionCell: string;
+                        if (isDispatchable(p)) {
+                            actionCell = `<td><button class="dispatch-btn" onclick="event.stopPropagation(); dispatchPbi(${p.adoId})" title="Dispatch to Copilot agent">🚀 Dispatch</button></td>`;
+                        } else if (isDispatched(p)) {
+                            actionCell = '<td><span class="dispatched-label">✅ Dispatched</span></td>';
+                        } else {
+                            const blocking = getBlockingDeps(p);
+                            if (blocking.length > 0) {
+                                const blockingList = blocking.map((d: string) => `AB#${d}`).join(', ');
+                                actionCell = `<td><span class="blocked-label" title="Blocked by: ${blockingList}">🔒 Blocked</span></td>`;
+                            } else {
+                                actionCell = '<td><span class="muted-action">—</span></td>';
+                            }
+                        }
                         return `<tr>
                           <td class="order-cell">${orderNum}</td>
                           <td><a href="#" onclick="openUrl('${escapeAttr(p.adoUrl)}')">${escapeHtml(String(p.displayId))}</a></td>
@@ -709,6 +787,7 @@ export class FeatureDetailPanel {
                           <td><code>${escapeHtml(p.module || '')}</code></td>
                           ${depsCell}
                           <td><span class="badge badge-${statusClass}">${escapeHtml(p.status || 'new')}</span></td>
+                          ${actionCell}
                         </tr>`;
                       }).join('')}
                     </tbody>
@@ -936,6 +1015,19 @@ a:hover { text-decoration: underline; }
 
 /* Order column */
 .order-cell { font-weight: 700; color: var(--vscode-descriptionForeground); text-align: center; min-width: 24px; }
+
+/* Dispatch button */
+.dispatch-btn {
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none; border-radius: 4px;
+    padding: 2px 8px; font-size: 12px;
+    cursor: pointer; white-space: nowrap;
+}
+.dispatch-btn:hover { background: var(--vscode-button-hoverBackground); }
+.dispatched-label { font-size: 10px; color: #339933; font-weight: 500; white-space: nowrap; }
+.blocked-label { font-size: 10px; color: #da3633; cursor: help; white-space: nowrap; }
+.muted-action { font-size: 10px; color: var(--vscode-descriptionForeground); }
 .prompt-block {
     background: var(--vscode-textCodeBlock-background);
     padding: 8px 12px;
@@ -989,6 +1081,7 @@ a:hover { text-decoration: underline; }
     function addDesign() { vscode.postMessage({ command: 'addDesign' }); }
     function addPbi() { vscode.postMessage({ command: 'addPbi' }); }
     function addAgentPr() { vscode.postMessage({ command: 'addAgentPr' }); }
+    function dispatchPbi(adoId) { vscode.postMessage({ command: 'dispatchPbi', adoId }); }
     function refresh() {
       const btn = document.getElementById('refreshBtn');
       if (btn) { btn.textContent = '↻ Refreshing...'; btn.disabled = true; }
