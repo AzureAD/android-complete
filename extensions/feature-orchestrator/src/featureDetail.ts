@@ -151,6 +151,21 @@ export class FeatureDetailPanel {
                 case 'dispatchPbi':
                     await FeatureDetailPanel.handleDispatchPbi(featureId, message.adoId, panel);
                     break;
+
+                case 'iteratePr': {
+                    const iterateState = FeatureDetailPanel.readState();
+                    const iterateFeature = iterateState.features?.find((f: any) => f.id === featureId);
+                    const featureName = iterateFeature?.name || '';
+                    await vscode.commands.executeCommand('workbench.action.chat.newChat');
+                    vscode.commands.executeCommand('workbench.action.chat.open', {
+                        query: `/feature-pr-iterate Feature: "${featureName}", Repo: ${message.repo}, PR #${message.prNumber}`,
+                    });
+                    break;
+                }
+
+                case 'checkoutPr':
+                    await FeatureDetailPanel.handleCheckoutPr(message.repo, message.prNumber);
+                    break;
             }
         });
 
@@ -635,6 +650,42 @@ export class FeatureDetailPanel {
         });
     }
 
+    /**
+     * Checkout a PR branch locally in the corresponding repo directory.
+     */
+    private static async handleCheckoutPr(repo: string, prNumber: number): Promise<void> {
+        const repoSlugs: Record<string, string> = {
+            'common': 'AzureAD/microsoft-authentication-library-common-for-android',
+            'msal': 'AzureAD/microsoft-authentication-library-for-android',
+            'broker': 'identity-authnz-teams/ad-accounts-for-android',
+            'adal': 'AzureAD/azure-activedirectory-library-for-android',
+        };
+        const repoDirs: Record<string, string> = {
+            'common': 'common',
+            'msal': 'msal',
+            'broker': 'broker',
+            'adal': 'adal',
+        };
+
+        const repoSlug = repoSlugs[repo] || repo;
+        const repoDir = repoDirs[repo] || repo;
+        const folders = vscode.workspace.workspaceFolders;
+        const cwd = folders ? path.join(folders[0].uri.fsPath, repoDir) : undefined;
+
+        try {
+            await switchGhAccount(repoSlug);
+            const terminal = vscode.window.createTerminal({
+                name: `PR #${prNumber} (${repo})`,
+                cwd,
+            });
+            terminal.show();
+            terminal.sendText(`gh pr checkout ${prNumber} --repo "${repoSlug}"`);
+            vscode.window.showInformationMessage(`Checking out PR #${prNumber} in ${repo}/`);
+        } catch (e) {
+            vscode.window.showErrorMessage(`Failed to checkout PR #${prNumber}: ${e}`);
+        }
+    }
+
     private static getHtml(feature: any): string {
         const artifacts: FeatureArtifacts = feature.artifacts || { pbis: [], agentPrs: [] };
         const design = artifacts.design;
@@ -844,7 +895,7 @@ export class FeatureDetailPanel {
                 <div class="artifact-header">🤖 Agent Pull Requests <span class="count">${agentPrs.length}</span> <button class="add-btn" onclick="addAgentPr()" title="Add a PR">+</button></div>
                 <div class="artifact-body">
                   <table class="artifact-table">
-                    <thead><tr><th>PR</th><th>Repo</th><th>Title</th><th>Comments</th><th>Status</th></tr></thead>
+                    <thead><tr><th>PR</th><th>Repo</th><th>Title</th><th>Comments</th><th>Status</th><th>Action</th></tr></thead>
                     <tbody>
                       ${agentPrs.map((pr: any) => {
                         const prUrl = pr.prUrl || pr.url || '#';
@@ -854,12 +905,20 @@ export class FeatureDetailPanel {
                         const resolvedComments = pr.resolvedComments ?? 0;
                         const commentsDisplay = totalComments === '—' ? '—'
                             : `<span class="comments-count">${resolvedComments}/${totalComments}</span>`;
+                        const prNum = pr.prNumber || pr.number || '';
+                        const prRepo = pr.repo || '';
+                        const isOpen = status === 'open' || status === 'draft';
+                        const actionBtns = isOpen
+                            ? `<button class="pr-action-btn" onclick="event.stopPropagation(); iteratePr('${prRepo}', ${prNum})" title="Review & send feedback">💬</button>
+                               <button class="pr-action-btn" onclick="event.stopPropagation(); checkoutPr('${prRepo}', ${prNum})" title="Checkout branch locally">📥</button>`
+                            : '<span class="muted-action">—</span>';
                         return `<tr>
-                          <td><a href="#" onclick="openUrl('${escapeAttr(prUrl)}')">#${pr.prNumber || pr.number || '?'}</a></td>
-                          <td><code>${escapeHtml(pr.repo || '')}</code></td>
+                          <td><a href="#" onclick="openUrl('${escapeAttr(prUrl)}')">#${prNum}</a></td>
+                          <td><code>${escapeHtml(prRepo)}</code></td>
                           <td>${escapeHtml(pr.title || '')}</td>
                           <td>${commentsDisplay}</td>
                           <td><span class="badge" style="background:${statusColor[status] || '#8b949e'}">${status}</span></td>
+                          <td class="action-cell">${actionBtns}</td>
                         </tr>`;
                       }).join('')}
                     </tbody>
@@ -1070,6 +1129,22 @@ a:hover { text-decoration: underline; }
 .dispatched-label { font-size: 10px; color: #339933; font-weight: 500; white-space: nowrap; }
 .blocked-label { font-size: 10px; color: #da3633; cursor: help; white-space: nowrap; }
 .muted-action { font-size: 10px; color: var(--vscode-descriptionForeground); }
+
+/* PR action buttons */
+.action-cell { white-space: nowrap; }
+.pr-action-btn {
+    background: none;
+    border: 1px solid var(--vscode-widget-border);
+    color: var(--vscode-foreground);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 12px;
+    cursor: pointer;
+    margin-right: 4px;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+.pr-action-btn:hover { opacity: 1; border-color: var(--vscode-focusBorder); }
 .prompt-block {
     background: var(--vscode-textCodeBlock-background);
     padding: 8px 12px;
@@ -1124,6 +1199,8 @@ a:hover { text-decoration: underline; }
     function addPbi() { vscode.postMessage({ command: 'addPbi' }); }
     function addAgentPr() { vscode.postMessage({ command: 'addAgentPr' }); }
     function dispatchPbi(adoId) { vscode.postMessage({ command: 'dispatchPbi', adoId }); }
+    function iteratePr(repo, prNumber) { vscode.postMessage({ command: 'iteratePr', repo, prNumber }); }
+    function checkoutPr(repo, prNumber) { vscode.postMessage({ command: 'checkoutPr', repo, prNumber }); }
     function refresh() {
       const btn = document.getElementById('refreshBtn');
       if (btn) { btn.textContent = '↻ Refreshing...'; btn.disabled = true; }
