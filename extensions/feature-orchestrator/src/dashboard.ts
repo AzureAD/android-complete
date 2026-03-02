@@ -126,6 +126,44 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         if (!this.view) { return; }
 
         const state = this.readStateFile();
+
+        // Auto-completion detection: check all non-done features
+        const completedStates = new Set(['done', 'resolved', 'closed', 'removed']);
+        let stateChanged = false;
+        for (const feature of state.features) {
+            if (feature.step === 'done') { continue; }
+            const allPbis = (feature as any).artifacts?.pbis || [];
+            const allPrs = (feature as any).artifacts?.agentPrs || feature.agentSessions || [];
+
+            let shouldComplete = false;
+            if (allPbis.length > 0) {
+                shouldComplete = allPbis.every((p: any) => completedStates.has((p.status || '').toLowerCase()));
+            } else if (allPrs.length > 0) {
+                shouldComplete = allPrs.every((pr: any) => (pr.status || '').toLowerCase() === 'merged');
+            }
+
+            if (shouldComplete) {
+                feature.step = 'done';
+                feature.updatedAt = Date.now();
+                stateChanged = true;
+                vscode.window.showInformationMessage(
+                    `🎉 Feature "${feature.name}" is complete! All work items are resolved.`,
+                    'View Feature'
+                ).then(selection => {
+                    if (selection === 'View Feature') {
+                        vscode.commands.executeCommand('orchestrator.openFeatureDetail', feature.id);
+                    }
+                });
+            }
+        }
+        if (stateChanged) {
+            const filePath = this.getStateFilePath();
+            if (filePath) {
+                state.lastUpdated = Date.now();
+                fs.writeFileSync(filePath, JSON.stringify(state, null, 2), 'utf-8');
+            }
+        }
+
         this.view.webview.html = this.getHtml(state);
     }
 
