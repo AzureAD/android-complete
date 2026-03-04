@@ -23,7 +23,10 @@ build/
 # IntelliJ
 *.iml
 .idea
-.vscode
+.vscode/*
+!.vscode/mcp.json
+extensions/feature-orchestrator/.vscode/
+extensions/feature-orchestrator/*.vsix
 .settings
 .project
 
