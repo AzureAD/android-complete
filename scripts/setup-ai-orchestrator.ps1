@@ -236,12 +236,14 @@ if (Test-Path $designDocsPath) {
     if ($isGitRepo) {
         Write-Host "  OK: design-docs/ exists and is a git repo" -ForegroundColor Green
     } else {
-        Write-Host "  OK: design-docs/ exists (not a git repo — may be from droidSetup)" -ForegroundColor Green
+        Write-Host "  WARNING: design-docs/ exists but is not a git repo. Design PR creation may not work." -ForegroundColor Yellow
+        Write-Host "  Consider deleting it and re-running this script to clone properly." -ForegroundColor Yellow
+        $warnings += "design-docs/ is not a git repo. Delete it and re-run setup to clone from ADO."
     }
 } else {
     Write-Host "  design-docs/ not found. Cloning from ADO..." -ForegroundColor Yellow
     try {
-        git clone "https://dev.azure.com/IdentityDivision/DevEx/_git/AuthLibrariesApiReview" $designDocsPath 2>&1 | Out-Null
+        git clone -b dev "https://dev.azure.com/IdentityDivision/DevEx/_git/AuthLibrariesApiReview" $designDocsPath 2>&1 | Out-Null
         Write-Host "  Cloned successfully." -ForegroundColor Green
     } catch {
         Write-Host "  Failed to clone. You may need to run 'git droidSetup' or clone manually." -ForegroundColor Red
