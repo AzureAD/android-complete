@@ -34,6 +34,46 @@ $issues = @()
 $warnings = @()
 
 # ============================================================
+# 0. Check VS Code & Copilot
+# ============================================================
+Write-Host "[0/7] Checking VS Code & GitHub Copilot..." -ForegroundColor Yellow
+
+# Check VS Code
+try {
+    $codeVersion = (code --version 2>&1 | Select-Object -First 1)
+    $versionParts = $codeVersion -split "\."
+    $major = [int]$versionParts[0]
+    $minor = [int]$versionParts[1]
+    if ($major -gt 1 -or ($major -eq 1 -and $minor -ge 109)) {
+        Write-Host "  OK: VS Code $codeVersion" -ForegroundColor Green
+    } else {
+        Write-Host "  WARNING: VS Code $codeVersion is too old. Requires >= 1.109 for agents, skills, prompt files, and askQuestion." -ForegroundColor Yellow
+        Write-Host "  Update: Help > Check for Updates, or download from https://code.visualstudio.com" -ForegroundColor Yellow
+        Write-Host "  (The rest of setup will continue — update VS Code afterward and you're good)" -ForegroundColor DarkGray
+        $warnings += "VS Code version $codeVersion is below 1.109. Update via Help > Check for Updates."
+    }
+} catch {
+    Write-Host "  MISSING: VS Code ('code' command not found)." -ForegroundColor Red
+    Write-Host "  Install from https://code.visualstudio.com and ensure 'code' is in PATH." -ForegroundColor Red
+    exit 1
+}
+
+# Check GitHub Copilot extension
+try {
+    $copilotExtensions = code --list-extensions 2>&1 | Select-String -Pattern "github\.copilot"
+    if ($copilotExtensions) {
+        Write-Host "  OK: GitHub Copilot installed" -ForegroundColor Green
+    } else {
+        Write-Host "  WARNING: GitHub Copilot extension not found." -ForegroundColor Yellow
+        Write-Host "  Install from VS Code: Extensions > search 'GitHub Copilot' > Install" -ForegroundColor Yellow
+        Write-Host "  (Requires a GitHub Copilot license. The rest of setup will continue)" -ForegroundColor DarkGray
+        $warnings += "GitHub Copilot extension is required for agents and prompt files."
+    }
+} catch {
+    # Couldn't check — skip
+}
+
+# ============================================================
 # 1. Check Node.js
 # ============================================================
 Write-Host "[1/7] Checking Node.js..." -ForegroundColor Yellow
