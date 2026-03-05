@@ -124,34 +124,5 @@ For complex investigation tasks, use these skills (read the skill file for detai
 | **codebase-researcher** | `.github/skills/codebase-researcher/SKILL.md` | "where is X implemented", "how does Y work", "trace the flow of", data flow investigation |
 | **incident-investigator** | `.github/skills/incident-investigator/SKILL.md` | IcM incidents, customer-reported issues, authentication failures |
 | **kusto-analyst** | `.github/skills/kusto-analyst/SKILL.md` | "query Kusto", "analyze telemetry", "check android_spans", eSTS correlation, latency investigation |
-| **feature-planner** | `.github/skills/feature-planner/SKILL.md` | "plan this feature", "break this down into PBIs", "decompose this into tasks", feature decomposition |
-| **pbi-creator** | `.github/skills/pbi-creator/SKILL.md` | "create the PBIs", "create work items", "push PBIs to ADO", approved plan → ADO work items |
-| **design-author** | `.github/skills/design-author/SKILL.md` | "design this feature", "create a design spec", "write a design doc", "create an implementation plan" |
-| **design-reviewer** | `.github/skills/design-reviewer/SKILL.md` | "address review comments", "handle my review", "review comments on" |
-| **pbi-dispatcher** | `.github/skills/pbi-dispatcher/SKILL.md` | "dispatch PBIs to agent", "assign to Copilot", "send work items to coding agent" |
-
-## 13. Azure DevOps Integration
-
-This project uses Azure DevOps (`IdentityDivision/Engineering`). The **Azure DevOps MCP Server** is configured in `.vscode/mcp.json` for work item management. Always check to see if the Azure DevOps MCP server has a tool relevant to the user's request.
-
-### 13.1 AI-Driven Development Pipeline
-This project supports an AI-driven development workflow:
-1. **Design**: Use the `design-author` skill to create a detailed design spec in the `AuthLibrariesApiReview` ADO repo and open a PR for team review
-2. **Plan**: After design approval, use the `feature-planner` skill to decompose the approved design into repo-targeted PBIs. Developer reviews and approves the plan.
-3. **Backlog**: After plan approval, use the `pbi-creator` skill to discover ADO defaults (area path, iteration) and create work items in ADO with dependency links.
-4. **Dispatch**: Use the `pbi-dispatcher` skill or `scripts/agent-pipeline/orchestrate.py` to assign PBIs to GitHub Copilot coding agent
-5. **Implement**: Copilot coding agent creates PRs in the target repos (`msal`, `common`, `broker`, `adal`)
-6. **Review**: Use `@copilot` in PR comments for automated feedback iteration
-
-### 13.2 Design Docs
-The `design-docs/` folder contains the `AuthLibrariesApiReview` ADO repo (cloned via `git droidSetup`). It holds ~150+ design specs for the Android Auth platform. **Designs may be outdated** — always verify against the current codebase. Use them as historical context and style reference.
-
-### 13.2 Repository Routing (for multi-repo features)
-| Module | GitHub Repo |
-|--------|-------------|
-| common / common4j | `AzureAD/microsoft-authentication-library-common-for-android` |
-| msal | `AzureAD/microsoft-authentication-library-for-android` |
-| broker / broker4j | `identity-authnz-teams/ad-accounts-for-android` (GHE) |
-| adal | `AzureAD/azure-activedirectory-library-for-android` |
 
 ---

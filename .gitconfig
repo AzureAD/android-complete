@@ -24,7 +24,6 @@
         git clone -b main https://github.com/Azure-Samples/ms-identity-ciam-native-auth-android-sample.git nativeauthsample; \
         git clone -b dev https://office.visualstudio.com/DefaultCollection/OneAuth/_git/OneAuth oneauth; \
         git clone -b develop https://github.com/AzureAD/microsoft-authentication-library-for-cpp.git msalcpp; \
-        git clone -b dev https://IdentityDivision@dev.azure.com/IdentityDivision/DevEx/_git/AuthLibrariesApiReview design-docs; \
 		cd msal; git submodule init; git submodule update; cd ..; \
 		cd adal; git submodule init; git submodule update; cd ..; \
 		cd broker; git submodule init; git submodule update; cd ..; \
