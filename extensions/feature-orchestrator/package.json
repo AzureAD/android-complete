@@ -1,0 +1,119 @@
+{
+  "name": "feature-orchestrator",
+  "displayName": "Android Auth Feature Orchestrator",
+  "description": "AI-driven feature development orchestrator for the Android Auth multi-repo project. Dashboard + @orchestrator chat participant.",
+  "version": "0.3.0",
+  "publisher": "AzureAD",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "AI"
+  ],
+  "activationEvents": ["onLanguage:markdown"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "feature-orchestrator",
+          "title": "Feature Orchestrator",
+          "icon": "$(rocket)"
+        }
+      ]
+    },
+    "views": {
+      "feature-orchestrator": [
+        {
+          "type": "webview",
+          "id": "orchestrator.dashboard",
+          "name": "Dashboard"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "orchestrator.refreshDashboard",
+        "title": "Refresh Dashboard",
+        "icon": "$(refresh)",
+        "category": "Orchestrator"
+      },
+      {
+        "command": "orchestrator.newFeature",
+        "title": "New Feature",
+        "icon": "$(add)",
+        "category": "Orchestrator"
+      },
+      {
+        "command": "orchestrator.openFeatureDetail",
+        "title": "Open Feature Detail",
+        "category": "Orchestrator"
+      },
+      {
+        "command": "orchestrator.submitDesignReview",
+        "title": "Submit Review Comments (Current File)",
+        "icon": "$(comment)",
+        "category": "Orchestrator"
+      },
+      {
+        "command": "orchestrator.submitAllReviews",
+        "title": "Submit All Review Comments",
+        "icon": "$(comment-discussion)",
+        "category": "Orchestrator"
+      },
+      {
+        "command": "orchestrator.clearReviewComments",
+        "title": "Clear Review Comments (Current File)",
+        "category": "Orchestrator"
+      },
+      {
+        "command": "orchestrator.reviewComment.add",
+        "title": "Add Comment"
+      },
+      {
+        "command": "orchestrator.reviewComment.delete",
+        "title": "Delete Comment",
+        "icon": "$(trash)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "orchestrator.refreshDashboard",
+          "when": "view == orchestrator.dashboard",
+          "group": "navigation"
+        },
+        {
+          "command": "orchestrator.newFeature",
+          "when": "view == orchestrator.dashboard",
+          "group": "navigation"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "orchestrator.reviewComment.add",
+          "group": "inline",
+          "when": "commentController == orchestrator.designReview"
+        }
+      ],
+      "comments/comment/title": [
+        {
+          "command": "orchestrator.reviewComment.delete",
+          "group": "inline",
+          "when": "commentController == orchestrator.designReview && comment == reviewComment"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.100.0",
+    "typescript": "^5.5.0"
+  }
+}
