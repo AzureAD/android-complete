@@ -96,7 +96,7 @@ and hooks that you install once and configure per-project.
 
 ### Install
 
-1. **Get the plugin** — download `feature-orchestrator-plugin.zip` (or clone the repo)
+1. **Get the plugin** — download [`feature-orchestrator-plugin.zip`](https://github.com/AzureAD/android-complete/blob/shahzaibj/orchestrator-workshop/feature-orchestrator-plugin.zip) from the workshop branch
 2. **Unzip** to a permanent location:
    ```powershell
    Expand-Archive -Path "feature-orchestrator-plugin.zip" -DestinationPath "$HOME\feature-orchestrator-plugin"
@@ -146,7 +146,8 @@ The **Starter Kit** is a set of template files you copy into your repo and custo
 
 ### Install
 
-1. **Copy** the `workshop/starter-kit/.github/` folder into your repo root
+1. **Get the starter kit** — download from the [workshop branch](https://github.com/AzureAD/android-complete/tree/shahzaibj/orchestrator-workshop/workshop/starter-kit)
+2. **Copy** the `.github/` folder into your repo root
 2. **Search for `TODO: CUSTOMIZE`** in every file and update:
    - Repo slugs and module names (in the orchestrator agent)
    - ADO project name (in pbi-creator skill)
