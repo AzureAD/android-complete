@@ -1,0 +1,35 @@
+{
+  "name": "feature-orchestrator",
+  "description": "AI-driven feature development pipeline: Design → Plan → Backlog → Dispatch → Monitor. Orchestrates codebase research, design specs, PBI creation in ADO, dispatch to Copilot coding agent, and PR monitoring.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Android Auth Team"
+  },
+  "license": "MIT",
+  "keywords": [
+    "feature-development",
+    "ai-orchestration",
+    "design-spec",
+    "pbi",
+    "copilot-agent",
+    "devops"
+  ],
+  "agents": [
+    "../../agents"
+  ],
+  "commands": [
+    "../../commands"
+  ],
+  "hooks": "../../hooks/hooks.json",
+  "mcpServers": "../../.mcp.json",
+  "skills": [
+    "../../skills/codebase-researcher",
+    "../../skills/design-author",
+    "../../skills/design-reviewer",
+    "../../skills/feature-planner",
+    "../../skills/pbi-creator",
+    "../../skills/pbi-dispatcher-github",
+    "../../skills/pbi-dispatcher-ado",
+    "../../skills/pbi-dispatcher-ado-swe"
+  ]
+}
