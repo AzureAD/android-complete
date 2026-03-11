@@ -1,9 +1,14 @@
 {
   "name": "feature-orchestrator",
-  "displayName": "Android Auth Feature Orchestrator",
-  "description": "AI-driven feature development orchestrator for the Android Auth multi-repo project. Dashboard + @orchestrator chat participant.",
+  "displayName": "Feature Orchestrator",
+  "description": "AI-driven feature development orchestrator for multi-repo projects. Dashboard + @orchestrator chat participant.",
   "version": "0.3.0",
   "publisher": "AzureAD",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AzureAD/android-complete.git",
+    "directory": "extensions/feature-orchestrator"
+  },
   "engines": {
     "vscode": "^1.100.0"
   },
@@ -108,8 +113,7 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "lint": "eslint src --ext ts"
+    "watch": "tsc -watch -p ./"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

@@ -23,8 +23,16 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 import { runCommand, switchGhAccount } from './tools';
+import {
+    ensureStateDirectoryExists,
+    getAdoOrgUrl,
+    getAdoWorkItemUrl,
+    getDesignDocsPath,
+    getModuleRepoChoices,
+    getRepoSlugForModule,
+    getStateFilePath,
+} from './config';
 
 /**
  * Artifact types that can be tracked per feature.
@@ -38,7 +46,7 @@ export interface DesignArtifact {
 export interface PbiArtifact {
     adoId: number;          // AB# work item ID
     title: string;
-    targetRepo: string;     // e.g. "AzureAD/microsoft-authentication-library-common-for-android"
+    targetRepo: string;     // e.g. "owner/repository-name"
     module: string;         // e.g. "common", "msal", "broker"
     adoUrl: string;         // full ADO URL
     status: 'new' | 'committed' | 'active' | 'resolved' | 'closed';
@@ -60,9 +68,6 @@ export interface FeatureArtifacts {
     pbis: PbiArtifact[];
     agentPrs: AgentPrArtifact[];
 }
-
-const ADO_ORG = 'IdentityDivision';
-const ADO_PROJECT = 'Engineering';
 
 /**
  * Opens a detail panel for a specific feature, showing all tracked artifacts.
@@ -204,10 +209,8 @@ export class FeatureDetailPanel {
         }, 300000); // 5 minutes
 
         // Watch for state file changes
-        const stateDir = path.join(os.homedir(), '.android-auth-orchestrator');
-        if (!fs.existsSync(stateDir)) {
-            fs.mkdirSync(stateDir, { recursive: true });
-        }
+        ensureStateDirectoryExists();
+        const stateDir = path.dirname(getStateFilePath());
         const pattern = new vscode.RelativePattern(vscode.Uri.file(stateDir), 'state.json');
         const watcher = vscode.workspace.createFileSystemWatcher(pattern);
         watcher.onDidChange(() => {
@@ -221,17 +224,16 @@ export class FeatureDetailPanel {
     }
 
     private static readState(): any {
-        const filePath = path.join(os.homedir(), '.android-auth-orchestrator', 'state.json');
+        const filePath = getStateFilePath();
         if (!fs.existsSync(filePath)) { return { features: [] }; }
         try { return JSON.parse(fs.readFileSync(filePath, 'utf-8')); }
         catch { return { features: [] }; }
     }
 
     private static writeState(state: any): void {
-        const dir = path.join(os.homedir(), '.android-auth-orchestrator');
-        if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); }
+        ensureStateDirectoryExists();
         state.lastUpdated = Date.now();
-        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify(state, null, 2), 'utf-8');
+        fs.writeFileSync(getStateFilePath(), JSON.stringify(state, null, 2), 'utf-8');
     }
 
     /**
@@ -245,13 +247,8 @@ export class FeatureDetailPanel {
 
         let changed = false;
 
-        // Repo slug mapping: short names → full GitHub slugs
-        const repoSlugs: Record<string, string> = {
-            'common': 'AzureAD/microsoft-authentication-library-common-for-android',
-            'msal': 'AzureAD/microsoft-authentication-library-for-android',
-            'adal': 'AzureAD/azure-activedirectory-library-for-android',
-            'broker': 'identity-authnz-teams/ad-accounts-for-android',
-        };
+        // Repo slug mapping: module/repo aliases → full GitHub slugs
+        const resolveRepoSlug = (name: string): string => getRepoSlugForModule(name) || name;
 
         // --- Refresh Agent PRs from GitHub ---
         const agentPrs = feature.artifacts?.agentPrs || [];
@@ -259,8 +256,8 @@ export class FeatureDetailPanel {
             // Group PRs by org to minimize gh account switches
             const prsByOrg: Record<string, any[]> = {};
             for (const pr of agentPrs) {
-                const repoSlug = repoSlugs[pr.repo] || pr.repo;
-                const org = repoSlug.split('/')[0] || 'AzureAD';
+                const repoSlug = resolveRepoSlug(pr.repo);
+                const org = repoSlug.split('/')[0] || '';
                 if (!prsByOrg[org]) { prsByOrg[org] = []; }
                 prsByOrg[org].push({ pr, repoSlug });
             }
@@ -275,6 +272,7 @@ export class FeatureDetailPanel {
                 }
 
                 for (const { pr, repoSlug } of prs) {
+                    if (!repoSlug || !repoSlug.includes('/')) { continue; }
                     try {
                         const prNumber = pr.prNumber || pr.number;
                         if (!prNumber) { continue; }
@@ -322,13 +320,18 @@ export class FeatureDetailPanel {
                 // Check if az CLI is available and authenticated (quick test)
                 await runCommand('az account show --only-show-errors -o none', undefined, 5000);
 
+                const adoOrgUrl = getAdoOrgUrl();
+                if (!adoOrgUrl) {
+                    return;
+                }
+
                 for (const pbi of pbis) {
                     try {
                         const adoId = pbi.adoId;
                         if (!adoId) { continue; }
 
                         const json = await runCommand(
-                            `az boards work-item show --id ${adoId} --org "https://dev.azure.com/IdentityDivision" --only-show-errors -o json`,
+                            `az boards work-item show --id ${adoId} --org "${adoOrgUrl}" --only-show-errors -o json`,
                             undefined, 15000 // 15s timeout
                         );
                         const wiData = JSON.parse(json);
@@ -421,7 +424,7 @@ export class FeatureDetailPanel {
     private static async handleAddDesign(featureId: string, panel: vscode.WebviewPanel): Promise<void> {
         const choice = await vscode.window.showQuickPick(
             [
-                { label: '📄 Browse for local file', description: 'Select a markdown file from design-docs/', value: 'file' },
+                { label: '📄 Browse for local file', description: `Select a markdown file from ${getDesignDocsPath()}`, value: 'file' },
                 { label: '🔗 Enter ADO PR URL', description: 'Paste a design review PR link', value: 'pr' },
             ],
             { placeHolder: 'How do you want to add the design spec?' }
@@ -435,8 +438,9 @@ export class FeatureDetailPanel {
 
         if (choice.value === 'file') {
             const folders = vscode.workspace.workspaceFolders;
+            const docsPath = getDesignDocsPath().replace(/[\\/]+$/, '');
             const defaultUri = folders
-                ? vscode.Uri.file(path.join(folders[0].uri.fsPath, 'design-docs'))
+                ? vscode.Uri.file(path.join(folders[0].uri.fsPath, docsPath))
                 : undefined;
 
             const uris = await vscode.window.showOpenDialog({
@@ -465,7 +469,7 @@ export class FeatureDetailPanel {
         } else {
             const prUrl = await vscode.window.showInputBox({
                 prompt: 'Paste the ADO PR URL for the design review',
-                placeHolder: 'https://dev.azure.com/IdentityDivision/Engineering/_git/AuthLibrariesApiReview/pullrequest/...',
+                placeHolder: 'https://dev.azure.com/<org>/<project>/_git/<repo>/pullrequest/...',
             });
             if (!prUrl) { return; }
 
@@ -473,7 +477,7 @@ export class FeatureDetailPanel {
                 // Ask for the doc path too
                 const docPath = await vscode.window.showInputBox({
                     prompt: 'Design doc path (workspace-relative, or leave empty)',
-                    placeHolder: 'design-docs/[Android] Feature Name/spec.md',
+                    placeHolder: `${getDesignDocsPath()}[Platform] Feature Name/spec.md`,
                 });
                 feature.artifacts.design = {
                     docPath: docPath || '',
@@ -525,8 +529,12 @@ export class FeatureDetailPanel {
         let module = '';
 
         try {
+            const adoOrgUrl = getAdoOrgUrl();
+            if (!adoOrgUrl) {
+                throw new Error('ADO organization is not configured.');
+            }
             const json = await runCommand(
-                `az boards work-item show --id ${adoId} --org "https://dev.azure.com/IdentityDivision" --only-show-errors -o json`,
+                `az boards work-item show --id ${adoId} --org "${adoOrgUrl}" --only-show-errors -o json`,
                 undefined, 15000
             );
             const wi = JSON.parse(json);
@@ -561,7 +569,7 @@ export class FeatureDetailPanel {
             module,
             targetRepo: module,
             status: pbiStatus,
-            adoUrl: `https://dev.azure.com/IdentityDivision/Engineering/_workitems/edit/${adoId}`,
+            adoUrl: getAdoWorkItemUrl(adoId),
         });
 
         // Also add to legacy pbis
@@ -579,13 +587,14 @@ export class FeatureDetailPanel {
      * Let user manually add an agent PR by repo + PR number — fetches details from GitHub.
      */
     private static async handleAddAgentPr(featureId: string, panel: vscode.WebviewPanel): Promise<void> {
+        const moduleChoices = getModuleRepoChoices();
+        if (moduleChoices.length === 0) {
+            vscode.window.showWarningMessage('No repositories are configured. Add repositories/modules to .github/orchestrator-config.json.');
+            return;
+        }
+
         const repoChoice = await vscode.window.showQuickPick(
-            [
-                { label: 'common', description: 'AzureAD/microsoft-authentication-library-common-for-android', value: 'AzureAD/microsoft-authentication-library-common-for-android' },
-                { label: 'msal', description: 'AzureAD/microsoft-authentication-library-for-android', value: 'AzureAD/microsoft-authentication-library-for-android' },
-                { label: 'broker', description: 'identity-authnz-teams/ad-accounts-for-android', value: 'identity-authnz-teams/ad-accounts-for-android' },
-                { label: 'adal', description: 'AzureAD/azure-activedirectory-library-for-android', value: 'AzureAD/azure-activedirectory-library-for-android' },
-            ],
+            moduleChoices,
             { placeHolder: 'Which repo is the PR in?' }
         );
         if (!repoChoice) { return; }
@@ -676,21 +685,8 @@ export class FeatureDetailPanel {
      * Checkout a PR branch locally in the corresponding repo directory.
      */
     private static async handleCheckoutPr(repo: string, prNumber: number): Promise<void> {
-        const repoSlugs: Record<string, string> = {
-            'common': 'AzureAD/microsoft-authentication-library-common-for-android',
-            'msal': 'AzureAD/microsoft-authentication-library-for-android',
-            'broker': 'identity-authnz-teams/ad-accounts-for-android',
-            'adal': 'AzureAD/azure-activedirectory-library-for-android',
-        };
-        const repoDirs: Record<string, string> = {
-            'common': 'common',
-            'msal': 'msal',
-            'broker': 'broker',
-            'adal': 'adal',
-        };
-
-        const repoSlug = repoSlugs[repo] || repo;
-        const repoDir = repoDirs[repo] || repo;
+        const repoSlug = getRepoSlugForModule(repo) || repo;
+        const repoDir = repo.includes('/') ? repo.split('/').pop() || repo : repo;
         const folders = vscode.workspace.workspaceFolders;
         const cwd = folders ? path.join(folders[0].uri.fsPath, repoDir) : undefined;
 
@@ -731,7 +727,7 @@ export class FeatureDetailPanel {
                 displayId: p.id || (p.adoId ? `AB#${p.adoId}` : '?'), // what to show in UI
                 title: p.title || '',
                 module: p.module || p.repo || p.targetRepo || '',
-                adoUrl: p.adoUrl || `https://dev.azure.com/${ADO_ORG}/${ADO_PROJECT}/_workitems/edit/${adoId}`,
+                adoUrl: p.adoUrl || getAdoWorkItemUrl(adoId),
                 status: p.status || 'new',
                 dependsOn,
                 priority: p.priority,
@@ -934,7 +930,7 @@ export class FeatureDetailPanel {
                       ${pbis.map((p: any) => {
                         const statusClass = (p.status || 'new').toLowerCase().replace(/\s/g, '-');
                         const depsCell = hasDeps
-                            ? `<td>${(p.dependsOn || []).map((d: string) => `<a href="#" onclick="openUrl('https://dev.azure.com/${ADO_ORG}/${ADO_PROJECT}/_workitems/edit/${d}')">AB#${d}</a>`).join(', ') || '—'}</td>`
+                            ? `<td>${(p.dependsOn || []).map((d: string) => `<a href="#" onclick="openUrl('${escapeAttr(getAdoWorkItemUrl(d))}')">AB#${d}</a>`).join(', ') || '—'}</td>`
                             : '';
                         const orderNum = pbiOrder.get(String(p.adoId)) || '—';
                         let actionCell: string;

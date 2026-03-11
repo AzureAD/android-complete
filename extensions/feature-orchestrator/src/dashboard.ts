@@ -23,8 +23,8 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 import { runCommand, switchGhAccount } from './tools';
+import { ensureStateDirectoryExists, getGithubRepositories, getStateFilePath } from './config';
 
 interface OpenPr {
     repo: string;
@@ -120,9 +120,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         if (stateFilePath) {
             const stateDir = path.dirname(stateFilePath);
             // Ensure the directory exists so the watcher can be set up
-            if (!fs.existsSync(stateDir)) {
-                fs.mkdirSync(stateDir, { recursive: true });
-            }
+            ensureStateDirectoryExists();
             const pattern = new vscode.RelativePattern(
                 vscode.Uri.file(stateDir),
                 'state.json'
@@ -256,7 +254,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
     }
 
     private getStateFilePath(): string | null {
-        return path.join(os.homedir(), '.android-auth-orchestrator', 'state.json');
+        return getStateFilePath();
     }
 
     private readStateFile(): OrchestratorState {
@@ -297,11 +295,18 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
         await this.refresh();
 
         try {
-            const repos = [
-                { slug: 'AzureAD/microsoft-authentication-library-common-for-android', label: 'common' },
-                { slug: 'AzureAD/microsoft-authentication-library-for-android', label: 'msal' },
-                { slug: 'identity-authnz-teams/ad-accounts-for-android', label: 'broker' },
-            ];
+            const repos = getGithubRepositories().map((repo) => ({
+                slug: repo.slug,
+                label: repo.key,
+            }));
+
+            if (repos.length === 0) {
+                this.cachedOpenPrs = [];
+                this.prsLastFetched = Date.now();
+                this.prsEverFetched = true;
+                await this.refresh();
+                return;
+            }
 
             const allPrs: OpenPr[] = [];
 
