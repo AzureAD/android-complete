@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "SubagentStart": [
+      {
+        "type": "command",
+        "command": "node .github/hooks/subagent-start.js",
+        "timeout": 10
+      }
+    ],
+    "SubagentStop": [
+      {
+        "type": "command",
+        "command": "node .github/hooks/subagent-stop.js",
+        "timeout": 10
+      }
+    ]
+  }
+}
