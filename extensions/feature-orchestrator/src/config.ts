@@ -103,22 +103,20 @@ export function getDesignDocsPath(): string {
 }
 
 export function getStateFilePath(): string {
+    const genericPath = path.join(os.homedir(), '.feature-orchestrator', 'state.json');
     const legacyPath = path.join(os.homedir(), '.android-auth-orchestrator', 'state.json');
 
-    const workspaceRoot = getWorkspaceRoot();
-    const config = getOrchestratorConfig();
-    const projectName = config.project?.name || (workspaceRoot ? path.basename(workspaceRoot) : 'workspace');
-    const projectSlug = projectName
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '') || 'workspace';
+    // Prefer the new generic path if it exists
+    if (fs.existsSync(genericPath)) {
+        return genericPath;
+    }
 
-    const genericPath = path.join(os.homedir(), '.feature-orchestrator', projectSlug, 'state.json');
-
-    if (fs.existsSync(legacyPath) && !fs.existsSync(genericPath)) {
+    // Fall back to legacy path for backward compat
+    if (fs.existsSync(legacyPath)) {
         return legacyPath;
     }
 
+    // Default to generic path for new installs
     return genericPath;
 }
 

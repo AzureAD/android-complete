@@ -760,23 +760,34 @@ export class FeatureDetailPanel {
         const cfg = stepConfig[normalizedStep] || stepConfig['idle'];
 
         const pipelineStages = [
-            { key: 'designing',      label: 'Design' },
-            { key: 'planning',       label: 'Plan' },
-            { key: 'backlogging',    label: 'Backlog' },
-            { key: 'dispatching',    label: 'Dispatch' },
-            { key: 'monitoring',     label: 'Monitor' },
+            { key: 'designing',      label: 'Design',   agentIcon: '📐', startIdx: 1, endIdx: 3 },
+            { key: 'planning',       label: 'Plan',     agentIcon: '🗂️', startIdx: 3, endIdx: 5 },
+            { key: 'backlogging',    label: 'Backlog',  agentIcon: '📋', startIdx: 5, endIdx: 7 },
+            { key: 'dispatching',    label: 'Dispatch', agentIcon: '🚀', startIdx: 7, endIdx: 8 },
+            { key: 'monitoring',     label: 'Monitor',  agentIcon: '👁️', startIdx: 8, endIdx: 9 },
         ];
         const stageOrder = ['idle', 'designing', 'design_review', 'planning', 'plan_review', 'backlogging', 'backlog_review', 'dispatching', 'monitoring', 'done'];
         const currentIdx = stageOrder.indexOf(normalizedStep);
 
+        // Determine if dispatch is fully complete
+        const resolvedStatuses = new Set(['resolved', 'done', 'closed', 'removed']);
+        const unresolvedPbis = pbis.filter((p: any) => !resolvedStatuses.has((p.status || '').toLowerCase()));
+        const allDispatched = unresolvedPbis.length === 0 || agentPrs.length >= unresolvedPbis.length;
+
         const pipelineHtml = pipelineStages.map((stage, i) => {
-            // Each stage maps to 2 entries in stageOrder (active + review), roughly at i*2+1
-            const stageIdx = i * 2 + 1;
             const isComplete = normalizedStep === 'done';
-            const isActive = !isComplete && currentIdx >= stageIdx && currentIdx < stageIdx + 2;
-            const isDone = isComplete || currentIdx >= stageIdx + 2;
+            let isDone = isComplete || currentIdx >= stage.endIdx;
+            let isActive = !isDone && currentIdx >= stage.startIdx && currentIdx < stage.endIdx;
+
+            // When monitoring: if not all PBIs dispatched, Dispatch is still active
+            if (stage.key === 'dispatching' && normalizedStep === 'monitoring' && !allDispatched) {
+                isDone = false;
+                isActive = true;
+            }
+
             const cls = isDone ? 'stage done' : isActive ? 'stage active' : 'stage';
-            return `<div class="${cls}">${isDone ? '✅' : isActive ? '🔵' : '○'} ${stage.label}</div>`;
+            const icon = isDone ? '✅' : stage.agentIcon;
+            return `<div class="${cls}"><span class="stage-agent-icon">${icon}</span> ${stage.label}</div>`;
         }).join('<div class="stage-arrow">→</div>');
 
         // Phase duration tracking
@@ -831,6 +842,41 @@ export class FeatureDetailPanel {
                 <div class="phase-durations-title">Phase Durations${totalDuration > 0 ? ` <span class="total-duration">(Total: ${formatDuration(totalDuration)})</span>` : ''}</div>
                 <div class="phase-bars">
                   ${phaseDurations.map(p => `<div class="phase-bar-item"><span class="phase-bar-label">${p.label}</span><span class="phase-bar-value">${p.duration}</span></div>`).join('')}
+                </div>
+              </div>`
+            : '';
+
+        // Agent Timeline section
+        const timelineEvents: Array<{ ts: number; agent: string; action: string; phase: string }> = feature.timeline || [];
+        const agentIcons: Record<string, string> = {
+            'design-writer': '📐', 'codebase-researcher': '🔍',
+            'feature-planner': '🗂️', 'pbi-creator': '📋',
+            'agent-dispatcher': '🚀', 'orchestrator': '⚡',
+        };
+
+        const timelineHtml = timelineEvents.length > 0
+            ? `<div class="artifact-card timeline-card">
+                <div class="artifact-header">📜 Agent Timeline <span class="count">${timelineEvents.length}</span></div>
+                <div class="artifact-body">
+                  <div class="timeline">
+                    ${timelineEvents.map((evt, i) => {
+                        const icon = agentIcons[evt.agent] || '🤖';
+                        const time = new Date(evt.ts);
+                        const timeStr = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                        const dateStr = time.toLocaleDateString([], { month: 'short', day: 'numeric' });
+                        const isLast = i === timelineEvents.length - 1;
+                        const activeClass = isLast && normalizedStep !== 'done' ? ' timeline-active' : '';
+                        return `<div class="timeline-item${activeClass}">
+                          <div class="timeline-connector">${isLast ? '' : '<div class="timeline-line"></div>'}</div>
+                          <div class="timeline-dot">${icon}</div>
+                          <div class="timeline-content">
+                            <div class="timeline-agent">${escapeHtml(evt.agent)}</div>
+                            <div class="timeline-action">${escapeHtml(evt.action)}</div>
+                          </div>
+                          <div class="timeline-time">${dateStr}<br/>${timeStr}</div>
+                        </div>`;
+                    }).join('')}
+                  </div>
                 </div>
               </div>`
             : '';
@@ -1069,12 +1115,16 @@ body {
     white-space: nowrap;
 }
 .stage.active {
-    color: var(--vscode-button-foreground);
-    background: var(--vscode-progressBar-background);
+    color: var(--vscode-foreground);
+    background: var(--vscode-editorWidget-background);
+    border: 1.5px solid var(--vscode-focusBorder);
     font-weight: 600;
+    animation: borderBreath 3s ease-in-out infinite;
 }
 .stage.done { color: #3fb950; font-weight: 500; }
 .stage-arrow { color: var(--vscode-descriptionForeground); font-size: 12px; }
+.stage-agent-icon { font-size: 14px; }
+@keyframes borderBreath { 0%, 100% { border-color: var(--vscode-focusBorder); } 50% { border-color: transparent; } }
 
 /* Status bar */
 .status-bar {
@@ -1245,6 +1295,61 @@ a:hover { text-decoration: underline; }
 .phase-bar-label { font-size: 10px; color: var(--vscode-descriptionForeground); }
 .phase-bar-value { font-size: 13px; font-weight: 700; color: var(--vscode-foreground); }
 
+/* Agent Timeline */
+.timeline-card { margin-bottom: 16px; }
+.timeline { display: flex; flex-direction: column; gap: 0; }
+.timeline-item {
+    display: grid;
+    grid-template-columns: 20px 30px 1fr auto;
+    gap: 8px;
+    align-items: start;
+    padding: 8px 0;
+    position: relative;
+}
+.timeline-connector {
+    display: flex;
+    justify-content: center;
+    position: relative;
+    height: 100%;
+}
+.timeline-line {
+    position: absolute;
+    top: 28px;
+    width: 2px;
+    height: calc(100% + 8px);
+    background: var(--vscode-widget-border);
+}
+.timeline-dot {
+    font-size: 16px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.timeline-content { min-width: 0; }
+.timeline-agent {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--vscode-foreground);
+    font-family: var(--vscode-editor-font-family, monospace);
+}
+.timeline-action {
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+    margin-top: 2px;
+}
+.timeline-time {
+    font-size: 10px;
+    color: var(--vscode-descriptionForeground);
+    text-align: right;
+    white-space: nowrap;
+    line-height: 1.3;
+}
+@keyframes timelinePulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.2); }
+}
+
 .section-title {
     font-size: 10px;
     text-transform: uppercase;
@@ -1275,6 +1380,8 @@ a:hover { text-decoration: underline; }
   </div>
 
   ${phaseDurationHtml}
+
+  ${timelineHtml}
 
   <div class="section-title">Artifacts</div>
   ${designHtml}

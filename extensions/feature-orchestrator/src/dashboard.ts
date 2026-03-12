@@ -446,14 +446,44 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
             const progressSteps = ['designing', 'design_review', 'planning', 'plan_review', 'backlogging', 'backlog_review', 'dispatching', 'monitoring', 'done'];
             const currentIdx = progressSteps.indexOf(normalizedStep);
 
-            const progressDots = progressSteps.map((_s, i) =>
-                `<div class="dot ${i < currentIdx ? 'done' : i === currentIdx ? 'active' : ''}"></div>`
-            ).join('');
+            // Determine if dispatch is still in progress (some PBIs not yet dispatched)
+            const artifacts = (f as any).artifacts;
+            const allPbis = artifacts?.pbis || f.pbis || [];
+            const allPrs = artifacts?.agentPrs || f.agentSessions || [];
+            const resolvedStatuses = new Set(['resolved', 'done', 'closed', 'removed']);
+            const unresolvedPbis = allPbis.filter((p: any) => !resolvedStatuses.has((p.status || '').toLowerCase()));
+            const allDispatched = unresolvedPbis.length === 0 || allPrs.length >= unresolvedPbis.length;
+
+            // Mini pipeline with agent icons
+            const stageInfo = [
+                { icon: '📐', label: 'Design', startIdx: 0, endIdx: 2 },
+                { icon: '🗂️', label: 'Plan', startIdx: 2, endIdx: 4 },
+                { icon: '📋', label: 'Backlog', startIdx: 4, endIdx: 6 },
+                { icon: '🚀', label: 'Dispatch', startIdx: 6, endIdx: 7 },
+                { icon: '👁️', label: 'Monitor', startIdx: 7, endIdx: 8 },
+            ];
+
+            const miniPipeline = stageInfo.map(s => {
+                let isDone = normalizedStep === 'done' || currentIdx >= s.endIdx;
+                let isActive = !isDone && currentIdx >= s.startIdx && currentIdx < s.endIdx;
+
+                // When monitoring: if not all PBIs dispatched, Dispatch is still active
+                if (s.label === 'Dispatch' && normalizedStep === 'monitoring' && !allDispatched) {
+                    isDone = false;
+                    isActive = true;
+                }
+                if (isDone) {
+                    return `<div class="mini-stage done" title="${s.label}"><span class="mini-icon">✅</span></div>`;
+                } else if (isActive) {
+                    return `<div class="mini-stage active" title="${s.label}"><span class="mini-icon">${s.icon}</span></div>`;
+                } else {
+                    return `<div class="mini-stage upcoming" title="${s.label}"><span class="mini-icon">${s.icon}</span></div>`;
+                }
+            }).join('<span class="mini-arrow">›</span>');
 
             // Artifact summary
-            const artifacts = (f as any).artifacts;
-            const pbiCount = artifacts?.pbis?.length || f.pbis?.length || 0;
-            const prCount = artifacts?.agentPrs?.length || f.agentSessions?.length || 0;
+            const pbiCount = allPbis.length;
+            const prCount = (artifacts?.agentPrs || f.agentSessions || []).length;
             const hasDesign = !!artifacts?.design || !!f.designDocPath;
             const artifactPills: string[] = [];
             if (hasDesign) { artifactPills.push('📄 Design'); }
@@ -498,7 +528,7 @@ export class DashboardViewProvider implements vscode.WebviewViewProvider {
                 <strong class="feature-name" title="${this.escapeHtml(f.prompt || f.name)}">${this.escapeHtml(f.name)}</strong>
                 <button class="x-btn" onclick="event.stopPropagation(); removeFeature('${f.id}')" title="Remove">✕</button>
               </div>
-              <div class="progress-bar">${progressDots}</div>
+              <div class="mini-pipeline">${miniPipeline}</div>
               ${actionBtn}
               ${artifactSummary}
               <div class="feature-time">${this.timeAgo(f.updatedAt)}</div>
@@ -563,6 +593,16 @@ h3 { margin: 14px 0 6px; font-size: 10px; text-transform: uppercase; letter-spac
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--vscode-widget-border); flex-shrink: 0; transition: all 0.3s; }
 .dot.active { background: var(--vscode-progressBar-background); box-shadow: 0 0 6px var(--vscode-progressBar-background); }
 .dot.done { background: #238636; }
+
+/* Mini pipeline stages */
+.mini-pipeline { display: flex; align-items: center; gap: 2px; margin: 8px 0; }
+.mini-stage { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; transition: all 0.3s; }
+.mini-stage.done { background: #23863620; }
+.mini-stage.active { background: var(--vscode-editorWidget-background); border: 1.5px solid var(--vscode-focusBorder); animation: borderBreath 3s ease-in-out infinite; }
+.mini-stage.upcoming { opacity: 0.35; }
+.mini-icon { font-size: 12px; line-height: 1; }
+.mini-arrow { color: var(--vscode-descriptionForeground); font-size: 10px; opacity: 0.3; margin: 0 1px; }
+@keyframes borderBreath { 0%, 100% { border-color: var(--vscode-focusBorder); } 50% { border-color: transparent; } }
 .action-btn { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 4px; padding: 6px 12px; font-size: 11px; cursor: pointer; font-weight: 600; width: 100%; margin: 4px 0; }
 .action-btn:hover { background: var(--vscode-button-hoverBackground); }
 .step-status { font-size: 11px; color: var(--vscode-descriptionForeground); font-style: italic; text-align: center; padding: 4px 0; }
