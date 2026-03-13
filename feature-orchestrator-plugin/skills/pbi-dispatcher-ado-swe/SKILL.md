@@ -41,6 +41,30 @@ Read PBI details from ADO (via MCP) or from chat context. Need:
 
 For each work item, check if dependencies (other AB# IDs) have merged PRs. Skip blocked items.
 
+### 2a. Gather Cross-PBI Context for Dependencies
+
+For each work item that HAS dependencies on already-merged PBIs, enrich the work item
+description with context about what those dependencies changed. This helps the Copilot
+SWE agent understand what preceding PBIs introduced.
+
+For each merged dependency, query the linked PR (check the work item's links or search):
+```
+Use mcp_ado_wit_get_work_item to read the dependency work item and check for linked PRs.
+```
+
+If a merged PR is found, **append** to the work item description (via `mcp_ado_wit_update_work_item`):
+```
+## Dependency Context
+
+This work item depends on already-merged changes:
+
+### AB#<dep-id>: <dep-title> (PR merged)
+Key changes introduced: [summary from PR title and description]
+Build on these changes. Do NOT duplicate or re-implement what the dependency already added.
+```
+
+If no linked PR is found, skip — the PBI description is still self-contained.
+
 ### 3. Tag Work Item with Target Repository
 
 Add a tag to the work item using the format:

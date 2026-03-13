@@ -30,6 +30,7 @@
     "../../skills/pbi-creator",
     "../../skills/pbi-dispatcher-github",
     "../../skills/pbi-dispatcher-ado",
-    "../../skills/pbi-dispatcher-ado-swe"
+    "../../skills/pbi-dispatcher-ado-swe",
+    "../../skills/pr-validator"
   ]
 }

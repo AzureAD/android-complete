@@ -113,6 +113,34 @@ Read PBI details from ADO (via MCP) or from the chat context. Need:
 
 For each work item, check if dependencies (other AB# IDs) have merged PRs. Skip blocked items.
 
+### 2a. Gather Cross-PBI Context for Dependencies
+
+For each work item that HAS dependencies on already-merged PBIs, enrich the dispatch
+prompt with context about what those dependencies changed. This is critical — the coding
+agent implementing PBI #3 needs to know what PBI #1 introduced.
+
+For each merged dependency:
+```powershell
+gh pr list --repo "<slug>" --search "AB#<dep-id>" --state merged --json number,title,files --jq '.[0]'
+```
+
+If a merged PR is found, add this block to the dispatch prompt:
+```
+## Dependency Context
+
+This work item depends on already-merged changes:
+
+### AB#<dep-id>: <dep-title> (PR #<number>, merged)
+Files changed:
+- <file1> (added/modified)
+- <file2> (added/modified)
+
+Key APIs introduced: [extract from PR title/files — e.g., new classes, interfaces]
+Build on these changes. Do NOT duplicate or re-implement what the dependency PR already added.
+```
+
+If the PR can't be found (no AB# match), skip gracefully — the PBI description is still self-contained.
+
 ### 3. Switch Account + Dispatch
 
 For each ready work item:

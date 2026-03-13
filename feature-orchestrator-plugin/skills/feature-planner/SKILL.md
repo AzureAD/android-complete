@@ -79,22 +79,112 @@ Rules:
 
 Each description MUST include:
 - **Objective**: What to implement and where
-- **Context**: Why this change is needed, how it fits
-- **Technical Requirements**: Specific implementation guidance with code patterns
+- **Context**: Why this change is needed, how it fits the broader feature
+- **Technical Requirements**: Specific implementation guidance — see mandatory rules below
 - **Acceptance Criteria**: Concrete, verifiable checklist
 - **Dependencies**: Use WI-N references (resolved to AB# later)
-- **Files to Modify/Create**: Specific paths when known
+- **Files to Modify/Create**: Specific paths extracted from research (see rule below)
 - **Testing**: What tests to write
+
+#### ⚠️ MANDATORY: Preserve Technical Detail from Design Spec
+
+The coding agent implements ONLY from the PBI description. It does NOT see the design spec,
+codebase-context.md, or any other local file. Therefore:
+
+**Every technical detail the agent needs to write correct code MUST be in the PBI.**
+
+1. **API signatures**: If the design spec includes method signatures, class interfaces, enum values,
+   or return types — copy them **verbatim** into the PBI. Do NOT summarize code into prose.
+
+   **Bad** (prose summary — agent will guess the types wrong):
+   > "Create AuthTabManager that wraps AuthTabIntent.registerActivityResultLauncher() and launch()"
+
+   **Good** (exact signatures from design spec — agent uses correct types):
+   > "Create `AuthTabManager` that wraps the AndroidX Browser 1.9.0 AuthTab API:
+   > ```kotlin
+   > // registerActivityResultLauncher returns ActivityResultLauncher<Intent>, NOT <Uri>
+   > // callback receives AuthTabIntent.AuthResult, NOT Uri
+   > fun registerLauncher(activity: ComponentActivity, callback: (AuthTabIntent.AuthResult) -> Unit): ActivityResultLauncher<Intent> {
+   >     return AuthTabIntent.registerActivityResultLauncher(activity, callback)
+   > }
+   >
+   > // launch() takes 3 params: launcher, uri, AND redirectScheme
+   > fun launch(launcher: ActivityResultLauncher<Intent>, uri: Uri, redirectScheme: String) {
+   >     AuthTabIntent.Builder().build().launch(launcher, uri, redirectScheme)
+   > }
+   > ```"
+
+2. **Rationale for changes**: Explain WHY something needs to change, not just what. The agent
+   makes better decisions when it understands the reason.
+
+   **Bad**: "Change browserVersion from 1.7.0 to 1.9.0"
+
+   **Good**: "Change `browserVersion` from `1.7.0` to `1.9.0` because AndroidX Browser 1.9.0
+   introduces the `AuthTabIntent` API (Chrome 137+) which this feature depends on. Note: this
+   version bump changes the `onNewIntent` signature in `ComponentActivity` from
+   `onNewIntent(intent: Intent)` to `onNewIntent(intent: Intent?)` — any override in existing
+   code (e.g., `SwitchBrowserActivity`) must be updated to match."
+
+3. **Breaking side effects**: If a change in this PBI will break other code (even code not in
+   scope for this PBI), document it explicitly so the agent can fix it or the planner can
+   create a separate PBI.
+
+   **Example**: "⚠️ Bumping browserVersion to 1.9.0 will break `SwitchBrowserActivity.onNewIntent()`
+   because the signature changed. Fix the override signature in this same PBI."
+
+4. **Third-party API details**: When wrapping a new library or API version, include:
+   - The exact dependency coordinates and version
+   - Key method signatures the agent needs to call (copied from docs or design spec)
+   - Any gotchas or differences from the agent's likely assumptions
+   - What the API returns and what types to expect
+
+5. **Code snippets from design spec**: If the design spec contains pseudocode, class skeletons,
+   or implementation patterns, include them in the PBI. The agent benefits enormously from
+   seeing a code sketch — even if it's pseudocode.
+
+#### ⚠️ MANDATORY: File Paths Rule
+
+The **"Files to Modify/Create"** field MUST list specific file paths from the research findings.
+This is the single most important factor in coding agent success — it tells the agent WHERE
+to look instead of forcing it to search blindly.
+
+**Good** (specific, extracted from research):
+```
+Files to Modify/Create:
+- common/common/src/main/java/com/microsoft/identity/common/internal/net/HttpClient.java — add retry logic
+- common/common/src/main/java/com/microsoft/identity/common/internal/flight/CommonFlight.java — add RETRY_ENABLED flag
+- common/common/src/test/java/com/microsoft/identity/common/internal/net/HttpClientTest.java — new test class
+```
+
+**Bad** (vague, agent has to guess):
+```
+Files to Modify/Create:
+- HTTP client module
+- Flight definitions
+- Tests
+```
+
+If the research didn't identify specific files for a task, state that explicitly:
+```
+Files to Modify/Create:
+- Exact paths not identified during research — agent should search for [specific class/pattern]
+  starting in [module/directory]
+```
+
+This gives the agent a starting point even when exact paths aren't known.
 
 ### Quality Checklist
 
 Before finalizing each work item:
 - [ ] Could someone unfamiliar implement it from the description alone?
-- [ ] Does it explain WHY, not just WHAT?
+- [ ] Does it explain WHY, not just WHAT? (rationale for every change)
 - [ ] Is the scope clear with explicit exclusions?
 - [ ] Are acceptance criteria concrete and testable?
 - [ ] Is it right-sized? (1-3 files = ideal, >6 files = split it)
-- [ ] Are code patterns from codebase research included?
+- [ ] Does "Files to Modify/Create" list specific paths from research?
+- [ ] Are API signatures from the design spec included verbatim (not summarized to prose)?
+- [ ] Are breaking side effects documented? (e.g., dependency bump breaks existing code)
+- [ ] For third-party API wrapping: are exact method signatures and return types included?
 
 ### Step 6: Present Plan for Review
 

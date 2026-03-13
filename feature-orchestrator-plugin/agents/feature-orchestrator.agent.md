@@ -240,7 +240,14 @@ Output:
    | PR | Repo | Title | Status | Checks | +/- Lines |
    |----|------|-------|--------|--------|-----------|
 
-5. **Update state** with latest PR statuses:
+5. **Validate open PRs** against their PBI acceptance criteria:
+   For each PR that is `open` (not merged/closed), run the `pr-validator` skill
+   (from `feature-orchestrator-plugin/skills/pr-validator/SKILL.md`).
+   This produces a validation report showing which acceptance criteria are met,
+   which files are missing, and whether tests/telemetry/flags are included.
+   Present the validation report after the status table.
+
+6. **Update state** with latest PR statuses:
    ```powershell
    node $su add-agent-pr "<feature>" '{"repo":"...","prNumber":N,"prUrl":"...","status":"<open|merged|closed>"}'
    ```
