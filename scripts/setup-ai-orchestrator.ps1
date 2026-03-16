@@ -119,7 +119,7 @@ try {
 # ============================================================
 Write-Host "[3/7] Checking GitHub authentication..." -ForegroundColor Yellow
 
-$devLocalPath = Join-Path $repoRoot ".github" "developer-local.json"
+$devLocalPath = Join-Path (Join-Path $repoRoot ".github") "developer-local.json"
 $ghAccounts = @{}
 
 # Check if developer-local.json already exists
@@ -295,7 +295,7 @@ if (Test-Path $designDocsPath) {
 # 6. Build & install the extension
 # ============================================================
 Write-Host "[6/7] Building Feature Orchestrator extension..." -ForegroundColor Yellow
-$extDir = Join-Path $repoRoot "extensions" "feature-orchestrator"
+$extDir = Join-Path (Join-Path $repoRoot "extensions") "feature-orchestrator"
 
 if (Test-Path (Join-Path $extDir "package.json")) {
     Push-Location $extDir
