@@ -49,7 +49,7 @@ try {
     } else {
         Write-Host "  WARNING: VS Code $codeVersion is too old. Requires >= 1.109 for agents, skills, prompt files, and askQuestion." -ForegroundColor Yellow
         Write-Host "  Update: Help > Check for Updates, or download from https://code.visualstudio.com" -ForegroundColor Yellow
-        Write-Host "  (The rest of setup will continue — update VS Code afterward and you're good)" -ForegroundColor DarkGray
+        Write-Host "  (The rest of setup will continue -- update VS Code afterward and you're good)" -ForegroundColor DarkGray
         $warnings += "VS Code version $codeVersion is below 1.109. Update via Help > Check for Updates."
     }
 } catch {
@@ -70,7 +70,7 @@ try {
         $warnings += "GitHub Copilot extension is required for agents and prompt files."
     }
 } catch {
-    # Couldn't check — skip
+    # Couldn't check -- skip
 }
 
 # ============================================================
