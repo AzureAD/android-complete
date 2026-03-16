@@ -3,7 +3,7 @@
 VS Code extension for the AI-driven feature development pipeline. Provides the dashboard UI,
 feature detail panel, and design review system.
 
-For the full developer guide, see [AI Driven Development Guide](../../AI%20Driven%20Development%20Guide.md).
+For the full developer guide, see `AI Driven Development Guide.md` in the repository root.
 
 ## What This Extension Provides
 
@@ -42,7 +42,7 @@ code --install-extension feature-orchestrator-latest.vsix --force
 
 ## State
 
-Feature state is stored at `~/.android-auth-orchestrator/state.json` (per-developer, not in repo).
+Feature state is stored at `~/.feature-orchestrator/<project>/state.json` (per-developer, not in repo).
 Managed by `.github/hooks/state-utils.js`.
 
 ## Works Without This Extension
