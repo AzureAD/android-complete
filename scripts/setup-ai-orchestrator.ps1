@@ -312,7 +312,7 @@ if (Test-Path (Join-Path $extDir "package.json")) {
 
     # Package
     Write-Host "  Packaging VSIX..." -ForegroundColor Cyan
-    Write-Output "y" | npx @vscode/vsce package --no-dependencies --allow-missing-repository -o feature-orchestrator-latest.vsix 2>&1 | Out-Null
+    Write-Output "y" | npx @vscode/vsce package --no-dependencies --allow-missing-repository --baseContentUrl . --baseImagesUrl . -o feature-orchestrator-latest.vsix 2>&1 | Out-Null
 
     if (Test-Path "feature-orchestrator-latest.vsix") {
         Write-Host "  Installing extension..." -ForegroundColor Cyan
