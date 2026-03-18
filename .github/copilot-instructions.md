@@ -129,6 +129,7 @@ For complex investigation tasks, use these skills (read the skill file for detai
 | **design-author** | `.github/skills/design-author/SKILL.md` | "design this feature", "create a design spec", "write a design doc", "create an implementation plan" |
 | **design-reviewer** | `.github/skills/design-reviewer/SKILL.md` | "address review comments", "handle my review", "review comments on" |
 | **pbi-dispatcher** | `.github/skills/pbi-dispatcher/SKILL.md` | "dispatch PBIs to agent", "assign to Copilot", "send work items to coding agent" |
+| **test-planner** | `.github/skills/test-planner/SKILL.md` | "create test plan", "write test cases", "add tests to ADO", "export test plan", "E2E tests for" |
 
 ## 13. Azure DevOps Integration
 
