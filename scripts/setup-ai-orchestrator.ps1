@@ -49,7 +49,7 @@ try {
     } else {
         Write-Host "  WARNING: VS Code $codeVersion is too old. Requires >= 1.109 for agents, skills, prompt files, and askQuestion." -ForegroundColor Yellow
         Write-Host "  Update: Help > Check for Updates, or download from https://code.visualstudio.com" -ForegroundColor Yellow
-        Write-Host "  (The rest of setup will continue — update VS Code afterward and you're good)" -ForegroundColor DarkGray
+        Write-Host "  (The rest of setup will continue -- update VS Code afterward and you're good)" -ForegroundColor DarkGray
         $warnings += "VS Code version $codeVersion is below 1.109. Update via Help > Check for Updates."
     }
 } catch {
@@ -70,7 +70,7 @@ try {
         $warnings += "GitHub Copilot extension is required for agents and prompt files."
     }
 } catch {
-    # Couldn't check — skip
+    # Couldn't check -- skip
 }
 
 # ============================================================
@@ -119,7 +119,7 @@ try {
 # ============================================================
 Write-Host "[3/7] Checking GitHub authentication..." -ForegroundColor Yellow
 
-$devLocalPath = Join-Path $repoRoot ".github" "developer-local.json"
+$devLocalPath = Join-Path (Join-Path $repoRoot ".github") "developer-local.json"
 $ghAccounts = @{}
 
 # Check if developer-local.json already exists
@@ -295,7 +295,7 @@ if (Test-Path $designDocsPath) {
 # 6. Build & install the extension
 # ============================================================
 Write-Host "[6/7] Building Feature Orchestrator extension..." -ForegroundColor Yellow
-$extDir = Join-Path $repoRoot "extensions" "feature-orchestrator"
+$extDir = Join-Path (Join-Path $repoRoot "extensions") "feature-orchestrator"
 
 if (Test-Path (Join-Path $extDir "package.json")) {
     Push-Location $extDir
@@ -312,7 +312,7 @@ if (Test-Path (Join-Path $extDir "package.json")) {
 
     # Package
     Write-Host "  Packaging VSIX..." -ForegroundColor Cyan
-    Write-Output "y" | npx @vscode/vsce package --no-dependencies --allow-missing-repository -o feature-orchestrator-latest.vsix 2>&1 | Out-Null
+    Write-Output "y" | npx @vscode/vsce package --no-dependencies --allow-missing-repository --baseContentUrl . --baseImagesUrl . -o feature-orchestrator-latest.vsix 2>&1 | Out-Null
 
     if (Test-Path "feature-orchestrator-latest.vsix") {
         Write-Host "  Installing extension..." -ForegroundColor Cyan
