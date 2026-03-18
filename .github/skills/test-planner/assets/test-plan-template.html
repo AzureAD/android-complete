@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>{{FEATURE_NAME}} — E2E Test Plan</title>
+<style>
+  body { font-family: Segoe UI, Arial, sans-serif; margin: 40px; color: #333; line-height: 1.5; }
+  h1 { color: #0078d4; border-bottom: 3px solid #0078d4; padding-bottom: 8px; }
+  h2 { color: #0078d4; margin-top: 40px; }
+  h3 { color: #106ebe; margin-top: 30px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 10px; margin-bottom: 20px; }
+  th { background-color: #0078d4; color: white; padding: 10px 12px; text-align: left; font-weight: 600; }
+  td { border: 1px solid #ddd; padding: 10px 12px; vertical-align: top; }
+  tr:nth-child(even) { background-color: #f9f9f9; }
+  .tag { display: inline-block; background: #e8f4fd; color: #0078d4; padding: 2px 8px; border-radius: 3px; font-size: 12px; margin-right: 4px; }
+  .prereq { background: #fff8e1; border-left: 4px solid #ffb300; padding: 12px 16px; margin: 16px 0; }
+  .header-info { color: #666; font-size: 14px; margin-bottom: 4px; }
+  .page-break { page-break-before: always; }
+  code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; font-family: Consolas, monospace; font-size: 13px; }
+  pre { background: #f4f4f4; padding: 12px; border-radius: 4px; overflow-x: auto; }
+</style>
+</head>
+<body>
+
+<h1>{{FEATURE_NAME}} — E2E Test Plan</h1>
+
+<p class="header-info"><strong>Feature:</strong> {{FEATURE_DESCRIPTION}}</p>
+<p class="header-info"><strong>Platform:</strong> Android (Broker)</p>
+<p class="header-info"><strong>Date:</strong> {{DATE}}</p>
+<p class="header-info"><strong>Author:</strong> {{AUTHOR}}</p>
+
+<h2>1. Overview</h2>
+<p>{{OVERVIEW}}</p>
+
+<h2>2. Prerequisites</h2>
+<div class="prereq">
+<ul>
+  <!-- {{PREREQUISITES}} -->
+  <li>Android 10+ device with Google Chrome installed from Play Store</li>
+  <li>Latest RC build of Microsoft Authenticator</li>
+  <li>Lab test accounts as needed for scenarios</li>
+</ul>
+</div>
+
+<h2>3. Test Cases</h2>
+
+<!-- 
+  TEMPLATE: Copy this block for each test case.
+  Replace TC-XX, title, tags, and step rows.
+
+<h3>TC-XX: Title</h3>
+<p><span class="tag">Category</span><span class="tag">Priority</span></p>
+<table>
+<tr><th width="5%">Step</th><th width="50%">Action</th><th width="45%">Expected Result</th></tr>
+<tr><td>1</td><td>Action description</td><td>Expected result</td></tr>
+<tr><td>2</td><td>Action description</td><td>Expected result</td></tr>
+</table>
+-->
+
+<!-- {{TEST_CASES}} -->
+
+</body>
+</html>
