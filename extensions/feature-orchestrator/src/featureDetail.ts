@@ -1,0 +1,1322 @@
+//  Copyright (c) Microsoft Corporation.
+//  All rights reserved.
+//
+//  This code is licensed under the MIT License.
+//
+//  Permission is hereby granted, free of charge, to any person obtaining a copy
+//  of this software and associated documentation files(the "Software"), to deal
+//  in the Software without restriction, including without limitation the rights
+//  to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
+//  copies of the Software, and to permit persons to whom the Software is
+//  furnished to do so, subject to the following conditions :
+//
+//  The above copyright notice and this permission notice shall be included in
+//  all copies or substantial portions of the Software.
+//
+//  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+//  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+//  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+//  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+//  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+//  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+//  THE SOFTWARE.
+import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { runCommand, switchGhAccount } from './tools';
+
+/**
+ * Artifact types that can be tracked per feature.
+ */
+export interface DesignArtifact {
+    docPath: string;        // workspace-relative path to the design doc
+    prUrl?: string;         // ADO PR URL for the design review
+    status: 'draft' | 'in-review' | 'approved';
+}
+
+export interface PbiArtifact {
+    adoId: number;          // AB# work item ID
+    title: string;
+    targetRepo: string;     // e.g. "AzureAD/microsoft-authentication-library-common-for-android"
+    module: string;         // e.g. "common", "msal", "broker"
+    adoUrl: string;         // full ADO URL
+    status: 'new' | 'committed' | 'active' | 'resolved' | 'closed';
+    priority?: number;
+    dependsOn?: number[];   // AB# IDs this PBI depends on
+    agentPr?: AgentPrArtifact; // linked PR from coding agent
+}
+
+export interface AgentPrArtifact {
+    repo: string;
+    prNumber: number;
+    prUrl: string;
+    status: 'open' | 'merged' | 'closed' | 'draft';
+    title?: string;
+}
+
+export interface FeatureArtifacts {
+    design?: DesignArtifact;
+    pbis: PbiArtifact[];
+    agentPrs: AgentPrArtifact[];
+}
+
+const ADO_ORG = 'IdentityDivision';
+const ADO_PROJECT = 'Engineering';
+
+/**
+ * Opens a detail panel for a specific feature, showing all tracked artifacts.
+ */
+export class FeatureDetailPanel {
+    public static readonly viewType = 'orchestrator.featureDetail';
+    private static panels: Map<string, vscode.WebviewPanel> = new Map();
+
+    static show(context: vscode.ExtensionContext, featureId: string): void {
+        // Reuse existing panel for this feature if open
+        const existing = FeatureDetailPanel.panels.get(featureId);
+        if (existing) {
+            existing.reveal(vscode.ViewColumn.One);
+            return;
+        }
+
+        const state = FeatureDetailPanel.readState();
+        const feature = state.features?.find((f: any) => f.id === featureId);
+        if (!feature) {
+            vscode.window.showWarningMessage(`Feature "${featureId}" not found in state.`);
+            return;
+        }
+
+        const panel = vscode.window.createWebviewPanel(
+            FeatureDetailPanel.viewType,
+            `Feature: ${feature.name}`,
+            vscode.ViewColumn.One,
+            { enableScripts: true, retainContextWhenHidden: true }
+        );
+
+        let autoRefreshInterval: NodeJS.Timeout | undefined;
+
+        FeatureDetailPanel.panels.set(featureId, panel);
+        panel.onDidDispose(() => {
+            FeatureDetailPanel.panels.delete(featureId);
+            if (autoRefreshInterval) { clearInterval(autoRefreshInterval); }
+        });
+
+        panel.webview.html = FeatureDetailPanel.getHtml(feature);
+
+        panel.webview.onDidReceiveMessage(async (message) => {
+            switch (message.command) {
+                case 'openUrl':
+                    vscode.env.openExternal(vscode.Uri.parse(message.url));
+                    break;
+                case 'openFile': {
+                    const folders = vscode.workspace.workspaceFolders;
+                    if (folders) {
+                        const uri = vscode.Uri.file(path.join(folders[0].uri.fsPath, message.path));
+                        vscode.commands.executeCommand('vscode.open', uri);
+                    }
+                    break;
+                }
+                case 'continueInChat': {
+                    const freshState2 = FeatureDetailPanel.readState();
+                    const feat = freshState2.features?.find((f: any) => f.id === featureId);
+                    const featureName = feat?.name || 'Unknown';
+                    const step = feat?.step || 'unknown';
+
+                    // Map current step to the appropriate prompt file
+                    const stepToPromptFile: Record<string, string> = {
+                        'designing': 'feature-design',
+                        'design_review': 'feature-plan',
+                        'planning': 'feature-plan',
+                        'plan_review': 'feature-backlog',
+                        'backlogging': 'feature-backlog',
+                        'backlog_review': 'feature-dispatch',
+                        'dispatching': 'feature-dispatch',
+                        'monitoring': 'feature-status',
+                    };
+                    const promptFile = stepToPromptFile[step] || 'feature-continue';
+
+                    await vscode.commands.executeCommand('workbench.action.chat.newChat');
+                    vscode.commands.executeCommand('workbench.action.chat.open', {
+                        query: `/${promptFile} Feature: "${featureName}"`,
+                    });
+                    break;
+                }
+                case 'refresh':
+                    // Fetch live statuses from GitHub, update state, and re-render
+                    panel.webview.postMessage({ command: 'refreshing', status: true });
+                    try {
+                        await FeatureDetailPanel.refreshLiveStatuses(featureId);
+                    } catch (e) {
+                        console.error('[FeatureDetail] Live refresh error:', e);
+                    }
+                    {
+                        const freshState = FeatureDetailPanel.readState();
+                        const freshFeature = freshState.features?.find((f: any) => f.id === featureId);
+                        if (freshFeature) {
+                            panel.webview.html = FeatureDetailPanel.getHtml(freshFeature);
+                        }
+                    }
+                    break;
+
+                case 'addDesign':
+                    await FeatureDetailPanel.handleAddDesign(featureId, panel);
+                    break;
+
+                case 'addPbi':
+                    await FeatureDetailPanel.handleAddPbi(featureId, panel);
+                    break;
+
+                case 'addAgentPr':
+                    await FeatureDetailPanel.handleAddAgentPr(featureId, panel);
+                    break;
+
+                case 'dispatchPbi':
+                    await FeatureDetailPanel.handleDispatchPbi(featureId, message.adoId, panel);
+                    break;
+
+                case 'iteratePr': {
+                    const iterateState = FeatureDetailPanel.readState();
+                    const iterateFeature = iterateState.features?.find((f: any) => f.id === featureId);
+                    const featureName = iterateFeature?.name || '';
+                    await vscode.commands.executeCommand('workbench.action.chat.newChat');
+                    vscode.commands.executeCommand('workbench.action.chat.open', {
+                        query: `/feature-pr-iterate Feature: "${featureName}", Repo: ${message.repo}, PR #${message.prNumber}`,
+                    });
+                    break;
+                }
+
+                case 'checkoutPr':
+                    await FeatureDetailPanel.handleCheckoutPr(message.repo, message.prNumber);
+                    break;
+            }
+        });
+
+        // Periodic auto-refresh every 5 minutes (fetches live PR + PBI statuses)
+        autoRefreshInterval = setInterval(async () => {
+            try {
+                await FeatureDetailPanel.refreshLiveStatuses(featureId);
+                const updated = FeatureDetailPanel.readState();
+                const updatedFeature = updated.features?.find((f: any) => f.id === featureId);
+                if (updatedFeature) {
+                    panel.webview.html = FeatureDetailPanel.getHtml(updatedFeature);
+                }
+            } catch { /* silent */ }
+        }, 300000); // 5 minutes
+
+        // Watch for state file changes
+        const stateDir = path.join(os.homedir(), '.android-auth-orchestrator');
+        if (!fs.existsSync(stateDir)) {
+            fs.mkdirSync(stateDir, { recursive: true });
+        }
+        const pattern = new vscode.RelativePattern(vscode.Uri.file(stateDir), 'state.json');
+        const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+        watcher.onDidChange(() => {
+            const updated = FeatureDetailPanel.readState();
+            const updatedFeature = updated.features?.find((f: any) => f.id === featureId);
+            if (updatedFeature) {
+                panel.webview.html = FeatureDetailPanel.getHtml(updatedFeature);
+            }
+        });
+        panel.onDidDispose(() => watcher.dispose());
+    }
+
+    private static readState(): any {
+        const filePath = path.join(os.homedir(), '.android-auth-orchestrator', 'state.json');
+        if (!fs.existsSync(filePath)) { return { features: [] }; }
+        try { return JSON.parse(fs.readFileSync(filePath, 'utf-8')); }
+        catch { return { features: [] }; }
+    }
+
+    private static writeState(state: any): void {
+        const dir = path.join(os.homedir(), '.android-auth-orchestrator');
+        if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); }
+        state.lastUpdated = Date.now();
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify(state, null, 2), 'utf-8');
+    }
+
+    /**
+     * Fetch live PR statuses from GitHub and PBI statuses from ADO,
+     * then write updated data back to state.json.
+     */
+    private static async refreshLiveStatuses(featureId: string): Promise<void> {
+        const state = FeatureDetailPanel.readState();
+        const feature = state.features?.find((f: any) => f.id === featureId);
+        if (!feature) { return; }
+
+        let changed = false;
+
+        // Repo slug mapping: short names → full GitHub slugs
+        const repoSlugs: Record<string, string> = {
+            'common': 'AzureAD/microsoft-authentication-library-common-for-android',
+            'msal': 'AzureAD/microsoft-authentication-library-for-android',
+            'adal': 'AzureAD/azure-activedirectory-library-for-android',
+            'broker': 'identity-authnz-teams/ad-accounts-for-android',
+        };
+
+        // --- Refresh Agent PRs from GitHub ---
+        const agentPrs = feature.artifacts?.agentPrs || [];
+        if (agentPrs.length > 0) {
+            // Group PRs by org to minimize gh account switches
+            const prsByOrg: Record<string, any[]> = {};
+            for (const pr of agentPrs) {
+                const repoSlug = repoSlugs[pr.repo] || pr.repo;
+                const org = repoSlug.split('/')[0] || 'AzureAD';
+                if (!prsByOrg[org]) { prsByOrg[org] = []; }
+                prsByOrg[org].push({ pr, repoSlug });
+            }
+
+            for (const [org, prs] of Object.entries(prsByOrg)) {
+                try {
+                    // Switch account once per org
+                    await switchGhAccount(`${org}/dummy`);
+                } catch {
+                    console.error(`[FeatureDetail] Failed to switch gh account for ${org}`);
+                    continue;
+                }
+
+                for (const { pr, repoSlug } of prs) {
+                    try {
+                        const prNumber = pr.prNumber || pr.number;
+                        if (!prNumber) { continue; }
+
+                                        const json = await runCommand(
+                            `gh pr view ${prNumber} --repo "${repoSlug}" --json state,title,url,comments,reviews`,
+                            undefined, 15000 // 15s timeout
+                        );
+                        const prData = JSON.parse(json);
+
+                        const stateMap: Record<string, string> = {
+                            'OPEN': 'open', 'MERGED': 'merged', 'CLOSED': 'closed',
+                        };
+                        const newStatus = stateMap[prData.state] || prData.state?.toLowerCase() || pr.status;
+
+                        if (newStatus !== pr.status || prData.title !== pr.title) {
+                            pr.status = newStatus;
+                            if (prData.title) { pr.title = prData.title; }
+                            if (prData.url) { pr.prUrl = prData.url; }
+                            changed = true;
+                        }
+
+                        // Count review comments (from reviews + comments)
+                        const reviews = prData.reviews || [];
+                        const comments = prData.comments || [];
+                        const totalComments = reviews.length + comments.length;
+                        // Count resolved: reviews/comments with state RESOLVED or DISMISSED
+                        const resolvedComments = reviews.filter((r: any) => r.state === 'APPROVED' || r.state === 'DISMISSED').length;
+                        if (pr.totalComments !== totalComments || pr.resolvedComments !== resolvedComments) {
+                            pr.totalComments = totalComments;
+                            pr.resolvedComments = resolvedComments;
+                            changed = true;
+                        }
+                    } catch (e) {
+                        console.error(`[FeatureDetail] Failed to refresh PR #${pr.prNumber}:`, e);
+                    }
+                }
+            }
+        }
+
+        // --- Refresh PBI statuses from ADO via az CLI ---
+        const pbis = feature.artifacts?.pbis || [];
+        if (pbis.length > 0) {
+            try {
+                // Check if az CLI is available and authenticated (quick test)
+                await runCommand('az account show --only-show-errors -o none', undefined, 5000);
+
+                for (const pbi of pbis) {
+                    try {
+                        const adoId = pbi.adoId;
+                        if (!adoId) { continue; }
+
+                        const json = await runCommand(
+                            `az boards work-item show --id ${adoId} --org "https://dev.azure.com/IdentityDivision" --only-show-errors -o json`,
+                            undefined, 15000 // 15s timeout
+                        );
+                        const wiData = JSON.parse(json);
+                        const fields = wiData.fields || {};
+
+                        const newState = fields['System.State'];
+                        if (newState && newState !== pbi.status) {
+                            pbi.status = newState;
+                            changed = true;
+                        }
+                        // Also update title if it changed
+                        const newTitle = fields['System.Title'];
+                        if (newTitle && newTitle !== pbi.title) {
+                            pbi.title = newTitle;
+                            changed = true;
+                        }
+                    } catch (e) {
+                        console.error(`[FeatureDetail] Failed to refresh PBI AB#${pbi.adoId}:`, e);
+                    }
+                }
+
+                // Also sync to legacy pbis array
+                if (changed && feature.pbis) {
+                    for (const legacyPbi of feature.pbis) {
+                        const artPbi = pbis.find((p: any) => p.adoId === legacyPbi.adoId);
+                        if (artPbi) {
+                            legacyPbi.status = artPbi.status;
+                            legacyPbi.title = artPbi.title;
+                        }
+                    }
+                }
+            } catch {
+                // az CLI not available or not authenticated — skip PBI refresh silently
+                console.log('[FeatureDetail] az CLI not available, skipping PBI status refresh');
+            }
+        }
+
+        if (changed) {
+            feature.updatedAt = Date.now();
+            FeatureDetailPanel.writeState(state);
+        }
+
+        // --- Auto-completion detection ---
+        // If all PBIs are Done/Resolved (primary), or no PBIs but all PRs merged (secondary),
+        // auto-advance the feature to "done" and notify the user.
+        if (feature.step !== 'done') {
+            const allPbis = feature.artifacts?.pbis || [];
+            const allPrs = feature.artifacts?.agentPrs || [];
+            const completedStates = new Set(['done', 'resolved', 'closed', 'removed']);
+
+            let shouldComplete = false;
+
+            if (allPbis.length > 0) {
+                // Primary: all PBIs are in a completed state
+                shouldComplete = allPbis.every((p: any) =>
+                    completedStates.has((p.status || '').toLowerCase())
+                );
+            } else if (allPrs.length > 0) {
+                // Secondary: no PBIs tracked, but all PRs are merged
+                shouldComplete = allPrs.every((pr: any) =>
+                    (pr.status || '').toLowerCase() === 'merged'
+                );
+            }
+
+            if (shouldComplete) {
+                feature.step = 'done';
+                feature.updatedAt = Date.now();
+                FeatureDetailPanel.writeState(state);
+
+                vscode.window.showInformationMessage(
+                    `🎉 Feature "${feature.name}" is complete! All work items are resolved.`,
+                    'View Details'
+                ).then(selection => {
+                    if (selection === 'View Details') {
+                        FeatureDetailPanel.show(
+                            undefined as any, // context not needed for existing panel
+                            featureId
+                        );
+                    }
+                });
+            }
+        }
+    }
+
+    // ---- Manual artifact entry handlers ----
+
+    /**
+     * Let user manually add a design spec — browse for a local file or paste an ADO PR URL.
+     */
+    private static async handleAddDesign(featureId: string, panel: vscode.WebviewPanel): Promise<void> {
+        const choice = await vscode.window.showQuickPick(
+            [
+                { label: '📄 Browse for local file', description: 'Select a markdown file from design-docs/', value: 'file' },
+                { label: '🔗 Enter ADO PR URL', description: 'Paste a design review PR link', value: 'pr' },
+            ],
+            { placeHolder: 'How do you want to add the design spec?' }
+        );
+        if (!choice) { return; }
+
+        const state = FeatureDetailPanel.readState();
+        const feature = state.features?.find((f: any) => f.id === featureId);
+        if (!feature) { return; }
+        if (!feature.artifacts) { feature.artifacts = { pbis: [], agentPrs: [] }; }
+
+        if (choice.value === 'file') {
+            const folders = vscode.workspace.workspaceFolders;
+            const defaultUri = folders
+                ? vscode.Uri.file(path.join(folders[0].uri.fsPath, 'design-docs'))
+                : undefined;
+
+            const uris = await vscode.window.showOpenDialog({
+                defaultUri,
+                canSelectMany: false,
+                filters: { 'Markdown': ['md'] },
+                title: 'Select Design Spec',
+            });
+            if (!uris || uris.length === 0) { return; }
+
+            // Make path workspace-relative
+            let docPath = uris[0].fsPath;
+            if (folders) {
+                const wsRoot = folders[0].uri.fsPath;
+                if (docPath.startsWith(wsRoot)) {
+                    docPath = docPath.substring(wsRoot.length + 1).replace(/\\/g, '/');
+                }
+            }
+
+            feature.artifacts.design = {
+                docPath,
+                status: feature.artifacts.design?.status || 'approved',
+                prUrl: feature.artifacts.design?.prUrl,
+            };
+            feature.designDocPath = docPath;
+        } else {
+            const prUrl = await vscode.window.showInputBox({
+                prompt: 'Paste the ADO PR URL for the design review',
+                placeHolder: 'https://dev.azure.com/IdentityDivision/Engineering/_git/AuthLibrariesApiReview/pullrequest/...',
+            });
+            if (!prUrl) { return; }
+
+            if (!feature.artifacts.design) {
+                // Ask for the doc path too
+                const docPath = await vscode.window.showInputBox({
+                    prompt: 'Design doc path (workspace-relative, or leave empty)',
+                    placeHolder: 'design-docs/[Android] Feature Name/spec.md',
+                });
+                feature.artifacts.design = {
+                    docPath: docPath || '',
+                    prUrl,
+                    status: 'in-review',
+                };
+                if (docPath) { feature.designDocPath = docPath; }
+            } else {
+                feature.artifacts.design.prUrl = prUrl;
+            }
+            feature.designPrUrl = prUrl;
+        }
+
+        feature.updatedAt = Date.now();
+        FeatureDetailPanel.writeState(state);
+        // Re-render
+        const fresh = FeatureDetailPanel.readState().features?.find((f: any) => f.id === featureId);
+        if (fresh) { panel.webview.html = FeatureDetailPanel.getHtml(fresh); }
+    }
+
+    /**
+     * Let user manually add a PBI by AB# ID — fetches details from ADO.
+     */
+    private static async handleAddPbi(featureId: string, panel: vscode.WebviewPanel): Promise<void> {
+        const idInput = await vscode.window.showInputBox({
+            prompt: 'Enter the ADO work item ID (AB# number)',
+            placeHolder: 'e.g., 3531353',
+            validateInput: (v) => /^\d+$/.test(v.replace(/^AB#/i, '')) ? null : 'Enter a numeric ID (e.g., 3531353)',
+        });
+        if (!idInput) { return; }
+
+        const adoId = parseInt(idInput.replace(/^AB#/i, ''), 10);
+
+        const state = FeatureDetailPanel.readState();
+        const feature = state.features?.find((f: any) => f.id === featureId);
+        if (!feature) { return; }
+        if (!feature.artifacts) { feature.artifacts = { pbis: [], agentPrs: [] }; }
+        if (!feature.artifacts.pbis) { feature.artifacts.pbis = []; }
+
+        // Check for duplicate
+        if (feature.artifacts.pbis.some((p: any) => p.adoId === adoId)) {
+            vscode.window.showInformationMessage(`AB#${adoId} is already tracked.`);
+            return;
+        }
+
+        // Try to fetch details from ADO
+        let title = `Work Item ${adoId}`;
+        let pbiStatus = 'New';
+        let module = '';
+
+        try {
+            const json = await runCommand(
+                `az boards work-item show --id ${adoId} --org "https://dev.azure.com/IdentityDivision" --only-show-errors -o json`,
+                undefined, 15000
+            );
+            const wi = JSON.parse(json);
+            const fields = wi.fields || {};
+            title = fields['System.Title'] || title;
+            pbiStatus = fields['System.State'] || pbiStatus;
+            // Try to infer module from tags or area path
+            const tags: string = fields['System.Tags'] || '';
+            const areaPath: string = fields['System.AreaPath'] || '';
+            if (areaPath.includes('Broker')) { module = 'broker'; }
+            else if (areaPath.includes('MSAL')) { module = 'msal'; }
+            else if (areaPath.includes('Common') || areaPath.includes('common')) { module = 'common'; }
+            else if (tags.toLowerCase().includes('common')) { module = 'common'; }
+        } catch {
+            // az CLI not available — ask user for details
+            const userTitle = await vscode.window.showInputBox({
+                prompt: `Could not fetch from ADO. Enter the PBI title:`,
+                placeHolder: 'PBI title',
+            });
+            if (userTitle) { title = userTitle; }
+
+            const userModule = await vscode.window.showQuickPick(
+                ['common', 'msal', 'broker', 'adal'],
+                { placeHolder: 'Which repo/module?' }
+            );
+            if (userModule) { module = userModule; }
+        }
+
+        feature.artifacts.pbis.push({
+            adoId,
+            title,
+            module,
+            targetRepo: module,
+            status: pbiStatus,
+            adoUrl: `https://dev.azure.com/IdentityDivision/Engineering/_workitems/edit/${adoId}`,
+        });
+
+        // Also add to legacy pbis
+        if (!feature.pbis) { feature.pbis = []; }
+        feature.pbis.push({ adoId, title, targetRepo: module, status: pbiStatus });
+
+        feature.updatedAt = Date.now();
+        FeatureDetailPanel.writeState(state);
+        const fresh = FeatureDetailPanel.readState().features?.find((f: any) => f.id === featureId);
+        if (fresh) { panel.webview.html = FeatureDetailPanel.getHtml(fresh); }
+        vscode.window.showInformationMessage(`Added AB#${adoId}: ${title}`);
+    }
+
+    /**
+     * Let user manually add an agent PR by repo + PR number — fetches details from GitHub.
+     */
+    private static async handleAddAgentPr(featureId: string, panel: vscode.WebviewPanel): Promise<void> {
+        const repoChoice = await vscode.window.showQuickPick(
+            [
+                { label: 'common', description: 'AzureAD/microsoft-authentication-library-common-for-android', value: 'AzureAD/microsoft-authentication-library-common-for-android' },
+                { label: 'msal', description: 'AzureAD/microsoft-authentication-library-for-android', value: 'AzureAD/microsoft-authentication-library-for-android' },
+                { label: 'broker', description: 'identity-authnz-teams/ad-accounts-for-android', value: 'identity-authnz-teams/ad-accounts-for-android' },
+                { label: 'adal', description: 'AzureAD/azure-activedirectory-library-for-android', value: 'AzureAD/azure-activedirectory-library-for-android' },
+            ],
+            { placeHolder: 'Which repo is the PR in?' }
+        );
+        if (!repoChoice) { return; }
+
+        const prInput = await vscode.window.showInputBox({
+            prompt: 'Enter the PR number',
+            placeHolder: 'e.g., 2922',
+            validateInput: (v) => /^\d+$/.test(v.replace(/^#/, '')) ? null : 'Enter a numeric PR number',
+        });
+        if (!prInput) { return; }
+
+        const prNumber = parseInt(prInput.replace(/^#/, ''), 10);
+
+        const state = FeatureDetailPanel.readState();
+        const feature = state.features?.find((f: any) => f.id === featureId);
+        if (!feature) { return; }
+        if (!feature.artifacts) { feature.artifacts = { pbis: [], agentPrs: [] }; }
+        if (!feature.artifacts.agentPrs) { feature.artifacts.agentPrs = []; }
+
+        // Check for duplicate
+        if (feature.artifacts.agentPrs.some((p: any) => p.prNumber === prNumber && (p.repo === repoChoice.label || p.repo === repoChoice.value))) {
+            vscode.window.showInformationMessage(`PR #${prNumber} in ${repoChoice.label} is already tracked.`);
+            return;
+        }
+
+        // Try to fetch details from GitHub
+        let prTitle = `PR #${prNumber}`;
+        let prStatus = 'open';
+        let prUrl = `https://github.com/${repoChoice.value}/pull/${prNumber}`;
+
+        try {
+            await switchGhAccount(repoChoice.value);
+            const json = await runCommand(
+                `gh pr view ${prNumber} --repo "${repoChoice.value}" --json state,title,url`,
+                undefined, 15000
+            );
+            const prData = JSON.parse(json);
+            const stateMap: Record<string, string> = { 'OPEN': 'open', 'MERGED': 'merged', 'CLOSED': 'closed' };
+            prTitle = prData.title || prTitle;
+            prStatus = stateMap[prData.state] || prData.state?.toLowerCase() || prStatus;
+            prUrl = prData.url || prUrl;
+        } catch {
+            // gh CLI not available — use defaults
+            const userTitle = await vscode.window.showInputBox({
+                prompt: 'Could not fetch from GitHub. Enter the PR title:',
+                placeHolder: 'PR title',
+            });
+            if (userTitle) { prTitle = userTitle; }
+        }
+
+        feature.artifacts.agentPrs.push({
+            repo: repoChoice.label,
+            prNumber,
+            prUrl,
+            status: prStatus,
+            title: prTitle,
+        });
+
+        feature.updatedAt = Date.now();
+        FeatureDetailPanel.writeState(state);
+        const fresh = FeatureDetailPanel.readState().features?.find((f: any) => f.id === featureId);
+        if (fresh) { panel.webview.html = FeatureDetailPanel.getHtml(fresh); }
+        vscode.window.showInformationMessage(`Added PR #${prNumber}: ${prTitle}`);
+    }
+
+    /**
+     * Dispatch a specific PBI to Copilot coding agent via prompt file.
+     */
+    private static async handleDispatchPbi(featureId: string, adoId: number, panel: vscode.WebviewPanel): Promise<void> {
+        const state = FeatureDetailPanel.readState();
+        const feature = state.features?.find((f: any) => f.id === featureId);
+        if (!feature) { return; }
+
+        const pbi = feature.artifacts?.pbis?.find((p: any) => p.adoId === adoId);
+        if (!pbi) {
+            vscode.window.showWarningMessage(`PBI AB#${adoId} not found in feature state.`);
+            return;
+        }
+
+        // Open a new chat with the dispatch prompt, scoped to this specific PBI
+        await vscode.commands.executeCommand('workbench.action.chat.newChat');
+        vscode.commands.executeCommand('workbench.action.chat.open', {
+            query: `/feature-dispatch Feature: "${feature.name}". Dispatch ONLY PBI AB#${adoId}: "${pbi.title}" to repo "${pbi.module || pbi.targetRepo}".`,
+        });
+    }
+
+    /**
+     * Checkout a PR branch locally in the corresponding repo directory.
+     */
+    private static async handleCheckoutPr(repo: string, prNumber: number): Promise<void> {
+        const repoSlugs: Record<string, string> = {
+            'common': 'AzureAD/microsoft-authentication-library-common-for-android',
+            'msal': 'AzureAD/microsoft-authentication-library-for-android',
+            'broker': 'identity-authnz-teams/ad-accounts-for-android',
+            'adal': 'AzureAD/azure-activedirectory-library-for-android',
+        };
+        const repoDirs: Record<string, string> = {
+            'common': 'common',
+            'msal': 'msal',
+            'broker': 'broker',
+            'adal': 'adal',
+        };
+
+        const repoSlug = repoSlugs[repo] || repo;
+        const repoDir = repoDirs[repo] || repo;
+        const folders = vscode.workspace.workspaceFolders;
+        const cwd = folders ? path.join(folders[0].uri.fsPath, repoDir) : undefined;
+
+        try {
+            await switchGhAccount(repoSlug);
+            const terminal = vscode.window.createTerminal({
+                name: `PR #${prNumber} (${repo})`,
+                cwd,
+            });
+            terminal.show();
+            terminal.sendText(`gh pr checkout ${prNumber} --repo "${repoSlug}"`);
+            vscode.window.showInformationMessage(`Checking out PR #${prNumber} in ${repo}/`);
+        } catch (e) {
+            vscode.window.showErrorMessage(`Failed to checkout PR #${prNumber}: ${e}`);
+        }
+    }
+
+    private static getHtml(feature: any): string {
+        const artifacts: FeatureArtifacts = feature.artifacts || { pbis: [], agentPrs: [] };
+        const design = artifacts.design;
+        const rawPbis: any[] = artifacts.pbis || feature.pbis || [];
+        const agentPrs = artifacts.agentPrs || feature.agentSessions || [];
+
+        // Normalize PBI fields — state may use different field names depending on how it was written
+        const pbis = rawPbis.map((p: any) => {
+            // adoId can be: p.adoId (number), p.id ("AB#12345"), or missing
+            let adoId: string | number = p.adoId || p.id || '?';
+            if (typeof adoId === 'string') {
+                adoId = adoId.replace(/^AB#/, ''); // strip "AB#" prefix for URL building
+            }
+            // dependsOn can be: array of numbers, array of "AB#NNN" strings, or missing
+            let dependsOn: string[] = [];
+            if (Array.isArray(p.dependsOn)) {
+                dependsOn = p.dependsOn.map((d: any) => String(d).replace(/^AB#/, ''));
+            }
+            return {
+                adoId,
+                displayId: p.id || (p.adoId ? `AB#${p.adoId}` : '?'), // what to show in UI
+                title: p.title || '',
+                module: p.module || p.repo || p.targetRepo || '',
+                adoUrl: p.adoUrl || `https://dev.azure.com/${ADO_ORG}/${ADO_PROJECT}/_workitems/edit/${adoId}`,
+                status: p.status || 'new',
+                dependsOn,
+                priority: p.priority,
+            };
+        });
+
+        const stepConfig: Record<string, { icon: string; label: string; color: string }> = {
+            'idle':           { icon: '⏳', label: 'Ready',                 color: '#8b949e' },
+            'designing':      { icon: '📝', label: 'Writing Design',       color: '#58a6ff' },
+            'design_review':  { icon: '👀', label: 'Design Review',        color: '#d29922' },
+            'planning':       { icon: '📋', label: 'Planning PBIs',        color: '#58a6ff' },
+            'plan_review':    { icon: '👀', label: 'Plan Review',          color: '#d29922' },
+            'backlogging':    { icon: '📝', label: 'Adding to Backlog',    color: '#58a6ff' },
+            'backlog_review': { icon: '👀', label: 'Backlog Review',       color: '#d29922' },
+            'dispatching':    { icon: '🚀', label: 'Dispatching',          color: '#58a6ff' },
+            'monitoring':     { icon: '📡', label: 'Monitoring Agents',    color: '#3fb950' },
+            'done':           { icon: '✅', label: 'Complete',              color: '#3fb950' },
+        };
+
+        // Normalize step names: map aliases/past-tense/legacy names to canonical keys
+        const stepAliases: Record<string, string> = {
+            'designed': 'design_review', 'design_complete': 'design_review',
+            'planned': 'plan_review', 'plan_complete': 'plan_review',
+            'backlogged': 'backlog_review', 'created': 'backlog_review', 'creating': 'backlogging', 'create_review': 'backlog_review',
+            'dispatched': 'monitoring', 'dispatch_complete': 'monitoring',
+            'complete': 'done', 'completed': 'done',
+        };
+        const normalizedStep = stepAliases[feature.step] || feature.step;
+
+        const cfg = stepConfig[normalizedStep] || stepConfig['idle'];
+
+        const pipelineStages = [
+            { key: 'designing',      label: 'Design' },
+            { key: 'planning',       label: 'Plan' },
+            { key: 'backlogging',    label: 'Backlog' },
+            { key: 'dispatching',    label: 'Dispatch' },
+            { key: 'monitoring',     label: 'Monitor' },
+        ];
+        const stageOrder = ['idle', 'designing', 'design_review', 'planning', 'plan_review', 'backlogging', 'backlog_review', 'dispatching', 'monitoring', 'done'];
+        const currentIdx = stageOrder.indexOf(normalizedStep);
+
+        const pipelineHtml = pipelineStages.map((stage, i) => {
+            // Each stage maps to 2 entries in stageOrder (active + review), roughly at i*2+1
+            const stageIdx = i * 2 + 1;
+            const isComplete = normalizedStep === 'done';
+            const isActive = !isComplete && currentIdx >= stageIdx && currentIdx < stageIdx + 2;
+            const isDone = isComplete || currentIdx >= stageIdx + 2;
+            const cls = isDone ? 'stage done' : isActive ? 'stage active' : 'stage';
+            return `<div class="${cls}">${isDone ? '✅' : isActive ? '🔵' : '○'} ${stage.label}</div>`;
+        }).join('<div class="stage-arrow">→</div>');
+
+        // Phase duration tracking
+        const phaseTs: Record<string, number> = feature.phaseTimestamps || {};
+        const phaseSequence = [
+            { key: 'designing',      label: 'Design' },
+            { key: 'design_review',  label: 'Review' },
+            { key: 'planning',       label: 'Plan' },
+            { key: 'plan_review',    label: 'Review' },
+            { key: 'backlogging',    label: 'Backlog' },
+            { key: 'backlog_review', label: 'Review' },
+            { key: 'dispatching',    label: 'Dispatch' },
+            { key: 'monitoring',     label: 'Monitor' },
+            { key: 'done',           label: 'Done' },
+        ];
+
+        const formatDuration = (ms: number): string => {
+            if (ms < 60000) { return `${Math.floor(ms / 1000)}s`; }
+            if (ms < 3600000) { return `${Math.floor(ms / 60000)}m`; }
+            if (ms < 86400000) { return `${Math.round(ms / 3600000 * 10) / 10}h`; }
+            return `${Math.round(ms / 86400000 * 10) / 10}d`;
+        };
+
+        // Build phase durations: time between consecutive phase timestamps
+        const phaseDurations: Array<{ label: string; duration: string }> = [];
+        let totalDuration = 0;
+        for (let i = 0; i < phaseSequence.length; i++) {
+            const ts = phaseTs[phaseSequence[i].key];
+            if (!ts) { continue; }
+            // Find the next phase that has a timestamp
+            let nextTs: number | null = null;
+            for (let j = i + 1; j < phaseSequence.length; j++) {
+                if (phaseTs[phaseSequence[j].key]) {
+                    nextTs = phaseTs[phaseSequence[j].key];
+                    break;
+                }
+            }
+            if (nextTs) {
+                const dur = nextTs - ts;
+                totalDuration += dur;
+                phaseDurations.push({ label: phaseSequence[i].label, duration: formatDuration(dur) });
+            } else if (normalizedStep !== 'done') {
+                // Current active phase — show elapsed time
+                const dur = Date.now() - ts;
+                totalDuration += dur;
+                phaseDurations.push({ label: phaseSequence[i].label, duration: `${formatDuration(dur)}...` });
+            }
+        }
+
+        const phaseDurationHtml = phaseDurations.length > 0
+            ? `<div class="phase-durations">
+                <div class="phase-durations-title">Phase Durations${totalDuration > 0 ? ` <span class="total-duration">(Total: ${formatDuration(totalDuration)})</span>` : ''}</div>
+                <div class="phase-bars">
+                  ${phaseDurations.map(p => `<div class="phase-bar-item"><span class="phase-bar-label">${p.label}</span><span class="phase-bar-value">${p.duration}</span></div>`).join('')}
+                </div>
+              </div>`
+            : '';
+
+        // Design section
+        const designHtml = design
+            ? `<div class="artifact-card">
+                <div class="artifact-header">📄 Design Spec <button class="add-btn" onclick="addDesign()" title="Change design spec">✏️</button></div>
+                <div class="artifact-body">
+                  ${design.docPath ? `<div class="artifact-row"><span class="label">Document:</span> <a href="#" onclick="openFile('${escapeAttr(design.docPath)}')">${escapeHtml(design.docPath)}</a></div>` : ''}
+                  ${design.prUrl ? `<div class="artifact-row"><span class="label">PR:</span> <a href="#" onclick="openUrl('${escapeAttr(design.prUrl)}')">View in ADO</a></div>` : ''}
+                  <div class="artifact-row"><span class="label">Status:</span> <span class="badge badge-${design.status}">${design.status}</span></div>
+                </div>
+              </div>`
+            : (feature.designDocPath
+                ? `<div class="artifact-card">
+                    <div class="artifact-header">📄 Design Spec <button class="add-btn" onclick="addDesign()" title="Change design spec">✏️</button></div>
+                    <div class="artifact-body">
+                      <div class="artifact-row"><span class="label">Document:</span> <a href="#" onclick="openFile('${escapeAttr(feature.designDocPath)}')">${escapeHtml(feature.designDocPath)}</a></div>
+                      ${feature.designPrUrl ? `<div class="artifact-row"><span class="label">PR:</span> <a href="#" onclick="openUrl('${escapeAttr(feature.designPrUrl)}')">View in ADO</a></div>` : ''}
+                    </div>
+                  </div>`
+                : '<div class="artifact-card muted-card"><div class="artifact-header">📄 Design Spec <button class="add-btn" onclick="addDesign()" title="Add design spec">+</button></div><div class="artifact-body"><p class="muted">Not yet created</p></div></div>');
+
+        // PBIs section
+        const hasDeps = pbis.some((p: any) => p.dependsOn && p.dependsOn.length > 0);
+
+        // Compute topological order for implementation sequence
+        const pbiOrder = new Map<string, number>();
+        if (pbis.length > 0) {
+            // Build adjacency: each PBI's dependencies
+            const resolved = new Set<string>();
+            const remaining = pbis.map((p: any) => ({ id: String(p.adoId), deps: (p.dependsOn || []).map(String) }));
+            let order = 1;
+            let maxIter = pbis.length + 1; // safety limit
+            while (remaining.length > 0 && maxIter-- > 0) {
+                const ready = remaining.filter(r => r.deps.every((d: string) => resolved.has(d)));
+                if (ready.length === 0) {
+                    // Cycle or unresolved deps — assign remaining in original order
+                    for (const r of remaining) { pbiOrder.set(r.id, order++); }
+                    break;
+                }
+                for (const r of ready) {
+                    pbiOrder.set(r.id, order++);
+                    resolved.add(r.id);
+                    remaining.splice(remaining.indexOf(r), 1);
+                }
+            }
+        }
+
+        // Determine which PBIs are dispatchable
+        // A PBI is dispatchable if:
+        // 1. Status is "Committed" (case-insensitive)
+        // 2. Not already dispatched (no matching agent PR by adoId in title/body, or no dispatched flag)
+        // 3. All dependencies are resolved/done/merged (or no dependencies)
+        const agentPrTitles = agentPrs.map((pr: any) => (pr.title || '').toLowerCase());
+        const resolvedStates = new Set(['resolved', 'done', 'closed', 'removed']);
+
+        const isDispatched = (p: any): boolean => {
+            if (p.dispatched) { return true; }
+            // Check if any agent PR references this PBI's AB# ID
+            const idStr = String(p.adoId);
+            return agentPrTitles.some((t: string) => t.includes(`ab#${idStr}`) || t.includes(idStr));
+        };
+
+        const areDepsResolved = (p: any): boolean => {
+            if (!p.dependsOn || p.dependsOn.length === 0) { return true; }
+            return p.dependsOn.every((depId: string) => {
+                const depPbi = pbis.find((d: any) => String(d.adoId) === String(depId));
+                if (!depPbi) { return true; } // Unknown dep — assume resolved
+                return resolvedStates.has((depPbi.status || '').toLowerCase());
+            });
+        };
+
+        const isDispatchable = (p: any): boolean => {
+            return (p.status || '').toLowerCase() === 'committed'
+                && !isDispatched(p)
+                && areDepsResolved(p);
+        };
+
+        const getBlockingDeps = (p: any): string[] => {
+            if (!p.dependsOn || p.dependsOn.length === 0) { return []; }
+            return p.dependsOn.filter((depId: string) => {
+                const depPbi = pbis.find((d: any) => String(d.adoId) === String(depId));
+                if (!depPbi) { return false; }
+                return !resolvedStates.has((depPbi.status || '').toLowerCase());
+            });
+        };
+
+        const pbisHtml = pbis.length > 0
+            ? `<div class="artifact-card">
+                <div class="artifact-header">📋 Product Backlog Items <span class="count">${pbis.length}</span> <button class="add-btn" onclick="addPbi()" title="Add a PBI">+</button></div>
+                <div class="artifact-body">
+                  <table class="artifact-table">
+                    <thead><tr><th>Order</th><th>AB#</th><th>Title</th><th>Repo</th>${hasDeps ? '<th>Depends On</th>' : ''}<th>Status</th><th>Action</th></tr></thead>
+                    <tbody>
+                      ${pbis.map((p: any) => {
+                        const statusClass = (p.status || 'new').toLowerCase().replace(/\s/g, '-');
+                        const depsCell = hasDeps
+                            ? `<td>${(p.dependsOn || []).map((d: string) => `<a href="#" onclick="openUrl('https://dev.azure.com/${ADO_ORG}/${ADO_PROJECT}/_workitems/edit/${d}')">AB#${d}</a>`).join(', ') || '—'}</td>`
+                            : '';
+                        const orderNum = pbiOrder.get(String(p.adoId)) || '—';
+                        let actionCell: string;
+                        if (isDispatchable(p)) {
+                            actionCell = `<td><button class="dispatch-btn" onclick="event.stopPropagation(); dispatchPbi(${p.adoId})" title="Dispatch to Copilot agent">🚀 Dispatch</button></td>`;
+                        } else if (isDispatched(p)) {
+                            actionCell = '<td><span class="dispatched-label">✅ Dispatched</span></td>';
+                        } else {
+                            const blocking = getBlockingDeps(p);
+                            if (blocking.length > 0) {
+                                const blockingList = blocking.map((d: string) => `AB#${d}`).join(', ');
+                                actionCell = `<td><span class="blocked-label" title="Blocked by: ${blockingList}">🔒 Blocked</span></td>`;
+                            } else {
+                                actionCell = '<td><span class="muted-action">—</span></td>';
+                            }
+                        }
+                        return `<tr>
+                          <td class="order-cell">${orderNum}</td>
+                          <td><a href="#" onclick="openUrl('${escapeAttr(p.adoUrl)}')">${escapeHtml(String(p.displayId))}</a></td>
+                          <td>${escapeHtml(p.title || '')}</td>
+                          <td><code>${escapeHtml(p.module || '')}</code></td>
+                          ${depsCell}
+                          <td><span class="badge badge-${statusClass}">${escapeHtml(p.status || 'new')}</span></td>
+                          ${actionCell}
+                        </tr>`;
+                      }).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              </div>`
+            : '<div class="artifact-card muted-card"><div class="artifact-header">📋 Product Backlog Items <button class="add-btn" onclick="addPbi()" title="Add a PBI">+</button></div><div class="artifact-body"><p class="muted">No PBIs yet</p></div></div>';
+
+        // Agent PRs section
+        const prsHtml = agentPrs.length > 0
+            ? `<div class="artifact-card">
+                <div class="artifact-header">🤖 Agent Pull Requests <span class="count">${agentPrs.length}</span> <button class="add-btn" onclick="addAgentPr()" title="Add a PR">+</button></div>
+                <div class="artifact-body">
+                  <table class="artifact-table">
+                    <thead><tr><th>PR</th><th>Repo</th><th>Title</th><th>Comments</th><th>Status</th><th>Action</th></tr></thead>
+                    <tbody>
+                      ${agentPrs.map((pr: any) => {
+                        const prUrl = pr.prUrl || pr.url || '#';
+                        const statusColor: Record<string, string> = { open: '#3fb950', merged: '#8957e5', closed: '#da3633', draft: '#8b949e' };
+                        const status = (pr.status || pr.state || 'open').toLowerCase();
+                        const totalComments = pr.totalComments ?? '—';
+                        const resolvedComments = pr.resolvedComments ?? 0;
+                        const commentsDisplay = totalComments === '—' ? '—'
+                            : `<span class="comments-count">${resolvedComments}/${totalComments}</span>`;
+                        const prNum = pr.prNumber || pr.number || '';
+                        const prRepo = pr.repo || '';
+                        const isOpen = status === 'open' || status === 'draft';
+                        const actionBtns = isOpen
+                            ? `<button class="pr-action-btn" onclick="event.stopPropagation(); iteratePr('${prRepo}', ${prNum})" title="Review & send feedback">💬</button>
+                               <button class="pr-action-btn" onclick="event.stopPropagation(); checkoutPr('${prRepo}', ${prNum})" title="Checkout branch locally">📥</button>`
+                            : '<span class="muted-action">—</span>';
+                        return `<tr>
+                          <td><a href="#" onclick="openUrl('${escapeAttr(prUrl)}')">#${prNum}</a></td>
+                          <td><code>${escapeHtml(prRepo)}</code></td>
+                          <td>${escapeHtml(pr.title || '')}</td>
+                          <td>${commentsDisplay}</td>
+                          <td><span class="badge" style="background:${statusColor[status] || '#8b949e'}">${status}</span></td>
+                          <td class="action-cell">${actionBtns}</td>
+                        </tr>`;
+                      }).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              </div>`
+            : '<div class="artifact-card muted-card"><div class="artifact-header">🤖 Agent Pull Requests <button class="add-btn" onclick="addAgentPr()" title="Add a PR">+</button></div><div class="artifact-body"><p class="muted">No agent PRs yet</p></div></div>';
+
+        const timeAgo = (ts: number) => {
+            if (!ts) return 'unknown';
+            const s = Math.floor((Date.now() - ts) / 1000);
+            if (s < 60) return 'just now';
+            if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+            if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+            return `${Math.floor(s / 86400)}d ago`;
+        };
+
+        return `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+* { box-sizing: border-box; }
+body {
+    font-family: var(--vscode-font-family, system-ui);
+    font-size: 13px;
+    color: var(--vscode-foreground);
+    background: var(--vscode-editor-background);
+    padding: 24px 32px;
+    margin: 0;
+    line-height: 1.5;
+}
+
+/* Header */
+.header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+.header-icon { font-size: 28px; }
+.header-info { flex: 1; }
+.header-info h1 { margin: 0; font-size: 20px; font-weight: 600; }
+.header-info .subtitle { color: var(--vscode-descriptionForeground); font-size: 12px; margin-top: 2px; }
+.header-actions { display: flex; gap: 8px; }
+.btn {
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none; border-radius: 4px;
+    padding: 6px 14px; font-size: 12px;
+    cursor: pointer; font-weight: 600;
+}
+.btn:hover { background: var(--vscode-button-hoverBackground); }
+.btn-secondary {
+    background: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+}
+.btn-secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+
+/* Pipeline */
+.pipeline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 16px;
+    background: var(--vscode-editorWidget-background);
+    border: 1px solid var(--vscode-widget-border);
+    border-radius: 8px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+.stage {
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+    padding: 4px 10px;
+    border-radius: 12px;
+    white-space: nowrap;
+}
+.stage.active {
+    color: var(--vscode-button-foreground);
+    background: var(--vscode-progressBar-background);
+    font-weight: 600;
+}
+.stage.done { color: #3fb950; font-weight: 500; }
+.stage-arrow { color: var(--vscode-descriptionForeground); font-size: 12px; }
+
+/* Status bar */
+.status-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+}
+.status-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    border: 1px solid ${cfg.color}40;
+    background: ${cfg.color}15;
+    color: ${cfg.color};
+    font-weight: 600;
+}
+
+/* Artifact cards */
+.artifact-card {
+    border: 1px solid var(--vscode-widget-border);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    overflow: hidden;
+}
+.muted-card { opacity: 0.6; }
+.artifact-header {
+    background: var(--vscode-editorWidget-background);
+    padding: 10px 14px;
+    font-weight: 600;
+    font-size: 13px;
+    border-bottom: 1px solid var(--vscode-widget-border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.add-btn {
+    margin-left: auto;
+    background: none;
+    border: 1px solid var(--vscode-widget-border);
+    color: var(--vscode-descriptionForeground);
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-size: 12px;
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.2s;
+}
+.add-btn:hover { opacity: 1; border-color: var(--vscode-focusBorder); color: var(--vscode-foreground); }
+.artifact-body { padding: 12px 14px; }
+.artifact-row { margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+.label { color: var(--vscode-descriptionForeground); font-size: 11px; min-width: 70px; text-transform: uppercase; letter-spacing: 0.5px; }
+.count {
+    background: var(--vscode-badge-background);
+    color: var(--vscode-badge-foreground);
+    padding: 1px 7px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+/* Table */
+.artifact-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.artifact-table th {
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--vscode-widget-border);
+    color: var(--vscode-descriptionForeground);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.artifact-table td { padding: 6px 8px; border-bottom: 1px solid var(--vscode-widget-border, transparent); }
+.artifact-table tr:last-child td { border-bottom: none; }
+.artifact-table code {
+    background: var(--vscode-textCodeBlock-background);
+    padding: 1px 5px; border-radius: 3px; font-size: 11px;
+}
+
+/* Badge */
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: capitalize;
+}
+.badge-draft { background: #8b949e30; color: #8b949e; }
+.badge-in-review { background: #d2992230; color: #d29922; }
+.badge-approved { background: #3fb95030; color: #3fb950; }
+.badge-new { background: #b2b2b230; color: #b2b2b2; }
+.badge-approved { background: #b2b2b230; color: #b2b2b2; }
+.badge-committed { background: #58a6ff25; color: #58a6ff; }
+.badge-in-review { background: #fbd14430; color: #c9a300; }
+.badge-in-progress { background: #e3b34130; color: #e3b341; }
+.badge-blocked { background: #da363330; color: #da3633; }
+.badge-extension { background: #1b478b30; color: #3b7bd6; }
+.badge-resolved { background: #33993330; color: #339933; }
+.badge-done { background: #33993330; color: #339933; }
+.badge-removed { background: #8b949e30; color: #8b949e; }
+
+a { color: var(--vscode-textLink-foreground); text-decoration: none; cursor: pointer; }
+a:hover { text-decoration: underline; }
+.muted { color: var(--vscode-descriptionForeground); font-style: italic; }
+
+/* Comments count */
+.comments-count { font-size: 11px; font-weight: 600; color: var(--vscode-descriptionForeground); }
+
+/* Order column */
+.order-cell { font-weight: 700; color: var(--vscode-descriptionForeground); text-align: center; min-width: 24px; }
+
+/* Dispatch button */
+.dispatch-btn {
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none; border-radius: 4px;
+    padding: 2px 8px; font-size: 12px;
+    cursor: pointer; white-space: nowrap;
+}
+.dispatch-btn:hover { background: var(--vscode-button-hoverBackground); }
+.dispatched-label { font-size: 10px; color: #339933; font-weight: 500; white-space: nowrap; }
+.blocked-label { font-size: 10px; color: #da3633; cursor: help; white-space: nowrap; }
+.muted-action { font-size: 10px; color: var(--vscode-descriptionForeground); }
+
+/* PR action buttons */
+.action-cell { white-space: nowrap; }
+.pr-action-btn {
+    background: none;
+    border: 1px solid var(--vscode-widget-border);
+    color: var(--vscode-foreground);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 12px;
+    cursor: pointer;
+    margin-right: 4px;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+}
+.pr-action-btn:hover { opacity: 1; border-color: var(--vscode-focusBorder); }
+.prompt-block {
+    background: var(--vscode-textCodeBlock-background);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    margin-bottom: 16px;
+    color: var(--vscode-descriptionForeground);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* Phase durations */
+.phase-durations {
+    background: var(--vscode-editorWidget-background);
+    border: 1px solid var(--vscode-widget-border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+}
+.phase-durations-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--vscode-descriptionForeground); margin-bottom: 8px; }
+.total-duration { text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--vscode-foreground); }
+.phase-bars { display: flex; gap: 12px; flex-wrap: wrap; }
+.phase-bar-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.phase-bar-label { font-size: 10px; color: var(--vscode-descriptionForeground); }
+.phase-bar-value { font-size: 13px; font-weight: 700; color: var(--vscode-foreground); }
+
+.section-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--vscode-descriptionForeground);
+    margin: 20px 0 8px;
+}
+</style></head>
+<body>
+  <div class="header">
+    <div class="header-icon">${cfg.icon}</div>
+    <div class="header-info">
+      <h1>${escapeHtml(feature.name)}</h1>
+      <div class="subtitle">Started ${timeAgo(feature.startedAt)} · Updated ${timeAgo(feature.updatedAt)}</div>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-secondary" id="refreshBtn" onclick="refresh()">↻ Refresh</button>
+      <button class="btn" onclick="continueInChat()">💬 Continue in New Chat</button>
+    </div>
+  </div>
+
+  ${feature.prompt ? `<div class="prompt-block">${escapeHtml(feature.prompt)}</div>` : ''}
+
+  <div class="pipeline">${pipelineHtml}</div>
+
+  <div class="status-bar">
+    <div class="status-indicator">${cfg.icon} ${cfg.label}</div>
+  </div>
+
+  ${phaseDurationHtml}
+
+  <div class="section-title">Artifacts</div>
+  ${designHtml}
+  ${pbisHtml}
+  ${prsHtml}
+
+  <script>
+    const vscode = acquireVsCodeApi();
+    function openUrl(url) { vscode.postMessage({ command: 'openUrl', url }); }
+    function openFile(p) { vscode.postMessage({ command: 'openFile', path: p }); }
+    function continueInChat() { vscode.postMessage({ command: 'continueInChat' }); }
+    function addDesign() { vscode.postMessage({ command: 'addDesign' }); }
+    function addPbi() { vscode.postMessage({ command: 'addPbi' }); }
+    function addAgentPr() { vscode.postMessage({ command: 'addAgentPr' }); }
+    function dispatchPbi(adoId) { vscode.postMessage({ command: 'dispatchPbi', adoId }); }
+    function iteratePr(repo, prNumber) { vscode.postMessage({ command: 'iteratePr', repo, prNumber }); }
+    function checkoutPr(repo, prNumber) { vscode.postMessage({ command: 'checkoutPr', repo, prNumber }); }
+    function refresh() {
+      const btn = document.getElementById('refreshBtn');
+      if (btn) { btn.textContent = '↻ Refreshing...'; btn.disabled = true; }
+      vscode.postMessage({ command: 'refresh' });
+    }
+    // Listen for messages from the extension
+    window.addEventListener('message', (event) => {
+      if (event.data.command === 'refreshing' && !event.data.status) {
+        const btn = document.getElementById('refreshBtn');
+        if (btn) { btn.textContent = '↻ Refresh'; btn.disabled = false; }
+      }
+    });
+  </script>
+</body></html>`;
+    }
+}
+
+function escapeHtml(s: string): string {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function escapeAttr(s: string): string {
+    return s.replace(/'/g, "\\'").replace(/"/g, '&quot;').replace(/\\/g, '\\\\');
+}
