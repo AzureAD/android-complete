@@ -26,7 +26,7 @@ Or build manually:
 cd extensions/feature-orchestrator
 npm install
 npm run compile
-npx @vscode/vsce package --no-dependencies --allow-missing-repository
+npx @vscode/vsce package --no-dependencies --allow-missing-repository --baseContentUrl . --baseImagesUrl .
 code --install-extension feature-orchestrator-latest.vsix --force
 ```
 
