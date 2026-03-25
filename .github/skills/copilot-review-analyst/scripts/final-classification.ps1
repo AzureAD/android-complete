@@ -1,34 +1,35 @@
 <#
 .SYNOPSIS
     Final classification of all Copilot review comments.
-    Applies keyword rules, loads manual audit decisions from external JSON,
-    merges GitHub accounts to real engineer names via external config.
+    Merges Phase 3 AI verdicts (for replied comments) with Phase 2 diff verdicts
+    (for no-reply comments). Maps GitHub accounts to display names.
     Produces authoritative per-engineer and per-repo statistics.
 
 .PARAMETER OutputDir
-    Directory containing raw_results.json and precise.json from prior phases.
+    Directory containing raw_results.json, precise.json, and reply-verdicts.json.
 
 .PARAMETER AccountMapFile
     Path to JSON file mapping GitHub logins to display names.
     Format: { "github_login": "DisplayName", ... }
     If not provided, uses PR author login as-is.
 
-.PARAMETER ManualAuditFile
-    Path to JSON file with manual audit decisions from Phase 3.
-    Format: {
-        "genuineUnclearHelpful": ["reply pattern 1", ...],
-        "genuineUnclearHelpfulExtra": ["commit sha or pattern", ...],
-        "reauditFlipKeys": ["repo/prNum/filePattern", ...],
-        "mixedResponseVerdict": "not-helpful"
-    }
-    If not provided, genuinely unclear comments default to "not-helpful"
-    and file-changed-elsewhere/no-line-info default to "not-helpful".
+.PARAMETER ReplyVerdictsFile
+    Path to JSON file with AI verdicts for replied comments (Phase 3 output).
+    Format: { "commentId": "helpful"|"not-helpful", ... }
+    Keys are comment IDs (as strings), values are verdicts.
+    If not provided, all replied comments default to "unknown".
+
+.PARAMETER ReauditFlipsFile
+    Path to JSON file with re-audit flips for no-reply comments (Phase 3 output).
+    Format: { "reauditFlipKeys": ["repo/prNum/filePattern", ...] }
+    If not provided, file-changed-elsewhere/no-line-info default to "not-helpful".
 #>
 
 param(
     [string]$OutputDir = "$env:TEMP\copilot-review-analysis",
     [string]$AccountMapFile = "",
-    [string]$ManualAuditFile = ""
+    [string]$ReplyVerdictsFile = "",
+    [string]$ReauditFlipsFile = ""
 )
 
 $rawData = Get-Content "$OutputDir\raw_results.json" | ConvertFrom-Json
@@ -50,84 +51,29 @@ if ($AccountMapFile -and (Test-Path $AccountMapFile)) {
     Write-Host "No account map file provided — using raw GitHub logins" -ForegroundColor Yellow
 }
 
-# Manual audit decisions from Phase 3
-$genuineUnclearHelpful = @()
-$genuineUnclearHelpfulExtra = @()
-$reauditFlipKeys = @()
-$mixedResponseVerdict = "not-helpful"
-
-if ($ManualAuditFile -and (Test-Path $ManualAuditFile)) {
-    $auditRaw = Get-Content $ManualAuditFile -Raw | ConvertFrom-Json
-    if ($auditRaw.genuineUnclearHelpful) {
-        $genuineUnclearHelpful = @($auditRaw.genuineUnclearHelpful)
+# Phase 3 AI verdicts for replied comments: { "commentId": "helpful"|"not-helpful" }
+$replyVerdicts = @{}
+if ($ReplyVerdictsFile -and (Test-Path $ReplyVerdictsFile)) {
+    $verdictsRaw = Get-Content $ReplyVerdictsFile -Raw | ConvertFrom-Json
+    foreach ($prop in $verdictsRaw.PSObject.Properties) {
+        $replyVerdicts[$prop.Name] = $prop.Value
     }
-    if ($auditRaw.genuineUnclearHelpfulExtra) {
-        $genuineUnclearHelpfulExtra = @($auditRaw.genuineUnclearHelpfulExtra)
-    }
-    if ($auditRaw.reauditFlipKeys) {
-        $reauditFlipKeys = @($auditRaw.reauditFlipKeys)
-    }
-    if ($auditRaw.mixedResponseVerdict) {
-        $mixedResponseVerdict = $auditRaw.mixedResponseVerdict
-    }
-    Write-Host "Loaded manual audit: $($genuineUnclearHelpful.Count) unclear-helpful patterns, $($reauditFlipKeys.Count) re-audit flips" -ForegroundColor Cyan
+    Write-Host "Loaded reply verdicts: $($replyVerdicts.Count) entries" -ForegroundColor Cyan
 } else {
-    Write-Host "No manual audit file provided — genuinely unclear and ambiguous comments will default to 'not-helpful'" -ForegroundColor Yellow
+    Write-Host "No reply verdicts file provided — replied comments will be 'unknown'" -ForegroundColor Yellow
 }
 
-# ========================================
-# STEP 1: Keyword patterns for classifying replied comments
-# ========================================
-
-# Positive reply patterns
-$positivePatterns = @(
-    "good catch", "fixed", "done", "addressed", "will fix", "will address",
-    "thanks", "thank you", "agreed", "makes sense", "updated", "nice catch",
-    "you're right", "you are right", "correct", "valid point", "great catch",
-    "resolved", "will do", "good point", "fair point", "acknowledged",
-    "applied", "changed", "modified", "yep", "absolutely",
-    "i'll update", "i will update", "i'll fix", "i will fix",
-    "good suggestion", "great suggestion", "nice suggestion",
-    "will change", "will update", "pushed a fix", "committed",
-    "good find", "great find", "indeed",
-    "making the change", "i've updated", "i've fixed"
-)
-
-# Negative reply patterns
-$negativePatterns = @(
-    "not applicable", "n/a", "won't fix", "wontfix", "by design",
-    "intentional", "false positive", "not relevant", "ignore",
-    "doesn't apply", "not needed", "unnecessary", "nah", "no need",
-    "disagree", "incorrect", "wrong", "not accurate", "hallucin",
-    "not a real issue", "not an issue", "this is fine", "it's fine",
-    "already handled", "already done", "not applicable here",
-    "copilot is wrong", "bot is wrong", "misunderstanding",
-    "out of scope", "does not apply", "not a concern", "not a problem",
-    "doesn't matter", "won't happen", "can't happen", "impossible"
-)
-
-# Delegated to copilot pattern
-$delegatedPattern = '@copilot'
-
-# Acknowledged action patterns (from unclear reclassification)
-$acknowledgedPatterns = @(
-    "added tests?", "refactored", "removed", "reverted", "renamed",
-    "implemented", "reworked", "update signature", "log warning",
-    "move check", "add test", "add unit test", "nice job", "good bot"
-)
-
-# Explained-away patterns (from unclear reclassification)
-$explainedPatterns = @(
-    "this is", "we don't", "we do not", "we aren't", "nope", "has been",
-    "it's a", "they're meant", "this has", "only used", "never been",
-    "was consciously", "just telemetry", "is just", "original behavior",
-    "overdo", "legacy", "can only", "can never", "doesn't need",
-    "suffix was", "timing is not", "skip", "most of the", "empty is fine",
-    "no longer", "will stick", "keep the current", "consciously"
-)
-
-# Outdated/dismissed patterns
-$outdatedPatterns = @("outdated", "dismissed")
+# Phase 3 re-audit flips for no-reply comments
+$reauditFlipKeys = @()
+if ($ReauditFlipsFile -and (Test-Path $ReauditFlipsFile)) {
+    $flipsRaw = Get-Content $ReauditFlipsFile -Raw | ConvertFrom-Json
+    if ($flipsRaw.reauditFlipKeys) {
+        $reauditFlipKeys = @($flipsRaw.reauditFlipKeys)
+    }
+    Write-Host "Loaded re-audit flips: $($reauditFlipKeys.Count) entries" -ForegroundColor Cyan
+} else {
+    Write-Host "No re-audit flips file provided — file-changed-elsewhere defaults to 'not-helpful'" -ForegroundColor Yellow
+}
 
 # ========================================
 # RE-AUDIT FLIP FUNCTION
@@ -157,81 +103,19 @@ foreach ($item in $rawData) {
     $repo = $item.Repo
     $prNum = $item.PRNumber
     $filePath = $item.FilePath
-    $replied = $item.Classification -ne "no-response"
+    $replied = $item.HasReply -eq $true
     $verdict = "unknown"
 
-    if ($item.Classification -eq "helpful-acknowledged") {
-        $verdict = "helpful"
-    }
-    elseif ($item.Classification -eq "unhelpful-dismissed") {
-        $verdict = "not-helpful"
-    }
-    elseif ($item.Classification -eq "mixed-response") {
-        $verdict = $mixedResponseVerdict
-    }
-    elseif ($item.Classification -eq "replied-unclear") {
-        # Apply the reclassification cascade
-        $replyLower = $item.HumanReplyText.ToLower()
-
-        # Check delegated to copilot
-        if ($replyLower -match $delegatedPattern) {
-            $verdict = "helpful"
+    if ($replied) {
+        # Use Phase 3 AI verdict
+        $commentIdStr = "$commentId"
+        if ($replyVerdicts.ContainsKey($commentIdStr)) {
+            $verdict = $replyVerdicts[$commentIdStr]
         }
-        # Check acknowledged action
-        elseif ($false) { # placeholder, check below
-        }
-        else {
-            # Check acknowledged patterns
-            $isAcknowledged = $false
-            foreach ($p in $acknowledgedPatterns) {
-                if ($replyLower -match "\b$p\b") { $isAcknowledged = $true; break }
-            }
-
-            if ($isAcknowledged) {
-                $verdict = "helpful"
-            }
-            else {
-                # Check explained-away patterns
-                $isExplained = $false
-                foreach ($p in $explainedPatterns) {
-                    if ($replyLower -match [regex]::Escape($p)) { $isExplained = $true; break }
-                }
-
-                # Check outdated patterns
-                $isOutdated = $false
-                foreach ($p in $outdatedPatterns) {
-                    if ($replyLower -match "\b$p\b") { $isOutdated = $true; break }
-                }
-
-                if ($isExplained) {
-                    $verdict = "not-helpful"
-                }
-                elseif ($isOutdated) {
-                    $verdict = "not-helpful"
-                }
-                else {
-                    # Genuinely unclear - check manual audit helpful list
-                    $isManualHelpful = $false
-                    foreach ($pattern in $genuineUnclearHelpful) {
-                        if ($replyLower.Contains($pattern)) { $isManualHelpful = $true; break }
-                    }
-                    foreach ($pattern in $genuineUnclearHelpfulExtra) {
-                        if ($replyLower.Contains($pattern)) { $isManualHelpful = $true; break }
-                    }
-
-                    if ($isManualHelpful) {
-                        $verdict = "helpful"
-                    }
-                    else {
-                        # Everything else in genuinely unclear was not-helpful
-                        $verdict = "not-helpful"
-                    }
-                }
-            }
-        }
+        # else stays "unknown"
     }
-    elseif ($item.Classification -eq "no-response") {
-        # Use diff verification results
+    else {
+        # No reply — use Phase 2 diff verification results
         $precise = $preciseData | Where-Object { $_.CommentId -eq $commentId }
         if ($precise) {
             $pv = $precise.Verdict
@@ -239,12 +123,9 @@ foreach ($item in $rawData) {
                 $verdict = "helpful"
             }
             elseif ($pv -eq "lines-modified-different-fix") {
-                # Nearby lines modified with a different approach — treat as helpful
-                # (the engineer addressed the concern differently than suggested)
                 $verdict = "helpful"
             }
             elseif ($pv -in @("file-changed-elsewhere", "file-changed-no-line-info")) {
-                # Check if this specific comment was flipped in re-audit
                 if (Test-ReauditFlip $repo $prNum $filePath) {
                     $verdict = "helpful"
                 } else {
@@ -272,7 +153,6 @@ foreach ($item in $rawData) {
         FilePath    = $filePath
         Replied     = $replied
         Verdict     = $verdict
-        OrigClass   = $item.Classification
     }
 }
 

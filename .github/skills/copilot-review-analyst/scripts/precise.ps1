@@ -24,7 +24,7 @@ $repoSlugs = @{
 
 # Load raw data
 $rawData = Get-Content "$OutputDir\raw_results.json" | ConvertFrom-Json
-$noResponse = $rawData | Where-Object { $_.Classification -eq "no-response" }
+$noResponse = $rawData | Where-Object { $_.HasReply -eq $false }
 Write-Host "Total no-response comments to verify: $($noResponse.Count)" -ForegroundColor Cyan
 
 # Caches
@@ -356,95 +356,30 @@ Write-Host "  NOT APPLIED: File not changed OR changes elsewhere in file:   $not
 Write-Host "  NO DATA: No commits after review / unknown:                   $noDataCount ($([math]::Round($noDataCount/$results.Count*100,1))%)" -ForegroundColor DarkGray
 
 # =======================================
-# FINAL COMBINED REPORT
+# OVERALL SUMMARY
 # =======================================
 Write-Host ""
 Write-Host "================================================================" -ForegroundColor Yellow
-Write-Host "     FINAL COMBINED ANALYSIS (ALL $($rawData.Count) COMMENTS)" -ForegroundColor Yellow
+Write-Host "     DIFF VERIFICATION COMPLETE" -ForegroundColor Yellow
 Write-Host "================================================================" -ForegroundColor Yellow
 
 $totalAll = $rawData.Count
-$rHelp = ($rawData | Where-Object { $_.Classification -eq "helpful-acknowledged" }).Count
-$rUnhelp = ($rawData | Where-Object { $_.Classification -eq "unhelpful-dismissed" }).Count
-$rUnclear = ($rawData | Where-Object { $_.Classification -eq "replied-unclear" }).Count
-$rMixed = ($rawData | Where-Object { $_.Classification -eq "mixed-response" }).Count
-
-$totalConfirmedHelpful = $rHelp + $strongCount
-$totalLikelyHelpful = $weakCount
-$totalConfirmedUnhelpful = $rUnhelp + $notCount
-$totalAmbiguous = $rUnclear + $rMixed + $noDataCount
+$replied = ($rawData | Where-Object { $_.HasReply -eq $true }).Count
+$noReply = ($rawData | Where-Object { $_.HasReply -eq $false }).Count
 
 Write-Host ""
-Write-Host "  CONFIRMED HELPFUL:" -ForegroundColor Green
-Write-Host "    Replied & acknowledged:       $rHelp" -ForegroundColor Green
-Write-Host "    Silent: suggestion applied:   $(($results | Where-Object { $_.Verdict -in @('suggestion-applied','suggestion-likely-applied') }).Count)" -ForegroundColor Green
-Write-Host "    Silent: exact lines modified: $(($results | Where-Object { $_.Verdict -eq 'exact-lines-modified' }).Count)" -ForegroundColor Green
-Write-Host "    TOTAL CONFIRMED HELPFUL:      $totalConfirmedHelpful ($([math]::Round($totalConfirmedHelpful/$totalAll*100,1))%)" -ForegroundColor Green
-
+Write-Host "  Total comments: $totalAll" -ForegroundColor White
+Write-Host "  Replied (Phase 3 will classify): $replied" -ForegroundColor White
+Write-Host "  No reply (verified via diff):    $noReply" -ForegroundColor White
 Write-Host ""
-Write-Host "  MODERATE (nearby lines changed, different fix):" -ForegroundColor DarkGreen
-Write-Host "    Total:                        $totalLikelyHelpful ($([math]::Round($totalLikelyHelpful/$totalAll*100,1))%)" -ForegroundColor DarkGreen
-
-Write-Host ""
-Write-Host "  CONFIRMED NOT HELPFUL:" -ForegroundColor Red
-Write-Host "    Replied & dismissed:          $rUnhelp" -ForegroundColor Red
-Write-Host "    Silent: file not changed:     $(($results | Where-Object { $_.Verdict -eq 'file-not-changed' }).Count)" -ForegroundColor Red
-Write-Host "    Silent: changes elsewhere:    $(($results | Where-Object { $_.Verdict -in @('file-changed-elsewhere','file-changed-no-line-info') }).Count)" -ForegroundColor Red
-Write-Host "    Silent: not applied:          $(($results | Where-Object { $_.Verdict -eq 'not-applied' }).Count)" -ForegroundColor Red
-Write-Host "    TOTAL CONFIRMED NOT HELPFUL:  $totalConfirmedUnhelpful ($([math]::Round($totalConfirmedUnhelpful/$totalAll*100,1))%)" -ForegroundColor Red
-
-Write-Host ""
-Write-Host "  AMBIGUOUS:" -ForegroundColor DarkYellow
-Write-Host "    Replied unclear:              $rUnclear" -ForegroundColor DarkYellow
-Write-Host "    Mixed:                        $rMixed" -ForegroundColor DarkYellow
-Write-Host "    No data:                      $noDataCount" -ForegroundColor DarkYellow
-Write-Host "    TOTAL AMBIGUOUS:              $totalAmbiguous ($([math]::Round($totalAmbiguous/$totalAll*100,1))%)" -ForegroundColor DarkYellow
-
-if (($totalConfirmedHelpful + $totalConfirmedUnhelpful) -gt 0) {
-    $ratio = [math]::Round($totalConfirmedHelpful / ($totalConfirmedHelpful + $totalConfirmedUnhelpful) * 100, 1)
-    Write-Host ""
-    Write-Host "  HELPFULNESS RATIO (confirmed only): $ratio%" -ForegroundColor White
-}
-
-# Per-repo
-Write-Host ""
-Write-Host "--- PER-REPO ---" -ForegroundColor Cyan
-foreach ($repoLabel in @("common", "msal", "broker")) {
-    $rr = $rawData | Where-Object { $_.Repo -eq $repoLabel }
-    $pr = $results | Where-Object { $_.Repo -eq $repoLabel }
-    $help = ($rr | Where-Object { $_.Classification -eq "helpful-acknowledged" }).Count + ($pr | Where-Object { $_.Verdict -in $strongApplied }).Count
-    $unhelp = ($rr | Where-Object { $_.Classification -eq "unhelpful-dismissed" }).Count + ($pr | Where-Object { $_.Verdict -in $notApplied }).Count
-    $total = $rr.Count
-    Write-Host "  $($repoLabel.ToUpper()) ($total): Helpful=$help ($([math]::Round($help/$total*100,1))%), Not helpful=$unhelp ($([math]::Round($unhelp/$total*100,1))%)"
-}
-
-# Samples
-Write-Host ""
-Write-Host "--- SAMPLE: SUGGESTION APPLIED ---" -ForegroundColor Green
-$results | Where-Object { $_.Verdict -in @("suggestion-applied","suggestion-likely-applied") } | Select-Object -First 5 | ForEach-Object {
-    Write-Host "  PR#$($_.PRNumber) ($($_.Repo)) $($_.FilePath)"
-    Write-Host "    $($_.Evidence)"
-    Write-Host "    $($_.CommentExcerpt)"
-    Write-Host ""
-}
-
-Write-Host "--- SAMPLE: EXACT LINES MODIFIED ---" -ForegroundColor Green
-$results | Where-Object { $_.Verdict -eq "exact-lines-modified" } | Select-Object -First 5 | ForEach-Object {
-    Write-Host "  PR#$($_.PRNumber) ($($_.Repo)) $($_.FilePath)"
-    Write-Host "    $($_.Evidence)"
-    Write-Host "    $($_.CommentExcerpt)"
-    Write-Host ""
-}
-
-Write-Host "--- SAMPLE: FILE NOT CHANGED (truly ignored) ---" -ForegroundColor Red
-$results | Where-Object { $_.Verdict -eq "file-not-changed" } | Select-Object -First 5 | ForEach-Object {
-    Write-Host "  PR#$($_.PRNumber) ($($_.Repo)) $($_.FilePath)"
-    Write-Host "    $($_.Evidence)"
-    Write-Host "    $($_.CommentExcerpt)"
-    Write-Host ""
-}
+Write-Host "  Of the $noReply no-reply comments:" -ForegroundColor Cyan
+Write-Host "    Applied (strong evidence):     $strongCount ($([math]::Round($strongCount/$noReply*100,1))%)" -ForegroundColor Green
+Write-Host "    Nearby lines modified:         $weakCount ($([math]::Round($weakCount/$noReply*100,1))%)" -ForegroundColor DarkGreen
+Write-Host "    Not applied / no evidence:     $notCount ($([math]::Round($notCount/$noReply*100,1))%)" -ForegroundColor Red
+Write-Host "    No subsequent commits:         $noDataCount ($([math]::Round($noDataCount/$noReply*100,1))%)" -ForegroundColor DarkGray
 
 Write-Host ""
 Write-Host "================================================================" -ForegroundColor Yellow
 Write-Host "Data: $OutputDir\precise.json" -ForegroundColor White
+Write-Host "Next: Run Phase 3 (AI classification of all replied comments)." -ForegroundColor Yellow
 Write-Host "================================================================" -ForegroundColor Yellow

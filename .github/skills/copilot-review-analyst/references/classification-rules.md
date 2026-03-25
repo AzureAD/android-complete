@@ -1,133 +1,90 @@
 # Classification Rules
 
-Complete classification hierarchy for Copilot review comment analysis.
+Guide for the AI agent performing Phase 3 reply classification. Read each replied comment's full context (Copilot's comment + engineer's reply) and assign a verdict.
 
-## Classification Cascade (Priority Order)
+## Phase 3: Classifying Replied Comments
 
-Apply rules in this exact order. First match wins.
+For every comment where `HasReply = true`, read the `CommentBody` (what Copilot said) and `HumanReplyText` (what the engineer replied), then assign one of:
 
-### Replied Comments (has human reply)
+- **`helpful`** — The engineer's reply indicates Copilot's feedback led to (or will lead to) a code improvement
+- **`not-helpful`** — The engineer's reply indicates Copilot's feedback was wrong, irrelevant, or not actionable
 
-| Priority | Condition | Verdict |
-|----------|-----------|---------|
-| 1 | Reply matches positive keyword patterns | **Helpful** |
-| 2 | Reply matches negative keyword patterns | **Not Helpful** |
-| 3 | Both positive and negative matched (mixed) | Verdict from `mixedResponseVerdict` in manual audit file (default: **Not Helpful**) |
-| 4 | Reply contains `@copilot` (delegated fix) | **Helpful** |
-| 5 | Reply matches acknowledged-action patterns | **Helpful** |
-| 6 | Reply matches explained-away patterns | **Not Helpful** |
-| 7 | Reply matches outdated/dismissed patterns | **Not Helpful** |
-| 8 | Genuinely unclear — apply AI judgment | See AI Classification below |
+### What counts as Helpful
 
-### No-Response Comments (no human reply)
+- **Explicit acknowledgment**: "good catch", "fixed", "done", "addressed", "will fix", "thanks", "agreed", "makes sense", "you're right", "great catch", etc.
+- **Action taken**: "added unit test", "refactored", "renamed", "removed", "reverted", "pushed a fix", "committed"
+- **Delegated back to Copilot**: Reply contains `@copilot` asking it to apply the fix
+- **Indirect confirmation**: "addressing in a later commit", "implemented something similar", "I did switch the ordering"
+- **Linked a commit**: Reply contains a commit SHA or link showing they applied a fix
+- **Acknowledged for future**: "this can be considered in another PR" (acknowledges the issue is valid)
 
-| Priority | Condition | Verdict |
-|----------|-----------|---------|
-| 9 | `suggestion-applied` or `suggestion-likely-applied` (from diff verification) | **Helpful** |
-| 10 | `exact-lines-modified` (from diff verification) | **Helpful** |
-| 11 | `lines-modified-different-fix` | **Helpful** (nearby lines modified with a different approach — engineer addressed the concern) |
-| 12 | `file-changed-elsewhere` or `file-changed-no-line-info` | **Check re-audit list** — helpful if evidence found, else **Unresolved** |
-| 13 | `file-not-changed`, `no-subsequent-commits`, `not-applied` | **Unresolved** |
-| 14 | Comment on stale/outdated code | **Not Helpful** |
+### What counts as Not Helpful
 
-## Keyword Patterns
+- **Explicit dismissal**: "won't fix", "by design", "intentional", "not applicable", "false positive", "not relevant"
+- **Copilot was wrong**: "incorrect", "Copilot is wrong", "hallucinating", "not accurate", "misunderstanding"
+- **Already handled**: "already done", "already handled", "this is fine"
+- **Explained away**: Engineer explains why the suggestion doesn't apply — "this is just telemetry", "we consciously chose this", "legacy code", "overdo", "only used in X context", "can't happen"
+- **Dismissed or outdated**: "outdated", "dismissed", "out of scope"
 
-### Positive Patterns (→ Helpful)
+### Edge Cases
 
-```
-good catch, fixed, done, addressed, will fix, will address,
-thanks, thank you, agreed, makes sense, updated, nice catch,
-you're right, you are right, correct, valid point, great catch,
-resolved, will do, good point, fair point, acknowledged,
-applied, changed, modified, yep, absolutely,
-i'll update, i will update, i'll fix, i will fix,
-good suggestion, great suggestion, nice suggestion,
-will change, will update, pushed a fix, committed,
-good find, great find, indeed,
-making the change, i've updated, i've fixed
-```
+- **Mixed signals** (both positive and negative in same reply): Read the full reply to determine the engineer's overall intent. Don't rely on individual words — understand the sentence.
+- **Administrative replies** ("will consider later", "not for this PR"): Classify as **helpful** if they acknowledge the issue is valid but defer it; classify as **not-helpful** if they're brushing it off.
+- **Short/ambiguous replies** ("ok", "noted", "see above"): Use the Copilot comment context to infer whether the engineer is acknowledging or dismissing. When genuinely unclear, lean toward **not-helpful** (conservative).
 
-### Negative Patterns (→ Not Helpful)
+### Important: Read the Full Reply
 
-```
-not applicable, n/a, won't fix, wontfix, by design,
-intentional, false positive, not relevant, ignore,
-doesn't apply, not needed, unnecessary, nah, no need,
-disagree, incorrect, wrong, not accurate, hallucin,
-not a real issue, not an issue, this is fine, it's fine,
-already handled, already done, not applicable here,
-copilot is wrong, bot is wrong, misunderstanding,
-out of scope, does not apply, not a concern, not a problem,
-doesn't matter, won't happen, can't happen, impossible
+Do NOT use simple keyword matching. Read the engineer's full reply in context. For example:
+- "This won't fix the actual issue we're seeing" — This is NOT a "won't fix" dismissal; the engineer is discussing a different topic
+- "Thanks but this is intentional" — Despite "thanks", this is a dismissal
+- "I disagree with this specific suggestion but good catch on the typo above" — Mixed; classify based on the primary concern
+
+## Phase 3 Output Format
+
+Write two JSON files to `$env:TEMP\copilot-review-analysis\`:
+
+### `reply-verdicts.json`
+
+Map of comment ID to verdict for every replied comment:
+
+```json
+{
+    "1234567890": "helpful",
+    "1234567891": "not-helpful",
+    "1234567892": "helpful"
+}
 ```
 
-### Acknowledged-Action Patterns (→ Helpful, for unclear replies)
+Keys are comment IDs (as strings). Values are `"helpful"` or `"not-helpful"`.
 
-These indicate the engineer acted on the feedback even if they didn't use standard positive keywords:
+### `reaudit-flips.json`
 
-```
-added tests?, refactored, removed, reverted, renamed,
-implemented, reworked, update signature, log warning,
-move check, add test, add unit test, nice job, good bot
-```
+For no-reply comments where Phase 2 returned `file-changed-elsewhere` or `file-changed-no-line-info`, review the Copilot comment and diff evidence to decide if the fix was applied differently. Record any that should flip to helpful:
 
-Use word-boundary matching (`\b`) for these.
-
-### Explained-Away Patterns (→ Not Helpful, for unclear replies)
-
-These indicate the engineer explained why the comment is not relevant:
-
-```
-this is, we don't, we do not, we aren't, nope, has been,
-it's a, they're meant, this has, only used, never been,
-was consciously, just telemetry, is just, original behavior,
-overdo, legacy, can only, can never, doesn't need,
-suffix was, timing is not, skip, most of the, empty is fine,
-no longer, will stick, keep the current, consciously
+```json
+{
+    "reauditFlipKeys": [
+        "common/3027/AzureActiveDirectory.java",
+        "broker/94/TelemetryRegionSupplier"
+    ]
+}
 ```
 
-### Outdated/Dismissed Patterns (→ Not Helpful)
+Format: `"repo/prNumber/partialFilePath"`. Only include entries with strong evidence.
 
-```
-outdated, dismissed
-```
+## No-Reply Comments (Phase 2 Diff Verdicts)
 
-## AI Classification for Genuinely Unclear Replies
+These are handled by `precise.ps1` and `final-classification.ps1` automatically:
 
-When no keyword pattern matches, read the reply text with domain context:
-
-1. **Is the engineer confirming they'll act?** Even indirect signals like "addressing in a later commit", "implemented something similar", or linking a commit hash → **Helpful**
-2. **Is the engineer explaining why the feedback doesn't apply?** Phrases like "this is just telemetry", "we consciously chose this", "legacy code" → **Not Helpful**
-3. **Is the reply tangential or administrative?** E.g., "will consider in another PR" → **Helpful** if they acknowledge the issue, **Not Helpful** if they're deflecting
-4. **Does the reply contain a commit SHA or link?** → **Helpful** (engineer is showing they applied a fix)
-
-## Diff Verification Logic
-
-### For Suggestion Blocks
-
-1. Extract code between `` ```suggestion `` and `` ``` `` markers
-2. Tokenize: keep lines >3 chars, skip punctuation-only lines
-3. Compare tokens against `+` (addition) lines in the diff
-4. Token match ratio ≥ 50% AND line range overlap → `suggestion-applied`
-5. Token match ratio ≥ 50% without line overlap → `suggestion-likely-applied`
-
-### For Prose Comments
-
-1. Get the comment's line range (`start_line` to `line`)
-2. Parse diff hunk headers (`@@ -old,count +new,count @@`)
-3. Check if any hunk's old-line range overlaps the comment range ±5 lines
-4. Overlap found → `exact-lines-modified`
-
-### No-Subsequent-Commits Check
-
-If the commit SHA the comment was left on equals the PR head SHA → `no-subsequent-commits`. This means the PR was merged without any further changes after the review.
+| Diff Verdict | Final Classification |
+|-------------|---------------------|
+| `suggestion-applied`, `suggestion-likely-applied`, `exact-lines-modified` | **Helpful** |
+| `lines-modified-different-fix` | **Helpful** |
+| `file-changed-elsewhere`, `file-changed-no-line-info` | **Not Helpful** (unless in re-audit flips) |
+| `file-not-changed`, `no-subsequent-commits`, `not-applied` | **Not Helpful** |
 
 ## Account Mapping
 
-Engineers have separate personal GitHub accounts and EMU (Enterprise Managed User) accounts. Merge them for per-engineer statistics:
-
-```
-personal_login → emu_login → Display Name
-```
+Engineers have separate personal GitHub accounts and EMU (Enterprise Managed User) accounts. Merge them for per-engineer statistics.
 
 The mapping is defined in `references/account-map.json` (external JSON file). Update for new team members by editing the JSON directly — no script changes needed.

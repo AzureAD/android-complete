@@ -6,20 +6,22 @@ Rules for generating Copilot Code Review Effectiveness reports in Markdown and O
 
 Generate both formats. Templates are in `assets/` within this skill folder.
 
-| # | Section | Content |
-|---|---------|---------|
-| 1 | **Background** | Team context, what repos are covered, what was enabled |
-| 2 | **At a Glance** | 4 summary cards (no-response %, helpful %, not-helpful %, unresolved %) + callout about adoption |
-| 3 | **Overall Results** | Response rate bar, helpfulness verdict bar, breakdown tables |
-| 4 | **Results by Repository** | Per-repo bars + table (comments, response rate, helpful/not/unresolved) |
-| 5 | **Results by Engineer** | Table with colored columns (anonymize names for org-wide sharing) |
-| 6 | **Response Behavior Deep Dive** | What happens to ignored comments (silently applied, merged without commits, etc.) |
-| 7 | **What Copilot Is Good At** | 4-5 real examples with PR references and engineer quotes |
-| 8 | **What Copilot Struggles With** | 4-5 real examples showing false positives, domain gaps |
-| 9 | **Most Reviewed Files** | Top 10 files by comment count |
-| 10 | **Key Takeaways** | 7-8 numbered findings |
-| 11 | **Recommendations** | 3 actionable next steps |
-| 12 | **Methodology Notes** | How data was collected, classified, and validated |
+**CRITICAL:** The section table below lists *what* each section covers, but not *how deep* each section should be. Always read the full asset templates to understand the expected narrative depth. The templates contain 3000+ words of prose — not just tables and bullet points.
+
+| # | Section | Content | Depth |
+|---|---------|---------|-------|
+| 1 | **Background** | Team context, what repos are covered, what was enabled | 2-3 prose paragraphs |
+| 2 | **At a Glance** | 4 summary cards (no-response %, helpful %, not-helpful %, unresolved %) + callout about adoption | Cards + 1 detailed callout box |
+| 3 | **Overall Results** | Response rate bar, helpfulness verdict bar, breakdown tables | Narrative paragraph before each visual + verdict definitions table + yellow warning callout + 2 breakdown tables |
+| 4 | **Results by Repository** | Per-repo bars + table (comments, response rate, helpful/not/unresolved) | Bar per repo + data table + 1 interpretive paragraph |
+| 5 | **Results by Engineer** | Table with colored columns (anonymize names for org-wide sharing) | Full table + blue callout box highlighting the engagement-value correlation |
+| 6 | **Response Behavior Deep Dive** | What happens to ignored comments (silently applied, merged without commits, etc.) | Summary stats + detailed breakdown table + interpretive paragraph |
+| 7 | **What Copilot Is Good At** | 4-5 real examples with PR references and engineer quotes | Each example: category header + full Copilot comment text (not truncated) + engineer reply + 1-2 sentence explanation |
+| 8 | **What Copilot Struggles With** | 4-5 real examples showing false positives, domain gaps | Same format as above — full quotes + explanatory context |
+| 9 | **Most Reviewed Files** | Top 10 files by comment count | Table + 1 interpretive paragraph |
+| 10 | **Key Takeaways** | 7-8 numbered findings | Each finding: bold stat + explanatory sentence |
+| 11 | **Recommendations** | 3 actionable next steps | Each recommendation: 1 full prose paragraph (not a bullet point) with reasoning |
+| 12 | **Methodology Notes** | How data was collected, classified, and validated | 5-6 bullet points with sufficient detail for reproducibility |
 
 ## Statistics to Compute
 
