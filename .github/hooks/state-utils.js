@@ -14,6 +14,7 @@
  *   node .github/hooks/state-utils.js set-design <id> <json>    → sets design artifact
  *   node .github/hooks/state-utils.js add-pbi <id> <json>       → adds a PBI artifact
  *   node .github/hooks/state-utils.js add-agent-pr <id> <json>  → adds an agent PR artifact
+ *   node .github/hooks/state-utils.js add-timeline <id> <json>   → adds a timeline event
  *
  * State file schema:
  * {
@@ -41,6 +42,9 @@
  *       "agentSessions": [
  *         { "repo": "AzureAD/...", "prNumber": 2916, "prUrl": "https://...", "sessionUrl": "https://...", "status": "in_progress" }
  *       ],
+ *       "timeline": [
+ *         { "ts": 1740000000000, "agent": "design-writer", "action": "Created design spec", "phase": "designing" }
+ *       ],
  *       "startedAt": 1740000000000,
  *       "updatedAt": 1740000000000
  *     }
@@ -55,8 +59,9 @@ const path = require('path');
 const os = require('os');
 
 // State file lives in user's home directory (not workspace root)
-const STATE_DIR = path.join(os.homedir(), '.android-auth-orchestrator');
+const STATE_DIR = path.join(os.homedir(), '.feature-orchestrator');
 const STATE_FILE = path.join(STATE_DIR, 'state.json');
+const LEGACY_STATE_FILE = path.join(os.homedir(), '.android-auth-orchestrator', 'state.json');
 
 function ensureStateDir() {
     if (!fs.existsSync(STATE_DIR)) {
@@ -65,11 +70,15 @@ function ensureStateDir() {
 }
 
 function readState() {
-    if (!fs.existsSync(STATE_FILE)) {
+    // Try new path first, fall back to legacy
+    const filePath = fs.existsSync(STATE_FILE) ? STATE_FILE
+        : fs.existsSync(LEGACY_STATE_FILE) ? LEGACY_STATE_FILE
+        : STATE_FILE;
+    if (!fs.existsSync(filePath)) {
         return { version: 1, features: [], lastUpdated: Date.now() };
     }
     try {
-        return JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+        return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
     } catch {
         return { version: 1, features: [], lastUpdated: Date.now() };
     }
@@ -142,6 +151,32 @@ switch (command) {
             // Record phase timestamp for duration tracking
             if (!feature.phaseTimestamps) { feature.phaseTimestamps = {}; }
             feature.phaseTimestamps[args[1]] = Date.now();
+            // Auto-record timeline event for phase transition
+            if (!feature.timeline) { feature.timeline = []; }
+            const agentMap = {
+                'designing': 'design-writer', 'design_review': 'design-writer',
+                'planning': 'feature-planner', 'plan_review': 'feature-planner',
+                'backlogging': 'pbi-creator', 'backlog_review': 'pbi-creator',
+                'dispatching': 'agent-dispatcher', 'monitoring': 'agent-dispatcher',
+                'done': 'orchestrator',
+            };
+            const actionMap = {
+                'designing': 'Started writing design spec',
+                'design_review': 'Design spec ready for review',
+                'planning': 'Started decomposing into PBIs',
+                'plan_review': 'Plan ready for review',
+                'backlogging': 'Creating work items in ADO',
+                'backlog_review': 'Work items created — ready for dispatch',
+                'dispatching': 'Dispatching PBIs to coding agent',
+                'monitoring': 'Agents working on PRs',
+                'done': 'Feature complete',
+            };
+            feature.timeline.push({
+                ts: Date.now(),
+                agent: agentMap[args[1]] || 'orchestrator',
+                action: actionMap[args[1]] || `Moved to ${args[1]}`,
+                phase: args[1],
+            });
             writeState(state);
             console.log(JSON.stringify({ ok: true, id: args[0], step: args[1] }));
         } else {
@@ -267,7 +302,27 @@ switch (command) {
         }
         break;
     }
+    case 'add-timeline': {
+        const state = readState();
+        const feature = findFeature(state, args[0]);
+        if (feature) {
+            const event = JSON.parse(args[1]);
+            if (!feature.timeline) { feature.timeline = []; }
+            feature.timeline.push({
+                ts: Date.now(),
+                agent: event.agent || 'orchestrator',
+                action: event.action || '',
+                phase: event.phase || feature.step || '',
+            });
+            feature.updatedAt = Date.now();
+            writeState(state);
+            console.log(JSON.stringify({ ok: true, timelineCount: feature.timeline.length }));
+        } else {
+            console.log(JSON.stringify({ ok: false, error: 'Feature not found' }));
+        }
+        break;
+    }
     default:
-        console.error('Usage: state-utils.js <get|list-features|get-feature|set-step|add-feature|set-agent-info|set-design|add-pbi|add-agent-pr> [args]');
+        console.error('Usage: state-utils.js <get|list-features|get-feature|set-step|add-feature|set-agent-info|set-design|add-pbi|add-agent-pr|add-timeline> [args]');
         process.exit(1);
 }
