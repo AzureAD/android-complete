@@ -1,0 +1,17 @@
+{
+    "_comment": "This file is produced by Phase 3 (AI-assisted classification). For each new analysis run, the agent reads unclear replies, classifies them, and writes the results here. Phase 4 (final-classification.ps1) reads this file to finalize verdicts.",
+
+    "genuineUnclearHelpful": [
+        "_comment: Reply text patterns (lowercased) that indicate the engineer acted on the feedback, even though keyword matching didn't catch it. These are discovered during Phase 3 manual/AI audit of 'replied-unclear' comments."
+    ],
+
+    "genuineUnclearHelpfulExtra": [
+        "_comment: Additional patterns like commit SHAs or unique strings that confirm a fix was applied."
+    ],
+
+    "reauditFlipKeys": [
+        "_comment: Keys in format 'repo/prNumber/filePattern' for no-response comments where diff verification returned 'file-changed-elsewhere' or 'file-changed-no-line-info' but manual re-audit confirmed the comment was helpful. Discovered during Phase 3."
+    ],
+
+    "mixedResponseVerdict": "not-helpful"
+}

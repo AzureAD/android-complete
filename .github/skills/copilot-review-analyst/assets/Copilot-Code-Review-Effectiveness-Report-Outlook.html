@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!--[if mso]>
+<noscript>
+<xml>
+<o:OfficeDocumentSettings>
+<o:PixelsPerInch>96</o:PixelsPerInch>
+</o:OfficeDocumentSettings>
+</xml>
+</noscript>
+<![endif]-->
+<title>Copilot Code Review Effectiveness Analysis</title>
+</head>
+<body style="font-family:Segoe UI,Helvetica,Arial,sans-serif;color:#1f2328;line-height:1.6;background:#ffffff;margin:0;padding:0;"><table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#ffffff;"><tr><td align="center" style="padding:20px 10px;"><table cellpadding="0" cellspacing="0" border="0" width="1000" style="background:#ffffff;"><tr><td style="padding:20px 28px;">
+
+<p style="font-size:26px;font-weight:bold;margin:0 0 4px;mso-line-height-rule:exactly;">Copilot Code Review Effectiveness Analysis</p>
+<p style="color:#656d76;font-size:14px;margin:0 0 28px;">Android Auth Platform &nbsp;|&nbsp; January 23 – March 23, 2026 &nbsp;|&nbsp; Common, MSAL, Broker Repositories</p>
+
+<!-- ==================== BACKGROUND ==================== -->
+<p style="margin:32px 0 0;mso-line-height-rule:exactly;">&nbsp;</p><table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 14px;"><tr><td style="background:#c8e1ff;border-left:5px solid #0969da;padding:10px 16px;"><font size="4" face="Segoe UI,Helvetica,Arial,sans-serif"><b>Background</b></font></td></tr></table>
+
+<p style="font-size:14px;line-height:1.7;">The Android Auth Platform team builds and maintains the authentication libraries used by Microsoft's mobile apps — including MSAL (client-side), Common (shared IPC and utilities), and Broker (the brokered authentication service running on Android devices). Our codebase spans three repositories with 10 active contributors.</p>
+
+<p style="font-size:14px;line-height:1.7;">Earlier this year, we enabled <strong>GitHub Copilot code reviews</strong> across all three repositories. We also added <strong>custom review instructions</strong> via <code>copilot-instructions.md</code> to give the AI context about our architecture, coding conventions, and multi-repo structure — aiming to make its feedback more relevant than generic suggestions.</p>
+
+<p style="font-size:14px;line-height:1.7;">This report answers the question: <strong>Is Copilot code review actually useful for our team?</strong> We looked at every comment Copilot left over 2 months and determined — through reply analysis, commit diff verification, and AI-assisted classification of ambiguous cases — whether each piece of feedback led to a real code improvement, was dismissed as irrelevant, or was simply never evaluated by the engineer.</p>
+
+<!-- ==================== Key Findings ==================== -->
+<p style="margin:32px 0 0;mso-line-height-rule:exactly;">&nbsp;</p><table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 14px;"><tr><td style="background:#c8e1ff;border-left:5px solid #0969da;padding:10px 16px;"><font size="4" face="Segoe UI,Helvetica,Arial,sans-serif"><b>At a Glance</b></font></td></tr></table>
+
+<p style="font-size:15px;line-height:1.7;">We analyzed <strong>every inline code review comment</strong> left by GitHub Copilot on human-authored pull requests across our three Android Auth repositories over the past two months. For each of the <strong>557 comments</strong>, we determined whether the feedback led to a concrete code improvement.</p>
+
+<!-- Summary cards as table -->
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:20px 0;">
+<tr>
+<td width="25%" style="padding:6px;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid #d0d7de;border-left:4px solid #656d76;border-radius:6px;">
+  <tr><td style="padding:14px;text-align:center;">
+    <div style="font-size:30px;font-weight:700;color:#656d76;">57%</div>
+    <div style="font-size:12px;color:#656d76;">of comments received<br><strong>no response</strong></div>
+  </td></tr>
+  </table>
+</td>
+<td width="25%" style="padding:6px;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid #d0d7de;border-left:4px solid #2da44e;border-radius:6px;">
+  <tr><td style="padding:14px;text-align:center;">
+    <div style="font-size:30px;font-weight:700;color:#2da44e;">41%</div>
+    <div style="font-size:12px;color:#656d76;">confirmed<br><strong>helpful</strong></div>
+  </td></tr>
+  </table>
+</td>
+<td width="25%" style="padding:6px;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid #d0d7de;border-left:4px solid #cf222e;border-radius:6px;">
+  <tr><td style="padding:14px;text-align:center;">
+    <div style="font-size:30px;font-weight:700;color:#cf222e;">18%</div>
+    <div style="font-size:12px;color:#656d76;">confirmed<br><strong>not helpful</strong></div>
+  </td></tr>
+  </table>
+</td>
+<td width="25%" style="padding:6px;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid #d0d7de;border-left:4px solid #bf8700;border-radius:6px;">
+  <tr><td style="padding:14px;text-align:center;">
+    <div style="font-size:30px;font-weight:700;color:#bf8700;">41%</div>
+    <div style="font-size:12px;color:#656d76;">unresolved<br><strong>(inconclusive)</strong></div>
+  </td></tr>
+  </table>
+</td>
+</tr>
+</table>
+
+<!-- Callout -->
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:16px 0;">
+<tr>
+<td style="background:#ddf4ff;border-left:4px solid #0969da;padding:14px 18px;border-radius:0 4px 4px 0;font-size:14px;">
+<strong style="display:block;margin-bottom:4px;">The biggest finding isn't about AI quality — it's about adoption.</strong>
+Of the 557 comments Copilot left, only 239 (43%) received any response from an engineer — the other 318 were never acknowledged. Of those 239 responded-to comments, <strong>144 (60%) led to confirmed code improvements</strong>. That's a strong signal: when engineers read and evaluate Copilot's feedback, the majority of it is useful. The challenge is that 57% of comments are never evaluated at all, leaving 226 (41%) in an unresolved state where we can't determine whether they were helpful or not.
+</td>
+</tr>
+</table>
+
+<!-- ==================== SCOPE ==================== --><p style="font-size:15px;font-weight:bold;margin:24px 0 10px;mso-line-height-rule:exactly;">Scope</p>
+
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:16px 0;">
+<tr>
+<td width="25%" style="padding:6px;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid #d0d7de;border-radius:6px;">
+  <tr><td style="padding:14px;text-align:center;">
+    <div style="font-size:28px;font-weight:700;">163</div>
+    <div style="font-size:12px;color:#656d76;">Human PRs<br>scanned</div>
+  </td></tr>
+  </table>
+</td>
+<td width="25%" style="padding:6px;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid #d0d7de;border-radius:6px;">
+  <tr><td style="padding:14px;text-align:center;">
+    <div style="font-size:28px;font-weight:700;">113</div>
+    <div style="font-size:12px;color:#656d76;">PRs received<br>Copilot review (69%)</div>
+  </td></tr>
+  </table>
+</td>
+<td width="25%" style="padding:6px;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid #d0d7de;border-radius:6px;">
+  <tr><td style="padding:14px;text-align:center;">
+    <div style="font-size:28px;font-weight:700;">557</div>
+    <div style="font-size:12px;color:#656d76;">Inline review<br>comments</div>
+  </td></tr>
+  </table>
+</td>
+<td width="25%" style="padding:6px;">
+  <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid #d0d7de;border-radius:6px;">
+  <tr><td style="padding:14px;text-align:center;">
+    <div style="font-size:28px;font-weight:700;">4.9</div>
+    <div style="font-size:12px;color:#656d76;">Avg comments<br>per reviewed PR</div>
+  </td></tr>
+  </table>
+</td>
+</tr>
+</table>
+
+<!-- ==================== OVERALL RESULTS ==================== -->
+<p style="margin:32px 0 0;mso-line-height-rule:exactly;">&nbsp;</p><table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 14px;"><tr><td style="background:#c8e1ff;border-left:5px solid #0969da;padding:10px 16px;"><font size="4" face="Segoe UI,Helvetica,Arial,sans-serif"><b>Overall Results</b></font></td></tr></table>
+
+<p style="font-size:15px;font-weight:bold;margin:24px 0 10px;mso-line-height-rule:exactly;">Engineer Response Rate</p>
+<p style="font-size:14px;">Before looking at helpfulness, it's important to understand how engineers interact with Copilot reviews — because a comment can only demonstrate value if someone reads it.</p>
+
+<!-- Response rate bar -->
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:12px 0;height:32px;">
+<tr>
+<td width="43%" style="background:#2da44e;color:#fff;font-size:12px;font-weight:600;text-align:center;padding:6px;">43% replied</td>
+<td width="57%" style="background:#656d76;color:#fff;font-size:12px;font-weight:600;text-align:center;padding:6px;">57% ignored</td>
+</tr>
+</table>
+<table cellpadding="0" cellspacing="0" border="0" style="font-size:13px;margin:6px 0;">
+<tr>
+<td style="padding:2px 4px;"><table cellpadding="0" cellspacing="0" border="0"><tr><td style="width:12px;height:12px;background:#2da44e;">&nbsp;</td></tr></table></td>
+<td style="padding:2px 8px 2px 4px;color:#656d76;">Engineer replied (239)</td>
+<td style="padding:2px 4px;"><table cellpadding="0" cellspacing="0" border="0"><tr><td style="width:12px;height:12px;background:#656d76;">&nbsp;</td></tr></table></td>
+<td style="padding:2px 8px 2px 4px;color:#656d76;">No response (318)</td>
+</tr>
+</table>
+
+<p style="font-size:14px;">More than half of all Copilot review comments receive no human response. The majority of AI feedback enters a void — it may be valid, but we can never confirm its value if no one engages with it.</p>
+
+<p style="font-size:15px;font-weight:bold;margin:24px 0 10px;mso-line-height-rule:exactly;">Helpfulness Verdict</p>
+
+<!-- Helpfulness bar -->
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:12px 0;height:36px;">
+<tr>
+<td width="41%" style="background:#2da44e;color:#fff;font-size:13px;font-weight:600;text-align:center;padding:6px;">41.3% Helpful</td>
+<td width="18%" style="background:#cf222e;color:#fff;font-size:12px;font-weight:600;text-align:center;padding:6px;">18.1%</td>
+<td width="41%" style="background:#bf8700;color:#fff;font-size:13px;font-weight:600;text-align:center;padding:6px;">40.6% Unresolved</td>
+</tr>
+</table>
+<table cellpadding="0" cellspacing="0" border="0" style="font-size:13px;margin:6px 0;">
+<tr>
+<td style="padding:2px 4px;"><table cellpadding="0" cellspacing="0" border="0"><tr><td style="width:12px;height:12px;background:#2da44e;">&nbsp;</td></tr></table></td>
+<td style="padding:2px 8px 2px 4px;color:#656d76;">Confirmed Helpful (230)</td>
+<td style="padding:2px 4px;"><table cellpadding="0" cellspacing="0" border="0"><tr><td style="width:12px;height:12px;background:#cf222e;">&nbsp;</td></tr></table></td>
+<td style="padding:2px 8px 2px 4px;color:#656d76;">Confirmed Not Helpful (101)</td>
+<td style="padding:2px 4px;"><table cellpadding="0" cellspacing="0" border="0"><tr><td style="width:12px;height:12px;background:#bf8700;">&nbsp;</td></tr></table></td>
+<td style="padding:2px 8px 2px 4px;color:#656d76;">Unresolved (226)</td>
+</tr>
+</table>
+
+<!-- Verdict definitions table -->
+<table cellpadding="0" cellspacing="0" border="1" bordercolor="#d0d7de" width="100%" style="border-collapse:collapse;font-size:13px;margin:14px 0;">
+<tr style="background:#ffffff;">
+  <th style="padding:8px 10px;text-align:left;font-weight:600;">Verdict</th>
+  <th style="padding:8px 10px;text-align:right;font-weight:600;">Count</th>
+  <th style="padding:8px 10px;text-align:right;font-weight:600;">%</th>
+  <th style="padding:8px 10px;text-align:left;font-weight:600;">Definition</th>
+</tr>
+<tr>
+  <td style="padding:8px 10px;font-weight:600;color:#2da44e;">Confirmed Helpful</td>
+  <td style="padding:8px 10px;text-align:right;">230</td>
+  <td style="padding:8px 10px;text-align:right;">41.3%</td>
+  <td style="padding:8px 10px;">The comment led to a code change — engineer explicitly acknowledged it, or the suggested fix was verified in a subsequent commit diff.</td>
+</tr>
+<tr>
+  <td style="padding:8px 10px;font-weight:600;color:#cf222e;">Confirmed Not Helpful</td>
+  <td style="padding:8px 10px;text-align:right;">101</td>
+  <td style="padding:8px 10px;text-align:right;">18.1%</td>
+  <td style="padding:8px 10px;">The engineer explicitly dismissed the comment with a reason why the feedback was incorrect, irrelevant, or by design.</td>
+</tr>
+<tr>
+  <td style="padding:8px 10px;font-weight:600;color:#bf8700;">Unresolved</td>
+  <td style="padding:8px 10px;text-align:right;">226</td>
+  <td style="padding:8px 10px;text-align:right;">40.6%</td>
+  <td style="padding:8px 10px;">No reply and no definitive diff evidence. All 226 are comments where the engineer did not respond. Includes comments on the final commit before merge, files modified at different lines, and comments with no line number. Could be valid feedback that was never evaluated.</td>
+</tr>
+</table>
+
+<!-- Warning callout -->
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:16px 0;">
+<tr>
+<td style="background:#fff8c5;border-left:4px solid #bf8700;padding:14px 18px;border-radius:0 4px 4px 0;font-size:14px;">
+<strong style="display:block;margin-bottom:4px;">226 comments (41%) are unresolved — not because the AI was wrong, but because no one engaged.</strong>
+All 226 are comments that received no reply from the engineer. This includes 122 comments on the final commit before merge (where the engineer had no subsequent commits), 45 where the file was modified but at different lines, 50 where the comment had no line number for verification, and 9 where the file was never modified. If engineers had responded — even just to dismiss — we would know whether the feedback was useful.
+</td>
+</tr>
+</table>
+
+<p style="font-size:15px;font-weight:bold;margin:24px 0 10px;mso-line-height-rule:exactly;">How Helpful Comments Were Delivered</p>
+<table cellpadding="0" cellspacing="0" border="1" bordercolor="#d0d7de" width="100%" style="border-collapse:collapse;font-size:13px;margin:14px 0;">
+<tr style="background:#ffffff;">
+  <th style="padding:8px 10px;text-align:left;">Path</th>
+  <th style="padding:8px 10px;text-align:right;">Count</th>
+  <th style="padding:8px 10px;text-align:left;">Description</th>
+</tr>
+<tr><td style="padding:8px 10px;">Engineer replied and acknowledged</td><td style="padding:8px 10px;text-align:right;">144</td><td style="padding:8px 10px;">"good catch", "fixed", "addressed", "added unit test", "@copilot apply changes"</td></tr>
+<tr><td style="padding:8px 10px;">Engineer silently applied the fix</td><td style="padding:8px 10px;text-align:right;">86</td><td style="padding:8px 10px;">No reply, but suggestion code or exact line range verified as modified in subsequent commit</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">Total Confirmed Helpful</td><td style="padding:8px 10px;text-align:right;font-weight:600;">230</td><td style="padding:8px 10px;"></td></tr>
+</table>
+
+<p style="font-size:15px;font-weight:bold;margin:24px 0 10px;mso-line-height-rule:exactly;">How Not Helpful Comments Were Identified</p>
+<table cellpadding="0" cellspacing="0" border="1" bordercolor="#d0d7de" width="100%" style="border-collapse:collapse;font-size:13px;margin:14px 0;">
+<tr style="background:#ffffff;">
+  <th style="padding:8px 10px;text-align:left;">Path</th>
+  <th style="padding:8px 10px;text-align:right;">Count</th>
+  <th style="padding:8px 10px;text-align:left;">Description</th>
+</tr>
+<tr><td style="padding:8px 10px;">Engineer replied and dismissed</td><td style="padding:8px 10px;text-align:right;">95</td><td style="padding:8px 10px;">"won't fix", "this is fine", "not applicable", "Copilot is incorrect"</td></tr>
+<tr><td style="padding:8px 10px;">Comment on stale/outdated code</td><td style="padding:8px 10px;text-align:right;">6</td><td style="padding:8px 10px;">Comment was on code already changed in a different commit</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">Total Confirmed Not Helpful</td><td style="padding:8px 10px;text-align:right;font-weight:600;">101</td><td style="padding:8px 10px;"></td></tr>
+</table>
+
+<!-- ==================== PER REPO ==================== -->
+<p style="margin:32px 0 0;mso-line-height-rule:exactly;">&nbsp;</p><table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 14px;"><tr><td style="background:#c8e1ff;border-left:5px solid #0969da;padding:10px 16px;"><font size="4" face="Segoe UI,Helvetica,Arial,sans-serif"><b>Results by Repository</b></font></td></tr></table>
+
+<!-- Broker bar -->
+<p style="font-size:13px;font-weight:600;margin:14px 0 4px;">Broker (293 comments)</p>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="height:24px;">
+<tr>
+<td width="49%" style="background:#2da44e;color:#fff;font-size:11px;font-weight:600;text-align:center;padding:4px;">49%</td>
+<td width="16%" style="background:#cf222e;color:#fff;font-size:11px;font-weight:600;text-align:center;padding:4px;">16%</td>
+<td width="35%" style="background:#bf8700;color:#fff;font-size:11px;font-weight:600;text-align:center;padding:4px;">35%</td>
+</tr>
+</table>
+
+<!-- Common bar -->
+<p style="font-size:13px;font-weight:600;margin:14px 0 4px;">Common (188 comments)</p>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="height:24px;">
+<tr>
+<td width="36%" style="background:#2da44e;color:#fff;font-size:11px;font-weight:600;text-align:center;padding:4px;">36%</td>
+<td width="18%" style="background:#cf222e;color:#fff;font-size:11px;font-weight:600;text-align:center;padding:4px;">18%</td>
+<td width="46%" style="background:#bf8700;color:#fff;font-size:11px;font-weight:600;text-align:center;padding:4px;">46%</td>
+</tr>
+</table>
+
+<!-- MSAL bar -->
+<p style="font-size:13px;font-weight:600;margin:14px 0 4px;">MSAL (76 comments)</p>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="height:24px;">
+<tr>
+<td width="26%" style="background:#2da44e;color:#fff;font-size:11px;font-weight:600;text-align:center;padding:4px;">26%</td>
+<td width="25%" style="background:#cf222e;color:#fff;font-size:11px;font-weight:600;text-align:center;padding:4px;">25%</td>
+<td width="49%" style="background:#bf8700;color:#fff;font-size:11px;font-weight:600;text-align:center;padding:4px;">49%</td>
+</tr>
+</table>
+
+<table cellpadding="0" cellspacing="0" border="0" style="font-size:13px;margin:6px 0 16px;">
+<tr>
+<td style="padding:2px 4px;"><table cellpadding="0" cellspacing="0" border="0"><tr><td style="width:12px;height:12px;background:#2da44e;">&nbsp;</td></tr></table></td>
+<td style="padding:2px 8px 2px 4px;color:#656d76;">Helpful</td>
+<td style="padding:2px 4px;"><table cellpadding="0" cellspacing="0" border="0"><tr><td style="width:12px;height:12px;background:#cf222e;">&nbsp;</td></tr></table></td>
+<td style="padding:2px 8px 2px 4px;color:#656d76;">Not Helpful</td>
+<td style="padding:2px 4px;"><table cellpadding="0" cellspacing="0" border="0"><tr><td style="width:12px;height:12px;background:#bf8700;">&nbsp;</td></tr></table></td>
+<td style="padding:2px 8px 2px 4px;color:#656d76;">Unresolved</td>
+</tr>
+</table>
+
+<table cellpadding="0" cellspacing="0" border="1" bordercolor="#d0d7de" width="100%" style="border-collapse:collapse;font-size:13px;margin:14px 0;">
+<tr style="background:#ffffff;">
+  <th style="padding:8px 10px;text-align:left;">Repository</th>
+  <th style="padding:8px 10px;text-align:right;">Comments</th>
+  <th style="padding:8px 10px;text-align:right;">Response Rate</th>
+  <th style="padding:8px 10px;text-align:right;font-weight:600;background:#dafbe1;">Helpful</th><th style="padding:8px 10px;text-align:right;font-weight:600;background:#ffebe9;">Not Helpful</th><th style="padding:8px 10px;text-align:right;font-weight:600;background:#fff8c5;">Unresolved</th>
+</tr>
+<tr><td style="padding:8px 10px;font-weight:600;">Broker</td><td style="padding:8px 10px;text-align:right;">293</td><td style="padding:8px 10px;text-align:right;">56.0%</td><td style="padding:8px 10px;text-align:right;background:#dafbe1;">142 (48.5%)</td><td style="padding:8px 10px;text-align:right;background:#ffebe9;">48 (16.4%)</td><td style="padding:8px 10px;text-align:right;background:#fff8c5;">103 (35.2%)</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">Common</td><td style="padding:8px 10px;text-align:right;">188</td><td style="padding:8px 10px;text-align:right;">29.8%</td><td style="padding:8px 10px;text-align:right;background:#dafbe1;">68 (36.2%)</td><td style="padding:8px 10px;text-align:right;background:#ffebe9;">34 (18.1%)</td><td style="padding:8px 10px;text-align:right;background:#fff8c5;">86 (45.7%)</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">MSAL</td><td style="padding:8px 10px;text-align:right;">76</td><td style="padding:8px 10px;text-align:right;">25.0%</td><td style="padding:8px 10px;text-align:right;background:#dafbe1;">20 (26.3%)</td><td style="padding:8px 10px;text-align:right;background:#ffebe9;">19 (25.0%)</td><td style="padding:8px 10px;text-align:right;background:#fff8c5;">37 (48.7%)</td></tr>
+</table>
+
+<!-- ==================== PER ENGINEER ==================== -->
+<p style="margin:32px 0 0;mso-line-height-rule:exactly;">&nbsp;</p><table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 14px;"><tr><td style="background:#c8e1ff;border-left:5px solid #0969da;padding:10px 16px;"><font size="4" face="Segoe UI,Helvetica,Arial,sans-serif"><b>Results by Engineer</b></font></td></tr></table>
+<p style="font-size:13px;color:#656d76;">Each engineer has two GitHub accounts (personal + EMU). These have been merged. Names are anonymized.</p>
+
+<table cellpadding="0" cellspacing="0" border="1" bordercolor="#d0d7de" width="100%" style="border-collapse:collapse;font-size:13px;margin:14px 0;">
+<tr style="background:#ffffff;">
+  <th style="padding:8px 10px;text-align:left;font-weight:600;">Engineer</th>
+  <th style="padding:8px 10px;text-align:right;font-weight:600;">Comments</th>
+  <th style="padding:8px 10px;text-align:right;font-weight:600;">Replied</th>
+  <th style="padding:8px 10px;text-align:right;font-weight:600;">Response Rate</th>
+  <th style="padding:8px 10px;text-align:right;font-weight:600;background:#dafbe1;">Helpful</th>
+  <th style="padding:8px 10px;text-align:right;font-weight:600;background:#ffebe9;">Not Helpful</th>
+  <th style="padding:8px 10px;text-align:right;font-weight:600;background:#fff8c5;">Unresolved</th>
+  <th style="padding:8px 10px;text-align:right;font-weight:600;">Helpfulness</th>
+</tr>
+<tr><td style="padding:8px 10px;font-weight:600;">Engineer A</td><td style="padding:8px 10px;text-align:right;">20</td><td style="padding:8px 10px;text-align:right;">20</td><td style="padding:8px 10px;text-align:right;font-weight:600;">100%</td><td style="padding:8px 10px;text-align:right;background:#dafbe1;">14</td><td style="padding:8px 10px;text-align:right;background:#ffebe9;">6</td><td style="padding:8px 10px;text-align:right;background:#fff8c5;">0</td><td style="padding:8px 10px;text-align:right;font-weight:600;color:#2da44e;">70.0%</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">Engineer B</td><td style="padding:8px 10px;text-align:right;">83</td><td style="padding:8px 10px;text-align:right;">75</td><td style="padding:8px 10px;text-align:right;font-weight:600;">90.4%</td><td style="padding:8px 10px;text-align:right;background:#dafbe1;">57</td><td style="padding:8px 10px;text-align:right;background:#ffebe9;">26</td><td style="padding:8px 10px;text-align:right;background:#fff8c5;">0</td><td style="padding:8px 10px;text-align:right;font-weight:600;color:#2da44e;">68.7%</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">Engineer C</td><td style="padding:8px 10px;text-align:right;">15</td><td style="padding:8px 10px;text-align:right;">4</td><td style="padding:8px 10px;text-align:right;">26.7%</td><td style="padding:8px 10px;text-align:right;background:#dafbe1;">8</td><td style="padding:8px 10px;text-align:right;background:#ffebe9;">2</td><td style="padding:8px 10px;text-align:right;background:#fff8c5;">5</td><td style="padding:8px 10px;text-align:right;font-weight:600;">53.3%</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">Engineer D</td><td style="padding:8px 10px;text-align:right;">40</td><td style="padding:8px 10px;text-align:right;">30</td><td style="padding:8px 10px;text-align:right;font-weight:600;">75.0%</td><td style="padding:8px 10px;text-align:right;background:#dafbe1;">19</td><td style="padding:8px 10px;text-align:right;background:#ffebe9;">14</td><td style="padding:8px 10px;text-align:right;background:#fff8c5;">7</td><td style="padding:8px 10px;text-align:right;font-weight:600;">47.5%</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">Engineer E</td><td style="padding:8px 10px;text-align:right;">110</td><td style="padding:8px 10px;text-align:right;">37</td><td style="padding:8px 10px;text-align:right;">33.6%</td><td style="padding:8px 10px;text-align:right;background:#dafbe1;">44</td><td style="padding:8px 10px;text-align:right;background:#ffebe9;">18</td><td style="padding:8px 10px;text-align:right;background:#fff8c5;">48</td><td style="padding:8px 10px;text-align:right;">40.0%</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">Engineer F</td><td style="padding:8px 10px;text-align:right;">99</td><td style="padding:8px 10px;text-align:right;">20</td><td style="padding:8px 10px;text-align:right;">20.2%</td><td style="padding:8px 10px;text-align:right;background:#dafbe1;">36</td><td style="padding:8px 10px;text-align:right;background:#ffebe9;">11</td><td style="padding:8px 10px;text-align:right;background:#fff8c5;">52</td><td style="padding:8px 10px;text-align:right;">36.4%</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">Engineer G</td><td style="padding:8px 10px;text-align:right;">63</td><td style="padding:8px 10px;text-align:right;">22</td><td style="padding:8px 10px;text-align:right;">34.9%</td><td style="padding:8px 10px;text-align:right;background:#dafbe1;">20</td><td style="padding:8px 10px;text-align:right;background:#ffebe9;">12</td><td style="padding:8px 10px;text-align:right;background:#fff8c5;">31</td><td style="padding:8px 10px;text-align:right;">31.7%</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">Engineer H</td><td style="padding:8px 10px;text-align:right;">100</td><td style="padding:8px 10px;text-align:right;">24</td><td style="padding:8px 10px;text-align:right;">24.0%</td><td style="padding:8px 10px;text-align:right;background:#dafbe1;">27</td><td style="padding:8px 10px;text-align:right;background:#ffebe9;">12</td><td style="padding:8px 10px;text-align:right;background:#fff8c5;">61</td><td style="padding:8px 10px;text-align:right;">27.0%</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">Engineer I</td><td style="padding:8px 10px;text-align:right;">24</td><td style="padding:8px 10px;text-align:right;">6</td><td style="padding:8px 10px;text-align:right;">25.0%</td><td style="padding:8px 10px;text-align:right;background:#dafbe1;">5</td><td style="padding:8px 10px;text-align:right;background:#ffebe9;">0</td><td style="padding:8px 10px;text-align:right;background:#fff8c5;">19</td><td style="padding:8px 10px;text-align:right;">20.8%</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">Engineer J</td><td style="padding:8px 10px;text-align:right;">3</td><td style="padding:8px 10px;text-align:right;">1</td><td style="padding:8px 10px;text-align:right;">33.3%</td><td style="padding:8px 10px;text-align:right;background:#dafbe1;">0</td><td style="padding:8px 10px;text-align:right;background:#ffebe9;">0</td><td style="padding:8px 10px;text-align:right;background:#fff8c5;">3</td><td style="padding:8px 10px;text-align:right;">0%</td></tr>
+</table>
+
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:16px 0;">
+<tr>
+<td style="background:#ddf4ff;border-left:4px solid #0969da;padding:14px 18px;border-radius:0 4px 4px 0;font-size:14px;">
+<strong style="display:block;margin-bottom:4px;">Engagement drives value — and visibility.</strong>
+Engineer A (100% response rate) and Engineer B (90%) have the highest helpfulness <em>and</em> zero unresolved comments. When you engage, you know exactly what the AI got right and wrong. Engineer F (20%) and Engineer H (24%) have 52 and 61 unresolved comments respectively — over half their feedback goes into a black hole.
+</td>
+</tr>
+</table>
+
+<!-- ==================== WHAT WORKS ==================== -->
+<p style="margin:32px 0 0;mso-line-height-rule:exactly;">&nbsp;</p><table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 14px;"><tr><td style="background:#c8e1ff;border-left:5px solid #0969da;padding:10px 16px;"><font size="4" face="Segoe UI,Helvetica,Arial,sans-serif"><b>What Copilot Is Good At</b></font></td></tr></table>
+
+<p style="font-size:14px;font-weight:600;">Catching real bugs:</p>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:4px 0 16px;"><tr><td style="border-left:3px solid #d0d7de;padding:8px 14px;background:#f6f8fa;font-size:13px;color:#656d76;">
+<em>PR #3050 (Common):</em> Copilot flagged that <code>"$it"</code> string wrapping doesn't JSON-escape the content, which could break consumers.<br>
+<strong>Engineer reply:</strong> "You're right. Making the change."
+</td></tr></table>
+
+<p style="font-size:14px;font-weight:600;">Stale documentation and naming inconsistencies:</p>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:4px 0 16px;"><tr><td style="border-left:3px solid #d0d7de;padding:8px 14px;background:#f6f8fa;font-size:13px;color:#656d76;">
+<em>PR #64 (Broker):</em> Copilot identified four locations where KDoc still referenced the old flight constant after it was renamed. All four were silently fixed in the next commit.
+</td></tr></table>
+
+<p style="font-size:14px;font-weight:600;">CI/pipeline configuration issues:</p>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:4px 0 16px;"><tr><td style="border-left:3px solid #d0d7de;padding:8px 14px;background:#f6f8fa;font-size:13px;color:#656d76;">
+<em>PR #3038 (Common):</em> Copilot warned that using <code>vmImage: 'windows-latest'</code> makes the CD pipeline non-deterministic. The engineer changed to a pinned image version.
+</td></tr></table>
+
+<p style="font-size:14px;font-weight:600;">The <code>@copilot apply</code> workflow:</p>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:4px 0 16px;"><tr><td style="border-left:3px solid #d0d7de;padding:8px 14px;background:#f6f8fa;font-size:13px;color:#656d76;">
+In 16 instances (2.9%), engineers validated the feedback and delegated the fix back: <code>@copilot open a new pull request to apply changes based on [this feedback]</code>. An efficient pattern where AI identifies <em>and</em> fixes the issue.
+</td></tr></table>
+
+<!-- ==================== WHAT DOESN'T WORK ==================== -->
+<p style="margin:32px 0 0;mso-line-height-rule:exactly;">&nbsp;</p><table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 14px;"><tr><td style="background:#c8e1ff;border-left:5px solid #0969da;padding:10px 16px;"><font size="4" face="Segoe UI,Helvetica,Arial,sans-serif"><b>What Copilot Struggles With</b></font></td></tr></table>
+
+<p style="font-size:14px;font-weight:600;">Lacking domain context:</p>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:4px 0 16px;"><tr><td style="border-left:3px solid #d0d7de;padding:8px 14px;background:#f6f8fa;font-size:13px;color:#656d76;">
+<em>Copilot:</em> "<code>shared_device_id</code> could be used for tracking — consider hashing before emission."<br>
+<em>Engineer:</em> "The shared_device_id is a random UUID and is not PII."
+</td></tr></table>
+
+<p style="font-size:14px;font-weight:600;">Suggesting tests for trivial code:</p>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:4px 0 16px;"><tr><td style="border-left:3px solid #d0d7de;padding:8px 14px;background:#f6f8fa;font-size:13px;color:#656d76;">
+<em>Copilot:</em> "New telemetry attributes lack test coverage..."<br>
+<em>Engineer:</em> "These are just telemetry related changes and adding unit tests will be overdo here."
+</td></tr></table>
+
+<p style="font-size:14px;font-weight:600;">Misunderstanding APIs:</p>
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:4px 0 16px;"><tr><td style="border-left:3px solid #d0d7de;padding:8px 14px;background:#f6f8fa;font-size:13px;color:#656d76;">
+<em>Copilot:</em> "<code>00000003-0000-0ff1-ce00-000000000000</code> is the resource ID for Microsoft Graph, not SharePoint Online."<br>
+<em>Engineer:</em> "00000003-0000-0ff1-ce00-000000000000 is SharePoint Online."
+</td></tr></table>
+
+<!-- ==================== KEY TAKEAWAYS ==================== -->
+<p style="margin:32px 0 0;mso-line-height-rule:exactly;">&nbsp;</p><table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 14px;"><tr><td style="background:#c8e1ff;border-left:5px solid #0969da;padding:10px 16px;"><font size="4" face="Segoe UI,Helvetica,Arial,sans-serif"><b>Key Takeaways</b></font></td></tr></table>
+
+<table cellpadding="0" cellspacing="0" border="1" bordercolor="#d0d7de" width="100%" style="border-collapse:collapse;font-size:13px;margin:14px 0;">
+<tr style="background:#ffffff;"><th style="padding:8px 10px;text-align:center;width:30px;">#</th><th style="padding:8px 10px;text-align:left;">Finding</th></tr>
+<tr><td style="padding:8px 10px;text-align:center;font-weight:600;">1</td><td style="padding:8px 10px;"><strong>57% of Copilot review comments receive no response from engineers.</strong> The majority of AI review feedback is never acknowledged. Of the ignored comments, only 27% are silently addressed — the remaining 71% are unresolved.</td></tr>
+<tr><td style="padding:8px 10px;text-align:center;font-weight:600;">2</td><td style="padding:8px 10px;"><strong>41% of all comments led to a confirmed code improvement.</strong> But 41% are unresolved, meaning the true helpfulness rate lies between 41% (floor) and 82% (ceiling). We cannot narrow this range without engineer engagement.</td></tr>
+<tr><td style="padding:8px 10px;text-align:center;font-weight:600;">3</td><td style="padding:8px 10px;"><strong>When engineers engage, 60% of comments are helpful.</strong> This suggests the AI review quality itself is decent — the bottleneck is adoption, not accuracy.</td></tr>
+<tr><td style="padding:8px 10px;text-align:center;font-weight:600;">4</td><td style="padding:8px 10px;"><strong>Only 18% of comments are confirmed not helpful.</strong> When we restrict "not helpful" to comments with actual evidence of poor quality, the rate is surprisingly low.</td></tr>
+<tr><td style="padding:8px 10px;text-align:center;font-weight:600;">5</td><td style="padding:8px 10px;"><strong>Engagement is the strongest predictor of value.</strong> Engineers who reply to 75%+ of comments see 47-70% helpfulness with zero unresolved. Engineers who reply to &lt;35% see 20-40% helpfulness with massive unresolved buckets.</td></tr>
+<tr><td style="padding:8px 10px;text-align:center;font-weight:600;">6</td><td style="padding:8px 10px;"><strong>38% of ignored comments are on the final commit before merge.</strong> These 122 comments represent the last review round being skipped — the feedback had zero chance of impact regardless of its quality.</td></tr>
+<tr><td style="padding:8px 10px;text-align:center;font-weight:600;">7</td><td style="padding:8px 10px;"><strong>Broker gets the most value (49%), Common is middling (36%), MSAL is lowest (26%).</strong> This correlates with response rate: Broker 56%, Common 30%, MSAL 25%.</td></tr>
+</table>
+
+<!-- ==================== METHODOLOGY ==================== -->
+<p style="margin:32px 0 0;mso-line-height-rule:exactly;">&nbsp;</p><table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 14px;"><tr><td style="background:#c8e1ff;border-left:5px solid #0969da;padding:10px 16px;"><font size="4" face="Segoe UI,Helvetica,Arial,sans-serif"><b>How We Measured This</b></font></td></tr></table>
+
+<table cellpadding="0" cellspacing="0" border="1" bordercolor="#d0d7de" width="100%" style="border-collapse:collapse;font-size:13px;margin:14px 0;">
+<tr style="background:#ffffff;"><th style="padding:8px 10px;text-align:left;">Phase</th><th style="padding:8px 10px;text-align:left;">Method</th></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">1. Data collection</td><td style="padding:8px 10px;">GitHub API extraction of all 557 Copilot inline review comments from 163 human-authored PRs. Excluded PRs by Copilot coding agent.</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">2. Reply classification</td><td style="padding:8px 10px;">Automated keyword matching on 239 replied comments to classify as positive, negative, or ambiguous.</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">3. Diff verification</td><td style="padding:8px 10px;">For 318 unreplied comments, used GitHub compare API to check if suggestion tokens appeared as diff additions, or if exact line ranges were modified.</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">4. AI-assisted classification</td><td style="padding:8px 10px;">All 133 ambiguous replies were read and classified by GitHub Copilot, based on reply text and domain context. These classifications were reviewed by the report author but not independently verified by the original PR engineers.</td></tr>
+<tr><td style="padding:8px 10px;font-weight:600;">5. Cross-validation</td><td style="padding:8px 10px;">All initially "not helpful" classifications were re-examined against diff evidence. 18 were reclassified where evidence was strong.</td></tr>
+</table>
+
+<p style="font-size:13px;margin-top:12px;"><strong>Classification rules:</strong> "Confirmed Helpful" requires positive evidence (engineer acknowledgment or verified code change). "Confirmed Not Helpful" requires positive evidence of poor quality (explicit engineer dismissal). Comments where the engineer did not engage are classified as "Unresolved" rather than assumed unhelpful.</p>
+
+<!-- ==================== WHAT THIS MEANS ==================== -->
+<p style="margin:32px 0 0;mso-line-height-rule:exactly;">&nbsp;</p><table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 14px;"><tr><td style="background:#c8e1ff;border-left:5px solid #0969da;padding:10px 16px;"><font size="4" face="Segoe UI,Helvetica,Arial,sans-serif"><b>What We'd Recommend</b></font></td></tr></table>
+
+<p style="font-size:14px;line-height:1.7;">Based on this analysis, we see three opportunities:</p>
+
+<p style="font-size:14px;line-height:1.7;"><strong>1. Engage with the feedback.</strong> The single biggest improvement would be for engineers to respond to Copilot's review comments — even if just to dismiss them. When engineers engage, 60% of comments are helpful. When they don't, 71% of comments become a black hole of unknown value. A quick "not applicable" is more useful than silence — it tells us whether the AI is giving good feedback, and it builds the data we need to improve the review instructions.</p>
+
+<p style="font-size:14px;line-height:1.7;"><strong>2. Review before merging.</strong> 38% of ignored comments were on the final commit — the engineer merged without looking at Copilot's last round. Building a habit of checking review comments before clicking merge would give this feedback a chance to have impact.</p>
+
+<p style="font-size:14px;line-height:1.7;"><strong>3. Improve the review instructions.</strong> The most common dismissal reasons — "lacks domain context," "suggests tests for trivial code," "misunderstands our APIs" — are things we can address by refining our <code>copilot-instructions.md</code>. Adding guidance like "don't suggest tests for telemetry-only changes" or providing context about specific domain patterns could reduce the noise and make the signal-to-noise ratio better for everyone.</p>
+
+<!-- Footer -->
+<table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:32px;border-top:1px solid #d0d7de;">
+<tr><td style="padding:14px 0;color:#656d76;font-size:12px;">
+<p style="margin:4px 0;">Analysis conducted March 23–24, 2026. Data covers all PRs created January 23 – March 23, 2026 in the Common, MSAL, and Broker repositories.</p>
+<p style="margin:4px 0;">Raw data (557 comments with full text, replies, diff evidence, and verdicts) available for independent verification.</p>
+</td></tr>
+</table>
+
+</td></tr></table></td></tr></table></body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
