@@ -1,0 +1,27 @@
+{
+  "inputs": [
+    {
+      "id": "ado_org",
+      "type": "promptString",
+      "description": "Azure DevOps organization name ONLY — do NOT enter a URL (e.g., 'IdentityDivision' not 'https://dev.azure.com/IdentityDivision')",
+      "default": "YOUR_ORG"
+    }
+  ],
+  "servers": {
+    "ado": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@azure-devops/mcp",
+        "${input:ado_org}",
+        "-d",
+        "core",
+        "work",
+        "work-items",
+        "repositories",
+        "pipelines"
+      ]
+    }
+  }
+}

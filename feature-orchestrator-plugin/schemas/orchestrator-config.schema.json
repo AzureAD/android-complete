@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Configuration for the Feature Orchestrator plugin. Run /feature-orchestrator-plugin:setup to generate this file interactively.",
+  "type": "object",
+  "properties": {
+    "project": {
+      "type": "object",
+      "description": "Project metadata",
+      "properties": {
+        "name": { "type": "string", "description": "Short project name (e.g., 'Android Auth')" },
+        "description": { "type": "string", "description": "One-line project description" }
+      }
+    },
+    "repositories": {
+      "type": "object",
+      "description": "Repository mapping. Keys are short names, values describe the hosting details.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "slug": { "type": "string", "description": "GitHub org/repo or ADO org/project/repo" },
+          "host": { "type": "string", "enum": ["github", "ado"], "default": "github", "description": "Where the repo is hosted" },
+          "baseBranch": { "type": "string", "default": "main", "description": "Default base branch for PRs" },
+          "accountType": { "type": "string", "default": "public", "description": "Account label for gh CLI switching (maps to a username in developer-local.json). Optional if only one GitHub account." }
+        },
+        "required": ["slug"]
+      }
+    },
+    "modules": {
+      "type": "object",
+      "description": "Module-to-repo mapping. Keys are module names referenced in work items. Each module maps to a repository.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "repo": { "type": "string", "description": "Key from the repositories map that this module belongs to" },
+          "path": { "type": "string", "description": "Path within the repo (e.g., 'common/' or 'src/api/'). Optional — omit if module is the whole repo." },
+          "purpose": { "type": "string", "description": "Brief description of what this module does (used by codebase-researcher)" }
+        },
+        "required": ["repo"]
+      }
+    },
+    "github": {
+      "type": "object",
+      "description": "GitHub configuration. Usernames are stored in developer-local.json (gitignored), NOT here.",
+      "properties": {
+        "configFile": { "type": "string", "default": ".github/developer-local.json", "description": "Path to per-developer config file (gitignored) that maps repos to GitHub usernames" }
+      }
+    },
+    "ado": {
+      "type": "object",
+      "description": "Azure DevOps configuration",
+      "properties": {
+        "org": { "type": "string", "description": "ADO organization URL or name" },
+        "project": { "type": "string", "description": "ADO project name (e.g., 'Engineering')" },
+        "workItemType": { "type": "string", "default": "Product Backlog Item", "description": "Work item type for PBIs" },
+        "iterationDepth": { "type": "integer", "default": 6, "description": "Depth for iteration discovery (6 for monthly sprints)" }
+      }
+    },
+    "design": {
+      "type": "object",
+      "description": "Design spec configuration",
+      "properties": {
+        "docsPath": { "type": "string", "description": "Path to design docs folder (e.g., 'design-docs/' or 'docs/designs/')" },
+        "templatePath": { "type": "string", "description": "Path to design spec template (optional)" },
+        "folderPattern": { "type": "string", "default": "[{platform}] {featureName}", "description": "Folder naming pattern for new designs" },
+        "reviewRepo": { "type": "string", "description": "ADO/GitHub repo for design review PRs (optional)" }
+      }
+    }
+  }
+}
