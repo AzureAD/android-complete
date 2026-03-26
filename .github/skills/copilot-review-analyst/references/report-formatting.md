@@ -23,6 +23,73 @@ Generate both formats. Templates are in `assets/` within this skill folder.
 | 11 | **Recommendations** | 3 actionable next steps | Each recommendation: 1 full prose paragraph (not a bullet point) with reasoning |
 | 12 | **Methodology Notes** | How data was collected, classified, and validated | 5-6 bullet points with sufficient detail for reproducibility |
 
+## Trend Section (Section 2.5 — between At a Glance and Overall Results)
+
+**Only generated when `history.json` has ≥2 entries.** Skip entirely on the first run.
+
+### Data Source
+
+Load `~/.copilot-review-analysis/history.json`. Entries are sorted newest-first.
+
+### Comparison Rules
+
+Since periods may have different lengths (e.g., 60 days vs 14 days):
+
+1. **Compare rates/percentages, not absolute counts.** Response rate, helpful %, not-helpful %, unresolved %, and replied-helpful rate are directly comparable across any period length.
+2. **Show counts as context only.** Display total comments alongside `comments/week` for normalized volume comparison. Do NOT compute count deltas like "comments dropped from 570 to 85" — this is misleading when periods differ.
+3. **Show period duration prominently.** Every trend row must include the date range and duration (e.g., "Jan 24–Mar 25 (60d)").
+4. **Use "pp" (percentage points) for deltas.** "↑ +7.6pp" not "↑ +7.6%". The delta is the arithmetic difference between two percentages.
+5. **Color-code deltas.** Green (↑) for improvements (response rate up, helpful up, not-helpful down, unresolved down). Red (↓) for regressions.
+
+### Markdown Format (2 runs — current vs previous)
+
+```markdown
+## Trend: This Run vs Previous
+
+| Metric | Previous (Jan 24–Mar 25, 60d) | Current (Mar 25–Apr 8, 14d) | Delta |
+|--------|-------------------------------|------------------------------|-------|
+| Comments | 570 (66.3/wk) | 85 (42.5/wk) | — |
+| Response rate | 44.4% | 52.0% | **↑ +7.6pp** |
+| Helpful | 38.6% | 45.0% | **↑ +6.4pp** |
+| Not helpful | 17.4% | 15.0% | ↑ -2.4pp |
+| Unresolved | 44.0% | 40.0% | **↑ -4.0pp** |
+| Replied helpful rate | 60.9% | 65.0% | **↑ +4.1pp** |
+```
+
+Add a 1-2 sentence narrative below the table interpreting the direction (e.g., "Response rate improved by 7.6 percentage points, suggesting engineers are engaging more with Copilot reviews since the team discussion. However, the data covers only 14 days — we'll need another cycle to confirm the trend.")
+
+### Markdown Format (3+ runs — full history table)
+
+```markdown
+## Historical Trend
+
+| Period | Duration | Comments | Cmt/wk | Response Rate | Helpful | Not Helpful | Unresolved |
+|--------|----------|----------|--------|---------------|---------|-------------|------------|
+| Mar 25–Apr 8 | 14d | 85 | 42.5 | **52.0%** | **45.0%** | 15.0% | 40.0% |
+| Jan 24–Mar 25 | 60d | 570 | 66.3 | 44.4% | 38.6% | 17.4% | 44.0% |
+```
+
+Bold the most recent row. Add an interpretive paragraph after the table.
+
+### Outlook HTML Format
+
+Use the same table-based approach as the rest of the report:
+
+- **Delta cells:** Green background (`#dafbe1`) for improvements, red background (`#ffebe9`) for regressions
+- **Arrow indicators:** `&#9650;` (▲) for positive, `&#9660;` (▼) for negative
+- **Per-run bars:** Same horizontal bar technique as per-repo bars — one row per historical run showing helpful/not-helpful/unresolved as percentage-width colored cells
+
+### What Counts as Improvement
+
+| Metric | Improvement | Regression |
+|--------|-------------|------------|
+| Response rate | ↑ (higher) | ↓ (lower) |
+| Helpful % | ↑ (higher) | ↓ (lower) |
+| Not helpful % | ↓ (lower) | ↑ (higher) |
+| Unresolved % | ↓ (lower) | ↑ (higher) |
+| Replied helpful rate | ↑ (higher) | ↓ (lower) |
+| Comments/week | Neutral — show but don't color |
+
 ## Statistics to Compute
 
 From `final_classification.json`:

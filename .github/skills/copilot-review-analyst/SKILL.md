@@ -136,6 +136,43 @@ What it does:
 
 **Output:** `$env:TEMP\copilot-review-analysis\final_classification.json`
 
+### Phase 4.5: Append History
+
+**Script:** `scripts/append-history.ps1`
+
+Append a snapshot of the current run to the persistent history file for trend tracking across runs:
+
+```powershell
+.\.github\skills\copilot-review-analyst\scripts\append-history.ps1 `
+    -PeriodStart "2026-01-24" `
+    -PeriodEnd "2026-03-25"
+```
+
+**Parameters:**
+- `-PeriodStart` — First day of the analysis period (YYYY-MM-DD). This is the `-StartDate` that was passed to `analyze.ps1` in Phase 1. **Required.**
+- `-PeriodEnd` — Last day of the analysis period (YYYY-MM-DD). Defaults to today.
+- `-InputDir` — Directory with `final_classification.json` and `precise.json` (default: `$env:TEMP\copilot-review-analysis`)
+- `-HistoryFile` — Path to persistent history JSON (default: `~/.copilot-review-analysis/history.json`)
+
+**Important:** Periods are **non-overlapping and variable-length**. Each run covers a distinct period — e.g., the first run might cover 60 days, subsequent runs might cover 2 weeks each. The `-PeriodStart` for a new run should be the day after the previous run's `-PeriodEnd`. The script automatically deduplicates entries with the same period.
+
+What it does:
+1. Load `final_classification.json` and `precise.json`
+2. Compute aggregate stats: response rate, three-way breakdown, per-repo, per-engineer
+3. Compute normalized volume: `comments/week` for fair comparison across different period lengths
+4. Load existing `history.json` (or create empty if first run)
+5. Append current snapshot; replace if same period already exists
+6. Save sorted by period (newest first)
+
+**Output:** `~/.copilot-review-analysis/history.json`
+
+The history file is an array of snapshots. Each snapshot contains:
+- Period metadata: `runDate`, `periodStart`, `periodEnd`, `periodDays`
+- Volume: `total`, `commentsPerWeek`, `reviewedPRs`, `avgCommentsPerPR`
+- Rates: `responseRate`, `helpful.pct`, `notHelpful.pct`, `unresolved.pct`, `repliedHelpfulRate`
+- Per-repo breakdown: `repos.{broker,common,msal}.{comments, responseRate, helpfulPct, ...}`
+- Per-engineer breakdown: `engineers.{name}.{comments, responseRate, helpfulPct}`
+
 ### Phase 5: Report Generation
 
 Generate both Markdown and Outlook-compatible HTML reports.
@@ -178,9 +215,10 @@ If a report doesn't meet these thresholds, re-read the template and identify wha
 2. **Read full template files** (`assets/Copilot-Code-Review-Effectiveness-Report.md` and `assets/Copilot-Code-Review-Effectiveness-Report-Outlook.html`) — do NOT skip this step
 3. Compute aggregate statistics (total, per-repo, per-engineer, three-way breakdown)
 4. Load `raw_results.json` to collect full comment text for 4-5 helpful and 4-5 unhelpful examples
-5. Generate reports matching the template's section structure, narrative depth, and visual formatting
-6. **Verify dimensions** (word count, line count) against the quality gate thresholds
-7. Save to `~/.copilot-review-analysis/`:
+5. Load `~/.copilot-review-analysis/history.json` for trend data. If ≥2 entries exist, generate a **Trend** section comparing the current run with the previous run(s). See [references/report-formatting.md](references/report-formatting.md) for trend section formatting rules.
+6. Generate reports matching the template's section structure, narrative depth, and visual formatting
+7. **Verify dimensions** (word count, line count) against the quality gate thresholds
+8. Save to `~/.copilot-review-analysis/`:
    - `Copilot-Code-Review-Effectiveness-Report.md` (team, real names)
    - `Copilot-Code-Review-Effectiveness-Report-Anonymous.md` (org-wide)
    - `Copilot-Code-Review-Effectiveness-Report-Outlook.html` (team, real names)
