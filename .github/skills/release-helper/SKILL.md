@@ -1,5 +1,5 @@
 ---
-name: pipeline-explorer
+name: release-helper
 description: Understand, navigate, and troubleshoot the Android Auth Client CI/CD pipeline system. Use this skill when asked about pipelines, release processes, build pipelines, hotfix workflows, daily validation, cron schedules, pipeline templates, release branches, RC testing, publishing to Maven Central, or any ADO/GitHub Actions pipeline question. Triggers include "how does the release pipeline work", "what pipeline does X", "where is the cron job for releases", "how do hotfixes work", "trace the monthly release flow", "pipeline template for Y", "how are broker apps built".
 ---
 
