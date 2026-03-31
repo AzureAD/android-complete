@@ -12,6 +12,8 @@ STRIDE is a threat classification model. In TMT, threats are auto-generated base
 
 **When to generate**: Ask the user via askQuestion tool. Include when requested.
 
+**Important**: These are common mitigation *patterns*. Before listing any mitigation in a threat model, verify it actually exists in the codebase for the feature being modeled. Do not assume a mitigation is present — confirm with code evidence.
+
 ## Categories
 
 ### Spoofing (S)
@@ -20,15 +22,15 @@ Can an attacker impersonate a legitimate entity?
 Common mitigations:
 - Caller package signature validation
 - Certificate pinning
-- Mutual TLS
+- OS-level caller UID verification (Android Binder)
 
 ### Tampering (T)
 Can an attacker modify data in transit or at rest?
 
 Common mitigations:
-- Signed tokens (JWT with session key)
-- Integrity checks on IPC payloads
-- Encrypted storage
+- Signed tokens (JWT with session key / PoP tokens)
+- OS-level IPC integrity (Android Binder)
+- Encrypted storage at rest
 
 ### Repudiation (R)
 Can an attacker deny having performed an action?
@@ -36,22 +38,21 @@ Can an attacker deny having performed an action?
 Common mitigations:
 - Audit logging with correlation IDs
 - Telemetry spans with timestamps
-- Non-repudiation tokens
 
 ### Information Disclosure (I)
 Can an attacker access confidential data?
 
 Common mitigations:
-- Encrypted IPC channels
+- OS-level process isolation (Android Binder)
 - Token encryption at rest
-- Minimal token lifetime (e.g., 5-min validity)
 - Nonce-bound tokens
+- Short token lifetime
 
 ### Denial of Service (D)
 Can an attacker disrupt service availability?
 
 Common mitigations:
-- Rate limiting on API endpoints
+- Rate limiting / concurrency limits
 - Flight gating for gradual rollout
 - Input validation and size limits
 
@@ -59,7 +60,7 @@ Common mitigations:
 Can an attacker gain unauthorized capabilities?
 
 Common mitigations:
-- URL domain allow-lists
+- Package + signature allow-lists
 - Minimum API level enforcement
 - Android permission model (signature-level)
 
@@ -68,22 +69,22 @@ Common mitigations:
 ### IPC Channel (App → Broker)
 | Category | Threat | Mitigation |
 |----------|--------|------------|
-| Spoofing | Malicious app impersonates Chrome | Caller signature validation against known hashes |
-| Tampering | Modified auth request in transit | AccountManager framework provides OS-level IPC integrity |
-| Info Disclosure | Token leakage via IPC | Tokens scoped to caller UID, encrypted in transit |
+| Spoofing | Malicious app impersonates allowed caller | Caller package signature validation against known hashes |
+| Tampering | Modified auth request in transit | Android Binder provides OS-level IPC integrity |
+| Info Disclosure | Token leakage via IPC | Android process isolation via Binder |
 | Elevation | Unauthorized app requests SSO | Package allow-list, flight gating |
 
 ### HTTPS Channel (Device → eSTS)
 | Category | Threat | Mitigation |
 |----------|--------|------------|
-| Spoofing | Man-in-the-middle on TLS | Certificate pinning, system CA validation |
+| Spoofing | Man-in-the-middle on TLS | TLS/HTTPS, system CA validation |
 | Tampering | Modified PRT headers | Session-key signed JWT (PoP token) |
-| Info Disclosure | PRT theft on network | HTTPS only, nonce-bound tokens, 5-min validity |
+| Info Disclosure | PRT theft on network | HTTPS only, nonce-bound tokens, short token lifetime |
 | DoS | Token replay attacks | Server-side nonce validation, short token lifetime |
 
 ### Trust Boundary Crossings
 Threats typically arise at these crossing points:
-- **App Sandbox → Broker Sandbox**: IPC via AccountManager
+- **App Sandbox → Broker Sandbox**: IPC via AccountManager/BoundService (Binder)
 - **Device → Internet**: HTTPS to eSTS
 - **User → App**: UI interactions, consent flows
 
