@@ -13,11 +13,7 @@ Execute these steps IN ORDER. Do not skip steps.
 
 ### Step 1: Gather IcM Context
 
-Query DRI Copilot MCP FIRST:
-
-```
-mcp_dricopilotdem_Broker_DRI_Copilot_Project_Explorer
-```
+Query DRI Copilot MCP FIRST. The tool name varies by local config, so use `tool_search_tool_regex` with pattern `Android_DRI_Copilot` to find the correct tool, then invoke it.
 
 Extract from IcM:
 - **Affected app(s)**: Outlook, Teams, other 1P apps?
