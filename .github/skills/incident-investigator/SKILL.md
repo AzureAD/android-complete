@@ -11,13 +11,20 @@ Investigate Android authentication incidents systematically with evidence-first 
 
 Execute these steps IN ORDER. Do not skip steps.
 
-### Step 1: Gather IcM Context
+### Step 1: Gather IcM Context & Similar Incidents
 
-Query DRI Copilot MCP FIRST:
+Query IcMs and TSGs **in parallel** using the `android-dri-s` MCP tools (faster than DRI Copilot Project Explorer):
 
 ```
-mcp_dricopilotdem_Broker_DRI_Copilot_Project_Explorer
+# Call BOTH in parallel (~18s total vs ~70s with DRI Copilot Project Explorer)
+mcp_android-dri-s_search_icms   → search for the incident topic / symptoms
+mcp_android-dri-s_search_tsgs   → search for relevant troubleshooting guides
 ```
+
+> **Why not `mcp_dricopilot-mc_Android_DRI_Copilot_Project_Explorer`?**
+> It returns AI-synthesized results but takes ~70s. The `android-dri-s` tools return raw data in ~18s (parallel), and we synthesize root causes ourselves with code context — producing equivalent or better analysis.
+
+If given a specific IcM ID, also use `mcp_android-dri-s_get_incident` to fetch full incident details.
 
 Extract from IcM:
 - **Affected app(s)**: Outlook, Teams, other 1P apps?
@@ -165,28 +172,35 @@ State explicitly what's NOT in the logs that would help:
 
 ## DRI Copilot Queries
 
-### Initial Query (always start here)
+### Available MCP Tools (Performance-Ranked)
 
-When given just an incident ID, query DRI Copilot with:
+| Tool | Speed | Use When |
+|------|-------|----------|
+| `mcp_android-dri-s_search_icms` | ~18s | Search past incidents by keyword/symptom |
+| `mcp_android-dri-s_search_tsgs` | ~18s | Search troubleshooting guides |
+| `mcp_android-dri-s_get_incident` | ~10s | Fetch a specific incident by ID |
+| `mcp_dricopilot-mc_Android_DRI_Copilot_Project_Explorer` | ~70s | Fallback: AI-synthesized IcM+TSG results in one call |
+
+### Preferred Strategy: Parallel Calls
+
+Always call `search_icms` and `search_tsgs` **in the same tool-call block** so they execute in parallel:
 
 ```
-"Investigate IcM [number]. What are the affected apps, symptoms, and known issues?"
+# Both fire simultaneously — total wall-clock ~18s
+Call 1: mcp_android-dri-s_search_icms("[symptom or keyword]")
+Call 2: mcp_android-dri-s_search_tsgs("[symptom or keyword]")
 ```
 
-This single query extracts:
-- Affected application(s)
-- Customer-reported symptoms
-- Account/device context
-- Any known root cause or past similar incidents
+Then synthesize root causes, mitigations, and confidence levels yourself using the raw results + code context + log evidence.
 
 ### Follow-up Queries (after initial context)
 
 Once you have context from the initial query, use targeted follow-ups:
 
 ```
-"TSG for error code [error_code]"           # After finding error in logs
-"Past incidents related to [symptom]"        # After identifying symptom from IcM
-"How to troubleshoot [specific_issue]"       # For deep-dive guidance
+mcp_android-dri-s_search_tsgs("error code [error_code]")     # After finding error in logs
+mcp_android-dri-s_search_icms("[specific symptom]")           # After identifying symptom
+mcp_android-dri-s_get_incident("[IcM ID]")                    # Deep-dive on a specific incident
 ```
 
 ## eSTS Correlation
@@ -215,8 +229,9 @@ For more Kusto queries, see [references/kusto-queries.md](references/kusto-queri
 
 ## Key Reminders
 
-1. **Query DRI Copilot FIRST** - Get IcM context before analyzing logs
+1. **Query `android-dri-s` tools FIRST (in parallel)** - Get IcM + TSG context before analyzing logs
 2. **Evidence over assumptions** - Only state what logs show
 3. **State what's missing** - Be explicit about evidence gaps
 4. **Search all log files** - Issue may span multiple log segments
 5. **Check for sign-out operations** - Critical for SDM issues
+6. **Always state confidence level** - HIGH/MEDIUM/LOW per hypothesis with supporting evidence

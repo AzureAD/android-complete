@@ -58,3 +58,6 @@ ehthumbs_vista.db
 out/
 
 plugins/buildsystem/bin
+
+# Local context - not committed
+.github/local-context/
