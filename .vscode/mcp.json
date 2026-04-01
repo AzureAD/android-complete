@@ -41,6 +41,11 @@
       "tools": ["*"]
     },
 
+    "s360-breeze-mcp": {
+      "type": "http",
+      "url": "https://mcp.vnext.s360.msftcloudes.com/"
+    },
+
     "MyDRICopilot": {
       "type": "http",
       "url": "https://msalandroiddricopilot.azurewebsites.net/mcp"
