@@ -22,6 +22,25 @@
         "repositories",
         "pipelines"
       ]
+    },
+
+      "workiq": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@microsoft/workiq", "mcp"],
+      "tools": ["*"]
+    },
+
+    "azure-mcp-server": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@azure/mcp@latest", "server", "start"],
+      "tools": ["*"]
+    },
+
+    "MyDRICopilot": {
+      "type": "http",
+      "url": "https://msalandroiddricopilot.azurewebsites.net/mcp"
     }
   }
 }
