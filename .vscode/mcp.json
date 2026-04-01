@@ -8,6 +8,9 @@
     }
   ],
   "servers": {
+    // MCP Server Configuration for Microsoft Authenticator Android
+    // Docs: https://code.visualstudio.com/docs/copilot/chat/mcp-servers
+
     "ado": {
       "type": "stdio",
       "command": "npx",
@@ -24,7 +27,7 @@
       ]
     },
 
-      "workiq": {
+    "workiq": {
       "type": "stdio",
       "command": "npx",
       "args": ["-y", "@microsoft/workiq", "mcp"],
