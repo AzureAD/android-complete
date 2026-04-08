@@ -11,12 +11,32 @@ HTML email report.
 
 ## Prerequisites
 
+- **Node.js** must be available (for the committed report generator script)
 - **S360 MCP Server** must be running (configured in `.vscode/mcp.json` as `s360-breeze-mcp`)
 - **ADO MCP Server** must be running (for PBI creation and lookup)
-- **Microsoft Graph MCP Server** must be running (for dynamic team member discovery via org chart)
+- **Microsoft Graph MCP Server** must be running (for dynamic team member discovery via org chart,
+  and optionally for creating an Outlook draft email)
 - **WorkIQ MCP Server** must be running (for pulling last week's email report)
 - Read the **Outlook HTML report prompt** at `{{VSCODE_USER_PROMPTS_FOLDER}}/outlook-html-report.prompt.md`
   for HTML rendering rules before generating the report
+
+## Quick Mode
+
+If the user says "quick S360" or "S360 status", run **Steps 0–2 only** and print a CLI
+summary instead of generating the full report. Example output:
+
+```
+S360 Status — Android Auth Team (Apr 8, 2026)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+15 active items: 1 🔴 Out of SLA, 2 🟠 Approaching, 12 🟢 In SLA
+7 items missing ETA
+
+🔴 GDPR Streams Left to Review — moghosh — Due Mar 22 (17 days overdue)
+🟠 Disable local auth for container registries — moghosh — Due Apr 12
+🟠 Threat Model Review — zhangrichard — Due May 5
+```
+
+Skip PBI creation, report generation, and email drafting in quick mode.
 
 ## Target Services
 
@@ -98,6 +118,13 @@ request: {
 This captures person-targeted items like on-call readiness checklists and certifications
 that are tied to individuals rather than service tree IDs.
 
+**Important**: The `assignedTo` search returns ALL items for those aliases across Microsoft,
+including items from other team memberships. After fetching, filter results to only include
+items where one of these conditions is met:
+- `TargetType` is `"Person"` (on-call, certifications — always relevant to the person)
+- `TargetId` matches one of our three service tree IDs
+- `CustomDimensions.TenantName` contains "Auth Client", "MSAL", "ADAL", or "Authenticator"
+
 #### 1c: Merge results
 
 Combine items from 1a and 1b. Deduplicate by `KpiActionItemId` — if the same item
@@ -162,10 +189,10 @@ Before creating any new PBIs, search for existing ones from two sources.
 
 #### 3a: Pull last week's S360 email via WorkIQ
 
-Call `mcp_workiq_ask_work_iq` to find the most recent S360 report email:
+Call `mcp_workiq_ask_work_iq` to find the most recent S360 report email **from the last 7 days**:
 
 ```
-question: "Find the most recent email with subject containing 'S360 Weekly Report' sent to androididentity@microsoft.com. Return the full email body content including any AB# work item references."
+question: "Find the most recent email from the last 7 days with subject containing 'S360 Weekly Report' sent to androididentity@microsoft.com. Return the full email body content including any AB# work item references."
 ```
 
 Parse the email body for:
@@ -228,23 +255,32 @@ Mark each item's PBI status: `existing` (with AB# + URL), `needs-creation`, or
 
 For items marked `needs-creation`:
 
-1. **Present a summary** to the user showing which items need PBIs:
+1. **Show a summary** of what will be created (no confirmation needed — always create):
    ```
-   The following S360 items have no ADO PBI:
-   - [Title 1] — Owner: alias — SLA: OutOfSla
-   - [Title 2] — Owner: alias — SLA: InSla
-   Create PBIs for these items? (Y/N)
+   Creating PBIs for 14 S360 items:
+   - [Title 1] — Owner: alias — SLA: OutOfSla — Priority 1
+   - [Title 2] — Owner: alias — SLA: InSla — Priority 3
+   ...
    ```
 
-2. If user approves, discover ADO defaults using the same pattern as the `pbi-creator`
-   skill's Step 2 (but call ADO MCP tools directly — do not invoke pbi-creator as a
-   sub-skill since we have a simpler PBI structure with no dependency linking):
-   - Call `mcp_ado_wit_my_work_items` to find recent work items
-   - Extract area path, iteration path from the results
-   - Use `mcp_ado_work_list_iterations` with `depth: 6` for current iterations
-   - **Batch all questions** into a single `askQuestion` call:
-     - Area Path (with discovered options)
-     - Iteration (current/next month only)
+2. **Use default ADO configuration:**
+   - **Area Path**: `Engineering\Auth Client\Broker\Android`
+   - **Iteration**: Compute from the current date (see formula below)
+   - **State**: `Committed`
+   - **Tags**: `S360; AI-Generated`
+   - **Priority**: `1` for OutOfSla, `2` for ApproachingSla, `3` for InSla
+
+   **Iteration computation** (from current date):
+   ```
+   month = current month (1-12)
+   year2 = last 2 digits of year (e.g., 26)
+   quarter = ceil(month / 3)  (1-4)
+   half = quarter <= 2 ? 1 : 2
+   monthAbbr = Jan|Feb|...|Dec
+
+   path = Engineering\CY{year2}\CY{year2}H{half}\CY{year2}Q{quarter}\Monthly\CY{year2}Q{quarter}_M{month}_{monthAbbr}
+   ```
+   Example for April 2026: `Engineering\CY26\CY26H1\CY26Q2\Monthly\CY26Q2_M4_Apr`
 
 3. For each item, create a PBI via `mcp_ado_wit_create_work_item`:
    ```json
@@ -272,83 +308,134 @@ For items marked `needs-creation`:
 
 4. Record the created AB# for each item.
 
+### Step 4b: Auto-Close Resolved PBIs
+
+For each item in the **resolved items list** (from Step 1d) that has an associated ADO PBI:
+
+1. Look up the PBI state via `mcp_ado_wit_get_work_items_batch_by_ids`
+2. If the PBI state is NOT `Done` or `Removed`, transition it to `Done`:
+   ```
+   mcp_ado_wit_update_work_item(
+     id: <pbi_id>,
+     updates: [{ path: "/fields/System.State", value: "Done" }]
+   )
+   ```
+3. Log which PBIs were auto-closed for the report's "Resolved" section
+
+If no PBI is associated with a resolved item, skip it (no action needed).
+
 ### Step 5: Generate HTML Report
 
-Read the **report template reference** at `.github/skills/s360-reporter/report-template.md`
-for all HTML building blocks, color palette, and assembly order. Also read the Outlook HTML
-report prompt at `{{VSCODE_USER_PROMPTS_FOLDER}}/outlook-html-report.prompt.md` (if available)
-for general Outlook rendering rules (bgcolor, border-radius caveats, etc.).
+Use the **committed generator script** at `.github/skills/s360-reporter/generate-report.js`
+to produce the HTML report. This script is data-driven — you prepare a JSON input file and
+the script handles all HTML rendering, Outlook compatibility, and styling.
 
-**CRITICAL**: Copy HTML building blocks **verbatim** from `report-template.md`. Do NOT
-rephrase, restyle, or improvise the HTML. Only substitute the `{{PLACEHOLDER}}` values
-with actual data. The template was carefully designed and tested for Outlook compatibility
-and visual consistency — any deviation (different padding, colors, font sizes, structure)
-will break the design. If you need a component not in the template, replicate the closest
-existing block's style exactly.
+#### 5a: Prepare JSON input file
 
-**Report structure:**
+Write a JSON file to a temp location (e.g., `$env:TEMP/s360_data.json`) with this schema:
 
-1. **Header** — Uppercase "S360 WEEKLY REPORT" label + large "Android Auth Team" title.
-   Right side: blue pill badge with "Week of {date}". Below: services line listing all 3
-   service names in bold.
-2. **Summary cards** — 5 stat cards with colored top borders and tinted backgrounds:
-   Total Items (blue), Out of SLA (red), Approaching (orange), In SLA (green),
-   No ETA (amber). Cards have `border-radius:12px`.
-3. **Severity bar** — Horizontal proportional bar showing red/orange/green distribution
-   with counts. `border-radius:6px; overflow:hidden`.
-4. **✅ Resolved Since Last Week** — Green left-bar callout box listing items resolved
-   since the previous report. Each entry shows: **Title** — AB#link — assignee — **Done**.
-   If no resolved items, show a note: "No resolved items were detected this week."
-5. **Needs Attention** — Section header with red underline bar, followed by the Out of SLA
-   card (red bordered, rounded, pink tint, detailed metadata layout with PBI chip).
-6. **Items by Compliance Area** — Each program gets its own section with:
-   - **Section header**: h3 title + italic subtitle + blue 3px underline bar
-   - **Table**: columns Title, Service, Owner, SLA, Due, ETA, PBI
-   - Blue-gray `#e8edf2` column headers, `border:1px solid` on all cells
-   - Inline SLA badges per row (Missed/Near/In SLA pills)
-   - Row background tints: `#fff5f5` for Missed, `#fff8f0` for Near, white/`#fafafa` zebra for In SLA
-   - Left border color per title cell: red for Missed, orange for Near, green for In SLA
-   - Programs ordered by worst SLA state first (programs with Missed items first, then Near, then In SLA)
-   - Related items (e.g., CFS pipelines) grouped under a single program section
-   - Typical program categories: GDPR & Data Classification, Continuous SDL, Vulnerability
-     Management, MSRC Security Response, CFS Pipeline Onboarding, On-Call Readiness,
-     PRC Violations. Derive program name directly from S360 API fields:
-     `CustomDimensions.S360_WavesMetadata[0].ProgramDisplayName`, `CustomDimensions.filter`,
-     `CustomDimensions.campaign`. For person-targeted items, use `CustomDimensions.TeamName`
-     or a fallback label. See `report-template.md` for details.
-7. **Ownership Breakdown** — Table: Assignee, Total, 🔴, 🟠, 🟢, No ETA.
-   Blue-gray headers, zebra striped rows. Sorted by severity (most out-of-SLA first).
-   No ETA column highlights values in amber.
-8. **Action Required callouts** — Three left-bar callout boxes:
-   - Red: Items needing owners (list item titles)
-   - Amber: Items missing ETA (list item titles)
-   - Blue: Newly created PBIs (list AB# links)
-9. **Footer** — "Auto-generated by S360 Reporter" + S360 dashboard link + ADO Board link + date.
+```json
+{
+  "reportDate": "YYYY-MM-DD",
+  "items": [
+    {
+      "title": "S360 item title",
+      "shortTitle": "Abbreviated title for cards (optional, falls back to title)",
+      "service": "Service name (e.g., MSAL Android)",
+      "ownerAlias": "alias",
+      "ownerName": "Full Name",
+      "sla": "OutOfSla | ApproachingSla | InSla",
+      "due": "Mon DD, YYYY",
+      "eta": "Mon DD, YYYY or null",
+      "pbi": "AB#12345 or null",
+      "isNew": true,
+      "s360Url": "https://s360.msftcloudes.com/...",
+      "program": "Program display name",
+      "programDesc": "Program subtitle/description (optional)",
+      "subtitle": "Wave or campaign name (optional)"
+    }
+  ],
+  "resolved": [
+    {
+      "title": "Resolved item title",
+      "assignee": "Full Name (alias)",
+      "pbi": "AB#12345 or null"
+    }
+  ],
+  "nameMap": {
+    "alias": "Full Name"
+  },
+  "newItems": [
+    { "title": "New item title", "service": "Service name" }
+  ]
+}
+```
 
-**Title column**: Each title should be a hyperlink to the S360 remediation URL (`item.s360_url`).
-This lets readers click through to the S360 dashboard directly from the email.
+**Field notes:**
+- `items`: All active S360 items from Steps 1–4 with PBI info attached
+- `resolved`: Items from Step 1d that are no longer active
+- `nameMap`: Alias → display name mapping from Step 0 (used for ownership table)
+- `newItems`: Items not found in last week's email (new this week) — for the info callout
+- `isNew`: Set `true` for newly created PBIs (shows 🆕 badge)
 
-**PBI column display conventions:**
-- Existing PBI: show as `AB#12345` hyperlinked to the ADO work item URL
-  (URL format: `https://dev.azure.com/IdentityDivision/Engineering/_workitems/edit/<id>`)
-- Newly created PBI: show as `AB#12345 🆕` with hyperlink
-- No PBI (user declined creation): show "None" in italic
-- Resolved PBI (from ADO search): omit from report (item was already handled)
+#### 5b: Run the generator
 
-**Other display conventions:**
-- SLA State badges: `OutOfSla` → red badge "MISSED SLA", `ApproachingSla` → orange "NEAR SLA",
-  `InSla` → green "IN SLA"
-- Missing ETA: show "⚠ No ETA" in orange
-- Owner: show full name with alias in parentheses, e.g. "Richard Zhang (zhangrichard)"
-- Due dates in the past: bold
-- Truncate long status notes to ~100 chars with "..." in the table
+```powershell
+node .github/skills/s360-reporter/generate-report.js --input "$env:TEMP/s360_data.json" --output "C:\Users\shjameel\Desktop\s360-report-{date}.html"
+```
 
-### Step 6: Save and Preview
+The script produces a fully styled Outlook-compatible HTML report with:
+- Header with team name, date badge, and service list
+- Summary cards (Total, Out of SLA, Approaching, In SLA, No ETA)
+- Severity distribution bar
+- "New This Week" info callout (if any new items)
+- Resolved items section
+- Needs Attention cards for Out of SLA items
+- Items by Compliance Area tables (grouped by program, sorted by severity)
+- Ownership breakdown table
+- Action Required callouts (missing owners, missing ETAs, new PBIs)
+- Footer with dashboard links
 
-1. Save HTML to `c:\Users\shjameel\Desktop\s360-report-{date}.html`
-2. Open in browser for preview using `Start-Process` in terminal
-3. Tell the user: "Report saved to Desktop. Preview opened in browser. Copy the HTML into a
-   new Outlook email (Edit → Paste Special → HTML) and send to the team."
+**Visual reference**: See `report-template.md` for the HTML building blocks, color palette,
+and design rationale. The generator script implements these blocks programmatically.
+
+**Fallback**: If Node.js is unavailable, fall back to manually assembling HTML using the
+building blocks in `report-template.md` — copy them verbatim and substitute placeholders.
+
+### Step 6: Save, Draft Email, and Preview
+
+1. **Save HTML** to `C:\Users\shjameel\Desktop\s360-report-{date}.html`
+
+2. **Draft Outlook email via Graph API** (if available):
+   ```
+   mcp_graph_microsoft_graph_suggest_queries(
+     intentDescription: "create a draft email message"
+   )
+   ```
+   Then call `mcp_graph_microsoft_graph_post` with the suggested endpoint:
+   ```
+   relativeUrl: "/v1.0/me/messages"
+   body: {
+     "subject": "S360 Weekly Report — Android Auth Team — Week of {date}",
+     "body": { "contentType": "HTML", "content": "<full HTML report>" },
+     "toRecipients": [
+       { "emailAddress": { "address": "androididentity@microsoft.com" } }
+     ],
+     "isDraft": true
+   }
+   ```
+   If the Graph call succeeds, tell the user: "📧 Outlook draft created. Open Outlook →
+   Drafts → review and send."
+
+   **Fallback**: If Graph MCP is unavailable or the call fails, fall back to the file-based
+   approach (step 3 below).
+
+3. **Open in browser** for preview using `Start-Process` in terminal
+
+4. Tell the user the report location and next steps:
+   - If email draft was created: "Report saved to Desktop and Outlook draft created."
+   - If file-only: "Report saved to Desktop. Preview opened in browser. Copy the HTML
+     into a new Outlook email (Edit → Paste Special → HTML) and send to the team."
 
 ## SLA State Sort Order
 
@@ -363,10 +450,14 @@ Within same SLA state, sort by `CurrentDueDate` ascending (earliest due first).
 - **Graph MCP unavailable**: Fall back to ADO Teams API (see Step 0 fallback). If both
   are unavailable, skip person-targeted search and proceed with service-targeted items only.
   Add a callout in the report noting that on-call items may be missing.
+- **Graph email draft fails**: Fall back to file-based approach — save HTML to Desktop and
+  instruct user to copy/paste into Outlook manually. Do not fail the workflow.
 - **S360 MCP auth failure**: Instruct user to restart MCP server via Command Palette →
   `MCP: Restart Server` → `s360-breeze-mcp`
 - **WorkIQ unavailable or no email found**: Skip Step 3a entirely; rely on S360 API field
   and ADO search only. Do not fail the workflow.
+- **WorkIQ returns emails older than 7 days**: The query is scoped to "last 7 days" to
+  ensure freshness. If no email is found within that window, proceed without previous report data.
 - **ADO MCP unavailable**: Skip PBI creation; generate report with "None" in PBI column
   and a callout noting ADO was unavailable.
 - **No items found**: Generate a celebratory "all clear" report
@@ -374,4 +465,8 @@ Within same SLA state, sort by `CurrentDueDate` ascending (earliest due first).
 - **Owner alias empty**: Show "Unassigned" in the report and flag for attention
 - **PBI already exists but title doesn't match exactly**: Use fuzzy matching — if an ADO
   item title contains the S360 item title (ignoring the `[S360]` prefix), consider it a match.
-- **User declines PBI creation**: Proceed with report generation; show "None" in PBI column.
+- **Node.js unavailable**: Fall back to manually assembling HTML from `report-template.md`
+  building blocks. Copy blocks verbatim and substitute placeholders.
+- **Iteration computation edge cases**: The formula `CY{YY}Q{Q}_M{M}_{Mon}` uses calendar
+  month number (M=1–12). At year boundaries (Dec→Jan), ensure year rolls over. At quarter
+  boundaries, ensure Q increments correctly (e.g., March=Q1, April=Q2).
