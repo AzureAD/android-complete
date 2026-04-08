@@ -49,6 +49,11 @@
     "MyDRICopilot": {
       "type": "http",
       "url": "https://msalandroiddricopilot.azurewebsites.net/mcp"
+    },
+
+    "graph": {
+      "type": "http",
+      "url": "https://mcp.svc.cloud.microsoft/enterprise"
     }
   }
 }
