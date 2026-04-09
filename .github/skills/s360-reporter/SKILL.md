@@ -164,10 +164,10 @@ The response contains an array at `result.resources`. For each item extract:
 
 | Field | JSON Path | Notes |
 |-------|-----------|-------|
-| Title | `Title` | |
-| Service | Map `TargetId` → service name from table above. For person-targeted items (`TargetType: \"Person\"`), use `CustomDimensions.TenantName` instead |
-| Owner Alias | `S360Dimensions.ActionOwnerAlias` | Falls back to `AssignedTo` |
-| Owner Name | `S360Dimensions.ActionOwner` | |
+| Title | `Title` | **Required** — if empty, fall back to `CustomDimensions.S360_WavesMetadata[0].WaveDisplayName` or KPI name via `KpiId` lookup. Never leave blank. |
+| Service | Map `TargetId` → service name from table above. For person-targeted items (`TargetType: "Person"`), use `CustomDimensions.TenantName` instead |
+| Owner Alias | `S360Dimensions.ActionOwnerAlias` | Falls back to `AssignedTo`. If both empty → "unassigned" |
+| Owner Name | `S360Dimensions.ActionOwner` | If empty, use the `nameMap` from Step 0 to look up alias → display name. If still empty, use the alias as display name |
 | Due Date | `CurrentDueDate` | Format as `Mon DD, YYYY` |
 | SLA State | `SLAState` | Values: `OutOfSla`, `ApproachingSla`, `InSla` |
 | ETA | `CurrentETA` | If null → flag as **"Missing ETA ⚠"** |
@@ -177,11 +177,37 @@ The response contains an array at `result.resources`. For each item extract:
 | S360 URL | `URL` | Link to details/remediation |
 | KPI ID | `KpiId` | For dedup |
 | Action Item ID | `KpiActionItemId` | For dedup |
+| Program Name | See extraction logic below | For grouping items by compliance area |
+| Program Desc | `CustomDimensions.S360_WavesMetadata[0].WaveDisplayName` | Subtitle under program heading |
 | Initiative | `CustomDimensions.initiative` | JSON array string |
 | Wave | Extract from `CustomDimensions.S360_WavesMetadata[0].WaveDisplayName` |
 
-**Dedup**: Some items appear twice with different `KpiActionItemId` but same `Title` and
-`TargetId`. Group by `Title` + `TargetId` and merge, keeping the one with worst SLA state.
+**Program Name extraction** (priority order — use the first non-empty value):
+
+1. `CustomDimensions.S360_WavesMetadata[0].ProgramDisplayName` — the human-readable name
+   (e.g., "Continuous SDL", "Vulnerability Management", "GDPR & Data Classification")
+2. `CustomDimensions.campaign` — sometimes contains a readable program name
+3. `CustomDimensions.TeamName` — for person-targeted items (e.g., "On-Call Readiness")
+4. `CustomDimensions.filter` — **last resort only**. This contains internal codes like
+   "ADFunGlobal" or "ADFunCompliance". If you must use this, map known codes to friendly names:
+   - `ADFunGlobal` → "Global Compliance"
+   - `ADFunCompliance` → "Security & Compliance"
+   - `ADFunReliability` → "Reliability"
+   - Otherwise, title-case the value and strip the "ADFun" prefix
+5. If all empty → "Other Compliance Items"
+
+**IMPORTANT**: Never use raw `CustomDimensions.filter` values (like "ADFunGlobal") as
+section headings. Always prefer `ProgramDisplayName` which contains the user-facing name.
+
+**Dedup**: Some items appear multiple times with different `KpiActionItemId` but same
+or similar `Title` and `TargetId`. Apply dedup in two passes:
+
+1. **Exact dedup**: Group by `Title` + `TargetId`. If duplicates, keep the one with worst
+   SLA state (`OutOfSla` > `ApproachingSla` > `InSla`).
+2. **Fuzzy dedup**: After exact dedup, check for items with the same `KpiId` and
+   overlapping title text. Items with the same KPI but targeting different services
+   (e.g., CFS pipeline items targeting 8 endpoints) should be **merged into one row**
+   with a note like "(8 endpoints)" rather than listed 8 times.
 
 ### Step 3: Find Existing PBIs (Two Sources)
 
