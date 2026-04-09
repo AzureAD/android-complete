@@ -292,7 +292,7 @@ For items marked `needs-creation`:
        {"name": "System.Description", "value": "<HTML with S360 details>", "format": "Html"},
        {"name": "System.AreaPath", "value": "<confirmed area path>"},
        {"name": "System.IterationPath", "value": "<confirmed iteration>"},
-       {"name": "System.AssignedTo", "value": "<OwnerAlias>@microsoft.com"},
+       {"name": "System.AssignedTo", "value": "<OwnerAlias>@microsoft.com"},  // OMIT this field if owner is empty — leave PBI unassigned
        {"name": "Microsoft.VSTS.Common.Priority", "value": "<1=OutOfSla, 2=Approaching, 3=InSla>"},
        {"name": "System.State", "value": "Committed"},
        {"name": "System.Tags", "value": "S360; AI-Generated"}
@@ -462,7 +462,10 @@ Within same SLA state, sort by `CurrentDueDate` ascending (earliest due first).
   and a callout noting ADO was unavailable.
 - **No items found**: Generate a celebratory "all clear" report
 - **Multiple pages**: Paginate using `nextCursor` until all items are fetched
-- **Owner alias empty**: Show "Unassigned" in the report and flag for attention
+- **Owner alias empty**: Show "Unassigned" in the report and flag for attention.
+  When creating PBIs, **omit the `System.AssignedTo` field entirely** — do NOT fall
+  back to the manager or `AssignedTo` from S360. Leave the PBI unassigned so the team
+  can triage it manually.
 - **PBI already exists but title doesn't match exactly**: Use fuzzy matching — if an ADO
   item title contains the S360 item title (ignoring the `[S360]` prefix), consider it a match.
 - **Node.js unavailable**: Fall back to manually assembling HTML from `report-template.md`
