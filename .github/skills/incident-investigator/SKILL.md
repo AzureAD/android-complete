@@ -13,14 +13,108 @@ Execute these steps IN ORDER. Do not skip steps.
 
 ### Step 1: Gather IcM Context
 
-Query DRI Copilot MCP FIRST. The tool name varies by local config, so use `tool_search_tool_regex` with pattern `Android_DRI_Copilot` to find the correct tool, then invoke it.
+Use the `android-dri-search-hosted` MCP server tools to gather all incident context. Execute these sub-steps in order:
 
-Extract from IcM:
+#### Step 1a: Get Incident Details
+
+Use `tool_search_tool_regex` with pattern `android-dri-s` to load the tools, then call `mcp_android-dri-s_get_incident` with the incident ID extracted from the IcM URL or user message.
+<!--Use agency's icm mcp tools to gather incident details with the incident ID extracted from the IcM URL or user message.-->
+
+```
+mcp_android-dri-s_get_incident(incident_id="<incident_id>")
+```
+
+Extract from the response:
 - **Affected app(s)**: Outlook, Teams, other 1P apps?
 - **Account(s)**: Specific user or tenant-wide?
 - **Device context**: SDM enabled? Device model? Android version?
 - **Symptoms**: What exactly fails? Error messages?
 - **Repro conditions**: When does it happen vs. not happen?
+- **Error codes**: Any error codes or correlation IDs mentioned
+
+#### Step 1b & 1c: Search Similar Incidents + TSGs (parallel, maximize batch)
+
+After Step 1a completes, fire **all** of the following searches **in a single parallel batch** — they are independent and all use output from Step 1a. The goal is to complete all searches in ONE round trip.
+
+**Plan your queries upfront.** Before calling any search tool, identify 2-3 distinct query angles from Step 1a:
+1. **Symptom-focused** query (e.g., "shared devices long login slow authentication")
+2. **Error/technical-focused** query (e.g., error codes, operation names, specific failure patterns)
+3. **Feature/component-focused** query (e.g., "broker performance latency response time")
+
+Then execute all searches using `batch_search` — combine ICM and TSG queries in a single call:
+
+**Use `mcp_android-dri-s_batch_search`** to run all ICM and TSG searches in one round trip. Each entry in the `searches` array specifies `type` (`"icm"` or `"tsg"`) and `query`.
+
+```
+mcp_android-dri-s_batch_search(searches=[
+  {"type": "icm", "query": "<symptom query>"},
+  {"type": "icm", "query": "<error/technical query>"},
+  {"type": "tsg", "query": "<error/technical query>"},
+  {"type": "tsg", "query": "<feature/component query>"}
+])
+```
+
+Review similar incidents for:
+- Known root causes that match the current symptoms
+- Previously successful mitigations
+- Patterns across similar incidents
+
+**Relevance filtering:** Search results are ranked by embedding similarity, NOT by actual relevance to the incident. Many results will be noise. Before including an incident in your report, verify that its root cause or symptoms have a **concrete, logical connection** to the current incident's failure mode. Do NOT pad the report with loosely related incidents — only include incidents where the root cause or symptom could plausibly explain the current issue.
+
+**Search Related TSGs:** Already included in the `batch_search` call above. Use `search_tsgs` only if you need a standalone single-query TSG search outside of a batch.
+
+**Query design tips:**
+- Use specific technical terms (error codes, operation names, component names) over vague symptom descriptions
+- If Step 1a has error codes, search for those directly — they yield the most precise TSG matches
+- Avoid mixing too many unrelated terms in one query (e.g., "slow login SDM sign-in time" dilutes results); split into focused queries instead
+- When the issue is about performance/latency, always include a query targeting dashboard/telemetry TSGs (e.g., "performance latency response time broker dashboard")
+
+Collect from TSGs:
+- Recommended troubleshooting steps
+- Known solutions for the identified error pattern
+- Relevant dashboards and Kusto queries
+- Escalation guidance if applicable
+
+### Step 1d: Categorize Findings and Confirm with User (BLOCKING)
+
+**CRITICAL: Do NOT skip this step. Do NOT jump to a single root cause.**
+
+After gathering search results, group similar incidents by **distinct root cause category** — not by
+individual ticket. Typical categories might include:
+- Keystore/KeyMaster hardware issue (specific device models)
+- OEM battery optimization killing broker background process (Samsung, etc.)
+- MDM/compliance policy triggering re-registration
+- CA policy changes or device cap limits
+- Broker/MSAL code regression
+- Server-side (eSTS) issue
+
+**Present ALL plausible categories** to the user as a summary table:
+
+```markdown
+## Possible Cause Categories
+
+| # | Category | Matching Incidents | Key Signal |
+|---|----------|--------------------|------------|
+| 1 | [Category name] | IcM 123, 456 | [What distinguishes this cause] |
+| 2 | [Category name] | IcM 789 | [What distinguishes this cause] |
+```
+
+**Only ask clarifying questions if the available context is insufficient to narrow down.**
+If the user (or the IcM ticket) already provided device model, error codes, logs, or
+enrollment type, use that information directly — do not re-ask what you already know.
+When context IS missing, ask using `askQuestion`:
+- Device make/model
+- Enrollment type (COPE, MAM-WE, fully managed, etc.)
+- Whether specific log signatures are present or absent
+- Any other known details (frequency, recent changes, error codes)
+
+**ONLY proceed to a diagnosis after you can confidently narrow to one category** — either
+from the user's provided context or from their answers to your questions.
+
+**Why this matters:** Search results are ranked by embedding similarity and can cluster
+around a single well-documented cause (e.g., keystore issues have many incidents). This
+does NOT mean it is the most likely cause for the current case. Always present the full
+spread of possibilities.
 
 ### Step 2: Extract Log Evidence
 
@@ -66,13 +160,21 @@ Map the operations that occurred:
 
 ### Step 5: Form Hypotheses
 
+**Present multiple hypotheses — never commit to a single root cause without user confirmation.**
+
 Rank by evidence strength:
 
 | Confidence | Criteria |
 |------------|----------|
-| **HIGH** | Direct log evidence shows the issue |
-| **MEDIUM** | Logs suggest but don't confirm |
+| **HIGH** | Direct log evidence shows the issue AND user-confirmed details match |
+| **MEDIUM** | Logs suggest but don't confirm, or user hasn't confirmed device/context details |
 | **LOW** | Inference based on patterns, no direct evidence |
+
+**Rules:**
+- Always list at least 2 hypotheses unless log evidence conclusively rules out all but one
+- If the user has not yet confirmed device model, enrollment type, or log signatures,
+  do NOT assign HIGH confidence to any hypothesis
+- Clearly state what evidence would promote or eliminate each hypothesis
 
 Common root causes to consider:
 - MDM triggering sign-out (Imprivata, other MDMs)
@@ -159,31 +261,27 @@ State explicitly what's NOT in the logs that would help:
 - `Found more than one account entry for user`
 - Multiple accounts with same UPN but different home account IDs
 
-## DRI Copilot Queries
+## DRI Search Queries Reference
 
-### Initial Query (always start here)
+### Tool Reference: `android-dri-search-hosted` MCP Server
 
-When given just an incident ID, query DRI Copilot with:
+| Tool | Purpose | Key Parameters |
+|------|---------|----------------|
+| `mcp_android-dri-s_get_incident` | Fetch incident details by ID | `incident_id` (required) |
+| `mcp_android-dri-s_batch_search` | Search past incidents AND/OR TSGs in a single call | `searches` (required): array of `{"type": "icm"\|"tsg", "query": "..."}` |
+| `mcp_android-dri-s_search_tsgs` | Search troubleshooting guides (single query) | `query` (required) |
 
-```
-"Investigate IcM [number]. What are the affected apps, symptoms, and known issues?"
-```
+### Query Strategy
 
-This single query extracts:
-- Affected application(s)
-- Customer-reported symptoms
-- Account/device context
-- Any known root cause or past similar incidents
-
-### Follow-up Queries (after initial context)
-
-Once you have context from the initial query, use targeted follow-ups:
-
-```
-"TSG for error code [error_code]"           # After finding error in logs
-"Past incidents related to [symptom]"        # After identifying symptom from IcM
-"How to troubleshoot [specific_issue]"       # For deep-dive guidance
-```
+1. **Start with `get_incident`** — always get the full incident context first
+2. **Then use `batch_search`** — combine ICM and TSG searches in a single call for maximum parallelism
+3. **Match query specificity to evidence confidence:**
+   - **High-confidence signals** (specific error codes, stack traces, operation names): query
+     those directly — they yield the best results. Do NOT dilute with broad exploratory queries.
+   - **Low-confidence / vague symptoms** (e.g., "device re-registration", "intermittent failures"
+     with no error codes): use multiple query angles to avoid clustering around one cause.
+     Vague symptoms have many possible root causes, so broaden the search.
+4. **Iterate if needed** — if initial search is too broad, narrow with specific error codes found in logs
 
 ## eSTS Correlation
 
@@ -211,7 +309,7 @@ For more Kusto queries, see [references/kusto-queries.md](references/kusto-queri
 
 ## Key Reminders
 
-1. **Query DRI Copilot FIRST** - Get IcM context before analyzing logs
+1. **Query `android-dri-search-hosted` FIRST** - Get incident details, similar incidents, and TSGs before analyzing logs
 2. **Evidence over assumptions** - Only state what logs show
 3. **State what's missing** - Be explicit about evidence gaps
 4. **Search all log files** - Issue may span multiple log segments
