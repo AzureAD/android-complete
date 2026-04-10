@@ -130,7 +130,28 @@ items where one of these conditions is met:
 Combine items from 1a and 1b. Deduplicate by `KpiActionItemId` — if the same item
 appears in both searches, keep only one copy.
 
-#### 1d: Detect Resolved Items (Week-over-Week)
+#### 1d: Fetch KPI Metadata (for Program Names)
+
+After merging, collect the unique `KpiId` values from all items and fetch metadata
+for each one:
+
+```
+mcp_s360-breeze-m_get_s360_kpi_metadata_by_kpi_id(kpiId: "<each unique KPI ID>")
+```
+
+Extract the `displayName` field from each response and build a **KpiId → displayName**
+map. These display names are the authoritative program/category labels (e.g.,
+`[SFI-ES4.2.4] Network Isolation for CFS endpoints`, `[Compl-CC1.3] Data Type
+Classification`, `Individual On-Call Readiness`).
+
+**Cache results** — multiple items share the same KpiId, so you only need one lookup
+per unique KPI, not per item.
+
+**Important**: Validate that the KpiId is a proper GUID (8-4-4-4-12 hex format) before
+calling the API. Some raw data may have malformed IDs — if invalid, log a warning and
+fall back to the item `Title` as the program name.
+
+#### 1e: Detect Resolved Items (Week-over-Week)
 
 To populate the "Resolved Since Last Week" section, compare the current S360 item set
 against last week's report:
@@ -164,7 +185,7 @@ The response contains an array at `result.resources`. For each item extract:
 
 | Field | JSON Path | Notes |
 |-------|-----------|-------|
-| Title | `Title` | **Required** — if empty, fall back to `CustomDimensions.S360_WavesMetadata[0].WaveDisplayName` or KPI name via `KpiId` lookup. Never leave blank. |
+| Title | `Title` | **Required** — sanitize before display (see below). If empty, use KPI `displayName` from Step 1d. Never leave blank. |
 | Service | Map `TargetId` → service name from table above. For person-targeted items (`TargetType: "Person"`), use `CustomDimensions.TenantName` instead |
 | Owner Alias | `S360Dimensions.ActionOwnerAlias` | Falls back to `AssignedTo`. If both empty → "unassigned" |
 | Owner Name | `S360Dimensions.ActionOwner` | If empty, use the `nameMap` from Step 0 to look up alias → display name. If still empty, use the alias as display name |
@@ -177,27 +198,31 @@ The response contains an array at `result.resources`. For each item extract:
 | S360 URL | `URL` | Link to details/remediation |
 | KPI ID | `KpiId` | For dedup |
 | Action Item ID | `KpiActionItemId` | For dedup |
-| Program Name | See extraction logic below | For grouping items by compliance area |
-| Program Desc | `CustomDimensions.S360_WavesMetadata[0].WaveDisplayName` | Subtitle under program heading |
-| Initiative | `CustomDimensions.initiative` | JSON array string |
+| Program Name | KPI metadata `displayName` (from Step 1d) | For grouping items by compliance area |
+| Program Desc | `CustomDimensions.S360_WavesMetadata[0].WaveDisplayName` | Subtitle under program heading (optional) |
 | Wave | Extract from `CustomDimensions.S360_WavesMetadata[0].WaveDisplayName` |
 
-**Program Name extraction** (priority order — use the first non-empty value):
+**Program Name**: Use the **KPI metadata `displayName`** fetched in Step 1d via the
+`KpiId → displayName` map. This is the only reliable source for program/category names.
 
-1. `CustomDimensions.S360_WavesMetadata[0].ProgramDisplayName` — the human-readable name
-   (e.g., "Continuous SDL", "Vulnerability Management", "GDPR & Data Classification")
-2. `CustomDimensions.campaign` — sometimes contains a readable program name
-3. `CustomDimensions.TeamName` — for person-targeted items (e.g., "On-Call Readiness")
-4. `CustomDimensions.filter` — **last resort only**. This contains internal codes like
-   "ADFunGlobal" or "ADFunCompliance". If you must use this, map known codes to friendly names:
-   - `ADFunGlobal` → "Global Compliance"
-   - `ADFunCompliance` → "Security & Compliance"
-   - `ADFunReliability` → "Reliability"
-   - Otherwise, title-case the value and strip the "ADFun" prefix
-5. If all empty → "Other Compliance Items"
+Do **NOT** use any of these fields for program names — they contain internal codes:
+- `CustomDimensions.initiative` — contains internal IDs like `"ADFunCompliance"`, `"CyberEO"`
+- `CustomDimensions.filter` — contains codes like `"ADFunGlobal"`
+- `CustomDimensions.campaign` — unreliable, often empty or internal
+- `CustomDimensions.Ingestion_KpiName` — internal KPI ingestion label, not user-facing
 
-**IMPORTANT**: Never use raw `CustomDimensions.filter` values (like "ADFunGlobal") as
-section headings. Always prefer `ProgramDisplayName` which contains the user-facing name.
+**Title sanitization**: S360 raw `Title` values often contain service tree GUIDs or
+overly technical text that is not suitable for display. Apply these cleanups:
+
+1. **Replace embedded GUIDs** — If the title contains a service tree ID (e.g.,
+   `"8d0d308e-cd5c-44a3-9518-43eeeb424b57 has streams left to review"`), replace the
+   GUID with the mapped service name (e.g., `"MSAL Android has streams left to review"`)
+   or use a cleaner description from the KPI metadata.
+2. **Set `shortTitle`** — For long titles (especially CFS pipeline items), extract the
+   meaningful suffix. For example, `"Use CFS package feeds for pipeline: Publish msal
+   to maven"` → shortTitle: `"Publish msal to maven"`.
+3. **Clean up resolved item titles** — Apply the same sanitization to resolved items
+   before rendering in the report.
 
 **Dedup**: Some items appear multiple times with different `KpiActionItemId` but same
 or similar `Title` and `TargetId`. Apply dedup in two passes:
