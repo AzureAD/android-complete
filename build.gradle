@@ -156,9 +156,13 @@ plugins {
     // Authenticator App plugins — declared with `apply false` so they are available
     // for Authenticator subprojects to apply. These are no-ops when Authenticator is
     // excluded (no module applies them), so they are kept unconditional for simplicity.
-    id "com.google.devtools.ksp" version "2.0.21-1.0.27" apply false
-    id "org.jetbrains.kotlin.plugin.compose" version "2.0.21" apply false
-    id "androidx.room" version "2.6.1" apply false
+    //
+    // Versions are resolved dynamically in settings.gradle via pluginManagement's
+    // resolutionStrategy.eachPlugin, sourced from authenticator/PhoneFactor/gradle.properties
+    // so they can never drift from Authenticator's canonical versions.
+    id "com.google.devtools.ksp" apply false
+    id "org.jetbrains.kotlin.plugin.compose" apply false
+    id "androidx.room" apply false
 }
 
 project.ext.vstsUsername = System.getenv("ENV_VSTS_MVN_CRED_USERNAME") != null ? System.getenv("ENV_VSTS_MVN_CRED_USERNAME") : project.findProperty("vstsUsername")

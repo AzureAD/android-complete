@@ -7,6 +7,36 @@
  * in the user guide at https://docs.gradle.org/5.1.1/userguide/multi_project_builds.html
  */
 pluginManagement {
+    // ---------------------------------------------------------------------------
+    // Authenticator plugin versions — loaded from authenticator/PhoneFactor/gradle.properties
+    // so we don't duplicate / drift from Authenticator's canonical versions.
+    // Falls back to sensible defaults when Authenticator isn't checked out (the plugins
+    // are still declared `apply false` in the root build.gradle, but never applied).
+    // ---------------------------------------------------------------------------
+    def __authProps = new Properties()
+    def __authPropsFile = new File(settings.rootDir, 'authenticator/PhoneFactor/gradle.properties')
+    if (__authPropsFile.exists()) {
+        __authPropsFile.withInputStream { __authProps.load(it) }
+    }
+    def __kotlinVersion = __authProps.getProperty('kotlin_version') ?: '2.0.21'
+    def __roomVersion   = __authProps.getProperty('androidx_room_persistence_version') ?: '2.6.1'
+    // KSP is coupled to BOTH kotlin_version AND its own increment suffix, so it must stay
+    // pinned as a whole string. Kept in one place here as the single source of truth.
+    def __kspVersion    = '2.0.21-1.0.27'
+
+    resolutionStrategy {
+        eachPlugin {
+            switch (requested.id.id) {
+                case 'com.google.devtools.ksp':
+                    useVersion(__kspVersion); break
+                case 'org.jetbrains.kotlin.plugin.compose':
+                    useVersion(__kotlinVersion); break
+                case 'androidx.room':
+                    useVersion(__roomVersion); break
+            }
+        }
+    }
+
     repositories {
         mavenLocal()
         google()
