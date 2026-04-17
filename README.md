@@ -3,6 +3,15 @@
 
 This repository contains a build gradle and git alias commands for building ADAL, MSAL, Authentication Broker, Common and test apps.  This project is intended for use by developers building and verifying integration primarily between ADAL, MSAL and the Android Authentication Broker.
 
+## AI-Driven Feature Development
+
+This repo supports an AI-driven development pipeline powered by GitHub Copilot agents. Design, plan, create work items, dispatch to coding agents, and monitor PRs — all from VS Code.
+
+**Get started**: See the [AI Driven Development Guide](AI%20Driven%20Development%20Guide.md) for full instructions, or run:
+```powershell
+.\scripts\setup-ai-orchestrator.ps1
+```
+
 ## Pre-requisites
 
 The android related auth projects pull artifacts from public and private package repositories.  The private artifacts are published using Azure DevOps.  You will need to generate

@@ -34,6 +34,7 @@
         git clone -b dev https://office.visualstudio.com/DefaultCollection/OneAuth/_git/OneAuth oneauth; \
         git clone -b develop https://github.com/AzureAD/microsoft-authentication-library-for-cpp.git msalcpp; \
         if grep -q 'includeAuthenticatorApp=true' local.properties 2>/dev/null || grep -q 'includeAuthenticatorApp=true' gradle.properties 2>/dev/null; then git clone https://msazure.visualstudio.com/DefaultCollection/One/_git/AD-MFA-phonefactor-phoneApp-android authenticator || echo "NOTE: Could not clone authenticator repo — skipping (optional)."; fi; \
+        git clone -b dev https://IdentityDivision@dev.azure.com/IdentityDivision/DevEx/_git/AuthLibrariesApiReview design-docs; \
 		cd msal; git submodule init; git submodule update; cd ..; \
 		cd adal; git submodule init; git submodule update; cd ..; \
 		cd broker; git submodule init; git submodule update; cd ..; \

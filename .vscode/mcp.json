@@ -1,0 +1,49 @@
+{
+  "inputs": [
+    {
+      "id": "ado_org",
+      "type": "promptString",
+      "description": "Azure DevOps organization name (e.g. 'IdentityDivision')",
+      "default": "IdentityDivision"
+    }
+  ],
+  "servers": {
+    // MCP Server Configuration for Microsoft Authenticator Android
+    // Docs: https://code.visualstudio.com/docs/copilot/chat/mcp-servers
+
+    "ado": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@azure-devops/mcp",
+        "${input:ado_org}",
+        "-d",
+        "core",
+        "work",
+        "work-items",
+        "repositories",
+        "pipelines"
+      ]
+    },
+
+    "workiq": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@microsoft/workiq", "mcp"],
+      "tools": ["*"]
+    },
+
+    "azure-mcp-server": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@azure/mcp@latest", "server", "start"],
+      "tools": ["*"]
+    },
+
+    "MyDRICopilot": {
+      "type": "http",
+      "url": "https://msalandroiddricopilot.azurewebsites.net/mcp"
+    }
+  }
+}
