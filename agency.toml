@@ -1,0 +1,5 @@
+# Agency configuration for android-complete
+# Docs: https://eng.ms/docs/cloud-ai-platform/github/github-copilot-suite/agency/config
+
+[mcps.builtins]
+ado = { type = "ado", organization = "IdentityDivision" }
