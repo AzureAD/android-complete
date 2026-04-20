@@ -40,6 +40,10 @@ non-production/
 ├── daily-validation/
 │   ├── daily-validation.yml          # Daily dev build & test pipeline (Local/ECS flights)
 │   └── release-util.yml             # CRON: auto-triggers monthly release (22-25th)
+├── weekly-validation/
+│   └── weekly-validation.yml         # Weekly validation pipeline (builds, tests, E2E via UI automation pipeline)
+├── ui-automation/
+│   └── ui-automation.yml             # Standalone Firebase UI automation (ID: 3076). Triggered by monthly-release/weekly-validation via queue-build.ps1
 └── linux-validation/                 # Linux validation pipelines
 ```
 
@@ -107,7 +111,7 @@ templates/
 │   ├── run-instrumented-tests-for-all-libraries.yml
 │   ├── run-instrumented-tests.yml
 │   ├── run-monthly-ui-automation.yml
-│   ├── run-daily-ui-automation.yml
+│   ├── run-weekly-ui-automation.yml
 │   ├── run-pre-ui-validation.yml
 │   ├── run-firebase-tests.yml
 │   ├── run-on-firebase.yml

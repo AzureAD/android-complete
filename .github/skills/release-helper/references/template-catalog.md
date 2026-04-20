@@ -97,12 +97,12 @@ Used by `hot-fix.yml`. Mirror the release templates with hotfix-specific branchi
 |---|---|
 | `run-instrumented-tests-for-all-libraries.yml` | Run instrumented tests for all libs |
 | `run-instrumented-tests.yml` | Run instrumented tests for a single lib |
-| `run-monthly-ui-automation.yml` | Full monthly E2E UI automation suite |
-| `run-daily-ui-automation.yml` | Daily E2E UI automation (subset) |
-| `run-pre-ui-validation.yml` | Pre-UI validation checks |
-| `run-firebase-tests.yml` | Execute tests on Firebase Test Lab |
-| `run-on-firebase.yml` | Firebase test runner (gcloud CLI) |
-| `run-on-firebase-with-flank.yml` | Firebase test runner using Flank |
+| `run-monthly-ui-automation.yml` | Monthly E2E UI automation suite (MSAL tests with RC/PROD broker). Called by the standalone UI automation pipeline (3076), not directly by monthly-release |
+| `run-weekly-ui-automation.yml` | Weekly E2E UI automation (MSAL tests with broker). Called by the standalone UI automation pipeline (3076), not directly by weekly-validation |
+| `run-pre-ui-validation.yml` | Pre-UI validation checks (lab API validation, broker discovery flag) |
+| `run-firebase-tests.yml` | Execute tests on Firebase Test Lab (delegates to `run-on-firebase.yml` or `run-on-firebase-with-flank.yml` based on shard count) |
+| `run-on-firebase.yml` | Firebase test runner (gcloud CLI, no sharding). Supports cross-pipeline artifact download via `sourcePipelineId`/`sourceBuildId` params |
+| `run-on-firebase-with-flank.yml` | Firebase test runner using Flank (with sharding). Same cross-pipeline artifact download support |
 | `flank.yml` | Flank configuration template |
 | `run-lab-api-validation.yml` | Lab API validation tests |
 
@@ -141,5 +141,5 @@ Used by `hot-fix.yml`. Mirror the release templates with hotfix-specific branchi
 ### Other
 | Template | Purpose |
 |---|---|
-| `automation-cert.yml` | Certificate provisioning for automation |
+| `automation-cert.yml` | Download `LabAuth.pfx` from Azure Key Vault (`msidlabs`) for Firebase test authentication. Included inside `run-on-firebase.yml` and `run-on-firebase-with-flank.yml` at the job level |
 | `token-from-service-connection.yml` | Get token from ADO service connection |

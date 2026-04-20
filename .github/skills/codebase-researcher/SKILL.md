@@ -239,15 +239,20 @@ file_search: **/broker/ipc/**/*.java
 ```
 
 ### Finding Pipeline Logic (1ES-Pipelines)
+
+> **Important:** `1ES-Pipelines/` is in `.gitignore`. Always use `includeIgnoredFiles: true` when searching with `grep_search`.
+
 ```
 file_search: 1ES-Pipelines/**/*.yml
-grep_search: "template:" or "- stage:" or "trigger:" in 1ES-Pipelines/
+grep_search: "template:" or "- stage:" or "trigger:" in 1ES-Pipelines/ (includeIgnoredFiles: true)
 ```
+
+Key pipeline IDs: `2519` (monthly-release), `2828` (start-monthly-release), `3076` (ui-automation)
 
 ### Finding Release Templates
 ```
 file_search: 1ES-Pipelines/templates/**/*.yml
-grep_search: "parameters:" in 1ES-Pipelines/templates/
+grep_search: "parameters:" in 1ES-Pipelines/templates/ (includeIgnoredFiles: true)
 ```
 
 ### Finding Pipeline Scripts
@@ -255,6 +260,11 @@ grep_search: "parameters:" in 1ES-Pipelines/templates/
 file_search: 1ES-Pipelines/scripts/**/*.py
 file_search: 1ES-Pipelines/scripts/**/*.ps1
 ```
+
+### Pipeline Architecture Patterns
+- **Cross-pipeline triggering**: Parent pipelines (monthly-release, weekly-validation) use `scripts/queue-build.ps1` to trigger child pipelines. The script queues an ADO build via REST API and polls for completion.
+- **Cross-pipeline artifact download**: Child pipelines receive `sourcePipelineId`/`sourceBuildId` as template parameters, threaded through the template chain down to `run-on-firebase.yml`/`run-on-firebase-with-flank.yml`, which use `DownloadPipelineArtifact@2` to pull artifacts from the parent pipeline.
+- **1ES compliance**: Production pipelines extend `v1/1ES.Official.PipelineTemplate.yml@1ESPipelineTemplates`, non-production extend `v1/1ES.Unofficial.PipelineTemplate.yml@1ESPipelineTemplates`.
 
 When investigating CI/CD pipelines, release processes, or build issues:
 1. Search `1ES-Pipelines/` for production pipeline YAML
