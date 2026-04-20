@@ -1,5 +1,7 @@
 # Template Catalog (AuthClientAndroidPipelines)
 
+> **Local path**: `1ES-Pipelines/templates/` (cloned via `git droidSetup`)
+
 All reusable YAML templates organized by category.
 
 ## Release Templates (`templates/release/`)

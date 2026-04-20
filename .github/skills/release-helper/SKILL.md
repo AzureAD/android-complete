@@ -13,7 +13,7 @@ Pipeline code lives in **two locations**:
 
 | Repository | Path | Purpose |
 |---|---|---|
-| **AuthClientAndroidPipelines** | `production/`, `non-production/`, `templates/`, `scripts/` | Primary pipeline repo (1ES-compliant). All monthly release, hotfix, daily validation, and publishing pipelines |
+| **AuthClientAndroidPipelines** | `1ES-Pipelines/` (local clone): `production/`, `non-production/`, `templates/`, `scripts/` | Primary pipeline repo (1ES-compliant). All monthly release, hotfix, daily validation, and publishing pipelines |
 | **android-complete** | `azure-pipelines/`, `scripts/release/`, `.github/workflows/` | Legacy pipelines (dev builds, instrumented tests, test apps) and release helper scripts |
 
 > **Key rule:** `AuthClientAndroidPipelines` is the source of truth for production pipelines. `android-complete` contains release scripts consumed by AuthClientAndroidPipelines and legacy dev-build pipelines.
@@ -240,7 +240,7 @@ For deeper exploration of specific areas, read the appropriate reference file:
 
 When investigating pipelines:
 
-1. **Start in AuthClientAndroidPipelines** for production/release/hotfix pipelines
+1. **Start in `1ES-Pipelines/`** (local clone of AuthClientAndroidPipelines) for production/release/hotfix pipelines
 2. **Check android-complete/scripts/release/** for version manipulation scripts
 3. **Check android-complete/azure-pipelines/** for legacy dev/daily build pipelines
 4. **Template references** follow the pattern `../../templates/{category}/{name.yml}`

@@ -18,6 +18,7 @@ This workspace contains multiple sub-repositories:
 | **Common** | Shared utilities + IPC logic | `common/common/src/main/java/com/microsoft/identity/common/` |
 | **ADAL** | Legacy auth library | `adal/adal/src/main/java/com/microsoft/aad/adal/` |
 | **OneAuth** | 1P apps library (external) | `oneauth/` |
+| **1ES-Pipelines** | Production CI/CD pipeline YAML | `1ES-Pipelines/production/`, `1ES-Pipelines/templates/`, `1ES-Pipelines/scripts/` |
 
 **⚠️ CRITICAL: Always search across ALL repositories.** Code is often duplicated or shared.
 
@@ -33,7 +34,7 @@ Client App → MSAL/OneAuth → Common (IPC) → Broker → eSTS → Broker → 
 2. **Always cite sources** - Every finding must include file path and line numbers
 3. **Acknowledge gaps** - Explicitly state when something cannot be found
 4. **Rate confidence** - Assign HIGH/MEDIUM/LOW to each finding
-5. **Search all modules** - Check MSAL, Broker, Common, ADAL for each query
+5. **Search all modules** - Check MSAL, Broker, Common, ADAL, and 1ES-Pipelines for each query
 
 ## Research Workflow
 
@@ -74,7 +75,7 @@ Use the output format below.
 ### Findings
 
 #### Finding 1: [Brief description]
-- **Module**: MSAL | Broker | Common | ADAL
+- **Module**: MSAL | Broker | Common | ADAL | 1ES-Pipelines
 - **File**: [path/to/file.ext](path/to/file.ext#L10-L25)
 - **Confidence**: HIGH | MEDIUM | LOW
 - **Evidence**: [What makes this the right code]
@@ -237,11 +238,35 @@ grep_search: BrokerOperationBundle|IIpcStrategy|BoundServiceStrategy
 file_search: **/broker/ipc/**/*.java
 ```
 
+### Finding Pipeline Logic (1ES-Pipelines)
+```
+file_search: 1ES-Pipelines/**/*.yml
+grep_search: "template:" or "- stage:" or "trigger:" in 1ES-Pipelines/
+```
+
+### Finding Release Templates
+```
+file_search: 1ES-Pipelines/templates/**/*.yml
+grep_search: "parameters:" in 1ES-Pipelines/templates/
+```
+
+### Finding Pipeline Scripts
+```
+file_search: 1ES-Pipelines/scripts/**/*.py
+file_search: 1ES-Pipelines/scripts/**/*.ps1
+```
+
+When investigating CI/CD pipelines, release processes, or build issues:
+1. Search `1ES-Pipelines/` for production pipeline YAML
+2. Search `azure-pipelines/` for legacy pipeline YAML
+3. Search `scripts/release/` for PowerShell/Python release scripts
+4. See the `release-helper` skill for detailed pipeline documentation
+
 ## Anti-Patterns to Avoid
 
 | Anti-Pattern | Problem | Correct Approach |
 |--------------|---------|------------------|
-| Searching only one module | Miss cross-module code | Search MSAL, Broker, Common, ADAL |
+| Searching only one module | Miss cross-module code | Search MSAL, Broker, Common, ADAL, 1ES-Pipelines |
 | "This is likely in..." | Speculation without evidence | Search first, report only what's found |
 | Path without line numbers | Imprecise, hard to verify | Always include line numbers |
 | Stopping at field definition | Misses conditional logic | Trace to Builder/Adapter for full behavior |

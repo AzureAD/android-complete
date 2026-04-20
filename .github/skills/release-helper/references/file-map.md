@@ -4,6 +4,8 @@ Every pipeline file and script across both repositories.
 
 ## AuthClientAndroidPipelines
 
+> **Local path**: `1ES-Pipelines/` (cloned via `git droidSetup`)
+
 ### Top-Level Pipelines
 
 ```
