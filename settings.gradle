@@ -7,26 +7,29 @@
  * in the user guide at https://docs.gradle.org/5.1.1/userguide/multi_project_builds.html
  */
 
-// ---------------------------------------------------------------------------
-// Authenticator App opt-in flag.
-// Computed once here and reused by both pluginManagement and module includes.
-// Priority (highest wins):
-//   1. Command line:              ./gradlew -PincludeAuthenticatorApp=true ...
-//   2. ~/.gradle/gradle.properties (per-user, never committed)
-//   3. gradle.properties           (committed project default)
-//   4. local.properties            (per-checkout, gitignored — fallback only)
-// providers.gradleProperty() already resolves 1-3, so we only fall back to
-// local.properties when none of those are set.
-// ---------------------------------------------------------------------------
-def __localProps = new Properties()
-def __localPropsFile = new File(settings.rootDir, 'local.properties')
-if (__localPropsFile.exists()) {
-    __localPropsFile.withInputStream { __localProps.load(it) }
-}
-def includeAuthenticatorApp = (providers.gradleProperty('includeAuthenticatorApp').getOrNull()
-        ?: __localProps.getProperty('includeAuthenticatorApp') ?: 'false').toString() == 'true'
-
 pluginManagement {
+    // ---------------------------------------------------------------------------
+    // Authenticator App opt-in flag.
+    // Computed once here (inside pluginManagement because Gradle requires
+    // pluginManagement to be the first statement in settings.gradle) and
+    // stashed on settings.ext for reuse by the module-include section below.
+    // Priority (highest wins):
+    //   1. Command line:              ./gradlew -PincludeAuthenticatorApp=true ...
+    //   2. ~/.gradle/gradle.properties (per-user, never committed)
+    //   3. gradle.properties           (committed project default)
+    //   4. local.properties            (per-checkout, gitignored — fallback only)
+    // providers.gradleProperty() already resolves 1-3, so we only fall back to
+    // local.properties when none of those are set.
+    // ---------------------------------------------------------------------------
+    def __localProps = new Properties()
+    def __localPropsFile = new File(settings.rootDir, 'local.properties')
+    if (__localPropsFile.exists()) {
+        __localPropsFile.withInputStream { __localProps.load(it) }
+    }
+    def includeAuthenticatorApp = (providers.gradleProperty('includeAuthenticatorApp').getOrNull()
+            ?: __localProps.getProperty('includeAuthenticatorApp') ?: 'false').toString() == 'true'
+    settings.ext.includeAuthenticatorApp = includeAuthenticatorApp
+
     // ---------------------------------------------------------------------------
     // Authenticator plugin versions — loaded from authenticator/PhoneFactor/gradle.properties
     // so we don't duplicate / drift from Authenticator's canonical versions.
@@ -92,6 +95,10 @@ pluginManagement {
         }
     }
 }
+
+// Re-bind the Authenticator opt-in flag (computed inside pluginManagement) to a
+// local variable so the module-include section below reads naturally.
+def includeAuthenticatorApp = settings.ext.includeAuthenticatorApp
 
 rootProject.name = 'android_auth'
 
