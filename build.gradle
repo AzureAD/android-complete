@@ -3,16 +3,18 @@ buildscript {
 
     // ---------------------------------------------------------------------------
     // Authenticator App opt-in flag.
-    // Reads local.properties (gitignored) first, then falls back to gradle property.
-    // Stored as ext property so it can be reused later in the build script.
+    // Priority (highest wins): -P command line > ~/.gradle/gradle.properties >
+    // project gradle.properties > local.properties (fallback only).
+    // project.findProperty() already resolves the first three, so we only fall
+    // back to local.properties when none of those are set.
     // ---------------------------------------------------------------------------
     def __localProps = new Properties()
     def __localPropsFile = new File(rootDir, 'local.properties')
     if (__localPropsFile.exists()) {
         __localPropsFile.withInputStream { __localProps.load(it) }
     }
-    def includeAuthenticatorApp = (__localProps.getProperty('includeAuthenticatorApp')
-            ?: project.findProperty('includeAuthenticatorApp')?.toString() ?: 'false') == 'true'
+    def includeAuthenticatorApp = (project.findProperty('includeAuthenticatorApp')?.toString()
+            ?: __localProps.getProperty('includeAuthenticatorApp') ?: 'false') == 'true'
     project.ext.set('includeAuthenticatorApp', includeAuthenticatorApp)
 
     // Authenticator is setting versions of their dependencies in their gradle.properties file.
