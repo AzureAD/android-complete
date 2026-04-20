@@ -6,7 +6,60 @@
  * Detailed information about configuring a multi-project build in Gradle can be found
  * in the user guide at https://docs.gradle.org/5.1.1/userguide/multi_project_builds.html
  */
+
 pluginManagement {
+    // ---------------------------------------------------------------------------
+    // Authenticator App opt-in flag.
+    // Computed once here (inside pluginManagement because Gradle requires
+    // pluginManagement to be the first statement in settings.gradle) and
+    // stashed on settings.ext for reuse by the module-include section below.
+    // Priority (highest wins):
+    //   1. Command line:              ./gradlew -PincludeAuthenticatorApp=true ...
+    //   2. ~/.gradle/gradle.properties (per-user, never committed)
+    //   3. gradle.properties           (committed project default)
+    //   4. local.properties            (per-checkout, gitignored — fallback only)
+    // providers.gradleProperty() already resolves 1-3, so we only fall back to
+    // local.properties when none of those are set.
+    // ---------------------------------------------------------------------------
+    def __localProps = new Properties()
+    def __localPropsFile = new File(settings.rootDir, 'local.properties')
+    if (__localPropsFile.exists()) {
+        __localPropsFile.withInputStream { __localProps.load(it) }
+    }
+    def includeAuthenticatorApp = (providers.gradleProperty('includeAuthenticatorApp').getOrNull()
+            ?: __localProps.getProperty('includeAuthenticatorApp') ?: 'false').toString() == 'true'
+    settings.ext.includeAuthenticatorApp = includeAuthenticatorApp
+
+    // ---------------------------------------------------------------------------
+    // Authenticator plugin versions — loaded from authenticator/PhoneFactor/gradle.properties
+    // so we don't duplicate / drift from Authenticator's canonical versions.
+    // Falls back to sensible defaults when Authenticator isn't checked out (the plugins
+    // are still declared `apply false` in the root build.gradle, but never applied).
+    // ---------------------------------------------------------------------------
+    def __authProps = new Properties()
+    def __authPropsFile = new File(settings.rootDir, 'authenticator/PhoneFactor/gradle.properties')
+    if (__authPropsFile.exists()) {
+        __authPropsFile.withInputStream { __authProps.load(it) }
+    }
+    def __kotlinVersion = __authProps.getProperty('kotlin_version') ?: '2.0.21'
+    def __roomVersion   = __authProps.getProperty('androidx_room_persistence_version') ?: '2.6.1'
+    // KSP is coupled to BOTH kotlin_version AND its own increment suffix, so it must stay
+    // pinned as a whole string. Kept in one place here as the single source of truth.
+    def __kspVersion    = '2.0.21-1.0.27'
+
+    resolutionStrategy {
+        eachPlugin {
+            switch (requested.id.id) {
+                case 'com.google.devtools.ksp':
+                    useVersion(__kspVersion); break
+                case 'org.jetbrains.kotlin.plugin.compose':
+                    useVersion(__kotlinVersion); break
+                case 'androidx.room':
+                    useVersion(__roomVersion); break
+            }
+        }
+    }
+
     repositories {
         mavenLocal()
         google()
@@ -22,8 +75,30 @@ pluginManagement {
                 password System.getenv("ENV_VSTS_MVN_CRED_ACCESSTOKEN") != null ? System.getenv("ENV_VSTS_MVN_CRED_ACCESSTOKEN") : vstsMavenAccessToken
             }
         }
+
+        // Authenticator App feed — only registered when Authenticator modules are enabled.
+        if (includeAuthenticatorApp) {
+            maven {
+                name "vsts-maven-authapp"
+                url "https://msazure.pkgs.visualstudio.com/One/_packaging/AuthApp/maven/v1"
+                credentials {
+                    username "VSTS"
+                    password System.getenv("SYSTEM_ACCESSTOKEN") != null ? System.getenv("SYSTEM_ACCESSTOKEN") : providers.gradleProperty("adoMsazureAuthAppAccessToken").getOrElse("")
+                }
+
+                // Accept artifacts without POMs. DexGuard is stored in external feed without POM.
+                metadataSources {
+                    mavenPom() // Try to find the POM first (preferred)
+                    artifact() // If no POM, accept the JAR anyway (fallback)
+                }
+            }
+        }
     }
 }
+
+// Re-bind the Authenticator opt-in flag (computed inside pluginManagement) to a
+// local variable so the module-include section below reads naturally.
+def includeAuthenticatorApp = settings.ext.includeAuthenticatorApp
 
 rootProject.name = 'android_auth'
 
@@ -120,3 +195,122 @@ project(':mockbrokerapplib').projectDir = new File('broker/mockbrokers/mockbroke
 
 include(":NativeAuthSample")
 project(':NativeAuthSample').projectDir = new File('nativeauthsample/app')
+
+// Authenticator App Projects — only included when the opt-in flag is set.
+if (includeAuthenticatorApp) {
+    // Main Authenticator app module (entry point with MainActivity, UI, and app lifecycle)
+    include ':MSAuthenticator'
+    project(':MSAuthenticator').projectDir = new File('authenticator/PhoneFactor/app')
+
+    // AAD Next-Generation Credentials (NGC) — remote passwordless key registration and deletion
+    include ':AadRemoteNgcLibrary'
+    project(':AadRemoteNgcLibrary').projectDir = new File('authenticator/PhoneFactor/AadRemoteNgcLibrary')
+
+    // Shared Android instrumented test utilities (Espresso helpers, test rules, logcat)
+    include ':AndroidTestUtilitiesLibrary'
+    project(':AndroidTestUtilitiesLibrary').projectDir = new File('authenticator/PhoneFactor/AndroidTestUtilitiesLibrary')
+
+    // User credential policy enforcement and auth app state persistence
+    include ':AuthenticatorPolicyChannel'
+    project(':AuthenticatorPolicyChannel').projectDir = new File('authenticator/PhoneFactor/AuthenticatorPolicyChannel')
+
+    // Credential history signals collection and storage for risk assessment
+    include ':AuthenticatorSignalsLibrary'
+    project(':AuthenticatorSignalsLibrary').projectDir = new File('authenticator/PhoneFactor/AuthenticatorSignalsLibrary')
+
+    // Bastion validation processing and response handling for secure auth flows
+    include ':BastionLibrary'
+    project(':BastionLibrary').projectDir = new File('authenticator/PhoneFactor/BastionLibrary')
+
+    // Shared UI components, dialogs, View extensions, and device screen-unlock activity
+    include ':CommonUiLibrary'
+    project(':CommonUiLibrary').projectDir = new File('authenticator/PhoneFactor/CommonUiLibrary')
+
+    // FIDO2/CTAP passkey management — storage, registration, and assertion handling
+    include ':CtapLibrary'
+    project(':CtapLibrary').projectDir = new File('authenticator/PhoneFactor/CtapLibrary')
+
+    // ECS (Experimentation & Configuration Service) feature-flag provider integration
+    include ':ExperimentationLibrary'
+    project(':ExperimentationLibrary').projectDir = new File('authenticator/PhoneFactor/ExperimentationLibrary')
+
+    // Microsoft Graph API client for auth methods policy and public key credential operations
+    include ':GraphClient'
+    project(':GraphClient').projectDir = new File('authenticator/PhoneFactor/GraphClient')
+
+    // Location permission management and GPS-signal UI for conditional-access scenarios
+    include ':LocationLibrary'
+    project(':LocationLibrary').projectDir = new File('authenticator/PhoneFactor/LocationLibrary')
+
+    // MFA SDK — push-notification registration, PIN encryption, and device-notification validation
+    include ':MfaLibrary'
+    project(':MfaLibrary').projectDir = new File('authenticator/PhoneFactor/MfaLibrary')
+
+    // Macrobenchmark references ':app' internally — excluded since it's not needed for local dev.
+    // include ':Macrobenchmark'
+    // project(':Macrobenchmark').projectDir = new File('authenticator/PhoneFactor/Macrobenchmark')
+
+    // Microsoft Account (MSA) management — ticket acquisition and MSA account operations
+    include ':MsaAccountLibrary'
+    project(':MsaAccountLibrary').projectDir = new File('authenticator/PhoneFactor/MsaAccountLibrary')
+
+    // MSA SDK wrapper (debug build variant)
+    include ':MsaSdkDebug'
+    project(':MsaSdkDebug').projectDir = new File('authenticator/PhoneFactor/MsaSdkDebug')
+
+    // MSA SDK wrapper (release build variant)
+    include ':MsaSdkRelease'
+    project(':MsaSdkRelease').projectDir = new File('authenticator/PhoneFactor/MsaSdkRelease')
+
+    // Native crash reporting via Breakpad for Authenticator's native code
+    include ':NativeLibrary'
+    project(':NativeLibrary').projectDir = new File('authenticator/PhoneFactor/NativeLibrary')
+
+    // NGC key provider — Android Keystore-backed key generation and credential management
+    include ':NgcProviderLibrary'
+    project(':NgcProviderLibrary').projectDir = new File('authenticator/PhoneFactor/NgcProviderLibrary')
+
+    // Rooted/compromised device detection and telemetry
+    include ':RootDetectionLibrary'
+    project(':RootDetectionLibrary').projectDir = new File('authenticator/PhoneFactor/RootDetectionLibrary')
+
+    // QR code scanning UI and result-handling pipeline
+    include ':ScanQrCodeLibrary'
+    project(':ScanQrCodeLibrary').projectDir = new File('authenticator/PhoneFactor/ScanQrCodeLibrary')
+
+    // Secure asymmetric key-pair generation (ECC/RSA) and Keystore access layer
+    include ':SecureKeystoreLibrary'
+    project(':SecureKeystoreLibrary').projectDir = new File('authenticator/PhoneFactor/SecureKeystoreLibrary')
+
+    // Core crypto, encryption interfaces, and shared utilities across Authenticator modules
+    include ':SharedCoreLibrary'
+    project(':SharedCoreLibrary').projectDir = new File('authenticator/PhoneFactor/SharedCoreLibrary')
+
+    // Silent push-notification channel for background MFA approval
+    include ':SilentNotificationChannelLibrary'
+    project(':SilentNotificationChannelLibrary').projectDir = new File('authenticator/PhoneFactor/SilentNotificationChannelLibrary')
+
+    // Unit-test utilities and helpers for Authenticator modules
+    include ':TestUtilitiesLibrary'
+    project(':TestUtilitiesLibrary').projectDir = new File('authenticator/PhoneFactor/TestUtilitiesLibrary')
+
+    // Decentralized identity (DID) SDK — issuance, presentation, and revocation of verifiable credentials
+    include ':VerifiableCredential-SDK'
+    project(':VerifiableCredential-SDK').projectDir = new File('authenticator/PhoneFactor/VerifiableCredential-SDK/sdk')
+
+    // Verifiable credential wallet — VC storage, display, and sharing UI
+    include ':VerifiableCredential-Wallet'
+    project(':VerifiableCredential-Wallet').projectDir = new File('authenticator/PhoneFactor/VerifiableCredential-Wallet')
+
+    // Entra Verified ID wallet — holder identifier management and credential extensions
+    include ':WalletLibrary'
+    project(':WalletLibrary').projectDir = new File('authenticator/PhoneFactor/WalletLibrary/walletlibrary')
+
+    // FaceCheck biometric liveness extension for Entra Verified ID presentations
+    include ':WalletLibrary-FaceCheck-Extension'
+    project(':WalletLibrary-FaceCheck-Extension').projectDir = new File('authenticator/PhoneFactor/WalletLibrary-FaceCheck-Extension/FaceCheck')
+
+    // UI Automator end-to-end smoke tests for Authenticator app
+    include ':uiautomator-tests'
+    project(':uiautomator-tests').projectDir = new File('authenticator/PhoneFactor/uiautomator-tests')
+}
