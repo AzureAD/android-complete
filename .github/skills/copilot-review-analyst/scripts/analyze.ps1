@@ -13,6 +13,36 @@ param(
 $ErrorActionPreference = "Continue"
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
+# ========================================
+# AUTH: Switch to EMU account (has access to all repos including private broker)
+# EMU accounts follow the *_microsoft naming convention.
+# ========================================
+$originalAccount = gh api user --jq '.login' 2>$null
+
+# Find the EMU account from gh auth status output
+$emuAccount = (gh auth status 2>&1 | Select-String 'Logged in to github.com account (\S+_microsoft)' | 
+    ForEach-Object { $_.Matches[0].Groups[1].Value } | Select-Object -First 1)
+
+if (-not $emuAccount) {
+    Write-Host "ERROR: No EMU account (*_microsoft) found in 'gh auth status'." -ForegroundColor Red
+    Write-Host "  Run: gh auth login  (and authenticate with your EMU account)" -ForegroundColor Yellow
+    exit 1
+}
+
+if ($originalAccount -ne $emuAccount) {
+    Write-Host "Switching from '$originalAccount' to EMU account '$emuAccount'..." -ForegroundColor Cyan
+    gh auth switch --user $emuAccount 2>&1 | Out-Null
+    $currentAccount = gh api user --jq '.login' 2>$null
+    if ($currentAccount -ne $emuAccount) {
+        Write-Host "ERROR: Failed to switch to EMU account '$emuAccount'." -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "  Switched to '$emuAccount'. Will restore '$originalAccount' on completion." -ForegroundColor Green
+} else {
+    Write-Host "Already using EMU account '$emuAccount'." -ForegroundColor Green
+    $originalAccount = $null  # no restore needed
+}
+
 # Copilot uses "Copilot" for inline review comments
 $COPILOT_USERS = @("Copilot", "copilot-pull-request-reviewer[bot]")
 $BOT_AUTHORS = @("app/copilot-swe-agent", "Copilot", "dependabot[bot]", "github-actions[bot]")
@@ -205,3 +235,12 @@ Write-Host "  review_summaries.json ($($reviewSummaries.Count) summaries)"
 Write-Host "================================================================"
 Write-Host "`nNext: Run Phase 2 (precise.ps1) for diff verification," -ForegroundColor Yellow
 Write-Host "then Phase 3 (AI classification of all replied comments)." -ForegroundColor Yellow
+
+# ========================================
+# RESTORE: Switch back to original GitHub account
+# ========================================
+if ($originalAccount) {
+    Write-Host "`nRestoring GitHub CLI to original account '$originalAccount'..." -ForegroundColor Cyan
+    gh auth switch --user $originalAccount 2>&1 | Out-Null
+    Write-Host "  Restored to '$originalAccount'." -ForegroundColor Green
+}

@@ -9,9 +9,8 @@ Analyze GitHub Copilot code review effectiveness across the Android Auth reposit
 
 ## Prerequisites
 
-- **GitHub CLI (`gh`)** authenticated with access to all target repos
-- For public repos (common, msal): personal GitHub account
-- For private repos (broker): EMU account (e.g. `shjameel_microsoft`)
+- **GitHub CLI (`gh`)** authenticated with an **EMU account** (`*_microsoft`) which has access to all three repos (public and private). The script auto-detects the EMU account from `gh auth status`.
+- The `analyze.ps1` script automatically switches to the EMU account at startup and restores the original account on completion — no manual auth switching needed
 - **Output directory**: `~/.copilot-review-analysis/` for final artifacts, `$env:TEMP\copilot-review-analysis\` for intermediate data
 
 ## Repository Configuration
@@ -20,9 +19,9 @@ Default repos (update in scripts if changed):
 
 | Label | Slug | Auth |
 |-------|------|------|
-| common | `AzureAD/microsoft-authentication-library-common-for-android` | Personal |
-| msal | `AzureAD/microsoft-authentication-library-for-android` | Personal |
-| broker | `identity-authnz-teams/ad-accounts-for-android` | EMU |
+| common | `AzureAD/microsoft-authentication-library-common-for-android` | EMU (also accessible via personal) |
+| msal | `AzureAD/microsoft-authentication-library-for-android` | EMU (also accessible via personal) |
+| broker | `identity-authnz-teams/ad-accounts-for-android` | EMU only |
 
 ## Analysis Pipeline
 
