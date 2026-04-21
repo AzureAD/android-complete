@@ -14,7 +14,7 @@ Read the skill file at `.github/skills/codebase-researcher/SKILL.md` and follow 
 
 ## Key Rules
 
-- Search across ALL repositories: common, msal, broker, adal
+- Search across ALL repositories: common, msal, broker, adal, 1ES-Pipelines
 - Read specific line ranges, not entire files
 - Report findings with file paths and line numbers
 - Check `design-docs/` for existing related designs
