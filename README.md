@@ -89,6 +89,48 @@ Where "local" is the name of the variant and "Debug" is the build type.
 
 For MSAuthenticator, please use "devDebug" to test against PROD, and "integrationDebug" to test against INT.
 
+## Authenticator App (Opt-in)
+
+Authenticator modules are **excluded by default** to keep Gradle sync/build fast for developers who don't work on Authenticator. To enable them, set `includeAuthenticatorApp=true` in one of these locations (highest priority wins):
+
+| Priority | Location | Scope | Committed? |
+|----------|----------|-------|------------|
+| 1 (highest) | `./gradlew -PincludeAuthenticatorApp=true` | Single invocation | No |
+| 2 | `~/.gradle/gradle.properties` | All projects on your machine | No |
+| 3 | `gradle.properties` | Everyone who clones the repo | Yes |
+| 4 (lowest) | `local.properties` | This checkout only (gitignored) | No |
+
+**Recommended for most developers** — add to `local.properties` (create it if it doesn't exist):
+
+```properties
+includeAuthenticatorApp=true
+android.enableJetifier=true
+```
+
+> **Jetifier is required.** Some Authenticator dependencies (e.g. Samsung Knox supportlib, MsaSdk .aar) use the legacy Android Support Library. `android.enableJetifier=true` rewrites their bytecode to AndroidX at build time. Without it you'll get `ClassNotFoundException` at runtime.
+
+### How it works
+
+- **Gradle** (`settings.gradle` / `build.gradle`): The flag gates the AuthApp Maven feed registration and all Authenticator module includes.
+- **Git aliases** (`.gitconfig`): The `droid*` commands (e.g. `droidSetup`, `droidNewFeature`, `droidPull`) use `scripts/resolve-include-authenticator.sh` to check the same flag with the same priority order. When enabled, they clone/pull/push the authenticator repo alongside the other repos.
+
+### Quick reference
+
+```bash
+# Enable for this checkout only
+echo "includeAuthenticatorApp=true" >> local.properties
+echo "android.enableJetifier=true" >> local.properties
+
+# Enable globally (all android-complete checkouts)
+echo "includeAuthenticatorApp=true" >> ~/.gradle/gradle.properties
+
+# One-off build with Authenticator
+./gradlew -PincludeAuthenticatorApp=true :MSAuthenticator:assembleDevDebug
+
+# One-off build WITHOUT Authenticator (overrides gradle.properties default)
+./gradlew -PincludeAuthenticatorApp=false assembleLocalDebug
+```
+
 ## Projects Properties (Command Line Build flags)
 
 We support a number of different project properties as command line flags across some of our modules. Please read the doc on [Gradle Project Properties](./docs/ProjectBuild/gradle_project_properties.md) to learn more about them.

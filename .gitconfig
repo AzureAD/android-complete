@@ -1,6 +1,16 @@
 [push]
     default = simple
 [alias]
+    ; ---------------------------------------------------------------------------
+    ; Authenticator App: All droid* aliases that touch the authenticator/ repo are
+    ; guarded by the same includeAuthenticatorApp property used by Gradle.
+    ; The guard calls scripts/resolve-include-authenticator.sh which checks files
+    ; in priority order (highest wins):
+    ;   1. ~/.gradle/gradle.properties  (per-user global)
+    ;   2. gradle.properties            (committed project default)
+    ;   3. local.properties             (per-checkout, gitignored — fallback only)
+    ; This matches the priority used by settings.gradle and build.gradle.
+    ; ---------------------------------------------------------------------------
 	hello = "!echo \"Hello World\""
 	droidShowBranches = "!f() { \
                 workDir=$(git config --get androidcomplete.workDir); \
@@ -9,6 +19,7 @@
                 printf '\n' ;cd $workDir/msal/; printf '\n' ; printf "${RED}MSAL${NC}"; printf '%s': "  "; git branch --show-current; \
                 printf '\n' ;cd $workDir/broker/; printf '\n' ; printf "${RED}BROKER${NC}"; printf '%s': "  ";  git branch --show-current; \
                 printf '\n' ;cd $workDir/common/; printf '\n' ; printf "${RED}COMMON${NC}"; printf '%s': "  ";  git branch --show-current; \
+                if "$workDir/scripts/resolve-include-authenticator.sh" "$workDir"; then printf '\n' ;cd $workDir/authenticator/; printf '\n' ; printf "${RED}AUTHENTICATOR${NC}"; printf '%s': "  ";  git branch --show-current; fi; \
                 printf '\n' ; printf '%s' "-----------------------------------------"; printf '%s' "  "; \
             }; f"
     droidReplaceLine = "!f() { \
@@ -24,11 +35,13 @@
         git clone -b main https://github.com/Azure-Samples/ms-identity-ciam-native-auth-android-sample.git nativeauthsample; \
         git clone -b dev https://office.visualstudio.com/DefaultCollection/OneAuth/_git/OneAuth oneauth; \
         git clone -b develop https://github.com/AzureAD/microsoft-authentication-library-for-cpp.git msalcpp; \
+        if "scripts/resolve-include-authenticator.sh" "."; then git clone https://msazure.visualstudio.com/DefaultCollection/One/_git/AD-MFA-phonefactor-phoneApp-android authenticator || echo "NOTE: Could not clone authenticator repo — skipping (optional)."; fi; \
         git clone -b dev https://IdentityDivision@dev.azure.com/IdentityDivision/DevEx/_git/AuthLibrariesApiReview design-docs; \
         git clone -b main https://IdentityDivision@dev.azure.com/IdentityDivision/Engineering/_git/AuthClientAndroidPipelines 1ES-Pipelines; \
 		cd msal; git submodule init; git submodule update; cd ..; \
 		cd adal; git submodule init; git submodule update; cd ..; \
 		cd broker; git submodule init; git submodule update; cd ..; \
+		if [ -d authenticator ]; then cd authenticator; git submodule init; git submodule update; cd ..; fi; \
 		workDir=$(pwd); \
 		git config --replace-all androidcomplete.workDir $workDir; \
 		}; f"
@@ -62,6 +75,7 @@
             cd $workDir/common/; printf "${RED}COMMON${NC}"; printf ": "; git fetch origin; git status; \
             cd $workDir/oneauth/; printf "${RED}ONEAUTH${NC}"; printf ": "; git fetch origin; git status; \
             cd $workDir/msalcpp/; printf "${RED}MSALCPP${NC}"; printf ": "; git fetch origin; git status; \
+            if "$workDir/scripts/resolve-include-authenticator.sh" "$workDir"; then cd $workDir/authenticator/; printf "${RED}AUTHENTICATOR${NC}"; printf ": "; git fetch origin; git status; fi; \
             cd $workDir/tsl/; printf "${RED}TSL${NC}"; printf ": "; git fetch origin; git status; \
             cd $workDir/1ES-Pipelines/; printf "${RED}1ES-PIPELINES${NC}"; printf ": "; git fetch origin; git status; \
         }; f"
@@ -72,6 +86,7 @@
             cd $workDir/broker/; git checkout -b $1 dev; \
             cd $workDir/common/; git checkout -b $1 dev; \
             cd $workDir/msalcpp/; git checkout -b $1 develop; \
+            if "$workDir/scripts/resolve-include-authenticator.sh" "$workDir"; then cd $workDir/authenticator/; git checkout -b $1 working; fi; \
         }; f"
     droidCheckout = "!f() { \
           workDir=$(git config --get androidcomplete.workDir); \
@@ -80,6 +95,7 @@
           cd $workDir/broker/; git checkout $1; \
           cd $workDir/common/; git checkout $1; \
           cd $workDir/msalcpp/; git checkout $1; \
+          if "$workDir/scripts/resolve-include-authenticator.sh" "$workDir"; then cd $workDir/authenticator/; git checkout $1 || echo \"WARNING: Could not checkout '$1' in authenticator — branch may not exist.\"; fi; \
       }; f"
     droidPull = "!f() { \
               workDir=$(git config --get androidcomplete.workDir); \
@@ -89,6 +105,28 @@
               cd $workDir/common/; git pull; \
               cd $workDir/msalcpp/; git pull; \
               cd $workDir/1ES-Pipelines/; git pull; \
+              if "$workDir/scripts/resolve-include-authenticator.sh" "$workDir"; then cd $workDir/authenticator/; git pull; fi; \
+          }; f"
+    droidPush = "!f() { \
+              workDir=$(git config --get androidcomplete.workDir); \
+              cd $workDir/adal/; git push -u origin HEAD; \
+              cd $workDir/msal/; git push -u origin HEAD; \
+              cd $workDir/broker/; git push -u origin HEAD; \
+              cd $workDir/common/; git push -u origin HEAD; \
+              cd $workDir/msalcpp/; git push -u origin HEAD || echo \"WARNING: Could not push to msalcpp — check remote access.\"; \
+              if "$workDir/scripts/resolve-include-authenticator.sh" "$workDir"; then cd $workDir/authenticator/; git push -u origin HEAD || echo \"WARNING: Could not push to authenticator — check remote access.\"; fi; \
+          }; f"
+    droidFetch = "!f() { \
+              RED='\\033[0;31m'; \
+              NC='\\033[0m'; \
+              workDir=$(git config --get androidcomplete.workDir); \
+              cd $workDir/adal/; printf \"${RED}ADAL${NC}: \"; git fetch origin; \
+              cd $workDir/msal/; printf \"${RED}MSAL${NC}: \"; git fetch origin; \
+              cd $workDir/broker/; printf \"${RED}BROKER${NC}: \"; git fetch origin; \
+              cd $workDir/common/; printf \"${RED}COMMON${NC}: \"; git fetch origin; \
+              cd $workDir/msalcpp/; printf \"${RED}MSALCPP${NC}: \"; git fetch origin; \
+              cd $workDir/oneauth/; printf \"${RED}ONEAUTH${NC}: \"; git fetch origin; \
+              if "$workDir/scripts/resolve-include-authenticator.sh" "$workDir"; then cd $workDir/authenticator/; printf \"${RED}AUTHENTICATOR${NC}: \"; git fetch origin; fi; \
           }; f"
     droidBranch = "!f() { \
     	RED='\\033[0;31m'; \
@@ -99,6 +137,7 @@
         cd $workDir/msal/; printf '\n' ; printf "${RED}MSAL${NC}"; printf '%s\n' ": "; git branch; \
         cd $workDir/broker/; printf '\n' ; printf "${RED}BROKER${NC}"; printf '%s\n' ": "; git branch; \
         cd $workDir/common/; printf '\n' ; printf "${RED}COMMON${NC}"; printf '%s\n' ": "; git branch; \
+        if "$workDir/scripts/resolve-include-authenticator.sh" "$workDir"; then cd $workDir/authenticator/; printf '\n' ; printf "${RED}AUTHENTICATOR${NC}"; printf '%s\n' ": "; git branch; fi; \
     }; f"
     droidStash = "!f() { \
             workDir=$(git config --get androidcomplete.workDir); \
@@ -107,6 +146,7 @@
             cd $workDir/broker/; git stash $1; \
             cd $workDir/common/; git stash $1; \
             cd $workDir/msalcpp/; git stash $1; \
+            if "$workDir/scripts/resolve-include-authenticator.sh" "$workDir"; then cd $workDir/authenticator/; git stash $1; fi; \
         }; f"
     droidUpdateVersionsGradle = "!f() { \
             workDir=$(git config --get androidcomplete.workDir); \
@@ -179,10 +219,12 @@
               cd $workDir/msal/; git checkout dev; git fetch; git pull;  git submodule update; \
               cd $workDir/broker/; git checkout dev; git fetch; git pull;  git submodule update; \
               cd $workDir/common/; git checkout dev; git fetch; git pull; \
+              if "$workDir/scripts/resolve-include-authenticator.sh" "$workDir"; then cd $workDir/authenticator/; git checkout working; git fetch; git pull;  git submodule update; fi; \
           }; f"
     droidUpdateSubmodules = "!f() { \
               workDir=$(git config --get androidcomplete.workDir); \
               cd $workDir/adal/; git submodule update; \
               cd $workDir/msal/; git submodule update; \
               cd $workDir/broker/; git submodule update; \
+              if "$workDir/scripts/resolve-include-authenticator.sh" "$workDir"; then cd $workDir/authenticator/; git submodule update; fi; \
           }; f"
