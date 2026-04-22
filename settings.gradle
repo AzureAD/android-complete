@@ -100,6 +100,32 @@ pluginManagement {
 // local variable so the module-include section below reads naturally.
 def includeAuthenticatorApp = settings.ext.includeAuthenticatorApp
 
+// Fail fast when the opt-in flag is set but the authenticator/ checkout is missing
+// or incomplete. Without this, Gradle would emit a confusing cascade of "project
+// directory does not exist" errors deep in the include() calls below.
+def __authenticatorDir = new File(settings.rootDir, 'authenticator')
+def __authenticatorPhoneFactorDir = new File(__authenticatorDir, 'PhoneFactor')
+if (includeAuthenticatorApp && !__authenticatorPhoneFactorDir.isDirectory()) {
+    def __msg
+    if (!__authenticatorDir.exists()) {
+        // Case 1: nothing cloned yet.
+        __msg = "includeAuthenticatorApp=true but authenticator/ is not checked out.\n" +
+                "  Fix:  re-run  git droidSetup  (clones only what's missing)."
+    } else {
+        // Case 2: authenticator/ exists but is empty / partial / wrong contents.
+        // git clone refuses to write into a non-empty directory, so droidSetup alone
+        // won't recover — the stale folder has to be removed first.
+        __msg = "includeAuthenticatorApp=true and authenticator/ exists, but " +
+                "authenticator/PhoneFactor/ is missing (partial or stale checkout).\n" +
+                "  Fix:  delete the folder and re-run droidSetup:\n" +
+                "          rm -rf authenticator && git droidSetup"
+    }
+    throw new GradleException(
+            __msg + "\n" +
+            "  To build without Authenticator instead, set includeAuthenticatorApp=false " +
+            "in gradle.properties (or ~/.gradle/gradle.properties).")
+}
+
 rootProject.name = 'android_auth'
 
 // Android DevX Projects

@@ -91,46 +91,32 @@ For MSAuthenticator, please use "devDebug" to test against PROD, and "integratio
 
 ## Authenticator App (Opt-in)
 
-Authenticator modules are **excluded by default** to keep Gradle sync/build fast for developers who don't work on Authenticator. To enable them, set `includeAuthenticatorApp=true` in one of these locations (highest priority wins):
-
-| Priority | Location | Scope | Committed? |
-|----------|----------|-------|------------|
-| 1 (highest) | `./gradlew -PincludeAuthenticatorApp=true` | Single invocation | No |
-| 2 | `~/.gradle/gradle.properties` | All projects on your machine | No |
-| 3 | `gradle.properties` | Everyone who clones the repo | Yes |
-| 4 (lowest) | `local.properties` | This checkout only (gitignored) | No |
-
-**Recommended for most developers** — add to `local.properties` (create it if it doesn't exist):
+Authenticator modules are **excluded by default** so Gradle sync/build stays fast for developers who don't work on Authenticator. To enable them, edit the **root `gradle.properties`** — not the one in `authenticator/` but the one at the root of the repo. Turn these two lines ON:
 
 ```properties
 includeAuthenticatorApp=true
 android.enableJetifier=true
 ```
 
-> **Jetifier is required.** Some Authenticator dependencies (e.g. Samsung Knox supportlib, MsaSdk .aar) use the legacy Android Support Library. `android.enableJetifier=true` rewrites their bytecode to AndroidX at build time. Without it you'll get `ClassNotFoundException` at runtime.
+Then re-sync Gradle in Android Studio. That's it — one file, two lines.
 
-### How it works
+#### If `authenticator/` isn't on disk yet
 
-- **Gradle** (`settings.gradle` / `build.gradle`): The flag gates the AuthApp Maven feed registration and all Authenticator module includes.
-- **Git aliases** (`.gitconfig`): The `droid*` commands (e.g. `droidSetup`, `droidNewFeature`, `droidPull`) use `scripts/resolve-include-authenticator.sh` to check the same flag with the same priority order. When enabled, they clone/pull/push the authenticator repo alongside the other repos.
-
-### Quick reference
+Flipping the flag to `true` in a checkout where `droidSetup` was previously run with Authenticator disabled will cause Gradle sync to fail fast with a clear message. The fix is:
 
 ```bash
-# Enable for this checkout only
-echo "includeAuthenticatorApp=true" >> local.properties
-echo "android.enableJetifier=true" >> local.properties
-
-# Enable globally (all android-complete checkouts)
-echo "includeAuthenticatorApp=true" >> ~/.gradle/gradle.properties
-
-# One-off build with Authenticator
-./gradlew -PincludeAuthenticatorApp=true :MSAuthenticator:assembleDevDebug
-
-# One-off build WITHOUT Authenticator (overrides gradle.properties default)
-./gradlew -PincludeAuthenticatorApp=false assembleLocalDebug
+git droidSetup    # idempotent — clones only what's missing
 ```
 
+If `authenticator/` exists but looks partial (e.g. `authenticator/PhoneFactor/` is missing), remove it first:
+
+```bash
+rm -rf authenticator && git droidSetup
+```
+
+#### To opt back out
+
+Flip both flags back to `false` in `gradle.properties` and re-sync. The `authenticator/` checkout can stay on disk — Gradle simply won't include it.
 ## Projects Properties (Command Line Build flags)
 
 We support a number of different project properties as command line flags across some of our modules. Please read the doc on [Gradle Project Properties](./docs/ProjectBuild/gradle_project_properties.md) to learn more about them.
