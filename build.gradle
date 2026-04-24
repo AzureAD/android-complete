@@ -278,7 +278,13 @@ allprojects {
 
     // Dependency substitution: when building in android-complete, replace Maven artifacts
     // with their local project equivalents to avoid duplicate class / resource errors.
+    // Note: Skip substitution for 'dist' flavor configurations — those are intended to
+    // resolve remote artifacts (e.g. distApi dependencies in test apps).
     configurations.configureEach {
+        // Skip dist flavor configurations so they resolve remote Maven artifacts
+        if (name.toLowerCase().contains('dist')) {
+            return
+        }
         resolutionStrategy.dependencySubstitution {
             if (rootProject.findProject(':AADAuthenticator') != null) {
                 substitute module('com.microsoft.workplace:ad-accounts-for-android') using project(':AADAuthenticator')
