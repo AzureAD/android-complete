@@ -30,7 +30,7 @@ Follow the repo's template at `design-docs/Template/template.md`. Key sections:
 
 1. **Title** — Feature name
 2. **Applicable to and priority** — Platform table (focus on Android column)
-3. **Components** — Which repos/modules (MSAL, Common, Broker, etc.)
+3. **Components** — Which repos/modules (MSAL, Common, Broker, Authenticator, etc.)
 4. **Problem description** — User problem, business context, examples
 5. **Requirements (Must)** — Key functional requirements
 6. **System Qualities (Must)** — Performance, telemetry, security, supportability
@@ -46,7 +46,7 @@ For Android-specific designs, also include:
 - **Telemetry** — Span names, attributes, success/failure signals
 - **Testing strategy** — Unit test approach, instrumented test needs, E2E coverage
 - **Rollout plan** — Feature flag stages, ECS configuration
-- **Cross-repo impact** — Which repos need changes and in what order
+- **Cross-repo impact** — Which repos need changes and in what order (include Authenticator if the feature affects the Authenticator app)
 
 ## Workflow
 
@@ -62,7 +62,7 @@ Gather from the developer:
 
 Use the `codebase-researcher` skill to:
 - Understand how related functionality currently works
-- Identify which repos/files would be affected
+- Identify which repos/files would be affected (including Authenticator if the feature touches the app)
 - Find existing patterns to follow (feature flags, error handling, telemetry, IPC contracts)
 - Check for any existing design docs in `design-docs/` on the same topic
 

@@ -97,6 +97,7 @@ Do NOT attempt to proceed without valid accounts — fail fast with clear instru
 | msal | `AzureAD/microsoft-authentication-library-for-android` | Public (AzureAD) |
 | broker / broker4j / AADAuthenticator | `identity-authnz-teams/ad-accounts-for-android` | EMU (identity-authnz-teams) |
 | adal | `AzureAD/azure-activedirectory-library-for-android` | Public (AzureAD) |
+| authenticator | `AzureAD/microsoft-authenticator-for-android` | Public (AzureAD) |
 
 ## Workflow
 

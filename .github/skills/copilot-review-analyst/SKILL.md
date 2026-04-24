@@ -22,6 +22,7 @@ Default repos (update in scripts if changed):
 | common | `AzureAD/microsoft-authentication-library-common-for-android` | EMU (also accessible via personal) |
 | msal | `AzureAD/microsoft-authentication-library-for-android` | EMU (also accessible via personal) |
 | broker | `identity-authnz-teams/ad-accounts-for-android` | EMU only |
+| authenticator | `AzureAD/microsoft-authenticator-for-android` | EMU (also accessible via personal) |
 
 ## Analysis Pipeline
 
