@@ -46,6 +46,7 @@ Repo slug mapping:
 - `msal` → `AzureAD/microsoft-authentication-library-for-android`
 - `broker` → `identity-authnz-teams/ad-accounts-for-android`
 - `adal` → `AzureAD/azure-activedirectory-library-for-android`
+- `authenticator` → `AzureAD/microsoft-authenticator-for-android`
 
 Discover the GitHub username from `.github/developer-local.json`, or `gh auth status`.
 Switch account before any gh commands: `gh auth switch --user <username>`
@@ -126,7 +127,7 @@ askQuestion({
 ```powershell
 gh pr checkout <prNumber> --repo "<full-repo-slug>"
 ```
-Run this in the correct sub-repo directory (common/, msal/, broker/, adal/).
+Run this in the correct sub-repo directory (common/, msal/, broker/, adal/, authenticator/).
 Then tell the developer: "Branch checked out. Make your changes, commit, and push."
 
 **If "I'll write custom feedback"**: Ask the developer to type their feedback, then post it

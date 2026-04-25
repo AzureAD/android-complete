@@ -12,7 +12,7 @@ Create threat model diagrams from feature descriptions. The AI researches the co
 ### Step 1: Understand the Feature
 
 Research the feature using the codebase-researcher skill or subagent. Identify:
-- **Processes**: Components that process data (Broker, MSAL, Chrome, eSTS)
+- **Processes**: Components that process data (Broker, MSAL, Chrome, eSTS, Authenticator)
 - **Data stores**: Where tokens/keys are persisted
 - **External interactors**: Systems outside our control
 - **Trust boundaries**: App sandboxes, device boundary, network boundary

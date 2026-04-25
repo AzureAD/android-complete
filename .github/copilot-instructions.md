@@ -14,9 +14,10 @@ The **android-complete** repository contains multiple sub-repositories as separa
 * **Broker** - Brokered authentication service
 * **Common** - Shared utilities, helpers, and IPC logic
 * **OneAuth** - Library owned by another team (consumed by 1P apps like Teams, Outlook)
+* **Authenticator** - Microsoft Authenticator Android application (consumes SDK library releases)
 * **1ES-Pipelines** - Production CI/CD pipeline YAML (releases, hotfixes, validation, publishing)
 
-**Important:** When asked a question, **always search across ALL repositories** to provide comprehensive answers. Code may be duplicated or shared across these sub-repos.
+**Important:** When asked a question, **always search across ALL repositories** (including Authenticator when relevant) to provide comprehensive answers. Code may be duplicated or shared across these sub-repos.
 
 ### 1.2 Authentication Flow Architecture
 
@@ -68,9 +69,34 @@ DRI Copilot MCP tools are available for querying documentation, TSGs, and past i
 * **Common:** This repo holds shared utilities, helper functions, and **all IPC logic**. MSAL/OneAuth use this layer to communicate with Broker. Suggestions in this context should aim for reusability and generality.
 * **ADAL (Azure Active Directory Authentication Library):** Similar to MSAL, this is an authentication library, potentially an older version or specific to certain flows. When working in ADAL context, align with its patterns.
 * **OneAuth:** Third-party library owned by another team (not us). Consumed by 1P Microsoft apps like Teams, Outlook, etc. OneAuth flows start by calling `BrokerMsalController` class methods.
+* **Authenticator (Microsoft Authenticator):** The Authenticator repo contains the Microsoft Authenticator Android application. It is a multi-module Gradle project rooted at `authenticator/PhoneFactor/`. Authenticator consumes SDK library releases from MSAL, Common, and Broker as dependencies. Key modules include:
+    * **MSAuthenticator** (`authenticator/PhoneFactor/app`) — Main app entry point (MainActivity, UI, lifecycle)
+    * **MfaLibrary** (`authenticator/PhoneFactor/MfaLibrary`) — MFA SDK: push notifications, PIN encryption, device-notification validation
+    * **CtapLibrary** (`authenticator/PhoneFactor/CtapLibrary`) — FIDO2/CTAP passkey management: storage, registration, assertion
+    * **SharedCoreLibrary** (`authenticator/PhoneFactor/SharedCoreLibrary`) — Core crypto, encryption, shared utilities
+    * **SecureKeystoreLibrary** (`authenticator/PhoneFactor/SecureKeystoreLibrary`) — Secure key-pair generation (ECC/RSA) and Keystore access
+    * **NgcProviderLibrary** (`authenticator/PhoneFactor/NgcProviderLibrary`) — NGC key provider: Android Keystore-backed credential management
+    * **AadRemoteNgcLibrary** (`authenticator/PhoneFactor/AadRemoteNgcLibrary`) — AAD NGC: remote passwordless key registration/deletion
+    * **CommonUiLibrary** (`authenticator/PhoneFactor/CommonUiLibrary`) — Shared UI components, dialogs, View extensions
+    * **BastionLibrary** (`authenticator/PhoneFactor/BastionLibrary`) — Bastion validation for secure auth flows
+    * **GraphClient** (`authenticator/PhoneFactor/GraphClient`) — Microsoft Graph API client for auth methods policy
+    * **ExperimentationLibrary** (`authenticator/PhoneFactor/ExperimentationLibrary`) — ECS feature-flag provider integration
+    * **MsaAccountLibrary** (`authenticator/PhoneFactor/MsaAccountLibrary`) — MSA ticket acquisition and account operations
+    * **WalletLibrary** (`authenticator/PhoneFactor/WalletLibrary/walletlibrary`) — Entra Verified ID wallet
+    * **VerifiableCredential-SDK** (`authenticator/PhoneFactor/VerifiableCredential-SDK/sdk`) — DID SDK: verifiable credential issuance/presentation
+    * **LocationLibrary** (`authenticator/PhoneFactor/LocationLibrary`) — GPS-signal UI for conditional-access scenarios
+    * **RootDetectionLibrary** (`authenticator/PhoneFactor/RootDetectionLibrary`) — Rooted device detection and telemetry
+    * **ScanQrCodeLibrary** (`authenticator/PhoneFactor/ScanQrCodeLibrary`) — QR code scanning
+    * **AuthenticatorPolicyChannel** (`authenticator/PhoneFactor/AuthenticatorPolicyChannel`) — Credential policy enforcement
+    * **AuthenticatorSignalsLibrary** (`authenticator/PhoneFactor/AuthenticatorSignalsLibrary`) — Credential history signals for risk assessment
+    * **SilentNotificationChannelLibrary** (`authenticator/PhoneFactor/SilentNotificationChannelLibrary`) — Silent push for background MFA approval
+    * **NativeLibrary** (`authenticator/PhoneFactor/NativeLibrary`) — Native crash reporting via Breakpad
+    * **TestUtilitiesLibrary** / **AndroidTestUtilitiesLibrary** — Unit and instrumented test helpers
+    * **uiautomator-tests** (`authenticator/PhoneFactor/uiautomator-tests`) — UI Automator E2E smoke tests
+  Authenticator is an **opt-in** submodule (controlled by `includeAuthenticatorApp=true` in `gradle.properties` or `local.properties`). When working in Authenticator context, note that it has its own build conventions, dependencies, and Kotlin/Java mix.
 * **1ES-Pipelines (AuthClientAndroidPipelines):** This directory contains all 1ES-compliant production pipeline YAML for the Android Auth platform. It includes monthly release orchestrators, hotfix pipelines, daily validation, internal/external publishing, and reusable YAML templates. Files are organized into `production/`, `non-production/`, `scripts/`, and `templates/` directories. This is NOT the same as `azure-pipelines/` which contains legacy/deprecated pipeline code. When modifying pipelines, always work in `1ES-Pipelines/`. All pipeline code is YAML. See the `release-helper` skill for detailed pipeline documentation.
 
-**Important:** When generating code that interacts across these repositories (e.g., calling a function from `common` in `MSAL`), ensure the generated code respects the language and API boundaries of each repository.
+**Important:** When generating code that interacts across these repositories (e.g., calling a function from `common` in `MSAL`, or consuming SDK APIs from Authenticator), ensure the generated code respects the language and API boundaries of each repository.
 
 ## 4. Naming Conventions & Style (Kotlin First)
 
@@ -145,7 +171,7 @@ This project supports an AI-driven development workflow:
 2. **Plan**: After design approval, use the `feature-planner` skill to decompose the approved design into repo-targeted PBIs. Developer reviews and approves the plan.
 3. **Backlog**: After plan approval, use the `pbi-creator` skill to discover ADO defaults (area path, iteration) and create work items in ADO with dependency links.
 4. **Dispatch**: Use the `pbi-dispatcher` skill or `scripts/agent-pipeline/orchestrate.py` to assign PBIs to GitHub Copilot coding agent
-5. **Implement**: Copilot coding agent creates PRs in the target repos (`msal`, `common`, `broker`, `adal`)
+5. **Implement**: Copilot coding agent creates PRs in the target repos (`msal`, `common`, `broker`, `adal`, `authenticator`)
 6. **Review**: Use `@copilot` in PR comments for automated feedback iteration
 
 ### 13.2 Design Docs
@@ -158,6 +184,7 @@ The `design-docs/` folder contains the `AuthLibrariesApiReview` ADO repo (cloned
 | msal | `AzureAD/microsoft-authentication-library-for-android` |
 | broker / broker4j | `identity-authnz-teams/ad-accounts-for-android` (GHE) |
 | adal | `AzureAD/azure-activedirectory-library-for-android` |
+| authenticator | `AzureAD/microsoft-authenticator-for-android` |
 | 1ES-Pipelines | `IdentityDivision/Engineering/_git/AuthClientAndroidPipelines` (ADO) |
 
 ### 13.3 1ES-Pipelines

@@ -159,6 +159,21 @@ State explicitly what's NOT in the logs that would help:
 - `Found more than one account entry for user`
 - Multiple accounts with same UPN but different home account IDs
 
+### Pattern: Authenticator App Issues
+**Symptoms**: MFA push notification failures, passwordless sign-in failures, passkey registration errors
+**Evidence to look for**:
+- `com.azure.authenticator` in `calling_package_name` or `active_broker_package_name`
+- NGC key registration/deletion failures in `AadRemoteNgcLibrary` logs
+- FIDO2/CTAP assertion errors from `CtapLibrary`
+- Push notification delivery failures in `MfaLibrary` logs
+- Wallet/Verified ID credential issuance or presentation errors
+**Key Authenticator modules to check:**
+- **MfaLibrary** — MFA push notification registration, PIN encryption, device-notification validation
+- **CtapLibrary** — FIDO2/CTAP passkey management
+- **NgcProviderLibrary** / **AadRemoteNgcLibrary** — Passwordless NGC key operations
+- **SharedCoreLibrary** — Core crypto and encryption
+- **SecureKeystoreLibrary** — Keystore access layer for key-pair generation
+
 ## DRI Copilot Queries
 
 ### Initial Query (always start here)

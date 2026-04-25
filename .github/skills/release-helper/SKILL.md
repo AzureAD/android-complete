@@ -18,6 +18,8 @@ Pipeline code lives in **two locations**:
 
 > **Key rule:** `AuthClientAndroidPipelines` is the source of truth for production pipelines. `android-complete` contains release scripts consumed by AuthClientAndroidPipelines and legacy dev-build pipelines.
 
+> **Authenticator note:** The Authenticator app (`authenticator/`) has its own separate build and release pipelines managed outside of `AuthClientAndroidPipelines`. Authenticator consumes SDK library releases (MSAL, Common, Broker) as Gradle dependencies — it does not ship as part of the SDK monthly release cycle. When SDK libraries are released, Authenticator picks up the new versions via dependency updates.
+
 ## Pipeline Catalog (Quick Reference)
 
 ### Production Pipelines (AuthClientAndroidPipelines)
