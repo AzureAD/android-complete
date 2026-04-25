@@ -5,13 +5,30 @@ description: Dispatch Azure DevOps PBIs to GitHub Copilot coding agent for auton
 
 # PBI Dispatcher
 
-Dispatch Azure DevOps PBIs to GitHub Copilot coding agent by creating GitHub Issues in the
-target repos and assigning them to `copilot-swe-agent[bot]`.
+Dispatch Azure DevOps PBIs to GitHub Copilot coding agent by creating PRs via the
+`create_pull_request_with_copilot` GitHub MCP tool (preferred) or `gh agent-task create` CLI.
+
+**IMPORTANT**: Always create PRs, never issues. The goal is to get Copilot coding agent to
+generate a pull request with code changes — NOT to create a GitHub Issue.
+
+## Dispatch Method Priority
+
+Try these methods **in order**. Use the first one that succeeds:
+
+1. **`create_pull_request_with_copilot` MCP tool** (PREFERRED — works inside Copilot CLI)
+2. **`assign_copilot_to_issue` MCP tool** (if an issue already exists)
+3. **`gh agent-task create` CLI** (if MCP tools return 401/403 due to auth limitations)
+4. **Generate a script** for the developer to run manually (last resort)
+
+**NEVER create a bare GitHub Issue as the dispatch mechanism.** If the MCP tool fails with
+401 (EMU auth can't access public repos), fall back to generating a `gh agent-task create`
+script — NOT a `gh issue create` script.
 
 ## Prerequisites
 
 - **ADO MCP Server** running (for reading PBI details)
-- **GitHub CLI** (`gh`) authenticated with accounts for target repos
+- **GitHub MCP Server** configured (for `create_pull_request_with_copilot`)
+- **GitHub CLI** (`gh`) authenticated as fallback
 - PBIs in ADO with tag `copilot-agent-ready`
 - Copilot coding agent enabled on target repos
 
@@ -107,11 +124,31 @@ PBI description — it will be needed for the dispatch prompt.
 ### 2. Check Dependencies
 For each PBI, check if its dependencies (other AB# IDs) have merged PRs. Skip blocked PBIs.
 
-### 3. Switch gh Account + Dispatch to Copilot Agent
+### 3. Dispatch to Copilot Agent
 
-For each ready PBI:
+For each ready PBI, try these methods **in order**:
 
-**Step 1: Switch to the correct gh account** (using the discovered username from above):
+#### Method 1: `create_pull_request_with_copilot` MCP Tool (PREFERRED)
+
+This is the most direct method — it creates a PR with Copilot coding agent in one step,
+no shell commands needed:
+
+```
+create_pull_request_with_copilot(
+  owner: "AzureAD",                    // or "identity-authnz-teams" for broker
+  repo: "microsoft-authentication-library-common-for-android",
+  base_ref: "dev",
+  title: "[PBI Title]",
+  problem_statement: "<full PBI description including 'Fixes AB#ID'>"
+)
+```
+
+**If this returns 401/403** (common when GitHub MCP uses EMU auth that can't access public
+repos), fall back to Method 2.
+
+#### Method 2: `gh agent-task create` CLI
+
+**Step 1: Switch to the correct gh account** (using the discovered username):
 ```bash
 # For AzureAD/* repos (common, msal, adal):
 gh auth switch --user <discovered_public_username>
@@ -120,7 +157,7 @@ gh auth switch --user <discovered_public_username>
 gh auth switch --user <discovered_emu_username>
 ```
 
-**Step 2: Dispatch using `gh agent-task create` (PREFERRED — requires gh v2.80+):**
+**Step 2: Dispatch:**
 
 Write the full PBI description to a temp file and pipe it as the prompt. This avoids
 shell escaping issues and ensures the full context reaches the agent:
@@ -152,19 +189,23 @@ gh agent-task create (Get-Content "$env:TEMP\pbi-prompt.txt" -Raw) --repo "OWNER
 - Do NOT include local file paths (design-docs/, etc.) — the agent can't access them
 - Do NOT truncate — the full description IS the implementation spec
 
-**Step 3 (FALLBACK — if `gh agent-task create` fails):**
+**If `gh agent-task create` also fails** (not installed, pwsh unavailable), fall back to
+Method 3.
 
-Create a GitHub Issue and assign to Copilot:
-```bash
-gh issue create \
-  --repo "OWNER/REPO" \
-  --title "[PBI Title]" \
-  --body "[Full PBI description with 'Fixes AB#ID']"
+#### Method 3: Generate Script for Developer (LAST RESORT)
+
+If neither MCP tools nor `gh` CLI are available from this environment, generate a
+PowerShell script file the developer can run in their own terminal. The script MUST use
+`gh agent-task create` (NOT `gh issue create`):
+
+```powershell
+# Save to a .ps1 file for the developer:
+gh auth switch --user <discovered_public_username>
+gh agent-task create "<prompt>" --repo "OWNER/REPO" --base dev
 ```
-Then assign via API (extract issue number from the URL output):
-```bash
-echo '{"assignees":["copilot-swe-agent[bot]"],"agent_assignment":{"target_repo":"OWNER/REPO","base_branch":"dev","custom_instructions":"Follow copilot-instructions.md. PR title must include Fixes AB#ID."}}' | gh api /repos/OWNER/REPO/issues/ISSUE_NUMBER/assignees --method POST --input -
-```
+
+**NEVER generate a script that uses `gh issue create`.** Issues are not PRs — they don't
+trigger Copilot coding agent to write code.
 
 ### 4. Update ADO State
 Mark the ADO work item as `Active`, add tag `agent-dispatched`.
