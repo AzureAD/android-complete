@@ -278,11 +278,12 @@ allprojects {
 
     // Dependency substitution: when building in android-complete, replace Maven artifacts
     // with their local project equivalents to avoid duplicate class / resource errors.
-    // Note: Skip substitution for 'dist' flavor configurations — those are intended to
-    // resolve remote artifacts (e.g. distApi dependencies in test apps).
+    // Note: Skip substitution for 'dist' and 'external' flavor configurations — those are
+    // intended to resolve remote artifacts (e.g. distApi dependencies in test apps,
+    // externalImplementation in AzureSample).
     configurations.configureEach {
-        // Skip dist flavor configurations so they resolve remote Maven artifacts
-        if (name.toLowerCase().contains('dist')) {
+        // Skip dist/external flavor configurations so they resolve remote Maven artifacts
+        if (name.toLowerCase().contains('dist') || name.toLowerCase().contains('external')) {
             return
         }
         resolutionStrategy.dependencySubstitution {
@@ -308,6 +309,18 @@ allprojects {
     // It conflicts with androidx.core and androidx.media which are used everywhere.
     configurations.configureEach {
         exclude group: 'com.android.support', module: 'support-v4'
+    }
+
+    // For modules with an 'external' product flavor that resolve MSAL from Maven:
+    // the published artifact uses the 'dist' flavor, so 'external' needs a fallback.
+    afterEvaluate {
+        def android = extensions.findByName('android')
+        if (android != null) {
+            def externalFlavor = android.productFlavors.findByName('external')
+            if (externalFlavor != null && !externalFlavor.matchingFallbacks) {
+                externalFlavor.matchingFallbacks = ['dist']
+            }
+        }
     }
 }
 
