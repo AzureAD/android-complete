@@ -238,9 +238,11 @@ allprojects {
     repositories {
         mavenLocal()
         google()
-        mavenCentral()
         maven {
             // msazure and aria are consumed via upstream sources of the NewAndroid feed.
+            // Placed before mavenCentral so that RC/pre-release artifacts (e.g. common:24.x.x-RC*)
+            // published to this internal feed are resolved here first, avoiding SSL failures when
+            // Gradle attempts to fetch them from mavenCentral where they are not published.
             name "vsts-maven-new-android"
             url "https://identitydivision.pkgs.visualstudio.com/_packaging/NewAndroid/maven/v1"
             credentials {
@@ -248,6 +250,7 @@ allprojects {
                 password project.vstsMavenAccessToken
             }
         }
+        mavenCentral()
         if (includeAuthenticatorApp) {
             maven {
                 // Authenticator App feed — pulls packages from msazure AuthApp upstream sources.
