@@ -1,0 +1,14 @@
+{
+    "_comment": "Phase 3 outputs two files. This template shows both schemas.",
+
+    "_reply_verdicts_schema": {
+        "_description": "reply-verdicts.json — AI verdict for every replied comment. Keys are comment IDs as strings.",
+        "1234567890": "helpful",
+        "1234567891": "not-helpful"
+    },
+
+    "_reaudit_flips_schema": {
+        "_description": "reaudit-flips.json — No-reply comments where diff evidence was ambiguous but manual review confirms helpfulness.",
+        "reauditFlipKeys": ["repo/prNumber/partialFilePath"]
+    }
+}

@@ -14,6 +14,7 @@ The **android-complete** repository contains multiple sub-repositories as separa
 * **Broker** - Brokered authentication service
 * **Common** - Shared utilities, helpers, and IPC logic
 * **OneAuth** - Library owned by another team (consumed by 1P apps like Teams, Outlook)
+* **1ES-Pipelines** - Production CI/CD pipeline YAML (releases, hotfixes, validation, publishing)
 
 **Important:** When asked a question, **always search across ALL repositories** to provide comprehensive answers. Code may be duplicated or shared across these sub-repos.
 
@@ -67,6 +68,7 @@ DRI Copilot MCP tools are available for querying documentation, TSGs, and past i
 * **Common:** This repo holds shared utilities, helper functions, and **all IPC logic**. MSAL/OneAuth use this layer to communicate with Broker. Suggestions in this context should aim for reusability and generality.
 * **ADAL (Azure Active Directory Authentication Library):** Similar to MSAL, this is an authentication library, potentially an older version or specific to certain flows. When working in ADAL context, align with its patterns.
 * **OneAuth:** Third-party library owned by another team (not us). Consumed by 1P Microsoft apps like Teams, Outlook, etc. OneAuth flows start by calling `BrokerMsalController` class methods.
+* **1ES-Pipelines (AuthClientAndroidPipelines):** This directory contains all 1ES-compliant production pipeline YAML for the Android Auth platform. It includes monthly release orchestrators, hotfix pipelines, daily validation, internal/external publishing, and reusable YAML templates. Files are organized into `production/`, `non-production/`, `scripts/`, and `templates/` directories. This is NOT the same as `azure-pipelines/` which contains legacy/deprecated pipeline code. When modifying pipelines, always work in `1ES-Pipelines/`. All pipeline code is YAML. See the `release-helper` skill for detailed pipeline documentation.
 
 **Important:** When generating code that interacts across these repositories (e.g., calling a function from `common` in `MSAL`), ensure the generated code respects the language and API boundaries of each repository.
 
@@ -132,6 +134,7 @@ For complex investigation tasks, use these skills (read the skill file for detai
 | **pbi-dispatcher** | `.github/skills/pbi-dispatcher/SKILL.md` | "dispatch PBIs to agent", "assign to Copilot", "send work items to coding agent" |
 | **test-planner** | `.github/skills/test-planner/SKILL.md` | "create test plan", "write test cases", "add tests to ADO", "export test plan", "E2E tests for" |
 | **threat-modeler** | `.github/skills/threat-modeler/SKILL.md` | "create a threat model", "threat model for", "threat model diagram", "STRIDE analysis for", "security diagram for" |
+| **copilot-review-analyst** | `.github/skills/copilot-review-analyst/SKILL.md` | "analyze Copilot reviews", "Copilot review effectiveness", "review analysis report", "how helpful are Copilot reviews" |
 
 ## 13. Azure DevOps Integration
 
@@ -156,5 +159,9 @@ The `design-docs/` folder contains the `AuthLibrariesApiReview` ADO repo (cloned
 | msal | `AzureAD/microsoft-authentication-library-for-android` |
 | broker / broker4j | `identity-authnz-teams/ad-accounts-for-android` (GHE) |
 | adal | `AzureAD/azure-activedirectory-library-for-android` |
+| 1ES-Pipelines | `IdentityDivision/Engineering/_git/AuthClientAndroidPipelines` (ADO) |
+
+### 13.3 1ES-Pipelines
+The `1ES-Pipelines/` folder contains the `AuthClientAndroidPipelines` ADO repo (cloned via `git droidSetup`). It houses all production CI/CD pipeline YAML for releases, hotfixes, validation, and publishing. Key directories: `production/` (release pipelines), `non-production/` (validation), `templates/` (reusable YAML), `scripts/` (Python/PowerShell helpers). This is **separate from** `azure-pipelines/` which contains legacy pipeline code. The `release-helper` skill provides detailed documentation of all pipeline files.
 
 ---
