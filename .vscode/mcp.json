@@ -8,8 +8,13 @@
     }
   ],
   "servers": {
-    // MCP Server Configuration for Microsoft Authenticator Android
+    // MCP Server Configuration for Android Auth Client
     // Docs: https://code.visualstudio.com/docs/copilot/chat/mcp-servers
+    //
+    // Bluebird MCP servers (bluebirdrepos & bluebirdrepos2) are automatically
+    // provided by the Bluebird extension (bluebird-ai-labs.bluebird-vscode).
+    // No configuration needed here — just install the extension.
+    // See .vscode/extensions.json for the recommended extension.
 
     "ado": {
       "type": "stdio",
