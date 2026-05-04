@@ -25,10 +25,13 @@ jobs:
 
       - name: Prepare environment
         id: env
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          echo "pr_number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
           echo "pr_body<<EOF" >> $GITHUB_OUTPUT
-          echo "${{ github.event.pull_request.body }}" >> $GITHUB_OUTPUT
+          echo "$PR_BODY" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Extract AB ID from PR body
@@ -54,7 +57,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_ID: ${{ github.event.pull_request.number }}
         run: |
-          PR_TITLE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${{ github.repository }}/pulls/${{ env.PR_ID }} | jq -r .title)
+          PR_TITLE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/${{ github.repository }}/pulls/${PR_ID}" | jq -r .title)
           echo "title=$PR_TITLE" >> $GITHUB_OUTPUT
 
       - name: Decide if title needs update
@@ -83,7 +86,11 @@ jobs:
           PR_ID: ${{ github.event.pull_request.number }}
           NEW_TITLE: ${{ steps.decide.outputs.new_title }}
         run: |
-          curl -s -X PATCH -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/${{ github.repository }}/pulls/${{ env.PR_ID }} -d '{"title":"'"${{ env.NEW_TITLE }}"'"}'
+          curl -s -X PATCH \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/${PR_ID}" \
+            -d "$(jq -n --arg title "$NEW_TITLE" '{title: $title}')"
 
       - name: Final status reporting
         if: always()

@@ -13,7 +13,7 @@ Pipeline code lives in **two locations**:
 
 | Repository | Path | Purpose |
 |---|---|---|
-| **AuthClientAndroidPipelines** | `production/`, `non-production/`, `templates/`, `scripts/` | Primary pipeline repo (1ES-compliant). All monthly release, hotfix, daily validation, and publishing pipelines |
+| **AuthClientAndroidPipelines** | `1ES-Pipelines/` (local clone): `production/`, `non-production/`, `templates/`, `scripts/` | Primary pipeline repo (1ES-compliant). All monthly release, hotfix, weekly validation, UI automation, and publishing pipelines |
 | **android-complete** | `azure-pipelines/`, `scripts/release/`, `.github/workflows/` | Legacy pipelines (dev builds, instrumented tests, test apps) and release helper scripts |
 
 > **Key rule:** `AuthClientAndroidPipelines` is the source of truth for production pipelines. `android-complete` contains release scripts consumed by AuthClientAndroidPipelines and legacy dev-build pipelines.
@@ -29,6 +29,8 @@ Pipeline code lives in **two locations**:
 | **Monthly Release (RC Testing)** | `production/monthly-release/monthly-release.yml` | Triggered by Start Monthly Release | `2519` |
 | **Hot-Fix** | `production/hot-fix/hot-fix.yml` | Manual only | — |
 | **Daily Validation** | `non-production/daily-validation/daily-validation.yml` | Scheduled / Manual | — |
+| **Weekly Validation** | `non-production/weekly-validation/weekly-validation.yml` | Scheduled / Manual | — |
+| **UI Automation** | `non-production/ui-automation/ui-automation.yml` | Triggered by monthly-release or weekly-validation via `queue-build.ps1` | `3076` |
 | **Publish Internal** | `production/publish-internal/{lib}.yml` | Triggered by orchestrators | — |
 | **Publish External** | `production/publish-external/{lib}.yml` | Triggered by orchestrators | — |
 | **Linux Broker** | `production/linux/linux-broker-publishing.yml` | Manual | — |
@@ -240,11 +242,15 @@ For deeper exploration of specific areas, read the appropriate reference file:
 
 When investigating pipelines:
 
-1. **Start in AuthClientAndroidPipelines** for production/release/hotfix pipelines
+1. **Start in `1ES-Pipelines/`** (local clone of AuthClientAndroidPipelines) for production/release/hotfix pipelines
 2. **Check android-complete/scripts/release/** for version manipulation scripts
 3. **Check android-complete/azure-pipelines/** for legacy dev/daily build pipelines
 4. **Template references** follow the pattern `../../templates/{category}/{name.yml}`
-5. **Pipeline IDs** are hardcoded in trigger scripts (`2519` = monthly-release, `2828` = start-monthly-release)
+5. **Pipeline IDs** are hardcoded in trigger scripts (`2519` = monthly-release, `2828` = start-monthly-release, `3076` = ui-automation)
+6. **`queue-build.ps1`** is used to trigger child pipelines from parent pipelines (monthly/weekly → UI automation). It queues an ADO build via REST API and polls for completion. Key parameters: `-BuildDefinitionId`, `-TemplateParams` (JSON of pipeline parameters), `-Branch`, `-WaitTimeoutInMinutes`
+7. **Cross-pipeline artifact download** uses `DownloadPipelineArtifact@2` with `buildType: specific` to pull artifacts from a source pipeline. The `sourcePipelineId`/`sourceBuildId` parameters are threaded from the standalone UI automation pipeline down through `run-monthly-ui-automation.yml` → `run-firebase-tests.yml` → `run-on-firebase.yml`/`run-on-firebase-with-flank.yml`
+8. **`1ES-Pipelines/` is in `.gitignore`** — use `includeIgnoredFiles: true` when searching with `grep_search`
+9. **1ES Pipeline Templates**: Production pipelines extend `v1/1ES.Official.PipelineTemplate.yml@1ESPipelineTemplates`, non-production extend `v1/1ES.Unofficial.PipelineTemplate.yml@1ESPipelineTemplates`
 
 ## Customizing the Release Schedule
 

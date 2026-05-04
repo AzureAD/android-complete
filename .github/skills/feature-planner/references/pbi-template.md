@@ -16,7 +16,7 @@ description and the repo's `copilot-instructions.md`.
 <table>
   <tr><td><strong>Repo</strong></td><td>[org/repo-name]</td></tr>
   <tr><td><strong>Base Branch</strong></td><td>dev</td></tr>
-  <tr><td><strong>Module</strong></td><td>[common | common4j | msal | AADAuthenticator | broker4j | adal]</td></tr>
+  <tr><td><strong>Module</strong></td><td>[common | common4j | msal | AADAuthenticator | broker4j | adal | 1ES-Pipelines]</td></tr>
 </table>
 
 <h2>Context</h2>

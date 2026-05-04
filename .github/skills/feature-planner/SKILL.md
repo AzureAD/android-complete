@@ -29,6 +29,7 @@ Determine which repo(s) each PBI targets based on the architectural layer:
 | broker | `identity-authnz-teams/ad-accounts-for-android` | Broker-side auth processing, PRT acquisition/rotation, device registration, eSTS communication, IPC entry points |
 | broker4j | (same repo as broker) | Pure Java/Kotlin broker business logic, Protobuf schemas |
 | adal | `AzureAD/azure-activedirectory-library-for-android` | Legacy ADAL changes only (rare — maintenance mode, bug fixes only) |
+| 1ES-Pipelines | `IdentityDivision/Engineering/_git/AuthClientAndroidPipelines` (ADO) | Pipeline YAML changes: release orchestration, hotfix pipelines, templates, validation, publishing, scripts |
 
 **Routing heuristic:**
 1. If it touches IPC contracts, shared data models, or command architecture → `common`

@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Copilot Code Review Effectiveness Analysis</title>
+<style>
+  :root {
+    --green: #2da44e;
+    --red: #cf222e;
+    --amber: #bf8700;
+    --gray: #656d76;
+    --light-green: #dafbe1;
+    --light-red: #ffebe9;
+    --light-amber: #fff8c5;
+    --light-gray: #f6f8fa;
+    --border: #d0d7de;
+    --text: #1f2328;
+    --text-secondary: #656d76;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    color: var(--text);
+    line-height: 1.6;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 40px 24px;
+    background: #fff;
+  }
+  h1 { font-size: 28px; font-weight: 600; margin-bottom: 4px; }
+  h2 { font-size: 22px; font-weight: 600; margin: 40px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 17px; font-weight: 600; margin: 28px 0 12px; }
+  p { margin: 12px 0; }
+  .subtitle { color: var(--text-secondary); font-size: 15px; margin-bottom: 32px; }
+  .lead { font-size: 16px; line-height: 1.7; }
+
+  /* Summary cards */
+  .card-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 24px 0; }
+  .card {
+    border: 1px solid var(--border); border-radius: 8px; padding: 16px;
+    text-align: center;
+  }
+  .card .number { font-size: 32px; font-weight: 700; line-height: 1.2; }
+  .card .label { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+  .card.green { border-left: 4px solid var(--green); }
+  .card.red { border-left: 4px solid var(--red); }
+  .card.amber { border-left: 4px solid var(--amber); }
+  .card.gray { border-left: 4px solid var(--gray); }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+  th { background: var(--light-gray); font-weight: 600; text-align: left; padding: 10px 12px; border: 1px solid var(--border); }
+  td { padding: 10px 12px; border: 1px solid var(--border); }
+  tr:hover td { background: #f6f8fa; }
+  .right { text-align: right; }
+  .bold { font-weight: 600; }
+
+  /* Bar charts */
+  .bar-chart { margin: 20px 0; }
+  .bar-row { display: flex; align-items: center; margin: 6px 0; }
+  .bar-label { width: 100px; font-size: 13px; font-weight: 600; flex-shrink: 0; }
+  .bar-track { flex: 1; height: 28px; background: #eee; border-radius: 4px; overflow: hidden; display: flex; position: relative; }
+  .bar-fill { height: 100%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #fff; min-width: 2px; }
+  .bar-fill.green { background: var(--green); }
+  .bar-fill.red { background: var(--red); }
+  .bar-fill.amber { background: var(--amber); }
+  .bar-value { width: 50px; font-size: 13px; text-align: right; flex-shrink: 0; margin-left: 8px; }
+
+  /* Stacked bar */
+  .stacked-bar { display: flex; height: 40px; border-radius: 6px; overflow: hidden; margin: 12px 0; }
+  .stacked-segment { display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; color: #fff; }
+  .stacked-legend { display: flex; gap: 24px; margin: 8px 0 20px; font-size: 13px; }
+  .stacked-legend .dot { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
+
+  /* Callout boxes */
+  .callout { border-radius: 8px; padding: 16px 20px; margin: 20px 0; font-size: 14px; }
+  .callout.insight { background: #ddf4ff; border-left: 4px solid #0969da; }
+  .callout.warning { background: var(--light-amber); border-left: 4px solid var(--amber); }
+  .callout strong { display: block; margin-bottom: 4px; }
+
+  /* Blockquotes */
+  blockquote { border-left: 3px solid var(--border); padding: 8px 16px; margin: 12px 0; color: var(--text-secondary); font-size: 14px; background: var(--light-gray); border-radius: 0 4px 4px 0; }
+  blockquote em { font-style: italic; }
+  blockquote p { margin: 6px 0; }
+
+  /* Donut chart */
+  .donut-container { display: flex; align-items: center; gap: 40px; margin: 24px 0; }
+  .donut-legend { font-size: 14px; }
+  .donut-legend .item { display: flex; align-items: center; margin: 8px 0; }
+  .donut-legend .dot { display: inline-block; width: 14px; height: 14px; border-radius: 3px; margin-right: 10px; flex-shrink: 0; }
+  .donut-legend .pct { font-weight: 700; margin-left: auto; padding-left: 16px; }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+  .footer { color: var(--text-secondary); font-size: 13px; margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--border); }
+
+  @media (max-width: 640px) {
+    .card-grid { grid-template-columns: repeat(2, 1fr); }
+    .donut-container { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Copilot Code Review Effectiveness Analysis</h1>
+<p class="subtitle">Android Auth Platform &nbsp;|&nbsp; January 23 – March 23, 2026 &nbsp;|&nbsp; Common, MSAL, Broker Repositories</p>
+
+<!-- ==================== EXECUTIVE SUMMARY ==================== -->
+<h2>Executive Summary</h2>
+
+<p class="lead">We analyzed <strong>every inline code review comment</strong> left by GitHub Copilot on human-authored pull requests across our three Android Auth repositories over the past two months. For each of the <strong>557 comments</strong>, we determined whether the feedback led to a concrete code improvement.</p>
+
+<div class="card-grid">
+  <div class="card gray">
+    <div class="number">57%</div>
+    <div class="label">of comments received<br><strong>no response</strong></div>
+  </div>
+  <div class="card green">
+    <div class="number">41%</div>
+    <div class="label">confirmed<br><strong>helpful</strong></div>
+  </div>
+  <div class="card red">
+    <div class="number">18%</div>
+    <div class="label">confirmed<br><strong>not helpful</strong></div>
+  </div>
+  <div class="card amber">
+    <div class="number">41%</div>
+    <div class="label">unresolved<br><strong>(not evaluated)</strong></div>
+  </div>
+</div>
+
+<div class="callout insight">
+  <strong>The biggest finding isn't about AI quality — it's about adoption.</strong>
+  When engineers <em>do</em> engage with Copilot's comments, 60% turn out to be helpful. But 57% of comments receive no response at all, and 41% of all comments are unresolved — we can't tell if they were useful because no one evaluated them. The true helpfulness rate lies between 41% (confirmed floor) and 82% (if all unresolved were helpful).
+</div>
+
+<!-- ==================== SCOPE ==================== -->
+<h2>Scope</h2>
+
+<div class="card-grid">
+  <div class="card">
+    <div class="number">163</div>
+    <div class="label">Human PRs<br>scanned</div>
+  </div>
+  <div class="card">
+    <div class="number">113</div>
+    <div class="label">PRs received<br>Copilot review (69%)</div>
+  </div>
+  <div class="card">
+    <div class="number">557</div>
+    <div class="label">Inline review<br>comments</div>
+  </div>
+  <div class="card">
+    <div class="number">4.9</div>
+    <div class="label">Avg comments<br>per reviewed PR</div>
+  </div>
+</div>
+
+<!-- ==================== OVERALL RESULTS ==================== -->
+<h2>Overall Results</h2>
+
+<h3>Engineer Response Rate</h3>
+<p>Before looking at helpfulness, it's important to understand how engineers interact with Copilot reviews — because a comment can only demonstrate value if someone reads it.</p>
+
+<div class="stacked-bar">
+  <div class="stacked-segment" style="width:42.9%;background:var(--green)">43% replied</div>
+  <div class="stacked-segment" style="width:57.1%;background:var(--gray)">57% ignored</div>
+</div>
+<div class="stacked-legend">
+  <span><span class="dot" style="background:var(--green)"></span> Engineer replied (239)</span>
+  <span><span class="dot" style="background:var(--gray)"></span> No response (318)</span>
+</div>
+
+<p>More than half of all Copilot review comments receive no human response. The majority of AI feedback enters a void — it may be valid, but we can never confirm its value if no one engages with it.</p>
+
+<h3>Helpfulness Verdict</h3>
+
+<div class="stacked-bar">
+  <div class="stacked-segment" style="width:41.3%;background:var(--green)">41.3%</div>
+  <div class="stacked-segment" style="width:18.1%;background:var(--red)">18.1%</div>
+  <div class="stacked-segment" style="width:40.6%;background:var(--amber)">40.6%</div>
+</div>
+<div class="stacked-legend">
+  <span><span class="dot" style="background:var(--green)"></span> Confirmed Helpful (230)</span>
+  <span><span class="dot" style="background:var(--red)"></span> Confirmed Not Helpful (101)</span>
+  <span><span class="dot" style="background:var(--amber)"></span> Unresolved (226)</span>
+</div>
+
+<table>
+  <tr><th>Verdict</th><th class="right">Count</th><th class="right">%</th><th>Definition</th></tr>
+  <tr><td class="bold" style="color:var(--green)">Confirmed Helpful</td><td class="right">230</td><td class="right">41.3%</td><td>The comment led to a code change — engineer explicitly acknowledged it, or the suggested fix was verified in a subsequent commit diff.</td></tr>
+  <tr><td class="bold" style="color:var(--red)">Confirmed Not Helpful</td><td class="right">101</td><td class="right">18.1%</td><td>The engineer explicitly dismissed the comment with a reason why the feedback was incorrect, irrelevant, or by design.</td></tr>
+  <tr><td class="bold" style="color:var(--amber)">Unresolved</td><td class="right">226</td><td class="right">40.6%</td><td>No reply and no definitive diff evidence. Includes comments on the final commit before merge, files modified at different lines, and comments with no line number. Could be valid feedback that was never evaluated.</td></tr>
+</table>
+
+<div class="callout warning">
+  <strong>226 comments (41%) are unresolved — not because the AI was wrong, but because no one looked.</strong>
+  This includes 122 comments on the final commit before merge where the engineer had no subsequent commits, 45 where the file was modified at different lines, 50 with no line number for verification, and 9 where the file was never modified. If engineers had engaged — even just to dismiss — we would know.
+</div>
+
+<h3>How Helpful Comments Were Delivered</h3>
+<table>
+  <tr><th>Path</th><th class="right">Count</th><th>Description</th></tr>
+  <tr><td>Engineer replied and acknowledged</td><td class="right">144</td><td>"good catch", "fixed", "addressed", "added unit test", "@copilot apply changes"</td></tr>
+  <tr><td>Engineer silently applied the fix</td><td class="right">86</td><td>No reply, but suggestion code or exact line range verified as modified in subsequent commit</td></tr>
+  <tr><td class="bold">Total Confirmed Helpful</td><td class="right bold">230</td><td></td></tr>
+</table>
+
+<h3>How Not Helpful Comments Were Identified</h3>
+<table>
+  <tr><th>Path</th><th class="right">Count</th><th>Description</th></tr>
+  <tr><td>Engineer replied and dismissed</td><td class="right">95</td><td>"won't fix", "this is fine", "not applicable", "Copilot is incorrect"</td></tr>
+  <tr><td>Comment on stale/outdated code</td><td class="right">6</td><td>Comment was on code already changed in a different commit</td></tr>
+  <tr><td class="bold">Total Confirmed Not Helpful</td><td class="right bold">101</td><td></td></tr>
+</table>
+
+<!-- ==================== PER REPO ==================== -->
+<h2>Results by Repository</h2>
+
+<div class="bar-chart">
+  <div class="bar-row">
+    <div class="bar-label">Broker</div>
+    <div class="bar-track">
+      <div class="bar-fill green" style="width:48.5%">48.5%</div>
+      <div class="bar-fill" style="width:16.4%;background:var(--red)">16%</div>
+      <div class="bar-fill amber" style="width:35.2%">35%</div>
+    </div>
+    <div class="bar-value">293</div>
+  </div>
+  <div class="bar-row">
+    <div class="bar-label">Common</div>
+    <div class="bar-track">
+      <div class="bar-fill green" style="width:36.2%">36.2%</div>
+      <div class="bar-fill" style="width:18.1%;background:var(--red)">18%</div>
+      <div class="bar-fill amber" style="width:45.7%">46%</div>
+    </div>
+    <div class="bar-value">188</div>
+  </div>
+  <div class="bar-row">
+    <div class="bar-label">MSAL</div>
+    <div class="bar-track">
+      <div class="bar-fill green" style="width:26.3%">26%</div>
+      <div class="bar-fill" style="width:25.0%;background:var(--red)">25%</div>
+      <div class="bar-fill amber" style="width:48.7%">49%</div>
+    </div>
+    <div class="bar-value">76</div>
+  </div>
+</div>
+<div class="stacked-legend">
+  <span><span class="dot" style="background:var(--green)"></span> Helpful</span>
+  <span><span class="dot" style="background:var(--red)"></span> Not Helpful</span>
+  <span><span class="dot" style="background:var(--amber)"></span> Unresolved</span>
+  <span style="color:var(--text-secondary)">(number = total comments)</span>
+</div>
+
+<table>
+  <tr><th>Repository</th><th class="right">Comments</th><th class="right">Response Rate</th><th class="right">Helpful</th><th class="right">Not Helpful</th><th class="right">Unresolved</th></tr>
+  <tr><td class="bold">Broker</td><td class="right">293</td><td class="right">56.0%</td><td class="right" style="color:var(--green)">142 (48.5%)</td><td class="right" style="color:var(--red)">48 (16.4%)</td><td class="right" style="color:var(--amber)">103 (35.2%)</td></tr>
+  <tr><td class="bold">Common</td><td class="right">188</td><td class="right">29.8%</td><td class="right" style="color:var(--green)">68 (36.2%)</td><td class="right" style="color:var(--red)">34 (18.1%)</td><td class="right" style="color:var(--amber)">86 (45.7%)</td></tr>
+  <tr><td class="bold">MSAL</td><td class="right">76</td><td class="right">25.0%</td><td class="right" style="color:var(--green)">20 (26.3%)</td><td class="right" style="color:var(--red)">19 (25.0%)</td><td class="right" style="color:var(--amber)">37 (48.7%)</td></tr>
+</table>
+
+<p>Broker has the highest response rate (56%) and the highest confirmed helpfulness (49%). In Common and MSAL — where response rates are below 30% — nearly half of all comments are unresolved.</p>
+
+<!-- ==================== PER ENGINEER ==================== -->
+<h2>Results by Engineer</h2>
+<p style="font-size:14px;color:var(--text-secondary)">Each engineer has two GitHub accounts (personal + EMU). These have been merged. Names are anonymized.</p>
+
+<table>
+  <tr><th>Engineer</th><th class="right">Comments</th><th class="right">Replied</th><th class="right">Response Rate</th><th class="right" style="color:var(--green)">Helpful</th><th class="right" style="color:var(--red)">Not Helpful</th><th class="right" style="color:var(--amber)">Unresolved</th><th class="right">Helpfulness</th></tr>
+  <tr><td class="bold">Engineer A</td><td class="right">20</td><td class="right">20</td><td class="right bold">100%</td><td class="right">14</td><td class="right">6</td><td class="right">0</td><td class="right bold" style="color:var(--green)">70.0%</td></tr>
+  <tr><td class="bold">Engineer B</td><td class="right">83</td><td class="right">75</td><td class="right bold">90.4%</td><td class="right">57</td><td class="right">26</td><td class="right">0</td><td class="right bold" style="color:var(--green)">68.7%</td></tr>
+  <tr><td class="bold">Engineer C</td><td class="right">15</td><td class="right">4</td><td class="right">26.7%</td><td class="right">8</td><td class="right">2</td><td class="right">5</td><td class="right bold">53.3%</td></tr>
+  <tr><td class="bold">Engineer D</td><td class="right">40</td><td class="right">30</td><td class="right bold">75.0%</td><td class="right">19</td><td class="right">14</td><td class="right">7</td><td class="right bold">47.5%</td></tr>
+  <tr><td class="bold">Engineer E</td><td class="right">110</td><td class="right">37</td><td class="right">33.6%</td><td class="right">44</td><td class="right">18</td><td class="right" style="color:var(--amber)">48</td><td class="right">40.0%</td></tr>
+  <tr><td class="bold">Engineer F</td><td class="right">99</td><td class="right">20</td><td class="right">20.2%</td><td class="right">36</td><td class="right">11</td><td class="right" style="color:var(--amber)">52</td><td class="right">36.4%</td></tr>
+  <tr><td class="bold">Engineer G</td><td class="right">63</td><td class="right">22</td><td class="right">34.9%</td><td class="right">20</td><td class="right">12</td><td class="right" style="color:var(--amber)">31</td><td class="right">31.7%</td></tr>
+  <tr><td class="bold">Engineer H</td><td class="right">100</td><td class="right">24</td><td class="right">24.0%</td><td class="right">27</td><td class="right">12</td><td class="right" style="color:var(--amber)">61</td><td class="right">27.0%</td></tr>
+  <tr><td class="bold">Engineer I</td><td class="right">24</td><td class="right">6</td><td class="right">25.0%</td><td class="right">5</td><td class="right">0</td><td class="right" style="color:var(--amber)">19</td><td class="right">20.8%</td></tr>
+  <tr><td class="bold">Engineer J</td><td class="right">3</td><td class="right">1</td><td class="right">33.3%</td><td class="right">0</td><td class="right">0</td><td class="right" style="color:var(--amber)">3</td><td class="right">0%</td></tr>
+</table>
+
+<div class="callout insight">
+  <strong>Engagement drives value — and visibility.</strong>
+  Engineer A (100% response rate) and Engineer B (90%) have the highest helpfulness <em>and</em> zero unresolved comments. When you engage, you know exactly what the AI got right and wrong. Engineer F (20%) and Engineer H (24%) have 52 and 61 unresolved comments respectively — over half their feedback goes into a black hole.
+</div>
+
+<!-- ==================== RESPONSE DEEP DIVE ==================== -->
+<h2>Response Behavior Deep Dive</h2>
+
+<h3>What happens when engineers reply? (239 comments)</h3>
+<div class="stacked-bar">
+  <div class="stacked-segment" style="width:60.3%;background:var(--green)">60% helpful</div>
+  <div class="stacked-segment" style="width:39.7%;background:var(--red)">40% not helpful</div>
+</div>
+<p>When engineers engage, the majority of Copilot feedback turns out useful. This is the strongest signal that <strong>review quality is decent — the bottleneck is adoption</strong>.</p>
+
+<h3>What happens when engineers don't reply? (318 comments)</h3>
+<div class="stacked-bar">
+  <div class="stacked-segment" style="width:27%;background:var(--green)">27% silently fixed</div>
+  <div class="stacked-segment" style="width:1.9%;background:var(--red)"></div>
+  <div class="stacked-segment" style="width:71.1%;background:var(--amber)">71% unresolved</div>
+</div>
+
+<table>
+  <tr><th>What happened</th><th class="right">Count</th><th class="right">% of ignored</th><th>Verdict</th></tr>
+  <tr><td>Suggestion code silently applied (verified via diff)</td><td class="right">50</td><td class="right">15.7%</td><td style="color:var(--green)">Confirmed Helpful</td></tr>
+  <tr><td>Exact commented lines modified in subsequent commit</td><td class="right">7</td><td class="right">2.2%</td><td style="color:var(--green)">Confirmed Helpful</td></tr>
+  <tr><td>Evidence of fix at nearby lines (re-audit)</td><td class="right">29</td><td class="right">9.1%</td><td style="color:var(--green)">Confirmed Helpful</td></tr>
+  <tr style="background:var(--light-amber)"><td>Merged without any subsequent commits</td><td class="right">122</td><td class="right">38.4%</td><td style="color:var(--amber)"><strong>Unresolved</strong></td></tr>
+  <tr style="background:var(--light-amber)"><td>File modified but not at the commented lines</td><td class="right">45</td><td class="right">14.2%</td><td style="color:var(--amber)"><strong>Unresolved</strong></td></tr>
+  <tr style="background:var(--light-amber)"><td>File modified but no line number to verify</td><td class="right">50</td><td class="right">15.7%</td><td style="color:var(--amber)"><strong>Unresolved</strong></td></tr>
+  <tr style="background:var(--light-amber)"><td>File never modified after the comment</td><td class="right">9</td><td class="right">2.8%</td><td style="color:var(--amber)"><strong>Unresolved</strong></td></tr>
+  <tr><td>Comment on stale/outdated code</td><td class="right">6</td><td class="right">1.9%</td><td style="color:var(--red)">Confirmed Not Helpful</td></tr>
+</table>
+
+<p>The single largest category is the <strong>122 comments (38% of ignored)</strong> where the engineer merged the PR without pushing any additional commits after Copilot's review. These comments may have been valid, but we cannot tell because the engineer never evaluated them.</p>
+
+<!-- ==================== WHAT COPILOT IS GOOD AT ==================== -->
+<h2>What Copilot Is Good At</h2>
+
+<p><strong>Catching real bugs:</strong></p>
+<blockquote>
+  <p><em>PR #3050 (Common):</em> Copilot flagged that <code>"$it"</code> string wrapping doesn't JSON-escape the content, which could break consumers if contract values contain special characters.</p>
+  <p><strong>Engineer reply:</strong> "You're right. Making the change."</p>
+</blockquote>
+
+<p><strong>Stale documentation and naming inconsistencies:</strong></p>
+<blockquote>
+  <p><em>PR #64 (Broker):</em> Copilot identified four locations where KDoc still referenced the old flight constant <code>USE_TEE_ONLY_FOR_TOKEN_BINDING</code> after it was renamed. All four were silently fixed in the next commit.</p>
+</blockquote>
+
+<p><strong>Dead code and unused imports:</strong></p>
+<blockquote>
+  <p><em>PR #3040 (Common):</em> Copilot spotted an unused local variable <code>enabledSettingRaw</code>. Verified as fixed via diff — the suggested replacement code appeared in the commit additions.</p>
+</blockquote>
+
+<p><strong>CI/pipeline configuration issues:</strong></p>
+<blockquote>
+  <p><em>PR #3038 (Common):</em> Copilot warned that <code>vmImage: 'windows-latest'</code> makes the CD pipeline non-deterministic. The engineer changed to a pinned image version.</p>
+</blockquote>
+
+<p><strong>The <code>@copilot apply</code> workflow:</strong></p>
+<blockquote>
+  <p>In 16 instances (2.9%), engineers validated Copilot's feedback and then delegated the fix back with: <code>@copilot open a new pull request to apply changes based on [this feedback]</code>. An efficient pattern where AI identifies <em>and</em> fixes the issue.</p>
+</blockquote>
+
+<!-- ==================== WHAT COPILOT STRUGGLES WITH ==================== -->
+<h2>What Copilot Struggles With</h2>
+
+<p><strong>Lacking domain context:</strong></p>
+<blockquote>
+  <p><em>Copilot:</em> "<code>shared_device_id</code> could be used for tracking across apps — consider hashing before emission."</p>
+  <p><em>Engineer:</em> "The shared_device_id is a random UUID generated by one of the participating apps and is not PII."</p>
+</blockquote>
+
+<p><strong>Suggesting tests for trivial code:</strong></p>
+<blockquote>
+  <p><em>Copilot:</em> "New telemetry attributes lack test coverage..."</p>
+  <p><em>Engineer:</em> "These are just telemetry related changes and adding unit tests will be overdo here."</p>
+</blockquote>
+
+<p><strong>Misunderstanding APIs:</strong></p>
+<blockquote>
+  <p><em>Copilot:</em> "<code>00000003-0000-0ff1-ce00-000000000000</code> is the resource ID for Microsoft Graph, not SharePoint Online."</p>
+  <p><em>Engineer:</em> "00000003-0000-0ff1-ce00-000000000000 is SharePoint Online."</p>
+</blockquote>
+
+<p><strong>Commenting on intentional design choices:</strong></p>
+<blockquote>
+  <p><em>Copilot:</em> "<code>getPackageInfo() != null</code> is redundant since it either returns PackageInfo or throws..."</p>
+  <p><em>Engineer:</em> "This is fine. The verbosity makes the code clearer to understand."</p>
+</blockquote>
+
+<!-- ==================== KEY TAKEAWAYS ==================== -->
+<h2>Key Takeaways</h2>
+
+<table>
+  <tr><th style="width:30px">#</th><th>Finding</th></tr>
+  <tr><td class="bold">1</td><td><strong>57% of Copilot review comments receive no response from engineers.</strong> The majority of AI review feedback is never acknowledged. Of the ignored comments, only 27% are silently addressed — the remaining 71% are unresolved.</td></tr>
+  <tr><td class="bold">2</td><td><strong>41% of all comments led to a confirmed code improvement.</strong> But 41% are unresolved, meaning the true helpfulness rate lies between 41% (floor) and 82% (ceiling). We cannot narrow this range without engineer engagement.</td></tr>
+  <tr><td class="bold">3</td><td><strong>When engineers engage, 60% of comments are helpful.</strong> This suggests the AI review quality itself is decent — the bottleneck is adoption, not accuracy.</td></tr>
+  <tr><td class="bold">4</td><td><strong>Only 18% of comments are confirmed not helpful.</strong> When we restrict "not helpful" to comments with actual evidence of poor quality — explicit engineer dismissals — the rate is surprisingly low.</td></tr>
+  <tr><td class="bold">5</td><td><strong>Engagement is the strongest predictor of value.</strong> Engineers who reply to 75%+ of comments see 47-70% helpfulness with zero unresolved. Engineers who reply to &lt;35% see 20-40% helpfulness with massive unresolved buckets.</td></tr>
+  <tr><td class="bold">6</td><td><strong>38% of ignored comments are on the final commit before merge.</strong> These 122 comments represent the last review round being skipped — the feedback had zero chance of impact regardless of its quality.</td></tr>
+  <tr><td class="bold">7</td><td><strong>Broker gets the most value (49% helpful), Common is middling (36%), MSAL is lowest (26%).</strong> This correlates with response rate: Broker 56%, Common 30%, MSAL 25%.</td></tr>
+  <tr><td class="bold">8</td><td><strong>At ~5 comments per PR, the signal-to-noise question can't be settled without engagement.</strong> We confirmed ~2 useful comments per PR on average, but with 41% unresolved, the actual number could be higher.</td></tr>
+</table>
+
+<!-- ==================== METHODOLOGY ==================== -->
+<h2>How We Measured This</h2>
+
+<table>
+  <tr><th>Phase</th><th>Method</th></tr>
+  <tr><td class="bold">1. Data collection</td><td>GitHub API extraction of all 557 Copilot inline review comments from 163 human-authored PRs. Excluded PRs by Copilot coding agent.</td></tr>
+  <tr><td class="bold">2. Reply classification</td><td>Automated keyword matching on 239 replied comments to classify as positive, negative, or ambiguous.</td></tr>
+  <tr><td class="bold">3. Diff verification</td><td>For 318 unreplied comments, used the GitHub compare API to check if suggestion tokens appeared as diff additions, or if the exact line range was modified in subsequent commits.</td></tr>
+  <tr><td class="bold">4. AI-assisted classification</td><td>All 133 ambiguous replies were individually read and classified by the AI conducting this analysis (Claude), based on reply text and domain context. These classifications were reviewed by the report author but not independently verified by the original PR engineers.</td></tr>
+  <tr><td class="bold">5. Cross-validation</td><td>All initially "not helpful" classifications were re-examined against diff evidence. 18 were reclassified where evidence was strong (e.g., typo fix + matching -1 line file change).</td></tr>
+</table>
+
+<p style="font-size:14px;margin-top:16px"><strong>Classification rules:</strong> A comment is "Confirmed Helpful" only with positive evidence (engineer acknowledgment or verified code change). "Confirmed Not Helpful" only with positive evidence of poor quality (explicit engineer dismissal). Comments where the engineer did not engage — including the final review round merged without evaluation — are classified as "Unresolved" rather than assumed unhelpful.</p>
+
+<hr>
+<div class="footer">
+  <p>Analysis conducted March 23–24, 2026. Data covers all PRs created January 23 – March 23, 2026 in the Common, MSAL, and Broker repositories.</p>
+  <p>Raw data (557 comments with full text, replies, diff evidence, and verdicts) available for independent verification.</p>
+</div>
+
+</body>
+</html>
