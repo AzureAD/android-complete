@@ -161,6 +161,26 @@ For complex investigation tasks, use these skills (read the skill file for detai
 | **threat-modeler** | `.github/skills/threat-modeler/SKILL.md` | "create a threat model", "threat model for", "threat model diagram", "STRIDE analysis for", "security diagram for" |
 | **copilot-review-analyst** | `.github/skills/copilot-review-analyst/SKILL.md` | "analyze Copilot reviews", "Copilot review effectiveness", "review analysis report", "how helpful are Copilot reviews" |
 
+### 12.1 Authenticator-Specific Skills
+
+The Authenticator submodule ships its own skills at `authenticator/.github/skills/`, loaded via `chat.agentSkillsLocations` in `.vscode/settings.json`. These skills are tuned for the Authenticator codebase and may leverage MCP tools specific to that repo (e.g., BlueBird).
+
+| Skill | Location | Purpose |
+|-------|----------|---------|
+| **android-feature-development** | `authenticator/.github/skills/android-feature-development/SKILL.md` | Feature implementation, EcsFlight feature flags, code changes |
+| **android-ui-development** | `authenticator/.github/skills/android-ui-development/SKILL.md` | UI development, Compose, colors, theming |
+| **codebase-researcher** | `authenticator/.github/skills/codebase-researcher/SKILL.md` | Deep Authenticator codebase research with architecture reference |
+| **incident-investigator** | `authenticator/.github/skills/incident-investigator/SKILL.md` | Authenticator-specific incident investigation with log patterns |
+| **pr-reviewer** | `authenticator/.github/skills/pr-reviewer/SKILL.md` | Authenticator PR review with security checklist |
+| **prompt-refiner** | `authenticator/.github/skills/prompt-refiner/SKILL.md` | Prompt refinement with Authenticator-specific templates |
+| **skill-creator** | `authenticator/.github/skills/skill-creator/SKILL.md` | Creating new skills for the Authenticator repo |
+
+**Skill Scoping — Avoiding Clashes:**  
+Four skills share names across both directories: `codebase-researcher`, `incident-investigator`, `prompt-refiner`, and `skill-creator`. Apply these rules:
+- **When working on Authenticator code** (files under `authenticator/`), prefer the Authenticator-specific skill variant (`authenticator/.github/skills/`). It has deeper context on Authenticator module structure, feature flags, and MCP integrations.
+- **When working on SDK libraries** (MSAL, Broker, Common, ADAL) or **cross-repo tasks**, use the android-complete skill variant (`.github/skills/`). It has broader multi-repo awareness and SDK-level context.
+- **When the scope is ambiguous**, use the android-complete variant as the default since it covers the full multi-repo project.
+
 ## 13. Azure DevOps Integration
 
 This project uses Azure DevOps (`IdentityDivision/Engineering`). The **Azure DevOps MCP Server** is configured in `.vscode/mcp.json` for work item management. Always check to see if the Azure DevOps MCP server has a tool relevant to the user's request.
