@@ -1,6 +1,6 @@
 ---
 name: aria-alert-investigator
-description: Investigate Aria health-metric alerts (anomaly-detection IcMs of the form "Aria detected an incident in <project> for <metric>"). Use this skill when an IcM was triggered by Aria's anomaly detector on android_spans / android_metrics — NOT for customer-reported authentication failures. Triggers include "investigate Aria alert", "Aria detected an incident", "health metric incident", "telemetry threshold breach", or any IcM where the title starts with "Aria detected".
+description: Investigate Aria health-metric alerts (threshold-based IcMs of the form "Aria detected an incident in <project> for <metric>"). Use this skill when an IcM was triggered by Aria's threshold monitor on android_spans / android_metrics — NOT for customer-reported authentication failures. Triggers include "investigate Aria alert", "Aria detected an incident", "health metric incident", "telemetry threshold breach", or any IcM where the title starts with "Aria detected".
 ---
 
 # Aria Alert Investigator
@@ -16,7 +16,7 @@ Investigate Aria health-metric alerts evidence-first, without anchoring on guess
 | **IcM title is "Aria detected an incident in `<project>` for `<metric>`"** | **This skill** |
 | User says "investigate this Aria alert" / "health metric IcM fired" | **This skill** |
 
-Aria alerts are **statistical anomaly detections on telemetry**, not user-reported problems. The investigation pattern is fundamentally different — there is often no customer, no error chain, and no log file. The signal is "the curve moved" and the job is to determine whether the underlying data actually moved, and if so, why.
+Aria alerts are **threshold-based monitors on telemetry** — they fire when a metric value crosses a pre-set baseline, not user-reported problems. The investigation pattern is fundamentally different — there is often no customer, no error chain, and no log file. The signal is "the curve moved" and the job is to determine whether the underlying data actually moved, and if so, why.
 
 ---
 
