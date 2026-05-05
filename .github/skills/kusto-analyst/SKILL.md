@@ -7,6 +7,10 @@ description: Analyze Android authentication telemetry using Azure Data Explorer 
 
 Analyze Android authentication telemetry using Azure Data Explorer (Kusto) for error analysis, latency investigation, and cross-cluster correlation.
 
+## Working an Aria health-metric alert?
+
+If the user is investigating an IcM titled "Aria detected an incident in `<project>` for `<metric>`", use the [`aria-alert-investigator`](../aria-alert-investigator/SKILL.md) skill. It defines the canonical four-view query pattern (raw count, rate per 1k requests, rate per 1k devices, same-day-of-week) and the rules for confirming the metric slice before running queries. This skill provides the underlying Kusto reference but not the Aria-specific workflow.
+
 ## Available MCP Tools
 
 **Always use these tools to execute Kusto queries:**
@@ -252,7 +256,7 @@ android_spans
 
 ### Android-Specific Filtering
 
-**⚠️ ALWAYS filter by Android platform:**
+**⚠️ ALWAYS filter by Android platform unless an explicit platform is specified:**
 ```kql
 AllPerRequestTable
 | where env_time >= ago(7d)
