@@ -2,4 +2,8 @@
 # Docs: https://eng.ms/docs/cloud-ai-platform/github/github-copilot-suite/agency/config
 
 [mcps.builtins]
-ado = { type = "ado", organization = "IdentityDivision" }
+ado            = { type = "ado", organization = "IdentityDivision" }
+es-chat        = { type = "es-chat" }
+workiq         = { type = "workiq" }
+m365-user      = { type = "m365-user" }
+s360-breeze    = { type = "s360-breeze" }
