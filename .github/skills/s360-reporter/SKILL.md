@@ -14,9 +14,8 @@ HTML email report.
 - **Node.js** must be available (for the committed report generator script)
 - **S360 MCP Server** must be running (configured in `.vscode/mcp.json` as `s360-breeze-mcp`)
 - **ADO MCP Server** must be running (for PBI creation and lookup)
-- **Microsoft Graph MCP Server** must be running (for dynamic team member discovery via org chart,
-  and optionally for creating an Outlook draft email)
-- **WorkIQ MCP Server** must be running (for pulling last week's email report)
+- **M365 User MCP** (`m365-user`) — for dynamic team member discovery via org chart
+- **WorkIQ MCP Server** (optional) — used as fallback for pulling last week's email if the user doesn't provide it
 - Read the **Outlook HTML report prompt** at `{{VSCODE_USER_PROMPTS_FOLDER}}/outlook-html-report.prompt.md`
   for HTML rendering rules before generating the report
 
@@ -46,6 +45,19 @@ Skip PBI creation, report generation, and email drafting in quick mode.
 | AuthN SDK - MSAL Android | `8d0d308e-cd5c-44a3-9518-43eeeb424b57` |
 | Microsoft Authenticator - Android | `0b97f26e-fcfc-4ed1-95e9-1dca3a2fde3b` |
 
+## KPIs Where ETA Is Not Applicable
+
+Some S360 KPIs do not have an ETA column in the portal. For items belonging to these KPIs,
+show **"N/A"** in the ETA field instead of "Missing ETA ⚠". Do NOT count them in the
+"Missing ETA" summary count.
+
+| KPI ID | KPI Name |
+|--------|----------|
+| `d573888d-4c6f-81cc-7992-50dc17c87d83` | [Compl-CC1.3] Data Type Classification (GDPR) |
+
+> **Maintaining this list**: If the user reports that an item shows "Missing ETA ⚠" but
+> the S360 portal has no ETA column for it, add the KPI ID to this table.
+
 ## Workflow
 
 ### Step 0: Discover Team Members via Graph
@@ -56,16 +68,17 @@ misses these. To capture them, dynamically discover team member aliases from the
 
 1. **Get current user's manager:**
    ```
-   mcp_graph_microsoft_graph_get(
-     relativeUrl: "/v1.0/me/manager?$select=id,displayName,userPrincipalName"
+   m365-user-GetManagerDetails(
+     select: "id,displayName,userPrincipalName"
    )
    ```
-   Extract the manager's `id`.
+   Extract the manager's `id` (GUID) and `userPrincipalName`.
 
 2. **Get all direct reports of the manager (= your teammates):**
    ```
-   mcp_graph_microsoft_graph_get(
-     relativeUrl: "/v1.0/users/{managerId}/directReports/graph.user?$count=true&$select=id,displayName,userPrincipalName,jobTitle,accountEnabled"
+   m365-user-GetDirectReportsDetails(
+     userId: "<manager UPN from step 1>",
+     select: "id,displayName,userPrincipalName,jobTitle,accountEnabled"
    )
    ```
 
@@ -75,12 +88,38 @@ misses these. To capture them, dynamically discover team member aliases from the
    - Extract alias from `userPrincipalName` by stripping `@microsoft.com`
    - Store the list of aliases and a display-name map for later use in the report
 
-**Fallback**: If the Graph MCP server is unavailable, fall back to the ADO Teams API:
+**Fallback**: If the M365 User MCP is unavailable, fall back to the ADO Teams API:
 - Call `mcp_ado_core_list_project_teams(project: "Engineering", mine: true)`
 - Find the team named "Auth Client - Android" and note its `id`
 - Call the ADO REST API via terminal:
   `Invoke-RestMethod -Uri "https://identitydivision.visualstudio.com/_apis/projects/Engineering/teams/{teamId}/members?api-version=7.1"`
 - Extract `uniqueName` values, strip `@microsoft.com` to get aliases
+
+### Step 0b: Collect Last Week's Report
+
+Before fetching S360 data, ask the user if they have last week's S360 report available.
+This is the **primary method** for determining "new this week" items, resolved items,
+and pre-existing PBI assignments. Use the `ask_user` tool:
+
+```
+question: "Do you have last week's S360 report to paste? This helps detect new/resolved items and avoid duplicate PBIs. You can paste the report text, or skip and I'll try to find it automatically."
+choices: ["I'll paste it now", "Skip — find it automatically"]
+```
+
+**If the user pastes the report:**
+1. Parse the pasted text for:
+   - **Item titles with owners** — each row in the report table
+   - **AB# references** — extract numeric PBI IDs (e.g., `AB#12345` or `Product Backlog Item 12345`)
+   - **ADO work item URLs** — links like `dev.azure.com/.../workitems/12345`
+   - **SLA states** — Missed SLA, Near SLA, In SLA
+2. Build a **previous report map**: title → { pbi, owner, slaState }
+3. Store this map for use in:
+   - **Step 1e** (resolved items = items in last week's map but NOT in current active set)
+   - **Step 3** (existing PBIs = AB# numbers from the map)
+   - **Step 5** (new items = items in current active set but NOT in last week's map)
+
+**If the user skips or doesn't respond:**
+Fall back to automatic discovery in Step 3a (WorkIQ → Mail Search → proceed without).
 
 ### Step 1: Fetch S360 Data
 
@@ -121,9 +160,17 @@ that are tied to individuals rather than service tree IDs.
 **Important**: The `assignedTo` search returns ALL items for those aliases across Microsoft,
 including items from other team memberships. After fetching, filter results to only include
 items where one of these conditions is met:
-- `TargetType` is `"Person"` (on-call, certifications — always relevant to the person)
+- `TargetType` is `"Person"` AND `TargetId` exactly matches one of the team aliases
 - `TargetId` matches one of our three service tree IDs
 - `CustomDimensions.TenantName` contains "Auth Client", "MSAL", "ADAL", or "Authenticator"
+
+**Critical — do NOT expand group items**: Each S360 item has exactly one `AssignedTo`
+and one `TargetId`. Treat each item as-is — one row per `KpiActionItemId`. Never split
+a single item into multiple rows by parsing names from the title or description. If
+multiple team members share the same on-call KPI, S360 creates **separate items** for
+each person (each with its own `KpiActionItemId` and `AssignedTo`). If an alias has no
+matching item in the API response, that person simply has no action item — do not
+fabricate one.
 
 #### 1c: Merge results
 
@@ -157,12 +204,14 @@ To populate the "Resolved Since Last Week" section, compare the current S360 ite
 against last week's report:
 
 1. **Pull last week's S360 items** via one of these sources (in priority order):
-   a. Call `mcp_s360-breeze-m_search_resolved_s360_kpi_action_items` with the same
-      `targetIds` and `assignedTo` used in 1a/1b. This returns items that were active
-      but have since been resolved.
-   b. If the resolved search tool is unavailable, parse last week's email (from Step 3a)
-      and extract the item titles + AB# numbers listed there.
-   c. If neither is available, skip this step.
+   a. **User-provided report** (from Step 0b) — if the user pasted last week's report,
+      use the parsed previous report map. This is the most reliable source.
+   b. Call `mcp_s360-breeze-m_search_resolved_s360_kpi_action_items` with the same
+      `targetIds` and `assignedTo` used in 1a/1b. Cross-reference results against the
+      user-provided report if available — only include items that appear in BOTH sources.
+   c. If no user-provided report and the resolved search tool is unavailable, parse
+      last week's email (from Step 3a) and extract the item titles + AB# numbers.
+   d. If none of the above are available, skip this step.
 
 2. **Identify resolved items**: Items that appeared in last week's report but are NOT
    in the current active set (from 1c) are considered resolved.
@@ -187,15 +236,15 @@ The response contains an array at `result.resources`. For each item extract:
 |-------|-----------|-------|
 | Title | `Title` | **Required** — sanitize before display (see below). If empty, use KPI `displayName` from Step 1d. Never leave blank. |
 | Service | Map `TargetId` → service name from table above. For person-targeted items (`TargetType: "Person"`), use `CustomDimensions.TenantName` instead |
-| Owner Alias | `S360Dimensions.ActionOwnerAlias` | Falls back to `AssignedTo`. If both empty → "unassigned" |
-| Owner Name | `S360Dimensions.ActionOwner` | If empty, use the `nameMap` from Step 0 to look up alias → display name. If still empty, use the alias as display name |
+| Owner Alias | `S360Dimensions.ActionOwnerAlias` | Falls back to `AssignedTo`. If both empty → "unassigned". **Overridden by ADO PBI assignee in Step 3e.** |
+| Owner Name | `S360Dimensions.ActionOwner` | If empty, use the `nameMap` from Step 0 to look up alias → display name. If still empty, use the alias as display name. **Overridden by ADO PBI assignee in Step 3e.** |
 | Due Date | `CurrentDueDate` | Format as `Mon DD, YYYY` |
 | SLA State | `SLAState` | Values: `OutOfSla`, `ApproachingSla`, `InSla` |
-| ETA | `CurrentETA` | If null → flag as **"Missing ETA ⚠"** |
+| ETA | `CurrentETA` | If null and KpiId is in the "ETA Not Applicable" table → show **"N/A"**. If null and KpiId is NOT in that table → flag as **"Missing ETA ⚠"** |
 | Status Notes | `CurrentStatus` | May be empty |
 | Status Author | `CurrentStatusAuthor` | |
 | ADO Work Item | `S360Dimensions.ADOWorkItemHTMLUrl` | Empty = no PBI linked |
-| S360 URL | `URL` | Link to details/remediation |
+| S360 URL | `URL` | Remediation/action link from S360 API (aka.ms, IcM, ADO, etc.) |
 | KPI ID | `KpiId` | For dedup |
 | Action Item ID | `KpiActionItemId` | For dedup |
 | Program Name | KPI metadata `displayName` (from Step 1d) | For grouping items by compliance area |
@@ -238,25 +287,31 @@ or similar `Title` and `TargetId`. Apply dedup in two passes:
 
 Before creating any new PBIs, search for existing ones from two sources.
 
-#### 3a: Pull last week's S360 email via WorkIQ
+#### 3a: Pull last week's S360 email
 
-Call `mcp_workiq_ask_work_iq` to find the most recent S360 report email **from the last 7 days**:
+**Method 1: User-provided report** (from Step 0b) — If the user already pasted last
+week's report, use the parsed map directly. This is the most reliable source and avoids
+issues with Purview-encrypted emails or WorkIQ failures. **Skip Methods 2–3 entirely.**
 
+**Method 2: WorkIQ** (fallback if user skipped Step 0b) — Call `mcp_workiq_ask_work_iq`:
 ```
 question: "Find the most recent email from the last 7 days with subject containing 'S360 Weekly Report' sent to androididentity@microsoft.com. Return the full email body content including any AB# work item references."
 ```
 
-Parse the email body for:
+**Method 3: Ask user** (fallback if WorkIQ errors) — Use `ask_user` to ask the user
+to paste last week's report content.
+
+Parse the email/report body for:
 - **AB# references** (e.g., `AB#12345`) — extract the number and the S360 item title nearby
 - **Work item links** — ADO URLs like `dev.azure.com/.../workitems/12345`
+- **Item titles with owners** — build a title → (AB#, owner) map
 
 Build a map of **S360 item title → AB# number** from the previous report.
 These are known-good PBI assignments from last week.
 
-If WorkIQ returns no results or the tool is unavailable, skip this step and continue
-with Step 3b. Do not fail the workflow.
+If all methods fail, skip this step and continue with Step 3b. Do not fail the workflow.
 
-#### 3b: Search ADO for existing S360 PBIs
+#### 3b: Search ADO for existing S360 PBIs (tag/title search)
 
 Search for work items that are tagged `s360` OR have `S360` in the title:
 
@@ -280,27 +335,92 @@ handled and exclude it from the "needs PBI" list.
 
 Build a map of **S360 item title → AB# number + state** from ADO.
 
-#### 3c: Merge PBI maps
+#### 3c: Keyword-based search for pre-existing PBIs (CRITICAL)
+
+**Why this step exists**: Team members often create PBIs for S360 items manually —
+without the `[S360]` prefix or tag. Step 3b will MISS these. Skipping this step
+creates **duplicate PBIs**. This step is mandatory.
+
+For each S360 item that was NOT matched in 3a or 3b, perform a **keyword search**
+using the ADO work item search tool (`search_workitem`):
+
+```
+search_workitem(
+  project: "Engineering",
+  areaPath: "Engineering\\Auth Client\\Broker\\Android",
+  searchText: "<2-4 distinctive keywords from the item title>",
+  state: ["Committed", "New", "Active", "In Progress"],
+  top: 5
+)
+```
+
+**Keyword extraction rules:**
+- Use the most distinctive 2–4 words from the S360 item title
+- Omit generic words like "required", "should", "the", "for", "is"
+- Examples:
+  - "MISE Compliance - 1.31.0+ [Wave 10]" → search: `"MISE Compliance Wave 10"`
+  - "AuthN SDK - MSAL Android is required to onboard in Trusted Platform OneCompliance" → search: `"OneCompliance Trusted Platform onboard"`
+  - "Establish and document a patch management process for DexGuard" → search: `"DexGuard patch management"`
+
+**Matching logic:**
+- If a result has the **same core meaning** as the S360 item (even without `[S360]`
+  prefix), it's a match. Use title similarity — if 3+ significant words overlap,
+  treat it as the same item.
+- Record the pre-existing AB# and assignee.
+
+**Batch for efficiency**: Group items into batches of 3–5 keyword searches at a time
+to reduce round-trips. Items that are very unique (e.g., on-call checklists with
+person names) can skip this step as they're unlikely to have pre-existing PBIs.
+
+**Mark matched items as `existing`** — do NOT create new PBIs for them.
+
+#### 3d: Merge PBI maps
 
 For each S360 item, check if a PBI exists from any source:
 1. The S360 API field `S360Dimensions.ADOWorkItemHTMLUrl` (already linked in S360)
 2. Last week's email AB# references (from 3a) — confirmed human assignments
-3. ADO search results (from 3b) — broader search, may include loosely related items
+3. ADO tag/title search results (from 3b) — items explicitly tagged S360
+4. ADO keyword search results (from 3c) — catches manually-created PBIs without S360 tag
 
-**Priority: S360-linked > last week's email > ADO search.**
+**Priority: S360-linked > last week's email > keyword search (3c) > tag search (3b).**
 
 Rationale: S360-linked is authoritative. Last week's email represents a confirmed OCE
-assignment (higher confidence than a title search). ADO search is a fallback that may
-produce false positives from unrelated items with "S360" in the title.
+assignment (higher confidence than a title search). Keyword search (3c) catches real
+duplicates that lack the `[S360]` prefix. Tag search (3b) is broadest but may produce
+false positives from unrelated items.
 
-**Title matching logic** (for 3a and 3b):
-- Normalize both titles: strip `[S360]` prefix, trim whitespace, lowercase
-- Match if the S360 item title is **contained within** the ADO item title, or vice versa
-- Example: S360 `"Update Vulnerable Container Image Reference"` matches
-  ADO `"[S360] Update Vulnerable Container Image Reference"`
+**Title matching logic** (for 3a, 3b, 3c):
+- **Normalize both titles identically before comparing**: strip `[S360]` prefix, replace
+  all non-alphanumeric characters (hyphens, underscores, brackets, etc.) with spaces,
+  collapse multiple spaces to one, trim whitespace, lowercase. Apply the **same**
+  normalizer to both the S360 title and the ADO/last-week-report title — mismatches
+  occur when one side keeps punctuation (e.g., hyphens) and the other strips it.
+- Match if the normalized S360 title is **contained within** the normalized ADO title,
+  or vice versa
+- For keyword search (3c): match if 3+ significant words overlap between titles
+- Example: S360 `"MISE Compliance - 1.31.0+ [Wave 10]"` matches
+  ADO `"[S360] MISE Compliance - 1.31.0+ [Wave 10]"` after normalization
 
 Mark each item's PBI status: `existing` (with AB# + URL), `needs-creation`, or
 `resolved` (PBI exists but is Done/Removed — skip from report).
+
+#### 3e: Override Owners from ADO PBI Assignees
+
+After PBI matching is complete, for every item that has an existing PBI (from any source),
+fetch the PBI's `System.AssignedTo` field and **override the item's owner** with the ADO
+assignee. This ensures the report reflects the actual PBI owner, not the S360 default.
+
+1. Collect all PBI IDs from matched items
+2. Call `mcp_ado_wit_get_work_items_batch_by_ids` with fields `["System.Id", "System.AssignedTo"]`
+3. For each item with a PBI:
+   - Extract alias from ADO `System.AssignedTo` (strip `@microsoft.com`)
+   - Set `ownerAlias` = ADO alias
+   - Set `ownerName` = ADO display name
+4. Items WITHOUT a PBI keep their S360-sourced owner (from Step 2)
+
+**Rationale**: The S360 `ActionOwnerAlias` often defaults to the service dev owner or
+a team lead, while the ADO PBI has been explicitly assigned to the person doing the work.
+The ADO assignment is more accurate for reporting purposes.
 
 ### Step 4: Create Missing PBIs
 
@@ -391,26 +511,26 @@ Write a JSON file to a temp location (e.g., `$env:TEMP/s360_data.json`) with thi
   "items": [
     {
       "title": "S360 item title",
-      "shortTitle": "Abbreviated title for cards (optional, falls back to title)",
+      "shortTitle": "Abbreviated title (optional — generator falls back to title if null)",
       "service": "Service name (e.g., MSAL Android)",
       "ownerAlias": "alias",
       "ownerName": "Full Name",
       "sla": "OutOfSla | ApproachingSla | InSla",
       "due": "Mon DD, YYYY",
       "eta": "Mon DD, YYYY or null",
-      "pbi": "AB#12345 or null",
+      "pbi": "12345 or null (number only — generator adds AB# prefix)",
       "isNew": true,
       "s360Url": "https://s360.msftcloudes.com/...",
       "program": "Program display name",
       "programDesc": "Program subtitle/description (optional)",
-      "subtitle": "Wave or campaign name (optional)"
+      "subtitle": "Wave or campaign name (optional — renders inside TITLE column, do NOT set to service name since Service has its own column; leave null unless wave/campaign info is available)"
     }
   ],
   "resolved": [
     {
       "title": "Resolved item title",
-      "assignee": "Full Name (alias)",
-      "pbi": "AB#12345 or null"
+      "assignee": "alias (just the alias — generator looks up display name from nameMap)",
+      "pbi": "12345 or null (number only — generator adds AB# prefix)"
     }
   ],
   "nameMap": {
@@ -453,40 +573,18 @@ and design rationale. The generator script implements these blocks programmatica
 **Fallback**: If Node.js is unavailable, fall back to manually assembling HTML using the
 building blocks in `report-template.md` — copy them verbatim and substitute placeholders.
 
-### Step 6: Save, Draft Email, and Preview
+### Step 6: Save and Preview
 
 1. **Save HTML** to `C:\Users\shjameel\Desktop\s360-report-{date}.html`
 
-2. **Draft Outlook email via Graph API** (if available):
-   ```
-   mcp_graph_microsoft_graph_suggest_queries(
-     intentDescription: "create a draft email message"
-   )
-   ```
-   Then call `mcp_graph_microsoft_graph_post` with the suggested endpoint:
-   ```
-   relativeUrl: "/v1.0/me/messages"
-   body: {
-     "subject": "S360 Weekly Report — Android Auth Team — Week of {date}",
-     "body": { "contentType": "HTML", "content": "<full HTML report>" },
-     "toRecipients": [
-       { "emailAddress": { "address": "androididentity@microsoft.com" } }
-     ],
-     "isDraft": true
-   }
-   ```
-   If the Graph call succeeds, tell the user: "📧 Outlook draft created. Open Outlook →
-   Drafts → review and send."
+2. **Open in browser** for preview using `Start-Process` in terminal
 
-   **Fallback**: If Graph MCP is unavailable or the call fails, fall back to the file-based
-   approach (step 3 below).
-
-3. **Open in browser** for preview using `Start-Process` in terminal
-
-4. Tell the user the report location and next steps:
-   - If email draft was created: "Report saved to Desktop and Outlook draft created."
-   - If file-only: "Report saved to Desktop. Preview opened in browser. Copy the HTML
-     into a new Outlook email (Edit → Paste Special → HTML) and send to the team."
+3. Tell the user:
+   ```
+   Report saved to Desktop and preview opened in browser.
+   To send: Open the browser preview → Select All (Ctrl+A) → Copy (Ctrl+C) →
+   New Outlook email to androididentity@microsoft.com → Paste (Ctrl+V) → Send.
+   ```
 
 ## SLA State Sort Order
 
@@ -498,12 +596,10 @@ Within same SLA state, sort by `CurrentDueDate` ascending (earliest due first).
 
 ## Edge Cases
 
-- **Graph MCP unavailable**: Fall back to ADO Teams API (see Step 0 fallback). If both
+- **M365 User MCP unavailable**: Fall back to ADO Teams API (see Step 0 fallback). If both
   are unavailable, skip person-targeted search and proceed with service-targeted items only.
   Add a callout in the report noting that on-call items may be missing.
-- **Graph email draft fails**: Fall back to file-based approach — save HTML to Desktop and
-  instruct user to copy/paste into Outlook manually. Do not fail the workflow.
-- **S360 MCP auth failure**: Instruct user to restart MCP server via Command Palette →
+- **S360 MCP auth failure**:Instruct user to restart MCP server via Command Palette →
   `MCP: Restart Server` → `s360-breeze-mcp`
 - **WorkIQ unavailable or no email found**: Skip Step 3a entirely; rely on S360 API field
   and ADO search only. Do not fail the workflow.

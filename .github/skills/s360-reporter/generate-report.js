@@ -56,6 +56,7 @@ const reportDateObj = new Date(reportDate);
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtDate(d) {
   if (!d) return null;
+  if (d === 'N/A') return 'N/A';
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
@@ -387,8 +388,7 @@ sortedPrograms.forEach(([progName, prog]) => {
     html += `
       <tr>
         <td bgcolor="${bg}" style="padding:12px 14px; font-size:13px; border:1px solid #e8e8e8; border-left:4px solid ${s.leftBorder};">
-          <a href="${it.s360Url}" style="color:#24292f; font-weight:600; text-decoration:none;">${esc(it.shortTitle)}</a><br>
-          <span style="font-size:11px;"><em>${esc(it.subtitle)}</em></span>
+          <a href="${it.s360Url}" style="color:#24292f; font-weight:600; text-decoration:none;">${esc(it.shortTitle || it.title)}</a>${it.subtitle ? `<br><span style="font-size:11px;"><em>${esc(it.subtitle)}</em></span>` : ''}
         </td>
         <td bgcolor="${bg}" style="padding:12px 14px; font-size:12px; border:1px solid #e8e8e8;">${esc(it.service)}</td>
         <td bgcolor="${bg}" style="padding:12px 14px; font-size:12px; border:1px solid #e8e8e8;">${esc(it.ownerName)}<br><span style="font-size:11px;"><em>(${esc(it.ownerAlias)})</em></span></td>
@@ -466,7 +466,7 @@ if (noEtaItems.length > 0) {
       <td width="4" bgcolor="#bf8700" style="font-size:1px;">&nbsp;</td>
       <td bgcolor="#fffbeb" style="padding:16px 20px;">
         <p style="margin:0 0 6px 0; font-size:14px; font-weight:700;">${noEtaItems.length} Items Missing ETA</p>
-        <p style="margin:0; font-size:13px;">${noEtaItems.map(i => `${esc(i.shortTitle)} (${esc(i.ownerAlias)})`).join(' &bull; ')}</p>
+        <p style="margin:0; font-size:13px;">${noEtaItems.map(i => `${esc(i.shortTitle || i.title)} (${esc(i.ownerAlias)})`).join(' &bull; ')}</p>
       </td>
     </tr>
   </table>`;
