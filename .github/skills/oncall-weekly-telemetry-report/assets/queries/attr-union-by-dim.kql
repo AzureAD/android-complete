@@ -1,0 +1,59 @@
+// Spike-attribution union — all 7 dims for N codes (or N types) in ONE query.
+//
+// Recommended for the standard 2-week WoW attribution pass (Step 5 of SKILL.md).
+// 1 round-trip vs 7. ~800 KB payload for 8 codes; well under the MCP limit.
+// Falls back to per-dim files (assets/queries/attr-codes-by-dim.kql) if you
+// need a wider time window or you exceed payload size.
+//
+// Inputs:
+//   <CODES>    e.g. dynamic(['no_tokens_found','timed_out_execution', ...])
+//   <START>    inclusive (e.g. datetime(2026-04-26))
+//   <END>      EXCLUSIVE Sunday after the reporting week (e.g. datetime(2026-05-10))
+//   <KEY>      either `error_code` or `unified_error_type` (the latter for type cards)
+//
+// Output schema (consumed by `summarize-attribution.js --union`):
+//   dim         string   short label per dimension
+//   wk          datetime reporting week
+//   <KEY>       string   error_code or unified_error_type
+//   val_string  string   dim value (for string-typed dims)
+//   val_bool    bool     dim value (for shared-device only)
+//   devs        long     dcount_hll merged device count
+//   errs        long     sum of countOverall (request count)
+//
+// For type cards, swap the first line and key:
+//   let base = materialized_view('ErrorStatsMetrics')
+//     | extend unified_error_type = MergeUiRequiredExceptions(error_type)
+//     | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+//     | where unified_error_type in (<TYPES>)
+//     | extend wk = startofweek(EventInfo_Time);
+
+let codes = dynamic([<CODES>]);
+let base = materialized_view('ErrorStatsMetrics')
+  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | where error_code in (codes)
+  | extend wk = startofweek(EventInfo_Time);
+(base | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
+                  errs = sum(countOverall)
+            by dim='span',          wk, error_code, val_string=span_name,                val_bool=bool(null))
+| union (base | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
+                          errs = sum(countOverall)
+            by dim='calling_app',   wk, error_code, val_string=calling_package_name,     val_bool=bool(null))
+| union (base | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
+                          errs = sum(countOverall)
+            by dim='active_broker', wk, error_code, val_string=active_broker_package_name, val_bool=bool(null))
+| union (base | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
+                          errs = sum(countOverall)
+            by dim='broker_ver',    wk, error_code, val_string=broker_version,           val_bool=bool(null))
+| union (base | extend t = MergeAccountType(account_type)
+              | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
+                          errs = sum(countOverall)
+            by dim='acct_type',     wk, error_code, val_string=t,                        val_bool=bool(null))
+| union (base | extend s = MergeIsSharedDevice(is_shared_device)
+              | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
+                          errs = sum(countOverall)
+            by dim='shared_dev',    wk, error_code, val_string=s,                        val_bool=bool(null))
+| union (base | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
+                          errs = sum(countOverall)
+            by dim='client_sku',    wk, error_code, val_string=client_sku,               val_bool=bool(null))
+| where wk < datetime(<END>)
+| order by error_code asc, dim asc, wk asc, devs desc

@@ -1,0 +1,15 @@
+// 60-day per-error-code trend.
+// Inputs (replace before pasting):
+//   <START>  = first Sunday of the 60d window (e.g. 2026-03-08)
+//   <END>    = end of the reporting week, EXCLUSIVE = next Sunday after the
+//              reporting week's Sunday (e.g. for a 2026-05-03 report, use 2026-05-10)
+// Output: feed to assets/bucket-trends.js with --start=<START> (no --end needed
+// because we filter the partial bucket out at the source — preferred).
+materialized_view('ErrorStatsMetrics')
+| where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+| where isnotempty(error_code) and error_code != 'success'
+| summarize errs = sum(countOverall),
+            devs = dcount_hll(hll_merge(countDevicesHll))
+     by week = startofweek(EventInfo_Time), error_code
+| where week < datetime(<END>)   // drop partial end-week
+| order by error_code asc, week asc

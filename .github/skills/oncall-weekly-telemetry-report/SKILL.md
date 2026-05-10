@@ -15,17 +15,27 @@ Reusable helpers in [`assets/`](assets/):
 
 | File | Purpose |
 |---|---|
-| [`report-template.html`](assets/report-template.html) | Canonical layout — copy and replace data only, never restructure CSS |
-| [`kusto-cheatsheet.md`](assets/kusto-cheatsheet.md) | Schemas, helper funcs, gotchas, ready-to-paste KQL templates |
+| [`report-template.html`](assets/report-template.html) | Canonical layout — a real prior-week report kept verbatim. **Edit in place** (replace dates / values / verdicts / PR links); do not restyle. See [`template-readme.md`](assets/template-readme.md) for what to change vs leave alone. |
+| [`template-readme.md`](assets/template-readme.md) | Author guide for `report-template.html` — what to change per week, color palette, CSS class quick-reference |
+| [`kusto-cheatsheet.md`](assets/kusto-cheatsheet.md) | Schemas, helper funcs, gotchas, ready-to-paste KQL templates, AADSTS reference |
 | [`code-attribution-template.md`](assets/code-attribution-template.md) | Per-card checklist for the deep code-attribution block (Originator / Top throw site / Wrapper / Caller hot-spots / Underlying cause / Top error_messages / Likely PRs / Next step) |
-| [`bucket-trends.js`](assets/bucket-trends.js) | Bucket all error codes into 60-day regression / spike / improvement / flat. Run with `--metric=devs` AND `--metric=reqs` |
-| [`summarize-attribution.js`](assets/summarize-attribution.js) | Roll up 7-dim attribution slices for spike-attribution cards |
+| [`queries/`](assets/queries/) | Canonical KQL templates, one file per query — see [`queries/README.md`](assets/queries/README.md). Highlights: [`attr-union-by-dim.kql`](assets/queries/attr-union-by-dim.kql) (NEW — all 7 dims in one round-trip), [`error-message-and-location.kql`](assets/queries/error-message-and-location.kql) (now accepts BOTH `<CODES_LIST>` and `<TYPES_LIST>` in one call) |
+| [`templates/`](assets/templates/) | Copy-paste HTML snippets (`spike-card.html`, `traffic-attr-card.html`, `sparkline-footer.html`) |
+| [`bucket-trends.js`](assets/bucket-trends.js) | Bucket all error codes into 60-day regression / spike / improvement / flat. Run with `--metric=devs` AND `--metric=reqs`. Pass `--end=YYYY-MM-DD` (Sunday after the reporting week, exclusive) to drop the partial in-progress bucket. |
+| [`agg.js`](assets/agg.js) | Per-error per-dim top-N rollup with WoW deltas. Workhorse for filling spike-attribution dim blocks. |
+| [`summarize-attribution.js`](assets/summarize-attribution.js) | Roll up 7-dim attribution slices for spike-attribution cards. Supports BOTH `--union <file.json>` (preferred for 2-week WoW; pairs with `attr-union-by-dim.kql`) AND legacy `--label=<dim> file.json` per-dim mode. |
+| [`find-suspect-prs.ps1`](assets/find-suspect-prs.ps1) | Parallel `git log -S` + `--grep` across broker/ + common/ for a class/method symbol, with PR numbers + URLs. Run after the Originator pre-check identifies the throw-site class. |
+| [`validate-report.ps1`](assets/validate-report.ps1) | Pre-publish validator. Catches stale tokens, devs/reqs leaks, mojibake (U+FFFD), and unbalanced `<div>` depth in Section 2 (the nested-callout bug). Run as part of Step 7. |
 
 ---
 
 ## Inputs to confirm with the user
 
-1. **Reporting week** — defaults to the most recent complete week (Sun → Sat ending yesterday or today). **Confirm explicit dates with the user.** Note that Kusto's `startofweek()` is **Sunday-aligned**, so a user-spoken "week of May 3 → May 9" maps to the bucket `startofweek == 2026-05-03`. Off-by-one-week is the #1 silent error — verify by printing the distinct `startofweek` buckets from your first query and confirming the label matches the user's intent.
+1. **Reporting week** — defaults to the **most recent complete Sun→Sat week**. If today is itself a Saturday or Sunday, the user often actually wants the **current in-progress week** instead — ASK explicitly. If they pick the in-progress week:
+   - Add the badge text *"Live data — current bucket may still be filling"* to the report header.
+   - The `bucket-trends.js` `--end` flag + the `| where week < datetime(<END>)` source filter both still apply (use the Sunday AFTER the reporting week as `<END>`); they will drop the partial-end-bucket warning.
+
+   Note that Kusto's `startofweek()` is **Sunday-aligned**, so a user-spoken "week of May 3 → May 9" maps to the bucket `startofweek == 2026-05-03`. Off-by-one-week is the #1 silent error — verify by printing the distinct `startofweek` buckets from your first query and confirming the label matches the user's intent.
 2. **Comparison baseline** — defaults to the prior complete week.
 3. **60-day window** — last 8 complete weeks (drop the partial start week when computing trend deltas).
 4. **Output filename** — `$env:USERPROFILE\android-oce-reports\oncall-wow-report-YYYY-MM-DD.html`, where `YYYY-MM-DD` is the **Sunday `startofweek` bucket** of the reporting week (e.g. the report for the week of May 3 → May 9, 2026 is `oncall-wow-report-2026-05-03.html`). User-scoped, outside the workspace; the date matches the Kusto bucket label used throughout the report.
@@ -37,24 +47,24 @@ If any of these are unstated, ask once, then proceed.
 ## Required sections (in order)
 
 1. **Top-line health KPIs** — total requests, total devices, silent-auth reliability %, interactive reliability %, p95 latency on the hot spans. WoW delta on each. Inline SVG sparklines.
-2. **Things that need attention this week** — three callouts:
+2. **Things that need attention this week** — callouts:
    - **Denominator caveat** — explain any large total-spans device-count shift caused by span-emission changes (e.g. `goAsync()` refactors). Always state which denominator the report uses (auth-only: `SilentAuthStats` ∪ `InteractiveAuthStats`).
-   - **Real WoW regressions** worth investigation, with PR links.
-   - **Slow-burn 60-day regressions** (rising on 60d even when WoW looks flat). Link to the 60-Day Trend section.
+   - **🔴 WoW regressions (last 7 days)** — *one* callout listing every code/type that moved sharply WoW, **sorted by current-week device count descending**. Built from the union of (a) the standard WoW table and (b) [`assets/queries/wow-movers.kql`](assets/queries/wow-movers.kql) so small-but-recent spikes appear in the same list as the high-volume ones. Each row uses the `.item` flat-row pattern (see `assets/template-readme.md` § "Section 2 callouts"): name + inline metric chips + tags pushed right + one-line body + optional foot with `Attribution card →` link. **Section 2 rows are at-a-glance only** — do not duplicate the dim slicing / PR analysis / detailed verdict here; that belongs in the Section 4 spike-attribution card. Each row carries tags: `NEW` (first appeared this week or last), `60d↑` (also rising on 60d), and an originator chip (`broker` / `eSTS` / `Android` / `env`). Reader's eye prioritizes naturally by row order and tag combination — broker-tagged rows at the top demand the most attention.
+   - **Slow-burn 60-day regressions** — codes/types climbing on the 60d window that are flat WoW. Anything that *also* moved WoW belongs in the red callout above (with `60d↑`), not here. Link to the 60-Day Trend section.
    - **Real wins this week**, with PR links.
    - **Traffic shape** — flat / surge / collapse summary.
-3. **📈 60-Day Trend Analysis** — built from the `ErrorStatsMetrics` materialized view over the last 8 complete weeks. **Run the bucketing pipeline FOUR times — the cross-product of `{error_code, error_type} × {devs, reqs}`** — and union the regression sets. An entry (code OR type) is flagged if it regresses on either metric.
+3. **📈 60-Day Trend Analysis** — built from the `ErrorStatsMetrics` materialized view over the last 8 complete weeks. **Run the bucketing pipeline FOUR times — the cross-product of `{error_code, error_type} × {devices, requests}`** — and union the regression sets. An entry (code OR type) is flagged if it regresses on either metric.
 
-   - **% of devices** affected (`devsHit / authActiveDevs`) — catches errors hitting more users.
-   - **% of requests** affected (`errReqs / authTotalReqs`) — catches per-device retry storms (fewer users, more traffic per user). The previous report would have missed `kdfv2_key_derivation_error` (262 → 5,374 reqs on ~57 devices) without this dim.
+   - **% of devices** affected (`devicesHit / authActiveDevices`) — catches errors hitting more users.
+   - **% of requests** affected (`errRequests / authTotalRequests`) — catches per-device retry storms (fewer users, more traffic per user). The previous report would have missed `kdfv2_key_derivation_error` (262 → 5,374 requests on ~57 devices) without this dim.
 
    Categories: True 60d regression / Ephemeral 60d spike (peak-then-recover) / True 60d improvement / Flat. Every rising entry — whether `error_code` or `error_type` — gets the same Spike Attribution + Code Attribution treatment (Step 4 / Step 5).
 
    Always apply `MergeUiRequiredExceptions(error_type)` before bucketing on type; otherwise the 6+ string variants of `UiRequiredException` will each be tracked separately and skew the buckets.
 4. **🔎 Spike Attribution** — one card per WoW regression AND per 60-day regression, **for both `error_code` and `error_type` regressions**. Each card slices on **all 7 dimensions** (broker version, span, active broker pkg, calling app, account type AAD/MSA, shared-device mode, client SKU). Each card ends with a **deep Code Attribution block** (see Step 4 for the required fields) and a Traffic Attribution verdict.
 5. **🚚 Traffic Attribution** — top-level section listing every error whose spike is fully or partly explained by traffic volume from a specific calling app, rather than a code regression. If none qualify this week, render the section with an explicit "None this week" note.
-6. **Error codes — WoW with stable denominator** — full table with `Δ reqs %` and `Δ devs %` columns and the 60d sparkline.
-7. **Error types — WoW with stable denominator** — full table, **same columns and rigor as the error-codes table** (`Δ reqs %`, `Δ devs %`, 60d sparkline, status pill). Any regressing type also gets a spike-attribution card in Section 4. For composite types (e.g. `ClientException` is the umbrella for many sub-codes), include a **decomposition card** that breaks the WoW Δ down into the top 3 contributing sub-codes — so a `ClientException` −5 pp drop is explicitly attributed to e.g. `−8.5 pp timed_out_execution` + `−3.4 pp unknown_authority` + `−0.15 pp illegal_argument_exception`.
+6. **Error codes — WoW with stable denominator** — full table with `Δ requests %` and `Δ devices %` columns and the 60d sparkline.
+7. **Error types — WoW with stable denominator** — full table, **same columns and rigor as the error-codes table** (`Δ requests %`, `Δ devices %`, 60d sparkline, status pill). Any regressing type also gets a spike-attribution card in Section 4. For composite types (e.g. `ClientException` is the umbrella for many sub-codes), include a **decomposition card** that breaks the WoW Δ down into the top 3 contributing sub-codes — so a `ClientException` −5 pp drop is explicitly attributed to e.g. `−8.5 pp timed_out_execution` + `−3.4 pp unknown_authority` + `−0.15 pp illegal_argument_exception`.
 8. **📊 Traffic analysis** — total requests/devices (WoW + 60d), top calling apps, top spans, **requests-per-device ratio** per error and overall (a rising ratio = retry storm; a falling ratio = caching gain), sampling-rate change indicator.
 9. **Latency** — p50/p95/p99 by hot span.
 10. **Broker version adoption** — week-over-week version share.
@@ -81,14 +91,19 @@ $reportingSunday = '2026-05-03'   # <-- replace with the confirmed reporting-wee
 $next = Join-Path $reportDir "oncall-wow-report-$reportingSunday.html"
 
 if (Test-Path $next) {
-  Write-Warning "$next already exists — confirm with the user before overwriting."
+  # Filename collision rule (per Hard Rules): do NOT silently overwrite. Open
+  # the existing report, identify its top-3 findings, and explicitly state in
+  # chat what changed in the new data before regenerating.
+  Write-Warning "$next already exists. Read it first, list its top-3 findings, and confirm a delta exists before regenerating."
 }
 
 Copy-Item c:\Users\shjameel\Repos\android-complete\.github\skills\oncall-weekly-telemetry-report\assets\report-template.html $next -Force
 Write-Host "Bootstrapped $next from skill template."
 ```
 
-Edit `$next` only. The template defines the layout, CSS, sparkline structure, attribution-card markup, and section ordering — **do not redesign these per week**. Replace the data inside each section with the current week's content; keep the structure verbatim.
+Edit `$next` in place — the template ships as a real prior-week report (not a tokenized skeleton). **Walk top-to-bottom and replace every prior-week date / KPI value / table row / verdict / PR citation with current-week data.** The CSS, sparkline JS, section ordering, and attribution-card markup are canonical — do not redesign them. See [`assets/template-readme.md`](assets/template-readme.md) for the full guide on what to change vs leave alone, the sparkline color palette, and the CSS class reference.
+
+Mark any unfinished card or table cell with the literal sentinel `EXAMPLE CONTENT BELOW` inside an HTML comment — the final-pass validator (Step 7) greps for it.
 
 If the template ever needs structural improvements (new section, new card style, etc.), update `assets/report-template.html` in the skill folder and commit it so future weeks inherit the change.
 
@@ -103,7 +118,7 @@ Use the Kusto MCP tool against:
 | Need | View |
 |------|------|
 | Per-error-code / per-error-type / per-span counts | `materialized_view('ErrorStatsMetrics')` |
-| Total broker reqs / devices | `materialized_view('BrokerAdoptionStatsUpdated')` |
+| Total broker requests / devices | `materialized_view('BrokerAdoptionStatsUpdated')` |
 | Silent auth reliability | `SilentAuthStatsAllRequestsMetrics` + `SilentAuthStatsRequestsWithoutExpectedErrorMetrics` |
 | Interactive auth reliability | `InteractiveAuthStatsAllRequestsMetrics` + `InteractiveAuthStatsRequestsWithoutExpectedErrorMetrics` |
 | Latency (p50/p95/p99) | `materialized_view('PerfStatsUpdated')` — use `percentile_tdigest(tdigest_merge(responseTimeTDigest), N, typeof(long))` |
@@ -126,42 +141,50 @@ Don't pre-filter to a hand-picked top-N list — small-but-rising errors (e.g. `
 
 #### 3a. Per-error-code trend
 
+Use [`assets/queries/60d-trend-codes.kql`](assets/queries/60d-trend-codes.kql) (template; replace `<START>` and `<END>` tokens — `<END>` is **exclusive** and equals the Sunday AFTER the reporting week, e.g. for a 2026-05-03 report use `2026-05-10`):
+
 ```kql
 materialized_view('ErrorStatsMetrics')
-| where EventInfo_Time > ago(70d)
+| where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
 | where isnotempty(error_code) and error_code != 'success'
 | summarize errs = sum(countOverall),
             devs = dcount_hll(hll_merge(countDevicesHll))
      by week = startofweek(EventInfo_Time), error_code
+| where week < datetime(<END>)   // drop partial in-progress week at the source
 | order by error_code asc, week asc
 ```
+
+**The `| where week < datetime(<END>)` line is mandatory.** Without it, if Kusto has crossed midnight UTC into the next Sunday, a tiny partial bucket lands as `last` and turns every code into a fake −99% improvement. `bucket-trends.js` will also auto-detect and warn about this, but filtering at the source is preferred.
 
 #### 3b. Per-error-type trend (same rigor)
 
 ```kql
 materialized_view('ErrorStatsMetrics')
 | extend unified_error_type = MergeUiRequiredExceptions(error_type)
-| where EventInfo_Time > ago(70d)
+| where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
 | where isnotempty(unified_error_type)
 | summarize errs = sum(countOverall),
             devs = dcount_hll(hll_merge(countDevicesHll))
      by week = startofweek(EventInfo_Time), unified_error_type
+| where week < datetime(<END>)
 | order by unified_error_type asc, week asc
 ```
 
 `MergeUiRequiredExceptions` is mandatory — without it the 6+ string variants of `UiRequiredException` (raw, fully-qualified, com.microsoft.identity.common.exception.*) each show as separate rows and skew the buckets.
 
-#### 3c. Run the bucketer 4 times (cross-product of `{code, type} × {devs, reqs}`)
+#### 3c. Run the bucketer 4 times (cross-product of `{code, type} × {devices, requests}`)
 
 ```pwsh
 # Error codes — by devices, then by requests
-node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <codes.json> --start=2026-03-08
-node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <codes.json> --start=2026-03-08 --metric=reqs
+node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <codes.json> --start=2026-03-08 --end=2026-05-10
+node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <codes.json> --start=2026-03-08 --end=2026-05-10 --metric=reqs
 
 # Error types — by devices, then by requests
-node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <types.json> --start=2026-03-08
-node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <types.json> --start=2026-03-08 --metric=reqs
+node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <types.json> --start=2026-03-08 --end=2026-05-10
+node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <types.json> --start=2026-03-08 --end=2026-05-10 --metric=reqs
 ```
+
+`--end` is the Sunday AFTER the reporting week (exclusive). The script also auto-detects partial end-buckets and warns, but passing `--end` explicitly is safer.
 
 Take the **union** of all four regression sets. Both `error_code` and `error_type` regressions get a spike-attribution card in Step 5.
 
@@ -171,15 +194,37 @@ It will print regression / spike / improvement / flat buckets, sorted by peak. T
 - **Ephemeral 60d spike:** peak week is ≥3× the mean of the surrounding weeks (peak-then-recover shape).
 - **True 60d improvement:** `delta < −15%`.
 - **Flat:** otherwise.
-- Codes/types with peak weekly devs `< 10K` (or peak weekly reqs `< 100K` when `--metric=reqs`) are filtered out (`--peak-floor=N` to override).
+- Codes/types with peak weekly devices `< 10K` (or peak weekly requests `< 100K` when `--metric=reqs`) are filtered out (`--peak-floor=N` to override).
 
 **Why both axes matter:**
-- *codes × reqs:* in v5, `kdfv2_key_derivation_error` spiked +1,951% on requests across only ~57 devices — a per-device retry storm device-only bucketing would have missed.
+- *codes × requests:* in v5, `kdfv2_key_derivation_error` spiked +1,951% on requests across only ~57 devices — a per-device retry storm device-only bucketing would have missed.
 - *types × either:* `error_type` is the umbrella (e.g. `ClientException`, `ServiceException`, `UiRequiredException`) — a moving type that doesn't map cleanly to one moving code is a strong signal of a *new* sub-code being introduced or an existing one being reclassified (the v5 `ClientException` −10% drop was driven by `timed_out_execution` reclassification under PR #141, which would have been invisible from the codes table alone).
 
-**Always present side-by-side WoW tables for BOTH error_code AND error_type** with `Δ reqs %` and `Δ devs %` columns; flag any row where either crosses threshold.
+**Always present side-by-side WoW tables for BOTH error_code AND error_type** with `Δ requests %` and `Δ devices %` columns; flag any row where either crosses threshold.
+
+#### 3d. WoW movers query — MANDATORY pass to catch small-base movers
+
+The 60d bucketer's `--peak-floor=10000` exists for good reason (otherwise the 60d regression list would be 200+ tiny noise codes), but it **silently drops every code whose absolute weekly volume stays under 10K** — even if that code is brand-new or just spiked 5× WoW. Real examples this skill has missed in the past:
+
+- `Failed to parse JWT` — went `7 → 32 → 54 → 46 → 55 → 892 → 3,461` over 7 weeks (2-week-old NEW spike, real broker code in `IDToken.parseJWT:38`). Never crossed the 10K floor.
+- `Code:-11` — sat at ~1,030 devs/wk for 7 weeks then jumped to 2,433 (+165% WoW). Sub-floor.
+- `SSLHandshakeException` — devices flat at 260 but requests +186% WoW (per-device retry storm). The bucketer's reqs-axis floor (100K) just barely captures it but the device floor doesn't.
+
+To catch these, **always** run [`assets/queries/wow-movers.kql`](assets/queries/wow-movers.kql) **as a separate pass after the 60d bucketing**:
+
+```kql
+// inputs: <CURR_START> = reporting-week Sunday, <CURR_END> = next Sunday (excl),
+//         <PRIOR_START> = baseline-week Sunday
+// floor: cDev>=500 OR cReq>=5000   move: |Δd|>=25% OR |Δr|>=50% OR new-this-week
+```
+
+Run it **twice — once for `error_code`, once for `error_type`**. **Merge its output rows into the same 🔴 WoW regressions callout as the standard WoW table** (sorted by current-week device count descending). Tag rows that came in via this pass with `NEW` if they were absent or near-zero in the prior week. Do *not* render this as a separate "emerging" callout — the size split is implementation detail; readers prioritize naturally by absolute device count + originator chip.
+
+For each WoW mover (regardless of size), you still owe the full Code Attribution treatment (Step 4). The dim-slicing pass (Step 5) is allowed to be deferred for sub-1K-device spikes if the throw-site + dominant message already pin the originator unambiguously — but say so explicitly in the card ("dims not yet sliced — file the bug first; pull dims if it persists").
 
 ### Step 4 — Code attribution (deep PR correlation)
+
+> ⚠️ **HARD RULE — Originator pre-check.** Before claiming `Originator: Broker` on any card, you MUST run [`assets/queries/error-message-and-location.kql`](assets/queries/error-message-and-location.kql) for that error code (or type) and read **(a) the throw-site stack and (b) the top 3 `error_message` strings**. Most broker error codes flow through `common/ExceptionAdapter.{getExceptionFromTokenErrorResponse, exceptionFromAuthorizationResult, clientExceptionFromException}` — which intentionally bridge eSTS responses into broker exceptions. **If the throw site is in any of those three methods AND the error_message starts with `AADSTS`, the originator is eSTS, not broker.** See the AADSTS reference table in [`assets/kusto-cheatsheet.md`](assets/kusto-cheatsheet.md). Cards that skip this step must be marked low-confidence, not high.
 
 For every regression card, the Code Attribution block **must** populate the following fields. Shallow PR-citation only is not acceptable. Use [`assets/code-attribution-template.md`](assets/code-attribution-template.md) as the per-card checklist.
 
@@ -196,17 +241,26 @@ For every regression card, the Code Attribution block **must** populate the foll
 
 #### PR-grep workflow
 
+**Read the full PR window first, then reason — don't `--grep` blind.** The 4-week window across `broker/` and `common/` typically returns &lt;30 PRs total, small enough to read end-to-end. Targeted `--grep` matches will miss PRs whose titles don't mention the error string (most of them).
+
 ```pwsh
 cd c:\Users\shjameel\Repos\android-complete\broker
-git log --since='<windowStart>' --until='<windowEnd>' --oneline `
-    --grep='<error_code>|<related symbol>|<related class>' -i
+git log --since='<windowStart>' --until='<windowEnd>' --pretty=format:'%h | %ai | %an | %s'
 
 cd ..\common
-git log --since='<windowStart>' --until='<windowEnd>' --oneline `
-    --grep='<error_code>|<related symbol>|<related class>' -i
+git log --since='<windowStart>' --until='<windowEnd>' --pretty=format:'%h | %ai | %an | %s'
 ```
 
-When the error name doesn't directly grep (e.g. `timed_out_execution`), grep for related concepts: `timeout`, `coroutine`, `executor`, `cancellation`, `thread pool`, `cache`, `authority`, etc. Then for each candidate PR, **read the diff at the throw site** to confirm it actually touches the failing code path — don't cite a PR just because it grep-matched.
+For each candidate PR, **read the diff** to confirm it touches the throw site / wrapper class identified in the Originator pre-check. Don't cite a PR just because the title mentions a related concept.
+
+For focused follow-up by class/method name, use the helper:
+
+```pwsh
+# Searches both repos in parallel via `git log -S` (pickaxe on diff) AND `--grep` (subject).
+# Returns a unified table: repo | date | author | sha | PR# | URL | subject.
+.\.github\skills\oncall-weekly-telemetry-report\assets\find-suspect-prs.ps1 `
+  -Symbol 'ExceptionAdapter' -Since 2026-04-01 -Until 2026-05-09
+```
 
 #### Repo URL patterns for citations
 
@@ -227,7 +281,9 @@ For errors with no broker code in the stack (Android system errors like `Code:-1
 
 **`ErrorStatsMetrics` already carries `account_type` and `is_shared_device`** (use the `MergeAccountType` / `MergeIsSharedDevice` helpers to normalize) — so you do **not** need a fallback to raw `android_spans` for these dims. Earlier versions of this skill claimed otherwise; that was wrong. The only dim that requires `android_spans` is `DeviceInfo_OsVersion` (OEM/version slicing).
 
-Slice on **all 7 dimensions** for each spike. Run **one query per dimension** (multi-dim cartesians from MCP can return >500 KB of JSON and risk truncation). For `error_type` cards, swap `error_code in (codes)` for `unified_error_type in (types)` and aggregate by the `MergeUiRequiredExceptions(error_type)` extension — otherwise everything else is identical.
+Slice on **all 7 dimensions** for each spike. **Preferred for 2-week WoW attribution: one union query that covers all 7 dims for all regressions in a single round-trip** — see [`assets/queries/attr-union-by-dim.kql`](assets/queries/attr-union-by-dim.kql). Typical payload for 8 codes × 2 weeks × 7 dims is ~800 KB, well under the MCP limit. Pipe the result into `summarize-attribution.js --union <file.json>` (which prints per-dim top-N share + Δ devices + Δ requests for every code). Fall back to the per-dim form ([`attr-codes-by-dim.kql`](assets/queries/attr-codes-by-dim.kql)) only when (a) you need a wider time window, or (b) the union response exceeds payload size.
+
+For `error_type` cards, swap `error_code in (codes)` for `unified_error_type in (types)` and aggregate by the `MergeUiRequiredExceptions(error_type)` extension — otherwise everything else is identical.
 
 | # | Dimension | Source | Cross-check |
 |---|-----------|--------|-------------|
@@ -237,7 +293,7 @@ Slice on **all 7 dimensions** for each spike. Run **one query per dimension** (m
 | 4 | Calling package | `ErrorStatsMetrics` group by `calling_package_name` | If 1–2 callers dominate, this is likely a traffic-attribution case (see Step 6) |
 | 5 | Account type (AAD vs MSA) | `ErrorStatsMetrics`, `extend t = MergeAccountType(account_type)` group by `t` | If the split deviates significantly from fleet (~85% AAD / 15% MSA), call it out |
 | 6 | Shared device mode | `ErrorStatsMetrics`, `extend s = MergeIsSharedDevice(is_shared_device)` group by `s` | Shared-device fleets have very different error profiles |
-| 7 | OS version | `android_spans` filtered by `error_code in (codes)` (or `error_type in (types)`) and a tight time window, group by `DeviceInfo_OsVersion` | OEM-specific Android quirks, especially for `io_error`, `unknown_crypto_error`, `null_pointer_error` |
+| 7 | OS version | [`assets/queries/os-version-slice.kql`](assets/queries/os-version-slice.kql) — raw `android_spans`, group by `DeviceInfo_OsVersion` | **On-demand only** — slice OS-version when EITHER (a) the wrapper class is in `ExceptionAdapter.clientExceptionFromException` (catch-all wrapping a system exception, where the OEM/version often is the cause), OR (b) the error code is one of `Code:-6`, `Code:-10`, `Code:-11`, `unknown_crypto_error`, `io_error`, `null_pointer_error`. Otherwise mark the dim row as "not sliced this week — no OEM concentration suspected" and move on. Slicing OS-version on every card wastes a raw-spans query without changing the verdict. |
 
 #### Type cards have one extra required dimension: sub-code decomposition
 
@@ -258,7 +314,16 @@ materialized_view('ErrorStatsMetrics')
 
 Cite the dominant sub-codes inline in the type card's verdict (e.g. *"`ClientException` −10.2% drop is dominated by −8.5 pp `timed_out_execution` + −3.4 pp `unknown_authority`"*) and link to those sub-codes' own attribution cards. The deep Code Attribution block (Step 4) for the type card itself focuses on the **wrapper / catch-and-rethrow** path that defines the type (e.g. `BaseException.java`, `ServiceException.java` constructors), not on each sub-code.
 
-Feed the seven JSON outputs into the helper to roll up dim shares per (error_code, week):
+Feed the union JSON output into the summarizer (one round-trip):
+
+```pwsh
+# Union mode (preferred). attr-union.json comes from attr-union-by-dim.kql.
+node .github\skills\oncall-weekly-telemetry-report\assets\summarize-attribution.js `
+  --union attr-union.json --top=5
+# For type cards, add --key=unified_error_type
+```
+
+Legacy per-dim mode (one JSON per dimension) is still supported for the rare wider-time-window case:
 
 ```pwsh
 node .github\skills\oncall-weekly-telemetry-report\assets\summarize-attribution.js `
@@ -266,12 +331,12 @@ node .github\skills\oncall-weekly-telemetry-report\assets\summarize-attribution.
   --label=calling_app app.json `
   --label=active_broker ab.json `
   --label=broker_version ver.json `
-  --label=account_type acct.json `
-  --label=shared_device shared.json `
-  --label=os_version os.json
+  --label=acct_type acct.json `
+  --label=shared_dev shared.json `
+  --label=client_sku sku.json
 ```
 
-Ready-to-paste KQL for the per-dimension query is in [`assets/kusto-cheatsheet.md` § 8c](assets/kusto-cheatsheet.md).
+Ready-to-paste KQL for both forms: union → [`assets/queries/attr-union-by-dim.kql`](assets/queries/attr-union-by-dim.kql); per-dim → [`assets/kusto-cheatsheet.md` § 8c](assets/kusto-cheatsheet.md).
 
 **Concentration thresholds** (paint the dim bar red):
 - > 80% in a single value → strong attribution (one root cause)
@@ -356,6 +421,22 @@ Add a top-level **🚚 Traffic Attribution** section that lists every error matc
 
 ### Step 7 — Validate & write
 
+Run the bundled validator FIRST — it covers all the silent-failure cases this skill has tripped on in the past:
+
+```pwsh
+.\.github\skills\oncall-weekly-telemetry-report\assets\validate-report.ps1
+# defaults to most-recent oncall-wow-report-*.html under ~/android-oce-reports/
+# pass -Path explicitly to validate a specific file
+```
+
+The validator hard-fails on:
+1. Stale `{{...}}` tokens or `EXAMPLE CONTENT BELOW` / `EXAMPLE_*` sentinels.
+2. `devs` / `reqs` in user-facing text (KQL inside `<pre><code>` is exempted).
+3. `U+FFFD` replacement characters (catches mojibake from emoji edits).
+4. Unbalanced `<div>` depth in the Section 2 attention block (catches the inception-style nested-callout bug from past runs).
+5. A second callout opening before the previous one closes (nested-callout sanity check).
+
+Then:
 - Run `get_errors` on the HTML file (no errors expected — pure HTML/CSS).
 - Verify no stale phrases from prior weeks remain (`Select-String` for retracted hypotheses, prior week's PR numbers).
 - Verify every PR link in the new file is reachable (the file paths just before the link should match what `git log` returned).
@@ -369,10 +450,18 @@ Add a top-level **🚚 Traffic Attribution** section that lists every error matc
 - **Never sum percentiles.** Latency is a TDigest sketch — `percentile_tdigest(tdigest_merge(responseTimeTDigest), N, typeof(long))` only.
 - **Always apply `MergeAccountType` / `MergeIsSharedDevice` / `MergeUiRequiredExceptions`** so this report agrees with the dashboard.
 - **Confirm the week bucket label matches the user's intent** before writing the rest of the queries (Sunday-aligned).
-- **Never claim "auxiliary spans" or denominator artifacts** without verifying the diff between broker versions in the actual commits.
+- **Always filter the partial in-progress week at the source** with `| where week < datetime(<END>)` where `<END>` is the Sunday immediately after the reporting week. Otherwise `bucket-trends.js` will show every error as a fake −99% improvement once UTC has crossed midnight Sunday.
+- **Originator pre-check is mandatory.** A card cannot claim `Originator: Broker` without first running [`assets/queries/error-message-and-location.kql`](assets/queries/error-message-and-location.kql) and reading the throw site + top 3 `error_message` strings. If the throw site is in `common/ExceptionAdapter.{getExceptionFromTokenErrorResponse, exceptionFromAuthorizationResult}` AND the message starts with `AADSTS`, the originator is **eSTS, not broker** — see the AADSTS reference in [`assets/kusto-cheatsheet.md`](assets/kusto-cheatsheet.md).
+- **WoW-movers pass is mandatory.** The 60d bucketer's `--peak-floor` silently drops sub-10K-device codes, so [`assets/queries/wow-movers.kql`](assets/queries/wow-movers.kql) MUST be run as a separate pass for both `error_code` and `error_type` (per Step 3d). Its output is **merged into the single 🔴 WoW regressions callout**, sorted by current-week device count descending, with rows tagged `NEW` / `60d↑` / originator chip. Do not render a separate "emerging" callout. Skipping the pass is how the Apr 26 `Failed to parse JWT` spike (7 → 3,461 devs over 7 weeks) hid for two reports running.
+- **Section 2 callouts are at-a-glance, Section 4 is the deep dive.** WoW / Slow-burn / Wins items in Section 2 use the `.item` flat-row pattern (no nested cards, no per-item left bars — the parent `.callout` border is the only severity affordance). Each row is a single line of metric chips + a one-line body + an `Attribution card →` link to the corresponding `.attr-card` in Section 4. Do NOT duplicate the dim slicing, PR analysis, or detailed verdict between the two sections — Section 4 is where that lives. See [`assets/template-readme.md`](assets/template-readme.md) for the CSS class reference and the example `.item` markup.
+- **Never use bash/PowerShell regex to bulk-edit balanced HTML.** This skill has burned twice on regex strip scripts that ate matched-pair `</div>` closes, producing inception-style nested-callout bugs that take a depth-tracking script to find. If you need a structural change to the HTML, make a targeted, single-occurrence string replacement (with explicit before/after context) or rewrite the affected block end-to-end. Never run a `-replace` across the whole file expecting it to leave balance intact.
+- **Denominator caveat must cite evidence, not hand-wave.** If you flag a large all-spans device-count shift, run [`assets/queries/broker-version-share.kql`](assets/queries/broker-version-share.kql) and name the version cohort the shift moved with. Do not write "recurring telemetry-shape artifact" without backing data; if you don't have it, drop the callout.
+- **"Recovery" still merits a PR citation.** When an error pins to a single old broker version and recovers as that version retires, look for the **fix PR in the version that replaced it** before calling it a "natural rolloff." Often the fix is real and just under-credited.
 - **Never report WoW-only verdicts** for errors that are flat-or-down WoW but rising on 60d — always cross-check both windows.
 - **Never page** based on a regression that turns out to be a downstream of a denominator shift; always include the auth-only-denominator number alongside the all-spans number.
 - **Always cite PRs** with full GitHub URLs (the repo URL patterns above), not bare commit SHAs.
+- **Filename collision rule.** If a report file already exists for the same Sunday bucket, do not silently overwrite. Open the existing report, list its top-3 findings, and explicitly state in chat what changed in the new data before regenerating. A second run on the same week without a delta is wasted work.
+- **No `devs` / `reqs` in user-facing strings.** All UI text — callouts, table headers, KPI labels, verdicts, badges — must say `devices` and `requests`. Internal variable / column / file names in scripts and JSON can stay short.
 - **Do not create a separate Markdown summary** of the report — the HTML *is* the deliverable.
 - **Do not commit** the report file. It lives in `$env:USERPROFILE\android-oce-reports\` (outside the workspace) precisely so it can't be staged accidentally.
 
@@ -380,16 +469,20 @@ Add a top-level **🚚 Traffic Attribution** section that lists every error matc
 
 ## Output checklist
 
-- [ ] New `oncall-wow-report-YYYY-MM-DD.html` (where `YYYY-MM-DD` is the reporting-week Sunday) exists at `$env:USERPROFILE\android-oce-reports\` (NOT at repo root).
+- [ ] New `oncall-wow-report-YYYY-MM-DD.html` (where `YYYY-MM-DD` is the reporting-week Sunday) exists at `$env:USERPROFILE\android-oce-reports\` (NOT at repo root). If a file for this Sunday already existed, the chat session explicitly stated what changed before regenerating.
 - [ ] All sections present and populated (incl. 🚚 Traffic Attribution — even if “None this week”)
-- [ ] **60-day trend bucketing run on the full cross-product** — `{error_code, error_type} × {devs, reqs}` = 4 runs — union of regressions reported. Per-request retry storms (e.g. small device pool, exploding request count) are flagged on both axes.
-- [ ] **Both error-codes AND error-types WoW tables have `Δ reqs %` and `Δ devs %` columns**, the 60d sparkline, and a status pill. Any row crossing threshold on either metric is in the regression list.
-- [ ] Every WoW regression AND every 60d regression — **for both `error_code` and `error_type`** — has its own spike-attribution card with all 7 dimensions sliced.
+- [ ] **60-day trend bucketing run on the full cross-product** — `{error_code, error_type} × {devices, requests}` = 4 runs — union of regressions reported. Per-request retry storms (e.g. small device pool, exploding request count) are flagged on both axes. Source KQL filtered the partial in-progress week with `| where week < datetime(<END>)`.
+- [ ] **WoW-movers pass run** ([`wow-movers.kql`](assets/queries/wow-movers.kql)) for BOTH `error_code` and `error_type`. Its output rows are **merged into the single 🔴 WoW regressions callout in Section 2** (sorted by curr-week devices descending), each row tagged `NEW` / `60d↑` / originator chip. No separate "emerging" callout. Every row carries throw-site, dominant message, originator, and a next step. If the WoW callout is empty (rare), render "None this week" rather than omit.
+- [ ] **Both error-codes AND error-types WoW tables have `Δ requests %` and `Δ devices %` columns**, the 60d sparkline, and a status pill. Any row crossing threshold on either metric is in the regression list.
+- [ ] Every WoW regression AND every 60d regression — **for both `error_code` and `error_type`** — has its own spike-attribution card with all 7 dimensions sliced. Cards are built from [`assets/templates/spike-card.html`](assets/templates/spike-card.html).
 - [ ] **Every `error_type` regression card includes the 8th-dimension sub-code decomposition** showing the top 3–5 contributing `error_code`s with their Δ vs prior week, and links to those sub-codes' own attribution cards.
-- [ ] **Every regression card's Code Attribution block populates Originator + Top throw site + Wrapper + Caller hot-spots + Underlying cause + Top error_messages + Likely PRs (with confidence/why-it's-the-suspect) + Next step (with named owner)** — per [`assets/code-attribution-template.md`](assets/code-attribution-template.md). For type cards, the wrapper field focuses on the type's catch-and-rethrow site (e.g. `BaseException`, `ServiceException` constructor). Shallow PR-only attribution is not acceptable.
+- [ ] **Originator pre-check has been run for every broker-tagged card** ([`error-message-and-location.kql`](assets/queries/error-message-and-location.kql)). Throw site and top 3 `error_message` strings are populated from real data, not from the code map. AADSTS-prefixed messages are tagged `eSTS`, not `Broker`.
+- [ ] **Every regression card's Code Attribution block populates Originator + Top throw site + Wrapper + Caller hot-spots + Underlying cause + Top error_messages + Likely PRs (with confidence/why-it's-the-suspect) + Next step (with named owner)**. For type cards, the wrapper field focuses on the type's catch-and-rethrow site (e.g. `BaseException`, `ServiceException` constructor). Shallow PR-only attribution is not acceptable.
 - [ ] Non-broker errors are explicitly tagged `environmental` / `non-broker` with confidence `none` — not invented broker PRs.
 - [ ] Traffic analysis covers totals, per-app, per-span, requests-per-device ratio (per error AND overall), and a sampling-change check.
 - [ ] **Every material traffic shift (>10% on any segment, up or down) has a reasoning paragraph** that names the dominant span/app/active-broker/broker-version, and either cites a causal PR (with confidence) — span removed/added, `goAsync()` refactor, sampling change, caller-side SDK release, ECS flight ramp — or explicitly says "no PR identified, suspect X" rather than leaving it unexplained.
+- [ ] Denominator caveat (if used) is backed by [`broker-version-share.kql`](assets/queries/broker-version-share.kql) evidence naming the responsible version cohort. No hand-waving.
 - [ ] Auth-only denominator used for all reliability %s, denominator caveat called out at top.
-- [ ] No stale text from previous weeks.
+- [ ] No `\bdevs\b` or `\breqs\b` in user-facing text. (`Select-String -Pattern '\bdevs\b|\breqs\b' -CaseSensitive:$false` returns 0.)
+- [ ] No stale text from previous weeks. (`Select-String -Pattern 'EXAMPLE CONTENT BELOW'` returns 0 — that's the unfinished-section sentinel. The template no longer ships `{{TOKEN}}` placeholders since v2; if the file still contains any `{{`, that's also a leftover.)
 - [ ] `get_errors` clean on the HTML file.

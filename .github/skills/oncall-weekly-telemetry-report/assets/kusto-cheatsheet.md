@@ -177,18 +177,73 @@ materialized_view('BrokerAdoptionStatsUpdated')
 
 ---
 
-## 9. MCP output handling
-
-- Most queries with multi-week × per-error-code grain return **>50 KB** and are written to a side file by the tool. Read the side file with the `read_file` tool, or pipe through `bucket-trends.js` / `summarize-attribution.js`.
-- The first row of `results.items` is the **schema object**, not data. The helper scripts know this.
-- If a query times out or returns `BadRequest`, check **column name typos first** (the error message names the missing column).
-
----
-
 ## 10. Helper scripts
 
 | Script | Purpose |
 |---|---|
-| [`bucket-trends.js`](bucket-trends.js) | Bucket every error code into regression / spike / improvement / flat across an N-week window |
+| [`bucket-trends.js`](bucket-trends.js) | Bucket every error code into regression / spike / improvement / flat across an N-week window. Pass `--end=YYYY-MM-DD` (Sunday after the reporting week, exclusive) to drop partial in-progress buckets. |
+| [`agg.js`](agg.js) | Per-error per-dim top-N rollup with WoW deltas. Feeds spike-attribution dim blocks. |
 | [`summarize-attribution.js`](summarize-attribution.js) | Roll up 7-dim attribution slices per (error_code, week) — feeds the spike-attribution cards |
-| [`report-template.html`](report-template.html) | Canonical layout. Copy to `oncall-wow-report-v{N+1}.html` and replace data only — never restructure CSS |
+| [`queries/`](queries/) | Canonical KQL templates, one per query — see [`queries/README.md`](queries/README.md) |
+| [`templates/`](templates/) | Copy-paste HTML snippets for cards / footer JS |
+| [`report-template.html`](report-template.html) | Canonical layout. Copy to `~/android-oce-reports/oncall-wow-report-<sunday>.html` and replace `{{TOKENS}}` only — never restructure CSS |
+
+---
+
+## 11. The `error_location` JSON shape (read this before slicing stack-traces)
+
+`error_location` on `android_spans` is a **serialized JSON string**, not a dynamic object. Naively writing `error_location.MethodName` returns null in KQL. Use `tostring()` to project it raw, then `parse_json()` if you need to drill in:
+
+```kql
+android_spans
+| where error_code == 'null_pointer_error'
+| extend loc = tostring(error_location)         // {"ClassName":"...","MethodName":"...","LineNumber":N}
+| extend method = tostring(parse_json(loc).MethodName)
+| extend lineNo = toint(parse_json(loc).LineNumber)
+| summarize devices = dcount(DeviceInfo_Id) by method, lineNo
+| top 20 by devices desc
+```
+
+For the report's **mandatory Originator pre-check** (Step 4 of SKILL.md), use [`queries/error-message-and-location.kql`](queries/error-message-and-location.kql) — it returns the raw `loc` blob alongside the first 100 chars of `error_message`, which is enough to identify the throw site (file + method + line) and the dominant message string.
+
+The single most informative attribution query for a regressing code:
+
+```kql
+android_spans
+| where PipelineInfo_IngestionTime between (datetime(<START>) .. datetime(<END>))
+| where error_code in (<CODES_LIST>)
+| extend loc = tostring(error_location),
+         msg = substring(tostring(error_message), 0, 100)
+| summarize cnt = count(),
+            devices = dcount(DeviceInfo_Id)
+     by error_code, loc, msg
+| top 60 by devices desc
+```
+
+---
+
+## 12. AADSTS reference — common eSTS responses bridged into broker errors
+
+When `error_message` starts with `AADSTS<digits>`, the originator is **eSTS, not broker**, regardless of which broker exception class was constructed. Broker (specifically `common/ExceptionAdapter.{getExceptionFromTokenErrorResponse, exceptionFromAuthorizationResult}`) translates the AAD response into a broker exception code as a courtesy — it is not the cause.
+
+| AADSTS code | Meaning | Broker exception code (typical) | Originator | Owner |
+|---|---|---|---|---|
+| `AADSTS500011` | Resource principal not found in tenant | `invalid_resource` | eSTS / tenant config | Resource owner team |
+| `AADSTS500014` | Service principal disabled in tenant | `invalid_resource` | eSTS / tenant config | Resource owner team |
+| `AADSTS50158` | External claims challenge / CA enforcement | `interaction_required` | eSTS / Conditional Access | Identity CA team |
+| `AADSTS50173` | Fresh token needed (CA / FR) | `interaction_required` / `invalid_grant` | eSTS / CA | Identity CA team |
+| `AADSTS65001` | User / admin has not consented | `unauthorized_client` | eSTS / app registration | App owner team |
+| `AADSTS70008` | Authorization code expired | `invalid_grant` | eSTS (timing) | Investigate caller latency |
+| `AADSTS70011` | Invalid scope | `invalid_scope` | eSTS / app registration | App owner team |
+| `AADSTS90072` | User account from external tenant doesn't exist locally | `unauthorized_client` | eSTS / B2B config | Tenant admin |
+| `AADSTS900971` | No reply address | `invalid_request` | eSTS / app registration | App owner team |
+
+**Rule of thumb:** if the throw site is an `ExceptionAdapter.*` method AND the message begins with `AADSTS`, tag the card `<span class="origin-tag origin-thirdparty">eSTS</span>` and route to the resource / app owner team. Do not invent a broker PR to "fix" it.
+
+---
+
+## 13. MCP output handling
+
+- Most queries with multi-week × per-error-code grain return **>50 KB** and are written to a side file by the tool. Read the side file with the `read_file` tool, or pipe through `bucket-trends.js` / `summarize-attribution.js`.
+- The first row of `results.items` is the **schema object**, not data. The helper scripts know this.
+- If a query times out or returns `BadRequest`, check **column name typos first** (the error message names the missing column).

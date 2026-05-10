@@ -1,0 +1,39 @@
+// Stack-trace + error_message slice for code attribution. MANDATORY for every
+// broker-tagged regression card before claiming "Originator: Broker".
+//
+// Rationale: most broker exception codes flow through
+// common/ExceptionAdapter.{getExceptionFromTokenErrorResponse,
+// exceptionFromAuthorizationResult, clientExceptionFromException}. Without
+// reading the throw site + the dominant error_message string, you cannot tell
+// whether the code originated in broker code or was bridged from an eSTS
+// AADSTS response. (See kusto-cheatsheet.md "AADSTS reference table".)
+//
+// THIS TEMPLATE COVERS BOTH error_code AND error_type IN ONE ROUND-TRIP.
+// Pass an empty list for the side you don't want to slice.
+//
+// Inputs:
+//   <CODES_LIST>  e.g. 'invalid_resource', 'null_pointer_error'  (or empty)
+//   <TYPES_LIST>  e.g. 'IntuneAppProtectionPolicyRequiredException'  (or empty)
+//   <START>       datetime of reporting-week PipelineInfo_IngestionTime start
+//   <END>         datetime of next Sunday (exclusive)
+//
+// Output column 'loc' is a JSON blob {"ClassName":"...","MethodName":"...","LineNumber":N}
+// — this is normal. Read it as text. To project the method name only, use
+//   parse_json(loc).MethodName
+//
+// HARD RULE (per SKILL.md Step 4): if the throw site is in
+// ExceptionAdapter.{getExceptionFromTokenErrorResponse, exceptionFromAuthorizationResult}
+// AND the message starts with "AADSTS", the originator is eSTS, not broker.
+
+let codes = dynamic([<CODES_LIST>]);
+let types = dynamic([<TYPES_LIST>]);
+android_spans
+| where PipelineInfo_IngestionTime between (datetime(<START>) .. datetime(<END>))
+| where (array_length(codes) > 0 and error_code in (codes))
+     or (array_length(types) > 0 and error_type in (types))
+| extend loc = tostring(error_location),
+         msg = substring(tostring(error_message), 0, 120)
+| summarize cnt = count(),
+            devices = dcount(DeviceInfo_Id)
+     by error_code, error_type, loc, msg
+| top 80 by devices desc

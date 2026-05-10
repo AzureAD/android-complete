@@ -1,0 +1,13 @@
+// Sub-code decomposition for an error_type regression card (the "8th dim").
+// Shows top error_codes that roll up under each unified_error_type, with WoW devices.
+let types = dynamic([<TYPES_LIST>]);
+materialized_view('ErrorStatsMetrics')
+| extend unified_error_type = MergeUiRequiredExceptions(error_type)
+| where EventInfo_Time between (datetime(<PREV_WEEK>) .. datetime(<END>))
+| where unified_error_type in (types)
+| extend wk = startofweek(EventInfo_Time)
+| where wk < datetime(<END>)
+| summarize devs = dcount_hll(hll_merge(countDevicesHll)),
+            errs = sum(countOverall)
+     by wk, unified_error_type, error_code
+| order by unified_error_type asc, wk asc, devs desc

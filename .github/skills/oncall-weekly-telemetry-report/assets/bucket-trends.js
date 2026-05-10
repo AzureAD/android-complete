@@ -5,17 +5,25 @@
  * Input: a Kusto MCP JSON result file from a query of the form:
  *
  *   materialized_view('ErrorStatsMetrics')
- *   | where EventInfo_Time > ago(70d)
+ *   | where EventInfo_Time between (datetime(<start>) .. datetime(<end_exclusive>))
  *   | where isnotempty(error_code) and error_code != 'success'
  *   | summarize errs=sum(countOverall),
  *               devs=dcount_hll(hll_merge(countDevicesHll))
  *       by week=startofweek(EventInfo_Time), error_code
+ *   | where week < datetime(<reporting_week_end_sunday>)   // drop partial end-week!
  *   | order by error_code asc, week asc
  *
  * (Use dcount_hll on countDevicesHll, NOT sum(countDevices) — see kusto-cheatsheet.md.)
  *
  * Usage:
- *   node bucket-trends.js <mcp-output.json> [--start=YYYY-MM-DD] [--peak-floor=N] [--metric=devs|reqs]
+ *   node bucket-trends.js <mcp-output.json>
+ *       [--start=YYYY-MM-DD] [--end=YYYY-MM-DD]    # inclusive start, EXCLUSIVE end (week-bucket)
+ *       [--peak-floor=N] [--metric=devs|reqs]
+ *
+ * --start defaults to the second-earliest week in the data (drops partial start week).
+ * --end   defaults to the most recent week, but the script will WARN-AND-DROP any week
+ *         where (latest EventInfo_Time in the bucket - week-start) < 6 days, because that
+ *         is a partial end-week and will turn every error into a fake -99% improvement.
  *
  * --metric=devs  (default) buckets on weekly device counts (catches errors hitting more users)
  * --metric=reqs  buckets on weekly request counts        (catches per-device retry storms)
@@ -34,6 +42,7 @@ const fs = require('fs');
 const args = process.argv.slice(2);
 const file = args.find(a => !a.startsWith('--'));
 const startArg = (args.find(a => a.startsWith('--start=')) || '').split('=')[1];
+const endArg   = (args.find(a => a.startsWith('--end='))   || '').split('=')[1];
 const metric = ((args.find(a => a.startsWith('--metric=')) || '').split('=')[1] || 'devs').toLowerCase();
 if (!['devs', 'reqs'].includes(metric)) {
   console.error(`--metric must be 'devs' or 'reqs', got '${metric}'`);
@@ -44,7 +53,7 @@ const peakFloor = +((args.find(a => a.startsWith('--peak-floor=')) || '').split(
 const metricIdx = metric === 'reqs' ? 0 : 1;  // [errs, devs] tuple
 
 if (!file) {
-  console.error('Usage: node bucket-trends.js <mcp-output.json> [--start=YYYY-MM-DD] [--peak-floor=N] [--metric=devs|reqs]');
+  console.error('Usage: node bucket-trends.js <mcp-output.json> [--start=YYYY-MM-DD] [--end=YYYY-MM-DD] [--peak-floor=N] [--metric=devs|reqs]');
   process.exit(1);
 }
 
@@ -57,10 +66,42 @@ for (const [w, code, errs, devs] of items) {
 }
 const weeks = [...new Set(items.map(r => r[0]))].sort();
 const startISO = startArg ? `${startArg}T00:00:00Z` : weeks[1]; // drop partial start week by default
-const keep = weeks.filter(w => w >= startISO);
+const endISO   = endArg   ? `${endArg}T00:00:00Z`   : null;     // exclusive cutoff
+
+// --- Partial end-week detection ---------------------------------------------
+// Compute the total devices/requests per bucket as a proxy for completeness.
+// If the most recent bucket is < 30% of the median of the prior 3 buckets, it's
+// almost certainly partial — drop it and warn. This catches the common case of
+// running the report at 09:00 UTC Sunday and getting 9 hours of data in the
+// "last week" bucket. (Caveat: real fleet collapses also look like this; warn,
+// don't crash.)
+function bucketTotal(w) {
+  let t = 0;
+  for (const wd of Object.values(series)) {
+    const v = wd[w];
+    if (v) t += v[metricIdx];
+  }
+  return t;
+}
+const totals = weeks.map(w => ({ w, t: bucketTotal(w) }));
+const medianOf = arr => { const s = [...arr].sort((a,b)=>a-b); return s[Math.floor(s.length/2)] || 0; };
+let droppedPartial = null;
+if (!endArg && weeks.length >= 4) {
+  const last = totals[totals.length - 1];
+  const prevMedian = medianOf(totals.slice(-4, -1).map(x => x.t));
+  if (prevMedian > 0 && last.t < prevMedian * 0.3) {
+    droppedPartial = last.w;
+    console.warn(`[bucket-trends] WARN: dropping likely-partial end bucket ${last.w} (total=${last.t.toLocaleString()} vs median-of-prior-3=${prevMedian.toLocaleString()}). Pass --end=YYYY-MM-DD to override or filter in KQL.`);
+  }
+}
+
+const keep = weeks.filter(w => w >= startISO && (endISO ? w < endISO : true) && w !== droppedPartial);
 console.log('All weeks:   ', weeks);
 console.log('Trend weeks: ', keep, `(${keep.length} complete)`);
 console.log('Metric:      ', metric, `(peak floor=${peakFloor.toLocaleString()})`);
+if (keep.length < 4) {
+  console.warn(`[bucket-trends] WARN: only ${keep.length} kept weeks — trend buckets will be unstable. Need >= 4 for meaningful regression/improvement classification.`);
+}
 
 const buckets = { regression: [], spike: [], improvement: [], flat: [] };
 for (const [code, wd] of Object.entries(series)) {
