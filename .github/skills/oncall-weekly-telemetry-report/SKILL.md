@@ -31,7 +31,11 @@ Reusable helpers in [`assets/`](assets/):
 
 ## Inputs to confirm with the user
 
-1. **Reporting week** — defaults to the **most recent complete Sun→Sat week**. If today is itself a Saturday or Sunday, the user often actually wants the **current in-progress week** instead — ASK explicitly. If they pick the in-progress week:
+1. **Reporting week** — **first compute the most recent complete Sun→Sat week** (Sunday bucket = the most recent Sunday strictly before today, or today itself if today is a Sunday and the week's data is at least 6h old). Default to that and proceed without asking *unless*:
+   - today is itself a Sat or Sun **and** the user phrasing suggests they want "this week" (e.g. "current report", "latest data"). Then ASK explicitly between the in-progress and most-recent-complete options.
+   - today is a Mon–Fri — just default to the most recent complete week and proceed; do not ask.
+
+   If the user picks the in-progress week:
    - Add the badge text *"Live data — current bucket may still be filling"* to the report header.
    - The `bucket-trends.js` `--end` flag + the `| where week < datetime(<END>)` source filter both still apply (use the Sunday AFTER the reporting week as `<END>`); they will drop the partial-end-bucket warning.
 
@@ -174,14 +178,16 @@ materialized_view('ErrorStatsMetrics')
 
 #### 3c. Run the bucketer 4 times (cross-product of `{code, type} × {devices, requests}`)
 
+`bucket-trends.js` defaults to grouping by `error_code`. For the type runs you MUST pass `--key=unified_error_type` so it picks up the right column from the type-trend JSON.
+
 ```pwsh
 # Error codes — by devices, then by requests
 node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <codes.json> --start=2026-03-08 --end=2026-05-10
 node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <codes.json> --start=2026-03-08 --end=2026-05-10 --metric=reqs
 
-# Error types — by devices, then by requests
-node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <types.json> --start=2026-03-08 --end=2026-05-10
-node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <types.json> --start=2026-03-08 --end=2026-05-10 --metric=reqs
+# Error types — by devices, then by requests (note --key)
+node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <types.json> --start=2026-03-08 --end=2026-05-10 --key=unified_error_type
+node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <types.json> --start=2026-03-08 --end=2026-05-10 --key=unified_error_type --metric=reqs
 ```
 
 `--end` is the Sunday AFTER the reporting week (exclusive). The script also auto-detects partial end-buckets and warns, but passing `--end` explicitly is safer.
@@ -225,6 +231,8 @@ For each WoW mover (regardless of size), you still owe the full Code Attribution
 ### Step 4 — Code attribution (deep PR correlation)
 
 > ⚠️ **HARD RULE — Originator pre-check.** Before claiming `Originator: Broker` on any card, you MUST run [`assets/queries/error-message-and-location.kql`](assets/queries/error-message-and-location.kql) for that error code (or type) and read **(a) the throw-site stack and (b) the top 3 `error_message` strings**. Most broker error codes flow through `common/ExceptionAdapter.{getExceptionFromTokenErrorResponse, exceptionFromAuthorizationResult, clientExceptionFromException}` — which intentionally bridge eSTS responses into broker exceptions. **If the throw site is in any of those three methods AND the error_message starts with `AADSTS`, the originator is eSTS, not broker.** See the AADSTS reference table in [`assets/kusto-cheatsheet.md`](assets/kusto-cheatsheet.md). Cards that skip this step must be marked low-confidence, not high.
+>
+> **Window:** use the FULL 7-day reporting window (`<CURR_START>` → `<CURR_END>`) on `PipelineInfo_IngestionTime`, NOT a narrower 3–5 day slice — low-volume types (e.g. `SSLHandshakeException`, `IntuneAppProtectionPolicyRequiredException`) routinely return zero rows in a sub-week window. If a code/type still returns nothing, fall back to the prior 14 days before declaring "no data".
 
 For every regression card, the Code Attribution block **must** populate the following fields. Shallow PR-citation only is not acceptable. Use [`assets/code-attribution-template.md`](assets/code-attribution-template.md) as the per-card checklist.
 
@@ -435,6 +443,8 @@ The validator hard-fails on:
 3. `U+FFFD` replacement characters (catches mojibake from emoji edits).
 4. Unbalanced `<div>` depth in the Section 2 attention block (catches the inception-style nested-callout bug from past runs).
 5. A second callout opening before the previous one closes (nested-callout sanity check).
+6. **Chartless KPI grid** — if more than half the `.kpi` tiles lack a `data-spark` element (catches the v7 regression where the body was rebuilt without sparklines). Also warns when total chart count (sparks + trends + inline svgs) is &lt; 15.
+7. **Code-attribution depth** — each `.attr-card`'s "Code attribution" block must contain an `Originator` row (proxy for the full 8-field structure: Originator / Top throw site / Wrapper / Caller hot-spots / Underlying cause / Top error_messages / Likely PRs / Next step). Catches the v7-third-pass regression where cards shipped with a `pr-list`-only stub.
 
 Then:
 - Run `get_errors` on the HTML file (no errors expected — pure HTML/CSS).
@@ -455,7 +465,7 @@ Then:
 - **WoW-movers pass is mandatory.** The 60d bucketer's `--peak-floor` silently drops sub-10K-device codes, so [`assets/queries/wow-movers.kql`](assets/queries/wow-movers.kql) MUST be run as a separate pass for both `error_code` and `error_type` (per Step 3d). Its output is **merged into the single 🔴 WoW regressions callout**, sorted by current-week device count descending, with rows tagged `NEW` / `60d↑` / originator chip. Do not render a separate "emerging" callout. Skipping the pass is how the Apr 26 `Failed to parse JWT` spike (7 → 3,461 devs over 7 weeks) hid for two reports running.
 - **Section 2 callouts are at-a-glance, Section 4 is the deep dive.** WoW / Slow-burn / Wins items in Section 2 use the `.item` flat-row pattern (no nested cards, no per-item left bars — the parent `.callout` border is the only severity affordance). Each row is a single line of metric chips + a one-line body + an `Attribution card →` link to the corresponding `.attr-card` in Section 4. Do NOT duplicate the dim slicing, PR analysis, or detailed verdict between the two sections — Section 4 is where that lives. See [`assets/template-readme.md`](assets/template-readme.md) for the CSS class reference and the example `.item` markup.
 - **Never use bash/PowerShell regex to bulk-edit balanced HTML.** This skill has burned twice on regex strip scripts that ate matched-pair `</div>` closes, producing inception-style nested-callout bugs that take a depth-tracking script to find. If you need a structural change to the HTML, make a targeted, single-occurrence string replacement (with explicit before/after context) or rewrite the affected block end-to-end. Never run a `-replace` across the whole file expecting it to leave balance intact.
-- **Denominator caveat must cite evidence, not hand-wave.** If you flag a large all-spans device-count shift, run [`assets/queries/broker-version-share.kql`](assets/queries/broker-version-share.kql) and name the version cohort the shift moved with. Do not write "recurring telemetry-shape artifact" without backing data; if you don't have it, drop the callout.
+- **Denominator caveat must cite evidence, not hand-wave.** If you flag a large all-spans device-count shift, run [`assets/queries/broker-version-share-wow.kql`](assets/queries/broker-version-share-wow.kql) (single WoW snapshot) or [`assets/queries/broker-version-share.kql`](assets/queries/broker-version-share.kql) (time-series) and name the version cohort the shift moved with. Do not write "recurring telemetry-shape artifact" without backing data; if you don't have it, drop the callout.
 - **"Recovery" still merits a PR citation.** When an error pins to a single old broker version and recovers as that version retires, look for the **fix PR in the version that replaced it** before calling it a "natural rolloff." Often the fix is real and just under-credited.
 - **Never report WoW-only verdicts** for errors that are flat-or-down WoW but rising on 60d — always cross-check both windows.
 - **Never page** based on a regression that turns out to be a downstream of a denominator shift; always include the auth-only-denominator number alongside the all-spans number.
@@ -481,8 +491,10 @@ Then:
 - [ ] Non-broker errors are explicitly tagged `environmental` / `non-broker` with confidence `none` — not invented broker PRs.
 - [ ] Traffic analysis covers totals, per-app, per-span, requests-per-device ratio (per error AND overall), and a sampling-change check.
 - [ ] **Every material traffic shift (>10% on any segment, up or down) has a reasoning paragraph** that names the dominant span/app/active-broker/broker-version, and either cites a causal PR (with confidence) — span removed/added, `goAsync()` refactor, sampling change, caller-side SDK release, ECS flight ramp — or explicitly says "no PR identified, suspect X" rather than leaving it unexplained.
-- [ ] Denominator caveat (if used) is backed by [`broker-version-share.kql`](assets/queries/broker-version-share.kql) evidence naming the responsible version cohort. No hand-waving.
+- [ ] Denominator caveat (if used) is backed by [`broker-version-share-wow.kql`](assets/queries/broker-version-share-wow.kql) or [`broker-version-share.kql`](assets/queries/broker-version-share.kql) evidence naming the responsible version cohort. No hand-waving.
 - [ ] Auth-only denominator used for all reliability %s, denominator caveat called out at top.
 - [ ] No `\bdevs\b` or `\breqs\b` in user-facing text. (`Select-String -Pattern '\bdevs\b|\breqs\b' -CaseSensitive:$false` returns 0.)
+- [ ] **Sparklines rendered.** Every `.kpi` tile in the Top-line health section has a `data-spark` array with 8–9 weekly values. Every row in the 60-day trend tables and both WoW tables (codes + types) has a `data-trend` mini-spark. The validator's chart-coverage check passes (KPI coverage ≥1/2 of tiles, total elements ≥15). Past failure mode: the v7 body rebuild dropped all sparklines silently — see `template-readme.md` § "Sparklines are MANDATORY".
+- [ ] **Code-attribution depth.** Every `.attr-card`'s Code attribution block uses the full 8-field `<div class="origin-row">` structure (Originator / Top throw site / Wrapper / Caller hot-spots / Underlying cause / Top error_messages / Likely PRs / Next step) per [`assets/code-attribution-template.md`](assets/code-attribution-template.md). A `pr-list`-only stub is **not acceptable** — the validator hard-fails this. Past failure mode (v7 third pass): all 10 cards shipped with PR-only stubs and lost the throw-site / wrapper / underlying-cause analysis.
 - [ ] No stale text from previous weeks. (`Select-String -Pattern 'EXAMPLE CONTENT BELOW'` returns 0 — that's the unfinished-section sentinel. The template no longer ships `{{TOKEN}}` placeholders since v2; if the file still contains any `{{`, that's also a leftover.)
 - [ ] `get_errors` clean on the HTML file.

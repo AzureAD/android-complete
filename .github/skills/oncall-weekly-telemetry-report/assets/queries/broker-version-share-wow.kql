@@ -1,0 +1,34 @@
+// WoW broker-version share comparison \u2014 the canonical evidence for the
+// "denominator caveat" callout when an entire version cohort retires. Use this
+// instead of the time-series `broker-version-share.kql` when you need a single
+// WoW snapshot showing which versions gained/lost share. Modeled on
+// `wow-movers.kql`.
+//
+// Inputs:
+//   <CURR_START>  Sunday of the reporting week (e.g. 2026-05-03)
+//   <CURR_END>    Sunday after (exclusive, e.g. 2026-05-10)
+//   <PRIOR_START> Sunday of the baseline week (e.g. 2026-04-26)
+//
+// Floor: only versions with >100M reqs in either week (filters long-tail).
+// Output sorted by current-week req count descending.
+
+let curr = materialized_view('BrokerAdoptionStatsUpdated')
+  | where EventInfo_Time between (datetime(<CURR_START>) .. datetime(<CURR_END>))
+  | summarize cReq = sum(countRequests),
+              cDev = dcount_hll(hll_merge(countDevicesHll))
+       by broker_version;
+let prior = materialized_view('BrokerAdoptionStatsUpdated')
+  | where EventInfo_Time between (datetime(<PRIOR_START>) .. datetime(<CURR_START>))
+  | summarize pReq = sum(countRequests),
+              pDev = dcount_hll(hll_merge(countDevicesHll))
+       by broker_version;
+curr | join kind=fullouter prior on broker_version
+| extend bv = coalesce(broker_version, broker_version1)
+| extend cReq = coalesce(cReq, long(0)), cDev = coalesce(cDev, long(0)),
+         pReq = coalesce(pReq, long(0)), pDev = coalesce(pDev, long(0))
+| project bv, pReq, cReq,
+          dReqPct = iff(pReq == 0, real(null), round(100.0 * (cReq - pReq) / pReq, 1)),
+          pDev, cDev,
+          dDevPct = iff(pDev == 0, real(null), round(100.0 * (cDev - pDev) / pDev, 1))
+| where cReq > 100000000 or pReq > 100000000
+| order by cReq desc

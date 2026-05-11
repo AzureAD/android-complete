@@ -32,6 +32,50 @@ If the layout itself ever needs to change (new section, new card style), edit
 `assets/report-template.html` here in the skill folder and commit so future
 weeks inherit the change.
 
+## Editing strategy: in-place vs head+body+footer rebuild
+
+Pick by overlap with the prior week:
+
+- **In-place edit (default)** — when ≤3 attribution cards change AND the section structure is unchanged. Use `replace_string_in_file` with surrounding context per card / table row. Fast and low-risk.
+- **Head+body+footer rebuild (fallback)** — when ≥4 attribution cards change, or several callouts get re-categorized, or the regression set has near-zero overlap with the template. Trying to in-place edit at that scale invites the inception-style nested-`</div>` bugs the validator was written to catch.
+
+  Boundary lines in the canonical template (verify with `grep` before splitting — they drift as the template evolves):
+
+  | Region | Lines (approx) | Last/first line content |
+  |---|---|---|
+  | **head** | 1 → ~342 | ends `<body>` then `<div class="container">` (open) |
+  | **body** (replace) | ~343 → ~1081 | starts `<div class="header">`, ends `</div>` that closes `.container` |
+  | **footer** | ~1082 → end | starts `<script>`, ends `</body></html>` |
+
+  Rebuild recipe (PowerShell, single line — multi-line here-strings can mangle JS template literals in the footer; see user-memory `oce-report-lessons.md`):
+
+  ```pwsh
+  $work="$env:USERPROFILE\android-oce-reports\_data"; $f='<output>.html'; $head=[IO.File]::ReadAllText("$work\head.html"); $body=[IO.File]::ReadAllText("$work\body.html"); $footerRaw=[IO.File]::ReadAllText("$work\footer.html"); $footer=$footerRaw -replace '^</div>\s*',''; [IO.File]::WriteAllText($f, $head + "`n" + $body + "`n" + $footer)
+  ```
+
+  The `-replace '^</div>\s*',''` strips the original body's closing `</div>` from the footer so the new body's own closing `</div>` doesn't double up. Always run `validate-report.ps1` after.
+
+  **Critical for the rebuild path:** the rebuilt body must include `data-spark` on every KPI tile and `data-trend` on every relevant table row — the in-place template has these, but a fresh-authored body won't unless you add them explicitly. Reference markup:
+
+  ```html
+  <!-- KPI tile with sparkline -->
+  <div class="kpi">
+    <div class="label">Silent auth requests (week)</div>
+    <div class="value">10.59 B</div>
+    <div class="delta delta-up">+2.4% WoW</div>
+    <div class="spark" data-spark='[9.97e9,9.61e9,...,1.06e10]' data-color="#0969da"></div>
+  </div>
+
+  <!-- 60-day trend table row with mini sparkline in the trajectory cell -->
+  <tr>
+    <td><code>no_tokens_found</code></td>
+    <td class="num">2.90 M</td><td class="num">4.52 M</td><td class="num bad">+55.7%</td>
+    <td><span class="trend" data-trend='[2902878,...,4519309]' data-color="#cf222e" data-w="160"></span></td>
+  </tr>
+  ```
+
+  The footer JS auto-renders both — no per-tile JS calls needed. The validator (Step 7) hard-fails if &gt; half the KPI tiles lack `data-spark`.
+
 ## Validator pass before saving
 
 Two literal-string greps must return zero results:
@@ -48,6 +92,48 @@ inside an HTML comment. The grep catches anything still in flight.
 (legitimate Kusto column / variable names). All other occurrences are
 forbidden — use `devices` / `requests` in user-facing prose, headers, badges,
 and verdicts.
+
+## Sparklines are MANDATORY (don't drop them)
+
+The footer JS auto-renders any element with `data-spark` or `data-trend` attributes — but only if you actually emit those attributes. **Past mistake (v7 run):** body was rebuilt without `data-spark` on KPI tiles and without `.trend` cells in tables → the report shipped with zero charts. The validator does not catch this, so it is your responsibility.
+
+Required spark/trend coverage in every report:
+
+| Where | Attribute | Length | Color (see palette below) |
+|---|---|---|---|
+| Every KPI tile in `.kpi-grid` (Top-line health) | `<div class="spark" data-spark='[...]' data-color="..."></div>` inside the tile | 8–9 weekly values | blue/green/dark-blue per metric semantic |
+| **Every** row in the 60-day trend tables — true regressions, **ephemeral spikes**, and **true improvements** (all three callout tables) | `<span class="trend" data-trend='[...]' data-color="..." data-w="160"></span>` in the trajectory cell | 8–9 weekly values | red regression / amber spike / green improvement / grey flat |
+| Every row in the error-codes WoW table and error-types WoW table | `<span class="trend" data-trend='[...]' data-color="..."></span>` in the 60d-trend column | 8 weekly values | same palette |
+
+**Past failure modes:**
+- v7 first pass: the body rebuild emitted *zero* `data-spark` / `data-trend` (validator now hard-fails this).
+- v7 second pass: only the *true regressions* table got sparklines; the **ephemeral spikes** and **true improvements** tables were left text-only. All three tables in the 60-day trend section need the trajectory column with a sparkline — the validator's overall-coverage warn (≥15) catches this approximately, but the rule of thumb is: **if a row reports an 8-week delta, it gets a sparkline.**
+
+## Traffic-shape callout styling
+
+The Section 2 "Traffic shape" callout uses the **neutral grey-bordered `<div class="callout">`** (no `urgent` / `watch` / `win` modifier) and a **🚦** icon — it's an informational summary, not an alert. Don't promote it to `watch` (yellow) just because there's been some movement; reserve `watch` for things that need follow-up.
+
+## Traffic-attribution sub-block on each attribution card (tri-state)
+
+Each `.attr-card` in Section 4 ends with a small "Traffic attribution" sub-block. **Pick one of three colors based on the verdict — don't paint everything yellow.** Yellow loses meaning when it's the default.
+
+| Verdict | Color | Title prefix | Inline `style` on the wrapper |
+|---|---|---|---|
+| Per-request rate clearly moved; traffic ruled out | 🟢 green | `✓ Traffic attribution — ruled out` | `background:#dafbe1;border-color:#1a7f37;` + title `color:#1a7f37;` |
+| Mixed signal — traffic + rate both contributing | 🟡 yellow | `⚠ Traffic attribution — partly contributing` | `background:linear-gradient(180deg,#fff8c5 0%,#fff1a8 100%);border-color:#d4a72c;` + title `color:#9a6700;` |
+| Traffic IS the dominant driver | 🔴 red | `🚚 Traffic attribution — primary driver (see § 5)` | `background:#ffeef0;border-color:#cf222e;` + title `color:#cf222e;` |
+
+A red sub-block here means the error **also** belongs in the top-level § 5 "🚚 Traffic Attribution" section. Don't surface a red sub-block without a matching § 5 entry, and don't render § 5 as "None this week" if any attribution card has a red sub-block.
+
+Past failure mode (v7 second pass): all 10 cards painted yellow regardless of verdict, making the color meaningless. The actual breakdown that week was 6 green + 4 yellow + 0 red.
+
+**Minimum verification step before publishing** (add to your final-pass checklist):
+
+```pwsh
+Select-String -Path <output.html> -Pattern 'data-spark|data-trend' | Measure-Object | Select-Object Count
+```
+
+Should return **at least ~30** matches (8 KPI tiles + ~10 60d-trend rows + ~12 WoW-table rows). If the count is zero or near-zero, the report is missing all charts — go back and add them.
 
 ## Sparkline color palette
 

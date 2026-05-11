@@ -78,7 +78,7 @@ function fmt(n) {
 }
 function pct(num, den) { return den ? (100 * num / den).toFixed(1) : '0.0'; }
 function delta(curr, prior) {
-  if (prior == null || prior === 0) return curr ? 'NEW' : '–';
+  if (prior == null || prior === 0) return curr ? `NEW(+${fmt(curr)})` : '–';
   return ((curr - prior) / prior * 100).toFixed(1) + '%';
 }
 
@@ -123,10 +123,19 @@ function loadUnion(file) {
   let idxWeek = idx('wk'); if (idxWeek < 0) idxWeek = idx('week');
   let idxDevs = idx('devs'); if (idxDevs < 0) idxDevs = idx('countDevices');
   let idxErrs = idx('errs'); if (idxErrs < 0) idxErrs = idx('countOverall');
-  const idxValS = idx('val_string') >= 0 ? idx('val_string') : idx('val');
-  const idxValB = idx('val_bool');
+  // Kusto auto-renames duplicate column names from union branches: a column
+  // declared `val_string` in two `union` legs (one typed string, one typed
+  // bool(null)) becomes `val_string_string` and `val_string_bool`. Accept
+  // those as synonyms so the union KQL doesn't need a per-leg cast.
+  const idxValS =
+    idx('val_string') >= 0 ? idx('val_string') :
+    idx('val_string_string') >= 0 ? idx('val_string_string') :
+    idx('val');
+  const idxValB =
+    idx('val_bool') >= 0 ? idx('val_bool') :
+    idx('val_string_bool');
   if (idxDim < 0 || idxCode < 0 || idxWeek < 0 || idxDevs < 0 || idxValS < 0) {
-    throw new Error(`Union file ${file}: schema must include dim, ${keyCol}, wk|week, devs|countDevices, val_string|val (and optionally val_bool). Got [${cols.join(', ')}]`);
+    throw new Error(`Union file ${file}: schema must include dim, ${keyCol}, wk|week, devs|countDevices, val_string|val|val_string_string (and optionally val_bool|val_string_bool). Got [${cols.join(', ')}]`);
   }
   // perDim[label].map[code][wk][dimVal] = { devs, errs }
   const byDim = {};

@@ -130,6 +130,22 @@ all | join kind=inner ok on week
     | order by week asc
 ```
 
+**Auth-only device union** (Silent ∪ Interactive — what the report uses for the "real fleet" KPI). The natural reach for `hll_merge_array` to combine two pre-merged HLL sketches **does not exist in Kusto** (`SEM0260: Unknown function`). Instead, project the raw `countDevicesHll` rows from both views, `union` them, and `hll_merge` once at the end:
+
+```kql
+let s = materialized_view('SilentAuthStatsAllRequestsMetrics')
+  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | project EventInfo_Time, countDevicesHll;
+let i = materialized_view('InteractiveAuthStatsAllRequestsMetrics')
+  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | project EventInfo_Time, countDevicesHll;
+union s, i
+| summarize authDev = dcount_hll(hll_merge(countDevicesHll))
+     by week = startofweek(EventInfo_Time)
+| where week < datetime(<END>)
+| order by week asc
+```
+
 ### 8b. 60-day error trend (feeds `bucket-trends.js`)
 
 ```kql

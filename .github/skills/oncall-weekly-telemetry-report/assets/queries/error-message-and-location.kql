@@ -14,8 +14,14 @@
 // Inputs:
 //   <CODES_LIST>  e.g. 'invalid_resource', 'null_pointer_error'  (or empty)
 //   <TYPES_LIST>  e.g. 'IntuneAppProtectionPolicyRequiredException'  (or empty)
-//   <START>       datetime of reporting-week PipelineInfo_IngestionTime start
+//   <START>       datetime — should be the reporting-week Sunday (e.g. 2026-05-03).
+//                 Use the FULL 7-day reporting window, NOT a narrower 3-5 day slice
+//                 (low-volume types like SSLHandshakeException / Intune* may return
+//                 zero rows in a sub-week window).
 //   <END>         datetime of next Sunday (exclusive)
+//
+// Tip: if the reporting window returns no rows for a low-volume code/type, fall
+// back to the prior 14-day window (`<START> - 7d .. <END>`) before giving up.
 //
 // Output column 'loc' is a JSON blob {"ClassName":"...","MethodName":"...","LineNumber":N}
 // — this is normal. Read it as text. To project the method name only, use

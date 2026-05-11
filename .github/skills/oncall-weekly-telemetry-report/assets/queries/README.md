@@ -20,6 +20,7 @@ weekly report needs. Token convention:
 |---|---|---|
 | [`reliability-auth-only.kql`](reliability-auth-only.kql) | Per-week auth-only requests/devices | Top-line health, denominator caveat |
 | [`broker-version-share.kql`](broker-version-share.kql) | Per-week per-version share — **evidence for denominator caveat** | Denominator caveat callout, broker adoption |
+| [`broker-version-share-wow.kql`](broker-version-share-wow.kql) | Single WoW snapshot of version share — fastest evidence for cohort transitions | Denominator caveat callout |
 | [`60d-trend-codes.kql`](60d-trend-codes.kql) | Feeds `bucket-trends.js` for codes | 60-day trend analysis |
 | [`60d-trend-types.kql`](60d-trend-types.kql) | Feeds `bucket-trends.js` for types | 60-day trend analysis |
 | [`wow-movers.kql`](wow-movers.kql) | **MANDATORY second pass** — catches small-base codes that spiked sharply this week (below the 60d bucketer's reporting threshold). Run for both `error_code` and `error_type`. **Merge its output rows into the single 🔴 WoW regressions callout** alongside the standard WoW table; tag rows that were absent or near-zero last week with `NEW`. Do not render a separate "emerging" callout. | 🔴 WoW regressions callout (Section 2) |

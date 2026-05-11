@@ -124,6 +124,69 @@ $calloutOpens = ([regex]::Matches($content, '<div class="callout(?:\s|")')).Coun
 Write-Host ""
 Write-Host "Info: $calloutOpens callout container(s) in the document."
 
+# ---- 6. Sparkline / trend chart coverage ----
+# The footer JS auto-renders any element with data-spark or data-trend. If the
+# count is near-zero, the body was likely rebuilt without sparklines (v7
+# regression — chartless report).
+#
+# Two checks:
+#   6a. STRUCTURAL (HARD FAIL): if the report has KPI tiles but >half lack
+#       data-spark, the rebuild dropped them — fail the build.
+#   6b. OVERALL (WARN): total chart elements should be ~30+ (8 KPI sparks +
+#       ~10 trend rows + ~12 WoW-table rows). Warn if under 15.
+$sparkCount = ([regex]::Matches($content, 'data-spark=')).Count
+$trendCount = ([regex]::Matches($content, 'data-trend=')).Count
+$inlineSvg  = ([regex]::Matches($content, '<svg[^>]*class="?sparkline')).Count
+$kpiTiles   = ([regex]::Matches($content, '<div class="kpi"')).Count
+$totalCharts = $sparkCount + $trendCount + $inlineSvg
+Write-Host ""
+Write-Host "Info: $sparkCount data-spark, $trendCount data-trend, $inlineSvg inline sparkline svg(s), $kpiTiles KPI tile(s)."
+
+if ($kpiTiles -ge 4 -and $sparkCount -lt [Math]::Ceiling($kpiTiles / 2)) {
+    Add-Fail "Only $sparkCount data-spark element(s) for $kpiTiles KPI tile(s) — over half the KPI tiles are chartless. The body was likely rebuilt without sparklines. See template-readme.md \"Sparklines are MANDATORY\"."
+} else {
+    Pass "KPI tiles have data-spark coverage ($sparkCount/$kpiTiles)"
+}
+if ($totalCharts -lt 15) {
+    Add-Warn "Only $totalCharts chart elements found. Expected ~30+ (KPI sparks + 60d-trend rows + WoW-table rows). Did you forget to add data-trend attributes to the WoW / trend tables?"
+} else {
+    Pass "Overall chart coverage looks reasonable ($totalCharts elements)"
+}
+
+# ---- 7. Traffic-attribution sub-block color diversity (tri-state convention) ----
+# Per template-readme.md: each .attr-card's traffic sub-block should be green
+# (ruled out), yellow (partly contributing), or red (primary driver). If every
+# sub-block is the same color, the author defaulted to one and didn't actually
+# classify per card (v7 second-pass regression: 10/10 yellow).
+$taGreen  = ([regex]::Matches($content, '\u2713 Traffic attribution \u2014 ruled out')).Count
+$taYellow = ([regex]::Matches($content, '\u26a0 Traffic attribution \u2014 partly contributing')).Count
+$taRed    = ([regex]::Matches($content, '\ud83d\ude9a Traffic attribution \u2014 primary driver')).Count
+$taTotal  = $taGreen + $taYellow + $taRed
+if ($taTotal -ge 4) {
+    $distinctColors = @($taGreen, $taYellow, $taRed | Where-Object { $_ -gt 0 }).Count
+    if ($distinctColors -le 1) {
+        Add-Warn "All $taTotal traffic-attribution sub-blocks share one color (g=$taGreen y=$taYellow r=$taRed). The tri-state convention exists so color carries meaning \u2014 verify each card's verdict and recolor accordingly. See template-readme.md \"Traffic-attribution sub-block on each attribution card (tri-state)\"."
+    } else {
+        Pass "Traffic-attribution color mix: $taGreen green / $taYellow yellow / $taRed red"
+    }
+}
+
+# ---- 8. Code-attribution depth (8-field structure) ----
+# SKILL.md \u00a74 mandates that each .attr-card's "Code attribution" block populates
+# Originator + Top throw site + Wrapper + Caller hot-spots + Underlying cause +
+# Top error_messages + Likely PRs + Next step. A pr-list-only block is the v7-third-
+# pass regression. Heuristic: each `<div class="code-attr-title">Code attribution</div>`
+# must be followed (within the same card) by an `origin-label` row.
+$codeAttrBlocks = ([regex]::Matches($content, '<div class="code-attr-title">Code attribution</div>')).Count
+$originLabels   = ([regex]::Matches($content, 'class="origin-label">Originator')).Count
+if ($codeAttrBlocks -ge 1) {
+    if ($originLabels -lt $codeAttrBlocks) {
+        Add-Fail "$codeAttrBlocks Code-attribution block(s) but only $originLabels have an Originator row. Each card needs the full 8-field structure (Originator / Top throw site / Wrapper / Caller hot-spots / Underlying cause / Top error_messages / Likely PRs / Next step). See assets/code-attribution-template.md."
+    } else {
+        Pass "All $codeAttrBlocks code-attribution block(s) have full 8-field structure"
+    }
+}
+
 # Cheap nested-callout heuristic: scan the attention block for any callout that
 # opens before the previous callout closes. We approximate by tracking depth.
 if ($startIdx -ge 0 -and $endIdx -gt $startIdx) {
