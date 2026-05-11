@@ -192,6 +192,14 @@ Example:
 - Check the cube definition in the Aria portal
 ```
 
+### Step 5 — Post Report to IcM
+
+After writing your report, **post it to the IcM discussion thread** using the `mcp_android-dri-s2_post_icm_discussion` tool:
+- `incident_id`: The IcM incident number
+- `text`: Your investigation report (the markdown from Step 4)
+
+This posts a plain-text discussion entry attributed to "DRI Copilot" so the on-call DRI sees your findings directly in the incident.
+
 ---
 
 ## Tool reference
@@ -203,6 +211,7 @@ Example:
 | `mcp_android-dri-s2_get_incident` | Fetch incident details by ID | `incident_id` (required) |
 | `mcp_android-dri-s2_batch_search` | Search past incidents AND/OR TSGs in parallel | `searches`: array of `{"type": "icm"\|"tsg", "query": "..."}` |
 | `mcp_android-dri-s2_search_tsgs` | Search troubleshooting guides (single query) | `query` (required) |
+| `mcp_android-dri-s2_post_icm_discussion` | Post investigation report to IcM discussion thread | `incident_id`, `text` |
 
 Use `tool_search` with query `android-dri-s` to load these tools before first use.
 
