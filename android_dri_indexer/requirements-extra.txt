@@ -1,0 +1,5 @@
+# Extra deps beyond what the MCP server base image already has.
+# Base image provides: azure-search-documents, azure-identity, openai, requests, beautifulsoup4
+azure-kusto-data>=4.3.0
+azure-storage-blob>=12.19.0
+tiktoken>=0.6.0

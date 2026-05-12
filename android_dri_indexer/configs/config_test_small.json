@@ -1,0 +1,52 @@
+{
+  "service_id": "android-auth-app",
+
+  "azure_search": {
+    "endpoint": "https://msalandroiddricopilotsearch.search.windows.net",
+    "icm_index_name": "android-dri-icm-index",
+    "tsg_index_name": "android-dri-tsg-index"
+  },
+
+  "azure_openai": {
+    "endpoint": "https://msal-android-dri-copilot-oai.openai.azure.com/",
+    "embedding_deployment": "text-embedding-3-large",
+    "chat_deployment": "gpt-4o",
+    "api_version": "2025-04-01-preview",
+    "embedding_dimensions": 3072
+  },
+
+  "icm": {
+    "kusto_cluster": "https://icmcluster.kusto.windows.net",
+    "kusto_database": "IcMDataWarehouse",
+    "lookback_hours_override": 168,
+    "team_groups": [
+      {
+        "label": "Broker + Authenticator",
+        "lookback_hours": 168,
+        "teams": [
+          "CLOUDIDENTITYAUTHNCLIENT\\CloudIdentityAuthNMSALAndroid"
+        ]
+      }
+    ]
+  },
+
+  "tsg": {
+    "wiki_base_url": "https://identitydivision.visualstudio.com/IdentityWiki/_wiki/wikis/IdentityWiki.wiki",
+    "git_sources": [
+      {
+        "source": "https://identitydivision.visualstudio.com/DefaultCollection/IdentityWiki/_git/IdentityWiki.wiki",
+        "branch": "wikiMaster",
+        "folder": "IdentityWiki/Services/Microsoft-Authenticator/Android",
+        "extensions": ["md"],
+        "description": "Auth app Android TSGs"
+      }
+    ]
+  },
+
+  "chunking": {
+    "chunk_size_tokens": 700,
+    "chunk_overlap_tokens": 125
+  },
+
+  "upload_batch_size": 100
+}
