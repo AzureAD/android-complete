@@ -54,9 +54,9 @@ The `android-dri-search` MCP server provides tools for querying past incidents, 
 
 | Tool | Purpose |
 |------|---------|
-| `mcp_android-dri-s2_get_incident` | Fetch a specific IcM incident by ID |
-| `mcp_android-dri-s2_batch_search` | Run multiple ICM and/or TSG searches in parallel |
-| `mcp_android-dri-s2_search_tsgs` | Search troubleshooting guides (single query) |
+| `mcp_android-dri-s_get_incident` | Fetch a specific IcM incident by ID |
+| `mcp_android-dri-s_batch_search` | Run multiple ICM and/or TSG searches in parallel |
+| `mcp_android-dri-s_search_tsgs` | Search troubleshooting guides (single query) |
 
 The server is configured in `.vscode/mcp.json` as `android-dri-search`. Authentication is automatic via Entra ID OAuth — you must be a member of the **Android Auth Client SDK** security group. See `android_dri_mcp_server/deployment-and-connection-guide.md` for details.
 
