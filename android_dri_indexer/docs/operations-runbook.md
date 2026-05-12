@@ -51,13 +51,12 @@ Key points:
 
 | Arg | Effect |
 |-----|--------|
-| `--config <path>` | Path to JSON config file (required) |
-| `--icm` | Run ICM indexer only |
-| `--tsg` | Run TSG indexer only (deprecated — use blob pipeline) |
-| `--all` | Run both ICM + TSG |
+| `--config <path>` | Path to JSON config file (required, or set `INDEXER_CONFIG` env var) |
+| `--icm` | Run ICM indexer |
 | `--skip-index-setup` | Skip index schema creation/update |
-| `--clean` | Delete and recreate target index before indexing |
+| `--clean` | Delete and recreate the ICM index before indexing |
 | `--fresh` | Use full `lookback_hours` instead of `scheduled_lookback_hours` |
+| `--cleanupAriaIncidents` | Delete AndroidShield ICMs older than 60 days from the index (runs instead of indexing) |
 
 ### ICM Indexer Behavior
 
@@ -103,6 +102,49 @@ ACS indexers run on a daily `P1D` schedule, read JSON blobs, and push docs into 
 | `android-dri-tsg-auth-lib-indexer` | `tsg-index-android-auth-lib-blob` | `android-dri-tsg-index` |
 
 The `tsg_indexer.py` in this codebase is **deprecated** — it was the old direct-upload approach before the blob pipeline was set up.
+
+---
+
+## Commands to Run
+
+All commands assume the config file is at `android_dri_indexer/configs/config_android.json`.
+
+### Daily ICM indexing (production — what the Container App Job runs)
+
+```bash
+python3 -m android_dri_indexer --config android_dri_indexer/configs/config_android.json --icm --skip-index-setup
+```
+
+### Full re-index (backfill all ICMs within the full lookback window)
+
+```bash
+python3 -m android_dri_indexer --config android_dri_indexer/configs/config_android.json --icm --fresh
+```
+
+### Clean rebuild (delete index, recreate schema, re-index)
+
+```bash
+python3 -m android_dri_indexer --config android_dri_indexer/configs/config_android.json --icm --clean --fresh
+```
+
+### Cleanup stale AndroidShield ICMs (delete docs older than 60 days)
+
+```bash
+python3 -m android_dri_indexer --config android_dri_indexer/configs/config_android.json --cleanupAriaIncidents --skip-index-setup
+```
+
+---
+
+## Schedules
+
+| Job | Cron Expression | Frequency | Description |
+|-----|-----------------|-----------|-------------|
+| ICM indexer (`android-dri-icm-indexer`) | `0 6 * * *` | Daily at 06:00 UTC | Indexes new/updated ICMs from the last 72h for all 5 teams |
+| AndroidShield cleanup | `0 7 * * 0` (recommended) | Weekly on Sunday at 07:00 UTC | Deletes AndroidShield ICMs older than 60 days from the index |
+| TSG AML pipeline (Stage 1) | AML scheduled | Daily | Clones wikis, chunks markdown, generates embeddings → blob |
+| TSG ACS indexer (Stage 2) | `P1D` | Daily | Reads JSON blobs → pushes to `android-dri-tsg-index` |
+
+> **Note:** The AndroidShield cleanup is not yet deployed as a separate Container App Job. To deploy it, use `deploy-job.ps1` with a different job name and the `--cleanupAriaIncidents` CMD args.
 
 ---
 
@@ -234,4 +276,3 @@ for doc in r:
 | Dockerfile (deployed) | `C:\Users\somalaya\DRICopilot\android_dri_indexer\Dockerfile` |
 | Config | `android_dri_indexer/configs/config_android.json` |
 | Deploy script | `android_dri_indexer/deploy/deploy-job.ps1` |
-| TSG indexer (deprecated) | `android_dri_indexer/tsg_indexer.py` — **do not use**; TSGs are handled by AML blob pipeline |
