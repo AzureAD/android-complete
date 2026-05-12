@@ -41,9 +41,9 @@
       "tools": ["*"]
     },
 
-    "MyDRICopilot": {
+    "android-dri-search": {
       "type": "http",
-      "url": "https://msalandroiddricopilot.azurewebsites.net/mcp"
+      "url": "https://android-dri-mcp.proudbeach-7e7ce77d.eastus.azurecontainerapps.io/mcp"
     }
   }
 }

@@ -113,14 +113,17 @@ If the user picks "I don't know," pick the candidate with the strongest evidence
 
 ### Step 2 — Search for past ICMs in the metric family (parallel with Step 3)
 
-The IcM's "duplicate of …" links from Step 1 capture what was already noted. This step goes further: actively search the DRI Copilot index for past Aria alerts on the **same or sibling** metrics, even if they aren't linked from the current ticket.
+The IcM's "duplicate of …" links from Step 1 capture what was already noted. This step goes further: actively search the `android-dri-search` MCP server for past Aria alerts on the **same or sibling** metrics, even if they aren't linked from the current ticket.
 
 Skip this step only if Step 1 already surfaced 3+ past ICMs in the same metric family with consistent resolutions.
 
+Use `tool_search` with query `android-dri-s` to load the tools, then call `batch_search`:
+
 ```
-mcp_mydricopilot_Android_DRI_Copilot_Project_Explorer(
-  message="Find past Aria alert ICMs related to <metric_name> in <project>. For each, return root cause, mitigation, and whether it required code change."
-)
+mcp_android-dri-s2_batch_search(searches=[
+  {"type": "icm", "query": "Aria alert <metric_name> <project>"},
+  {"type": "icm", "query": "Aria detected incident <metric_name> anomaly"}
+])
 ```
 
 Report what the family pattern looks like (do not draw conclusions about the current ICM from it).
@@ -193,8 +196,15 @@ Example:
 
 ## Tool reference
 
-### DRI Copilot
-- `mcp_mydricopilot_Android_DRI_Copilot_Project_Explorer` — Get IcM context, find similar past ICMs, search TSGs
+### Android DRI MCP Server (`android-dri-search`)
+
+| Tool | Purpose | Key Parameters |
+|------|---------|-----------------|
+| `mcp_android-dri-s2_get_incident` | Fetch incident details by ID | `incident_id` (required) |
+| `mcp_android-dri-s2_batch_search` | Search past incidents AND/OR TSGs in parallel | `searches`: array of `{"type": "icm"\|"tsg", "query": "..."}` |
+| `mcp_android-dri-s2_search_tsgs` | Search troubleshooting guides (single query) | `query` (required) |
+
+Use `tool_search` with query `android-dri-s` to load these tools before first use.
 
 ### Kusto
 - Delegate to the [`kusto-analyst`](../kusto-analyst/SKILL.md) skill for all KQL work — cluster/database/table identifiers, field schema, and query construction live there.
