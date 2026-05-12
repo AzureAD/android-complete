@@ -120,7 +120,7 @@ Skip this step only if Step 1 already surfaced 3+ past ICMs in the same metric f
 Use `tool_search` with query `android-dri-s` to load the tools, then call `batch_search`:
 
 ```
-mcp_android-dri-s2_batch_search(searches=[
+mcp_android-dri-s_batch_search(searches=[
   {"type": "icm", "query": "Aria alert <metric_name> <project>"},
   {"type": "icm", "query": "Aria detected incident <metric_name> anomaly"}
 ])
@@ -200,9 +200,9 @@ Example:
 
 | Tool | Purpose | Key Parameters |
 |------|---------|-----------------|
-| `mcp_android-dri-s2_get_incident` | Fetch incident details by ID | `incident_id` (required) |
-| `mcp_android-dri-s2_batch_search` | Search past incidents AND/OR TSGs in parallel | `searches`: array of `{"type": "icm"\|"tsg", "query": "..."}` |
-| `mcp_android-dri-s2_search_tsgs` | Search troubleshooting guides (single query) | `query` (required) |
+| `mcp_android-dri-s_get_incident` | Fetch incident details by ID | `incident_id` (required) |
+| `mcp_android-dri-s_batch_search` | Search past incidents AND/OR TSGs in parallel | `searches`: array of `{"type": "icm"\|"tsg", "query": "..."}` |
+| `mcp_android-dri-s_search_tsgs` | Search troubleshooting guides (single query) | `query` (required) |
 
 Use `tool_search` with query `android-dri-s` to load these tools before first use.
 
