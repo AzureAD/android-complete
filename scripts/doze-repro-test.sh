@@ -58,6 +58,10 @@ if ! adb devices 2>/dev/null | grep -q "device$"; then
     exit 1
 fi
 SERIAL=$(adb devices | grep "device$" | head -1 | awk '{print $1}')
+if [ -z "$SERIAL" ]; then
+    echo -e "${RED}ERROR: Failed to resolve adb device serial.${NC}"
+    exit 1
+fi
 echo "  Device: $SERIAL"
 ADB=(adb -s "$SERIAL")
 
@@ -75,7 +79,7 @@ cleanup() {
     fi
 }
 
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 
 echo "[2/8] Checking SilentAuthReceiver is registered..."
 if ! adb_cmd shell "dumpsys package $RECEIVER_PKG" 2>/dev/null | grep -q "SilentAuthReceiver"; then
