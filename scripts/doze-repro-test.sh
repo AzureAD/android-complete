@@ -51,7 +51,7 @@ echo "============================================="
 echo ""
 
 # --- Prerequisite checks ---
-echo "[1/8] Checking adb connection..."
+echo "[1/9] Checking adb connection..."
 if ! adb devices 2>/dev/null | grep -q "device$"; then
     echo -e "${RED}ERROR: No adb device connected.${NC}"
     echo "Connect a device via USB and authorize adb."
@@ -71,7 +71,7 @@ adb_cmd() {
 
 cleanup() {
     if [ "$DOZE_FORCED" = true ]; then
-        echo "[8/8] Cleaning up Doze..."
+        echo "[9/9] Cleaning up Doze..."
         adb_cmd shell dumpsys deviceidle unforce > /dev/null 2>&1 || true
         adb_cmd shell dumpsys battery reset > /dev/null 2>&1 || true
         DOZE_FORCED=false
@@ -81,7 +81,7 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
-echo "[2/8] Checking SilentAuthReceiver is registered..."
+echo "[2/9] Checking SilentAuthReceiver is registered..."
 if ! adb_cmd shell "dumpsys package $RECEIVER_PKG" 2>/dev/null | grep -q "SilentAuthReceiver"; then
     echo -e "${RED}ERROR: SilentAuthReceiver not found in $RECEIVER_PKG.${NC}"
     echo "Install MsalTestApp."
@@ -89,7 +89,7 @@ if ! adb_cmd shell "dumpsys package $RECEIVER_PKG" 2>/dev/null | grep -q "Silent
 fi
 echo "  SilentAuthReceiver: registered"
 
-echo "[3/8] Checking broker apps installed..."
+echo "[3/9] Checking broker apps installed..."
 BROKER_PKGS=(
     "com.azure.authenticator"
     "com.microsoft.windowsintune.companyportal"
@@ -131,7 +131,7 @@ BROKER_NAME="${INSTALLED_NAMES[0]}"
 echo "  Broker: $BROKER_NAME ($BROKER)"
 
 # --- Battery exemption check ---
-echo "[4/8] Checking battery optimization for broker..."
+echo "[4/9] Checking battery optimization for broker..."
 BATTERY_EXEMPT=false
 if adb_cmd shell dumpsys deviceidle whitelist 2>/dev/null | grep -q "$BROKER"; then
     BATTERY_EXEMPT=true
@@ -147,8 +147,14 @@ else
     echo "  Battery optimization: active (not exempt) — good"
 fi
 
+# --- Kill MsalTestApp to ensure cold start ---
+echo "[5/9] Killing MsalTestApp (ensure cold start)..."
+adb_cmd shell am force-stop "$RECEIVER_PKG" > /dev/null 2>&1
+echo "  Killed $RECEIVER_PKG"
+sleep 1
+
 # --- Force Doze ---
-echo "[5/8] Forcing Doze mode..."
+echo "[6/9] Forcing Doze mode..."
 adb_cmd logcat -c
 adb_cmd shell dumpsys battery unplug > /dev/null 2>&1
 adb_cmd shell dumpsys deviceidle force-idle > /dev/null 2>&1
@@ -165,7 +171,7 @@ if [ "$DOZE_STATE" != "IDLE" ]; then
 fi
 
 # --- Send broadcast ---
-echo "[6/8] Sending SILENT_AUTH broadcast (background context)..."
+echo "[7/9] Sending SILENT_AUTH broadcast (background context)..."
 adb_cmd shell "am broadcast \
     -a $RECEIVER_ACTION \
     -n $RECEIVER_PKG/$RECEIVER_CLASS \
@@ -175,7 +181,7 @@ echo "  Waiting ${WAIT_SECONDS}s for auth to complete..."
 sleep "$WAIT_SECONDS"
 
 # --- Capture results ---
-echo "[7/8] Capturing logcat results..."
+echo "[8/9] Capturing logcat results..."
 LOGCAT=$(adb_cmd logcat -d -s "${TAG}:*" 2>/dev/null)
 
 # --- Report results ---
