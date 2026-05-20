@@ -38,6 +38,7 @@ RECEIVER_CLASS="com.microsoft.identity.client.testapp.SilentAuthReceiver"
 RECEIVER_ACTION="com.microsoft.identity.client.testapp.SILENT_AUTH"
 WAIT_SECONDS=15
 TAG="SilentAuthReceiver"
+DOZE_FORCED=false
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -58,9 +59,26 @@ if ! adb devices 2>/dev/null | grep -q "device$"; then
 fi
 SERIAL=$(adb devices | grep "device$" | head -1 | awk '{print $1}')
 echo "  Device: $SERIAL"
+ADB=(adb -s "$SERIAL")
+
+adb_cmd() {
+    "${ADB[@]}" "$@"
+}
+
+cleanup() {
+    if [ "$DOZE_FORCED" = true ]; then
+        echo "[8/8] Cleaning up Doze..."
+        adb_cmd shell dumpsys deviceidle unforce > /dev/null 2>&1 || true
+        adb_cmd shell dumpsys battery reset > /dev/null 2>&1 || true
+        DOZE_FORCED=false
+        echo "  Doze reset to ACTIVE"
+    fi
+}
+
+trap cleanup EXIT
 
 echo "[2/8] Checking SilentAuthReceiver is registered..."
-if ! adb shell "dumpsys package $RECEIVER_PKG" 2>/dev/null | grep -q "SilentAuthReceiver"; then
+if ! adb_cmd shell "dumpsys package $RECEIVER_PKG" 2>/dev/null | grep -q "SilentAuthReceiver"; then
     echo -e "${RED}ERROR: SilentAuthReceiver not found in $RECEIVER_PKG.${NC}"
     echo "Install MsalTestApp."
     exit 1
@@ -83,7 +101,7 @@ BROKER_NAMES=(
 INSTALLED_BROKERS=()
 INSTALLED_NAMES=()
 for i in "${!BROKER_PKGS[@]}"; do
-    if adb shell pm list packages -e 2>/dev/null | grep -q "${BROKER_PKGS[$i]}"; then
+    if adb_cmd shell pm list packages -e 2>/dev/null | grep -q "${BROKER_PKGS[$i]}"; then
         INSTALLED_BROKERS+=("${BROKER_PKGS[$i]}")
         INSTALLED_NAMES+=("${BROKER_NAMES[$i]}")
     fi
@@ -111,7 +129,7 @@ echo "  Broker: $BROKER_NAME ($BROKER)"
 # --- Battery exemption check ---
 echo "[4/8] Checking battery optimization for broker..."
 BATTERY_EXEMPT=false
-if adb shell dumpsys deviceidle whitelist 2>/dev/null | grep -q "$BROKER"; then
+if adb_cmd shell dumpsys deviceidle whitelist 2>/dev/null | grep -q "$BROKER"; then
     BATTERY_EXEMPT=true
 fi
 if [ "$BATTERY_EXEMPT" = true ]; then
@@ -127,25 +145,24 @@ fi
 
 # --- Force Doze ---
 echo "[5/8] Forcing Doze mode..."
-adb logcat -c
-adb shell dumpsys battery unplug > /dev/null 2>&1
-adb shell dumpsys deviceidle force-idle > /dev/null 2>&1
+adb_cmd logcat -c
+adb_cmd shell dumpsys battery unplug > /dev/null 2>&1
+adb_cmd shell dumpsys deviceidle force-idle > /dev/null 2>&1
+DOZE_FORCED=true
 
-DOZE_STATE=$(adb shell dumpsys deviceidle get deep 2>/dev/null)
-IDLE_MODE=$(adb shell "dumpsys power | grep mDeviceIdleMode" 2>/dev/null | tr -d '[:space:]')
+DOZE_STATE=$(adb_cmd shell dumpsys deviceidle get deep 2>/dev/null)
+IDLE_MODE=$(adb_cmd shell "dumpsys power | grep mDeviceIdleMode" 2>/dev/null | tr -d '[:space:]')
 echo "  Doze state: $DOZE_STATE"
 echo "  $IDLE_MODE"
 
 if [ "$DOZE_STATE" != "IDLE" ]; then
     echo -e "${RED}ERROR: Failed to enter Doze. State: $DOZE_STATE${NC}"
-    adb shell dumpsys deviceidle unforce > /dev/null 2>&1
-    adb shell dumpsys battery reset > /dev/null 2>&1
     exit 1
 fi
 
 # --- Send broadcast ---
 echo "[6/8] Sending SILENT_AUTH broadcast (background context)..."
-adb shell "am broadcast \
+adb_cmd shell "am broadcast \
     -a $RECEIVER_ACTION \
     -n $RECEIVER_PKG/$RECEIVER_CLASS \
     --es scopes 'https://graph.microsoft.com/.default'" > /dev/null 2>&1
@@ -155,13 +172,8 @@ sleep "$WAIT_SECONDS"
 
 # --- Capture results ---
 echo "[7/8] Capturing logcat results..."
-LOGCAT=$(adb logcat -d -s "${TAG}:*" 2>/dev/null)
-
-# --- Cleanup ---
-echo "[8/8] Cleaning up Doze..."
-adb shell dumpsys deviceidle unforce > /dev/null 2>&1
-adb shell dumpsys battery reset > /dev/null 2>&1
-echo "  Doze reset to ACTIVE"
+LOGCAT=$(adb_cmd logcat -d -s "${TAG}:*" 2>/dev/null)
+cleanup
 
 # --- Report results ---
 echo ""
