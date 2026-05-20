@@ -173,7 +173,6 @@ sleep "$WAIT_SECONDS"
 # --- Capture results ---
 echo "[7/8] Capturing logcat results..."
 LOGCAT=$(adb_cmd logcat -d -s "${TAG}:*" 2>/dev/null)
-cleanup
 
 # --- Report results ---
 echo ""
