@@ -50,6 +50,7 @@ jobs:
       vmImage: ubuntu-latest
     variables:
       - group: MSIDLABVARS
+      - group: devex-ciam-test
       - name: LabAppCert
         value: "/data/local/tmp/LabAuth.pfx"
     steps:
@@ -65,7 +66,7 @@ jobs:
         inputs:
           targetType: inline
           script: |
-            $assembleTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(LabAppCert) -PbrokerSource=${{ parameters.brokerSource }} -PbrokerUpdateSource=${{ parameters.brokerUpdateSource }}"
+            $assembleTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(LabAppCert) -PbrokerSource=${{ parameters.brokerSource }} -PbrokerUpdateSource=${{ parameters.brokerUpdateSource }} -PnativeAuthConfigString=$(NATIVE_AUTH_CONFIG_STRING)"
             if (("${{ parameters.msalVersion }}" -ne "")) {
                 $assembleTask = $assembleTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
             }
@@ -83,7 +84,7 @@ jobs:
         inputs:
           targetType: inline
           script: |
-            $assembleTestTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(LabAppCert)"
+            $assembleTestTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(LabAppCert) -PnativeAuthConfigString=$(NATIVE_AUTH_CONFIG_STRING)"
             if (("${{ parameters.msalVersion }}" -ne "")) {
                 $assembleTestTask = $assembleTestTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
             }

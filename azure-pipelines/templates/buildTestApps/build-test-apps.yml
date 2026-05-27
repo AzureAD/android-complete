@@ -100,3 +100,6 @@ jobs:
       oldMsalTestAppVersion: ${{ parameters.oldMsalTestAppVersion }}
       oldOneAuthTestAppVersion: ${{ parameters.oldOneAuthTestAppVersion }}
   - template: ../../ui-automation/templates/download-first-party-apps.yml
+  - template: ../../ui-automation/templates/build-nativeauth-sample-app.yml
+    parameters:
+      packageVariant: RC

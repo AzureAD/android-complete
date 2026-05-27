@@ -1,0 +1,36 @@
+parameters:
+- name: packageVariant
+  displayName: Package Variant
+  type: string
+  default: PROD
+  values:
+    - PROD
+    - RC
+
+jobs:
+- job: nativeauthsampleapp${{ parameters.packageVariant }}
+  displayName: Build NativeAuth Sample App ${{ parameters.packageVariant }}
+  pool:
+    vmImage: ubuntu-latest
+  steps:
+  - checkout: self
+    clean: true
+    submodules: recursive
+    persistCredentials: True
+  - bash: |
+      echo "##vso[task.setvariable variable=ENV_VSTS_MVN_ANDROIDADACCOUNTS_ACCESSTOKEN]$(System.AccessToken)"
+    displayName: Set MVN Access Token in Environment
+  - task: Gradle@2
+    displayName: 'Assemble NativeAuth Sample App'
+    inputs:
+      tasks: NativeAuthSample:clean NativeAuthSample:assembleDebug
+      publishJUnitResults: false
+  - task: CopyFiles@2
+    displayName: 'Copy apks for later use in the pipeline'
+    inputs:
+      flattenFolders: true
+      contents: '$(Build.SourcesDirectory)/nativeauthsample/app/build/outputs/apk/**/*.apk'
+      targetFolder: '$(Build.ArtifactStagingDirectory)/nativeauthsample'
+  - publish: '$(Build.ArtifactStagingDirectory)/nativeauthsample'
+    displayName: 'Publish NativeAuth Sample APK'
+    artifact: nativeauthsampleapk-${{ upper(parameters.packageVariant) }}
