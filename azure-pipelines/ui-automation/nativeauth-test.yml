@@ -1,0 +1,91 @@
+# Run NativeAuth UI automation tests (standalone stabilization pipeline)
+# This pipeline is used during test development/stabilization.
+# Once tests are stable, they can be added to the weekly-validation pipeline.
+# https://dev.azure.com/IdentityDivision/Engineering/_build?definitionId=XXXX
+name: $(Build.BuildId)_NativeAuth_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
+
+trigger: none
+pr: none
+
+resources:
+  repositories:
+  - repository: msal
+    type: github
+    name: AzureAD/microsoft-authentication-library-for-android
+    ref: $(msal_branch)
+    endpoint: ANDROID_GITHUB
+
+variables:
+  - group: devex-ciam-test
+  - name: engineeringProjectId
+    value: 'fac9d424-53d2-45c0-91b5-ef6ba7a6bf26'
+  - name: msalApp
+    value: msalautomationapp-local-AutoBroker-debug.apk
+  - name: msalTestApp
+    value: msalautomationapp-local-AutoBroker-debug-androidTest.apk
+  - name: nativeAuthSampleApk
+    value: app-debug.apk
+  - name: firebaseTimeout
+    value: 45m
+  - name: resultsHistoryName
+    value: NativeAuth Tests
+
+parameters:
+- name: msal_branch
+  displayName: MSAL Branch
+  type: string
+  default: 'spetrescu/custom_headers'
+- name: firebaseDeviceId
+  displayName: Firebase Device Id
+  type: string
+  default: oriole
+- name: firebaseDeviceAndroidVersion
+  displayName: Firebase Device Android Version
+  type: number
+  default: 33
+
+stages:
+# Build MSAL Automation App (Local flavor, no broker needed for NativeAuth tests)
+- stage: 'msalautomationapp'
+  dependsOn: []
+  displayName: Build MSAL Automation APKs
+  jobs:
+    - template: ./templates/build-msal-automation-app.yml
+      parameters:
+        brokerApp: AutoBroker
+        msalFlavor: Local
+        brokerSource: LocalApk
+        brokerUpdateSource: LocalApk
+        packageVariant: RC
+        nativeAuthConfigString: $(NATIVE_AUTH_CONFIG_STRING)
+
+# Build NativeAuth Sample App
+- stage: 'nativeauthsampleapp'
+  dependsOn: []
+  displayName: Build NativeAuth Sample App
+  jobs:
+    - template: ./templates/build-nativeauth-sample-app.yml
+      parameters:
+        packageVariant: RC
+
+# Run NativeAuth tests on Firebase
+- stage: 'nativeauth_tests'
+  dependsOn:
+  - msalautomationapp
+  - nativeauthsampleapp
+  displayName: Running NativeAuth Tests (API ${{ parameters.firebaseDeviceAndroidVersion }})
+  jobs:
+    - template: ./templates/flank/run-on-firebase-with-flank.yml
+      parameters:
+        automationAppApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msalApp)"
+        automationAppTestApkPath: "$(Pipeline.Workspace)/msalautomationapks-AutoBroker-RC-LocalApk/$(msalTestApp)"
+        testTargetPackages: "package com.microsoft.identity.client.msal.automationapp.testpass.msalonly.nativeauth"
+        resultsHistoryName: "$(resultsHistoryName)"
+        resultsDir: "nativeauth-tests-$(Build.BuildId)"
+        otherFiles: "/sdcard/NativeAuthSampleApp.apk=$(Pipeline.Workspace)/nativeauthsampleapk-RC/$(nativeAuthSampleApk),\
+                      /data/local/tmp/LabAuth.pfx=$(Build.SourcesDirectory)/LabAuth.pfx"
+        firebaseDeviceId: ${{ parameters.firebaseDeviceId }}
+        firebaseDeviceAndroidVersion: ${{ parameters.firebaseDeviceAndroidVersion }}
+        testRunTitle: "NativeAuth UI Automation (API ${{ parameters.firebaseDeviceAndroidVersion }}) # $(Build.BuildNumber)"
+        extraTarget: ""
+        flankShards: 1

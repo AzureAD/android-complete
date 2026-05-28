@@ -42,6 +42,9 @@ parameters:
   - name: preInstallLtw
     type: boolean
     default: false
+  - name: nativeAuthConfigString
+    type: string
+    default: ""
 
 jobs:
   - job: msalautomationapp${{ parameters.packageVariant }}${{ parameters.msalFlavor }}
@@ -50,7 +53,6 @@ jobs:
       vmImage: ubuntu-latest
     variables:
       - group: MSIDLABVARS
-      - group: devex-ciam-test
       - name: LabAppCert
         value: "/data/local/tmp/LabAuth.pfx"
     steps:
@@ -66,7 +68,10 @@ jobs:
         inputs:
           targetType: inline
           script: |
-            $assembleTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(LabAppCert) -PbrokerSource=${{ parameters.brokerSource }} -PbrokerUpdateSource=${{ parameters.brokerUpdateSource }} -PnativeAuthConfigString=$(NATIVE_AUTH_CONFIG_STRING)"
+            $assembleTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}Debug -PlabSecret=$(LabAppCert) -PbrokerSource=${{ parameters.brokerSource }} -PbrokerUpdateSource=${{ parameters.brokerUpdateSource }}"
+            if ("${{ parameters.nativeAuthConfigString }}" -ne "") {
+                $assembleTask = $assembleTask + " -PnativeAuthConfigString=${{ parameters.nativeAuthConfigString }}"
+            }
             if (("${{ parameters.msalVersion }}" -ne "")) {
                 $assembleTask = $assembleTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
             }
@@ -84,7 +89,10 @@ jobs:
         inputs:
           targetType: inline
           script: |
-            $assembleTestTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(LabAppCert) -PnativeAuthConfigString=$(NATIVE_AUTH_CONFIG_STRING)"
+            $assembleTestTask = "msalautomationapp:assemble${{ parameters.msalFlavor }}${{ parameters.brokerApp }}DebugAndroidTest -PlabSecret=$(LabAppCert)"
+            if ("${{ parameters.nativeAuthConfigString }}" -ne "") {
+                $assembleTestTask = $assembleTestTask + " -PnativeAuthConfigString=${{ parameters.nativeAuthConfigString }}"
+            }
             if (("${{ parameters.msalVersion }}" -ne "")) {
                 $assembleTestTask = $assembleTestTask + " -PdistMsalVersion=" + "${{ parameters.msalVersion }}"
             }
