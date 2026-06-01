@@ -142,7 +142,7 @@ Then:
    findings — your output is the primary context for writing the design spec.
 
    Search for:
-   - Existing implementations related to this feature across all repos (MSAL, Common, Broker)
+   - Existing implementations related to this feature across all repos (MSAL, Common, Broker, Authenticator)
    - Patterns to follow (feature flags, IPC, telemetry, decorators)
    - Related design docs in design-docs/
    - Key source files and their architecture
@@ -304,6 +304,7 @@ Repo slug mapping:
 - `msal` → `AzureAD/microsoft-authentication-library-for-android`
 - `broker` → `identity-authnz-teams/ad-accounts-for-android`
 - `adal` → `AzureAD/azure-activedirectory-library-for-android`
+- `authenticator` → `AzureAD/microsoft-authenticator-for-android`
 
 **Step 3: Present results** as a table with: PR #, repo, title, status, checks, +/- lines.
 

@@ -29,6 +29,7 @@ Determine which repo(s) each PBI targets based on the architectural layer:
 | broker | `identity-authnz-teams/ad-accounts-for-android` | Broker-side auth processing, PRT acquisition/rotation, device registration, eSTS communication, IPC entry points |
 | broker4j | (same repo as broker) | Pure Java/Kotlin broker business logic, Protobuf schemas |
 | adal | `AzureAD/azure-activedirectory-library-for-android` | Legacy ADAL changes only (rare — maintenance mode, bug fixes only) |
+| authenticator | `AzureAD/microsoft-authenticator-for-android` | Microsoft Authenticator app changes: MFA flows, passkey/FIDO2, passwordless (NGC), Verified ID wallet, UI, QR scanning, device policy, experimentation flags |
 | 1ES-Pipelines | `IdentityDivision/Engineering/_git/AuthClientAndroidPipelines` (ADO) | Pipeline YAML changes: release orchestration, hotfix pipelines, templates, validation, publishing, scripts |
 
 **Routing heuristic:**
@@ -36,7 +37,8 @@ Determine which repo(s) each PBI targets based on the architectural layer:
 2. If it's a client-facing API change or MSAL configuration → `msal`
 3. If it handles token processing on the broker side, PRT, device registration → `broker`
 4. If it's a pure Java utility with no Android dependency → `common4j` or `broker4j`
-5. Most features span `common` + one consumer (`msal` or `broker`) — create separate PBIs for each
+5. If it changes the Authenticator app (MFA, passkeys, NGC, wallet, UI) → `authenticator`
+6. Most features span `common` + one consumer (`msal`, `broker`, or `authenticator`) — create separate PBIs for each
 
 ## Workflow
 
@@ -211,7 +213,7 @@ Most bug fixes and small features only touch one repo. Create a single PBI.
 ### Two-Repo Feature (Common + Consumer)
 The most common multi-repo pattern:
 1. PBI-1: Add shared logic/contract in `common`
-2. PBI-2: Consume from `msal` or `broker`
+2. PBI-2: Consume from `msal`, `broker`, or `authenticator`
 
 ### Three-Repo Feature (Common + Broker + MSAL)
 For end-to-end features affecting the full auth flow:
@@ -219,6 +221,20 @@ For end-to-end features affecting the full auth flow:
 2. PBI-2: Implement broker-side processing (depends on PBI-1)
 3. PBI-3: Implement MSAL client-side API (depends on PBI-1)
 4. PBI-4: (optional) Integration test PBI
+
+### Authenticator Feature
+For features that also require Authenticator app changes:
+1. SDK PBIs first (common → broker/msal) — Authenticator consumes SDK library releases
+2. PBI-N: Implement Authenticator-side changes (depends on SDK PBIs)
+Authenticator targets the `AzureAD/microsoft-authenticator-for-android` repo. It is a multi-module
+Gradle project rooted at `authenticator/PhoneFactor/`. Key modules to target:
+- **MSAuthenticator** (`app/`) — Main app entry point, Activities, UI
+- **MfaLibrary** — MFA push notification flows
+- **CtapLibrary** — FIDO2/CTAP passkey operations
+- **SharedCoreLibrary** — Core crypto, encryption, shared utilities
+- **NgcProviderLibrary** / **AadRemoteNgcLibrary** — Passwordless NGC key management
+- **WalletLibrary** — Entra Verified ID wallet
+- **CommonUiLibrary** — Shared UI components
 
 ### Feature Flag Convention
 All PBIs for a feature should use the **same feature flag name** across repos:

@@ -18,9 +18,10 @@ This workspace contains multiple sub-repositories:
 | **Common** | Shared utilities + IPC logic | `common/common/src/main/java/com/microsoft/identity/common/` |
 | **ADAL** | Legacy auth library | `adal/adal/src/main/java/com/microsoft/aad/adal/` |
 | **OneAuth** | 1P apps library (external) | `oneauth/` |
+| **Authenticator** | Microsoft Authenticator app | `authenticator/PhoneFactor/app/`, `authenticator/PhoneFactor/MfaLibrary/`, `authenticator/PhoneFactor/SharedCoreLibrary/` |
 | **1ES-Pipelines** | Production CI/CD pipeline YAML | `1ES-Pipelines/production/`, `1ES-Pipelines/templates/`, `1ES-Pipelines/scripts/` |
 
-**⚠️ CRITICAL: Always search across ALL repositories.** Code is often duplicated or shared.
+**⚠️ CRITICAL: Always search across ALL repositories** (including Authenticator when relevant)**.** Code is often duplicated or shared.
 
 ## Authentication Flow
 
@@ -34,7 +35,7 @@ Client App → MSAL/OneAuth → Common (IPC) → Broker → eSTS → Broker → 
 2. **Always cite sources** - Every finding must include file path and line numbers
 3. **Acknowledge gaps** - Explicitly state when something cannot be found
 4. **Rate confidence** - Assign HIGH/MEDIUM/LOW to each finding
-5. **Search all modules** - Check MSAL, Broker, Common, ADAL, and 1ES-Pipelines for each query
+5. **Search all modules** - Check MSAL, Broker, Common, ADAL, Authenticator, and 1ES-Pipelines for each query
 
 ## Research Workflow
 
@@ -75,7 +76,7 @@ Use the output format below.
 ### Findings
 
 #### Finding 1: [Brief description]
-- **Module**: MSAL | Broker | Common | ADAL | 1ES-Pipelines
+- **Module**: MSAL | Broker | Common | ADAL | Authenticator | 1ES-Pipelines
 - **File**: [path/to/file.ext](path/to/file.ext#L10-L25)
 - **Confidence**: HIGH | MEDIUM | LOW
 - **Evidence**: [What makes this the right code]
@@ -119,6 +120,19 @@ Use the output format below.
 - `BrokerOperationExecutor` (Common) - Executes broker operations
 - `MsalBrokerResultAdapter` (Common) - Converts results for IPC
 - `BrokerResult` (Common) - IPC response object
+
+### Authenticator App
+- `MSAuthenticator` (`authenticator/PhoneFactor/app`) - Main app entry point (MainActivity, UI, lifecycle)
+- `MfaLibrary` (`authenticator/PhoneFactor/MfaLibrary`) - MFA push notifications, PIN encryption, device-notification validation
+- `CtapLibrary` (`authenticator/PhoneFactor/CtapLibrary`) - FIDO2/CTAP passkey management: storage, registration, assertion
+- `SharedCoreLibrary` (`authenticator/PhoneFactor/SharedCoreLibrary`) - Core crypto, encryption, shared utilities
+- `SecureKeystoreLibrary` (`authenticator/PhoneFactor/SecureKeystoreLibrary`) - Secure key-pair generation (ECC/RSA) and Keystore access
+- `NgcProviderLibrary` (`authenticator/PhoneFactor/NgcProviderLibrary`) - NGC key provider: Android Keystore-backed credential management
+- `AadRemoteNgcLibrary` (`authenticator/PhoneFactor/AadRemoteNgcLibrary`) - AAD NGC: remote passwordless key registration/deletion
+- `WalletLibrary` (`authenticator/PhoneFactor/WalletLibrary/walletlibrary`) - Entra Verified ID wallet
+- `GraphClient` (`authenticator/PhoneFactor/GraphClient`) - Microsoft Graph API client
+
+**Note:** Authenticator is an **opt-in** submodule (`includeAuthenticatorApp=true` in `gradle.properties`). It consumes SDK library releases from MSAL, Common, and Broker as dependencies — it does NOT consume source-level code from them during normal builds.
 
 ## Data Flow Investigation
 
@@ -276,7 +290,7 @@ When investigating CI/CD pipelines, release processes, or build issues:
 
 | Anti-Pattern | Problem | Correct Approach |
 |--------------|---------|------------------|
-| Searching only one module | Miss cross-module code | Search MSAL, Broker, Common, ADAL, 1ES-Pipelines |
+| Searching only one module | Miss cross-module code | Search MSAL, Broker, Common, ADAL, Authenticator, 1ES-Pipelines |
 | "This is likely in..." | Speculation without evidence | Search first, report only what's found |
 | Path without line numbers | Imprecise, hard to verify | Always include line numbers |
 | Stopping at field definition | Misses conditional logic | Trace to Builder/Adapter for full behavior |
