@@ -11,7 +11,8 @@ HTML email report.
 
 ## Prerequisites
 
-- **Node.js** must be available (for the committed report generator script)
+- **Node.js** must be available (for the committed merge/reduce/report scripts:
+  `merge-items.js`, `reduce-items.js`, `generate-report.js`)
 - **S360 MCP Server** must be running (configured in `.vscode/mcp.json` as `s360-breeze-mcp`)
 - **ADO MCP Server** must be running (for PBI creation and lookup)
 - **M365 User MCP** (`m365-user`) — for dynamic team member discovery via org chart
@@ -174,8 +175,45 @@ fabricate one.
 
 #### 1c: Merge results
 
-Combine items from 1a and 1b. Deduplicate by `KpiActionItemId` — if the same item
-appears in both searches, keep only one copy.
+Use the committed **`merge-items.js`** script to filter person items to team-relevance
+and deduplicate by `KpiActionItemId`. The script encodes the filter rules from 1b and
+the dedup rule below, so they cannot be forgotten or re-implemented inconsistently
+across weekly runs.
+
+```powershell
+# Write the team config (aliases + nameMap from Step 0) to a JSON file:
+$team = @{ aliases = @('alias1','alias2',...); nameMap = @{ alias1='Name1'; ... } } |
+  ConvertTo-Json -Depth 3
+$team | Out-File -Encoding utf8 "$env:TEMP\s360-team.json"
+
+# Run the merger (writes warnings/counts to stderr, merged JSON to --output):
+node .github/skills/s360-reporter/merge-items.js `
+  --service "$env:TEMP\s360-service.json" `
+  --person  "$env:TEMP\s360-person.json" `
+  --team    "$env:TEMP\s360-team.json" `
+  --output  "$env:TEMP\s360-merged.json"
+```
+
+The script accepts MCP envelopes (`{ result: { resources: [...] } }`), trimmed
+envelopes (`{ resources: [...] }`), or bare arrays for the `--service` / `--person`
+inputs.
+
+**Filter logic** (enforced by the script — do not duplicate ad-hoc):
+- `TargetType == "Person"` AND `TargetId` is a team alias  → keep
+- `TargetId` is one of the three service tree GUIDs        → keep
+- `CustomDimensions.TenantName` matches an Auth-team pattern → keep
+- **`AssignedTo` alone is NOT sufficient** — the person query already filters by
+  `assignedTo`, so every returned item has a team-alias `AssignedTo` but many are
+  for OTHER teams the person also belongs to. Items that match only `AssignedTo`
+  with no direct relevance signal are dropped (the script logs sample drops to
+  stderr for sanity checking).
+
+**Dedup**: by `KpiActionItemId`. Cross-source duplicates (same item appearing in
+both service and person queries) are removed.
+
+**Fallback**: If Node.js is unavailable, apply the filter + dedup logic manually
+following the rules above. Do not invent new merging rules — anything that
+collapses items into fewer rows MUST honor the per-finding exception in Step 2.
 
 #### 1d: Fetch KPI Metadata (for Program Names)
 
@@ -230,7 +268,59 @@ not appear here."
 
 ### Step 2: Parse and Deduplicate Items
 
-The response contains an array at `result.resources`. For each item extract:
+Use the committed **`reduce-items.js`** script to turn the merged items from Step 1c
+into logical report rows. The script encodes every dedup rule below — most
+importantly the CRITICAL per-finding exception — so they cannot be skipped or
+reinterpreted on each weekly run.
+
+```powershell
+# Build a KpiId → displayName map from the metadata you fetched in Step 1d:
+$kpiMap = @{
+  'a0f0ce42-3063-5d3b-3b47-1ff3143abdc9' = '[SFI-PS3.1] Security Code Bugs'
+  '2d6597da-8e08-4495-a4e1-954f7697a4a8' = 'SDL Annual Assessment'
+  # ... (one entry per unique KpiId)
+}
+$kpiMap | ConvertTo-Json | Out-File -Encoding utf8 "$env:TEMP\s360-kpi.json"
+
+# Run the reducer (warnings to stderr, reduced rows to --output):
+node .github/skills/s360-reporter/reduce-items.js `
+  --input        "$env:TEMP\s360-merged.json" `
+  --kpi-metadata "$env:TEMP\s360-kpi.json" `
+  --output       "$env:TEMP\s360-reduced.json"
+```
+
+**What the reducer guarantees** (the rules below are now enforced in code):
+1. Extracts a per-item ADO work-item ID from `URL` (regex `_workitems/edit/(\d+)`),
+   falling back to `S360Dimensions.ADOWorkItemHTMLUrl`. Warns on conflicts.
+2. Resolves `ETA` by walking the item object for any key containing `eta`
+   (case-insensitive) that parses as a strict ISO date. Picks the most recent.
+3. Groups items into rows using:
+   - `wi:<ADOWorkItemId>` if the item has a non-null, non-reused ADO ID → one
+     row per work item (the per-finding case).
+   - `pf:<KpiActionItemId>` if the item's KPI is in the script's
+     `PER_FINDING_KPIS` set but URL is missing → still one row per item, so a
+     temporary URL outage cannot silently umbrella-merge.
+   - `nowi:<KpiId>|<baseTitle>|<TargetId>` otherwise → umbrella merge (CFS
+     multi-endpoint case).
+4. Detects **reused work-item IDs** (same ADO ID referenced by multiple distinct
+   `KpiId|baseTitle|TargetId` tuples) and refuses to use them as grouping
+   authority — prevents a shared template work item from collapsing unrelated
+   items into one row.
+5. Picks the worst-SLA + earliest-due item as the group representative
+   (deterministic tiebreak on `KpiActionItemId`).
+6. Sorts output rows deterministically by SLA, due date, program, title — same
+   input always produces identical output.
+7. Logs URL-coverage warnings for known per-finding KPIs when not every item
+   has an ADO link.
+
+**Maintaining the `PER_FINDING_KPIS` set**: If a new KPI is discovered where each
+S360 item maps to its own ADO Bug (e.g. accessibility per-issue, BinSkim per-rule),
+add its KpiId to the `PER_FINDING_KPIS` set near the top of `reduce-items.js`.
+The script will still do the right thing if you forget (URL-based grouping handles
+it as long as URLs are populated) — the set is a defense-in-depth fallback for
+missing URLs.
+
+For each item the reducer extracts (and the rest of the workflow consumes):
 
 | Field | JSON Path | Notes |
 |-------|-----------|-------|
@@ -243,8 +333,8 @@ The response contains an array at `result.resources`. For each item extract:
 | ETA | See **ETA Field Resolution** below — do NOT just read `CurrentETA` | If no ETA can be resolved from any of the candidate fields AND KpiId is in the "ETA Not Applicable" table → show **"N/A"**. If unresolved AND KpiId is NOT in that table → flag as **"Missing ETA ⚠"** |
 | Status Notes | `CurrentStatus` | May be empty |
 | Status Author | `CurrentStatusAuthor` | |
-| ADO Work Item | `S360Dimensions.ADOWorkItemHTMLUrl` | Empty = no PBI linked |
-| S360 URL | `URL` | Remediation/action link from S360 API (aka.ms, IcM, ADO, etc.) |
+| ADO Work Item | `S360Dimensions.ADOWorkItemHTMLUrl` | Empty does NOT mean no work item — also check the `URL` field (see next row) |
+| S360 URL | `URL` | Remediation/action link from S360 API. May be `aka.ms/...`, IcM URL, **or an ADO work-item URL**. If it matches `dev.azure.com/.../_workitems/edit/(\d+)` or `*.visualstudio.com/.../_workitems/edit/(\d+)`, extract the ID — that is the **pre-created Bug/PBI for this specific S360 item** (highest-priority work-item match — see Step 3d). |
 | KPI ID | `KpiId` | For dedup |
 | Action Item ID | `KpiActionItemId` | For dedup |
 | Program Name | KPI metadata `displayName` (from Step 1d) | For grouping items by compliance area |
@@ -303,8 +393,11 @@ overly technical text that is not suitable for display. Apply these cleanups:
 3. **Clean up resolved item titles** — Apply the same sanitization to resolved items
    before rendering in the report.
 
-**Dedup**: Some items appear multiple times with different `KpiActionItemId` but same
-or similar `Title` and `TargetId`. Apply dedup in two passes:
+**Dedup** *(reference spec — implemented by `reduce-items.js`; documented here
+so reviewers can verify the script is doing the right thing and so the rules
+remain enforceable if Node.js is unavailable as a fallback)*: Some items appear
+multiple times with different `KpiActionItemId` but same or similar `Title` and
+`TargetId`. Apply dedup in two passes:
 
 1. **Exact dedup**: Group by `Title` + `TargetId`. If duplicates, keep the one with worst
    SLA state (`OutOfSla` > `ApproachingSla` > `InSla`).
@@ -312,6 +405,34 @@ or similar `Title` and `TargetId`. Apply dedup in two passes:
    overlapping title text. Items with the same KPI but targeting different services
    (e.g., CFS pipeline items targeting 8 endpoints) should be **merged into one row**
    with a note like "(8 endpoints)" rather than listed 8 times.
+
+   **CRITICAL exception — never merge per-finding items with distinct work items.**
+   If two items share a `KpiId` but each item's `URL` (or `S360Dimensions.ADOWorkItemHTMLUrl`)
+   resolves to a **different** ADO work-item ID, they are **distinct findings** and MUST
+   be rendered as separate rows. Examples (verified — these KPIs publish one Bug per
+   finding):
+   - **Security Code Bugs** (KPI `a0f0ce42-3063-5d3b-3b47-1ff3143abdc9`, Nightwatch
+     findings): each item has its own pre-created Bug in ADO (linked via `URL`). Render
+     one row per finding, with `pbi` set to that Bug's ID — never collapse them under an
+     umbrella PBI.
+   - **SDL Annual Assessment** (KPI `2d6597da-8e08-4495-a4e1-954f7697a4a8`): every
+     finding has its own per-finding Bug linked via `URL`. Older versions of this
+     workflow silently merged all SDL items into one row per service, hiding many
+     distinct Bugs — do not regress.
+   - **Accessibility bugs**, **BinSkim per-rule findings**, and similar per-finding
+     KPIs follow the same rule.
+
+   Merging is only appropriate when the items represent the **same logical work**
+   (e.g., the same remediation applied to N targets, with no per-target work item).
+   When in doubt, **do not merge** — rendering N rows is recoverable; merging hides
+   distinct bugs and is the error mode this exception exists to prevent.
+
+**Presentation note for high-volume per-finding KPIs**: When a single KPI legitimately
+produces many rows (e.g. 13 Nightwatch Bugs, 22 SDL Bugs), `generate-report.js` may
+render them under a single program header with a count badge and individual AB#
+links per row — but each row MUST remain individually present in the reducer's
+output (`reduced.json`). The reducer's job is data fidelity; visual rollup is the
+report's concern.
 
 ### Step 3: Find Existing Work Items (PBIs or Bugs)
 
@@ -434,19 +555,26 @@ of whether the existing item is a Bug or a PBI.
 #### 3d: Merge work-item maps
 
 For each S360 item, check if a work item (PBI or Bug) exists from any source:
-1. The S360 API field `S360Dimensions.ADOWorkItemHTMLUrl` (already linked in S360 —
-   the linked item may be a PBI or a Bug; the URL doesn't encode the type)
-2. Last week's email AB# references (from 3a) — confirmed human assignments
-3. ADO tag/title search results (from 3b) — items explicitly tagged S360 (Bug or PBI)
-4. ADO keyword search results (from 3c) — catches manually-created items (Bug or PBI)
+1. **ADO ID parsed from the S360 `URL` field** — if `URL` matches
+   `dev.azure.com/.../_workitems/edit/(\d+)` or `*.visualstudio.com/.../_workitems/edit/(\d+)`,
+   extract the ID. This is the **per-item Bug/PBI created by the S360 publisher** and is
+   the most specific match available. Common for security KPIs (Nightwatch, accessibility,
+   etc.) where each finding gets its own auto-filed Bug.
+2. The S360 API field `S360Dimensions.ADOWorkItemHTMLUrl` (legacy linked-item field —
+   often empty for newer KPIs that use `URL` instead; the linked item may be a PBI or a Bug;
+   the URL doesn't encode the type)
+3. Last week's email AB# references (from 3a) — confirmed human assignments
+4. ADO tag/title search results (from 3b) — items explicitly tagged S360 (Bug or PBI)
+5. ADO keyword search results (from 3c) — catches manually-created items (Bug or PBI)
    without the S360 tag
 
-**Priority: S360-linked > last week's email > keyword search (3c) > tag search (3b).**
+**Priority: URL-parsed ADO ID (source 1) > ADOWorkItemHTMLUrl (source 2) > last week's
+email > keyword search (3c) > tag search (3b).**
 
-Rationale: S360-linked is authoritative. Last week's email represents a confirmed OCE
-assignment (higher confidence than a title search). Keyword search (3c) catches real
-duplicates that lack the `[S360]` prefix. Tag search (3b) is broadest but may produce
-false positives from unrelated items.
+Rationale: A per-item ADO link in the `URL` field is the most authoritative match — it
+is the actual Bug/PBI the publisher created for that specific finding. Falling back to
+keyword/tag search for these items risks matching an unrelated umbrella PBI (e.g., one
+PBI for the whole KPI) and losing the per-bug granularity.
 
 **Title matching logic** (for 3a, 3b, 3c):
 - **Normalize both titles identically before comparing**: strip `[S360]` prefix, replace
@@ -475,14 +603,24 @@ owner, not the S360 default.
 2. Call `mcp_ado_wit_get_work_items_batch_by_ids` with fields
    `["System.Id", "System.AssignedTo", "System.WorkItemType", "System.State"]`
 3. For each item with a matched work item:
-   - Extract alias from ADO `System.AssignedTo` (strip `@microsoft.com`)
-   - Set `ownerAlias` = ADO alias
-   - Set `ownerName` = ADO display name
+   - **Skip the override if the ADO assignee is a bot / automation account.** Treat as
+     a bot if any of the following is true:
+     - `System.AssignedTo.displayName` contains `Copilot`, `Bot`, `Service`, `Agent`,
+       or `Automation` (case-insensitive)
+     - `System.AssignedTo.uniqueName` starts with `sc-` or `SC-` (non-EA service accounts)
+     - The display name matches a known automation identity (e.g., `GitHub Copilot`)
+
+     For bot-assigned items, **keep the S360-sourced `ActionOwnerAlias`** — a bot
+     assignment means "no human owner yet", not "the bot owns this work". Common case:
+     Nightwatch security Bugs are auto-filed by the GitHub Copilot bot.
+   - Otherwise: extract alias from ADO `System.AssignedTo` (strip `@microsoft.com`),
+     set `ownerAlias` = ADO alias, `ownerName` = ADO display name.
 4. Items WITHOUT a matched work item keep their S360-sourced owner (from Step 2)
 
 **Rationale**: The S360 `ActionOwnerAlias` often defaults to the service dev owner or
 a team lead, while the ADO work item has been explicitly assigned to the person doing
-the work. The ADO assignment is more accurate for reporting purposes.
+the work. The ADO assignment is more accurate — *unless* the ADO assignee is a bot,
+in which case the S360 owner is the better signal for the report.
 
 ### Step 4: Create Missing PBIs
 
