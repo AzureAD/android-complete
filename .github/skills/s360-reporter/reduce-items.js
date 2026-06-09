@@ -272,6 +272,13 @@ for (const [groupKey, group] of groups) {
     Wave: (r.CustomDimensions && r.CustomDimensions.S360_WavesMetadata && r.CustomDimensions.S360_WavesMetadata[0] && r.CustomDimensions.S360_WavesMetadata[0].WaveDisplayName) || null,
     CurrentStatus: r.CurrentStatus || null,
     CurrentStatusAuthor: r.CurrentStatusAuthor || null,
+    // Set to true by Pass 7 if every row sharing this row's KpiId also shares
+    // its exact Title AND each such row has a distinct ADOWorkItemId — meaning
+    // the S360 publisher reused one generic umbrella title across many distinct
+    // ADO work items. Step 3e of the workflow substitutes ADO System.Title for
+    // flagged rows so each row reads as its actual finding instead of the
+    // umbrella label (e.g. SDL Annual Assessment → "Use only approved hash...").
+    usesGenericS360Title: false,
     // Original IDs that fed into this row (for traceability + debugging)
     underlyingActionItemIds: group.map(e => e.raw.KpiActionItemId).sort()
   });
@@ -302,6 +309,45 @@ if (collapsed.length) {
   for (const r of collapsed) {
     console.error(`  [${r.count}x] ${r.SLAState} ${r.ProgramName.slice(0, 60)} :: ${String(r.Title).slice(0, 60)}`);
   }
+}
+
+// ── Pass 7: flag rows that share a generic umbrella S360 Title ────────────────
+//
+// Some S360 publishers (e.g. SDL Annual Assessment) write one identical Title
+// across every sub-item of a KPI but link each item to a distinct ADO work
+// item with its own descriptive System.Title. Rendering "SDL Annual Assessment"
+// on 22 separate rows is unhelpful — Step 3e of the workflow should substitute
+// the ADO System.Title for each flagged row. We just identify the rows here;
+// the actual ADO lookup happens downstream where the batch fetch already runs.
+//
+// Heuristic: within a KpiId, if N ≥ 2 rows share the EXACT same Title AND each
+// of those rows has a distinct ADOWorkItemId, flag every row in that group with
+// `usesGenericS360Title: true`.
+const rowsByKpi = new Map();
+for (const r of reduced) {
+  if (!rowsByKpi.has(r.KpiId)) rowsByKpi.set(r.KpiId, []);
+  rowsByKpi.get(r.KpiId).push(r);
+}
+let genericFlaggedCount = 0;
+for (const [kpiId, kpiRows] of rowsByKpi) {
+  if (kpiRows.length < 2) continue;
+  // Group by exact Title
+  const byTitle = new Map();
+  for (const r of kpiRows) {
+    const t = String(r.Title || '');
+    if (!byTitle.has(t)) byTitle.set(t, []);
+    byTitle.get(t).push(r);
+  }
+  for (const [title, group] of byTitle) {
+    if (group.length < 2) continue;
+    const distinctAdoIds = new Set(group.map(r => r.ADOWorkItemId).filter(Boolean));
+    if (distinctAdoIds.size !== group.length) continue; // need 1:1 row→ADO ID
+    for (const r of group) { r.usesGenericS360Title = true; genericFlaggedCount++; }
+    console.error(`WARN: KPI ${kpiId} uses generic umbrella title "${title.slice(0, 60)}" across ${group.length} distinct ADO work items — flagged for Title substitution from ADO (Step 3e).`);
+  }
+}
+if (genericFlaggedCount) {
+  console.error(`Flagged ${genericFlaggedCount} rows with usesGenericS360Title=true (will pull descriptive ADO titles in Step 3e)`);
 }
 
 // ── Write output ──────────────────────────────────────────────────────────────

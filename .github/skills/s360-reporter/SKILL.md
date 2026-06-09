@@ -320,11 +320,11 @@ The script will still do the right thing if you forget (URL-based grouping handl
 it as long as URLs are populated) — the set is a defense-in-depth fallback for
 missing URLs.
 
-For each item the reducer extracts (and the rest of the workflow consumes):
+For each field the reducer extracts (and the rest of the workflow consumes):
 
 | Field | JSON Path | Notes |
 |-------|-----------|-------|
-| Title | `Title` | **Required** — sanitize before display (see below). If empty, use KPI `displayName` from Step 1d. Never leave blank. |
+| Title | `Title` | **Required** — sanitize before display (see below). If empty, use KPI `displayName` from Step 1d. Never leave blank. If the row is flagged with `usesGenericS360Title: true`, the workflow substitutes the ADO `System.Title` in Step 3e (see below). |
 | Service | Map `TargetId` → service name from table above. For person-targeted items (`TargetType: "Person"`), use `CustomDimensions.TenantName` instead |
 | Owner Alias | `S360Dimensions.ActionOwnerAlias` | Falls back to `AssignedTo`. If both empty → "unassigned". **Overridden by ADO PBI assignee in Step 3e.** |
 | Owner Name | `S360Dimensions.ActionOwner` | If empty, use the `nameMap` from Step 0 to look up alias → display name. If still empty, use the alias as display name. **Overridden by ADO PBI assignee in Step 3e.** |
@@ -338,6 +338,7 @@ For each item the reducer extracts (and the rest of the workflow consumes):
 | KPI ID | `KpiId` | For dedup |
 | Action Item ID | `KpiActionItemId` | For dedup |
 | Program Name | KPI metadata `displayName` (from Step 1d) | For grouping items by compliance area |
+| usesGenericS360Title | (computed by reducer) | `true` when the S360 publisher reused one identical `Title` across many rows that each link to a distinct ADO work item (e.g. SDL Annual Assessment → 22 rows). When true, Step 3e substitutes the ADO `System.Title` for each row so the report shows the actual finding instead of the umbrella label. |
 | Program Desc | `CustomDimensions.S360_WavesMetadata[0].WaveDisplayName` | Subtitle under program heading (optional) |
 | Wave | Extract from `CustomDimensions.S360_WavesMetadata[0].WaveDisplayName` |
 
@@ -591,7 +592,7 @@ PBI for the whole KPI) and losing the per-bug granularity.
 Mark each item's status: `existing` (with AB# + URL + work-item type), `needs-creation`,
 or `resolved` (work item exists but is Done/Removed — skip from report).
 
-#### 3e: Override Owners from ADO Assignees
+#### 3e: Override Owners (and Titles) from ADO Work Items
 
 After matching is complete, for every item that has an existing work item (from any
 source), fetch the `System.AssignedTo` field and **override the item's owner** with
@@ -601,9 +602,9 @@ owner, not the S360 default.
 
 1. Collect all work-item IDs from matched items (Bugs and PBIs)
 2. Call `mcp_ado_wit_get_work_items_batch_by_ids` with fields
-   `["System.Id", "System.AssignedTo", "System.WorkItemType", "System.State"]`
+   `["System.Id", "System.Title", "System.AssignedTo", "System.WorkItemType", "System.State"]`
 3. For each item with a matched work item:
-   - **Skip the override if the ADO assignee is a bot / automation account.** Treat as
+   - **Skip the assignee override if the ADO assignee is a bot / automation account.** Treat as
      a bot if any of the following is true:
      - `System.AssignedTo.displayName` contains `Copilot`, `Bot`, `Service`, `Agent`,
        or `Automation` (case-insensitive)
@@ -615,12 +616,26 @@ owner, not the S360 default.
      Nightwatch security Bugs are auto-filed by the GitHub Copilot bot.
    - Otherwise: extract alias from ADO `System.AssignedTo` (strip `@microsoft.com`),
      set `ownerAlias` = ADO alias, `ownerName` = ADO display name.
-4. Items WITHOUT a matched work item keep their S360-sourced owner (from Step 2)
+   - **If the row is flagged with `usesGenericS360Title: true`** (set by `reduce-items.js`
+     Pass 7), substitute the ADO `System.Title` for the row's `Title` so the report
+     shows the actual finding instead of the umbrella label. Apply the same title
+     sanitization (GUID → service name, etc.) afterward. Example: SDL Annual Assessment
+     (KPI `2d6597da-…`) publishes 22 rows all titled "SDL Annual Assessment", each
+     linked to a distinct ADO Task — without this substitution every row would read
+     "SDL Annual Assessment"; with it, rows read like "Use only approved cryptographic
+     hash functions", "All issues identified by the Attack Surface Analyzer (ASA) tool
+     must be fixed", etc.
+4. Items WITHOUT a matched work item keep their S360-sourced owner and title (from Step 2)
 
-**Rationale**: The S360 `ActionOwnerAlias` often defaults to the service dev owner or
-a team lead, while the ADO work item has been explicitly assigned to the person doing
-the work. The ADO assignment is more accurate — *unless* the ADO assignee is a bot,
+**Rationale (assignee)**: The S360 `ActionOwnerAlias` often defaults to the service dev
+owner or a team lead, while the ADO work item has been explicitly assigned to the person
+doing the work. The ADO assignment is more accurate — *unless* the ADO assignee is a bot,
 in which case the S360 owner is the better signal for the report.
+
+**Rationale (title)**: Some S360 KPIs (notably SDL Annual Assessment) reuse one generic
+umbrella `Title` across every sub-item while linking each one to its own per-finding
+ADO Task with a descriptive `System.Title`. Showing the umbrella title makes every row
+indistinguishable; substituting the ADO title makes the report actionable.
 
 ### Step 4: Create Missing PBIs
 
