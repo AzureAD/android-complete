@@ -48,10 +48,17 @@ Client App
 - **Common Module:** Contains all IPC (Inter-Process Communication) logic. MSAL/OneAuth use Common layer to send requests to Broker over IPC
 - **Broker Module:** Handles the actual authentication logic, communicates with eSTS, and returns tokens
 
-### 1.3 DRI Copilot MCP Server
+### 1.3 Android DRI MCP Server
 
-DRI Copilot MCP tools are available for querying documentation, TSGs, and past incidents:
-- **Broker DRI Copilot** (tools containing `Broker_DRI_Copilot`) - For Broker-related questions, PRT, device registration, brokered auth flows
+The `android-dri-search` MCP server provides tools for querying past incidents, TSGs, and DRI knowledge:
+
+| Tool | Purpose |
+|------|---------|
+| `mcp_android-dri-s_get_incident` | Fetch a specific IcM incident by ID |
+| `mcp_android-dri-s_batch_search` | Run multiple ICM and/or TSG searches in parallel |
+| `mcp_android-dri-s_search_tsgs` | Search troubleshooting guides (single query) |
+
+The server is configured in `.vscode/mcp.json` as `android-dri-search`. Authentication is automatic via Entra ID OAuth — you must be a member of the **Android Auth Client SDK** security group. See `android_dri_mcp_server/deployment-and-connection-guide.md` for details.
 
 > **For incident investigations:** Use the `incident-investigator` skill (located at `.github/skills/incident-investigator/SKILL.md`) which provides a comprehensive workflow for IcM/customer-reported issues.
 
@@ -134,6 +141,7 @@ For complex investigation tasks, use these skills (read the skill file for detai
 | **pbi-dispatcher** | `.github/skills/pbi-dispatcher/SKILL.md` | "dispatch PBIs to agent", "assign to Copilot", "send work items to coding agent" |
 | **test-planner** | `.github/skills/test-planner/SKILL.md` | "create test plan", "write test cases", "add tests to ADO", "export test plan", "E2E tests for" |
 | **threat-modeler** | `.github/skills/threat-modeler/SKILL.md` | "create a threat model", "threat model for", "threat model diagram", "STRIDE analysis for", "security diagram for" |
+| **s360-reporter** | `.github/skills/s360-reporter/SKILL.md` | "S360 report", "generate S360 report", "weekly S360", "S360 status", "what are our S360 items" |
 | **copilot-review-analyst** | `.github/skills/copilot-review-analyst/SKILL.md` | "analyze Copilot reviews", "Copilot review effectiveness", "review analysis report", "how helpful are Copilot reviews" |
 
 ## 13. Azure DevOps Integration
