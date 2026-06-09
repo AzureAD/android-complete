@@ -41,6 +41,11 @@
       "tools": ["*"]
     },
 
+    "s360-breeze-mcp": {
+      "type": "http",
+      "url": "https://mcp.vnext.s360.msftcloudes.com/"
+    },
+
     "android-dri-search": {
       "type": "http",
       "url": "https://android-dri-mcp.proudbeach-7e7ce77d.eastus.azurecontainerapps.io/mcp"
