@@ -135,6 +135,60 @@ Select-String -Path <output.html> -Pattern 'data-spark|data-trend' | Measure-Obj
 
 Should return **at least ~30** matches (8 KPI tiles + ~10 60d-trend rows + ~12 WoW-table rows). If the count is zero or near-zero, the report is missing all charts — go back and add them.
 
+## Attribution-card layout — the two v8 traps
+
+The CSS in `report-template.html` now guards both, and `validate-report.ps1` § 9
+hard-fails when the rules are missing. Two failure modes to know about:
+
+### 1. Cards touching (no spacing between consecutive `.attr-card`s)
+
+The template originally relied on an outer `<div class="attr-grid">` wrapper to
+provide `gap: 16px` between cards. A head+body+footer rebuild that emits
+`.attr-card` elements directly under `<h2>` produces visually touching cards.
+
+**Fix in template CSS:** `.attr-card { margin-bottom: 16px }` + `.attr-card +
+.attr-card { margin-top: 16px }`. If you ever rewrite the head, make sure both
+rules survive.
+
+### 2. Text bleeding out of `.dim` boxes (long calling-app / version names)
+
+Two flexbox traps stack here:
+
+- **`text-overflow: ellipsis` is silently ignored on `display: inline` elements.**
+  A `<span>` defaults to inline. The name span must be `display: block` (or
+  `inline-block`) for ellipsis to render.
+- **Flex children don't shrink below their content size by default.** Both the
+  flex child AND every flex ancestor need `min-width: 0` explicitly.
+
+**Two valid `.dim-row` markup variants — pick one per card:**
+
+```html
+<!-- Variant A: classed spans (original template, recommended) -->
+<div class="dim-row">
+  <div class="dim-bar-track"><div class="dim-bar-fill dominant" style="width:99.0%"></div></div>
+  <span class="dim-name">AcquireTokenSilent</span>
+  <span class="dim-pct">99.0%</span>
+</div>
+
+<!-- Variant B: unclassed spans (terser; CSS covers both forms via :first-of-type / :last-of-type) -->
+<div class="dim-row">
+  <div class="dim-bar-track"><div class="dim-bar-fill" style="width:36.6%"></div></div>
+  <span>com.microsoft.windowsintune.companyportal</span>
+  <span>36.6%</span>
+</div>
+
+<!-- Placeholder rows ("Not sliced — …") — one span only, still truncate -->
+<div class="dim-row">
+  <span style="color:#656d76;font-size:11.5px;">Not sliced — OEM not suspected.</span>
+</div>
+```
+
+The CSS rules `text-overflow: ellipsis` + `display: block` + `flex: 1 1 0` +
+`min-width: 0` + `max-width: 100%` are baked into the template name-column
+selector for both classed and unclassed variants. Do not bypass them by setting
+inline `white-space: normal` or removing `min-width: 0` from `.dim` /
+`.attr-dims` — that's how the bug regresses.
+
 ## Sparkline color palette
 
 Used by both `.spark` (KPI tiles) and `.trend` (table cells):

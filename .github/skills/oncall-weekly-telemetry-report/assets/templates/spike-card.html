@@ -40,7 +40,32 @@
       <strong>Verdict:</strong> {{VERDICT_PARAGRAPH}}
     </div>
 
-    <!-- 7 mandatory dim blocks — fill from agg.js output for each dim query -->
+    <!-- 7 mandatory dim blocks — fill from agg.js output for each dim query.
+         Canonical .dim-row markup (use EXACTLY this shape so CSS targets it).
+         Two variants are supported; pick one and stick with it within a card:
+
+         Variant A — classed spans (matches the original template, recommended):
+           <div class="dim-row">
+             <div class="dim-bar-track"><div class="dim-bar-fill dominant" style="width:99.0%"></div></div>
+             <span class="dim-name">AcquireTokenSilent</span>
+             <span class="dim-pct">99.0%</span>
+           </div>
+
+         Variant B — unclassed spans (terser; CSS selectors cover both forms):
+           <div class="dim-row">
+             <div class="dim-bar-track"><div class="dim-bar-fill" style="width:36.6%"></div></div>
+             <span>com.microsoft.windowsintune.companyportal</span>
+             <span>36.6%</span>
+           </div>
+
+         "Not sliced / N/A" placeholder rows — one span only, will truncate too:
+           <div class="dim-row">
+             <span style="color:#656d76;font-size:11.5px;">Not sliced — OEM not suspected.</span>
+           </div>
+
+         Long names (calling apps, broker versions with annotations) MUST truncate
+         to an ellipsis — never wrap, never bleed out of the .dim card. The CSS
+         in assets/report-template.html handles this for both variants. -->
     <div class="attr-dims">
       <div class="dim"><div class="dim-label">Span</div>
         {{SPAN_DIM_ROWS}}

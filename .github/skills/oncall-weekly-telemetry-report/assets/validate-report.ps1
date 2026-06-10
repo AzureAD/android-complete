@@ -10,9 +10,20 @@
       4. Section 2 callouts are siblings, NOT nested. Tracks <div> open/close depth
          from #attention to #trend60d; the depth must return to 0 between callouts.
       5. (Informational) Reports HTML size and number of <div class="callout"> openings.
+      6. KPI tiles have data-spark coverage (>= half) + overall chart coverage (>=15).
+      7. Traffic-attribution sub-block color diversity (tri-state convention).
+      8. Code-attribution depth — each .attr-card has the full 8-field Originator block.
+      9. Attribution-card layout sanity (v8 regression):
+           9a. .attr-card cards-touching guard — CSS must define explicit margin
+               on .attr-card so successive cards don't visually run together when
+               the body emits them without an .attr-grid wrapper.
+           9b. .dim-row name-overflow guard — CSS must define text-overflow:ellipsis
+               on .dim-name / .dim-row > span:first-of-type AND min-width:0 on
+               .dim / .dim-row so long calling-app / version names truncate inside
+               their dim card rather than bleeding out.
 
     Exits with non-zero status if any HARD check fails (stale tokens, devs/reqs leak,
-    U+FFFD, or unbalanced div depth in the attention block).
+    U+FFFD, unbalanced div depth, missing layout-guard CSS).
 
 .PARAMETER Path
     Absolute path to the report file. Defaults to the current week's report under
@@ -206,6 +217,47 @@ if ($startIdx -ge 0 -and $endIdx -gt $startIdx) {
         Add-Fail "Nested callout detected at line(s): $($nestedAt -join ', '). Each callout in Section 2 must be a SIBLING, not nested inside another callout."
     } else {
         Pass "No nested callouts in Section 2"
+    }
+}
+
+# ---- 9. Attribution-card layout sanity (v8 regression — cards touching + dim-row bleed) ----
+# Two layout bugs hit the v8 rebuild and forced manual CSS patches mid-publish.
+# Both have CSS fixes baked into report-template.html now, but the validator
+# catches the markup-side preconditions so a future hand-rolled body that
+# diverges from the template is flagged before publish.
+#
+# 9a. Cards-touching guard: if the report has .attr-card outside any .attr-grid
+#     wrapper AND the CSS in <style> is missing the explicit margin rule, warn.
+#     (Belt + suspenders — the canonical CSS now ships the margin, but a stale
+#     copy/paste of an older head could regress.)
+$hasAttrCard = ([regex]::Matches($content, '<div class="attr-card')).Count -gt 0
+if ($hasAttrCard) {
+    $cssHasCardMargin = $content -match '\.attr-card\s*\{[^}]*margin-bottom\s*:\s*16px' `
+                     -or $content -match '\.attr-card\s*\+\s*\.attr-card\s*\{[^}]*margin-top'
+    if (-not $cssHasCardMargin) {
+        Add-Fail "Report has .attr-card elements but the CSS is missing the cards-touching guard (.attr-card { margin-bottom:16px } and/or .attr-card + .attr-card { margin-top:16px }). The v8 head rebuild dropped this — re-extract <head> from the current assets/report-template.html."
+    } else {
+        Pass "Attribution cards have spacing CSS"
+    }
+}
+
+# 9b. Dim-row overflow guard: every .dim-row that wraps a name + percent must
+#     have the CSS rules that make text-overflow:ellipsis engage. The trap:
+#     text-overflow:ellipsis is silently ignored on inline <span> elements;
+#     the spans must be display:block (or inline-block) AND flex children
+#     with min-width:0. We can't measure actual rendering, but we CAN assert
+#     the CSS rules exist verbatim.
+if ($hasAttrCard) {
+    $cssHasEllipsis = $content -match '\.dim-row\s*>\s*span:first-of-type[^}]*text-overflow\s*:\s*ellipsis' `
+                   -or $content -match '\.dim-row\s+\.dim-name[^}]*text-overflow\s*:\s*ellipsis'
+    $cssHasMinWidth = $content -match '\.dim\s*\{[^}]*min-width\s*:\s*0' `
+                   -or $content -match '\.dim-row\s*\{[^}]*min-width\s*:\s*0'
+    if (-not $cssHasEllipsis) {
+        Add-Fail "CSS is missing the .dim-row name-overflow guard (text-overflow:ellipsis on .dim-name and/or .dim-row > span:first-of-type). Long calling-app / version names will bleed out of the dim cards. Re-extract <head> from the current assets/report-template.html."
+    } elseif (-not $cssHasMinWidth) {
+        Add-Warn "CSS has text-overflow rules but is missing min-width:0 on .dim / .dim-row. Without it, flex children won't shrink below content size and ellipsis won't trigger inside narrow dim cards."
+    } else {
+        Pass "Dim-row name-overflow guard CSS present (ellipsis + min-width:0)"
     }
 }
 

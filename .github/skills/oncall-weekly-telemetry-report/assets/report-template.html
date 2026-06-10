@@ -132,7 +132,12 @@
   .attr-card {
     background: #fff; border: 1px solid #d0d7de; border-radius: 12px;
     box-shadow: 0 1px 3px rgba(31,35,40,0.06); overflow: hidden;
+    /* Spacing when cards are rendered as siblings (no .attr-grid wrapper) —
+       e.g. a head+body+footer rebuild that emits .attr-card directly under <h2>.
+       Without this, consecutive cards visually touch. Discovered in v8 rebuild. */
+    margin-bottom: 16px;
   }
+  .attr-card + .attr-card { margin-top: 16px; }
   .attr-header {
     padding: 14px 18px; background: linear-gradient(180deg, #fafbfc 0%, #f6f8fa 100%);
     border-bottom: 1px solid #d0d7de; display: flex; align-items: center;
@@ -162,37 +167,69 @@
   .attr-verdict.bad  { border-left-color: #cf222e; background: #fff8f8; }
   .attr-verdict strong { color: #0d1117; }
 
-  .attr-dims {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  /* .attr-dims grid + .dim cards — long calling-app / version names MUST truncate,
+     never wrap or bleed out. Two flexbox traps to be aware of (v8 regression):
+       1. text-overflow:ellipsis is silently IGNORED on display:inline elements.
+          The name <span> must be display:block (or inline-block) for ellipsis.
+       2. Flex children won't shrink below their content size unless min-width:0
+          is set explicitly on the child AND every flex ancestor.
+     Both fixes are baked into the rules below. Authors who hand-write .dim-row
+     markup may use either classed (.dim-name + .dim-pct) or unclassed (<span>
+     + <span>) — both are covered. */
+  .attr-dims { min-width: 0; display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 12px;
   }
   .dim {
     background: #fafbfc; border: 1px solid #eaeef2; border-radius: 8px;
     padding: 10px 12px;
+    min-width: 0; overflow: hidden;
   }
   .dim-label {
     font-size: 10px; font-weight: 700; text-transform: uppercase;
     color: #656d76; letter-spacing: 0.4px; margin-bottom: 6px;
   }
   .dim-row {
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex; align-items: center;
+    flex-wrap: nowrap;
     gap: 8px; padding: 3px 0; font-size: 12px;
+    min-width: 0; width: 100%;
   }
-  .dim-row .dim-name {
-    font-family: "SF Mono", Consolas, monospace; font-size: 11.5px;
-    color: #0d1117; flex: 1; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .dim-row .dim-pct {
-    font-variant-numeric: tabular-nums; color: #656d76; font-size: 11px;
-    min-width: 38px; text-align: right;
-  }
-  .dim-row.dominant .dim-name { font-weight: 700; }
-  .dim-row.dominant .dim-pct { color: #cf222e; font-weight: 700; }
-  .dim-bar-track {
+  /* Bar-track fixed width — must not flex */
+  .dim-row > .dim-bar-track {
+    flex: 0 0 56px; width: 56px; min-width: 56px;
     height: 4px; background: #eaeef2; border-radius: 2px;
-    margin-top: 2px; overflow: hidden;
+    margin-top: 0; overflow: hidden;
   }
+  /* Name column — classed (.dim-name) OR first unclassed <span>.
+     KEY: display:block + flex:1 1 0 + min-width:0 to make ellipsis engage. */
+  .dim-row .dim-name,
+  .dim-row > span:first-of-type {
+    display: block;
+    flex: 1 1 0; min-width: 0; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: "SF Mono", Consolas, monospace; font-size: 11.5px; color: #0d1117;
+  }
+  /* Percent column — classed (.dim-pct) OR last unclassed <span> */
+  .dim-row .dim-pct,
+  .dim-row > span:last-of-type {
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums; color: #656d76; font-size: 11px;
+    min-width: 38px; text-align: right; white-space: nowrap;
+  }
+  /* Single-span placeholder rows (e.g. "Not sliced — …") */
+  .dim-row > span:only-child {
+    display: block; flex: 1 1 0; min-width: 0; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* Dominant row styling — works whether .dominant is on the row OR derived
+     from the bar-fill class (the body-generated markup only marks the fill). */
+  .dim-row.dominant .dim-name,
+  .dim-row.dominant > span:first-of-type,
+  .dim-row:has(> .dim-bar-track > .dim-bar-fill.dominant) > span:first-of-type { font-weight: 700; }
+  .dim-row.dominant .dim-pct,
+  .dim-row.dominant > span:last-of-type,
+  .dim-row:has(> .dim-bar-track > .dim-bar-fill.dominant) > span:last-of-type { color: #cf222e; font-weight: 700; }
   .dim-bar-fill { height: 100%; background: #0969da; border-radius: 2px; }
   .dim-bar-fill.dominant { background: #cf222e; }
   .dim-bar-fill.split    { background: #9a6700; }
