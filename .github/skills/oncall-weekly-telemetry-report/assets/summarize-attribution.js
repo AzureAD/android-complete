@@ -86,7 +86,17 @@ function delta(curr, prior) {
 function loadSliceFile({ label, file }) {
   const d = JSON.parse(fs.readFileSync(file, 'utf8'));
   const rows = d.results.items;
-  const schema = rows[0];
+  const schemaRaw = rows[0];
+  // Support both schema forms: object (MCP) and array (assets/scripts/run-kql.ps1).
+  let schema;
+  if (Array.isArray(schemaRaw)) {
+    schema = {};
+    for (let i = 0; i < schemaRaw.length; i++) schema[String(schemaRaw[i])] = 'string';
+  } else if (schemaRaw && typeof schemaRaw === 'object') {
+    schema = schemaRaw;
+  } else {
+    throw new Error(`${file}: first row of results.items must be the schema (column-name array or {col: type} object). Got: ${JSON.stringify(schemaRaw)}`);
+  }
   const cols = Object.keys(schema);
   const idxCode = cols.indexOf(keyCol);
   let idxWeek = cols.indexOf('wk'); if (idxWeek < 0) idxWeek = cols.indexOf('week');
@@ -95,9 +105,16 @@ function loadSliceFile({ label, file }) {
   if (idxCode < 0 || idxWeek < 0 || idxDevs < 0) {
     throw new Error(`${file}: schema must include ${keyCol}, wk|week, devs|countDevices. Got [${cols.join(', ')}]`);
   }
-  const idxDim = cols.findIndex((c, i) =>
+  // Find the dim column. When schema was provided as an array (run-kql.ps1) we
+  // don't have type info, so fall back to "any remaining column" (typically the
+  // last one in the SELECT).
+  let idxDim = cols.findIndex((c, i) =>
     i !== idxCode && i !== idxWeek && i !== idxDevs && i !== idxErrs && schema[c] === 'string');
-  if (idxDim < 0) throw new Error(`${file}: no string dimension column found`);
+  if (idxDim < 0) {
+    idxDim = cols.findIndex((c, i) =>
+      i !== idxCode && i !== idxWeek && i !== idxDevs && i !== idxErrs);
+  }
+  if (idxDim < 0) throw new Error(`${file}: no dimension column found`);
 
   const map = {};
   for (const r of rows.slice(1)) {
@@ -115,7 +132,20 @@ function loadSliceFile({ label, file }) {
 function loadUnion(file) {
   const d = JSON.parse(fs.readFileSync(file, 'utf8'));
   const rows = d.results.items;
-  const schema = rows[0];
+  const schemaRaw = rows[0];
+  // Two schema shapes are supported:
+  //   (a) Object form (MCP tool): { dim: 0, wk: 1, ... } — keys are column names
+  //   (b) Array form  (REST helper assets/scripts/run-kql.ps1): ['dim', 'wk', ...]
+  // Detect and normalize to an object map { colName -> index }.
+  let schema;
+  if (Array.isArray(schemaRaw)) {
+    schema = {};
+    for (let i = 0; i < schemaRaw.length; i++) schema[String(schemaRaw[i])] = i;
+  } else if (schemaRaw && typeof schemaRaw === 'object') {
+    schema = schemaRaw;
+  } else {
+    throw new Error(`Union file ${file}: first row of results.items must be the schema (column-name array or {col: index} object). Got: ${JSON.stringify(schemaRaw)}`);
+  }
   const cols = Object.keys(schema);
   const idx = name => cols.indexOf(name);
   const idxDim  = idx('dim');

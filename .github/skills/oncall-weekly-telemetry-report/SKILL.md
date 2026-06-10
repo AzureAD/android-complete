@@ -21,11 +21,14 @@ Reusable helpers in [`assets/`](assets/):
 | [`code-attribution-template.md`](assets/code-attribution-template.md) | Per-card checklist for the deep code-attribution block (Originator / Top throw site / Wrapper / Caller hot-spots / Underlying cause / Top error_messages / Likely PRs / Next step) |
 | [`queries/`](assets/queries/) | Canonical KQL templates, one file per query — see [`queries/README.md`](assets/queries/README.md). Highlights: [`attr-union-by-dim.kql`](assets/queries/attr-union-by-dim.kql) (NEW — all 7 dims in one round-trip), [`error-message-and-location.kql`](assets/queries/error-message-and-location.kql) (now accepts BOTH `<CODES_LIST>` and `<TYPES_LIST>` in one call) |
 | [`templates/`](assets/templates/) | Copy-paste HTML snippets (`spike-card.html`, `traffic-attr-card.html`, `sparkline-footer.html`) |
-| [`bucket-trends.js`](assets/bucket-trends.js) | Bucket all error codes into 60-day regression / spike / improvement / flat. Run with `--metric=devs` AND `--metric=reqs`. Pass `--end=YYYY-MM-DD` (Sunday after the reporting week, exclusive) to drop the partial in-progress bucket. |
+| [`bucket-trends.js`](assets/bucket-trends.js) | Bucket all error codes into 60-day regression / spike / improvement / flat. Run with `--metric=devs` AND `--metric=reqs`. Pass `--end=YYYY-MM-DD` (Sunday after the reporting week, exclusive) to drop the partial in-progress bucket. **`--summary` suppresses the verbose header; `--json=<path>` emits a structured sidecar for programmatic consumption.** |
 | [`agg.js`](assets/agg.js) | Per-error per-dim top-N rollup with WoW deltas. Workhorse for filling spike-attribution dim blocks. |
-| [`summarize-attribution.js`](assets/summarize-attribution.js) | Roll up 7-dim attribution slices for spike-attribution cards. Supports BOTH `--union <file.json>` (preferred for 2-week WoW; pairs with `attr-union-by-dim.kql`) AND legacy `--label=<dim> file.json` per-dim mode. |
-| [`find-suspect-prs.ps1`](assets/find-suspect-prs.ps1) | Parallel `git log -S` + `--grep` across broker/ + common/ for a class/method symbol, with PR numbers + URLs. Run after the Originator pre-check identifies the throw-site class. |
-| [`validate-report.ps1`](assets/validate-report.ps1) | Pre-publish validator. Catches stale tokens, devs/reqs leaks, mojibake (U+FFFD), and unbalanced `<div>` depth in Section 2 (the nested-callout bug). Run as part of Step 7. |
+| [`summarize-attribution.js`](assets/summarize-attribution.js) | Roll up 7-dim attribution slices for spike-attribution cards. Supports BOTH `--union <file.json>` (preferred for 2-week WoW; pairs with `attr-union-by-dim.kql`) AND legacy `--label=<dim> file.json` per-dim mode. **Auto-detects the array-form schema produced by `assets/scripts/run-kql.ps1` — no schema-transformer step needed.** |
+| [`find-suspect-prs.ps1`](assets/find-suspect-prs.ps1) | Parallel `git log -S` + `--grep` across broker/ + common/ for a class/method symbol, with PR numbers + URLs. Run *only after* the Originator pre-check has identified a specific throw-site class — the unscoped 4-week PR window is small enough (<30 PRs) to scan with plain `git log` first. |
+| [`validate-report.ps1`](assets/validate-report.ps1) | Pre-publish validator. Catches stale tokens, devs/reqs leaks, mojibake (U+FFFD), unbalanced `<div>` depth in Section 2 (the nested-callout bug), KPI/trend sparkline coverage, code-attribution depth, layout-guard CSS presence, and suspicious low-peak fabricated `data-trend` arrays. Run as part of Step 7. |
+| [`scripts/run-kql.ps1`](assets/scripts/run-kql.ps1) | **Direct-REST Kusto helper — drop-in fallback for the Azure Kusto MCP server when the MCP times out** (frequent on per-error-code queries). Acquires a token via `az`, POSTs to `/v2/rest/query`, writes a JSON file the JS helpers can consume directly. |
+| [`scripts/bootstrap-report.ps1`](assets/scripts/bootstrap-report.ps1) | Bootstrap a new week's report from the canonical template. Auto-computes the reporting Sunday, creates `_data/<sunday>/`, prunes `_data` folders older than 60 days, and detects "unfilled template stub" vs "real prior report" collisions using a multi-marker fingerprint (title + meta date + first KPI value + size ratio). |
+| [`scripts/visual-smoke.ps1`](assets/scripts/visual-smoke.ps1) | Optional Playwright-based layout smoke test. Renders the report at 1400 px viewport, captures a full-page screenshot under `~/android-oce-reports/_visual/`, and runs DOM-based overflow + adjacent-card-gap detection. Catches the rendered-layout bugs (text bleed, cards touching) that pure HTML/CSS validation can't see. |
 
 ---
 
@@ -80,32 +83,24 @@ If any of these are unstated, ask once, then proceed.
 
 ### Step 1 — Bootstrap the new report file from the template
 
-This skill ships with a canonical template at [`assets/report-template.html`](assets/report-template.html) (a real prior week's report kept as the reference layout). **Always start from this template** — never assume a prior week's report exists on the file system.
+This skill ships with a canonical template at [`assets/report-template.html`](assets/report-template.html) (a real prior week's report kept as the reference layout). **Use [`assets/scripts/bootstrap-report.ps1`](assets/scripts/bootstrap-report.ps1)** to handle all the boilerplate (Sunday-date computation, `_data/<sunday>/` directory, retention-pruning, collision detection):
 
 ```pwsh
-# Reports live OUTSIDE the workspace, in the user's home folder, so they never
-# accidentally get committed and don't pollute the repo root.
-$reportDir = Join-Path $env:USERPROFILE 'android-oce-reports'
-New-Item -ItemType Directory -Force $reportDir | Out-Null
-
-# Filename uses the Sunday startofweek bucket of the reporting week (matches the
-# Kusto bucket label used throughout the report). For "week of May 3 -> May 9, 2026"
-# this evaluates to 2026-05-03.
-$reportingSunday = '2026-05-03'   # <-- replace with the confirmed reporting-week Sunday
-$next = Join-Path $reportDir "oncall-wow-report-$reportingSunday.html"
-
-if (Test-Path $next) {
-  # Filename collision rule (per Hard Rules): do NOT silently overwrite. Open
-  # the existing report, identify its top-3 findings, and explicitly state in
-  # chat what changed in the new data before regenerating.
-  Write-Warning "$next already exists. Read it first, list its top-3 findings, and confirm a delta exists before regenerating."
-}
-
-Copy-Item c:\Users\shjameel\Repos\android-complete\.github\skills\oncall-weekly-telemetry-report\assets\report-template.html $next -Force
-Write-Host "Bootstrapped $next from skill template."
+.\.github\skills\oncall-weekly-telemetry-report\assets\scripts\bootstrap-report.ps1
+# Optional: explicit reporting Sunday + force overwrite
+# .\bootstrap-report.ps1 -ReportingSunday 2026-05-31 -Force
 ```
 
-Edit `$next` in place — the template ships as a real prior-week report (not a tokenized skeleton). **Walk top-to-bottom and replace every prior-week date / KPI value / table row / verdict / PR citation with current-week data.** The CSS, sparkline JS, section ordering, and attribution-card markup are canonical — do not redesign them. See [`assets/template-readme.md`](assets/template-readme.md) for the full guide on what to change vs leave alone, the sparkline color palette, and the CSS class reference.
+What it does:
+* Computes the reporting-Sunday from the system clock (most recent complete Sun-Sat week).
+* Creates `~/android-oce-reports/oncall-wow-report-<sunday>.html` from the canonical template.
+* Creates `~/android-oce-reports/_data/<sunday>/` for raw KQL JSON payloads.
+* Prunes `_data/<old-sunday>/` folders older than 60 days so the cache doesn't accumulate.
+* **Collision detection (the v8-hardened version):** uses a multi-marker fingerprint (title + meta-line dates + first-KPI value + size ratio) to distinguish an "unfilled template stub" (silently re-bootstrap) from a "real populated report" (HARD HALT, exit 2, require `-Force` to overwrite). The earlier single-marker (title only) version misclassified populated reports as stubs and overwrote real work.
+
+Edit the bootstrapped file in place — the template ships as a real prior-week report (not a tokenized skeleton). **Walk top-to-bottom and replace every prior-week date / KPI value / table row / verdict / PR citation with current-week data.** The CSS, sparkline JS, section ordering, and attribution-card markup are canonical — do not redesign them. See [`assets/template-readme.md`](assets/template-readme.md) for the full guide on what to change vs leave alone, the sparkline color palette, the CSS class reference, and the two v8 layout traps.
+
+> **⚠️ UTF-8 trap — DO NOT use PowerShell `@'...'@` heredocs to compose HTML content containing emojis, em-dashes, arrows, or middle dots.** PowerShell silently strips multi-byte UTF-8 characters when piping heredocs to `Set-Content` / `Out-File`. Use Node.js (`fs.writeFileSync`), `[IO.File]::WriteAllText($path, $text, [System.Text.UTF8Encoding]::new($false))`, or explicit Unicode-pair literals (`[char]0xD83D + [char]0xDCCA` for 📊) instead. This trap cost ~30 min in v8 and required a full emoji-restoration pass — every callout icon, every section header emoji, every arrow link had to be re-injected. The validator's `U+FFFD` check catches the worst case (mojibake replacement char) but cannot detect characters that were silently stripped to nothing.
 
 Mark any unfinished card or table cell with the literal sentinel `EXAMPLE CONTENT BELOW` inside an HTML comment — the final-pass validator (Step 7) greps for it.
 
@@ -118,6 +113,20 @@ Use the Kusto MCP tool against:
 - **Database:** `ad-accounts-android-otel`
 
 **Always prefer the canonical `materialized_view('XxxMetrics' or 'XxxUpdated')` variants** — these are what the production dashboard uses, are pre-aggregated and HLL-bucketed, and avoid the 240 s MCP timeout that plain `android_spans` queries hit. Full schema, gotchas, and query templates: [`assets/kusto-cheatsheet.md`](assets/kusto-cheatsheet.md).
+
+> **Fallback when the Kusto MCP times out:** use [`assets/scripts/run-kql.ps1`](assets/scripts/run-kql.ps1). It acquires a token via `az account get-access-token`, POSTs directly to `/v2/rest/query`, and writes the result as a JSON file the JS helpers (`bucket-trends.js`, `summarize-attribution.js`) can consume directly. The skill's MCP-vs-REST switch is roughly: try the MCP once; if it returns `McpError -32001 (timeout)`, switch to the REST helper for the rest of the run. Run multiple queries in parallel via PowerShell `Start-Job`:
+>
+> ```pwsh
+> $queries = @{ 'reliability.json' = $reliabilityKql; '60d-codes.json' = $codesKql; ... }
+> $jobs = @()
+> foreach ($f in $queries.Keys) {
+>   $q = $queries[$f]
+>   $jobs += Start-Job -ScriptBlock {
+>     param($Q, $O) & "$using:skillRoot\assets\scripts\run-kql.ps1" -Query $Q -Out $O
+>   } -ArgumentList $q, $f
+> }
+> $jobs | Wait-Job | Receive-Job; $jobs | Remove-Job
+> ```
 
 | Need | View |
 |------|------|
@@ -249,21 +258,28 @@ For every regression card, the Code Attribution block **must** populate the foll
 
 #### PR-grep workflow
 
-**Read the full PR window first, then reason — don't `--grep` blind.** The 4-week window across `broker/` and `common/` typically returns &lt;30 PRs total, small enough to read end-to-end. Targeted `--grep` matches will miss PRs whose titles don't mention the error string (most of them).
+**Read the full PR window first, then reason — don't `--grep` blind.** The 4-week window across `broker/` and `common/` typically returns &lt;30 PRs total, small enough to read end-to-end. Targeted `--grep` matches will miss PRs whose titles don't mention the error string (most of them). **The recommended order is:**
+
+1. **Run plain `git log` on both repos** for the 4-week window. Read the resulting list end-to-end before any greps.
+2. **Cross-reference titles + dates** against the Originator pre-check throw-site class.
+3. **Only when you have a specific symbol** to chase (e.g. the throw-site class identified in step 2), reach for `find-suspect-prs.ps1` to do the symbol-targeted parallel pickaxe + grep.
+
+The historical mistake (pre-v8) was to jump straight to `find-suspect-prs.ps1` without reading the window first, which silently dropped PRs whose titles didn't mention the symbol.
 
 ```pwsh
+# Step 1: read the full 4-week window
 cd c:\Users\shjameel\Repos\android-complete\broker
-git log --since='<windowStart>' --until='<windowEnd>' --pretty=format:'%h | %ai | %an | %s'
+git --no-pager log --since='<windowStart>' --until='<windowEnd>' --pretty=format:'%h | %ai | %an | %s' --no-merges
 
 cd ..\common
-git log --since='<windowStart>' --until='<windowEnd>' --pretty=format:'%h | %ai | %an | %s'
+git --no-pager log --since='<windowStart>' --until='<windowEnd>' --pretty=format:'%h | %ai | %an | %s' --no-merges
 ```
 
 For each candidate PR, **read the diff** to confirm it touches the throw site / wrapper class identified in the Originator pre-check. Don't cite a PR just because the title mentions a related concept.
 
-For focused follow-up by class/method name, use the helper:
-
 ```pwsh
+# Step 3 (optional): symbol-targeted focused follow-up. Use ONLY after step 1 gave
+# you a specific class/method name to chase from the Originator pre-check.
 # Searches both repos in parallel via `git log -S` (pickaxe on diff) AND `--grep` (subject).
 # Returns a unified table: repo | date | author | sha | PR# | URL | subject.
 .\.github\skills\oncall-weekly-telemetry-report\assets\find-suspect-prs.ps1 `
@@ -292,6 +308,8 @@ For errors with no broker code in the stack (Android system errors like `Code:-1
 Slice on **all 7 dimensions** for each spike. **Preferred for 2-week WoW attribution: one union query that covers all 7 dims for all regressions in a single round-trip** — see [`assets/queries/attr-union-by-dim.kql`](assets/queries/attr-union-by-dim.kql). Typical payload for 8 codes × 2 weeks × 7 dims is ~800 KB, well under the MCP limit. Pipe the result into `summarize-attribution.js --union <file.json>` (which prints per-dim top-N share + Δ devices + Δ requests for every code). Fall back to the per-dim form ([`attr-codes-by-dim.kql`](assets/queries/attr-codes-by-dim.kql)) only when (a) you need a wider time window, or (b) the union response exceeds payload size.
 
 For `error_type` cards, swap `error_code in (codes)` for `unified_error_type in (types)` and aggregate by the `MergeUiRequiredExceptions(error_type)` extension — otherwise everything else is identical.
+
+> **Low-volume fallback (extends Step 4's pre-check fallback to the 7-dim union):** when a code/type returns sparse dim rows in the 7-day reporting window — typical for sub-1k-device entries like `TimeoutCancellationException`, `JsonSyntaxException`, `kdfv2_key_derivation_error` — widen the union query to **14 days** (`<START>` = baseline-week Sunday − 7d) before declaring "broad — needs targeted slice". The added week of context usually surfaces enough rows to compute concentration percentages. If a code STILL has no concentration after 14 days, mark every dim cell as "not sliced — sub-week volume; file the bug first, slice on persistence" — do NOT fabricate "Broad" verdicts.
 
 | # | Dimension | Source | Cross-check |
 |---|-----------|--------|-------------|
@@ -445,8 +463,21 @@ The validator hard-fails on:
 5. A second callout opening before the previous one closes (nested-callout sanity check).
 6. **Chartless KPI grid** — if more than half the `.kpi` tiles lack a `data-spark` element (catches the v7 regression where the body was rebuilt without sparklines). Also warns when total chart count (sparks + trends + inline svgs) is &lt; 15.
 7. **Code-attribution depth** — each `.attr-card`'s "Code attribution" block must contain an `Originator` row (proxy for the full 8-field structure: Originator / Top throw site / Wrapper / Caller hot-spots / Underlying cause / Top error_messages / Likely PRs / Next step). Catches the v7-third-pass regression where cards shipped with a `pr-list`-only stub.
+8. **Attribution-card layout guards (v8)** — the CSS must define `.attr-card { margin-bottom: 16px }` AND `.dim-row` overflow rules (`text-overflow: ellipsis` + `min-width: 0`). Catches the "cards touching" and "text bleeding out of dim boxes" regressions from a stale `<head>` block.
+9. **Fabricated-sparkline heuristic (v8)** — warns when a `data-trend` array's peak value is < 100 (almost certainly hand-rolled rather than sourced from real data). See [`assets/queries/wow-table-sparkline-series.kql`](assets/queries/wow-table-sparkline-series.kql) for the canonical KQL that pulls real 8-week series for every code in the WoW tables.
 
 Then:
+- **Run the visual smoke test (recommended)** — catches rendered-layout bugs that pure HTML/CSS validation can't see:
+
+  ```pwsh
+  .\.github\skills\oncall-weekly-telemetry-report\assets\scripts\visual-smoke.ps1
+  # Opens the report at 1400px in headless Chromium via Playwright, captures a
+  # full-page screenshot to ~/android-oce-reports/_visual/, and runs DOM-based
+  # checks for:
+  #   - element overflow inside .dim / .attr-card (catches "text bleeding out")
+  #   - adjacent .attr-card pairs with gap < 8px (catches "cards touching")
+  # First run auto-installs Playwright + Chromium into %LOCALAPPDATA%\oce-skill-playwright
+  ```
 - Run `get_errors` on the HTML file (no errors expected — pure HTML/CSS).
 - Verify no stale phrases from prior weeks remain (`Select-String` for retracted hypotheses, prior week's PR numbers).
 - Verify every PR link in the new file is reachable (the file paths just before the link should match what `git log` returned).

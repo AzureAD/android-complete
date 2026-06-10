@@ -39,6 +39,13 @@ Pick by overlap with the prior week:
 - **In-place edit (default)** — when ≤3 attribution cards change AND the section structure is unchanged. Use `replace_string_in_file` with surrounding context per card / table row. Fast and low-risk.
 - **Head+body+footer rebuild (fallback)** — when ≥4 attribution cards change, or several callouts get re-categorized, or the regression set has near-zero overlap with the template. Trying to in-place edit at that scale invites the inception-style nested-`</div>` bugs the validator was written to catch.
 
+> **⚠️ UTF-8 trap in PowerShell composition.** When composing HTML body sections via `@'...'@` heredocs piped to `Set-Content` / `Out-File` (or even `Add-Content`), PowerShell silently strips multi-byte UTF-8 characters — emojis (📊 🚨 🔴 🟡), em-dashes (—), arrows (→), middle-dots (·). The file remains valid UTF-8; the characters just become empty strings. The validator's `U+FFFD` check catches mojibake but NOT silent strips. Two safe approaches:
+>
+> 1. **Use `[IO.File]::WriteAllText($path, $text, [System.Text.UTF8Encoding]::new($false))`** for the final write — this preserves Unicode literals from the script source.
+> 2. **Write a Node.js generator** (`gen-body.js`) that takes a JSON spec and emits the HTML body. Node handles UTF-8 natively. If creating the script becomes painful (the `create` tool occasionally fails on `file_text` in this codebase), fall back to approach 1 with explicit `[char]0xD83D + [char]0xDCCA` for 📊, `[char]0x2192` for →, etc.
+>
+> The cost when this trap fires: a full restoration pass against every emoji + em-dash + arrow in the report (~30 minutes in v8).
+
   Boundary lines in the canonical template (verify with `grep` before splitting — they drift as the template evolves):
 
   | Region | Lines (approx) | Last/first line content |
@@ -236,3 +243,28 @@ Used by both `.spark` (KPI tiles) and `.trend` (table cells):
 | `.stack` | Chip for a `file:line` throw-site reference. |
 | `.pr-card` / `.pr-conf` (`-high` / `-medium` / `-low` / `-none`) / `.pr-body` | PR citation with confidence pill. |
 | `.origin-tag` (`.origin-broker` / `.origin-android` / `.origin-thirdparty` / `.origin-env`) | Colored chips for the Originator field. |
+
+### Section 6/7 WoW table row pills
+
+Status pills in the `error_codes` and `error_types` WoW tables. The 5-color
+palette is meaningful — pick the one that matches the row's state:
+
+| Class | Color | Emoji | When to use |
+|---|---|---|---|
+| `.pill-bad` | red (#ffeef0 bg / #cf222e text) | 🔴 | Row crossed regression threshold this week — `WoW`, `NEW`, `spike`, or `retry storm` modifier. |
+| `.pill-watch` | amber (#fff8c5 bg / #9a6700 text) | 🟡 | Row is flat WoW but rising on the 60d window (use the `60d↑` modifier). |
+| `.pill-good` | green (#dafbe1 bg / #1a7f37 text) | 🟢 | Row is improving — recovery, `improving`, `60d↓`, or `requests↓` modifier. |
+| `.pill-flat` | grey (#f0f3f6 bg / #656d76 text) | ⚪ | Row is within ±10% on both 60d and WoW; explicitly stable. |
+| `.pill-info` | blue (#ddf4ff bg / #0550ae text) | ℹ️ | Informational rows (e.g. policy-driven, fleet-growth-driven). |
+
+Render pattern:
+```html
+<span class="pill pill-bad">🔴 WoW</span>
+<span class="pill pill-watch">🟡 60d↑</span>
+<span class="pill pill-good">🟢 improving</span>
+```
+
+If your table has zero `.pill-bad` rows the week was unusually quiet —
+double-check the WoW-movers and 60d bucketing passes ran. If every row is
+`.pill-bad` you've mis-categorized.
+

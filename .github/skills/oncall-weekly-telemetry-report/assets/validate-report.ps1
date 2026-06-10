@@ -232,8 +232,9 @@ if ($startIdx -ge 0 -and $endIdx -gt $startIdx) {
 #     copy/paste of an older head could regress.)
 $hasAttrCard = ([regex]::Matches($content, '<div class="attr-card')).Count -gt 0
 if ($hasAttrCard) {
-    $cssHasCardMargin = $content -match '\.attr-card\s*\{[^}]*margin-bottom\s*:\s*16px' `
-                     -or $content -match '\.attr-card\s*\+\s*\.attr-card\s*\{[^}]*margin-top'
+    # Use single-line regex (?s) flag so [^}]* can span newlines — .attr-card { ... } is multi-line.
+    $cssHasCardMargin = $content -match '(?s)\.attr-card\s*\{[^}]*margin-bottom\s*:\s*16px' `
+                     -or $content -match '(?s)\.attr-card\s*\+\s*\.attr-card\s*\{[^}]*margin-top'
     if (-not $cssHasCardMargin) {
         Add-Fail "Report has .attr-card elements but the CSS is missing the cards-touching guard (.attr-card { margin-bottom:16px } and/or .attr-card + .attr-card { margin-top:16px }). The v8 head rebuild dropped this — re-extract <head> from the current assets/report-template.html."
     } else {
@@ -248,10 +249,10 @@ if ($hasAttrCard) {
 #     with min-width:0. We can't measure actual rendering, but we CAN assert
 #     the CSS rules exist verbatim.
 if ($hasAttrCard) {
-    $cssHasEllipsis = $content -match '\.dim-row\s*>\s*span:first-of-type[^}]*text-overflow\s*:\s*ellipsis' `
-                   -or $content -match '\.dim-row\s+\.dim-name[^}]*text-overflow\s*:\s*ellipsis'
-    $cssHasMinWidth = $content -match '\.dim\s*\{[^}]*min-width\s*:\s*0' `
-                   -or $content -match '\.dim-row\s*\{[^}]*min-width\s*:\s*0'
+    $cssHasEllipsis = $content -match '(?s)\.dim-row\s*>\s*span:first-of-type[^}]*text-overflow\s*:\s*ellipsis' `
+                   -or $content -match '(?s)\.dim-row\s+\.dim-name[^}]*text-overflow\s*:\s*ellipsis'
+    $cssHasMinWidth = $content -match '(?s)\.dim\s*\{[^}]*min-width\s*:\s*0' `
+                   -or $content -match '(?s)\.dim-row\s*\{[^}]*min-width\s*:\s*0'
     if (-not $cssHasEllipsis) {
         Add-Fail "CSS is missing the .dim-row name-overflow guard (text-overflow:ellipsis on .dim-name and/or .dim-row > span:first-of-type). Long calling-app / version names will bleed out of the dim cards. Re-extract <head> from the current assets/report-template.html."
     } elseif (-not $cssHasMinWidth) {
@@ -259,6 +260,39 @@ if ($hasAttrCard) {
     } else {
         Pass "Dim-row name-overflow guard CSS present (ellipsis + min-width:0)"
     }
+}
+
+# ---- 10. Fabricated-sparkline heuristic (v8 regression — hand-rolled data-trend arrays) ----
+# Past failure mode: when 60d bucketer dropped a sub-floor code, the report author
+# fabricated a "roughly monotonic" 8-week series inline in the WoW table HTML.
+# Cannot 100% detect fabricated data, but we can flag the telltale fingerprints:
+#   - All values < 1000 (the bucketer's peak-floor is 10000; real data above floor)
+#   - Suspiciously round / arithmetic-progression numbers (e.g. [388,401,394,425,415,432,414,455]
+#     where consecutive deltas are all ~10-30)
+# Authors should source these from assets/queries/wow-table-sparkline-series.kql
+# instead and validate against the pulled JSON.
+$trendMatches = [regex]::Matches($content, "data-trend=['""]?\[([0-9.,e\s+\-]+)\]")
+$suspectCount = 0
+$suspectFirst = $null
+foreach ($m in $trendMatches) {
+    $arrStr = $m.Groups[1].Value
+    $vals = $arrStr.Split(',') | ForEach-Object { try { [double]$_.Trim() } catch { 0 } }
+    if ($vals.Count -lt 6) { continue }
+    # Filter 1: trend with all values < 100 is suspicious (real codes don't sit at 30-50 devices/wk for 8 weeks)
+    $maxVal = ($vals | Measure-Object -Maximum).Maximum
+    if ($maxVal -lt 100) {
+        $suspectCount++
+        if (-not $suspectFirst) { $suspectFirst = $arrStr }
+        continue
+    }
+    # Filter 2: zero-padded series like [0,0,0,0,0,0,0,N] is fine (legitimate NEW); skip
+    # Filter 3: implausibly regular - if every consecutive delta has the same sign AND is < 5% of the value, that's a fake.
+    # Skip this; too easy to false-positive on genuinely monotonic real series like no_tokens_found.
+}
+if ($suspectCount -gt 0) {
+    Add-Warn "$suspectCount data-trend array(s) have peak value < 100 (suspicious — real WoW-table series usually peak >= 100 devices/wk). Likely fabricated. First: [$suspectFirst]. Source from assets/queries/wow-table-sparkline-series.kql instead."
+} else {
+    Pass "No suspicious low-peak data-trend arrays detected"
 }
 
 Write-Host ""

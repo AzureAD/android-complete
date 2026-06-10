@@ -217,10 +217,14 @@
     font-variant-numeric: tabular-nums; color: #656d76; font-size: 11px;
     min-width: 38px; text-align: right; white-space: nowrap;
   }
-  /* Single-span placeholder rows (e.g. "Not sliced — …") */
-  .dim-row > span:only-child {
+  /* Single-span placeholder rows (e.g. "Not sliced — …") — allow wrap, not truncate.
+     Long inline <code> blocks should wrap inside the cell rather than expanding
+     it horizontally. Truncation/ellipsis is for the name+bar+pct rows only. */
+  .dim-row > span:only-child,
+  .dim-row:not(:has(> .dim-bar-track)) > span {
     display: block; flex: 1 1 0; min-width: 0; max-width: 100%;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    overflow: hidden; text-overflow: clip; white-space: normal;
+    overflow-wrap: anywhere; word-break: break-word;
   }
   /* Dominant row styling — works whether .dominant is on the row OR derived
      from the bar-fill class (the body-generated markup only marks the fill). */

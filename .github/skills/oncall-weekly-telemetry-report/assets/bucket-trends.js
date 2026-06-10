@@ -36,6 +36,24 @@
  *   spike:       peak >= 3 x mean(other weeks) and peak > 1.5 x max(first,last)
  *   improvement: delta < -15%
  *   flat:        otherwise
+ *
+ * Output flags (NEW v8):
+ *   --summary               Suppress the verbose header (week list, partial-bucket
+ *                           detection). Print only the bucket counts + the per-bucket
+ *                           rows. Recommended for the standard skill workflow.
+ *   --json=<path>           Also write a structured JSON sidecar with the bucketed
+ *                           result for programmatic consumption (e.g. by a future
+ *                           sparkline-data-generator script). The sidecar shape is:
+ *                             {
+ *                               "metric": "devs" | "reqs",
+ *                               "weeks": [iso, iso, ...],
+ *                               "buckets": {
+ *                                 "regression": [ { code, first, last, peak, delta, series: [N,N,...] }, ... ],
+ *                                 "spike":       [...],
+ *                                 "improvement": [...],
+ *                                 "flat":        [...]
+ *                               }
+ *                             }
  */
 const fs = require('fs');
 
@@ -44,6 +62,8 @@ const file = args.find(a => !a.startsWith('--'));
 const startArg = (args.find(a => a.startsWith('--start=')) || '').split('=')[1];
 const endArg   = (args.find(a => a.startsWith('--end='))   || '').split('=')[1];
 const metric = ((args.find(a => a.startsWith('--metric=')) || '').split('=')[1] || 'devs').toLowerCase();
+const summary = args.includes('--summary');
+const jsonArg = (args.find(a => a.startsWith('--json=')) || '').split('=')[1];
 if (!['devs', 'reqs'].includes(metric)) {
   console.error(`--metric must be 'devs' or 'reqs', got '${metric}'`);
   process.exit(1);
@@ -51,20 +71,42 @@ if (!['devs', 'reqs'].includes(metric)) {
 const defaultFloor = metric === 'reqs' ? 100000 : 10000;
 const peakFloor = +((args.find(a => a.startsWith('--peak-floor=')) || '').split('=')[1] || defaultFloor);
 const metricIdx = metric === 'reqs' ? 0 : 1;  // [errs, devs] tuple
+const keyCol = ((args.find(a => a.startsWith('--key=')) || '').split('=')[1] || 'error_code');
 
 if (!file) {
-  console.error('Usage: node bucket-trends.js <mcp-output.json> [--start=YYYY-MM-DD] [--end=YYYY-MM-DD] [--peak-floor=N] [--metric=devs|reqs]');
+  console.error('Usage: node bucket-trends.js <mcp-output.json> [--start=YYYY-MM-DD] [--end=YYYY-MM-DD] [--peak-floor=N] [--metric=devs|reqs] [--key=error_code|unified_error_type] [--summary] [--json=path]');
   process.exit(1);
 }
 
 const d = JSON.parse(fs.readFileSync(file, 'utf8'));
-const items = d.results.items.slice(1); // first row is the schema
+// Schema row can be either an object {col: type} (MCP) or a string array [col, col, ...]
+// (from assets/scripts/run-kql.ps1). Detect and locate the key column index so we
+// don't assume positional order.
+const schemaRow = d.results.items[0];
+let colNames;
+if (Array.isArray(schemaRow)) {
+  colNames = schemaRow.map(String);
+} else if (schemaRow && typeof schemaRow === 'object') {
+  colNames = Object.keys(schemaRow);
+} else {
+  throw new Error('First row of results.items must be the schema row');
+}
+const iWeek = colNames.indexOf('week') >= 0 ? colNames.indexOf('week') : colNames.indexOf('wk');
+const iCode = colNames.indexOf(keyCol);
+const iErrs = colNames.indexOf('errs');
+const iDevs = colNames.indexOf('devs');
+if (iWeek < 0 || iCode < 0 || iErrs < 0 || iDevs < 0) {
+  throw new Error(`Schema must include week|wk, ${keyCol}, errs, devs. Got [${colNames.join(', ')}]`);
+}
+
+const items = d.results.items.slice(1);
 const series = {};
-for (const [w, code, errs, devs] of items) {
+for (const r of items) {
+  const w = r[iWeek], code = r[iCode], errs = r[iErrs], devs = r[iDevs];
   if (!series[code]) series[code] = {};
   series[code][w] = [errs, devs];
 }
-const weeks = [...new Set(items.map(r => r[0]))].sort();
+const weeks = [...new Set(items.map(r => r[iWeek]))].sort();
 const startISO = startArg ? `${startArg}T00:00:00Z` : weeks[1]; // drop partial start week by default
 const endISO   = endArg   ? `${endArg}T00:00:00Z`   : null;     // exclusive cutoff
 
@@ -96,9 +138,11 @@ if (!endArg && weeks.length >= 4) {
 }
 
 const keep = weeks.filter(w => w >= startISO && (endISO ? w < endISO : true) && w !== droppedPartial);
-console.log('All weeks:   ', weeks);
-console.log('Trend weeks: ', keep, `(${keep.length} complete)`);
-console.log('Metric:      ', metric, `(peak floor=${peakFloor.toLocaleString()})`);
+if (!summary) {
+  console.log('All weeks:   ', weeks);
+  console.log('Trend weeks: ', keep, `(${keep.length} complete)`);
+  console.log('Metric:      ', metric, `(peak floor=${peakFloor.toLocaleString()})`);
+}
 if (keep.length < 4) {
   console.warn(`[bucket-trends] WARN: only ${keep.length} kept weeks — trend buckets will be unstable. Need >= 4 for meaningful regression/improvement classification.`);
 }
@@ -122,6 +166,11 @@ for (const [code, wd] of Object.entries(series)) {
   buckets[cat].push({ code, first, last, peak, delta: +(delta * 100).toFixed(1), series: vals });
 }
 
+// Compact bucket-count line (always emitted, summary or verbose)
+const countLine = ['regression','spike','improvement','flat']
+  .map(k => `${k}=${buckets[k].length}`).join('  ');
+console.log(`\nBucket counts (metric=${metric}, key=${keyCol}, peak-floor=${peakFloor.toLocaleString()}):  ${countLine}`);
+
 for (const k of ['regression', 'improvement', 'spike', 'flat']) {
   console.log(`\n=== ${k.toUpperCase()} (${buckets[k].length}) ===`);
   buckets[k]
@@ -131,4 +180,23 @@ for (const k of ['regression', 'improvement', 'spike', 'flat']) {
         `  ${r.code.padEnd(60)} first=${String(r.first).padStart(11)} last=${String(r.last).padStart(11)} peak=${String(r.peak).padStart(11)} d=${r.delta >= 0 ? '+' : ''}${r.delta}% series=${JSON.stringify(r.series)}`
       );
     });
+}
+
+// Optional structured JSON sidecar
+if (jsonArg) {
+  const sidecar = {
+    metric,
+    key: keyCol,
+    peakFloor,
+    weeks: keep,
+    droppedPartial,
+    buckets: Object.fromEntries(
+      Object.entries(buckets).map(([k, arr]) => [
+        k,
+        arr.sort((a, b) => b.peak - a.peak)
+      ])
+    )
+  };
+  fs.writeFileSync(jsonArg, JSON.stringify(sidecar, null, 2));
+  console.log(`\nWrote JSON sidecar -> ${jsonArg}`);
 }
