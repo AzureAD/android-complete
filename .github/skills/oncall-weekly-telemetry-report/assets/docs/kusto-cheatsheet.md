@@ -202,7 +202,7 @@ materialized_view('BrokerAdoptionStatsUpdated')
 | [`summarize-attribution.js`](summarize-attribution.js) | Roll up 7-dim attribution slices per (error_code, week) — feeds the spike-attribution cards |
 | [`queries/`](queries/) | Canonical KQL templates, one per query — see [`queries/README.md`](queries/README.md) |
 | [`templates/`](templates/) | Copy-paste HTML snippets for cards / footer JS |
-| [`report-template.html`](report-template.html) | Canonical layout. Copy to `~/android-oce-reports/oncall-wow-report-<sunday>.html` and replace `{{TOKENS}}` only — never restructure CSS |
+| [`report-template.html`](../templates/report-template.html) | Canonical layout. Copy to `~/android-oce-reports/oncall-wow-report-<sunday>.html` and replace `{{TOKENS}}` only — never restructure CSS |
 
 ---
 

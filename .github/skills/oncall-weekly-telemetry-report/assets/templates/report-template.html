@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<!-- TEMPLATE - see assets/template-readme.md for usage. This file IS a real prior-week
+<!-- TEMPLATE - see assets/templates/template-readme.md for usage. This file IS a real prior-week
      report kept as a structural reference. To produce a new week's report, copy this
      file to ~/android-oce-reports/oncall-wow-report-<sunday>.html and edit IN PLACE,
      replacing prior-week dates, KPI values, table rows, attribution-card prose, and
      PR citations with the current week's data. The CSS in <head> is canonical - do
-     not restyle per week. Authors mark unfinished sections with the literal sentinel string the validator greps for (see assets/template-readme.md). -->
+     not restyle per week. Authors mark unfinished sections with the literal sentinel string the validator greps for (see assets/templates/template-readme.md). -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1123,7 +1123,7 @@ ErrorStats | where EventInfo_Time &gt; ago(14d) | where error_code in (codes)
 </div>
 
 <script>
-  // Sparkline color palette (mirror of assets/template-readme.md):
+  // Sparkline color palette (mirror of assets/templates/template-readme.md):
   //   #cf222e red    bad / regression       data-color on .trend in regression rows
   //   #1a7f37 green  good / improvement     reliability KPI sparks; recovery trends
   //   #0969da blue   neutral                traffic-volume KPI sparks

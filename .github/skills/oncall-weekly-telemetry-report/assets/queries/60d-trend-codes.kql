@@ -3,7 +3,7 @@
 //   <START>  = first Sunday of the 60d window (e.g. 2026-03-08)
 //   <END>    = end of the reporting week, EXCLUSIVE = next Sunday after the
 //              reporting week's Sunday (e.g. for a 2026-05-03 report, use 2026-05-10)
-// Output: feed to assets/bucket-trends.js with --start=<START> (no --end needed
+// Output: feed to assets/scripts/bucket-trends.js with --start=<START> (no --end needed
 // because we filter the partial bucket out at the source — preferred).
 materialized_view('ErrorStatsMetrics')
 | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))

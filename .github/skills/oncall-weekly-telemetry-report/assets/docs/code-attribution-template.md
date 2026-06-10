@@ -1,6 +1,6 @@
 # Code Attribution Card — Per-Spike Checklist
 
-Use this template for **every** spike-attribution card in the report. The HTML markup matches the `code-attr` / `pr-card` / `origin-tag` styles already in [`report-template.html`](report-template.html).
+Use this template for **every** spike-attribution card in the report. The HTML markup matches the `code-attr` / `pr-card` / `origin-tag` styles already in [`report-template.html`](../templates/report-template.html).
 
 A card without a populated **Originator + Top throw site + Likely PRs + Next step** is not acceptable. "Caller hot-spots", "Underlying cause", and "Top error_messages" are required for any error where the originator is *not* obvious from the error name alone (Android system errors, 3rd-party library wrappers, environmental).
 

@@ -6,7 +6,7 @@
 // exceptionFromAuthorizationResult, clientExceptionFromException}. Without
 // reading the throw site + the dominant error_message string, you cannot tell
 // whether the code originated in broker code or was bridged from an eSTS
-// AADSTS response. (See kusto-cheatsheet.md "AADSTS reference table".)
+// AADSTS response. (See ../docs/kusto-cheatsheet.md "AADSTS reference table".)
 //
 // THIS TEMPLATE COVERS BOTH error_code AND error_type IN ONE ROUND-TRIP.
 // Pass an empty list for the side you don't want to slice.

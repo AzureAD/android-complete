@@ -2,7 +2,7 @@
 
 These are raw HTML fragments designed to be copied verbatim into the working
 report file and then have `{{TOKENS}}` replaced. The CSS classes they reference
-are defined in [`../report-template.html`](../report-template.html) — do not
+are defined in [`report-template.html`](report-template.html) — do not
 restyle per week.
 
 | File | When to use |

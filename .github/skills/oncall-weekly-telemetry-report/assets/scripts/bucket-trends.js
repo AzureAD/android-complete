@@ -13,7 +13,7 @@
  *   | where week < datetime(<reporting_week_end_sunday>)   // drop partial end-week!
  *   | order by error_code asc, week asc
  *
- * (Use dcount_hll on countDevicesHll, NOT sum(countDevices) — see kusto-cheatsheet.md.)
+// (Use dcount_hll on countDevicesHll, NOT sum(countDevices) — see ../docs/kusto-cheatsheet.md.)
  *
  * Usage:
  *   node bucket-trends.js <mcp-output.json>

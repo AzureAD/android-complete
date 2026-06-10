@@ -53,9 +53,11 @@ $ErrorActionPreference = 'Stop'
 
 # Locate the skill folder + canonical template
 if (-not $SkillRoot) {
+  # This script lives at <skill>/assets/scripts/bootstrap-report.ps1, so go up 2 levels
+  # to reach <skill>/assets/. Templates live at <skill>/assets/templates/.
   $SkillRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 }
-$template = Join-Path $SkillRoot 'report-template.html'
+$template = Join-Path $SkillRoot 'templates\report-template.html'
 if (-not (Test-Path $template)) {
   throw "Canonical template not found at $template. Pass -SkillRoot if running outside the skill folder."
 }

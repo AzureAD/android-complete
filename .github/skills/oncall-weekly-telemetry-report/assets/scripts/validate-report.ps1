@@ -154,7 +154,7 @@ Write-Host ""
 Write-Host "Info: $sparkCount data-spark, $trendCount data-trend, $inlineSvg inline sparkline svg(s), $kpiTiles KPI tile(s)."
 
 if ($kpiTiles -ge 4 -and $sparkCount -lt [Math]::Ceiling($kpiTiles / 2)) {
-    Add-Fail "Only $sparkCount data-spark element(s) for $kpiTiles KPI tile(s) — over half the KPI tiles are chartless. The body was likely rebuilt without sparklines. See template-readme.md \"Sparklines are MANDATORY\"."
+    Add-Fail "Only $sparkCount data-spark element(s) for $kpiTiles KPI tile(s) — over half the KPI tiles are chartless. The body was likely rebuilt without sparklines. See assets/templates/template-readme.md \"Sparklines are MANDATORY\"."
 } else {
     Pass "KPI tiles have data-spark coverage ($sparkCount/$kpiTiles)"
 }
@@ -165,7 +165,7 @@ if ($totalCharts -lt 15) {
 }
 
 # ---- 7. Traffic-attribution sub-block color diversity (tri-state convention) ----
-# Per template-readme.md: each .attr-card's traffic sub-block should be green
+# Per assets/templates/template-readme.md: each .attr-card's traffic sub-block should be green
 # (ruled out), yellow (partly contributing), or red (primary driver). If every
 # sub-block is the same color, the author defaulted to one and didn't actually
 # classify per card (v7 second-pass regression: 10/10 yellow).
@@ -176,7 +176,7 @@ $taTotal  = $taGreen + $taYellow + $taRed
 if ($taTotal -ge 4) {
     $distinctColors = @($taGreen, $taYellow, $taRed | Where-Object { $_ -gt 0 }).Count
     if ($distinctColors -le 1) {
-        Add-Warn "All $taTotal traffic-attribution sub-blocks share one color (g=$taGreen y=$taYellow r=$taRed). The tri-state convention exists so color carries meaning \u2014 verify each card's verdict and recolor accordingly. See template-readme.md \"Traffic-attribution sub-block on each attribution card (tri-state)\"."
+        Add-Warn "All $taTotal traffic-attribution sub-blocks share one color (g=$taGreen y=$taYellow r=$taRed). The tri-state convention exists so color carries meaning \u2014 verify each card's verdict and recolor accordingly. See assets/templates/template-readme.md \"Traffic-attribution sub-block on each attribution card (tri-state)\"."
     } else {
         Pass "Traffic-attribution color mix: $taGreen green / $taYellow yellow / $taRed red"
     }
@@ -192,7 +192,7 @@ $codeAttrBlocks = ([regex]::Matches($content, '<div class="code-attr-title">Code
 $originLabels   = ([regex]::Matches($content, 'class="origin-label">Originator')).Count
 if ($codeAttrBlocks -ge 1) {
     if ($originLabels -lt $codeAttrBlocks) {
-        Add-Fail "$codeAttrBlocks Code-attribution block(s) but only $originLabels have an Originator row. Each card needs the full 8-field structure (Originator / Top throw site / Wrapper / Caller hot-spots / Underlying cause / Top error_messages / Likely PRs / Next step). See assets/code-attribution-template.md."
+        Add-Fail "$codeAttrBlocks Code-attribution block(s) but only $originLabels have an Originator row. Each card needs the full 8-field structure (Originator / Top throw site / Wrapper / Caller hot-spots / Underlying cause / Top error_messages / Likely PRs / Next step). See assets/docs/code-attribution-template.md."
     } else {
         Pass "All $codeAttrBlocks code-attribution block(s) have full 8-field structure"
     }
@@ -222,7 +222,7 @@ if ($startIdx -ge 0 -and $endIdx -gt $startIdx) {
 
 # ---- 9. Attribution-card layout sanity (v8 regression — cards touching + dim-row bleed) ----
 # Two layout bugs hit the v8 rebuild and forced manual CSS patches mid-publish.
-# Both have CSS fixes baked into report-template.html now, but the validator
+# Both have CSS fixes baked into assets/templates/report-template.html now, but the validator
 # catches the markup-side preconditions so a future hand-rolled body that
 # diverges from the template is flagged before publish.
 #
@@ -236,7 +236,7 @@ if ($hasAttrCard) {
     $cssHasCardMargin = $content -match '(?s)\.attr-card\s*\{[^}]*margin-bottom\s*:\s*16px' `
                      -or $content -match '(?s)\.attr-card\s*\+\s*\.attr-card\s*\{[^}]*margin-top'
     if (-not $cssHasCardMargin) {
-        Add-Fail "Report has .attr-card elements but the CSS is missing the cards-touching guard (.attr-card { margin-bottom:16px } and/or .attr-card + .attr-card { margin-top:16px }). The v8 head rebuild dropped this — re-extract <head> from the current assets/report-template.html."
+        Add-Fail "Report has .attr-card elements but the CSS is missing the cards-touching guard (.attr-card { margin-bottom:16px } and/or .attr-card + .attr-card { margin-top:16px }). The v8 head rebuild dropped this — re-extract <head> from the current assets/templates/report-template.html."
     } else {
         Pass "Attribution cards have spacing CSS"
     }
@@ -254,7 +254,7 @@ if ($hasAttrCard) {
     $cssHasMinWidth = $content -match '(?s)\.dim\s*\{[^}]*min-width\s*:\s*0' `
                    -or $content -match '(?s)\.dim-row\s*\{[^}]*min-width\s*:\s*0'
     if (-not $cssHasEllipsis) {
-        Add-Fail "CSS is missing the .dim-row name-overflow guard (text-overflow:ellipsis on .dim-name and/or .dim-row > span:first-of-type). Long calling-app / version names will bleed out of the dim cards. Re-extract <head> from the current assets/report-template.html."
+        Add-Fail "CSS is missing the .dim-row name-overflow guard (text-overflow:ellipsis on .dim-name and/or .dim-row > span:first-of-type). Long calling-app / version names will bleed out of the dim cards. Re-extract <head> from the current assets/templates/report-template.html."
     } elseif (-not $cssHasMinWidth) {
         Add-Warn "CSS has text-overflow rules but is missing min-width:0 on .dim / .dim-row. Without it, flex children won't shrink below content size and ellipsis won't trigger inside narrow dim cards."
     } else {

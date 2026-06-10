@@ -1,6 +1,6 @@
 # report-template.html — author guide
 
-`assets/report-template.html` is the canonical layout for the OCE weekly report.
+`assets/templates/report-template.html` is the canonical layout for the OCE weekly report.
 It is **a real prior week's report kept verbatim as a structural reference** —
 not a tokenized skeleton. The right mental model is:
 
@@ -29,7 +29,7 @@ not a tokenized skeleton. The right mental model is:
 - Section ordering and `id="..."` anchors — the table-of-contents links rely on these
 
 If the layout itself ever needs to change (new section, new card style), edit
-`assets/report-template.html` here in the skill folder and commit so future
+`assets/templates/report-template.html` here in the skill folder and commit so future
 weeks inherit the change.
 
 ## Editing strategy: in-place vs head+body+footer rebuild
