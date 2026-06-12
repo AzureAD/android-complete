@@ -132,6 +132,7 @@ For complex investigation tasks, use these skills (read the skill file for detai
 |-------|----------|----------|
 | **codebase-researcher** | `.github/skills/codebase-researcher/SKILL.md` | "where is X implemented", "how does Y work", "trace the flow of", data flow investigation |
 | **incident-investigator** | `.github/skills/incident-investigator/SKILL.md` | IcM incidents, customer-reported issues, authentication failures |
+| **vuln-triage-reporter** | `.github/skills/vuln-triage-reporter/SKILL.md` | `[MSRC]`/`[ITD]` vulnerability triage, classify/right-size severity, FireWatch findings, on-call security report |
 | **aria-alert-investigator** | `.github/skills/aria-alert-investigator/SKILL.md` | "Aria detected an incident", "investigate Aria alert", "health metric incident", telemetry threshold breach |
 | **kusto-analyst** | `.github/skills/kusto-analyst/SKILL.md` | "query Kusto", "analyze telemetry", "check android_spans", eSTS correlation, latency investigation |
 | **feature-planner** | `.github/skills/feature-planner/SKILL.md` | "plan this feature", "break this down into PBIs", "decompose this into tasks", feature decomposition |

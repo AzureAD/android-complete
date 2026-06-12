@@ -1,0 +1,59 @@
+# Glossary — Android Auth security terms
+
+Source of truth for the auto-glossary in `scripts/build_research_pages.py`. The generator scans each
+finding's text and renders **only the terms that appear on that page**. Format: `- **TERM** — definition`
+(em-dash separates term from definition). Keep definitions to one line, leadership-readable.
+
+- **MSRC** — Microsoft Security Response Center; files externally/internally reported security vulnerabilities as restricted IcMs.
+- **ITD** — Intelligent Threat Detection; IDSEC/Nightwatch security findings, often surfaced via FireWatch/S360.
+- **IcM** — Incident Management; Microsoft's incident tracking system.
+- **CWE** — Common Weakness Enumeration; a standard catalog of software weakness types (e.g. CWE-601 open redirect).
+- **CVSS** — Common Vulnerability Scoring System; a 0–10 severity score with vector metrics (attack vector, complexity, etc.).
+- **MSAL** — Microsoft Authentication Library; the client SDK apps use to acquire tokens.
+- **ADAL** — Azure Active Directory Authentication Library; the legacy predecessor to MSAL.
+- **Broker** — the on-device service (Authenticator / Company Portal) that brokers authentication for apps.
+- **PRT** — Primary Refresh Token; the device-bound token the broker holds that represents the user's authenticated session.
+- **SSO** — Single Sign-On; one authentication reused across multiple apps/resources.
+- **eSTS** — Evolved Security Token Service; Microsoft's token-issuing service (login.microsoftonline.com).
+- **IPC** — Inter-Process Communication; how Android apps/services talk across process boundaries.
+- **AIDL** — Android Interface Definition Language; defines the typed interface of a bound Android service.
+- **Binder** — the Android kernel IPC mechanism underlying services, ContentProviders, and intents.
+- **ContentProvider** — an Android component that exposes data/operations to other apps via `content://` URIs.
+- **BroadcastReceiver** — an Android component that receives broadcast Intents.
+- **PendingIntent** — a token wrapping an Intent that lets another app/process execute it later as the originating app.
+- **FLAG_IMMUTABLE** — a PendingIntent flag (Android 12+) preventing the receiver from altering the wrapped Intent's extras.
+- **FLAG_UPDATE_CURRENT** — a PendingIntent flag that overwrites an existing matching PendingIntent's extras.
+- **exported** — an Android manifest attribute; when true, a component can be invoked by other apps on the device.
+- **ACTION_VIEW** — a standard Android Intent action that opens a URI in whatever app handles it (browser, deep link, etc.).
+- **Intent injection** — coercing a trusted app to launch an attacker-controlled Intent.
+- **deep link** — a URI (custom scheme or https App Link) that opens a specific in-app destination.
+- **BROWSABLE** — an Intent-filter category marking a component reachable from web pages / other apps via a URI.
+- **WebView** — an embedded browser component; here it hosts the interactive sign-in page.
+- **Custom Tabs** — Chrome Custom Tabs; the system-browser-backed auth surface used instead of an embedded WebView.
+- **JavaScript bridge** — a native object exposed to WebView JS via `addJavascriptInterface`, callable from page scripts.
+- **WPJ** — Workplace Join; registering a device with Entra ID to obtain a device PRT.
+- **NGC** — Next Generation Credentials; the passwordless (phone-as-a-key) approval mechanism.
+- **TOTP** — Time-based One-Time Password; rotating 6-digit MFA codes derived from a shared seed.
+- **OATH** — the open standard behind TOTP/HOTP one-time-password generation.
+- **MFA** — Multi-Factor Authentication; requiring more than one proof of identity.
+- **JWE** — JSON Web Encryption; an encrypted JSON token/blob format.
+- **KEK** — Key Encryption Key; a key used to wrap (encrypt) another key.
+- **SSRF** — Server-Side Request Forgery; coercing an app to make a request to an attacker-chosen endpoint.
+- **CSRF** — Cross-Site Request Forgery; tricking a victim's client into making an unintended state-changing request.
+- **TOCTOU** — Time-Of-Check to Time-Of-Use; a race where state changes between validation and use.
+- **MITM** — Man-In-The-Middle; an attacker intercepting/altering network traffic.
+- **FCM** — Firebase Cloud Messaging; Google's push-notification transport (delivers approval prompts).
+- **confused deputy** — a privileged component tricked into misusing its authority on an attacker's behalf.
+- **allow-list** — an explicit list of permitted callers/hosts/packages; everything else is denied.
+- **flight** — a remotely-controlled feature flag (via ECS) gating whether code runs.
+- **ECS** — Experimentation & Configuration Service; Microsoft's remote feature-flag/config system.
+- **VC** — Verifiable Credentials; the Entra Verified ID digital-wallet credential model.
+- **Verified ID** — Microsoft's decentralized-identity wallet (issues/presents Verifiable Credentials).
+- **OpenID4VCI** — OpenID for Verifiable Credential Issuance; the protocol used to obtain a VC.
+- **DID** — Decentralized Identifier; a self-owned identifier whose document lists keys/domains.
+- **NTLM** — a Windows challenge/response authentication protocol (corporate credentials).
+- **LPE** — Local Privilege Elevation; gaining higher privileges from local (on-device) code.
+- **NSC** — Network Security Configuration; the Android XML controlling per-domain TLS trust/pinning.
+- **DA token** — Delegation/Device-Auth token; an MSA credential used to obtain resource tokens.
+- **B2C** — Azure AD B2C; customer identity tenants that can host custom HTML sign-in pages.
+- **CIAM** — Customer Identity & Access Management; the B2C-style external-identity scenario.
