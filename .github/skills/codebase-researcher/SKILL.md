@@ -18,9 +18,12 @@ This workspace contains multiple sub-repositories:
 | **Common** | Shared utilities + IPC logic | `common/common/src/main/java/com/microsoft/identity/common/` |
 | **ADAL** | Legacy auth library | `adal/adal/src/main/java/com/microsoft/aad/adal/` |
 | **OneAuth** | 1P apps library (external) | `oneauth/` |
+| **Authenticator** | Microsoft Authenticator app (MFA, Brooklyn, VerifiedID) | `authenticator/` |
 | **1ES-Pipelines** | Production CI/CD pipeline YAML | `1ES-Pipelines/production/`, `1ES-Pipelines/templates/`, `1ES-Pipelines/scripts/` |
 
 **⚠️ CRITICAL: Always search across ALL repositories.** Code is often duplicated or shared.
+
+> **🔀 Delegate Authenticator research to the Authenticator skill.** When the research target is inside the `authenticator/` project (the Microsoft Authenticator app — MFA, Brooklyn, VerifiedID/FaceCheck, push notifications, app-level UI), use the dedicated **`authenticator/.github/skills/codebase-researcher/SKILL.md`** skill instead of this one. That skill is tuned for the Authenticator codebase and searches it via the **Bluebird MCP** index (`mcp_bluebirdrepos2_` for MFA/Authenticator, `mcp_bluebirdrepos_` for VerifiedID/DID), which is faster and more complete than local search there. Use *this* root skill for the broker/MSAL/common/ADAL auth-library code paths.
 
 ## Authentication Flow
 
@@ -46,6 +49,8 @@ Clarify what to find:
 - Expected patterns (class names, function signatures)
 
 ### Step 2: Search Strategy (Multi-Repo)
+
+**First, route by target project.** If the target is in the `authenticator/` project, stop and switch to the Authenticator skill (see the delegation callout above) — it uses Bluebird MCP for that codebase. Otherwise, continue here for the broker/MSAL/common/ADAL auth libraries.
 
 Execute searches in this order, **always searching across all modules**:
 
@@ -133,18 +138,18 @@ When asked questions about **what data is returned**, **how data flows**, or **w
 1. **Find the Data Structure** (e.g., `BrokerResult`, `TokenResponse`)
    - Confirm the field exists in the data class
    - Check serialization annotations (`@SerializedName`)
-   
+
 2. **Find the Construction/Population Code** ⚠️ **CRITICAL - Don't skip this!**
    - Search for `Builder` or factory methods that create the object
    - Search for where the field is actually set (e.g., `.refreshToken(`)
    - Look in adapter/converter classes (e.g., `*ResultAdapter`, `*Converter`)
-   
+
 3. **Check for Conditional Logic** ⚠️ **CRITICAL - Don't skip this!**
    - Search for `if` statements around the field assignment
    - Look for account type checks (e.g., `MSA_MEGA_TENANT_ID`, `accountType`)
    - Look for protocol version checks
    - Look for flight/feature flag checks (`CommonFlightsManager`, `isFlightEnabled`)
-   
+
 4. **Trace the Complete Flow**
    - Follow from entry point → IPC → processing → response construction → IPC → return
    - Verify no filtering/scrubbing happens in any layer
@@ -173,6 +178,36 @@ When asked questions about **what data is returned**, **how data flows**, or **w
 ✅ **DO** search for the field name in assignment context (e.g., `.setField(`, `.field(`)
 ✅ **DO** look for `Adapter` or `Converter` classes in the flow
 ✅ **DO** check for conditional logic based on account type, protocol version, or flights
+
+## Scenario-Scoped Defect Surfaces
+
+When a code-path trace is produced for an incident investigation, the deliverable often includes a "defect surface" list — spots where a defect could plausibly cause the observed symptom. **Filter this list aggressively to the scenario.** A 10+ item list enumerating every conceivable failure mode in every cited file is noise; a 3–6 item list ranked by relevance to the *specific* scenario is signal.
+
+### Filter rules
+
+Keep a defect-surface entry only if **all** of these are true:
+
+1. **The branch is reachable in the scenario being investigated.** Drop entries that depend on flights/protocol versions/account types that don't match the customer's setup.
+2. **The failure mode produces the observed symptom.** Drop entries whose failure mode would produce a *different* symptom than what the IcM reports.
+3. **The entry cites a specific branch or call**, not just "this file is involved." If the description is "this layer does X — could fail," it belongs in the trace narrative, not the defect surface.
+
+### Anti-pattern (avoid)
+
+> 10. **Scope normalisation inconsistency between MSAL & broker** — `<some strategy class>`. If MSAL normalizes scopes differently than broker, cache mismatch could occur causing eSTS to reject.
+
+Problems: no evidence the customer's app is hitting this branch; "could occur" is generic speculation; the failure mode (eSTS rejection) doesn't match a "silent request never reached eSTS" symptom.
+
+### Good example
+
+> 1. **PRT lookup keyed by account + authority** — `<PRT controller>.<loadPrt method>` (cite the exact file:line from your local broker source). If the second-leg request supplies a different `authority` than the PRT was issued under (sovereign cloud, common-vs-tenanted), the lookup returns null and the silent path falls through to interactive — matching the IcM's missing-silent-redeem symptom exactly.
+
+Reasons it works: cites a specific branch; the failure mode (lookup returns null) directly produces the observed symptom; scenario-grounded language.
+
+> **Note on citations:** in the *delivered* report, cite the concrete `file:line` you verified in the broker source. Keep those private-repo paths in the investigation artifact, not in this shared skill.
+
+### Rule of thumb
+
+If you find yourself writing more than 6 defect-surface entries, you're probably enumerating possibilities rather than filtering them. Re-read the IcM, drop entries whose failure mode doesn't match the symptom, and re-rank.
 
 ### Flow Investigation Search Patterns
 
