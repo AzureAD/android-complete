@@ -1,13 +1,13 @@
 ---
 name: oncall-weekly-telemetry-report
-description: Generate the weekly Android Broker on-call (OCE) WoW + 60-day trend telemetry report as a polished self-contained HTML file. Use this skill for the weekly OCE rotation when asked to "produce the OCE report", "weekly on-call report", "WoW telemetry report", "weekly broker health report", or "generate this week's on-call summary". Pulls from `android_spans` materialized views, attributes regressions/improvements to PRs in `broker/` and `common/`, and writes to `oncall-wow-report-vN.html` at repo root.
+description: Generate the weekly Android Broker on-call (OCE) WoW + 60-day trend telemetry report as a polished self-contained HTML file. Use this skill for the weekly OCE rotation when asked to "produce the OCE report", "weekly on-call report", "WoW telemetry report", "weekly broker health report", or "generate this week's on-call summary". Pulls from `android_spans` materialized views, attributes regressions/improvements to PRs in `broker/` and `common/`, and writes to `$env:USERPROFILE\android-oce-reports\oncall-wow-report-YYYY-MM-DD.html` (outside the workspace so reports are never committed).
 ---
 
 # OCE Weekly Report
 
-Produce the weekly Android Broker on-call (OCE) telemetry report as a self-contained HTML file at `$env:USERPROFILE\android-oce-reports\oncall-wow-report-v{N+1}.html` (i.e. `~/android-oce-reports/`, outside the workspace so reports never accidentally get committed).
+Produce the weekly Android Broker on-call (OCE) telemetry report as a self-contained HTML file at `$env:USERPROFILE\android-oce-reports\oncall-wow-report-YYYY-MM-DD.html` (where `YYYY-MM-DD` is the reporting-week Sunday — see "Inputs to confirm" §4). Writes to the user's home folder, **outside the workspace**, so reports never accidentally get committed.
 
-The output mirrors the structure of the canonical template at [`assets/templates/report-template.html`](assets/templates/report-template.html) — copy it to `oncall-wow-report-v{N+1}.html` at repo root and edit in place. Do **not** redesign the layout each week.
+The output mirrors the structure of the canonical template at [`assets/templates/report-template.html`](assets/templates/report-template.html). The Step 1 bootstrap script copies the template into `~/android-oce-reports/oncall-wow-report-<sunday>.html` and you edit it in place from there. Do **not** redesign the layout each week.
 
 **Before writing any KQL, read [`assets/docs/kusto-cheatsheet.md`](assets/docs/kusto-cheatsheet.md).** It captures the canonical view names, helper functions, the HLL device-count gotcha, week-alignment rules, and ready-to-paste query templates — distilled from the production Android Broker Dashboard.
 
@@ -191,12 +191,12 @@ materialized_view('ErrorStatsMetrics')
 
 ```pwsh
 # Error codes — by devices, then by requests
-node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <codes.json> --start=2026-03-08 --end=2026-05-10
-node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <codes.json> --start=2026-03-08 --end=2026-05-10 --metric=reqs
+node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <codes.json> --start=2026-03-08 --end=2026-05-10
+node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <codes.json> --start=2026-03-08 --end=2026-05-10 --metric=reqs
 
 # Error types — by devices, then by requests (note --key)
-node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <types.json> --start=2026-03-08 --end=2026-05-10 --key=unified_error_type
-node .github\skills\oncall-weekly-telemetry-report\assets\bucket-trends.js <types.json> --start=2026-03-08 --end=2026-05-10 --key=unified_error_type --metric=reqs
+node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <types.json> --start=2026-03-08 --end=2026-05-10 --key=unified_error_type
+node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <types.json> --start=2026-03-08 --end=2026-05-10 --key=unified_error_type --metric=reqs
 ```
 
 `--end` is the Sunday AFTER the reporting week (exclusive). The script also auto-detects partial end-buckets and warns, but passing `--end` explicitly is safer.
@@ -282,7 +282,7 @@ For each candidate PR, **read the diff** to confirm it touches the throw site / 
 # you a specific class/method name to chase from the Originator pre-check.
 # Searches both repos in parallel via `git log -S` (pickaxe on diff) AND `--grep` (subject).
 # Returns a unified table: repo | date | author | sha | PR# | URL | subject.
-.\.github\skills\oncall-weekly-telemetry-report\assets\find-suspect-prs.ps1 `
+.\.github\skills\oncall-weekly-telemetry-report\assets\scripts\find-suspect-prs.ps1 `
   -Symbol 'ExceptionAdapter' -Since 2026-04-01 -Until 2026-05-09
 ```
 
@@ -344,7 +344,7 @@ Feed the union JSON output into the summarizer (one round-trip):
 
 ```pwsh
 # Union mode (preferred). attr-union.json comes from attr-union-by-dim.kql.
-node .github\skills\oncall-weekly-telemetry-report\assets\summarize-attribution.js `
+node .github\skills\oncall-weekly-telemetry-report\assets\scripts\summarize-attribution.js `
   --union attr-union.json --top=5
 # For type cards, add --key=unified_error_type
 ```
@@ -352,7 +352,7 @@ node .github\skills\oncall-weekly-telemetry-report\assets\summarize-attribution.
 Legacy per-dim mode (one JSON per dimension) is still supported for the rare wider-time-window case:
 
 ```pwsh
-node .github\skills\oncall-weekly-telemetry-report\assets\summarize-attribution.js `
+node .github\skills\oncall-weekly-telemetry-report\assets\scripts\summarize-attribution.js `
   --label=span span.json `
   --label=calling_app app.json `
   --label=active_broker ab.json `

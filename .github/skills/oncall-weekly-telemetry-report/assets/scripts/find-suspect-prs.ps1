@@ -26,7 +26,12 @@
     Inclusive end date. Defaults to today.
 
 .PARAMETER RepoRoot
-    Defaults to C:\Users\<you>\Repos\android-complete. Overrides via -RepoRoot.
+    Root folder containing `broker/` and `common/` subfolders. Defaults to the
+    git top-level of the current working directory (so running from any clone
+    of android-complete just works). If you keep your repos elsewhere, pass
+    -RepoRoot explicitly. The script will FAIL loudly if neither broker/ nor
+    common/ exists under the resolved root — silent no-match would hide
+    attribution candidates.
 
 .EXAMPLE
     .\find-suspect-prs.ps1 -Symbol ExceptionAdapter -Since 2026-04-01
@@ -44,8 +49,20 @@ param(
     [string]$GrepRegex,
     [string]$Since = (Get-Date).AddDays(-28).ToString('yyyy-MM-dd'),
     [string]$Until = (Get-Date).ToString('yyyy-MM-dd'),
-    [string]$RepoRoot = (Join-Path $env:USERPROFILE 'Repos\android-complete')
+    [string]$RepoRoot
 )
+
+# Resolve repo root: explicit -RepoRoot wins; otherwise discover via `git rev-parse --show-toplevel`
+# from the current directory; otherwise fall back to the legacy assumption with a warning.
+if (-not $RepoRoot) {
+    $gitRoot = (git rev-parse --show-toplevel 2>$null)
+    if ($gitRoot) {
+        $RepoRoot = $gitRoot.Trim()
+    } else {
+        $RepoRoot = (Join-Path $env:USERPROFILE 'Repos\android-complete')
+        Write-Warning "Not inside a git working tree. Falling back to legacy default: $RepoRoot. Pass -RepoRoot explicitly to silence this."
+    }
+}
 
 if (-not $GrepRegex) { $GrepRegex = [regex]::Escape($Symbol) }
 
@@ -54,9 +71,30 @@ $repos = @(
     @{ Name='common'; Path=(Join-Path $RepoRoot 'common'); UrlBase='https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/' }
 )
 
+# FAIL LOUDLY if neither subrepo exists under the resolved root. A silent
+# "No PRs match..." after a path miss is indistinguishable from a real no-match
+# result and can silently hide attribution candidates.
+$availableRepos = @($repos | Where-Object { Test-Path $_.Path })
+if ($availableRepos.Count -eq 0) {
+    Write-Error @"
+Neither broker/ nor common/ found under -RepoRoot $RepoRoot.
+
+Expected layout:
+  $RepoRoot\broker\   (clone of identity-authnz-teams/ad-accounts-for-android)
+  $RepoRoot\common\   (clone of AzureAD/microsoft-authentication-library-common-for-android)
+
+Pass -RepoRoot pointing at the parent of those two clones. The android-complete
+mono-repo at the repo root works because broker/ and common/ are submodules there.
+"@
+    exit 2
+}
+if ($availableRepos.Count -lt $repos.Count) {
+    $missing = $repos | Where-Object { -not (Test-Path $_.Path) } | ForEach-Object { $_.Name }
+    Write-Warning "Skipping $($missing -join ', ') — not found under $RepoRoot. Results will be incomplete."
+}
+
 $results = @()
-foreach ($r in $repos) {
-    if (-not (Test-Path $r.Path)) { Write-Warning "Repo path not found: $($r.Path)"; continue }
+foreach ($r in $availableRepos) {
     Push-Location $r.Path
     try {
         # Pickaxe: PRs whose diff added or removed the symbol
