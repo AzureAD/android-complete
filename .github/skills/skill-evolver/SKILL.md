@@ -14,6 +14,15 @@ Make skills and tools get better over time. The loop: **capture → analyze → 
 - **Validation**: reuse `.github/skills/skill-creator/scripts/quick_validate.py` after every edit.
 - **Changelog**: `.github/skill-evolution/evolution-log.md` records every applied change (for audit + rollback).
 
+## Non-intrusiveness & controls
+
+This system is designed to stay out of the way:
+
+- **Silent capture.** The hook only writes to the journal file. It never interrupts, never asks questions, and always lets the tool flow continue (returns `{continue:true}`). It records **only on detected failure**, so successful work produces no noise.
+- **No mid-task edits.** Skills are never auto-edited. Analysis and proposals happen only when you invoke a retrospective, and every behavior-affecting edit is gated on your approval.
+- **Proactive logging must not derail the user.** If you log a friction note proactively at the end of a friction-heavy task, do it in **one line, recorded silently** via the CLI — do NOT ask the user a question, pause their task, or expand scope to discuss it. They review the journal later.
+- **Off switch.** Set the environment variable `SKILL_EVOLUTION_DISABLE=1` to silence all capture (hook + CLI `record` become no-ops). Reviewing past data (`stats`, `list`) still works. Unset it to re-enable.
+
 ## 1. Capture
 
 Three capture paths feed the same journal:

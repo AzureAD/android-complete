@@ -34,6 +34,11 @@ try {
     emitAndExit();
 }
 
+// Global off switch — set SKILL_EVOLUTION_DISABLE=1 to silence all capture.
+if (process.env.SKILL_EVOLUTION_DISABLE) {
+    emitAndExit();
+}
+
 // Avoid re-entry loops
 if (hookInput.stop_hook_active) {
     emitAndExit();

@@ -66,6 +66,11 @@ var VALID_SEVERITY = ['low', 'medium', 'high'];
  * truncates verbose fields. Returns the stored event.
  */
 function recordEvent(evt) {
+    // Global off switch — when disabled, capture is a silent no-op.
+    // Read paths (stats/list) still work so past data stays reviewable.
+    if (process.env.SKILL_EVOLUTION_DISABLE) {
+        return null;
+    }
     ensureStore();
     evt = evt || {};
 
@@ -212,7 +217,8 @@ function runCli() {
             var json = rest[0];
             var evt = json ? JSON.parse(json) : {};
             evt.source = evt.source || 'cli';
-            console.log(JSON.stringify(recordEvent(evt)));
+            var rec = recordEvent(evt);
+            console.log(rec ? JSON.stringify(rec) : 'capture disabled (SKILL_EVOLUTION_DISABLE set) — not recorded');
         } else if (cmd === 'set-active') {
             setActive(rest[0] || 'unknown');
             console.log('active skill set to: ' + (rest[0] || 'unknown'));
