@@ -171,6 +171,56 @@ function computeStats() {
     };
 }
 
+// ---------------------------------------------------------------------------
+// Skill size budget (anti-bloat tripwire). Scans every SKILL.md and flags any
+// whose body or description is over budget, so the retrospective can propose
+// pruning / moving detail to references/ instead of letting skills grow forever.
+// ---------------------------------------------------------------------------
+var BODY_WARN = 400;   // SKILL.md body lines — start consolidating
+var BODY_OVER = 500;   // skill-creator's stated maximum
+var DESC_WARN = 900;   // description chars — getting close to the limit
+var DESC_MAX = 1024;   // hard frontmatter limit
+
+function computeSkillSizes() {
+    var skillsDir = path.join(__dirname, '..', 'skills');
+    var out = [];
+    if (!fs.existsSync(skillsDir)) return out;
+    var entries = fs.readdirSync(skillsDir);
+    for (var i = 0; i < entries.length; i++) {
+        var md = path.join(skillsDir, entries[i], 'SKILL.md');
+        if (!fs.existsSync(md)) continue;
+        var content = fs.readFileSync(md, 'utf-8');
+        var lineCount = content.split('\n').length;
+        var descMatch = content.match(/^description:\s*(.*)$/m);
+        var descLen = descMatch ? descMatch[1].length : 0;
+        var flags = [];
+        if (lineCount > BODY_OVER) flags.push('BODY_OVER');
+        else if (lineCount > BODY_WARN) flags.push('BODY_WARN');
+        if (descLen > DESC_MAX) flags.push('DESC_OVER');
+        else if (descLen > DESC_WARN) flags.push('DESC_WARN');
+        out.push({ skill: entries[i], lines: lineCount, descLen: descLen, flags: flags });
+    }
+    return out.sort(function (a, b) { return b.lines - a.lines; });
+}
+
+function skillSizesToMarkdown(sizes) {
+    var lines = ['# Skill Size Budget', '',
+        'Body budget: warn >' + BODY_WARN + ', over >' + BODY_OVER +
+        ' lines. Description: warn >' + DESC_WARN + ', max ' + DESC_MAX + ' chars.', '',
+        '| Skill | Lines | Desc chars | Flags |',
+        '|-------|-------|-----------|-------|'];
+    var flagged = 0;
+    sizes.forEach(function (s) {
+        if (s.flags.length) flagged++;
+        lines.push('| ' + s.skill + ' | ' + s.lines + ' | ' + s.descLen + ' | ' +
+            (s.flags.join(', ') || '—') + ' |');
+    });
+    lines.push('');
+    lines.push(flagged ? ('⚠️ ' + flagged + ' skill(s) over budget — consider pruning or moving detail to references/.')
+        : '✅ All skills within budget.');
+    return lines.join('\n');
+}
+
 function statsToMarkdown(s) {
     var lines = [];
     lines.push('# Friction Digest');
@@ -239,6 +289,10 @@ function runCli() {
             var s = computeStats();
             var fl = parseFlags(rest);
             console.log(fl.md ? statsToMarkdown(s) : JSON.stringify(s, null, 2));
+        } else if (cmd === 'skill-sizes') {
+            var sizes = computeSkillSizes();
+            var szf = parseFlags(rest);
+            console.log(szf.md ? skillSizesToMarkdown(sizes) : JSON.stringify(sizes, null, 2));
         } else if (cmd === 'path') {
             console.log(JSON.stringify({ storeDir: STORE_DIR, journal: JOURNAL_FILE, activeMarker: ACTIVE_FILE }, null, 2));
         } else if (cmd === 'clear') {
@@ -248,7 +302,7 @@ function runCli() {
             console.log('journal cleared (backup at ' + JOURNAL_FILE + '.bak)');
         } else {
             console.error('Unknown command: ' + cmd);
-            console.error('Commands: record, set-active, clear-active, active, list, stats, path, clear');
+            console.error('Commands: record, set-active, clear-active, active, list, stats, skill-sizes, path, clear');
             process.exit(1);
         }
     } catch (e) {
@@ -265,6 +319,8 @@ module.exports = {
     readEvents: readEvents,
     computeStats: computeStats,
     statsToMarkdown: statsToMarkdown,
+    computeSkillSizes: computeSkillSizes,
+    skillSizesToMarkdown: skillSizesToMarkdown,
     STORE_DIR: STORE_DIR,
     JOURNAL_FILE: JOURNAL_FILE,
     ACTIVE_FILE: ACTIVE_FILE,

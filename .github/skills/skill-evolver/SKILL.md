@@ -62,8 +62,10 @@ Run when asked to improve/evolve skills or review friction.
 1. **Pull the digest** (deterministic aggregation; ranks recurring issues by frequency × severity):
    ```powershell
    node .github/hooks/journal-utils.js stats --md
+   node .github/hooks/journal-utils.js skill-sizes --md
    ```
    For raw events of one skill: `node .github/hooks/journal-utils.js list --skill <name>`.
+   `skill-sizes` flags any skill over its body/description budget — those are pruning candidates (see step 4).
 
 2. **Classify each recurring group** using [references/classification-rubric.md](references/classification-rubric.md). The critical judgment: is this a **skill defect** (fixable by editing the skill), a **model mistake**, an **environment issue**, or a **genuinely novel task**? Only skill defects (and global-convention gaps) become edits.
 
@@ -94,9 +96,13 @@ Follow [references/edit-safety-rules.md](references/edit-safety-rules.md) strict
 6. **Log it** — append an entry to `.github/skill-evolution/evolution-log.md` (issue, evidence, change, target, rollback ref).
 7. **Offer a PR** for the branch when the user wants it.
 
-## 4. Measure
+## 4. Measure & prune
 
 After fixes land, re-run `stats` over time to confirm the friction rate for the edited skill is trending down. Note the trend in the evolution-log entry. If an edit didn't help, roll it back (see edit-safety-rules) and try a different fix.
+
+**Counter the addition bias.** The loop naturally *adds* rules; without pushback, skills bloat. So:
+- Run `skill-sizes --md` each retrospective; any flagged skill is a **pruning candidate**.
+- Every ~5th retrospective (or whenever a skill is flagged), propose **removals** — obsolete, redundant, one-off, or contradictory rules — not just additions. See [references/bloat-control.md](references/bloat-control.md) for the prune procedure and budgets. A prune goes through the same review gate as any edit.
 
 ## Scope notes
 

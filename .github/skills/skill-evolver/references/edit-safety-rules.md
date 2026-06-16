@@ -18,6 +18,10 @@ Skills change agent behavior. Treat every edit as a reviewed code change.
    `description`; `description` must be **≤1024 characters**. Check before saving:
    `(Select-String -Path <SKILL.md> -Pattern '^description:').Line.Length` (subtract the
    `description: ` prefix). Keep it under the size limits.
+6. **Consolidate over append (anti-bloat).** Prefer editing or merging an existing instruction
+   over adding a new bullet. Put detailed caveats/examples in `references/`, not the always-loaded
+   SKILL.md body. Don't add to a skill already over budget (`skill-sizes`) without pruning first.
+   See [bloat-control.md](bloat-control.md).
 
 ## Workflow
 

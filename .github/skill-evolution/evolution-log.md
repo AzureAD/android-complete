@@ -8,6 +8,32 @@ entry format.
 
 <!-- New entries go below this line -->
 
+## 2026-06-16 — skill-evolver: add anti-bloat guardrails (#1 prune, #2 tripwire, #3 consolidate, #4 references)
+
+- **Target:** skill-evolver → `journal-utils.js`, `SKILL.md`, `references/edit-safety-rules.md`,
+  `references/bloat-control.md` (new)
+- **Root cause:** design risk (user-raised) — the loop has an addition bias; every retrospective
+  tends to *add* a rule, so skills bloat over time and pay a per-trigger token tax. Nothing in the
+  loop pruned, consolidated, or measured skill weight.
+- **Evidence:** in one session skill-evolver took 4 edits, all additions; largest skills already
+  320–369 lines vs the 500-line guideline.
+- **Change:**
+  - **#2 tripwire:** new `journal-utils.js skill-sizes` command scans every SKILL.md and flags
+    body >400/500 lines and description >900/1024 chars.
+  - **#1 prune:** SKILL.md §4 renamed "Measure & prune" — run `skill-sizes` each retro; every ~5th
+    retro (or when flagged) propose *removals*, not just additions.
+  - **#3 + #4:** new edit-safety rule 6 (consolidate over append; references over body; don't add
+    to an over-budget skill without pruning).
+  - New `references/bloat-control.md` holds the budgets + prune procedure (kept out of the
+    always-loaded body — practicing #4).
+- **Validation:** `quick_validate.py` passes; `skill-sizes --md` runs and correctly flags
+  skill-evolver's own description (1019 chars, DESC_WARN). SKILL.md body grew only 104→111 lines
+  because detail went into the reference.
+- **Commit:** branch `skill-evolution/copilot-cli-active-capture` (rollback: `git revert <sha>`).
+- **Follow-up:** skill-evolver's description (1019/1024) should be trimmed at the next pass — the
+  tripwire is already flagging the tool's own author.
+
+
 ## 2026-06-16 — skill-evolver: require proposals to name target skill + file
 
 - **Target:** skill-evolver → `.github/skills/skill-evolver/SKILL.md` (§3 Propose, review, apply)
