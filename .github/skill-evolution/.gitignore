@@ -1,0 +1,5 @@
+# The live friction journal is stored outside the repo (~/.skill-evolution/ by default).
+# If SKILL_EVOLUTION_HOME is pointed here, ignore the generated journal artifacts.
+journal.jsonl
+journal.jsonl.bak
+active-skill.json

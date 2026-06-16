@@ -143,6 +143,7 @@ For complex investigation tasks, use these skills (read the skill file for detai
 | **threat-modeler** | `.github/skills/threat-modeler/SKILL.md` | "create a threat model", "threat model for", "threat model diagram", "STRIDE analysis for", "security diagram for" |
 | **s360-reporter** | `.github/skills/s360-reporter/SKILL.md` | "S360 report", "generate S360 report", "weekly S360", "S360 status", "what are our S360 items" |
 | **copilot-review-analyst** | `.github/skills/copilot-review-analyst/SKILL.md` | "analyze Copilot reviews", "Copilot review effectiveness", "review analysis report", "how helpful are Copilot reviews" |
+| **skill-evolver** | `.github/skills/skill-evolver/SKILL.md` | "improve/evolve/fix my skills", "run a skill retrospective", "what went wrong with X skill", "why didn't skill Y trigger", "this skill is outdated/wrong", "review skill friction", "you keep making the same mistake", "that didn't go well" |
 
 ## 13. Azure DevOps Integration
 

@@ -321,6 +321,8 @@ Write instructions for using the skill and its bundled resources.
 
 Once development of the skill is complete, it must be packaged into a distributable .skill file that gets shared with the user. The packaging process automatically validates the skill first to ensure it meets all requirements:
 
+**Prerequisite:** the validation and packaging scripts require PyYAML. If you hit `ModuleNotFoundError: No module named 'yaml'`, run `pip install pyyaml` first.
+
 ```bash
 scripts/package_skill.py <path/to/skill-folder>
 ```
@@ -354,3 +356,5 @@ After testing the skill, users may request improvements. Often this happens righ
 2. Notice struggles or inefficiencies
 3. Identify how SKILL.md or bundled resources should be updated
 4. Implement changes and test again
+
+This step covers immediate, in-the-moment tweaks while authoring. For **continuous, evidence-based iteration after the skill is in use** — capturing friction during real tasks, running retrospectives, and proposing reviewed edits — use the **skill-evolver** skill (`.github/skills/skill-evolver/SKILL.md`).
