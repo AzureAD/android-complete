@@ -8,6 +8,31 @@ entry format.
 
 <!-- New entries go below this line -->
 
+## 2026-06-16 — skill-creator ⇄ skill-evolver: bidirectional lifecycle handoff + "Needs a new skill" outcome
+
+- **Target:** skill-evolver → `SKILL.md` (§2 target decision), `references/classification-rubric.md`,
+  `references/bloat-control.md`; skill-creator → `SKILL.md` (Step 6 Iterate)
+- **Root cause:** missing_context (design gap, user-raised). The build-time (creator) and run-time
+  (evolver) halves of the skill lifecycle had no documented handoff, and the evolver had **no branch
+  for "evolving an existing skill is insufficient — a new skill is needed."** The rubric's 5
+  categories all resolved to edit/no-edit; "Novel task" only said "add a section."
+- **Evidence:** user questions — (1) does a creator→evolver pointer skip Step 6 / does evolver cover
+  it; (2) does the evolver ever recommend a *new* skill. Verified against files: no new-skill path
+  existed, no cross-references existed.
+- **Change:**
+  - **creator → evolver:** Step 6 now notes it covers immediate authoring tweaks, and points to
+    skill-evolver for continuous, evidence-based iteration after the skill is in use.
+  - **evolver → creator:** new **"Needs a new skill"** classification outcome (substantial
+    out-of-scope task, or splitting an over-budget skill doing two jobs) → recommend creating via
+    skill-creator. Added to the rubric table, §2 target-decision list, and bloat-control's prune
+    procedure (split vs. cram).
+- **Decision:** keep the skills separate (different triggers, freedom levels, and the 1024-char
+  description ceiling) — integrate via lightweight cross-references, not a merge.
+- **Validation:** both skills pass `quick_validate.py`; `skill-sizes` reports all within budget
+  (skill-creator 361, skill-evolver 112 lines).
+- **Commit:** branch `skill-evolution/copilot-cli-active-capture` (rollback: `git revert <sha>`).
+
+
 ## 2026-06-16 — skill-evolver: trim description to clear self-flagged DESC_WARN
 
 - **Target:** skill-evolver → `.github/skills/skill-evolver/SKILL.md` (frontmatter `description`)

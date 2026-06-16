@@ -33,6 +33,8 @@ additions:
 3. **One-off `low`-severity notes** — caveats added for a single incident that never recurred (check the journal: if the signature appears once and is old, expire it).
 4. **Contradictions** — a newer rule that supersedes an older one. Keep one, remove the other.
 
+If a skill is over budget because it's covering **two distinct jobs**, pruning won't help — the right fix is to **split** it into a new skill (classify as "Needs a new skill" and hand off to `skill-creator`), not to keep cramming.
+
 Propose prunes through the same review gate as any edit (lead with `Target:`, get approval, log it).
 A retrospective that removes a stale rule is as valuable as one that adds a needed rule.
 

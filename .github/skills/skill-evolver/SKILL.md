@@ -73,6 +73,7 @@ Run when asked to improve/evolve skills or review friction.
    - Single-skill defect → edit that skill's `SKILL.md` / `references/` / `scripts/`.
    - Cross-cutting lesson that applies to many skills → edit `.github/copilot-instructions.md` instead.
    - Trigger miss → tune the skill's `description` frontmatter (the activation mechanism).
+   - **Needs a new skill** → when a substantial novel task fits no existing skill, or an over-budget skill is really doing two jobs and should be **split**, don't force-fit it. Recommend creating a new skill via the **skill-creator** skill (`.github/skills/skill-creator/SKILL.md`) and hand off.
 
 ## 3. Propose, review, apply
 
