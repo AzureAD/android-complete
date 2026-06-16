@@ -12,6 +12,25 @@
         "type": "command",
         "command": "node .github/hooks/subagent-stop.js",
         "timeout": 10
+      },
+      {
+        "type": "command",
+        "command": "node .github/hooks/friction-capture.js",
+        "timeout": 10
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "node .github/hooks/friction-capture.js",
+        "timeout": 10
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node .github/hooks/friction-capture.js",
+        "timeout": 10
       }
     ]
   }
