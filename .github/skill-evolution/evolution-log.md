@@ -8,6 +8,22 @@ entry format.
 
 <!-- New entries go below this line -->
 
+## 2026-06-16 — skill-evolver: trim description to clear self-flagged DESC_WARN
+
+- **Target:** skill-evolver → `.github/skills/skill-evolver/SKILL.md` (frontmatter `description`)
+- **Root cause:** bloat (low). The `skill-sizes` tripwire added in the prior commit immediately
+  flagged skill-evolver's own description at 1019/1024 chars (DESC_WARN).
+- **Evidence:** `skill-sizes --md` output — skill-evolver was the only flagged skill.
+- **Change:** removed redundant trigger phrasings ("note that something went wrong, didn't work, or
+  was confusing" overlapped with "that didn't go well"; dropped one duplicate example) and tightened
+  the global-lessons clause. Strongest trigger phrases preserved.
+- **Validation:** `quick_validate.py` passes; description now 887 chars (under the 900 warn);
+  `skill-sizes --md` reports "✅ All skills within budget."
+- **Commit:** branch `skill-evolution/copilot-cli-active-capture` (rollback: `git revert <sha>`).
+- **Result/trend:** the tripwire flagged its own author and the prune cleared it — the anti-bloat
+  loop works end to end.
+
+
 ## 2026-06-16 — skill-evolver: add anti-bloat guardrails (#1 prune, #2 tripwire, #3 consolidate, #4 references)
 
 - **Target:** skill-evolver → `journal-utils.js`, `SKILL.md`, `references/edit-safety-rules.md`,
