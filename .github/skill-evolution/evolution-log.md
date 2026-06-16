@@ -8,6 +8,30 @@ entry format.
 
 <!-- New entries go below this line -->
 
+## 2026-06-16 — skill-evolver: clarify git branch creation uses powershell tool (retro #2)
+
+Source: retrospective #2. 7 events in journal (4 carried from retro #1 — all confirmed fixed,
+no recurrence). 3 new events captured. 1 skill defect actioned.
+
+### 4. skill-evolver: `git checkout -b` clarification in edit-safety-rules
+- **Root cause:** skill defect (medium). edit-safety-rules said `git checkout -b` without
+  specifying *which* tool — I used `gitkraken-git_checkout` (doesn't support `-b`) when
+  the `powershell` tool works fine with native git.
+- **Evidence:** `tool_error`, medium — had to use an unnecessary two-step workaround
+  (git_branch create + git_checkout), costing an extra turn. Verified: `git checkout -b`
+  works perfectly via the powershell tool.
+- **Change:** one-line clarification in Workflow step 1 of
+  `.github/skills/skill-evolver/references/edit-safety-rules.md`: specify
+  "via the powershell tool (not gitkraken-git_checkout, which doesn't support -b)".
+- **Not actioned:** event #6 (`ask_user` interruption — environmental, no fix) and
+  event #7 (dirty workspace file — environmental, user skipped the doc nudge).
+
+- **Validation:** `quick_validate.py` passes.
+- **Commit:** see branch `skill-evolution/copilot-cli-active-capture` (rollback: `git revert <sha>`).
+- **Result/trend:** 4/4 carried-over defects still resolved; 1 new defect fixed; 2 environmental.
+  Velocity: retro #2 closed faster than retro #1 — journal patterns are getting cleaner.
+
+
 ## 2026-06-16 — skill-evolver: make active capture first-class, quarantine non-firing hook (Option A)
 
 Source: investigation of "why isn't PostToolUse/Stop firing". Root cause: the GitHub

@@ -21,7 +21,7 @@ Skills change agent behavior. Treat every edit as a reviewed code change.
 
 ## Workflow
 
-1. Create a branch: `git checkout -b skill-evolution/<short-desc>`.
+1. Create a branch: run `git checkout -b skill-evolution/<short-desc>` via the **powershell tool** (not `gitkraken-git_checkout`, which doesn't support `-b`).
 2. Make one logical change per commit; reference the journal event ids in the commit body.
 3. **Validate** each edited skill:
    ```powershell
