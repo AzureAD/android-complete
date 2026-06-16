@@ -321,6 +321,8 @@ Write instructions for using the skill and its bundled resources.
 
 Once development of the skill is complete, it must be packaged into a distributable .skill file that gets shared with the user. The packaging process automatically validates the skill first to ensure it meets all requirements:
 
+**Prerequisite:** the validation and packaging scripts require PyYAML. If you hit `ModuleNotFoundError: No module named 'yaml'`, run `pip install pyyaml` first.
+
 ```bash
 scripts/package_skill.py <path/to/skill-folder>
 ```

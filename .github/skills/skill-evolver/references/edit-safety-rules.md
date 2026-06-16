@@ -15,7 +15,9 @@ Skills change agent behavior. Treat every edit as a reviewed code change.
    Trigger miss → the skill `description`.
 5. **Preserve the skill contract.** Keep `SKILL.md` frontmatter to allowed keys only
    (`name`, `description`, `license`, `allowed-tools`, `metadata`); no angle brackets in
-   `description`; keep it under the size limits.
+   `description`; `description` must be **≤1024 characters**. Check before saving:
+   `(Select-String -Path <SKILL.md> -Pattern '^description:').Line.Length` (subtract the
+   `description: ` prefix). Keep it under the size limits.
 
 ## Workflow
 

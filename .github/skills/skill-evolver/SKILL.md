@@ -10,7 +10,7 @@ Make skills and tools get better over time. The loop: **capture → analyze → 
 ## Architecture (already wired in this repo)
 
 - **Store CLI**: `.github/hooks/journal-utils.js` — single writer for the JSONL friction journal (`~/.skill-evolution/journal.jsonl`) and the active-skill attribution marker.
-- **Automatic capture**: `.github/hooks/friction-capture.js` runs on `PostToolUse`/`Stop` (registered in `.github/hooks/orchestrator.json`) and logs tool failures. If the runtime doesn't fire those events, automatic capture is silently skipped — **active capture (below) is the reliable fallback.**
+- **Automatic capture**: `.github/hooks/friction-capture.js` runs on `PostToolUse`/`Stop` (registered in `.github/hooks/orchestrator.json`) and logs tool failures. **Automatic capture is best-effort: in some runtimes `PostToolUse`/`Stop` do not fire, so active capture (below) is the PRIMARY path — record friction yourself, don't assume the hook caught it.**
 - **Validation**: reuse `.github/skills/skill-creator/scripts/quick_validate.py` after every edit.
 - **Changelog**: `.github/skill-evolution/evolution-log.md` records every applied change (for audit + rollback).
 
