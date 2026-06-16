@@ -76,15 +76,23 @@ Run when asked to improve/evolve skills or review friction.
 
 Follow [references/edit-safety-rules.md](references/edit-safety-rules.md) strictly. Summary:
 
-1. **Propose concrete diffs** — never vague advice. Show the exact before/after for each file.
-2. **Gate on human review** — present proposals and use `ask_user` to get approval. Never silently change behavior-affecting instructions.
-3. **Apply on a branch** (`skill-evolution/<short-desc>`), one logical change per commit.
-4. **Validate** every edited skill:
+1. **Lead every proposal with its target.** Before the diff, each proposed fix MUST state, on one line:
+   **`Target: <skill-name> → <relative/file/path>` · `<root-cause>` · `<severity>`**
+   (for global lessons use `Target: copilot-instructions.md (all skills)`). This skill evolves *many*
+   skills, so the reviewer must see at a glance which skill each fix changes — never bury it.
+   When proposing multiple fixes, also include a one-row-per-fix summary table with columns
+   **# · Target skill · File · Root cause · Severity** before the detailed diffs.
+2. **Propose concrete diffs** — never vague advice. Show the exact before/after for each file.
+3. **Gate on human review** — present proposals and use `ask_user` to get approval. When asking
+   per-fix, name the target skill in the question (e.g. "Apply fix #2 to **release-helper**?").
+   Never silently change behavior-affecting instructions.
+4. **Apply on a branch** (`skill-evolution/<short-desc>`), one logical change per commit.
+5. **Validate** every edited skill:
    ```powershell
    python .github/skills/skill-creator/scripts/quick_validate.py .github/skills/<edited-skill>
    ```
-5. **Log it** — append an entry to `.github/skill-evolution/evolution-log.md` (issue, evidence, change, target, rollback ref).
-6. **Offer a PR** for the branch when the user wants it.
+6. **Log it** — append an entry to `.github/skill-evolution/evolution-log.md` (issue, evidence, change, target, rollback ref).
+7. **Offer a PR** for the branch when the user wants it.
 
 ## 4. Measure
 

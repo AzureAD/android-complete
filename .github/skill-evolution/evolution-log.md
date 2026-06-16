@@ -8,6 +8,23 @@ entry format.
 
 <!-- New entries go below this line -->
 
+## 2026-06-16 — skill-evolver: require proposals to name target skill + file
+
+- **Target:** skill-evolver → `.github/skills/skill-evolver/SKILL.md` (§3 Propose, review, apply)
+- **Root cause:** skill defect (medium). The Propose section required "concrete diffs" but did
+  not require each proposal to state *which skill and file* it targets. Since this skill evolves
+  many skills, reviewers couldn't tell at a glance what each fix changed.
+- **Evidence:** `missing_context`, medium (user-reported) — "I didn't see which skill the fix was
+  for" during retro #1/#2 proposals.
+- **Change:** §3 now mandates a per-proposal header
+  `Target: <skill> → <file> · <root-cause> · <severity>`, a summary table (# · Target skill · File ·
+  Root cause · Severity) when proposing multiple fixes, and naming the target skill in per-fix
+  approval questions.
+- **Validation:** `quick_validate.py` passes.
+- **Commit:** branch `skill-evolution/copilot-cli-active-capture` (rollback: `git revert <sha>`).
+- **Result/trend:** future retrospective proposals will be unambiguous about scope per skill.
+
+
 ## 2026-06-16 — skill-evolver: clarify git branch creation uses powershell tool (retro #2)
 
 Source: retrospective #2. 7 events in journal (4 carried from retro #1 — all confirmed fixed,
