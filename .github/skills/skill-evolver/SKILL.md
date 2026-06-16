@@ -10,7 +10,8 @@ Make skills and tools get better over time. The loop: **capture → analyze → 
 ## Architecture (already wired in this repo)
 
 - **Store CLI**: `.github/hooks/journal-utils.js` — single writer for the JSONL friction journal (`~/.skill-evolution/journal.jsonl`) and the active-skill attribution marker.
-- **Automatic capture**: `.github/hooks/friction-capture.js` runs on `PostToolUse`/`Stop` (registered in `.github/hooks/orchestrator.json`) and logs tool failures. **Automatic capture is best-effort: in some runtimes `PostToolUse`/`Stop` do not fire, so active capture (below) is the PRIMARY path — record friction yourself, don't assume the hook caught it.**
+- **Capture is ACTIVE on this runtime.** On the GitHub Copilot CLI there is **no hooks system**, so capture happens because **you (the agent) record friction yourself** via `journal-utils.js record`. This is the primary and only reliable mechanism here — treat logging friction as part of doing the task, not something a hook does for you.
+- **Dormant auto-capture hook**: `.github/hooks/friction-capture.js` is a Claude Code-style `PostToolUse`/`Stop` hook. It does **not** fire on Copilot CLI and is intentionally **not** registered in `orchestrator.json`. It's kept only for teams running this repo under Claude Code (register it in `.claude/settings.json` there). Do not rely on it here.
 - **Validation**: reuse `.github/skills/skill-creator/scripts/quick_validate.py` after every edit.
 - **Changelog**: `.github/skill-evolution/evolution-log.md` records every applied change (for audit + rollback).
 
@@ -18,20 +19,20 @@ Make skills and tools get better over time. The loop: **capture → analyze → 
 
 This system is designed to stay out of the way:
 
-- **Silent capture.** The hook only writes to the journal file. It never interrupts, never asks questions, and always lets the tool flow continue (returns `{continue:true}`). It records **only on detected failure**, so successful work produces no noise.
+- **Silent capture.** Recording a friction event only appends one line to the journal file. It never interrupts the user, never asks a question, and never changes your task flow. Log **only real friction** (failures, retries, wrong instructions, corrections) so the journal stays high-signal.
 - **No mid-task edits.** Skills are never auto-edited. Analysis and proposals happen only when you invoke a retrospective, and every behavior-affecting edit is gated on your approval.
 - **Proactive logging must not derail the user.** If you log a friction note proactively at the end of a friction-heavy task, do it in **one line, recorded silently** via the CLI — do NOT ask the user a question, pause their task, or expand scope to discuss it. They review the journal later.
-- **Off switch.** Set the environment variable `SKILL_EVOLUTION_DISABLE=1` to silence all capture (hook + CLI `record` become no-ops). Reviewing past data (`stats`, `list`) still works. Unset it to re-enable.
+- **Off switch.** Set the environment variable `SKILL_EVOLUTION_DISABLE=1` to silence capture (CLI `record` becomes a no-op; the dormant hook is already inert). Reviewing past data (`stats`, `list`) still works. Unset it to re-enable.
 
-## 1. Capture
+## 1. Capture (active — this is the main job on Copilot CLI)
 
-Three capture paths feed the same journal:
+**You are the capture mechanism.** There is no background hook on this runtime, so friction is only recorded if you record it. Make this a habit: whenever you hit friction, append one line to the journal before moving on.
 
 | Path | Who | How |
 |------|-----|-----|
-| Automatic | hook | Tool errors logged on `PostToolUse`. No action needed. |
-| Active | you (agent) | When you notice friction mid-task, record it (see below). |
+| **Active (primary)** | you (agent) | The moment you notice friction, record it via the CLI (below). |
 | User-flagged | user | "that didn't go well" → record the last friction with their context. |
+| Dormant hook | — | Not active on Copilot CLI; see Architecture. Ignore for capture here. |
 
 **Record a friction event** (see [references/friction-schema.md](references/friction-schema.md) for the schema and the `eventType` catalog). Use single quotes around the JSON on PowerShell:
 
@@ -39,12 +40,12 @@ Three capture paths feed the same journal:
 node .github/hooks/journal-utils.js record '{"skill":"release-helper","tool":"powershell","eventType":"skill_step_mismatch","severity":"high","expected":"pipeline YAML under 1ES-Pipelines/","actual":"skill pointed to azure-pipelines/ which is deprecated","fixHint":"update path reference in SKILL.md step 3"}'
 ```
 
-**Attribute events to a skill**: when you start working under a skill, optionally mark it active so hook-captured events get attributed:
+**Attribute events to a skill**: optionally mark the skill you're working under so events default to it (otherwise they record as `skill: "unknown"` and get triaged later):
 
 ```powershell
 node .github/hooks/journal-utils.js set-active <skill-name>
 # ... work ...
-node .github/hooks/journal-utils.js clear-active   # (Stop hook also clears it)
+node .github/hooks/journal-utils.js clear-active
 ```
 
 **When to actively record** (don't log noise — log signal):

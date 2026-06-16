@@ -1,15 +1,28 @@
 #!/usr/bin/env node
 /**
- * friction-capture.js — automatic friction capture for the skill-evolver system.
+ * friction-capture.js — OPTIONAL automatic friction capture for skill-evolver.
  *
- * Registered as a PostToolUse and Stop hook (see orchestrator.json). It reads the
- * hook payload from stdin and:
+ * ┌─────────────────────────────────────────────────────────────────────────┐
+ * │ DORMANT ON GITHUB COPILOT CLI.                                            │
+ * │ This is a Claude Code-style lifecycle hook (PostToolUse / Stop). The      │
+ * │ GitHub Copilot CLI runtime has no hooks system, so it NEVER fires here    │
+ * │ and is intentionally NOT registered in orchestrator.json.                 │
+ * │                                                                           │
+ * │ On Copilot CLI, ACTIVE capture is the real mechanism: the agent records   │
+ * │ friction itself via `journal-utils.js record` (see the skill-evolver      │
+ * │ SKILL.md). Do not rely on this file to catch anything on Copilot CLI.     │
+ * │                                                                           │
+ * │ Kept for teams that run this repo under Claude Code: register it in       │
+ * │ `.claude/settings.json` (PostToolUse + Stop) and it will work there.      │
+ * └─────────────────────────────────────────────────────────────────────────┘
+ *
+ * Behavior when it DOES fire (Claude Code): reads the hook payload from stdin and
  *   - PostToolUse: if the tool reported a failure/error, appends a high-signal
  *     `tool_error` friction event to the journal (attributed to the active skill).
  *   - Stop / SubagentStop: clears the active-skill marker so attribution does not
  *     leak across tasks.
  *
- * Design rules (match the existing hooks in this folder):
+ * Design rules:
  *   - Never block the tool flow. Always print {continue:true} and exit 0.
  *   - Wrap everything in try/catch; capture is best-effort.
  *   - Only record on detected failure to keep the journal high-signal.

@@ -8,6 +8,31 @@ entry format.
 
 <!-- New entries go below this line -->
 
+## 2026-06-16 — skill-evolver: make active capture first-class, quarantine non-firing hook (Option A)
+
+Source: investigation of "why isn't PostToolUse/Stop firing". Root cause: the GitHub
+Copilot CLI runtime has no hooks system, and `orchestrator.json` used the Claude Code hook
+schema, so `friction-capture.js` never fired. Developer chose **Option A** (Copilot CLI only).
+
+- **Root cause:** environmental / `skill_step_mismatch` (high) — automatic capture was
+  presented as primary but cannot fire on this runtime.
+- **Evidence:** empty journal despite real tool failures; CLI docs show no hooks feature;
+  no runtime config references `orchestrator.json`.
+- **Change:**
+  - `orchestrator.json`: removed the `PostToolUse`/`Stop` and the second `SubagentStop`
+    `friction-capture.js` registrations (kept the orchestrator's own subagent hooks).
+  - `friction-capture.js`: marked DORMANT with a header banner — Claude Code-only, not
+    registered on Copilot CLI; documents how to enable via `.claude/settings.json`.
+  - `skill-evolver/SKILL.md`: reframed capture so **active capture is the primary mechanism**
+    (Architecture, Capture section table, attribution note, non-intrusiveness + off-switch
+    wording all updated to stop implying an automatic hook runs here).
+- **Validation:** `quick_validate.py` passes; `orchestrator.json` parses and no longer
+  references friction-capture; CLI `record`/`stats` still work (active capture intact).
+- **Commit:** see branch `skill-evolution/copilot-cli-active-capture` (rollback: `git revert <sha>`).
+- **Result/trend:** capture now honestly reflects the runtime; no false reliance on a hook
+  that never fires.
+
+
 ## 2026-06-16 — skill-creator, skill-evolver: first retrospective (3 fixes)
 
 Source: retrospective run over `~/.skill-evolution/journal.jsonl` (3 active-captured events
