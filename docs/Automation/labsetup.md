@@ -24,7 +24,7 @@ The Lab Api is a protected Api and we need an access token to be able to make re
 
 1. Go to https://coreidentity.microsoft.com/
 2. Request membership from one of the following groups:
-   - If a member of the Identity org, request read-write permissions for entitlement **TM-MSIDLabs-Int**
+   - If a member of the Identity org, request read-only(RO) permissions for entitlement **TM-MSIDLabs-Int**
    - If outside the Identity org, request read access to entitlement **TM-MSIDLABS-DevKV**
 3. You can also reach out to *msidlabint@microsoft.com* to ask them for a rushed approval
 4. After access has been approved, wait for 2-24 hours for changes to be effective.
