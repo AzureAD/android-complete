@@ -86,6 +86,30 @@ should pin something to Sev3/Sev4), **record it here** so future runs are consis
   control of `app_link` depends on unverifiable eSTS/redirect behavior (External Validation = Yes), so it
   is held at Sev3 (not Sev2.5) despite default-path reachability. Pattern: **open-redirect/intent-launch
   gated by a server-emitted value is capped at Sev3 until the server side is confirmed.**
+- _⚠️ "Embedded WebView is non-default" is a TRAP for broker findings (Sev calibration)_ — for the MSAL SDK,
+  the auth WebView is non-default (browser/Custom Tabs default), which tempts a down-classify to Low. But the
+  **Broker forces `AuthorizationAgent.WEBVIEW` by default** (`MsalAndroidBrokerCommandParameterAdapter` /
+  `MsalBrokerRequestAdapter` / `BrokerTokenCommandParametersUtil` → `authorizationAgent == null` → WEBVIEW),
+  so any auth-WebView sink IS on the default path for **broker-mediated** auth (the highest-value PRT/SSO
+  context). Pattern: **never down-classify an auth-WebView finding on "non-default WebView" without checking
+  the broker adapter — the broker default is WEBVIEW, which keeps such findings at Sev3, not Sev4.** (Caught
+  twice by the adversarial pass: intent-scheme differential Low→Moderate, origin-blind NTLM.)
+- _CSRF/SSRF via auto-firing deep link (FCM token + activation code) → Sev3_ — the deep-link activation
+  **auto-fires zero-click** (the external link is treated as a QR scan) AND the CSRF **completes** (the
+  server PAD push legitimately reaches the victim's own device). But it caps at Moderate because the injected
+  account is **attacker-owned** (the submitted device token is the victim's own → no reverse account-binding)
+  and the FCM token isn't weaponizable. Pattern: **a completable, zero-click CSRF still caps at Sev3 when the
+  injected artifact is attacker-owned and the exfiltrated data is non-weaponizable — likelihood is high but
+  impact is bounded.**
+- _Plaintext secret logged to an app-private file → Sev3 (not lower)_ — the usual down-classifier ("logging
+  compiled out in release") must be PROVEN, not assumed. Here release level = INFO, ERROR still writes to the
+  on-disk file, no `-assumenosideeffects` strip, scrub off-by-default. Pattern: **a log-leak of durable
+  secrets (TOTP seeds) holds at Sev3/Important when the release-suppression control is proven ABSENT — verify
+  `BuildConfig.DEBUG` gating, proguard `-assumenosideeffects`, and the scrub default before down-classifying.**
+- _"TLSBypass"-labeled finding with no actual TLS bypass → recategorize, don't just re-sev_ — verify the
+  filed CATEGORY, not just severity. Here TLS was fully enforced (HTTPS-forced cast, system CAs, zero
+  trust-all); the real issue was SSRF/exfil. Pattern: **a mislabeled finding needs the category corrected in
+  the report + ITD title, or the fix gets mis-scoped.**
 
 
 ## Defense-in-depth checklist (the "look beyond" sweep)
