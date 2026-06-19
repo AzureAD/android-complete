@@ -21,6 +21,7 @@ payloads, no PII**.
 **IcM Severity:** Sev2 | Sev2.5 | Sev3 | Sev4  _(team response-urgency mapping — see severity-rubric.md; Sev2.5+ is a rare, high bar)_
 **Assignment:** Intern-eligible | Engineer-owned  _(Low/Moderate → Intern-eligible; Important/Critical → Engineer-owned)_
 **External validation:** Yes | No — _one line: do we need facts outside the code we own (downstream consumers / server-side eSTS) to be sure? If the verdict leans on a server/downstream safeguard we can only infer, say "Yes" and name it — the impact is partly theoretical until confirmed._
+**Bottom line:** _one plain-English sentence (the TL;DR rendered at the top of the HTML): what it is, what to do now, and the one thing still open. A human skimming should get the whole story from this line._
 **Justification:** <1–3 sentences, anchored to the evidence below>
 
 > These `**Label:**` fields drive the colorful **stat tiles** at the top of the generated HTML page
@@ -96,6 +97,12 @@ was verified when it was only reasoned about.**
 > **Can proceed now vs. blocked:** one line — which parts of the fix an engineer/intern can start immediately
 > on the confirmed-in-code facts, and which decisions must wait for the answers above. Never stall on a gap
 > you can route around; never over-claim a gap you can't.
+
+## Decisions Needed
+Judgment calls a human must make — the agent should **not** decide these alone (severity acceptance vs.
+escalation, flight default, won't-fix sign-off, backport scope, cross-team coordination). Each as a bullet
+with a recommendation. Omit the section only if there are genuinely none.
+- **<decision>** — <options> · recommend <X> because <reason>.
 
 ## Remediation
 Pick ONE based on Assignment:

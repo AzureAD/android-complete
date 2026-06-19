@@ -272,30 +272,38 @@ Use [references/remediation-spec.md](references/remediation-spec.md). It must be
 an engineer or the Copilot coding agent / `pbi-creator` without further investigation. For Intern-eligible
 findings, a lighter **Fix Notes** block is sufficient.
 
-### Step 5 — Report
-- **Per-finding report** → the finding's folder `README.md` (or `msrc-investigations/<n>-<id>-<slug>.md`),
-  including the `## Adversarial Verification` section (Pass 2) and ending with the verbatim
-  `## Searches Run (audit trail)` section.
-- **HTML evidence subpages** → run `scripts/build_research_pages.py` over the per-finding markdown to
-  produce one self-contained, shareable HTML page each (CSS inlined; `file:line` citations rendered as
-  visible evidence chips, not broken links) plus an `index.html`. Each page opens with a band of
-  **colorful stat tiles** (Our Severity · Confidence · Verdict vs. filed · Investigation Passes ·
-  **External Validation Needed** · Assignment) parsed from the report's `**Label:**` fields, then a
-  **Description** and a **How It Can Be Exploited** section (high-level attack narrative, no PoC/PII), and —
-  whenever the verdict wasn't fully settled by static analysis — a **Verification Gaps & What We Need to
-  Confirm** section (see below). A **Glossary** of the acronyms/concepts used on that page is auto-appended
-  from `references/glossary.md` — add new terms there.
+### Step 5 — Report (two coordinated artifacts per finding)
+Each finding yields a **human report** and a **machine-readable agent spec** — see
+[references/agent-spec-template.md](references/agent-spec-template.md) for the dual-output rationale + schema.
+
+- **Per-finding report (human source)** → the finding's folder `README.md` (or
+  `msrc-investigations/<n>-<id>-<slug>.md`), including a `**Bottom line:**` TL;DR field, the
+  `## Adversarial Verification` section (Pass 2), `## Verification Gaps & What We Need to Confirm`,
+  `## Decisions Needed`, and ending with the verbatim `## Searches Run (audit trail)` section.
+- **Agent dispatch spec (machine-readable)** → run `scripts/build_agent_spec.py` over each README to emit a
+  `<slug>.agent.md`: YAML front-matter (`finding_id, our_tier, icm_sev, confidence, assignment,
+  target_repos, files_to_change, external_validation_needed, status, blocked_on`) + a Dispatch Block
+  (problem statement, acceptance criteria = the negative test, do-not-proceed-until gating, constraints).
+  This is what the Copilot coding agent / `pbi-creator` consumes to open a PR **without scraping prose**.
+  Generate the specs **first** so the HTML can link them.
+- **HTML evidence subpages (human, curated)** → run `scripts/build_research_pages.py` with
+  `--agent-dir ../agent-specs` to produce one self-contained, shareable HTML page each (CSS inlined;
+  `file:line` citations as visible evidence chips) plus an `index.html`. Each page opens with a band of
+  **colorful stat tiles** (Our Severity · IcM Severity · Confidence · Verdict · Investigation Passes ·
+  **External Validation Needed** · Assignment), a **Bottom line** TL;DR, then **Description** and
+  **How It Can Be Exploited** (high-level, no PoC/PII). The heavy **Searches Run** audit is auto-collapsed
+  into a `<details>` for readability, and a header **"Agent dispatch spec"** button links the `.agent.md`.
+  A **Glossary** of the terms used is auto-appended from `references/glossary.md`.
   > **Surface what you could NOT test.** Many real exploits require conditions an AI agent cannot reproduce —
   > a runtime device repro, a specific tenant/server state, code in a downstream repo we don't own. The
-  > **Verification Gaps** table makes each one explicit: the open question, *why* it's untestable statically,
-  > what we confirmed instead, the concrete ask (who/what closes it), and how it would move the severity. It
-  > also states what can proceed now vs. what's blocked — so the user knows where to supply info and the
-  > engineer never stalls on a gap they can route around. Required whenever `External Validation = Yes` or any
-  > runtime/server/downstream condition affects the verdict.
-- **Master HTML report** → overview table linking each row to its IcM, FireWatch finding, and its
-  **Research** subpage; show **Confidence** and **Assignment** columns; severity legend; scope summary;
-  capacity narrative.
-- **Aggregate roll-up** → counts, severity breakdown (ours vs. filed), confidence breakdown, an
+  > **Verification Gaps** table makes each explicit (open question · *why* untestable statically · what we
+  > confirmed instead · the concrete ask · severity effect) and the **Decisions Needed** box lists the
+  > judgment calls a human must make. So the user knows exactly where to supply info, and neither a human nor
+  > an agent stalls on a gap they can route around. Required whenever `External Validation = Yes`.
+- **Master HTML report** → overview table linking each row to its IcM, FireWatch finding, its **Research**
+  subpage, and its **agent spec**; show **Confidence**, **IcM Sev**, and **Assignment** columns; severity
+  legend; scope summary; capacity narrative.
+- **Aggregate roll-up** → counts, severity breakdown (ours vs. filed), confidence + IcM-Sev breakdown, an
   **Intern Queue** (Low/Moderate, delegatable) vs. **Engineer-owned** (kept, with remediation) split,
   estimated eng-days, and at-risk commitments — generated with `scripts/rollup.py`. Suitable for on-call
   handoff and the bi-monthly WBR.
