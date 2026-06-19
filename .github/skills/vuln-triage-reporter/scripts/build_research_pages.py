@@ -57,10 +57,28 @@ hr{border:none;border-top:1px solid var(--line);margin:1rem 0}
 .didbox h2{border:none;color:var(--low);margin-top:0}
 .disclaimer{border:1px solid #f0e0b8;border-left:4px solid var(--mod);background:#fdfaf0;border-radius:10px;padding:14px 18px;margin:18px 0}
 .disclaimer h2{border:none;color:var(--mod);margin-top:0}
+.verifybox{border:1px solid #d6c9ec;border-left:4px solid #6d28d9;background:#f8f5fd;border-radius:10px;padding:14px 18px;margin:18px 0}
+.verifybox h2{border:none;color:#5b21b6;margin-top:0}
+.fixbox{border:1px solid #c7dbef;border-left:4px solid var(--brand);background:#f4f8fd;border-radius:10px;padding:14px 18px;margin:18px 0}
+.fixbox h2{border:none;color:var(--brand-d);margin-top:0}
+.gapbox{border:1px solid #f6c6d3;border-left:4px solid #be123c;background:#fff1f4;border-radius:10px;padding:14px 18px;margin:18px 0}
+.gapbox h2{border:none;color:#9f1239;margin-top:0}
 .glossary{border:1px solid var(--line);background:#fbfbfc;border-radius:10px;padding:14px 18px;margin:18px 0}
 .glossary dl{margin:.4rem 0;display:grid;grid-template-columns:max-content 1fr;gap:.3rem .9rem}
 .glossary dt{font-weight:700;color:var(--brand-d);font-family:'Cascadia Mono',Consolas,monospace;font-size:.84rem}
 .glossary dd{margin:0;color:var(--ink2)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px;margin:18px 0}
+.tile{border-radius:12px;padding:13px 16px;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.10);min-height:84px;display:flex;flex-direction:column;justify-content:center}
+.tile .lbl{font-size:.64rem;text-transform:uppercase;letter-spacing:.06em;opacity:.92;font-weight:600}
+.tile .val{font-size:1.18rem;font-weight:700;margin-top:5px;line-height:1.15}
+.tile .sub{font-size:.7rem;opacity:.92;margin-top:4px;line-height:1.3;font-weight:400}
+.t-crit{background:linear-gradient(135deg,#b91c1c,#7f1212)}.t-imp{background:linear-gradient(135deg,#c2410c,#9a3209)}
+.t-mod{background:linear-gradient(135deg,#a16207,#7c4a05)}.t-low{background:linear-gradient(135deg,#15803d,#0f5f2d)}
+.t-high{background:linear-gradient(135deg,#15803d,#0f5f2d)}.t-med{background:linear-gradient(135deg,#b45309,#8a3f07)}.t-lowc{background:linear-gradient(135deg,#b91c1c,#7f1212)}
+.t-pass{background:linear-gradient(135deg,#0f6cbd,#084e8a)}.t-eng{background:linear-gradient(135deg,#6d28d9,#4c1d95)}.t-intern{background:linear-gradient(135deg,#0e7490,#0a586e)}
+.t-ext-yes{background:linear-gradient(135deg,#b45309,#8a3f07)}.t-ext-no{background:linear-gradient(135deg,#15803d,#0f5f2d)}
+.t-agree{background:linear-gradient(135deg,#475569,#334155)}.t-down{background:linear-gradient(135deg,#15803d,#0f5f2d)}.t-up{background:linear-gradient(135deg,#b91c1c,#7f1212)}
+.t-sev2{background:linear-gradient(135deg,#b91c1c,#7f1212)}.t-sev25{background:linear-gradient(135deg,#c2410c,#9a3209)}.t-sev3{background:linear-gradient(135deg,#a16207,#7c4a05)}.t-sev4{background:linear-gradient(135deg,#15803d,#0f5f2d)}
 .muted{color:var(--ink2)}.idx a{display:block;padding:6px 0;border-bottom:1px solid var(--line)}
 footer{margin-top:24px;font-size:.78rem;color:var(--ink2);text-align:center;line-height:1.6}
 """
@@ -103,13 +121,24 @@ def glossary_html(md_text, terms):
 
 def md_inline(s):
     s = htmllib.escape(s)
+    # Protect code/citation spans in placeholders so later bold/italic passes can't mangle the
+    # identifiers inside them (e.g. app_link, BROKER_APP_LINK, src/main/**).
+    stash = []
+
+    def keep(html):
+        stash.append(html)
+        return f"\x00{len(stash) - 1}\x00"
+
     # citations in backticks with #Lnn -> evidence chip (before plain code so chips win)
-    s = re.sub(r'`([^`]+?#L[\d,\u2013\-]+)`', lambda m: f'<span class="ev">{m.group(1)}</span>', s)
-    # inline code BEFORE bold; neutralize * inside code so a literal ** (e.g. `src/main/**`)
-    # can't be misread as a bold marker by the later bold pass
-    s = re.sub(r'`([^`]+)`', lambda m: '<code>' + m.group(1).replace('*', '&#42;') + '</code>', s)
-    # bold (now safe: code spans converted and any * inside them escaped)
+    s = re.sub(r'`([^`]+?#L[\d,\u2013\-]+)`',
+               lambda m: keep(f'<span class="ev">{m.group(1)}</span>'), s)
+    # plain inline code
+    s = re.sub(r'`([^`]+)`', lambda m: keep('<code>' + m.group(1) + '</code>'), s)
+    # bold **...**
     s = re.sub(r'\*\*([^*]+)\*\*', r'<strong>\1</strong>', s)
+    # italics: *text* and _text_ (underscores must be word-boundaried so app_link/FOO_BAR are safe)
+    s = re.sub(r'(?<![\w\x00])_(?!_)([^_\n]+?)_(?![\w\x00])', r'<em>\1</em>', s)
+    s = re.sub(r'(?<!\*)\*(?!\*)([^*\n]+?)\*(?!\*)', r'<em>\1</em>', s)
     # markdown links [t](u): http(s)/relative -> real link; repo-relative path/file:line -> evidence chip
     def link_sub(m):
         text, url = m.group(1), m.group(2)
@@ -117,6 +146,8 @@ def md_inline(s):
             return f'<a href="{url}">{text}</a>'
         return f'<span class="ev">{text}</span>'
     s = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', link_sub, s)
+    # restore protected code/citation spans
+    s = re.sub(r'\x00(\d+)\x00', lambda m: stash[int(m.group(1))], s)
     return s
 
 
@@ -126,7 +157,13 @@ CALLOUT_SECTIONS = [
     ("why likely not exploited", "didbox"),
     ("defense-in-depth: why", "didbox"),
     ("defense-in-depth: partial", "didbox"),
+    ("verification gaps", "gapbox"),
+    ("what we need", "gapbox"),
+    ("open questions", "gapbox"),
     ("verification boundary", "disclaimer"),
+    ("adversarial verification", "verifybox"),
+    ("remediation spec", "fixbox"),
+    ("remediation", "fixbox"),
     ("searches run", "audit"),
 ]
 
@@ -178,7 +215,7 @@ def md_to_html(md):
         if re.match(r'^\d+\. ', ln.lstrip()):
             buf = []
             while i < len(lines) and re.match(r'^\d+\. ', lines[i].lstrip()):
-                buf.append(f"<li>{md_inline(re.sub(r'^\\d+\\. ', '', lines[i].lstrip()))}</li>"); i += 1
+                buf.append(f"<li>{md_inline(re.sub(r'^\d+\. ', '', lines[i].lstrip()))}</li>"); i += 1
             out.append("<ol>" + "".join(buf) + "</ol>"); continue
         if ln.lstrip().startswith("|"):
             tbl = []
@@ -225,14 +262,134 @@ def render_table(rows):
     return h
 
 
-def page(title, body_html, subtitle=""):
+def _clean(v):
+    """Strip markdown emphasis/parentheticals for tile display."""
+    if not v:
+        return ""
+    v = re.sub(r'`[^`]*`', '', v)            # drop code spans
+    v = re.sub(r'\*\*([^*]+)\*\*', r'\1', v)  # unbold
+    v = re.sub(r'[_*]', '', v)                # stray emphasis
+    v = re.sub(r'\s*[_(].*$', '', v).strip()  # drop trailing parenthetical/italic note
+    v = v.split('·')[0].strip()
+    return v
+
+
+def parse_meta(md):
+    """Pull the at-a-glance fields from a finding's markdown for the stat tiles."""
+    meta = {}
+    for m in re.finditer(r'^\*\*([\w /&-]+):\*\*\s*(.+)$', md, re.MULTILINE):
+        meta[m.group(1).strip().lower()] = m.group(2).strip()
+    # our severity tier from the 'Ours' classification-table row
+    for line in md.splitlines():
+        if re.match(r'\s*\|\s*\*\*?Ours', line):
+            cells = [c.strip() for c in line.strip().strip('|').split('|')]
+            if len(cells) >= 3:
+                meta['our_tier'] = cells[2]
+            break
+    meta['passes'] = 2 if re.search(r'^##\s*Adversarial Verification', md, re.MULTILINE) else 1
+    return meta
+
+
+def _sev_cls(tier):
+    t = (tier or "").lower()
+    if "critical" in t:
+        return "t-crit", "Critical"
+    if "important" in t:
+        return "t-imp", "Important"
+    if "moderate" in t:
+        return "t-mod", "Moderate"
+    if "low" in t or "won't" in t or "wont" in t:
+        return "t-low", "Low"
+    return "t-pass", tier or "—"
+
+
+def tiles_html(md):
+    """Build the colorful stat-tile band from the finding metadata."""
+    m = parse_meta(md)
+    tiles = []
+
+    sev_cls, sev_txt = _sev_cls(m.get('our_tier', ''))
+    filed = ""
+    for line in md.splitlines():
+        if re.match(r'\s*\|\s*\*\*?Filed', line):
+            cells = [c.strip() for c in line.strip().strip('|').split('|')]
+            if len(cells) >= 3:
+                filed = _clean(cells[2])
+            break
+    tiles.append((sev_cls, "Our Severity", sev_txt, (f"filed: {filed}" if filed else "")))
+
+    # IcM Sev (team response-urgency) tile
+    sev_icm_raw = _clean(m.get('icm severity', m.get('icm sev', '')))
+    sev_icm = sev_icm_raw.replace(" ", "").lower()
+    icm_map = {
+        "sev2": ("t-sev2", "Sev2", "page on-call — outside business hrs"),
+        "sev2.5": ("t-sev25", "Sev2.5", "immediate — business hrs"),
+        "sev25": ("t-sev25", "Sev2.5", "immediate — business hrs"),
+        "sev3": ("t-sev3", "Sev3", "soon, not drop-everything"),
+        "sev4": ("t-sev4", "Sev4", "low priority / hygiene"),
+    }
+    if sev_icm in icm_map:
+        c, v, s = icm_map[sev_icm]
+        tiles.append((c, "IcM Severity (urgency)", v, s))
+
+    conf = _clean(m.get('confidence', '')).lower()
+    conf_cls = {"high": "t-high", "medium": "t-med", "low": "t-lowc"}.get(conf, "t-pass")
+    tiles.append((conf_cls, "Confidence", conf.title() or "—", "adversarial-verified"))
+
+    verdict = _clean(m.get('verdict', ''))
+    vlow = verdict.lower()
+    v_cls = "t-down" if "down" in vlow else "t-up" if "up" in vlow else "t-agree"
+    tiles.append((v_cls, "Verdict vs. filed", verdict or "—", ""))
+
+    passes = m.get('passes', 1)
+    tiles.append(("t-pass", "Investigation Passes", f"{passes}-pass",
+                  "investigate + adversarial" if passes == 2 else "single pass"))
+
+    ext = m.get('external validation', m.get('external dependency', ''))
+    ext_l = ext.lower()
+    if ext:
+        is_yes = ext_l.startswith(("yes", "y ")) or "unverified" in ext_l or "inferred" in ext_l
+    else:
+        # fall back: a Scope & Verification Boundary disclaimer always implies some external dependency
+        is_yes = bool(re.search(r'cannot (conclude|verify)|server-side|inferred|downstream', md, re.IGNORECASE))
+    ext_cls = "t-ext-yes" if is_yes else "t-ext-no"
+    ext_val = "Yes — partly theoretical" if is_yes else "No — fully in our code"
+    ext_sub = _clean_sub(ext) if ext else ("verdict leans on server/downstream we can't verify" if is_yes
+                                           else "all controls verified in code we own")
+    tiles.append((ext_cls, "External Validation Needed", ext_val, ext_sub))
+
+    asn = _clean(m.get('assignment', ''))
+    asn_cls = "t-eng" if "engineer" in asn.lower() else "t-intern"
+    tiles.append((asn_cls, "Assignment", asn or "—",
+                  "remediation spec" if "engineer" in asn.lower() else "delegatable / fix notes"))
+
+    cells = "".join(
+        f'<div class="tile {cls}"><div class="lbl">{htmllib.escape(lbl)}</div>'
+        f'<div class="val">{htmllib.escape(val)}</div>'
+        + (f'<div class="sub">{htmllib.escape(sub)}</div>' if sub else "")
+        + "</div>"
+        for cls, lbl, val, sub in tiles
+    )
+    return f'<div class="tiles">{cells}</div>'
+
+
+def _clean_sub(v):
+    """Short subtitle from the external-validation note (keep the 'what', trim markers)."""
+    v = re.sub(r'`[^`]*`', '', v)
+    v = re.sub(r'[_*]', '', v)
+    v = re.sub(r'^(yes|no)\s*[—\-:]\s*', '', v, flags=re.IGNORECASE).strip()
+    return (v[:90] + "…") if len(v) > 92 else v
+
+
+def page(title, body_html, subtitle="", tiles=""):
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><title>{htmllib.escape(title)}</title>
 <style>{CSS}</style></head><body><div class="wrap">
 <a class="back" href="../wbr-security-report.html">&larr; Back to WBR overview</a>
 <header class="top"><h1>{htmllib.escape(title)}</h1>{f'<div class="sub">{subtitle}</div>' if subtitle else ''}</header>
+{tiles}
 <div class="body">{body_html}</div>
-<footer>Evidence record generated by the <code>vuln-triage-reporter</code> skill via parallel <code>codebase-researcher</code> investigation.<br>
+<footer>Evidence record generated by the <code>vuln-triage-reporter</code> skill via parallel <code>codebase-researcher</code> investigation (two-pass: investigate + adversarial).<br>
 File:line citations are repo-relative; no exploit PoC or PII included.</footer>
 </div></body></html>"""
 
@@ -264,12 +421,12 @@ def main():
             slug = re.sub(r'[^a-z0-9]+', '-', os.path.basename(os.path.dirname(f)).lower()).strip('-')
         outp = os.path.join(args.out, slug + ".html")
         body = wrap_callouts(md_to_html(md)) + glossary_html(md, glossary)
-        open(outp, "w", encoding="utf-8").write(page(first, body))
+        open(outp, "w", encoding="utf-8").write(page(first, body, tiles=tiles_html(md)))
         generated.append((first, slug + ".html"))
         print("  +", outp)
 
     if args.index:
-        body = "<h2>Deep-research evidence records</h2><p class='muted'>One page per finding: confirmed sink, defense-in-depth sweep, recommended fix, and the verbatim <strong>Searches Run</strong> audit trail.</p><div class='idx'>"
+        body = "<h2>Deep-research evidence records</h2><p class='muted'>One page per finding: confirmed sink, defense-in-depth sweep, adversarial verification, remediation spec, and the verbatim <strong>Searches Run</strong> audit trail.</p><div class='idx'>"
         body += "".join(f'<a href="{u}">{htmllib.escape(t)}</a>' for t, u in generated)
         body += "</div>"
         open(os.path.join(args.out, "index.html"), "w", encoding="utf-8").write(page("Research evidence index", body))
