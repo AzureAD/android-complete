@@ -17,7 +17,15 @@ payloads, no PII**.
 | **Ours** | this investigation | <CRITICAL / Important / Moderate / Low> | <CWE-xxx> |
 
 **Verdict:** AGREE | DOWN-CLASSIFY | UP-CLASSIFY
+**Confidence:** High | Medium | Low  _(set by the adversarial pass — see below)_
+**IcM Severity:** Sev2 | Sev2.5 | Sev3 | Sev4  _(team response-urgency mapping — see severity-rubric.md; Sev2.5+ is a rare, high bar)_
+**Assignment:** Intern-eligible | Engineer-owned  _(Low/Moderate → Intern-eligible; Important/Critical → Engineer-owned)_
+**External validation:** Yes | No — _one line: do we need facts outside the code we own (downstream consumers / server-side eSTS) to be sure? If the verdict leans on a server/downstream safeguard we can only infer, say "Yes" and name it — the impact is partly theoretical until confirmed._
 **Justification:** <1–3 sentences, anchored to the evidence below>
+
+> These `**Label:**` fields drive the colorful **stat tiles** at the top of the generated HTML page
+> (Severity, Confidence, Verdict, Passes, External-Validation, Assignment). Keep each on its own line so
+> the generator can parse them.
 
 ## Description
 Plain-English: what the component is and what the weakness is. 2–4 sentences. Name the acronyms/concepts
@@ -65,16 +73,51 @@ What we own and verified (Authenticator client / Broker / Common) vs. what we **
 State plainly: it is possible there are downstream/server checks but we cannot conclude definitively — worth
 investigating. Only confirm what you can; do not assert "safe" or "exploitable" about an unverified boundary.
 
-## Recommended Fix (high-level)
-- <the control to add; mirror the sibling hardened handler if one exists>
+## Adversarial Verification
+The second, independent `codebase-researcher` (Challenger) pass that tried to **break** the Pass 1 verdict.
+- **What the Challenger attempted:** <bypass of the cited mitigation / alternate entry path / case for still-exploitable>
+- **Result:** HELD (could not break it) | WEAKENED (found a caveat/partial gap) | OVERTURNED (verdict changed)
+- **What changed (if anything):** <new evidence, with `file:line`>
+- **Confidence set:** High | Medium | Low — <one line: why this level>
+
+> Append the Challenger's own "Searches Run" lines into the audit-trail section below (label them `[challenger]`).
+
+## Verification Gaps & What We Need to Confirm
+**Required whenever any part of the verdict could not be settled by static code analysis.** Some conditions
+an AI agent *cannot* test — they need a runtime repro, a specific device/tenant state, server-side
+visibility, or code in a repo we don't own. Surface each as an explicit, actionable row so the engineer
+knows exactly what to confirm and how it moves the severity. **Be honest: never imply a runtime/server claim
+was verified when it was only reasoned about.**
+
+| # | Open question (unverified) | Why it can't be statically verified | What we checked instead | What we need (who/how) | If confirmed → effect |
+|---|----------------------------|--------------------------------------|--------------------------|------------------------|-----------------------|
+| 1 | <the precise claim we could not settle> | <runtime / server-side / downstream-repo / device-state / rooted / timing — name it> | <the static fact we DID establish, cited> | <the person, repro, or data that would close it> | <Sev/verdict change if confirmed> |
+
+> **Can proceed now vs. blocked:** one line — which parts of the fix an engineer/intern can start immediately
+> on the confirmed-in-code facts, and which decisions must wait for the answers above. Never stall on a gap
+> you can route around; never over-claim a gap you can't.
+
+## Remediation
+Pick ONE based on Assignment:
+
+### If Engineer-owned (Important/Critical) — Dispatch-ready Remediation Spec
+Fill out the full spec from [remediation-spec.md](remediation-spec.md): Root Cause · Fix Approach ·
+Files to Change (`file:line`) · Test Plan · Risks & Rollout (flighting). Must be detailed enough to hand to
+an engineer or the Copilot coding agent / `pbi-creator` without further investigation.
+
+### If Intern-eligible (Low/Moderate) — Fix Notes
+- <the control to add or the close-out action; mirror the sibling hardened handler if one exists>
+- Scope: single repo? bounded? any cross-team coordination needed (if yes, reconsider Engineer-owned).
 
 ## Estimated Eng-Days
 <n> (ESTIMATE — on-call to adjust). Basis: <tier + fix complexity>.
 
 ## Searches Run (audit trail)
-Verbatim list of the searches the investigation actually ran — ESPECIALLY the ones that returned nothing
+Verbatim list of the searches BOTH passes actually ran — ESPECIALLY the ones that returned nothing
 (the absence proofs behind every "no mitigation found" / "not reachable" claim). Required, non-optional.
+Label challenger (Pass 2) searches so the adversarial coverage is visible.
 - `<pattern>` in `<path/scope>` → <what it returned, or "0 matches → proves X absent">
+- `[challenger] <pattern>` in `<path/scope>` → <result of the bypass/alternate-path attempt>
 - ...
 ```
 

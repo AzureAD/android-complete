@@ -57,3 +57,8 @@ finding's text and renders **only the terms that appear on that page**. Format: 
 - **DA token** — Delegation/Device-Auth token; an MSA credential used to obtain resource tokens.
 - **B2C** — Azure AD B2C; customer identity tenants that can host custom HTML sign-in pages.
 - **CIAM** — Customer Identity & Access Management; the B2C-style external-identity scenario.
+- **PoC** — Proof of Concept; a minimal demonstration that a vulnerability is exploitable.
+- **defense-in-depth** — layered controls so that if one fails, another still blocks exploitation.
+- **blast radius** — the scope of damage if a vulnerability is exploited (one user vs. all users vs. device).
+- **DRI** — Designated Responsible Individual; the on-call engineer who owns an incident/finding.
+- **adversarial verification** — a second, independent analysis pass whose goal is to disprove the first pass's conclusion.

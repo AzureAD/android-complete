@@ -25,6 +25,8 @@ import json
 import sys
 from datetime import datetime, timezone, timedelta
 
+sys.stdout.reconfigure(encoding="utf-8")
+
 
 def load_records(path):
     with open(path, encoding="utf-8") as f:

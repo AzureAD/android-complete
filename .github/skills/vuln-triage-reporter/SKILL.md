@@ -28,6 +28,10 @@ This skill is for **on-call engineers during their on-call week**. Default scope
 > **All investigation OUTPUTS are sensitive and live OUTSIDE the repo** in the private workspace
 > `$VULN_TRIAGE_WORKSPACE` (default `~/vuln-triage-workspace`) — never under the repo tree.
 > **Any future edit to this skill must preserve these rules.**
+>
+> 🔒 **MANDATORY before ANY commit that touches this skill: run the public-repo safety check**
+> (`scripts/safety_check.py`, see "Pre-Commit Safety Check" below). Never commit skill changes without it.
+> This is non-negotiable — sensitive information committed to a public repo cannot be un-leaked.
 
 > **Related skills.** This is the security-vulnerability counterpart to `incident-investigator` (which
 > handles auth-failure/log incidents). For all codebase exploration you **MUST** use `codebase-researcher`
@@ -86,23 +90,88 @@ ways — never claim "safe" *or* "exploitable" about a boundary you couldn't ver
    Do **not** process findings sequentially when more than one is in scope.
 2. **MUST use `codebase-researcher`** for every code-evidence step. Do not free-hand grep and call it
    analysis. The classification's credibility rests on cited `file:line` evidence gathered systematically.
-3. **Preserve the "Searches Run" audit trail VERBATIM.** Every investigation must end with a
+3. **MANDATORY adversarial verification pass.** After the first investigation classifies a finding, dispatch
+   a **second, independent `codebase-researcher`** whose only job is to **break the conclusion** — challenge
+   every cited mitigation, hunt for a bypass, and try to reach the sink another way. Only after the
+   challenger reports do you finalize. Record the outcome and set a **Confidence** level (High/Medium/Low).
+   This is the core correction for the past failure — a single pass is not trustworthy. See
+   "The two-pass model" below.
+4. **Preserve the "Searches Run" audit trail VERBATIM.** Every investigation (both passes) must end with a
    `## Searches Run (audit trail)` section listing the actual search patterns/paths run and what each
    returned — especially the searches that returned **nothing** (the absence proofs behind every
    "no mitigation found" / "not reachable" claim). This is non-optional: the subagent's granular tool
    calls are not retained, so this section IS the audit trail. Copy it into the finding's report; do not
    summarize it away.
-3. **Every severity call needs evidence.** Cite the sink AND every mitigating/aggravating control with
+5. **Every severity call needs evidence.** Cite the sink AND every mitigating/aggravating control with
    `file:line`. No control found? Show the searches that prove the absence.
-4. **Agree-or-rebut explicitly.** State FireWatch's filed classification, then state ours, then the delta
+6. **Agree-or-rebut explicitly.** State FireWatch's filed classification, then state ours, then the delta
    and the evidence that justifies any change.
-5. **No PoC payloads or PII** in committed artifacts. Keep detail at engineering-triage level.
-6. **Scripts, not one-liners.** Use the committed scripts in `scripts/` for discovery, scaffolding,
+7. **Assign every finding, and solution the ones we keep.** Set an **Assignment** using the cutoff:
+   **Low/Moderate → Intern-eligible**, **Important/Critical → Engineer-owned**. For every engineer-owned
+   (kept) finding, produce a **dispatch-ready Remediation Spec** (root cause, fix approach, files to change,
+   test plan, risks/rollout) — see [references/remediation-spec.md](references/remediation-spec.md).
+8. **No PoC payloads or PII** in committed artifacts. Keep detail at engineering-triage level.
+9. **Scripts, not one-liners.** Use the committed scripts in `scripts/` for discovery, scaffolding,
    transcription, and roll-up so the weekly run is repeatable.
-7. **Generate the HTML evidence record per finding.** The master report's table is a summary; the real
-   proof lives in one HTML subpage per finding (sink + defense-in-depth sweep + recommended fix + the
-   verbatim "Searches Run" audit). Generate them with `scripts/build_research_pages.py` and link each
-   master-table row to its subpage. Reviewers must be able to verify every severity call without chat access.
+10. **Generate the HTML evidence record per finding.** The master report's table is a summary; the real
+    proof lives in one HTML subpage per finding (sink + defense-in-depth sweep + remediation spec + the
+    verbatim "Searches Run" audit). Generate them with `scripts/build_research_pages.py` and link each
+    master-table row to its subpage. Reviewers must be able to verify every severity call without chat access.
+11. **Run the public-repo safety check before committing.** Any commit touching this skill MUST be preceded
+    by `scripts/safety_check.py` (see "Pre-Commit Safety Check"). A non-zero exit blocks the commit.
+12. **Map to an IcM Sev, conservatively.** Translate the analytical tier to the team's IcM severity
+    (Sev2/2.5/3/4) using the mapping in [references/severity-rubric.md](references/severity-rubric.md).
+    **Sev2.5+ is a rare, high bar** — only when High confidence + proven shipping reachability + proven
+    absence of any safeguard + not leaning on an unverifiable boundary. When in doubt, go lower.
+13. **Capture learnings back into the skill.** When a run surfaces a reusable insight — a new tier→Sev
+    calibration point, a recurring safeguard pattern, a codebase-search gotcha, an estimate heuristic —
+    record it in the right place (the **calibration log** in `references/severity-rubric.md`, the relevant
+    reference doc, or repo memory) and include it in the commit. The skill must get smarter every rotation.
+
+## The two-pass model (verify before you trust)
+
+A single investigation — however well-cited — is **not** sufficient, because the failure mode is *not knowing
+what you missed*. Every finding goes through two independent `codebase-researcher` passes:
+
+1. **Pass 1 — Investigator.** Finds the sink, runs the defense-in-depth sweep, proposes a classification with
+   cited evidence (the existing workflow).
+2. **Pass 2 — Challenger (adversarial).** A *separate* agent that receives Pass 1's conclusion and is
+   instructed to **disprove it**: if Pass 1 said "mitigated by X", the challenger tries to bypass X; if Pass 1
+   said "not reachable", the challenger hunts for another entry path; if Pass 1 down-classified, the challenger
+   builds the strongest case that it's still exploitable. The challenger must cite `file:line` too and append
+   its own "Searches Run" audit.
+
+**Set Confidence from the result:**
+
+| Confidence | When |
+|------------|------|
+| **High** | Challenger ran a genuine attempt and **could not** break Pass 1; both agree; mitigations independently re-confirmed. |
+| **Medium** | Challenger surfaced a caveat / partial gap, or a control holds only under conditions we can see but not fully prove. |
+| **Low** | Challenger found a plausible bypass, the two passes disagree, or the conclusion leans on an **unverifiable boundary** (downstream/server). Low-confidence findings need human review before action. |
+
+Run the challenger passes in **parallel** across findings, just like Pass 1. Both passes' evidence and audits
+go into the finding's report (Pass 2 under an `## Adversarial Verification` section).
+
+## Timing & ETA (tell the user up front, and watch for hangs)
+
+Each `codebase-researcher` pass is a deep investigation. **Observed timings** (one finding, against a
+full local checkout): a single pass runs **~4–8 minutes** (typically ~3.5 min for a contained
+Authenticator-app finding, up to ~7–8 min for a cross-module `common`/`broker` finding with many sinks).
+
+Because Pass 1 and Pass 2 both run **in parallel across findings**, wall-clock time is roughly:
+
+> **ETA ≈ (longest Pass 1 ≈ 8 min) + (longest Pass 2 ≈ 8 min) + reporting ≈ 5 min ≈ 20 minutes**, largely
+> independent of how many findings (parallelism), as long as the agent fleet can run them concurrently.
+
+**Always give the user an ETA before launching** (e.g. *"Investigating N findings in two parallel passes —
+expect ~15–25 minutes"*) so they know what to expect.
+
+**Hang detection — important.** Background agents can occasionally stall or be cleared (e.g. a long idle gap
+between turns). Rules:
+- If a pass has not returned in **~12 minutes** (≈1.5× the worst-case single-pass time), treat it as hung.
+- Check status; if it is gone/stalled, **relaunch that specific pass** (the others' results are unaffected).
+- Do **not** silently wait indefinitely — surface the stall to the user and restart the affected pass.
+- Each pass is independent and idempotent, so relaunching one finding's pass does not disturb the others.
 
 ## Searching the Authenticator app code (critical gotcha)
 
@@ -172,22 +241,64 @@ For each finding, dispatch a `codebase-researcher` investigation that returns:
 
 Use the severity rubric in [references/severity-rubric.md](references/severity-rubric.md).
 
-### Step 4 — Classify (agree or rebut)
-For each finding, produce our classification and the agree/rebut delta vs. FireWatch, with evidence.
+### Step 3.5 — Adversarial verification IN PARALLEL (codebase-researcher, second pass)
+For each finding, dispatch a **second, independent** `codebase-researcher` (the **Challenger**) that
+receives Pass 1's conclusion and tries to **break it**:
+- If Pass 1 cited a mitigation, attempt to **bypass** it (find a path that skips the allow-list / flight /
+  package check; check whether the control is itself reachable/poisonable).
+- If Pass 1 said "not reachable", hunt for **another entry point** to the sink (other manifests, other
+  callers, exported aliases, intent filters).
+- If Pass 1 **down-classified**, build the strongest case that it is **still exploitable**.
+- The Challenger cites `file:line` and appends its own "Searches Run" audit.
+
+Then **reconcile**: keep, raise, or lower the Pass 1 verdict, and set **Confidence** (High/Medium/Low) per
+the table in "The two-pass model". Disagreement or an unverifiable boundary ⇒ at most **Medium**, usually **Low**.
+
+### Step 4 — Classify & assign (agree or rebut)
+For each finding, produce our final classification and the agree/rebut delta vs. FireWatch, with evidence,
+plus the **Confidence** from Step 3.5. Then set the **Assignment** using the cutoff:
+- **Low / Moderate → `Intern-eligible`** — bounded, lower-risk; safe to delegate.
+- **Important / Critical → `Engineer-owned`** — we keep these and solution them (Step 4.5).
+
+> The cutoff is intentionally simple (severity-based). Confidence is advisory: if an intern-eligible finding
+> is **Low confidence**, flag it for a quick engineer sanity-check before handing it off.
+
 Use [references/report-template.md](references/report-template.md).
+
+### Step 4.5 — Solution the kept findings (remediation spec)
+For every **Engineer-owned** (Important/Critical) finding, produce a **dispatch-ready Remediation Spec**:
+root cause, fix approach, exact files to change (`file:line`), test plan, and risks/rollout (flighting).
+Use [references/remediation-spec.md](references/remediation-spec.md). It must be detailed enough to hand to
+an engineer or the Copilot coding agent / `pbi-creator` without further investigation. For Intern-eligible
+findings, a lighter **Fix Notes** block is sufficient.
 
 ### Step 5 — Report
 - **Per-finding report** → the finding's folder `README.md` (or `msrc-investigations/<n>-<id>-<slug>.md`),
-  ending with the verbatim `## Searches Run (audit trail)` section.
+  including the `## Adversarial Verification` section (Pass 2) and ending with the verbatim
+  `## Searches Run (audit trail)` section.
 - **HTML evidence subpages** → run `scripts/build_research_pages.py` over the per-finding markdown to
   produce one self-contained, shareable HTML page each (CSS inlined; `file:line` citations rendered as
-  visible evidence chips, not broken links) plus an `index.html`. Each page must contain a **Description**
-  and a **How It Can Be Exploited** section (high-level attack narrative, no PoC/PII). A **Glossary** of the
-  acronyms/concepts used on that page is auto-appended from `references/glossary.md` — add new terms there.
+  visible evidence chips, not broken links) plus an `index.html`. Each page opens with a band of
+  **colorful stat tiles** (Our Severity · Confidence · Verdict vs. filed · Investigation Passes ·
+  **External Validation Needed** · Assignment) parsed from the report's `**Label:**` fields, then a
+  **Description** and a **How It Can Be Exploited** section (high-level attack narrative, no PoC/PII), and —
+  whenever the verdict wasn't fully settled by static analysis — a **Verification Gaps & What We Need to
+  Confirm** section (see below). A **Glossary** of the acronyms/concepts used on that page is auto-appended
+  from `references/glossary.md` — add new terms there.
+  > **Surface what you could NOT test.** Many real exploits require conditions an AI agent cannot reproduce —
+  > a runtime device repro, a specific tenant/server state, code in a downstream repo we don't own. The
+  > **Verification Gaps** table makes each one explicit: the open question, *why* it's untestable statically,
+  > what we confirmed instead, the concrete ask (who/what closes it), and how it would move the severity. It
+  > also states what can proceed now vs. what's blocked — so the user knows where to supply info and the
+  > engineer never stalls on a gap they can route around. Required whenever `External Validation = Yes` or any
+  > runtime/server/downstream condition affects the verdict.
 - **Master HTML report** → overview table linking each row to its IcM, FireWatch finding, and its
-  **Research** subpage; severity legend; scope summary; capacity narrative.
-- **Aggregate roll-up** → counts, severity breakdown (ours vs. filed), estimated eng-days, at-risk
-  commitments — generated with `scripts/rollup.py`. Suitable for on-call handoff and the bi-monthly WBR.
+  **Research** subpage; show **Confidence** and **Assignment** columns; severity legend; scope summary;
+  capacity narrative.
+- **Aggregate roll-up** → counts, severity breakdown (ours vs. filed), confidence breakdown, an
+  **Intern Queue** (Low/Moderate, delegatable) vs. **Engineer-owned** (kept, with remediation) split,
+  estimated eng-days, and at-risk commitments — generated with `scripts/rollup.py`. Suitable for on-call
+  handoff and the bi-monthly WBR.
 
 ---
 
@@ -195,15 +306,59 @@ Use [references/report-template.md](references/report-template.md).
 
 Full rubric + required evidence per tier: [references/severity-rubric.md](references/severity-rubric.md).
 
-| Our Tier | Meaning | Required evidence |
-|----------|---------|-------------------|
-| **CRITICAL (must fix)** | Reachable in prod, no mitigating control, real-world exploitable | Sink `file:line` + confirmed reachability + proven absence of any gate |
-| **Important** | Real weakness, but partial mitigation / elevated prerequisites | Sink + the specific mitigation limiting blast radius, cited |
-| **Moderate** | Defense-in-depth gap; needs unlikely preconditions (root, debug build, physical access) | Cited precondition that blocks mass exploitation |
-| **Low / Won't-Fix** | Not reachable in shipping config, or already gated off | Citation proving non-reachability (flight default off, non-exported, sibling allow-list, etc.) |
+| Our Tier | Meaning | IcM Sev | Required evidence |
+|----------|---------|---------|-------------------|
+| **CRITICAL (must fix)** | Reachable in prod, no mitigating control, real-world exploitable | **Sev2** (active/mass) or **Sev2.5** (not active) | Sink `file:line` + confirmed reachability + proven absence of any gate |
+| **Important** | Real weakness, but partial mitigation / elevated prerequisites | **Sev3** (Sev2.5 only at confirmed-reachable, no-safeguard top edge) | Sink + the specific mitigation limiting blast radius, cited |
+| **Moderate** | Defense-in-depth gap; needs unlikely preconditions (root, debug build, physical access) | **Sev3 / Sev4** | Cited precondition that blocks mass exploitation |
+| **Low / Won't-Fix** | Not reachable in shipping config, or already gated off | **Sev4** | Citation proving non-reachability (flight default off, non-exported, sibling allow-list, etc.) |
 
 **A down-classification is only valid if the mitigating control is cited with `file:line`.** "I didn't find
 an exploit path" is not evidence — show the control, or show the searches proving its absence.
+
+> **IcM Sev = response urgency** (Sev2 = page on-call outside business hours · Sev2.5 = immediate, business
+> hours · Sev3 = soon · Sev4 = hygiene). **Assigning Sev2.5+ is a high, rare bar** — our stack almost always
+> has a safeguard. Only assign Sev2.5+ when **all** hold: High confidence (adversarial pass held) · reachable
+> in shipping (proven) · no mitigating control (proven absent) · **not** leaning on an unverifiable
+> downstream/server boundary (External Validation = Yes ⇒ cap at Sev3). When in doubt, go lower. Full gate +
+> the evolving **calibration log**: [references/severity-rubric.md](references/severity-rubric.md).
+
+### Confidence & Assignment (summary)
+
+- **Confidence** (High/Medium/Low) comes from the **adversarial pass** (Step 3.5) — see "The two-pass model".
+  It measures *how sure we are of the verdict*, independent of severity. Low-confidence findings get a human
+  review before action.
+- **Assignment** is a simple severity cutoff applied to **our** final tier:
+
+| Our Tier | Assignment | What we do |
+|----------|-----------|------------|
+| **Low / Moderate** | `Intern-eligible` | Bounded, lower-risk — safe to delegate (Fix Notes). |
+| **Important / Critical** | `Engineer-owned` | We keep it and produce a dispatch-ready Remediation Spec (Step 4.5). |
+
+---
+
+## Pre-Commit Safety Check (MANDATORY)
+
+This skill lives in a **public** repo. **Before every commit that touches this skill**, run the scanner and
+review its output — no exceptions:
+
+```
+python .github/skills/vuln-triage-reporter/scripts/safety_check.py
+```
+
+It scans the **staged + modified** skill files (and warns if any investigation output under
+`local-context/` or the private workspace is accidentally tracked) for:
+- Telemetry **sampling rates / coverage percentages** (the evasion map) — forbidden.
+- **Internal security-control logic** — flight constant names, bypass/skip conditions, and real
+  `file:line` citations into private submodules — forbidden in docs/specs.
+- **PII / tenant GUIDs / UPNs / aliases / internal hostnames** (`*.azurefd.net`, `firewatch-pilot`,
+  `@microsoft.com`, `ame.gbl`) — forbidden.
+- **Real long IcM numbers / FireWatch GUIDs paired with finding content** — forbidden in committed skill
+  text (use placeholders like `NNNNNN` in examples).
+
+Opaque routing IDs (team IDs, service-tree GUIDs, codenames) are allowed and are NOT flagged. A **non-zero
+exit means do not commit** until the flagged content is removed or genericized. The agent must run this and
+report the result before staging any commit; if asked to commit without it, run it first anyway.
 
 ---
 
