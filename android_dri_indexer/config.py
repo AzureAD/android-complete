@@ -37,7 +37,7 @@ def load(config_path: str) -> None:
     global ICM_KUSTO_CLUSTER, ICM_KUSTO_DATABASE, ICM_LOOKBACK_HOURS
     global ICM_TEAM_GROUPS, ICM_TEAM_TO_SERVICE_ID
     global ICM_BLOB_CONTAINER_URL, ICM_BLOB_PREFIX
-    global WIKI_BASE_URL, TSG_GIT_SOURCES
+    global WIKI_BASE_URL, TSG_GIT_SOURCES, TSG_BLOB_CONTAINER_URL, TSG_BLOB_PREFIX
     global SERVICE_ID, CHUNK_SIZE_TOKENS, CHUNK_OVERLAP_TOKENS, UPLOAD_BATCH_SIZE
 
     path = Path(config_path)
@@ -86,6 +86,8 @@ def load(config_path: str) -> None:
     # TSG wiki sources
     WIKI_BASE_URL = tsg.get("wiki_base_url", "")
     TSG_GIT_SOURCES = tsg.get("git_sources", [])
+    TSG_BLOB_CONTAINER_URL = _env("TSG_BLOB_CONTAINER_URL", tsg.get("blob_container_url", ""))
+    TSG_BLOB_PREFIX = tsg.get("blob_prefix", "ACS_prep/")
 
     # Chunking / general
     SERVICE_ID = _env("SERVICE_ID", cfg.get("service_id", ""))
@@ -117,6 +119,8 @@ ICM_BLOB_PREFIX: str = "ACS_prep/"
 
 WIKI_BASE_URL: str = ""
 TSG_GIT_SOURCES: list[dict] = []
+TSG_BLOB_CONTAINER_URL: str = ""
+TSG_BLOB_PREFIX: str = "ACS_prep/"
 
 SERVICE_ID: str = ""
 CHUNK_SIZE_TOKENS: int = 700

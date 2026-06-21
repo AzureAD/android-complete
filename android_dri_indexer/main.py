@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from android_dri_indexer import config
 from android_dri_indexer.index_schemas import ensure_indexes, delete_index
 from android_dri_indexer.icm_indexer import run_icm_indexer
+from android_dri_indexer.tsg_indexer import run_tsg_indexer
 
 _ANDROID_SHIELD_TEAM = "CLOUDIDENTITYAUTHNCLIENT\\AndroidShield"
 _ARIA_RETENTION_DAYS = 60
@@ -69,6 +70,7 @@ def main() -> None:
              "Can also be set via INDEXER_CONFIG env var.",
     )
     parser.add_argument("--icm", action="store_true", help="Run ICM indexer")
+    parser.add_argument("--tsg", action="store_true", help="Run TSG indexer (writes to blob for ACS pull indexer)")
     parser.add_argument(
         "--skip-index-setup", action="store_true",
         help="Skip index creation/update",
@@ -114,15 +116,21 @@ def main() -> None:
     total_errors = 0
     try:
         if args.clean:
-            logger.info("Deleting ICM index for clean rebuild …")
-            delete_index(config.ICM_INDEX_NAME)
+            if args.icm:
+                logger.info("Deleting ICM index for clean rebuild …")
+                delete_index(config.ICM_INDEX_NAME)
 
         if not args.skip_index_setup:
             logger.info("Ensuring search indexes …")
-            ensure_indexes(icm=True, tsg=False)
+            ensure_indexes(icm=args.icm, tsg=args.tsg)
 
-        logger.info("--- ICM indexer ---")
-        total_errors += run_icm_indexer(fresh=args.fresh)
+        if args.icm:
+            logger.info("--- ICM indexer ---")
+            total_errors += run_icm_indexer(fresh=args.fresh)
+
+        if args.tsg:
+            logger.info("--- TSG indexer ---")
+            total_errors += run_tsg_indexer()
 
     except Exception:
         logger.exception("Indexer failed")
