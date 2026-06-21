@@ -1,0 +1,117 @@
+{
+  "service_id": "android-auth-team",
+
+  "upload_batch_size": 10,
+
+  "azure_search": {
+    "endpoint": "https://msalandroiddricopilotsearch.search.windows.net",
+    "icm_index_name": "android-dri-icm-index",
+    "tsg_index_name": "android-dri-tsg-index-v2"
+  },
+
+  "azure_openai": {
+    "endpoint": "https://msal-android-dri-copilot-oai.openai.azure.com/",
+    "embedding_deployment": "text-embedding-3-large",
+    "chat_deployment": "gpt-4o",
+    "api_version": "2025-04-01-preview",
+    "embedding_dimensions": 3072
+  },
+
+  "icm": {
+    "kusto_cluster": "https://icmcluster.kusto.windows.net",
+    "kusto_database": "IcMDataWarehouse",
+    "lookback_hours_override": null,
+    "blob_container_url": "https://msalandroidamlstorage.blob.core.windows.net/azureml-blobstore-dfc7eead-ae80-4f7a-83a1-f39ffe94c2e3",
+    "blob_prefix": "outputs_android-dri-icm/ACS_prep/",
+    "team_to_service_id": {
+      "CLOUDIDENTITYAUTHNCLIENT\\CloudIdentityAuthNMSALAndroid": "msal-android",
+      "CLOUDIDENTITYAUTHNCLIENT\\CloudIdentityAuthNADALAndroid": "msal-android",
+      "CLOUDIDENTITYAUTHNCLIENT\\AndroidShield": "msal-android",
+      "CLOUDIDENTITYAUTHNCLIENT\\AndroidMicrosoftAuthenticatorApp": "android-auth-app",
+      "AZUREMFA\\MicrosoftIdentityApps(WindowsPhone,iOS,AndroidApps)": "android-auth-app"
+    },
+    "team_groups": [
+      {
+        "label": "Broker + Authenticator",
+        "lookback_hours": 8760,
+        "scheduled_lookback_hours": 72,
+        "teams": [
+          "CLOUDIDENTITYAUTHNCLIENT\\CloudIdentityAuthNMSALAndroid",
+          "CLOUDIDENTITYAUTHNCLIENT\\CloudIdentityAuthNADALAndroid",
+          "CLOUDIDENTITYAUTHNCLIENT\\AndroidMicrosoftAuthenticatorApp",
+          "AZUREMFA\\MicrosoftIdentityApps(WindowsPhone,iOS,AndroidApps)"
+        ]
+      },
+      {
+        "label": "AndroidShield",
+        "lookback_hours": 672,
+        "scheduled_lookback_hours": 72,
+        "teams": [
+          "CLOUDIDENTITYAUTHNCLIENT\\AndroidShield"
+        ]
+      }
+    ]
+  },
+
+  "tsg": {
+    "wiki_base_url": "https://identitydivision.visualstudio.com/IdentityWiki/_wiki/wikis/IdentityWiki.wiki",
+    "blob_container_url": "https://msalandroidamlstorage.blob.core.windows.net/azureml-blobstore-dfc7eead-ae80-4f7a-83a1-f39ffe94c2e3",
+    "blob_prefix": "outputs_android-dri-tsg-v2/ACS_prep/",
+    "git_sources": [
+      {
+        "source": "https://identitydivision.visualstudio.com/DefaultCollection/IdentityWiki/_git/IdentityWiki.wiki",
+        "branch": "wikiMaster",
+        "folder": "IdentityWiki/Teams/DevEx-Android",
+        "extensions": ["md", "markdown"],
+        "description": "MSAL/Broker Android (DevEx-Android) TSGs"
+      },
+      {
+        "source": "https://identitydivision.visualstudio.com/DefaultCollection/IdentityWiki/_git/IdentityWiki.wiki",
+        "branch": "wikiMaster",
+        "folder": "IdentityWiki/Services/Microsoft-Authenticator/Android",
+        "extensions": ["md", "markdown"],
+        "description": "Authenticator App Android TSGs"
+      },
+      {
+        "source": "https://identitydivision.visualstudio.com/DefaultCollection/IdentityWiki/_git/IdentityWiki.wiki",
+        "branch": "wikiMaster",
+        "folder": "IdentityWiki/Services/Microsoft-Authenticator/On-Call-Rotation",
+        "extensions": ["md", "markdown"],
+        "description": "Authenticator App On-Call-Rotation TSGs"
+      },
+      {
+        "source": "https://identitydivision.visualstudio.com/DefaultCollection/IdentityWiki/_git/IdentityWiki.wiki",
+        "branch": "wikiMaster",
+        "folder": "IdentityWiki/Services/Microsoft-Authenticator/Common/TSG-Guides",
+        "extensions": ["md", "markdown"],
+        "description": "Authenticator App Common TSG Guides"
+      },
+      {
+        "source": "https://identitydivision.visualstudio.com/DefaultCollection/IdentityWiki/_git/IdentityWiki.wiki",
+        "branch": "wikiMaster",
+        "folder": "IdentityWiki/Services/Microsoft-Authenticator/Release",
+        "extensions": ["md", "markdown"],
+        "description": "Authenticator App Release TSGs"
+      },
+      {
+        "source": "https://identitydivision.visualstudio.com/DefaultCollection/IdentityWiki/_git/IdentityWiki.wiki",
+        "branch": "wikiMaster",
+        "folder": "IdentityWiki/Services/Microsoft-Authenticator/Telemetry-Monitoring",
+        "extensions": ["md", "markdown"],
+        "description": "Authenticator App Telemetry-Monitoring TSGs"
+      },
+      {
+        "source": "https://identitydivision.visualstudio.com/DefaultCollection/IdentityWiki/_git/IdentityWiki.wiki",
+        "branch": "wikiMaster",
+        "folder": "IdentityWiki/Services/Microsoft-Authenticator/Telemetry-Infrastructure",
+        "extensions": ["md", "markdown"],
+        "description": "Authenticator App Telemetry-Infrastructure TSGs"
+      }
+    ]
+  },
+
+  "chunking": {
+    "chunk_size_tokens": 700,
+    "chunk_overlap_tokens": 125
+  }
+}
