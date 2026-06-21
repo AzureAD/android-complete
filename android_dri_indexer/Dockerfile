@@ -2,6 +2,9 @@
 # Only adds the 3 extra packages the indexer needs (kusto, blob, tiktoken).
 FROM androiddrimcp.azurecr.io/android-dri-mcp:latest
 
+# Install git (required by TSG indexer for wiki clone)
+RUN tdnf install -y git && tdnf clean all
+
 # Install additional indexer-only dependencies
 COPY requirements-extra.txt .
 RUN pip install --no-cache-dir -r requirements-extra.txt
