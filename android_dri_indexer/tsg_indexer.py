@@ -294,16 +294,14 @@ def _make_chunk_id(filepath: str, chunk_index: int) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 
-def _build_wiki_url(rel_path: str) -> str:
-    """Construct a browsable ADO wiki URL from a repo-relative file path."""
+def _build_wiki_url(rel_path: str, git_source: str, branch: str) -> str:
+    """Construct a browsable ADO git file URL (same format as DRICopilot prod).
+
+    Produces URLs like:
+      https://identitydivision.visualstudio.com/DefaultCollection/IdentityWiki/_git/IdentityWiki.wiki?version=GBwikiMaster&path=IdentityWiki/path/to/file.md
+    """
     posix = rel_path.replace("\\", "/")
-    parts = posix.split("/", 1)
-    page_path = parts[1] if len(parts) > 1 else parts[0]
-    page_path = re.sub(r"\.(md|markdown)$", "", page_path, flags=re.IGNORECASE)
-    encoded = "/".join(
-        urllib.parse.quote(segment, safe="") for segment in page_path.split("/")
-    )
-    return f"{config.WIKI_BASE_URL}?pagePath=/{encoded}"
+    return f"{git_source}?version=GB{branch}&path={posix}"
 
 
 # ── Main pipeline ────────────────────────────────────────────────────────────
@@ -370,7 +368,7 @@ def run_tsg_indexer() -> int:
                         continue
 
                     rel_path = str(md_file.relative_to(clone_root))
-                    wiki_url = _build_wiki_url(rel_path)
+                    wiki_url = _build_wiki_url(rel_path, repo_url, branch)
                     images = _extract_images(md_file)
                     images_json = json.dumps(images) if images else ""
 
