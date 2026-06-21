@@ -24,6 +24,8 @@ import shutil
 import subprocess
 import tempfile
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Optional
 
@@ -38,6 +40,9 @@ logger = logging.getLogger(__name__)
 
 # Azure DevOps resource scope for managed identity token exchange
 _ADO_SCOPE = "499b84ac-1321-427f-aa17-267ca6975798/.default"
+
+# Parallelism for embedding + keyword generation
+_EMBED_WORKERS = int(os.environ.get("TSG_EMBED_WORKERS", "3"))
 
 # ── Git helpers ──────────────────────────────────────────────────────────────
 
@@ -79,15 +84,47 @@ def _clone_wiki(
 
 
 def _find_markdown_files(root: Path, folder: str, extensions: list[str]) -> list[Path]:
-    """Find all markdown files in a specific folder."""
+    """Find all markdown files in a specific folder, respecting .indexignore."""
     search_dir = root / folder
     if not search_dir.exists():
         logger.warning("Folder not found in clone: %s", search_dir)
         return []
+
+    # Load .indexignore patterns (check folder, then repo root)
+    ignore_patterns = _load_indexignore(search_dir) or _load_indexignore(root)
+
     files: list[Path] = []
     for ext in extensions:
-        files.extend(search_dir.rglob(f"*.{ext}"))
+        for f in search_dir.rglob(f"*.{ext}"):
+            if ignore_patterns and _should_ignore(f, search_dir, ignore_patterns):
+                logger.debug("Skipping (indexignore): %s", f)
+                continue
+            files.append(f)
     return sorted(files)
+
+
+def _load_indexignore(directory: Path) -> list[str] | None:
+    """Load .indexignore patterns from a directory. Returns None if not found."""
+    ignore_file = directory / ".indexignore"
+    if not ignore_file.exists():
+        return None
+    patterns = []
+    for line in ignore_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            patterns.append(line)
+    if patterns:
+        logger.info("Loaded %d .indexignore patterns from %s", len(patterns), ignore_file)
+    return patterns or None
+
+
+def _should_ignore(file_path: Path, base_dir: Path, patterns: list[str]) -> bool:
+    """Check if a file matches any .indexignore pattern."""
+    rel = str(file_path.relative_to(base_dir)).replace("\\", "/")
+    for pattern in patterns:
+        if fnmatch(rel, pattern) or fnmatch(file_path.name, pattern):
+            return True
+    return False
 
 
 # ── Blob helpers ─────────────────────────────────────────────────────────────
@@ -283,6 +320,9 @@ def run_tsg_indexer() -> int:
             md_files = _find_markdown_files(clone_root, folder, extensions)
             logger.info("Found %d markdown files in %s", len(md_files), folder)
 
+            # Collect chunks to process for this folder
+            chunks_to_process: list[tuple[str, str, int, str, str]] = []  # (blob_path, chunk_text, idx, wiki_url, description, images_json, rel_path)
+
             for md_file in md_files:
                 try:
                     text = md_file.read_text(encoding="utf-8", errors="replace")
@@ -307,33 +347,48 @@ def run_tsg_indexer() -> int:
                             stats["skipped_dedup"] += 1
                             continue
 
-                        # ── Generate embeddings + keywords ──
-                        title_vec = generate_embedding(wiki_url)
-                        content_vec = generate_embedding(chunk_text)
-                        keywords = _generate_keywords(chunk_text)
-
-                        doc = {
-                            "id": _make_chunk_id(rel_path, idx),
-                            "service_id": config.SERVICE_ID,
-                            "title": wiki_url,
-                            "filepath": rel_path,
-                            "content": chunk_text,
-                            "keywords": keywords,
-                            "tsg_description": description,
-                            "base64_images": images_json,
-                            "title_vector": title_vec,
-                            "content_vector": content_vec,
-                        }
-
-                        # ── Write to blob immediately (per-chunk) ──
-                        _upload_blob(blob_client, bp, doc)
-                        stats["new_or_updated"] += 1
+                        # Queue for parallel processing
+                        chunks_to_process.append((bp, chunk_text, idx, wiki_url, description, images_json, rel_path))
 
                     logger.info("Chunked %s → %d chunks", rel_path, len(chunks))
 
                 except Exception:
                     logger.exception("Error processing %s", md_file)
                     errors += 1
+
+            # ── Process queued chunks in parallel (embed + keywords + blob write) ──
+            if chunks_to_process:
+                logger.info("Processing %d new/updated chunks with %d workers", len(chunks_to_process), _EMBED_WORKERS)
+
+                def _process_chunk(item):
+                    bp, chunk_text, idx, wiki_url, desc, img_json, rel_p = item
+                    title_vec = generate_embedding(wiki_url)
+                    content_vec = generate_embedding(chunk_text)
+                    keywords = _generate_keywords(chunk_text)
+                    doc = {
+                        "id": _make_chunk_id(rel_p, idx),
+                        "service_id": config.SERVICE_ID,
+                        "title": wiki_url,
+                        "filepath": rel_p,
+                        "content": chunk_text,
+                        "keywords": keywords,
+                        "tsg_description": desc,
+                        "base64_images": img_json,
+                        "title_vector": title_vec,
+                        "content_vector": content_vec,
+                    }
+                    _upload_blob(blob_client, bp, doc)
+                    return bp
+
+                with ThreadPoolExecutor(max_workers=_EMBED_WORKERS) as executor:
+                    futures = {executor.submit(_process_chunk, item): item[0] for item in chunks_to_process}
+                    for future in as_completed(futures):
+                        try:
+                            future.result()
+                            stats["new_or_updated"] += 1
+                        except Exception as e:
+                            logger.error("Failed to process chunk %s: %s", futures[future], e)
+                            errors += 1
 
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
