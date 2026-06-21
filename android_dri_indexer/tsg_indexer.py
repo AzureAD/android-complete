@@ -74,13 +74,13 @@ def _clone_wiki(
 
     if sparse_paths:
         logger.info("Sparse-cloning %s (branch=%s, %d paths)", source, branch, len(sparse_paths))
-        _run(["git", "clone", "--no-checkout", "--single-branch", "--branch", branch, "--depth", "1", auth_url, str(dest)])
+        _run(["git", "clone", "--no-checkout", "--single-branch", "--branch", branch, "--depth", "1", "--filter=blob:none", auth_url, str(dest)], timeout=600)
         _run(["git", "sparse-checkout", "init", "--cone"], cwd=dest)
         _run(["git", "sparse-checkout", "set", *sparse_paths], cwd=dest)
-        _run(["git", "checkout"], cwd=dest)
+        _run(["git", "checkout"], cwd=dest, timeout=600)
     else:
         logger.info("Cloning %s (branch=%s)", source, branch)
-        _run(["git", "clone", "--single-branch", "--branch", branch, "--depth", "1", auth_url, str(dest)])
+        _run(["git", "clone", "--single-branch", "--branch", branch, "--depth", "1", "--filter=blob:none", auth_url, str(dest)], timeout=600)
 
 
 def _find_markdown_files(root: Path, folder: str, extensions: list[str]) -> list[Path]:
@@ -389,7 +389,7 @@ def run_tsg_indexer() -> int:
                         # Queue for parallel processing
                         chunks_to_process.append((bp, chunk_text, idx, wiki_url, description, images_json, rel_path))
 
-                    logger.info("Chunked %s → %d chunks", rel_path, len(chunks))
+                    logger.info("Chunked %s -> %d chunks", rel_path, len(chunks))
 
                 except Exception:
                     logger.exception("Error processing %s", md_file)
