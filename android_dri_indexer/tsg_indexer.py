@@ -158,6 +158,43 @@ def _read_existing_blob(client: ContainerClient, path: str) -> Optional[dict]:
         return None
 
 
+def _preload_existing_blobs(client: ContainerClient) -> dict[str, str]:
+    """Preload all existing blob content fields for dedup.
+
+    Instead of reading blobs one-by-one during processing, this lists all
+    blobs under the TSG prefix and downloads their 'content' field in
+    parallel. Returns a dict of {blob_path: content_text}.
+
+    This turns ~1,500 sequential blob reads into one list + parallel downloads,
+    saving ~2 min on incremental runs.
+    """
+    prefix = (config.TSG_BLOB_PREFIX or "ACS_prep/") + (config.SERVICE_ID or "")
+    blob_names = [b.name for b in client.list_blobs(name_starts_with=prefix)]
+
+    if not blob_names:
+        return {}
+
+    logger.info("Preloading %d existing blobs for dedup...", len(blob_names))
+    content_map: dict[str, str] = {}
+
+    def _download_content(name: str) -> tuple[str, str]:
+        try:
+            data = json.loads(client.download_blob(name).readall())
+            return name, data.get("content", "")
+        except Exception:
+            return name, ""
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(_download_content, name) for name in blob_names]
+        for future in as_completed(futures):
+            name, content = future.result()
+            if content:
+                content_map[name] = content
+
+    logger.info("Preloaded %d blobs with content", len(content_map))
+    return content_map
+
+
 def _upload_blob(client: ContainerClient, path: str, data: dict) -> None:
     """Upload a JSON document to blob, overwriting if exists."""
     content = json.dumps(data, indent=2, ensure_ascii=False)
@@ -285,6 +322,9 @@ def run_tsg_indexer() -> int:
         chunk_overlap=config.CHUNK_OVERLAP_TOKENS,
     )
 
+    # Preload existing blob content for fast dedup (parallel download)
+    existing_content = _preload_existing_blobs(blob_client)
+
     written_blob_paths: set[str] = set()
     errors = 0
     stats = {"processed": 0, "skipped_dedup": 0, "new_or_updated": 0}
@@ -341,9 +381,8 @@ def run_tsg_indexer() -> int:
                         written_blob_paths.add(bp)
                         stats["processed"] += 1
 
-                        # ── DEDUP: check if chunk content is unchanged ──
-                        existing = _read_existing_blob(blob_client, bp)
-                        if existing and existing.get("content") == chunk_text:
+                        # ── DEDUP: check preloaded content cache ──
+                        if bp in existing_content and existing_content[bp] == chunk_text:
                             stats["skipped_dedup"] += 1
                             continue
 
