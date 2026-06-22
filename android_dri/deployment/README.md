@@ -246,6 +246,72 @@ Update the Container App Job's cron expression:
 az containerapp job update --name <team>-tsg-indexer -g <rg> --cron-expression "0 6 * * *"
 ```
 
+## Monitoring & Visualization
+
+### Azure Portal (quickest — no setup)
+
+Bookmark these URLs to check job status:
+
+- **TSG Indexer:** Azure Portal → Resource Group `rg-<team>-dri-mcp` → Container App Jobs → `<team>-tsg-indexer` → **Execution History**
+- **ICM Indexer:** Azure Portal → Resource Group `rg-<team>-dri-mcp` → Container App Jobs → `<team>-icm-indexer` → **Execution History**
+- **MCP Server:** Azure Portal → Resource Group `rg-<team>-dri-mcp` → Container Apps → `<team>-mcp` → **Log stream**
+
+### CLI (quick health check)
+
+```powershell
+$env:AZURE_CLI_DISABLE_CONNECTION_VERIFICATION = "1"
+
+# Check last execution status for both indexers
+az containerapp job execution list --name <team>-tsg-indexer -g rg-<team>-dri-mcp `
+    --query "[0].{name:name, start:properties.startTime, status:properties.status}" -o table
+
+az containerapp job execution list --name <team>-icm-indexer -g rg-<team>-dri-mcp `
+    --query "[0].{name:name, start:properties.startTime, status:properties.status}" -o table
+
+# Check index document counts (verifies indexers are populating data)
+foreach ($idx in @("<team>-tsg-index","<team>-icm-index")) {
+  $count = az rest --method get `
+    --url "<search-endpoint>/indexes/$idx/docs/`$count?api-version=2024-07-01" `
+    --resource "https://search.azure.com" 2>$null
+  Write-Host "$idx : $count docs"
+}
+```
+
+### Alerting (optional — get notified on failure)
+
+Set up an Azure Monitor alert to get an email/Teams notification when a job fails:
+
+1. Go to Azure Portal → **Monitor** → **Alerts** → **Create alert rule**
+2. Scope: your Container Apps Environment (`<team>-mcp-env`)
+3. Condition: **Custom log search** with query:
+   ```kusto
+   ContainerAppSystemLogs_CL
+   | where Reason_s == "Error" or Reason_s == "BackOff"
+   | where ContainerGroupName_s contains "indexer"
+   | project TimeGenerated, ContainerGroupName_s, Log_s
+   ```
+4. Actions: Create action group → Email/Teams webhook
+5. Alert rule name: `DRI Indexer Job Failure`
+
+Alternatively, use the built-in **metric alert**:
+1. Scope: Container Apps Environment
+2. Signal: `Jobs Failed Executions`
+3. Condition: Greater than 0
+4. Check every: 1 hour
+
+### Dashboard (persistent visual overview)
+
+To create an Azure Dashboard showing everything on one page:
+
+1. Go to Azure Portal → **Dashboard** → **New dashboard**
+2. Add tiles:
+   - **Container App Job execution history** (pin from each job's Execution History page)
+   - **Index document count** (pin from Azure AI Search → Indexes)
+   - **MCP server request count** (pin from Container App → Metrics → Requests)
+3. Share the dashboard URL with your team
+
+---
+
 ## Source Code
 
 The MCP server and indexer code is in this repo:
