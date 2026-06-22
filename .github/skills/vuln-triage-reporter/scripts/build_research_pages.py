@@ -88,6 +88,7 @@ details.audit[open] summary{margin-bottom:6px}
 .t-ext-yes{background:linear-gradient(135deg,#b45309,#8a3f07)}.t-ext-no{background:linear-gradient(135deg,#15803d,#0f5f2d)}
 .t-agree{background:linear-gradient(135deg,#475569,#334155)}.t-down{background:linear-gradient(135deg,#15803d,#0f5f2d)}.t-up{background:linear-gradient(135deg,#b91c1c,#7f1212)}
 .t-sev2{background:linear-gradient(135deg,#b91c1c,#7f1212)}.t-sev25{background:linear-gradient(135deg,#c2410c,#9a3209)}.t-sev3{background:linear-gradient(135deg,#a16207,#7c4a05)}.t-sev4{background:linear-gradient(135deg,#15803d,#0f5f2d)}
+.t-repo-auth{background:linear-gradient(135deg,#0e7490,#0a586e)}.t-repo-broker{background:linear-gradient(135deg,#7c3aed,#5b21b6)}.t-repo-msal{background:linear-gradient(135deg,#0369a1,#075985)}.t-repo-common{background:linear-gradient(135deg,#475569,#334155)}.t-repo-adal{background:linear-gradient(135deg,#57534e,#44403c)}
 .muted{color:var(--ink2)}.idx a{display:block;padding:6px 0;border-bottom:1px solid var(--line)}
 footer{margin-top:24px;font-size:.78rem;color:var(--ink2);text-align:center;line-height:1.6}
 """
@@ -321,6 +322,40 @@ def _sev_cls(tier):
     return "t-pass", tier or "—"
 
 
+# Component → canonical repo (the 4 we own + ADAL). Order matters: check the leading token.
+REPO_TILE = {
+    "Authenticator": ("t-repo-auth", "Microsoft Authenticator app"),
+    "Common": ("t-repo-common", "auth-library-common-for-android"),
+    "Broker": ("t-repo-broker", "ad-accounts-for-android"),
+    "MSAL": ("t-repo-msal", "auth-library-for-android"),
+    "ADAL": ("t-repo-adal", "azure-ad-library-for-android"),
+}
+
+
+def canonical_repo(component):
+    """Map a free-form Component string to one of: Authenticator | Common | Broker | MSAL | ADAL."""
+    c = _clean(component).lower()
+    if "authenticator" in c or "auth app" in c or c in ("auth", "auth-app"):
+        return "Authenticator"
+    if "common" in c:
+        return "Common"
+    if "broker" in c:
+        return "Broker"
+    if "msal" in c:
+        return "MSAL"
+    if "adal" in c:
+        return "ADAL"
+    return _clean(component) or "—"
+
+
+def compute_assignment(sev_icm, component):
+    """Cutoff: Intern-eligible ONLY when IcM Sev4 AND the repo is the Authenticator app. Else Engineer-owned."""
+    sev = (sev_icm or "").replace(" ", "").lower()
+    if sev == "sev4" and canonical_repo(component) == "Authenticator":
+        return "Intern-eligible"
+    return "Engineer-owned"
+
+
 def tiles_html(md):
     """Build the colorful stat-tile band from the finding metadata."""
     m = parse_meta(md)
@@ -335,6 +370,11 @@ def tiles_html(md):
                 filed = _clean(cells[2])
             break
     tiles.append((sev_cls, "Our Severity", sev_txt, (f"filed: {filed}" if filed else "")))
+
+    # Component / repo tile
+    repo = canonical_repo(m.get('component', ''))
+    repo_cls, repo_sub = REPO_TILE.get(repo, ("t-repo-common", ""))
+    tiles.append((repo_cls, "Component / Repo", repo, repo_sub))
 
     # IcM Sev (team response-urgency) tile
     sev_icm_raw = _clean(m.get('icm severity', m.get('icm sev', '')))
@@ -376,10 +416,11 @@ def tiles_html(md):
                                            else "all controls verified in code we own")
     tiles.append((ext_cls, "External Validation Needed", ext_val, ext_sub))
 
-    asn = _clean(m.get('assignment', ''))
-    asn_cls = "t-eng" if "engineer" in asn.lower() else "t-intern"
-    tiles.append((asn_cls, "Assignment", asn or "—",
-                  "remediation spec" if "engineer" in asn.lower() else "delegatable / fix notes"))
+    asn = compute_assignment(sev_icm_raw, m.get('component', ''))
+    is_eng = asn == "Engineer-owned"
+    asn_cls = "t-eng" if is_eng else "t-intern"
+    tiles.append((asn_cls, "Assignment", asn,
+                  "remediation spec" if is_eng else "delegatable / fix notes (Sev4 + Authenticator)"))
 
     cells = "".join(
         f'<div class="tile {cls}"><div class="lbl">{htmllib.escape(lbl)}</div>'

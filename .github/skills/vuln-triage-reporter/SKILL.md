@@ -107,7 +107,8 @@ ways — never claim "safe" *or* "exploitable" about a boundary you couldn't ver
 6. **Agree-or-rebut explicitly.** State FireWatch's filed classification, then state ours, then the delta
    and the evidence that justifies any change.
 7. **Assign every finding, and solution the ones we keep.** Set an **Assignment** using the cutoff:
-   **Low/Moderate → Intern-eligible**, **Important/Critical → Engineer-owned**. For every engineer-owned
+   **Intern-eligible ONLY when IcM Sev4 AND the component is the Authenticator app; everything else →
+   Engineer-owned.** For every engineer-owned
    (kept) finding, produce a **dispatch-ready Remediation Spec** (root cause, fix approach, files to change,
    test plan, risks/rollout) — see [references/remediation-spec.md](references/remediation-spec.md).
 8. **No PoC payloads or PII** in committed artifacts. Keep detail at engineering-triage level.
@@ -257,16 +258,19 @@ the table in "The two-pass model". Disagreement or an unverifiable boundary ⇒ 
 ### Step 4 — Classify & assign (agree or rebut)
 For each finding, produce our final classification and the agree/rebut delta vs. FireWatch, with evidence,
 plus the **Confidence** from Step 3.5. Then set the **Assignment** using the cutoff:
-- **Low / Moderate → `Intern-eligible`** — bounded, lower-risk; safe to delegate.
-- **Important / Critical → `Engineer-owned`** — we keep these and solution them (Step 4.5).
+- **`Intern-eligible`** — ONLY when **IcM Sev4 AND the component is the Authenticator app**. These are the
+  smallest, lowest-risk, single-repo fixes — safe to delegate.
+- **`Engineer-owned`** — **everything else** (any Sev3+, or any Broker/Common/MSAL component). We keep these
+  and solution them (Step 4.5). Cross-module, broker-privileged, and library findings always stay here.
 
-> The cutoff is intentionally simple (severity-based). Confidence is advisory: if an intern-eligible finding
-> is **Low confidence**, flag it for a quick engineer sanity-check before handing it off.
+> The cutoff is deliberately narrow: an intern only takes a finding that is both low-urgency (Sev4) **and**
+> contained to the app we fully own (Authenticator). Confidence is advisory: if an intern-eligible finding is
+> **Low confidence**, flag it for a quick engineer sanity-check before handing it off.
 
 Use [references/report-template.md](references/report-template.md).
 
 ### Step 4.5 — Solution the kept findings (remediation spec)
-For every **Engineer-owned** (Important/Critical) finding, produce a **dispatch-ready Remediation Spec**:
+For every **Engineer-owned** finding, produce a **dispatch-ready Remediation Spec**:
 root cause, fix approach, exact files to change (`file:line`), test plan, and risks/rollout (flighting).
 Use [references/remediation-spec.md](references/remediation-spec.md). It must be detailed enough to hand to
 an engineer or the Copilot coding agent / `pbi-creator` without further investigation. For Intern-eligible
@@ -289,23 +293,26 @@ Each finding yields a **human report** and a **machine-readable agent spec** —
 - **HTML evidence subpages (human, curated)** → run `scripts/build_research_pages.py` with
   `--agent-dir ../agent-specs` to produce one self-contained, shareable HTML page each (CSS inlined;
   `file:line` citations as visible evidence chips) plus an `index.html`. Each page opens with a band of
-  **colorful stat tiles** (Our Severity · IcM Severity · Confidence · Verdict · Investigation Passes ·
-  **External Validation Needed** · Assignment), a **Bottom line** TL;DR, then **Description** and
-  **How It Can Be Exploited** (high-level, no PoC/PII). The heavy **Searches Run** audit is auto-collapsed
-  into a `<details>` for readability, and a header **"Agent dispatch spec"** button links the `.agent.md`.
-  A **Glossary** of the terms used is auto-appended from `references/glossary.md`.
+  **colorful stat tiles** (Our Severity · **Component / Repo** · IcM Severity · Confidence · Verdict ·
+  Investigation Passes · **External Validation Needed** · Assignment), a **Bottom line** TL;DR, then
+  **Description** and **How It Can Be Exploited** (high-level, no PoC/PII). The heavy **Searches Run** audit
+  is auto-collapsed into a `<details>` for readability, and a header **"Agent dispatch spec"** button links
+  the `.agent.md`. A **Glossary** of the terms used is auto-appended from `references/glossary.md`.
   > **Surface what you could NOT test.** Many real exploits require conditions an AI agent cannot reproduce —
   > a runtime device repro, a specific tenant/server state, code in a downstream repo we don't own. The
   > **Verification Gaps** table makes each explicit (open question · *why* untestable statically · what we
   > confirmed instead · the concrete ask · severity effect) and the **Decisions Needed** box lists the
   > judgment calls a human must make. So the user knows exactly where to supply info, and neither a human nor
   > an agent stalls on a gap they can route around. Required whenever `External Validation = Yes`.
-- **Master HTML report** → overview table linking each row to its IcM, FireWatch finding, its **Research**
-  subpage, and its **agent spec**; show **Confidence**, **IcM Sev**, and **Assignment** columns; severity
-  legend; scope summary; capacity narrative.
+- **Master HTML report (self-contained)** → run `scripts/build_master_report.py` over the same finding
+  markdown with `--out <run_dir> --research-dir research --agent-dir agent-specs` to emit
+  `wbr-security-report.html` in the run dir. It has summary stat cards, the severity legend, and a master
+  table linking each row to its IcM, its **Research** subpage, and its **agent spec**. The research subpages'
+  "Back to WBR overview" link points here, so **the run folder is fully self-contained — never reuse a prior
+  run's overview.** Generate it AFTER the subpages + specs exist.
 - **Aggregate roll-up** → counts, severity breakdown (ours vs. filed), confidence + IcM-Sev breakdown, an
-  **Intern Queue** (Low/Moderate, delegatable) vs. **Engineer-owned** (kept, with remediation) split,
-  estimated eng-days, and at-risk commitments — generated with `scripts/rollup.py`. Suitable for on-call
+  **Intern Queue** (Sev4 + Authenticator, delegatable) vs. **Engineer-owned** (everything else, kept with
+  remediation) split, estimated eng-days, and at-risk commitments — generated with `scripts/rollup.py`. For on-call
   handoff and the bi-monthly WBR.
 
 ---
@@ -336,12 +343,15 @@ an exploit path" is not evidence — show the control, or show the searches prov
 - **Confidence** (High/Medium/Low) comes from the **adversarial pass** (Step 3.5) — see "The two-pass model".
   It measures *how sure we are of the verdict*, independent of severity. Low-confidence findings get a human
   review before action.
-- **Assignment** is a simple severity cutoff applied to **our** final tier:
+- **Assignment** is a cutoff on **IcM Sev + component** (not tier alone):
 
-| Our Tier | Assignment | What we do |
-|----------|-----------|------------|
-| **Low / Moderate** | `Intern-eligible` | Bounded, lower-risk — safe to delegate (Fix Notes). |
-| **Important / Critical** | `Engineer-owned` | We keep it and produce a dispatch-ready Remediation Spec (Step 4.5). |
+| Condition | Assignment | What we do |
+|-----------|-----------|------------|
+| **IcM Sev4 AND component = Authenticator app** | `Intern-eligible` | Smallest, contained, single-repo fix — safe to delegate (Fix Notes). |
+| **Everything else** (any Sev3+, or Broker/Common/MSAL) | `Engineer-owned` | We keep it and produce a dispatch-ready Remediation Spec (Step 4.5). |
+
+> Rationale: an intern only takes a finding that is both **low-urgency (Sev4)** and **contained to the app we
+> fully own (Authenticator)**. Library (Common/Broker/MSAL) and any Sev3+ finding needs engineer judgment.
 
 ---
 

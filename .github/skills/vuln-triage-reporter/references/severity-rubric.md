@@ -160,17 +160,21 @@ A finding that depends on a **Scope & Verification Boundary** disclaimer cannot 
 
 ## Assignment cutoff (intern vs. engineer)
 
-Apply a **simple severity cutoff** to **our** final tier so the on-call engineer can delegate safely:
+Apply this **two-factor cutoff** (IcM Sev **and** component) so the on-call engineer only delegates the
+smallest, most contained work:
 
-| Our Tier | Assignment | Rationale |
-|----------|-----------|-----------|
-| **Low / Won't-Fix** | `Intern-eligible` | Bounded write-up/close or a small, well-understood gate. |
-| **Moderate** | `Intern-eligible` | Defense-in-depth gap with unlikely preconditions; lower blast radius. |
-| **Important** | `Engineer-owned` | Real weakness; needs judgment + a coordinated fix. |
-| **CRITICAL** | `Engineer-owned` | Must-fix; coordinated release + MSRC process. |
+| Condition | Assignment | Rationale |
+|-----------|-----------|-----------|
+| **IcM Sev4 AND component = Authenticator app** | `Intern-eligible` | Low-urgency, single-repo, contained to the app we fully own — a bounded, well-understood fix. |
+| **Any Sev3 or higher** (regardless of component) | `Engineer-owned` | Real urgency; needs judgment + a coordinated fix. |
+| **Any Broker / Common / MSAL component** (even Sev4) | `Engineer-owned` | Library / cross-module / broker-privileged code — needs engineer ownership and downstream-impact judgment. |
+
+So **Intern-eligible requires BOTH** Sev4 **and** Authenticator. Everything else is Engineer-owned. The
+component is the canonical repo (Authenticator / Broker / Common / MSAL), derived from the finding's
+`**Component:**` field.
 
 Caveat: if an **Intern-eligible** finding is **Low confidence**, flag it for an engineer sanity-check before
-handing it off — the cutoff is on severity, but we don't delegate something we're unsure about.
+handing it off — we don't delegate something we're unsure about.
 
 For every **Engineer-owned** finding, produce a dispatch-ready Remediation Spec
 (see [remediation-spec.md](remediation-spec.md)). Intern-eligible findings get lighter **Fix Notes**.

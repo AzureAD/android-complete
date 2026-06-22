@@ -5,10 +5,11 @@ Repeatable helper for the `vuln-triage-reporter` skill. Reads a simple CSV/TSV o
 and emits: counts, filed-vs-ours severity breakdown, confidence breakdown, an Intern-Queue vs.
 Engineer-owned split, total estimated eng-days, and a compact table suitable for a shared WBR section.
 
-Input format (CSV, header row required). `confidence`, `assignment`, and `icm_sev` are optional — assignment
-is auto-derived from `our_tier` when omitted (Low/Moderate -> Intern-eligible; Important/Critical -> Engineer-owned):
+Input format (CSV, header row required). `confidence` is optional; `assignment` is always derived from the
+cutoff (**Intern-eligible only when IcM Sev4 AND component is the Authenticator app; otherwise
+Engineer-owned**), so `component` and `icm_sev` should be accurate:
     id,tag,component,filed_tier,our_tier,icm_sev,verdict,confidence,assignment,eng_days,title
-    NNNNNN,ITD,Broker,IMPORTANT,Moderate,Sev4,DOWN-CLASSIFY,High,Intern-eligible,2,<short vuln class>
+    NNNNNN,ITD,Authenticator,IMPORTANT,Low,Sev4,DOWN-CLASSIFY,High,,2,<short vuln class>
     ...
 
 Usage:
@@ -24,12 +25,25 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 TIER_ORDER = {"CRITICAL": 0, "Important": 1, "Moderate": 2, "Low": 3, "Won't-Fix": 4}
 CONF_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
-ENGINEER_TIERS = {"CRITICAL", "IMPORTANT"}
 
 
-def derive_assignment(our_tier):
-    """Severity cutoff: Important/Critical -> Engineer-owned; everything else -> Intern-eligible."""
-    return "Engineer-owned" if our_tier.strip().upper() in ENGINEER_TIERS else "Intern-eligible"
+def canonical_repo(component):
+    """Map a free-form component string to Authenticator | Common | Broker | MSAL | ADAL."""
+    c = (component or "").split("·")[0].split("(")[0].strip().lower()
+    if "authenticator" in c or "auth app" in c or c in ("auth", "auth-app"):
+        return "Authenticator"
+    for key in ("common", "broker", "msal", "adal"):
+        if key in c:
+            return key.upper() if key in ("msal", "adal") else key.capitalize()
+    return (component or "").strip() or "—"
+
+
+def derive_assignment(our_tier, icm_sev="", component=""):
+    """Cutoff: Intern-eligible ONLY when IcM Sev4 AND repo is the Authenticator app. Else Engineer-owned."""
+    sev = (icm_sev or "").replace(" ", "").lower()
+    if sev == "sev4" and canonical_repo(component) == "Authenticator":
+        return "Intern-eligible"
+    return "Engineer-owned"
 
 
 def main():
@@ -48,10 +62,11 @@ def main():
         return 0
 
     n = len(rows)
-    # auto-derive assignment where missing
+    # Always derive assignment from the cutoff (Sev4 + Authenticator → Intern; else Engineer)
+    # so the roll-up is the single source of truth regardless of any stale CSV value.
     for r in rows:
-        if not (r.get("assignment") or "").strip():
-            r["assignment"] = derive_assignment(r.get("our_tier", ""))
+        r["assignment"] = derive_assignment(
+            r.get("our_tier", ""), r.get("icm_sev", ""), r.get("component", ""))
 
     by_tag = Counter(r.get("tag", "?").strip().upper() for r in rows)
     filed = Counter(r.get("filed_tier", "?").strip() for r in rows)
@@ -136,7 +151,7 @@ def main():
     else:
         print("_None._")
 
-    print(f"\n## Intern Queue (Low/Moderate — delegatable)  ·  {len(intern)} finding(s), "
+    print(f"\n## Intern Queue (Sev4 + Authenticator — delegatable)  ·  {len(intern)} finding(s), "
           f"~{eng_days_int:g} eng-days\n")
     if intern:
         print_table(intern)
