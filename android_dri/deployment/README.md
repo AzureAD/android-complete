@@ -15,14 +15,103 @@ Complete these before running `deploy.ps1`:
 
 | # | Task | Details |
 |---|------|---------|
-| 1 | **Entra ID App Registration** | Public client, add `groupMembershipClaims = "SecurityGroup"` to manifest. Redirect URIs: `http://localhost`, `https://vscode.dev/redirect` |
-| 2 | **Security Group** | Create SG, add team members, note the Object ID |
-| 3 | **Azure AI Search** | Provision service (Standard tier). Note endpoint URL |
-| 4 | **Azure OpenAI** | Provision resource + deploy `text-embedding-3-large` (3072 dims) + `gpt-4o` |
-| 5 | **Storage Account** | Create or use existing. Need a blob container for TSG chunks |
-| 6 | **Key Vault** | Upload your ICM OData certificate (for live incident access) |
-| 7 | **ADO Wiki Access** | Ensure the MSI (created by deploy script) can clone your wiki repo |
-| 8 | **Kusto Access** | Grant MSI read access to `icmcluster.kusto.windows.net / IcMDataWarehouse` |
+| 1 | **Entra ID App Registration** | See [App Registration Setup](#app-registration-setup) below |
+| 2 | **Security Group** | Create SG in Azure AD, add team members, note the Object ID |
+| 3 | **Azure AI Search** | Provision service (Standard tier recommended). Note endpoint URL |
+| 4 | **Azure OpenAI** | Provision resource + deploy two models: `text-embedding-3-large` (3072 dims) + `gpt-4o`. Note endpoint URL and deployment names |
+| 5 | **Storage Account** | Create or use existing. Need a blob container for TSG chunks. Note the container URL |
+| 6 | **Key Vault + ICM Certificate** | See [ICM Certificate Setup](#icm-certificate-setup) below |
+| 7 | **ADO Wiki Access** | Grant the MSI (created by deploy script) access to clone your wiki. See [ADO Wiki Access](#ado-wiki-access) below |
+| 8 | **Kusto Access** | Grant MSI read access to `icmcluster.kusto.windows.net / IcMDataWarehouse`. See [Kusto Access](#kusto-access) below |
+
+---
+
+### App Registration Setup
+
+1. Go to [Azure Portal → App registrations → New registration](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade)
+2. Name: `<your-team>-dri-copilot`
+3. Supported account types: **Single tenant** (this org only)
+4. Register
+5. Note the **Application (client) ID** — this goes in `auth.app_registration_client_id`
+6. Go to **Authentication** → Add platforms:
+   - **Mobile and desktop applications**: add `http://localhost` and `http://127.0.0.1`
+   - **Single-page application**: add `https://vscode.dev/redirect`
+   - Under "Advanced settings", set **Allow public client flows** = Yes
+7. Go to **Manifest** → find `"groupMembershipClaims"` → change from `null` to `"SecurityGroup"`:
+   ```json
+   "groupMembershipClaims": "SecurityGroup",
+   ```
+8. Save the manifest
+
+> **Why `groupMembershipClaims`?** This tells Entra ID to include the user's security group IDs in the JWT `groups` claim. The MCP server checks that at least one group matches your team's SG — this is how access control works without a client secret.
+
+### ICM Certificate Setup
+
+The ICM OData API uses **client certificate authentication** (`/api/cert/` endpoint). This is NOT a self-signed cert — it must be issued by a trusted CA and registered in IcM.
+
+**Step 1: Obtain a certificate**
+
+If your team already uses DRICopilot, you can reuse the existing certificate (`DRICopilotOAuthCertificate` in your Key Vault). Skip to Step 3.
+
+For a new certificate:
+- Request via your org's certificate provisioning process (e.g., AME/OneCert, ServiceTree cert request)
+- The certificate must be signed by a CA that IcM trusts (typically Microsoft internal PKI)
+- Export as `.pfx` (PKCS#12) format
+
+**Step 2: Register the certificate in IcM**
+
+1. Go to [IcM Portal](https://portal.microsofticm.com) → **Administration** → **Connectors**
+2. Register the certificate's subject name for your team's tenant
+3. This grants `/api/cert/` access to incidents owned by your teams
+
+**Step 3: Upload to Key Vault**
+
+```powershell
+# Create Key Vault (if you don't have one)
+az keyvault create --name <your-keyvault> --resource-group <your-rg> --location eastus
+
+# Import the certificate
+az keyvault certificate import `
+    --vault-name <your-keyvault> `
+    --name DRICopilotOAuthCertificate `
+    --file <path-to-your-cert.pfx>
+
+# Grant the MSI access to download the cert (run after deploy.ps1 creates the MSI)
+az keyvault set-policy `
+    --name <your-keyvault> `
+    --object-id <msi-principal-id> `
+    --secret-permissions get `
+    --certificate-permissions get
+```
+
+> **Note:** The MCP server downloads the cert at startup, extracts the PEM key pair, and presents it as a TLS client certificate to ICM. No secrets are stored — the cert is fetched from Key Vault via MSI every time the container starts.
+
+### ADO Wiki Access
+
+The TSG indexer needs to `git clone` your wiki repo. Authentication uses the Managed Identity with an Azure DevOps token exchange.
+
+**Option A: FIC (Federated Identity Credential) — recommended for MSIT tenant**
+
+Your org may require FIC for ADO access. Follow your org's process to configure the MSI as a federated identity for ADO.
+
+**Option B: Direct MSI token exchange — simpler**
+
+1. The MSI requests a token scoped to Azure DevOps (`499b84ac-1321-427f-aa17-267ca6975798/.default`)
+2. This works if the MSI has been granted access to the ADO organization
+3. Go to your ADO org → **Organization Settings** → **Users** → add the MSI's service principal
+4. Grant **Reader** access to the project containing your wiki
+
+**Option C: PAT (Personal Access Token) — quick but not recommended**
+
+Store a PAT in Key Vault and configure the indexer to use it. Not recommended for production (PATs expire, tied to individual users).
+
+### Kusto Access
+
+The ICM indexer and OBO restricted CRI checker query `icmcluster.kusto.windows.net / IcMDataWarehouse`.
+
+1. Go to [Kusto Explorer](https://dataexplorer.azure.com) or contact the IcM data team
+2. Request **Viewer** access for your MSI's principal ID to the `IcMDataWarehouse` database
+3. The MSI principal ID is output by the deploy script (or find it via `az identity show --name <team>-mcp-identity -g <rg> --query principalId -o tsv`)
 
 ## Deploy
 
@@ -31,7 +120,7 @@ Complete these before running `deploy.ps1`:
 Copy `config_template.json` and fill in your team's values:
 
 ```powershell
-Copy-Item deployment-template\config_template.json deployment-template\my_config.json
+Copy-Item android_dri\deployment\config_template.json android_dri\deployment\my_config.json
 # Edit my_config.json with your values
 ```
 
