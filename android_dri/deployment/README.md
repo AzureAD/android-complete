@@ -62,6 +62,15 @@ Copy-Item deployment-template\config_template.json deployment-template\my_config
    ```json
    {"servers": {"<team>-dri-search": {"type": "http", "url": "https://<your-app>.eastus.azurecontainerapps.io/mcp"}}}
    ```
+7. **Enable OBO for restricted CRI enforcement** (optional, after cert is in Key Vault):
+   ```powershell
+   az containerapp update --name <team>-mcp -g <rg> --set-env-vars "OBO_ENABLED=true"
+   ```
+   Prerequisites for OBO:
+   - ICM certificate uploaded to Key Vault
+   - App registration configured for SNI certificate validation
+   - MSI granted Key Vault access (to download the cert)
+   - MSI granted Kusto access (for restricted incident team membership checks)
 
 ## What the Script Creates
 
