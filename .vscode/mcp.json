@@ -41,6 +41,19 @@
       "tools": ["*"]
     },
 
+    "ado-msazure": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@azure-devops/mcp",
+        "msazure",
+        "-d",
+        "core",
+        "repositories"
+      ]
+    },
+
     "android-dri-search": {
       "type": "http",
       "url": "https://android-dri-mcp.proudbeach-7e7ce77d.eastus.azurecontainerapps.io/mcp"

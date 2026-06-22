@@ -1,0 +1,14 @@
+name: android-dri-mcp-server
+metadata:
+  template: android-dri-mcp-server@0.0.1
+services:
+  api:
+    project: .
+    language: py
+    host: containerapp
+    docker:
+      path: ./Dockerfile
+      context: .
+infra:
+  provider: bicep
+  path: infra

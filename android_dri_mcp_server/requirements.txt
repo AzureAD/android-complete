@@ -1,0 +1,15 @@
+# android_dri_mcp_server dependencies
+# All are already installed in the project venv; listed here for reference.
+mcp>=1.0.0
+azure-search-documents>=11.4.0
+azure-identity>=1.15.0
+azure-keyvault-certificates>=4.8.0
+azure-keyvault-secrets>=4.8.0
+cryptography>=42.0.0
+openai>=1.0.0
+uvicorn[standard]>=0.24.0   # required for hosted transport
+PyJWT[crypto]>=2.8.0        # Entra ID JWT validation
+requests>=2.31.0             # ICM OData API calls
+beautifulsoup4>=4.12.0       # HTML → text sanitisation for ICM discussion entries
+msal>=1.28.0                 # OBO token exchange (ConfidentialClientApplication)
+azure-kusto-data>=4.3.0      # Restricted CRI access checks via Kusto
