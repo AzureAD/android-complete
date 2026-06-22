@@ -1,0 +1,19 @@
+{
+  "name": "{{INDEX_NAME}}",
+  "fields": [
+    {"name": "id", "type": "Edm.String", "key": true, "filterable": true},
+    {"name": "service_id", "type": "Edm.String", "filterable": true},
+    {"name": "title", "type": "Edm.String", "searchable": true, "filterable": true},
+    {"name": "content", "type": "Edm.String", "searchable": true},
+    {"name": "keywords", "type": "Edm.String", "searchable": true},
+    {"name": "filepath", "type": "Edm.String", "filterable": true},
+    {"name": "tsg_description", "type": "Edm.String", "searchable": true},
+    {"name": "base64_images", "type": "Edm.String"},
+    {"name": "title_vector", "type": "Collection(Edm.Single)", "searchable": true, "dimensions": 3072, "vectorSearchProfile": "default-vector-profile"},
+    {"name": "content_vector", "type": "Collection(Edm.Single)", "searchable": true, "dimensions": 3072, "vectorSearchProfile": "default-vector-profile"}
+  ],
+  "vectorSearch": {
+    "algorithms": [{"name": "default-algorithm", "kind": "hnsw"}],
+    "profiles": [{"name": "default-vector-profile", "algorithm": "default-algorithm"}]
+  }
+}

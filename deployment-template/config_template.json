@@ -1,0 +1,79 @@
+{
+  "$schema": "Config template for Android DRI MCP Server + Indexer. Fill in your team's values.",
+
+  "team_name": "<your-team-name>",
+  "service_id": "<your-service-id>",
+
+  "azure": {
+    "subscription_id": "<your-subscription-id>",
+    "location": "eastus",
+    "resource_group": "rg-<your-team>-dri-mcp"
+  },
+
+  "azure_search": {
+    "endpoint": "<https://your-search-service.search.windows.net>",
+    "tsg_index_name": "<your-team>-tsg-index",
+    "icm_index_name": "<your-team>-icm-index"
+  },
+
+  "azure_openai": {
+    "endpoint": "<https://your-openai.openai.azure.com/>",
+    "embedding_deployment": "text-embedding-3-large",
+    "chat_deployment": "gpt-4o",
+    "api_version": "2025-04-01-preview",
+    "embedding_dimensions": 3072
+  },
+
+  "auth": {
+    "tenant_id": "72f988bf-86f1-41af-91ab-2d7cd011db47",
+    "app_registration_client_id": "<your-app-registration-client-id>",
+    "security_group_object_id": "<your-security-group-object-id>",
+    "allowed_app_ids": "04b07795-8ddb-461a-bbee-02f9e1bf7b46,<your-app-id>"
+  },
+
+  "keyvault": {
+    "uri": "<https://your-keyvault.vault.azure.net/>",
+    "icm_cert_name": "DRICopilotOAuthCertificate"
+  },
+
+  "acr": {
+    "name": "<your-acr-name>",
+    "login_server": "<your-acr-name>.azurecr.io"
+  },
+
+  "icm": {
+    "kusto_cluster": "https://icmcluster.kusto.windows.net",
+    "kusto_database": "IcMDataWarehouse",
+    "team_groups": [
+      {
+        "label": "<Your Team Name>",
+        "lookback_hours": 8760,
+        "scheduled_lookback_hours": 72,
+        "teams": [
+          "<TENANT>\\<TeamName1>",
+          "<TENANT>\\<TeamName2>"
+        ]
+      }
+    ]
+  },
+
+  "tsg": {
+    "wiki_base_url": "<https://your-org.visualstudio.com/YourProject/_wiki/wikis/YourWiki.wiki>",
+    "blob_container_url": "<storage-account-blob-container-url>",
+    "blob_prefix": "outputs_<your-team>-tsg/ACS_prep/",
+    "git_sources": [
+      {
+        "source": "<https://your-org.visualstudio.com/DefaultCollection/YourProject/_git/YourWiki.wiki>",
+        "branch": "wikiMaster",
+        "folder": "<WikiRoot/Path/To/Your/TSGs>",
+        "extensions": ["md", "markdown"],
+        "description": "<Your Team> TSGs"
+      }
+    ]
+  },
+
+  "chunking": {
+    "chunk_size_tokens": 700,
+    "chunk_overlap_tokens": 125
+  }
+}

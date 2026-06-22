@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "{{TEAM_NAME}}-dri-search": {
+      "type": "http",
+      "url": "https://{{MCP_APP_FQDN}}/mcp"
+    }
+  }
+}
