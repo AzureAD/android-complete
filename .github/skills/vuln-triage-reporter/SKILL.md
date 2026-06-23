@@ -39,6 +39,59 @@ This skill is for **on-call engineers during their on-call week**. Default scope
 
 ---
 
+## Requirements — verify BEFORE any work (HARD GATE)
+
+> 🛑 **Do NOT begin discovery, investigation, or reporting until every requirement below is satisfied.**
+> If any is missing, **stop and tell the user exactly what to fix** — partial environments produce wrong
+> verdicts (e.g. a missing submodule makes a real sink look absent → a finding gets wrongly down-classified).
+> Run the verification block, report PASS/FAIL per item, and only proceed on an all-PASS.
+
+### 1. Full `android-complete` checkout WITH submodules
+The investigation greps **real source**. The app/broker code lives in **git-ignored submodules** that are
+**not** present in a bare clone or in a git **worktree**:
+- `authenticator/PhoneFactor/` — Microsoft Authenticator app + MSA SDK
+- `broker/AADAuthenticator/` — broker app code
+- the `common`, `msal`, `adal`, `broker` library modules must also be populated.
+
+**Work from the main `android-complete` checkout (e.g. `C:\src\android-complete`), NOT a worktree** —
+worktrees created for skill edits typically lack the submodules. If those folders are missing/empty, the
+user must run the repo's submodule sync (e.g. `git droidSetup` / `git submodule update --init --recursive`)
+**before** any triage.
+
+### 2. MCP servers / tooling
+| Capability | Used for | Required? | If missing |
+|------------|----------|-----------|------------|
+| **IcM MCP** (`search_incidents`, `get_incident*`, `get_teams_by_name`) | Discover `[MSRC]`/`[ITD]` findings + pull incident detail | **Required** for discovery (Steps 0–1) | Stop — cannot scope the week. (User can still paste IcM IDs to triage a specific finding.) |
+| **`codebase-researcher` subagent** | The mandatory two-pass code investigation | **Required** | Stop — the skill's core (Non-Negotiable #2/#3) cannot run. |
+| **ADO MCP** (`mcp_ado_wit_*`) | Create PBIs (Step 6) | Optional | Fall back to the ADO **REST API** + `az` token (see Step 6). |
+| **`az` CLI, logged in** | Live status report (Step 7) + REST PBI fallback | Optional (only for Steps 6–7) | Status report still renders without live state; PBI creation needs it if no ADO MCP. |
+| **FireWatch / Security MCP** | — | **N/A — not reachable** | ITD findings are intake **manually** (Step 2); do not wait on a Security MCP. |
+
+### 3. Private workspace
+`$VULN_TRIAGE_WORKSPACE` (default `~/vuln-triage-workspace`) must be writable — **all investigation
+outputs live there, OUTSIDE the repo** (they are sensitive). Never write findings under the repo tree.
+
+### Quick verification (run first, report PASS/FAIL)
+```powershell
+# 1. submodules present (non-empty)
+foreach ($p in 'authenticator\PhoneFactor','broker\AADAuthenticator','common','msal') {
+  $full = Join-Path 'C:\src\android-complete' $p
+  $ok = (Test-Path $full) -and (Get-ChildItem $full -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
+  Write-Host ("[{0}] {1}" -f $(if($ok){'PASS'}else{'FAIL'}), $p)
+}
+# 2. on the main checkout, not a worktree
+Write-Host ("git dir: " + (git -C 'C:\src\android-complete' rev-parse --git-dir))
+# 3. az logged in (only needed for Steps 6–7)
+az account show --query user.name -o tsv --only-show-errors 2>$null
+# 4. workspace writable
+$ws = if ($env:VULN_TRIAGE_WORKSPACE) { $env:VULN_TRIAGE_WORKSPACE } else { "$HOME\vuln-triage-workspace" }
+New-Item -ItemType Directory -Force -Path $ws | Out-Null; Write-Host "workspace: $ws"
+```
+> IcM MCP / `codebase-researcher` availability is confirmed by the agent's own tool list — verify they are
+> present before Step 0. If the IcM MCP is down, the discovery step cannot run.
+
+---
+
 ## Why This Skill Exists (read this first)
 
 The security team files MSRC/ITD vulnerabilities against us, each with a **pre-assigned classification**
@@ -85,6 +138,11 @@ ways — never claim "safe" *or* "exploitable" about a boundary you couldn't ver
 
 ## Non-Negotiables
 
+0. **Satisfy the Requirements hard gate FIRST.** Before any discovery/investigation/reporting, verify the
+   environment per the **"Requirements — verify BEFORE any work"** section (full `android-complete` checkout
+   **with submodules**, on the **main checkout not a worktree**; IcM MCP + `codebase-researcher` available;
+   writable private workspace). If any item FAILs, **stop and tell the user what to fix** — do not begin
+   work in a partial environment (a missing submodule silently turns a real sink into a false "no sink").
 1. **Run investigations in PARALLEL.** Each finding is independent. Dispatch one investigation per finding
    concurrently (use the `codebase-researcher` subagent / `runSubagent`, or parallel `Explore` agents).
    Do **not** process findings sequentially when more than one is in scope.
