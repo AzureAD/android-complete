@@ -17,10 +17,21 @@ Inputs:
                           When given, the script fetches each mapped work item's live State / ChangedDate /
                           Tags and derives the Status column from them. Without it, Status falls back to a
                           `status` column in the CSV, else "Not started".
+  --auto-token          — instead of a token file, acquire the ADO token automatically via `az`
+                          (must be logged in). Makes the weekly run a SINGLE command.
   --out <file>          — write HTML here as UTF-8 (recommended). Else prints to stdout.
   --window "<label>"    — header window label, e.g. "2026-06-18 -> 2026-06-25".
 
+Map auto-discovery: if --map is omitted, the script looks for `work-item-map.json` (then
+`work-item-map.csv`) NEXT TO the CSV. Persist that map once in the workspace and the weekly run needs
+no --map. (The map pairs IcM ids with work-item ids, so it lives in the private workspace, NOT the repo.)
+
 Usage:
+  # one-command weekly run (auto-discovered map + auto token):
+  python build_status_report.py classifications.csv --auto-token \
+      --out weekly-status.html --window "2026-06-18 -> 2026-06-25"
+
+  # explicit map + token file:
   python build_status_report.py classifications.csv --map map.json --token tok.txt \
       --out weekly-status.html --window "2026-06-18 -> 2026-06-25"
 """
@@ -86,6 +97,24 @@ def load_map(path):
     return out
 
 
+def acquire_token():
+    """Fetch an ADO bearer token via the Azure CLI. Returns the token string or None.
+
+    `az` is a .cmd shim on Windows, so it must be invoked through the shell. The resource is the
+    well-known Azure DevOps application id (constant across tenants)."""
+    import subprocess
+    ado_app_id = "499b84ac-1321-427f-aa17-267ca6975798"  # public Azure DevOps resource id (not a secret)
+    try:
+        r = subprocess.run(
+            f'az account get-access-token --resource {ado_app_id} --query accessToken -o tsv',
+            shell=True, capture_output=True, text=True)
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write(f"  ! token acquisition error: {e}\n")
+        return None
+    tok = (r.stdout or "").strip()
+    return tok if r.returncode == 0 and tok else None
+
+
 def fetch_ado(work_id, token):
     """Return (state, changed_date 'MM-DD', tags) for a work item, or (None, '', '')."""
     import urllib.request
@@ -107,22 +136,44 @@ def fetch_ado(work_id, token):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("csv_file")
-    ap.add_argument("--map", default=None, help="JSON/CSV mapping IcM id -> ADO work-item id")
+    ap.add_argument("--map", default=None,
+                    help="JSON/CSV mapping IcM id -> ADO work-item id. If omitted, auto-discovers "
+                         "'work-item-map.json' (then '.csv') next to the CSV.")
     ap.add_argument("--token", default=None, help="File with an ADO bearer token (enables live status)")
+    ap.add_argument("--auto-token", action="store_true",
+                    help="Acquire an ADO bearer token automatically via the Azure CLI "
+                         "(az account get-access-token) so no token file is needed. Requires `az` "
+                         "logged in. This makes the weekly run a single command.")
     ap.add_argument("--out", default=None, help="Write HTML here as UTF-8 (recommended)")
     ap.add_argument("--window", default="", help="Header window label")
     ap.add_argument("--title", default="Security Triage — Weekly Status")
     args = ap.parse_args()
 
     rows = list(csv.DictReader(open(args.csv_file, encoding="utf-8")))
-    wmap = load_map(args.map)
+
+    # Map: explicit --map, else auto-discover a persisted map next to the CSV.
+    map_path = args.map
+    if not map_path:
+        here = os.path.dirname(os.path.abspath(args.csv_file))
+        for cand in ("work-item-map.json", "work-item-map.csv"):
+            if os.path.isfile(os.path.join(here, cand)):
+                map_path = os.path.join(here, cand)
+                print(f"  (using discovered map: {cand})")
+                break
+    wmap = load_map(map_path)
     # also accept a work_item column directly on the CSV
     for r in rows:
         wid = (r.get("work_item") or "").strip().lstrip("AB#").strip()
         if r.get("id") and wid and str(r["id"]).strip() not in wmap:
             wmap[str(r["id"]).strip()] = int(wid)
 
-    token = open(args.token, encoding="utf-8").read().strip() if args.token and os.path.isfile(args.token) else None
+    token = None
+    if args.token and os.path.isfile(args.token):
+        token = open(args.token, encoding="utf-8").read().strip()
+    elif args.auto_token:
+        token = acquire_token()
+        if not token:
+            sys.stderr.write("  ! --auto-token failed (is `az` logged in?). Falling back to no live status.\n")
 
     items = []
     for r in rows:

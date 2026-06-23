@@ -5,8 +5,9 @@ This is **NOT** the research report — it is a single compact table for a manag
 forward. No evidence, no file:line, no audit trail.
 
 > Generate it with [`scripts/build_status_report.py`](../scripts/build_status_report.py), which reads
-> `classifications.csv` and (optionally) pulls live ADO work-item state. Output is a self-contained HTML
-> table that pastes cleanly into Outlook.
+> `classifications.csv`, auto-discovers a persisted `work-item-map.json` (IcM → AB#) beside it, and
+> (with `--auto-token`) pulls live ADO work-item state. Output is a self-contained HTML table that pastes
+> cleanly into Outlook.
 
 ## What it contains (and what it does NOT)
 
@@ -66,5 +67,15 @@ Keep the report's status vocabulary small and manager-friendly. Map the raw ADO 
 ## Cadence
 
 Run it once a week (e.g. end of the on-call shift, Wednesday) and paste the table into the manager's
-tracking email. Because it reads live ADO state, re-running it just refreshes the statuses — no manual
-bookkeeping.
+tracking email. Persist the IcM→work-item map **once** as `work-item-map.json` next to
+`classifications.csv` (`{ "<IcM id>": <AB#> }`; both IcMs of a combined PBI point at the same id) — the
+script auto-discovers it. Then the weekly refresh is a single command:
+
+```
+python scripts/build_status_report.py <run>/classifications.csv --auto-token \
+    --out <run>/weekly-status.html --window "<Wed> -> <Wed>"
+```
+
+`--auto-token` reads live ADO work-item state via `az` (must be logged in), so re-running just refreshes
+the statuses — no manual bookkeeping. The map lives in the **private workspace** (it pairs IcM ids with
+work-item ids), never in the skill repo.

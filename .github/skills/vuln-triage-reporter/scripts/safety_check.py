@@ -52,6 +52,12 @@ RULES = [
      "long numeric ID resembling a real IcM number (use NNNNNN in examples)"),
 ]
 
+# Well-known PUBLIC constants that look like sensitive GUIDs but are not — same for every tenant,
+# published in Microsoft docs. Safe to appear in skill scripts.
+ALLOW_GUIDS = {
+    "499b84ac-1321-427f-aa17-267ca6975798",  # Azure DevOps resource (app) id — public, tenant-independent
+}
+
 # Lines that legitimately mention forbidden terms because they are the RULES/banner themselves.
 ALLOW_CONTEXT = re.compile(
     r"sampling rate|coverage percentage|evasion map|forbidden|NEVER put here|do\s+not\s+commit|"
@@ -82,8 +88,11 @@ def scan_file(path):
     for n, line in enumerate(lines, 1):
         if ALLOW_CONTEXT.search(line):
             continue
+        scan_line = line
+        for g in ALLOW_GUIDS:
+            scan_line = scan_line.replace(g, "<allowed-public-guid>")
         for label, rx, why in RULES:
-            if rx.search(line):
+            if rx.search(scan_line):
                 hits.append((n, label, why, line.strip()[:160]))
     return hits
 

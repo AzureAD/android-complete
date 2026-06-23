@@ -406,6 +406,19 @@ research report. It is a single compact table meant to paste into an email. Gene
 - Group/sort by status or severity; include a one-line header (window + counts). Plain HTML table that
   pastes cleanly into Outlook.
 
+**One-command weekly run.** Persist the IcM→work-item map **once** in the workspace as
+`work-item-map.json` (next to `classifications.csv`) — `{ "<IcM id>": <AB#> }`, with both IcMs of a
+combined PBI pointing at the same id. The script **auto-discovers** it, so the weekly refresh is just:
+
+```
+python scripts/build_status_report.py <run>/classifications.csv --auto-token \
+    --out <run>/weekly-status.html --window "<Wed> -> <Wed>"
+```
+
+`--auto-token` pulls an ADO token via `az` (must be logged in) to read live work-item state; re-running
+just refreshes the statuses. The map lives in the **private workspace** (it pairs IcM ids with work
+items) — never in the repo.
+
 ---
 
 ## Severity Classification (summary)
