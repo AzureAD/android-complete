@@ -129,6 +129,11 @@ ways — never claim "safe" *or* "exploitable" about a boundary you couldn't ver
     calibration point, a recurring safeguard pattern, a codebase-search gotcha, an estimate heuristic —
     record it in the right place (the **calibration log** in `references/severity-rubric.md`, the relevant
     reference doc, or repo memory) and include it in the commit. The skill must get smarter every rotation.
+14. **NEVER create ADO work items without explicit user approval.** Creating PBIs/bugs from findings is an
+    **opt-in, separate step** (see "Step 6 — Create PBIs"). Always present the proposed items (titles,
+    tier, parent, area/iteration, assignee) and **wait for the user to confirm** before creating anything.
+    Never auto-create, never assume the parent or assignee. This is non-negotiable — unwanted work items
+    are noise the team has to clean up.
 
 ## The two-pass model (verify before you trust)
 
@@ -342,7 +347,7 @@ Each finding yields a **human report** and a **machine-readable agent spec** —
   markdown with `--out <run_dir> --research-dir research --agent-dir agent-specs` to emit
   `wbr-security-report.html` in the run dir. It has summary stat cards (incl. a **Needs external validation**
   count), the severity legend, and a master table: **IcM · Tag (MSRC/ITD) · Component · Filed · Ours · Conf ·
-  Verdict · Owner (E/I) · Action · Eng-days · Vulnerability · Research**. A ⚗ **ext** badge marks rows whose
+  Verdict · Owner (E/I) · Eng-days · Vulnerability · Research**. A ⚗ **ext** badge marks rows whose
   severity still hinges on a server/downstream control we can't statically verify, and an **Exports** strip
   links the roll-up + CSV that ship in the same folder. For an on-call **shift report**, add
   `--shift "Wed <start> -> Wed <end>" --owner "<label>"` — this re-frames the header, adds a **Generated
@@ -351,11 +356,55 @@ Each finding yields a **human report** and a **machine-readable agent spec** —
   run's overview.** Generate it AFTER the subpages + specs exist.
 - **Aggregate roll-up** → counts, severity breakdown (ours vs. filed), confidence + IcM-Sev breakdown, an
   **Intern Queue** (Moderate↓ + Authenticator, delegatable) vs. **Engineer-owned** (everything else, kept with
-  remediation) split, an **Action** column (Keep & fix / Delegate), estimated eng-days, and at-risk
-  commitments — generated with `scripts/rollup.py classifications.csv --out <run_dir>/_ROLLUP.md`.
+  remediation) split, estimated eng-days, and at-risk commitments — generated with
+  `scripts/rollup.py classifications.csv --out <run_dir>/_ROLLUP.md`. (Owner E/I is the action split — the two
+  sections ARE keep-&-fix vs delegate; no separate Action column.)
   > ⚠️ **Always pass `--out`** so the markdown is written as UTF-8. Do **not** use PowerShell `>` redirection —
   > it re-encodes through the console code page and corrupts the Unicode (`·` → `┬╖`, `—` → `ΓÇö`).
   For on-call handoff and the bi-monthly WBR.
+
+### Step 6 — Create PBIs (OPTIONAL — only on request, ALWAYS with approval)
+
+Creating ADO work items is a **separate, opt-in step** the user must ask for — never a default part of a
+triage run. When asked to create PBIs/bugs from findings (see Non-Negotiable #14):
+
+1. **Propose first.** Present the proposed items as a table — title, our tier, IcM, eng-days, target
+   **parent**, area/iteration, assignee — and **wait for explicit approval.** Never assume the parent or
+   the assignee; ask.
+2. **Default parent = the team's standing "Keep the Lights On" (KTLO) feature** on the *Auth Client - Android*
+   board — that is where ongoing security-triage/bug work belongs. **Look it up at creation time** (IDs and
+   iterations rotate) and confirm the exact ID with the user. The Summer-2026 intern feature (an intern
+   batch under `[Summer 2026] Deliverable Payload`) was a **one-time** exception — do not reuse it as the
+   default.
+3. **Inherit area + iteration from the chosen parent** unless the user overrides. Leave **unassigned**
+   unless the user names an assignee (intern aliases are usually not known at creation time).
+4. **One PBI per fix, not per IcM.** When two findings share a single root cause + fix (e.g. ITD 635330 +
+   635488 both being the `activateMfa` deep link), create **one combined PBI** and count the eng-days once.
+5. **Description = the report distilled** (NOT a copy): Summary, Security classification (filed vs. our
+   verdict/confidence/IcM Sev), How it can be exploited, Fix approach, Files to change (`file:line`),
+   Test plan, an Open-questions/external-validation call-out, and a **📎 Reports & spec (to be linked)**
+   placeholder (research HTML · agent spec · WBR master report) for the user to paste links into later.
+   Convert to **HTML** for `System.Description` (`"format": "Html"`).
+6. **Tooling.** Prefer the **ADO MCP** (`mcp_ado_wit_*`) when connected; this is the same flow the
+   `pbi-creator` skill uses, so hand off to it. If the MCP isn't connected, the ADO **REST API** with an
+   `az account get-access-token` bearer works (the `az` CLI is a `.cmd` shim that can't pass HTML cleanly
+   via `subprocess`, and `az boards` routes HTML through cmd.exe which corrupts `& < >`). Make creation
+   **idempotent** (query by exact title before creating) so a mid-run failure can be safely re-run.
+7. ADO citations + IcM IDs **are allowed** in work-item descriptions (corp Engineering project, not the
+   public skill repo). The public-repo safety rules apply to the **skill files**, not to ADO items.
+
+### Step 7 — Weekly status report (manager tracking — concise, email-ready)
+
+The on-call's manager tracks these findings weekly. This is a **separate, high-level artifact** — NOT the
+research report. It is a single compact table meant to paste into an email. Generate it with
+`scripts/build_status_report.py` (reads the same `classifications.csv` plus live ADO state) — see
+[references/status-report-template.md](references/status-report-template.md). Keep it minimal:
+
+- **Columns:** IcM · Bug (one-line) · Severity (our tier) · Owner (E/I) · Status · Work Item · Updated.
+- **Status** is the ADO work-item state mapped to: *Not started · In progress · Blocked · In review · Complete.*
+- **No research detail** — no evidence, no file:line, no audit trail. Quick-glance only.
+- Group/sort by status or severity; include a one-line header (window + counts). Plain HTML table that
+  pastes cleanly into Outlook.
 
 ---
 
