@@ -2,7 +2,7 @@
 """Build a concise, email-ready WEEKLY STATUS report from the triage classifications.
 
 Part of the `vuln-triage-reporter` skill. This is the manager-tracking artifact — a single compact table
-(IcM · Bug · Severity · Owner · Status · Work Item · Updated). It is NOT the research report: no evidence,
+(IcM · Bug · Severity · Status · Work Item · Updated). It is NOT the research report: no evidence,
 no file:line, no audit trail. Output is self-contained HTML that pastes cleanly into Outlook.
 
 Status vocabulary (manager-friendly): Not started · In progress · Blocked · In review · Complete.
@@ -44,8 +44,6 @@ import os
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import rollup  # noqa: E402  (reuse canonical_repo / derive_assignment for a consistent Owner split)
 
 ORG = "https://identitydivision.visualstudio.com"
 PROJECT = "Engineering"
@@ -180,8 +178,6 @@ def main():
         icm = (r.get("id") or "").strip()
         tier = (r.get("our_tier") or "").strip()
         tier_key = next((k for k in SEV_ORDER if k in tier.lower()), "moderate")
-        owner = "E" if rollup.derive_assignment(tier, r.get("icm_sev", ""), r.get("component", "")) \
-            == "Engineer-owned" else "I"
         work_id = wmap.get(icm)
         status, updated = "Not started", ""
         if work_id and token:
@@ -194,7 +190,6 @@ def main():
             "bug": (r.get("title") or "").strip(),
             "tier": tier or "—",
             "tier_key": tier_key,
-            "owner": owner,
             "status": status,
             "work_id": work_id,
             "updated": updated,
@@ -229,7 +224,6 @@ def main():
             f'<td {td}>{icm_link}</td>'
             f'<td {td}>{htmllib.escape(i["bug"])}</td>'
             f'<td {td}>{chip(i["tier"], vbg, vfg)}</td>'
-            f'<td {td} align="center">{htmllib.escape(i["owner"])}</td>'
             f'<td {td}>{chip(i["status"], sbg, sfg)}</td>'
             f'<td {td}>{wi}</td>'
             f'<td {td} style="padding:6px 10px;border-bottom:1px solid #e2e6ea;font-size:13px;'
@@ -244,10 +238,10 @@ def main():
 <div style="font-size:12px;color:#5b6470;margin:2px 0 10px">{htmllib.escape(sub)}</div>
 <table style="border-collapse:collapse;width:100%">
 <thead><tr>
-<th {th}>IcM</th><th {th}>Bug</th><th {th}>Sev</th><th {th} align="center">Owner</th>
+<th {th}>IcM</th><th {th}>Bug</th><th {th}>Sev</th>
 <th {th}>Status</th><th {th}>Work Item</th><th {th}>Updated</th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>
-<div style="font-size:11px;color:#94a3b8;margin-top:8px">Generated {generated} · Owner: E = engineer · I = intern · high-level status only (see the research report for evidence).</div>
+<div style="font-size:11px;color:#94a3b8;margin-top:8px">Generated {generated} · high-level status only (owner &amp; details live on the work item; evidence in the research report).</div>
 </div>"""
 
     if args.out:

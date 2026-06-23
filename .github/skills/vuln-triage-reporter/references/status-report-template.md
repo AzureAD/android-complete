@@ -18,14 +18,17 @@ forward. No evidence, no file:line, no audit trail.
 | **IcM** | finding | Linked to the IcM incident. |
 | **Bug** | finding | A **one-line** plain-language description (the short title — NOT the full vuln writeup). |
 | **Severity** | our tier | Critical / Important / Moderate / Low (our verdict, not the filed one). |
-| **Owner** | cutoff | **E** (engineer) or **I** (intern). |
 | **Status** | ADO state | Mapped to: **Not started · In progress · Blocked · In review · Complete** (see mapping below). |
 | **Work Item** | ADO | `AB#NNNN` linked to the PBI/bug. Blank if no work item created yet. |
 | **Updated** | ADO | Date the work item last changed (so stale items are visible). |
 
-**Do NOT include:** research evidence, file:line citations, defense-in-depth sweep, adversarial pass,
-the "Searches Run" audit, remediation specs, eng-day estimates, confidence, or external-validation prose.
-Those live in the research report. This report is a **status tracker**, not an investigation.
+> **Owner (engineer vs intern) is intentionally NOT a column** — the linked work item already shows the
+> assignee. Keep the weekly table lean.
+
+**Do NOT include:** owner/assignee, research evidence, file:line citations, defense-in-depth sweep,
+adversarial pass, the "Searches Run" audit, remediation specs, eng-day estimates, confidence, or
+external-validation prose. Those live on the work item or in the research report. This report is a
+**status tracker**, not an investigation.
 
 ## Status mapping (ADO state → report status)
 
@@ -56,13 +59,13 @@ Keep the report's status vocabulary small and manager-friendly. Map the raw ADO 
 > **Security Triage — Weekly Status · 2026-06-18 → 2026-06-25**
 > _8 findings · 1 complete · 3 in progress · 1 blocked · 3 not started_
 
-| IcM | Bug | Sev | Owner | Status | Work Item | Updated |
-|-----|-----|-----|-------|--------|-----------|---------|
-| NNNNNN | Plaintext TOTP seeds logged on JWE failure | Important | E | In progress | AB#NNNN | 06-24 |
-| NNNNNN | Unvalidated app_link → arbitrary ACTION_VIEW launch | Important | E | In review | AB#NNNN | 06-23 |
-| NNNNNN | activateMfa deep-link CSRF/SSRF + token exfil | Moderate | I | Blocked | AB#NNNN | 06-22 |
-| NNNNNN | Exported MainActivity → fragment injection | Moderate | I | Not started | AB#NNNN | 06-20 |
-| NNNNNN | NGC PendingIntent collision (session swap) | Low | I | Not started | AB#NNNN | 06-20 |
+| IcM | Bug | Sev | Status | Work Item | Updated |
+|-----|-----|-----|--------|-----------|---------|
+| NNNNNN | Plaintext TOTP seeds logged on JWE failure | Important | In progress | AB#NNNN | 06-24 |
+| NNNNNN | Unvalidated app_link → arbitrary ACTION_VIEW launch | Important | In review | AB#NNNN | 06-23 |
+| NNNNNN | activateMfa deep-link CSRF/SSRF + token exfil | Moderate | Blocked | AB#NNNN | 06-22 |
+| NNNNNN | Exported MainActivity → fragment injection | Moderate | Not started | AB#NNNN | 06-20 |
+| NNNNNN | NGC PendingIntent collision (session swap) | Low | Not started | AB#NNNN | 06-20 |
 
 ## Cadence
 

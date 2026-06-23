@@ -400,9 +400,10 @@ research report. It is a single compact table meant to paste into an email. Gene
 `scripts/build_status_report.py` (reads the same `classifications.csv` plus live ADO state) — see
 [references/status-report-template.md](references/status-report-template.md). Keep it minimal:
 
-- **Columns:** IcM · Bug (one-line) · Severity (our tier) · Owner (E/I) · Status · Work Item · Updated.
+- **Columns:** IcM · Bug (one-line) · Severity (our tier) · Status · Work Item · Updated.
 - **Status** is the ADO work-item state mapped to: *Not started · In progress · Blocked · In review · Complete.*
-- **No research detail** — no evidence, no file:line, no audit trail. Quick-glance only.
+- **No research detail, and no owner column** — owner/assignee already lives on the linked work item.
+  Quick-glance only: no evidence, no file:line, no audit trail.
 - Group/sort by status or severity; include a one-line header (window + counts). Plain HTML table that
   pastes cleanly into Outlook.
 
