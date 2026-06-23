@@ -523,11 +523,22 @@ research report. It is a single compact table meant to paste into an email. Gene
 [references/status-report-template.md](references/status-report-template.md). Keep it minimal:
 
 - **Columns:** IcM · Bug (one-line) · Severity (our tier) · Status · Work Item · Updated.
-- **Status** is the ADO work-item state mapped to: *Not started · In progress · Blocked · In review · Complete.*
+- **Status** is read from the **execution tracker** (`EXECUTION-TRACKER.md` — what's actually been *done*:
+  branch/PR/merge state), falling back to live ADO work-item state, mapped to: *Not started · In progress ·
+  Blocked · In review · Complete · **Out of scope***.
+- **Intern items show *Out of scope*** for now — they're assigned to an intern who hasn't started yet, so the
+  report renders a one-line note explaining it and sorts them last (tracked for completeness).
 - **No research detail, and no owner column** — owner/assignee already lives on the linked work item.
   Quick-glance only: no evidence, no file:line, no audit trail.
 - Group/sort by status or severity; include a one-line header (window + counts). Plain HTML table that
   pastes cleanly into Outlook.
+
+**Source of truth = the execution tracker.** `build_status_report.py` **auto-discovers** `EXECUTION-TRACKER.md`
+next to the CSV (override with `--tracker`) and uses its per-finding exec status **in preference to** live ADO
+state — the tracker reflects real remediation progress (branch created → implemented → pushed → PR open →
+merged) and marks intern-eligible findings `OUT OF SCOPE (intern)`. Keep the tracker current (it's updated at
+every execution milestone — see [references/remediation-execution.md](references/remediation-execution.md))
+and the weekly report stays accurate with no extra bookkeeping.
 
 **One-command weekly run.** Persist the IcM→work-item map **once** in the workspace as
 `work-item-map.json` (next to `classifications.csv`) — `{ "<IcM id>": <AB#> }`, with both IcMs of a

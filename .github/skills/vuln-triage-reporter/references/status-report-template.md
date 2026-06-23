@@ -5,9 +5,10 @@ This is **NOT** the research report — it is a single compact table for a manag
 forward. No evidence, no file:line, no audit trail.
 
 > Generate it with [`scripts/build_status_report.py`](../scripts/build_status_report.py), which reads
-> `classifications.csv`, auto-discovers a persisted `work-item-map.json` (IcM → AB#) beside it, and
-> (with `--auto-token`) pulls live ADO work-item state. Output is a self-contained HTML table that pastes
-> cleanly into Outlook.
+> `classifications.csv`, auto-discovers a persisted `work-item-map.json` (IcM → AB#) beside it, reads the
+> **execution tracker** (`EXECUTION-TRACKER.md`) for real remediation status, and (with `--auto-token`)
+> falls back to live ADO work-item state. Output is a self-contained HTML table that pastes cleanly into
+> Outlook.
 
 ## What it contains (and what it does NOT)
 
@@ -18,7 +19,7 @@ forward. No evidence, no file:line, no audit trail.
 | **IcM** | finding | Linked to the IcM incident. |
 | **Bug** | finding | A **one-line** plain-language description (the short title — NOT the full vuln writeup). |
 | **Severity** | our tier | Critical / Important / Moderate / Low (our verdict, not the filed one). |
-| **Status** | ADO state | Mapped to: **Not started · In progress · Blocked · In review · Complete** (see mapping below). |
+| **Status** | exec tracker → ADO | Mapped to: **Not started · In progress · Blocked · In review · Complete · Out of scope** (see mapping below). |
 | **Work Item** | ADO | `AB#NNNN` linked to the PBI/bug. Blank if no work item created yet. |
 | **Updated** | ADO | Date the work item last changed (so stale items are visible). |
 
@@ -30,17 +31,20 @@ adversarial pass, the "Searches Run" audit, remediation specs, eng-day estimates
 external-validation prose. Those live on the work item or in the research report. This report is a
 **status tracker**, not an investigation.
 
-## Status mapping (ADO state → report status)
+## Status mapping (execution tracker / ADO state → report status)
 
-Keep the report's status vocabulary small and manager-friendly. Map the raw ADO work-item state:
+Keep the report's status vocabulary small and manager-friendly. **Status comes from the execution tracker
+first** (`EXECUTION-TRACKER.md`, the source of truth for what's actually been *done*), then falls back to
+live ADO state:
 
-| Report status | ADO `System.State` (typical) | Meaning |
-|---------------|------------------------------|---------|
-| **Not started** | New, Approved, Proposed, (no work item yet) | Triaged, not yet picked up. |
-| **In progress** | Committed, Active, In Progress, Doing | Being worked. |
-| **Blocked** | any state tagged `Blocked` / `blocked`, or State=`On Hold` | Waiting on a dependency / external input (e.g. the ⚗ external-validation answer). |
-| **In review** | In Review, Code Review, Resolved (pending verify) | Fix up for review / PR open. |
-| **Complete** | Done, Closed, Completed | Shipped / verified. |
+| Report status | Exec-tracker status | ADO `System.State` (fallback) | Meaning |
+|---------------|---------------------|-------------------------------|---------|
+| **Not started** | `NOT STARTED` | New, Approved, Proposed, (no work item yet) | Triaged, not yet picked up. |
+| **In progress** | `IN PROGRESS` · `IMPLEMENTED (local)` · `PUSHED (no PR)` | Committed, Active, In Progress, Doing | Being worked. |
+| **Blocked** | `BLOCKED` | tagged `Blocked`, or State=`On Hold` | Waiting on a dependency / external input (e.g. the ⚗ external-validation answer). |
+| **In review** | `PR OPEN` | In Review, Code Review, Resolved (pending verify) | Fix up for review / PR open. |
+| **Complete** | `MERGED` | Done, Closed, Completed | Shipped / verified. |
+| **Out of scope** | `OUT OF SCOPE (intern)` | — | Intern-eligible; assigned to an intern who hasn't started yet. Tracked for completeness, sorted last. The report adds a one-line note explaining it. |
 
 > A finding with an open **external-validation** question (⚗ in the research report) should show **Blocked**
 > here if the severity/fix decision is actually waiting on that answer — otherwise In progress. The status
@@ -57,15 +61,17 @@ Keep the report's status vocabulary small and manager-friendly. Map the raw ADO 
 ## Example (rendered shape)
 
 > **Security Triage — Weekly Status · 2026-06-18 → 2026-06-25**
-> _8 findings · 1 complete · 3 in progress · 1 blocked · 3 not started_
+> _8 findings · 1 in review · 3 not started · 4 out of scope_
 
 | IcM | Bug | Sev | Status | Work Item | Updated |
 |-----|-----|-----|--------|-----------|---------|
-| NNNNNN | Plaintext TOTP seeds logged on JWE failure | Important | In progress | AB#NNNN | 06-24 |
-| NNNNNN | Unvalidated app_link → arbitrary ACTION_VIEW launch | Important | In review | AB#NNNN | 06-23 |
-| NNNNNN | activateMfa deep-link CSRF/SSRF + token exfil | Moderate | Blocked | AB#NNNN | 06-22 |
-| NNNNNN | Exported MainActivity → fragment injection | Moderate | Not started | AB#NNNN | 06-20 |
-| NNNNNN | NGC PendingIntent collision (session swap) | Low | Not started | AB#NNNN | 06-20 |
+| NNNNNN | Intent-scheme parser differential | Moderate | In review | AB#NNNN | 06-23 |
+| NNNNNN | Unvalidated app_link → arbitrary ACTION_VIEW launch | Important | Not started | AB#NNNN | 06-23 |
+| NNNNNN | Plaintext TOTP seeds logged on JWE failure | Important | Not started | AB#NNNN | 06-23 |
+| NNNNNN | activateMfa deep-link CSRF/SSRF + token exfil | Moderate | Out of scope | AB#NNNN | 06-23 |
+| NNNNNN | NGC PendingIntent collision (session swap) | Low | Out of scope | AB#NNNN | 06-23 |
+
+_Out of scope (4): intern-eligible items are out of scope for now — assigned to an intern who has not started yet._
 
 ## Cadence
 

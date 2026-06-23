@@ -41,6 +41,7 @@ import datetime
 import html as htmllib
 import json
 import os
+import re
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
@@ -49,13 +50,15 @@ ORG = "https://identitydivision.visualstudio.com"
 PROJECT = "Engineering"
 
 # report status -> sort order (needs-attention first) + chip colour (bg, fg)
-STATUS_ORDER = {"Blocked": 0, "In progress": 1, "In review": 2, "Not started": 3, "Complete": 4}
+STATUS_ORDER = {"Blocked": 0, "In progress": 1, "In review": 2, "Not started": 3,
+                "Complete": 4, "Out of scope": 5}
 STATUS_COLOR = {
     "Blocked": ("#fde8e8", "#b91c1c"),
     "In progress": ("#e0f2fe", "#075985"),
     "In review": ("#ede9fe", "#5b21b6"),
     "Not started": ("#f1f5f9", "#475569"),
     "Complete": ("#dcfce7", "#15803d"),
+    "Out of scope": ("#f1f5f9", "#94a3b8"),
 }
 SEV_ORDER = {"critical": 0, "important": 1, "moderate": 2, "low": 3}
 SEV_COLOR = {
@@ -78,6 +81,52 @@ def map_ado_state(state, tags):
         return "In progress"
     # New / Approved / Proposed / unknown
     return "Not started"
+
+
+def map_tracker_status(text):
+    """EXECUTION-TRACKER.md exec-status vocabulary -> the report's small status set, or None if the text
+    is not a recognized status (so non-status table cells — e.g. a spec path — are ignored).
+    Tracker statuses: NOT STARTED · IN PROGRESS · IMPLEMENTED (local) · PUSHED (no PR) · PR OPEN ·
+    MERGED · BLOCKED · OUT OF SCOPE (intern)."""
+    s = (text or "").strip().lower()
+    if "out of scope" in s:
+        return "Out of scope"
+    if "blocked" in s:
+        return "Blocked"
+    if "merged" in s:
+        return "Complete"
+    if "pr open" in s:
+        return "In review"
+    if "in progress" in s or "implemented" in s or "pushed" in s:
+        return "In progress"
+    if "not started" in s:
+        return "Not started"
+    return None
+
+
+def load_tracker(path):
+    """Parse EXECUTION-TRACKER.md's 'Status at a glance' table -> {icm_id: report_status}.
+    Reads each markdown table row, takes the long IcM number from any cell and the exec status from the
+    LAST cell (strips **bold**/`code`/parenthetical detail). Rows whose last cell is NOT a recognized
+    status (e.g. the bottom 'Out of scope' table whose last cell is a spec path) are skipped."""
+    if not path or not os.path.isfile(path):
+        return {}
+    out = {}
+    for line in open(path, encoding="utf-8"):
+        if not line.lstrip().startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) < 3:
+            continue
+        icm = next((re.search(r"\b(\d{9,})\b", c).group(1) for c in cells
+                    if re.search(r"\b\d{9,}\b", c)), None)
+        if not icm:
+            continue
+        raw = re.sub(r"[`*]", "", cells[-1])      # drop bold/code markers
+        status = map_tracker_status(raw)
+        if status:                                 # ignore non-status cells (spec paths, etc.)
+            out[icm] = status
+    return out
 
 
 def load_map(path):
@@ -138,6 +187,10 @@ def main():
                     help="JSON/CSV mapping IcM id -> ADO work-item id. If omitted, auto-discovers "
                          "'work-item-map.json' (then '.csv') next to the CSV.")
     ap.add_argument("--token", default=None, help="File with an ADO bearer token (enables live status)")
+    ap.add_argument("--tracker", default=None,
+                    help="EXECUTION-TRACKER.md to read exec status from (branch/PR/merge state + intern "
+                         "out-of-scope). Takes precedence over live ADO state. If omitted, auto-discovers "
+                         "'EXECUTION-TRACKER.md' next to the CSV.")
     ap.add_argument("--auto-token", action="store_true",
                     help="Acquire an ADO bearer token automatically via the Azure CLI "
                          "(az account get-access-token) so no token file is needed. Requires `az` "
@@ -165,6 +218,18 @@ def main():
         if r.get("id") and wid and str(r["id"]).strip() not in wmap:
             wmap[str(r["id"]).strip()] = int(wid)
 
+    # Execution tracker: explicit --tracker, else auto-discover EXECUTION-TRACKER.md next to the CSV.
+    # The tracker reflects what has ACTUALLY been done (branch/PR/merge) and marks intern items out of
+    # scope — it takes precedence over live ADO state for the Status column.
+    tracker_path = args.tracker
+    if not tracker_path:
+        here = os.path.dirname(os.path.abspath(args.csv_file))
+        cand = os.path.join(here, "EXECUTION-TRACKER.md")
+        if os.path.isfile(cand):
+            tracker_path = cand
+            print("  (using discovered execution tracker: EXECUTION-TRACKER.md)")
+    tracker = load_tracker(tracker_path)
+
     token = None
     if args.token and os.path.isfile(args.token):
         token = open(args.token, encoding="utf-8").read().strip()
@@ -180,7 +245,12 @@ def main():
         tier_key = next((k for k in SEV_ORDER if k in tier.lower()), "moderate")
         work_id = wmap.get(icm)
         status, updated = "Not started", ""
-        if work_id and token:
+        # Precedence: execution tracker (source of truth for done-ness) > live ADO state > csv > default.
+        if icm in tracker:
+            status = tracker[icm]
+            if work_id and token:                       # still fetch the changed-date for the Updated col
+                _state, updated, _tags = fetch_ado(work_id, token)
+        elif work_id and token:
             state, updated, tags = fetch_ado(work_id, token)
             status = map_ado_state(state, tags)
         elif (r.get("status") or "").strip():
@@ -201,6 +271,7 @@ def main():
     sc = Counter(i["status"] for i in items)
     count_line = f'{len(items)} findings · ' + ' · '.join(
         f'{sc[s]} {s.lower()}' for s in sorted(sc, key=lambda s: STATUS_ORDER.get(s, 9)))
+    oos = sc.get("Out of scope", 0)
     generated = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
     def chip(text, bg, fg):
@@ -241,6 +312,7 @@ def main():
 <th {th}>IcM</th><th {th}>Bug</th><th {th}>Sev</th>
 <th {th}>Status</th><th {th}>Work Item</th><th {th}>Updated</th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>
+{f'<div style="font-size:11px;color:#5b6470;margin-top:8px"><strong>Out of scope</strong> ({oos}): intern-eligible items are out of scope for now — assigned to an intern who has not started yet. They are tracked for completeness and will move to In progress once the intern picks them up.</div>' if oos else ''}
 <div style="font-size:11px;color:#94a3b8;margin-top:8px">Generated {generated} · high-level status only (owner &amp; details live on the work item; evidence in the research report).</div>
 </div>"""
 
