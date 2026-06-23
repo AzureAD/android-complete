@@ -1,12 +1,12 @@
-# DRI MCP Server — Deployment Template
+# Android DRI lite MCP Server — Deployment Template
 
 Deploy a lightweight MCP server that plugs into GitHub Copilot (VS Code) to search your team's TSGs and past incidents.
 
 ## What You Get
 
-- **MCP Server** — 4 tools (`search_tsgs`, `get_incident`, `batch_search`, `post_icm_discussion`)
-- **TSG Indexer** — Clones your ADO wiki, chunks markdown, generates embeddings, writes to blob → ACS pull indexer
-- **ICM Indexer** — Queries Kusto for your team's incidents, GPT-4o summarizes, embeds, pushes to search index
+- **MCP Server (Hosted on a container app)** — 4 tools (`search_tsgs`, `get_incident_details`, `batch_search`, `post_icm_discussion`)
+- **TSG Indexer (Container job)** — Clones your ADO wiki, chunks markdown, generates embeddings, writes to blob → Azure search service/Azure AI search pull indexer
+- **ICM Indexer (Container job)** — Queries Kusto for your team's incidents, GPT-4o summarizes, embeds, pushes to search index
 - **Zero-secret auth** — Managed Identity for backend, Entra ID OAuth for users, OBO for restricted CRI enforcement
 
 ## Prerequisites (Manual Setup)
@@ -17,7 +17,7 @@ Complete these before running `deploy.ps1`:
 |---|------|---------|
 | 1 | **Entra ID App Registration** | See [App Registration Setup](#app-registration-setup) below |
 | 2 | **Security Group** | Create SG in Azure AD, add team members, note the Object ID |
-| 3 | **Azure AI Search** | Provision service (Standard tier recommended). Note endpoint URL |
+| 3 | **Azure AI Search** | Provision service (**Basic tier** is sufficient — a typical deployment uses ~2 GB storage and ~400 MB vector index, well within Basic's limits). Note endpoint URL |
 | 4 | **Azure OpenAI** | Provision resource + deploy two models: `text-embedding-3-large` (3072 dims) + `gpt-4o`. Note endpoint URL and deployment names |
 | 5 | **Storage Account** | Create or use existing. Need a blob container for TSG chunks. Note the container URL |
 | 6 | **Key Vault + ICM Certificate** | See [ICM Certificate Setup](#icm-certificate-setup) below |
@@ -181,6 +181,8 @@ Azure AI Search (existing service)
 
 ## Cost Estimate
 
+### Per-deployment costs (always new)
+
 | Component | Monthly |
 |-----------|---------|
 | Container App (MCP server, scale to zero) | ~$5 |
@@ -189,9 +191,28 @@ Azure AI Search (existing service)
 | Log Analytics | ~$2 |
 | Azure OpenAI embeddings (query-time + indexing) | ~$1-5 |
 | Azure OpenAI GPT-4o (ICM summarization, keywords) | ~$5 |
-| **Total new costs** | **~$20-25/month** |
+| **Subtotal (per-deployment)** | **~$20-25/month** |
 
-*Azure AI Search and Azure OpenAI resource costs are separate (shared or new).*
+### Base infrastructure (shared or new)
+
+These resources are often **shared** with an existing DRICopilot deployment (incremental cost ≈ $0). If you provision them **dedicated** for this MCP, add:
+
+| Component | Monthly | Notes |
+|-----------|---------|-------|
+| Azure AI Search (**Basic**) | ~$75 | Basic is sufficient (~2 GB storage / ~400 MB vectors). Standard S1 (~$245) is **not** required for this workload. |
+| Storage Account (blob, LRS) | ~$0-1 | A few MB of TSG chunks |
+| Key Vault (standard) | ~$0-1 | Holds the ICM cert; per-operation pricing is negligible |
+| Azure OpenAI resource | $0 base | Pay-per-token only (already counted above) |
+| **Subtotal (dedicated base infra)** | **~$75-80/month** | $0 if shared |
+
+### Total
+
+| Scenario | Monthly |
+|----------|---------|
+| **Shared** Search/Storage/Key Vault (recommended) | **~$20-25** |
+| **Fully dedicated** (new Basic Search + Storage + Key Vault) | **~$95-105** |
+
+> If a team follows this guide literally and provisions a **dedicated Standard S1** Search service instead of Basic, the dedicated total jumps to **~$265-285/month** — avoid this unless you actually exceed Basic's limits.
 
 ## Architecture
 
