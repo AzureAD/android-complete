@@ -66,7 +66,7 @@ the gate — classify on the non-root path:
 - the sensitive data **egresses off-device** by a non-root channel (e.g. bundled into a **diagnostics /
   log upload**, sent to a server, written to shared/world-readable storage).
 
-**Worked example (why this nuance matters):** the plaintext-TOTP-seed log finding (ITD 31000000635204)
+**Worked example (why this nuance matters):** the plaintext-TOTP-seed log finding (an ITD)
 writes seeds to an **app-private** file — reading that file directly *does* need root/forensic/ADB. If that
 were the only path it would be Won't-Fix. But the same log is **harvested into a PowerLift diagnostics
 upload** (a non-root, off-device egress), so it stayed **Important** — the non-root path governs. Always
