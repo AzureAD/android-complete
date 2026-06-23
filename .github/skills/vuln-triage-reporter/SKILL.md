@@ -333,6 +333,10 @@ For each finding, dispatch a `codebase-researcher` investigation that returns:
   - IPC boundary checks (package name, signature, caller UID)
   - Build/config gating (debug-only, test-only, root-only reachability)
   - Any validation upstream of the sink
+  - **Threat boundary / scope** — is the **only** way in root / physical / debug-build / `adb`? If so the
+    finding is **out of scope (Won't-Fix / Sev4)** — BUT first prove there is **no** non-root path (another
+    app via IPC/Intent/deep-link, network/zero-click, or off-device egress like a diagnostics/log upload).
+    See "Out-of-scope threat boundary" in [references/severity-rubric.md](references/severity-rubric.md).
 - **Aggravating factors** — anything that makes it *worse* than filed (unflighted, exported, no allow-list).
 
 Use the severity rubric in [references/severity-rubric.md](references/severity-rubric.md).
@@ -488,11 +492,18 @@ Full rubric + required evidence per tier: [references/severity-rubric.md](refere
 |----------|---------|---------|-------------------|
 | **CRITICAL (must fix)** | Reachable in prod, no mitigating control, real-world exploitable | **Sev2** (active/mass) or **Sev2.5** (not active) | Sink `file:line` + confirmed reachability + proven absence of any gate |
 | **Important** | Real weakness, but partial mitigation / elevated prerequisites | **Sev3** (Sev2.5 only at confirmed-reachable, no-safeguard top edge) | Sink + the specific mitigation limiting blast radius, cited |
-| **Moderate** | Defense-in-depth gap; needs unlikely preconditions (root, debug build, physical access) | **Sev3 / Sev4** | Cited precondition that blocks mass exploitation |
-| **Low / Won't-Fix** | Not reachable in shipping config, or already gated off | **Sev4** | Citation proving non-reachability (flight default off, non-exported, sibling allow-list, etc.) |
+| **Moderate** | Defense-in-depth gap; needs unlikely (but non-root) preconditions — a narrow race, a non-default config, attacker already controlling a federated page | **Sev3 / Sev4** | Cited precondition that blocks mass exploitation |
+| **Low / Won't-Fix** | Not reachable in shipping config, already gated off, **or only exploitable past the OS boundary (root / physical / debug-build / `adb`) with no non-root path** | **Sev4** | Citation proving non-reachability or the sole-root precondition (and that no non-root path exists) |
 
 **A down-classification is only valid if the mitigating control is cited with `file:line`.** "I didn't find
 an exploit path" is not evidence — show the control, or show the searches proving its absence.
+
+> **Out-of-scope threat boundary:** a finding whose **only** exploitation path requires a rooted/jailbroken
+> device, physical/forensic access, a debuggable/test build, or `adb`/developer-mode is **out of scope →
+> Won't-Fix (Sev4)** — the OS boundary is already defeated, so no app control helps. **First prove there is
+> no non-root path** (another app via IPC/Intent/deep-link, network/zero-click, or off-device egress like a
+> diagnostics/log upload); if one exists, the finding is in scope and the non-root path governs the tier.
+> See "Out-of-scope threat boundary" in [references/severity-rubric.md](references/severity-rubric.md).
 
 > **IcM Sev = response urgency** (Sev2 = page on-call outside business hours · Sev2.5 = immediate, business
 > hours · Sev3 = soon · Sev4 = hygiene). **Assigning Sev2.5+ is a high, rare bar** — our stack almost always
