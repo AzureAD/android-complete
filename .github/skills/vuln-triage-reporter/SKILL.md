@@ -290,6 +290,12 @@ file language, flag `OneAuthSharedFunctions` changes to OneAuth). Because three 
 vulnerability** — only a corp-gated work-item link points to the sensitive context. **Present the diff and
 get explicit go/no-go before any push or PR**, and run the public-token sweep first.
 
+> **Per-repo PR platform & identity (critical):** common/msal → **public GitHub, non-EMU** (open the PR with
+> the **local** Git Credential Manager token; the MCP GitHub tool is EMU and **403s** on these public repos —
+> fall back to the REST API). broker → **GitHub Enterprise, EMU** (use the EMU/MCP identity). authenticator →
+> **Azure DevOps** (no GitHub PR — open it in ADO). Match the credential to the repo or the PR step fails. See
+> the full matrix in [references/remediation-execution.md](references/remediation-execution.md).
+
 ### Step 5 — Report (two coordinated artifacts per finding)
 Each finding yields a **human report** and a **machine-readable agent spec** — see
 [references/agent-spec-template.md](references/agent-spec-template.md) for the dual-output rationale + schema.

@@ -135,6 +135,42 @@ $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN= (Select-String -Path $gp -Pattern '^vstsMave
 
 ---
 
+## Per-repo platform & identity (where the PR goes, and which credential opens it)
+
+The four target repos do **not** all live on the same platform or use the same GitHub identity model. Pick the
+right destination + credential **before** you push, or the PR step fails (or lands in the wrong place):
+
+| Module | PR platform | Identity model | How to open the PR |
+|--------|-------------|----------------|--------------------|
+| **common** / common4j | **public GitHub** (`AzureAD/microsoft-authentication-library-common-for-android`) | **non-EMU** | Use the **local Git Credential Manager** identity (the non-EMU `gho_` token that pushes). |
+| **msal** | **public GitHub** (`AzureAD/microsoft-authentication-library-for-android`) | **non-EMU** | Same as common — local non-EMU credential. |
+| **broker** / broker4j | **GitHub Enterprise** (`identity-authnz-teams/ad-accounts-for-android`, GHE) | **EMU** (Enterprise Managed User) | Use the **EMU** identity for this org. |
+| **authenticator** | **Azure DevOps** (not GitHub at all) | ADO | Open the PR in **ADO**, not GitHub — use the ADO MCP / `az repos pr`. |
+
+**The MCP GitHub tool is bound to an EMU identity.** That makes it the right tool for **broker** (EMU/GHE) but
+it **403s on the public `AzureAD` repos** (common/msal) with *"As an Enterprise Managed User, you cannot access
+this content."* So:
+
+- **common / msal (public, non-EMU):** the MCP `create_pull_request` tool will 403. **Fall back to the local
+  non-EMU credential** — retrieve it from Git Credential Manager and call the GitHub REST API directly:
+
+  ```powershell
+  $cred = "protocol=https`nhost=github.com`n`n"
+  $tok  = (($cred | git credential fill 2>$null) | Where-Object { $_ -like 'password=*' }).Substring(9)  # gho_…, has push
+  # POST https://api.github.com/repos/AzureAD/<repo>/pulls  with Authorization: Bearer $tok  (draft=true)
+  ```
+  (`git push` already uses this identity, which is why the push succeeds even when the MCP PR call fails.)
+  **Never print the token.** `gh` CLI is not installed in this environment — use `curl`/`Invoke-RestMethod`.
+- **broker (EMU/GHE):** the MCP GitHub tool / EMU identity is correct here — the local non-EMU token will not
+  have access to the GHE org.
+- **authenticator (ADO):** there is no GitHub PR — branch/push and open the PR in Azure DevOps.
+
+> Net: **match the credential to the repo's identity model.** Public AzureAD (common/msal) = local non-EMU
+> token; GHE broker = EMU/MCP; authenticator = ADO. A 403 on a public repo almost always means you used the
+> EMU identity by mistake — switch to the local credential, don't assume the push itself failed.
+
+---
+
 ## Push & PR mechanics
 
 - Commit locally first; include the standard **`Co-authored-by: Copilot` trailer** the repo mandates (see the
@@ -143,3 +179,4 @@ $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN= (Select-String -Path $gp -Pattern '^vstsMave
 - Pushing a branch ≠ opening a PR. GitHub prints a "create a PR" link on push; that does **not** open one.
   Only open the PR on explicit approval, and keep the PR title/body under the same public-safe rules (vague
   title, WI link, surface any `external_validation_needed` "do NOT close until confirmed" question in the body).
+- Open security PRs as **draft** so reviewers aren't auto-requested before the external-validation answers land.
