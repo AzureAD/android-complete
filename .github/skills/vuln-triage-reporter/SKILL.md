@@ -522,10 +522,18 @@ research report. It is a single compact table meant to paste into an email. Gene
 `scripts/build_status_report.py` (reads the same `classifications.csv` plus live ADO state) — see
 [references/status-report-template.md](references/status-report-template.md). Keep it minimal:
 
-- **Columns:** IcM · Bug (one-line) · Severity (our tier) · Status · Work Item · Updated.
+- **Columns:** IcM · Bug (one-line) · Severity (our tier) · Status · **Code complete** · **Prod (100%)** ·
+  Work Item · Updated.
 - **Status** is read from the **execution tracker** (`EXECUTION-TRACKER.md` — what's actually been *done*:
   branch/PR/merge state), falling back to live ADO work-item state, mapped to: *Not started · In progress ·
   Blocked · In review · Complete · **Out of scope***.
+- **Code complete** = projected implement-&-test date (eng-days + a testing buffer, default +50%). **Prod
+  (100%)** = code-complete + a **component-based rollout window** from the Combined Android Release Checklist:
+  **~14d** for broker/common/MSAL/ADAL libraries (Phase 4 Maven Central publish) vs **~35d** for the
+  Authenticator app (Phase 5 gradual ramp 5%→10%→25%→50%→100% with 2-day bakes + flag-on after 100%). The
+  app is the longer pole — most fixes flip the feature flag only after Prod 100%. Tune with `--asof`,
+  `--test-buffer`, `--rollout-app-days`, `--rollout-lib-days`. See
+  [references/status-report-template.md](references/status-report-template.md) "Prod rollout basis".
 - **Intern items show *Out of scope*** for now — they're assigned to an intern who hasn't started yet, so the
   report renders a one-line note explaining it and sorts them last (tracked for completeness).
 - **No research detail, and no owner column** — owner/assignee already lives on the linked work item.

@@ -2,7 +2,7 @@
 """Build a concise, email-ready WEEKLY STATUS report from the triage classifications.
 
 Part of the `vuln-triage-reporter` skill. This is the manager-tracking artifact — a single compact table
-(IcM · Bug · Severity · Status · Work Item · Updated). It is NOT the research report: no evidence,
+(IcM · Bug · Severity · Status · Code-complete ETA · Prod · Work Item · Updated). It is NOT the research report: no evidence,
 no file:line, no audit trail. Output is self-contained HTML that pastes cleanly into Outlook.
 
 Status vocabulary (manager-friendly): Not started · In progress · Blocked · In review · Complete.
@@ -162,6 +162,62 @@ def acquire_token():
     return tok if r.returncode == 0 and tok else None
 
 
+# --- ETA / Prod-rollout math -------------------------------------------------
+# Rollout days = calendar days from CODE COMPLETE to full production (flag-on), derived from the
+# Combined Android Release Checklist. Libraries (broker/common/msal/adal) publish to Maven Central in
+# Phase 4 — they reach prod EARLIER. The Authenticator app runs Phase 5's gradual Prod ramp
+# (5%->10%->25%->50%->100%, 2 days bake each, Mon-Wed approvals) + Phase 7 partner stores, and a feature
+# flag only flips after 100% — so the app takes much longer. These are ESTIMATES (monthly train +
+# ramp); override with --rollout-lib-days / --rollout-app-days.
+ROLLOUT_APP_DAYS = 35   # Authenticator app: monthly CCD train + full gradual Prod ramp to 100% + flag-on
+ROLLOUT_LIB_DAYS = 14   # broker/common/msal/adal libraries: Phase 4 Maven Central publish (earlier)
+
+# How far the per-finding work is from code-complete, by status (fraction of remaining effort).
+REMAINING_BY_STATUS = {
+    "Not started": 1.0, "Blocked": 1.0, "In progress": 0.5,
+    "In review": 0.0, "Complete": 0.0, "Out of scope": None,  # None => not applicable
+}
+
+
+def is_app_component(component):
+    """Authenticator app -> True (slow rollout); broker/common/msal/adal libraries -> False (faster)."""
+    c = (component or "").lower()
+    return "authenticator" in c or "auth app" in c or c.strip() in ("auth", "auth-app", "app")
+
+
+def add_business_days(start, n):
+    """Add n business days (Mon-Fri) to a date."""
+    d = start
+    n = int(n)
+    while n > 0:
+        d += datetime.timedelta(days=1)
+        if d.weekday() < 5:
+            n -= 1
+    return d
+
+
+def eta_dates(asof, eng_days, status, component, buffer_frac, rollout_app, rollout_lib):
+    """Return (code_complete_str, prod_str). Dates are 'MM-DD'; '✓' = already there; '—' = N/A."""
+    remaining = REMAINING_BY_STATUS.get(status, 1.0)
+    if remaining is None:                          # Out of scope
+        return "—", "—"
+    rollout = rollout_app if is_app_component(component) else rollout_lib
+    if status == "Complete":                       # merged → assume rolling/rolled out
+        return "✓", "✓"
+    try:
+        ed = float(eng_days or 0)
+    except (TypeError, ValueError):
+        ed = 0.0
+    # code-complete = today + (remaining effort × (1 + testing buffer)), in BUSINESS days
+    work_days = ed * (1.0 + buffer_frac) * remaining
+    import math
+    cc_date = add_business_days(asof, math.ceil(work_days)) if work_days > 0 else asof
+    cc_str = "✓" if remaining == 0.0 else cc_date.strftime("%m-%d")
+    # prod = code-complete + rollout (CALENDAR days; bake time runs over weekends)
+    prod_date = cc_date + datetime.timedelta(days=rollout)
+    return cc_str, prod_date.strftime("%m-%d")
+
+
 def fetch_ado(work_id, token):
     """Return (state, changed_date 'MM-DD', tags) for a work item, or (None, '', '')."""
     import urllib.request
@@ -198,7 +254,20 @@ def main():
     ap.add_argument("--out", default=None, help="Write HTML here as UTF-8 (recommended)")
     ap.add_argument("--window", default="", help="Header window label")
     ap.add_argument("--title", default="Security Triage — Weekly Status")
+    ap.add_argument("--asof", default=None,
+                    help="Anchor date for ETA math (YYYY-MM-DD); default today.")
+    ap.add_argument("--test-buffer", type=float, default=0.5,
+                    help="Testing buffer added to eng-days for the Code-complete ETA (fraction; "
+                         "default 0.5 = +50%% for tests/flighting/review).")
+    ap.add_argument("--rollout-app-days", type=int, default=ROLLOUT_APP_DAYS,
+                    help=f"Calendar days from code-complete to Prod 100%% for the Authenticator app "
+                         f"(default {ROLLOUT_APP_DAYS}: monthly train + gradual ramp + flag-on).")
+    ap.add_argument("--rollout-lib-days", type=int, default=ROLLOUT_LIB_DAYS,
+                    help=f"Calendar days from code-complete to Prod for broker/common/msal/adal libraries "
+                         f"(default {ROLLOUT_LIB_DAYS}: Phase 4 Maven Central publish).")
     args = ap.parse_args()
+
+    asof = datetime.date.fromisoformat(args.asof) if args.asof else datetime.date.today()
 
     rows = list(csv.DictReader(open(args.csv_file, encoding="utf-8")))
 
@@ -255,6 +324,9 @@ def main():
             status = map_ado_state(state, tags)
         elif (r.get("status") or "").strip():
             status = r["status"].strip()
+        cc_eta, prod_eta = eta_dates(
+            asof, r.get("eng_days"), status, r.get("component", ""),
+            args.test_buffer, args.rollout_app_days, args.rollout_lib_days)
         items.append({
             "icm": icm,
             "bug": (r.get("title") or "").strip(),
@@ -263,6 +335,8 @@ def main():
             "status": status,
             "work_id": work_id,
             "updated": updated,
+            "cc_eta": cc_eta,
+            "prod_eta": prod_eta,
         })
 
     items.sort(key=lambda x: (STATUS_ORDER.get(x["status"], 9), SEV_ORDER.get(x["tier_key"], 9)))
@@ -290,12 +364,16 @@ def main():
               f' style="color:#0f6cbd;text-decoration:none">AB#{i["work_id"]}</a>'
               if i["work_id"] else '<span style="color:#94a3b8">—</span>')
         td = 'style="padding:6px 10px;border-bottom:1px solid #e2e6ea;font-size:13px;vertical-align:top"'
+        tdc = ('style="padding:6px 10px;border-bottom:1px solid #e2e6ea;font-size:13px;vertical-align:top;'
+               'white-space:nowrap;color:#1a1a2e"')
         trs.append(
             "<tr>"
             f'<td {td}>{icm_link}</td>'
             f'<td {td}>{htmllib.escape(i["bug"])}</td>'
             f'<td {td}>{chip(i["tier"], vbg, vfg)}</td>'
             f'<td {td}>{chip(i["status"], sbg, sfg)}</td>'
+            f'<td {tdc}>{htmllib.escape(i["cc_eta"])}</td>'
+            f'<td {tdc}>{htmllib.escape(i["prod_eta"])}</td>'
             f'<td {td}>{wi}</td>'
             f'<td {td} style="padding:6px 10px;border-bottom:1px solid #e2e6ea;font-size:13px;'
             f'color:#5b6470">{htmllib.escape(i["updated"]) or "—"}</td>'
@@ -304,15 +382,17 @@ def main():
     th = ('style="text-align:left;padding:6px 10px;border-bottom:2px solid #cbd5e1;font-size:11px;'
           'text-transform:uppercase;letter-spacing:.03em;color:#5b6470"')
     sub = (args.window + " · " if args.window else "") + count_line
-    html = f"""<div style="font-family:'Segoe UI',Arial,sans-serif;color:#1a1a2e;max-width:920px">
+    html = f"""<div style="font-family:'Segoe UI',Arial,sans-serif;color:#1a1a2e;max-width:1040px">
 <div style="font-size:16px;font-weight:700">{htmllib.escape(args.title)}</div>
 <div style="font-size:12px;color:#5b6470;margin:2px 0 10px">{htmllib.escape(sub)}</div>
 <table style="border-collapse:collapse;width:100%">
 <thead><tr>
 <th {th}>IcM</th><th {th}>Bug</th><th {th}>Sev</th>
-<th {th}>Status</th><th {th}>Work Item</th><th {th}>Updated</th>
+<th {th}>Status</th><th {th}>Code&nbsp;complete</th><th {th}>Prod&nbsp;(100%)</th>
+<th {th}>Work Item</th><th {th}>Updated</th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>
 {f'<div style="font-size:11px;color:#5b6470;margin-top:8px"><strong>Out of scope</strong> ({oos}): intern-eligible items are out of scope for now — assigned to an intern who has not started yet. They are tracked for completeness and will move to In progress once the intern picks them up.</div>' if oos else ''}
+<div style="font-size:11px;color:#5b6470;margin-top:8px"><strong>Code complete</strong> = projected date the fix is implemented &amp; tested (eng-days + {int(args.test_buffer*100)}% testing buffer, business days; ✓ = done). <strong>Prod (100%)</strong> = projected full production rollout: <strong>~{args.rollout_lib_days}d</strong> after code-complete for broker/common/MSAL/ADAL libraries (publish to Maven Central), <strong>~{args.rollout_app_days}d</strong> for the Authenticator app (gradual ramp 5%→10%→25%→50%→100% with 2-day bakes, then feature-flag on). Estimates — per the Combined Android Release Checklist.</div>
 <div style="font-size:11px;color:#94a3b8;margin-top:8px">Generated {generated} · high-level status only (owner &amp; details live on the work item; evidence in the research report).</div>
 </div>"""
 

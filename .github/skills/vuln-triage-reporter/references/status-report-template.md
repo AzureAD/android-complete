@@ -20,6 +20,8 @@ forward. No evidence, no file:line, no audit trail.
 | **Bug** | finding | A **one-line** plain-language description (the short title — NOT the full vuln writeup). |
 | **Severity** | our tier | Critical / Important / Moderate / Low (our verdict, not the filed one). |
 | **Status** | exec tracker → ADO | Mapped to: **Not started · In progress · Blocked · In review · Complete · Out of scope** (see mapping below). |
+| **Code complete** | eng-days + buffer | Projected date the fix is **implemented & tested** = eng-days + a testing buffer (default +50%), in business days from the as-of date. `✓` = code already complete (PR open / merged); `—` = out of scope. |
+| **Prod (100%)** | code-complete + rollout | Projected **full production rollout** date = code-complete + a component-based rollout window (see "Prod rollout basis" below). |
 | **Work Item** | ADO | `AB#NNNN` linked to the PBI/bug. Blank if no work item created yet. |
 | **Updated** | ADO | Date the work item last changed (so stale items are visible). |
 
@@ -50,6 +52,23 @@ live ADO state:
 > here if the severity/fix decision is actually waiting on that answer — otherwise In progress. The status
 > report does not explain *why* it's blocked; that detail stays in the research report.
 
+## Prod rollout basis (how the Prod column is computed)
+
+`Prod (100%)` = `Code complete` + a **component-based rollout window**, derived from the
+[Combined Android Release Checklist](https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/combined-release-checklist).
+The split matters because libraries reach production **earlier** than the app:
+
+| Component | Default window | Why |
+|-----------|----------------|-----|
+| **broker / common / MSAL / ADAL** (libraries) | **~14 days** | Publish to **Maven Central** in the release's Phase 4 — they reach prod before the app's 100%. |
+| **Authenticator app** | **~35 days** | Phase 5 **gradual Prod ramp** (5% → 10% → 25% → 50% → 100%, **2-day bake** at each stage, approvals Mon–Wed) + Phase 7 partner stores, and **the feature flag only flips after 100%**. |
+
+These are **estimates** anchored on the monthly release train; tune per-run with
+`--rollout-lib-days` / `--rollout-app-days` and `--test-buffer` (the Code-complete testing buffer,
+default +50%), and `--asof` to set the projection anchor. **Most security fixes are flighted and only
+turn the flag ON after the carrier hits Prod 100%** — so for an Authenticator-app fix, the effective
+"done" date is the longer app window, not code-complete.
+
 ## Layout
 
 - **One-line header:** report title + window (e.g. `Security Triage — Weekly Status · 2026-06-18 → 2026-06-25`)
@@ -63,13 +82,16 @@ live ADO state:
 > **Security Triage — Weekly Status · 2026-06-18 → 2026-06-25**
 > _8 findings · 1 in review · 3 not started · 4 out of scope_
 
-| IcM | Bug | Sev | Status | Work Item | Updated |
-|-----|-----|-----|--------|-----------|---------|
-| NNNNNN | Intent-scheme parser differential | Moderate | In review | AB#NNNN | 06-23 |
-| NNNNNN | Unvalidated app_link → arbitrary ACTION_VIEW launch | Important | Not started | AB#NNNN | 06-23 |
-| NNNNNN | Plaintext TOTP seeds logged on JWE failure | Important | Not started | AB#NNNN | 06-23 |
-| NNNNNN | activateMfa deep-link CSRF/SSRF + token exfil | Moderate | Out of scope | AB#NNNN | 06-23 |
-| NNNNNN | NGC PendingIntent collision (session swap) | Low | Out of scope | AB#NNNN | 06-23 |
+| IcM | Bug | Sev | Status | Code complete | Prod (100%) | Work Item | Updated |
+|-----|-----|-----|--------|---------------|-------------|-----------|---------|
+| NNNNNN | Intent-scheme parser differential (common) | Moderate | In review | ✓ | 07-07 | AB#NNNN | 06-23 |
+| NNNNNN | Unvalidated app_link → ACTION_VIEW (common) | Important | Not started | 07-01 | 07-15 | AB#NNNN | 06-23 |
+| NNNNNN | Plaintext TOTP seeds logged (authenticator) | Important | Not started | 07-01 | 08-05 | AB#NNNN | 06-23 |
+| NNNNNN | activateMfa deep-link CSRF/SSRF (authenticator) | Moderate | Out of scope | — | — | AB#NNNN | 06-23 |
+| NNNNNN | NGC PendingIntent collision (authenticator) | Low | Out of scope | — | — | AB#NNNN | 06-23 |
+
+_Note how the Authenticator-app fix (Prod 08-05) lands later than the equal-effort `common` library fix
+(Prod 07-15) — the app's gradual ramp + flag-on is the longer pole._
 
 _Out of scope (4): intern-eligible items are out of scope for now — assigned to an intern who has not started yet._
 
