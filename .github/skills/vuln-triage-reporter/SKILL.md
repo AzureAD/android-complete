@@ -296,6 +296,15 @@ get explicit go/no-go before any push or PR**, and run the public-token sweep fi
 > **Azure DevOps** (no GitHub PR — open it in ADO). Match the credential to the repo or the PR step fails. See
 > the full matrix in [references/remediation-execution.md](references/remediation-execution.md).
 
+> **Maintain the cross-session execution tracker.** Remediation often spans multiple sessions (one per MSRC).
+> Keep a single `EXECUTION-TRACKER.md` in the **workspace** (`$VULN_TRIAGE_WORKSPACE/msrc/<window>/`, NOT the
+> repo) that records, per finding, the real IcM↔WI↔branch↔commit↔PR linkage and an exec status
+> (`NOT STARTED` → `IN PROGRESS` → `IMPLEMENTED (local)` → `PUSHED` → `PR OPEN` → `MERGED`/`BLOCKED`/
+> `OUT OF SCOPE`). Create it on first execution, and **update it at every milestone** (branch, implement, test,
+> push, PR, merge) so a fresh session for any single MSRC can resume without re-deriving state. Because it
+> lives in the private workspace it may hold the real linkage — that is its purpose; the *repo* artifacts stay
+> sanitized, the tracker is the bridge.
+
 ### Step 5 — Report (two coordinated artifacts per finding)
 Each finding yields a **human report** and a **machine-readable agent spec** — see
 [references/agent-spec-template.md](references/agent-spec-template.md) for the dual-output rationale + schema.

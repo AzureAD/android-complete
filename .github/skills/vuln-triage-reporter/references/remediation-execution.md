@@ -180,3 +180,36 @@ this content."* So:
   Only open the PR on explicit approval, and keep the PR title/body under the same public-safe rules (vague
   title, WI link, surface any `external_validation_needed` "do NOT close until confirmed" question in the body).
 - Open security PRs as **draft** so reviewers aren't auto-requested before the external-validation answers land.
+
+---
+
+## Cross-session execution tracker (resume work across sessions)
+
+Remediation is frequently done **one MSRC per session**, often days apart. Without a durable record, each new
+session re-derives "what's done vs. not" from git archaeology. Avoid that: keep a single
+**`EXECUTION-TRACKER.md` in the workspace** (`$VULN_TRIAGE_WORKSPACE/msrc/<window>/EXECUTION-TRACKER.md` —
+**not** in the repo). It is the **bridge** between the sanitized repo artifacts and the real finding identity:
+because it lives in the private workspace, it *may* hold the real IcM↔WI↔branch↔commit↔PR linkage (that is its
+purpose).
+
+**Create it on first execution; update it at every milestone.** Status vocabulary:
+`NOT STARTED` → `IN PROGRESS` → `IMPLEMENTED (local)` → `PUSHED (no PR)` → `PR OPEN` → `MERGED` /
+`BLOCKED` / `OUT OF SCOPE (intern)`.
+
+Each finding gets an at-a-glance row **and** a detail block recording: spec path, WI, repo(s) + PR platform,
+branch + checkout path, commit SHA, PR URL + draft state, a **What was done** checklist, a **What is NOT done /
+pending** list (esp. `external_validation_needed` gates), and a one-line **Resume hint**. Suggested skeleton:
+
+```markdown
+## <IcM ID> — <short title>  ·  <STATUS>
+- Spec: agent-specs/<slug>.agent.md · WI: <n> · Repo(s): <…> · <Sev> / <Assignment>
+- PR platform: <public GitHub non-EMU | GHE EMU | ADO>
+- Branch: <name> (in <checkout path>) · Commit: <sha> · PR: <url> (<draft?>)
+- What was done: [x] … [x] …
+- What is NOT done / pending: [ ] external validation … [ ] merge/ramp …
+- Resume hint: <one line a fresh session can act on>
+```
+
+Keep intern-eligible findings in an **Out of scope** section so the next session doesn't accidentally pick one
+up. On every push/PR action, update the matching row **and** detail block in the same turn — a stale tracker is
+worse than none.
