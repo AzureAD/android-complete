@@ -271,23 +271,34 @@ anything, **ask the engineer which mode they want** — the right answer depends
 > findings not already in the shift report.
 
 **Shift report = an append model, not a fresh run each time.** The report is keyed to the **Wed→Wed
-window** and findings accumulate into it as IcMs arrive. Maintain a small manifest so re-runs append
-instead of overwrite:
+window** and findings accumulate into it as IcMs arrive. The window + folder + dedup are handled by
+[`scripts/shift.py`](scripts/shift.py) so this is deterministic — **do not hand-name folders**:
 
-- Manifest file: `$VULN_TRIAGE_WORKSPACE/msrc/<shift>/manifest.json` — a JSON map of
-  `{ "<IcM id>": { "first_seen": "<ISO>", "slug": "<n-class-component>" } }`.
-- In mode (a)/(b), **skip** any IcM already in the manifest (it's already triaged); add new ones with
-  `first_seen = now`. Mode (c) just re-renders over whatever findings already exist.
-- Render with the **shift flags** so the report is framed correctly and stamped:
-  `build_master_report.py … --shift "Wed 2026-06-11 -> Wed 2026-06-18" --owner "<on-call label>"`.
-  The header then shows the shift window, a **Generated <timestamp>** stamp (so a stale/hung run is
-  obvious), and a "findings appended as IcMs arrive" note.
+- **Resolve the shift first:** `python scripts/shift.py window` prints the current Wed→Wed window
+  (`start`, `end`, `slug`, `label`, `dir`). It picks the shift **containing today** (a Wednesday starts a
+  fresh shift). Override with `--date YYYY-MM-DD`, or `--start/--end` for an explicit window.
+- **Folder = the shift slug:** `$VULN_TRIAGE_WORKSPACE/msrc/<YYYY-MM-DD_to_YYYY-MM-DD>/` (e.g.
+  `msrc/2026-06-17_to_2026-06-24/`). Create it with `python scripts/shift.py ensure`. Everything for that
+  shift lives under it: `itd-investigations/ findings/ research/ agent-specs/ manifest.json`,
+  `wbr-security-report.html`, `_ROLLUP.md`, `classifications.csv`, `work-item-map.json`.
+- **Dedup / append via the manifest:** before researching an IcM, run
+  `python scripts/shift.py check <icm>` — exit 0 = **NEW** (research it), exit 3 = **SEEN** (skip; already
+  triaged this shift). After a finding is written, record it with
+  `python scripts/shift.py add <icm> --slug <n-class-component> --tag <MSRC|ITD>`. Mode (c) re-renders over
+  whatever is already in the folder.
+- **Render with the shift label** so the report header is framed + stamped:
+  `build_master_report.py … --shift "<label from shift.py>" --owner "<on-call label>"` — header shows the
+  window, a **Generated <timestamp>** stamp (stale/hung runs are obvious), and a "findings appended" note.
 
 > ⚠️ **Owner label is workspace-only.** You may put a human name/alias in `--owner` because the report
 > lives in the **private** `$VULN_TRIAGE_WORKSPACE` — **never** commit an alias into the skill repo.
 
-### Step 0 — Scope the week & resolve IDs
-Default window = **the current Wed→Wed shift** (≈ past 7 days). Query **all** of the IcM owning teams
+### Step 0 — Scope the shift & resolve IDs
+**Resolve the shift folder first** (deterministic — don't hand-name it):
+`python scripts/shift.py window` → gives the Wed→Wed `start/end/slug/label/dir`; then
+`python scripts/shift.py ensure` creates `$VULN_TRIAGE_WORKSPACE/msrc/<slug>/`. Use `--date YYYY-MM-DD`
+if the engineer wants a shift other than the one containing today. **All this shift's outputs go in that
+folder.** Default window = the current Wed→Wed shift (≈ past 7 days). Query **all** of the IcM owning teams
 below (missing a queue drops findings):
 
 | Team ID | Name |
@@ -308,12 +319,28 @@ Query IcM for `[MSRC]` / `[ITD]` incidents in the window for both teams. Use the
 session resource files, then summarize with [`scripts/discover_findings.py`](scripts/discover_findings.py)
 to emit the inventory table (ID, tag, title, vuln class, component, sev, state, date).
 
+> **Dedup against the shift manifest.** For each candidate IcM, run `python scripts/shift.py check <icm>` —
+> **NEW** (exit 0) → triage it; **SEEN** (exit 3) → already done this shift, skip. In mode (a) (single IcM),
+> do the same check before researching. This is what makes re-runs **append** instead of re-investigate.
+
+### Step 1.5 — Check for prior / duplicate incidents (do BEFORE investigating)
+Before spending a two-pass investigation, check whether this finding (or one very like it) has been seen
+or **already resolved** before — it may be a duplicate, a regression, or have a known fix to cite:
+- **IcM similar incidents:** call the IcM MCP `get_similar_incidents` on the finding's IcM id.
+- **Past incidents + TSGs:** query the `android-dri-search` MCP (`get_incident` / `batch_search` /
+  `search_tsgs`) for the vuln class / component / key API names.
+- **Record the result on the finding** in a `**Prior incidents:**` field (and the research-page tile):
+  *None found*, or a short list of IcM ids + one-line outcome (e.g. "AB#/IcM NNN — fixed in <area>, "
+  the same sink"). If a prior **resolved** incident clearly covers it, say so up front — the on-call can
+  short-circuit (link the prior fix / close as duplicate) instead of re-triaging. Cite, don't assume:
+  a *similar* title is a lead, not proof — still confirm against current code in Step 3.
+
 ### Step 2 — ITD manual intake (FireWatch is not MCP-reachable)
 FireWatch/Glasswing findings are **not** available through the Security MCP server (confirmed). They must
 be retrieved manually:
-1. Agent scaffolds one folder per finding under `$VULN_TRIAGE_WORKSPACE/msrc/itd-investigations/`
-   (out-of-repo; default `~/vuln-triage-workspace`) using
-   [`scripts/scaffold_itd.py`](scripts/scaffold_itd.py).
+1. Agent scaffolds one folder per finding under the **shift folder's** `itd-investigations/`
+   (`$VULN_TRIAGE_WORKSPACE/msrc/<slug>/itd-investigations/`, out-of-repo) using
+   [`scripts/scaffold_itd.py`](scripts/scaffold_itd.py) with `--root <shift dir>/itd-investigations`.
 2. **Ask the user** to open each FireWatch finding and **Save Page As → "Web Page, Complete"** into the
    matching folder. The saved `_files/report-content.html` holds the full report — it is required.
 3. Agent transcribes each saved report with
@@ -481,6 +508,31 @@ python scripts/build_status_report.py <run>/classifications.csv --auto-token \
 `--auto-token` pulls an ADO token via `az` (must be logged in) to read live work-item state; re-running
 just refreshes the statuses. The map lives in the **private workspace** (it pairs IcM ids with work
 items) — never in the repo.
+
+### Step 8 — After the report: confirm next actions (nothing auto-runs)
+
+Generating the report is **not** the end — but the report is the **decision point**, and the engineer
+drives what happens next. Once the master report + research pages exist, **summarize the outcome and ask
+the engineer which follow-ups to run** (offer as a short menu — do **not** silently proceed):
+
+1. **Record findings in the manifest** *(automatic, safe)* — for each finding just written, run
+   `python scripts/shift.py add <icm> --slug <n-class-component> --tag <MSRC|ITD>` so re-runs append/dedup.
+   This is the one post-step you can do without asking.
+2. **Create PBIs / bugs?** *(opt-in, approval-gated — Step 6 + Non-Negotiable #14)* — offer to create work
+   items. If yes: **propose the table first** (title, tier, IcM, parent, area/iteration, assignee) and wait
+   for explicit approval; default parent = the current **KTLO** feature (look it up + confirm). After
+   creation, add each `IcM → AB#` to `work-item-map.json`.
+3. **Dispatch / execute a fix?** *(opt-in)* — each engineer-owned finding already has a machine-actionable
+   `.agent.md` dispatch spec. Offer to hand it to a coding agent (e.g. the `pbi-dispatcher` skill or the
+   Copilot coding agent) to draft a PR. **Execution only happens on the engineer's go-ahead, per finding**,
+   and the spec's `blocked_on` / "do-not-proceed-until" gates (the external-validation ⚗ items) must be
+   honored — a finding gated on an unverified server/runtime condition is **not** auto-dispatched; surface
+   it for the engineer to confirm first.
+4. **Weekly status report?** *(opt-in — Step 7)* — offer to (re)generate the manager email table.
+
+> **Order of trust:** manifest record (auto) → propose PBIs (approve) → dispatch fixes (approve, per
+> finding, gates honored) → status email (on request). The agent never creates work items or opens PRs
+> without an explicit yes.
 
 ---
 

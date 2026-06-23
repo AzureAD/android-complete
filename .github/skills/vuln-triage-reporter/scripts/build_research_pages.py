@@ -438,6 +438,14 @@ def tiles_html(md):
     tiles.append(("t-pass", "Investigation Passes", f"{passes}-pass",
                   "investigate + adversarial" if passes == 2 else "single pass", a_adv))
 
+    # Prior incidents — CONDITIONAL tile: only when a prior/duplicate match was found (high-signal,
+    # could short-circuit the triage). Omitted when "None found" / absent to keep the band concise.
+    prior = _clean(m.get('prior incidents', ''))
+    if prior and prior.lower() not in ("none", "none found", "n/a", "—", ""):
+        n_ids = len(re.findall(r'\b\d{6,}\b', prior))
+        prior_val = f"{n_ids} prior" if n_ids else "Prior match"
+        tiles.append(("t-ext-yes", "Prior incidents", prior_val, "may be a dup / known fix", a_classify))
+
     ext = m.get('external validation', m.get('external dependency', ''))
     ext_l = ext.lower()
     if ext:
