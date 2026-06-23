@@ -348,10 +348,12 @@ def canonical_repo(component):
     return _clean(component) or "—"
 
 
-def compute_assignment(sev_icm, component):
-    """Cutoff: Intern-eligible ONLY when IcM Sev4 AND the repo is the Authenticator app. Else Engineer-owned."""
-    sev = (sev_icm or "").replace(" ", "").lower()
-    if sev == "sev4" and canonical_repo(component) == "Authenticator":
+def compute_assignment(our_tier, component):
+    """Cutoff: Intern-eligible when our tier is Moderate or lower (Moderate/Low/Won't-Fix) AND the component
+    is the Authenticator app. Important/Critical, or any non-Authenticator component → Engineer-owned."""
+    t = (our_tier or "").strip().lower()
+    intern_tier = ("moderate" in t) or ("low" in t) or ("won't" in t) or ("wont" in t)
+    if intern_tier and canonical_repo(component) == "Authenticator":
         return "Intern-eligible"
     return "Engineer-owned"
 
@@ -416,11 +418,11 @@ def tiles_html(md):
                                            else "all controls verified in code we own")
     tiles.append((ext_cls, "External Validation Needed", ext_val, ext_sub))
 
-    asn = compute_assignment(sev_icm_raw, m.get('component', ''))
+    asn = compute_assignment(m.get('our_tier', ''), m.get('component', ''))
     is_eng = asn == "Engineer-owned"
     asn_cls = "t-eng" if is_eng else "t-intern"
     tiles.append((asn_cls, "Assignment", asn,
-                  "remediation spec" if is_eng else "delegatable / fix notes (Sev4 + Authenticator)"))
+                  "remediation spec" if is_eng else "delegatable / fix notes (Moderate↓ + Authenticator)"))
 
     cells = "".join(
         f'<div class="tile {cls}"><div class="lbl">{htmllib.escape(lbl)}</div>'
@@ -449,7 +451,8 @@ def bottomline_html(md):
 
 
 def page(title, body_html, subtitle="", tiles="", tldr="", agent_link=""):
-    agent_btn = (f'<a class="agentlink" href="{agent_link}">&#128221; Agent dispatch spec (machine-readable)</a>'
+    agent_btn = (f'<a class="agentlink" href="{agent_link}">&#128221; Fix this with an AI agent &mdash; '
+                 f'open the dispatch spec (feed it to a coding agent to implement the fix)</a>'
                  if agent_link else "")
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><title>{htmllib.escape(title)}</title>

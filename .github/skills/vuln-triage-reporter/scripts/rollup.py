@@ -6,10 +6,10 @@ and emits: counts, filed-vs-ours severity breakdown, confidence breakdown, an In
 Engineer-owned split, total estimated eng-days, and a compact table suitable for a shared WBR section.
 
 Input format (CSV, header row required). `confidence` is optional; `assignment` is always derived from the
-cutoff (**Intern-eligible only when IcM Sev4 AND component is the Authenticator app; otherwise
-Engineer-owned**), so `component` and `icm_sev` should be accurate:
+cutoff (**Intern-eligible when our tier is Moderate or lower AND component is the Authenticator app;
+otherwise Engineer-owned**), so `component` and `our_tier` should be accurate:
     id,tag,component,filed_tier,our_tier,icm_sev,verdict,confidence,assignment,eng_days,title
-    NNNNNN,ITD,Authenticator,IMPORTANT,Low,Sev4,DOWN-CLASSIFY,High,,2,<short vuln class>
+    NNNNNN,ITD,Authenticator,IMPORTANT,Moderate,Sev3,DOWN-CLASSIFY,High,,2,<short vuln class>
     ...
 
 Usage:
@@ -39,9 +39,11 @@ def canonical_repo(component):
 
 
 def derive_assignment(our_tier, icm_sev="", component=""):
-    """Cutoff: Intern-eligible ONLY when IcM Sev4 AND repo is the Authenticator app. Else Engineer-owned."""
-    sev = (icm_sev or "").replace(" ", "").lower()
-    if sev == "sev4" and canonical_repo(component) == "Authenticator":
+    """Cutoff: Intern-eligible when our tier is Moderate or lower (Moderate/Low/Won't-Fix) AND component is
+    the Authenticator app. Important/Critical, or any non-Authenticator component → Engineer-owned."""
+    t = (our_tier or "").strip().lower()
+    intern_tier = ("moderate" in t) or ("low" in t) or ("won't" in t) or ("wont" in t)
+    if intern_tier and canonical_repo(component) == "Authenticator":
         return "Intern-eligible"
     return "Engineer-owned"
 
@@ -151,7 +153,7 @@ def main():
     else:
         print("_None._")
 
-    print(f"\n## Intern Queue (Sev4 + Authenticator — delegatable)  ·  {len(intern)} finding(s), "
+    print(f"\n## Intern Queue (Moderate↓ + Authenticator — delegatable)  ·  {len(intern)} finding(s), "
           f"~{eng_days_int:g} eng-days\n")
     if intern:
         print_table(intern)

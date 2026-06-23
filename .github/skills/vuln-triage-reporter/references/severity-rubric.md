@@ -160,18 +160,18 @@ A finding that depends on a **Scope & Verification Boundary** disclaimer cannot 
 
 ## Assignment cutoff (intern vs. engineer)
 
-Apply this **two-factor cutoff** (IcM Sev **and** component) so the on-call engineer only delegates the
-smallest, most contained work:
+Apply this **two-factor cutoff** (our tier **and** component) so the on-call engineer only delegates
+contained, lower-severity work:
 
 | Condition | Assignment | Rationale |
 |-----------|-----------|-----------|
-| **IcM Sev4 AND component = Authenticator app** | `Intern-eligible` | Low-urgency, single-repo, contained to the app we fully own — a bounded, well-understood fix. |
-| **Any Sev3 or higher** (regardless of component) | `Engineer-owned` | Real urgency; needs judgment + a coordinated fix. |
-| **Any Broker / Common / MSAL component** (even Sev4) | `Engineer-owned` | Library / cross-module / broker-privileged code — needs engineer ownership and downstream-impact judgment. |
+| **Our tier ≤ Moderate (Moderate / Low / Won't-Fix) AND component = Authenticator app** | `Intern-eligible` | Contained to the app we fully own, lower blast radius — a bounded, well-understood fix (MSRC or ITD). |
+| **Our tier ≥ Important** (regardless of component) | `Engineer-owned` | Real weakness; needs judgment + a coordinated fix. |
+| **Any Broker / Common / MSAL component** (even Moderate/Low) | `Engineer-owned` | Library / cross-module / broker-privileged code — needs engineer ownership and downstream-impact judgment. |
 
-So **Intern-eligible requires BOTH** Sev4 **and** Authenticator. Everything else is Engineer-owned. The
-component is the canonical repo (Authenticator / Broker / Common / MSAL), derived from the finding's
-`**Component:**` field.
+So **Intern-eligible requires BOTH** a Moderate-or-lower tier **and** the Authenticator app. Important and
+above go to engineers; anything in Broker/Common/MSAL goes to engineers. The component is the canonical repo
+(Authenticator / Broker / Common / MSAL), derived from the finding's `**Component:**` field.
 
 Caveat: if an **Intern-eligible** finding is **Low confidence**, flag it for an engineer sanity-check before
 handing it off — we don't delegate something we're unsure about.

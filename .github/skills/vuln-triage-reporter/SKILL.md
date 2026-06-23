@@ -107,8 +107,9 @@ ways — never claim "safe" *or* "exploitable" about a boundary you couldn't ver
 6. **Agree-or-rebut explicitly.** State FireWatch's filed classification, then state ours, then the delta
    and the evidence that justifies any change.
 7. **Assign every finding, and solution the ones we keep.** Set an **Assignment** using the cutoff:
-   **Intern-eligible ONLY when IcM Sev4 AND the component is the Authenticator app; everything else →
-   Engineer-owned.** For every engineer-owned
+   **Intern-eligible when our tier is Moderate or lower (Moderate/Low/Won't-Fix) AND the component is the
+   Authenticator app; everything else (Important+, or any Broker/Common/MSAL) → Engineer-owned.** For every
+   engineer-owned
    (kept) finding, produce a **dispatch-ready Remediation Spec** (root cause, fix approach, files to change,
    test plan, risks/rollout) — see [references/remediation-spec.md](references/remediation-spec.md).
 8. **No PoC payloads or PII** in committed artifacts. Keep detail at engineering-triage level.
@@ -258,12 +259,12 @@ the table in "The two-pass model". Disagreement or an unverifiable boundary ⇒ 
 ### Step 4 — Classify & assign (agree or rebut)
 For each finding, produce our final classification and the agree/rebut delta vs. FireWatch, with evidence,
 plus the **Confidence** from Step 3.5. Then set the **Assignment** using the cutoff:
-- **`Intern-eligible`** — ONLY when **IcM Sev4 AND the component is the Authenticator app**. These are the
-  smallest, lowest-risk, single-repo fixes — safe to delegate.
-- **`Engineer-owned`** — **everything else** (any Sev3+, or any Broker/Common/MSAL component). We keep these
-  and solution them (Step 4.5). Cross-module, broker-privileged, and library findings always stay here.
+- **`Intern-eligible`** — when our tier is **Moderate or lower (Moderate/Low/Won't-Fix) AND the component is
+  the Authenticator app**. Contained to the app we fully own, lower blast radius — safe to delegate (MSRC or ITD).
+- **`Engineer-owned`** — **everything else**: any **Important+** finding, or any **Broker/Common/MSAL**
+  component. We keep these and solution them (Step 4.5). Library and broker-privileged findings always stay here.
 
-> The cutoff is deliberately narrow: an intern only takes a finding that is both low-urgency (Sev4) **and**
+> The cutoff is two-factor: an intern only takes a finding that is both lower-severity (≤ Moderate) **and**
 > contained to the app we fully own (Authenticator). Confidence is advisory: if an intern-eligible finding is
 > **Low confidence**, flag it for a quick engineer sanity-check before handing it off.
 
@@ -311,7 +312,7 @@ Each finding yields a **human report** and a **machine-readable agent spec** —
   "Back to WBR overview" link points here, so **the run folder is fully self-contained — never reuse a prior
   run's overview.** Generate it AFTER the subpages + specs exist.
 - **Aggregate roll-up** → counts, severity breakdown (ours vs. filed), confidence + IcM-Sev breakdown, an
-  **Intern Queue** (Sev4 + Authenticator, delegatable) vs. **Engineer-owned** (everything else, kept with
+  **Intern Queue** (Moderate↓ + Authenticator, delegatable) vs. **Engineer-owned** (everything else, kept with
   remediation) split, estimated eng-days, and at-risk commitments — generated with `scripts/rollup.py`. For on-call
   handoff and the bi-monthly WBR.
 
@@ -347,11 +348,11 @@ an exploit path" is not evidence — show the control, or show the searches prov
 
 | Condition | Assignment | What we do |
 |-----------|-----------|------------|
-| **IcM Sev4 AND component = Authenticator app** | `Intern-eligible` | Smallest, contained, single-repo fix — safe to delegate (Fix Notes). |
-| **Everything else** (any Sev3+, or Broker/Common/MSAL) | `Engineer-owned` | We keep it and produce a dispatch-ready Remediation Spec (Step 4.5). |
+| **Tier ≤ Moderate AND component = Authenticator app** | `Intern-eligible` | Contained, lower-severity fix — safe to delegate (Fix Notes). |
+| **Tier ≥ Important, or any Broker/Common/MSAL** | `Engineer-owned` | We keep it and produce a dispatch-ready Remediation Spec (Step 4.5). |
 
-> Rationale: an intern only takes a finding that is both **low-urgency (Sev4)** and **contained to the app we
-> fully own (Authenticator)**. Library (Common/Broker/MSAL) and any Sev3+ finding needs engineer judgment.
+> Rationale: an intern only takes a finding that is both **≤ Moderate** and **contained to the app we fully
+> own (Authenticator)**. Library (Common/Broker/MSAL) and any Important+ finding needs engineer judgment.
 
 ---
 

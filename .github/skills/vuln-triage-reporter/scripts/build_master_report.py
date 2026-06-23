@@ -54,11 +54,14 @@ code{background:#f0f2f4;padding:.05rem .3rem;border-radius:4px;font-family:'Casc
 .s-critical{background:#fde8e8;color:#b91c1c}.s-important{background:#fdebd9;color:#c2410c}.s-moderate{background:#fdf3d3;color:#a16207}.s-low{background:#dcfce7;color:#15803d}
 .sev-Sev2{background:#fde8e8;color:#b91c1c}.sev-Sev25{background:#fdebd9;color:#c2410c}.sev-Sev3{background:#fdf3d3;color:#a16207}.sev-Sev4{background:#dcfce7;color:#15803d}
 .v-agree{background:#e5e7eb;color:#374151}.v-down{background:#dcfce7;color:#15803d}.v-up{background:#fde8e8;color:#b91c1c}
-.a-eng{background:#ede9fe;color:#5b21b6}.a-intern{background:#cffafe;color:#0e7490}
+.a-eng{background:#ede9fe;color:#5b21b6;font-weight:800;min-width:20px;text-align:center}.a-intern{background:#cffafe;color:#0e7490;font-weight:800;min-width:20px;text-align:center}
 .conf-High{background:#dcfce7;color:#15803d}.conf-Medium{background:#fdebd9;color:#b45309}.conf-Low{background:#fde8e8;color:#b91c1c}
+.tag-msrc{background:#fae8ff;color:#86198f}.tag-itd{background:#e0f2fe;color:#075985}
 .repo{font-weight:600}.muted{color:var(--ink2)}
 .legend{font-size:.84rem}.legend td{padding:6px 10px}
-.links a{margin-right:8px;white-space:nowrap}
+td.ctr,th.ctr{text-align:center}td.vuln{min-width:230px}
+.footlegend{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);font-size:.78rem;color:var(--ink2);display:flex;flex-direction:column;gap:6px}
+.footlegend .chip{margin:0 2px}
 footer{margin-top:26px;font-size:.78rem;color:var(--ink2);text-align:center;line-height:1.6}
 """
 
@@ -95,16 +98,20 @@ def extract(md, path):
     short = re.sub(r'^\s*(MSRC|ITD)\s*\[[^\]]*\]\s*[—-]\s*', '', title)
     sev_icm = brp._clean(meta.get('icm severity', meta.get('icm sev', '')))
     component = meta.get('component', '')
+    our_tier = brp._clean(meta.get('our_tier', ''))
+    # Tag: MSRC vs ITD — from the title prefix, or a FireWatch GUID implies ITD
+    tag = "MSRC" if re.match(r'^\s*MSRC\b', title) and not re.search(r'\bITD\b', title) else "ITD"
     return {
         "id": fid,
+        "tag": tag,
         "title_short": short,
         "component": brp.canonical_repo(component),
         "filed": filed_tier(md),
-        "our_tier": brp._clean(meta.get('our_tier', '')),
+        "our_tier": our_tier,
         "icm_sev": sev_icm,
         "confidence": brp._clean(meta.get('confidence', '')).title(),
         "verdict": brp._clean(meta.get('verdict', '')),
-        "assignment": brp.compute_assignment(sev_icm, component),
+        "assignment": brp.compute_assignment(our_tier, component),
         "eng_days": eng_days(md),
         "slug": slug_for(path),
         "bottomline": (re.search(r'^\*\*Bottom line:\*\*\s*(.+)$', md, re.MULTILINE) or [None, ""])[1]
@@ -175,46 +182,62 @@ def main():
     <tr><td><span class="chip s-moderate">Moderate</span></td><td><span class="chip sev-Sev3">Sev3</span>/<span class="chip sev-Sev4">Sev4</span></td><td>Soon → hygiene</td><td>Defense-in-depth gap; needs unlikely preconditions</td></tr>
     <tr><td><span class="chip s-low">Low</span></td><td><span class="chip sev-Sev4">Sev4</span></td><td>Low priority / hygiene</td><td>Not reachable in shipping config, or gated off</td></tr>
     </tbody></table>
-    <p class="muted" style="font-size:.8rem;margin-bottom:0">Sev2.5+ is a rare, high bar (High confidence + proven reachable + no safeguard + not boundary-dependent). <strong>Intern-eligible</strong> = Sev4 <em>and</em> Authenticator app only; everything else is Engineer-owned.</p></section>
+    <p class="muted" style="font-size:.8rem;margin-bottom:0">Sev2.5+ is a rare, high bar (High confidence + proven reachable + no safeguard + not boundary-dependent). <strong>Intern-eligible</strong> = our tier is Moderate or lower <em>and</em> the component is the Authenticator app; everything else (Important+, or any Broker/Common/MSAL) is Engineer-owned.</p></section>
     """
 
     # ---- master table ----
     def chip(cls, txt):
         return f'<span class="chip {cls}">{htmllib.escape(txt)}</span>' if txt else "—"
 
+    def verdict_short(v):
+        vl = v.lower()
+        if "down" in vl:
+            return "v-down", "DOWN"
+        if "up" in vl:
+            return "v-up", "UP"
+        return "v-agree", "AGREE"
+
     rows = []
     for f in findings:
-        sev_cls = "sev-" + f["icm_sev"].replace(" ", "").replace("Sev2.5", "Sev25")
         tier_cls = "s-" + (f["our_tier"].lower() if f["our_tier"].lower() in ("critical", "important", "moderate", "low") else "moderate")
-        vlow = f["verdict"].lower()
-        v_cls = "v-down" if "down" in vlow else "v-up" if "up" in vlow else "v-agree"
-        a_cls = "a-eng" if f["assignment"] == "Engineer-owned" else "a-intern"
+        v_cls, v_txt = verdict_short(f["verdict"])
+        is_eng = f["assignment"] == "Engineer-owned"
+        a_cls, a_txt = ("a-eng", "E") if is_eng else ("a-intern", "I")
+        tag_cls = "tag-msrc" if f["tag"] == "MSRC" else "tag-itd"
         icm = (f'<a href="https://portal.microsofticm.com/imp/v5/incidents/details/{f["id"]}/summary" '
                f'target="_blank">{f["id"]}</a>' if f["id"] else "—")
         research = f'{args.research_dir}/{f["slug"]}.html'
-        spec = f'{args.agent_dir}/{f["slug"]}.agent.md'
-        links = (f'<span class="links"><a href="{research}">Research</a>'
-                 f'<a href="{spec}">Spec</a></span>')
         rows.append(
             "<tr>"
             f"<td>{icm}</td>"
+            f"<td>{chip(tag_cls, f['tag'])}</td>"
             f'<td><span class="repo">{htmllib.escape(f["component"])}</span></td>'
             f'<td class="muted">{htmllib.escape(f["filed"])}</td>'
             f"<td>{chip(tier_cls, f['our_tier'])}</td>"
-            f"<td>{chip(sev_cls, f['icm_sev'])}</td>"
             f"<td>{chip('conf-' + f['confidence'], f['confidence'])}</td>"
-            f"<td>{chip(v_cls, f['verdict'])}</td>"
-            f"<td>{chip(a_cls, f['assignment'])}</td>"
-            f"<td>{f['eng_days']:g}</td>"
-            f"<td>{htmllib.escape(f['title_short'])}</td>"
-            f"<td>{links}</td>"
+            f'<td class="ctr">{chip(v_cls, v_txt)}</td>'
+            f'<td class="ctr">{chip(a_cls, a_txt)}</td>'
+            f'<td class="ctr">{f["eng_days"]:g}</td>'
+            f'<td class="vuln">{htmllib.escape(f["title_short"])}</td>'
+            f'<td><a href="{research}">Research&nbsp;&rarr;</a></td>'
             "</tr>")
 
     table = (
         '<section><h2 style="margin-top:0">Findings</h2><table><thead><tr>'
-        "<th>IcM</th><th>Component</th><th>Filed</th><th>Ours</th><th>IcM Sev</th><th>Conf</th>"
-        "<th>Verdict</th><th>Assignment</th><th>Eng-days</th><th>Vulnerability</th><th>Evidence</th>"
-        "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></section>")
+        "<th>IcM</th><th>Tag</th><th>Component</th><th>Filed</th><th>Ours</th><th>Conf</th>"
+        '<th class="ctr">Verdict</th><th class="ctr">Owner</th><th class="ctr">Eng-days</th>'
+        "<th>Vulnerability</th><th>Evidence</th>"
+        "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
+        # bottom legends (verdict + owner) — keep the table columns compact
+        '<div class="footlegend">'
+        '<span><strong>Verdict</strong> (vs. filed): '
+        '<span class="chip v-agree">AGREE</span> we concur · '
+        '<span class="chip v-down">DOWN</span> down-classified (filed too high) · '
+        '<span class="chip v-up">UP</span> up-classified (filed too low)</span>'
+        '<span><strong>Owner</strong>: '
+        '<span class="chip a-eng">E</span> Engineer-owned (Important+ or any Broker/Common/MSAL) · '
+        '<span class="chip a-intern">I</span> Intern-eligible (Moderate↓ AND Authenticator app)</span>'
+        '</div></section>')
 
     sub = (args.window + " · " if args.window else "") + f"{n} findings · two-pass evidence-based triage"
     html = f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
@@ -225,7 +248,7 @@ def main():
 {legend}
 {table}
 <footer>Generated by the <code>vuln-triage-reporter</code> skill — parallel <code>codebase-researcher</code> two-pass investigation (investigate + adversarial).<br>
-Each row links to a self-contained research evidence page and a machine-readable <code>.agent.md</code> dispatch spec. No exploit PoC or PII included.</footer>
+Each row links to a self-contained research evidence page; each evidence page has a one-click <strong>"Fix this with an AI agent"</strong> dispatch spec. No exploit PoC or PII included.</footer>
 </div></body></html>"""
 
     outp = os.path.join(args.out, "wbr-security-report.html")
