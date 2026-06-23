@@ -1,12 +1,17 @@
 ---
 name: vuln-triage-reporter
-description: Triage and classify MSRC/ITD security vulnerabilities filed against Android Authenticator & Broker, and produce evidence-based classification reports for on-call handoff and WBR. Use this skill when an on-call engineer needs to process recent [MSRC]- or [ITD]-tagged IcMs, decide whether to agree with the security team's filed severity or rebut it with code evidence, and generate per-finding + aggregate reports. Triggers include "triage MSRC", "classify these vulnerabilities", "investigate ITD findings", "on-call security report", "review FireWatch findings", "are these MSRCs really that severe", or any request to assess/right-size security vulnerability severity for Android Auth.
+description: Triage, classify, AND remediate MSRC/ITD security vulnerabilities filed against Android Authenticator & Broker. Right-sizes the security team's filed severity with evidence-based codebase analysis, produces on-call/WBR reports, and (when asked) executes the fix end-to-end — implementing the change, writing tests, and opening a public-repo-safe PR. Use this skill when an on-call engineer needs to process recent [MSRC]- or [ITD]-tagged IcMs, decide whether to agree with the filed severity or rebut it with code evidence, generate per-finding + aggregate reports, OR implement and ship the remediation for a kept finding. Triggers include "triage MSRC", "classify these vulnerabilities", "investigate ITD findings", "on-call security report", "review FireWatch findings", "are these MSRCs really that severe", "fix this finding", "remediate the MSRC", "execute the fix and open a PR", or any request to assess/right-size OR remediate a security vulnerability for Android Auth.
 ---
 
-# Vulnerability Triage & Reporter
+# Vulnerability Triage, Reporter & Remediation
 
 Right-size MSRC/ITD vulnerability severity for Android Authenticator & Broker using **deep,
-evidence-based codebase analysis**, then produce on-call/WBR reports.
+evidence-based codebase analysis**, produce on-call/WBR reports, and — when asked — **remediate kept
+findings end-to-end** (implement the fix, test it, open a public-repo-safe PR; see Step 4.6).
+
+> The skill name is `vuln-triage-reporter` for stable invocation, but its scope is **triage → report →
+> remediate**. The reporting half stops at a dispatch-ready spec; the remediation half (Step 4.6,
+> [references/remediation-execution.md](references/remediation-execution.md)) can ship the fix itself.
 
 This skill is for **on-call engineers during their on-call week**. Default scope is the **past 7 days**
 (the rotation length), parameterized so it can be widened.
@@ -271,6 +276,19 @@ root cause, fix approach, exact files to change (`file:line`), test plan, and ri
 Use [references/remediation-spec.md](references/remediation-spec.md). It must be detailed enough to hand to
 an engineer or the Copilot coding agent / `pbi-creator` without further investigation. For Intern-eligible
 findings, a lighter **Fix Notes** block is sufficient.
+
+### Step 4.6 — Execute the fix & open the PR (optional, public-repo-safe)
+When the user wants the skill to **implement** a kept finding (not just dispatch it), follow
+[references/remediation-execution.md](references/remediation-execution.md). **Prime directive: regression-safety
+over everything** — `common`/`msal`/`adal`/broker ship to **>1 billion users**, so the *safest* change that
+closes the gap always beats the cleverer/more complete one: smallest diff, gate behind a **default-OFF ECS
+flight (flight-off = byte-for-byte legacy)**, reuse hardened sibling controls, don't widen scope on a guess,
+and prove both a rollback test and a legit-flow regression test. Ground every edit in `codebase-researcher`
+citations and follow the repo's custom instructions (`Logger`, multi-repo boundaries, match existing
+file language, flag `OneAuthSharedFunctions` changes to OneAuth). Because three of the four target repos are
+**public**, the **branch name, commit message, code comments, and test fixtures must not reveal the
+vulnerability** — only a corp-gated work-item link points to the sensitive context. **Present the diff and
+get explicit go/no-go before any push or PR**, and run the public-token sweep first.
 
 ### Step 5 — Report (two coordinated artifacts per finding)
 Each finding yields a **human report** and a **machine-readable agent spec** — see

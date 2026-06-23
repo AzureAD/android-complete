@@ -86,6 +86,12 @@ should pin something to Sev3/Sev4), **record it here** so future runs are consis
   control of `app_link` depends on unverifiable eSTS/redirect behavior (External Validation = Yes), so it
   is held at Sev3 (not Sev2.5) despite default-path reachability. Pattern: **open-redirect/intent-launch
   gated by a server-emitted value is capped at Sev3 until the server side is confirmed.**
+- _Execution/rollout calibration (intent-scheme allow-list hardening)_ — when we **fix** an Important
+  finding in `common`, default the new ECS flight **OFF** and ramp progressively, because `common` ships to
+  broker + MSAL + OneAuth and a regression hits all of them; flight-OFF must be byte-for-byte legacy.
+  Pattern: **a behavioral/security fix in a shared library is shipped dark behind a default-OFF ECS flight,
+  not default-ON — verify the sibling flight's actual default before copying it.** Execution playbook:
+  [references/remediation-execution.md](remediation-execution.md).
 
 
 ## Defense-in-depth checklist (the "look beyond" sweep)
