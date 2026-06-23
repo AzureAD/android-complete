@@ -13,8 +13,10 @@ Usage:
         --research-dir research --agent-dir agent-specs --window "2026-06-11 -> 2026-06-18"
 """
 import argparse
+import datetime
 import glob
 import html as htmllib
+import json
 import os
 import re
 import sys
@@ -57,6 +59,9 @@ code{background:#f0f2f4;padding:.05rem .3rem;border-radius:4px;font-family:'Casc
 .a-eng{background:#ede9fe;color:#5b21b6;font-weight:800;min-width:20px;text-align:center}.a-intern{background:#cffafe;color:#0e7490;font-weight:800;min-width:20px;text-align:center}
 .conf-High{background:#dcfce7;color:#15803d}.conf-Medium{background:#fdebd9;color:#b45309}.conf-Low{background:#fde8e8;color:#b91c1c}
 .tag-msrc{background:#fae8ff;color:#86198f}.tag-itd{background:#e0f2fe;color:#075985}
+.ext-yes{background:#fef3c7;color:#92400e}.ext-no{background:#dcfce7;color:#15803d}
+.act-keep{background:#ede9fe;color:#5b21b6}.act-deleg{background:#cffafe;color:#0e7490}
+.c-rose{background:linear-gradient(135deg,#be123c,#881337)}
 .repo{font-weight:600}.muted{color:var(--ink2)}
 .legend{font-size:.84rem}.legend td{padding:6px 10px}
 td.ctr,th.ctr{text-align:center}td.vuln{min-width:230px}
@@ -87,6 +92,16 @@ def eng_days(md):
     return float(m.group(1)) if m else 0.0
 
 
+def ext_validation_needed(md, meta):
+    """True when the verdict leans on a server-side/downstream control we cannot statically verify.
+    Mirrors build_research_pages.tiles_html so the master signal matches each finding's tile."""
+    ext = meta.get('external validation', meta.get('external dependency', ''))
+    ext_l = ext.lower()
+    if ext:
+        return ext_l.startswith(("yes", "y ")) or "unverified" in ext_l or "inferred" in ext_l
+    return bool(re.search(r'cannot (conclude|verify)|server-side|inferred|downstream', md, re.IGNORECASE))
+
+
 def extract(md, path):
     meta = brp.parse_meta(md)
     head = md.split("##", 1)[0]
@@ -101,6 +116,13 @@ def extract(md, path):
     our_tier = brp._clean(meta.get('our_tier', ''))
     # Tag: MSRC vs ITD — from the title prefix, or a FireWatch GUID implies ITD
     tag = "MSRC" if re.match(r'^\s*MSRC\b', title) and not re.search(r'\bITD\b', title) else "ITD"
+    assignment = brp.compute_assignment(our_tier, component)
+    ext_needed = ext_validation_needed(md, meta)
+    # Action = ownership-based next step (orthogonal to ext-validation, which is its own ⚗ signal).
+    if assignment == "Engineer-owned":
+        action = ("act-keep", "Keep & fix")
+    else:
+        action = ("act-deleg", "Delegate")
     return {
         "id": fid,
         "tag": tag,
@@ -111,7 +133,9 @@ def extract(md, path):
         "icm_sev": sev_icm,
         "confidence": brp._clean(meta.get('confidence', '')).title(),
         "verdict": brp._clean(meta.get('verdict', '')),
-        "assignment": brp.compute_assignment(our_tier, component),
+        "assignment": assignment,
+        "ext_needed": ext_needed,
+        "action": action,
         "eng_days": eng_days(md),
         "slug": slug_for(path),
         "bottomline": (re.search(r'^\*\*Bottom line:\*\*\s*(.+)$', md, re.MULTILINE) or [None, ""])[1]
@@ -137,6 +161,15 @@ def main():
     ap.add_argument("--agent-dir", default="agent-specs", help="Subdir (under --out) with the agent specs")
     ap.add_argument("--window", default="", help="Window label for the header")
     ap.add_argument("--title", default="MSRC/ITD Security Triage — WBR Overview", help="Report title")
+    ap.add_argument("--shift", default="", help="Shift label, e.g. 'Wed 2026-06-11 -> Wed 2026-06-18'. "
+                    "When set, the report is framed as an on-call shift report.")
+    ap.add_argument("--owner", default="", help="On-call owner label for the shift (free text; kept in the "
+                    "private workspace output only — no alias is committed to the repo).")
+    ap.add_argument("--csv", default="classifications.csv",
+                    help="Filename (under --out) of the classifications CSV to link for export. "
+                         "Set to '' to omit the link.")
+    ap.add_argument("--rollup", default="_ROLLUP.md",
+                    help="Filename (under --out) of the roll-up markdown to link. Set to '' to omit.")
     args = ap.parse_args()
 
     files = []
@@ -153,10 +186,12 @@ def main():
     agrees = sum(1 for f in findings if "agree" in f["verdict"].lower())
     eng = [f for f in findings if f["assignment"] == "Engineer-owned"]
     intern = [f for f in findings if f["assignment"] != "Engineer-owned"]
+    ext_needed = [f for f in findings if f["ext_needed"]]
     total_days = sum(f["eng_days"] for f in findings)
     from collections import Counter
     sev_c = Counter(f["icm_sev"].replace(" ", "") for f in findings if f["icm_sev"])
     conf_c = Counter(f["confidence"] for f in findings if f["confidence"])
+    conf_str = " · ".join(f"{c} {lvl}" for lvl, c in conf_c.most_common())
 
     # ---- cards ----
     cards = [
@@ -168,9 +203,10 @@ def main():
              "team response urgency"),
         card("c-purple", "Engineer-owned", str(len(eng)),
              f"~{sum(f['eng_days'] for f in eng):g} eng-days · remediation specs"),
-        card("c-teal", "Intern queue", str(len(intern)), "Sev4 + Authenticator only"),
-        card("c-slate", "Est. eng-days", f"{total_days:g}",
-             " · ".join(f"{c} {lvl}" for lvl, c in conf_c.most_common()) + " confidence"),
+        card("c-teal", "Intern queue", str(len(intern)), "Moderate↓ + Authenticator only"),
+        card("c-rose", "Needs external validation", str(len(ext_needed)),
+             "verdict leans on a server/downstream control we can't statically prove"),
+        card("c-slate", "Est. eng-days", f"{total_days:g}", "summed across all findings (estimate)"),
     ]
 
     # ---- legend ----
@@ -203,9 +239,13 @@ def main():
         v_cls, v_txt = verdict_short(f["verdict"])
         is_eng = f["assignment"] == "Engineer-owned"
         a_cls, a_txt = ("a-eng", "E") if is_eng else ("a-intern", "I")
+        act_cls, act_txt = f["action"]
         tag_cls = "tag-msrc" if f["tag"] == "MSRC" else "tag-itd"
         icm = (f'<a href="https://portal.microsofticm.com/imp/v5/incidents/details/{f["id"]}/summary" '
                f'target="_blank">{f["id"]}</a>' if f["id"] else "—")
+        # ⚗ flag on the vulnerability cell when the verdict needs external (server/downstream) validation
+        ext_flag = (' <span class="chip ext-yes" title="Verdict leans on a server/downstream control we '
+                    'cannot statically verify — confirm before closing">⚗ ext</span>') if f["ext_needed"] else ""
         research = f'{args.research_dir}/{f["slug"]}.html'
         rows.append(
             "<tr>"
@@ -217,18 +257,19 @@ def main():
             f"<td>{chip('conf-' + f['confidence'], f['confidence'])}</td>"
             f'<td class="ctr">{chip(v_cls, v_txt)}</td>'
             f'<td class="ctr">{chip(a_cls, a_txt)}</td>'
+            f'<td class="ctr">{chip(act_cls, act_txt)}</td>'
             f'<td class="ctr">{f["eng_days"]:g}</td>'
-            f'<td class="vuln">{htmllib.escape(f["title_short"])}</td>'
+            f'<td class="vuln">{htmllib.escape(f["title_short"])}{ext_flag}</td>'
             f'<td><a href="{research}">Research&nbsp;&rarr;</a></td>'
             "</tr>")
 
     table = (
         '<section><h2 style="margin-top:0">Findings</h2><table><thead><tr>'
         "<th>IcM</th><th>Tag</th><th>Component</th><th>Filed</th><th>Ours</th><th>Conf</th>"
-        '<th class="ctr">Verdict</th><th class="ctr">Owner</th><th class="ctr">Eng-days</th>'
-        "<th>Vulnerability</th><th>Evidence</th>"
+        '<th class="ctr">Verdict</th><th class="ctr">Owner</th><th class="ctr">Action</th>'
+        '<th class="ctr">Eng-days</th><th>Vulnerability</th><th>Evidence</th>'
         "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
-        # bottom legends (verdict + owner) — keep the table columns compact
+        # bottom legends (verdict + owner + action) — keep the table columns compact
         '<div class="footlegend">'
         '<span><strong>Verdict</strong> (vs. filed): '
         '<span class="chip v-agree">AGREE</span> we concur · '
@@ -237,16 +278,48 @@ def main():
         '<span><strong>Owner</strong>: '
         '<span class="chip a-eng">E</span> Engineer-owned (Important+ or any Broker/Common/MSAL) · '
         '<span class="chip a-intern">I</span> Intern-eligible (Moderate↓ AND Authenticator app)</span>'
+        '<span><strong>Action</strong>: '
+        '<span class="chip act-keep">Keep &amp; fix</span> engineer remediates · '
+        '<span class="chip act-deleg">Delegate</span> hand to intern. '
+        '<span class="chip ext-yes">⚗ ext</span> = severity confirmation still needs a server/downstream '
+        'check we can\'t statically verify (the fix may still proceed — see the finding\'s '
+        '"can proceed now vs. blocked").</span>'
         '</div></section>')
 
-    sub = (args.window + " · " if args.window else "") + f"{n} findings · two-pass evidence-based triage"
+    # ---- header: shift framing + freshness stamp ----
+    generated = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    if args.shift:
+        title = args.title if "Shift" in args.title else f"On-Call Shift Security Report"
+        sub_bits = [f"Shift: {args.shift}"]
+        if args.owner:
+            sub_bits.append(f"on-call: {args.owner}")
+        sub_bits.append(f"{n} findings")
+        sub_bits.append("findings appended as IcMs arrive")
+        sub = " · ".join(sub_bits)
+    else:
+        title = args.title
+        sub = (args.window + " · " if args.window else "") + f"{n} findings · two-pass evidence-based triage"
+    stamp = (f'<div class="sub" style="margin-top:8px;font-size:.78rem;opacity:.85">'
+             f'Generated {generated} · confidence: {htmllib.escape(conf_str)}'
+             f'{" · ⚠ run may be stale if older than your shift" if args.shift else ""}</div>')
+
+    # ---- export links (self-contained: link the rollup + CSV that ship in the same folder) ----
+    links = []
+    if args.rollup and os.path.isfile(os.path.join(args.out, args.rollup)):
+        links.append(f'<a href="{htmllib.escape(args.rollup)}">Roll-up (markdown)</a>')
+    if args.csv and os.path.isfile(os.path.join(args.out, args.csv)):
+        links.append(f'<a href="{htmllib.escape(args.csv)}">Classifications (CSV export)</a>')
+    links_html = (f'<section style="padding:12px 20px"><strong>Exports:</strong> ' + " · ".join(links)
+                  + '</section>') if links else ""
+
     html = f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>{htmllib.escape(args.title)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>{htmllib.escape(title)}</title>
 <style>{CSS}</style></head><body><div class="wrap">
-<header class="top"><h1>{htmllib.escape(args.title)}</h1><div class="sub">{htmllib.escape(sub)}</div></header>
+<header class="top"><h1>{htmllib.escape(title)}</h1><div class="sub">{htmllib.escape(sub)}</div>{stamp}</header>
 <div class="cards">{''.join(cards)}</div>
 {legend}
 {table}
+{links_html}
 <footer>Generated by the <code>vuln-triage-reporter</code> skill — parallel <code>codebase-researcher</code> two-pass investigation (investigate + adversarial).<br>
 Each row links to a self-contained research evidence page; each evidence page has a one-click <strong>"Fix this with an AI agent"</strong> dispatch spec. No exploit PoC or PII included.</footer>
 </div></body></html>"""

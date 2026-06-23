@@ -111,6 +111,22 @@ should pin something to Sev3/Sev4), **record it here** so future runs are consis
   trust-all); the real issue was SSRF/exfil. Pattern: **a mislabeled finding needs the category corrected in
   the report + ITD title, or the fix gets mis-scoped.**
 
+### Reporting / tooling calibration (report-UX learnings)
+
+- _"Needs external validation" is ORTHOGONAL to owner/action — keep them as separate signals._ Folding
+  external-validation into the Action column collapsed every row to "Needs input" (all 8 findings had
+  `External validation: Yes`), erasing the Keep-&-fix vs Delegate distinction. A finding can need a
+  server/downstream confirmation for its **severity** while its **fix still proceeds now** (e.g. the TOTP
+  log-leak: fix unblocked, only the diagnostics-egress magnitude gated). Pattern: **Action = ownership
+  (Keep & fix / Delegate); external-validation = its own ⚗ badge + count tile. Never let one override the other.**
+- _Roll-up/CSV markdown must be written as UTF-8 via `--out`, never PowerShell `>` redirection._ `>` re-encodes
+  through the console code page and corrupts Unicode (`·`→`┬╖`, `—`→`ΓÇö`). Pattern: **scripts that emit
+  Unicode markdown take an `--out` path and write `encoding="utf-8"` directly.**
+- _On-call is a Wed→Wed rotation; the report is an append model, not a fresh run._ Findings accumulate into a
+  shift-scoped report keyed to the window; a manifest (`manifest.json`) lets re-runs skip already-triaged IcMs
+  and append new ones. Always offer the engineer the entry-mode choice (triage-one / sweep-window / finalize /
+  re-run-one) before doing work. A **Generated <timestamp>** stamp on the header makes a hung/stale run obvious.
+
 
 ## Defense-in-depth checklist (the "look beyond" sweep)
 

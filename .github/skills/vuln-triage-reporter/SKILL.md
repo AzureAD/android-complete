@@ -193,8 +193,39 @@ these unless you pass `includeIgnoredFiles: true`. Rules the subagents MUST foll
 
 ## Workflow
 
+### On-call mode — pick an entry point first
+This skill runs during an **on-call rotation** (primary is **Wednesday → Wednesday**). Before doing
+anything, **ask the engineer which mode they want** — the right answer depends on where they are in the week:
+
+| Mode | When to use | What it does |
+|------|-------------|--------------|
+| **(a) Triage one IcM now** | A new `[MSRC]`/`[ITD]` just landed | Research that single ID (two-pass) and **append** it to the current shift report. |
+| **(b) Sweep my shift window** *(default)* | Catching up / mid-shift | Query the 4 teams for findings in `[shift-start … now]`, **diff against the manifest**, triage only the **new** ones, append. |
+| **(c) Finalize / refresh roll-up** | End of shift, or after a hang | Re-render the master report + roll-up from existing findings — **no new research** (fast, safe). |
+| **(d) Re-run one finding** | A pass hung or evidence looks thin | Re-investigate a single finding and replace its record. |
+
+> **Recommended default = (b)**. If the engineer is unsure, offer (b) and tell them it only researches
+> findings not already in the shift report.
+
+**Shift report = an append model, not a fresh run each time.** The report is keyed to the **Wed→Wed
+window** and findings accumulate into it as IcMs arrive. Maintain a small manifest so re-runs append
+instead of overwrite:
+
+- Manifest file: `$VULN_TRIAGE_WORKSPACE/msrc/<shift>/manifest.json` — a JSON map of
+  `{ "<IcM id>": { "first_seen": "<ISO>", "slug": "<n-class-component>" } }`.
+- In mode (a)/(b), **skip** any IcM already in the manifest (it's already triaged); add new ones with
+  `first_seen = now`. Mode (c) just re-renders over whatever findings already exist.
+- Render with the **shift flags** so the report is framed correctly and stamped:
+  `build_master_report.py … --shift "Wed 2026-06-11 -> Wed 2026-06-18" --owner "<on-call label>"`.
+  The header then shows the shift window, a **Generated <timestamp>** stamp (so a stale/hung run is
+  obvious), and a "findings appended as IcMs arrive" note.
+
+> ⚠️ **Owner label is workspace-only.** You may put a human name/alias in `--owner` because the report
+> lives in the **private** `$VULN_TRIAGE_WORKSPACE` — **never** commit an alias into the skill repo.
+
 ### Step 0 — Scope the week & resolve IDs
-Default window = **past 7 days**. Query **all** of the IcM owning teams below (missing a queue drops findings):
+Default window = **the current Wed→Wed shift** (≈ past 7 days). Query **all** of the IcM owning teams
+below (missing a queue drops findings):
 
 | Team ID | Name |
 |---------|------|
@@ -297,7 +328,8 @@ Each finding yields a **human report** and a **machine-readable agent spec** —
   **colorful stat tiles** (Our Severity · **Component / Repo** · IcM Severity · Confidence · Verdict ·
   Investigation Passes · **External Validation Needed** · Assignment), a **Bottom line** TL;DR, then
   **Description** and **How It Can Be Exploited** (high-level, no PoC/PII). The heavy **Searches Run** audit
-  is auto-collapsed into a `<details>` for readability, and a header **"Agent dispatch spec"** button links
+  is auto-collapsed into a `<details>` for readability, an **On this page** TOC links the major sections,
+  and a header **"Fix this with an AI agent"** button links
   the `.agent.md`. A **Glossary** of the terms used is auto-appended from `references/glossary.md`.
   > **Surface what you could NOT test.** Many real exploits require conditions an AI agent cannot reproduce —
   > a runtime device repro, a specific tenant/server state, code in a downstream repo we don't own. The
@@ -307,14 +339,22 @@ Each finding yields a **human report** and a **machine-readable agent spec** —
   > an agent stalls on a gap they can route around. Required whenever `External Validation = Yes`.
 - **Master HTML report (self-contained)** → run `scripts/build_master_report.py` over the same finding
   markdown with `--out <run_dir> --research-dir research --agent-dir agent-specs` to emit
-  `wbr-security-report.html` in the run dir. It has summary stat cards, the severity legend, and a master
-  table linking each row to its IcM, its **Research** subpage, and its **agent spec**. The research subpages'
+  `wbr-security-report.html` in the run dir. It has summary stat cards (incl. a **Needs external validation**
+  count), the severity legend, and a master table: **IcM · Tag (MSRC/ITD) · Component · Filed · Ours · Conf ·
+  Verdict · Owner (E/I) · Action · Eng-days · Vulnerability · Research**. A ⚗ **ext** badge marks rows whose
+  severity still hinges on a server/downstream control we can't statically verify, and an **Exports** strip
+  links the roll-up + CSV that ship in the same folder. For an on-call **shift report**, add
+  `--shift "Wed <start> -> Wed <end>" --owner "<label>"` — this re-frames the header, adds a **Generated
+  <timestamp>** stamp (so a hung/stale run is obvious), and a "findings appended" note. The research subpages'
   "Back to WBR overview" link points here, so **the run folder is fully self-contained — never reuse a prior
   run's overview.** Generate it AFTER the subpages + specs exist.
 - **Aggregate roll-up** → counts, severity breakdown (ours vs. filed), confidence + IcM-Sev breakdown, an
   **Intern Queue** (Moderate↓ + Authenticator, delegatable) vs. **Engineer-owned** (everything else, kept with
-  remediation) split, estimated eng-days, and at-risk commitments — generated with `scripts/rollup.py`. For on-call
-  handoff and the bi-monthly WBR.
+  remediation) split, an **Action** column (Keep & fix / Delegate), estimated eng-days, and at-risk
+  commitments — generated with `scripts/rollup.py classifications.csv --out <run_dir>/_ROLLUP.md`.
+  > ⚠️ **Always pass `--out`** so the markdown is written as UTF-8. Do **not** use PowerShell `>` redirection —
+  > it re-encodes through the console code page and corrupts the Unicode (`·` → `┬╖`, `—` → `ΓÇö`).
+  For on-call handoff and the bi-monthly WBR.
 
 ---
 
