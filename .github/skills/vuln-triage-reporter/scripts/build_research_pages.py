@@ -81,6 +81,9 @@ details.audit[open] summary{margin-bottom:6px}
 .tile .lbl{font-size:.64rem;text-transform:uppercase;letter-spacing:.06em;opacity:.92;font-weight:600}
 .tile .val{font-size:1.18rem;font-weight:700;margin-top:5px;line-height:1.15}
 .tile .sub{font-size:.7rem;opacity:.92;margin-top:4px;line-height:1.3;font-weight:400}
+a.tile.tlink{text-decoration:none;color:#fff;transition:transform .08s ease,box-shadow .08s ease}
+a.tile.tlink:hover{text-decoration:none;transform:translateY(-2px);box-shadow:0 6px 16px rgba(0,0,0,.18)}
+.tjump{font-size:.78rem;opacity:.75;font-weight:400}
 .t-crit{background:linear-gradient(135deg,#b91c1c,#7f1212)}.t-imp{background:linear-gradient(135deg,#c2410c,#9a3209)}
 .t-mod{background:linear-gradient(135deg,#a16207,#7c4a05)}.t-low{background:linear-gradient(135deg,#15803d,#0f5f2d)}
 .t-high{background:linear-gradient(135deg,#15803d,#0f5f2d)}.t-med{background:linear-gradient(135deg,#b45309,#8a3f07)}.t-lowc{background:linear-gradient(135deg,#b91c1c,#7f1212)}
@@ -88,7 +91,12 @@ details.audit[open] summary{margin-bottom:6px}
 .t-ext-yes{background:linear-gradient(135deg,#b45309,#8a3f07)}.t-ext-no{background:linear-gradient(135deg,#15803d,#0f5f2d)}
 .t-agree{background:linear-gradient(135deg,#475569,#334155)}.t-down{background:linear-gradient(135deg,#15803d,#0f5f2d)}.t-up{background:linear-gradient(135deg,#b91c1c,#7f1212)}
 .t-sev2{background:linear-gradient(135deg,#b91c1c,#7f1212)}.t-sev25{background:linear-gradient(135deg,#c2410c,#9a3209)}.t-sev3{background:linear-gradient(135deg,#a16207,#7c4a05)}.t-sev4{background:linear-gradient(135deg,#15803d,#0f5f2d)}
+.t-repo-auth{background:linear-gradient(135deg,#0e7490,#0a586e)}.t-repo-broker{background:linear-gradient(135deg,#7c3aed,#5b21b6)}.t-repo-msal{background:linear-gradient(135deg,#0369a1,#075985)}.t-repo-common{background:linear-gradient(135deg,#475569,#334155)}.t-repo-adal{background:linear-gradient(135deg,#57534e,#44403c)}
 .muted{color:var(--ink2)}.idx a{display:block;padding:6px 0;border-bottom:1px solid var(--line)}
+.toc{background:#fbfbfc;border:1px solid var(--line);border-radius:10px;padding:10px 16px;margin:16px 0;font-size:.82rem}
+.toc strong{color:var(--brand-d);font-size:.72rem;text-transform:uppercase;letter-spacing:.04em}
+.toc ul{list-style:none;padding:0;margin:.4rem 0 0;display:flex;flex-wrap:wrap;gap:.25rem .9rem}
+.toc li{margin:0}.toc a{color:var(--ink2)}.toc a:hover{color:var(--brand)}
 footer{margin-top:24px;font-size:.78rem;color:var(--ink2);text-align:center;line-height:1.6}
 """
 
@@ -205,7 +213,14 @@ def wrap_callouts(html_body):
     return "".join(out)
 
 
-def md_to_html(md):
+def _anchor(text):
+    """Stable id from an h2's plain text."""
+    t = re.sub(r'<[^>]+>', '', text)
+    t = re.sub(r'[^a-z0-9]+', '-', t.lower()).strip('-')
+    return t or "section"
+
+
+def md_to_html(md, toc_sink=None):
     lines = md.split("\n")
     out, i = [], 0
     while i < len(lines):
@@ -215,7 +230,11 @@ def md_to_html(md):
         if ln.startswith("# "):
             out.append(f"<h1>{md_inline(ln[2:])}</h1>"); i += 1; continue
         if ln.startswith("## "):
-            out.append(f"<h2>{md_inline(ln[3:])}</h2>"); i += 1; continue
+            inner = md_inline(ln[3:])
+            aid = _anchor(ln[3:])
+            if toc_sink is not None:
+                toc_sink.append((aid, re.sub(r'<[^>]+>', '', inner).strip()))
+            out.append(f'<h2 id="{aid}">{inner}</h2>'); i += 1; continue
         if ln.startswith("### "):
             out.append(f"<h3>{md_inline(ln[4:])}</h3>"); i += 1; continue
         if ln.strip() in ("---", "***"):
@@ -321,10 +340,61 @@ def _sev_cls(tier):
     return "t-pass", tier or "—"
 
 
+# Component → canonical repo (the 4 we own + ADAL). Order matters: check the leading token.
+REPO_TILE = {
+    "Authenticator": ("t-repo-auth", "Microsoft Authenticator app"),
+    "Common": ("t-repo-common", "auth-library-common-for-android"),
+    "Broker": ("t-repo-broker", "ad-accounts-for-android"),
+    "MSAL": ("t-repo-msal", "auth-library-for-android"),
+    "ADAL": ("t-repo-adal", "azure-ad-library-for-android"),
+}
+
+
+def canonical_repo(component):
+    """Map a free-form Component string to one of: Authenticator | Common | Broker | MSAL | ADAL."""
+    c = _clean(component).lower()
+    if "authenticator" in c or "auth app" in c or c in ("auth", "auth-app"):
+        return "Authenticator"
+    if "common" in c:
+        return "Common"
+    if "broker" in c:
+        return "Broker"
+    if "msal" in c:
+        return "MSAL"
+    if "adal" in c:
+        return "ADAL"
+    return _clean(component) or "—"
+
+
+def compute_assignment(our_tier, component):
+    """Cutoff: Intern-eligible when our tier is Moderate or lower (Moderate/Low/Won't-Fix) AND the component
+    is the Authenticator app. Important/Critical, or any non-Authenticator component → Engineer-owned."""
+    t = (our_tier or "").strip().lower()
+    intern_tier = ("moderate" in t) or ("low" in t) or ("won't" in t) or ("wont" in t)
+    if intern_tier and canonical_repo(component) == "Authenticator":
+        return "Intern-eligible"
+    return "Engineer-owned"
+
+
 def tiles_html(md):
-    """Build the colorful stat-tile band from the finding metadata."""
+    """Build the colorful stat-tile band from the finding metadata.
+
+    Tiles stay CONCISE (no truncated prose, no assignment-cutoff reasoning). Where a deeper section
+    exists on the page, the tile becomes a jump-link to it (anchor)."""
     m = parse_meta(md)
-    tiles = []
+    tiles = []  # (cls, lbl, val, sub, anchor)
+
+    # Which detail sections exist on this page (for jump-links). Match md_to_html's _anchor() ids.
+    present = {_anchor(ln[3:]) for ln in md.splitlines() if ln.startswith("## ")}
+
+    def pick(*cands):
+        return next((a for a in cands if a in present), None)
+
+    a_classify = pick("classification")
+    a_adv = pick("adversarial-verification")
+    a_gaps = pick("verification-gaps-what-we-need-to-confirm", "scope-verification-boundary",
+                  "decisions-needed")
+    a_fix = pick("remediation-spec", "fix-notes")
 
     sev_cls, sev_txt = _sev_cls(m.get('our_tier', ''))
     filed = ""
@@ -334,7 +404,12 @@ def tiles_html(md):
             if len(cells) >= 3:
                 filed = _clean(cells[2])
             break
-    tiles.append((sev_cls, "Our Severity", sev_txt, (f"filed: {filed}" if filed else "")))
+    tiles.append((sev_cls, "Our Severity", sev_txt, (f"filed: {filed}" if filed else ""), a_classify))
+
+    # Component / repo tile
+    repo = canonical_repo(m.get('component', ''))
+    repo_cls, repo_sub = REPO_TILE.get(repo, ("t-repo-common", ""))
+    tiles.append((repo_cls, "Component / Repo", repo, repo_sub, None))
 
     # IcM Sev (team response-urgency) tile
     sev_icm_raw = _clean(m.get('icm severity', m.get('icm sev', '')))
@@ -348,20 +423,28 @@ def tiles_html(md):
     }
     if sev_icm in icm_map:
         c, v, s = icm_map[sev_icm]
-        tiles.append((c, "IcM Severity (urgency)", v, s))
+        tiles.append((c, "IcM Severity (urgency)", v, s, a_classify))
 
     conf = _clean(m.get('confidence', '')).lower()
     conf_cls = {"high": "t-high", "medium": "t-med", "low": "t-lowc"}.get(conf, "t-pass")
-    tiles.append((conf_cls, "Confidence", conf.title() or "—", "adversarial-verified"))
+    tiles.append((conf_cls, "Confidence", conf.title() or "—", "adversarial-verified", a_adv))
 
     verdict = _clean(m.get('verdict', ''))
     vlow = verdict.lower()
     v_cls = "t-down" if "down" in vlow else "t-up" if "up" in vlow else "t-agree"
-    tiles.append((v_cls, "Verdict vs. filed", verdict or "—", ""))
+    tiles.append((v_cls, "Verdict vs. filed", verdict or "—", "", a_adv))
 
     passes = m.get('passes', 1)
     tiles.append(("t-pass", "Investigation Passes", f"{passes}-pass",
-                  "investigate + adversarial" if passes == 2 else "single pass"))
+                  "investigate + adversarial" if passes == 2 else "single pass", a_adv))
+
+    # Prior incidents — CONDITIONAL tile: only when a prior/duplicate match was found (high-signal,
+    # could short-circuit the triage). Omitted when "None found" / absent to keep the band concise.
+    prior = _clean(m.get('prior incidents', ''))
+    if prior and prior.lower() not in ("none", "none found", "n/a", "—", ""):
+        n_ids = len(re.findall(r'\b\d{6,}\b', prior))
+        prior_val = f"{n_ids} prior" if n_ids else "Prior match"
+        tiles.append(("t-ext-yes", "Prior incidents", prior_val, "may be a dup / known fix", a_classify))
 
     ext = m.get('external validation', m.get('external dependency', ''))
     ext_l = ext.lower()
@@ -371,32 +454,29 @@ def tiles_html(md):
         # fall back: a Scope & Verification Boundary disclaimer always implies some external dependency
         is_yes = bool(re.search(r'cannot (conclude|verify)|server-side|inferred|downstream', md, re.IGNORECASE))
     ext_cls = "t-ext-yes" if is_yes else "t-ext-no"
-    ext_val = "Yes — partly theoretical" if is_yes else "No — fully in our code"
-    ext_sub = _clean_sub(ext) if ext else ("verdict leans on server/downstream we can't verify" if is_yes
-                                           else "all controls verified in code we own")
-    tiles.append((ext_cls, "External Validation Needed", ext_val, ext_sub))
+    ext_val = "Yes" if is_yes else "No"
+    # CONCISE: no truncated prose. The detail lives in the linked Gaps section.
+    ext_sub = "needs a server/downstream check" if is_yes else "fully verified in our code"
+    tiles.append((ext_cls, "External Validation", ext_val, ext_sub, a_gaps if is_yes else None))
 
-    asn = _clean(m.get('assignment', ''))
-    asn_cls = "t-eng" if "engineer" in asn.lower() else "t-intern"
-    tiles.append((asn_cls, "Assignment", asn or "—",
-                  "remediation spec" if "engineer" in asn.lower() else "delegatable / fix notes"))
+    asn = compute_assignment(m.get('our_tier', ''), m.get('component', ''))
+    is_eng = asn == "Engineer-owned"
+    asn_cls = "t-eng" if is_eng else "t-intern"
+    # CONCISE: just the owner + a short next-step verb (no cutoff reasoning — that lives in the body).
+    asn_sub = "keep & fix" if is_eng else "delegate"
+    tiles.append((asn_cls, "Assignment", asn, asn_sub, a_fix))
 
-    cells = "".join(
-        f'<div class="tile {cls}"><div class="lbl">{htmllib.escape(lbl)}</div>'
-        f'<div class="val">{htmllib.escape(val)}</div>'
-        + (f'<div class="sub">{htmllib.escape(sub)}</div>' if sub else "")
-        + "</div>"
-        for cls, lbl, val, sub in tiles
-    )
+    def cell(cls, lbl, val, sub, anchor):
+        arrow = ' <span class="tjump">↓</span>' if anchor else ""
+        inner = (f'<div class="lbl">{htmllib.escape(lbl)}</div>'
+                 f'<div class="val">{htmllib.escape(val)}{arrow}</div>'
+                 + (f'<div class="sub">{htmllib.escape(sub)}</div>' if sub else ""))
+        if anchor:
+            return f'<a class="tile {cls} tlink" href="#{anchor}">{inner}</a>'
+        return f'<div class="tile {cls}">{inner}</div>'
+
+    cells = "".join(cell(*t) for t in tiles)
     return f'<div class="tiles">{cells}</div>'
-
-
-def _clean_sub(v):
-    """Short subtitle from the external-validation note (keep the 'what', trim markers)."""
-    v = re.sub(r'`[^`]*`', '', v)
-    v = re.sub(r'[_*]', '', v)
-    v = re.sub(r'^(yes|no)\s*[—\-:]\s*', '', v, flags=re.IGNORECASE).strip()
-    return (v[:90] + "…") if len(v) > 92 else v
 
 
 def bottomline_html(md):
@@ -407,9 +487,15 @@ def bottomline_html(md):
     return f'<div class="tldr"><strong>Bottom line:</strong> {md_inline(m.group(1).strip())}</div>'
 
 
-def page(title, body_html, subtitle="", tiles="", tldr="", agent_link=""):
-    agent_btn = (f'<a class="agentlink" href="{agent_link}">&#128221; Agent dispatch spec (machine-readable)</a>'
+def page(title, body_html, subtitle="", tiles="", tldr="", agent_link="", toc=None):
+    agent_btn = (f'<a class="agentlink" href="{agent_link}">&#128221; Fix this with an AI agent &mdash; '
+                 f'open the dispatch spec (feed it to a coding agent to implement the fix)</a>'
                  if agent_link else "")
+    toc_html = ""
+    if toc:
+        # `txt` is already-escaped HTML with tags stripped (from md_inline) — do NOT re-escape.
+        items = "".join(f'<li><a href="#{aid}">{txt}</a></li>' for aid, txt in toc)
+        toc_html = f'<div class="toc"><strong>On this page</strong><ul>{items}</ul></div>'
     return f"""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><title>{htmllib.escape(title)}</title>
 <style>{CSS}</style></head><body><div class="wrap">
@@ -417,6 +503,7 @@ def page(title, body_html, subtitle="", tiles="", tldr="", agent_link=""):
 <header class="top"><h1>{htmllib.escape(title)}</h1>{f'<div class="sub">{subtitle}</div>' if subtitle else ''}{('<br>' + agent_btn) if agent_btn else ''}</header>
 {tiles}
 {tldr}
+{toc_html}
 <div class="body">{body_html}</div>
 <footer>Evidence record generated by the <code>vuln-triage-reporter</code> skill via parallel <code>codebase-researcher</code> investigation (two-pass: investigate + adversarial).<br>
 File:line citations are repo-relative; no exploit PoC or PII included. Full machine-actionable spec: the linked <code>.agent.md</code>.</footer>
@@ -457,9 +544,11 @@ def main():
             rel = f"{args.agent_dir.rstrip('/')}/{slug}.agent.md"
             if os.path.isfile(os.path.join(args.out, rel)):
                 agent_link = rel
-        body = wrap_callouts(md_to_html(md)) + glossary_html(md, glossary)
+        toc = []
+        body = wrap_callouts(md_to_html(md, toc_sink=toc)) + glossary_html(md, glossary)
         open(outp, "w", encoding="utf-8").write(
-            page(first, body, tiles=tiles_html(md), tldr=bottomline_html(md), agent_link=agent_link))
+            page(first, body, tiles=tiles_html(md), tldr=bottomline_html(md), agent_link=agent_link,
+                 toc=toc))
         generated.append((first, slug + ".html"))
         print("  +", outp)
 

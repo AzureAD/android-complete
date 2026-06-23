@@ -44,6 +44,59 @@ This skill is for **on-call engineers during their on-call week**. Default scope
 
 ---
 
+## Requirements — verify BEFORE any work (HARD GATE)
+
+> 🛑 **Do NOT begin discovery, investigation, or reporting until every requirement below is satisfied.**
+> If any is missing, **stop and tell the user exactly what to fix** — partial environments produce wrong
+> verdicts (e.g. a missing submodule makes a real sink look absent → a finding gets wrongly down-classified).
+> Run the verification block, report PASS/FAIL per item, and only proceed on an all-PASS.
+
+### 1. Full `android-complete` checkout WITH submodules
+The investigation greps **real source**. The app/broker code lives in **git-ignored submodules** that are
+**not** present in a bare clone or in a git **worktree**:
+- `authenticator/PhoneFactor/` — Microsoft Authenticator app + MSA SDK
+- `broker/AADAuthenticator/` — broker app code
+- the `common`, `msal`, `adal`, `broker` library modules must also be populated.
+
+**Work from the main `android-complete` checkout (e.g. `C:\src\android-complete`), NOT a worktree** —
+worktrees created for skill edits typically lack the submodules. If those folders are missing/empty, the
+user must run the repo's submodule sync (e.g. `git droidSetup` / `git submodule update --init --recursive`)
+**before** any triage.
+
+### 2. MCP servers / tooling
+| Capability | Used for | Required? | If missing |
+|------------|----------|-----------|------------|
+| **IcM MCP** (`search_incidents`, `get_incident*`, `get_teams_by_name`) | Discover `[MSRC]`/`[ITD]` findings + pull incident detail | **Required** for discovery (Steps 0–1) | Stop — cannot scope the week. (User can still paste IcM IDs to triage a specific finding.) |
+| **`codebase-researcher` subagent** | The mandatory two-pass code investigation | **Required** | Stop — the skill's core (Non-Negotiable #2/#3) cannot run. |
+| **ADO MCP** (`mcp_ado_wit_*`) | Create PBIs (Step 6) | Optional | Fall back to the ADO **REST API** + `az` token (see Step 6). |
+| **`az` CLI, logged in** | Live status report (Step 7) + REST PBI fallback | Optional (only for Steps 6–7) | Status report still renders without live state; PBI creation needs it if no ADO MCP. |
+| **FireWatch / Security MCP** | — | **N/A — not reachable** | ITD findings are intake **manually** (Step 2); do not wait on a Security MCP. |
+
+### 3. Private workspace
+`$VULN_TRIAGE_WORKSPACE` (default `~/vuln-triage-workspace`) must be writable — **all investigation
+outputs live there, OUTSIDE the repo** (they are sensitive). Never write findings under the repo tree.
+
+### Quick verification (run first, report PASS/FAIL)
+```powershell
+# 1. submodules present (non-empty)
+foreach ($p in 'authenticator\PhoneFactor','broker\AADAuthenticator','common','msal') {
+  $full = Join-Path 'C:\src\android-complete' $p
+  $ok = (Test-Path $full) -and (Get-ChildItem $full -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
+  Write-Host ("[{0}] {1}" -f $(if($ok){'PASS'}else{'FAIL'}), $p)
+}
+# 2. on the main checkout, not a worktree
+Write-Host ("git dir: " + (git -C 'C:\src\android-complete' rev-parse --git-dir))
+# 3. az logged in (only needed for Steps 6–7)
+az account show --query user.name -o tsv --only-show-errors 2>$null
+# 4. workspace writable
+$ws = if ($env:VULN_TRIAGE_WORKSPACE) { $env:VULN_TRIAGE_WORKSPACE } else { "$HOME\vuln-triage-workspace" }
+New-Item -ItemType Directory -Force -Path $ws | Out-Null; Write-Host "workspace: $ws"
+```
+> IcM MCP / `codebase-researcher` availability is confirmed by the agent's own tool list — verify they are
+> present before Step 0. If the IcM MCP is down, the discovery step cannot run.
+
+---
+
 ## Why This Skill Exists (read this first)
 
 The security team files MSRC/ITD vulnerabilities against us, each with a **pre-assigned classification**
@@ -90,6 +143,11 @@ ways — never claim "safe" *or* "exploitable" about a boundary you couldn't ver
 
 ## Non-Negotiables
 
+0. **Satisfy the Requirements hard gate FIRST.** Before any discovery/investigation/reporting, verify the
+   environment per the **"Requirements — verify BEFORE any work"** section (full `android-complete` checkout
+   **with submodules**, on the **main checkout not a worktree**; IcM MCP + `codebase-researcher` available;
+   writable private workspace). If any item FAILs, **stop and tell the user what to fix** — do not begin
+   work in a partial environment (a missing submodule silently turns a real sink into a false "no sink").
 1. **Run investigations in PARALLEL.** Each finding is independent. Dispatch one investigation per finding
    concurrently (use the `codebase-researcher` subagent / `runSubagent`, or parallel `Explore` agents).
    Do **not** process findings sequentially when more than one is in scope.
@@ -112,7 +170,9 @@ ways — never claim "safe" *or* "exploitable" about a boundary you couldn't ver
 6. **Agree-or-rebut explicitly.** State FireWatch's filed classification, then state ours, then the delta
    and the evidence that justifies any change.
 7. **Assign every finding, and solution the ones we keep.** Set an **Assignment** using the cutoff:
-   **Low/Moderate → Intern-eligible**, **Important/Critical → Engineer-owned**. For every engineer-owned
+   **Intern-eligible when our tier is Moderate or lower (Moderate/Low/Won't-Fix) AND the component is the
+   Authenticator app; everything else (Important+, or any Broker/Common/MSAL) → Engineer-owned.** For every
+   engineer-owned
    (kept) finding, produce a **dispatch-ready Remediation Spec** (root cause, fix approach, files to change,
    test plan, risks/rollout) — see [references/remediation-spec.md](references/remediation-spec.md).
 8. **No PoC payloads or PII** in committed artifacts. Keep detail at engineering-triage level.
@@ -132,6 +192,11 @@ ways — never claim "safe" *or* "exploitable" about a boundary you couldn't ver
     calibration point, a recurring safeguard pattern, a codebase-search gotcha, an estimate heuristic —
     record it in the right place (the **calibration log** in `references/severity-rubric.md`, the relevant
     reference doc, or repo memory) and include it in the commit. The skill must get smarter every rotation.
+14. **NEVER create ADO work items without explicit user approval.** Creating PBIs/bugs from findings is an
+    **opt-in, separate step** (see "Step 6 — Create PBIs"). Always present the proposed items (titles,
+    tier, parent, area/iteration, assignee) and **wait for the user to confirm** before creating anything.
+    Never auto-create, never assume the parent or assignee. This is non-negotiable — unwanted work items
+    are noise the team has to clean up.
 
 ## The two-pass model (verify before you trust)
 
@@ -196,8 +261,50 @@ these unless you pass `includeIgnoredFiles: true`. Rules the subagents MUST foll
 
 ## Workflow
 
-### Step 0 — Scope the week & resolve IDs
-Default window = **past 7 days**. Query **all** of the IcM owning teams below (missing a queue drops findings):
+### On-call mode — pick an entry point first
+This skill runs during an **on-call rotation** (primary is **Wednesday → Wednesday**). Before doing
+anything, **ask the engineer which mode they want** — the right answer depends on where they are in the week:
+
+| Mode | When to use | What it does |
+|------|-------------|--------------|
+| **(a) Triage one IcM now** | A new `[MSRC]`/`[ITD]` just landed | Research that single ID (two-pass) and **append** it to the current shift report. |
+| **(b) Sweep my shift window** *(default)* | Catching up / mid-shift | Query the 4 teams for findings in `[shift-start … now]`, **diff against the manifest**, triage only the **new** ones, append. |
+| **(c) Finalize / refresh roll-up** | End of shift, or after a hang | Re-render the master report + roll-up from existing findings — **no new research** (fast, safe). |
+| **(d) Re-run one finding** | A pass hung or evidence looks thin | Re-investigate a single finding and replace its record. |
+
+> **Recommended default = (b)**. If the engineer is unsure, offer (b) and tell them it only researches
+> findings not already in the shift report.
+
+**Shift report = an append model, not a fresh run each time.** The report is keyed to the **Wed→Wed
+window** and findings accumulate into it as IcMs arrive. The window + folder + dedup are handled by
+[`scripts/shift.py`](scripts/shift.py) so this is deterministic — **do not hand-name folders**:
+
+- **Resolve the shift first:** `python scripts/shift.py window` prints the current Wed→Wed window
+  (`start`, `end`, `slug`, `label`, `dir`). It picks the shift **containing today** (a Wednesday starts a
+  fresh shift). Override with `--date YYYY-MM-DD`, or `--start/--end` for an explicit window.
+- **Folder = the shift slug:** `$VULN_TRIAGE_WORKSPACE/msrc/<YYYY-MM-DD_to_YYYY-MM-DD>/` (e.g.
+  `msrc/2026-06-17_to_2026-06-24/`). Create it with `python scripts/shift.py ensure`. Everything for that
+  shift lives under it: `itd-investigations/ findings/ research/ agent-specs/ manifest.json`,
+  `wbr-security-report.html`, `_ROLLUP.md`, `classifications.csv`, `work-item-map.json`.
+- **Dedup / append via the manifest:** before researching an IcM, run
+  `python scripts/shift.py check <icm>` — exit 0 = **NEW** (research it), exit 3 = **SEEN** (skip; already
+  triaged this shift). After a finding is written, record it with
+  `python scripts/shift.py add <icm> --slug <n-class-component> --tag <MSRC|ITD>`. Mode (c) re-renders over
+  whatever is already in the folder.
+- **Render with the shift label** so the report header is framed + stamped:
+  `build_master_report.py … --shift "<label from shift.py>" --owner "<on-call label>"` — header shows the
+  window, a **Generated <timestamp>** stamp (stale/hung runs are obvious), and a "findings appended" note.
+
+> ⚠️ **Owner label is workspace-only.** You may put a human name/alias in `--owner` because the report
+> lives in the **private** `$VULN_TRIAGE_WORKSPACE` — **never** commit an alias into the skill repo.
+
+### Step 0 — Scope the shift & resolve IDs
+**Resolve the shift folder first** (deterministic — don't hand-name it):
+`python scripts/shift.py window` → gives the Wed→Wed `start/end/slug/label/dir`; then
+`python scripts/shift.py ensure` creates `$VULN_TRIAGE_WORKSPACE/msrc/<slug>/`. Use `--date YYYY-MM-DD`
+if the engineer wants a shift other than the one containing today. **All this shift's outputs go in that
+folder.** Default window = the current Wed→Wed shift (≈ past 7 days). Query **all** of the IcM owning teams
+below (missing a queue drops findings):
 
 | Team ID | Name |
 |---------|------|
@@ -217,12 +324,28 @@ Query IcM for `[MSRC]` / `[ITD]` incidents in the window for both teams. Use the
 session resource files, then summarize with [`scripts/discover_findings.py`](scripts/discover_findings.py)
 to emit the inventory table (ID, tag, title, vuln class, component, sev, state, date).
 
+> **Dedup against the shift manifest.** For each candidate IcM, run `python scripts/shift.py check <icm>` —
+> **NEW** (exit 0) → triage it; **SEEN** (exit 3) → already done this shift, skip. In mode (a) (single IcM),
+> do the same check before researching. This is what makes re-runs **append** instead of re-investigate.
+
+### Step 1.5 — Check for prior / duplicate incidents (do BEFORE investigating)
+Before spending a two-pass investigation, check whether this finding (or one very like it) has been seen
+or **already resolved** before — it may be a duplicate, a regression, or have a known fix to cite:
+- **IcM similar incidents:** call the IcM MCP `get_similar_incidents` on the finding's IcM id.
+- **Past incidents + TSGs:** query the `android-dri-search` MCP (`get_incident` / `batch_search` /
+  `search_tsgs`) for the vuln class / component / key API names.
+- **Record the result on the finding** in a `**Prior incidents:**` field (and the research-page tile):
+  *None found*, or a short list of IcM ids + one-line outcome (e.g. "AB#/IcM NNN — fixed in <area>, "
+  the same sink"). If a prior **resolved** incident clearly covers it, say so up front — the on-call can
+  short-circuit (link the prior fix / close as duplicate) instead of re-triaging. Cite, don't assume:
+  a *similar* title is a lead, not proof — still confirm against current code in Step 3.
+
 ### Step 2 — ITD manual intake (FireWatch is not MCP-reachable)
 FireWatch/Glasswing findings are **not** available through the Security MCP server (confirmed). They must
 be retrieved manually:
-1. Agent scaffolds one folder per finding under `$VULN_TRIAGE_WORKSPACE/msrc/itd-investigations/`
-   (out-of-repo; default `~/vuln-triage-workspace`) using
-   [`scripts/scaffold_itd.py`](scripts/scaffold_itd.py).
+1. Agent scaffolds one folder per finding under the **shift folder's** `itd-investigations/`
+   (`$VULN_TRIAGE_WORKSPACE/msrc/<slug>/itd-investigations/`, out-of-repo) using
+   [`scripts/scaffold_itd.py`](scripts/scaffold_itd.py) with `--root <shift dir>/itd-investigations`.
 2. **Ask the user** to open each FireWatch finding and **Save Page As → "Web Page, Complete"** into the
    matching folder. The saved `_files/report-content.html` holds the full report — it is required.
 3. Agent transcribes each saved report with
@@ -242,6 +365,10 @@ For each finding, dispatch a `codebase-researcher` investigation that returns:
   - IPC boundary checks (package name, signature, caller UID)
   - Build/config gating (debug-only, test-only, root-only reachability)
   - Any validation upstream of the sink
+  - **Threat boundary / scope** — is the **only** way in root / physical / debug-build / `adb`? If so the
+    finding is **out of scope (Won't-Fix / Sev4)** — BUT first prove there is **no** non-root path (another
+    app via IPC/Intent/deep-link, network/zero-click, or off-device egress like a diagnostics/log upload).
+    See "Out-of-scope threat boundary" in [references/severity-rubric.md](references/severity-rubric.md).
 - **Aggravating factors** — anything that makes it *worse* than filed (unflighted, exported, no allow-list).
 
 Use the severity rubric in [references/severity-rubric.md](references/severity-rubric.md).
@@ -262,16 +389,19 @@ the table in "The two-pass model". Disagreement or an unverifiable boundary ⇒ 
 ### Step 4 — Classify & assign (agree or rebut)
 For each finding, produce our final classification and the agree/rebut delta vs. FireWatch, with evidence,
 plus the **Confidence** from Step 3.5. Then set the **Assignment** using the cutoff:
-- **Low / Moderate → `Intern-eligible`** — bounded, lower-risk; safe to delegate.
-- **Important / Critical → `Engineer-owned`** — we keep these and solution them (Step 4.5).
+- **`Intern-eligible`** — when our tier is **Moderate or lower (Moderate/Low/Won't-Fix) AND the component is
+  the Authenticator app**. Contained to the app we fully own, lower blast radius — safe to delegate (MSRC or ITD).
+- **`Engineer-owned`** — **everything else**: any **Important+** finding, or any **Broker/Common/MSAL**
+  component. We keep these and solution them (Step 4.5). Library and broker-privileged findings always stay here.
 
-> The cutoff is intentionally simple (severity-based). Confidence is advisory: if an intern-eligible finding
-> is **Low confidence**, flag it for a quick engineer sanity-check before handing it off.
+> The cutoff is two-factor: an intern only takes a finding that is both lower-severity (≤ Moderate) **and**
+> contained to the app we fully own (Authenticator). Confidence is advisory: if an intern-eligible finding is
+> **Low confidence**, flag it for a quick engineer sanity-check before handing it off.
 
 Use [references/report-template.md](references/report-template.md).
 
 ### Step 4.5 — Solution the kept findings (remediation spec)
-For every **Engineer-owned** (Important/Critical) finding, produce a **dispatch-ready Remediation Spec**:
+For every **Engineer-owned** finding, produce a **dispatch-ready Remediation Spec**:
 root cause, fix approach, exact files to change (`file:line`), test plan, and risks/rollout (flighting).
 Use [references/remediation-spec.md](references/remediation-spec.md). It must be detailed enough to hand to
 an engineer or the Copilot coding agent / `pbi-creator` without further investigation. For Intern-eligible
@@ -322,24 +452,120 @@ Each finding yields a **human report** and a **machine-readable agent spec** —
 - **HTML evidence subpages (human, curated)** → run `scripts/build_research_pages.py` with
   `--agent-dir ../agent-specs` to produce one self-contained, shareable HTML page each (CSS inlined;
   `file:line` citations as visible evidence chips) plus an `index.html`. Each page opens with a band of
-  **colorful stat tiles** (Our Severity · IcM Severity · Confidence · Verdict · Investigation Passes ·
-  **External Validation Needed** · Assignment), a **Bottom line** TL;DR, then **Description** and
-  **How It Can Be Exploited** (high-level, no PoC/PII). The heavy **Searches Run** audit is auto-collapsed
-  into a `<details>` for readability, and a header **"Agent dispatch spec"** button links the `.agent.md`.
-  A **Glossary** of the terms used is auto-appended from `references/glossary.md`.
+  **colorful stat tiles** (Our Severity · **Component / Repo** · IcM Severity · Confidence · Verdict ·
+  Investigation Passes · **External Validation** · Assignment — each kept concise; tiles with a ↓ jump to
+  the matching detail section), a **Bottom line** TL;DR, then
+  **Description** and **How It Can Be Exploited** (high-level, no PoC/PII). The heavy **Searches Run** audit
+  is auto-collapsed into a `<details>` for readability, an **On this page** TOC links the major sections,
+  and a header **"Fix this with an AI agent"** button links
+  the `.agent.md`. A **Glossary** of the terms used is auto-appended from `references/glossary.md`.
   > **Surface what you could NOT test.** Many real exploits require conditions an AI agent cannot reproduce —
   > a runtime device repro, a specific tenant/server state, code in a downstream repo we don't own. The
   > **Verification Gaps** table makes each explicit (open question · *why* untestable statically · what we
   > confirmed instead · the concrete ask · severity effect) and the **Decisions Needed** box lists the
   > judgment calls a human must make. So the user knows exactly where to supply info, and neither a human nor
   > an agent stalls on a gap they can route around. Required whenever `External Validation = Yes`.
-- **Master HTML report** → overview table linking each row to its IcM, FireWatch finding, its **Research**
-  subpage, and its **agent spec**; show **Confidence**, **IcM Sev**, and **Assignment** columns; severity
-  legend; scope summary; capacity narrative.
+- **Master HTML report (self-contained)** → run `scripts/build_master_report.py` over the same finding
+  markdown with `--out <run_dir> --research-dir research --agent-dir agent-specs` to emit
+  `wbr-security-report.html` in the run dir. It has summary stat cards (incl. a **Needs external validation**
+  count), the severity legend, and a master table: **IcM · Tag (MSRC/ITD) · Component · Filed · Ours · Conf ·
+  Verdict · Owner (E/I) · Eng-days · Vulnerability · Research**. A ⚗ **ext** badge marks rows whose
+  severity still hinges on a server/downstream control we can't statically verify, and an **Exports** strip
+  links the roll-up + CSV that ship in the same folder. For an on-call **shift report**, add
+  `--shift "Wed <start> -> Wed <end>" --owner "<label>"` — this re-frames the header, adds a **Generated
+  <timestamp>** stamp (so a hung/stale run is obvious), and a "findings appended" note. The research subpages'
+  "Back to WBR overview" link points here, so **the run folder is fully self-contained — never reuse a prior
+  run's overview.** Generate it AFTER the subpages + specs exist.
 - **Aggregate roll-up** → counts, severity breakdown (ours vs. filed), confidence + IcM-Sev breakdown, an
-  **Intern Queue** (Low/Moderate, delegatable) vs. **Engineer-owned** (kept, with remediation) split,
-  estimated eng-days, and at-risk commitments — generated with `scripts/rollup.py`. Suitable for on-call
-  handoff and the bi-monthly WBR.
+  **Intern Queue** (Moderate↓ + Authenticator, delegatable) vs. **Engineer-owned** (everything else, kept with
+  remediation) split, estimated eng-days, and at-risk commitments — generated with
+  `scripts/rollup.py classifications.csv --out <run_dir>/_ROLLUP.md`. (Owner E/I is the action split — the two
+  sections ARE keep-&-fix vs delegate; no separate Action column.)
+  > ⚠️ **Always pass `--out`** so the markdown is written as UTF-8. Do **not** use PowerShell `>` redirection —
+  > it re-encodes through the console code page and corrupts the Unicode (`·` → `┬╖`, `—` → `ΓÇö`).
+  For on-call handoff and the bi-monthly WBR.
+
+### Step 6 — Create PBIs (OPTIONAL — only on request, ALWAYS with approval)
+
+Creating ADO work items is a **separate, opt-in step** the user must ask for — never a default part of a
+triage run. When asked to create PBIs/bugs from findings (see Non-Negotiable #14):
+
+1. **Propose first.** Present the proposed items as a table — title, our tier, IcM, eng-days, target
+   **parent**, area/iteration, assignee — and **wait for explicit approval.** Never assume the parent or
+   the assignee; ask.
+2. **Default parent = the team's standing "Keep the Lights On" (KTLO) feature** on the *Auth Client - Android*
+   board — that is where ongoing security-triage/bug work belongs. **Look it up at creation time** (IDs and
+   iterations rotate) and confirm the exact ID with the user. The Summer-2026 intern feature (an intern
+   batch under `[Summer 2026] Deliverable Payload`) was a **one-time** exception — do not reuse it as the
+   default.
+3. **Inherit area + iteration from the chosen parent** unless the user overrides. Leave **unassigned**
+   unless the user names an assignee (intern aliases are usually not known at creation time).
+4. **One PBI per fix, not per IcM.** When two findings share a single root cause + fix (e.g. ITD 635330 +
+   635488 both being the `activateMfa` deep link), create **one combined PBI** and count the eng-days once.
+5. **Description = the report distilled** (NOT a copy): Summary, Security classification (filed vs. our
+   verdict/confidence/IcM Sev), How it can be exploited, Fix approach, Files to change (`file:line`),
+   Test plan, an Open-questions/external-validation call-out, and a **📎 Reports & spec (to be linked)**
+   placeholder (research HTML · agent spec · WBR master report) for the user to paste links into later.
+   Convert to **HTML** for `System.Description` (`"format": "Html"`).
+6. **Tooling.** Prefer the **ADO MCP** (`mcp_ado_wit_*`) when connected; this is the same flow the
+   `pbi-creator` skill uses, so hand off to it. If the MCP isn't connected, the ADO **REST API** with an
+   `az account get-access-token` bearer works (the `az` CLI is a `.cmd` shim that can't pass HTML cleanly
+   via `subprocess`, and `az boards` routes HTML through cmd.exe which corrupts `& < >`). Make creation
+   **idempotent** (query by exact title before creating) so a mid-run failure can be safely re-run.
+7. ADO citations + IcM IDs **are allowed** in work-item descriptions (corp Engineering project, not the
+   public skill repo). The public-repo safety rules apply to the **skill files**, not to ADO items.
+
+### Step 7 — Weekly status report (manager tracking — concise, email-ready)
+
+The on-call's manager tracks these findings weekly. This is a **separate, high-level artifact** — NOT the
+research report. It is a single compact table meant to paste into an email. Generate it with
+`scripts/build_status_report.py` (reads the same `classifications.csv` plus live ADO state) — see
+[references/status-report-template.md](references/status-report-template.md). Keep it minimal:
+
+- **Columns:** IcM · Bug (one-line) · Severity (our tier) · Status · Work Item · Updated.
+- **Status** is the ADO work-item state mapped to: *Not started · In progress · Blocked · In review · Complete.*
+- **No research detail, and no owner column** — owner/assignee already lives on the linked work item.
+  Quick-glance only: no evidence, no file:line, no audit trail.
+- Group/sort by status or severity; include a one-line header (window + counts). Plain HTML table that
+  pastes cleanly into Outlook.
+
+**One-command weekly run.** Persist the IcM→work-item map **once** in the workspace as
+`work-item-map.json` (next to `classifications.csv`) — `{ "<IcM id>": <AB#> }`, with both IcMs of a
+combined PBI pointing at the same id. The script **auto-discovers** it, so the weekly refresh is just:
+
+```
+python scripts/build_status_report.py <run>/classifications.csv --auto-token \
+    --out <run>/weekly-status.html --window "<Wed> -> <Wed>"
+```
+
+`--auto-token` pulls an ADO token via `az` (must be logged in) to read live work-item state; re-running
+just refreshes the statuses. The map lives in the **private workspace** (it pairs IcM ids with work
+items) — never in the repo.
+
+### Step 8 — After the report: confirm next actions (nothing auto-runs)
+
+Generating the report is **not** the end — but the report is the **decision point**, and the engineer
+drives what happens next. Once the master report + research pages exist, **summarize the outcome and ask
+the engineer which follow-ups to run** (offer as a short menu — do **not** silently proceed):
+
+1. **Record findings in the manifest** *(automatic, safe)* — for each finding just written, run
+   `python scripts/shift.py add <icm> --slug <n-class-component> --tag <MSRC|ITD>` so re-runs append/dedup.
+   This is the one post-step you can do without asking.
+2. **Create PBIs / bugs?** *(opt-in, approval-gated — Step 6 + Non-Negotiable #14)* — offer to create work
+   items. If yes: **propose the table first** (title, tier, IcM, parent, area/iteration, assignee) and wait
+   for explicit approval; default parent = the current **KTLO** feature (look it up + confirm). After
+   creation, add each `IcM → AB#` to `work-item-map.json`.
+3. **Dispatch / execute a fix?** *(opt-in)* — each engineer-owned finding already has a machine-actionable
+   `.agent.md` dispatch spec. Offer to hand it to a coding agent (e.g. the `pbi-dispatcher` skill or the
+   Copilot coding agent) to draft a PR. **Execution only happens on the engineer's go-ahead, per finding**,
+   and the spec's `blocked_on` / "do-not-proceed-until" gates (the external-validation ⚗ items) must be
+   honored — a finding gated on an unverified server/runtime condition is **not** auto-dispatched; surface
+   it for the engineer to confirm first.
+4. **Weekly status report?** *(opt-in — Step 7)* — offer to (re)generate the manager email table.
+
+> **Order of trust:** manifest record (auto) → propose PBIs (approve) → dispatch fixes (approve, per
+> finding, gates honored) → status email (on request). The agent never creates work items or opens PRs
+> without an explicit yes.
 
 ---
 
@@ -351,11 +577,18 @@ Full rubric + required evidence per tier: [references/severity-rubric.md](refere
 |----------|---------|---------|-------------------|
 | **CRITICAL (must fix)** | Reachable in prod, no mitigating control, real-world exploitable | **Sev2** (active/mass) or **Sev2.5** (not active) | Sink `file:line` + confirmed reachability + proven absence of any gate |
 | **Important** | Real weakness, but partial mitigation / elevated prerequisites | **Sev3** (Sev2.5 only at confirmed-reachable, no-safeguard top edge) | Sink + the specific mitigation limiting blast radius, cited |
-| **Moderate** | Defense-in-depth gap; needs unlikely preconditions (root, debug build, physical access) | **Sev3 / Sev4** | Cited precondition that blocks mass exploitation |
-| **Low / Won't-Fix** | Not reachable in shipping config, or already gated off | **Sev4** | Citation proving non-reachability (flight default off, non-exported, sibling allow-list, etc.) |
+| **Moderate** | Defense-in-depth gap; needs unlikely (but non-root) preconditions — a narrow race, a non-default config, attacker already controlling a federated page | **Sev3 / Sev4** | Cited precondition that blocks mass exploitation |
+| **Low / Won't-Fix** | Not reachable in shipping config, already gated off, **or only exploitable past the OS boundary (root / physical / debug-build / `adb`) with no non-root path** | **Sev4** | Citation proving non-reachability or the sole-root precondition (and that no non-root path exists) |
 
 **A down-classification is only valid if the mitigating control is cited with `file:line`.** "I didn't find
 an exploit path" is not evidence — show the control, or show the searches proving its absence.
+
+> **Out-of-scope threat boundary:** a finding whose **only** exploitation path requires a rooted/jailbroken
+> device, physical/forensic access, a debuggable/test build, or `adb`/developer-mode is **out of scope →
+> Won't-Fix (Sev4)** — the OS boundary is already defeated, so no app control helps. **First prove there is
+> no non-root path** (another app via IPC/Intent/deep-link, network/zero-click, or off-device egress like a
+> diagnostics/log upload); if one exists, the finding is in scope and the non-root path governs the tier.
+> See "Out-of-scope threat boundary" in [references/severity-rubric.md](references/severity-rubric.md).
 
 > **IcM Sev = response urgency** (Sev2 = page on-call outside business hours · Sev2.5 = immediate, business
 > hours · Sev3 = soon · Sev4 = hygiene). **Assigning Sev2.5+ is a high, rare bar** — our stack almost always
@@ -369,12 +602,15 @@ an exploit path" is not evidence — show the control, or show the searches prov
 - **Confidence** (High/Medium/Low) comes from the **adversarial pass** (Step 3.5) — see "The two-pass model".
   It measures *how sure we are of the verdict*, independent of severity. Low-confidence findings get a human
   review before action.
-- **Assignment** is a simple severity cutoff applied to **our** final tier:
+- **Assignment** is a cutoff on **IcM Sev + component** (not tier alone):
 
-| Our Tier | Assignment | What we do |
-|----------|-----------|------------|
-| **Low / Moderate** | `Intern-eligible` | Bounded, lower-risk — safe to delegate (Fix Notes). |
-| **Important / Critical** | `Engineer-owned` | We keep it and produce a dispatch-ready Remediation Spec (Step 4.5). |
+| Condition | Assignment | What we do |
+|-----------|-----------|------------|
+| **Tier ≤ Moderate AND component = Authenticator app** | `Intern-eligible` | Contained, lower-severity fix — safe to delegate (Fix Notes). |
+| **Tier ≥ Important, or any Broker/Common/MSAL** | `Engineer-owned` | We keep it and produce a dispatch-ready Remediation Spec (Step 4.5). |
+
+> Rationale: an intern only takes a finding that is both **≤ Moderate** and **contained to the app we fully
+> own (Authenticator)**. Library (Common/Broker/MSAL) and any Important+ finding needs engineer judgment.
 
 ---
 
