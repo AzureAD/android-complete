@@ -326,7 +326,8 @@ Each finding yields a **human report** and a **machine-readable agent spec** —
   `--agent-dir ../agent-specs` to produce one self-contained, shareable HTML page each (CSS inlined;
   `file:line` citations as visible evidence chips) plus an `index.html`. Each page opens with a band of
   **colorful stat tiles** (Our Severity · **Component / Repo** · IcM Severity · Confidence · Verdict ·
-  Investigation Passes · **External Validation Needed** · Assignment), a **Bottom line** TL;DR, then
+  Investigation Passes · **External Validation** · Assignment — each kept concise; tiles with a ↓ jump to
+  the matching detail section), a **Bottom line** TL;DR, then
   **Description** and **How It Can Be Exploited** (high-level, no PoC/PII). The heavy **Searches Run** audit
   is auto-collapsed into a `<details>` for readability, an **On this page** TOC links the major sections,
   and a header **"Fix this with an AI agent"** button links

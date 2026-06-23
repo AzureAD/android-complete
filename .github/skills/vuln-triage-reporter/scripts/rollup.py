@@ -51,14 +51,6 @@ def derive_assignment(our_tier, icm_sev="", component=""):
     return "Engineer-owned"
 
 
-def derive_action(row):
-    """The on-call's ownership-based next move for a finding (orthogonal to external-validation,
-    which the master HTML report surfaces separately via its ⚗ signal):
-      Delegate    — intern-eligible (Moderate↓ + Authenticator)
-      Keep & fix  — engineer-owned"""
-    return "Delegate" if row.get("assignment", "").strip() != "Engineer-owned" else "Keep & fix"
-
-
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("csv_file", help="CSV of classifications (see module docstring)")
@@ -89,7 +81,6 @@ def main():
     for r in rows:
         r["assignment"] = derive_assignment(
             r.get("our_tier", ""), r.get("icm_sev", ""), r.get("component", ""))
-        r["action"] = derive_action(r)
 
     by_tag = Counter(r.get("tag", "?").strip().upper() for r in rows)
     filed = Counter(r.get("filed_tier", "?").strip() for r in rows)
@@ -155,8 +146,8 @@ def main():
              + ", ".join(str(r.get("id", "?")) for r in low_conf) + "\n")
 
     def print_table(subset):
-        emit("| IcM | Tag | Component | Filed | Ours | Sev | Verdict | Conf | Action | Eng-days | Title |")
-        emit("|-----|-----|-----------|-------|------|-----|---------|------|--------|----------|-------|")
+        emit("| IcM | Tag | Component | Filed | Ours | Sev | Verdict | Conf | Eng-days | Title |")
+        emit("|-----|-----|-----------|-------|------|-----|---------|------|----------|-------|")
         for r in sorted(subset, key=lambda x: TIER_ORDER.get(x.get("our_tier", "").strip(), 9)):
             title = (r.get("title", "") or "").replace("|", "\\|")
             if len(title) > 55:
@@ -164,7 +155,7 @@ def main():
             emit(f"| {r.get('id','')} | {r.get('tag','')} | {r.get('component','')} | "
                  f"{r.get('filed_tier','')} | {r.get('our_tier','')} | "
                  f"{(r.get('icm_sev','') or '').strip() or '—'} | {r.get('verdict','')} | "
-                 f"{(r.get('confidence','') or '').strip() or '—'} | {r.get('action','')} | "
+                 f"{(r.get('confidence','') or '').strip() or '—'} | "
                  f"{r.get('eng_days','')} | {title} |")
 
     engineer = [r for r in rows if r.get("assignment", "").strip() == "Engineer-owned"]
@@ -192,10 +183,9 @@ def main():
     else:
         emit("_None._")
 
-    emit("\n> **Action legend:** **Keep & fix** = engineer-owned, grounded in our code · "
-         "**Delegate** = intern-eligible (Moderate↓ + Authenticator). "
-         "External-validation gating (server/downstream we can't statically verify) is flagged "
-         "per-finding in the HTML report's ⚗ signal.")
+    emit("\n> The two sections above ARE the action split: **Engineer-owned** = keep & fix, "
+         "**Intern Queue** = delegate. External-validation gating (server/downstream we can't statically "
+         "verify) is flagged per-finding in the HTML report's ⚗ signal.")
 
     _flush(buf, args.out)
     return 0

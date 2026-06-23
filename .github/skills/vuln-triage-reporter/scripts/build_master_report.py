@@ -60,7 +60,6 @@ code{background:#f0f2f4;padding:.05rem .3rem;border-radius:4px;font-family:'Casc
 .conf-High{background:#dcfce7;color:#15803d}.conf-Medium{background:#fdebd9;color:#b45309}.conf-Low{background:#fde8e8;color:#b91c1c}
 .tag-msrc{background:#fae8ff;color:#86198f}.tag-itd{background:#e0f2fe;color:#075985}
 .ext-yes{background:#fef3c7;color:#92400e}.ext-no{background:#dcfce7;color:#15803d}
-.act-keep{background:#ede9fe;color:#5b21b6}.act-deleg{background:#cffafe;color:#0e7490}
 .c-rose{background:linear-gradient(135deg,#be123c,#881337)}
 .repo{font-weight:600}.muted{color:var(--ink2)}
 .legend{font-size:.84rem}.legend td{padding:6px 10px}
@@ -118,11 +117,6 @@ def extract(md, path):
     tag = "MSRC" if re.match(r'^\s*MSRC\b', title) and not re.search(r'\bITD\b', title) else "ITD"
     assignment = brp.compute_assignment(our_tier, component)
     ext_needed = ext_validation_needed(md, meta)
-    # Action = ownership-based next step (orthogonal to ext-validation, which is its own ⚗ signal).
-    if assignment == "Engineer-owned":
-        action = ("act-keep", "Keep & fix")
-    else:
-        action = ("act-deleg", "Delegate")
     return {
         "id": fid,
         "tag": tag,
@@ -135,7 +129,6 @@ def extract(md, path):
         "verdict": brp._clean(meta.get('verdict', '')),
         "assignment": assignment,
         "ext_needed": ext_needed,
-        "action": action,
         "eng_days": eng_days(md),
         "slug": slug_for(path),
         "bottomline": (re.search(r'^\*\*Bottom line:\*\*\s*(.+)$', md, re.MULTILINE) or [None, ""])[1]
@@ -233,13 +226,24 @@ def main():
             return "v-up", "UP"
         return "v-agree", "AGREE"
 
+    def split_tier(t):
+        """Base tier (for the chip + colour) and any trailing note (e.g. '— and recategorize')."""
+        m = re.match(r'\s*(critical|important|moderate|low)\b', (t or "").lower())
+        if not m:
+            return (t or "—"), ""
+        base = m.group(1).capitalize()
+        note = (t or "")[m.end():].lstrip(" —-·").strip()
+        return base, note
+
     rows = []
     for f in findings:
-        tier_cls = "s-" + (f["our_tier"].lower() if f["our_tier"].lower() in ("critical", "important", "moderate", "low") else "moderate")
+        base_tier, tier_note = split_tier(f["our_tier"])
+        tier_cls = "s-" + (base_tier.lower() if base_tier.lower() in ("critical", "important", "moderate", "low") else "moderate")
+        ours_cell = chip(tier_cls, base_tier) + (
+            f' <span class="muted" style="font-size:.7rem">↻ {htmllib.escape(tier_note)}</span>' if tier_note else "")
         v_cls, v_txt = verdict_short(f["verdict"])
         is_eng = f["assignment"] == "Engineer-owned"
         a_cls, a_txt = ("a-eng", "E") if is_eng else ("a-intern", "I")
-        act_cls, act_txt = f["action"]
         tag_cls = "tag-msrc" if f["tag"] == "MSRC" else "tag-itd"
         icm = (f'<a href="https://portal.microsofticm.com/imp/v5/incidents/details/{f["id"]}/summary" '
                f'target="_blank">{f["id"]}</a>' if f["id"] else "—")
@@ -253,11 +257,10 @@ def main():
             f"<td>{chip(tag_cls, f['tag'])}</td>"
             f'<td><span class="repo">{htmllib.escape(f["component"])}</span></td>'
             f'<td class="muted">{htmllib.escape(f["filed"])}</td>'
-            f"<td>{chip(tier_cls, f['our_tier'])}</td>"
+            f"<td>{ours_cell}</td>"
             f"<td>{chip('conf-' + f['confidence'], f['confidence'])}</td>"
             f'<td class="ctr">{chip(v_cls, v_txt)}</td>'
             f'<td class="ctr">{chip(a_cls, a_txt)}</td>'
-            f'<td class="ctr">{chip(act_cls, act_txt)}</td>'
             f'<td class="ctr">{f["eng_days"]:g}</td>'
             f'<td class="vuln">{htmllib.escape(f["title_short"])}{ext_flag}</td>'
             f'<td><a href="{research}">Research&nbsp;&rarr;</a></td>'
@@ -266,22 +269,19 @@ def main():
     table = (
         '<section><h2 style="margin-top:0">Findings</h2><table><thead><tr>'
         "<th>IcM</th><th>Tag</th><th>Component</th><th>Filed</th><th>Ours</th><th>Conf</th>"
-        '<th class="ctr">Verdict</th><th class="ctr">Owner</th><th class="ctr">Action</th>'
+        '<th class="ctr">Verdict</th><th class="ctr">Owner</th>'
         '<th class="ctr">Eng-days</th><th>Vulnerability</th><th>Evidence</th>'
         "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
-        # bottom legends (verdict + owner + action) — keep the table columns compact
+        # bottom legends (verdict + owner) — keep the table columns compact
         '<div class="footlegend">'
         '<span><strong>Verdict</strong> (vs. filed): '
         '<span class="chip v-agree">AGREE</span> we concur · '
         '<span class="chip v-down">DOWN</span> down-classified (filed too high) · '
         '<span class="chip v-up">UP</span> up-classified (filed too low)</span>'
         '<span><strong>Owner</strong>: '
-        '<span class="chip a-eng">E</span> Engineer-owned (Important+ or any Broker/Common/MSAL) · '
-        '<span class="chip a-intern">I</span> Intern-eligible (Moderate↓ AND Authenticator app)</span>'
-        '<span><strong>Action</strong>: '
-        '<span class="chip act-keep">Keep &amp; fix</span> engineer remediates · '
-        '<span class="chip act-deleg">Delegate</span> hand to intern. '
-        '<span class="chip ext-yes">⚗ ext</span> = severity confirmation still needs a server/downstream '
+        '<span class="chip a-eng">E</span> Engineer-owned — keep &amp; fix (Important+ or any Broker/Common/MSAL) · '
+        '<span class="chip a-intern">I</span> Intern-eligible — delegate (Moderate↓ AND Authenticator app)</span>'
+        '<span><span class="chip ext-yes">⚗ ext</span> = severity confirmation still needs a server/downstream '
         'check we can\'t statically verify (the fix may still proceed — see the finding\'s '
         '"can proceed now vs. blocked").</span>'
         '</div></section>')

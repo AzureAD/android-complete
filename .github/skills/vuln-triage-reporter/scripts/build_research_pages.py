@@ -81,6 +81,9 @@ details.audit[open] summary{margin-bottom:6px}
 .tile .lbl{font-size:.64rem;text-transform:uppercase;letter-spacing:.06em;opacity:.92;font-weight:600}
 .tile .val{font-size:1.18rem;font-weight:700;margin-top:5px;line-height:1.15}
 .tile .sub{font-size:.7rem;opacity:.92;margin-top:4px;line-height:1.3;font-weight:400}
+a.tile.tlink{text-decoration:none;color:#fff;transition:transform .08s ease,box-shadow .08s ease}
+a.tile.tlink:hover{text-decoration:none;transform:translateY(-2px);box-shadow:0 6px 16px rgba(0,0,0,.18)}
+.tjump{font-size:.78rem;opacity:.75;font-weight:400}
 .t-crit{background:linear-gradient(135deg,#b91c1c,#7f1212)}.t-imp{background:linear-gradient(135deg,#c2410c,#9a3209)}
 .t-mod{background:linear-gradient(135deg,#a16207,#7c4a05)}.t-low{background:linear-gradient(135deg,#15803d,#0f5f2d)}
 .t-high{background:linear-gradient(135deg,#15803d,#0f5f2d)}.t-med{background:linear-gradient(135deg,#b45309,#8a3f07)}.t-lowc{background:linear-gradient(135deg,#b91c1c,#7f1212)}
@@ -374,9 +377,24 @@ def compute_assignment(our_tier, component):
 
 
 def tiles_html(md):
-    """Build the colorful stat-tile band from the finding metadata."""
+    """Build the colorful stat-tile band from the finding metadata.
+
+    Tiles stay CONCISE (no truncated prose, no assignment-cutoff reasoning). Where a deeper section
+    exists on the page, the tile becomes a jump-link to it (anchor)."""
     m = parse_meta(md)
-    tiles = []
+    tiles = []  # (cls, lbl, val, sub, anchor)
+
+    # Which detail sections exist on this page (for jump-links). Match md_to_html's _anchor() ids.
+    present = {_anchor(ln[3:]) for ln in md.splitlines() if ln.startswith("## ")}
+
+    def pick(*cands):
+        return next((a for a in cands if a in present), None)
+
+    a_classify = pick("classification")
+    a_adv = pick("adversarial-verification")
+    a_gaps = pick("verification-gaps-what-we-need-to-confirm", "scope-verification-boundary",
+                  "decisions-needed")
+    a_fix = pick("remediation-spec", "fix-notes")
 
     sev_cls, sev_txt = _sev_cls(m.get('our_tier', ''))
     filed = ""
@@ -386,12 +404,12 @@ def tiles_html(md):
             if len(cells) >= 3:
                 filed = _clean(cells[2])
             break
-    tiles.append((sev_cls, "Our Severity", sev_txt, (f"filed: {filed}" if filed else "")))
+    tiles.append((sev_cls, "Our Severity", sev_txt, (f"filed: {filed}" if filed else ""), a_classify))
 
     # Component / repo tile
     repo = canonical_repo(m.get('component', ''))
     repo_cls, repo_sub = REPO_TILE.get(repo, ("t-repo-common", ""))
-    tiles.append((repo_cls, "Component / Repo", repo, repo_sub))
+    tiles.append((repo_cls, "Component / Repo", repo, repo_sub, None))
 
     # IcM Sev (team response-urgency) tile
     sev_icm_raw = _clean(m.get('icm severity', m.get('icm sev', '')))
@@ -405,20 +423,20 @@ def tiles_html(md):
     }
     if sev_icm in icm_map:
         c, v, s = icm_map[sev_icm]
-        tiles.append((c, "IcM Severity (urgency)", v, s))
+        tiles.append((c, "IcM Severity (urgency)", v, s, a_classify))
 
     conf = _clean(m.get('confidence', '')).lower()
     conf_cls = {"high": "t-high", "medium": "t-med", "low": "t-lowc"}.get(conf, "t-pass")
-    tiles.append((conf_cls, "Confidence", conf.title() or "—", "adversarial-verified"))
+    tiles.append((conf_cls, "Confidence", conf.title() or "—", "adversarial-verified", a_adv))
 
     verdict = _clean(m.get('verdict', ''))
     vlow = verdict.lower()
     v_cls = "t-down" if "down" in vlow else "t-up" if "up" in vlow else "t-agree"
-    tiles.append((v_cls, "Verdict vs. filed", verdict or "—", ""))
+    tiles.append((v_cls, "Verdict vs. filed", verdict or "—", "", a_adv))
 
     passes = m.get('passes', 1)
     tiles.append(("t-pass", "Investigation Passes", f"{passes}-pass",
-                  "investigate + adversarial" if passes == 2 else "single pass"))
+                  "investigate + adversarial" if passes == 2 else "single pass", a_adv))
 
     ext = m.get('external validation', m.get('external dependency', ''))
     ext_l = ext.lower()
@@ -428,39 +446,29 @@ def tiles_html(md):
         # fall back: a Scope & Verification Boundary disclaimer always implies some external dependency
         is_yes = bool(re.search(r'cannot (conclude|verify)|server-side|inferred|downstream', md, re.IGNORECASE))
     ext_cls = "t-ext-yes" if is_yes else "t-ext-no"
-    ext_val = "Yes — partly theoretical" if is_yes else "No — fully in our code"
-    ext_sub = _clean_sub(ext) if ext else ("verdict leans on server/downstream we can't verify" if is_yes
-                                           else "all controls verified in code we own")
-    tiles.append((ext_cls, "External Validation Needed", ext_val, ext_sub))
+    ext_val = "Yes" if is_yes else "No"
+    # CONCISE: no truncated prose. The detail lives in the linked Gaps section.
+    ext_sub = "needs a server/downstream check" if is_yes else "fully verified in our code"
+    tiles.append((ext_cls, "External Validation", ext_val, ext_sub, a_gaps if is_yes else None))
 
     asn = compute_assignment(m.get('our_tier', ''), m.get('component', ''))
     is_eng = asn == "Engineer-owned"
     asn_cls = "t-eng" if is_eng else "t-intern"
-    repo_now = canonical_repo(m.get('component', ''))
-    tier_now = _sev_cls(m.get('our_tier', ''))[1]
-    if is_eng:
-        why = (f"{tier_now} → engineer-owned" if tier_now in ("Critical", "Important")
-               else f"{repo_now} (not Authenticator) → engineer-owned")
-    else:
-        why = f"{tier_now} + Authenticator → delegatable"
-    tiles.append((asn_cls, "Assignment", asn, why))
+    # CONCISE: just the owner + a short next-step verb (no cutoff reasoning — that lives in the body).
+    asn_sub = "keep & fix" if is_eng else "delegate"
+    tiles.append((asn_cls, "Assignment", asn, asn_sub, a_fix))
 
-    cells = "".join(
-        f'<div class="tile {cls}"><div class="lbl">{htmllib.escape(lbl)}</div>'
-        f'<div class="val">{htmllib.escape(val)}</div>'
-        + (f'<div class="sub">{htmllib.escape(sub)}</div>' if sub else "")
-        + "</div>"
-        for cls, lbl, val, sub in tiles
-    )
+    def cell(cls, lbl, val, sub, anchor):
+        arrow = ' <span class="tjump">↓</span>' if anchor else ""
+        inner = (f'<div class="lbl">{htmllib.escape(lbl)}</div>'
+                 f'<div class="val">{htmllib.escape(val)}{arrow}</div>'
+                 + (f'<div class="sub">{htmllib.escape(sub)}</div>' if sub else ""))
+        if anchor:
+            return f'<a class="tile {cls} tlink" href="#{anchor}">{inner}</a>'
+        return f'<div class="tile {cls}">{inner}</div>'
+
+    cells = "".join(cell(*t) for t in tiles)
     return f'<div class="tiles">{cells}</div>'
-
-
-def _clean_sub(v):
-    """Short subtitle from the external-validation note (keep the 'what', trim markers)."""
-    v = re.sub(r'`[^`]*`', '', v)
-    v = re.sub(r'[_*]', '', v)
-    v = re.sub(r'^(yes|no)\s*[—\-:]\s*', '', v, flags=re.IGNORECASE).strip()
-    return (v[:90] + "…") if len(v) > 92 else v
 
 
 def bottomline_html(md):
