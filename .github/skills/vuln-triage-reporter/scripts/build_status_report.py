@@ -27,13 +27,18 @@ Map auto-discovery: if --map is omitted, the script looks for `work-item-map.jso
 no --map. (The map pairs IcM ids with work-item ids, so it lives in the private workspace, NOT the repo.)
 
 Usage:
-  # one-command weekly run (auto-discovered map + auto token):
+  # one-command weekly run (auto-discovered map + auto token + fixed milestone dates):
   python build_status_report.py classifications.csv --auto-token \
-      --out weekly-status.html --window "2026-06-18 -> 2026-06-25"
+      --out weekly-status.html --window "2026-06-18 -> 2026-06-25" \
+      --code-complete-date 7/8/26 --prod-date-app 8/10/26 --prod-date-lib 7/13/26
 
   # explicit map + token file:
   python build_status_report.py classifications.csv --map map.json --token tok.txt \
       --out weekly-status.html --window "2026-06-18 -> 2026-06-25"
+
+Milestone dates: pass --code-complete-date (one date, same for all — shown once in the header, no per-row
+column), and --prod-date-app / --prod-date-lib for the per-component Prod (100%) milestone. When omitted, the
+script falls back to estimating Prod from rollout days.
 """
 import argparse
 import csv
@@ -270,6 +275,26 @@ def eta_dates(asof, eng_days, status, component, buffer_frac, rollout_app, rollo
     return cc_str, prod_date.strftime("%m-%d")
 
 
+def parse_flex_date(s):
+    """Parse a user-supplied date in ISO or US format (e.g. '2026-07-08', '7/8/26', '07/08/2026').
+    Returns a date or None."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%m-%d-%y"):
+        try:
+            return datetime.datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    sys.stderr.write(f"  ! could not parse date '{s}' — expected YYYY-MM-DD or M/D/YY\n")
+    return None
+
+
+def fmt_milestone(d):
+    """Friendly milestone format, e.g. 'Jul 8, 2026'."""
+    return f"{d:%b} {d.day}, {d.year}" if d else "—"
+
+
 def fetch_ado(work_id, token):
     """Return (state, changed_date 'MM-DD', tags) for a work item, or (None, '', '')."""
     import urllib.request
@@ -317,6 +342,16 @@ def main():
     ap.add_argument("--rollout-lib-days", type=int, default=ROLLOUT_LIB_DAYS,
                     help=f"Calendar days from code-complete to Prod for broker/common/msal/adal libraries "
                          f"(default {ROLLOUT_LIB_DAYS}: Phase 4 Maven Central publish).")
+    ap.add_argument("--code-complete-date", default=None,
+                    help="Fixed code-complete milestone date (e.g. 2026-07-08 or 7/8/26). Same for all "
+                         "findings — shown once in the header. When set, the per-row Code-complete column "
+                         "is not computed.")
+    ap.add_argument("--prod-date-app", default=None,
+                    help="Fixed Prod (100%%) date for the Authenticator app (e.g. 8/10/26). Overrides the "
+                         "computed app rollout estimate.")
+    ap.add_argument("--prod-date-lib", default=None,
+                    help="Fixed Prod date for broker/common/msal/adal libraries (e.g. 7/13/26). Overrides "
+                         "the computed library rollout estimate.")
     args = ap.parse_args()
 
     asof = datetime.date.fromisoformat(args.asof) if args.asof else datetime.date.today()
@@ -359,6 +394,12 @@ def main():
         if not token:
             sys.stderr.write("  ! --auto-token failed (is `az` logged in?). Falling back to no live status.\n")
 
+    # Fixed milestone dates (user-supplied) override the computed ETA estimates.
+    fixed_cc = parse_flex_date(args.code_complete_date)
+    fixed_prod_app = parse_flex_date(args.prod_date_app)
+    fixed_prod_lib = parse_flex_date(args.prod_date_lib)
+    use_fixed_prod = bool(fixed_prod_app or fixed_prod_lib)
+
     items = []
     for r in rows:
         icm = (r.get("id") or "").strip()
@@ -382,9 +423,19 @@ def main():
             status = map_ado_state(state, tags)
         elif (r.get("status") or "").strip():
             status = r["status"].strip()
-        cc_eta, prod_eta = eta_dates(
-            asof, r.get("eng_days"), status, r.get("component", ""),
-            args.test_buffer, args.rollout_app_days, args.rollout_lib_days)
+        # Prod date: fixed per-component milestone when supplied, else the computed rollout estimate.
+        component = r.get("component", "")
+        if status == "Out of scope":
+            prod_eta = "—"
+        elif status == "Complete":
+            prod_eta = "✓"
+        elif use_fixed_prod:
+            fp = fixed_prod_app if is_app_component(component) else fixed_prod_lib
+            prod_eta = fmt_milestone(fp) if fp else "—"
+        else:
+            _cc, prod_eta = eta_dates(
+                asof, r.get("eng_days"), status, component,
+                args.test_buffer, args.rollout_app_days, args.rollout_lib_days)
         items.append({
             "icm": icm,
             "bug": (r.get("title") or "").strip(),
@@ -393,7 +444,6 @@ def main():
             "status": status,
             "work_id": work_id,
             "updated": updated,
-            "cc_eta": cc_eta,
             "prod_eta": prod_eta,
             "pr_label": pr_label,
             "pr_url": pr_url,
@@ -443,7 +493,6 @@ def main():
             f'<td {td}>{chip(i["tier"], vbg, vfg)}</td>'
             f'<td {td}>{chip(i["status"], sbg, sfg)}</td>'
             f'<td {td}>{pr_cell}</td>'
-            f'<td {tdc}>{htmllib.escape(i["cc_eta"])}</td>'
             f'<td {tdc}>{htmllib.escape(i["prod_eta"])}</td>'
             f'<td {td}>{wi}</td>'
             f'<td {td} style="padding:6px 10px;border-bottom:1px solid #e2e6ea;font-size:13px;'
@@ -453,17 +502,38 @@ def main():
     th = ('style="text-align:left;padding:6px 10px;border-bottom:2px solid #cbd5e1;font-size:11px;'
           'text-transform:uppercase;letter-spacing:.03em;color:#5b6470"')
     sub = (args.window + " · " if args.window else "") + count_line
+    cc_header = (f'<div style="font-size:12px;color:#1a1a2e;margin:0 0 10px">'
+                 f'<strong>Code complete (all):</strong> {htmllib.escape(fmt_milestone(fixed_cc))}</div>'
+                 if fixed_cc else "")
+    if use_fixed_prod:
+        bits = []
+        if fixed_prod_lib:
+            bits.append(f"<strong>{htmllib.escape(fmt_milestone(fixed_prod_lib))}</strong> for "
+                        f"broker/common/MSAL/ADAL libraries (Maven Central publish)")
+        if fixed_prod_app:
+            bits.append(f"<strong>{htmllib.escape(fmt_milestone(fixed_prod_app))}</strong> for the "
+                        f"Authenticator app (gradual ramp, then feature-flag on)")
+        prod_note = ("<strong>Prod (100%)</strong> = planned full production rollout milestone: "
+                     + "; ".join(bits) + ".")
+    else:
+        prod_note = (f"<strong>Prod (100%)</strong> = projected full production rollout: "
+                     f"<strong>~{args.rollout_lib_days}d</strong> after code-complete for "
+                     f"broker/common/MSAL/ADAL libraries (publish to Maven Central), "
+                     f"<strong>~{args.rollout_app_days}d</strong> for the Authenticator app (gradual ramp "
+                     f"5%→10%→25%→50%→100% with 2-day bakes, then feature-flag on). Estimates — per the "
+                     f"Combined Android Release Checklist.")
     html = f"""<div style="font-family:'Segoe UI',Arial,sans-serif;color:#1a1a2e;max-width:1120px">
 <div style="font-size:16px;font-weight:700">{htmllib.escape(args.title)}</div>
-<div style="font-size:12px;color:#5b6470;margin:2px 0 10px">{htmllib.escape(sub)}</div>
+<div style="font-size:12px;color:#5b6470;margin:2px 0 6px">{htmllib.escape(sub)}</div>
+{cc_header}
 <table style="border-collapse:collapse;width:100%">
 <thead><tr>
 <th {th}>IcM</th><th {th}>Bug</th><th {th}>Sev</th>
-<th {th}>Status</th><th {th}>PR</th><th {th}>Code&nbsp;complete</th><th {th}>Prod&nbsp;(100%)</th>
+<th {th}>Status</th><th {th}>PR</th><th {th}>Prod&nbsp;(100%)</th>
 <th {th}>Work Item</th><th {th}>Updated</th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>
 {f'<div style="font-size:11px;color:#5b6470;margin-top:8px"><strong>Out of scope</strong> ({oos}): intern-eligible items are out of scope for now — assigned to an intern who has not started yet. They are tracked for completeness and will move to In progress once the intern picks them up.</div>' if oos else ''}
-<div style="font-size:11px;color:#5b6470;margin-top:8px"><strong>Code complete</strong> = projected date the fix is implemented &amp; tested (eng-days + {int(args.test_buffer*100)}% testing buffer, business days; ✓ = done). <strong>Prod (100%)</strong> = projected full production rollout: <strong>~{args.rollout_lib_days}d</strong> after code-complete for broker/common/MSAL/ADAL libraries (publish to Maven Central), <strong>~{args.rollout_app_days}d</strong> for the Authenticator app (gradual ramp 5%→10%→25%→50%→100% with 2-day bakes, then feature-flag on). Estimates — per the Combined Android Release Checklist.</div>
+<div style="font-size:11px;color:#5b6470;margin-top:8px">{prod_note}</div>
 <div style="font-size:11px;color:#94a3b8;margin-top:8px">Generated {generated} · high-level status only (owner &amp; details live on the work item; evidence in the research report).</div>
 </div>"""
 
