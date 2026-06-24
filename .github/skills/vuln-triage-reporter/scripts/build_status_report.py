@@ -5,7 +5,7 @@ Part of the `vuln-triage-reporter` skill. This is the manager-tracking artifact 
 (IcM · Bug · Severity · Status · Code-complete ETA · Prod · Work Item · Updated). It is NOT the research report: no evidence,
 no file:line, no audit trail. Output is self-contained HTML that pastes cleanly into Outlook.
 
-Status vocabulary (manager-friendly): Not started · In progress · Blocked · In review · Complete.
+Status vocabulary (manager-friendly): Not started · In progress · In testing · Blocked · In review · Complete.
 
 Inputs:
   classifications.csv   — id, our_tier, component, assignment, title (the triage roll-up CSV)
@@ -50,11 +50,12 @@ ORG = "https://identitydivision.visualstudio.com"
 PROJECT = "Engineering"
 
 # report status -> sort order (needs-attention first) + chip colour (bg, fg)
-STATUS_ORDER = {"Blocked": 0, "In progress": 1, "In review": 2, "Not started": 3,
-                "Complete": 4, "Out of scope": 5}
+STATUS_ORDER = {"Blocked": 0, "In progress": 1, "In testing": 2, "In review": 3, "Not started": 4,
+                "Complete": 5, "Out of scope": 6}
 STATUS_COLOR = {
     "Blocked": ("#fde8e8", "#b91c1c"),
     "In progress": ("#e0f2fe", "#075985"),
+    "In testing": ("#fef3c7", "#92400e"),
     "In review": ("#ede9fe", "#5b21b6"),
     "Not started": ("#f1f5f9", "#475569"),
     "Complete": ("#dcfce7", "#15803d"),
@@ -86,15 +87,22 @@ def map_ado_state(state, tags):
 def map_tracker_status(text):
     """EXECUTION-TRACKER.md exec-status vocabulary -> the report's small status set, or None if the text
     is not a recognized status (so non-status table cells — e.g. a spec path — are ignored).
-    Tracker statuses: NOT STARTED · IN PROGRESS · IMPLEMENTED (local) · PUSHED (no PR) · PR OPEN ·
-    MERGED · BLOCKED · OUT OF SCOPE (intern)."""
+    Tracker statuses: NOT STARTED · IN PROGRESS · IMPLEMENTED (local) · PUSHED (no PR) · PR DRAFT ·
+    PR OPEN · MERGED · BLOCKED · DROPPED / ALREADY-COVERED / WON'T-FIX · OUT OF SCOPE (intern)."""
     s = (text or "").strip().lower()
     if "out of scope" in s:
+        return "Out of scope"
+    # Closed-out with no shipping change: dropped because already covered by defense-in-depth / won't-fix.
+    if "dropped" in s or "already" in s or "won't" in s or "wont" in s:
         return "Out of scope"
     if "blocked" in s:
         return "Blocked"
     if "merged" in s:
         return "Complete"
+    # A DRAFT PR is code-complete + locally tested but NOT verified/merged and NOT yet in formal review —
+    # surface it as "In testing". Checked before "pr open" so "PR OPEN (draft)" / "PR DRAFT" land here.
+    if "draft" in s or "in testing" in s or "verifying" in s:
+        return "In testing"
     if "pr open" in s:
         return "In review"
     if "in progress" in s or "implemented" in s or "pushed" in s:
@@ -104,11 +112,38 @@ def map_tracker_status(text):
     return None
 
 
+def parse_tracker_detail(raw):
+    """From a tracker 'Exec status' cell, extract (pr_label, pr_url, note).
+    - pr_label/pr_url: a GitHub PR (#NNNN) or ADO PR (!NNNN) reference, linked when a URL is derivable.
+    - note: a short reason phrase for non-shipping outcomes (dropped / already-covered / won't-fix),
+      else "".
+    Returns ("", "", "") when nothing notable is present."""
+    text = re.sub(r"[`*]", "", raw or "").strip()
+    pr_label, pr_url, note = "", "", ""
+    # GitHub PR: "PR #3170"  (common/msal repos — link resolved by repo hint if present, else left unlinked)
+    m_gh = re.search(r"\bPR\s*#(\d+)\b", text)
+    m_ado = re.search(r"!(\d{6,})\b", text)  # ADO PR like "!16213879"
+    if m_gh:
+        pr_label = f"PR #{m_gh.group(1)}"
+    elif m_ado:
+        pr_label = f"PR !{m_ado.group(1)}"
+        pr_url = ("https://msazure.visualstudio.com/DefaultCollection/One/_git/"
+                  "AD-MFA-phonefactor-phoneApp-android/pullrequest/" + m_ado.group(1))
+    low = text.lower()
+    if "dropped" in low or "already" in low or "won't" in low or "wont" in low:
+        # Keep the human phrase after a dash if present, else a default.
+        after = re.split(r"[—-]", text, maxsplit=1)
+        note = (after[1].strip() if len(after) > 1 and after[1].strip()
+                else "Dropped — already covered by defense-in-depth")
+    return pr_label, pr_url, note
+
+
 def load_tracker(path):
-    """Parse EXECUTION-TRACKER.md's 'Status at a glance' table -> {icm_id: report_status}.
-    Reads each markdown table row, takes the long IcM number from any cell and the exec status from the
-    LAST cell (strips **bold**/`code`/parenthetical detail). Rows whose last cell is NOT a recognized
-    status (e.g. the bottom 'Out of scope' table whose last cell is a spec path) are skipped."""
+    """Parse EXECUTION-TRACKER.md's 'Status at a glance' table -> {icm_id: {...}}.
+    Each value is a dict: {status, pr_label, pr_url, note}. Reads each markdown table row, takes the long
+    IcM number from any cell and the exec status from the LAST cell (strips **bold**/`code`/parenthetical
+    detail). Rows whose last cell is NOT a recognized status (e.g. the bottom 'Out of scope' table whose
+    last cell is a spec path) are skipped."""
     if not path or not os.path.isfile(path):
         return {}
     out = {}
@@ -125,8 +160,25 @@ def load_tracker(path):
         raw = re.sub(r"[`*]", "", cells[-1])      # drop bold/code markers
         status = map_tracker_status(raw)
         if status:                                 # ignore non-status cells (spec paths, etc.)
-            out[icm] = status
+            pr_label, pr_url, note = parse_tracker_detail(cells[-1])
+            out[icm] = {"status": status, "pr_label": pr_label, "pr_url": pr_url, "note": note}
     return out
+
+
+def github_pr_url(component, pr_number):
+    """Map a finding's component to its public GitHub repo and build a PR URL. Returns "" if unknown
+    (e.g. broker is GHE / authenticator is ADO — those PRs come through as ADO '!NNNN' already)."""
+    c = (component or "").lower()
+    repo = None
+    if "common" in c:
+        repo = "AzureAD/microsoft-authentication-library-common-for-android"
+    elif "msal" in c:
+        repo = "AzureAD/microsoft-authentication-library-for-android"
+    elif "adal" in c:
+        repo = "AzureAD/azure-activedirectory-library-for-android"
+    if not repo:
+        return ""
+    return f"https://github.com/{repo}/pull/{pr_number}"
 
 
 def load_map(path):
@@ -174,7 +226,7 @@ ROLLOUT_LIB_DAYS = 14   # broker/common/msal/adal libraries: Phase 4 Maven Centr
 
 # How far the per-finding work is from code-complete, by status (fraction of remaining effort).
 REMAINING_BY_STATUS = {
-    "Not started": 1.0, "Blocked": 1.0, "In progress": 0.5,
+    "Not started": 1.0, "Blocked": 1.0, "In progress": 0.5, "In testing": 0.15,
     "In review": 0.0, "Complete": 0.0, "Out of scope": None,  # None => not applicable
 }
 
@@ -314,9 +366,15 @@ def main():
         tier_key = next((k for k in SEV_ORDER if k in tier.lower()), "moderate")
         work_id = wmap.get(icm)
         status, updated = "Not started", ""
+        pr_label, pr_url, note = "", "", ""
         # Precedence: execution tracker (source of truth for done-ness) > live ADO state > csv > default.
         if icm in tracker:
-            status = tracker[icm]
+            t = tracker[icm]
+            status = t["status"]
+            pr_label, pr_url, note = t["pr_label"], t["pr_url"], t["note"]
+            # Resolve a GitHub PR link from the finding's component/repo when the tracker gave a "#NNNN".
+            if pr_label.startswith("PR #") and not pr_url:
+                pr_url = github_pr_url(r.get("component", ""), pr_label.split("#", 1)[1])
             if work_id and token:                       # still fetch the changed-date for the Updated col
                 _state, updated, _tags = fetch_ado(work_id, token)
         elif work_id and token:
@@ -337,6 +395,9 @@ def main():
             "updated": updated,
             "cc_eta": cc_eta,
             "prod_eta": prod_eta,
+            "pr_label": pr_label,
+            "pr_url": pr_url,
+            "note": note,
         })
 
     items.sort(key=lambda x: (STATUS_ORDER.get(x["status"], 9), SEV_ORDER.get(x["tier_key"], 9)))
@@ -363,15 +424,25 @@ def main():
         wi = (f'<a href="{ORG}/{PROJECT}/_workitems/edit/{i["work_id"]}"'
               f' style="color:#0f6cbd;text-decoration:none">AB#{i["work_id"]}</a>'
               if i["work_id"] else '<span style="color:#94a3b8">—</span>')
+        # PR cell: linked when we have a URL, plain label when not, dash otherwise.
+        if i["pr_label"] and i["pr_url"]:
+            pr_cell = (f'<a href="{htmllib.escape(i["pr_url"])}" style="color:#0f6cbd;text-decoration:none">'
+                       f'{htmllib.escape(i["pr_label"])}</a>')
+        elif i["pr_label"]:
+            pr_cell = htmllib.escape(i["pr_label"])
+        else:
+            pr_cell = '<span style="color:#94a3b8">—</span>'
+        bug_cell = htmllib.escape(i["bug"])
         td = 'style="padding:6px 10px;border-bottom:1px solid #e2e6ea;font-size:13px;vertical-align:top"'
         tdc = ('style="padding:6px 10px;border-bottom:1px solid #e2e6ea;font-size:13px;vertical-align:top;'
                'white-space:nowrap;color:#1a1a2e"')
         trs.append(
             "<tr>"
             f'<td {td}>{icm_link}</td>'
-            f'<td {td}>{htmllib.escape(i["bug"])}</td>'
+            f'<td {td}>{bug_cell}</td>'
             f'<td {td}>{chip(i["tier"], vbg, vfg)}</td>'
             f'<td {td}>{chip(i["status"], sbg, sfg)}</td>'
+            f'<td {td}>{pr_cell}</td>'
             f'<td {tdc}>{htmllib.escape(i["cc_eta"])}</td>'
             f'<td {tdc}>{htmllib.escape(i["prod_eta"])}</td>'
             f'<td {td}>{wi}</td>'
@@ -382,13 +453,13 @@ def main():
     th = ('style="text-align:left;padding:6px 10px;border-bottom:2px solid #cbd5e1;font-size:11px;'
           'text-transform:uppercase;letter-spacing:.03em;color:#5b6470"')
     sub = (args.window + " · " if args.window else "") + count_line
-    html = f"""<div style="font-family:'Segoe UI',Arial,sans-serif;color:#1a1a2e;max-width:1040px">
+    html = f"""<div style="font-family:'Segoe UI',Arial,sans-serif;color:#1a1a2e;max-width:1120px">
 <div style="font-size:16px;font-weight:700">{htmllib.escape(args.title)}</div>
 <div style="font-size:12px;color:#5b6470;margin:2px 0 10px">{htmllib.escape(sub)}</div>
 <table style="border-collapse:collapse;width:100%">
 <thead><tr>
 <th {th}>IcM</th><th {th}>Bug</th><th {th}>Sev</th>
-<th {th}>Status</th><th {th}>Code&nbsp;complete</th><th {th}>Prod&nbsp;(100%)</th>
+<th {th}>Status</th><th {th}>PR</th><th {th}>Code&nbsp;complete</th><th {th}>Prod&nbsp;(100%)</th>
 <th {th}>Work Item</th><th {th}>Updated</th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>
 {f'<div style="font-size:11px;color:#5b6470;margin-top:8px"><strong>Out of scope</strong> ({oos}): intern-eligible items are out of scope for now — assigned to an intern who has not started yet. They are tracked for completeness and will move to In progress once the intern picks them up.</div>' if oos else ''}

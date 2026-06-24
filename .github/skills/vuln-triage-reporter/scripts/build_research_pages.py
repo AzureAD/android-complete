@@ -367,10 +367,13 @@ def canonical_repo(component):
 
 
 def compute_assignment(our_tier, component):
-    """Cutoff: Intern-eligible when our tier is Moderate or lower (Moderate/Low/Won't-Fix) AND the component
-    is the Authenticator app. Important/Critical, or any non-Authenticator component → Engineer-owned."""
+    """Coverage gate first, then the cutoff. Won't-Fix / already-covered tier -> 'Won't-Fix (Already-Covered)'
+    (no remediation). Else Intern-eligible when tier is Moderate or lower (Moderate/Low) AND the component is
+    the Authenticator app. Important/Critical, or any non-Authenticator component -> Engineer-owned."""
     t = (our_tier or "").strip().lower()
-    intern_tier = ("moderate" in t) or ("low" in t) or ("won't" in t) or ("wont" in t)
+    if ("won't" in t) or ("wont" in t) or ("already-covered" in t) or ("already covered" in t):
+        return "Won't-Fix (Already-Covered)"
+    intern_tier = ("moderate" in t) or ("low" in t)
     if intern_tier and canonical_repo(component) == "Authenticator":
         return "Intern-eligible"
     return "Engineer-owned"

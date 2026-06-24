@@ -178,7 +178,9 @@ def main():
     ups = sum(1 for f in findings if "up" in f["verdict"].lower())
     agrees = sum(1 for f in findings if "agree" in f["verdict"].lower())
     eng = [f for f in findings if f["assignment"] == "Engineer-owned"]
-    intern = [f for f in findings if f["assignment"] != "Engineer-owned"]
+    intern = [f for f in findings if f["assignment"] == "Intern-eligible"]
+    covered = [f for f in findings if f["assignment"].lower().startswith("won't")
+               or "already-covered" in f["assignment"].lower()]
     ext_needed = [f for f in findings if f["ext_needed"]]
     total_days = sum(f["eng_days"] for f in findings)
     from collections import Counter
@@ -194,6 +196,8 @@ def main():
         card("c-amber", "IcM Sev breakdown",
              " · ".join(f"{v}× {k}" for k, v in sorted(sev_c.items(), key=lambda kv: sev_key(kv[0]))) or "—",
              "team response urgency"),
+        card("c-green", "Already covered / Won't-Fix", str(len(covered)),
+             "already neutralized by defense-in-depth — no fix shipped"),
         card("c-purple", "Engineer-owned", str(len(eng)),
              f"~{sum(f['eng_days'] for f in eng):g} eng-days · remediation specs"),
         card("c-teal", "Intern queue", str(len(intern)), "Moderate↓ + Authenticator only"),
