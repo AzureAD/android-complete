@@ -11,6 +11,28 @@ and open the PR. This doc captures the hard-won rules for doing that **safely on
 
 ---
 
+## Pre-flight: re-verify the finding is STILL LIVE on the current base branch (do this FIRST)
+
+**Before writing a single line of fix code, reproduce the gap on the current base-branch HEAD.** Findings are
+investigated on a *snapshot*; the codebase moves between investigation and remediation, and a control may have
+landed in the meantime. The spec's `file:line` citations can be stale.
+
+Concretely, for the cited sink(s):
+1. **Trace the untrusted input backwards** from the sink to the point it is *admitted/classified* (the
+   redirect→result-code classifier, the dispatcher, the IPC entry). Confirm the sink is **reachable with
+   attacker-controlled input on HEAD** — i.e., that no allow-list/validator upstream already rejects it. (Use
+   `codebase-researcher`; this is the same "Upstream validation" trace from the defense-in-depth checklist.)
+2. If an upstream validator/allow-list (e.g. an `is*Safe*`/`is*Allowed*` gate at the classifier) **already
+   gates the sink**, the finding is **already mitigated** → **STOP. Do not ship a redundant fix.** Report it
+   back as already-covered-by-defense-in-depth and recommend re-triage to Won't-Fix/Low (this should ideally
+   have been caught in the report — see the calibration-log entry in `severity-rubric.md`).
+3. Only proceed to implement when you can point to the still-open path on HEAD.
+
+> Real example: a 3–4-sink "unvalidated `app_link` → `ACTION_VIEW`" finding was **already neutralized on dev**
+> by a shared allow-list at the redirect classifier (`RawAuthorizationResult.fromRedirectUri` →
+> `is*Safe*BrokerInstallLink`), making the whole fix redundant. It surfaced only when the fix's tests failed
+> *because* the existing validator rejected the test input. Catch this in pre-flight, not after writing code.
+
 ## Prime directive: regression-safety over everything (these libraries ship to >1 billion users)
 
 `common`, `msal`, `adal`, and the broker are consumed by Authenticator, Outlook, Teams, OneAuth and the

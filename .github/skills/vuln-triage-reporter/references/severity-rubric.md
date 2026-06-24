@@ -158,6 +158,18 @@ should pin something to Sev3/Sev4), **record it here** so future runs are consis
   Pattern: **a behavioral/security fix in a shared library is shipped dark behind a default-OFF ECS flight,
   not default-ON — verify the sibling flight's actual default before copying it.** Execution playbook:
   [references/remediation-execution.md](remediation-execution.md).
+- _⚠️ "Already mitigated upstream" must be caught in the REPORT, not discovered mid-remediation_ — an
+  unvalidated-`app_link`→`ACTION_VIEW` finding (cited at 3–4 sinks) turned out to be **already neutralized on
+  current `dev`**: a shared allow-list validator (`is*Safe*BrokerInstallLink`) at the **redirect→result-code
+  classifier** (`RawAuthorizationResult.fromRedirectUri`) rejects any non-allow-listed `app_link` *before* the
+  install-result code is emitted, so none of the sinks are reachable with attacker input. The
+  defense-in-depth sweep's **"Upstream validation"** row should have traced the data back to that classifier
+  and flagged the finding **Won't-Fix / already-mitigated** — saving a redundant 5-file fix. Two failure modes
+  to guard against: (1) the sweep stopped at the sink + immediate caller instead of tracing to where input is
+  admitted; (2) the finding was **investigated on a stale snapshot** and the control landed afterward. Pattern:
+  **for any "sink reached without validation" finding, trace untrusted input back to its admission/classifier
+  point and check for an allow-list there; and at remediation time, re-verify the gap still reproduces on the
+  current base-branch HEAD before writing code** (see remediation-execution.md "Pre-flight").
 
 ### Reporting / tooling calibration (report-UX learnings)
 
@@ -187,7 +199,7 @@ what you found (or the search that proves absence):
 | IPC boundary | caller package / signature / UID validation | Common IPC layer, Broker operation dispatch |
 | Sibling handlers | do adjacent methods enforce allow-lists this sink skips? | same file as the sink |
 | Flight gates | `CommonFlight*`, ECS default state | flight managers, `*FlightsManager` |
-| Upstream validation | scheme/host/path allow-lists before the sink | the dispatcher / classifier feeding the sink |
+| Upstream validation | scheme/host/path allow-lists before the sink — **trace all the way to where untrusted input is ADMITTED/classified, not just the sink's immediate caller.** If a validator/allow-list at the input-admission point (e.g. a redirect→result-code classifier, an `is*Safe*`/`is*Allowed*` gate) already rejects attacker input before the sink is reachable, the finding may be **already mitigated → Won't-Fix / Low** — say so in the report instead of proposing a redundant sink-level fix | the dispatcher / **result-code / redirect classifier** feeding the sink (follow the data backwards to its entry) |
 | Build/config gating | debug-only, test-only, emulator-only paths | `BuildConfig`, gradle, `if (DEBUG)` |
 | Reachability conditions | what must be true at runtime to hit the sink | call-graph from a real entry point |
 | **Threat boundary (scope)** | **is the ONLY path root / physical / debug-build / `adb`?** If so → out of scope (Won't-Fix). But first prove there is **no** non-root path (another app via IPC/Intent/deep-link, network/zero-click, or off-device egress like a diagnostics/log upload) | exported components, deep links, IPC dispatch, log/diagnostics egress |

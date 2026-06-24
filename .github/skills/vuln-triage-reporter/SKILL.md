@@ -409,7 +409,11 @@ findings, a lighter **Fix Notes** block is sufficient.
 
 ### Step 4.6 — Execute the fix & open the PR (optional, public-repo-safe)
 When the user wants the skill to **implement** a kept finding (not just dispatch it), follow
-[references/remediation-execution.md](references/remediation-execution.md). **Prime directive: regression-safety
+[references/remediation-execution.md](references/remediation-execution.md). **Pre-flight FIRST: re-verify the
+finding is still live on the current base-branch HEAD** — trace the untrusted input back to its
+admission/classifier point; if an upstream allow-list/validator already gates the sink, the finding is
+**already mitigated → STOP and re-triage (Won't-Fix/Low)** rather than shipping a redundant fix (findings are
+investigated on a snapshot; controls land in between). **Prime directive: regression-safety
 over everything** — `common`/`msal`/`adal`/broker ship to **>1 billion users**, so the *safest* change that
 closes the gap always beats the cleverer/more complete one: smallest diff, gate behind a **default-OFF ECS
 flight (flight-off = byte-for-byte legacy)**, reuse hardened sibling controls, don't widen scope on a guess,
