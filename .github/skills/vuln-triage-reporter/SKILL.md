@@ -169,12 +169,18 @@ ways — never claim "safe" *or* "exploitable" about a boundary you couldn't ver
    `file:line`. No control found? Show the searches that prove the absence.
 6. **Agree-or-rebut explicitly.** State FireWatch's filed classification, then state ours, then the delta
    and the evidence that justifies any change.
-7. **Assign every finding, and solution the ones we keep.** Set an **Assignment** using the cutoff:
-   **Intern-eligible when our tier is Moderate or lower (Moderate/Low/Won't-Fix) AND the component is the
-   Authenticator app; everything else (Important+, or any Broker/Common/MSAL) → Engineer-owned.** For every
-   engineer-owned
-   (kept) finding, produce a **dispatch-ready Remediation Spec** (root cause, fix approach, files to change,
-   test plan, risks/rollout) — see [references/remediation-spec.md](references/remediation-spec.md).
+7. **Coverage gate FIRST, then assign, then solution the ones we keep.** Before the Engineer/Intern split,
+   run **Gate 0**: if the cited sink is **already neutralized by an existing control** (an upstream
+   allow-list/validator, flight default, signature/package check, non-exported component, server-side
+   number-match…), cited with `file:line` on the **current base branch**, classify it
+   **`Won't-Fix (Already-Covered)`** and **close it out — ship nothing** (the safest outcome; a redundant fix
+   in a >1B-user library is regression risk for zero security gain). We have been getting a high volume of
+   findings that are already covered — but **not all are**, so the gate requires a cited control, never a
+   hunch. For findings that survive Gate 0, set the **Assignment**: **Intern-eligible when our tier is
+   Moderate or lower (Moderate/Low) AND the component is the Authenticator app; everything else (Important+,
+   or any Broker/Common/MSAL) → Engineer-owned.** For every engineer-owned (kept) finding, produce a
+   **dispatch-ready Remediation Spec** (root cause, fix approach, files to change, test plan, risks/rollout)
+   — see [references/remediation-spec.md](references/remediation-spec.md).
 8. **No PoC payloads or PII** in committed artifacts. Keep detail at engineering-triage level.
 9. **Scripts, not one-liners.** Use the committed scripts in `scripts/` for discovery, scaffolding,
    transcription, and roll-up so the weekly run is repeatable.
@@ -388,8 +394,30 @@ the table in "The two-pass model". Disagreement or an unverifiable boundary ⇒ 
 
 ### Step 4 — Classify & assign (agree or rebut)
 For each finding, produce our final classification and the agree/rebut delta vs. FireWatch, with evidence,
-plus the **Confidence** from Step 3.5. Then set the **Assignment** using the cutoff:
-- **`Intern-eligible`** — when our tier is **Moderate or lower (Moderate/Low/Won't-Fix) AND the component is
+plus the **Confidence** from Step 3.5. Then set the **Assignment**.
+
+> **🛑 GATE 0 — check defense-in-depth coverage FIRST (before any Engineer/Intern split).** We have been
+> receiving a high volume of MSRC/ITD findings that turn out to be **already covered by existing
+> defense-in-depth** (an upstream allow-list/validator, a flight default, a signature/package check, a
+> non-exported component, server-validated number-matching, etc.). So the **first** question for every
+> finding is: *"is the cited sink already neutralized by a control that exists today, traced with
+> `file:line`?"* If yes → classify it **`Won't-Fix (Already-Covered)`** and **close it out** — do **not**
+> proceed to remediation. This is the cheapest and safest outcome: **the change we don't ship can't cause a
+> regression.** These are shared libraries (Common/Broker/MSAL) consumed by >1B users; a redundant
+> "belt-and-suspenders" fix is *negative* value — it adds regression surface for no security gain.
+>
+> The bar to use this category is the **same as any down-classification**: cite the covering control with
+> `file:line` (or the searches proving the sink is unreachable). "I didn't find an exploit" is not coverage —
+> show the control. And stay conservative the *other* way too: **not everything is covered.** If you cannot
+> prove a control exists, treat the finding as live and solution it. Be especially careful that the control
+> is on the **current base-branch HEAD**, not a stale snapshot (findings are investigated against a snapshot;
+> see Step 4.6 Pre-flight).
+
+Then set the **Assignment** using the cutoff (only for findings that survive Gate 0):
+- **`Won't-Fix (Already-Covered)`** — Gate 0 hit: an existing, cited control already neutralizes the sink.
+  No remediation. Surfaced in the report's **Already Covered / Won't-Fix** section and recommended to the IcM
+  as Won't-Fix / down-classify (with the covering control cited).
+- **`Intern-eligible`** — when our tier is **Moderate or lower (Moderate/Low) AND the component is
   the Authenticator app**. Contained to the app we fully own, lower blast radius — safe to delegate (MSRC or ITD).
 - **`Engineer-owned`** — **everything else**: any **Important+** finding, or any **Broker/Common/MSAL**
   component. We keep these and solution them (Step 4.5). Library and broker-privileged findings always stay here.
@@ -625,15 +653,20 @@ an exploit path" is not evidence — show the control, or show the searches prov
 - **Confidence** (High/Medium/Low) comes from the **adversarial pass** (Step 3.5) — see "The two-pass model".
   It measures *how sure we are of the verdict*, independent of severity. Low-confidence findings get a human
   review before action.
-- **Assignment** is a cutoff on **IcM Sev + component** (not tier alone):
+- **Assignment** is decided by a **coverage gate first, then** a cutoff on **IcM Sev + component**:
 
 | Condition | Assignment | What we do |
 |-----------|-----------|------------|
+| **🛑 GATE 0: sink already neutralized by an existing control (cited `file:line` on current HEAD)** | `Won't-Fix (Already-Covered)` | **Close it out — no fix.** The safest outcome; a redundant change only adds regression risk. Recommend Won't-Fix/down-classify to the IcM, citing the covering control. |
 | **Tier ≤ Moderate AND component = Authenticator app** | `Intern-eligible` | Contained, lower-severity fix — safe to delegate (Fix Notes). |
 | **Tier ≥ Important, or any Broker/Common/MSAL** | `Engineer-owned` | We keep it and produce a dispatch-ready Remediation Spec (Step 4.5). |
 
-> Rationale: an intern only takes a finding that is both **≤ Moderate** and **contained to the app we fully
-> own (Authenticator)**. Library (Common/Broker/MSAL) and any Important+ finding needs engineer judgment.
+> Always run **Gate 0 first.** A large share of filed findings are already covered by defense-in-depth — but
+> **not all**, so the gate requires a cited control, never a hunch. Be conservative both ways: don't ship a
+> redundant fix into a >1B-user library (regression risk for no gain), and don't wave a finding off as
+> "covered" without proving the control exists on the current base branch.
+> Rationale for the rest: an intern only takes a finding that is both **≤ Moderate** and **contained to the
+> app we fully own (Authenticator)**. Library (Common/Broker/MSAL) and any Important+ finding needs engineer judgment.
 
 ---
 

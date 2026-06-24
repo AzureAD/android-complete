@@ -19,7 +19,7 @@ payloads, no PII**.
 **Verdict:** AGREE | DOWN-CLASSIFY | UP-CLASSIFY
 **Confidence:** High | Medium | Low  _(set by the adversarial pass — see below)_
 **IcM Severity:** Sev2 | Sev2.5 | Sev3 | Sev4  _(team response-urgency mapping — see severity-rubric.md; Sev2.5+ is a rare, high bar)_
-**Assignment:** Intern-eligible | Engineer-owned  _(Intern-eligible when tier ≤ Moderate AND component = Authenticator app; everything else → Engineer-owned)_
+**Assignment:** Won't-Fix (Already-Covered) | Intern-eligible | Engineer-owned  _(GATE 0 first: **Won't-Fix (Already-Covered)** when the cited sink is already neutralized by an existing control — cite it `file:line` on current HEAD; no fix ships. Else Intern-eligible when tier ≤ Moderate AND component = Authenticator app; everything else → Engineer-owned)_
 **External validation:** Yes | No — _one line: do we need facts outside the code we own (downstream consumers / server-side eSTS) to be sure? If the verdict leans on a server/downstream safeguard we can only infer, say "Yes" and name it — the impact is partly theoretical until confirmed._
 **Prior incidents:** None found | _IcM NNN — outcome (e.g. "fixed in <area>, same sink"); IcM NNN — duplicate._ — _from IcM `get_similar_incidents` + the `android-dri-search` MCP (Step 1.5). A prior **resolved** match means the on-call may short-circuit (link the fix / close as duplicate) instead of re-triaging. A similar title is a lead, not proof — still confirm against current code._
 **Bottom line:** _one plain-English sentence (the TL;DR rendered at the top of the HTML): what it is, what to do now, and the one thing still open. A human skimming should get the whole story from this line._

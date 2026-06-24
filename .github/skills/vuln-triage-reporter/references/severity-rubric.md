@@ -170,6 +170,16 @@ should pin something to Sev3/Sev4), **record it here** so future runs are consis
   **for any "sink reached without validation" finding, trace untrusted input back to its admission/classifier
   point and check for an allow-list there; and at remediation time, re-verify the gap still reproduces on the
   current base-branch HEAD before writing code** (see remediation-execution.md "Pre-flight").
+- _"Already-Covered / Won't-Fix" is a FIRST-CLASS category and the FIRST gate — high filing volume_ — a large
+  and growing share of MSRC/ITD findings filed against us turn out to be **already covered by existing
+  defense-in-depth** (upstream allow-list/validator, flight default, signature/package check, non-exported
+  component, server-side number-match). Treat **Gate 0** ("is the sink already neutralized by a cited control
+  on current HEAD?") as the *first* classification step, before the Engineer/Intern split. If yes →
+  **`Won't-Fix (Already-Covered)`**, close it out, ship nothing, and it gets its own **Already Covered /
+  Won't-Fix** section in the roll-up (0 eng-days). Pattern: **the safest change is the one we don't make** — a
+  redundant "belt-and-suspenders" fix in a >1B-user shared library is regression risk for zero security gain.
+  Conservatism cuts both ways: the category requires a **cited** covering control (not a hunch), because
+  **not** everything is covered — when you can't prove a control, the finding is live and we solution it.
 
 ### Reporting / tooling calibration (report-UX learnings)
 

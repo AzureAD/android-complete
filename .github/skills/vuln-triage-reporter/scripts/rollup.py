@@ -5,9 +5,11 @@ Repeatable helper for the `vuln-triage-reporter` skill. Reads a simple CSV/TSV o
 and emits: counts, filed-vs-ours severity breakdown, confidence breakdown, an Intern-Queue vs.
 Engineer-owned split, total estimated eng-days, and a compact table suitable for a shared WBR section.
 
-Input format (CSV, header row required). `confidence` is optional; `assignment` is always derived from the
-cutoff (**Intern-eligible when our tier is Moderate or lower AND component is the Authenticator app;
-otherwise Engineer-owned**), so `component` and `our_tier` should be accurate:
+Input format (CSV, header row required). `confidence` is optional; `assignment` is always derived by a
+**coverage gate first, then** the cutoff (**Won't-Fix (Already-Covered) when our tier is Won't-Fix —
+already neutralized by an existing control, ship nothing; else Intern-eligible when tier is Moderate/Low AND
+component is the Authenticator app; otherwise Engineer-owned**), so `component` and `our_tier` should be
+accurate:
     id,tag,component,filed_tier,our_tier,icm_sev,verdict,confidence,assignment,eng_days,title
     NNNNNN,ITD,Authenticator,IMPORTANT,Moderate,Sev3,DOWN-CLASSIFY,High,,2,<short vuln class>
     ...
@@ -42,10 +44,14 @@ def canonical_repo(component):
 
 
 def derive_assignment(our_tier, icm_sev="", component=""):
-    """Cutoff: Intern-eligible when our tier is Moderate or lower (Moderate/Low/Won't-Fix) AND component is
-    the Authenticator app. Important/Critical, or any non-Authenticator component → Engineer-owned."""
+    """Coverage gate first, then the cutoff. A finding whose final tier is Won't-Fix is treated as
+    'Won't-Fix (Already-Covered)' — it is already neutralized by an existing control, so we ship nothing.
+    Otherwise: Intern-eligible when our tier is Moderate or lower (Moderate/Low) AND component is the
+    Authenticator app; everything else (Important+, or any non-Authenticator component) → Engineer-owned."""
     t = (our_tier or "").strip().lower()
-    intern_tier = ("moderate" in t) or ("low" in t) or ("won't" in t) or ("wont" in t)
+    if ("won't" in t) or ("wont" in t) or ("already-covered" in t) or ("already covered" in t):
+        return "Won't-Fix (Already-Covered)"
+    intern_tier = ("moderate" in t) or ("low" in t)
     if intern_tier and canonical_repo(component) == "Authenticator":
         return "Intern-eligible"
     return "Engineer-owned"
@@ -158,11 +164,24 @@ def main():
                  f"{(r.get('confidence','') or '').strip() or '—'} | "
                  f"{r.get('eng_days','')} | {title} |")
 
-    engineer = [r for r in rows if r.get("assignment", "").strip() == "Engineer-owned"]
-    intern = [r for r in rows if r.get("assignment", "").strip() != "Engineer-owned"]
+    covered = [r for r in rows if r.get("assignment", "").strip().lower().startswith("won't")
+               or "already-covered" in r.get("assignment", "").strip().lower()]
+    actionable = [r for r in rows if r not in covered]
+    engineer = [r for r in actionable if r.get("assignment", "").strip() == "Engineer-owned"]
+    intern = [r for r in actionable if r.get("assignment", "").strip() == "Intern-eligible"]
 
     eng_days_eng = sum(float(r.get("eng_days", 0) or 0) for r in engineer if (r.get("eng_days") or "").strip())
     eng_days_int = sum(float(r.get("eng_days", 0) or 0) for r in intern if (r.get("eng_days") or "").strip())
+
+    emit(f"\n## ✅ Already Covered / Won't-Fix  ·  {len(covered)} finding(s)  ·  0 eng-days\n")
+    emit("> Already neutralized by existing defense-in-depth (an upstream allow-list/validator, flight "
+         "default, signature/package check, non-exported component, server-side number-match, …) — **we ship "
+         "nothing.** Each row must cite the covering control. This is the safest outcome: the change we don't "
+         "make can't regress a >1B-user library. Recommend these to their IcMs as Won't-Fix / down-classify.\n")
+    if covered:
+        print_table(covered)
+    else:
+        emit("_None this period._")
 
     emit(f"\n## Engineer-owned (kept — needs remediation)  ·  {len(engineer)} finding(s), "
          f"~{eng_days_eng:g} eng-days\n")
@@ -183,9 +202,10 @@ def main():
     else:
         emit("_None._")
 
-    emit("\n> The two sections above ARE the action split: **Engineer-owned** = keep & fix, "
-         "**Intern Queue** = delegate. External-validation gating (server/downstream we can't statically "
-         "verify) is flagged per-finding in the HTML report's ⚗ signal.")
+    emit("\n> The three sections above ARE the action split: **Already Covered / Won't-Fix** = close out "
+         "(no change), **Engineer-owned** = keep & fix, **Intern Queue** = delegate. External-validation "
+         "gating (server/downstream we can't statically verify) is flagged per-finding in the HTML report's "
+         "⚗ signal.")
 
     _flush(buf, args.out)
     return 0
