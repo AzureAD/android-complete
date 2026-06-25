@@ -191,6 +191,10 @@ materialized_view('BrokerAdoptionStatsUpdated')
 | order by week asc, req desc
 ```
 
+> **⚠️ Share/snapshot views are window-parameterized — don't assume 60-day coverage.** The share queries — `BrokerAdoptionStatsUpdated` (version share, 8e), `AppStatsUpdated` (calling-app share), `SkuStatsUpdated` (SKU share), and the [`broker-version-share-wow.kql`](../queries/broker-version-share-wow.kql) / [`app-share.kql`](../queries/app-share.kql) templates — all take an explicit `<START>..<END>` (or `ago(Nd)`) window. They return **exactly the weeks you ask for, nothing more.** The adoption / app-share sections of the report typically only need a short **2–3 week** WoW window, so that's what these templates default to (`ago(21d)` above).
+>
+> The trap: if you then try to draw a **9-week sparkline** for version/app/SKU adoption from that same short pull, you'll only have 2–3 real points and the rest will look flat or fabricated (the validator's low-peak `data-trend` heuristic may flag it). If you genuinely need a multi-week adoption sparkline, **re-run the share query with the full 60-day window** (`<START>` = reporting-Sunday − 56d) — don't pad a short result. If you don't need the sparkline, don't build one from a 2–3 week pull and pretend it's a trend.
+
 ---
 
 ## 10. Helper scripts

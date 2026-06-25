@@ -93,7 +93,8 @@ function Get-FingerprintMarkers([string]$text) {
   $m = @{}
   if ($text -match '<title>([^<]+?)</title>')                                                              { $m['title']     = $Matches[1].Trim() }
   if ($text -match '<div class="meta">\s*<strong>([^<]+)</strong>')                                        { $m['metaDate']  = $Matches[1].Trim() }
-  if ($text -match 'Generated\s+<strong>([^<]+?)</strong>')                                                { $m['generated'] = $Matches[1].Trim() }
+  # NOTE: the "Generated" date is intentionally NOT a fingerprint marker — bootstrap
+  # stamps it to the actual run date below, so it never matches the template after copy.
   # First KPI tile's value (e.g. "10.58 B"). Differs week-to-week.
   if ($text -match '<div class="kpi">\s*<div class="label">[^<]+</div>\s*<div class="value">([^<]+?)</div>') { $m['firstKpi']  = $Matches[1].Trim() }
   return $m
@@ -150,6 +151,19 @@ Per the SKILL.md filename-collision rule, do NOT silently overwrite. Either:
 Copy-Item $template $out -Force
 Write-Host "Bootstrapped $out from $template"
 Write-Host "Data folder:   $dataDir"
+
+# Stamp the actual run date into the "Generated <strong>...</strong>" banner so the
+# report never carries a stale template date (the v8 bug where it read 2026-06-15
+# on a file produced 2026-06-18). This is purely mechanical — today's clock date —
+# and has zero off-by-one risk. The reporting-week / baseline / 60-day meta dates
+# are still AUTHOR-set (see template-readme.md "Date fields"); bootstrap does not
+# touch them because they must be verified against the user's intended week bucket.
+# Use UTF8-no-BOM read/write so the report's emojis/arrows survive (the UTF-8 trap).
+$today   = (Get-Date).ToString('yyyy-MM-dd')
+$outText = [IO.File]::ReadAllText($out)
+$outText = [regex]::Replace($outText, 'Generated\s+<strong>[^<]*</strong>', "Generated <strong>$today</strong>")
+[IO.File]::WriteAllText($out, $outText, [System.Text.UTF8Encoding]::new($false))
+Write-Host "Stamped Generated date: $today"
 
 # Prune old _data folders
 $dataRoot = Join-Path $reportDir '_data'
