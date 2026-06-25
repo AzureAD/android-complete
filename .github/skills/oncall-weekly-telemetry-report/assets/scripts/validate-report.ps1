@@ -21,6 +21,9 @@
                on .dim-name / .dim-row > span:first-of-type AND min-width:0 on
                .dim / .dim-row so long calling-app / version names truncate inside
                their dim card rather than bleeding out.
+           9c. .dim-pct content guard — every dim-pct cell must be a short bare
+               percentage (no "(...)" annotations, <= 9 chars). A long pct value
+               starves the flex name column and collapses real labels to "1...".
 
     Exits with non-zero status if any HARD check fails (stale tokens, devs/reqs leak,
     U+FFFD, unbalanced div depth, missing layout-guard CSS).
@@ -259,6 +262,24 @@ if ($hasAttrCard) {
         Add-Warn "CSS has text-overflow rules but is missing min-width:0 on .dim / .dim-row. Without it, flex children won't shrink below content size and ellipsis won't trigger inside narrow dim cards."
     } else {
         Pass "Dim-row name-overflow guard CSS present (ellipsis + min-width:0)"
+    }
+}
+
+# 9c. Dim-pct content guard (CONTENT, not CSS): the percent cell must be a short
+#     bare percentage (e.g. "50.7%", "100%", "+759%"). A long value such as
+#     "75% (+111%)" sits in the narrow, fixed pct column and starves the flex
+#     name column, collapsing real labels to a couple of chars ("16.1.0" -> "1...").
+#     9b only proves the CSS guard exists; this catches the authoring mistake that
+#     slips past it. WoW deltas belong in card prose / tags, never in dim-pct.
+if ($hasAttrCard) {
+    $badPct = [regex]::Matches($content, '<span class="dim-pct">([^<]*)</span>') |
+        ForEach-Object { $_.Groups[1].Value.Trim() } |
+        Where-Object { $_ -match '\(' -or $_.Length -gt 9 }
+    if ($badPct.Count -gt 0) {
+        $sample = (($badPct | Select-Object -Unique -First 5) -join '  |  ')
+        Add-Fail "dim-pct cells must be a short bare percentage (e.g. '50.7%'). Found $($badPct.Count) overlong/annotated value(s) that starve the name column and truncate labels: $sample . Move WoW deltas into the card prose / tags, not the pct cell."
+    } else {
+        Pass "dim-pct cells are short bare percentages (name column protected)"
     }
 }
 

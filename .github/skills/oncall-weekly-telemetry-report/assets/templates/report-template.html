@@ -210,12 +210,18 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-family: "SF Mono", Consolas, monospace; font-size: 11.5px; color: #0d1117;
   }
-  /* Percent column — classed (.dim-pct) OR last unclassed <span> */
+  /* Percent column — classed (.dim-pct) OR last unclassed <span>.
+     MUST be a short bare percentage (e.g. "50.7%"). flex-shrink:1 + a hard
+     max-width cap guarantee that even if an author wrongly stuffs a long value
+     (e.g. "75% (+111%)") into this cell it truncates ITSELF instead of starving
+     the flex name column and collapsing real labels to "1...". The validator
+     (check 9c) additionally fails the build on overlong/annotated pct cells. */
   .dim-row .dim-pct,
   .dim-row > span:last-of-type {
-    flex: 0 0 auto;
+    flex: 0 1 auto;
     font-variant-numeric: tabular-nums; color: #656d76; font-size: 11px;
-    min-width: 38px; text-align: right; white-space: nowrap;
+    min-width: 38px; max-width: 72px; overflow: hidden; text-overflow: ellipsis;
+    text-align: right; white-space: nowrap;
   }
   /* Single-span placeholder rows (e.g. "Not sliced — …") — allow wrap, not truncate.
      Long inline <code> blocks should wrap inside the cell rather than expanding
