@@ -1,0 +1,1204 @@
+<!DOCTYPE html>
+<!-- TEMPLATE - see assets/templates/template-readme.md for usage. This file IS a real prior-week
+     report kept as a structural reference. To produce a new week's report, copy this
+     file to ~/android-oce-reports/oncall-wow-report-<sunday>.html and edit IN PLACE,
+     replacing prior-week dates, KPI values, table rows, attribution-card prose, and
+     PR citations with the current week's data. The CSS in <head> is canonical - do
+     not restyle per week. Authors mark unfinished sections with the literal sentinel string the validator greps for (see assets/templates/template-readme.md). -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Android Broker · On-Call Weekly Report — Week of May 3, 2026</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px; line-height: 1.5; color: #1f2328;
+    background: linear-gradient(180deg, #f6f8fa 0%, #eef1f4 100%);
+    background-attachment: fixed;
+  }
+  .container { max-width: 1400px; margin: 0 auto; padding: 32px 28px 80px; }
+
+  h1 { font-size: 28px; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.5px; color: #0d1117; }
+  h2 { font-size: 18px; font-weight: 700; margin: 36px 0 14px; padding-bottom: 8px;
+       border-bottom: 1px solid #d0d7de; color: #0d1117; letter-spacing: -0.2px; }
+  h2 .count { font-size: 13px; font-weight: 500; color: #656d76; margin-left: 8px; }
+  h3 { font-size: 13px; font-weight: 600; margin: 20px 0 8px; color: #656d76;
+       text-transform: uppercase; letter-spacing: 0.5px; }
+  p { margin: 0 0 8px; }
+  code { font-family: "SF Mono", "JetBrains Mono", Consolas, Monaco, monospace;
+         font-size: 12.5px; background: rgba(175,184,193,0.2);
+         padding: 1px 6px; border-radius: 4px; }
+
+  .header { display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 8px; flex-wrap: wrap; gap: 16px; }
+  .header .meta { color: #656d76; font-size: 13px; }
+  .header .meta strong { color: #1f2328; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px;
+           font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
+           text-transform: uppercase; vertical-align: middle; }
+  .badge-live { background: #dafbe1; color: #1a7f37; }
+
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+              gap: 14px; margin: 18px 0 28px; }
+  .kpi { background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+         padding: 16px 18px; transition: all 0.15s ease;
+         box-shadow: 0 1px 0 rgba(31,35,40,0.04); }
+  .kpi:hover { box-shadow: 0 4px 12px rgba(31,35,40,0.08); transform: translateY(-1px); }
+  .kpi .label { color: #656d76; font-size: 11px; text-transform: uppercase;
+                letter-spacing: 0.4px; font-weight: 600; }
+  .kpi .value { font-size: 24px; font-weight: 700; margin-top: 6px; color: #0d1117;
+                font-variant-numeric: tabular-nums; letter-spacing: -0.5px; }
+  .kpi .delta { font-size: 12px; font-weight: 500; margin-top: 4px; }
+  .kpi .spark { margin-top: 8px; height: 28px; }
+  .delta-up { color: #cf222e; } .delta-down { color: #1a7f37; } .delta-flat { color: #656d76; }
+
+  .callout { border-radius: 10px; padding: 14px 18px; margin: 10px 0 16px;
+             border: 1px solid; position: relative; }
+  .callout.urgent { background: #fff8f8; border-color: #ffcecb; }
+  .callout.urgent::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+                            background: #cf222e; border-radius: 10px 0 0 10px; }
+  .callout.watch { background: #fff8c5; border-color: #d4a72c; }
+  .callout.watch::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+                           background: #bf8700; border-radius: 10px 0 0 10px; }
+  .callout.win { background: #dafbe1; border-color: #aceebb; }
+  .callout.win::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+                         background: #1a7f37; border-radius: 10px 0 0 10px; }
+  .callout-title { font-size: 14px; font-weight: 700; margin-bottom: 6px; display: flex;
+                   align-items: center; gap: 8px; }
+  .callout-title .icon { font-size: 16px; }
+  .callout p, .callout li { font-size: 13px; line-height: 1.55; }
+  .callout ul { margin: 6px 0 0; padding-left: 22px; }
+  .callout li { margin: 3px 0; }
+  .callout li code { background: rgba(255,255,255,0.6); }
+
+  .table-card { background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+                overflow: hidden; box-shadow: 0 1px 0 rgba(31,35,40,0.04); margin-bottom: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th { background: #f6f8fa; text-align: left; padding: 10px 12px; font-weight: 600;
+             color: #656d76; border-bottom: 1px solid #d0d7de; font-size: 11px;
+             text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; position: sticky; top: 0; }
+  tbody td { padding: 10px 12px; border-bottom: 1px solid #f0f3f6; vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #f6f8fa; }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.code-cell { font-family: "SF Mono", Consolas, Monaco, monospace; font-size: 12.5px;
+                 font-weight: 500; color: #0550ae; }
+  td.bad { color: #cf222e; font-weight: 600; }
+  td.good { color: #1a7f37; font-weight: 600; }
+  td.warn { color: #9a6700; font-weight: 600; }
+  td.muted { color: #656d76; }
+
+  svg.sparkline { display: block; }
+  .spark-cell { vertical-align: middle; }
+
+  .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+                gap: 14px; margin: 14px 0 24px; }
+  .chart-card { background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+                padding: 16px 18px 14px; box-shadow: 0 1px 0 rgba(31,35,40,0.04); }
+  .chart-card .chart-title { font-size: 13px; font-weight: 600; color: #1f2328; margin-bottom: 4px; }
+  .chart-card .chart-subtitle { font-size: 11px; color: #656d76; margin-bottom: 12px; }
+  .chart-card svg { width: 100%; height: auto; display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11px; color: #656d76; }
+  .legend-item { display: flex; align-items: center; gap: 5px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+  details { background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+            margin: 10px 0; box-shadow: 0 1px 0 rgba(31,35,40,0.04); }
+  details summary { cursor: pointer; padding: 12px 16px; font-weight: 600;
+                    color: #0d1117; user-select: none; list-style: none; font-size: 13px; }
+  details summary::before { content: "▶"; display: inline-block; margin-right: 8px;
+                            color: #656d76; font-size: 10px; transition: transform 0.15s; }
+  details[open] summary::before { transform: rotate(90deg); }
+  details summary:hover { background: #f6f8fa; border-radius: 10px 10px 0 0; }
+  details > div { padding: 0 16px 16px; }
+
+  .glossary { background: #f6f8fa; border-left: 3px solid #d0d7de;
+              padding: 10px 14px; margin: 8px 0 16px; font-size: 12px; color: #656d76;
+              border-radius: 0 6px 6px 0; }
+  .glossary strong { color: #1f2328; }
+
+  .toc { background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+         padding: 12px 18px; margin-bottom: 24px; font-size: 13px;
+         box-shadow: 0 1px 0 rgba(31,35,40,0.04); }
+  .toc ul { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; padding: 0; list-style: none; }
+  .toc a { color: #0550ae; text-decoration: none; font-weight: 500; }
+  .toc a:hover { text-decoration: underline; }
+
+  /* ==================== ATTRIBUTION CARDS ==================== */
+  .attr-grid { display: grid; grid-template-columns: 1fr; gap: 16px; margin: 12px 0 20px; }
+  .attr-card {
+    background: #fff; border: 1px solid #d0d7de; border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(31,35,40,0.06); overflow: hidden;
+    /* Spacing when cards are rendered as siblings (no .attr-grid wrapper) —
+       e.g. a head+body+footer rebuild that emits .attr-card directly under <h2>.
+       Without this, consecutive cards visually touch. Discovered in v8 rebuild. */
+    margin-bottom: 16px;
+  }
+  .attr-card + .attr-card { margin-top: 16px; }
+  .attr-header {
+    padding: 14px 18px; background: linear-gradient(180deg, #fafbfc 0%, #f6f8fa 100%);
+    border-bottom: 1px solid #d0d7de; display: flex; align-items: center;
+    justify-content: space-between; flex-wrap: wrap; gap: 10px;
+  }
+  .attr-header.urgent { background: linear-gradient(180deg, #fff8f8 0%, #ffeef0 100%); border-bottom-color: #ffcecb; }
+  .attr-header.watch  { background: linear-gradient(180deg, #fffbe8 0%, #fff8c5 100%); border-bottom-color: #d4a72c; }
+  .attr-name {
+    font-family: "SF Mono", Consolas, monospace; font-size: 15px; font-weight: 700; color: #0d1117;
+  }
+  .attr-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 9px; border-radius: 12px; font-size: 11px;
+    font-weight: 600; white-space: nowrap;
+  }
+  .tag-bad   { background: #ffeef0; color: #cf222e; }
+  .tag-warn  { background: #fff8c5; color: #9a6700; }
+  .tag-info  { background: #ddf4ff; color: #0550ae; }
+  .tag-muted { background: #f0f3f6; color: #656d76; }
+
+  .attr-body { padding: 14px 18px; }
+  .attr-verdict {
+    background: #f6f8fa; border-left: 3px solid #0550ae; padding: 10px 14px;
+    margin-bottom: 14px; border-radius: 0 6px 6px 0; font-size: 13px;
+  }
+  .attr-verdict.bad  { border-left-color: #cf222e; background: #fff8f8; }
+  .attr-verdict strong { color: #0d1117; }
+
+  /* .attr-dims grid + .dim cards — long calling-app / version names MUST truncate,
+     never wrap or bleed out. Two flexbox traps to be aware of (v8 regression):
+       1. text-overflow:ellipsis is silently IGNORED on display:inline elements.
+          The name <span> must be display:block (or inline-block) for ellipsis.
+       2. Flex children won't shrink below their content size unless min-width:0
+          is set explicitly on the child AND every flex ancestor.
+     Both fixes are baked into the rules below. Authors who hand-write .dim-row
+     markup may use either classed (.dim-name + .dim-pct) or unclassed (<span>
+     + <span>) — both are covered. */
+  .attr-dims { min-width: 0; display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .dim {
+    background: #fafbfc; border: 1px solid #eaeef2; border-radius: 8px;
+    padding: 10px 12px;
+    min-width: 0; overflow: hidden;
+  }
+  .dim-label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    color: #656d76; letter-spacing: 0.4px; margin-bottom: 6px;
+  }
+  .dim-row {
+    display: flex; align-items: center;
+    flex-wrap: nowrap;
+    gap: 8px; padding: 3px 0; font-size: 12px;
+    min-width: 0; width: 100%;
+  }
+  /* Bar-track fixed width — must not flex */
+  .dim-row > .dim-bar-track {
+    flex: 0 0 56px; width: 56px; min-width: 56px;
+    height: 4px; background: #eaeef2; border-radius: 2px;
+    margin-top: 0; overflow: hidden;
+  }
+  /* Name column — classed (.dim-name) OR first unclassed <span>.
+     KEY: display:block + flex:1 1 0 + min-width:0 to make ellipsis engage. */
+  .dim-row .dim-name,
+  .dim-row > span:first-of-type {
+    display: block;
+    flex: 1 1 0; min-width: 0; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: "SF Mono", Consolas, monospace; font-size: 11.5px; color: #0d1117;
+  }
+  /* Percent column — classed (.dim-pct) OR last unclassed <span> */
+  .dim-row .dim-pct,
+  .dim-row > span:last-of-type {
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums; color: #656d76; font-size: 11px;
+    min-width: 38px; text-align: right; white-space: nowrap;
+  }
+  /* Single-span placeholder rows (e.g. "Not sliced — …") — allow wrap, not truncate.
+     Long inline <code> blocks should wrap inside the cell rather than expanding
+     it horizontally. Truncation/ellipsis is for the name+bar+pct rows only. */
+  .dim-row > span:only-child,
+  .dim-row:not(:has(> .dim-bar-track)) > span {
+    display: block; flex: 1 1 0; min-width: 0; max-width: 100%;
+    overflow: hidden; text-overflow: clip; white-space: normal;
+    overflow-wrap: anywhere; word-break: break-word;
+  }
+  /* Dominant row styling — works whether .dominant is on the row OR derived
+     from the bar-fill class (the body-generated markup only marks the fill). */
+  .dim-row.dominant .dim-name,
+  .dim-row.dominant > span:first-of-type,
+  .dim-row:has(> .dim-bar-track > .dim-bar-fill.dominant) > span:first-of-type { font-weight: 700; }
+  .dim-row.dominant .dim-pct,
+  .dim-row.dominant > span:last-of-type,
+  .dim-row:has(> .dim-bar-track > .dim-bar-fill.dominant) > span:last-of-type { color: #cf222e; font-weight: 700; }
+  .dim-bar-fill { height: 100%; background: #0969da; border-radius: 2px; }
+  .dim-bar-fill.dominant { background: #cf222e; }
+  .dim-bar-fill.split    { background: #9a6700; }
+
+  .split-row { display: flex; gap: 8px; align-items: center; padding: 3px 0; font-size: 12px; }
+  .split-row .split-bar {
+    flex: 1; height: 8px; border-radius: 4px; overflow: hidden;
+    display: flex; background: #eaeef2;
+  }
+  .split-row .split-seg { height: 100%; }
+  .seg-aad     { background: #0969da; }
+  .seg-msa     { background: #8250df; }
+  .seg-unknown { background: #6e7781; }
+  .seg-shared  { background: #bf8700; }
+  .seg-personal{ background: #1a7f37; }
+  .split-legend { display: flex; gap: 10px; font-size: 10px; color: #656d76; margin-top: 4px; flex-wrap: wrap; }
+  .split-legend .li { display: flex; align-items: center; gap: 4px; }
+  .split-legend .sw { width: 8px; height: 8px; border-radius: 2px; }
+
+  /* ==================== CODE ATTRIBUTION ==================== */
+  .code-attr {
+    margin-top: 14px; padding: 12px 14px;
+    background: linear-gradient(180deg, #f6f8fa 0%, #eef1f4 100%);
+    border: 1px solid #d0d7de; border-radius: 8px;
+  }
+  .code-attr-title {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    color: #656d76; letter-spacing: 0.5px; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .code-attr-title::before { content: "🔬"; font-size: 13px; }
+
+  .origin-row {
+    display: grid; grid-template-columns: 110px 1fr; gap: 10px;
+    padding: 6px 0; font-size: 12px; align-items: start;
+  }
+  .origin-row + .origin-row { border-top: 1px dashed #d0d7de; }
+  .origin-label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    color: #656d76; letter-spacing: 0.4px; padding-top: 2px;
+  }
+  .origin-value { color: #0d1117; }
+  .origin-value code { font-size: 11.5px; }
+  .origin-value .stack {
+    font-family: "SF Mono", Consolas, monospace; font-size: 11px;
+    color: #0550ae; background: rgba(208,215,222,0.3);
+    padding: 1px 6px; border-radius: 3px; word-break: break-all;
+  }
+
+  .pr-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+  .pr-card {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 8px 10px; background: #fff; border: 1px solid #d0d7de;
+    border-radius: 6px; font-size: 12px;
+  }
+  .pr-conf {
+    flex-shrink: 0; padding: 2px 8px; border-radius: 10px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.4px; align-self: flex-start; min-width: 70px; text-align: center;
+  }
+  .pr-conf-high   { background: #ffeef0; color: #cf222e; }
+  .pr-conf-medium { background: #fff8c5; color: #9a6700; }
+  .pr-conf-low    { background: #ddf4ff; color: #0550ae; }
+  .pr-conf-none   { background: #f0f3f6; color: #656d76; }
+  .pr-body { flex: 1; line-height: 1.4; }
+  .pr-body .pr-id {
+    font-family: "SF Mono", Consolas, monospace; font-weight: 600; color: #0550ae;
+    text-decoration: none;
+  }
+  .pr-body .pr-id:hover { text-decoration: underline; }
+  .pr-body .pr-id::after { content: " \2197"; font-size: 9px; opacity: 0.7; }
+  .pr-body .pr-title { color: #0d1117; }
+  .pr-body .pr-meta { font-size: 11px; color: #656d76; margin-top: 2px; }
+  .pr-body .pr-why  { font-size: 11.5px; color: #1f2328; margin-top: 4px; font-style: italic; }
+
+  .origin-tag {
+    display: inline-block; padding: 1px 7px; border-radius: 10px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.3px;
+    margin-right: 6px; vertical-align: middle;
+  }
+  .origin-broker { background: #ffeef0; color: #cf222e; }
+  .origin-android { background: #fff4e0; color: #9a6700; }
+  .origin-thirdparty { background: #ddf4ff; color: #0550ae; }
+  .origin-env { background: #f0f3f6; color: #656d76; }
+
+  /* ==================== Section 2 callout flat-row items ==================== */
+  /* Use .item-list inside .callout for the at-a-glance bullet list in WoW /     */
+  /* Slow-burn / Wins callouts. Each .item is a single divider-separated row    */
+  /* with name + inline metric chips + a one-line body. Do NOT use nested       */
+  /* card chrome (no left bars, no boxes) — the parent .callout border is the   */
+  /* only severity affordance. Deep dive lives in .attr-card under              */
+  /* #attribution further down.                                                 */
+  .item-list { display: flex; flex-direction: column; gap: 0; margin-top: 8px; }
+  .item {
+    padding: 9px 0;
+    border-top: 1px solid #eaeef2;
+    min-width: 0;
+  }
+  .item:first-child { border-top: none; padding-top: 4px; }
+  .item-head {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 6px 10px; line-height: 1.4;
+  }
+  .item-name {
+    font-family: "SF Mono", Consolas, monospace; font-weight: 700;
+    font-size: 13.5px; color: #0d1117;
+  }
+  .item-name .kind {
+    color: #656d76; font-weight: 500; font-size: 10.5px;
+    background: #f0f3f6; padding: 1px 6px; border-radius: 8px;
+    margin-left: 4px; vertical-align: 1px;
+    font-family: -apple-system, "Segoe UI", sans-serif;
+    text-transform: lowercase; letter-spacing: 0.3px;
+  }
+  .metric {
+    display: inline-flex; align-items: baseline; gap: 4px;
+    font-size: 12px; color: #1f2328; font-variant-numeric: tabular-nums;
+    padding: 1px 8px; border-radius: 10px; background: #f6f8fa;
+    white-space: nowrap;
+  }
+  .metric .m-label { color: #656d76; font-size: 10.5px; font-weight: 500; }
+  .metric .m-value { font-weight: 700; }
+  .metric.up   .m-value { color: #cf222e; }
+  .metric.down .m-value { color: #1a7f37; }
+  .item-tags { display: inline-flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
+  .item-body {
+    font-size: 12px; line-height: 1.5; color: #1f2328;
+    margin-top: 4px;
+  }
+  .item-body code {
+    background: #f6f8fa; padding: 1px 4px; border-radius: 3px;
+    font-size: 11px; color: #0550ae;
+  }
+  .item-body em { color: #656d76; font-style: italic; }
+  .item-body .action-flag { color: #cf222e; font-weight: 700; }
+  .item-foot {
+    font-size: 11px; color: #656d76; margin-top: 3px;
+    display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center;
+  }
+  .item-foot strong { color: #1f2328; }
+  .item-foot .arrow-link {
+    margin-left: auto; color: #0550ae; text-decoration: none; font-weight: 600;
+  }
+  .item-foot .arrow-link:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="header">
+  <div>
+    <h1>Android Broker · Weekly On-Call Report</h1>
+    <div class="meta">
+      <strong>Sun May 3 → Sat May 9, 2026</strong> &nbsp;vs&nbsp; <strong>Apr 26 → May 2</strong> &nbsp;·&nbsp;
+      60-day window: Mar 8 → May 3 (8 complete weeks) &nbsp;·&nbsp;
+      Source: <code>android_spans</code> materialized views &nbsp;·&nbsp;
+      Generated <strong>2026-05-09</strong>
+    </div>
+  </div>
+  <span class="badge badge-live">v6 · Live data</span>
+</div>
+
+<nav class="toc">
+  <ul>
+    <li><a href="#health">📊 Top-line health</a></li>
+    <li><a href="#attention">🚨 Needs attention</a></li>
+    <li><a href="#trend60d">📈 60-Day Trend Analysis</a></li>
+    <li><a href="#attribution">🔎 Spike Attribution</a></li>
+    <li><a href="#traffic-attr">🚚 Traffic Attribution</a></li>
+    <li><a href="#error-codes">Error codes</a></li>
+    <li><a href="#error-types">Error types</a></li>
+    <li><a href="#traffic">📊 Traffic analysis</a></li>
+    <li><a href="#latency">Latency</a></li>
+    <li><a href="#adoption">Broker adoption</a></li>
+    <li><a href="#appendix">Appendix</a></li>
+  </ul>
+</nav>
+
+<!-- ================ TOP-LINE HEALTH ================ -->
+<h2 id="health">📊 Top-line health <span class="count">— auth-only denominator</span></h2>
+<div class="kpi-grid">
+  <div class="kpi">
+    <div class="label">Silent auth requests (week)</div>
+    <div class="value">10.58 B</div>
+    <div class="delta delta-up">+2.3% WoW</div>
+    <div class="spark"><svg width="180" height="36" viewBox="0 0 180 36" xmlns="http://www.w3.org/2000/svg"><path d="M2,6.081303513427532 L21.555555555555557,22.01102048871357 L41.111111111111114,34 L60.66666666666667,21.009401126062063 L80.22222222222223,21.679231057425735 L99.77777777777779,14.54226031109486 L119.33333333333334,9.648586233955964 L138.8888888888889,17.05669650481885 L158.44444444444446,9.68906396615192 L178,2 L178,36 L2,36 Z" fill="#0969da" opacity="0.12"/><path d="M2,6.081303513427532 L21.555555555555557,22.01102048871357 L41.111111111111114,34 L60.66666666666667,21.009401126062063 L80.22222222222223,21.679231057425735 L99.77777777777779,14.54226031109486 L119.33333333333334,9.648586233955964 L138.8888888888889,17.05669650481885 L158.44444444444446,9.68906396615192 L178,2" fill="none" stroke="#0969da" stroke-width="1.4"/><circle cx="178" cy="2" r="2" fill="#0969da"/></svg></div>
+  </div>
+  <div class="kpi">
+    <div class="label">Silent auth reliability (req)</div>
+    <div class="value">73.34%</div>
+    <div class="delta delta-down">+0.68 pp WoW (improving)</div>
+    <div class="spark"><svg width="180" height="36" viewBox="0 0 180 36" xmlns="http://www.w3.org/2000/svg"><path d="M2,5.5152006485610165 L21.555555555555557,3.1544385893797973 L41.111111111111114,4.3088771787595945 L60.66666666666667,3.764085934333142 L80.22222222222223,2 L99.77777777777779,2.3307661126874883 L119.33333333333334,13.09039319010941 L138.8888888888889,34 L158.44444444444446,12.688285366842297 L178,3.997567896230194 L178,36 L2,36 Z" fill="#1a7f37" opacity="0.12"/><path d="M2,5.5152006485610165 L21.555555555555557,3.1544385893797973 L41.111111111111114,4.3088771787595945 L60.66666666666667,3.764085934333142 L80.22222222222223,2 L99.77777777777779,2.3307661126874883 L119.33333333333334,13.09039319010941 L138.8888888888889,34 L158.44444444444446,12.688285366842297 L178,3.997567896230194" fill="none" stroke="#1a7f37" stroke-width="1.4"/><circle cx="178" cy="3.997567896230194" r="2" fill="#1a7f37"/></svg></div>
+  </div>
+  <div class="kpi">
+    <div class="label">Silent auth reliability (dev)</div>
+    <div class="value">82.52%</div>
+    <div class="delta delta-down">+1.34 pp WoW (improving)</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Interactive auth requests</div>
+    <div class="value">10.29 M</div>
+    <div class="delta delta-up">+7.5% WoW</div>
+    <div class="spark"><svg width="180" height="36" viewBox="0 0 180 36" xmlns="http://www.w3.org/2000/svg"><path d="M2,14.914417539797014 L21.555555555555557,13.017661053972478 L41.111111111111114,29.72786786931389 L60.66666666666667,11.960825685462954 L80.22222222222223,34 L99.77777777777779,18.00801959372353 L119.33333333333334,18.00745927276468 L138.8888888888889,19.615405324362364 L158.44444444444446,27.12370617294219 L178,2 L178,36 L2,36 Z" fill="#0969da" opacity="0.12"/><path d="M2,14.914417539797014 L21.555555555555557,13.017661053972478 L41.111111111111114,29.72786786931389 L60.66666666666667,11.960825685462954 L80.22222222222223,34 L99.77777777777779,18.00801959372353 L119.33333333333334,18.00745927276468 L138.8888888888889,19.615405324362364 L158.44444444444446,27.12370617294219 L178,2" fill="none" stroke="#0969da" stroke-width="1.4"/><circle cx="178" cy="2" r="2" fill="#0969da"/></svg></div>
+  </div>
+  <div class="kpi">
+    <div class="label">Interactive reliability (dev)</div>
+    <div class="value">58.43%</div>
+    <div class="delta delta-down">+0.74 pp WoW (improving)</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Interactive devices</div>
+    <div class="value">8.17 M</div>
+    <div class="delta delta-up">+5.6% WoW</div>
+    <div class="spark"><svg width="180" height="36" viewBox="0 0 180 36" xmlns="http://www.w3.org/2000/svg"><path d="M2,18.720133537911614 L21.555555555555557,7.990321873577365 L41.111111111111114,27.965705036335127 L60.66666666666667,7.21202515638436 L80.22222222222223,34 L99.77777777777779,13.563250096949872 L119.33333333333334,12.598755669459948 L138.8888888888889,14.295091807314236 L158.44444444444446,25.41084152489504 L178,2 L178,36 L2,36 Z" fill="#0969da" opacity="0.12"/><path d="M2,18.720133537911614 L21.555555555555557,7.990321873577365 L41.111111111111114,27.965705036335127 L60.66666666666667,7.21202515638436 L80.22222222222223,34 L99.77777777777779,13.563250096949872 L119.33333333333334,12.598755669459948 L138.8888888888889,14.295091807314236 L158.44444444444446,25.41084152489504 L178,2" fill="none" stroke="#0969da" stroke-width="1.4"/><circle cx="178" cy="2" r="2" fill="#0969da"/></svg></div>
+  </div>
+  <div class="kpi">
+    <div class="label">Latest broker (16.0.1)</div>
+    <div class="value">70.8%</div>
+    <div class="delta delta-up">+15.4 pp share WoW (rollout complete)</div>
+  </div>
+  <div class="kpi">
+    <div class="label">p95 AcquireTokenSilent</div>
+    <div class="value">5,916 ms</div>
+    <div class="delta delta-down">−45 ms (−0.8%) WoW</div>
+  </div>
+</div>
+
+<!-- ================ NEEDS ATTENTION ================ -->
+<h2 id="attention">🚨 Things that need attention this week</h2>
+
+<div class="callout watch">
+  <div class="callout-title"><span class="icon">ℹ️</span> Denominator caveat — read this first</div>
+  <p>The headline <code>BrokerAdoptionStats</code> device count dropped <strong>−18.6% WoW</strong> (1.52 B → 1.24 B), but this <strong>is not a real fleet shrink</strong>. The drop is fully explained by three low-value spans deflating as the 16.0.1 rollout completes:</p>
+  <ul>
+    <li><code>OnUpgradeReceiver</code>: 438 M → 151 M events (<strong>−65.5%</strong>) — fires once per app upgrade; tapers naturally as 16.0.1 finishes deploying. May also be impacted by historical <code>goAsync()</code> refactors that allow the OS to kill the receiver before the span flushes.</li>
+    <li><code>SecretKeyWrapping</code>: 329 M → 251 M (−23.7%) — downstream of fewer keystore ops in the OnUpgradeReceiver path.</li>
+    <li><code>WrappedKeyAlgorithmIdentifier</code>: 135 M → 87 M (−35.3%) — same downstream cause.</li>
+  </ul>
+  <p style="margin-top:6px;"><strong>The auth-only denominator (Silent ∪ Interactive) is up:</strong> silent <code>countRequests</code> +2.3%, interactive +7.5%, silent device count flat (1.55 B → 1.53 B). All reliability % and per-app figures in this report use the auth-only denominator. Real users are unaffected by the device-count drop.</p>
+</div>
+
+<div class="callout urgent">
+  <div class="callout-title"><span class="icon">🔴</span> WoW regressions (last 7 days vs prior 7) <span style="font-weight:400;color:#656d76;font-size:12px;">— sorted by current-week devices, descending</span></div>
+  <p style="margin-top:0;font-size:12.5px;color:#656d76;">Tags: <span class="tag tag-bad">NEW</span> first appeared this week or last; <span class="tag tag-warn">60d↑</span> also rising on the 60-day window; <span class="origin-tag origin-broker">broker</span> / <span class="origin-tag origin-thirdparty">eSTS</span> / <span class="origin-tag origin-android">Android</span> / <span class="origin-tag origin-env">env</span> = originator. Built from the standard WoW table union with <code>wow-movers.kql</code> so small-but-recent spikes appear alongside the high-volume movers.</p>
+  <div class="item-list">
+
+    <!-- EXAMPLE ITEM ROW (replace per week, repeat per regression, sorted by curr-week devices desc).
+         Pattern: monospace name + inline metric chips + tags-pushed-right; one-line body; optional foot.
+         Use .metric.up for red (regression), .metric.down for green (improvement).
+         Originator chip goes in .item-tags. Add `<span class="tag tag-bad">NEW</span>` if first appeared this week. -->
+    <div class="item">
+        <div class="item-head">
+          <span class="item-name">EXAMPLE_error_code</span>
+          <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 65 K</span></span>
+          <span class="metric up"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE +6.1%</span></span>
+          <span class="metric"><span class="m-label">on 16.0.1</span><span class="m-value">EXAMPLE 73%</span></span>
+          <span class="item-tags">
+            <span class="origin-tag origin-broker">broker</span>
+            <span class="tag tag-warn">60d↑ +52%</span>
+          </span>
+        </div>
+        <div class="item-body">EXAMPLE one-line narrative: throw site <code>common/SomeClass.someMethod:NN</code>, dominant message, and the verdict. Keep this short — the deep dive is in the attribution card below.</div>
+        <div class="item-foot"><span><strong>Owner:</strong> EXAMPLE team</span><a class="arrow-link" href="#card-EXAMPLE">Attribution card →</a></div>
+    </div>
+
+  </div>
+</div>
+
+<div class="callout watch">
+  <div class="callout-title"><span class="icon">🟡</span> Slow-burn 60-day regressions <span style="font-weight:400;color:#656d76;font-size:12px;">— rising on 60d window but flat WoW; codes that also moved WoW are in the red callout above with a <span class="tag tag-warn">60d↑</span> tag</span></div>
+  <div class="item-list">
+
+    <div class="item">
+        <div class="item-head">
+          <span class="item-name">EXAMPLE_slow_burn_code</span>
+          <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 4.5 M</span></span>
+          <span class="metric up"><span class="m-label">Δ 60d</span><span class="m-value">EXAMPLE +56%</span></span>
+          <span class="metric up"><span class="m-label">Δ requests 60d</span><span class="m-value">EXAMPLE +40%</span></span>
+          <span class="metric"><span class="m-label">on 16.0.1</span><span class="m-value">EXAMPLE 78%</span></span>
+          <span class="item-tags">
+            <span class="origin-tag origin-broker">broker</span>
+          </span>
+        </div>
+        <div class="item-body">EXAMPLE: WoW only +X%. Tracks 16.0.1 rollout share; one-line hypothesis or owner pointer.</div>
+    </div>
+
+  </div>
+  <p style="margin-top:10px;font-size:12px;color:#656d76;">See the <a href="#trend60d">60-day trend section</a> for the full ranked list.</p>
+</div>
+
+<div class="callout win">
+  <div class="callout-title"><span class="icon">🟢</span> Real wins this week</div>
+  <div class="item-list">
+
+    <div class="item">
+        <div class="item-head">
+          <span class="item-name">EXAMPLE_recovered_code</span>
+          <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 834 K</span></span>
+          <span class="metric down"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE −86%</span></span>
+          <span class="metric down"><span class="m-label">Δ requests</span><span class="m-value">EXAMPLE −78%</span></span>
+        </div>
+        <div class="item-body">EXAMPLE: 100% pinned to broker 16.0.0; recovery is natural rolloff. Likely fix PR: common <a href="https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/EXAMPLE" target="_blank" rel="noopener">#EXAMPLE</a>.</div>
+        <div class="item-foot"><span><em>Watch:</em> EXAMPLE residual cohort.</span></div>
+    </div>
+
+  </div>
+</div>
+
+<div class="callout watch">
+  <div class="callout-title"><span class="icon">📊</span> Traffic shape — flat with mild interactive uptick</div>
+  <p>Auth volume is essentially flat in silent (+2.3% requests, −1.2% devices) and slightly up on interactive (+7.5% requests, +5.6% devices). Top calling apps all moved within ±5% on requests. No surge, no collapse, no sampling-rate change suspected. See → <a href="#traffic">📊 Traffic Analysis</a>.</p>
+</div>
+
+<!-- ================ 60-DAY TREND ================ -->
+<h2 id="trend60d">📈 60-Day Trend Analysis <span class="count">— bucketed across 8 complete weeks</span></h2>
+
+<div class="glossary">
+  <strong>Methodology:</strong> Pulled all error codes from the <code>ErrorStats</code> view over the last 9 weeks. Dropped the partial start week (Mar 1). Kept all codes whose <strong>peak weekly device count ≥ 10 K</strong>. Bucketed each 8-week series by <code>delta = (last − first) / first</code>:
+  <strong>regression</strong> if delta &gt; +15% and trajectory is monotonic-ish; <strong>ephemeral spike</strong> if peak ≥ 3× mean of surrounding weeks; <strong>improvement</strong> if delta &lt; −15%; <strong>flat</strong> otherwise. Every code in the regression list gets a spike-attribution card below.
+</div>
+
+<div class="callout urgent">
+  <div class="callout-title"><span class="icon">⚠️</span> True 60-day regressions — 5 codes</div>
+  <table style="width:100%;font-size:12.5px;margin-top:6px;">
+    <thead><tr><th>Error code</th><th class="num">Wk 1 devices</th><th class="num">Wk 8 devices</th><th class="num">Δ over 8w</th><th>60d sparkline</th><th>Trajectory</th></tr></thead>
+    <tbody>
+      <tr><td><code>no_tokens_found</code></td><td class="num">13.9 M</td><td class="num">23.7 M</td><td class="num bad">+70.6%</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L24.285714285714285,20.383668820602942 L46.57142857142857,17.044905304296815 L68.85714285714286,15.18400665024738 L91.14285714285714,12.689055778726654 L113.42857142857142,6.831869070007514 L135.71428571428572,3.989606756024628 L158,2 L158,28 L2,28 Z" fill="#cf222e" opacity="0.12"/><path d="M2,26 L24.285714285714285,20.383668820602942 L46.57142857142857,17.044905304296815 L68.85714285714286,15.18400665024738 L91.14285714285714,12.689055778726654 L113.42857142857142,6.831869070007514 L135.71428571428572,3.989606756024628 L158,2" fill="none" stroke="#cf222e" stroke-width="1.4"/><circle cx="158" cy="2" r="2" fill="#cf222e"/></svg></td><td>monotonic up</td></tr>
+      <tr><td><code>unauthorized_client</code></td><td class="num">2.72 M</td><td class="num">3.37 M</td><td class="num bad">+23.6%</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L24.285714285714285,21.189291211268483 L46.57142857142857,23.68350616439421 L68.85714285714286,19.3902520172261 L91.14285714285714,17.614458730430187 L113.42857142857142,8.793961536667652 L135.71428571428572,9.488838792929215 L158,2 L158,28 L2,28 Z" fill="#cf222e" opacity="0.12"/><path d="M2,26 L24.285714285714285,21.189291211268483 L46.57142857142857,23.68350616439421 L68.85714285714286,19.3902520172261 L91.14285714285714,17.614458730430187 L113.42857142857142,8.793961536667652 L135.71428571428572,9.488838792929215 L158,2" fill="none" stroke="#cf222e" stroke-width="1.4"/><circle cx="158" cy="2" r="2" fill="#cf222e"/></svg></td><td>monotonic up</td></tr>
+      <tr><td><code>Code:-6</code></td><td class="num">31.8 K</td><td class="num">86.4 K</td><td class="num bad">+171.5%</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L24.285714285714285,24.449077654725272 L46.57142857142857,25.830176570290774 L68.85714285714286,25.017788675146868 L91.14285714285714,25.0122595402261 L113.42857142857142,3.0351330448090295 L135.71428571428572,2 L158,4.430449735885073 L158,28 L2,28 Z" fill="#cf222e" opacity="0.12"/><path d="M2,26 L24.285714285714285,24.449077654725272 L46.57142857142857,25.830176570290774 L68.85714285714286,25.017788675146868 L91.14285714285714,25.0122595402261 L113.42857142857142,3.0351330448090295 L135.71428571428572,2 L158,4.430449735885073" fill="none" stroke="#cf222e" stroke-width="1.4"/><circle cx="158" cy="4.430449735885073" r="2" fill="#cf222e"/></svg></td><td>step-up at wk 6</td></tr>
+      <tr><td><code>unknown_crypto_error</code></td><td class="num">59.3 K</td><td class="num">78.4 K</td><td class="num bad">+32.4%</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,12.844218264065592 L24.285714285714285,20.60277070964094 L46.57142857142857,26 L68.85714285714286,25.522193949674865 L91.14285714285714,19.8676844783715 L113.42857142857142,11.079445858071812 L135.71428571428572,3.202714164546226 L158,2 L158,28 L2,28 Z" fill="#cf222e" opacity="0.12"/><path d="M2,12.844218264065592 L24.285714285714285,20.60277070964094 L46.57142857142857,26 L68.85714285714286,25.522193949674865 L91.14285714285714,19.8676844783715 L113.42857142857142,11.079445858071812 L135.71428571428572,3.202714164546226 L158,2" fill="none" stroke="#cf222e" stroke-width="1.4"/><circle cx="158" cy="2" r="2" fill="#cf222e"/></svg></td><td>U-shaped, climbing</td></tr>
+      <tr><td><code>null_pointer_error</code></td><td class="num">48.5 K</td><td class="num">70.7 K</td><td class="num bad">+45.9%</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L24.285714285714285,21.782943057115702 L46.57142857142857,19.458221722975892 L68.85714285714286,17.252743454592586 L91.14285714285714,14.458308130994556 L113.42857142857142,2 L135.71428571428572,6.484576168668454 L158,2.9218007431089603 L158,28 L2,28 Z" fill="#cf222e" opacity="0.12"/><path d="M2,26 L24.285714285714285,21.782943057115702 L46.57142857142857,19.458221722975892 L68.85714285714286,17.252743454592586 L91.14285714285714,14.458308130994556 L113.42857142857142,2 L135.71428571428572,6.484576168668454 L158,2.9218007431089603" fill="none" stroke="#cf222e" stroke-width="1.4"/><circle cx="158" cy="2.9218007431089603" r="2" fill="#cf222e"/></svg></td><td>monotonic up</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout watch">
+  <div class="callout-title"><span class="icon">⚡</span> Ephemeral 60-day spikes (peaked then recovered)</div>
+  <table style="width:100%;font-size:12.5px;margin-top:6px;">
+    <thead><tr><th>Error code</th><th class="num">Baseline</th><th class="num">Peak</th><th class="num">Now</th><th>60d sparkline</th></tr></thead>
+    <tbody>
+      <tr><td><code>timed_out_execution</code></td><td class="num">17.9 M</td><td class="num warn">142.9 M (wk Apr 12)</td><td class="num">53.4 M</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L24.285714285714285,25.528917259912554 L46.57142857142857,22.86811849024978 L68.85714285714286,20.067936711023833 L91.14285714285714,13.167810711621335 L113.42857142857142,2 L135.71428571428572,13.962359714679643 L158,19.186934955198492 L158,28 L2,28 Z" fill="#bf8700" opacity="0.12"/><path d="M2,26 L24.285714285714285,25.528917259912554 L46.57142857142857,22.86811849024978 L68.85714285714286,20.067936711023833 L91.14285714285714,13.167810711621335 L113.42857142857142,2 L135.71428571428572,13.962359714679643 L158,19.186934955198492" fill="none" stroke="#bf8700" stroke-width="1.4"/><circle cx="158" cy="19.186934955198492" r="2" fill="#bf8700"/></svg></td></tr>
+      <tr><td><code>unknown_authority</code></td><td class="num">~1 K</td><td class="num warn">34.1 M (wk Apr 12)</td><td class="num good">1.45 M</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L24.285714285714285,25.9999479454561 L46.57142857142857,25.99996764177001 L68.85714285714286,25.33638194365043 L91.14285714285714,11.586519561385366 L113.42857142857142,2 L135.71428571428572,19.66698228641905 L158,24.983948061054704 L158,28 L2,28 Z" fill="#bf8700" opacity="0.12"/><path d="M2,26 L24.285714285714285,25.9999479454561 L46.57142857142857,25.99996764177001 L68.85714285714286,25.33638194365043 L91.14285714285714,11.586519561385366 L113.42857142857142,2 L135.71428571428572,19.66698228641905 L158,24.983948061054704" fill="none" stroke="#bf8700" stroke-width="1.4"/><circle cx="158" cy="24.983948061054704" r="2" fill="#bf8700"/></svg></td></tr>
+      <tr><td><code>429</code> (eSTS rate-limit)</td><td class="num">~10</td><td class="num warn">218 K (wk Mar 22)</td><td class="num good">2.5 K</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L24.285714285714285,25.543803291327453 L46.57142857142857,23.002120180261215 L68.85714285714286,2 L91.14285714285714,23.690049838003542 L113.42857142857142,24.35132580103347 L135.71428571428572,10.1533872403697 L158,25.724211357190715 L158,28 L2,28 Z" fill="#bf8700" opacity="0.12"/><path d="M2,26 L24.285714285714285,25.543803291327453 L46.57142857142857,23.002120180261215 L68.85714285714286,2 L91.14285714285714,23.690049838003542 L113.42857142857142,24.35132580103347 L135.71428571428572,10.1533872403697 L158,25.724211357190715" fill="none" stroke="#bf8700" stroke-width="1.4"/><circle cx="158" cy="25.724211357190715" r="2" fill="#bf8700"/></svg></td></tr>
+    </tbody>
+  </table>
+  <p style="margin-top:6px;font-size:12.5px;">Both <code>unknown_authority</code> (common <a href="https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/3082" target="_blank">#3082</a> ABBA deadlock fix) and <code>timed_out_execution</code> (broker <a href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank">#141</a> flight gating) are recovering. <strong>Recommendation:</strong> add Aria guardrail at &gt;1M devices/week for <code>unknown_authority</code> to detect any future excursion early.</p>
+</div>
+
+<div class="callout win">
+  <div class="callout-title"><span class="icon">✅</span> True 60-day improvements</div>
+  <table style="width:100%;font-size:12.5px;margin-top:6px;">
+    <thead><tr><th>Error code</th><th class="num">Wk 1</th><th class="num">Wk 8</th><th class="num">Δ</th><th>Sparkline</th></tr></thead>
+    <tbody>
+      <tr><td><code>timed_out</code></td><td class="num">36.1 M</td><td class="num">5.1 M</td><td class="num good">−85.9%</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,2 L24.285714285714285,2.1966100510730797 L46.57142857142857,14.840149790989093 L68.85714285714286,23.851737187854066 L91.14285714285714,24.847759480546166 L113.42857142857142,25.33007842170968 L135.71428571428572,25.72486240767855 L158,26 L158,28 L2,28 Z" fill="#1a7f37" opacity="0.12"/><path d="M2,2 L24.285714285714285,2.1966100510730797 L46.57142857142857,14.840149790989093 L68.85714285714286,23.851737187854066 L91.14285714285714,24.847759480546166 L113.42857142857142,25.33007842170968 L135.71428571428572,25.72486240767855 L158,26" fill="none" stroke="#1a7f37" stroke-width="1.4"/><circle cx="158" cy="26" r="2" fill="#1a7f37"/></svg></td></tr>
+      <tr><td><code>invalid_scope</code></td><td class="num">1.92 M</td><td class="num">0.36 M</td><td class="num good">−81.3%</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,2.9089631735852812 L24.285714285714285,2 L46.57142857142857,4.319034301681064 L68.85714285714286,7.231735360666569 L91.14285714285714,23.028816660289213 L113.42857142857142,25.050257210316957 L135.71428571428572,25.733456042935238 L158,26 L158,28 L2,28 Z" fill="#1a7f37" opacity="0.12"/><path d="M2,2.9089631735852812 L24.285714285714285,2 L46.57142857142857,4.319034301681064 L68.85714285714286,7.231735360666569 L91.14285714285714,23.028816660289213 L113.42857142857142,25.050257210316957 L135.71428571428572,25.733456042935238 L158,26" fill="none" stroke="#1a7f37" stroke-width="1.4"/><circle cx="158" cy="26" r="2" fill="#1a7f37"/></svg></td></tr>
+      <tr><td><code>timed_out_thread_pool_saturated</code></td><td class="num">1.64 M</td><td class="num">0.62 M</td><td class="num good">−62.1%</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,6.328263905610402 L24.285714285714285,16.098049602696847 L46.57142857142857,11.362947267035878 L68.85714285714286,2 L91.14285714285714,4.101555502046715 L113.42857142857142,16.951466409824224 L135.71428571428572,24.913537202022635 L158,26 L158,28 L2,28 Z" fill="#1a7f37" opacity="0.12"/><path d="M2,6.328263905610402 L24.285714285714285,16.098049602696847 L46.57142857142857,11.362947267035878 L68.85714285714286,2 L91.14285714285714,4.101555502046715 L113.42857142857142,16.951466409824224 L135.71428571428572,24.913537202022635 L158,26" fill="none" stroke="#1a7f37" stroke-width="1.4"/><circle cx="158" cy="26" r="2" fill="#1a7f37"/></svg></td></tr>
+      <tr><td><code>illegal_argument_exception</code></td><td class="num">0.21 M</td><td class="num">0.19 M</td><td class="num good">−7.5% (peak −62%)</td><td></td></tr>
+      <tr><td><code>null_object</code>, <code>device_network_not_available</code>, <code>access_denied</code>, <code>ONLY_SUPPORTS_ACCOUNT_MANAGER_ERROR_CODE</code>, <code>invalid_key</code></td><td colspan="3" class="muted">all −17% to −78% over 8 wks (see appendix)</td><td></td></tr>
+    </tbody>
+  </table>
+  <p style="margin-top:6px;font-size:12.5px;"><strong>Note:</strong> the <code>timed_out</code> drop and <code>timed_out_execution</code> climb are partly the same event — broker <a href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank">#141</a> reclassifies legacy <code>timed_out</code> into the more specific <code>timed_out_execution</code>. The reclassification is net-neutral but the new code is louder; treat the <code>timed_out</code> "win" with caution.</p>
+</div>
+
+<div class="callout">
+  <div class="callout-title">Flat on 60d (within ±10%)</div>
+  <p style="font-size:12.5px;"><code>io_error</code>, <code>no_account_found</code>, <code>invalid_grant</code>, <code>interaction_required</code>, <code>device_network_not_available_doze_mode</code>, <code>authorization_pending</code>, <code>expired_token</code>, <code>User cancelled</code>, <code>auth_cancelled_by_sdk</code>, <code>invalid_resource</code>, <code>invalid_request</code>, <code>device_registration_needed</code>, <code>Code:-1</code>, <code>Code:-2</code>, <code>Code:-8</code>, <code>operation_interrupted</code>, <code>ipc_return_null_cursor</code>, <code>device_needs_to_be_managed</code>, <code>Redirect url scheme not SSL protected</code>, <code>ipc_operation_not_supported_on_server_side</code>, <code>invalid_client</code>, <code>ipc_connection_error</code>, <code>unknown_error</code>.</p>
+</div>
+
+<!-- ================ SPIKE ATTRIBUTION ================ -->
+<h2 id="attribution">🔎 Spike Attribution <span class="count">— one card per regression</span></h2>
+
+<div class="glossary">
+  Each card slices on broker version, span, active broker package, calling app, and sub-dimensions where data is available. Concentration thresholds: <strong>&gt; 80%</strong> in a single value = strong attribution (red bar); <strong>60–80%</strong> = medium; <strong>&lt; 60%</strong> = broad/cross-cutting. Account-type and shared-device-mode dimensions are sourced from raw <code>android_spans</code> and shown when material.
+</div>
+
+<div class="attr-grid">
+<div class="attr-card" id="attr-no-tokens-found">
+  <div class="attr-header urgent">
+    <div>
+      <div class="attr-name">no_tokens_found</div>
+      <div style="font-size:11px;color:#656d76;margin-top:2px;">Devices: 14.1 M → 23.7 M over 8wks &nbsp;(<strong style="color:#cf222e;">+68.2%</strong>); WoW 22.9 M → 23.7 M (+3.6%)</div>
+    </div>
+    <div class="attr-tags"><span class="tag tag-bad">60d regression</span><span class="tag tag-info">silent path</span><span class="tag tag-info">broad calling-app spread</span></div>
+  </div>
+  <div class="attr-body">
+    <div class="attr-verdict bad"><strong>Verdict — Slow-burn 60-day regression, no single dominant dimension.</strong> Spans <code>AcquireTokenSilent</code> (98%) but spread across all top callers (Outlook 36%, Teams 20%, SkyDrive 11%, AppManager 7%). Active broker is split ~46% Authenticator / 44% AppManager / 10% Intune CP, mirroring fleet-share — so this is not a broker-app-specific issue. Strongest code-attribution candidate: common <a href="https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/3074" target="_blank">#3074</a> (token-cache remove path optimization, AB#3570409). The +9.6 M devices added since wk of Mar 8 closely tracks the rollout window of that PR. <strong>Action:</strong> bisect by enabling/disabling the filter-first-clone flight on a small ring to confirm causation.</div>
+    <div class="attr-dims"><div class="dim"><div class="dim-label">Span</div><div class="dim-row dominant"><span class="dim-name">AcquireTokenSilent</span><span class="dim-pct">98.6%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill dominant" style="width:98.6%"></div></div>
+<div class="dim-row "><span class="dim-name">ATISilently</span><span class="dim-pct">1.3%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:1.3%"></div></div>
+<div class="dim-row "><span class="dim-name">MSAL_PerformIpcStrategy</span><span class="dim-pct">0.1%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:0.06%"></div></div></div><div class="dim"><div class="dim-label">Calling app</div><div class="dim-row "><span class="dim-name">com.microsoft.office.outlook</span><span class="dim-pct">35.5%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:35.5%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.teams</span><span class="dim-pct">20.1%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:20.1%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.skydrive</span><span class="dim-pct">10.6%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:10.6%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.office.word</span><span class="dim-pct">7.3%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:7.3%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.appmanager</span><span class="dim-pct">7.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:7%"></div></div></div><div class="dim"><div class="dim-label">Active broker</div><div class="dim-row "><span class="dim-name">com.azure.authenticator</span><span class="dim-pct">46.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:46%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.appmanager</span><span class="dim-pct">44.5%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:44.5%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.windowsintune.companyportal</span><span class="dim-pct">9.5%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:9.5%"></div></div></div><div class="dim"><div class="dim-label">Broker version</div><div class="dim-row "><span class="dim-name">16.0.1</span><span class="dim-pct">71.1%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill split" style="width:71.1%"></div></div>
+<div class="dim-row "><span class="dim-name">15.1.0</span><span class="dim-pct">10.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:10%"></div></div>
+<div class="dim-row "><span class="dim-name">14.2.0</span><span class="dim-pct">9.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:9%"></div></div>
+<div class="dim-row "><span class="dim-name">other</span><span class="dim-pct">9.9%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:9.9%"></div></div></div></div>
+    <div class="code-attr">
+      <div class="code-attr-title">Code attribution</div>
+      <div class="pr-list"><div class="pr-card">
+      <div class="pr-conf pr-conf-medium">medium</div>
+      <div class="pr-body"><a class="pr-id" href="https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/3074" target="_blank" rel="noopener">common#3074</a> <span class="pr-title">Token cache filter-first-clone optimization</span>
+        <div class="pr-why">Touches the cache-remove path; an over-eager remove or filter mismatch would directly raise no_tokens_found on AcquireTokenSilent.</div>
+      </div>
+    </div><div class="pr-card">
+      <div class="pr-conf pr-conf-low">low</div>
+      <div class="pr-body"><a class="pr-id" href="https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/3081" target="_blank" rel="noopener">common#3081</a> <span class="pr-title">BrokerDiscovery cache crash fix (shared encryption key with MSAL)</span>
+        <div class="pr-why">Same WPJ/encryption surface; less likely root cause but worth ruling out.</div>
+      </div>
+    </div></div>
+    </div>
+    <div class="code-attr" style="background:linear-gradient(180deg,#fff8c5 0%,#fff1a8 100%);border-color:#d4a72c;">
+      <div class="code-attr-title" style="color:#9a6700;">🚚 Traffic attribution</div>
+      <div style="font-size:12px;color:#1f2328;">Spread across all top callers in proportion to their request volume — no single calling-app traffic surge is responsible. Per-Outlook-request rate of no_tokens_found has risen consistently with the trend, ruling out traffic attribution.</div>
+    </div>
+  </div>
+</div>
+<div class="attr-card" id="attr-timed-out-execution">
+  <div class="attr-header urgent">
+    <div>
+      <div class="attr-name">timed_out_execution</div>
+      <div style="font-size:11px;color:#656d76;margin-top:2px;">Devices: 18.0 M → 53.4 M over 8wks (peaked 143 M wk of Apr 12); WoW 80.6 M → 53.4 M (<strong style="color:#1a7f37;">−33.7%</strong>) — recovering</div>
+    </div>
+    <div class="attr-tags"><span class="tag tag-bad">60d regression</span><span class="tag tag-warn">peak-then-recover</span><span class="tag tag-info">AppManager-heavy</span></div>
+  </div>
+  <div class="attr-body">
+    <div class="attr-verdict bad"><strong>Verdict — 60d regression with WoW recovery underway.</strong> Almost entirely on <code>AcquireTokenSilent</code> (99.9%). The peak at 143 M devices (wk of Apr 12) and subsequent drop to 53.4 M is consistent with broker <a href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank">#141</a> (HTTP cancellation on ATS command-level timeout) being flight-rolled out and then partially gated back. AppManager (Link to Windows) is the dominant active broker (53% this week, was 69% prior), and most-affected calling app: Outlook 32% / AppManager 25% / Teams 24%. <strong>Action:</strong> confirm the flight rollout schedule for #141 and check whether the timeout threshold needs tuning before re-enabling broadly. Watch for downstream client retry storms (it converts silent thread-leak into an explicit error → callers must retry cleanly).</div>
+    <div class="attr-dims"><div class="dim"><div class="dim-label">Span</div><div class="dim-row dominant"><span class="dim-name">AcquireTokenSilent</span><span class="dim-pct">99.9%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill dominant" style="width:99.9%"></div></div>
+<div class="dim-row "><span class="dim-name">ATISilently</span><span class="dim-pct">0.1%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:0.06%"></div></div>
+<div class="dim-row "><span class="dim-name">AcquireTokenInteractive</span><span class="dim-pct">0.1%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:0.06%"></div></div></div><div class="dim"><div class="dim-label">Calling app</div><div class="dim-row "><span class="dim-name">com.microsoft.office.outlook</span><span class="dim-pct">32.5%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:32.5%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.appmanager</span><span class="dim-pct">25.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:25%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.teams</span><span class="dim-pct">24.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:24%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.skydrive</span><span class="dim-pct">5.4%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:5.4%"></div></div></div><div class="dim"><div class="dim-label">Active broker</div><div class="dim-row "><span class="dim-name">com.microsoft.appmanager</span><span class="dim-pct">52.9%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:52.9%"></div></div>
+<div class="dim-row "><span class="dim-name">com.azure.authenticator</span><span class="dim-pct">35.4%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:35.4%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.windowsintune.companyportal</span><span class="dim-pct">11.7%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:11.7%"></div></div></div><div class="dim"><div class="dim-label">Broker version</div><div class="dim-row "><span class="dim-name">16.0.1</span><span class="dim-pct">70.8%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill split" style="width:70.8%"></div></div>
+<div class="dim-row "><span class="dim-name">15.1.0</span><span class="dim-pct">10.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:10%"></div></div>
+<div class="dim-row "><span class="dim-name">14.2.0</span><span class="dim-pct">8.8%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:8.8%"></div></div>
+<div class="dim-row "><span class="dim-name">other</span><span class="dim-pct">10.4%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:10.4%"></div></div></div></div>
+    <div class="code-attr">
+      <div class="code-attr-title">Code attribution</div>
+      <div class="pr-list"><div class="pr-card">
+      <div class="pr-conf pr-conf-high">high</div>
+      <div class="pr-body"><a class="pr-id" href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank" rel="noopener">broker#141</a> <span class="pr-title">Add flight-gated HTTP cancellation on ATS command-level timeout to eliminate zombie worker threads (AB#3542516)</span>
+        <div class="pr-why">This PR explicitly converts long-running ATS calls into timed_out_execution. The 60d trajectory matches the flight rollout perfectly. The reciprocal drop in legacy timed_out (-86%) confirms the reclassification.</div>
+      </div>
+    </div></div>
+    </div>
+    <div class="code-attr" style="background:linear-gradient(180deg,#fff8c5 0%,#fff1a8 100%);border-color:#d4a72c;">
+      <div class="code-attr-title" style="color:#9a6700;">🚚 Traffic attribution</div>
+      <div style="font-size:12px;color:#1f2328;">AppManager (LTW) dropped from 55.5 M to 28.2 M devices (-49%) WoW while AppManager total request volume rose 2.9% — so this is NOT traffic-driven; the per-AppManager-request rate is what fell, consistent with a flight pull-back.</div>
+    </div>
+  </div>
+</div>
+<div class="attr-card" id="attr-unauthorized-client">
+  <div class="attr-header urgent">
+    <div>
+      <div class="attr-name">unauthorized_client</div>
+      <div style="font-size:11px;color:#656d76;margin-top:2px;">Devices: 2.74 M → 3.37 M over 8wks (<strong style="color:#cf222e;">+22.8%</strong>); WoW 3.17 M → 3.37 M (+6.3%)</div>
+    </div>
+    <div class="attr-tags"><span class="tag tag-warn">60d regression</span><span class="tag tag-info">Outlook+Teams concentrated</span><span class="tag tag-info">silent path</span></div>
+  </div>
+  <div class="attr-body">
+    <div class="attr-verdict bad"><strong>Verdict — Mild but consistent 60d climb, very likely traffic-attributed (not a broker bug).</strong> Calling-app concentration: 67% in Outlook+Teams alone, with the next 5 callers all being Office apps (Excel 8%, Word 7%, SCMx 4%). Span: <code>AcquireTokenSilent</code> 90% / <code>AcquireTokenInteractive</code> 6%. Active broker shares mirror fleet-share. The growth tracks request-volume growth in Outlook/Teams (+2.1%/+3.9% WoW each, +12% over 60d) closely. The most likely explanation is that some Outlook/Teams app registrations are gradually being marked unauthorized for specific resources/scopes by their first-party app owners — not a broker code issue. <strong>Action:</strong> sample 10 unauthorized_client correlation IDs from this week's Outlook traffic and check the eSTS error sub-code; route to Outlook + first-party app team if confirmed.</div>
+    <div class="attr-dims"><div class="dim"><div class="dim-label">Span</div><div class="dim-row dominant"><span class="dim-name">AcquireTokenSilent</span><span class="dim-pct">90.3%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill dominant" style="width:90.3%"></div></div>
+<div class="dim-row "><span class="dim-name">AcquireTokenInteractive</span><span class="dim-pct">5.8%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:5.8%"></div></div>
+<div class="dim-row "><span class="dim-name">ATISilently</span><span class="dim-pct">3.6%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:3.6%"></div></div></div><div class="dim"><div class="dim-label">Calling app</div><div class="dim-row "><span class="dim-name">com.microsoft.office.outlook</span><span class="dim-pct">34.7%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:34.7%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.teams</span><span class="dim-pct">32.6%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:32.6%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.office.excel</span><span class="dim-pct">8.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:8%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.office.word</span><span class="dim-pct">7.4%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:7.4%"></div></div></div><div class="dim"><div class="dim-label">Active broker</div><div class="dim-row "><span class="dim-name">com.azure.authenticator</span><span class="dim-pct">43.3%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:43.3%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.windowsintune.companyportal</span><span class="dim-pct">36.9%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:36.9%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.appmanager</span><span class="dim-pct">19.8%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:19.8%"></div></div></div><div class="dim"><div class="dim-label">Broker version</div><div class="dim-row "><span class="dim-name">16.0.1</span><span class="dim-pct">70.5%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill split" style="width:70.5%"></div></div>
+<div class="dim-row "><span class="dim-name">15.1.0</span><span class="dim-pct">10.2%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:10.2%"></div></div>
+<div class="dim-row "><span class="dim-name">14.2.0</span><span class="dim-pct">8.8%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:8.8%"></div></div>
+<div class="dim-row "><span class="dim-name">other</span><span class="dim-pct">10.5%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:10.5%"></div></div></div></div>
+    <div class="code-attr">
+      <div class="code-attr-title">Code attribution</div>
+      <div class="pr-list"><div class="pr-card">
+      <div class="pr-conf pr-conf-none">none</div>
+      <div class="pr-body"><span style="color:#656d76;font-weight:600;">(no PR)</span> <span class="pr-title">No broker code regression identified</span>
+        <div class="pr-why">Mirrors fleet broker-version share; no version concentration. Most likely an app-registration / first-party-config drift on the eSTS side.</div>
+      </div>
+    </div></div>
+    </div>
+    <div class="code-attr" style="background:linear-gradient(180deg,#fff8c5 0%,#fff1a8 100%);border-color:#d4a72c;">
+      <div class="code-attr-title" style="color:#9a6700;">🚚 Traffic attribution</div>
+      <div style="font-size:12px;color:#1f2328;">Strong traffic-attribution signal: 67% concentration in Outlook+Teams, both growing in request volume. See → 🚚 Traffic Attribution section for full analysis.</div>
+    </div>
+  </div>
+</div>
+<div class="attr-card" id="attr-Code--6">
+  <div class="attr-header urgent">
+    <div>
+      <div class="attr-name">Code:-6</div>
+      <div style="font-size:11px;color:#656d76;margin-top:2px;">Devices: 33 K → 86 K over 8wks (<strong style="color:#cf222e;">+162%</strong>, peak 92 K wk of Apr 26); WoW 92.6 K → 86.4 K (−6.7%) — first WoW pullback</div>
+    </div>
+    <div class="attr-tags"><span class="tag tag-bad">60d regression</span><span class="tag tag-info">interactive only</span><span class="tag tag-info">Intune-CP active broker</span></div>
+  </div>
+  <div class="attr-body">
+    <div class="attr-verdict bad"><strong>Verdict — Code:-6 (interactive auth canceled by user via system UI) jumped 2.7× starting wk of Apr 19.</strong> Span: <code>AcquireTokenInteractive</code> 76% / <code>ATIInteractively</code> 24%. Active broker concentration: <strong>57% Intune Company Portal</strong> (vs ~38% fleet share). Calling-app spread: Outlook 30% / Teams 21% / Axis Bank Siddhi 21% (notable: 3rd-party banking app appearing as #3 caller for an interactive-cancellation error suggests an MAM/Intune pop-up issue). Broker-version split: 36% on 15.1.0 (over-represented vs 10% fleet share) and 36% on 16.0.1. <strong>Action:</strong> investigate whether 15.1.0 introduced an interactive-cancellation path bug, or whether Intune CP is showing a new system dialog that users dismiss. Check broker <code>broker/AADAuthenticator</code> for changes to <code>WebViewClient</code> / interactive consent flows since wk of Apr 12.</div>
+    <div class="attr-dims"><div class="dim"><div class="dim-label">Span</div><div class="dim-row "><span class="dim-name">AcquireTokenInteractive</span><span class="dim-pct">75.8%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill split" style="width:75.8%"></div></div>
+<div class="dim-row "><span class="dim-name">ATIInteractively</span><span class="dim-pct">24.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:24%"></div></div>
+<div class="dim-row "><span class="dim-name">CertBasedAuth</span><span class="dim-pct">0.1%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:0.06%"></div></div></div><div class="dim"><div class="dim-label">Calling app</div><div class="dim-row "><span class="dim-name">com.microsoft.office.outlook</span><span class="dim-pct">29.6%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:29.6%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.teams</span><span class="dim-pct">21.4%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:21.4%"></div></div>
+<div class="dim-row "><span class="dim-name">com.axisbank.siddhi.v3</span><span class="dim-pct">21.3%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:21.3%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.windowsintune.companyportal</span><span class="dim-pct">4.7%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:4.7%"></div></div></div><div class="dim"><div class="dim-label">Active broker</div><div class="dim-row "><span class="dim-name">com.microsoft.windowsintune.companyportal</span><span class="dim-pct">56.7%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:56.7%"></div></div>
+<div class="dim-row "><span class="dim-name">com.azure.authenticator</span><span class="dim-pct">24.3%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:24.3%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.appmanager</span><span class="dim-pct">19.1%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:19.1%"></div></div></div><div class="dim"><div class="dim-label">Broker version</div><div class="dim-row "><span class="dim-name">15.1.0</span><span class="dim-pct">37.8%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:37.8%"></div></div>
+<div class="dim-row "><span class="dim-name">16.0.1</span><span class="dim-pct">35.5%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:35.5%"></div></div>
+<div class="dim-row "><span class="dim-name">15.0.0</span><span class="dim-pct">13.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:13%"></div></div>
+<div class="dim-row "><span class="dim-name">14.2.0</span><span class="dim-pct">4.7%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:4.7%"></div></div></div></div>
+    <div class="code-attr">
+      <div class="code-attr-title">Code attribution</div>
+      <div class="pr-list"><div class="pr-card">
+      <div class="pr-conf pr-conf-low">low</div>
+      <div class="pr-body"><span style="color:#656d76;font-weight:600;">(no PR)</span> <span class="pr-title">Investigate broker/AADAuthenticator WebViewClient changes between 15.1.0 and 16.0.1</span>
+        <div class="pr-why">Both versions are over-represented vs fleet share. Could not pinpoint a single PR via grep — needs targeted diff between 15.1.0 and 16.0.1 release branches focused on interactive consent flows.</div>
+      </div>
+    </div></div>
+    </div>
+    <div class="code-attr" style="background:linear-gradient(180deg,#fff8c5 0%,#fff1a8 100%);border-color:#d4a72c;">
+      <div class="code-attr-title" style="color:#9a6700;">🚚 Traffic attribution</div>
+      <div style="font-size:12px;color:#1f2328;">Axis Bank Siddhi alone is 21% — a single 3rd-party app being a top contributor to a cancellation-style error is unusual. Check whether their app introduced an interactive AcquireToken call recently and whether their UX is causing user dismissal.</div>
+    </div>
+  </div>
+</div>
+<div class="attr-card" id="attr-null-pointer-error">
+  <div class="attr-header urgent">
+    <div>
+      <div class="attr-name">null_pointer_error</div>
+      <div style="font-size:11px;color:#656d76;margin-top:2px;">Devices: 48 K → 71 K over 8wks (<strong style="color:#cf222e;">+46%</strong>); WoW 67 K → 71 K (+5.1%)</div>
+    </div>
+    <div class="attr-tags"><span class="tag tag-warn">60d regression</span><span class="tag tag-info">silent path</span><span class="tag tag-info">LTW + Authenticator</span></div>
+  </div>
+  <div class="attr-body">
+    <div class="attr-verdict bad"><strong>Verdict — Steady 60d climb in NPE crashes; small absolute volume but trajectory worth flagging.</strong> Span: <code>AcquireTokenSilent</code> 98%. Active broker: AppManager (LTW) 53% / Authenticator 26% / Intune CP 20%. Calling app: AppManager 35% / Teams 28% / Outlook 21%. The over-representation of LTW (53% vs ~5-10% fleet share for that active broker) is a strong signal — there's likely a null path specific to the LTW broker process. <strong>Action:</strong> bucket by error_location / stack-trace prefix and route to LTW team. Cite <a href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank">broker #141</a> as a possible secondary contributor (timeout cancellation can interact with deferred work that holds a null reference).</div>
+    <div class="attr-dims"><div class="dim"><div class="dim-label">Span</div><div class="dim-row dominant"><span class="dim-name">AcquireTokenSilent</span><span class="dim-pct">98.5%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill dominant" style="width:98.5%"></div></div>
+<div class="dim-row "><span class="dim-name">DeviceRegistrationApi</span><span class="dim-pct">1.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:1%"></div></div>
+<div class="dim-row "><span class="dim-name">AcquireTokenInteractive</span><span class="dim-pct">0.3%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:0.3%"></div></div></div><div class="dim"><div class="dim-label">Calling app</div><div class="dim-row "><span class="dim-name">com.microsoft.appmanager</span><span class="dim-pct">35.4%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:35.4%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.teams</span><span class="dim-pct">28.5%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:28.5%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.office.outlook</span><span class="dim-pct">21.2%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:21.2%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.office.word</span><span class="dim-pct">2.8%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:2.8%"></div></div></div><div class="dim"><div class="dim-label">Active broker</div><div class="dim-row "><span class="dim-name">com.microsoft.appmanager</span><span class="dim-pct">53.3%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:53.3%"></div></div>
+<div class="dim-row "><span class="dim-name">com.azure.authenticator</span><span class="dim-pct">26.4%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:26.4%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.windowsintune.companyportal</span><span class="dim-pct">20.3%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:20.3%"></div></div></div><div class="dim"><div class="dim-label">Broker version</div><div class="dim-row "><span class="dim-name">16.0.1</span><span class="dim-pct">70.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill split" style="width:70%"></div></div>
+<div class="dim-row "><span class="dim-name">15.1.0</span><span class="dim-pct">10.5%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:10.5%"></div></div>
+<div class="dim-row "><span class="dim-name">14.2.0</span><span class="dim-pct">9.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:9%"></div></div>
+<div class="dim-row "><span class="dim-name">other</span><span class="dim-pct">10.5%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:10.5%"></div></div></div></div>
+    <div class="code-attr">
+      <div class="code-attr-title">Code attribution</div>
+      <div class="pr-list"><div class="pr-card">
+      <div class="pr-conf pr-conf-low">low</div>
+      <div class="pr-body"><a class="pr-id" href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank" rel="noopener">broker#141</a> <span class="pr-title">HTTP cancellation on ATS timeout (LTW broker process)</span>
+        <div class="pr-why">Active broker is heavily LTW (53% vs ~7% fleet share). The same ATS timeout cancellation path may be racing with a null-checked reference in a deferred callback. Needs stack-trace bucketing to confirm.</div>
+      </div>
+    </div><div class="pr-card">
+      <div class="pr-conf pr-conf-none">none</div>
+      <div class="pr-body"><span style="color:#656d76;font-weight:600;">(no PR)</span> <span class="pr-title">Awaiting crash bucket by error_location</span>
+        <div class="pr-why">Cannot pinpoint specific PR without stacktrace breakdown.</div>
+      </div>
+    </div></div>
+    </div>
+    <div class="code-attr" style="background:linear-gradient(180deg,#fff8c5 0%,#fff1a8 100%);border-color:#d4a72c;">
+      <div class="code-attr-title" style="color:#9a6700;">🚚 Traffic attribution</div>
+      <div style="font-size:12px;color:#1f2328;">AppManager (LTW) request volume rose only +2.9% WoW while NPE devices from LTW grew +12% — per-LTW-request NPE rate is rising. NOT traffic-driven.</div>
+    </div>
+  </div>
+</div>
+<div class="attr-card" id="attr-unknown-crypto-error">
+  <div class="attr-header urgent">
+    <div>
+      <div class="attr-name">unknown_crypto_error</div>
+      <div style="font-size:11px;color:#656d76;margin-top:2px;">Devices: 64 K → 78 K over 8wks (<strong style="color:#cf222e;">+23%</strong>); WoW 76.3 K → 78.4 K (+2.7%)</div>
+    </div>
+    <div class="attr-tags"><span class="tag tag-warn">60d regression</span><span class="tag tag-info">keystore / TEE</span><span class="tag tag-info">pre-auth flow</span></div>
+  </div>
+  <div class="attr-body">
+    <div class="attr-verdict bad"><strong>Verdict — Slow-burn keystore failure, dominated by device-registration / WPJ paths.</strong> Span: <code>KeyPairGeneration</code> 55% / <code>SecretKeyGeneration</code> 45% — both keystore-bound, indicating TEE / hardware keystore issues at first-key-generation time. Active broker: 63% Authenticator / 31% AppManager / 6% Intune CP. Calling app is blank for ~100% of these (consistent with pre-authentication flows like DRS/WPJ where no caller is yet attached). <strong>Action:</strong> slice by <code>DeviceInfo_OsVersion</code> and OEM (Samsung/Pixel/Xiaomi/Huawei) on raw <code>android_spans</code>; this kind of growth typically maps to a specific OEM/Android-version combo (StrongBox-backed keystore quirks).</div>
+    <div class="attr-dims"><div class="dim"><div class="dim-label">Span</div><div class="dim-row "><span class="dim-name">KeyPairGeneration</span><span class="dim-pct">54.5%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:54.5%"></div></div>
+<div class="dim-row "><span class="dim-name">SecretKeyGeneration</span><span class="dim-pct">45.3%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:45.3%"></div></div>
+<div class="dim-row "><span class="dim-name">SecretKeyWrapping</span><span class="dim-pct">0.1%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:0.12%"></div></div>
+<div class="dim-row "><span class="dim-name">SecretKeyRetrieval</span><span class="dim-pct">0.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:0.01%"></div></div></div><div class="dim"><div class="dim-label">Calling app</div><div class="dim-row dominant"><span class="dim-name">(blank — pre-auth)</span><span class="dim-pct">100.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill dominant" style="width:100%"></div></div></div><div class="dim"><div class="dim-label">Active broker</div><div class="dim-row "><span class="dim-name">com.azure.authenticator</span><span class="dim-pct">63.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill split" style="width:63%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.appmanager</span><span class="dim-pct">31.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:31%"></div></div>
+<div class="dim-row "><span class="dim-name">com.microsoft.windowsintune.companyportal</span><span class="dim-pct">5.9%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:5.9%"></div></div></div><div class="dim"><div class="dim-label">Broker version</div><div class="dim-row "><span class="dim-name">16.0.1</span><span class="dim-pct">71.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill split" style="width:71%"></div></div>
+<div class="dim-row "><span class="dim-name">15.1.0</span><span class="dim-pct">10.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:10%"></div></div>
+<div class="dim-row "><span class="dim-name">14.2.0</span><span class="dim-pct">9.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:9%"></div></div>
+<div class="dim-row "><span class="dim-name">other</span><span class="dim-pct">10.0%</span></div>
+        <div class="dim-bar-track"><div class="dim-bar-fill " style="width:10%"></div></div></div></div>
+    <div class="code-attr">
+      <div class="code-attr-title">Code attribution</div>
+      <div class="pr-list"><div class="pr-card">
+      <div class="pr-conf pr-conf-none">none</div>
+      <div class="pr-body"><span style="color:#656d76;font-weight:600;">(no PR)</span> <span class="pr-title">No broker PR identified — likely OEM/Android-version-specific keystore behavior</span>
+        <div class="pr-why">KeyPairGeneration + SecretKeyGeneration concentration points to TEE/StrongBox keystore. Common Android quirks: Samsung Knox vault provisioning, Xiaomi/Huawei custom keystore HALs.</div>
+      </div>
+    </div></div>
+    </div>
+    <div class="code-attr" style="background:linear-gradient(180deg,#fff8c5 0%,#fff1a8 100%);border-color:#d4a72c;">
+      <div class="code-attr-title" style="color:#9a6700;">🚚 Traffic attribution</div>
+      <div style="font-size:12px;color:#1f2328;">Pre-authentication flow with no calling app — traffic attribution does not apply.</div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ================ TRAFFIC ATTRIBUTION ================ -->
+<h2 id="traffic-attr">🚚 Traffic Attribution <span class="count">— spikes explained by calling-app traffic, not code</span></h2>
+
+<div class="attr-card">
+  <div class="attr-header watch">
+    <div>
+      <div class="attr-name">unauthorized_client</div>
+      <div style="font-size:11px;color:#656d76;margin-top:2px;">Classification: <strong style="color:#9a6700;">traffic-attributed</strong> — not a broker code regression</div>
+    </div>
+    <div class="attr-tags"><span class="tag tag-warn">🚚 traffic-driven</span></div>
+  </div>
+  <div class="attr-body">
+    <div class="attr-verdict" style="background:#fff8c5;border-left-color:#bf8700;">
+      <strong><code>unauthorized_client</code> +6.3% devices WoW (and +22.8% over 60d)</strong> is concentrated in Outlook (35%) + Teams (33%) — combined 67% — both of which grew in request volume +2.1% and +3.9% WoW respectively, and ~12% over 60d. Per-Outlook-request and per-Teams-request unauthorized_client rates are essentially flat. This means the spike is being driven by these apps issuing more requests (some of which were always going to fail with this error code), not by broker code regressing. <strong>No broker code change is implicated.</strong> Route to Outlook + Teams app-registration owners on the eSTS side.
+    </div>
+  </div>
+</div>
+
+<!-- ================ ERROR CODES TABLE ================ -->
+<h2 id="error-codes">Error codes — WoW with stable (auth-only) denominator</h2>
+<div class="table-card"><table>
+<thead><tr><th>Error code</th><th>Status</th><th class="num">Devices now</th><th class="num">Devices prior</th><th class="num">Δ devices</th><th>60d sparkline</th></tr></thead>
+<tbody><tr><td class="code-cell">no_tokens_found</td><td><span class="tag tag-bad">▲ 60d regression</span></td><td class="num">23.73 M</td><td class="num">22.91 M</td><td class="num bad">+3.6%</td><td class="spark-cell"><svg width="140" height="28" viewBox="0 0 140 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L21.428571428571427,20.383668820602942 L40.857142857142854,17.044905304296815 L60.28571428571428,15.18400665024738 L79.71428571428571,12.689055778726654 L99.14285714285714,6.831869070007514 L118.57142857142856,3.989606756024628 L138,2 L138,28 L2,28 Z" fill="#cf222e" opacity="0.12"/><path d="M2,26 L21.428571428571427,20.383668820602942 L40.857142857142854,17.044905304296815 L60.28571428571428,15.18400665024738 L79.71428571428571,12.689055778726654 L99.14285714285714,6.831869070007514 L118.57142857142856,3.989606756024628 L138,2" fill="none" stroke="#cf222e" stroke-width="1.4"/><circle cx="138" cy="2" r="2" fill="#cf222e"/></svg></td></tr>
+<tr><td class="code-cell">unauthorized_client</td><td><span class="tag tag-bad">▲ 60d regression</span></td><td class="num">3.37 M</td><td class="num">3.17 M</td><td class="num bad">+6.3%</td><td class="spark-cell"><svg width="140" height="28" viewBox="0 0 140 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L21.428571428571427,21.189291211268483 L40.857142857142854,23.68350616439421 L60.28571428571428,19.3902520172261 L79.71428571428571,17.614458730430187 L99.14285714285714,8.793961536667652 L118.57142857142856,9.488838792929215 L138,2 L138,28 L2,28 Z" fill="#cf222e" opacity="0.12"/><path d="M2,26 L21.428571428571427,21.189291211268483 L40.857142857142854,23.68350616439421 L60.28571428571428,19.3902520172261 L79.71428571428571,17.614458730430187 L99.14285714285714,8.793961536667652 L118.57142857142856,9.488838792929215 L138,2" fill="none" stroke="#cf222e" stroke-width="1.4"/><circle cx="138" cy="2" r="2" fill="#cf222e"/></svg></td></tr>
+<tr><td class="code-cell">unknown_crypto_error</td><td><span class="tag tag-bad">▲ 60d regression</span></td><td class="num">78.4 k</td><td class="num">76.3 k</td><td class="num bad">+2.8%</td><td class="spark-cell"><svg width="140" height="28" viewBox="0 0 140 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,12.844218264065592 L21.428571428571427,20.60277070964094 L40.857142857142854,26 L60.28571428571428,25.522193949674865 L79.71428571428571,19.8676844783715 L99.14285714285714,11.079445858071812 L118.57142857142856,3.202714164546226 L138,2 L138,28 L2,28 Z" fill="#cf222e" opacity="0.12"/><path d="M2,12.844218264065592 L21.428571428571427,20.60277070964094 L40.857142857142854,26 L60.28571428571428,25.522193949674865 L79.71428571428571,19.8676844783715 L99.14285714285714,11.079445858071812 L118.57142857142856,3.202714164546226 L138,2" fill="none" stroke="#cf222e" stroke-width="1.4"/><circle cx="138" cy="2" r="2" fill="#cf222e"/></svg></td></tr>
+<tr><td class="code-cell">null_pointer_error</td><td><span class="tag tag-bad">▲ 60d regression</span></td><td class="num">70.7 k</td><td class="num">67.3 k</td><td class="num bad">+5.1%</td><td class="spark-cell"><svg width="140" height="28" viewBox="0 0 140 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L21.428571428571427,21.782943057115702 L40.857142857142854,19.458221722975892 L60.28571428571428,17.252743454592586 L79.71428571428571,14.458308130994556 L99.14285714285714,2 L118.57142857142856,6.484576168668454 L138,2.9218007431089603 L138,28 L2,28 Z" fill="#cf222e" opacity="0.12"/><path d="M2,26 L21.428571428571427,21.782943057115702 L40.857142857142854,19.458221722975892 L60.28571428571428,17.252743454592586 L79.71428571428571,14.458308130994556 L99.14285714285714,2 L118.57142857142856,6.484576168668454 L138,2.9218007431089603" fill="none" stroke="#cf222e" stroke-width="1.4"/><circle cx="138" cy="2.9218007431089603" r="2" fill="#cf222e"/></svg></td></tr>
+<tr><td class="code-cell">Code:-6</td><td><span class="tag tag-muted">⚪ Flat</span></td><td class="num">86.4 k</td><td class="num">92.6 k</td><td class="num muted">-6.6%</td><td class="spark-cell"><svg width="140" height="28" viewBox="0 0 140 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L21.428571428571427,24.449077654725272 L40.857142857142854,25.830176570290774 L60.28571428571428,25.017788675146868 L79.71428571428571,25.0122595402261 L99.14285714285714,3.0351330448090295 L118.57142857142856,2 L138,4.430449735885073 L138,28 L2,28 Z" fill="#0969da" opacity="0.12"/><path d="M2,26 L21.428571428571427,24.449077654725272 L40.857142857142854,25.830176570290774 L60.28571428571428,25.017788675146868 L79.71428571428571,25.0122595402261 L99.14285714285714,3.0351330448090295 L118.57142857142856,2 L138,4.430449735885073" fill="none" stroke="#0969da" stroke-width="1.4"/><circle cx="138" cy="4.430449735885073" r="2" fill="#0969da"/></svg></td></tr>
+<tr><td class="code-cell">timed_out_execution</td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">▼ Win</span></td><td class="num">53.40 M</td><td class="num">80.63 M</td><td class="num good">-33.8%</td><td class="spark-cell"><svg width="140" height="28" viewBox="0 0 140 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L21.428571428571427,25.528917259912554 L40.857142857142854,22.86811849024978 L60.28571428571428,20.067936711023833 L79.71428571428571,13.167810711621335 L99.14285714285714,2 L118.57142857142856,13.962359714679643 L138,19.186934955198492 L138,28 L2,28 Z" fill="#1a7f37" opacity="0.12"/><path d="M2,26 L21.428571428571427,25.528917259912554 L40.857142857142854,22.86811849024978 L60.28571428571428,20.067936711023833 L79.71428571428571,13.167810711621335 L99.14285714285714,2 L118.57142857142856,13.962359714679643 L138,19.186934955198492" fill="none" stroke="#1a7f37" stroke-width="1.4"/><circle cx="138" cy="19.186934955198492" r="2" fill="#1a7f37"/></svg></td></tr>
+<tr><td class="code-cell">unknown_authority</td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">▼ Win</span></td><td class="num">1.45 M</td><td class="num">9.00 M</td><td class="num good">-83.9%</td><td class="spark-cell"><svg width="140" height="28" viewBox="0 0 140 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L21.428571428571427,25.9999479454561 L40.857142857142854,25.99996764177001 L60.28571428571428,25.33638194365043 L79.71428571428571,11.586519561385366 L99.14285714285714,2 L118.57142857142856,19.66698228641905 L138,24.983948061054704 L138,28 L2,28 Z" fill="#1a7f37" opacity="0.12"/><path d="M2,26 L21.428571428571427,25.9999479454561 L40.857142857142854,25.99996764177001 L60.28571428571428,25.33638194365043 L79.71428571428571,11.586519561385366 L99.14285714285714,2 L118.57142857142856,19.66698228641905 L138,24.983948061054704" fill="none" stroke="#1a7f37" stroke-width="1.4"/><circle cx="138" cy="24.983948061054704" r="2" fill="#1a7f37"/></svg></td></tr>
+<tr><td class="code-cell">429</td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">▼ Win</span></td><td class="num">2.5 k</td><td class="num">143.9 k</td><td class="num good">-98.3%</td><td class="spark-cell"><svg width="140" height="28" viewBox="0 0 140 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L21.428571428571427,25.543803291327453 L40.857142857142854,23.002120180261215 L60.28571428571428,2 L79.71428571428571,23.690049838003542 L99.14285714285714,24.35132580103347 L118.57142857142856,10.1533872403697 L138,25.724211357190715 L138,28 L2,28 Z" fill="#1a7f37" opacity="0.12"/><path d="M2,26 L21.428571428571427,25.543803291327453 L40.857142857142854,23.002120180261215 L60.28571428571428,2 L79.71428571428571,23.690049838003542 L99.14285714285714,24.35132580103347 L118.57142857142856,10.1533872403697 L138,25.724211357190715" fill="none" stroke="#1a7f37" stroke-width="1.4"/><circle cx="138" cy="25.724211357190715" r="2" fill="#1a7f37"/></svg></td></tr>
+<tr><td class="code-cell">io_error</td><td><span class="tag tag-muted">⚪ Flat</span></td><td class="num">458.49 M</td><td class="num">439.68 M</td><td class="num muted">+4.3%</td><td class="spark-cell"></td></tr>
+<tr><td class="code-cell">no_account_found</td><td><span class="tag tag-muted">⚪ Flat</span></td><td class="num">305.05 M</td><td class="num">311.77 M</td><td class="num muted">-2.2%</td><td class="spark-cell"></td></tr>
+<tr><td class="code-cell">invalid_grant</td><td><span class="tag tag-muted">⚪ Flat</span></td><td class="num">144.07 M</td><td class="num">140.76 M</td><td class="num muted">+2.4%</td><td class="spark-cell"></td></tr>
+<tr><td class="code-cell">device_network_not_available_doze_mode</td><td><span class="tag tag-muted">⚪ Flat</span></td><td class="num">6.31 M</td><td class="num">6.28 M</td><td class="num muted">+0.5%</td><td class="spark-cell"></td></tr>
+<tr><td class="code-cell">interaction_required</td><td><span class="tag tag-muted">⚪ Flat</span></td><td class="num">5.23 M</td><td class="num">5.12 M</td><td class="num muted">+2.1%</td><td class="spark-cell"></td></tr>
+<tr><td class="code-cell">User cancelled</td><td><span class="tag tag-muted">⚪ Flat</span></td><td class="num">3.19 M</td><td class="num">3.08 M</td><td class="num muted">+3.5%</td><td class="spark-cell"></td></tr>
+<tr><td class="code-cell">auth_cancelled_by_sdk</td><td><span class="tag tag-muted">⚪ Flat</span></td><td class="num">1.46 M</td><td class="num">1.42 M</td><td class="num muted">+2.9%</td><td class="spark-cell"></td></tr>
+<tr><td class="code-cell">invalid_resource</td><td><span class="tag tag-warn">⚠ Watch</span></td><td class="num">1.31 M</td><td class="num">1.05 M</td><td class="num bad">+24.4%</td><td class="spark-cell"></td></tr>
+<tr><td class="code-cell">invalid_request</td><td><span class="tag tag-muted">⚪ Flat</span></td><td class="num">1.28 M</td><td class="num">1.25 M</td><td class="num muted">+2.3%</td><td class="spark-cell"></td></tr>
+<tr><td class="code-cell">authorization_pending</td><td><span class="tag tag-muted">⚪ Flat</span></td><td class="num">175.2 k</td><td class="num">170.0 k</td><td class="num muted">+3.0%</td><td class="spark-cell"></td></tr>
+<tr><td class="code-cell">expired_token</td><td><span class="tag tag-muted">⚪ Flat</span></td><td class="num">111.0 k</td><td class="num">111.9 k</td><td class="num muted">-0.7%</td><td class="spark-cell"></td></tr>
+<tr><td class="code-cell">Failed to parse JWT</td><td><span class="tag tag-warn">⚠ Watch</span></td><td class="num">3.5 k</td><td class="num">895</td><td class="num bad">+288.0%</td><td class="spark-cell"></td></tr></tbody></table></div>
+
+<!-- ================ ERROR TYPES TABLE ================ -->
+<h2 id="error-types">Error types — WoW with stable denominator</h2>
+<div class="table-card"><table>
+<thead><tr><th>Error type</th><th class="num">Devices now</th><th class="num">Devices prior</th><th class="num">Δ devices %</th></tr></thead>
+<tbody><tr><td class="code-cell">ClientException</td><td class="num">536.81 M</td><td class="num">552.79 M</td><td class="num good">-2.9%</td></tr>
+<tr><td class="code-cell">UiRequiredException</td><td class="num">474.82 M</td><td class="num">477.28 M</td><td class="num good">-0.5%</td></tr>
+<tr><td class="code-cell">ServiceException</td><td class="num">3.88 M</td><td class="num">3.73 M</td><td class="num bad">+4.0%</td></tr>
+<tr><td class="code-cell">IntuneAppProtectionPolicyRequiredException</td><td class="num">3.22 M</td><td class="num">3.03 M</td><td class="num bad">+6.2%</td></tr>
+<tr><td class="code-cell">UserCancelException</td><td class="num">3.20 M</td><td class="num">3.09 M</td><td class="num bad">+3.5%</td></tr>
+<tr><td class="code-cell">ArgumentException</td><td class="num">190.4 k</td><td class="num">464.2 k</td><td class="num good">-59.0%</td></tr>
+<tr><td class="code-cell">CreateCredentialCancellationException</td><td class="num">136.9 k</td><td class="num">141.1 k</td><td class="num good">-2.9%</td></tr>
+<tr><td class="code-cell">GetCredentialCancellationException</td><td class="num">116.1 k</td><td class="num">115.5 k</td><td class="num bad">+0.5%</td></tr>
+<tr><td class="code-cell">BrokerCommunicationException</td><td class="num">73.0 k</td><td class="num">70.4 k</td><td class="num bad">+3.7%</td></tr>
+<tr><td class="code-cell">DeviceRegistrationRequiredException</td><td class="num">64.5 k</td><td class="num">59.8 k</td><td class="num bad">+8.0%</td></tr>
+<tr><td class="code-cell">CreatePublicKeyCredentialDomException</td><td class="num">38.1 k</td><td class="num">42.4 k</td><td class="num good">-10.3%</td></tr>
+<tr><td class="code-cell">JobCancellationException</td><td class="num">32.8 k</td><td class="num">31.9 k</td><td class="num bad">+2.8%</td></tr>
+<tr><td class="code-cell">UnknownHostException</td><td class="num">19.6 k</td><td class="num">20.4 k</td><td class="num good">-4.0%</td></tr>
+<tr><td class="code-cell">NullPointerException</td><td class="num">12.2 k</td><td class="num">11.9 k</td><td class="num bad">+2.3%</td></tr>
+<tr><td class="code-cell">JsonSyntaxException</td><td class="num">6.1 k</td><td class="num">7.0 k</td><td class="num good">-12.5%</td></tr>
+<tr><td class="code-cell">SocketException</td><td class="num">1.5 k</td><td class="num">1.6 k</td><td class="num good">-7.8%</td></tr>
+<tr><td class="code-cell">CreateCredentialUnknownException</td><td class="num">969</td><td class="num">1.2 k</td><td class="num good">-19.0%</td></tr>
+<tr><td class="code-cell">TimeoutCancellationException</td><td class="num">916</td><td class="num">1.5 k</td><td class="num good">-37.2%</td></tr></tbody></table></div>
+
+<!-- ================ TRAFFIC ANALYSIS ================ -->
+<h2 id="traffic">📊 Traffic analysis</h2>
+
+<div class="glossary">
+  Total auth requests/devices, top calling apps, top spans, requests-per-device, sampling-change check.
+</div>
+
+<div class="kpi-grid">
+  <div class="kpi"><div class="label">Total broker requests (BrokerAdoptionStats)</div><div class="value">12.79 B</div><div class="delta delta-down">−1.1% WoW · 60d −24%</div></div>
+  <div class="kpi"><div class="label">Total broker devices (BrokerAdoptionStats)</div><div class="value">1.24 B</div><div class="delta delta-up">−18.6% WoW · ⚠ denominator artifact (see top callout)</div></div>
+  <div class="kpi"><div class="label">Auth-only requests (Silent + Interactive)</div><div class="value">10.59 B</div><div class="delta delta-down">+2.4% WoW · 60d +1.0%</div></div>
+  <div class="kpi"><div class="label">Auth-only devices</div><div class="value">1.54 B</div><div class="delta delta-flat">−1.2% WoW (real fleet flat)</div></div>
+  <div class="kpi"><div class="label">Requests / device (silent)</div><div class="value">6.92</div><div class="delta delta-up">+3.6% WoW (more requests per dev)</div></div>
+  <div class="kpi"><div class="label">Sampling change indicator</div><div class="value">⚪ Stable</div><div class="delta delta-flat">All-spans dropped &gt;20%, but auth-only &lt;5% — confirms <code>OnUpgradeReceiver</code> taper, not sampling change</div></div>
+</div>
+
+<h3>Top calling apps</h3>
+<div class="table-card"><table>
+<thead><tr><th>Calling app</th><th class="num">Requests now</th><th class="num">Requests prior</th><th class="num">Δ requests %</th><th class="num">Devices now</th><th class="num">Devices prior</th><th class="num">Δ devices %</th></tr></thead>
+<tbody><tr><td class="code-cell">com.microsoft.office.outlook</td><td class="num">3.24 B</td><td class="num">3.18 B</td><td class="num delta-up">+2.1%</td><td class="num">458.26 M</td><td class="num">454.87 M</td><td class="num delta-up">+0.7%</td></tr>
+<tr><td class="code-cell">com.microsoft.appmanager</td><td class="num">2.64 B</td><td class="num">2.56 B</td><td class="num delta-up">+2.9%</td><td class="num">282.92 M</td><td class="num">284.00 M</td><td class="num delta-down">-0.4%</td></tr>
+<tr><td class="code-cell">com.microsoft.teams</td><td class="num">1.79 B</td><td class="num">1.72 B</td><td class="num delta-up">+3.9%</td><td class="num">236.82 M</td><td class="num">234.55 M</td><td class="num delta-up">+1.0%</td></tr>
+<tr><td class="code-cell">com.microsoft.skydrive</td><td class="num">691.12 M</td><td class="num">691.85 M</td><td class="num delta-down">-0.1%</td><td class="num">200.50 M</td><td class="num">199.29 M</td><td class="num delta-up">+0.6%</td></tr>
+<tr><td class="code-cell">com.microsoft.skype.teams.ipphone</td><td class="num">599.97 M</td><td class="num">597.66 M</td><td class="num delta-up">+0.4%</td><td class="num">9.03 M</td><td class="num">9.28 M</td><td class="num delta-down">-2.7%</td></tr>
+<tr><td class="code-cell">com.microsoft.office.word</td><td class="num">419.64 M</td><td class="num">400.69 M</td><td class="num delta-up">+4.7%</td><td class="num">63.26 M</td><td class="num">61.29 M</td><td class="num delta-up">+3.2%</td></tr>
+<tr><td class="code-cell">com.microsoft.office.excel</td><td class="num">279.21 M</td><td class="num">264.73 M</td><td class="num delta-up">+5.5%</td><td class="num">44.64 M</td><td class="num">42.86 M</td><td class="num delta-up">+4.2%</td></tr>
+<tr><td class="code-cell">com.microsoft.office.officehubrow</td><td class="num">247.83 M</td><td class="num">233.35 M</td><td class="num delta-up">+6.2%</td><td class="num">38.71 M</td><td class="num">37.31 M</td><td class="num delta-up">+3.8%</td></tr>
+<tr><td class="code-cell">com.microsoft.emmx</td><td class="num">158.68 M</td><td class="num">158.54 M</td><td class="num delta-up">+0.1%</td><td class="num">16.83 M</td><td class="num">17.10 M</td><td class="num delta-down">-1.6%</td></tr>
+<tr><td class="code-cell">com.samsung.android.email.provider</td><td class="num">151.42 M</td><td class="num">178.53 M</td><td class="num delta-down">-15.2%</td><td class="num">4.20 M</td><td class="num">4.16 M</td><td class="num delta-up">+0.9%</td></tr>
+<tr><td class="code-cell">com.microsoft.scmx</td><td class="num">93.59 M</td><td class="num">94.15 M</td><td class="num delta-down">-0.6%</td><td class="num">9.68 M</td><td class="num">9.74 M</td><td class="num delta-down">-0.7%</td></tr>
+<tr><td class="code-cell">com.microsoft.office.powerpoint</td><td class="num">84.03 M</td><td class="num">79.37 M</td><td class="num delta-up">+5.9%</td><td class="num">14.91 M</td><td class="num">14.17 M</td><td class="num delta-up">+5.2%</td></tr>
+<tr><td class="code-cell">com.microsoft.windowsintune.companyportal</td><td class="num">65.18 M</td><td class="num">63.85 M</td><td class="num delta-up">+2.1%</td><td class="num">35.32 M</td><td class="num">34.80 M</td><td class="num delta-up">+1.5%</td></tr>
+<tr><td class="code-cell">com.microsoft.sharepoint</td><td class="num">12.86 M</td><td class="num">12.75 M</td><td class="num delta-up">+0.9%</td><td class="num">5.40 M</td><td class="num">5.39 M</td><td class="num delta-up">+0.1%</td></tr></tbody></table></div>
+
+<h3>Top spans by request volume</h3>
+<div class="table-card"><table>
+<thead><tr><th>Span</th><th class="num">Count now</th><th class="num">Count prior</th><th class="num">Δ %</th><th>Note</th></tr></thead>
+<tbody><tr><td class="code-cell">AcquireTokenSilent</td><td class="num">10.59 B</td><td class="num">10.35 B</td><td class="num delta-up">+2.3%</td><td style="font-size:11.5px;color:#656d76;"></td></tr>
+<tr><td class="code-cell">DeviceRegistrationApi</td><td class="num">598.70 M</td><td class="num">578.30 M</td><td class="num delta-up">+3.5%</td><td style="font-size:11.5px;color:#656d76;"></td></tr>
+<tr><td class="code-cell">AcquireTokenDcfFetchToken</td><td class="num">365.00 M</td><td class="num">364.00 M</td><td class="num delta-up">+0.3%</td><td style="font-size:11.5px;color:#656d76;"></td></tr>
+<tr><td class="code-cell">BrokerOperationRequestDispatcher</td><td class="num">349.10 M</td><td class="num">344.30 M</td><td class="num delta-up">+1.4%</td><td style="font-size:11.5px;color:#656d76;"></td></tr>
+<tr><td class="code-cell">SecretKeyWrapping</td><td class="num">251.00 M</td><td class="num">329.10 M</td><td class="num delta-down">-23.7%</td><td style="font-size:11.5px;color:#656d76;">Downstream of OnUpgradeReceiver drop</td></tr>
+<tr><td class="code-cell">OnUpgradeReceiver</td><td class="num">151.20 M</td><td class="num">438.20 M</td><td class="num delta-down">-65.5%</td><td style="font-size:11.5px;color:#656d76;"><strong>Denominator culprit</strong> — natural taper as 16.0.1 rollout completes; may also be amplified by goAsync() effects</td></tr>
+<tr><td class="code-cell">SecretKeyRetrieval</td><td class="num">113.40 M</td><td class="num">111.50 M</td><td class="num delta-up">+1.7%</td><td style="font-size:11.5px;color:#656d76;"></td></tr>
+<tr><td class="code-cell">WrappedKeyAlgorithmIdentifier</td><td class="num">87.10 M</td><td class="num">134.70 M</td><td class="num delta-down">-35.3%</td><td style="font-size:11.5px;color:#656d76;">Downstream of OnUpgradeReceiver drop</td></tr>
+<tr><td class="code-cell">RefreshTransferToken</td><td class="num">78.80 M</td><td class="num">74.80 M</td><td class="num delta-up">+5.3%</td><td style="font-size:11.5px;color:#656d76;"></td></tr>
+<tr><td class="code-cell">EcsFlightsFetchConfigs</td><td class="num">47.30 M</td><td class="num">47.70 M</td><td class="num delta-down">-0.8%</td><td style="font-size:11.5px;color:#656d76;"></td></tr>
+<tr><td class="code-cell">AcquireAtUsingPrt</td><td class="num">38.80 M</td><td class="num">37.10 M</td><td class="num delta-up">+4.6%</td><td style="font-size:11.5px;color:#656d76;"></td></tr>
+<tr><td class="code-cell">Passthrough</td><td class="num">23.90 M</td><td class="num">24.20 M</td><td class="num delta-down">-1.2%</td><td style="font-size:11.5px;color:#656d76;"></td></tr>
+<tr><td class="code-cell">RefreshPrt</td><td class="num">20.70 M</td><td class="num">19.40 M</td><td class="num delta-up">+6.7%</td><td style="font-size:11.5px;color:#656d76;"></td></tr>
+<tr><td class="code-cell">AccountStorageWithBackup</td><td class="num">11.40 M</td><td class="num">11.60 M</td><td class="num delta-down">-1.7%</td><td style="font-size:11.5px;color:#656d76;"></td></tr>
+<tr><td class="code-cell">AcquireTokenInteractive</td><td class="num">10.30 M</td><td class="num">9.60 M</td><td class="num delta-up">+7.3%</td><td style="font-size:11.5px;color:#656d76;">Up — matches +7.5% interactive auth growth</td></tr></tbody></table></div>
+
+<!-- ================ LATENCY ================ -->
+<h2 id="latency">Latency <span class="count">— ms, p50/p95/p99 by hot span</span></h2>
+<div class="table-card"><table>
+<thead><tr><th>Span</th><th class="num">p50 now</th><th class="num">p50 prior</th><th class="num">p95 now</th><th class="num">p95 prior</th><th class="num">p99 now</th><th class="num">p99 prior</th><th class="num">Δ p99 %</th></tr></thead>
+<tbody><tr><td class="code-cell">AcquireTokenSilent</td><td class="num">1185</td><td class="num muted">1204</td><td class="num">5916</td><td class="num muted">5961</td><td class="num">13758</td><td class="num muted">13712</td><td class="num delta-up">+0.3%</td></tr>
+<tr><td class="code-cell">GetAccounts</td><td class="num">452</td><td class="num muted">448</td><td class="num">4490</td><td class="num muted">4401</td><td class="num">11801</td><td class="num muted">11784</td><td class="num delta-up">+0.1%</td></tr>
+<tr><td class="code-cell">ProcessWebsiteRequest</td><td class="num">16</td><td class="num muted">16</td><td class="num">76</td><td class="num muted">77</td><td class="num">199</td><td class="num muted">201</td><td class="num delta-down">-1.0%</td></tr>
+<tr><td class="code-cell">RemoveAccount</td><td class="num">17</td><td class="num muted">19</td><td class="num">259</td><td class="num muted">285</td><td class="num">1674</td><td class="num muted">1945</td><td class="num delta-down">-13.9%</td></tr></tbody></table></div>
+<p style="font-size:12px;color:#656d76;margin-top:8px;">Source: <code>PerfStats</code> (TDigest-merged). All hot spans flat or slightly improving except <code>GetAccounts</code> p95 (+2%, within noise).</p>
+
+<!-- ================ BROKER ADOPTION ================ -->
+<h2 id="adoption">Broker version adoption <span class="count">— request share by version</span></h2>
+<div class="table-card"><table>
+<thead><tr><th>Broker version</th><th class="num">Req share now</th><th class="num">Req share prior</th><th class="num">Δ share pp</th><th class="num">Δ rel %</th></tr></thead>
+<tbody><tr><td class="code-cell">16.0.1</td><td class="num">70.77%</td><td class="num muted">55.34%</td><td class="num delta-up">+15.43</td><td class="num delta-up">+26.5%</td></tr>
+<tr><td class="code-cell">15.1.0</td><td class="num">10.12%</td><td class="num muted">10.78%</td><td class="num delta-down">-0.66</td><td class="num delta-down">-7.1%</td></tr>
+<tr><td class="code-cell">14.2.0</td><td class="num">8.80%</td><td class="num muted">9.42%</td><td class="num delta-down">-0.62</td><td class="num delta-down">-7.6%</td></tr>
+<tr><td class="code-cell">15.0.0</td><td class="num">2.27%</td><td class="num muted">4.03%</td><td class="num delta-down">-1.75</td><td class="num delta-down">-44.1%</td></tr>
+<tr><td class="code-cell">16.0.0</td><td class="num">1.39%</td><td class="num muted">13.35%</td><td class="num delta-down">-11.96</td><td class="num delta-down">-89.7%</td></tr>
+<tr><td class="code-cell">14.1.1</td><td class="num">1.06%</td><td class="num muted">1.24%</td><td class="num delta-down">-0.18</td><td class="num delta-down">-15.6%</td></tr>
+<tr><td class="code-cell">14.0.2</td><td class="num">0.99%</td><td class="num muted">1.09%</td><td class="num delta-down">-0.10</td><td class="num delta-down">-9.9%</td></tr>
+<tr><td class="code-cell">13.3.2</td><td class="num">0.63%</td><td class="num muted">0.67%</td><td class="num delta-down">-0.04</td><td class="num delta-down">-6.9%</td></tr>
+<tr><td class="code-cell">13.9.1</td><td class="num">0.42%</td><td class="num muted">0.45%</td><td class="num delta-down">-0.03</td><td class="num delta-down">-6.9%</td></tr>
+<tr><td class="code-cell">13.20.0</td><td class="num">0.40%</td><td class="num muted">0.41%</td><td class="num delta-down">-0.01</td><td class="num delta-down">-3.8%</td></tr></tbody></table></div>
+<p style="font-size:12px;color:#656d76;margin-top:8px;"><strong>16.0.1 rollout effectively complete.</strong> Reached 70.8% req share (from 55.4%); 16.0.0 down to 1.4% from 13.4%. Older 15.x and 14.x versions all decline 5-15% as natural attrition. No version regressed in error rate during this rollout — see Spike Attribution cards for per-error broker_version concentration.</p>
+
+<!-- ================ APPENDIX ================ -->
+<h2 id="appendix">Appendix</h2>
+
+<details>
+  <summary>Queries used (Kusto KQL)</summary>
+  <div>
+    <p><strong>Cluster:</strong> <code>https://idsharedeus2.kusto.windows.net</code> · <strong>Database:</strong> <code>ad-accounts-android-otel</code></p>
+    <p><strong>1. Reliability:</strong></p>
+    <pre style="background:#f6f8fa;padding:10px;border-radius:6px;font-size:11.5px;overflow-x:auto;">let all = SilentAuthStatsAllRequests | where EventInfo_Time &gt; ago(70d)
+  | summarize allReq=sum(countRequests), allDev=sum(countDevices) by week=startofweek(EventInfo_Time);
+let ok = SilentAuthStatsRequestsWithoutExpectedError | where EventInfo_Time &gt; ago(70d)
+  | summarize okReq=sum(countRequests), okDev=sum(countDevices) by week=startofweek(EventInfo_Time);
+all | join kind=inner ok on week
+  | project week, reqRel=round(100.0*okReq/allReq,3), devRel=round(100.0*okDev/allDev,3)
+  | order by week asc</pre>
+    <p><strong>2. 60-day error trend (bucketed in post-processing):</strong></p>
+    <pre style="background:#f6f8fa;padding:10px;border-radius:6px;font-size:11.5px;overflow-x:auto;">ErrorStats | where EventInfo_Time &gt; ago(70d)
+  | where isnotempty(error_code) and error_code != 'success'
+  | summarize errs=sum(countOverall), devs=sum(countDevices)
+       by week=startofweek(EventInfo_Time), error_code
+  | order by error_code asc, week asc</pre>
+    <p><strong>3. Spike attribution (per error, per dimension):</strong></p>
+    <pre style="background:#f6f8fa;padding:10px;border-radius:6px;font-size:11.5px;overflow-x:auto;">let codes = dynamic(['no_tokens_found','unauthorized_client','Code:-6',
+                     'unknown_crypto_error','null_pointer_error','timed_out_execution']);
+ErrorStats | where EventInfo_Time &gt; ago(14d) | where error_code in (codes)
+  | extend wk=startofweek(EventInfo_Time)
+  | summarize devs=sum(countDevices) by wk, error_code,
+       calling_package_name, active_broker_package_name, broker_version, span_name
+  | order by error_code asc, wk asc, devices desc</pre>
+    <p><strong>4. Latency (TDigest-merged):</strong></p>
+    <pre style="background:#f6f8fa;padding:10px;border-radius:6px;font-size:11.5px;overflow-x:auto;">PerfStats | where EventInfo_Time &gt; ago(21d)
+  | where span_name in ('AcquireTokenSilent','GetAccounts','ProcessWebsiteRequest','RemoveAccount')
+  | where span_status == 'OK'
+  | summarize merged=tdigest_merge(responseTimeTDigest), reqs=sum(countRequests)
+       by week=startofweek(EventInfo_Time), span_name
+  | extend p50=percentile_tdigest(merged,50),
+           p95=percentile_tdigest(merged,95),
+           p99=percentile_tdigest(merged,99)</pre>
+  </div>
+</details>
+
+<details>
+  <summary>Methodology &amp; caveats</summary>
+  <div>
+    <ul>
+      <li><strong>Reporting window:</strong> Sun May 3 → Sat May 9, 2026 (Kusto <code>startofweek('2026-05-03')</code>). Baseline: prior week of Apr 26 → May 2.</li>
+      <li><strong>60-day window:</strong> 8 complete weeks Mar 8 → May 3 (the partial Mar 1 start week is excluded for trend deltas).</li>
+      <li><strong>Auth-only denominator:</strong> all reliability % use <code>countRequests</code> from <code>SilentAuthStatsAllRequests</code> ∪ <code>InteractiveAuthStatsAllRequests</code>. The all-spans denominator from <code>BrokerAdoptionStats</code> is sensitive to receiver/<code>goAsync()</code> taper effects.</li>
+      <li><strong>Concentration thresholds for attribution cards:</strong> &gt;80% = strong (red bar); 60-80% = medium; &lt;60% = broad/cross-cutting.</li>
+      <li><strong>PR confidence rating:</strong> high = trajectory + flight rollout date both line up; medium = code path matches but no flight gate evidence; low = candidate from grep, needs verification; none = no broker PR identified.</li>
+      <li><strong>Account type / shared-device-mode</strong> dimensions are not yet sliced this week — <code>ErrorStats</code> doesn't carry them, requires a targeted <code>android_spans</code> query that we'll add next pass.</li>
+    </ul>
+  </div>
+</details>
+
+</div>
+
+<script>
+  // Sparkline color palette (mirror of assets/templates/template-readme.md):
+  //   #cf222e red    bad / regression       data-color on .trend in regression rows
+  //   #1a7f37 green  good / improvement     reliability KPI sparks; recovery trends
+  //   #0969da blue   neutral                traffic-volume KPI sparks
+  //   #0550ae blueD  latency                p95 KPI sparks
+  //   #9a6700 amber  watch / spike          ephemeral peak-then-recover trends
+  //   #656d76 grey   flat                   long-tail rows
+  function makeSparkline(values, opts = {}) {
+    const w = opts.w || 100, h = opts.h || 24, color = opts.color || "#0969da", pad = 2;
+    if (!values || values.length === 0) return "";
+    const min = Math.min(...values), max = Math.max(...values);
+    const range = max - min || 1;
+    const step = (w - pad * 2) / (values.length - 1);
+    const points = values.map((v, i) => [pad + i * step, h - pad - ((v - min) / range) * (h - pad * 2)]);
+    const linePath = "M" + points.map(p => p.join(",")).join(" L");
+    const fillPath = linePath + ` L${points[points.length-1][0]},${h} L${points[0][0]},${h} Z`;
+    const last = points[points.length-1];
+    return `<svg class="sparkline" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
+      <path d="${fillPath}" fill="${color}" opacity="0.12"/>
+      <path d="${linePath}" fill="none" stroke="${color}" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="${last[0]}" cy="${last[1]}" r="2" fill="${color}"/>
+    </svg>`;
+  }
+
+  document.querySelectorAll(".spark[data-spark]").forEach(el => {
+    el.innerHTML = makeSparkline(JSON.parse(el.dataset.spark), { w: 180, h: 28, color: el.dataset.color });
+  });
+  document.querySelectorAll(".trend[data-trend]").forEach(el => {
+    const w = parseInt(el.dataset.w) || 220;
+    const h = parseInt(el.dataset.h) || 32;
+    el.innerHTML = makeSparkline(JSON.parse(el.dataset.trend), { w: w, h: h, color: el.dataset.color });
+  });
+
+  function makeMultiLineChart(svgId, series) {
+    const svg = document.getElementById(svgId);
+    if (!svg) return;
+    const w = 600, h = 220, padL = 36, padR = 12, padT = 10, padB = 26;
+    const dates = series[0].values.map((_, i) => i);
+    const allV = series.flatMap(s => s.values);
+    const max = Math.max(...allV);
+    const niceMax = Math.ceil(max / 10) * 10;
+    const xStep = (w - padL - padR) / (dates.length - 1);
+    const yScale = v => h - padB - (v / niceMax) * (h - padT - padB);
+    let html = "";
+    for (let i = 0; i <= 4; i++) {
+      const v = (niceMax / 4) * i;
+      const y = yScale(v);
+      html += `<line x1="${padL}" y1="${y}" x2="${w-padR}" y2="${y}" stroke="#eef0f2" stroke-width="1"/>`;
+      html += `<text x="${padL-6}" y="${y+3}" text-anchor="end" font-size="10" fill="#656d76">${v.toFixed(0)}%</text>`;
+    }
+    const labels = ["Apr 25", "May 1", "May 7"];
+    [0, Math.floor(dates.length/2), dates.length-1].forEach((i, idx) => {
+      const x = padL + i * xStep;
+      html += `<text x="${x}" y="${h-8}" text-anchor="middle" font-size="10" fill="#656d76">${labels[idx]}</text>`;
+    });
+    series.forEach(s => {
+      const pts = s.values.map((v, i) => `${padL + i*xStep},${yScale(v)}`).join(" L");
+      html += `<path d="M${pts}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+      const last = s.values.length - 1;
+      html += `<circle cx="${padL + last*xStep}" cy="${yScale(s.values[last])}" r="3" fill="${s.color}"/>`;
+    });
+    svg.innerHTML = html;
+  }
+
+  makeMultiLineChart("chart-appmanager", [
+    { name: "16.0.0", color: "#cf222e", values: [54.2,52.8,48.1,42.5,38.6,33.2,28.8,22.4,17.8,11.3,7.2,5.0,3.85] },
+    { name: "16.0.1", color: "#1a7f37", values: [12.0,15.5,22.5,30.8,37.3,43.5,48.2,55.8,60.5,63.9,65.7,66.4,66.82] },
+    { name: "15.0.0", color: "#656d76", values: [2.96,3.20,2.24,2.09,2.36,2.23,2.19,2.08,1.95,1.77,1.59,1.31,1.20] }
+  ]);
+  makeMultiLineChart("chart-authenticator", [
+    { name: "16.0.1", color: "#1a7f37", values: [9.5,10.5,12.1,13.3,14.0,14.5,15.2,15.8,16.2,16.5,16.7,16.85,16.92] },
+    { name: "15.1.0", color: "#9a6700", values: [4.05,3.49,2.30,1.73,1.91,1.79,1.53,1.34,1.25,1.39,1.20,0.99,0.91] },
+    { name: "16.0.0", color: "#cf222e", values: [0.92,0.56,0.30,0.19,0.18,0.16,0.14,0.11,0.10,0.11,0.10,0.08,0.07] },
+    { name: "15.0.0", color: "#656d76", values: [0.30,0.35,0.32,0.33,0.42,0.44,0.40,0.38,0.37,0.44,0.43,0.38,0.37] }
+  ]);
+</script>
+
+</body>
+</html>

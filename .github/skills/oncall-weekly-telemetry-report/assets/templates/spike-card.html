@@ -1,0 +1,154 @@
+<!--
+  Spike Attribution card template — copy verbatim per regressing error_code (or
+  error_type) and replace every {{TOKEN}}. The 7 dim blocks are MANDATORY (per
+  SKILL.md). For type cards, also include the 8th-dim sub-code decomposition.
+
+  CSS classes used here are defined in assets/templates/report-template.html. Do not
+  restyle per week.
+
+  Severity:
+    .attr-header.urgent  -> red,    use for confirmed broker WoW regressions
+    .attr-header.watch   -> yellow, use for slow-burn / 60d-only / environmental
+    (no class)           -> neutral, use for recovering or wins
+
+  Origin tag (apply on Originator row + in attr-tags):
+    .origin-broker     red       — code lives in broker/ or common/
+    .origin-android    orange    — Android system / Credential Manager / OEM
+    .origin-thirdparty blue      — eSTS / Nimbus / okhttp / 3p library
+    .origin-env        gray      — tenant policy, network, environmental
+
+  PR confidence (REQUIRED — pick one honestly):
+    .pr-conf-high   red       evidence directly ties this PR to the regression
+    .pr-conf-medium yellow    PR touches the affected code path; timing fits
+    .pr-conf-low    blue      possible but no direct evidence
+    .pr-conf-none   gray      no broker PR can fix this (eSTS/Android/env)
+-->
+
+<div class="attr-card" id="card-{{ERROR_ID}}">
+  <div class="attr-header {{HEADER_CLASS}}">
+    <div class="attr-name">{{ERROR_NAME}} &nbsp;
+      <span class="tag tag-bad">{{WOW_BADGE}}</span>
+      <span class="tag tag-bad">{{D60_BADGE}}</span>
+    </div>
+    <div class="attr-tags">
+      <span class="tag tag-warn">{{TAG_1}}</span>
+      <span class="tag tag-info">{{TAG_2}}</span>
+    </div>
+  </div>
+  <div class="attr-body">
+    <div class="attr-verdict bad">
+      <strong>Verdict:</strong> {{VERDICT_PARAGRAPH}}
+    </div>
+
+    <!-- 7 mandatory dim blocks — fill from agg.js output for each dim query.
+         Canonical .dim-row markup (use EXACTLY this shape so CSS targets it).
+         Two variants are supported; pick one and stick with it within a card:
+
+         Variant A — classed spans (matches the original template, recommended):
+           <div class="dim-row">
+             <div class="dim-bar-track"><div class="dim-bar-fill dominant" style="width:99.0%"></div></div>
+             <span class="dim-name">AcquireTokenSilent</span>
+             <span class="dim-pct">99.0%</span>
+           </div>
+
+         Variant B — unclassed spans (terser; CSS selectors cover both forms):
+           <div class="dim-row">
+             <div class="dim-bar-track"><div class="dim-bar-fill" style="width:36.6%"></div></div>
+             <span>com.microsoft.windowsintune.companyportal</span>
+             <span>36.6%</span>
+           </div>
+
+         "Not sliced / N/A" placeholder rows — one span only, will truncate too:
+           <div class="dim-row">
+             <span style="color:#656d76;font-size:11.5px;">Not sliced — OEM not suspected.</span>
+           </div>
+
+         Long names (calling apps, broker versions with annotations) MUST truncate
+         to an ellipsis — never wrap, never bleed out of the .dim card. The CSS
+         in assets/templates/report-template.html handles this for both variants. -->
+    <div class="attr-dims">
+      <div class="dim"><div class="dim-label">Span</div>
+        {{SPAN_DIM_ROWS}}
+      </div>
+      <div class="dim"><div class="dim-label">Calling app</div>
+        {{APP_DIM_ROWS}}
+      </div>
+      <div class="dim"><div class="dim-label">Active broker pkg</div>
+        {{ACTIVE_BROKER_DIM_ROWS}}
+      </div>
+      <div class="dim"><div class="dim-label">Broker version</div>
+        {{BROKER_VERSION_DIM_ROWS}}
+      </div>
+      <div class="dim"><div class="dim-label">Account type</div>
+        {{ACCOUNT_TYPE_DIM_ROWS}}
+      </div>
+      <div class="dim"><div class="dim-label">Shared device</div>
+        {{SHARED_DEVICE_DIM_ROWS}}
+      </div>
+      <div class="dim"><div class="dim-label">Client SKU</div>
+        {{CLIENT_SKU_DIM_ROWS}}
+      </div>
+      <div class="dim"><div class="dim-label">OS version</div>
+        {{OS_VERSION_DIM_ROWS}}
+      </div>
+    </div>
+
+    <!-- Code attribution — every field below is REQUIRED. -->
+    <div class="code-attr">
+      <div class="code-attr-title">Code attribution</div>
+      <div class="origin-row"><div class="origin-label">Originator</div>
+        <div class="origin-value"><span class="origin-tag {{ORIGIN_CLASS}}">{{ORIGIN_LABEL}}</span> {{ORIGIN_DESCRIPTION}}</div>
+      </div>
+      <div class="origin-row"><div class="origin-label">Top throw site</div>
+        <div class="origin-value"><span class="stack">{{THROW_SITE_FILE_LINE}}</span> {{THROW_SITE_NOTES}}</div>
+      </div>
+      <div class="origin-row"><div class="origin-label">Wrapper</div>
+        <div class="origin-value">{{WRAPPER_CLASS_AND_METHOD}}</div>
+      </div>
+      <div class="origin-row"><div class="origin-label">Caller hot-spots</div>
+        <div class="origin-value">{{CALLER_BREAKDOWN}}</div>
+      </div>
+      <div class="origin-row"><div class="origin-label">Underlying cause</div>
+        <div class="origin-value">{{ROOT_CAUSE}}</div>
+      </div>
+      <div class="origin-row"><div class="origin-label">Top error_messages</div>
+        <div class="origin-value">
+          <ol style="margin:0;padding-left:18px;font-size:11.5px;">
+            <li><code>{{MSG_1}}</code> &mdash; {{MSG_1_DEVICES}}</li>
+            <li><code>{{MSG_2}}</code> &mdash; {{MSG_2_DEVICES}}</li>
+            <li><code>{{MSG_3}}</code> &mdash; {{MSG_3_DEVICES}}</li>
+          </ol>
+        </div>
+      </div>
+      <div class="origin-row"><div class="origin-label">Likely PRs</div>
+        <div class="origin-value"><div class="pr-list">
+          <div class="pr-card">
+            <div class="pr-conf {{PR_1_CONF_CLASS}}">{{PR_1_CONF_LABEL}}</div>
+            <div class="pr-body">
+              <a class="pr-id" href="{{PR_1_URL}}" target="_blank" rel="noopener">{{PR_1_ID}}</a> &nbsp;
+              <span class="pr-title">{{PR_1_TITLE}}</span>
+              <div class="pr-meta">{{PR_1_DATE}} &middot; {{PR_1_AUTHOR}} &middot; sha {{PR_1_SHA}}</div>
+              <div class="pr-why">{{PR_1_WHY}}</div>
+            </div>
+          </div>
+          <!-- Repeat .pr-card for PR 2 / PR 3. For environmental errors use:
+          <div class="pr-card">
+            <div class="pr-conf pr-conf-none">&#9898; None &mdash; not in scope</div>
+            <div class="pr-body">
+              <span class="pr-title">No broker/common PR matches. Tagged <strong>{{ENV_TAG}}</strong>.</span>
+            </div>
+          </div>
+          -->
+        </div></div>
+      </div>
+      <div class="origin-row"><div class="origin-label">Next step</div>
+        <div class="origin-value">📝 <strong>{{OWNER_TEAM}}:</strong> {{NEXT_ACTION}}</div>
+      </div>
+    </div>
+
+    <!-- Traffic Attribution check — REQUIRED on every card. -->
+    <div class="attr-verdict" style="border-left-color:#1a7f37; background:#dafbe1;">
+      <strong>Traffic Attribution check:</strong> {{TRAFFIC_VERDICT}}
+    </div>
+  </div>
+</div>

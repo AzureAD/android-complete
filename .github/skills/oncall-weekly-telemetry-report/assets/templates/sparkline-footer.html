@@ -1,0 +1,42 @@
+<!-- Sparkline footer JS — paste verbatim immediately before </body>.
+
+     This file uses string concatenation (no JS template literals) so it
+     survives PowerShell here-string composition. PowerShell treats backticks
+     as escape characters and would silently mangle ${...} expressions.
+
+     COLOR PALETTE for `data-color` attributes (matches the rest of the report
+     CSS — keep these in sync with assets/templates/template-readme.md):
+
+       #cf222e  red          — bad / regression           (data-trend in regression rows)
+       #1a7f37  green        — good / improvement / win   (reliability KPIs, recovery sparklines)
+       #0969da  blue         — neutral / informational    (traffic-volume KPIs)
+       #0550ae  darker blue  — latency                    (p95 KPI sparklines)
+       #9a6700  amber        — watch / spike              (ephemeral peak-then-recover trends)
+       #656d76  grey         — flat / no-movement         (long-tail rows)
+-->
+<script>
+function makeSparkline(values, opts) {
+  opts = opts || {};
+  var w = opts.w || 100, h = opts.h || 24, color = opts.color || "#0969da", pad = 2;
+  if (!values || values.length === 0) return "";
+  var min = Math.min.apply(null, values), max = Math.max.apply(null, values);
+  var range = max - min || 1;
+  var step = (w - pad * 2) / (values.length - 1);
+  var points = values.map(function (v, i) { return [pad + i * step, h - pad - ((v - min) / range) * (h - pad * 2)]; });
+  var linePath = "M" + points.map(function (p) { return p.join(","); }).join(" L");
+  var lastPt = points[points.length - 1];
+  var fillPath = linePath + " L" + lastPt[0] + "," + h + " L" + points[0][0] + "," + h + " Z";
+  return '<svg class="sparkline" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" xmlns="http://www.w3.org/2000/svg">'
+    + '<path d="' + fillPath + '" fill="' + color + '" opacity="0.12"/>'
+    + '<path d="' + linePath + '" fill="none" stroke="' + color + '" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>'
+    + '<circle cx="' + lastPt[0] + '" cy="' + lastPt[1] + '" r="2" fill="' + color + '"/></svg>';
+}
+document.querySelectorAll(".spark[data-spark]").forEach(function (el) {
+  el.innerHTML = makeSparkline(JSON.parse(el.dataset.spark), { w: 180, h: 28, color: el.dataset.color });
+});
+document.querySelectorAll(".trend[data-trend]").forEach(function (el) {
+  var w = parseInt(el.dataset.w) || 120;
+  var h = parseInt(el.dataset.h) || 24;
+  el.innerHTML = makeSparkline(JSON.parse(el.dataset.trend), { w: w, h: h, color: el.dataset.color });
+});
+</script>

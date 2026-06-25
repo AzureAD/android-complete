@@ -1,0 +1,13 @@
+// p50 / p95 / p99 latency on the hot spans. Always merge TDigest before percentile.
+materialized_view('PerfStatsUpdated')
+| where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+| where span_name in ('AcquireTokenSilent','AcquireTokenInteractive',
+                      'GetAccounts','RemoveAccount','ProcessWebsiteRequest')
+| where span_status == 'OK'
+| summarize p50 = percentile_tdigest(tdigest_merge(responseTimeTDigest), 50, typeof(long)),
+            p95 = percentile_tdigest(tdigest_merge(responseTimeTDigest), 95, typeof(long)),
+            p99 = percentile_tdigest(tdigest_merge(responseTimeTDigest), 99, typeof(long)),
+            reqs = sum(countRequests)
+        by week = startofweek(EventInfo_Time), span_name
+| where week < datetime(<END>)
+| order by span_name asc, week asc

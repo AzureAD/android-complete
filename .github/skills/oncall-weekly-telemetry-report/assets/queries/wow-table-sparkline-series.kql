@@ -1,0 +1,34 @@
+// 8-week per-error sparkline series for the WoW tables (data-trend arrays).
+//
+// MANDATORY (per SKILL.md Output checklist, v8): the `data-trend` arrays in
+// the Section 6 (error_code) and Section 7 (error_type) WoW tables must come
+// from real data — not be fabricated from a "roughly increasing" pattern.
+// Past failure mode: small-volume codes (Broker request cancelled,
+// kdfv2_key_derivation_error, TimeoutCancellationException) were filtered out
+// by the 60d bucketer's peak-floor, then their sparklines were invented inline
+// in the WoW table HTML. That's data dishonesty even when the array looks plausible.
+//
+// This query returns 8 weekly buckets for every code/type that appears in
+// either the WoW movers list OR the 60d trend output. Run it twice — once with
+// the codes filter, once with the types filter — and feed the result into the
+// WoW-table generator so every row has a real-data trend.
+//
+// Inputs:
+//   <START>  Sunday of week-0 (e.g. 2026-04-12 for an 8-week window ending 2026-06-06)
+//   <END>    Sunday after the reporting week, EXCLUSIVE (e.g. 2026-06-07)
+//   <CODES>  Dynamic list of error_code values whose sparklines we need.
+//            Build this from the union of:
+//              * wow-movers-codes.json results
+//              * 60d-codes regression/spike/improvement bucket members
+//            For the type variant, swap to `unified_error_type in (<TYPES>)`
+//            and the MergeUiRequiredExceptions extension.
+
+let codes = dynamic([<CODES>]);
+materialized_view('ErrorStatsMetrics')
+| where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+| where error_code in (codes)
+| summarize devs = dcount_hll(hll_merge(countDevicesHll)),
+            errs = sum(countOverall)
+     by week = startofweek(EventInfo_Time), error_code
+| where week < datetime(<END>)
+| order by error_code asc, week asc
