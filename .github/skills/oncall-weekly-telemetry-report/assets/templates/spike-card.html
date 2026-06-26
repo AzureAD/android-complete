@@ -63,9 +63,17 @@
              <span style="color:#656d76;font-size:11.5px;">Not sliced — OEM not suspected.</span>
            </div>
 
-         Long names (calling apps, broker versions with annotations) MUST truncate
-         to an ellipsis — never wrap, never bleed out of the .dim card. The CSS
-         in assets/templates/report-template.html handles this for both variants. -->
+         Long NAMES (calling apps, broker versions) MUST truncate to an ellipsis —
+         never wrap, never bleed out of the .dim card. The CSS in
+         assets/templates/report-template.html handles this for both variants.
+
+         dim-pct RULE (do not violate): the percent cell is a SHORT bare percentage
+         only — "36.6%", "100%", "+759%". NEVER put WoW deltas or annotations like
+         "50.7% (+646%)" or "75% (+111%)" in the pct cell. The pct column is narrow;
+         a long value starves the flex name column and collapses real labels to a
+         couple of characters ("16.1.0" -> "1..."). Put per-slice movement in the
+         card prose / tags / Caller hot-spots instead. The validator fails (9c) on
+         any dim-pct that contains "(" or exceeds 9 characters. -->
     <div class="attr-dims">
       <div class="dim"><div class="dim-label">Span</div>
         {{SPAN_DIM_ROWS}}
