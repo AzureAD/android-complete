@@ -1,0 +1,56 @@
+// Broker — HEADLINE health for ONE host app, compared by that app's version.
+// Answers "is THIS app's rollout moving the broker?". The Broker runs inside a host
+// app (Authenticator / Company Portal / Link to Windows); the canonical Broker section
+// pools every host and keys on broker_version, which can be dominated by a host you are
+// NOT shipping. Here we pin active_broker_package_name to one host and compare by
+// AppInfo_Version — which, for a given host package, IS that host app's version
+// (e.g. for com.azure.authenticator, AppInfo_Version == the Authenticator AppVersion).
+//
+// Cluster:  https://idsharedeus2.kusto.windows.net
+// Database: ad-accounts-android-otel
+//
+// Placeholders:
+//   <PACKAGE>  active broker package, e.g. "com.azure.authenticator"
+//              (others: "com.microsoft.windowsintune.companyportal", "com.microsoft.appmanager").
+//   <FIRST>    rolling-out host-app version (AppInfo_Version), e.g. "6.2606.3817".
+//   <SECOND>   previous/baseline host-app version, e.g. "6.2605.3042".
+//   <START><END>  datetime bounds (yyyy-mm-dd).
+//
+// Both MVs expose active_broker_package_name + AppInfo_Version + countDevicesHll.
+// HLL gotcha: merge the sketch, then dcount_hll — NEVER sum countDevices.
+let pkg = "<PACKAGE>";
+let vers = dynamic(["<FIRST>", "<SECOND>"]);
+let s = datetime(<START>); let e = datetime(<END>);
+let total = materialized_view('BrokerAdoptionStatsUpdated')
+  | where EventInfo_Time between (s .. e) | where active_broker_package_name == pkg | where AppInfo_Version in (vers)
+  | summarize totalDev = dcount_hll(hll_merge(countDevicesHll)) by AppInfo_Version;
+let errored = materialized_view('ErrorStatsMetrics')
+  | where EventInfo_Time between (s .. e) | where active_broker_package_name == pkg | where AppInfo_Version in (vers)
+  | where isnotempty(error_code) and tolower(error_code) != "success"
+  | summarize errDev = dcount_hll(hll_merge(countDevicesHll)) by AppInfo_Version;
+let s_all = materialized_view('SilentAuthStatsAllRequestsMetrics')
+  | where EventInfo_Time between (s .. e) | where active_broker_package_name == pkg | where AppInfo_Version in (vers)
+  | summarize sAllReq = sum(countRequests), sAllDev = dcount_hll(hll_merge(countDevicesHll)) by AppInfo_Version;
+let s_ok = materialized_view('SilentAuthStatsRequestsWithoutExpectedErrorMetrics')
+  | where EventInfo_Time between (s .. e) | where active_broker_package_name == pkg | where AppInfo_Version in (vers)
+  | summarize sOkReq = sum(countRequests), sOkDev = dcount_hll(hll_merge(countDevicesHll)) by AppInfo_Version;
+let i_all = materialized_view('InteractiveAuthStatsAllRequestsMetrics')
+  | where EventInfo_Time between (s .. e) | where active_broker_package_name == pkg | where AppInfo_Version in (vers)
+  | summarize iAllReq = sum(countRequests), iAllDev = dcount_hll(hll_merge(countDevicesHll)) by AppInfo_Version;
+let i_ok = materialized_view('InteractiveAuthStatsRequestsWithoutExpectedErrorMetrics')
+  | where EventInfo_Time between (s .. e) | where active_broker_package_name == pkg | where AppInfo_Version in (vers)
+  | summarize iOkReq = sum(countRequests), iOkDev = dcount_hll(hll_merge(countDevicesHll)) by AppInfo_Version;
+total
+| join kind=leftouter errored on AppInfo_Version
+| join kind=leftouter s_all on AppInfo_Version | join kind=leftouter s_ok on AppInfo_Version
+| join kind=leftouter i_all on AppInfo_Version | join kind=leftouter i_ok on AppInfo_Version
+| extend errDev = coalesce(errDev, 0)
+| project AppInfo_Version,
+    TotalDevices = totalDev,
+    DevicesWithError = errDev,
+    DeviceErrorRate = round(100.0 * errDev / totalDev, 3),
+    SilentReqReliability = round(100.0 * sOkReq / sAllReq, 3),
+    SilentDevReliability = round(100.0 * sOkDev / sAllDev, 3),
+    InteractiveReqReliability = round(100.0 * iOkReq / iAllReq, 3),
+    InteractiveDevReliability = round(100.0 * iOkDev / iAllDev, 3)
+| order by AppInfo_Version desc

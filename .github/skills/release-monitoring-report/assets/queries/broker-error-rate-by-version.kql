@@ -1,0 +1,27 @@
+// Broker — HEADLINE device error rate per version. For each version: total distinct
+// devices (from BrokerAdoptionStatsUpdated) and distinct devices that hit ANY non-success
+// error (from ErrorStatsMetrics), giving an overall device error rate. This is the single
+// "is the new release worse?" headline number for the Broker section.
+//
+// Cluster:  https://idsharedeus2.kusto.windows.net
+// Database: ad-accounts-android-otel
+//
+// Placeholders: <VERSIONS> dynamic list e.g. dynamic(['16.1.0','16.0.1']);
+//               <START>, <END>.
+// Both MVs expose broker_version + countDevicesHll. Merge HLL; never sum countDevices.
+let vers = dynamic(<VERSIONS>);
+let total = materialized_view('BrokerAdoptionStatsUpdated')
+  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | where broker_version in (vers)
+  | summarize totalDev = dcount_hll(hll_merge(countDevicesHll)) by broker_version;
+let errored = materialized_view('ErrorStatsMetrics')
+  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | where broker_version in (vers)
+  | where isnotempty(error_code) and tolower(error_code) != "success"
+  | summarize errDev = dcount_hll(hll_merge(countDevicesHll)) by broker_version;
+total
+| join kind=leftouter errored on broker_version
+| extend errDev = coalesce(errDev, 0)
+| extend DeviceErrorRate = round(100.0 * errDev / totalDev, 3)
+| project broker_version, TotalDevices = totalDev, DevicesWithError = errDev, DeviceErrorRate
+| order by broker_version desc
