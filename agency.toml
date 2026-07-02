@@ -7,12 +7,3 @@ es-chat        = { type = "es-chat" }
 workiq         = { type = "workiq" }
 m365-user      = { type = "m365-user" }
 s360-breeze    = { type = "s360-breeze" }
-# Kusto — android_spans / android_metrics telemetry + eSTS correlation (used by incident/aria investigator + kusto-analyst skills).
-kusto          = { type = "kusto" }
-# ICM — read/triage IcM tickets (used by incident-investigator + aria-alert-investigator skills).
-icm            = { type = "icm" }
-
-[mcps.servers]
-# Android DRI Search — MSAL/Broker/Authenticator TSGs + past ICM incidents via Azure AI Search.
-# Custom remote MCP (Entra-authenticated); Agency handles the auth/proxy automatically.
-android-dri-search = { type = "http", url = "https://android-dri-mcp.proudbeach-7e7ce77d.eastus.azurecontainerapps.io/mcp", tools = ["*"] }
