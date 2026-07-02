@@ -60,3 +60,7 @@ ehthumbs_vista.db
 out/
 
 plugins/buildsystem/bin
+
+# Python bytecode caches (build artifacts, never version these)
+__pycache__/
+*.py[cod]
