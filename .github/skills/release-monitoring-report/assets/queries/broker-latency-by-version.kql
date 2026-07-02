@@ -1,0 +1,22 @@
+// Broker — LATENCY percentiles per version. P50/P75/P90/P95/P99 of responseTime for the
+// rolling-out version vs the previous version. Optionally narrow to a single span_name
+// (e.g. an AcquireToken span) to compare a hot path; leave the span filter line out to
+// compare overall broker latency.
+//
+// Cluster:  https://idsharedeus2.kusto.windows.net
+// Database: ad-accounts-android-otel
+//
+// Placeholders: <VERSIONS> dynamic list e.g. dynamic(['16.1.0','16.0.1']);
+//               <START>, <END>. Optional: replace <SPAN_FILTER> or delete that line.
+// NEVER sum percentiles — always tdigest_merge then percentiles_array_tdigest.
+let vers = dynamic(<VERSIONS>);
+materialized_view('PerfStatsUpdated')
+| where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+| where broker_version in (vers)
+// | where span_name == "<SPAN_FILTER>"   // optional: focus a single span/hot path
+| summarize LatencyValues = percentiles_array_tdigest(tdigest_merge(responseTimeTDigest), 50, 75, 90, 95, 99)
+       by broker_version
+| extend LatencyLabels = dynamic(['P50','P75','P90','P95','P99'])
+| mv-expand LatencyLabels to typeof(string), LatencyMs = LatencyValues to typeof(long)
+| project broker_version, Percentile = LatencyLabels, LatencyMs
+| order by broker_version desc, Percentile asc

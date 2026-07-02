@@ -1,0 +1,38 @@
+// Authenticator — per-version SUCCESS RATE for a single-MV scenario.
+// Generalizes the dashboard's outcome-distribution tiles (Passkey WebAuthN / InApp /
+// Authentication, MFA QR + No-QR, PSI Registration + PN-Registration, MSA NGC + SA
+// Registration). Produces ONE aggregate row per version over the whole window — the
+// headline number the release report compares (first_target vs second_target).
+//
+// Cluster:  https://idsharedeus2.eastus2.kusto.windows.net
+// Database: d496be22d62a46b0a3cf67ea2e736fd8
+//
+// Placeholders:
+//   <SCENARIO_MV>  one of the scenario materialized views (see queries/README.md catalog).
+//                  For "No QR" MFA pass:  union Entra_MFA_Registration_Manual_Flow_MV_V1, Entra_MFA_Registration_Non_QR_Code_Flow_MV_V1
+//   <FIRST>        rolling-out version  (e.g. 6.2606.3817)
+//   <SECOND>       previous/baseline version (e.g. 6.2605.3042)
+//   <START><END>   datetime bounds (yyyy-mm-dd)
+//   <DCOUNT>       true  -> distinct-device counts (…DCount columns)
+//                  false -> raw event counts (default the dashboard uses for success rate)
+//
+// NOTE: registration MVs expose exactly Initiated / Succeeded / Failed (+ …DCount twins)
+// and TotalUniqueDevices — there is no Cancelled / PartiallySucceeded column, so
+// SuccessRate = Succeeded / Initiated and any shortfall is bucketed as "Unknown"
+// (notification shown but no terminal result in-window). See queries/README.md catalog.
+let dc = <DCOUNT>;
+<SCENARIO_MV>
+| where EventDate >= startofday(datetime(<START>)) and EventDate <= endofday(datetime(<END>))
+| where AppVersion in ("<FIRST>", "<SECOND>")
+| summarize
+    Initiated = iff(dc, sum(InitiatedDCount), sum(Initiated)),
+    Succeeded = iff(dc, sum(SucceededDCount), sum(Succeeded)),
+    Failed    = iff(dc, sum(FailedDCount),    sum(Failed))
+    by AppVersion
+| extend Unknown = case(Initiated > (Succeeded + Failed), Initiated - (Succeeded + Failed), 0)
+| extend
+    SuccessRate = round(case(Initiated > 0, todouble(Succeeded) / todouble(Initiated) * 100, 0.0), 2),
+    FailureRate = round(case(Initiated > 0, todouble(Failed)    / todouble(Initiated) * 100, 0.0), 2),
+    UnknownRate = round(case(Initiated > 0, todouble(Unknown)   / todouble(Initiated) * 100, 0.0), 2)
+| project AppVersion, Initiated, Succeeded, Failed, SuccessRate, FailureRate, UnknownRate
+| order by AppVersion desc

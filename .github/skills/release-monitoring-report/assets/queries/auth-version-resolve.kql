@@ -1,0 +1,22 @@
+// Authenticator — resolve candidate release versions (most-used first).
+// Use this to AUTO-DETECT the rolling-out version + previous release when the user
+// did not supply explicit versions. Derived from the dashboard's proven
+// "Top 15 App Version User DCount" tile (union * over AppInfo_Version), so the
+// columns are guaranteed to exist.
+//
+// Cluster:  https://idsharedeus2.eastus2.kusto.windows.net
+// Database: d496be22d62a46b0a3cf67ea2e736fd8   (Authenticator OTEL)
+//
+// Authenticator versions are "6.YYMM.BUILD". Newest YYMM = current train; prior YYMM
+// = previous release. A staged rollout / hotfix can put two BUILDs in the same YYMM —
+// keep both. Pick the two newest YYMM groups for first_target / second_target.
+union *
+| where EventInfo_Time >= startofday(datetime(<START>)) and EventInfo_Time <= endofday(datetime(<END>))
+| where isnotempty(AppInfo_Version)
+| extend parts = split(AppInfo_Version, ".")
+| where array_length(parts) == 3 and isnotnull(toint(parts[1]))
+| summarize Devices = dcount(DeviceInfo_Id) by AppInfo_Version,
+            yymm = toint(parts[1]), build = toint(parts[2])
+| where Devices > 100        // drop dev/test/noise builds
+| order by yymm desc, build desc
+| take 12

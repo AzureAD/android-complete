@@ -1,0 +1,41 @@
+// Authenticator — per-version PUSH-NOTIFICATION COMPLETION RATE (two-table join).
+// Generalizes the dashboard's "PN + CheckForAuth Success Rate" / "Push Notification
+// Completion Rate" tiles for Entra MFA, Entra PSI, and MSA NGC/SA.
+// Completion = (results where FinalResult in Approved|Denied) / (notifications initiated).
+//
+// Cluster:  https://idsharedeus2.eastus2.kusto.windows.net
+// Database: d496be22d62a46b0a3cf67ea2e736fd8
+//
+// Per-family table + column wiring (set <INIT_MV> <INIT_COL> <RESULT_MV> <RESULT_COL> <FAMILY_FILTER>):
+//   Entra MFA : <INIT_MV>=Entra_MFA_Push_Notification_And_CheckForAuth_MV_V1
+//               <INIT_COL>=NotificationInitiated  <RESULT_MV>=Entra_MFA_Push_Notification_And_CheckForAuth_Results_MV_V1
+//               <RESULT_COL>=RequestTimeInitiated  <FAMILY_FILTER>=(no filter)
+//   Entra PSI : <INIT_MV>=Entra_PSI_Push_Notification_And_CheckForAuth_MV_V1
+//               <INIT_COL>=NotificationInitiated  <RESULT_MV>=Entra_PSI_Push_Notification_And_CheckForAuth_Results_MV_V1
+//               <RESULT_COL>=RequestTimeInitiated  <FAMILY_FILTER>=(no filter)
+//   MSA NGC   : <INIT_MV>=Entra_MSA_Push_Notification_And_CheckForAuth_MV_V1
+//               <INIT_COL>=NotificationReceivedInitiated  <RESULT_MV>=Entra_MSA_Push_Notification_And_CheckForAuth_Results_MV_V1
+//               <RESULT_COL>=SessionTimeInitiated  <FAMILY_FILTER>=| where IsNGC == "true"
+//   MSA SA    : same as NGC but <FAMILY_FILTER>=| where IsNGC == "false"
+//
+// Placeholders: <FIRST> <SECOND> <START> <END> <DCOUNT> and the DCount column names
+// follow the "<col>DCount" convention.
+let dc = <DCOUNT>;
+let initiated = <INIT_MV>
+    <FAMILY_FILTER>
+    | where EventDate >= startofday(datetime(<START>)) and EventDate <= endofday(datetime(<END>))
+    | where AppVersion in ("<FIRST>", "<SECOND>")
+    | summarize NotificationInitiated = iff(dc, sum(<INIT_COL>DCount), sum(<INIT_COL>)) by AppVersion;
+let completed = <RESULT_MV>
+    <FAMILY_FILTER>
+    | where EventDate >= startofday(datetime(<START>)) and EventDate <= endofday(datetime(<END>))
+    | where AppVersion in ("<FIRST>", "<SECOND>")
+    | where FinalResult == "Approved" or FinalResult == "Denied"
+    | summarize Completed = iff(dc, sum(<RESULT_COL>DCount), sum(<RESULT_COL>)) by AppVersion;
+initiated
+| join kind=inner completed on AppVersion
+| extend
+    CompletionRate = round(todouble(Completed) / todouble(NotificationInitiated) * 100.0, 2),
+    DropRate       = round((todouble(NotificationInitiated) - todouble(Completed)) / todouble(NotificationInitiated) * 100.0, 2)
+| project AppVersion, NotificationInitiated, Completed, CompletionRate, DropRate
+| order by AppVersion desc
