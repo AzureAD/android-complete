@@ -21,7 +21,10 @@
     4. Azure OpenAI resource with text-embedding-3-large + gpt-4o deployments
     5. Azure AI Search service provisioned
     6. Storage Account with a blob container for TSG chunks
-    7. ADO wiki repo access granted to the Managed Identity
+
+  Note: the Managed Identity is created BY this script (Step 3), so identity-dependent
+  grants (ADO wiki, Kusto, Key Vault access) are done AFTER it runs — see "Next steps"
+  printed at the end.
 
 .PARAMETER ConfigFile
   Path to your filled-in config JSON (based on config_template.json).

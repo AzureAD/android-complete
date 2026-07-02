@@ -6,7 +6,7 @@ Deploy a lightweight MCP server that plugs into GitHub Copilot (VS Code) to sear
 
 - **MCP Server (Hosted on a container app)** — 4 tools (`search_tsgs`, `get_incident_details`, `batch_search`, `post_icm_discussion`)
 - **TSG Indexer (Container job)** — Clones your ADO wiki, chunks markdown, generates embeddings, writes to blob → Azure search service/Azure AI search pull indexer
-- **ICM Indexer (Container job)** — Queries Kusto for your team's incidents, GPT-4o summarizes, embeds, pushes to search index
+- **ICM Indexer (Container job)** — Queries Kusto for your team's incidents, GPT-4.1 summarizes, embeds, pushes to search index
 - **Zero-secret auth** — Managed Identity for backend, Entra ID OAuth for users, OBO for restricted CRI enforcement
 
 ## Prerequisites (Manual Setup)
@@ -18,7 +18,7 @@ Complete these before running `deploy.ps1`:
 | 1 | **Entra ID App Registration** | See [App Registration Setup](#app-registration-setup) below |
 | 2 | **Security Group** | Create SG in Azure AD, add team members, note the Object ID |
 | 3 | **Azure AI Search** | Provision service (**Basic tier** is sufficient — a typical deployment uses ~2 GB storage and ~400 MB vector index, well within Basic's limits). Note endpoint URL |
-| 4 | **Azure OpenAI** | Provision resource + deploy two models: `text-embedding-3-large` (3072 dims) + `gpt-4o`. Note endpoint URL and deployment names |
+| 4 | **Azure OpenAI** | Provision resource + deploy two models: `text-embedding-3-large` (3072 dims) + `gpt-4.1`. Note endpoint URL and deployment names |
 | 5 | **Storage Account** | Create or use existing. Need a blob container for TSG chunks. Note the container URL |
 | 6 | **Key Vault + ICM Certificate** | See [ICM Certificate Setup](#icm-certificate-setup) below |
 | 7 | **ADO Wiki Access** | Grant the MSI (created by deploy script) access to clone your wiki. See [ADO Wiki Access](#ado-wiki-access) below |

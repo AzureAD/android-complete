@@ -1,21 +1,14 @@
 # New Team Onboarding — Presentation Script
 
-A running speaker script for walking a brand-new team through deploying the DRI MCP server.
-Sections are added as needed. Each section is written to be spoken aloud or pasted into slide notes.
-
-> Companion diagrams live in [onboarding-diagrams.md](onboarding-diagrams.md).
-
----
-
 ## Section: ICM Certificate Setup
 
 Another important thing we need to discuss is the **ICM certificate setup**. This certificate is needed for **two reasons**.
 
 **Job one — talking to the IcM service to get data.**
-The IcM team exposes a few APIs. There's one particular API that **DRICopilot** was already using, and we simply reused that same approach. It's the **`/api/cert/` endpoint**, and it requires **TLS client-certificate–based authentication**. So that alone is the reason we have to set up a certificate — without it, the server can't pull incident data from IcM at all.
+The IcM team exposes a few APIs. There's one particular API that **DRICopilot** was already using, and we simply reused that same approach. It's the **`/api/cert/` endpoint**, and it requires **TLS client-certificate–based authentication**. So, yeah — without it, the server can't pull incident data from IcM at all.
 
 **Job two — the On-Behalf-Of (OBO) user flow.**
-For **restricted incidents**, we don't want the server to see everything — we want it to see only what the **asking user** is allowed to see. To do that, the server performs an **on-behalf-of token exchange**: it takes the user's sign-in token and asks **Entra ID** for a downstream token **in that user's name**.
+For **restricted incidents**, we don't want the server to access everything — we want it to access only what the **user** is allowed to see. To do that, the server performs an **on-behalf-of token exchange**: it takes the user's sign-in token and asks **Entra ID** for a downstream token **in that user's name**.
 
 To make that request, the server has to **prove it's the legitimate app** — and it does that by **signing the request with the same certificate**.
 
@@ -25,8 +18,6 @@ To make that request, the server has to **prove it's the legitimate app** — an
 - The **private key** is stored in **Key Vault** — and the **MCP server** fetches that private key from Key Vault (via its managed identity) to **sign** the request.
 
 So it's **one certificate doing two jobs**: TLS client auth to reach IcM, and the signing credential that lets the server act on behalf of the user — all with **no secrets** stored anywhere.
-
-> **One-line wrap-up:** Same cert, two uses — it's how we *reach* IcM, and it's how we safely act *as the user* for restricted incidents. Public half verifies in the App Registration, private half signs from Key Vault.
 
 ---
 
@@ -39,8 +30,8 @@ Think of it in two halves: first it lays down the **plumbing and identity**, the
 **First, the foundation:**
 
 - It creates a **Resource Group** to hold everything for our team.
-- It creates a **Container Registry** — that's where the Docker images for the server and the indexers will live. It's the Basic tier, and admin access is disabled because we authenticate with identity, not keys.
-- It creates a **user-assigned Managed Identity**. This is the single most important piece — it's the identity the server and jobs run as, and it's how they talk to everything else *without secrets*.
+- It creates a **Container Registry** — that's where the Docker images for the server and the indexers will live. 
+- It creates a **user-assigned Managed Identity**.  it's the identity the server and jobs run as, and it's how they talk to everything else *without secrets*.
 - It then assigns the **RBAC roles** that identity needs: pull images from the registry, read from Azure AI Search, and call Azure OpenAI. (One role — write access to our storage blob — is granted manually if our storage lives in a different resource group.)
 
 **Next, the search backend:**
@@ -63,3 +54,19 @@ When it finishes, it prints our **server URL** and the exact snippet to drop int
 - **Finally flip OBO on.**
 
 ---
+
+Container — A lightweight, isolated package that bundles an app with all its dependencies so it runs the same everywhere. It shares the host OS kernel rather than carrying its own, making it far lighter than a VM.
+
+Docker image — The immutable, versioned artifact produced by a build (e.g. android-dri-mcp:v31). It's the "blueprint" that gets stored, shipped, and run as a container — like an APK.
+
+Docker — The tool that builds an image from a Dockerfile recipe. It packages your code + dependencies into the shippable image — like Gradle building an APK.
+
+Dockerfile — The build recipe listing the base image, dependencies, and entrypoint. Equivalent to build.gradle for an APK.
+
+Container registry (ACR) — A private store for built images (androiddrimcp.azurecr.io). Like a Play Store / artifact repo that hosts and distributes your images.
+
+Container App — An always-on containerized service that runs continuously and responds to requests (your android-dri-mcp server). Like a foreground Android Service.
+
+Container App Job — A containerized task that runs on a schedule (or trigger), does its work, then exits (your indexers). Like Android WorkManager / a cron job.
+
+Azure Container Apps (ACA) — The managed platform that stores, runs, scales, and restarts your containers. It's the host environment — like the phone + OS + Play Store combined.
