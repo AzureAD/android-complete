@@ -28,7 +28,11 @@ from android_dri_mcp_server.client import (
 )
 from android_dri_mcp_server.icm_odata import icm_client, _format_live_incident
 from android_dri_mcp_server.user_context import get_user_context
-from android_dri_mcp_server.restricted_cri_checker import check_incident_access
+from android_dri_mcp_server.restricted_cri_checker import (
+    AccessResult,
+    check_incident_access,
+    normalize_incident_id,
+)
 
 _POST_DISCUSSION_MAX_LENGTH = 8000  # IcM discussion entries have a size limit
 
@@ -238,6 +242,13 @@ async def get_incident(incident_id: str) -> str:
     """
     logger.info("get_incident: id=%s", incident_id)
 
+    # Normalize the incident ID up front — callers sometimes pass a sub-resource
+    # suffix (e.g. "12345/attachments") which breaks both the Kusto restriction
+    # check and the live/index lookups. Keep the original only if no digits exist.
+    normalized_id = normalize_incident_id(incident_id)
+    if normalized_id:
+        incident_id = normalized_id
+
     # Check restricted CRI access (if OBO is enabled)
     user_ctx = get_user_context()
     kusto_token = user_ctx.kusto_token if user_ctx else None
@@ -248,10 +259,21 @@ async def get_incident(incident_id: str) -> str:
     else:
         logger.info("get_incident: OBO not available (disabled or no token), skipping restricted CRI check")
 
-    if not check_incident_access(incident_id, user_email, kusto_token):
+    access = check_incident_access(incident_id, user_email, kusto_token)
+    if access == AccessResult.DENIED:
         logger.warning("get_incident: ACCESS DENIED for user=%s on incident=%s", user_email, incident_id)
         return json.dumps({
             "error": f"Access denied: incident {incident_id} is restricted and you are not authorized to view it."
+        })
+    if access == AccessResult.UNVERIFIED:
+        logger.warning("get_incident: ACCESS UNVERIFIED for user=%s on incident=%s", user_email, incident_id)
+        return json.dumps({
+            "error": (
+                f"Could not verify your access to restricted incident {incident_id}. "
+                "This is a permission/verification issue while checking your access "
+                "(not an authorization denial). If it persists, ensure the DRI service "
+                "identity has IcMDataWarehouse read access, or contact the tool owners."
+            )
         })
 
     # Try live OData first
@@ -362,18 +384,22 @@ async def batch_search(
             # Filter out restricted ICMs the user can't access (if OBO enabled)
             user_ctx = get_user_context()
             if user_ctx and user_ctx.kusto_token:
-                pre_filter_count = len(all_results)
-                all_results = [
-                    r for r in all_results
-                    if check_incident_access(
+                decisions = [
+                    (r, check_incident_access(
                         r.get("ticket_id", ""),
                         user_ctx.email,
                         user_ctx.kusto_token,
-                    )
+                    ))
+                    for r in all_results
                 ]
-                filtered = pre_filter_count - len(all_results)
-                if filtered:
-                    logger.info("batch_search: filtered %d restricted ICMs for user=%s", filtered, user_ctx.email)
+                all_results = [r for r, d in decisions if d == AccessResult.ALLOWED]
+                denied = sum(1 for _, d in decisions if d == AccessResult.DENIED)
+                unverified = sum(1 for _, d in decisions if d == AccessResult.UNVERIFIED)
+                if denied or unverified:
+                    logger.info(
+                        "batch_search: filtered %d restricted ICMs for user=%s (denied=%d, unverified=%d)",
+                        denied + unverified, user_ctx.email, denied, unverified,
+                    )
 
             # Trim summaries
             for r in all_results:

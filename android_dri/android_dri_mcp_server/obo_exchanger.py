@@ -175,6 +175,23 @@ class OBOTokenExchanger:
             logger.error("OBO exchange exception: %s", e, exc_info=True)
             return None
 
+    def get_service_kusto_token(self, scopes: list[str] | None = None) -> Optional[str]:
+        """Acquire a Kusto token using the server's own service identity.
+
+        This is a *fallback* only. OBO (the user's delegated token) is always the
+        preferred path for restricted-CRI checks; the service identity is used
+        solely when a user's OBO Kusto query fails (e.g. the user lacks
+        IcMDataWarehouse read access), so that legitimate owners aren't blocked.
+        """
+        target_scope = (scopes or [KUSTO_SCOPE])[0]
+        try:
+            credential = self._get_credential()
+            token = credential.get_token(target_scope)
+            return token.token
+        except Exception as e:
+            logger.error("Failed to acquire service Kusto token: %s", e)
+            return None
+
 
 # Module-level singleton
 obo_exchanger = OBOTokenExchanger()

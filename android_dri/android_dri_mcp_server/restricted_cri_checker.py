@@ -10,6 +10,8 @@ When OBO is disabled, falls back to allowing access (same as current behavior).
 """
 
 import logging
+import re
+from enum import Enum
 from typing import Optional
 
 from azure.kusto.data import KustoClient, KustoConnectionStringBuilder
@@ -21,19 +23,93 @@ _ICM_CLUSTER = "https://icmcluster.kusto.windows.net"
 _ICM_DATABASE = "IcMDataWarehouse"
 
 
+class AccessResult(str, Enum):
+    """Outcome of an incident access check."""
+
+    ALLOWED = "allowed"        # OBO disabled, non-restricted, or user authorized
+    DENIED = "denied"          # verified: incident restricted and user not authorized
+    UNVERIFIED = "unverified"  # could not verify access (Kusto/permission failure)
+
+
+def normalize_incident_id(incident_id: str) -> str:
+    """Extract the numeric incident ID.
+
+    Callers may pass a sub-resource suffix (e.g. "12345/attachments") or other
+    decoration. Only the leading path segment's digits identify the incident, so
+    everything else is stripped. Returns "" if no digits are present. Because the
+    result is digits-only, it is also safe to interpolate directly into KQL.
+    """
+    if not incident_id:
+        return ""
+    head = str(incident_id).split("/", 1)[0].strip()
+    return re.sub(r"\D", "", head)
+
+
+def _escape_kql_string(value: str) -> str:
+    """Escape a value for safe use inside a double-quoted KQL string literal."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _is_old_format_id(incident_id: str) -> bool:
     """IDs with <14 digits use the old format and cannot be restricted."""
     normalized = incident_id.lstrip("0") or "0"
     return len(normalized) < 14
 
 
-def _build_kusto_client(kusto_token: str) -> KustoClient:
-    """Build a Kusto client using a pre-acquired Bearer token."""
-    kcsb = KustoConnectionStringBuilder.with_aad_user_token_authentication(
-        connection_string=_ICM_CLUSTER,
-        user_token=kusto_token,
-    )
+def _build_kusto_client(token: str, is_app_token: bool = False) -> KustoClient:
+    """Build a Kusto client from a pre-acquired Bearer token.
+
+    User (OBO) tokens use user-token auth; service-identity tokens use
+    application-token auth.
+    """
+    if is_app_token:
+        kcsb = KustoConnectionStringBuilder.with_aad_application_token_authentication(
+            connection_string=_ICM_CLUSTER,
+            application_token=token,
+        )
+    else:
+        kcsb = KustoConnectionStringBuilder.with_aad_user_token_authentication(
+            connection_string=_ICM_CLUSTER,
+            user_token=token,
+        )
     return KustoClient(kcsb)
+
+
+def _get_service_kusto_token() -> Optional[str]:
+    """Return a Kusto token for the server's service identity, or None.
+
+    Fallback only — see _run_kusto_query.
+    """
+    try:
+        from android_dri_mcp_server.obo_exchanger import obo_exchanger
+        return obo_exchanger.get_service_kusto_token()
+    except Exception as e:
+        logger.error("Failed to obtain service Kusto token for fallback: %s", e)
+        return None
+
+
+def _run_kusto_query(query: str, user_kusto_token: str) -> KustoResponseDataSet:
+    """Execute a query against IcMDataWarehouse.
+
+    OBO (the user's delegated token) is always the primary path. Only if the
+    user's query fails — e.g. the user lacks IcMDataWarehouse access — do we fall
+    back to the server's own service identity, which is granted read access. The
+    access decision is still computed from the real user's email/team membership,
+    so this changes only *which identity runs the lookup*, not *what is checked*.
+    Raises the original error if the fallback is unavailable or also fails.
+    """
+    try:
+        client = _build_kusto_client(user_kusto_token)
+        return client.execute(_ICM_DATABASE, query)
+    except Exception as user_err:
+        service_token = _get_service_kusto_token()
+        if not service_token:
+            raise
+        logger.warning(
+            "OBO Kusto query failed (%s); falling back to service identity", user_err
+        )
+        client = _build_kusto_client(service_token, is_app_token=True)
+        return client.execute(_ICM_DATABASE, query)
 
 
 def is_restricted(incident_id: str, kusto_token: str) -> bool:
@@ -47,7 +123,8 @@ def is_restricted(incident_id: str, kusto_token: str) -> bool:
     Returns:
         True if the incident is restricted, False otherwise.
     """
-    if _is_old_format_id(incident_id):
+    incident_id = normalize_incident_id(incident_id)
+    if not incident_id or _is_old_format_id(incident_id):
         return False
 
     query = f"""
@@ -58,14 +135,9 @@ def is_restricted(incident_id: str, kusto_token: str) -> bool:
         | take 1
     """
 
-    try:
-        client = _build_kusto_client(kusto_token)
-        response: KustoResponseDataSet = client.execute(_ICM_DATABASE, query)
-        return response.primary_results[0].rows_count > 0
-    except Exception as e:
-        logger.error("Failed to check restriction for %s: %s", incident_id, e)
-        # Fail closed — treat as restricted if we can't verify
-        return True
+    # Let query failures propagate — check_incident_access maps them to UNVERIFIED.
+    response = _run_kusto_query(query, kusto_token)
+    return response.primary_results[0].rows_count > 0
 
 
 def user_has_access(incident_id: str, user_email: str, kusto_token: str) -> bool:
@@ -86,11 +158,12 @@ def user_has_access(incident_id: str, user_email: str, kusto_token: str) -> bool
     Returns:
         True if the user has access, False otherwise.
     """
-    if _is_old_format_id(incident_id):
+    incident_id = normalize_incident_id(incident_id)
+    if not incident_id or _is_old_format_id(incident_id):
         return True
 
     query = f"""
-        let myUser = "{user_email}";
+        let myUser = "{_escape_kql_string(user_email)}";
         let myIncidentId = {incident_id};
         let myUserName = tostring(split(myUser, "@")[0]);
         let IncidentMaterialized = materialize(
@@ -135,52 +208,66 @@ def user_has_access(incident_id: str, user_email: str, kusto_token: str) -> bool
         | where EmailAddress == myUser
     """
 
-    try:
-        client = _build_kusto_client(kusto_token)
-        response: KustoResponseDataSet = client.execute(_ICM_DATABASE, query)
-        has_access = response.primary_results[0].rows_count > 0
-        if not has_access:
-            logger.warning(
-                "User %s denied access to restricted incident %s",
-                user_email, incident_id,
-            )
-        return has_access
-    except Exception as e:
-        logger.error("Failed ACL check for %s on %s: %s", user_email, incident_id, e)
-        # Fail closed — deny access if we can't verify
-        return False
+    # Let query failures propagate — check_incident_access maps them to UNVERIFIED.
+    response = _run_kusto_query(query, kusto_token)
+    has_access = response.primary_results[0].rows_count > 0
+    if not has_access:
+        logger.warning(
+            "User %s denied access to restricted incident %s",
+            user_email, incident_id,
+        )
+    return has_access
 
 
 def check_incident_access(
     incident_id: str,
     user_email: Optional[str],
     kusto_token: Optional[str],
-) -> bool:
+) -> AccessResult:
     """
     High-level access check for an incident.
 
-    If OBO is not available (no kusto_token), allows access (backward-compatible).
-    If OBO is available, checks restriction status and user ACL.
+    Returns an AccessResult:
+    - ALLOWED     — OBO not enabled, incident non-restricted, or the user is
+                    authorized.
+    - DENIED      — the incident is restricted and the membership check ran
+                    successfully but the user is not authorized.
+    - UNVERIFIED  — access could not be verified (e.g. the Kusto restriction/ACL
+                    query failed on both the user's OBO token and the service
+                    fallback). Treated as no-access, but distinguished so callers
+                    don't present an infra failure as an authorization denial.
 
     Args:
         incident_id: The incident ID.
         user_email: The user's email from JWT claims.
         kusto_token: OBO-exchanged Kusto token, or None if OBO is disabled.
-
-    Returns:
-        True if access is allowed, False if denied.
     """
     # If OBO is not available, fall back to current behavior (allow all)
     if not kusto_token or not user_email:
-        return True
+        return AccessResult.ALLOWED
 
-    # Old-format IDs cannot be restricted
-    if _is_old_format_id(incident_id):
-        return True
+    # Normalize once up front (strips sub-resource suffixes like "/attachments")
+    incident_id = normalize_incident_id(incident_id)
 
-    # Check if incident is restricted
-    if not is_restricted(incident_id, kusto_token):
-        return True
+    # Non-numeric / old-format IDs cannot be restricted
+    if not incident_id or _is_old_format_id(incident_id):
+        return AccessResult.ALLOWED
 
-    # Incident is restricted — check user access
-    return user_has_access(incident_id, user_email, kusto_token)
+    # Check if the incident is restricted
+    try:
+        restricted = is_restricted(incident_id, kusto_token)
+    except Exception as e:
+        logger.error("Could not verify restriction status for %s: %s", incident_id, e)
+        return AccessResult.UNVERIFIED
+
+    if not restricted:
+        return AccessResult.ALLOWED
+
+    # Incident is restricted — verify the user's access
+    try:
+        authorized = user_has_access(incident_id, user_email, kusto_token)
+    except Exception as e:
+        logger.error("Could not verify ACL for %s on %s: %s", user_email, incident_id, e)
+        return AccessResult.UNVERIFIED
+
+    return AccessResult.ALLOWED if authorized else AccessResult.DENIED
