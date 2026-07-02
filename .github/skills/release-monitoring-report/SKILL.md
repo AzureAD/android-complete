@@ -132,9 +132,13 @@ pwsh -NoProfile -File "$S\preflight-appcenter.ps1" -Check -Json
    - **`missing`** (2) / **`invalid`** (3) → the token is absent or expired. **Stop and prompt the
      engineer** (via an `ask_user`-style choice) — do **not** write the placeholder yet. Surface the
      exact one-time fix for them to run **in their own terminal** (an agent can't securely capture a
-     pasted secret):
+     pasted secret). **Hand them the ABSOLUTE script path** — relay the exact `-Setup` command that
+     `preflight -Check` just printed (its message uses `$PSCommandPath`, always absolute). **Never give
+     a repo-relative path** like `.github\…\preflight-appcenter.ps1`: the engineer's terminal is
+     usually at their home directory, where a relative path fails with *"not recognized as the name of
+     a script file"*.
      ```powershell
-     pwsh -File "$S\preflight-appcenter.ps1" -Setup
+     pwsh -File "<ABSOLUTE path>\preflight-appcenter.ps1" -Setup
      ```
      Offer two choices: **"I've set it up — re-check"** (re-run step 0) or **"skip crashes this run"**
      (fall through to the placeholder). Loop until `ok` or the engineer skips.
