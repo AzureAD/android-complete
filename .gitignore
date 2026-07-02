@@ -27,6 +27,7 @@ build/
 .idea
 .vscode/*
 !.vscode/mcp.json
+!.vscode/settings.json
 extensions/feature-orchestrator/.vscode/
 extensions/feature-orchestrator/*.vsix
 .settings

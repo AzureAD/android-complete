@@ -27,6 +27,7 @@ Repo slug mapping:
 - `msal` → `AzureAD/microsoft-authentication-library-for-android`
 - `broker` → `identity-authnz-teams/ad-accounts-for-android`
 - `adal` → `AzureAD/azure-activedirectory-library-for-android`
+- `authenticator` → `AzureAD/microsoft-authenticator-for-android`
 
 Discover the GitHub username from `.github/developer-local.json`, or `gh auth status`, or prompt.
 

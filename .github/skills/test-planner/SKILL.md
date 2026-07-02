@@ -71,6 +71,16 @@ For any broker feature, cover (in order of priority):
 
 Not every feature needs all categories. Use judgment based on what the feature touches.
 
+For **Authenticator app features**, also consider:
+- **MFA push approval** (accept/deny notification) — P0
+- **Passwordless sign-in** (NGC key registration, phone sign-in) — P0
+- **Passkey/FIDO2** (registration, assertion, cross-device) — P0
+- **QR code scanning** — P1
+- **Verified ID** (credential issuance, presentation) — P1
+- **Account management** (add/remove accounts, MSA + AAD) — P1
+- **Device policy** (rooted device detection, conditional access) — P1
+- **Biometric/PIN unlock** — P1
+
 ### Get Feature Context
 
 If the user hasn't provided feature details, gather them by:

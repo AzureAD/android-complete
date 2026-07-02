@@ -1,0 +1,6 @@
+{
+  "chat.agentSkillsLocations": [
+    ".github/skills",
+    "authenticator/.github/skills"
+  ]
+}
