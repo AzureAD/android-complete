@@ -65,15 +65,47 @@ App Center is the only source that returns actionable crash clusters.
 
 ## Authentication (secret handling)
 
-`fetch-appcenter-crashes.js` needs an App Center **read-only User API token**. Resolution order:
+`fetch-appcenter-crashes.js` needs an App Center **read-only User API token**. There is **no
+interactive OAuth** for App Center API tokens — you generate one in the web UI once and cache it
+locally. The [`preflight-appcenter.ps1`](../scripts/preflight-appcenter.ps1) helper makes this a
+one-and-done step; the skill drives it, you rarely touch it.
 
-1. `--token-file <path>`
+**Resolution order** (both the helper and the fetch script use this):
+
+1. `--token-file <path>` (helper: `-TokenFile`)
 2. `$APPCENTER_API_TOKEN`
 3. `~/.android-release-reports/appcenter.token` (default; 40-char value)
 
-The token is a **SECRET**. Keep it out of the repo, never echo or paste it into the report,
-and never commit any file under `~/.android-release-reports/`. Create one at App Center →
-**Account settings → API tokens** (read-only is sufficient).
+**How the skill uses it (Step 3b step 0):**
+
+- The skill **auto-runs `preflight-appcenter.ps1 -Check -Json`** at the top of the crash layer. It
+  resolves the token, validates it with one cheap `GET /apps/{owner}/{app}`, and emits a
+  machine-readable status + exit code:
+
+  | STATUS | exit | meaning | skill action |
+  |--------|------|---------|--------------|
+  | `ok` | 0 | present + authorized | pull crashes (no user action) |
+  | `missing` | 2 | no token anywhere | prompt: run `-Setup` once, then re-check |
+  | `invalid` | 3 | present but 401 (expired/revoked) | prompt: refresh via `-Setup` |
+  | `no-access` | 4 | valid but 403/404 for this app/org | wrong org/scope — regenerate |
+  | `network` | 5 | App Center unreachable | note + skip crash layer this run |
+
+- **First-time (or expired) capture is interactive and runs in the engineer's OWN terminal** — an
+  agent shell is not a TTY and cannot capture a pasted secret safely:
+
+  ```powershell
+  pwsh -File "<skill>\assets\scripts\preflight-appcenter.ps1" -Setup
+  ```
+
+  `-Setup` opens the token page, reads the token via `Read-Host -AsSecureString` (never echoed),
+  validates it, and only on success writes it to the default cache file with a user-only ACL. On any
+  failure it writes nothing. After one successful setup, every future report runs hands-off until the
+  token expires (then `-Check` returns `invalid` and the same prompt reappears, now saying *expired*).
+
+The token is a **SECRET**. Keep it out of the repo, never echo or paste it into the report or into
+agent chat, and never commit any file under `~/.android-release-reports/`. Generate one at App Center
+→ **Account settings → API tokens** (`https://appcenter.ms/settings/apitokens`, read-only scope is
+sufficient) — or just let `-Setup` open that page for you.
 
 ## App slug
 

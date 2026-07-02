@@ -50,9 +50,11 @@ Ask only for what's missing; infer the rest.
 3. **Window** — default last **30 days** (Authenticator MVs) / **14 days** (Broker). The new
    version is usually young, so a longer window mostly grows the baseline cohort.
 4. **Report date** — defaults to today (used in the filename + the "Generated" banner).
-5. **Authenticator crash layer (optional)** — if an Authenticator version is given and an App Center
-   read-only token is available (`~/.android-release-reports/appcenter.token`, `$APPCENTER_API_TOKEN`,
-   or `--token-file`), add the crash/stability section. Skip silently if no token. The token is a
+5. **Authenticator crash layer (optional)** — if an Authenticator version is given, add the
+   crash/stability section. It needs an App Center read-only token (`~/.android-release-reports/appcenter.token`,
+   `$APPCENTER_API_TOKEN`, or `--token-file`). **Step 3b step 0 auto-runs
+   [`preflight-appcenter.ps1`](assets/scripts/preflight-appcenter.ps1) `-Check`** and, if the token is
+   missing/expired, **prompts** the engineer to run `-Setup` once (never a silent skip). The token is a
    **secret** — never echo it or write it into the report.
 
 If the user gives versions but not the baseline, run the resolution queries first and propose
@@ -80,6 +82,7 @@ If the user gives versions but not the baseline, run the resolution queries firs
 | [`queries/*.kql`](assets/queries/) | 6 Broker + 6 Authenticator scenario templates + `authenticator-crash-denominator.kql` (crash-rate denominator), all validated live. Substitute `<TOKENS>` before running. Includes `broker-errors-by-host-app-span.kql` — the per-`span_name` request-rate drill-down that complements the host-app device-share movers. |
 | [`scripts/run-kql.ps1`](assets/scripts/run-kql.ps1) | Direct-REST Kusto helper. `-Query`/`-Out` mandatory; `-Cluster`/`-Database` for Authenticator. |
 | [`scripts/find-suspect-prs.ps1`](assets/scripts/find-suspect-prs.ps1) | Release PR correlation. **Auth-code** (eSTS) attribution: defaults to `broker/`+`common/` over a broker tag range (`-Range v16.1.0..v16.2.0`; broker uses its own tags, common maps via the broker submodule pointer). **Crash** attribution: `-Repos authenticator` over the app tag range (`-Range 6.2606.3817..6.2606.4029`) — resolves the app's own tags and parses ADO `Merged PR NNNNNNNN:` → pullrequest URLs. Three search streams: `-S` pickaxe + `-DiffGrep` (`git log -G` over diff text) + `--grep` (subject). **For a crash, set `-Symbol` to the exception/API token from the stack (e.g. `EntryPoints.get`), not the crashing class, and always pass `-DiffGrep`** — the crashing class is the victim, the culprit is a caller whose subject rarely names the subsystem. Prints PR ids + URLs for attribution cards. |
+| [`scripts/preflight-appcenter.ps1`](assets/scripts/preflight-appcenter.ps1) | App Center token gate for the crash layer. **`-Check`** (non-interactive, the skill auto-runs it) resolves the token (`--token-file` → `$APPCENTER_API_TOKEN` → `~/.android-release-reports/appcenter.token`) and validates it with one `GET /apps/{owner}/{app}`, emitting `STATUS: ok\|missing\|invalid\|no-access\|network` + exit `0/2/3/4/5` (+ `-Json`). **`-Setup`** (interactive — the engineer runs it once in their **own** terminal) opens the token page, reads the token via `Read-Host -AsSecureString` (never echoed), validates, then saves with a user-only ACL. Never prints the token. |
 | [`scripts/fetch-appcenter-crashes.js`](assets/scripts/fetch-appcenter-crashes.js) | Pull Authenticator crash clusters from App Center → run-kql array-form JSON. `groups` (one version) + `diff` (two versions, signature-joined, per-1k rate when given Kusto denominators) + `enrich` (top signatures' daily **trend** + instance-sampled **OS-major/device-model** concentration) + **`newcrashes`** (genuinely-new java-frame signatures via anti-join against a **union of priors**, native/hex frames split out as `new-native?`) + **`signature`** (cross-version presence of one signature + trend — "is crash X version-specific?"). Captures `exceptionMessage`/`appCodeFrame`/`firstOccurrence`, drops `hidden`/`Ignored` groups, and `--page-cap 0` exhausts paging for an accurate total. |
 | [`scripts/bootstrap-report.ps1`](assets/scripts/bootstrap-report.ps1) | Copy the template to a version-named file, create `_data/<slug>-<date>/`, stamp the Generated date, prune old `_data`, detect unfilled-stub vs real-report collisions. |
 | [`scripts/compare-versions.js`](assets/scripts/compare-versions.js) | Delta + classification engine over run-kql JSON. `rows` mode (version-per-row metrics) and `movers` mode (paired error-share rows). Thresholds + volume guard. |
@@ -117,8 +120,27 @@ Minimum useful set:
   always alongside `auth-scenario-initiates` for the volume guard. Use `auth-stats` for adoption.
 
 ### Step 3b — Authenticator crash layer (optional)
-If an Authenticator version is given and an App Center token is available, **read
-[`assets/docs/crash-sources.md`](assets/docs/crash-sources.md) first**, then:
+If an Authenticator version is given, **read
+[`assets/docs/crash-sources.md`](assets/docs/crash-sources.md) first**, then gate on the token:
+
+0. **Preflight the App Center token (do this first — don't silently skip).** Auto-run:
+```powershell
+pwsh -NoProfile -File "$S\preflight-appcenter.ps1" -Check -Json
+```
+   Branch on the `STATUS:` line / exit code:
+   - **`ok`** (exit 0) → proceed to step 1 (fully automatic, no user action).
+   - **`missing`** (2) / **`invalid`** (3) → the token is absent or expired. **Stop and prompt the
+     engineer** (via an `ask_user`-style choice) — do **not** write the placeholder yet. Surface the
+     exact one-time fix for them to run **in their own terminal** (an agent can't securely capture a
+     pasted secret):
+     ```powershell
+     pwsh -File "$S\preflight-appcenter.ps1" -Setup
+     ```
+     Offer two choices: **"I've set it up — re-check"** (re-run step 0) or **"skip crashes this run"**
+     (fall through to the placeholder). Loop until `ok` or the engineer skips.
+   - **`no-access`** (4) → their token is valid but not scoped to `authapp-t7qc`; tell them to generate a
+     read-only token in the right org, then `-Setup`.
+   - **`network`** (5) → App Center unreachable; note it in the report and skip the crash layer this run.
 1. Run `authenticator-crash-denominator.kql` (auth cluster) to get active devices for `<FIRST>`/`<SECOND>`.
 2. Pull + pair crashes (signature-joined; pass the two device counts so it computes the per-1k rate).
    Use **`--page-cap 0`** for a verdict so the crash total isn't undercounted (there's no aggregate-total
@@ -171,8 +193,10 @@ node "$S\fetch-appcenter-crashes.js" signature --owner authapp-t7qc `
    **count** beside the rate.
 
 **Lead with the per-1k rate, not crash-share** — a signature can take a bigger share of a smaller
-crash pool while its per-device rate falls (share alone invents phantom regressions). Skip this
-step silently if no token exists.
+crash pool while its per-device rate falls (share alone invents phantom regressions). If the step-0
+preflight returned `missing`/`invalid` and the engineer chose to skip (or it returned `network`),
+write the "Crash/stability not evaluated" placeholder and name the reason (no token / expired token /
+App Center unreachable) — never skip silently.
 
 5. **Attribute a confirmed new/rising crash to its code (P10 step 6).** Once a signature is confirmed
    genuinely-new (or a cross-version-confirmed rising per-1k gap) AND first-party + fleet-broad — not a
