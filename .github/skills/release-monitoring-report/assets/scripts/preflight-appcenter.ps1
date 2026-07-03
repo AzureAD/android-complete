@@ -235,8 +235,7 @@ function Invoke-Setup {
     Write-Host 'App Center read-only token setup'
     Write-Host '--------------------------------'
     Write-Host "1. Opening the App Center API-tokens page: $TokenPageUrl"
-    Write-Host '2. Click "New API token", choose scope "Read-only", and set expiry to'
-    Write-Host '   "No expiry" (or the max offered) so you never have to redo this. Copy the value.'
+    Write-Host '2. Click "New API token", choose scope "Read-only", and copy the value.'
     Write-Host '3. Paste it below (input is hidden and never echoed).'
     Write-Host ''
     try { Start-Process $TokenPageUrl | Out-Null } catch { Write-Host "   (could not auto-open a browser — open $TokenPageUrl manually)" }

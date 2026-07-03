@@ -144,8 +144,6 @@ pwsh -NoProfile -File "$S\preflight-appcenter.ps1" -Check -Json
        message uses `$PSCommandPath`). **Never a repo-relative path** like
        `.github\…\preflight-appcenter.ps1` — the engineer's terminal is usually at their home
        directory, where a relative path fails with *"not recognized as the name of a script file"*.
-       Also mention: when creating the token, choose **"No expiry"** (read-only scope) so this is
-       truly one-and-done.
 
      **b. Auto-resume — the skill polls and continues on its own.** In parallel with the capture,
        run the blocking poll (host-agnostic — works in app/VS Code/CLI):

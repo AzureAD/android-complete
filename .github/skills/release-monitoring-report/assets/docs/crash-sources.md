@@ -101,8 +101,8 @@ one-and-done step; the skill drives it, you rarely touch it.
 
   `-Setup` opens the token page, reads the token via `Read-Host -AsSecureString` (never echoed),
   validates it, and only on success writes it to the default cache file with a user-only ACL. On any
-  failure it writes nothing. **Create the token with "No expiry"** (read-only scope) so this is a
-  true one-and-done — the `invalid` re-prompt then essentially never fires.
+  failure it writes nothing. Read-only scope is sufficient, and App Center tokens don't expire —
+  so this is a true one-and-done.
 
 - **No "done, re-check" handshake.** While the engineer pastes, the skill runs a **blocking poll** that
   returns the moment the token validates and then continues automatically — host-agnostic:
@@ -116,8 +116,8 @@ one-and-done step; the skill drives it, you rarely touch it.
 
 The token is a **SECRET**. Keep it out of the repo, never echo or paste it into the report or into
 agent chat, and never commit any file under `~/.android-release-reports/`. Generate one at App Center
-→ **Account settings → API tokens** (`https://appcenter.ms/settings/apitokens`, read-only scope,
-**no expiry**) — or just let `-Setup` open that page for you.
+→ **Account settings → API tokens** (`https://appcenter.ms/settings/apitokens`, read-only scope) —
+or just let `-Setup` open that page for you.
 
 > **Platform note (durable fix):** App Center is retired; its **Analytics & Diagnostics** (crashes) is
 > supported only until ~**March 31, 2027**, with **Azure Monitor Mobile Analytics** as the successor
