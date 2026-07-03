@@ -85,27 +85,46 @@ one-and-done step; the skill drives it, you rarely touch it.
   | STATUS | exit | meaning | skill action |
   |--------|------|---------|--------------|
   | `ok` | 0 | present + authorized | pull crashes (no user action) |
-  | `missing` | 2 | no token anywhere | prompt: run `-Setup` once, then re-check |
-  | `invalid` | 3 | present but 401 (expired/revoked) | prompt: refresh via `-Setup` |
+  | `missing` | 2 | no token anywhere | open capture surface + auto-poll via `-Wait` |
+  | `invalid` | 3 | present but 401 (expired/revoked) | refresh via `-Setup` + auto-poll |
   | `no-access` | 4 | valid but 403/404 for this app/org | wrong org/scope — regenerate |
   | `network` | 5 | App Center unreachable | note + skip crash layer this run |
 
-- **First-time (or expired) capture is interactive and runs in the engineer's OWN terminal** — an
-  agent shell is not a TTY and cannot capture a pasted secret safely:
+- **First-time (or expired) capture is interactive and runs in a terminal the engineer types into**
+  — an agent shell is not a TTY and cannot capture a pasted secret safely. The skill opens the best
+  surface for the host (Terminal **canvas** in the desktop app, the **integrated terminal** in VS Code,
+  the engineer's **own terminal** in Copilot CLI) and launches:
 
   ```powershell
-  pwsh -File "<skill>\assets\scripts\preflight-appcenter.ps1" -Setup
+  pwsh -File "<ABSOLUTE>\assets\scripts\preflight-appcenter.ps1" -Setup
   ```
 
   `-Setup` opens the token page, reads the token via `Read-Host -AsSecureString` (never echoed),
   validates it, and only on success writes it to the default cache file with a user-only ACL. On any
-  failure it writes nothing. After one successful setup, every future report runs hands-off until the
-  token expires (then `-Check` returns `invalid` and the same prompt reappears, now saying *expired*).
+  failure it writes nothing. **Create the token with "No expiry"** (read-only scope) so this is a
+  true one-and-done — the `invalid` re-prompt then essentially never fires.
+
+- **No "done, re-check" handshake.** While the engineer pastes, the skill runs a **blocking poll** that
+  returns the moment the token validates and then continues automatically — host-agnostic:
+
+  ```powershell
+  pwsh -NoProfile -File "<ABSOLUTE>\preflight-appcenter.ps1" -Check -Json -Wait 180 -IntervalSec 5
+  ```
+
+  The token file is **machine-global** (`~/.android-release-reports/appcenter.token`), so once captured
+  in any host the app, VS Code, and CLI all see `ok` — the friction is strictly first-capture-per-machine.
 
 The token is a **SECRET**. Keep it out of the repo, never echo or paste it into the report or into
 agent chat, and never commit any file under `~/.android-release-reports/`. Generate one at App Center
-→ **Account settings → API tokens** (`https://appcenter.ms/settings/apitokens`, read-only scope is
-sufficient) — or just let `-Setup` open that page for you.
+→ **Account settings → API tokens** (`https://appcenter.ms/settings/apitokens`, read-only scope,
+**no expiry**) — or just let `-Setup` open that page for you.
+
+> **Platform note (durable fix):** App Center is retired; its **Analytics & Diagnostics** (crashes) is
+> supported only until ~**March 31, 2027**, with **Azure Monitor Mobile Analytics** as the successor
+> (public preview 2026). Azure Monitor is queried via **Kusto on the existing `az login`** — the same
+> path this skill already uses for the Broker/Auth clusters — which would make the crash layer
+> **token-free and identical across all hosts**. Migrating the crash source there is the tracked
+> end-state that retires this whole token-config surface.
 
 ## App slug
 

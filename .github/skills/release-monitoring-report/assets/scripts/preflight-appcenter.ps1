@@ -35,6 +35,15 @@
 .PARAMETER Check
     Non-interactive validation. This is the default when neither switch is given.
 
+.PARAMETER Wait
+    (Check mode) Seconds to block-poll for a valid token before giving up. When > 0 and the
+    token isn't yet valid, the script re-checks every -IntervalSec seconds and returns `ok` the
+    instant the engineer finishes -Setup in their own terminal — so the skill auto-resumes with
+    no "done, re-check" handshake. Host-agnostic (app / VS Code / CLI). Default 0 (single shot).
+
+.PARAMETER IntervalSec
+    (Check mode) Poll interval in seconds while -Wait is active. Default 5 (min 2).
+
 .PARAMETER Setup
     Interactive first-time secure token capture. Run in your own terminal.
 
@@ -71,7 +80,9 @@ param(
     [string]$App = 'Microsoft-Authenticator-Android-Prod-App-Center',
     [string]$TokenFile,
     [switch]$Json,
-    [switch]$Force
+    [switch]$Force,
+    [int]$Wait = 0,
+    [int]$IntervalSec = 5
 )
 
 $ErrorActionPreference = 'Stop'
@@ -158,31 +169,47 @@ function Write-Status {
     exit $exit
 }
 
-# ---- CHECK MODE (default) --------------------------------------------------
-function Invoke-Check {
+# Resolve + validate once, returning a {status; source} object WITHOUT printing or exiting.
+# Used by both the single-shot check and the -Wait poll loop.
+function Get-Verdict {
     $r = Resolve-Token -ExplicitFile $TokenFile
-    if (-not $r.Token) {
-        Write-Status -Status 'missing' -Source $r.Source `
-            -Message "No App Center token found. Run once in your own terminal:`n  pwsh -File `"$PSCommandPath`" -Setup"
-    }
+    if (-not $r.Token) { return [pscustomobject]@{ Status = 'missing'; Source = $r.Source } }
     $verdict = Test-Token -Token $r.Token
-    switch ($verdict) {
-        'ok' {
-            Write-Status -Status 'ok' -Source $r.Source -Message "Token OK (source $($r.Source)) — crash layer can pull."
+    return [pscustomobject]@{ Status = $verdict; Source = $r.Source }
+}
+
+$StatusMessages = @{
+    'ok'        = 'Token OK — crash layer can pull.'
+    'missing'   = "No App Center token found. Run once in your own terminal:`n  pwsh -File `"$PSCommandPath`" -Setup"
+    'invalid'   = "Token is expired or revoked (401). Refresh it:`n  pwsh -File `"$PSCommandPath`" -Setup"
+    'no-access' = "Token is valid but not authorized for $Owner/$App (403/404). Generate a read-only token in the right org, then:`n  pwsh -File `"$PSCommandPath`" -Setup"
+    'network'   = 'Could not reach App Center (offline/proxy). Retry later.'
+}
+
+# ---- CHECK MODE (default) --------------------------------------------------
+# With -Wait <sec>, block-poll until the token becomes valid (or timeout) so the
+# skill auto-resumes the instant the engineer finishes -Setup in their own
+# terminal — no "done, re-check" handshake. Host-agnostic: works in the desktop
+# app, VS Code Copilot Chat, and Copilot CLI alike.
+function Invoke-Check {
+    $v = Get-Verdict
+
+    if ($v.Status -ne 'ok' -and $Wait -gt 0) {
+        $deadline = (Get-Date).AddSeconds($Wait)
+        $interval = [Math]::Max(2, $IntervalSec)
+        Write-Host "Waiting up to ${Wait}s for a valid App Center token (polling every ${interval}s)..."
+        Write-Host "Finish setup in your terminal:  pwsh -File `"$PSCommandPath`" -Setup"
+        while ($v.Status -ne 'ok' -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds $interval
+            $v = Get-Verdict
         }
-        'invalid' {
-            Write-Status -Status 'invalid' -Source $r.Source `
-                -Message "Token is expired or revoked (401). Refresh it:`n  pwsh -File `"$PSCommandPath`" -Setup"
-        }
-        'no-access' {
-            Write-Status -Status 'no-access' -Source $r.Source `
-                -Message "Token is valid but not authorized for $Owner/$App (403/404). Generate a token in the right org with read access, then:`n  pwsh -File `"$PSCommandPath`" -Setup"
-        }
-        default {
-            Write-Status -Status 'network' -Source $r.Source `
-                -Message 'Could not reach App Center (offline/proxy). Retry later.'
-        }
+        if ($v.Status -eq 'ok') { Write-Host 'Detected a valid token — resuming automatically.' }
     }
+
+    $msg = $StatusMessages[$v.Status]
+    if (-not $msg) { $msg = "Status: $($v.Status)" }
+    if ($v.Status -eq 'ok') { $msg = "Token OK (source $($v.Source)) — crash layer can pull." }
+    Write-Status -Status $v.Status -Source $v.Source -Message $msg
 }
 
 # ---- SETUP MODE (interactive, run in your own terminal) --------------------
@@ -208,7 +235,8 @@ function Invoke-Setup {
     Write-Host 'App Center read-only token setup'
     Write-Host '--------------------------------'
     Write-Host "1. Opening the App Center API-tokens page: $TokenPageUrl"
-    Write-Host '2. Click "New API token", choose scope "Read-only", copy the value.'
+    Write-Host '2. Click "New API token", choose scope "Read-only", and set expiry to'
+    Write-Host '   "No expiry" (or the max offered) so you never have to redo this. Copy the value.'
     Write-Host '3. Paste it below (input is hidden and never echoed).'
     Write-Host ''
     try { Start-Process $TokenPageUrl | Out-Null } catch { Write-Host "   (could not auto-open a browser — open $TokenPageUrl manually)" }

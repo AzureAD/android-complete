@@ -82,7 +82,7 @@ If the user gives versions but not the baseline, run the resolution queries firs
 | [`queries/*.kql`](assets/queries/) | 6 Broker + 6 Authenticator scenario templates + `authenticator-crash-denominator.kql` (crash-rate denominator), all validated live. Substitute `<TOKENS>` before running. Includes `broker-errors-by-host-app-span.kql` — the per-`span_name` request-rate drill-down that complements the host-app device-share movers. |
 | [`scripts/run-kql.ps1`](assets/scripts/run-kql.ps1) | Direct-REST Kusto helper. `-Query`/`-Out` mandatory; `-Cluster`/`-Database` for Authenticator. |
 | [`scripts/find-suspect-prs.ps1`](assets/scripts/find-suspect-prs.ps1) | Release PR correlation. **Auth-code** (eSTS) attribution: defaults to `broker/`+`common/` over a broker tag range (`-Range v16.1.0..v16.2.0`; broker uses its own tags, common maps via the broker submodule pointer). **Crash** attribution: `-Repos authenticator` over the app tag range (`-Range 6.2606.3817..6.2606.4029`) — resolves the app's own tags and parses ADO `Merged PR NNNNNNNN:` → pullrequest URLs. Three search streams: `-S` pickaxe + `-DiffGrep` (`git log -G` over diff text) + `--grep` (subject). **For a crash, set `-Symbol` to the exception/API token from the stack (e.g. `EntryPoints.get`), not the crashing class, and always pass `-DiffGrep`** — the crashing class is the victim, the culprit is a caller whose subject rarely names the subsystem. Prints PR ids + URLs for attribution cards. |
-| [`scripts/preflight-appcenter.ps1`](assets/scripts/preflight-appcenter.ps1) | App Center token gate for the crash layer. **`-Check`** (non-interactive, the skill auto-runs it) resolves the token (`--token-file` → `$APPCENTER_API_TOKEN` → `~/.android-release-reports/appcenter.token`) and validates it with one `GET /apps/{owner}/{app}`, emitting `STATUS: ok\|missing\|invalid\|no-access\|network` + exit `0/2/3/4/5` (+ `-Json`). **`-Setup`** (interactive — the engineer runs it once in their **own** terminal) opens the token page, reads the token via `Read-Host -AsSecureString` (never echoed), validates, then saves with a user-only ACL. Never prints the token. |
+| [`scripts/preflight-appcenter.ps1`](assets/scripts/preflight-appcenter.ps1) | App Center token gate for the crash layer. **`-Check`** (non-interactive, the skill auto-runs it) resolves the token (`--token-file` → `$APPCENTER_API_TOKEN` → `~/.android-release-reports/appcenter.token`) and validates it with one `GET /apps/{owner}/{app}`, emitting `STATUS: ok\|missing\|invalid\|no-access\|network` + exit `0/2/3/4/5` (+ `-Json`). Add **`-Wait <sec>` `-IntervalSec <sec>`** to block-poll until a valid token appears (auto-resume, no handshake). **`-Setup`** (interactive — the engineer runs it once in a real terminal) opens the token page, reads the token via `Read-Host -AsSecureString` (never echoed), validates, then saves with a user-only ACL. Never prints the token. |
 | [`scripts/fetch-appcenter-crashes.js`](assets/scripts/fetch-appcenter-crashes.js) | Pull Authenticator crash clusters from App Center → run-kql array-form JSON. `groups` (one version) + `diff` (two versions, signature-joined, per-1k rate when given Kusto denominators) + `enrich` (top signatures' daily **trend** + instance-sampled **OS-major/device-model** concentration) + **`newcrashes`** (genuinely-new java-frame signatures via anti-join against a **union of priors**, native/hex frames split out as `new-native?`) + **`signature`** (cross-version presence of one signature + trend — "is crash X version-specific?"). Captures `exceptionMessage`/`appCodeFrame`/`firstOccurrence`, drops `hidden`/`Ignored` groups, and `--page-cap 0` exhausts paging for an accurate total. |
 | [`scripts/bootstrap-report.ps1`](assets/scripts/bootstrap-report.ps1) | Copy the template to a version-named file, create `_data/<slug>-<date>/`, stamp the Generated date, prune old `_data`, detect unfilled-stub vs real-report collisions. |
 | [`scripts/compare-versions.js`](assets/scripts/compare-versions.js) | Delta + classification engine over run-kql JSON. `rows` mode (version-per-row metrics) and `movers` mode (paired error-share rows). Thresholds + volume guard. |
@@ -129,21 +129,35 @@ pwsh -NoProfile -File "$S\preflight-appcenter.ps1" -Check -Json
 ```
    Branch on the `STATUS:` line / exit code:
    - **`ok`** (exit 0) → proceed to step 1 (fully automatic, no user action).
-   - **`missing`** (2) / **`invalid`** (3) → the token is absent or expired. **Stop and prompt the
-     engineer** (via an `ask_user`-style choice) — do **not** write the placeholder yet. Surface the
-     exact one-time fix for them to run **in their own terminal** (an agent can't securely capture a
-     pasted secret). **Hand them the ABSOLUTE script path** — relay the exact `-Setup` command that
-     `preflight -Check` just printed (its message uses `$PSCommandPath`, always absolute). **Never give
-     a repo-relative path** like `.github\…\preflight-appcenter.ps1`: the engineer's terminal is
-     usually at their home directory, where a relative path fails with *"not recognized as the name of
-     a script file"*.
-     ```powershell
-     pwsh -File "<ABSOLUTE path>\preflight-appcenter.ps1" -Setup
-     ```
-     Offer two choices: **"I've set it up — re-check"** (re-run step 0) or **"skip crashes this run"**
-     (fall through to the placeholder). Loop until `ok` or the engineer skips.
-   - **`no-access`** (4) → their token is valid but not scoped to `authapp-t7qc`; tell them to generate a
-     read-only token in the right org, then `-Setup`.
+   - **`missing`** (2) / **`invalid`** (3) → the token is absent or expired. **Don't write the
+     placeholder yet — set up a seamless capture + auto-resume (no "done, re-check" handshake):**
+
+     **a. Open the best capture surface for the current host and launch `-Setup` there:**
+       - **Desktop app** (Terminal canvas available) → open a **Terminal canvas** and run
+         `pwsh -File "<ABSOLUTE>\preflight-appcenter.ps1" -Setup` in it, so the engineer pastes
+         without leaving the app.
+       - **VS Code Copilot Chat** → tell the engineer to run that same command in the **integrated
+         terminal** (they already have one open).
+       - **Copilot CLI / anything else** → surface the command for the engineer's **own terminal**.
+
+       In every case relay the **ABSOLUTE** script path that `preflight -Check` just printed (its
+       message uses `$PSCommandPath`). **Never a repo-relative path** like
+       `.github\…\preflight-appcenter.ps1` — the engineer's terminal is usually at their home
+       directory, where a relative path fails with *"not recognized as the name of a script file"*.
+       Also mention: when creating the token, choose **"No expiry"** (read-only scope) so this is
+       truly one-and-done.
+
+     **b. Auto-resume — the skill polls and continues on its own.** In parallel with the capture,
+       run the blocking poll (host-agnostic — works in app/VS Code/CLI):
+       ```powershell
+       pwsh -NoProfile -File "$S\preflight-appcenter.ps1" -Check -Json -Wait 180 -IntervalSec 5
+       ```
+       It returns `ok` the **instant** the engineer finishes `-Setup`, then the crash layer proceeds
+       automatically — the engineer never has to come back and say "done." If it times out
+       (`missing`/`invalid` after 180s), *then* ask whether to keep waiting or **skip crashes this
+       run** (fall through to the placeholder).
+     - **`no-access`** (4) → their token is valid but not scoped to `authapp-t7qc`; tell them to generate a
+       read-only token in the right org, then `-Setup`.
    - **`network`** (5) → App Center unreachable; note it in the report and skip the crash layer this run.
 1. Run `authenticator-crash-denominator.kql` (auth cluster) to get active devices for `<FIRST>`/`<SECOND>`.
 2. Pull + pair crashes (signature-joined; pass the two device counts so it computes the per-1k rate).
