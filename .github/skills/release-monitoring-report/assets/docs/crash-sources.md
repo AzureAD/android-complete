@@ -108,7 +108,7 @@ one-and-done step; the skill drives it, you rarely touch it.
   returns the moment the token validates and then continues automatically — host-agnostic:
 
   ```powershell
-  pwsh -NoProfile -File "<ABSOLUTE>\preflight-appcenter.ps1" -Check -Json -Wait 180 -IntervalSec 5
+  pwsh -NoProfile -File "<ABSOLUTE>\preflight-appcenter.ps1" -Check -Json -Wait 180 -IntervalSec 10
   ```
 
   The token file is **machine-global** (`~/.android-release-reports/appcenter.token`), so once captured

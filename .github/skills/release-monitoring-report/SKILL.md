@@ -148,7 +148,7 @@ pwsh -NoProfile -File "$S\preflight-appcenter.ps1" -Check -Json
      **b. Auto-resume — the skill polls and continues on its own.** In parallel with the capture,
        run the blocking poll (host-agnostic — works in app/VS Code/CLI):
        ```powershell
-       pwsh -NoProfile -File "$S\preflight-appcenter.ps1" -Check -Json -Wait 180 -IntervalSec 5
+       pwsh -NoProfile -File "$S\preflight-appcenter.ps1" -Check -Json -Wait 180 -IntervalSec 10
        ```
        It returns `ok` the **instant** the engineer finishes `-Setup`, then the crash layer proceeds
        automatically — the engineer never has to come back and say "done." If it times out

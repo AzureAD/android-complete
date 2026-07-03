@@ -42,7 +42,7 @@
     no "done, re-check" handshake. Host-agnostic (app / VS Code / CLI). Default 0 (single shot).
 
 .PARAMETER IntervalSec
-    (Check mode) Poll interval in seconds while -Wait is active. Default 5 (min 2).
+    (Check mode) Poll interval in seconds while -Wait is active. Default 10 (min 2).
 
 .PARAMETER Setup
     Interactive first-time secure token capture. Run in your own terminal.
@@ -82,7 +82,7 @@ param(
     [switch]$Json,
     [switch]$Force,
     [int]$Wait = 0,
-    [int]$IntervalSec = 5
+    [int]$IntervalSec = 10
 )
 
 $ErrorActionPreference = 'Stop'
