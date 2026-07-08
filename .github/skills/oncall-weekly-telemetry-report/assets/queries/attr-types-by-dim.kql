@@ -1,0 +1,15 @@
+// Spike attribution: types by ONE dimension at a time.
+// Same usage as attr-codes-by-dim.kql but for error_type regressions.
+let types = dynamic([<TYPES_LIST>]);
+materialized_view('ErrorStatsMetrics')
+| extend unified_error_type = MergeUiRequiredExceptions(error_type)
+| extend unified_account_type = MergeAccountType(account_type)
+| extend unified_is_shared_device = MergeIsSharedDevice(is_shared_device)
+| where EventInfo_Time between (datetime(<PREV_WEEK>) .. datetime(<END>))
+| where unified_error_type in (types)
+| extend wk = startofweek(EventInfo_Time)
+| where wk < datetime(<END>)
+| summarize devs = dcount_hll(hll_merge(countDevicesHll)),
+            errs = sum(countOverall)
+     by wk, unified_error_type, <DIM>
+| order by unified_error_type asc, wk asc, devs desc

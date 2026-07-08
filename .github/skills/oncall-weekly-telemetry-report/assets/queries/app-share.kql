@@ -1,0 +1,11 @@
+// Top calling apps share for last N weeks (typically 3).
+materialized_view('AppStatsUpdated')
+| where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+| summarize req = sum(countRequests),
+            dev = dcount_hll(hll_merge(countDevicesHll))
+     by week = startofweek(EventInfo_Time), calling_package_name
+| where week < datetime(<END>)
+| order by week asc, req desc
+| summarize topApps = make_list(pack('app', calling_package_name, 'req', req, 'dev', dev), 25)
+     by week
+| order by week asc

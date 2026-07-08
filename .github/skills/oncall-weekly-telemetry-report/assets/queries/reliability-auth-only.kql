@@ -1,0 +1,14 @@
+// Auth-only denominator and reliability per week.
+let s = materialized_view('SilentAuthStatsAllRequestsMetrics')
+  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | summarize req = sum(countRequests), devHll = hll_merge(countDevicesHll)
+       by week = startofweek(EventInfo_Time);
+let i = materialized_view('InteractiveAuthStatsAllRequestsMetrics')
+  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | summarize req = sum(countRequests), devHll = hll_merge(countDevicesHll)
+       by week = startofweek(EventInfo_Time);
+union s, i
+| summarize authReq = sum(req), authDev = dcount_hll(hll_merge(devHll))
+     by week
+| where week < datetime(<END>)
+| order by week asc

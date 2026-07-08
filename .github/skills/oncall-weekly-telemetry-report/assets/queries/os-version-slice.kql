@@ -1,0 +1,11 @@
+// OS version slice (8th attribution dim). Requires raw android_spans because
+// ErrorStatsMetrics doesn't carry DeviceInfo_OsVersion. Keep the time window
+// tight (<= 7 days) to stay under the MCP 240s timeout.
+android_spans
+| where PipelineInfo_IngestionTime between (datetime(<START>) .. datetime(<END>))
+| where error_code in (<CODES_LIST>)
+| summarize devs = dcount(DeviceInfo_Id),
+            cnt  = count()
+     by error_code, DeviceInfo_OsVersion
+| where devs >= 100
+| top 30 by devs desc

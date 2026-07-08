@@ -1,0 +1,46 @@
+// WoW movers — codes (or types) that moved sharply this week regardless of 60d shape.
+//
+// MANDATORY pass alongside `60d-trend-codes.kql` / `60d-trend-types.kql` (per
+// SKILL.md Step 3b). The 60d bucketer's --peak-floor=10000 EXCLUDES errors
+// whose absolute weekly volume is small, but those small-volume codes can
+// still spike sharply WoW (e.g. `Failed to parse JWT` 7 -> 3,461 devs over 7
+// weeks, or `Code:-11` 937 -> 2,490 devs WoW). Without this pass those spikes
+// are silently dropped from the report.
+//
+// Inputs:
+//   <CURR_START>  Sunday of the reporting week (e.g. 2026-05-03)
+//   <CURR_END>    Sunday after (exclusive, e.g. 2026-05-10)
+//   <PRIOR_START> Sunday of the baseline week (e.g. 2026-04-26)
+//
+// To run for error_type instead of error_code, copy this query and replace:
+//   - error_code -> MergeUiRequiredExceptions(error_type) (alias as `t`)
+//   - drop the `error_code != 'success'` filter
+//
+// Thresholds (tuneable):
+//   floor:        cDev>=500 OR cReq>=5000        (small enough to catch sub-bucketer-floor codes)
+//   move:         |dDev%|>=25 OR |dReq%|>=50     (real spike, not noise)
+//   new-this-wk:  pDev==0 OR pReq==0             (never seen before this week)
+
+let curr = materialized_view('ErrorStatsMetrics')
+  | where EventInfo_Time between (datetime(<CURR_START>) .. datetime(<CURR_END>))
+  | where isnotempty(error_code) and error_code != 'success'
+  | summarize cDev = dcount_hll(hll_merge(countDevicesHll)),
+              cReq = sum(countOverall)
+       by error_code;
+let prior = materialized_view('ErrorStatsMetrics')
+  | where EventInfo_Time between (datetime(<PRIOR_START>) .. datetime(<CURR_START>))
+  | where isnotempty(error_code) and error_code != 'success'
+  | summarize pDev = dcount_hll(hll_merge(countDevicesHll)),
+              pReq = sum(countOverall)
+       by error_code;
+curr | join kind=fullouter prior on error_code
+| extend ec = coalesce(error_code, error_code1)
+| extend cDev = coalesce(cDev, long(0)), cReq = coalesce(cReq, long(0)),
+         pDev = coalesce(pDev, long(0)), pReq = coalesce(pReq, long(0))
+| extend dDevPct = iff(pDev == 0, real(null), 100.0 * (cDev - pDev) / pDev)
+| extend dReqPct = iff(pReq == 0, real(null), 100.0 * (cReq - pReq) / pReq)
+| where (cDev >= 500 or cReq >= 5000)
+| where (abs(dDevPct) >= 25 or abs(dReqPct) >= 50 or pDev == 0 or pReq == 0)
+| project ec, pDev, cDev, dDevPct = round(dDevPct, 1),
+              pReq, cReq, dReqPct = round(dReqPct, 1)
+| order by abs(dDevPct) desc nulls first

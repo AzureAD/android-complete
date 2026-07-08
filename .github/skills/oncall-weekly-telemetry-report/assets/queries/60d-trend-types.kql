@@ -1,0 +1,10 @@
+// 60-day per-error-type trend (with MergeUiRequiredExceptions to collapse variants).
+materialized_view('ErrorStatsMetrics')
+| extend unified_error_type = MergeUiRequiredExceptions(error_type)
+| where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+| where isnotempty(unified_error_type)
+| summarize errs = sum(countOverall),
+            devs = dcount_hll(hll_merge(countDevicesHll))
+     by week = startofweek(EventInfo_Time), unified_error_type
+| where week < datetime(<END>)
+| order by unified_error_type asc, week asc

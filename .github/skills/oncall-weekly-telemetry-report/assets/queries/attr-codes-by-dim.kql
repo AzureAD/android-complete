@@ -1,0 +1,17 @@
+// Spike attribution: codes by ONE dimension at a time.
+// Run 7 times with <DIM> set to each of:
+//   span_name | calling_package_name | active_broker_package_name |
+//   broker_version | unified_account_type | unified_is_shared_device | client_sku
+// (Plus android_spans-based for OS version — see os-version-slice.kql.)
+let codes = dynamic([<CODES_LIST>]);
+materialized_view('ErrorStatsMetrics')
+| extend unified_account_type = MergeAccountType(account_type)
+| extend unified_is_shared_device = MergeIsSharedDevice(is_shared_device)
+| where EventInfo_Time between (datetime(<PREV_WEEK>) .. datetime(<END>))
+| where error_code in (codes)
+| extend wk = startofweek(EventInfo_Time)
+| where wk < datetime(<END>)
+| summarize devs = dcount_hll(hll_merge(countDevicesHll)),
+            errs = sum(countOverall)
+     by wk, error_code, <DIM>
+| order by error_code asc, wk asc, devs desc

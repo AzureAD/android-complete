@@ -1,0 +1,10 @@
+// Per-broker-version request and device share — the canonical evidence for
+// the "denominator caveat" callout. If the all-spans device count moved >20%
+// WoW, this query tells you WHICH version cohort drove it.
+materialized_view('BrokerAdoptionStatsUpdated')
+| where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+| summarize req = sum(countRequests),
+            dev = dcount_hll(hll_merge(countDevicesHll))
+     by week = startofweek(EventInfo_Time), broker_version
+| where week < datetime(<END>)
+| order by week asc, req desc
