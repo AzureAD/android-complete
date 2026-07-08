@@ -54,7 +54,9 @@ Ask only for what's missing; infer the rest.
    crash/stability section. It needs an App Center read-only token (`~/.android-release-reports/appcenter.token`,
    `$APPCENTER_API_TOKEN`, or `--token-file`). **Step 3b step 0 auto-runs
    [`preflight-appcenter.ps1`](assets/scripts/preflight-appcenter.ps1) `-Check`** and, if the token is
-   missing/expired, **prompts** the engineer to run `-Setup` once (never a silent skip). The token is a
+   missing/expired, posts an **unmissable action block** for the engineer to run `-Setup` once, then
+   **blocks on an auto-poll** and won't finalize the report until a token validates or the engineer
+   explicitly skips (never a silent skip). The token is a
    **secret** — never echo it or write it into the report.
 
 If the user gives versions but not the baseline, run the resolution queries first and propose
@@ -130,30 +132,39 @@ pwsh -NoProfile -File "$S\preflight-appcenter.ps1" -Check -Json
    Branch on the `STATUS:` line / exit code:
    - **`ok`** (exit 0) → proceed to step 1 (fully automatic, no user action).
    - **`missing`** (2) / **`invalid`** (3) → the token is absent or expired. **Don't write the
-     placeholder yet — set up a seamless capture + auto-resume (no "done, re-check" handshake):**
+     placeholder yet, and DO NOT just tell the engineer and move on** — set up a seamless capture +
+     auto-resume. This branch has two hard requirements; skipping either is a bug:
 
-     **a. Open the best capture surface for the current host and launch `-Setup` there:**
-       - **Desktop app** (Terminal canvas available) → open a **Terminal canvas** and run
-         `pwsh -File "<ABSOLUTE>\preflight-appcenter.ps1" -Setup` in it, so the engineer pastes
-         without leaving the app.
-       - **VS Code Copilot Chat** → tell the engineer to run that same command in the **integrated
-         terminal** (they already have one open).
-       - **Copilot CLI / anything else** → surface the command for the engineer's **own terminal**.
+     **a. Surface an UNMISSABLE action block.** Post the setup ask as its own dedicated, visually
+       prominent message — a `⚠️ ACTION REQUIRED` header, one line stating *"the report's
+       crash/stability section is blocked until you do this,"* and the exact command. Do **not** bury
+       it mid-paragraph or trail it with "meanwhile I'll continue," which makes engineers miss it.
+       Open the best capture surface for the host and launch `-Setup` there:
+        - **Desktop app** (Terminal canvas available) → open a **Terminal canvas** and run
+          `pwsh -File "<ABSOLUTE>\preflight-appcenter.ps1" -Setup` in it, so the engineer pastes
+          without leaving the app.
+        - **VS Code Copilot Chat** → tell the engineer to run that same command in the **integrated
+          terminal** (they already have one open).
+        - **Copilot CLI / anything else** → surface the command for the engineer's **own terminal**.
 
-       In every case relay the **ABSOLUTE** script path that `preflight -Check` just printed (its
-       message uses `$PSCommandPath`). **Never a repo-relative path** like
-       `.github\…\preflight-appcenter.ps1` — the engineer's terminal is usually at their home
-       directory, where a relative path fails with *"not recognized as the name of a script file"*.
+        In every case relay the **ABSOLUTE** script path that `preflight -Check` just printed (its
+        message uses `$PSCommandPath`). **Never a repo-relative path** like
+        `.github\…\preflight-appcenter.ps1` — the engineer's terminal is usually at their home
+        directory, where a relative path fails with *"not recognized as the name of a script file"*.
 
-     **b. Auto-resume — the skill polls and continues on its own.** In parallel with the capture,
-       run the blocking poll (host-agnostic — works in app/VS Code/CLI):
+     **b. You MUST actually run the blocking auto-poll — and MUST NOT finalize the report until it
+       resolves.** Telling the engineer to run `-Setup` is not enough on its own; without the poll
+       there is no auto-resume and the crash layer silently never happens. Launch it as a **background
+       shell** so independent Kusto work can proceed in parallel, but treat it as a gate:
        ```powershell
        pwsh -NoProfile -File "$S\preflight-appcenter.ps1" -Check -Json -Wait 180 -IntervalSec 10
        ```
-       It returns `ok` the **instant** the engineer finishes `-Setup`, then the crash layer proceeds
-       automatically — the engineer never has to come back and say "done." If it times out
-       (`missing`/`invalid` after 180s), *then* ask whether to keep waiting or **skip crashes this
-       run** (fall through to the placeholder).
+       It returns `ok` the **instant** the engineer finishes `-Setup` (the engineer never says "done").
+       **Before writing the crash/stability section or declaring the report complete, you MUST wait for
+       this poll to finish.** Do not conclude the run while it is still pending. On timeout
+       (`missing`/`invalid` after 180s), **stop and explicitly ask** the engineer: keep waiting (re-run
+       the poll) or skip crashes this run. Never silently skip and never finalize past a pending/timed-out
+       poll without an explicit skip.
      - **`no-access`** (4) → their token is valid but not scoped to `authapp-t7qc`; tell them to generate a
        read-only token in the right org, then `-Setup`.
    - **`network`** (5) → App Center unreachable; note it in the report and skip the crash layer this run.
