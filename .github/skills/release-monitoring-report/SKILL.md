@@ -133,12 +133,16 @@ pwsh -NoProfile -File "$S\preflight-appcenter.ps1" -Check -Json
    - **`ok`** (exit 0) → proceed to step 1 (fully automatic, no user action).
    - **`missing`** (2) / **`invalid`** (3) → the token is absent or expired. **Don't write the
      placeholder yet, and DO NOT just tell the engineer and move on** — set up a seamless capture +
-     auto-resume. This branch has two hard requirements; skipping either is a bug:
+     auto-resume. Split this across the run so the engineer's paste window overlaps the Kusto work:
+     **prompt EARLY (step a — the moment `-Check` first returns not-ok, even before the main queries),
+     then block LATE (step b — the foreground poll, at the crash layer, which is the report's last
+     section).** Both are hard requirements; skipping either is a bug:
 
      **a. Surface an UNMISSABLE action block.** Post the setup ask as its own dedicated, visually
        prominent message — a `⚠️ ACTION REQUIRED` header, one line stating *"the report's
        crash/stability section is blocked until you do this,"* and the exact command. Do **not** bury
-       it mid-paragraph or trail it with "meanwhile I'll continue," which makes engineers miss it.
+       it mid-paragraph, trail it with "meanwhile I'll continue," or imply the report will finish
+       without it — that both makes engineers miss it and tempts you to drop the gate in step b.
        Open the best capture surface for the host and launch `-Setup` there:
         - **Desktop app** (Terminal canvas available) → open a **Terminal canvas** and run
           `pwsh -File "<ABSOLUTE>\preflight-appcenter.ps1" -Setup` in it, so the engineer pastes
@@ -152,19 +156,22 @@ pwsh -NoProfile -File "$S\preflight-appcenter.ps1" -Check -Json
         `.github\…\preflight-appcenter.ps1` — the engineer's terminal is usually at their home
         directory, where a relative path fails with *"not recognized as the name of a script file"*.
 
-     **b. You MUST actually run the blocking auto-poll — and MUST NOT finalize the report until it
-       resolves.** Telling the engineer to run `-Setup` is not enough on its own; without the poll
-       there is no auto-resume and the crash layer silently never happens. Launch it as a **background
-       shell** so independent Kusto work can proceed in parallel, but treat it as a gate:
+     **b. Run the blocking poll in the FOREGROUND as a single step and wait on its result — do NOT
+       background it and "check later."** This is the enforcement mechanism, and the most important rule
+       in this branch. **Observed failure:** when the poll is launched detached (or merely described as
+       running "in parallel"), the agent posts the message, moves on, and the poll *never actually runs* —
+       so pasting the token resumes nothing and the crash layer silently never happens. The crash layer is
+       the **last** section of the report, so by the time you reach this branch every other Kusto query is
+       already done and there is nothing left to parallelize. Run it as an ordinary blocking command and
+       treat its return as a hard gate:
        ```powershell
        pwsh -NoProfile -File "$S\preflight-appcenter.ps1" -Check -Json -Wait 180 -IntervalSec 10
        ```
-       It returns `ok` the **instant** the engineer finishes `-Setup` (the engineer never says "done").
-       **Before writing the crash/stability section or declaring the report complete, you MUST wait for
-       this poll to finish.** Do not conclude the run while it is still pending. On timeout
-       (`missing`/`invalid` after 180s), **stop and explicitly ask** the engineer: keep waiting (re-run
-       the poll) or skip crashes this run. Never silently skip and never finalize past a pending/timed-out
-       poll without an explicit skip.
+       **Wait for this call to return before writing the crash/stability section or declaring the report
+       complete — the blocking call *is* the wait.** It returns `ok` the instant the engineer finishes
+       `-Setup` (they never say "done"). On timeout (`missing`/`invalid` after 180s), **stop and explicitly
+       ask**: keep waiting (re-run the poll) or skip crashes this run. Never silently skip, and never
+       finalize past a pending or timed-out poll without an explicit skip.
      - **`no-access`** (4) → their token is valid but not scoped to `authapp-t7qc`; tell them to generate a
        read-only token in the right org, then `-Setup`.
    - **`network`** (5) → App Center unreachable; note it in the report and skip the crash layer this run.
