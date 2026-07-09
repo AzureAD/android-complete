@@ -16,7 +16,10 @@ HTML email report.
 - **S360 MCP Server** must be running (configured in `.vscode/mcp.json` as `s360-breeze-mcp`)
 - **ADO MCP Server** must be running (for PBI creation and lookup)
 - **M365 User MCP** (`m365-user`) — for dynamic team member discovery via org chart
-- **WorkIQ MCP Server** (optional) — used as fallback for pulling last week's email if the user doesn't provide it
+- **WorkIQ MCP Server** (`workiq`) — **required for the default flow**. Used in Step 0b to
+  auto-fetch last week's S360 report from the user's mailbox via a Microsoft Graph
+  passthrough (`workiq-fetch` on `/me/messages`). If WorkIQ is unavailable, the skill
+  falls back to a manual paste — see Step 0b for the full fallback tier
 - Read the **Outlook HTML report prompt** at `{{VSCODE_USER_PROMPTS_FOLDER}}/outlook-html-report.prompt.md`
   for HTML rendering rules before generating the report
 
@@ -96,31 +99,81 @@ misses these. To capture them, dynamically discover team member aliases from the
   `Invoke-RestMethod -Uri "https://identitydivision.visualstudio.com/_apis/projects/Engineering/teams/{teamId}/members?api-version=7.1"`
 - Extract `uniqueName` values, strip `@microsoft.com` to get aliases
 
-### Step 0b: Collect Last Week's Report
+### Step 0b: Fetch Last Week's Report (Automatic)
 
-Before fetching S360 data, ask the user if they have last week's S360 report available.
-This is the **primary method** for determining "new this week" items, resolved items,
-and pre-existing PBI assignments. Use the `ask_user` tool:
+Before fetching S360 data, **automatically pull last week's S360 report from the
+user's mailbox** via the WorkIQ MCP's Graph passthrough. This replaces the old
+copy/paste flow — VS Code's input box silently truncated large HTML pastes, which
+corrupted the "new vs. previously tracked" diff downstream. Do **not** prompt the
+user for a paste unless every automatic method has failed.
+
+The parsed result of this step is the **previous report map**:
+`title → { pbi, owner, slaState }`. It is consumed by:
+- **Step 1e** — resolved items = items in the map but NOT in the current active set
+- **Step 3** — existing PBIs = AB# numbers from the map
+- **Step 5** — new items = items in the current active set but NOT in the map
+
+Try the following sources in order and stop at the first success. Do not ask the
+user which one to try.
+
+#### Method 1 (default): WorkIQ Graph fetch
+
+Call the WorkIQ MCP's Graph passthrough tool (exposed as `workiq-fetch`; the runtime
+tool identifier is typically `mcp_workiq_fetch`) with a Microsoft Graph query
+against the current user's mailbox:
 
 ```
-question: "Do you have last week's S360 report to paste? This helps detect new/resolved items and avoid duplicate PBIs. You can paste the report text, or skip and I'll try to find it automatically."
-choices: ["I'll paste it now", "Skip — find it automatically"]
+GET /me/messages
+  ?$search="S360 Weekly Report"
+  &$select=id,subject,body,sentDateTime,receivedDateTime
+  &$top=5
 ```
 
-**If the user pastes the report:**
-1. Parse the pasted text for:
-   - **Item titles with owners** — each row in the report table
-   - **AB# references** — extract numeric ADO work item IDs (e.g., `AB#12345`, `Product Backlog Item 12345`, or `Bug 12345`)
-   - **ADO work item URLs** — links like `dev.azure.com/.../workitems/12345`
-   - **SLA states** — Missed SLA, Near SLA, In SLA
-2. Build a **previous report map**: title → { pbi, owner, slaState }
-3. Store this map for use in:
-   - **Step 1e** (resolved items = items in last week's map but NOT in current active set)
-   - **Step 3** (existing PBIs = AB# numbers from the map)
-   - **Step 5** (new items = items in current active set but NOT in last week's map)
+**Important Graph quirks:**
+- `$search` **cannot be combined with `$filter`** — do not try to add
+  `$filter=sentDateTime ge ...`. Do the date/subject narrowing in code after the
+  results come back.
+- `$search` is quoted-string phrase match against the message index, so
+  `"S360 Weekly Report"` matches the standard subject fragment used by the team.
+- `$select` keeps the payload small — the message body is still large HTML, so
+  omit any fields you don't need.
+- Results are typically returned in relevance order, not date order — sort by
+  `sentDateTime` in code.
 
-**If the user skips or doesn't respond:**
-Fall back to automatic discovery in Step 3a (WorkIQ → Mail Search → proceed without).
+After the call, in code:
+1. Drop any message whose `sentDateTime` is within the current cycle (heuristic:
+   less than 3 days old — the current run is "this week's" report, so anything
+   that recent is either the run in progress or a same-cycle draft).
+2. From the remaining messages, sort by `sentDateTime` descending and take the
+   most recent one — that is last week's report.
+3. Extract `body.content` (HTML string) and parse it using the **prior-report
+   parser** (rules in Step 3a below). This gives you the previous report map.
+4. Log a short one-line summary to the user so the pick is auditable, e.g.:
+   `Fetched prior report: "S360 Weekly Report — Jul 2" (sent 2026-07-02T18:14Z) — parsed 18 items.`
+
+#### Method 2 (fallback): WorkIQ natural-language query
+
+If Method 1 errors (tool missing, Graph 401/403, empty result), fall back to
+`mcp_workiq_ask_work_iq`:
+
+```
+question: "Find the most recent email from the last 14 days with subject containing 'S360 Weekly Report' sent to androididentity@microsoft.com. Return the full email body content (HTML) including any AB# work item references."
+```
+
+Feed the returned body through the same prior-report parser (Step 3a).
+
+#### Method 3 (last resort): Manual paste
+
+Only if Methods 1 and 2 both fail, prompt the user with `ask_user`:
+
+```
+question: "I couldn't fetch last week's S360 report automatically (WorkIQ/Graph unavailable). If you have it, paste the report body here — otherwise skip and I'll proceed without prior-week data. Note: VS Code's input box can truncate large pastes; use a chat-window paste if you can, and warn me if the paste looks cut off."
+choices: ["I'll paste it now", "Skip — proceed without prior data"]
+```
+
+If the user pastes, parse via Step 3a. If they skip or all methods fail, proceed
+without a previous report map — Steps 3 and 5 already handle this case (see
+"Fallback" note in the Resolved section).
 
 ### Step 1: Fetch S360 Data
 
@@ -242,14 +295,14 @@ To populate the "Resolved Since Last Week" section, compare the current S360 ite
 against last week's report:
 
 1. **Pull last week's S360 items** via one of these sources (in priority order):
-   a. **User-provided report** (from Step 0b) — if the user pasted last week's report,
-      use the parsed previous report map. This is the most reliable source.
+   a. **Fetched prior report** (from Step 0b) — the previous report map built by
+      the automatic Graph fetch (or one of its fallbacks) is the most reliable
+      source. Use it if present.
    b. Call `mcp_s360-breeze-m_search_resolved_s360_kpi_action_items` with the same
       `targetIds` and `assignedTo` used in 1a/1b. Cross-reference results against the
-      user-provided report if available — only include items that appear in BOTH sources.
-   c. If no user-provided report and the resolved search tool is unavailable, parse
-      last week's email (from Step 3a) and extract the item titles + AB# numbers.
-   d. If none of the above are available, skip this step.
+      Step 0b map if available — only include items that appear in BOTH sources.
+   c. If Step 0b produced no map and the resolved search tool is unavailable, skip
+      this step.
 
 2. **Identify resolved items**: Items that appeared in last week's report but are NOT
    in the current active set (from 1c) are considered resolved.
@@ -444,19 +497,15 @@ defects (especially security/compliance items), and the skill must match those
 just like it matches PBIs. **Do not restrict any lookup to `Product Backlog Item`
 only.** Every search and merge step below applies equally to both work-item types.
 
-#### 3a: Pull last week's S360 email
+#### 3a: Prior-report parser (invoked from Step 0b)
 
-**Method 1: User-provided report** (from Step 0b) — If the user already pasted last
-week's report, use the parsed map directly. This is the most reliable source and avoids
-issues with Purview-encrypted emails or WorkIQ failures. **Skip Methods 2–3 entirely.**
+Step 0b is now responsible for **acquiring** the prior report body (via the Graph
+fetch, WorkIQ NL fallback, or paste fallback). This subsection defines the
+**parser** that Step 0b calls to turn that body into the previous report map.
+Do not re-fetch here.
 
-**Method 2: WorkIQ** (fallback if user skipped Step 0b) — Call `mcp_workiq_ask_work_iq`:
-```
-question: "Find the most recent email from the last 7 days with subject containing 'S360 Weekly Report' sent to androididentity@microsoft.com. Return the full email body content including any AB# work item references."
-```
-
-**Method 3: Ask user** (fallback if WorkIQ errors) — Use `ask_user` to ask the user
-to paste last week's report content.
+If, for some reason, Step 0b was skipped (e.g., an ad-hoc rerun mid-workflow),
+run Step 0b now before continuing.
 
 Parse the email/report body for:
 - **AB# references** (e.g., `AB#12345`) — extract the number and the S360 item title nearby.
@@ -469,7 +518,8 @@ Parse the email/report body for:
 Build a map of **S360 item title → AB# number** from the previous report.
 These are known-good PBI assignments from last week.
 
-If all methods fail, skip this step and continue with Step 3b. Do not fail the workflow.
+If Step 0b returned no map (all three fetch methods failed), skip this step and
+continue with Step 3b. Do not fail the workflow.
 
 #### 3b: Search ADO for existing S360 work items (tag/title search)
 
@@ -827,6 +877,14 @@ Within same SLA state, sort by `CurrentDueDate` ascending (earliest due first).
   Add a callout in the report noting that on-call items may be missing.
 - **S360 MCP auth failure**:Instruct user to restart MCP server via Command Palette →
   `MCP: Restart Server` → `s360-breeze-mcp`
+- **WorkIQ Graph fetch (`workiq-fetch`) fails**: Fall through Step 0b's tier:
+  Graph fetch → `ask_work_iq` NL query → manual paste. Only if all three fail
+  should you proceed without a previous report map.
+- **`$search` + `$filter` collision**: Microsoft Graph rejects requests that
+  combine `$search` with `$filter`. Never add a `$filter=sentDateTime ge …`
+  clause to the Step 0b query — do all date narrowing in code after the results
+  come back. Cycle-age skip (drop messages < 3 days old) is a code-side heuristic,
+  not a Graph query parameter.
 - **WorkIQ unavailable or no email found**: Skip Step 3a entirely; rely on S360 API field
   and ADO search only. Do not fail the workflow.
 - **WorkIQ returns emails older than 7 days**: The query is scoped to "last 7 days" to
