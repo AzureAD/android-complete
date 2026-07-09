@@ -15,16 +15,23 @@
  *
  * Input shape: a Kusto MCP JSON file produced by:
  *
+ *   let curEnd    = datetime(<CUR_END>);
+ *   let curStart  = datetime(<CUR_START>);
+ *   let prevStart = datetime(<PREV_START>);
  *   let codes = dynamic([...]);
  *   materialized_view('ErrorStatsMetrics')
- *   | where EventInfo_Time between (datetime(<prev_week>) .. datetime(<this_week_end>))
+ *   | where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
  *   | where error_code in (codes)            // or unified_error_type in (types)
- *   | extend wk = startofweek(EventInfo_Time)
- *   | where wk < datetime(<reporting_week_end_sunday>)   // drop partial end!
+ *   | extend wk = iff(EventInfo_Time >= curStart, curStart, prevStart)
  *   | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
  *               errs = sum(countOverall)
  *        by wk, error_code, <ONE_DIMENSION>
  *   | order by error_code asc, wk asc, devs desc
+ *
+ * (`wk` is now the START datetime of the 7-day window -- one of two values:
+ * prevStart or curStart. The script sorts wks lexicographically and treats
+ * the smallest as "prev" and the largest as "cur", so any pair of sortable
+ * bucket labels works.)
  *
  * Usage:
  *   node agg.js <input.json> <error_key> <dim_col> [<dim_col2> ...] [--top=N] [--metric=devs|reqs]

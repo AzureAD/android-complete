@@ -1,15 +1,24 @@
 // 60-day per-error-code trend.
+//
+// The 60-day trend section keeps Sun-Sat weekly bucketing (Kusto's
+// startofweek() is Sunday-aligned). Only the primary/WoW window is rolling.
+//
 // Inputs (replace before pasting):
-//   <START>  = first Sunday of the 60d window (e.g. 2026-03-08)
-//   <END>    = end of the reporting week, EXCLUSIVE = next Sunday after the
-//              reporting week's Sunday (e.g. for a 2026-05-03 report, use 2026-05-10)
-// Output: feed to assets/scripts/bucket-trends.js with --start=<START> (no --end needed
-// because we filter the partial bucket out at the source — preferred).
+//   <TREND_START>  = first Sunday of the 60d window (e.g. 2026-05-10 for a report
+//                    run on 2026-07-09)
+//   <TREND_END>    = Sunday that OPENS the current in-progress week, EXCLUSIVE.
+//                    Compute as startofweek(today). For a run on 2026-07-09 (Thu),
+//                    use 2026-07-05. The final `where week < datetime(<TREND_END>)`
+//                    drops the partial in-progress bucket at the source.
+//
+// Output: feed to assets/scripts/bucket-trends.js with --start=<TREND_START>
+// (no --end needed because we filter the partial bucket out at the source --
+// preferred).
 materialized_view('ErrorStatsMetrics')
-| where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+| where EventInfo_Time between (datetime(<TREND_START>) .. datetime(<TREND_END>))
 | where isnotempty(error_code) and error_code != 'success'
 | summarize errs = sum(countOverall),
             devs = dcount_hll(hll_merge(countDevicesHll))
      by week = startofweek(EventInfo_Time), error_code
-| where week < datetime(<END>)   // drop partial end-week
+| where week < datetime(<TREND_END>)   // drop partial in-progress week
 | order by error_code asc, week asc

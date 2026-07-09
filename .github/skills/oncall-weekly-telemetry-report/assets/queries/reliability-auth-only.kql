@@ -1,14 +1,29 @@
-// Auth-only denominator and reliability per week.
+// Auth-only denominator and reliability for the WoW window.
+//
+// Rolling 7-day window. curEnd is EXCLUSIVE (00:00 UTC of the invocation day);
+// curStart = curEnd - 7d, prevStart = curEnd - 14d. See SKILL.md and
+// assets/scripts/bootstrap-report.ps1 for the canonical window computation.
+//
+// Inputs:
+//   <CUR_END>     e.g. 2026-07-09 (exclusive)
+//   <CUR_START>   curEnd - 7d, e.g. 2026-07-02
+//   <PREV_START>  curEnd - 14d, e.g. 2026-06-25
+//
+// Output shape: two rows per bucket, wk in { prevStart, curStart }.
+let curEnd    = datetime(<CUR_END>);
+let curStart  = datetime(<CUR_START>);
+let prevStart = datetime(<PREV_START>);
 let s = materialized_view('SilentAuthStatsAllRequestsMetrics')
-  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
+  | extend wk = iff(EventInfo_Time >= curStart, curStart, prevStart)
   | summarize req = sum(countRequests), devHll = hll_merge(countDevicesHll)
-       by week = startofweek(EventInfo_Time);
+       by wk;
 let i = materialized_view('InteractiveAuthStatsAllRequestsMetrics')
-  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
+  | extend wk = iff(EventInfo_Time >= curStart, curStart, prevStart)
   | summarize req = sum(countRequests), devHll = hll_merge(countDevicesHll)
-       by week = startofweek(EventInfo_Time);
+       by wk;
 union s, i
 | summarize authReq = sum(req), authDev = dcount_hll(hll_merge(devHll))
-     by week
-| where week < datetime(<END>)
-| order by week asc
+     by wk
+| order by wk asc

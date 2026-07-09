@@ -1,4 +1,4 @@
-// WoW movers — codes (or types) that moved sharply this week regardless of 60d shape.
+// WoW movers -- codes (or types) that moved sharply this window regardless of 60d shape.
 //
 // MANDATORY pass alongside `60d-trend-codes.kql` / `60d-trend-types.kql` (per
 // SKILL.md Step 3b). The 60d bucketer's --peak-floor=10000 EXCLUDES errors
@@ -7,10 +7,13 @@
 // weeks, or `Code:-11` 937 -> 2,490 devs WoW). Without this pass those spikes
 // are silently dropped from the report.
 //
+// Rolling 7-day window. See SKILL.md and bootstrap-report.ps1 for the canonical
+// window computation.
+//
 // Inputs:
-//   <CURR_START>  Sunday of the reporting week (e.g. 2026-05-03)
-//   <CURR_END>    Sunday after (exclusive, e.g. 2026-05-10)
-//   <PRIOR_START> Sunday of the baseline week (e.g. 2026-04-26)
+//   <CUR_END>     end of the current window, EXCLUSIVE (e.g. 2026-07-09)
+//   <CUR_START>   curEnd - 7d (e.g. 2026-07-02)
+//   <PREV_START>  curEnd - 14d (e.g. 2026-06-25)
 //
 // To run for error_type instead of error_code, copy this query and replace:
 //   - error_code -> MergeUiRequiredExceptions(error_type) (alias as `t`)
@@ -19,16 +22,19 @@
 // Thresholds (tuneable):
 //   floor:        cDev>=500 OR cReq>=5000        (small enough to catch sub-bucketer-floor codes)
 //   move:         |dDev%|>=25 OR |dReq%|>=50     (real spike, not noise)
-//   new-this-wk:  pDev==0 OR pReq==0             (never seen before this week)
+//   new-this-wk:  pDev==0 OR pReq==0             (never seen before this window)
 
+let curEnd    = datetime(<CUR_END>);
+let curStart  = datetime(<CUR_START>);
+let prevStart = datetime(<PREV_START>);
 let curr = materialized_view('ErrorStatsMetrics')
-  | where EventInfo_Time between (datetime(<CURR_START>) .. datetime(<CURR_END>))
+  | where EventInfo_Time >= curStart and EventInfo_Time < curEnd
   | where isnotempty(error_code) and error_code != 'success'
   | summarize cDev = dcount_hll(hll_merge(countDevicesHll)),
               cReq = sum(countOverall)
        by error_code;
 let prior = materialized_view('ErrorStatsMetrics')
-  | where EventInfo_Time between (datetime(<PRIOR_START>) .. datetime(<CURR_START>))
+  | where EventInfo_Time >= prevStart and EventInfo_Time < curStart
   | where isnotempty(error_code) and error_code != 'success'
   | summarize pDev = dcount_hll(hll_merge(countDevicesHll)),
               pReq = sum(countOverall)

@@ -2,15 +2,20 @@
 // Run 7 times with <DIM> set to each of:
 //   span_name | calling_package_name | active_broker_package_name |
 //   broker_version | unified_account_type | unified_is_shared_device | client_sku
-// (Plus android_spans-based for OS version — see os-version-slice.kql.)
+// (Plus android_spans-based for OS version -- see os-version-slice.kql.)
+//
+// Rolling 7-day WoW window. See SKILL.md and bootstrap-report.ps1 for the
+// canonical window computation. Two wk buckets per (code, dim value).
+let curEnd    = datetime(<CUR_END>);
+let curStart  = datetime(<CUR_START>);
+let prevStart = datetime(<PREV_START>);
 let codes = dynamic([<CODES_LIST>]);
 materialized_view('ErrorStatsMetrics')
 | extend unified_account_type = MergeAccountType(account_type)
 | extend unified_is_shared_device = MergeIsSharedDevice(is_shared_device)
-| where EventInfo_Time between (datetime(<PREV_WEEK>) .. datetime(<END>))
+| where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
 | where error_code in (codes)
-| extend wk = startofweek(EventInfo_Time)
-| where wk < datetime(<END>)
+| extend wk = iff(EventInfo_Time >= curStart, curStart, prevStart)
 | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
             errs = sum(countOverall)
      by wk, error_code, <DIM>

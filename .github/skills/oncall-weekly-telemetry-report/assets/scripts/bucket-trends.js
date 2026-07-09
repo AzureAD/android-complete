@@ -1,19 +1,30 @@
 #!/usr/bin/env node
 /**
- * bucket-trends.js — Bucket every error code into 60-day trend categories.
+ * bucket-trends.js -- Bucket every error code into 60-day trend categories.
+ *
+ * This tool operates ONLY on the 60-day trend section, which still uses Sun-Sat
+ * weekly buckets (Kusto startofweek()-aligned). The primary/WoW section uses a
+ * rolling 7-day window and does NOT go through this script -- it consumes the
+ * two-bucket outputs of reliability-auth-only.kql / wow-movers.kql / etc.
+ * directly.
  *
  * Input: a Kusto MCP JSON result file from a query of the form:
  *
  *   materialized_view('ErrorStatsMetrics')
- *   | where EventInfo_Time between (datetime(<start>) .. datetime(<end_exclusive>))
+ *   | where EventInfo_Time between (datetime(<trend_start>) .. datetime(<trend_end>))
  *   | where isnotempty(error_code) and error_code != 'success'
  *   | summarize errs=sum(countOverall),
  *               devs=dcount_hll(hll_merge(countDevicesHll))
  *       by week=startofweek(EventInfo_Time), error_code
- *   | where week < datetime(<reporting_week_end_sunday>)   // drop partial end-week!
+ *   | where week < datetime(<trend_end>)   // drop partial in-progress week!
  *   | order by error_code asc, week asc
  *
-// (Use dcount_hll on countDevicesHll, NOT sum(countDevices) — see ../docs/kusto-cheatsheet.md.)
+ * (Use dcount_hll on countDevicesHll, NOT sum(countDevices) -- see ../docs/kusto-cheatsheet.md.)
+ *
+ * <trend_end> convention: startofweek(today) -- i.e. the Sunday that OPENS the
+ * currently in-progress week. Every complete week strictly before that Sunday
+ * is kept; the in-progress week is dropped. See assets/scripts/bootstrap-report.ps1
+ * for how this is computed (`$sixtyDayEnd`).
  *
  * Usage:
  *   node bucket-trends.js <mcp-output.json>
@@ -23,7 +34,7 @@
  * --start defaults to the second-earliest week in the data (drops partial start week).
  * --end   defaults to the most recent week, but the script will WARN-AND-DROP any week
  *         where (latest EventInfo_Time in the bucket - week-start) < 6 days, because that
- *         is a partial end-week and will turn every error into a fake -99% improvement.
+ *         is a partial in-progress week and will turn every error into a fake -99% improvement.
  *
  * --metric=devs  (default) buckets on weekly device counts (catches errors hitting more users)
  * --metric=reqs  buckets on weekly request counts        (catches per-device retry storms)

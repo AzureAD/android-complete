@@ -19,13 +19,16 @@
  *    Per-file schema: row[0] must include `error_code`, `wk`/`week`, `devs`/`countDevices`,
  *    and exactly one trailing string column (the dimension value).
  *
- * 2) Union mode (NEW, recommended for 2-week WoW attribution — one query covers all dims):
+ * 2) Union mode (recommended for WoW attribution -- one query covers all dims):
  *
  *    node summarize-attribution.js --union <attribution-union.json>
  *
  *    Expected schema (any column order):
  *       dim          string  -- short label e.g. 'span', 'calling_app', 'broker_ver'
- *       wk | week    datetime
+ *       wk | week    datetime  -- for the rolling-window queries this is the
+ *                                 bucket START datetime (prevStart or curStart);
+ *                                 the script sorts them lexicographically and
+ *                                 treats the smallest as prev, largest as cur.
  *       error_code   string  (or `error_type` — use --key=error_type to switch)
  *       val_string   string  } EITHER `val_string`+`val_bool` (Kusto union of
  *       val_bool     bool    } mixed-type slice columns) ...
@@ -33,7 +36,7 @@
  *       devs         long    (use `dcount_hll(hll_merge(countDevicesHll))` upstream)
  *       errs         long    (optional — request count, used for retry-storm detection)
  *
- *    The union form is what Step 5 of SKILL.md now recommends — 1 round-trip vs 7.
+ *    The union form is what Step 5 of SKILL.md recommends — 1 round-trip vs 7.
  *    See assets/queries/attr-union-by-dim.kql.
  *
  * Output: per error_code, per dimension, the top-5 values for each week (prior + curr),

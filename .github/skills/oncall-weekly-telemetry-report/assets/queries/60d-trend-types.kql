@@ -1,10 +1,17 @@
 // 60-day per-error-type trend (with MergeUiRequiredExceptions to collapse variants).
+//
+// The 60-day trend section keeps Sun-Sat weekly bucketing (Kusto's
+// startofweek() is Sunday-aligned). Only the primary/WoW window is rolling.
+//
+// Inputs (see 60d-trend-codes.kql for detailed semantics):
+//   <TREND_START>  first Sunday of the 60d window
+//   <TREND_END>    startofweek(today), exclusive
 materialized_view('ErrorStatsMetrics')
 | extend unified_error_type = MergeUiRequiredExceptions(error_type)
-| where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+| where EventInfo_Time between (datetime(<TREND_START>) .. datetime(<TREND_END>))
 | where isnotempty(unified_error_type)
 | summarize errs = sum(countOverall),
             devs = dcount_hll(hll_merge(countDevicesHll))
      by week = startofweek(EventInfo_Time), unified_error_type
-| where week < datetime(<END>)
+| where week < datetime(<TREND_END>)
 | order by unified_error_type asc, week asc

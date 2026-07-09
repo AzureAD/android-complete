@@ -1,14 +1,19 @@
 <!DOCTYPE html>
 <!-- TEMPLATE - see assets/templates/template-readme.md for usage. This file IS a real prior-week
-     report kept as a structural reference. To produce a new week's report, copy this
-     file to ~/android-oce-reports/oncall-wow-report-<sunday>.html and edit IN PLACE,
-     replacing prior-week dates, KPI values, table rows, attribution-card prose, and
-     PR citations with the current week's data. The CSS in <head> is canonical - do
-     not restyle per week. Authors mark unfinished sections with the literal sentinel string the validator greps for (see assets/templates/template-readme.md). -->
+     report kept as a structural reference. To produce a new report, run
+     assets/scripts/bootstrap-report.ps1 which copies this file to
+     ~/android-oce-reports/oncall-wow-report-<end-date>.html and STAMPS the
+     resolved rolling-7-day window into the <title>, meta line, and Generated
+     banner. You then edit IN PLACE, replacing prior-window KPI values, table
+     rows, attribution-card prose, and PR citations with the current window's
+     data. The CSS in <head> is canonical - do not restyle per run. Header
+     dates (title, meta line, Generated) are stamped by bootstrap - do not
+     hand-edit them. Authors mark unfinished sections with the literal sentinel
+     string the validator greps for (see assets/templates/template-readme.md). -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Android Broker · On-Call Weekly Report — Week of May 3, 2026</title>
+<title>Android Broker · Weekly On-Call Report</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   html { scroll-behavior: smooth; }

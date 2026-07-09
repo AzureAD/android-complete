@@ -1,24 +1,30 @@
-// WoW broker-version share comparison \u2014 the canonical evidence for the
+// WoW broker-version share comparison -- the canonical evidence for the
 // "denominator caveat" callout when an entire version cohort retires. Use this
 // instead of the time-series `broker-version-share.kql` when you need a single
 // WoW snapshot showing which versions gained/lost share. Modeled on
 // `wow-movers.kql`.
 //
-// Inputs:
-//   <CURR_START>  Sunday of the reporting week (e.g. 2026-05-03)
-//   <CURR_END>    Sunday after (exclusive, e.g. 2026-05-10)
-//   <PRIOR_START> Sunday of the baseline week (e.g. 2026-04-26)
+// Rolling 7-day window. See SKILL.md and bootstrap-report.ps1 for the canonical
+// window computation.
 //
-// Floor: only versions with >100M reqs in either week (filters long-tail).
-// Output sorted by current-week req count descending.
+// Inputs:
+//   <CUR_END>     end of the current window, EXCLUSIVE (e.g. 2026-07-09)
+//   <CUR_START>   curEnd - 7d (e.g. 2026-07-02)
+//   <PREV_START>  curEnd - 14d (e.g. 2026-06-25)
+//
+// Floor: only versions with >100M reqs in either window (filters long-tail).
+// Output sorted by current-window req count descending.
 
+let curEnd    = datetime(<CUR_END>);
+let curStart  = datetime(<CUR_START>);
+let prevStart = datetime(<PREV_START>);
 let curr = materialized_view('BrokerAdoptionStatsUpdated')
-  | where EventInfo_Time between (datetime(<CURR_START>) .. datetime(<CURR_END>))
+  | where EventInfo_Time >= curStart and EventInfo_Time < curEnd
   | summarize cReq = sum(countRequests),
               cDev = dcount_hll(hll_merge(countDevicesHll))
        by broker_version;
 let prior = materialized_view('BrokerAdoptionStatsUpdated')
-  | where EventInfo_Time between (datetime(<PRIOR_START>) .. datetime(<CURR_START>))
+  | where EventInfo_Time >= prevStart and EventInfo_Time < curStart
   | summarize pReq = sum(countRequests),
               pDev = dcount_hll(hll_merge(countDevicesHll))
        by broker_version;
