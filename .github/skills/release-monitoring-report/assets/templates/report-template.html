@@ -1,0 +1,924 @@
+<!DOCTYPE html>
+<!-- TEMPLATE - see assets/templates/template-readme.md for usage. This file IS a real
+     prior release-comparison report kept as a structural + visual reference. To produce
+     a new report, run assets/scripts/bootstrap-report.ps1 (it copies this file to
+     ~/android-release-reports/release-report-broker-<bv>-auth-<av>-<date>.html), then edit
+     IN PLACE: replace the version strings, window dates, KPI values, table rows, verdict
+     callout prose, and the appendix. The CSS in <head> is canonical - do not restyle.
+     Numbers below are REAL (pulled while authoring the skill) and illustrate the intended
+     narrative: a Broker release with an error-share regression but a latency win, and a
+     clean flat Authenticator release. Validate with assets/scripts/validate-report.ps1. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Android Release Monitoring · Broker 16.1.0 · Authenticator 6.2606.3817</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px; line-height: 1.5; color: #1f2328;
+    background: linear-gradient(180deg, #f6f8fa 0%, #eef1f4 100%);
+    background-attachment: fixed;
+  }
+  .container { max-width: 1400px; margin: 0 auto; padding: 32px 28px 80px; }
+
+  h1 { font-size: 28px; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.5px; color: #0d1117; }
+  h2 { font-size: 18px; font-weight: 700; margin: 36px 0 14px; padding-bottom: 8px;
+       border-bottom: 1px solid #d0d7de; color: #0d1117; letter-spacing: -0.2px; }
+  h2 .count { font-size: 13px; font-weight: 500; color: #656d76; margin-left: 8px; }
+  h3 { font-size: 13px; font-weight: 600; margin: 20px 0 8px; color: #656d76;
+       text-transform: uppercase; letter-spacing: 0.5px; }
+  p { margin: 0 0 8px; }
+  code { font-family: "SF Mono", "JetBrains Mono", Consolas, Monaco, monospace;
+         font-size: 12.5px; background: rgba(175,184,193,0.2);
+         padding: 1px 6px; border-radius: 4px; }
+
+  .header { display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 8px; flex-wrap: wrap; gap: 16px; }
+  .header .meta { color: #656d76; font-size: 13px; }
+  .header .meta strong { color: #1f2328; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px;
+           font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
+           text-transform: uppercase; vertical-align: middle; }
+  .badge-live { background: #dafbe1; color: #1a7f37; }
+
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+              gap: 14px; margin: 18px 0 28px; }
+  .kpi { background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+         padding: 16px 18px; transition: all 0.15s ease;
+         box-shadow: 0 1px 0 rgba(31,35,40,0.04); }
+  .kpi:hover { box-shadow: 0 4px 12px rgba(31,35,40,0.08); transform: translateY(-1px); }
+  .kpi .label { color: #656d76; font-size: 11px; text-transform: uppercase;
+                letter-spacing: 0.4px; font-weight: 600; }
+  .kpi .value { font-size: 24px; font-weight: 700; margin-top: 6px; color: #0d1117;
+                font-variant-numeric: tabular-nums; letter-spacing: -0.5px; }
+  .kpi .delta { font-size: 12px; font-weight: 500; margin-top: 4px; }
+  .kpi .spark { margin-top: 8px; height: 28px; }
+  .delta-up { color: #cf222e; } .delta-down { color: #1a7f37; } .delta-flat { color: #656d76; }
+
+  .callout { border-radius: 10px; padding: 14px 18px; margin: 10px 0 16px;
+             border: 1px solid; position: relative; }
+  .callout.urgent { background: #fff8f8; border-color: #ffcecb; }
+  .callout.urgent::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+                            background: #cf222e; border-radius: 10px 0 0 10px; }
+  .callout.watch { background: #fff8c5; border-color: #d4a72c; }
+  .callout.watch::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+                           background: #bf8700; border-radius: 10px 0 0 10px; }
+  .callout.win { background: #dafbe1; border-color: #aceebb; }
+  .callout.win::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+                         background: #1a7f37; border-radius: 10px 0 0 10px; }
+  .callout-title { font-size: 14px; font-weight: 700; margin-bottom: 6px; display: flex;
+                   align-items: center; gap: 8px; }
+  .callout-title .icon { font-size: 16px; }
+  .callout p, .callout li { font-size: 13px; line-height: 1.55; }
+  .callout ul { margin: 6px 0 0; padding-left: 22px; }
+  .callout li { margin: 3px 0; }
+  .callout li code { background: rgba(255,255,255,0.6); }
+
+  .table-card { background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+                overflow: hidden; box-shadow: 0 1px 0 rgba(31,35,40,0.04); margin-bottom: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th { background: #f6f8fa; text-align: left; padding: 10px 12px; font-weight: 600;
+             color: #656d76; border-bottom: 1px solid #d0d7de; font-size: 11px;
+             text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; position: sticky; top: 0; }
+  tbody td { padding: 10px 12px; border-bottom: 1px solid #f0f3f6; vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #f6f8fa; }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.code-cell { font-family: "SF Mono", Consolas, Monaco, monospace; font-size: 12.5px;
+                 font-weight: 500; color: #0550ae; }
+  td.bad { color: #cf222e; font-weight: 600; }
+  td.good { color: #1a7f37; font-weight: 600; }
+  td.warn { color: #9a6700; font-weight: 600; }
+  td.muted { color: #656d76; }
+
+  svg.sparkline { display: block; }
+  .spark-cell { vertical-align: middle; }
+
+  .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+                gap: 14px; margin: 14px 0 24px; }
+  .chart-card { background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+                padding: 16px 18px 14px; box-shadow: 0 1px 0 rgba(31,35,40,0.04); }
+  .chart-card .chart-title { font-size: 13px; font-weight: 600; color: #1f2328; margin-bottom: 4px; }
+  .chart-card .chart-subtitle { font-size: 11px; color: #656d76; margin-bottom: 12px; }
+  .chart-card svg { width: 100%; height: auto; display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11px; color: #656d76; }
+  .legend-item { display: flex; align-items: center; gap: 5px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+  details { background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+            margin: 10px 0; box-shadow: 0 1px 0 rgba(31,35,40,0.04); }
+  details summary { cursor: pointer; padding: 12px 16px; font-weight: 600;
+                    color: #0d1117; user-select: none; list-style: none; font-size: 13px; }
+  details summary::before { content: "▶"; display: inline-block; margin-right: 8px;
+                            color: #656d76; font-size: 10px; transition: transform 0.15s; }
+  details[open] summary::before { transform: rotate(90deg); }
+  details summary:hover { background: #f6f8fa; border-radius: 10px 10px 0 0; }
+  details > div { padding: 0 16px 16px; }
+
+  .glossary { background: #f6f8fa; border-left: 3px solid #d0d7de;
+              padding: 10px 14px; margin: 8px 0 16px; font-size: 12px; color: #656d76;
+              border-radius: 0 6px 6px 0; }
+  .glossary strong { color: #1f2328; }
+
+  .toc { background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+         padding: 12px 18px; margin-bottom: 24px; font-size: 13px;
+         box-shadow: 0 1px 0 rgba(31,35,40,0.04); }
+  .toc ul { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; padding: 0; list-style: none; }
+  .toc a { color: #0550ae; text-decoration: none; font-weight: 500; }
+  .toc a:hover { text-decoration: underline; }
+
+  /* ==================== ATTRIBUTION CARDS ==================== */
+  .attr-grid { display: grid; grid-template-columns: 1fr; gap: 16px; margin: 12px 0 20px; }
+  .attr-card {
+    background: #fff; border: 1px solid #d0d7de; border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(31,35,40,0.06); overflow: hidden;
+    /* Spacing when cards are rendered as siblings (no .attr-grid wrapper) —
+       e.g. a head+body+footer rebuild that emits .attr-card directly under <h2>.
+       Without this, consecutive cards visually touch. Discovered in v8 rebuild. */
+    margin-bottom: 16px;
+  }
+  .attr-card + .attr-card { margin-top: 16px; }
+  .attr-header {
+    padding: 14px 18px; background: linear-gradient(180deg, #fafbfc 0%, #f6f8fa 100%);
+    border-bottom: 1px solid #d0d7de; display: flex; align-items: center;
+    justify-content: space-between; flex-wrap: wrap; gap: 10px;
+  }
+  .attr-header.urgent { background: linear-gradient(180deg, #fff8f8 0%, #ffeef0 100%); border-bottom-color: #ffcecb; }
+  .attr-header.watch  { background: linear-gradient(180deg, #fffbe8 0%, #fff8c5 100%); border-bottom-color: #d4a72c; }
+  .attr-name {
+    font-family: "SF Mono", Consolas, monospace; font-size: 15px; font-weight: 700; color: #0d1117;
+  }
+  .attr-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 9px; border-radius: 12px; font-size: 11px;
+    font-weight: 600; white-space: nowrap;
+  }
+  .tag-bad   { background: #ffeef0; color: #cf222e; }
+  .tag-warn  { background: #fff8c5; color: #9a6700; }
+  .tag-info  { background: #ddf4ff; color: #0550ae; }
+  .tag-muted { background: #f0f3f6; color: #656d76; }
+
+  .attr-body { padding: 14px 18px; }
+  .attr-verdict {
+    background: #f6f8fa; border-left: 3px solid #0550ae; padding: 10px 14px;
+    margin-bottom: 14px; border-radius: 0 6px 6px 0; font-size: 13px;
+  }
+  .attr-verdict.bad  { border-left-color: #cf222e; background: #fff8f8; }
+  .attr-verdict strong { color: #0d1117; }
+
+  /* .attr-dims grid + .dim cards — long calling-app / version names MUST truncate,
+     never wrap or bleed out. Two flexbox traps to be aware of (v8 regression):
+       1. text-overflow:ellipsis is silently IGNORED on display:inline elements.
+          The name <span> must be display:block (or inline-block) for ellipsis.
+       2. Flex children won't shrink below their content size unless min-width:0
+          is set explicitly on the child AND every flex ancestor.
+     Both fixes are baked into the rules below. Authors who hand-write .dim-row
+     markup may use either classed (.dim-name + .dim-pct) or unclassed (<span>
+     + <span>) — both are covered. */
+  .attr-dims { min-width: 0; display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .dim {
+    background: #fafbfc; border: 1px solid #eaeef2; border-radius: 8px;
+    padding: 10px 12px;
+    min-width: 0; overflow: hidden;
+  }
+  .dim-label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    color: #656d76; letter-spacing: 0.4px; margin-bottom: 6px;
+  }
+  .dim-row {
+    display: flex; align-items: center;
+    flex-wrap: nowrap;
+    gap: 8px; padding: 3px 0; font-size: 12px;
+    min-width: 0; width: 100%;
+  }
+  /* Bar-track fixed width — must not flex */
+  .dim-row > .dim-bar-track {
+    flex: 0 0 56px; width: 56px; min-width: 56px;
+    height: 4px; background: #eaeef2; border-radius: 2px;
+    margin-top: 0; overflow: hidden;
+  }
+  /* Name column — classed (.dim-name) OR first unclassed <span>.
+     KEY: display:block + flex:1 1 0 + min-width:0 to make ellipsis engage. */
+  .dim-row .dim-name,
+  .dim-row > span:first-of-type {
+    display: block;
+    flex: 1 1 0; min-width: 0; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: "SF Mono", Consolas, monospace; font-size: 11.5px; color: #0d1117;
+  }
+  /* Percent column — classed (.dim-pct) OR last unclassed <span> */
+  .dim-row .dim-pct,
+  .dim-row > span:last-of-type {
+    flex: 0 0 auto;
+    font-variant-numeric: tabular-nums; color: #656d76; font-size: 11px;
+    min-width: 38px; text-align: right; white-space: nowrap;
+  }
+  /* Single-span placeholder rows (e.g. "Not sliced — …") — allow wrap, not truncate.
+     Long inline <code> blocks should wrap inside the cell rather than expanding
+     it horizontally. Truncation/ellipsis is for the name+bar+pct rows only. */
+  .dim-row > span:only-child,
+  .dim-row:not(:has(> .dim-bar-track)) > span {
+    display: block; flex: 1 1 0; min-width: 0; max-width: 100%;
+    overflow: hidden; text-overflow: clip; white-space: normal;
+    overflow-wrap: anywhere; word-break: break-word;
+  }
+  /* Dominant row styling — works whether .dominant is on the row OR derived
+     from the bar-fill class (the body-generated markup only marks the fill). */
+  .dim-row.dominant .dim-name,
+  .dim-row.dominant > span:first-of-type,
+  .dim-row:has(> .dim-bar-track > .dim-bar-fill.dominant) > span:first-of-type { font-weight: 700; }
+  .dim-row.dominant .dim-pct,
+  .dim-row.dominant > span:last-of-type,
+  .dim-row:has(> .dim-bar-track > .dim-bar-fill.dominant) > span:last-of-type { color: #cf222e; font-weight: 700; }
+  .dim-bar-fill { height: 100%; background: #0969da; border-radius: 2px; }
+  .dim-bar-fill.dominant { background: #cf222e; }
+  .dim-bar-fill.split    { background: #9a6700; }
+
+  .split-row { display: flex; gap: 8px; align-items: center; padding: 3px 0; font-size: 12px; }
+  .split-row .split-bar {
+    flex: 1; height: 8px; border-radius: 4px; overflow: hidden;
+    display: flex; background: #eaeef2;
+  }
+  .split-row .split-seg { height: 100%; }
+  .seg-aad     { background: #0969da; }
+  .seg-msa     { background: #8250df; }
+  .seg-unknown { background: #6e7781; }
+  .seg-shared  { background: #bf8700; }
+  .seg-personal{ background: #1a7f37; }
+  .split-legend { display: flex; gap: 10px; font-size: 10px; color: #656d76; margin-top: 4px; flex-wrap: wrap; }
+  .split-legend .li { display: flex; align-items: center; gap: 4px; }
+  .split-legend .sw { width: 8px; height: 8px; border-radius: 2px; }
+
+  /* ==================== CODE ATTRIBUTION ==================== */
+  .code-attr {
+    margin-top: 14px; padding: 12px 14px;
+    background: linear-gradient(180deg, #f6f8fa 0%, #eef1f4 100%);
+    border: 1px solid #d0d7de; border-radius: 8px;
+  }
+  .code-attr-title {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    color: #656d76; letter-spacing: 0.5px; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .code-attr-title::before { content: "🔬"; font-size: 13px; }
+
+  .origin-row {
+    display: grid; grid-template-columns: 110px 1fr; gap: 10px;
+    padding: 6px 0; font-size: 12px; align-items: start;
+  }
+  .origin-row + .origin-row { border-top: 1px dashed #d0d7de; }
+  .origin-label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    color: #656d76; letter-spacing: 0.4px; padding-top: 2px;
+  }
+  .origin-value { color: #0d1117; }
+  .origin-value code { font-size: 11.5px; }
+  .origin-value .stack {
+    font-family: "SF Mono", Consolas, monospace; font-size: 11px;
+    color: #0550ae; background: rgba(208,215,222,0.3);
+    padding: 1px 6px; border-radius: 3px; word-break: break-all;
+  }
+
+  .pr-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+  .pr-card {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 8px 10px; background: #fff; border: 1px solid #d0d7de;
+    border-radius: 6px; font-size: 12px;
+  }
+  .pr-conf {
+    flex-shrink: 0; padding: 2px 8px; border-radius: 10px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.4px; align-self: flex-start; min-width: 70px; text-align: center;
+  }
+  .pr-conf-high   { background: #ffeef0; color: #cf222e; }
+  .pr-conf-medium { background: #fff8c5; color: #9a6700; }
+  .pr-conf-low    { background: #ddf4ff; color: #0550ae; }
+  .pr-conf-none   { background: #f0f3f6; color: #656d76; }
+  .pr-body { flex: 1; line-height: 1.4; }
+  .pr-body .pr-id {
+    font-family: "SF Mono", Consolas, monospace; font-weight: 600; color: #0550ae;
+    text-decoration: none;
+  }
+  .pr-body .pr-id:hover { text-decoration: underline; }
+  .pr-body .pr-id::after { content: " \2197"; font-size: 9px; opacity: 0.7; }
+  .pr-body .pr-title { color: #0d1117; }
+  .pr-body .pr-meta { font-size: 11px; color: #656d76; margin-top: 2px; }
+  .pr-body .pr-why  { font-size: 11.5px; color: #1f2328; margin-top: 4px; font-style: italic; }
+
+  .origin-tag {
+    display: inline-block; padding: 1px 7px; border-radius: 10px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.3px;
+    margin-right: 6px; vertical-align: middle;
+  }
+  .origin-broker { background: #ffeef0; color: #cf222e; }
+  .origin-app { background: #ffeef0; color: #cf222e; }
+  .origin-android { background: #fff4e0; color: #9a6700; }
+  .origin-thirdparty { background: #ddf4ff; color: #0550ae; }
+  .origin-env { background: #f0f3f6; color: #656d76; }
+
+  /* ==================== Section 2 callout flat-row items ==================== */
+  /* Use .item-list inside .callout for the at-a-glance bullet list in WoW /     */
+  /* Slow-burn / Wins callouts. Each .item is a single divider-separated row    */
+  /* with name + inline metric chips + a one-line body. Do NOT use nested       */
+  /* card chrome (no left bars, no boxes) — the parent .callout border is the   */
+  /* only severity affordance. Deep dive lives in .attr-card under              */
+  /* #attribution further down.                                                 */
+  .item-list { display: flex; flex-direction: column; gap: 0; margin-top: 8px; }
+  .item {
+    padding: 9px 0;
+    border-top: 1px solid #eaeef2;
+    min-width: 0;
+  }
+  .item:first-child { border-top: none; padding-top: 4px; }
+  .item-head {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 6px 10px; line-height: 1.4;
+  }
+  .item-name {
+    font-family: "SF Mono", Consolas, monospace; font-weight: 700;
+    font-size: 13.5px; color: #0d1117;
+  }
+  .item-name .kind {
+    color: #656d76; font-weight: 500; font-size: 10.5px;
+    background: #f0f3f6; padding: 1px 6px; border-radius: 8px;
+    margin-left: 4px; vertical-align: 1px;
+    font-family: -apple-system, "Segoe UI", sans-serif;
+    text-transform: lowercase; letter-spacing: 0.3px;
+  }
+  .metric {
+    display: inline-flex; align-items: baseline; gap: 4px;
+    font-size: 12px; color: #1f2328; font-variant-numeric: tabular-nums;
+    padding: 1px 8px; border-radius: 10px; background: #f6f8fa;
+    white-space: nowrap;
+  }
+  .metric .m-label { color: #656d76; font-size: 10.5px; font-weight: 500; }
+  .metric .m-value { font-weight: 700; }
+  .metric.up   .m-value { color: #cf222e; }
+  .metric.down .m-value { color: #1a7f37; }
+  .item-tags { display: inline-flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
+  .item-body {
+    font-size: 12px; line-height: 1.5; color: #1f2328;
+    margin-top: 4px;
+  }
+  .item-body code {
+    background: #f6f8fa; padding: 1px 4px; border-radius: 3px;
+    font-size: 11px; color: #0550ae;
+  }
+  .item-body em { color: #656d76; font-style: italic; }
+  .item-body .action-flag { color: #cf222e; font-weight: 700; }
+  .item-foot {
+    font-size: 11px; color: #656d76; margin-top: 3px;
+    display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center;
+  }
+  .item-foot strong { color: #1f2328; }
+  .item-foot .arrow-link {
+    margin-left: auto; color: #0550ae; text-decoration: none; font-weight: 600;
+  }
+  .item-foot .arrow-link:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="header">
+  <div>
+    <h1>Android Release Monitoring</h1>
+    <div class="meta">
+      <strong>Broker 16.1.0</strong> vs <strong>16.0.1</strong>
+      &nbsp;·&nbsp; <strong>Authenticator 6.2606.3817</strong> vs <strong>6.2605.3042</strong>
+      &nbsp;·&nbsp; Window: last 14 days &nbsp;·&nbsp;
+      Source: <code>ad-accounts-android-otel</code> + Authenticator OTEL &nbsp;·&nbsp;
+      Generated <strong>2026-01-01</strong>
+    </div>
+  </div>
+  <span class="badge badge-live">Template · Live data</span>
+</div>
+
+<nav class="toc">
+  <ul>
+    <li><a href="#verdict">🚦 Release verdict</a></li>
+    <li><a href="#broker-health">📊 Broker health</a></li>
+    <li><a href="#broker-errors">🔎 Broker error movers</a></li>
+    <li><a href="#broker-latency">⏱️ Broker latency</a></li>
+    <li><a href="#broker-adoption">🚚 Broker adoption</a></li>
+    <li><a href="#auth-health">📊 Authenticator health</a></li>
+    <li><a href="#auth-scenarios">🔎 Authenticator scenarios</a></li>
+    <li><a href="#auth-stability">🐞 Authenticator stability</a></li>
+    <li><a href="#auth-broker">🛡️ Broker via Authenticator</a></li>
+    <li><a href="#appendix">Appendix</a></li>
+  </ul>
+</nav>
+
+<!-- ================ RELEASE VERDICT ================ -->
+<h2 id="verdict">🚦 Release verdict</h2>
+
+<div class="callout watch">
+  <div class="callout-title"><span class="icon">⚠️</span> Broker 16.1.0 — HOLD wide rollout</div>
+  <p>16.1.0 is in <strong>early rollout</strong> (76.4M devices vs 585.3M on 16.0.1). Two signals disagree:</p>
+  <ul>
+    <li><strong>Regression:</strong> overall device error-share is elevated — <code>io_error</code> reaches <strong>82.1%</strong> of 16.1.0 devices vs <strong>41.8%</strong> on 16.0.1 (<strong>+40.3 pp</strong>). This dominates the headline device-error-rate gap and must be understood before widening.</li>
+    <li><strong>Win:</strong> latency improved at every percentile through P95 (P95 <strong>3,117 ms</strong> vs 4,712 ms, −33.8%). Only P99 is slightly worse (+2,064 ms).</li>
+  </ul>
+  <p>Early-rollout cohorts skew toward upgrade/network churn, so part of the <code>io_error</code> lift may be transient — confirm the trend as adoption grows before shipping or rolling back.</p>
+</div>
+
+<div class="callout win">
+  <div class="callout-title"><span class="icon">✅</span> Authenticator 6.2606.3817 — SAFE to proceed</div>
+  <p>6.2606.3817 is <strong>flat</strong> against 6.2605.3042 across every measured scenario — all deltas within ±1 pp, no regression. Volumes on the new build are small but representative (5.69M devices). Stability is a clear <strong>win</strong>: the crash rate fell <strong>6.49 → 0.86 crashes per 1k active devices (−87%)</strong>, driven mostly by the near-elimination of a tampered/sideloaded-APK <code>ClassNotFoundException</code> (−1.65/1k alone). No genuine per-device crash regression exists. The <a href="#auth-broker">broker hosted inside this app</a> (16.2.0) shows <strong>no broad regression</strong> versus the broker in 6.2605 (16.1.0) at the device level, but a <strong>span drill-down</strong> finds per-request <code>invalid_grant</code> / <code>interaction_required</code> on the <strong>silent</strong> path running ~0.4 pp above baseline (mostly a decaying upgrade spike) — a <strong>watch</strong> item, not a blocker. The app rollout itself is safe to proceed; monitor the silent path as the cohort matures.</p>
+</div>
+
+<!-- ================ BROKER HEALTH ================ -->
+<h2 id="broker-health">📊 Broker health <span class="count">— 16.1.0 vs 16.0.1</span></h2>
+<div class="kpi-grid">
+  <div class="kpi">
+    <div class="label">Device error rate</div>
+    <div class="value">58.71%</div>
+    <div class="delta delta-up">+36.62 pp vs 16.0.1 (22.09%)</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Silent reliability (dev)</div>
+    <div class="value">93.63%</div>
+    <div class="delta delta-up">−3.66 pp vs 16.0.1 (97.28%)</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Interactive reliability (dev)</div>
+    <div class="value">69.73%</div>
+    <div class="delta delta-down">+16.18 pp vs 16.0.1 (53.55%)</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Silent reliability (req)</div>
+    <div class="value">44.97%</div>
+    <div class="delta delta-up">−42.14 pp vs 16.0.1 (87.11%)</div>
+  </div>
+  <div class="kpi">
+    <div class="label">p95 latency</div>
+    <div class="value">3,117 ms</div>
+    <div class="delta delta-down">−1,595 ms (−33.8%) vs 16.0.1</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Devices on 16.1.0</div>
+    <div class="value">76.4 M</div>
+    <div class="delta delta-flat">13.1% of 16.0.1 fleet (early rollout)</div>
+  </div>
+</div>
+<div class="glossary">
+  <strong>Reading the deltas:</strong> red <span class="delta-up">▲</span> = worse on the new release, green <span class="delta-down">▼</span> = better. "pp" = percentage points. Reliability = requests/devices without an expected error. Device error rate = devices hitting any non-success <code>error_code</code> ÷ total devices on that version (a broad denominator — use the error-movers table below to see <em>which</em> code drives it).
+</div>
+
+<!-- ================ BROKER ERROR MOVERS ================ -->
+<h2 id="broker-errors">🔎 Broker error movers <span class="count">— device-share by error_code</span></h2>
+<p>Per <code>error_code</code>, the share of each version's devices that hit it. Sorted by the 16.1.0−16.0.1 delta — the codes "changing this release". Device share normalizes for the rollout size difference, so growth here is real, not just a bigger cohort.</p>
+<div class="table-card">
+<table>
+  <thead><tr>
+    <th>error_code</th>
+    <th class="num">16.0.1 dev-share</th>
+    <th class="num">16.1.0 dev-share</th>
+    <th class="num">Δ pp</th>
+    <th class="num">16.1.0 devices</th>
+  </tr></thead>
+  <tbody>
+    <tr><td class="code-cell">io_error</td><td class="num">41.79%</td><td class="num bad">82.09%</td><td class="num bad">+40.30</td><td class="num">36.8 M</td></tr>
+    <tr><td class="code-cell">invalid_grant</td><td class="num">25.17%</td><td class="num warn">31.98%</td><td class="num warn">+6.82</td><td class="num">14.3 M</td></tr>
+    <tr><td class="code-cell">timed_out_execution</td><td class="num">21.11%</td><td class="num warn">26.22%</td><td class="num warn">+5.11</td><td class="num">11.8 M</td></tr>
+    <tr><td class="code-cell">device_network_not_available_doze_mode</td><td class="num">0.62%</td><td class="num warn">4.16%</td><td class="num warn">+3.55</td><td class="num">1.9 M</td></tr>
+    <tr><td class="code-cell">no_tokens_found</td><td class="num">2.56%</td><td class="num warn">5.60%</td><td class="num warn">+3.04</td><td class="num">2.5 M</td></tr>
+    <tr><td class="code-cell">interaction_required</td><td class="num">1.08%</td><td class="num">2.64%</td><td class="num">+1.57</td><td class="num">1.2 M</td></tr>
+    <tr><td class="code-cell">unauthorized_client</td><td class="num">0.88%</td><td class="num">2.11%</td><td class="num">+1.23</td><td class="num">0.9 M</td></tr>
+    <tr><td class="code-cell">timed_out</td><td class="num">0.26%</td><td class="num">0.82%</td><td class="num">+0.56</td><td class="num">0.4 M</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="glossary"><strong>Why this matters:</strong> <code>io_error</code> alone accounts for the bulk of the headline device-error-rate gap. Drill into its <code>error_message</code> / <code>span_name</code> distribution on 16.1.0 next (filter <code>ErrorStatsMetrics</code> by <code>broker_version == "16.1.0"</code> and <code>error_code == "io_error"</code>) to attribute it to a code path or a transient network class.</div>
+
+<!-- ================ BROKER LATENCY ================ -->
+<h2 id="broker-latency">⏱️ Broker latency <span class="count">— responseTime percentiles</span></h2>
+<div class="table-card">
+<table>
+  <thead><tr>
+    <th>Percentile</th>
+    <th class="num">16.0.1</th>
+    <th class="num">16.1.0</th>
+    <th class="num">Δ</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>P50</td><td class="num">462 ms</td><td class="num good">272 ms</td><td class="num good">−190 ms</td></tr>
+    <tr><td>P75</td><td class="num">1,328 ms</td><td class="num good">760 ms</td><td class="num good">−568 ms</td></tr>
+    <tr><td>P90</td><td class="num">2,825 ms</td><td class="num good">1,781 ms</td><td class="num good">−1,044 ms</td></tr>
+    <tr><td>P95</td><td class="num">4,712 ms</td><td class="num good">3,117 ms</td><td class="num good">−1,595 ms</td></tr>
+    <tr><td>P99</td><td class="num">28,035 ms</td><td class="num bad">30,099 ms</td><td class="num bad">+2,064 ms</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="glossary">Latency improved across the board through P95; only the P99 tail is worse on 16.1.0. Percentiles are merged via <code>tdigest_merge</code> — never summed.</div>
+
+<!-- ================ BROKER ADOPTION ================ -->
+<h2 id="broker-adoption">🚚 Broker adoption <span class="count">— distinct devices by version</span></h2>
+<div class="table-card">
+<table>
+  <thead><tr><th>broker_version</th><th class="num">Devices</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td class="code-cell">16.0.1</td><td class="num">585.3 M</td><td class="muted">prior release (baseline)</td></tr>
+    <tr><td class="code-cell">16.1.0</td><td class="num">76.4 M</td><td class="warn">rolling out</td></tr>
+    <tr><td class="code-cell">16.2.0</td><td class="num">11.9 M</td><td class="muted">next train (canary)</td></tr>
+    <tr><td class="code-cell">14.2.0</td><td class="num">9.9 M</td><td class="muted">long tail</td></tr>
+    <tr><td class="code-cell">15.0.0</td><td class="num">2.8 M</td><td class="muted">long tail</td></tr>
+  </tbody>
+</table>
+</div>
+
+<!-- ================ AUTHENTICATOR HEALTH ================ -->
+<h2 id="auth-health">📊 Authenticator health <span class="count">— 6.2606.3817 vs 6.2605.3042</span></h2>
+<div class="kpi-grid">
+  <div class="kpi">
+    <div class="label">MFA PN completion</div>
+    <div class="value">76.73%</div>
+    <div class="delta delta-flat">+0.06 pp vs 6.2605 (76.67%)</div>
+  </div>
+  <div class="kpi">
+    <div class="label">MFA QR reg success</div>
+    <div class="value">74.73%</div>
+    <div class="delta delta-flat">−0.27 pp vs 6.2605 (75.00%)</div>
+  </div>
+  <div class="kpi">
+    <div class="label">PSI reg success</div>
+    <div class="value">68.03%</div>
+    <div class="delta delta-flat">−0.84 pp vs 6.2605 (68.87%)</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Passkey WebAuthN reg</div>
+    <div class="value">80.63%</div>
+    <div class="delta delta-flat">−0.31 pp vs 6.2605 (80.94%)</div>
+  </div>
+  <div class="kpi">
+    <div class="label">MSA NGC reg success</div>
+    <div class="value">20.15%</div>
+    <div class="delta delta-flat">+0.20 pp vs 6.2605 (19.95%)</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Devices on 6.2606.3817</div>
+    <div class="value">5.69 M</div>
+    <div class="delta delta-flat">newest train build</div>
+  </div>
+</div>
+
+<!-- ================ AUTHENTICATOR SCENARIOS ================ -->
+<h2 id="auth-scenarios">🔎 Authenticator scenarios <span class="count">— per-scenario success / completion</span></h2>
+<div class="table-card">
+<table>
+  <thead><tr>
+    <th>Scenario</th>
+    <th>Metric</th>
+    <th class="num">6.2605.3042</th>
+    <th class="num">6.2606.3817</th>
+    <th class="num">Δ pp</th>
+    <th class="num">6.2606 volume</th>
+    <th>Verdict</th>
+  </tr></thead>
+  <tbody>
+    <tr><td>Entra MFA · PN + CheckForAuth</td><td class="muted">completion</td><td class="num">76.67%</td><td class="num">76.73%</td><td class="num good">+0.06</td><td class="num">9.9 M</td><td class="good">flat</td></tr>
+    <tr><td>Entra MFA · QR registration</td><td class="muted">success</td><td class="num">75.00%</td><td class="num">74.73%</td><td class="num">−0.27</td><td class="num">135.9 K</td><td class="muted">flat</td></tr>
+    <tr><td>Entra PSI · registration</td><td class="muted">success</td><td class="num">68.87%</td><td class="num">68.03%</td><td class="num">−0.84</td><td class="num">42.1 K</td><td class="muted">flat</td></tr>
+    <tr><td>Passkey · WebAuthN registration</td><td class="muted">success</td><td class="num">80.94%</td><td class="num">80.63%</td><td class="num">−0.31</td><td class="num muted">852</td><td class="muted">low-volume</td></tr>
+    <tr><td>MSA NGC · registration</td><td class="muted">success</td><td class="num">19.95%</td><td class="num">20.15%</td><td class="num good">+0.20</td><td class="num">99.2 K</td><td class="muted">flat</td></tr>
+    <tr><td>MSA SA · registration</td><td class="muted">success</td><td class="num">15.45%</td><td class="num">14.74%</td><td class="num">−0.71</td><td class="num">6.5 K</td><td class="muted">flat</td></tr>
+    <tr><td>Passkey · InApp registration</td><td class="muted">success</td><td class="num">75.11%</td><td class="num">73.50%</td><td class="num">−1.61</td><td class="num muted">11.2 K</td><td class="muted">low-volume</td></tr>
+    <tr><td>Passkey · WebAuthN sign-in</td><td class="muted">success</td><td class="num">94.87%</td><td class="num">94.50%</td><td class="num">−0.37</td><td class="num">181.4 K</td><td class="good">flat</td></tr>
+    <tr><td>Entra MFA · No-QR registration</td><td class="muted">success</td><td class="num">47.39%</td><td class="num">48.63%</td><td class="num good">+1.24</td><td class="num">64.9 K</td><td class="muted">flat</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="glossary"><strong>Low MSA registration success</strong> (≈15–20%) is a known steady-state characteristic of that scenario, not a 6.2606 regression — the point of a release report is the <em>delta</em>, which is flat. The <strong>No-QR MFA</strong> flow is similarly low-success by nature (manual entry). Verify volume before trusting a small-percentage move (e.g. the 852-initiate Passkey reg and 11.2K InApp rows are noise-prone).</div>
+
+<p style="margin-top:18px"><strong>Reacted-notification outcome split — Entra MFA.</strong> Of the pushes a user actually <em>reacted</em> to, the share they Approved / Denied / hit an Error on. A release that broke the approve path or spiked fraud-denials would surface here even when headline completion looks flat.</p>
+<div class="table-card">
+<table>
+  <thead><tr>
+    <th>App version</th>
+    <th class="num">Reacted devices</th>
+    <th class="num">Approved</th>
+    <th class="num">Denied</th>
+    <th class="num">Error</th>
+  </tr></thead>
+  <tbody>
+    <tr><td class="code-cell">6.2605.3042 <span class="muted">(prev)</span></td><td class="num">144.0 M</td><td class="num">97.12%</td><td class="num">1.24%</td><td class="num">1.64%</td></tr>
+    <tr><td class="code-cell">6.2606.3817 <span class="muted">(new)</span></td><td class="num">6.68 M</td><td class="num good">97.23%</td><td class="num good">1.18%</td><td class="num good">1.60%</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="glossary"><strong>Approve quality is stable:</strong> on 6.2606 the approval rate edged up (+0.11 pp) while both denials (−0.06 pp) and reaction errors (−0.04 pp) edged down — no sign the new build degraded the MFA approve path or triggered more fraud-denials. Counts are device-deduped reactions; 6.68 M on the new build is early-rollout volume.</div>
+
+<!-- ================ AUTHENTICATOR STABILITY ================ -->
+<h2 id="auth-stability">🐞 Authenticator stability <span class="count">— crashes per 1k active devices</span></h2>
+<p>Crash clusters from <strong>App Center Diagnostics</strong> (numerator), normalized by <strong>Kusto</strong> active devices per version (denominator). The headline is the <strong>per-device rate</strong>, not crash-share: a signature can take a bigger <em>share</em> of a much smaller crash pool while its real per-device rate <em>drops</em> — so share alone would invent regressions that don't exist.</p>
+<div class="kpi-grid">
+  <div class="kpi">
+    <div class="label">Crash rate / 1k active dev</div>
+    <div class="value">0.86</div>
+    <div class="delta delta-down">−87% vs 6.49 on 6.2605</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Crashes (App Center · 14d)</div>
+    <div class="value">10.8 K</div>
+    <div class="delta delta-flat">over 12.62M active devices</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Distinct crash signatures</div>
+    <div class="value">683</div>
+    <div class="delta delta-flat">App Center error groups</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Genuine rate regressions</div>
+    <div class="value">0</div>
+    <div class="delta delta-down">no signature ≥ 0.02/1k worse</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Top driver of the drop</div>
+    <div class="value">−1.65/1k</div>
+    <div class="delta delta-down">tampered-APK ClassNotFoundException</div>
+  </div>
+  <div class="kpi">
+    <div class="label">New long-tail clusters</div>
+    <div class="value">344</div>
+    <div class="delta delta-flat">all &lt; 0.02/1k (early-window noise)</div>
+  </div>
+</div>
+<div class="table-card">
+<table>
+  <thead><tr>
+    <th>Crashing frame</th>
+    <th>Exception</th>
+    <th class="num">6.2605 /1k</th>
+    <th class="num">6.2606 /1k</th>
+    <th class="num">Δ /1k</th>
+    <th class="num">6.2606 share</th>
+    <th>Status</th>
+  </tr></thead>
+  <tbody>
+    <tr><td class="code-cell">appcenter.crashes.Crashes.saveUncaughtException</td><td class="muted">RemoteException <span class="muted">(SDK bucket)</span></td><td class="num">0.905</td><td class="num">0.140</td><td class="num good">−0.765</td><td class="num">16.36%</td><td class="good">improved</td></tr>
+    <tr><td class="code-cell">bastion.internal.ValidationCheckType$5.resetCache</td><td class="muted">ClassNotFoundException</td><td class="num">0.388</td><td class="num">0.106</td><td class="num good">−0.282</td><td class="num">12.35%</td><td class="good">improved</td></tr>
+    <tr><td class="code-cell">onlineid.internal.ApiRequest.sendResult</td><td class="muted">NotSerializableException</td><td class="num">0.649</td><td class="num">0.073</td><td class="num good">−0.576</td><td class="num">8.54%</td><td class="good">improved</td></tr>
+    <tr><td class="code-cell">com.c.b.b.bSS.loadClass <span class="muted">(tampered APK)</span></td><td class="muted">ClassNotFoundException</td><td class="num">1.715</td><td class="num">0.062</td><td class="num good">−1.653</td><td class="num">7.25%</td><td class="good">improved</td></tr>
+    <tr><td class="code-cell">core.common.CoroutineTimer$startTimer$1</td><td class="muted">OutOfMemoryError</td><td class="num">0.093</td><td class="num">0.048</td><td class="num good">−0.045</td><td class="num">5.60%</td><td class="good">improved</td></tr>
+    <tr><td class="code-cell">core.app.ActivityCompat$Api28Impl.requireViewById</td><td class="muted">IllegalArgumentException</td><td class="num">0.153</td><td class="num">0.028</td><td class="num good">−0.125</td><td class="num">3.26%</td><td class="good">improved</td></tr>
+    <tr><td class="code-cell">identity.common…WebViewUtil.getCookieManager</td><td class="muted">MissingWebViewPackageException</td><td class="num">0.088</td><td class="num">0.025</td><td class="num good">−0.063</td><td class="num">2.89%</td><td class="good">improved</td></tr>
+    <tr><td class="code-cell">core.app.JobIntentService…WrapperWorkItem.complete</td><td class="muted">IllegalArgumentException</td><td class="num">0.163</td><td class="num">0.022</td><td class="num good">−0.141</td><td class="num">2.55%</td><td class="good">improved</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="glossary"><strong>Reading this table:</strong> rows are the most-hit crash frames on the rolling-out build, ranked by 6.2606 per-1k rate. "Δ /1k" is the per-device rate change — green = fewer crashes per device. <strong>Share ≠ rate:</strong> <code>ValidationCheckType</code> takes a bigger <em>share</em> on 6.2606 (5.98% → 12.35%) yet its rate <em>fell</em> 73% — it is only a larger slice of a much smaller pie. The dominant legacy crash, an obfuscated <code>ClassNotFoundException</code> in a repackaged class (<code>com.c.b.b.bSS.loadClass</code>), is a <strong>tampered/sideloaded-APK</strong> signature, not a first-party bug — its near-disappearance (−1.65/1k) drives most of the overall improvement. <strong>Caveat:</strong> App Center crash uploads on an early-rollout build are still accumulating, so confirm the low rate holds as adoption grows; the 344 "new" long-tail clusters are each &lt; 0.02/1k (one-window noise), not regressions.</div>
+
+<!-- Crash attribution card — emit ONE per confirmed NEW or RISING first-party crash (P10 step 6 / crash-sources.md § "Crash → PR / code attribution"). KEY RULE: search the EXCEPTION TOKEN from the stack (find-suspect-prs.ps1 -Symbol 'EntryPoints.get' -DiffGrep 'EntryPoints|GeneratedComponent'), NOT the crashing class — the crashing class is the VICTIM the runtime inspected, the CULPRIT is a caller in another file whose PR subject rarely names the subsystem. The example below is the confirmed first-party-regression case → origin-app, HIGH confidence. Reserve origin-android+origin-env ONLY for a genuine OS×build-config interaction, and ONLY after the exception-token pickaxe, the -DiffGrep scan, and the DI path-log all come up empty. Delete this card if no crash qualifies. -->
+<div class="code-attr">
+  <div class="code-attr-title">Crash attribution — new dagger.hilt EntryPoints.get on MfaAuthDialogActivity</div>
+  <div class="origin-row">
+    <div class="origin-label">Originator</div>
+    <div class="origin-value"><span class="origin-tag origin-app">Authenticator</span> A <strong>first-party regression</strong>. The crash frame names <code>MfaAuthDialogActivity</code>, but the Activity is the <strong>victim</strong> — it was never edited. The <strong>culprit</strong> is a new caller in a different file (<code>OathSecretEncryptionUseCase</code>) that hands that Activity's context to Hilt's <code>EntryPoints.get</code>. Confirmed in-range release regression, <strong>not</strong> an OS/shrinker interaction.</div>
+  </div>
+  <div class="origin-row">
+    <div class="origin-label">Mechanism</div>
+    <div class="origin-value"><code>dagger.hilt.EntryPoints.get:62</code> throws <code>IllegalStateException</code> — "component holder class <code>MfaAuthDialogActivity</code> does not implement interface <code>dagger.hilt.internal.GeneratedComponent</code>." The new <code>OathSecretEncryptionUseCase</code> resolves its ECS dependency via <code>EntryPoints.get(applicationContext, SecureTotpEcsDependency::class.java)</code>. That <code>applicationContext</code> is bound from the <strong>legacy Dagger <code>ContextModule.provideContext()</code></strong>, which returned the context the component was <em>built with</em> — and the MFA dialog fragments build it with <code>requireContext()</code> = the <code>MfaAuthDialogActivity</code>. So <code>EntryPoints.get</code> runs against an <strong>Activity</strong>, which is not a Hilt generated-component holder → crash. Genuinely-new this release (0 on the baseline), <strong>66.7% Android 16</strong> incidentally (the TOTP path is exercised more there), broad across device models.</div>
+  </div>
+  <div class="origin-row">
+    <div class="origin-label">Release range</div>
+    <div class="origin-value">authenticator <code>6.2606.3817..6.2606.4029</code> (34 commits), searched with <code>find-suspect-prs.ps1 -Repos authenticator -Symbol 'EntryPoints.get' -DiffGrep 'EntryPoints|GeneratedComponent'</code>. The <strong>exception-token</strong> pickaxe + <code>-DiffGrep</code> diff-text scan surface the culprit immediately — note a <code>-Symbol MfaAuthDialogActivity</code> search (the crashing class) finds <strong>nothing</strong>, because the Activity is only <em>passed into</em> the failing API by a caller in another file under an unrelated PR title.</div>
+  </div>
+  <div class="origin-row">
+    <div class="origin-label">Likely PRs</div>
+    <div class="origin-value">
+      <div class="pr-list">
+        <div class="pr-card">
+          <span class="pr-conf pr-conf-high">high</span>
+          <div class="pr-body">
+            <a class="pr-id" href="https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/15896454">authenticator PR 15896454</a>
+            <span class="pr-title">[MSRC] [110950] - TOTP Secret Fix - Phase 1</span>
+            <div class="pr-meta">7d3da30b13 · ADO · Cesar Acosta</div>
+            <div class="pr-why">Added <code>OathSecretEncryptionUseCase</code>, which calls <code>EntryPoints.get(applicationContext, …)</code> on a context that the legacy <code>ContextModule</code> resolves to the <strong>dialog Activity</strong>, not the application — the exact <code>EntryPoints.get</code> + <code>GeneratedComponent</code> frame in the stack. Its subject ("TOTP Secret Fix") never mentions Hilt/DI, which is why <code>-DiffGrep</code> (not <code>--grep</code>) was required to find it.</div>
+          </div>
+        </div>
+        <div class="pr-card">
+          <span class="pr-conf pr-conf-none">fix</span>
+          <div class="pr-body">
+            <a class="pr-id" href="https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/16249408">authenticator PR 16249408</a>
+            <span class="pr-title">[Cherry-pick] Fix MFA auth dialog Hilt crash on saved-state restore (AB#3677526)</span>
+            <div class="pr-meta">023aec8abd · ADO · Melissa Ahn</div>
+            <div class="pr-why">The fix: normalizes <code>ContextModule.provideContext()</code> to <code>= context.applicationContext</code>, so <code>EntryPoints.get</code> always receives the process-wide application context even when callers (the MFA dialog fragments) build the component with an Activity context. Confirms the mechanism above.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="origin-row">
+    <div class="origin-label">Next step</div>
+    <div class="origin-value">Ship/verify the <strong>PR 16249408</strong> fix (<code>ContextModule.provideContext() = context.applicationContext</code>, AB#3677526) in the next release and confirm the signature drops to 0. Add a regression test that builds the MFA-dialog component with an Activity context and asserts <code>EntryPoints.get</code> still resolves. Audit other legacy <code>ContextModule</code> consumers that pass <code>requireContext()</code> into Hilt. Low fleet rate (≈0.56/1k) and a fix in flight → <strong>watch</strong>, not a HOLD.</div>
+  </div>
+</div>
+
+
+<!-- ================ BROKER VIA AUTHENTICATOR ================ -->
+<h2 id="auth-broker">🛡️ Broker health · Authenticator-hosted <span class="count">— is the app release moving broker errors?</span></h2>
+<p>The Broker runs <em>inside</em> the Authenticator process. The <a href="#broker-health">Broker health</a> section above pools <strong>every</strong> host (Link to Windows, Company Portal, Authenticator) and compares <code>broker_version</code>. This section isolates <code>active_broker_package_name == "com.azure.authenticator"</code> and compares by <strong>Authenticator app version</strong> (<code>AppInfo_Version</code>) — so a broker regression caused by <em>this</em> app rollout shows up here even when the fleet-wide broker numbers are dominated by other hosts. The new app <strong>6.2606.3817 bundles broker 16.2.0</strong>; the previous <strong>6.2605.3042 bundled 16.1.0</strong>.</p>
+<div class="kpi-grid">
+  <div class="kpi">
+    <div class="label">Device error rate (Auth-hosted)</div>
+    <div class="value">47.19%</div>
+    <div class="delta delta-down">−16.12 pp vs 63.31% on 6.2605</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Silent reliability (req)</div>
+    <div class="value">47.92%</div>
+    <div class="delta delta-down">+3.16 pp vs 44.76%</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Silent reliability (dev)</div>
+    <div class="value">87.20%</div>
+    <div class="delta delta-up">−6.81 pp vs 94.00%</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Interactive reliability (dev)</div>
+    <div class="value">65.90%</div>
+    <div class="delta delta-up">−3.57 pp vs 69.47%</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Bundled broker</div>
+    <div class="value">16.2.0</div>
+    <div class="delta delta-flat">vs 16.1.0 on the 6.2605 app</div>
+  </div>
+  <div class="kpi">
+    <div class="label">Auth-hosted devices</div>
+    <div class="value">12.40 M</div>
+    <div class="delta delta-flat">18.4% of the 6.2605 cohort (early rollout)</div>
+  </div>
+</div>
+<div class="glossary"><strong>Mixed, but not regressing:</strong> the broad device-error rate fell sharply and request-level silent reliability rose, while device-level reliability dipped a few points — the signature of an early-rollout cohort (upgrade + network churn). The device-share movers below look clean, but device-share dedups each device across all spans and hides per-span request spikes — the span drill-down further down catches two codes climbing on the silent path.</div>
+<div class="table-card">
+<table>
+  <thead><tr>
+    <th>error_code</th>
+    <th class="num">6.2605 dev-share</th>
+    <th class="num">6.2606 dev-share</th>
+    <th class="num">Δ pp</th>
+    <th class="num">6.2606 devices</th>
+  </tr></thead>
+  <tbody>
+    <tr><td class="code-cell">io_error</td><td class="num">82.48%</td><td class="num good">80.05%</td><td class="num good">−2.43</td><td class="num">4.68 M</td></tr>
+    <tr><td class="code-cell">invalid_grant</td><td class="num">32.47%</td><td class="num good">22.35%</td><td class="num good">−10.12</td><td class="num">1.31 M</td></tr>
+    <tr><td class="code-cell">no_account_found</td><td class="num">21.07%</td><td class="num good">17.82%</td><td class="num good">−3.25</td><td class="num">1.04 M</td></tr>
+    <tr><td class="code-cell">timed_out_execution</td><td class="num">26.99%</td><td class="num good">12.78%</td><td class="num good">−14.21</td><td class="num">0.75 M</td></tr>
+    <tr><td class="code-cell">no_tokens_found</td><td class="num">5.74%</td><td class="num good">4.64%</td><td class="num good">−1.11</td><td class="num">0.27 M</td></tr>
+    <tr><td class="code-cell">device_network_not_available_doze_mode</td><td class="num">4.16%</td><td class="num good">2.80%</td><td class="num good">−1.36</td><td class="num">0.16 M</td></tr>
+    <tr><td class="code-cell">interaction_required</td><td class="num">2.62%</td><td class="num good">1.72%</td><td class="num good">−0.90</td><td class="num">0.10 M</td></tr>
+    <tr><td class="code-cell">multiple_apps_listening_url_scheme <span class="muted">(only device-share riser)</span></td><td class="num">0.00%</td><td class="num">0.04%</td><td class="num warn">+0.04</td><td class="num muted">2.2 K</td></tr>
+  </tbody>
+</table>
+</div>
+<h3>Span drill-down — where the silent errors actually moved</h3>
+<p>The device-share table above dedups each device across <em>all</em> spans, so a code can climb on one hot span while its fleet-wide device-share falls. Slicing the same <code>active_broker_package_name == "com.azure.authenticator"</code> error stream by <code>span_name</code> at the <strong>request</strong> level (errored requests ÷ total requests in that span) tells a different story for two codes that looked flat-to-down above:</p>
+<div class="table-card">
+<table>
+  <thead><tr>
+    <th>error_code</th>
+    <th>span</th>
+    <th class="num">6.2605 req-rate</th>
+    <th class="num">6.2606 req-rate</th>
+    <th class="num">Δ pp</th>
+    <th class="num">6.2606 err req</th>
+  </tr></thead>
+  <tbody>
+    <tr><td class="code-cell">invalid_grant</td><td><code>ATIInteractively</code></td><td class="num">27.51%</td><td class="num bad">36.60%</td><td class="num bad">+9.09</td><td class="num">40 K</td></tr>
+    <tr><td class="code-cell">invalid_grant</td><td><code>ATISilently</code></td><td class="num">70.47%</td><td class="num bad">72.47%</td><td class="num bad">+2.01</td><td class="num">204 K</td></tr>
+    <tr><td class="code-cell">invalid_grant</td><td><code>AcquireTokenSilent</code></td><td class="num">9.35%</td><td class="num warn">10.53%</td><td class="num warn">+1.19</td><td class="num">21.3 M</td></tr>
+    <tr><td class="code-cell">interaction_required</td><td><code>MSAL_PerformIpcStrategy</code></td><td class="num">11.69%</td><td class="num bad">15.07%</td><td class="num bad">+3.38</td><td class="num">2.6 K</td></tr>
+    <tr><td class="code-cell">interaction_required</td><td><code>ATISilently</code></td><td class="num">6.03%</td><td class="num warn">6.77%</td><td class="num warn">+0.74</td><td class="num">19 K</td></tr>
+    <tr><td class="code-cell">interaction_required</td><td><code>AcquireTokenSilent</code></td><td class="num">0.39%</td><td class="num warn">0.48%</td><td class="num warn">+0.09</td><td class="num">969 K</td></tr>
+  </tbody>
+</table>
+</div>
+<div class="glossary"><strong>Highest-volume mover:</strong> <code>invalid_grant</code> on the <code>AcquireTokenSilent</code> path rose <strong>9.35% → 10.53% (+1.19 pp)</strong> across <strong>21.3 M</strong> errored silent requests on the new app. The device-share table hid this because the dominant silent path is mostly <code>io_error</code> / <code>no_account_found</code> and the early cohort dedups "clean." <code>ATIInteractively</code> (+9.09 pp) and the IPC-strategy span (+3.38 pp) move hardest in <em>rate</em> but on small volumes (40 K / 2.6 K req).</div>
+<div class="glossary"><strong>Mostly early-rollout churn — but not entirely.</strong> Daily, <code>invalid_grant</code> in <code>AcquireTokenSilent</code> on 6.2606 started at <strong>24.0%</strong> (Jun 09, first updaters) and decayed — 19.3% → 16.1% → 12.1% → … → <strong>9.4%</strong> (Jun 21) — as the cohort re-bootstrapped credentials, while 6.2605 held steady at <strong>~9.0%</strong>. So the 14-day +1.19 pp is inflated by the upgrade spike, yet 6.2606 still sits <strong>~0.4 pp above baseline every day</strong> and has not fully converged. <code>interaction_required</code> tracks the same curve (0.98% → 0.45% vs ~0.39% baseline).</div>
+<div class="glossary"><strong>Verdict — device-share flat, but watch the silent path.</strong> Aggregate device-error rate fell (−16.12 pp) and no dominant code grew at the device level, so there is <em>no broad</em> broker regression from this app rollout. <strong>However</strong>, per-request <code>invalid_grant</code> / <code>interaction_required</code> on the <strong>silent</strong> path (AcquireTokenSilent / ATISilently) run consistently above baseline — mostly a decaying re-auth spike, with a ~0.4 pp residual that has not yet converged. Treat as <strong>watch</strong>, not clear: re-check after the cohort matures, and see the attribution below for the most likely trigger. <strong>Cross-check the fleet view:</strong> the all-hosts <a href="#broker-errors">io_error +40 pp</a> spike is driven by <strong>other</strong> hosts (Link to Windows ≈122 M devices), <em>not</em> Authenticator — Auth-hosted <code>io_error</code> actually fell (−2.43 pp).</div>
+<div class="code-attr">
+  <div class="code-attr-title">Code attribution — silent invalid_grant / interaction_required</div>
+  <div class="origin-row">
+    <div class="origin-label">Originator</div>
+    <div class="origin-value"><span class="origin-tag origin-env">eSTS</span> Both are <strong>server-returned OAuth errors</strong> from the token service — a broker/common change is the <em>trigger</em> (it makes the device present a credential eSTS then rejects), not the source of the error string.</div>
+  </div>
+  <div class="origin-row">
+    <div class="origin-label">Mechanism</div>
+    <div class="origin-value">The silent flow reads the device-bound RT / PRT from the in-memory token cache. The new <strong>filter-then-clone</strong> cache path (flight <code>ENABLE_FILTER_THEN_CLONE_IN_MEMORY_CACHE</code>) changes <code>load()</code> / <code>getIdTokensForAccountRecord()</code> to skip the clone-all preload and clone only the credentials matching a filter — a filtering miss returns a stale or empty credential set, so the silent refresh presents the wrong (or no) RT and eSTS rejects it with <code>invalid_grant</code>; the broker then surfaces <code>interaction_required</code> to force re-auth. <strong>Flight rollout + cache warm-up</strong> explains the observed <strong>partial, decaying</strong> signal, and the in-release #3110 fix (crash when the flight is on without an in-memory cache) confirms the path was actively buggy this release.</div>
+  </div>
+  <div class="origin-row">
+    <div class="origin-label">Release range</div>
+    <div class="origin-value">broker <code>v16.1.0..v16.2.0</code> (15 commits) + the common range it pins via <strong>submodule pointer</strong> <code>57b9503..e8011745</code> (25 commits), read in full and pickaxed (<code>find-suspect-prs.ps1 -Range</code>) on the token-cache / PRT path. <strong>Note:</strong> common's own <code>v16.x</code> tags are an unrelated 2023 namespace — the range must be taken from the broker submodule pointer, not the common tag.</div>
+  </div>
+  <div class="origin-row">
+    <div class="origin-label">Likely PRs</div>
+    <div class="origin-value">
+      <div class="pr-list">
+        <div class="pr-card">
+          <span class="pr-conf pr-conf-medium">med-high</span>
+          <div class="pr-body">
+            <a class="pr-id" href="https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/3100">common#3100</a>
+            <span class="pr-title">filter-then-clone cache series (with #3110, #3114)</span>
+            <div class="pr-meta">dabefab61 / 184019b87 / 3e6df21e5 · @siddhijain · AB#3588022, AB#3601828, AB#3590267</div>
+            <div class="pr-why"><a href="https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/3100">#3100</a> rewrites <code>load()</code> + <code>getIdTokensForAccountRecord()</code> in <code>MsalOAuth2TokenCache.java</code> (+284 lines) behind the <code>ENABLE_FILTER_THEN_CLONE_IN_MEMORY_CACHE</code> flight; <a href="https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/3110">#3110</a> fixes a <code>ClassCastException</code> when the flight is on without an in-memory cache; <a href="https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/3114">#3114</a> extends it to <code>deleteAccessTokensWithIntersectingScopes</code>. Directly rewrites the silent-path cache read/delete and is flight-gated — best causal fit for a partial, decaying <code>invalid_grant</code> rise on <code>AcquireTokenSilent</code>.</div>
+          </div>
+        </div>
+        <div class="pr-card">
+          <span class="pr-conf pr-conf-low">low-med</span>
+          <div class="pr-body">
+            <a class="pr-id" href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/176">broker#176</a>
+            <span class="pr-title">supportsBoundService default → true</span>
+            <div class="pr-meta">68126018c · Pedro Romero Vargas · AB#3571860</div>
+            <div class="pr-why">Flips <code>supportsBoundService</code> from <code>false</code> to <code>true</code> in <code>DeviceRegistrationClientApplication</code>, changing IPC-strategy selection toward the bound-service path — a plausible driver of the <code>interaction_required</code> rise on the <code>MSAL_PerformIpcStrategy</code> span (+3.38 pp). Needs eSTS-side confirmation.</div>
+          </div>
+        </div>
+        <div class="pr-card">
+          <span class="pr-conf pr-conf-none">excluded</span>
+          <div class="pr-body">
+            <a class="pr-id" href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/174">broker#174</a>
+            <span class="pr-title">null object get cache record + 2023 common#2222 false-positive</span>
+            <div class="pr-meta">9c9906686 · @siddhijain · AB#3607178</div>
+            <div class="pr-why">broker#174 touches the silent cache path but addresses a <em>different</em> code (<code>null_object</code>), <em>reduces</em> errors, and is gated to <code>SdkType.MSAL_CPP</code> (OneAuth) — not the Authenticator MSAL path. Note: the 2023 <code>common#2222</code> (PoP re-key) is <strong>not in this release</strong> — it surfaced earlier only because the range tool resolved common's own <code>v16.x</code> tag namespace instead of the submodule pointer.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="origin-row">
+    <div class="origin-label">Next step</div>
+    <div class="origin-value">Pull eSTS correlation IDs for 6.2606 devices hitting <code>invalid_grant</code> in <code>AcquireTokenSilent</code> and split by the <code>ENABLE_FILTER_THEN_CLONE_IN_MEMORY_CACHE</code> flight cohort (flighted vs not). If the rise concentrates in the flighted cohort, #3100/#3110 is confirmed — hold or roll back the flight and fast-track the #3110 fix fleet-wide. Separately bisect broker#176 for the <code>MSAL_PerformIpcStrategy</code> <code>interaction_required</code> rise.</div>
+  </div>
+</div>
+
+
+<!-- ================ APPENDIX ================ -->
+<h2 id="appendix">Appendix</h2>
+<details>
+  <summary>Data sources</summary>
+  <div>
+    <p><strong>Broker</strong> — cluster <code>https://idsharedeus2.kusto.windows.net</code>, db <code>ad-accounts-android-otel</code>. Version dimension <code>broker_version</code>. MVs: <code>SilentAuthStats*Metrics</code>, <code>InteractiveAuthStats*Metrics</code>, <code>ErrorStatsMetrics</code>, <code>BrokerAdoptionStatsUpdated</code>, <code>PerfStatsUpdated</code>.</p>
+    <p><strong>Authenticator</strong> — cluster <code>https://idsharedeus2.eastus2.kusto.windows.net</code>, db <code>d496be22d62a46b0a3cf67ea2e736fd8</code>. Version dimension <code>AppVersion</code>. Scenario MVs per <code>assets/queries/README.md</code>.</p>
+    <p><strong>Broker hosted by Authenticator</strong> — same Broker cluster/db as above, but the Broker MVs (<code>ErrorStatsMetrics</code>, <code>*AuthStats*Metrics</code>, <code>BrokerAdoptionStatsUpdated</code>) also carry <code>active_broker_package_name</code> (the host app — <code>com.azure.authenticator</code>) and <code>AppInfo_Version</code> (which, for that package, <em>is</em> the Authenticator app version). Filtering on both isolates the broker as it runs inside a specific Authenticator release. Queries: <code>broker-by-host-app.kql</code>, <code>broker-top-errors-by-host-app.kql</code>, <code>broker-errors-by-host-app-span.kql</code> (span drill-down). PR correlation across the broker version range via <code>assets/scripts/find-suspect-prs.ps1</code>.</p>
+    <p><strong>Authenticator crashes</strong> — App Center Diagnostics (<code>errors/errorGroups</code>), app <code>authapp-t7qc / Microsoft-Authenticator-Android-Prod-App-Center</code>, pulled by <code>assets/scripts/fetch-appcenter-crashes.js</code>. Rate denominator (active devices/version) from Kusto via <code>authenticator-crash-denominator.kql</code>. App Center <em>Analytics</em> (native crash-free %) is retired, so the rate is computed App-Center-numerator ÷ Kusto-denominator. Setup &amp; caveats: <code>assets/docs/crash-sources.md</code>. <strong>Play Console:</strong> not yet wired (Phase 2 — needs a gated GCP service account).</p>
+  </div>
+</details>
+<details>
+  <summary>Queries used</summary>
+  <div>
+    <p>All under <code>assets/queries/</code>: <code>broker-error-rate-by-version.kql</code>, <code>broker-reliability-by-version.kql</code>, <code>broker-top-errors-by-version.kql</code>, <code>broker-latency-by-version.kql</code>, <code>broker-adoption.kql</code>, <code>broker-by-host-app.kql</code>, <code>broker-top-errors-by-host-app.kql</code>, <code>broker-errors-by-host-app-span.kql</code>, <code>auth-scenario-success-rate.kql</code>, <code>auth-pn-checkforauth-completion.kql</code>, <code>auth-reacted-notification-split.kql</code>, <code>auth-scenario-initiates.kql</code>, <code>auth-version-resolve.kql</code>, <code>auth-stats.kql</code>, <code>authenticator-crash-denominator.kql</code>. Crash clusters via <code>assets/scripts/fetch-appcenter-crashes.js</code> (App Center).</p>
+  </div>
+</details>
+<details>
+  <summary>Methodology &amp; caveats</summary>
+  <div>
+    <ul>
+      <li><strong>Distinct devices</strong> use <code>dcount_hll(hll_merge(countDevicesHll))</code> — sketches are merged, never summed.</li>
+      <li><strong>Device error rate</strong> uses a broad "any non-success <code>error_code</code>" denominator; the error-movers table attributes it to specific codes.</li>
+      <li><strong>Host-app attribution:</strong> to tell whether the Authenticator rollout itself moved broker errors, scope Broker MVs to <code>active_broker_package_name == "com.azure.authenticator"</code> and compare by <code>AppInfo_Version</code> (the app version for that host). Fleet-wide <code>broker_version</code> deltas can be dominated by other hosts (Link to Windows ≈122 M devices) and must not be attributed to Authenticator.</li>
+      <li><strong>Device-share masks per-span spikes:</strong> the host-app error table is a <em>device-share</em> (devices hitting code X anywhere ÷ devices on that version), which dedups a device across all spans. A code can look flat-to-down there while its <em>per-request</em> rate climbs inside one span. When a code is suspected of a span-local rise, re-slice by <code>span_name</code> at the request level with <code>broker-errors-by-host-app-span.kql</code>.</li>
+      <li><strong>Release PR correlation:</strong> for server-returned codes (<code>invalid_grant</code>, <code>interaction_required</code> — Originator = eSTS) the trigger is a broker/common change in the bundled broker version range. Read <code>git log v&lt;PREV&gt;..v&lt;NEW&gt;</code> in <code>broker/</code> + <code>common/</code> in full (ranges are small), then pickaxe with <code>find-suspect-prs.ps1</code>; weight device-PoP / PRT / cache-path changes for silent-auth credential rejections.</li>
+      <li><strong>Early-rollout bias:</strong> a version with far fewer devices is skewed toward upgrade/network churn — treat single-window regressions as provisional until adoption grows.</li>
+      <li><strong>Volume guard:</strong> percentage moves on &lt; ~1K initiates are noise (flagged "low-volume").</li>
+      <li><strong>Latency</strong> percentiles merged via <code>tdigest_merge</code>; never summed.</li>
+      <li><strong>Crash rate</strong> = App Center crash count ÷ Kusto active devices, per version (per 1k). Lead with this <em>rate</em>, not crash-<em>share</em>: a signature can grow its share of a shrinking crash pool while its per-device rate falls. App Center's own crash-free metric is retired; numerator coverage on early-rollout builds can lag — see <code>assets/docs/crash-sources.md</code>.</li>
+    </ul>
+  </div>
+</details>
+
+</div>
+
+<script>
+  function makeSparkline(values, opts = {}) {
+    const w = opts.w || 100, h = opts.h || 24, color = opts.color || "#0969da", pad = 2;
+    if (!values || values.length === 0) return "";
+    const min = Math.min(...values), max = Math.max(...values);
+    const range = max - min || 1;
+    const step = (w - pad * 2) / (values.length - 1);
+    const points = values.map((v, i) => [pad + i * step, h - pad - ((v - min) / range) * (h - pad * 2)]);
+    const linePath = "M" + points.map(p => p.join(",")).join(" L");
+    const fillPath = linePath + " L" + points[points.length-1][0] + "," + h + " L" + points[0][0] + "," + h + " Z";
+    const last = points[points.length-1];
+    return '<svg class="sparkline" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" xmlns="http://www.w3.org/2000/svg">' +
+      '<path d="' + fillPath + '" fill="' + color + '" opacity="0.12"/>' +
+      '<path d="' + linePath + '" fill="none" stroke="' + color + '" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>' +
+      '<circle cx="' + last[0] + '" cy="' + last[1] + '" r="2" fill="' + color + '"/></svg>';
+  }
+  document.querySelectorAll(".spark[data-spark]").forEach(el => {
+    el.innerHTML = makeSparkline(JSON.parse(el.dataset.spark), { w: 180, h: 28, color: el.dataset.color });
+  });
+  document.querySelectorAll(".trend[data-trend]").forEach(el => {
+    const w = parseInt(el.dataset.w) || 220, h = parseInt(el.dataset.h) || 32;
+    el.innerHTML = makeSparkline(JSON.parse(el.dataset.trend), { w: w, h: h, color: el.dataset.color });
+  });
+</script>
+
+</body>
+</html>

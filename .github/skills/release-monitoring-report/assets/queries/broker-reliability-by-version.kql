@@ -1,0 +1,44 @@
+// Broker — per-version RELIABILITY (silent + interactive, request + device).
+// Computes reliability for the rolling-out version vs the previous/baseline version
+// directly from the canonical Metrics MVs (all expose broker_version, countRequests,
+// countDevicesHll). Reliability = without-expected-error / all-requests.
+//
+// Cluster:  https://idsharedeus2.kusto.windows.net
+// Database: ad-accounts-android-otel
+//
+// Placeholders:
+//   <VERSIONS>  dynamic list of the versions to compare, e.g. dynamic(['16.1.0','16.0.1'])
+//               Use the FULL broker_version strings (resolve via broker-adoption.kql first).
+//   <START><END>  datetime bounds (yyyy-mm-dd).
+//
+// HLL gotcha: NEVER sum countDevicesHll across rows. Merge the sketch, then dcount_hll.
+//
+// ---- Silent auth -----------------------------------------------------------------
+let vers = dynamic(<VERSIONS>);
+let s_all = materialized_view('SilentAuthStatsAllRequestsMetrics')
+  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | where broker_version in (vers)
+  | summarize allReq = sum(countRequests), allDev = dcount_hll(hll_merge(countDevicesHll)) by broker_version;
+let s_ok = materialized_view('SilentAuthStatsRequestsWithoutExpectedErrorMetrics')
+  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | where broker_version in (vers)
+  | summarize okReq = sum(countRequests), okDev = dcount_hll(hll_merge(countDevicesHll)) by broker_version;
+let i_all = materialized_view('InteractiveAuthStatsAllRequestsMetrics')
+  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | where broker_version in (vers)
+  | summarize iAllReq = sum(countRequests), iAllDev = dcount_hll(hll_merge(countDevicesHll)) by broker_version;
+let i_ok = materialized_view('InteractiveAuthStatsRequestsWithoutExpectedErrorMetrics')
+  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | where broker_version in (vers)
+  | summarize iOkReq = sum(countRequests), iOkDev = dcount_hll(hll_merge(countDevicesHll)) by broker_version;
+s_all
+| join kind=leftouter s_ok on broker_version
+| join kind=leftouter i_all on broker_version
+| join kind=leftouter i_ok on broker_version
+| project broker_version,
+    SilentReqReliability = round(100.0 * okReq / allReq, 3),
+    SilentDevReliability = round(100.0 * okDev / allDev, 3),
+    InteractiveReqReliability = round(100.0 * iOkReq / iAllReq, 3),
+    InteractiveDevReliability = round(100.0 * iOkDev / iAllDev, 3),
+    SilentRequests = allReq, SilentDevices = allDev
+| order by broker_version desc

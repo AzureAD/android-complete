@@ -1,0 +1,22 @@
+// Authenticator — CRASH-RATE DENOMINATOR. Distinct active devices for the rolling-out
+// version and the baseline, in one shot, so a crashes-per-1k-active-devices rate can be
+// computed against the App Center crash NUMERATOR (fetch-appcenter-crashes.js).
+//
+//   crashesPer1k = 1000.0 * appCenterCrashCount(version) / ActiveDevices(version)
+//
+// Cluster:  https://idsharedeus2.eastus2.kusto.windows.net
+// Database: d496be22d62a46b0a3cf67ea2e736fd8
+//
+// Placeholders: <FIRST> (rolling-out AppVersion), <SECOND> (previous/baseline), <START>, <END>.
+//
+// CAVEAT — the two populations are NOT identical: App Center counts devices whose App Center
+// SDK reported a crash; Kusto counts devices emitting product telemetry. The ratio is a
+// useful directional rate, not an exact crash-free percentage. Prefer the within-version
+// crash-SHARE delta (already cohort-normalized) as the headline, and use this rate only to
+// sanity-check that a share move is not just a cohort-size artifact. App Center's own
+// crash-free metric is RETIRED, which is why the denominator must come from here.
+union *
+| where EventInfo_Time >= startofday(datetime(<START>)) and EventInfo_Time <= endofday(datetime(<END>))
+| where AppInfo_Version in ("<FIRST>", "<SECOND>")
+| summarize ActiveDevices = dcount(DeviceInfo_Id) by AppVersion = AppInfo_Version
+| order by ActiveDevices desc
