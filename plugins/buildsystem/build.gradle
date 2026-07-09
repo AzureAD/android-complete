@@ -10,7 +10,7 @@ plugins {
 }
 
 group 'com.microsoft.identity'
-version '0.2.5'
+version '0.2.6-dev'
 
 tasks.withType(JavaCompile) {
     sourceCompatibility = '11'
@@ -47,6 +47,24 @@ repositories {
         credentials {
             username System.getenv("ENV_VSTS_MVN_CRED_USERNAME") != null ? System.getenv("ENV_VSTS_MVN_CRED_USERNAME") : project.findProperty("vstsUsername")
             password System.getenv("ENV_VSTS_MVN_CRED_ACCESSTOKEN") != null ? System.getenv("ENV_VSTS_MVN_CRED_ACCESSTOKEN") : project.findProperty("vstsMavenAccessToken")
+        }
+    }
+}
+
+// Publish target for the internal NewAndroid Azure Artifacts feed.
+// The java-gradle-plugin + maven-publish plugins auto-create the plugin's
+// publications (the plugin jar/pom and the plugin-marker artifact); this block
+// only tells Gradle WHERE to push them. Consuming repos resolve the plugin from
+// this same feed via their settings.gradle pluginManagement block.
+publishing {
+    repositories {
+        maven {
+            name "vsts-maven-new-android"
+            url "https://identitydivision.pkgs.visualstudio.com/_packaging/NewAndroid/maven/v1"
+            credentials {
+                username System.getenv("ENV_VSTS_MVN_CRED_USERNAME") != null ? System.getenv("ENV_VSTS_MVN_CRED_USERNAME") : project.findProperty("vstsUsername")
+                password System.getenv("ENV_VSTS_MVN_CRED_ACCESSTOKEN") != null ? System.getenv("ENV_VSTS_MVN_CRED_ACCESSTOKEN") : project.findProperty("vstsMavenAccessToken")
+            }
         }
     }
 }
