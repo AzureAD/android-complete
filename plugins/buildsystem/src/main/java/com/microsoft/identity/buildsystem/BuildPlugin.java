@@ -27,14 +27,12 @@ import com.microsoft.identity.buildsystem.codecov.CodeCoverage;
 import org.gradle.api.JavaVersion;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
+import org.gradle.api.plugins.JavaPluginExtension;
 
 public class BuildPlugin implements Plugin<Project> {
 
     private final static String ANDROID_LIBRARY_PLUGIN_ID = "com.android.library";
     private final static String JAVA_LIBRARY_PLUGIN_ID = "java-library";
-
-    private final static String JAVA_SOURCE_COMPATIBILITY_PROPERTY = "sourceCompatibility";
-    private final static String JAVA_TARGET_COMPATIBILITY_PROPERTY = "targetCompatibility";
 
     @Override
     public void apply(final Project project) {
@@ -70,8 +68,10 @@ public class BuildPlugin implements Plugin<Project> {
 
     private void applyJava8ToJavaProject(final Project project) {
         project.getPluginManager().withPlugin(JAVA_LIBRARY_PLUGIN_ID, appliedPlugin -> {
-            project.setProperty(JAVA_SOURCE_COMPATIBILITY_PROPERTY, JavaVersion.VERSION_1_8);
-            project.setProperty(JAVA_TARGET_COMPATIBILITY_PROPERTY, JavaVersion.VERSION_1_8);
+            final JavaPluginExtension javaPluginExtension = project.getExtensions()
+                    .getByType(JavaPluginExtension.class);
+            javaPluginExtension.setSourceCompatibility(JavaVersion.VERSION_1_8);
+            javaPluginExtension.setTargetCompatibility(JavaVersion.VERSION_1_8);
         });
     }
 }

@@ -1,5 +1,9 @@
 Plugin Overview: https://github.com/AzureAD/android-complete/blob/master/plugins/buildsystem/docs/Overview.md
 
+Version 0.2.6
+----------------------------
+[MINOR] Remove use of deleted gradle APIs
+
 Version 0.2.3
 ----------------------------
 [PATCH] Allow ability to enable/disable code coverage - disabled by default
