@@ -143,6 +143,25 @@ request: {
 
 If more than 50 items, paginate using the `nextCursor` field.
 
+**Pagination is mandatory** — save each page's raw MCP response to a separate
+file (e.g. `s360-service-page1.json`, `s360-service-page2.json`, ...) and keep
+calling with the returned cursor until `nextCursor` is empty. Then consolidate
+with `fetch-items.js`:
+
+```powershell
+node .github/skills/s360-reporter/fetch-items.js `
+  --input "$env:TEMP\s360-service-page1.json" "$env:TEMP\s360-service-page2.json" `
+  --output "$env:TEMP\s360-service.json"
+```
+
+`fetch-items.js` exits non-zero if the last input page still has `nextCursor`
+set. This is a defense against the first-user bug reported in AB#3683197
+where a single-page fetch silently dropped every item past page 1.
+
+If your first page's response has no `nextCursor`, you can pass it directly as
+`--input` (single file) — the consolidator will still verify pagination
+completed and produce the same output shape.
+
 #### 1b: Person-targeted items
 
 Using the aliases discovered in Step 0, call `mcp_s360-breeze-m_search_active_s360_kpi_action_items`
@@ -157,6 +176,11 @@ request: {
 
 This captures person-targeted items like on-call readiness checklists and certifications
 that are tied to individuals rather than service tree IDs.
+
+**Same pagination rule applies** — the person query also paginates at
+`pageSize=50`. Save each page separately and consolidate with
+`fetch-items.js` before running the merger. `merge-items.js` refuses to run
+against a JSON file that still has a populated `nextCursor` (see 1c).
 
 **Important**: The `assignedTo` search returns ALL items for those aliases across Microsoft,
 including items from other team memberships. After fetching, filter results to only include
@@ -197,6 +221,11 @@ node .github/skills/s360-reporter/merge-items.js `
 The script accepts MCP envelopes (`{ result: { resources: [...] } }`), trimmed
 envelopes (`{ resources: [...] }`), or bare arrays for the `--service` / `--person`
 inputs.
+
+**Coverage guard**: `merge-items.js` refuses to run if either input still has a
+populated `nextCursor` — this is defense-in-depth against skipping the
+pagination loop in 1a/1b. If it errors, go back and consolidate with
+`fetch-items.js`.
 
 **Filter logic** (enforced by the script — do not duplicate ad-hoc):
 - `TargetType == "Person"` AND `TargetId` is a team alias  → keep
@@ -774,6 +803,15 @@ Write a JSON file to a temp location (e.g., `$env:TEMP/s360_data.json`) with thi
 - `pbi`: This field is the ADO work item ID and accepts **either a PBI or a Bug** ID
   (the generator's `pbiUrl()` builds a type-agnostic ADO URL that works for both).
   When the matched item is a Bug, still put its ID here — do not leave it null.
+- `s360Url`: The item's title-link target. Populated from the S360 API `URL`
+  field (remediation / action link — may be `aka.ms/…`, IcM URL, or an ADO
+  work-item URL). May legitimately be missing for some KPIs. The generator
+  validates it — non-empty `http(s)` URLs render as an anchor; anything else
+  (null, empty, `undefined`, malformed) renders as plain text and the item is
+  logged to a `⚠ N item(s) have no S360 link` banner at the top of the report
+  and to stderr. **Do not** substitute a placeholder like `https://s360.msftcloudes.com/`
+  just to get an anchor — plain text is the correct fallback so the human
+  reviewer notices the missing link before sending.
 
 #### 5b: Run the generator
 

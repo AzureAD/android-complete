@@ -67,6 +67,21 @@ if (!servicePath || !personPath || !teamPath) {
 // ── Load inputs ───────────────────────────────────────────────────────────────
 function loadResources(p) {
   const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+  // Coverage guard: refuse to proceed if the input still carries an unspent
+  // nextCursor. A populated nextCursor means the caller only fetched one page
+  // — merging that partial data into the report silently under-counts items.
+  // This is the failure mode reported in AB#3683197 (first-user bug, Jun 2026).
+  // Use fetch-items.js to consolidate all pages before running the merger.
+  const cursor = (j && j.nextCursor) || (j && j.result && j.result.nextCursor) || null;
+  if (cursor) {
+    throw new Error(
+      `Refusing to merge ${p}: input still has a populated nextCursor ("${cursor}"). ` +
+      `This means only one page (up to pageSize=50) was fetched — the S360 items past that page ` +
+      `would be silently dropped from the report. Fetch every page via ` +
+      `\`mcp_s360-breeze-m_search_active_s360_kpi_action_items\` (looping until nextCursor is empty) ` +
+      `and consolidate with fetch-items.js before running the merger.`
+    );
+  }
   if (Array.isArray(j)) return j;
   if (j && j.resources && Array.isArray(j.resources)) return j.resources;
   if (j && j.result && j.result.resources && Array.isArray(j.result.resources)) return j.result.resources;

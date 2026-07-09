@@ -77,6 +77,37 @@ function esc(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// ── Link safety ───────────────────────────────────────────────────────────────
+// safeHref returns a rendered href attribute value only when the input is a
+// non-empty http(s) URL. Anything else (null, undefined, empty string, the
+// literal string "undefined", a bare path, javascript:, mailto:, etc.) returns
+// null so callers can fall back to plain text.
+//
+// This exists because before this fix, `<a href="${item.s360Url}">` rendered
+// as `href="undefined"` when the S360 API's URL field was missing — producing
+// visibly broken links on hover and 404s on click. (Reported by first user
+// Sowmya Malayanur, Jun 2026; PBI AB#3683197.)
+function safeHref(url) {
+  if (typeof url !== 'string') return null;
+  const s = url.trim();
+  if (!s || s.toLowerCase() === 'undefined' || s.toLowerCase() === 'null') return null;
+  if (!/^https?:\/\//i.test(s)) return null;
+  return s;
+}
+
+// linkOrText wraps `innerHtml` in an anchor when the URL is safe, otherwise
+// returns the inner HTML unwrapped. Callers pass the CSS for the anchor.
+function linkOrText(url, innerHtml, anchorStyle) {
+  const href = safeHref(url);
+  if (!href) return innerHtml;
+  return `<a href="${href}" style="${anchorStyle}">${innerHtml}</a>`;
+}
+
+// Track items whose title link had to be rendered as plain text because the
+// S360 API returned no usable URL. Surfaced in the self-check banner + stderr
+// so a broken run is visible in-report instead of shipping silently.
+const itemsWithoutLinks = [];
+
 function slaStyle(sla) {
   if (sla === 'OutOfSla') return {
     rowBg: '#fff5f5', rowBgAlt: '#fff5f5', leftBorder: '#cf222e',
@@ -175,7 +206,8 @@ html += `<!DOCTYPE html>
       Services: <strong>AuthN SDK - MSAL Android</strong> &bull; <strong>AuthN SDK - ADAL Android</strong> &bull; <strong>Microsoft Authenticator - Android</strong>
     </p>
   </td>
-</tr>`;
+</tr>
+<!--LINK_CHECK_BANNER-->`;
 
 // Summary cards
 const cards = [
@@ -314,7 +346,10 @@ if (outOfSlaItems.length > 0) {
             <tr>
               <td valign="top" width="65%">
                 <p style="margin:0 0 8px 0; font-size:16px; font-weight:700;">
-                  <a href="${item.s360Url}" style="color:#1a1a1a; text-decoration:none;">${esc(item.title)}</a>
+                  ${(() => {
+                    if (!safeHref(item.s360Url)) itemsWithoutLinks.push({ title: item.title, ownerAlias: item.ownerAlias });
+                    return linkOrText(item.s360Url, esc(item.title), 'color:#1a1a1a; text-decoration:none;');
+                  })()}
                 </p>
                 <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:10px;">
                   <tr>
@@ -388,7 +423,10 @@ sortedPrograms.forEach(([progName, prog]) => {
     html += `
       <tr>
         <td bgcolor="${bg}" style="padding:12px 14px; font-size:13px; border:1px solid #e8e8e8; border-left:4px solid ${s.leftBorder};">
-          <a href="${it.s360Url}" style="color:#24292f; font-weight:600; text-decoration:none;">${esc(it.shortTitle || it.title)}</a>${it.subtitle ? `<br><span style="font-size:11px;"><em>${esc(it.subtitle)}</em></span>` : ''}
+          ${(() => {
+            if (!safeHref(it.s360Url)) itemsWithoutLinks.push({ title: it.title, ownerAlias: it.ownerAlias });
+            return linkOrText(it.s360Url, esc(it.shortTitle || it.title), 'color:#24292f; font-weight:600; text-decoration:none;');
+          })()}${it.subtitle ? `<br><span style="font-size:11px;"><em>${esc(it.subtitle)}</em></span>` : ''}
         </td>
         <td bgcolor="${bg}" style="padding:12px 14px; font-size:12px; border:1px solid #e8e8e8;">${esc(it.service)}</td>
         <td bgcolor="${bg}" style="padding:12px 14px; font-size:12px; border:1px solid #e8e8e8;">${esc(it.ownerName)}<br><span style="font-size:11px;"><em>(${esc(it.ownerAlias)})</em></span></td>
@@ -516,6 +554,39 @@ html += `
 </html>`;
 
 // ── Output ────────────────────────────────────────────────────────────────────
+
+// Self-check: surface any items whose title link had to be rendered as plain
+// text. If items are missing links, prepend an in-report banner so the human
+// reviewer sees it immediately rather than shipping a broken-looking report.
+if (itemsWithoutLinks.length > 0) {
+  const preview = itemsWithoutLinks.slice(0, 5).map(i => `${esc(i.title)}${i.ownerAlias ? ` (${esc(i.ownerAlias)})` : ''}`).join(' &bull; ');
+  const more = itemsWithoutLinks.length > 5 ? ` &bull; +${itemsWithoutLinks.length - 5} more` : '';
+  const banner = `
+<tr>
+  <td style="padding:16px 56px 0 56px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+      <tr>
+        <td width="4" bgcolor="#cf222e" style="font-size:1px;">&nbsp;</td>
+        <td bgcolor="#fef2f2" style="padding:14px 20px;">
+          <p style="margin:0 0 4px 0; font-size:13px; font-weight:700; color:#cf222e;">&#x26A0; ${itemsWithoutLinks.length} item(s) have no S360 link</p>
+          <p style="margin:0; font-size:12px;">The S360 API returned no usable URL for these items — their titles render as plain text. Investigate before sending this report externally.</p>
+          <p style="margin:6px 0 0 0; font-size:12px;"><em>${preview}${more}</em></p>
+        </td>
+      </tr>
+    </table>
+  </td>
+</tr>`;
+  html = html.replace('<!--LINK_CHECK_BANNER-->', banner);
+  console.error(`WARN: ${itemsWithoutLinks.length} item(s) have no valid S360 link (rendered as plain text):`);
+  itemsWithoutLinks.forEach(i => console.error(`  - ${i.title}${i.ownerAlias ? ` (${i.ownerAlias})` : ''}`));
+} else {
+  html = html.replace('<!--LINK_CHECK_BANNER-->', '');
+}
+
+// Coverage summary — helps the human running the skill eyeball item count vs
+// the S360 portal without having to hunt through the report.
+console.error(`Coverage summary: ${total} active items rendered (${outCount} out-of-SLA, ${nearCount} approaching, ${inCount} in SLA, ${noEta} missing ETA). ${resolved.length} resolved. ${newItems.length} new this week.`);
+
 if (outputPath) {
   fs.writeFileSync(outputPath, html, 'utf8');
   console.log('Report saved to ' + outputPath);
