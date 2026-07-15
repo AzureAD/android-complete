@@ -111,13 +111,25 @@ $curStart  = $curEnd.AddDays(-7)
 $prevStart = $curEnd.AddDays(-14)
 $prevEnd   = $curStart
 
-# 60-day trend keeps weekly (Sun-Sat) bucketing -- the trend view is a
-# longer-horizon signal and needs stable weekly denominators. Its exclusive
-# upper bound is startofweek(curEnd) so the current in-progress week is
-# always dropped from the trend.
+# 60-day trend spans the LITERAL last 60 days ending curEnd (today), so BOTH
+# bounds move with -EndDate (AB#3683194 follow-up: Fadi wanted the trend to end
+# today, not 3-6 days ago on the last complete Sunday). The trend CHART shows the
+# current in-progress week as its final (partial) bar, but bucket-trends.js still
+# computes regression/improvement DELTAS on complete Sun-Sat weeks only -- a
+# partial week as "last" would read as a fake -99% improvement. So we resolve two
+# distinct things:
+#   * data/chart window   [sixtyDayStart, sixtyDayEnd) = [curEnd-60d, curEnd)
+#                         -> queried and charted (final bucket is the partial week)
+#   * classification cutoff  trendClassEnd = startofweek(curEnd)
+#                         -> passed to bucket-trends.js as --end so the partial
+#                            current week is excluded from the delta math while
+#                            still being drawn.
+# Per-week bucketing stays Sun-Sat aligned (Kusto startofweek() is Sunday-based),
+# so the first and last buckets are partial by construction.
 $curEndDow      = [int]$curEnd.DayOfWeek  # Sun=0 .. Sat=6
-$sixtyDayEnd    = $curEnd.AddDays(-$curEndDow)   # Kusto startofweek() equivalent
-$sixtyDayStart  = $sixtyDayEnd.AddDays(-56)       # 8 complete weeks
+$sixtyDayStart  = $curEnd.AddDays(-60)             # literal 60 days ending today
+$sixtyDayEnd    = $curEnd                          # exclusive upper bound == today; chart includes the partial current week
+$trendClassEnd  = $curEnd.AddDays(-$curEndDow)     # startofweek(curEnd): weeks >= this are the in-progress (partial) week, excluded from delta classification
 
 # Sanity check: curEnd must not be in the future (a common footgun if the
 # user passes a stale -EndDate that hasn't happened yet in UTC).
@@ -134,7 +146,8 @@ $prevEndStr   = $prevEnd.ToString('yyyy-MM-dd')
 Write-Host "Resolved reporting window (UTC):"
 Write-Host "  Last 7 days:   $curStartStr -> $curEndStr  (exclusive upper bound)"
 Write-Host "  Baseline:      $prevStartStr -> $prevEndStr"
-Write-Host "  60-day trend:  $($sixtyDayStart.ToString('yyyy-MM-dd')) -> $($sixtyDayEnd.ToString('yyyy-MM-dd'))  (8 weekly buckets, exclusive)"
+Write-Host "  60-day trend:  $($sixtyDayStart.ToString('yyyy-MM-dd')) -> $($sixtyDayEnd.ToString('yyyy-MM-dd'))  (literal 60d ending today; chart includes current partial week)"
+Write-Host "  Trend delta cutoff: weeks < $($trendClassEnd.ToString('yyyy-MM-dd'))  (startofweek(curEnd); pass as bucket-trends.js --end)"
 # NOTE: Console output uses ASCII '->'; the HTML stamp below uses U+2192 arrows
 # and U+00B7 middle-dots to match the template's canonical visual style. This
 # is safe because $outText is written via [System.Text.UTF8Encoding]::new($false)
@@ -244,9 +257,11 @@ $arrow = [char]0x2192
 $dot   = [char]0x00B7
 $curLabel        = "$(Format-DateHuman $curStart -IncludeYear:$false) $arrow $(Format-DateHuman $curEnd -IncludeYear:$true)"
 $prevLabel       = "$(Format-DateHuman $prevStart -IncludeYear:$false) $arrow $(Format-DateHuman $prevEnd -IncludeYear:$false)"
-# 60-day trend: display the last COMPLETE week's Saturday (sixtyDayEnd - 1) as the
-# reader-facing upper bound; sixtyDayEnd itself is the exclusive Sunday cutoff.
-$sixtyDaySatLabel = "$(Format-DateHuman $sixtyDayStart -IncludeYear:$false) $arrow $(Format-DateHuman ($sixtyDayEnd.AddDays(-1)) -IncludeYear:$false)"
+# 60-day trend: literal 60 days ending curEnd (today). curEnd is the exclusive
+# upper bound, so the last calendar day carrying data is curEnd - 1 (yesterday).
+# The final weekly bucket is the current in-progress week (partial) -- see
+# bootstrap's $trendClassEnd note and bucket-trends.js --include-partial-end.
+$sixtyDayLabel   = "$(Format-DateHuman $sixtyDayStart -IncludeYear:$false) $arrow $(Format-DateHuman ($sixtyDayEnd.AddDays(-1)) -IncludeYear:$true)"
 $todayStr         = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
 
 $outText = [IO.File]::ReadAllText($out)
@@ -260,7 +275,7 @@ $outText  = [regex]::Replace($outText, '<title>[^<]*</title>', "<title>$newTitle
 $newMeta = @"
 <div class="meta">
       <strong>Last 7 days: $curLabel</strong> &nbsp;vs&nbsp; <strong>$prevLabel</strong> &nbsp;$dot&nbsp;
-      60-day trend: <strong>$sixtyDaySatLabel</strong> (8 complete weeks) &nbsp;$dot&nbsp;
+      60-day trend: <strong>$sixtyDayLabel</strong> (last 60 days; final bar in progress) &nbsp;$dot&nbsp;
       Source: <code>android_spans</code> materialized views &nbsp;$dot&nbsp;
       Generated <strong>$todayStr</strong>
     </div>

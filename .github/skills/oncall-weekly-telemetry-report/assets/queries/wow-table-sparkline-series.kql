@@ -13,18 +13,22 @@
 // the codes filter, once with the types filter -- and feed the result into the
 // WoW-table generator so every row has a real-data trend.
 //
-// NOTE ON WEEK ALIGNMENT: even though the primary WoW section now uses a
-// rolling 7-day window (see SKILL.md), the sparkline still uses Sun-Sat
-// weekly buckets. Rolling windows produce jagged sparkline endpoints because
-// the last "week" only covers the calendar days that happen to fall in the
-// current window; weekly-bucketed sparklines are cleaner and align with the
-// 60-day trend section.
+// NOTE ON WEEK ALIGNMENT: even though the primary WoW section uses a rolling
+// 7-day window AND the big 60-day trend chart now ends today (with a partial
+// final bar), these per-ROW sparklines deliberately keep 8 COMPLETE Sun-Sat
+// weeks. A partial final point in every WoW row would render as a misleading
+// dip across the whole table; the decorative per-row trajectory reads cleaner
+// on complete weeks. (The big 60d chart can afford one honest partial bar; 30+
+// table rows each ending on a partial point cannot.)
 //
-// Inputs:
-//   <TREND_START>  Sunday of week-0 (e.g. 2026-05-10 for an 8-week window ending 2026-07-05)
-//   <TREND_END>    Sunday that OPENS the current in-progress week, EXCLUSIVE.
+// Inputs (distinct from the trend-codes/types <TREND_*> tokens, which now mean
+// the LITERAL last 60 days ending today -- these SPARK_* tokens still mean the
+// last 8 COMPLETE weeks):
+//   <SPARK_START>  Sunday of week-0 = startofweek(today) - 56d
+//                  (e.g. 2026-05-10 for an 8-week window ending 2026-07-05)
+//   <SPARK_END>    Sunday that OPENS the current in-progress week, EXCLUSIVE.
 //                  Compute as startofweek(today). For a report run on 2026-07-09
-//                  (a Thu), use 2026-07-05. The `where week < datetime(<TREND_END>)`
+//                  (a Thu), use 2026-07-05. The `where week < datetime(<SPARK_END>)`
 //                  drops the partial in-progress bucket at the source.
 //   <CODES>        Dynamic list of error_code values whose sparklines we need.
 //                  Build this from the union of:
@@ -35,10 +39,10 @@
 
 let codes = dynamic([<CODES>]);
 materialized_view('ErrorStatsMetrics')
-| where EventInfo_Time between (datetime(<TREND_START>) .. datetime(<TREND_END>))
+| where EventInfo_Time between (datetime(<SPARK_START>) .. datetime(<SPARK_END>))
 | where error_code in (codes)
 | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
             errs = sum(countOverall)
      by week = startofweek(EventInfo_Time), error_code
-| where week < datetime(<TREND_END>)
+| where week < datetime(<SPARK_END>)
 | order by error_code asc, week asc

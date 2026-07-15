@@ -399,7 +399,7 @@
     <h1>Android Broker · Weekly On-Call Report</h1>
     <div class="meta">
       <strong>Sun May 3 → Sat May 9, 2026</strong> &nbsp;vs&nbsp; <strong>Apr 26 → May 2</strong> &nbsp;·&nbsp;
-      60-day window: Mar 8 → May 3 (8 complete weeks) &nbsp;·&nbsp;
+      60-day trend: Mar 10 → May 8 (last 60 days; final bar in progress) &nbsp;·&nbsp;
       Source: <code>android_spans</code> materialized views &nbsp;·&nbsp;
       Generated <strong>2026-05-09</strong>
     </div>
@@ -559,7 +559,7 @@
 </div>
 
 <!-- ================ 60-DAY TREND ================ -->
-<h2 id="trend60d">📈 60-Day Trend Analysis <span class="count">— bucketed across 8 complete weeks</span></h2>
+<h2 id="trend60d">📈 60-Day Trend Analysis <span class="count">— literal last 60 days ending today; final bar = current partial week</span></h2>
 
 <div class="glossary">
   <strong>Methodology:</strong> Pulled all error codes from the <code>ErrorStats</code> view over the last 9 weeks. Dropped the partial start week (Mar 1). Kept all codes whose <strong>peak weekly device count ≥ 10 K</strong>. Bucketed each 8-week series by <code>delta = (last − first) / first</code>:
@@ -1121,8 +1121,8 @@ ErrorStats | where EventInfo_Time &gt; ago(14d) | where error_code in (codes)
   <summary>Methodology &amp; caveats</summary>
   <div>
     <ul>
-      <li><strong>Reporting window:</strong> Sun May 3 → Sat May 9, 2026 (Kusto <code>startofweek('2026-05-03')</code>). Baseline: prior week of Apr 26 → May 2.</li>
-      <li><strong>60-day window:</strong> 8 complete weeks Mar 8 → May 3 (the partial Mar 1 start week is excluded for trend deltas).</li>
+      <li><strong>Reporting window:</strong> rolling last 7 days May 2 → May 9, 2026 (<code>[curEnd − 7d, curEnd)</code>, UTC). Baseline: prior 7 days Apr 25 → May 2.</li>
+      <li><strong>60-day window:</strong> literal last 60 days Mar 10 → May 9 (Sun-Sat weekly buckets; the final bar is the current in-progress week). Regression/improvement deltas are computed on complete weeks only — the partial current week is charted but excluded from the delta math.</li>
       <li><strong>Auth-only denominator:</strong> all reliability % use <code>countRequests</code> from <code>SilentAuthStatsAllRequests</code> ∪ <code>InteractiveAuthStatsAllRequests</code>. The all-spans denominator from <code>BrokerAdoptionStats</code> is sensitive to receiver/<code>goAsync()</code> taper effects.</li>
       <li><strong>Concentration thresholds for attribution cards:</strong> &gt;80% = strong (red bar); 60-80% = medium; &lt;60% = broad/cross-cutting.</li>
       <li><strong>PR confidence rating:</strong> high = trajectory + flight rollout date both line up; medium = code path matches but no flight gate evidence; low = candidate from grep, needs verification; none = no broker PR identified.</li>

@@ -21,7 +21,7 @@ Reusable helpers in [`assets/`](assets/):
 | [`code-attribution-template.md`](assets/docs/code-attribution-template.md) | Per-card checklist for the deep code-attribution block (Originator / Top throw site / Wrapper / Caller hot-spots / Underlying cause / Top error_messages / Likely PRs / Next step) |
 | [`queries/`](assets/queries/) | Canonical KQL templates, one file per query — see [`queries/README.md`](assets/queries/README.md). Highlights: [`attr-union-by-dim.kql`](assets/queries/attr-union-by-dim.kql) (NEW — all 7 dims in one round-trip), [`error-message-and-location.kql`](assets/queries/error-message-and-location.kql) (now accepts BOTH `<CODES_LIST>` and `<TYPES_LIST>` in one call) |
 | [`templates/`](assets/templates/) | Copy-paste HTML snippets (`spike-card.html`, `traffic-attr-card.html`, `sparkline-footer.html`) |
-| [`bucket-trends.js`](assets/scripts/bucket-trends.js) | Bucket all error codes into 60-day regression / spike / improvement / flat. Run with `--metric=devs` AND `--metric=reqs`. Pass `--end=YYYY-MM-DD` (the Sunday that OPENS the current in-progress week, exclusive — i.e. `startofweek(today)`) to drop the partial in-progress bucket. **`--summary` suppresses the verbose header; `--json=<path>` emits a structured sidecar for programmatic consumption.** |
+| [`bucket-trends.js`](assets/scripts/bucket-trends.js) | Bucket all error codes into 60-day regression / spike / improvement / flat. Run with `--metric=devs` AND `--metric=reqs`. Pass `--end=YYYY-MM-DD` (the Sunday that OPENS the current in-progress week, exclusive — i.e. `startofweek(today)`, printed by bootstrap as "Trend delta cutoff") to exclude the partial week from the delta math, plus **`--include-partial-end`** to still chart it as the final bar. **`--summary` suppresses the verbose header; `--json=<path>` emits a structured sidecar for programmatic consumption.** |
 | [`agg.js`](assets/scripts/agg.js) | Per-error per-dim top-N rollup with WoW deltas. Workhorse for filling spike-attribution dim blocks. |
 | [`summarize-attribution.js`](assets/scripts/summarize-attribution.js) | Roll up 7-dim attribution slices for spike-attribution cards. Supports BOTH `--union <file.json>` (preferred for 2-week WoW; pairs with `attr-union-by-dim.kql`) AND legacy `--label=<dim> file.json` per-dim mode. **Auto-detects the array-form schema produced by `assets/scripts/run-kql.ps1` — no schema-transformer step needed.** |
 | [`find-suspect-prs.ps1`](assets/scripts/find-suspect-prs.ps1) | Parallel `git log -S` + `--grep` across broker/ + common/ for a class/method symbol, with PR numbers + URLs. Run *only after* the Originator pre-check has identified a specific throw-site class — the unscoped 4-week PR window is small enough (<30 PRs) to scan with plain `git log` first. |
@@ -41,7 +41,8 @@ Reusable helpers in [`assets/`](assets/):
    Resolved reporting window (UTC):
      Last 7 days:   2026-07-02 -> 2026-07-09  (exclusive upper bound)
      Baseline:      2026-06-25 -> 2026-07-02
-     60-day trend:  2026-05-10 -> 2026-07-05  (8 weekly buckets, exclusive)
+     60-day trend:  2026-05-16 -> 2026-07-15  (literal 60d ending today; chart includes current partial week)
+     Trend delta cutoff: weeks < 2026-07-12  (startofweek(curEnd); pass as bucket-trends.js --end)
    ```
    These dates are stamped into the report's `<title>`, `<div class="meta">`, and Generated banner during bootstrap — you do not hand-edit them (see `assets/templates/template-readme.md` § Date fields).
 
@@ -53,7 +54,7 @@ Reusable helpers in [`assets/`](assets/):
 
 2. **Comparison baseline** — auto-computed as the immediately-prior 7 days (`[curEnd - 14d, curEnd - 7d)`). No user input.
 
-3. **60-day trend window** — auto-computed as 8 complete Sun-Sat weeks ending `startofweek(curEnd)` exclusive. This section still uses weekly bucketing (Kusto `startofweek()` is Sunday-aligned) because the trend view needs stable weekly denominators; the primary/WoW section is the only part that switched to rolling 7d.
+3. **60-day trend window** — auto-computed as the **literal last 60 days ending today** (`[curEnd - 60d, curEnd)`), so both bounds move with `-EndDate`. The section is still Sun-Sat weekly-bucketed (Kusto `startofweek()` is Sunday-aligned) because the trend needs stable weekly denominators, but the final bar is the **current in-progress (partial) week** — the chart ends today. Regression/improvement **delta classification is still computed on complete weeks only** (`bucket-trends.js --end=startofweek(curEnd) --include-partial-end`); a partial week as "last" would read as a fake −99% improvement, so it is charted but excluded from the delta math. `bootstrap-report.ps1` prints both the 60d data window and the "Trend delta cutoff" (= `startofweek(curEnd)`).
 
 4. **Output filename** — `$env:USERPROFILE\android-oce-reports\oncall-wow-report-YYYY-MM-DD.html` where `YYYY-MM-DD` is the resolved `curEnd`. Example: run on 2026-07-09 (default) → `oncall-wow-report-2026-07-09.html`. User-scoped, outside the workspace. The filename date always matches the meta-line "Last 7 days" end-date; `validate-report.ps1` check #11 asserts this.
 
@@ -70,7 +71,7 @@ Reusable helpers in [`assets/`](assets/):
    - **Slow-burn 60-day regressions** — codes/types climbing on the 60d window that are flat WoW. Anything that *also* moved WoW belongs in the red callout above (with `60d↑`), not here. Link to the 60-Day Trend section.
    - **Real wins this week**, with PR links.
    - **Traffic shape** — flat / surge / collapse summary.
-3. **📈 60-Day Trend Analysis** — built from the `ErrorStatsMetrics` materialized view over the last 8 complete weeks. **Run the bucketing pipeline FOUR times — the cross-product of `{error_code, error_type} × {devices, requests}`** — and union the regression sets. An entry (code OR type) is flagged if it regresses on either metric.
+3. **📈 60-Day Trend Analysis** — built from the `ErrorStatsMetrics` materialized view over the **literal last 60 days ending today** (final bar = current in-progress week). **Run the bucketing pipeline FOUR times — the cross-product of `{error_code, error_type} × {devices, requests}`** — and union the regression sets. An entry (code OR type) is flagged if it regresses on either metric. Deltas are computed on complete weeks only; the partial current week is charted but excluded from classification.
 
    - **% of devices** affected (`devicesHit / authActiveDevices`) — catches errors hitting more users.
    - **% of requests** affected (`errRequests / authTotalRequests`) — catches per-device retry storms (fewer users, more traffic per user). The previous report would have missed `kdfv2_key_derivation_error` (262 → 5,374 requests on ~57 devices) without this dim.
@@ -165,32 +166,30 @@ Don't pre-filter to a hand-picked top-N list — small-but-rising errors (e.g. `
 
 #### 3a. Per-error-code trend
 
-Use [`assets/queries/60d-trend-codes.kql`](assets/queries/60d-trend-codes.kql) (template; replace `<TREND_START>` and `<TREND_END>` tokens — `<TREND_END>` is **exclusive** and equals `startofweek(today)`, i.e. the Sunday that OPENS the current in-progress week. `bootstrap-report.ps1` prints the resolved values):
+Use [`assets/queries/60d-trend-codes.kql`](assets/queries/60d-trend-codes.kql) (template; replace `<TREND_START>` and `<TREND_END>` tokens. **`<TREND_START>` = `curEnd − 60d`** and **`<TREND_END>` = `curEnd` (today), exclusive** — the literal last 60 days. `bootstrap-report.ps1` prints the resolved values):
 
 ```kql
 materialized_view('ErrorStatsMetrics')
-| where EventInfo_Time between (datetime(<TREND_START>) .. datetime(<TREND_END>))
+| where EventInfo_Time >= datetime(<TREND_START>) and EventInfo_Time < datetime(<TREND_END>)
 | where isnotempty(error_code) and error_code != 'success'
 | summarize errs = sum(countOverall),
             devs = dcount_hll(hll_merge(countDevicesHll))
      by week = startofweek(EventInfo_Time), error_code
-| where week < datetime(<TREND_END>)   // drop partial in-progress week at the source
 | order by error_code asc, week asc
 ```
 
-**The `| where week < datetime(<TREND_END>)` line is mandatory.** Without it, the current in-progress week lands as `last` and turns every code into a fake −99% improvement. `bucket-trends.js` will also auto-detect and warn about this, but filtering at the source is preferred.
+**Do NOT filter the partial in-progress week here.** The chart wants it as the final bar (the window ends today). The partial week is excluded from the regression/improvement **delta math** by `bucket-trends.js` via `--end=<TREND_CLASS_END> --include-partial-end` (see 3c), not at the source — a partial week driving the delta would read as a fake −99% improvement, which is exactly why classification and display are split in the JS.
 
 #### 3b. Per-error-type trend (same rigor)
 
 ```kql
 materialized_view('ErrorStatsMetrics')
 | extend unified_error_type = MergeUiRequiredExceptions(error_type)
-| where EventInfo_Time between (datetime(<TREND_START>) .. datetime(<TREND_END>))
+| where EventInfo_Time >= datetime(<TREND_START>) and EventInfo_Time < datetime(<TREND_END>)
 | where isnotempty(unified_error_type)
 | summarize errs = sum(countOverall),
             devs = dcount_hll(hll_merge(countDevicesHll))
      by week = startofweek(EventInfo_Time), unified_error_type
-| where week < datetime(<TREND_END>)
 | order by unified_error_type asc, week asc
 ```
 
@@ -201,17 +200,19 @@ materialized_view('ErrorStatsMetrics')
 `bucket-trends.js` defaults to grouping by `error_code`. For the type runs you MUST pass `--key=unified_error_type` so it picks up the right column from the type-trend JSON.
 
 ```pwsh
-# Error codes — by devices, then by requests. TREND_START = startofweek(today) - 56d;
-# TREND_END = startofweek(today). Values printed by bootstrap-report.ps1.
-node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <codes.json> --start=<TREND_START> --end=<TREND_END>
-node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <codes.json> --start=<TREND_START> --end=<TREND_END> --metric=reqs
+# Error codes — by devices, then by requests.
+#   TREND_START     = curEnd - 60d           (literal 60d start)
+#   TREND_CLASS_END = startofweek(today)     ("Trend delta cutoff" printed by bootstrap)
+# --include-partial-end charts the current partial week while excluding it from deltas.
+node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <codes.json> --start=<TREND_START> --end=<TREND_CLASS_END> --include-partial-end
+node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <codes.json> --start=<TREND_START> --end=<TREND_CLASS_END> --include-partial-end --metric=reqs
 
 # Error types — by devices, then by requests (note --key)
-node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <types.json> --start=<TREND_START> --end=<TREND_END> --key=unified_error_type
-node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <types.json> --start=<TREND_START> --end=<TREND_END> --key=unified_error_type --metric=reqs
+node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <types.json> --start=<TREND_START> --end=<TREND_CLASS_END> --include-partial-end --key=unified_error_type
+node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <types.json> --start=<TREND_START> --end=<TREND_CLASS_END> --include-partial-end --key=unified_error_type --metric=reqs
 ```
 
-`--end` is `startofweek(today)` (exclusive) — the Sunday that opens the current in-progress week. The script also auto-detects partial end-buckets and warns, but passing `--end` explicitly is safer.
+`--end` is `<TREND_CLASS_END>` = `startofweek(today)` (exclusive) — the Sunday that opens the current in-progress week. Weeks at or after it (the partial current week) are excluded from delta classification; `--include-partial-end` keeps that week in the emitted `series` so the chart ends today. The script also auto-detects partial end-buckets and warns if `--end` is omitted, but passing it explicitly is safer.
 
 Take the **union** of all four regression sets. Both `error_code` and `error_type` regressions get a spike-attribution card in Step 5.
 
@@ -483,7 +484,7 @@ The validator hard-fails on:
 6. **Chartless KPI grid** — if more than half the `.kpi` tiles lack a `data-spark` element (catches the v7 regression where the body was rebuilt without sparklines). Also warns when total chart count (sparks + trends + inline svgs) is &lt; 15.
 7. **Code-attribution depth** — each `.attr-card`'s "Code attribution" block must contain an `Originator` row (proxy for the full 8-field structure: Originator / Top throw site / Wrapper / Caller hot-spots / Underlying cause / Top error_messages / Likely PRs / Next step). Catches the v7-third-pass regression where cards shipped with a `pr-list`-only stub.
 8. **Attribution-card layout guards (v8)** — the CSS must define `.attr-card { margin-bottom: 16px }` AND `.dim-row` overflow rules (`text-overflow: ellipsis` + `min-width: 0`). Catches the "cards touching" and "text bleeding out of dim boxes" regressions from a stale `<head>` block.
-9. **Fabricated-sparkline heuristic (v8)** — warns when a `data-trend` array's peak value is < 100 (almost certainly hand-rolled rather than sourced from real data). See [`assets/queries/wow-table-sparkline-series.kql`](assets/queries/wow-table-sparkline-series.kql) for the canonical KQL that pulls real 8-week series for every code in the WoW tables.
+9. **Fabricated-sparkline heuristic (v8)** — warns when a `data-trend` array's peak value is < 100 (almost certainly hand-rolled rather than sourced from real data). See [`assets/queries/wow-table-sparkline-series.kql`](assets/queries/wow-table-sparkline-series.kql) for the canonical KQL that pulls real 8-week series for every code in the WoW tables. Its `<SPARK_START>` / `<SPARK_END>` tokens are the last **8 complete** Sun-Sat weeks (`<SPARK_END>` = `startofweek(today)`, exclusive) — deliberately distinct from the trend-chart's `<TREND_START>` / `<TREND_END>` (literal last 60 days ending today). Per-row sparklines stay on complete weeks so a partial final point doesn't create a misleading dip in every WoW row.
 
 Then:
 - **Run the visual smoke test (recommended)** — catches rendered-layout bugs that pure HTML/CSS validation can't see:
@@ -510,7 +511,7 @@ Then:
 - **Never sum percentiles.** Latency is a TDigest sketch — `percentile_tdigest(tdigest_merge(responseTimeTDigest), N, typeof(long))` only.
 - **Always apply `MergeAccountType` / `MergeIsSharedDevice` / `MergeUiRequiredExceptions`** so this report agrees with the dashboard.
 - **Confirm the week bucket label matches the user's intent** before writing the rest of the queries (Sunday-aligned).
-- **Always filter the partial in-progress week at the source in the 60-day trend queries** with `| where week < datetime(<TREND_END>)` where `<TREND_END>` is `startofweek(today)` (exclusive). Otherwise `bucket-trends.js` will show every error as a fake −99% improvement. Primary/WoW queries don't need this filter because their `EventInfo_Time < curEnd` half-open bound handles it inherently.
+- **Do NOT filter the partial in-progress week at the source in the 60-day trend queries** — the chart ends today and wants that partial week as its final bar. Exclude it from the regression/improvement **delta math** instead by running `bucket-trends.js --end=<startofweek(today)> --include-partial-end`: the `--end` cutoff drops the partial week from first/last/delta classification while `--include-partial-end` keeps it in the emitted `series`. Skipping `--end` (or the cutoff) would make `bucket-trends.js` show every error as a fake −99% improvement. The per-row `wow-table-sparkline-series.kql` is the exception — it keeps 8 complete weeks (`<SPARK_END>` = `startofweek(today)`, with the partial week filtered at the source) so no WoW row ends on a misleading partial dip.
 - **Never carry a numeric telemetry value forward between runs.** Every KPI, table cell, delta %, device/request count, sparkline point, and verdict number must be re-pulled from Kusto for *this* run — never copied from a previous report, from a checkpoint/summary, from notes, or from memory. Telemetry shifts between runs and stale numbers read as fabricated. Near-miss precedent: a `no_tokens_found` count was about to be carried as ~23.7M when the actual current-window value was ~4.86M — a ~5× error that only the re-pull caught. If a number isn't backed by a query result file in this run's `_data/<end-date>/`, it does not go in the report.
 - **Never hardcode the "Generated" date.** It is the *run* date (system clock, local), auto-stamped by `bootstrap-report.ps1`. If you rebuild the body programmatically, derive it live with a **local-date** formatter (`new Date().toLocaleDateString('en-CA')` in Node, `(Get-Date).ToString('yyyy-MM-dd')` in PowerShell) — never paste a literal, and avoid `new Date().toISOString().slice(0,10)` (UTC; stamps tomorrow's date when run in the evening in a UTC-negative timezone). The v8 "Generated 2026-06-15 on a 2026-06-18 file" bug came from a hardcoded string in the assembler. (Reporting-week / baseline / 60d window dates are author-set and verified against the user's intended Sunday bucket — see template-readme "Date fields".)
 - **Originator pre-check is mandatory.** A card cannot claim `Originator: Broker` without first running [`assets/queries/error-message-and-location.kql`](assets/queries/error-message-and-location.kql) and reading the throw site + top 3 `error_message` strings. If the throw site is in `common/ExceptionAdapter.{getExceptionFromTokenErrorResponse, exceptionFromAuthorizationResult}` AND the message starts with `AADSTS`, the originator is **eSTS, not broker** — see the AADSTS reference in [`assets/docs/kusto-cheatsheet.md`](assets/docs/kusto-cheatsheet.md).
@@ -533,7 +534,7 @@ Then:
 
 - [ ] New `oncall-wow-report-YYYY-MM-DD.html` (where `YYYY-MM-DD` is the resolved `curEnd` — the end-date of the rolling 7-day window) exists at `$env:USERPROFILE\android-oce-reports\` (NOT at repo root). If a file for this end-date already existed, the chat session explicitly stated what changed before regenerating.
 - [ ] All sections present and populated (incl. 🚚 Traffic Attribution — even if “None this week”)
-- [ ] **60-day trend bucketing run on the full cross-product** — `{error_code, error_type} × {devices, requests}` = 4 runs — union of regressions reported. Per-request retry storms (e.g. small device pool, exploding request count) are flagged on both axes. Source KQL filtered the partial in-progress week with `| where week < datetime(<TREND_END>)`.
+- [ ] **60-day trend bucketing run on the full cross-product** — `{error_code, error_type} × {devices, requests}` = 4 runs — union of regressions reported. Per-request retry storms (e.g. small device pool, exploding request count) are flagged on both axes. Source KQL spans the literal last 60 days ending today (no source-side partial-week filter); the partial current week is excluded from delta classification via `bucket-trends.js --end=<startofweek(today)> --include-partial-end` and charted as the final bar.
 - [ ] **WoW-movers pass run** ([`wow-movers.kql`](assets/queries/wow-movers.kql)) for BOTH `error_code` and `error_type`. Its output rows are **merged into the single 🔴 WoW regressions callout in Section 2** (sorted by curr-week devices descending), each row tagged `NEW` / `60d↑` / originator chip. No separate "emerging" callout. Every row carries throw-site, dominant message, originator, and a next step. If the WoW callout is empty (rare), render "None this week" rather than omit.
 - [ ] **Both error-codes AND error-types WoW tables have `Δ requests %` and `Δ devices %` columns**, the 60d sparkline, and a status pill. Any row crossing threshold on either metric is in the regression list.
 - [ ] Every WoW regression AND every 60d regression — **for both `error_code` and `error_type`** — has its own spike-attribution card with all 7 dimensions sliced. Cards are built from [`assets/templates/spike-card.html`](assets/templates/spike-card.html).
@@ -546,7 +547,7 @@ Then:
 - [ ] Denominator caveat (if used) is backed by [`broker-version-share-wow.kql`](assets/queries/broker-version-share-wow.kql) or [`broker-version-share.kql`](assets/queries/broker-version-share.kql) evidence naming the responsible version cohort. No hand-waving.
 - [ ] Auth-only denominator used for all reliability %s, denominator caveat called out at top.
 - [ ] No `\bdevs\b` or `\breqs\b` in user-facing text. (`Select-String -Pattern '\bdevs\b|\breqs\b' -CaseSensitive:$false` returns 0.)
-- [ ] **Sparklines rendered.** Every `.kpi` tile in the Top-line health section has a `data-spark` array with 8–9 weekly values. Every row in the 60-day trend tables and both WoW tables (codes + types) has a `data-trend` mini-spark. The validator's chart-coverage check passes (KPI coverage ≥1/2 of tiles, total elements ≥15). Past failure mode: the v7 body rebuild dropped all sparklines silently — see `template-readme.md` § "Sparklines are MANDATORY".
+- [ ] **Sparklines rendered.** Every `.kpi` tile in the Top-line health section has a `data-spark` array with 8–9 weekly values. Every row in the 60-day trend tables and both WoW tables (codes + types) has a `data-trend` mini-spark. Note the 60-day trend `data-trend` arrays now end on the current partial week (≈9 points incl. the in-progress bar), while the WoW-table sparklines keep 8 complete weeks. The validator's chart-coverage check passes (KPI coverage ≥1/2 of tiles, total elements ≥15). Past failure mode: the v7 body rebuild dropped all sparklines silently — see `template-readme.md` § "Sparklines are MANDATORY".
 - [ ] **Code-attribution depth.** Every `.attr-card`'s Code attribution block uses the full 8-field `<div class="origin-row">` structure (Originator / Top throw site / Wrapper / Caller hot-spots / Underlying cause / Top error_messages / Likely PRs / Next step) per [`assets/docs/code-attribution-template.md`](assets/docs/code-attribution-template.md). A `pr-list`-only stub is **not acceptable** — the validator hard-fails this. Past failure mode (v7 third pass): all 10 cards shipped with PR-only stubs and lost the throw-site / wrapper / underlying-cause analysis.
 - [ ] No stale text from previous weeks. (`Select-String -Pattern 'EXAMPLE CONTENT BELOW'` returns 0 — that's the unfinished-section sentinel. The template no longer ships `{{TOKEN}}` placeholders since v2; if the file still contains any `{{`, that's also a leftover.)
 - [ ] `get_errors` clean on the HTML file.

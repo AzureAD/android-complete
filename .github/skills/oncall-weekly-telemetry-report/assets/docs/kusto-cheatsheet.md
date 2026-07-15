@@ -69,8 +69,11 @@ Compute the placeholder values via `bootstrap-report.ps1` (which prints them to 
 | `<CUR_END>` | `-EndDate` | `2026-07-09` |
 | `<CUR_START>` | `<CUR_END> - 7d` | `2026-07-02` |
 | `<PREV_START>` | `<CUR_END> - 14d` | `2026-06-25` |
-| `<TREND_END>` | `startofweek(<CUR_END>)` — Sunday-aligned | `2026-07-05` |
-| `<TREND_START>` | `<TREND_END> - 56d` | `2026-05-10` |
+| `<TREND_END>` | `<CUR_END>` (today) — literal 60d trend upper bound, exclusive | `2026-07-09` |
+| `<TREND_START>` | `<CUR_END> - 60d` | `2026-05-10` |
+| `<TREND_CLASS_END>` | `startofweek(<CUR_END>)` — delta cutoff, `bucket-trends.js --end` | `2026-07-05` |
+| `<SPARK_END>` | `startofweek(<CUR_END>)` — WoW-sparkline upper bound (8 complete weeks) | `2026-07-05` |
+| `<SPARK_START>` | `<SPARK_END> - 56d` | `2026-05-10` |
 
 ---
 
@@ -141,8 +144,10 @@ materialized_view('PerfStatsUpdated')
 
 If a user says "the week of May 2 → May 9", Kusto buckets it as `startofweek('2026-05-09') == 2026-05-03T00:00:00Z`. When writing weekly-bucketed queries (60-day trend, `wow-table-sparkline-series.kql`), **always confirm**: print the distinct `startofweek(EventInfo_Time)` values from your first query and verify the bucket labels match your intended range. Off-by-one-week is the #1 silent error in weekly-bucket queries.
 
-For an 8-complete-week 60-day window ending Sat May 9, the buckets are:
-`2026-03-08, 03-15, 03-22, 03-29, 04-05, 04-12, 04-19, 04-26, 05-03` — that's 9 buckets, one of which (the first) was a partial start. Drop the first; keep 8 complete weeks.
+For the literal-60-day trend window ending today (say `<CUR_END> = 2026-07-09`, so `<TREND_START> = 2026-05-10`), `startofweek()` produces buckets:
+`2026-05-03, 05-10, 05-17, 05-24, 05-31, 06-07, 06-14, 06-21, 06-28, 07-05` — the first (`05-03`) is a partial start (window opens mid-week `05-10`) and is dropped by `bucket-trends.js --start`; the last (`07-05`) is the **partial current week** — it is charted as the final bar but excluded from delta classification via `--end=<TREND_CLASS_END>` (= `startofweek(today)` = `2026-07-05`) `--include-partial-end`.
+
+The `wow-table-sparkline-series.kql` per-row sparklines are different: they stay on the last **8 complete** weeks (`<SPARK_END> = startofweek(today)`, exclusive, partial week filtered at the source) so no WoW row ends on a misleading partial dip.
 
 ---
 
@@ -186,9 +191,11 @@ union s, i
 
 ### 8b. 60-day error trend (feeds `bucket-trends.js`)
 
+Literal last 60 days ending today (`<TREND_START> = CUR_END - 60d`, `<TREND_END> = CUR_END`). Do NOT drop the partial current week here — it's the chart's final bar. Exclude it from deltas in the bucketer instead: `bucket-trends.js --end=<TREND_CLASS_END> --include-partial-end` where `<TREND_CLASS_END> = startofweek(today)`.
+
 ```kql
 materialized_view('ErrorStatsMetrics')
-| where EventInfo_Time > ago(70d)
+| where EventInfo_Time >= datetime(<TREND_START>) and EventInfo_Time < datetime(<TREND_END>)
 | where isnotempty(error_code) and error_code != 'success'
 | summarize errs = sum(countOverall),
             devs = dcount_hll(hll_merge(countDevicesHll))
@@ -242,7 +249,7 @@ materialized_view('BrokerAdoptionStatsUpdated')
 
 | Script | Purpose |
 |---|---|
-| [`bucket-trends.js`](bucket-trends.js) | Bucket every error code into regression / spike / improvement / flat across an N-week window. Pass `--end=YYYY-MM-DD` (Sunday after the reporting week, exclusive) to drop partial in-progress buckets. |
+| [`bucket-trends.js`](bucket-trends.js) | Bucket every error code into regression / spike / improvement / flat across an N-week window. Pass `--end=YYYY-MM-DD` (= `startofweek(today)`, exclusive) to exclude the partial in-progress week from delta classification, plus `--include-partial-end` to still chart it as the final bar. |
 | [`agg.js`](agg.js) | Per-error per-dim top-N rollup with WoW deltas. Feeds spike-attribution dim blocks. |
 | [`summarize-attribution.js`](summarize-attribution.js) | Roll up 7-dim attribution slices per (error_code, week) — feeds the spike-attribution cards |
 | [`queries/`](queries/) | Canonical KQL templates, one per query — see [`queries/README.md`](queries/README.md) |
