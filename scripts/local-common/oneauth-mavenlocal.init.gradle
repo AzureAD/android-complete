@@ -1,0 +1,25 @@
+// ---------------------------------------------------------------------------
+// oneauth-mavenlocal.init.gradle
+//
+// Gradle init script that injects mavenLocal() (~/.m2) into every project of a
+// build WITHOUT editing that build's source. Use it to make OneAuthTestApp (and
+// the :OneAuth SDK it builds from source) consume a locally-published
+// com.microsoft.identity:common / common4j from Maven Local.
+//
+// Why an init script? The OneAuth repo is owned by another team. Instead of
+// adding mavenLocal() to their build.gradle.kts, we inject it at invocation time
+// so nothing in the OneAuth checkout is modified.
+//
+// Usage:
+//   gradlew :app:assembleDebug \
+//       --init-script <path-to-this-file> \
+//       -PandroidCommonVersion=<locally-published-common-version>
+//
+// mavenLocal() is added FIRST so the locally-published version is preferred;
+// every other dependency simply falls through to the OneAuth feeds as usual.
+// ---------------------------------------------------------------------------
+allprojects {
+    repositories {
+        mavenLocal()
+    }
+}
