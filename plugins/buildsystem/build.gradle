@@ -10,7 +10,7 @@ plugins {
 }
 
 group 'com.microsoft.identity'
-version '0.2.6-dev'
+version '0.2.6'
 
 tasks.withType(JavaCompile) {
     sourceCompatibility = '11'
