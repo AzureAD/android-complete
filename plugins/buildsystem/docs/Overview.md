@@ -135,3 +135,46 @@ pluginManagement {
 ## Plugins/Settings applied by BuildPlugin
 
 - [SpotBugs](Spotbugs.md)
+
+## Publishing (manual)
+
+> This plugin is **published manually** — it is intentionally **not** wired into any CI/CD
+> pipeline (daily, weekly, or release). Publish a new version by hand using the steps below.
+
+The `build.gradle` already declares the `NewAndroid` Azure Artifacts feed as a `publishing`
+target, so no build changes are needed to publish.
+
+**Steps:**
+
+1. **Bump the version** in [`build.gradle`](../build.gradle) (the `version '...'` line) and add a
+   matching entry to the [`changelog`](../changelog). Feed versions are **immutable** — you cannot
+   overwrite an already-published version.
+
+2. **Generate a PAT** with **Packaging → Read & write** scope at
+   <https://dev.azure.com/IdentityDivision/_usersSettings/tokens>.
+
+3. **Provide credentials.** The username is arbitrary for Azure Artifacts (use `VSTS`); the PAT is
+   what authenticates. Either set env vars:
+
+   ```powershell
+   $env:ENV_VSTS_MVN_CRED_USERNAME    = "VSTS"
+   $env:ENV_VSTS_MVN_CRED_ACCESSTOKEN = "<your-PAT>"
+   ```
+
+   …or add `vstsUsername` / `vstsMavenAccessToken` to `~/.gradle/gradle.properties`
+   (never commit the PAT).
+
+4. **Publish from the android-complete root** (the plugin only builds in the root context — the root
+   `settings.gradle` `pluginManagement` supplies the Kotlin plugin version):
+
+   ```powershell
+   .\gradlew.bat :AcaPlugin:publish
+   ```
+
+   This uploads both artifacts to the feed:
+   - `com.microsoft.identity:AcaPlugin:<version>` — the plugin jar
+   - `com.microsoft.identity.buildsystem:com.microsoft.identity.buildsystem.gradle.plugin:<version>` — the plugin marker consumers resolve
+
+5. **Verify** the new version at
+   <https://dev.azure.com/identitydivision/Engineering/_artifacts/feed/NewAndroid>, then bump
+   consumers' `id 'com.microsoft.identity.buildsystem' version '<version>'` declarations.
