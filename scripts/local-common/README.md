@@ -48,54 +48,12 @@ From `scripts\local-common\`:
 # 2a) Fast check — prove OneAuthTestApp resolves your local Common (no NDK/CMake needed)
 .\build-oneauthtestapp-with-local-common.ps1 -VerifyOnly
 
-# 2b) Full build — assemble the debug APK against your local Common
+# 2b) Full build + install on the connected device/emulator against your local Common
 .\build-oneauthtestapp-with-local-common.ps1
 ```
 
 `publish-…` writes the version it used to `.last-published-version`; `build-…` reads it automatically,
 so you don't have to copy/paste the version between steps.
-
----
-
-## Building from Android Studio (the Run button)
-
-By default the **Run button does NOT pick up your local Common.** Android Studio runs a plain
-Gradle build that passes neither `--init-script` (so `mavenLocal()` is never added) nor
-`-PandroidCommonVersion` (so it silently falls back to the feed version
-`msIdentityCommon = 24.3.0`). It will build and install successfully — but against the **published
-feed Common, not your changes.** Easy to be fooled by.
-
-To make the Run button use your local Common, run the opt-in helper **once**:
-
-```powershell
-# Publishes a stable SNAPSHOT and installs two persistent (per-machine) Gradle hooks
-.\enable-android-studio-local-common.ps1 -Publish
-```
-Then in Android Studio: **File > Sync Project with Gradle Files**, pick the `:app` run config, and hit **Run**.
-
-The helper makes both flags persistent so the IDE picks them up automatically:
-1. copies `oneauth-mavenlocal.init.gradle` → `~/.gradle/init.d/zz-oneauth-local-common.gradle` (adds `mavenLocal()` to every build), and
-2. sets `androidCommonVersion=0.0.0-local-dev-SNAPSHOT` in your **global** `~/.gradle/gradle.properties`.
-
-It uses a **`-SNAPSHOT`** version on purpose: the OneAuth SDK + app set `cacheChangingModulesFor(0)`,
-so a SNAPSHOT is re-read from `~/.m2` on every build. After you change Common again, just re-publish
-the **same** version and hit Run — nothing else to edit:
-```powershell
-.\publish-common-to-maven-local.ps1 -Version 0.0.0-local-dev-SNAPSHOT
-```
-
-Turn it all off (back to normal feed builds), then Sync Gradle:
-```powershell
-.\enable-android-studio-local-common.ps1 -Disable
-```
-
-> ⚠️ These hooks are **global** (per-machine, affect all Gradle builds), which is why they're
-> opt-in and reversible. If you'd rather not touch global config, use the command-line
-> `build-oneauthtestapp-with-local-common.ps1` instead — it passes the flags per-invocation.
->
-> Alternative (IDE-only, no global config): Android Studio **Settings > Build, Execution,
-> Deployment > Compiler > Command-line Options**, add
-> `--init-script <path-to>\oneauth-mavenlocal.init.gradle -PandroidCommonVersion=<ver>`.
 
 ---
 
@@ -111,19 +69,13 @@ Params: `-Version` (default `0.0.0-local-<timestamp>`), `-SuperprojectRoot`, `-J
 
 ### `build-oneauthtestapp-with-local-common.ps1`
 Runs the OneAuthTestApp build with `--init-script oneauth-mavenlocal.init.gradle` and
-`-PandroidCommonVersion=<Version>`.
+`-PandroidCommonVersion=<Version>`. The default task `:app:installDebug` builds the debug APK and
+**installs it on the connected device/emulator** (a device/emulator must be attached).
 
-Params: `-Version` (default = last published), `-Task` (default `:app:assembleDebug`),
-`-VerifyOnly` (dependency check, implies `-SkipNativeBuild`), `-SkipNativeBuild`,
-`-SuperprojectRoot`, `-JavaHome`, `-GradleArgs` (passthrough, e.g. `--refresh-dependencies`).
-
-### `enable-android-studio-local-common.ps1`
-Enables/disables the **Android Studio Run button** path by installing two persistent per-machine
-Gradle hooks (init.d `mavenLocal()` + global `androidCommonVersion`). Use a `-SNAPSHOT` version so
-re-publishes are auto-picked-up.
-
-Params: `-Version` (default `0.0.0-local-dev-SNAPSHOT`), `-Publish` (publish first),
-`-Disable` (uninstall hooks), `-JavaHome`.
+Params: `-Version` (default = last published), `-Task` (default `:app:installDebug`; use
+`:app:assembleDebug` to build only, no install), `-VerifyOnly` (dependency check, implies
+`-SkipNativeBuild`), `-SkipNativeBuild`, `-SuperprojectRoot`, `-JavaHome`, `-GradleArgs`
+(passthrough, e.g. `--refresh-dependencies`).
 
 ### `oneauth-mavenlocal.init.gradle`
 Init script that adds `mavenLocal()` to every project of the OneAuthTestApp build. Non-invasive —
@@ -150,8 +102,8 @@ $init = "…\scripts\local-common\oneauth-mavenlocal.init.gradle"
 .\gradlew.bat :OneAuth:dependencyInsight --configuration debugRuntimeClasspath `
     --dependency com.microsoft.identity:common `
     -PandroidCommonVersion=$ver -PskipNativeBuild=true --init-script $init --console=plain
-# full APK
-.\gradlew.bat :app:assembleDebug -PandroidCommonVersion=$ver --init-script $init
+# full build + install on the connected device
+.\gradlew.bat :app:installDebug -PandroidCommonVersion=$ver --init-script $init
 ```
 
 A successful resolve check shows (no `FAILED` lines):

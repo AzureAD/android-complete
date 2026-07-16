@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-    Builds / verifies OneAuthTestApp against a locally-published Common (from Maven Local),
-    without modifying the OneAuth repo (mavenLocal is injected via a Gradle init script).
+    Builds + installs (or verifies) OneAuthTestApp against a locally-published Common (from Maven
+    Local), without modifying the OneAuth repo (mavenLocal is injected via a Gradle init script).
 
 .DESCRIPTION
     Wires OneAuthTestApp to consume com.microsoft.identity:common:<Version> from ~/.m2 by:
@@ -15,7 +15,9 @@
     publish-common-to-maven-local.ps1 in `.last-published-version`.
 
 .PARAMETER Task
-    Gradle task(s) to run in the OneAuthTestApp build. Default: :app:assembleDebug.
+    Gradle task(s) to run in the OneAuthTestApp build. Default: :app:installDebug, which builds the
+    debug APK and installs it on the connected device/emulator. Use -Task ':app:assembleDebug' to
+    only build the APK without installing.
 
 .PARAMETER VerifyOnly
     Fast path: instead of building the APK, run a dependency check proving `common` resolves
@@ -38,19 +40,20 @@
 
 .EXAMPLE
     .\build-oneauthtestapp-with-local-common.ps1 -VerifyOnly
-    # confirms common/common4j resolve from ~/.m2 (fast, no native build)
+    # confirms common/common4j resolve from ~/.m2 (fast, no native build, no device needed)
 
 .EXAMPLE
     .\build-oneauthtestapp-with-local-common.ps1
-    # full :app:assembleDebug against the local Common
+    # full build + install on the connected device (:app:installDebug) against the local Common
 
 .EXAMPLE
-    .\build-oneauthtestapp-with-local-common.ps1 -Task ':app:installDebug' -GradleArgs '--refresh-dependencies'
+    .\build-oneauthtestapp-with-local-common.ps1 -Task ':app:assembleDebug'
+    # build the debug APK only (no install)
 #>
 [CmdletBinding()]
 param(
     [string]$Version,
-    [string]$Task = ":app:assembleDebug",
+    [string]$Task = ":app:installDebug",
     [switch]$VerifyOnly,
     [switch]$SkipNativeBuild,
     [string]$SuperprojectRoot,
@@ -142,5 +145,8 @@ if ($VerifyOnly) {
     Write-Host " (Look for the version above under debugRuntimeClasspath with no FAILED lines.)"
 } else {
     Write-Host " OK: '$Task' completed against local Common $Version." -ForegroundColor Green
+    if ($Task -match 'install') {
+        Write-Host " The app was installed on the connected device — launch it from the app launcher."
+    }
 }
 Write-Host "=====================================================================" -ForegroundColor Green
