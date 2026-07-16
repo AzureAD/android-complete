@@ -9,21 +9,21 @@
 //   <CUR_START>   curEnd - 7d, e.g. 2026-07-02
 //   <PREV_START>  curEnd - 14d, e.g. 2026-06-25
 //
-// Output shape: two rows per bucket, wk in { prevStart, curStart }.
+// Output shape: two rows per bucket, week in { prevStart, curStart }.
 let curEnd    = datetime(<CUR_END>);
 let curStart  = datetime(<CUR_START>);
 let prevStart = datetime(<PREV_START>);
 let s = materialized_view('SilentAuthStatsAllRequestsMetrics')
   | where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
-  | extend wk = iff(EventInfo_Time >= curStart, curStart, prevStart)
+  | extend week = iff(EventInfo_Time >= curStart, curStart, prevStart)
   | summarize req = sum(countRequests), devHll = hll_merge(countDevicesHll)
-       by wk;
+       by week;
 let i = materialized_view('InteractiveAuthStatsAllRequestsMetrics')
   | where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
-  | extend wk = iff(EventInfo_Time >= curStart, curStart, prevStart)
+  | extend week = iff(EventInfo_Time >= curStart, curStart, prevStart)
   | summarize req = sum(countRequests), devHll = hll_merge(countDevicesHll)
-       by wk;
+       by week;
 union s, i
 | summarize authReq = sum(req), authDev = dcount_hll(hll_merge(devHll))
-     by wk
-| order by wk asc
+     by week
+| order by week asc

@@ -12,8 +12,8 @@ materialized_view('ErrorStatsMetrics')
 | extend unified_is_shared_device = MergeIsSharedDevice(is_shared_device)
 | where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
 | where unified_error_type in (types)
-| extend wk = iff(EventInfo_Time >= curStart, curStart, prevStart)
+| extend week = iff(EventInfo_Time >= curStart, curStart, prevStart)
 | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
             errs = sum(countOverall)
-     by wk, unified_error_type, <DIM>
-| order by unified_error_type asc, wk asc, devs desc
+     by week, unified_error_type, <DIM>
+| order by unified_error_type asc, week asc, devs desc

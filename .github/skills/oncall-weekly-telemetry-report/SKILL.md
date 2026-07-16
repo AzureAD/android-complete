@@ -27,20 +27,20 @@ Reusable helpers in [`assets/`](assets/):
 | [`find-suspect-prs.ps1`](assets/scripts/find-suspect-prs.ps1) | Parallel `git log -S` + `--grep` across broker/ + common/ for a class/method symbol, with PR numbers + URLs. Run *only after* the Originator pre-check has identified a specific throw-site class — the unscoped 4-week PR window is small enough (<30 PRs) to scan with plain `git log` first. |
 | [`validate-report.ps1`](assets/scripts/validate-report.ps1) | Pre-publish validator. Catches stale tokens, devs/reqs leaks, mojibake (U+FFFD), unbalanced `<div>` depth in Section 2 (the nested-callout bug), KPI/trend sparkline coverage, code-attribution depth, layout-guard CSS presence, and suspicious low-peak fabricated `data-trend` arrays. Run as part of Step 7. |
 | [`scripts/run-kql.ps1`](assets/scripts/run-kql.ps1) | **Direct-REST Kusto helper — drop-in fallback for the Azure Kusto MCP server when the MCP times out** (frequent on per-error-code queries). Acquires a token via `az`, POSTs to `/v2/rest/query`, writes a JSON file the JS helpers can consume directly. |
-| [`scripts/bootstrap-report.ps1`](assets/scripts/bootstrap-report.ps1) | Bootstrap a new report from the canonical template. Auto-computes the rolling 7-day window (curEnd = today UTC; override with `-EndDate YYYY-MM-DD`), creates `_data/<end-date>/`, prunes `_data` folders older than 60 days, **stamps the resolved window into the `<title>` / `<div class="meta">` block / Generated banner**, and detects "unfilled template stub" vs "real prior report" collisions using first-KPI + size-ratio fingerprints. See AB#3683194 for the rolling-window rationale. |
+| [`scripts/bootstrap-report.ps1`](assets/scripts/bootstrap-report.ps1) | Bootstrap a new report from the canonical template. Auto-computes the rolling 7-day window (curEnd = today UTC; override with `-EndDate YYYY-MM-DD`), creates `_data/<end-date>/`, prunes `_data` folders older than 60 days, **stamps the resolved window into the `<title>` / `<div class="meta">` block / Generated banner**, and detects "unfilled template stub" vs "real prior report" collisions using a template-only sentinel token (see § collision detection). |
 | [`scripts/visual-smoke.ps1`](assets/scripts/visual-smoke.ps1) | Optional Playwright-based layout smoke test. Renders the report at 1400 px viewport, captures a full-page screenshot under `~/android-oce-reports/_visual/`, and runs DOM-based overflow + adjacent-card-gap detection. Catches the rendered-layout bugs (text bleed, cards touching) that pure HTML/CSS validation can't see. |
 
 ---
 
 ## Inputs to confirm with the user
 
-> **⚠️ Do NOT ask the user for a reporting date by default.** As of AB#3683194 (Fadi feedback, Jun 2026) the skill uses a **rolling 7-day window** ending at start-of-day UTC on the invocation day. `assets/scripts/bootstrap-report.ps1` computes and stamps the window automatically. The previous "confirm the Sunday bucket with the user" flow silently produced stale windows (e.g. a Thursday run emitted a 4-day partial window and dropped the last complete week) — that failure mode is what this section explicitly guards against.
+> **⚠️ Do NOT ask the user for a reporting date by default.** The skill uses a **rolling 7-day window** ending at start-of-day UTC on the invocation day so the most recent complete days are always captured. `assets/scripts/bootstrap-report.ps1` computes and stamps the window automatically. The previous "confirm the Sunday bucket with the user" flow silently produced stale windows (e.g. a Thursday run emitted a 4-day partial window and dropped the last complete week) — that failure mode is what this section explicitly guards against.
 
 1. **Reporting window** — do NOT ask. Run `bootstrap-report.ps1` with no arguments; it resolves the window silently and prints:
    ```
-   Resolved reporting window (UTC):
-     Last 7 days:   2026-07-02 -> 2026-07-09  (exclusive upper bound)
-     Baseline:      2026-06-25 -> 2026-07-02
+   Resolved reporting window (UTC):   # example values for a run on 2026-07-15
+     Last 7 days:   2026-07-08 -> 2026-07-15  (exclusive upper bound)
+     Baseline:      2026-07-01 -> 2026-07-08
      60-day trend:  2026-05-16 -> 2026-07-15  (literal 60d ending today; chart includes current partial week)
      Trend delta cutoff: weeks < 2026-07-12  (startofweek(curEnd); pass as bucket-trends.js --end)
    ```
@@ -51,6 +51,8 @@ Reusable helpers in [`assets/`](assets/):
    .\bootstrap-report.ps1 -EndDate 2026-07-02   # e.g. reproduce the report as of Jul 2
    ```
    `-EndDate` is the exclusive upper bound of the current window (`curEnd`); the script derives `curStart = curEnd - 7d` and `prevStart = curEnd - 14d` deterministically. `-EndDate` must be today or earlier — future dates are refused.
+
+   **Supported override = `-EndDate` only (shifts the window *end*).** The 7-day primary span, the 7-day baseline, and the 60-day trend form a fixed frame that moves *rigidly* with `-EndDate`. There is **no** custom start-date and **no** arbitrary-span flag — a request like "last 30 days" or "from Jun 1 to Jun 20" is **not** expressible via a single parameter. To produce a longer or custom span you must edit the KQL window placeholders (`<CUR_START>` / `<CUR_END>` / `<PREV_START>` / `<PREV_END>`) by hand. If the user asks for a non-7-day span, say so up front rather than silently emitting a 7-day report.
 
 2. **Comparison baseline** — auto-computed as the immediately-prior 7 days (`[curEnd - 14d, curEnd - 7d)`). No user input.
 
@@ -106,9 +108,9 @@ What it does:
 * Resolves the rolling 7-day window from the system clock in UTC (`curEnd = today`, `curStart = curEnd - 7d`, `prevStart = curEnd - 14d`) — or from `-EndDate` if passed.
 * Creates `~/android-oce-reports/oncall-wow-report-<curEnd>.html` from the canonical template.
 * Creates `~/android-oce-reports/_data/<curEnd>/` for raw KQL JSON payloads.
-* **Stamps the resolved window into the report's `<title>`, `<div class="meta">` block, and Generated banner** — you never hand-edit header dates. This is the AB#3683194 acceptance criterion ("the resolved window is echoed in the report header for transparency").
+* **Stamps the resolved window into the report's `<title>`, `<div class="meta">` block, and Generated banner** — you never hand-edit header dates. The resolved window is echoed in the report header for transparency.
 * Prunes `_data/<old-end-date>/` folders older than 60 days so the cache doesn't accumulate.
-* **Collision detection:** first-KPI value + file-size ratio distinguish an "unfilled template stub" (silently re-bootstrap) from a "real populated report" (HARD HALT, exit 2, require `-Force` to overwrite). Title/meta-line are NOT fingerprinted because bootstrap always rewrites them on copy.
+* **Collision detection (fail-safe):** an existing same-day report is silently re-bootstrapped only when it is *positively* identified as an unpopulated stub — it still carries the `OCE-UNPOPULATED-STUB` sentinel that bootstrap injects **and** its first KPI still equals the template's value. Anything else (sentinel removed, or KPIs edited) is treated as real work: **HARD HALT, exit 2**, requiring `-Force` to overwrite. `validate-report.ps1` refuses to pass a report that still carries the sentinel, so a published report can never be misclassified as a stub.
 
 Edit the bootstrapped file in place — the template ships as a real prior-week report (not a tokenized skeleton). **Walk top-to-bottom and replace every prior-week date / KPI value / table row / verdict / PR citation with current-week data.** The CSS, sparkline JS, section ordering, and attribution-card markup are canonical — do not redesign them. See [`assets/templates/template-readme.md`](assets/templates/template-readme.md) for the full guide on what to change vs leave alone, the sparkline color palette, the CSS class reference, and the two v8 layout traps.
 
@@ -235,7 +237,7 @@ It will print regression / spike / improvement / flat buckets, sorted by peak. T
 The 60d bucketer's `--peak-floor=10000` exists for good reason (otherwise the 60d regression list would be 200+ tiny noise codes), but it **silently drops every code whose absolute weekly volume stays under 10K** — even if that code is brand-new or just spiked 5× WoW. Real examples this skill has missed in the past:
 
 - `Failed to parse JWT` — went `7 → 32 → 54 → 46 → 55 → 892 → 3,461` over 7 weeks (2-week-old NEW spike, real broker code in `IDToken.parseJWT:38`). Never crossed the 10K floor.
-- `Code:-11` — sat at ~1,030 devs/wk for 7 weeks then jumped to 2,433 (+165% WoW). Sub-floor.
+- `Code:-11` — sat at ~1,030 devs/week for 7 weeks then jumped to 2,433 (+165% WoW). Sub-floor.
 - `SSLHandshakeException` — devices flat at 260 but requests +186% WoW (per-device retry storm). The bucketer's reqs-axis floor (100K) just barely captures it but the device floor doesn't.
 
 To catch these, **always** run [`assets/queries/wow-movers.kql`](assets/queries/wow-movers.kql) **as a separate pass after the 60d bucketing**:
@@ -347,11 +349,11 @@ materialized_view('ErrorStatsMetrics')
 | extend unified_error_type = MergeUiRequiredExceptions(error_type)
 | where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
 | where unified_error_type in (target_types)
-| extend wk = iff(EventInfo_Time >= curStart, curStart, prevStart)
+| extend week = iff(EventInfo_Time >= curStart, curStart, prevStart)
 | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
             errs = sum(countOverall)
-     by wk, unified_error_type, error_code
-| order by unified_error_type asc, wk asc, devs desc
+     by week, unified_error_type, error_code
+| order by unified_error_type asc, week asc, devs desc
 ```
 
 Cite the dominant sub-codes inline in the type card's verdict (e.g. *"`ClientException` −10.2% drop is dominated by −8.5 pp `timed_out_execution` + −3.4 pp `unknown_authority`"*) and link to those sub-codes' own attribution cards. The deep Code Attribution block (Step 4) for the type card itself focuses on the **wrapper / catch-and-rethrow** path that defines the type (e.g. `BaseException.java`, `ServiceException.java` constructors), not on each sub-code.
@@ -452,11 +454,11 @@ let prevStart = datetime(<PREV_START>);
 let target_code = "<error_code>";
 materialized_view('ErrorStatsMetrics')
 | where EventInfo_Time >= prevStart and EventInfo_Time < curEnd and error_code == target_code
-| extend wk = iff(EventInfo_Time >= curStart, curStart, prevStart)
+| extend week = iff(EventInfo_Time >= curStart, curStart, prevStart)
 | summarize errs = sum(countOverall),
             devs = dcount_hll(hll_merge(countDevicesHll))
-     by wk, calling_package_name
-| order by wk asc, devs desc
+     by week, calling_package_name
+| order by week asc, devs desc
 ```
 
 If the spike is concentrated in a single calling app whose **overall** request volume also rose that week (cross-check `AppStatsUpdated`), and the **per-request failure rate is essentially flat**, classify the spike as a **traffic-attribution case** rather than a code regression:

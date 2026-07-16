@@ -1,17 +1,17 @@
 // Top calling apps share for the WoW window.
 //
 // Rolling 7-day window. See SKILL.md and bootstrap-report.ps1 for the canonical
-// window computation. Two rows per app (wk = prevStart or curStart).
+// window computation. Two rows per app (week = prevStart or curStart).
 let curEnd    = datetime(<CUR_END>);
 let curStart  = datetime(<CUR_START>);
 let prevStart = datetime(<PREV_START>);
 materialized_view('AppStatsUpdated')
 | where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
-| extend wk = iff(EventInfo_Time >= curStart, curStart, prevStart)
+| extend week = iff(EventInfo_Time >= curStart, curStart, prevStart)
 | summarize req = sum(countRequests),
             dev = dcount_hll(hll_merge(countDevicesHll))
-     by wk, calling_package_name
-| order by wk asc, req desc
+     by week, calling_package_name
+| order by week asc, req desc
 | summarize topApps = make_list(pack('app', calling_package_name, 'req', req, 'dev', dev), 25)
-     by wk
-| order by wk asc
+     by week
+| order by week asc

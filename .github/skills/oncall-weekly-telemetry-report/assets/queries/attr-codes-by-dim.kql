@@ -5,7 +5,7 @@
 // (Plus android_spans-based for OS version -- see os-version-slice.kql.)
 //
 // Rolling 7-day WoW window. See SKILL.md and bootstrap-report.ps1 for the
-// canonical window computation. Two wk buckets per (code, dim value).
+// canonical window computation. Two week buckets per (code, dim value).
 let curEnd    = datetime(<CUR_END>);
 let curStart  = datetime(<CUR_START>);
 let prevStart = datetime(<PREV_START>);
@@ -15,8 +15,8 @@ materialized_view('ErrorStatsMetrics')
 | extend unified_is_shared_device = MergeIsSharedDevice(is_shared_device)
 | where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
 | where error_code in (codes)
-| extend wk = iff(EventInfo_Time >= curStart, curStart, prevStart)
+| extend week = iff(EventInfo_Time >= curStart, curStart, prevStart)
 | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
             errs = sum(countOverall)
-     by wk, error_code, <DIM>
-| order by error_code asc, wk asc, devs desc
+     by week, error_code, <DIM>
+| order by error_code asc, week asc, devs desc

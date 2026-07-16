@@ -22,7 +22,7 @@
 // Thresholds (tuneable):
 //   floor:        cDev>=500 OR cReq>=5000        (small enough to catch sub-bucketer-floor codes)
 //   move:         |dDev%|>=25 OR |dReq%|>=50     (real spike, not noise)
-//   new-this-wk:  pDev==0 OR pReq==0             (never seen before this window)
+//   new-this-week:  pDev==0 OR pReq==0             (never seen before this window)
 
 let curEnd    = datetime(<CUR_END>);
 let curStart  = datetime(<CUR_START>);

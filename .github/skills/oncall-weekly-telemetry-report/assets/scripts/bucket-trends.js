@@ -20,7 +20,7 @@
  *
  * (Use dcount_hll on countDevicesHll, NOT sum(countDevices) -- see ../docs/kusto-cheatsheet.md.)
  *
- * AB#3683194 follow-up -- LITERAL 60-day window ending today:
+ * LITERAL 60-day window ending today:
  *   The 60d trend now spans [today-60d, today), so the query no longer filters the
  *   partial in-progress week at the source -- the CHART wants it as the final bar.
  *   Instead this script splits two week sets:
@@ -120,12 +120,12 @@ if (Array.isArray(schemaRow)) {
 } else {
   throw new Error('First row of results.items must be the schema row');
 }
-const iWeek = colNames.indexOf('week') >= 0 ? colNames.indexOf('week') : colNames.indexOf('wk');
+const iWeek = colNames.indexOf('week');
 const iCode = colNames.indexOf(keyCol);
 const iErrs = colNames.indexOf('errs');
 const iDevs = colNames.indexOf('devs');
 if (iWeek < 0 || iCode < 0 || iErrs < 0 || iDevs < 0) {
-  throw new Error(`Schema must include week|wk, ${keyCol}, errs, devs. Got [${colNames.join(', ')}]`);
+  throw new Error(`Schema must include week, ${keyCol}, errs, devs. Got [${colNames.join(', ')}]`);
 }
 
 const items = d.results.items.slice(1);

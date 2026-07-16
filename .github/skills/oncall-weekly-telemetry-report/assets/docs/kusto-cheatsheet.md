@@ -40,9 +40,9 @@ Time filter on materialized views is always **`EventInfo_Time`**. Use `PipelineI
 
 ## 3. Rolling 7-day WoW window (PRIMARY / attribution / latency)
 
-**Since AB#3683194 (Fadi feedback, Jun 2026)** the report's primary window is a **rolling 7-day window** ending at start-of-day UTC on `-EndDate` (default: today), NOT a Sun→Sat calendar week. Only the 60-day trend section (§ 7 below) still uses `startofweek()` bucketing.
+**The report's primary window is a **rolling 7-day window** ending at start-of-day UTC on `-EndDate` (default: today), NOT a Sun→Sat calendar week.** Only the 60-day trend section (§ 7 below) still uses `startofweek()` bucketing.
 
-Canonical template — two rows per key (`wk` in `{prevStart, curStart}`):
+Canonical template — two rows per key (`week` in `{prevStart, curStart}`):
 
 ```kql
 let curEnd    = datetime(<CUR_END>);      // exclusive upper bound (e.g. 2026-07-09)
@@ -50,16 +50,16 @@ let curStart  = datetime(<CUR_START>);    // curEnd - 7d
 let prevStart = datetime(<PREV_START>);   // curEnd - 14d
 materialized_view('<view>')
 | where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
-| extend wk = iff(EventInfo_Time >= curStart, curStart, prevStart)
+| extend week = iff(EventInfo_Time >= curStart, curStart, prevStart)
 | summarize <aggregations>
-     by wk, <keys>
-| order by <keys> asc, wk asc
+     by week, <keys>
+| order by <keys> asc, week asc
 ```
 
 Notes:
 - Use `>= ... and < ...` (half-open) NOT `between (.. .. ..)`. `between` is inclusive-inclusive in Kusto; the half-open form correctly assigns the exact `curEnd` boundary to no bucket (the query drops it because `EventInfo_Time < curEnd`).
 - The window boundaries are always aligned to `00:00 UTC` — this matches Kusto's default datetime semantics and the bootstrap script's `-EndDate` interpretation.
-- `wk` values are datetimes; they sort lexicographically (ISO 8601) so downstream JS helpers (`agg.js`, `summarize-attribution.js`) that pick smallest = prev, largest = cur continue to work unchanged.
+- `week` values are datetimes; they sort lexicographically (ISO 8601) so downstream JS helpers (`agg.js`, `summarize-attribution.js`) that pick smallest = prev, largest = cur continue to work unchanged.
 - All primary/WoW `.kql` templates in `../queries/` follow this pattern. See `../queries/reliability-auth-only.kql` and `../queries/attr-union-by-dim.kql` for full examples.
 
 Compute the placeholder values via `bootstrap-report.ps1` (which prints them to stdout as `Resolved reporting window (UTC):`) or manually:
@@ -218,10 +218,10 @@ materialized_view('ErrorStatsMetrics')
 | extend unified_is_shared_device = MergeIsSharedDevice(is_shared_device)
 | where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
 | where error_code in (codes)
-| extend wk = iff(EventInfo_Time >= curStart, curStart, prevStart)
+| extend week = iff(EventInfo_Time >= curStart, curStart, prevStart)
 | summarize devs = dcount_hll(hll_merge(countDevicesHll))
-     by wk, error_code, span_name           // <-- swap this dim per query
-| order by error_code asc, wk asc, devs desc
+     by week, error_code, span_name           // <-- swap this dim per query
+| order by error_code asc, week asc, devs desc
 ```
 
 Run once each with the trailing dim set to: `span_name`, `calling_package_name`, `active_broker_package_name`, `broker_version`, `unified_account_type`, `unified_is_shared_device`, `client_sku`. That's the full 7.

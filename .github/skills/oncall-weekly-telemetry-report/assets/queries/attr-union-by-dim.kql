@@ -17,7 +17,7 @@
 //
 // Output schema (consumed by `summarize-attribution.js --union`):
 //   dim         string   short label per dimension
-//   wk          datetime bucket start (prevStart or curStart)
+//   week          datetime bucket start (prevStart or curStart)
 //   <KEY>       string   error_code or unified_error_type
 //   val_string  string   dim value (cast via tostring() in every union leg)
 //   devs        long     dcount_hll merged device count
@@ -28,7 +28,7 @@
 //     | extend unified_error_type = MergeUiRequiredExceptions(error_type)
 //     | where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
 //     | where unified_error_type in (<TYPES>)
-//     | extend wk = iff(EventInfo_Time >= curStart, curStart, prevStart);
+//     | extend week = iff(EventInfo_Time >= curStart, curStart, prevStart);
 //
 // IMPORTANT -- column-aliasing gotcha: every union branch MUST emit `val_string`
 // as a real `string` (never `bool(null)`), or Kusto will rename the columns
@@ -43,28 +43,28 @@ let codes = dynamic([<CODES>]);
 let base = materialized_view('ErrorStatsMetrics')
   | where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
   | where error_code in (codes)
-  | extend wk = iff(EventInfo_Time >= curStart, curStart, prevStart);
+  | extend week = iff(EventInfo_Time >= curStart, curStart, prevStart);
 (base | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
                   errs = sum(countOverall)
-            by dim='span',          wk, error_code, val_string=tostring(span_name))
+            by dim='span',          week, error_code, val_string=tostring(span_name))
 | union (base | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
                           errs = sum(countOverall)
-            by dim='calling_app',   wk, error_code, val_string=tostring(calling_package_name))
+            by dim='calling_app',   week, error_code, val_string=tostring(calling_package_name))
 | union (base | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
                           errs = sum(countOverall)
-            by dim='active_broker', wk, error_code, val_string=tostring(active_broker_package_name))
+            by dim='active_broker', week, error_code, val_string=tostring(active_broker_package_name))
 | union (base | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
                           errs = sum(countOverall)
-            by dim='broker_ver',    wk, error_code, val_string=tostring(broker_version))
+            by dim='broker_ver',    week, error_code, val_string=tostring(broker_version))
 | union (base | extend t = MergeAccountType(account_type)
               | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
                           errs = sum(countOverall)
-            by dim='acct_type',     wk, error_code, val_string=tostring(t))
+            by dim='acct_type',     week, error_code, val_string=tostring(t))
 | union (base | extend s = MergeIsSharedDevice(is_shared_device)
               | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
                           errs = sum(countOverall)
-            by dim='shared_dev',    wk, error_code, val_string=tostring(s))
+            by dim='shared_dev',    week, error_code, val_string=tostring(s))
 | union (base | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
                           errs = sum(countOverall)
-            by dim='client_sku',    wk, error_code, val_string=tostring(client_sku))
-| order by error_code asc, dim asc, wk asc, devs desc
+            by dim='client_sku',    week, error_code, val_string=tostring(client_sku))
+| order by error_code asc, dim asc, week asc, devs desc

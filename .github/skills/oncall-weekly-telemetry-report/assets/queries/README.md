@@ -5,7 +5,7 @@ report needs. The reporting window is a **rolling 7-day window** ending at
 start-of-day UTC on `-EndDate` (default: today). See
 [`../scripts/bootstrap-report.ps1`](../scripts/bootstrap-report.ps1) for the
 canonical window computation, and SKILL.md § "Inputs to confirm" for the
-rationale (AB#3683194).
+rationale.
 
 ## Placeholder convention
 

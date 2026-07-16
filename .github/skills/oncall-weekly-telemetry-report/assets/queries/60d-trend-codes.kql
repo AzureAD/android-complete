@@ -1,6 +1,6 @@
 // 60-day per-error-code trend (LITERAL last 60 days ending today).
 //
-// AB#3683194 follow-up: the 60-day trend spans the literal last 60 days ending at
+// The 60-day trend spans the literal last 60 days ending at
 // curEnd (today), so BOTH bounds move with the report date. The trend CHART
 // includes the current in-progress week as its final (partial) bar. Per-week
 // bucketing is still Sun-Sat aligned (Kusto startofweek() is Sunday-based), so the

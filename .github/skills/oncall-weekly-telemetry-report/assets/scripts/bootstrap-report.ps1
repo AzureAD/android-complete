@@ -12,7 +12,7 @@
         prevStart = EndDate - 14d
         prevEnd   = curStart
 
-    Historical rationale (AB#3683194, Fadi feedback Jun 2026): the prior
+    Rationale: the prior
     implementation aligned the reporting window on Sun-Sat calendar weeks and
     defaulted to "the Sunday of the currently in-progress week". Run on a
     Thursday it emitted a 4-day partial window and dropped the last complete
@@ -26,8 +26,8 @@
          ~/android-oce-reports/oncall-wow-report-<end-date>.html.
       3. Stamps the resolved window into the <title>, the <div class="meta">
          block, and the "Generated <strong>...</strong>" banner so the header
-         can never drift from what was actually queried (this is the ADO
-         acceptance criterion "resolved window is echoed in the report header
+         can never drift from what was actually queried (the resolved window
+         is echoed in the report header for transparency
          for transparency").
       4. Decides what to do if the target report file already exists:
          - If the existing file is an UNFILLED template stub (multiple
@@ -64,7 +64,7 @@
     Prints the absolute path of the newly created report file.
 
 .NOTES
-    Fixes AB#3683194. Breaking change vs pre-fix versions:
+    Breaking change vs pre-fix versions:
       * -ReportingSunday parameter has been REMOVED; use -EndDate instead.
         (The old name encoded the exact semantic mismatch that caused the bug.)
       * Filename is now oncall-wow-report-<end-date>.html (was <sunday>.html).
@@ -112,8 +112,8 @@ $prevStart = $curEnd.AddDays(-14)
 $prevEnd   = $curStart
 
 # 60-day trend spans the LITERAL last 60 days ending curEnd (today), so BOTH
-# bounds move with -EndDate (AB#3683194 follow-up: Fadi wanted the trend to end
-# today, not 3-6 days ago on the last complete Sunday). The trend CHART shows the
+# bounds move with -EndDate (the trend ends today rather than 3-6 days ago on
+# the last complete Sunday). The trend CHART shows the
 # current in-progress week as its final (partial) bar, but bucket-trends.js still
 # computes regression/improvement DELTAS on complete Sun-Sat weeks only -- a
 # partial week as "last" would read as a fake -99% improvement. So we resolve two
@@ -165,56 +165,48 @@ New-Item -ItemType Directory -Force $dataDir   | Out-Null
 
 # ---------------------------------------------------------------------------
 # Collision detection -- "unfilled stub" vs "real report"
+#
+# Fail-safe by design: we only silently overwrite when we can POSITIVELY
+# identify the existing file as a freshly-bootstrapped, never-populated stub.
+# The authoritative signal is the OCE-UNPOPULATED-STUB sentinel that bootstrap
+# injects into every stub (see the write step below) and that validate-report.ps1
+# refuses to let a report publish with. A populated (validated) report can never
+# carry it, so real work can never be misclassified as a stub. As a second guard
+# we also require the first KPI to still hold the template's value. Anything that
+# is not a positively-identified stub requires an explicit -Force to overwrite;
+# when in doubt we refuse and exit rather than risk clobbering real work.
 # ---------------------------------------------------------------------------
+$stubSentinel = 'OCE-UNPOPULATED-STUB'
 $templateText = [IO.File]::ReadAllText($template)
 
-function Get-FingerprintMarkers([string]$text) {
-  # Only fingerprint fields we do NOT stamp on write. The <title> and
-  # <div class="meta"> are rewritten unconditionally during bootstrap, so they
-  # always diverge from the template's copy after any bootstrap run --
-  # including a fresh re-bootstrap of an unfilled stub. We rely on the first
-  # KPI value + file size to distinguish "unfilled stub" from "author has
-  # populated real data".
-  $m = @{}
-  if ($text -match '<div class="kpi">\s*<div class="label">[^<]+</div>\s*<div class="value">([^<]+?)</div>') { $m['firstKpi']  = $Matches[1].Trim() }
-  return $m
+function Get-FirstKpi([string]$text) {
+  if ($text -match '<div class="kpi">\s*<div class="label">[^<]+</div>\s*<div class="value">([^<]+?)</div>') { return $Matches[1].Trim() }
+  return $null
 }
-$templateMarkers = Get-FingerprintMarkers $templateText
+$templateFirstKpi = Get-FirstKpi $templateText
 
 if ((Test-Path $out) -and -not $Force) {
-  $existingText    = [IO.File]::ReadAllText($out)
-  $existingMarkers = Get-FingerprintMarkers $existingText
-
-  $allMatch = $true
-  foreach ($k in $templateMarkers.Keys) {
-    if ($existingMarkers[$k] -ne $templateMarkers[$k]) { $allMatch = $false; break }
-  }
-  $sizeRatio = (Get-Item $out).Length / [Math]::Max(1, (Get-Item $template).Length)
-  $sizeClose = ($sizeRatio -ge 0.95) -and ($sizeRatio -le 1.05)
-  $isUnfilledStub = $allMatch -and $sizeClose
+  $existingText      = [IO.File]::ReadAllText($out)
+  $hasStubSentinel   = $existingText.Contains($stubSentinel)
+  $existingFirstKpi  = Get-FirstKpi $existingText
+  $firstKpiUnchanged = ($null -ne $templateFirstKpi) -and ($existingFirstKpi -eq $templateFirstKpi)
+  $isUnfilledStub    = $hasStubSentinel -and $firstKpiUnchanged
 
   if ($isUnfilledStub) {
-    Write-Warning "Existing $out is an unfilled template stub (all template fingerprints match, size within 5%). Re-bootstrapping silently."
+    Write-Warning "Existing $out is an unpopulated bootstrap stub (carries the $stubSentinel sentinel and still holds the template's first-KPI value). Re-bootstrapping silently."
   } else {
-    $divergence = @()
-    foreach ($k in $templateMarkers.Keys) {
-      if ($existingMarkers[$k] -ne $templateMarkers[$k]) {
-        $divergence += "    $k`: template='$($templateMarkers[$k])' existing='$($existingMarkers[$k])'"
-      }
-    }
-    if (-not $sizeClose) {
-      $divergence += "    size: template=$((Get-Item $template).Length) bytes  existing=$((Get-Item $out).Length) bytes  ratio=$([Math]::Round($sizeRatio,2))x"
-    }
+    $reasons = @()
+    if (-not $hasStubSentinel)   { $reasons += "    - the $stubSentinel sentinel is absent (a populated/validated report never carries it)" }
+    if (-not $firstKpiUnchanged) { $reasons += "    - the first KPI differs from the template (existing='$existingFirstKpi' template='$templateFirstKpi')" }
     Write-Error @"
-A populated report already exists for the same end-date bucket:
+A report already exists for the same end-date bucket and is NOT a positively-identified unfilled stub:
   $out
 
-Divergence from the template (which is why this is NOT classified as an unfilled stub):
-$($divergence -join "`n")
+Why this is not treated as a re-bootstrappable stub:
+$($reasons -join "`n")
 
-Per the SKILL.md filename-collision rule, do NOT silently overwrite. Either:
-  1. Open the existing report, list its top-3 findings, and confirm what changed
-     in the new data before regenerating. Then re-run with -Force.
+Refusing to overwrite to avoid clobbering real work. Either:
+  1. Open the existing report, confirm what it contains, then re-run with -Force to overwrite.
   2. Rename / delete the existing file and re-run.
 "@
     exit 2
@@ -234,8 +226,8 @@ Write-Host "Data folder:   $dataDir"
 # The template ships with hard-coded dates from a real prior week. We rewrite
 # them mechanically so the header always matches what the queries actually
 # targeted. This removes the last hand-authored date field and closes the
-# window-drift class of bugs entirely (AB#3683194 acceptance criterion:
-# "resolved window is echoed in the report header for transparency").
+# window-drift class of bugs entirely (the resolved window is echoed in the
+# report header for transparency).
 #
 # Uses UTF8-no-BOM read/write so the report's emojis/arrows survive (the
 # UTF-8 trap called out in template-readme.md).
@@ -287,6 +279,17 @@ $outText = [regex]::Replace($outText, '(?s)<div class="meta">.*?</div>', $newMet
 #    hit (e.g. the template was restructured), still update the Generated banner
 #    so the file never carries a stale template date.
 $outText = [regex]::Replace($outText, 'Generated\s+<strong>[^<]*</strong>', "Generated <strong>$todayStr</strong>")
+
+# 4) Inject the unpopulated-stub sentinel right after the DOCTYPE so a later
+#    bootstrap can POSITIVELY identify this file as a never-populated stub that
+#    is safe to silently overwrite. The author replaces the template's KPI /
+#    table / prose values and DELETES this line while filling the report;
+#    validate-report.ps1 refuses to pass a report that still carries it, so a
+#    published report can never be mistaken for a stub.
+$stubMarker = "<!-- OCE-UNPOPULATED-STUB: freshly bootstrapped, not yet populated. Replace the template KPI/table/prose values with the current window's data and DELETE this line before validating/publishing. -->"
+if ($outText -notmatch 'OCE-UNPOPULATED-STUB') {
+  $outText = [regex]::Replace($outText, '(<!DOCTYPE html>)', "`$1`n$stubMarker", 1)
+}
 
 [IO.File]::WriteAllText($out, $outText, [System.Text.UTF8Encoding]::new($false))
 Write-Host "Stamped resolved window into <title> and meta block. Generated=$todayStr."
