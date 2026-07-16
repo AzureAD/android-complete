@@ -172,8 +172,8 @@ const classKeep = weeks.filter(w => w >= startISO && (endISO ? w < endISO : true
 // displayKeep = weeks emitted in `series` / the JSON sidecar (what the chart draws).
 // With --include-partial-end it adds the partial current week (bucket >= endISO up to
 // endISO inclusive) so the chart ends today; otherwise it mirrors classKeep.
-const displayKeep = includePartialEnd
-  ? weeks.filter(w => w >= startISO && (endISO ? w <= endISO : true))
+const displayKeep = (includePartialEnd && endISO)
+  ? weeks.filter(w => w >= startISO && w <= endISO)
   : classKeep;
 if (!summary) {
   console.log('All weeks:      ', weeks);

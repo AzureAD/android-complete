@@ -27,8 +27,7 @@
       3. Stamps the resolved window into the <title>, the <div class="meta">
          block, and the "Generated <strong>...</strong>" banner so the header
          can never drift from what was actually queried (the resolved window
-         is echoed in the report header for transparency
-         for transparency").
+         is echoed in the report header for transparency).
       4. Decides what to do if the target report file already exists:
          - If the existing file is an UNFILLED template stub (multiple
            fingerprint markers still match the canonical template), silently
