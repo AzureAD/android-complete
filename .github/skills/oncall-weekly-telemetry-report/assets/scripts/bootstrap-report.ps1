@@ -130,11 +130,13 @@ $sixtyDayStart  = $curEnd.AddDays(-60)             # literal 60 days ending toda
 $sixtyDayEnd    = $curEnd                          # exclusive upper bound == today; chart includes the partial current week
 $trendClassEnd  = $curEnd.AddDays(-$curEndDow)     # startofweek(curEnd): weeks >= this are the in-progress (partial) week, excluded from delta classification
 
-# Sanity check: curEnd must not be in the future (a common footgun if the
-# user passes a stale -EndDate that hasn't happened yet in UTC).
-$nowUtc = [datetime]::UtcNow
-if ($curEnd -gt $nowUtc.AddHours(1)) {
-  throw "Resolved curEnd $($curEnd.ToString('yyyy-MM-dd HH:mm')) UTC is in the future (now UTC = $($nowUtc.ToString('yyyy-MM-dd HH:mm'))). Refusing to bootstrap a report with a future window."
+# Sanity check: curEnd is an exclusive 00:00-UTC date boundary and must be today
+# (UTC) or earlier. Compare date-to-date -- a sub-day clock slack here would let
+# *tomorrow* through as -EndDate when the script runs in the last hour before
+# midnight UTC, which would include today's partial data and shift the window.
+$todayUtc = [datetime]::UtcNow.Date
+if ($curEnd -gt $todayUtc) {
+  throw "Resolved curEnd $($curEnd.ToString('yyyy-MM-dd')) UTC is in the future (today UTC = $($todayUtc.ToString('yyyy-MM-dd'))). -EndDate must be today or earlier. Refusing to bootstrap a report with a future window."
 }
 
 $curEndStr    = $curEnd.ToString('yyyy-MM-dd')
