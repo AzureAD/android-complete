@@ -55,7 +55,7 @@ dependencies {
     testImplementation "org.junit.jupiter:junit-jupiter-api:${rootProject.ext.jupiterApiVersion}"
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine'
     implementation "com.android.tools.build:gradle:${rootProject.ext.gradleVersion}"
-    implementation "gradle.plugin.com.github.spotbugs.snom:spotbugs-gradle-plugin:${rootProject.ext.spotBugsGradlePluginVersion}"
+    implementation "com.github.spotbugs.snom:spotbugs-gradle-plugin:${rootProject.ext.spotBugsGradlePluginVersion}"
 
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:${rootProject.ext.kotlinVersion}"
     testImplementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:${rootProject.ext.kotlinVersion}"
