@@ -17,8 +17,6 @@ msalcpp
 design-docs
 1ES-Pipelines
 nativeauthsample
-AuthClientAndroidPipelines
-telemetry-platform
 
 # Gradle files
 .gradle/
