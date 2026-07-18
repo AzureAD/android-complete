@@ -34,6 +34,8 @@ param(
 
     [string]$InputDir = "$env:TEMP\copilot-review-analysis",
 
+    [string]$CoverageFile = "",
+
     [string]$HistoryFile = "$env:USERPROFILE\.copilot-review-analysis\history.json"
 )
 
@@ -54,39 +56,50 @@ if (Test-Path $precisePath) {
     $precise = Get-Content $precisePath -Raw | ConvertFrom-Json
 }
 
+# --- Load coverage (Tier 2.4), if present ---
+# coverage.json is emitted by analyze.ps1 and records, per repo, how many merged human PRs
+# actually received a Copilot review. Optional so older runs still work.
+if (-not $CoverageFile) { $CoverageFile = Join-Path $InputDir "coverage.json" }
+$coverage = $null
+if (Test-Path $CoverageFile) {
+    $coverage = Get-Content $CoverageFile -Raw | ConvertFrom-Json
+}
+
 # --- Compute period ---
 $startDate = [datetime]::ParseExact($PeriodStart, "yyyy-MM-dd", $null)
 $endDate = [datetime]::ParseExact($PeriodEnd, "yyyy-MM-dd", $null)
 $periodDays = ($endDate - $startDate).Days
 $periodWeeks = [math]::Round($periodDays / 7, 1)
 
-# --- Compute overall stats ---
+# --- Compute overall stats (canonical taxonomy) ---
+# final_classification.json now carries a fully-resolved canonical Verdict per comment
+# (helpful | declined | incorrect | unresolved | unknown) with silent-adoption promotions
+# ALREADY applied by final-classification.ps1. We count those verdicts directly rather than
+# re-deriving silent-helpful from precise.json (which double-counted before).
 $total = $data.Count
 $replied = ($data | Where-Object { $_.Replied -eq $true }).Count
-$helpful = ($data | Where-Object { $_.Verdict -eq "helpful" }).Count
-$notHelpful = ($data | Where-Object { $_.Verdict -eq "not-helpful" }).Count
 
-# Three-way breakdown: compute unresolved from no-reply comments without diff evidence
-$preciseMap = @{}
-foreach ($p in $precise) { $preciseMap["$($p.CommentId)"] = $p.Verdict }
-$silentComments = $data | Where-Object { $_.Replied -eq $false }
-$silentHelpful = 0
-foreach ($s in $silentComments) {
-    $dv = $preciseMap["$($s.CommentId)"]
-    if ($dv -in @("suggestion-applied", "suggestion-likely-applied", "exact-lines-modified", "lines-modified-different-fix")) {
-        $silentHelpful++
-    }
-}
-$repliedHelpful = ($data | Where-Object { $_.Replied -eq $true -and $_.Verdict -eq "helpful" }).Count
-$confirmedHelpful = $repliedHelpful + $silentHelpful
-$confirmedNotHelpful = ($data | Where-Object { $_.Replied -eq $true -and $_.Verdict -eq "not-helpful" }).Count
-$unresolved = $total - $confirmedHelpful - $confirmedNotHelpful
+$confirmedHelpful             = ($data | Where-Object { $_.Verdict -eq "helpful" }).Count
+$confirmedNotHelpfulIncorrect = ($data | Where-Object { $_.Verdict -eq "incorrect" }).Count
+$declinedCount                = ($data | Where-Object { $_.Verdict -eq "declined" }).Count
+$unresolved                   = ($data | Where-Object { $_.Verdict -eq "unresolved" }).Count
+$unknownCount                 = ($data | Where-Object { $_.Verdict -eq "unknown" }).Count
+$repliedHelpful               = ($data | Where-Object { $_.Replied -eq $true -and $_.Verdict -eq "helpful" }).Count
+$silentHelpful                = ($data | Where-Object { $_.Replied -eq $false -and $_.Verdict -eq "helpful" }).Count
+$promotedBySignal             = ($data | Where-Object { $_.PromotedBySignal }).Count
+# Combined dismissals — kept for trend continuity with prior snapshots (which pre-date the declined split)
+$confirmedNotHelpful = $confirmedNotHelpfulIncorrect + $declinedCount
 
 $responseRate = if ($total -gt 0) { [math]::Round(($replied / $total) * 100, 1) } else { 0 }
 $helpfulPct = if ($total -gt 0) { [math]::Round(($confirmedHelpful / $total) * 100, 1) } else { 0 }
 $notHelpfulPct = if ($total -gt 0) { [math]::Round(($confirmedNotHelpful / $total) * 100, 1) } else { 0 }
+$notHelpfulIncorrectPct = if ($total -gt 0) { [math]::Round(($confirmedNotHelpfulIncorrect / $total) * 100, 1) } else { 0 }
+$declinedPct = if ($total -gt 0) { [math]::Round(($declinedCount / $total) * 100, 1) } else { 0 }
 $unresolvedPct = if ($total -gt 0) { [math]::Round(($unresolved / $total) * 100, 1) } else { 0 }
 $repliedHelpfulRate = if ($replied -gt 0) { [math]::Round(($repliedHelpful / $replied) * 100, 1) } else { 0 }
+# Copilot precision: when Copilot was evaluable for correctness (helpful + genuinely incorrect), how often it was correct
+$precisionDenom = $confirmedHelpful + $confirmedNotHelpfulIncorrect
+$precision = if ($precisionDenom -gt 0) { [math]::Round(($confirmedHelpful / $precisionDenom) * 100, 1) } else { 0 }
 $commentsPerWeek = if ($periodWeeks -gt 0) { [math]::Round($total / $periodWeeks, 1) } else { $total }
 
 # Count unique PRs
@@ -94,62 +107,58 @@ $humanPRs = ($data | Select-Object -Property Repo, PRNumber -Unique | Group-Obje
 $reviewedPRs = $humanPRs  # All PRs in final_classification had Copilot comments
 $avgCommentsPerPR = if ($reviewedPRs -gt 0) { [math]::Round($total / $reviewedPRs, 1) } else { 0 }
 
-# --- Per-repo stats ---
+# --- Per-repo stats (canonical taxonomy) ---
 $repoStats = @{}
 foreach ($repoGroup in ($data | Group-Object Repo)) {
     $repoName = $repoGroup.Name
     $rTotal = $repoGroup.Count
     $rReplied = ($repoGroup.Group | Where-Object { $_.Replied -eq $true }).Count
-    $rRepliedH = ($repoGroup.Group | Where-Object { $_.Replied -eq $true -and $_.Verdict -eq "helpful" }).Count
-    $rRepliedNH = ($repoGroup.Group | Where-Object { $_.Replied -eq $true -and $_.Verdict -eq "not-helpful" }).Count
-
-    # Silent helpful for this repo
-    $rSilentH = 0
-    $rSilent = $repoGroup.Group | Where-Object { $_.Replied -eq $false }
-    foreach ($s in $rSilent) {
-        $dv = $preciseMap["$($s.CommentId)"]
-        if ($dv -in @("suggestion-applied", "suggestion-likely-applied", "exact-lines-modified", "lines-modified-different-fix")) {
-            $rSilentH++
-        }
-    }
-
-    $rConfH = $rRepliedH + $rSilentH
-    $rConfNH = $rRepliedNH
-    $rUnresolved = $rTotal - $rConfH - $rConfNH
+    $rConfH = ($repoGroup.Group | Where-Object { $_.Verdict -eq "helpful" }).Count
+    $rRepliedNH = ($repoGroup.Group | Where-Object { $_.Verdict -eq "incorrect" }).Count
+    $rDeclined = ($repoGroup.Group | Where-Object { $_.Verdict -eq "declined" }).Count
+    $rUnresolved = ($repoGroup.Group | Where-Object { $_.Verdict -eq "unresolved" }).Count
+    $rConfNH = $rRepliedNH + $rDeclined   # combined dismissals for trend continuity
 
     $repoStats[$repoName] = @{
-        comments      = $rTotal
-        responseRate  = if ($rTotal -gt 0) { [math]::Round(($rReplied / $rTotal) * 100, 1) } else { 0 }
-        helpfulPct    = if ($rTotal -gt 0) { [math]::Round(($rConfH / $rTotal) * 100, 1) } else { 0 }
-        notHelpfulPct = if ($rTotal -gt 0) { [math]::Round(($rConfNH / $rTotal) * 100, 1) } else { 0 }
-        unresolvedPct = if ($rTotal -gt 0) { [math]::Round(($rUnresolved / $rTotal) * 100, 1) } else { 0 }
+        comments             = $rTotal
+        responseRate         = if ($rTotal -gt 0) { [math]::Round(($rReplied / $rTotal) * 100, 1) } else { 0 }
+        helpfulPct           = if ($rTotal -gt 0) { [math]::Round(($rConfH / $rTotal) * 100, 1) } else { 0 }
+        notHelpfulPct        = if ($rTotal -gt 0) { [math]::Round(($rConfNH / $rTotal) * 100, 1) } else { 0 }
+        notHelpfulIncorrectPct = if ($rTotal -gt 0) { [math]::Round(($rRepliedNH / $rTotal) * 100, 1) } else { 0 }
+        declinedPct          = if ($rTotal -gt 0) { [math]::Round(($rDeclined / $rTotal) * 100, 1) } else { 0 }
+        unresolvedPct        = if ($rTotal -gt 0) { [math]::Round(($rUnresolved / $rTotal) * 100, 1) } else { 0 }
     }
 }
 
-# --- Per-engineer stats ---
+# --- Per-engineer stats (canonical taxonomy) ---
 $engineerStats = @{}
 foreach ($engGroup in ($data | Group-Object Engineer)) {
     $eName = $engGroup.Name
     $eTotal = $engGroup.Count
     $eReplied = ($engGroup.Group | Where-Object { $_.Replied -eq $true }).Count
-    $eRepliedH = ($engGroup.Group | Where-Object { $_.Replied -eq $true -and $_.Verdict -eq "helpful" }).Count
-
-    # Silent helpful for this engineer
-    $eSilentH = 0
-    $eSilent = $engGroup.Group | Where-Object { $_.Replied -eq $false }
-    foreach ($s in $eSilent) {
-        $dv = $preciseMap["$($s.CommentId)"]
-        if ($dv -in @("suggestion-applied", "suggestion-likely-applied", "exact-lines-modified", "lines-modified-different-fix")) {
-            $eSilentH++
-        }
-    }
-
-    $eConfH = $eRepliedH + $eSilentH
+    $eConfH = ($engGroup.Group | Where-Object { $_.Verdict -eq "helpful" }).Count
+    $eDeclined = ($engGroup.Group | Where-Object { $_.Verdict -eq "declined" }).Count
 
     $engineerStats[$eName] = @{
         comments     = $eTotal
         responseRate = if ($eTotal -gt 0) { [math]::Round(($eReplied / $eTotal) * 100, 1) } else { 0 }
         helpfulPct   = if ($eTotal -gt 0) { [math]::Round(($eConfH / $eTotal) * 100, 1) } else { 0 }
+        declinedPct  = if ($eTotal -gt 0) { [math]::Round(($eDeclined / $eTotal) * 100, 1) } else { 0 }
+    }
+}
+
+# --- Coverage block for the snapshot (Tier 2.4) ---
+# coverage.json schema (from analyze.ps1): { perRepo:[{repo,mergedHumanPRs,reviewedByCopilot,
+# withInlineFeedback,noFeedback,reviewCoveragePct}], overall:{...same fields...} }
+$coverageBlock = $null
+if ($coverage -and $coverage.overall) {
+    $coverageBlock = [ordered]@{
+        overallPct     = $coverage.overall.reviewCoveragePct
+        reviewedPRs    = $coverage.overall.reviewedByCopilot
+        mergedHumanPRs = $coverage.overall.mergedHumanPRs
+        withFeedback   = $coverage.overall.withInlineFeedback
+        noFeedback     = $coverage.overall.noFeedback
+        repos          = $coverage.perRepo
     }
 }
 
@@ -166,8 +175,13 @@ $snapshot = [ordered]@{
     responseRate       = $responseRate
     helpful            = [ordered]@{ count = $confirmedHelpful; pct = $helpfulPct }
     notHelpful         = [ordered]@{ count = $confirmedNotHelpful; pct = $notHelpfulPct }
+    notHelpfulIncorrect = [ordered]@{ count = $confirmedNotHelpfulIncorrect; pct = $notHelpfulIncorrectPct }
+    declined           = [ordered]@{ count = $declinedCount; pct = $declinedPct }
     unresolved         = [ordered]@{ count = $unresolved; pct = $unresolvedPct }
+    precision          = $precision
     repliedHelpfulRate = $repliedHelpfulRate
+    silentAdoptions    = [ordered]@{ count = $silentHelpful; promotedBySignal = $promotedBySignal }
+    coverage           = $coverageBlock
     repos              = $repoStats
     engineers          = $engineerStats
 }
@@ -206,7 +220,7 @@ $history.Add($snapshot) | Out-Null
 $sorted = $history | Sort-Object { [datetime]::ParseExact($_.periodStart, "yyyy-MM-dd", $null) } -Descending
 
 # Save
-$sorted | ConvertTo-Json -Depth 5 | Set-Content $HistoryFile -Encoding UTF8
+$sorted | ConvertTo-Json -Depth 8 | Set-Content $HistoryFile -Encoding UTF8
 
 Write-Host ""
 Write-Host "================================================================"
@@ -215,9 +229,12 @@ Write-Host "================================================================"
 Write-Host "  Period: $PeriodStart to $PeriodEnd ($periodDays days)"
 Write-Host "  Comments: $total ($commentsPerWeek/week)"
 Write-Host "  Response Rate: $responseRate%"
-Write-Host "  Helpful: $helpfulPct% ($confirmedHelpful)"
-Write-Host "  Not Helpful: $notHelpfulPct% ($confirmedNotHelpful)"
+Write-Host "  Helpful: $helpfulPct% ($confirmedHelpful)  [silent adoptions: $silentHelpful, signal-promoted: $promotedBySignal]"
+Write-Host "  Declined: $declinedPct% ($declinedCount)"
+Write-Host "  Incorrect: $notHelpfulIncorrectPct% ($confirmedNotHelpfulIncorrect)"
 Write-Host "  Unresolved: $unresolvedPct% ($unresolved)"
+Write-Host "  Precision: $precision%"
+if ($coverageBlock) { Write-Host "  Coverage: $($coverageBlock.overallPct)% ($($coverageBlock.reviewedPRs)/$($coverageBlock.mergedHumanPRs) merged human PRs reviewed)" }
 Write-Host "  History entries: $($sorted.Count)"
 Write-Host "  Saved to: $HistoryFile"
 Write-Host "================================================================"
