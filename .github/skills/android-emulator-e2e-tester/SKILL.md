@@ -171,6 +171,12 @@ expected element → act (`tap-text` / `input-text` / `key` / `finger`) → re-`
 Allow/Yes, pick an account, grant permissions, simulate a fingerprint (`finger`), enter a TOTP if the
 seed is known, set/enter a device PIN. **Do not** print or commit credentials.
 
+**Set flags & mock what's missing (don't fake a pass).** If the scenario needs a feature flag on, or a
+step depends on data/a dependency you can't produce naturally (a server API not deployed yet, a
+collaborator app you can't drive), set the flag and mock the missing piece — including **temporary code
+changes** that you revert afterward. If a middle piece genuinely can't be mocked, test the flow in
+**segments**. See [references/mocking-flights-and-segments.md](references/mocking-flights-and-segments.md).
+
 **Stop and ask the user** only for genuine blockers (see the consolidated list below).
 
 ### Phase 5 — Verify from logs
@@ -228,7 +234,10 @@ Ask (don't guess) when:
 - A **blocker** needs a human: real push-notification MFA on another device, SMS/phone OTP, a hardware
   key/NFC/QR/camera, CAPTCHA, a credential the AI doesn't have, or a tenant/CA policy it can't provision.
 - The **implementation is incomplete** for the path under test (stubs, `TODO`, missing wiring, feature
-  flag off with no way to enable) — report the gap instead of forcing a fake pass.
+  flag off with no way to enable) — **first try** to set the flag (temp code change) and mock/segment
+  around a missing middle piece (see
+  [mocking-flights-and-segments.md](references/mocking-flights-and-segments.md)); report the gap and ask
+  only if the feature genuinely can't be exercised even in segments.
 - **Environment setup** is missing and only the user can fix it (Maven creds/PAT, no sub-repo checkout,
   no system image, no lab account).
 
@@ -244,6 +253,7 @@ Load these as needed (don't preload all):
 | [references/app-and-module-map.md](references/app-and-module-map.md) | Choosing/deploying the test app, package discovery, broker pairing, credentials, emulator requirements |
 | [references/log-signals.md](references/log-signals.md) | Interpreting logcat, success/failure patterns, AADSTS codes, per-flow pass criteria, eSTS correlation |
 | [references/ui-interaction.md](references/ui-interaction.md) | Driving auth screens, AI-vs-human inputs, FLAG_SECURE gotcha, selector strategy |
+| [references/mocking-flights-and-segments.md](references/mocking-flights-and-segments.md) | A flag must be set, a dependency/server data is unavailable, or the flow can't run fully E2E (mock it or test in segments) |
 | [references/troubleshooting.md](references/troubleshooting.md) | Emulator/build/install/uiautomator/broker failures; env-vs-defect triage |
 
 ## Guardrails
@@ -254,6 +264,8 @@ Load these as needed (don't preload all):
   if it hangs and the test isn't done, terminate it once the result is in. Never surface "done" without the
   sub-agent's PASS/FAIL/BLOCKED evidence.
 - **Lease the device before use and release it after** (even on failure) so concurrent runs don't collide.
+- **Temp changes for mocks/flags stay uncommitted and get reverted** — never commit/push a flag flip or a
+  mock; leave a `TODO: REVERT` marker and confirm the tree is clean before finishing.
 - **Environment problems are not code defects** — fix setup and re-run; only hand real defects to the fix loop.
 - **Cap the loop** (3–5 iterations) and escalate with evidence rather than looping indefinitely.
 - **Require a positive success signal** matching the scenario before declaring PASS.
