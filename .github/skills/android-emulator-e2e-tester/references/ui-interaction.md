@@ -41,7 +41,7 @@ pick among duplicates). When text is empty (icon-only buttons), use `tap-desc`. 
 | **Consent / permissions requested** | `tap-text "Accept"` (safe for test apps/accounts). |
 | **"Stay signed in?" / KMSI** | `tap-text "Yes"` (or `No` if the scenario needs a fresh session). |
 | **"Approve sign in request" (push MFA)** | Usually a **blocker** — see below, unless a TOTP/seed is available. |
-| **Fingerprint / biometric prompt** | On emulator, `deviceui.ps1 finger -Text 1` simulates an enrolled fingerprint. Enroll first if needed (Settings → Security), or fall back to PIN. |
+| **Fingerprint / biometric prompt** | On an **emulator**, enroll once if needed (`deviceui.ps1 finger-enroll`), then `deviceui.ps1 finger -Text 1` simulates a touch. On a **real device** `emu finger` can't help — the user must have a fingerprint enrolled and press the sensor (the script will prompt). Check state with `deviceui.ps1 finger-status`. Fall back to PIN if biometrics can't be satisfied. |
 | **Device PIN/pattern (keyguard)** | Set a known PIN via adb during setup, then enter it; or `emulator.ps1` dismisses a no-secure keyguard automatically. |
 
 ## Inputs the AI handles automatically
@@ -53,7 +53,9 @@ Do these without asking:
 - Selecting an account from a picker; choosing `Add account`.
 - Granting runtime permissions (`appcontrol.ps1 grant` or tapping the dialog).
 - Dismissing benign system dialogs/ANRs (`Wait`), closing bottom sheets (`key BACK`).
-- **Simulating a fingerprint** on the emulator (`finger`).
+- **Simulating a fingerprint** on the emulator (`finger` to touch; `finger-enroll` to enroll one first,
+  `finger-status` to check). On a real device, enrolling needs the physical sensor — the script will
+  prompt the user for that setup.
 - Entering a **TOTP** code when the authenticator seed/secret is known to the session (compute it).
 - Setting a device PIN during environment setup and re-entering it later.
 - Toggling in-app test switches (feature flags exposed in the test app UI).

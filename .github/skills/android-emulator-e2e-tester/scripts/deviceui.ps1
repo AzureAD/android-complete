@@ -7,26 +7,30 @@
 
 .PARAMETER Command
     dump | find-text | tap-text | tap-desc | input-text | wait-text | screenshot |
-    key | finger | current-app | tap-xy
+    key | finger | finger-status | finger-enroll | current-app | tap-xy
 
 .EXAMPLE
     ./deviceui.ps1 wait-text -Text "Sign in" -TimeoutSec 30
     ./deviceui.ps1 tap-text -Text "Sign in"
     ./deviceui.ps1 input-text -Text "user@contoso.com"
     ./deviceui.ps1 key -Text ENTER
-    ./deviceui.ps1 finger -Text 1           # simulate enrolled fingerprint id 1
+    ./deviceui.ps1 finger-status                  # is a fingerprint enrolled?
+    ./deviceui.ps1 finger-enroll                  # enroll one on an emulator (or prompt if a real device)
+    ./deviceui.ps1 finger -Text 1                 # simulate a touch of enrolled fingerprint id 1
     ./deviceui.ps1 screenshot -Out C:\runs\step1.png
     ./deviceui.ps1 current-app              # resolved/focused package + activity
 
 .NOTES
     Text matching is case-insensitive substring by default. Use -Exact for equality.
     Always re-`dump` after an action; the UI tree changes between steps.
+    Fingerprint: `emu finger` only works on EMULATORS. On a real device a fingerprint must be enrolled
+    by the user against the physical sensor — `finger-enroll` will print the steps and ask.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
     [ValidateSet('dump', 'find-text', 'tap-text', 'tap-desc', 'input-text', 'wait-text',
-        'screenshot', 'key', 'finger', 'current-app', 'tap-xy')]
+        'screenshot', 'key', 'finger', 'finger-status', 'finger-enroll', 'current-app', 'tap-xy')]
     [string]$Command = 'dump',
 
     [string]$Serial,
@@ -36,6 +40,7 @@ param(
     [int]$Index = 0,
     [switch]$Exact,
     [int]$TimeoutSec = 20,
+    [string]$Pin = '1234',
     [string]$Out
 )
 
@@ -114,6 +119,40 @@ function Encode-Input {
     return $s
 }
 
+function Test-IsEmulator {
+    # An explicit emulator-XXXX serial is an emulator; otherwise probe the running device.
+    if ($Serial) { return ($Serial -match '^emulator-') }
+    $qemu = (Adb shell getprop ro.kernel.qemu 2>$null | Out-String).Trim()
+    if ($qemu -eq '1') { return $true }
+    $chars = (Adb shell getprop ro.build.characteristics 2>$null | Out-String).Trim()
+    return ($chars -match 'emulator')
+}
+
+function Get-FingerprintStatus {
+    # Best-effort: 'yes' | 'no' | 'unknown'. dumpsys layout varies by API level, so match a few shapes.
+    $dump = (Adb shell dumpsys fingerprint 2>$null | Out-String)
+    if (-not $dump.Trim()) { return 'unknown' }
+    # Modern JSON shape: {"prints":[{"id":<user>,"count":<enrolled>,...}]} — enrolled if any count >= 1.
+    if ($dump -match '"prints"\s*:\s*\[') {
+        $counts = [regex]::Matches($dump, '"count"\s*:\s*(\d+)') | ForEach-Object { [int]$_.Groups[1].Value }
+        if (@($counts | Where-Object { $_ -ge 1 }).Count -gt 0) { return 'yes' }
+        if ($counts.Count -gt 0) { return 'no' }
+    }
+    # Common markers of an enrolled template across older versions.
+    if ($dump -match 'Fingerprint\s*\(.*id=\d+' -or
+        $dump -match 'enrolledTemplates?=\s*\[?\s*[1-9]' -or
+        $dump -match 'mEnrolledFingerprints=\[[^\]]+\]' -or
+        $dump -match 'numEnrolled=\s*[1-9]' -or
+        $dump -match 'templates?:\s*[1-9]') {
+        return 'yes'
+    }
+    # Explicit "none enrolled" shapes.
+    if ($dump -match 'enrolledTemplates?=\s*\[\s*\]' -or $dump -match 'numEnrolled=\s*0' -or $dump -match 'mEnrolledFingerprints=\[\]') {
+        return 'no'
+    }
+    return 'unknown'
+}
+
 switch ($Command) {
     'dump' {
         Get-Nodes (Get-UiXml) | Where-Object { $_.Text -or $_.Desc } |
@@ -176,9 +215,63 @@ switch ($Command) {
     }
     'finger' {
         $id = if ($Text) { $Text } else { '1' }
-        $ser = if ($Serial) { $Serial } else { '' }
-        if ($ser) { & $adb -s $ser emu finger touch $id | Out-Null } else { & $adb -e emu finger touch $id | Out-Null }
-        Write-Host "Simulated fingerprint id=$id"
+        if (Test-IsEmulator) {
+            if ($Serial) { & $adb -s $Serial emu finger touch $id | Out-Null } else { & $adb -e emu finger touch $id | Out-Null }
+            Write-Host "Simulated fingerprint touch id=$id on emulator."
+        }
+        else {
+            Write-Host "PROMPT-USER: This is a real device — `emu finger` cannot simulate a touch."
+            Write-Host "Please press the enrolled finger on the device's sensor now, then continue."
+            exit 5
+        }
+    }
+    'finger-status' {
+        $status = Get-FingerprintStatus
+        Write-Host "Fingerprint enrolled: $status"
+        if ($status -eq 'yes') { exit 0 } elseif ($status -eq 'no') { exit 2 } else { exit 3 }
+    }
+    'finger-enroll' {
+        $id = if ($Text) { $Text } else { '1' }
+        if ((Get-FingerprintStatus) -eq 'yes') { Write-Host "A fingerprint is already enrolled; nothing to do."; exit 0 }
+
+        if (-not (Test-IsEmulator)) {
+            Write-Host "PROMPT-USER: Real device — a fingerprint must be enrolled against the physical sensor."
+            Write-Host "  1) Settings > Security > Fingerprint  (set a screen lock/PIN first if asked)"
+            Write-Host "  2) Add a fingerprint and follow the prompts on the sensor."
+            Write-Host "  3) Re-run the test once enrolled."
+            exit 5
+        }
+
+        Write-Host "Enrolling a fingerprint on the emulator (id=$id)..."
+        # A screen lock is a prerequisite for fingerprint enrollment.
+        Adb shell locksettings set-pin $Pin 2>$null | Out-Null
+        # Open the enrollment flow (action exists API 28+); fall back to Security settings.
+        Adb shell am start -a android.settings.FINGERPRINT_ENROLL 2>$null | Out-Null
+        Start-Sleep -Seconds 2
+        # If it asks to confirm the existing PIN, enter it.
+        try { Adb shell input text $Pin 2>$null | Out-Null; Adb shell input keyevent 66 2>$null | Out-Null } catch { }
+        Start-Sleep -Seconds 1
+        # The enroll wizard advances on each sensor touch; emulate several with brief pauses,
+        # tapping Next/Done/Confirm/OK when they appear.
+        for ($i = 0; $i -lt 8; $i++) {
+            if ($Serial) { & $adb -s $Serial emu finger touch $id | Out-Null } else { & $adb -e emu finger touch $id | Out-Null }
+            Start-Sleep -Milliseconds 700
+            foreach ($label in @('Next', 'Done', 'Confirm', 'OK', 'Got it')) {
+                $m = Find-ByField 'Text' $label
+                if ($m) { $t = @($m)[0]; if ($t.Cx) { Adb shell input tap $t.Cx $t.Cy | Out-Null }; break }
+            }
+        }
+        Start-Sleep -Seconds 1
+        $status = Get-FingerprintStatus
+        if ($status -eq 'yes') {
+            Write-Host "Fingerprint enrolled (id=$id). Use `finger -Text $id` to simulate a touch."
+            exit 0
+        }
+        Write-Host "PROMPT-USER: Could not confirm automatic fingerprint enrollment on this emulator."
+        Write-Host "Please enroll one manually, then re-run:"
+        Write-Host "  Settings > Security > Fingerprint > Add fingerprint; when it asks for a touch, run:"
+        Write-Host "    ./deviceui.ps1 finger -Text $id -Serial $Serial   (repeat until it completes)"
+        exit 5
     }
     'current-app' {
         $win = (Adb shell dumpsys window 2>$null | Out-String)
