@@ -34,6 +34,7 @@ All under `scripts/` (PowerShell — the team's cross-platform shell). Run `-?` 
 | Script | Purpose | Key commands |
 |---|---|---|
 | `emulator.ps1` | Device pool: emulators **and** real devices | `ensure`, `status`, `list`, `pool`, `list-images`, `create`, `start` |
+| `devicelease.ps1` | Lease a device so concurrent tests don't collide | `acquire`, `heartbeat`, `release`, `list`, `reap` |
 | `appcontrol.ps1` | App build/install/state | `build`, `install`, `launch`, `clear`, `uninstall`, `is-installed`, `grant`, `list-apks` |
 | `deviceui.ps1` | AI-driven UI I/O | `dump`, `wait-text`, `tap-text`, `tap-desc`, `input-text`, `key`, `finger`, `screenshot`, `current-app` |
 | `authlogs.ps1` | Log capture + verdict | `clear`, `scan`, `snapshot`, `grep`, `watch` |
@@ -83,6 +84,30 @@ devices first. Capture the printed `SERIAL=` and use it as `-Serial` everywhere.
 may run concurrently, lease the device first** (see Phase 2a) so two runs don't collide. If provisioning
 fails, see [references/troubleshooting.md](references/troubleshooting.md) (missing images, hypervisor,
 boot hang).
+
+### Phase 2a — Lease the device (avoid collisions with other tests)
+
+Multiple E2E tests can run at once (different agents/sessions). To stop two runs from driving the same
+device, **lease it** before use and **release it** when done:
+
+```powershell
+# Acquire (reaps abandoned leases, picks a free device, or boots one if the pool cap allows).
+# Use YOUR agent/session id as the owner so a dead agent's lease can be reclaimed.
+$serial = (./scripts/devicelease.ps1 acquire -Owner $AgentId -Feature <feature> `
+             -RequireGoogleApis -ApiLevel 30 -Wait |
+             Select-String '^SERIAL=(.+)$').Matches[0].Groups[1].Value
+```
+- **Owner = your agent/session id** (or set `$env:E2E_AGENT_ID`). Liveness is heartbeat-based: refresh
+  during the run so a long test isn't reclaimed out from under you:
+  `./scripts/devicelease.ps1 heartbeat -Owner $AgentId -Serial $serial` (call it at each phase).
+- **Pool cap:** `-MaxPoolSize N` (default 4) limits concurrent devices. If the pool is full and every
+  device is held by a **live** owner, acquire fails with guidance (wait, raise the cap, or connect a
+  device). If a holder's agent/session is **dead** (heartbeat older than `-StaleMinutes`, default 30),
+  its device is reclaimed automatically on the next `acquire`/`reap`.
+- `acquire` will **boot/create an emulator** to add a device when the pool has no free one and the cap
+  allows — so it subsumes Phase 2's `emulator.ps1 ensure` (pass the same requirement flags). Use
+  `emulator.ps1 ensure` directly only when you deliberately don't want leasing.
+- Do the whole run against the leased `$serial` (pass it as `-Serial` everywhere).
 
 ### Phase 3 — Deploy the app-under-test
 
@@ -159,6 +184,11 @@ Track iterations in the run folder (one subfolder per attempt) so regressions/pr
 Summarize: scenario tested, target app/emulator, final verdict, iterations taken, key evidence
 (success signal + correlation_id, or the blocker), and links to the run-folder artifacts (logs,
 screenshots). If blocked, state exactly what you need from the user to proceed.
+
+**Release the device lease** so the next test can use it (do this even on failure/blocked):
+```powershell
+./scripts/devicelease.ps1 release -Owner $AgentId -Serial $serial
+```
 
 ## When to ask the user
 
