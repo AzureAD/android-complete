@@ -39,6 +39,37 @@ All under `scripts/` (PowerShell — the team's cross-platform shell). Run `-?` 
 | `deviceui.ps1` | AI-driven UI I/O | `dump`, `wait-text`, `tap-text`, `tap-desc`, `input-text`, `key`, `finger`, `screenshot`, `current-app` |
 | `authlogs.ps1` | Log capture + verdict | `clear`, `scan`, `snapshot`, `grep`, `watch` |
 
+## Execution model — run inside a sub-agent, and supervise it
+
+An E2E run is long and chatty (boot, install, dozens of UI dumps/taps, log scans). **Delegate the actual
+device-driving to a sub-agent** so the parent's context stays clean and the parent supervises rather than
+performs.
+
+1. **Launch one sub-agent to own the run, on the SAME model as the parent.** If the parent is running on
+   Claude Opus 4.8, request the sub-agent on Claude Opus 4.8 (match whatever model the parent is on).
+   Give it a **self-contained** prompt: the scenario + explicit success criterion (Phase 1 output), the
+   leased `$serial` (or tell it to lease one with **its own agent id** as owner), the app/module +
+   package, credential-handling rules (type on device, never print), the run-folder path, any
+   mocks/flights to apply, and an instruction to **finish with a `PASS` / `FAIL` / `BLOCKED` verdict plus
+   evidence** (success signal + correlation_id, or the exact blocker).
+2. **The parent WAITS for the sub-agent to finish.** Start it in the background, then block on its
+   completion (read its result with wait=true). **Do not end your turn, and do not report to the user,
+   until the sub-agent's verdict is in.** This is the #1 real failure mode we hit: the parent returned
+   early, the sub-agent's result and analysis were never surfaced to the user.
+3. **Supervise with a watchdog while waiting:**
+   - **Hang → restart.** The sub-agent should emit a progress line and refresh its device lease
+     (`devicelease.ps1 heartbeat`) at each phase. If there's no progress within a timeout (e.g. ~10–15 min
+     for an install-heavy flow) **and the test isn't done**, treat it as hung: nudge once; if still stuck,
+     **restart** it (fresh sub-agent, resume from the last known state) rather than waiting forever.
+   - **Result in → stop.** If the verdict/evidence is already available, **stop waiting / terminate** the
+     sub-agent and move to reporting — don't let a finished run linger.
+   - **Cap restarts** (e.g. 2). If still unresolved, escalate to the user with the full evidence trail.
+4. **Only the parent reports to the user.** Collect the sub-agent's verdict + artifact links and present
+   the Phase 7 report yourself.
+
+If the harness can't spawn a sub-agent (or you're already the deepest agent), run the phases inline — but
+keep the same discipline: **don't declare done until the verdict is in, and don't loop forever on a hang.**
+
 ## Workflow
 
 Execute in order. Announce a one-line status at each phase.
@@ -219,6 +250,10 @@ Load these as needed (don't preload all):
 
 - **Never** print, log, or commit real or lab credentials, tokens, or secrets. Type them onto the device only.
 - **Artifacts stay outside the repo** (the run folder). Never commit logs/screenshots.
+- **When delegating to a sub-agent, wait for its verdict** before reporting or ending the turn; restart it
+  if it hangs and the test isn't done, terminate it once the result is in. Never surface "done" without the
+  sub-agent's PASS/FAIL/BLOCKED evidence.
+- **Lease the device before use and release it after** (even on failure) so concurrent runs don't collide.
 - **Environment problems are not code defects** — fix setup and re-run; only hand real defects to the fix loop.
 - **Cap the loop** (3–5 iterations) and escalate with evidence rather than looping indefinitely.
 - **Require a positive success signal** matching the scenario before declaring PASS.
