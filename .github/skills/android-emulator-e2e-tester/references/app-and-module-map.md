@@ -7,7 +7,7 @@ Table of contents:
 - [Two E2E execution modes](#two-e2e-execution-modes)
 - [Broker pairing rules](#broker-pairing-rules)
 - [Test credentials (Lab API) and when they block](#test-credentials-lab-api-and-when-they-block)
-- [Emulator requirements per feature](#emulator-requirements-per-feature)
+- [Emulator / real-device requirements per feature](#emulator--real-device-requirements-per-feature)
 
 The repo root (`android-complete`) aggregates sub-repos cloned via `git droidSetup`:
 `msal/`, `common/`, `broker/`, `adal/`, and optionally `authenticator/`. Gradle modules are
