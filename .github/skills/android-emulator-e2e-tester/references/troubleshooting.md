@@ -142,9 +142,9 @@ build signed with the wrong keystore is rejected even though the package name is
 Access policy blocked the app **before** the flow you're trying to test could run. This happens when the
 `clientId` / app configuration you signed in with is **not on the tenant's approved-client-app list**.
 
-- **Why it bites E2E:** you may be testing a MAM / CA-driven flow, but if the test app's configured
-  client id isn't CA-approved, eSTS returns `530021` and you never reach the step under test (e.g. the
-  install-broker prompt).
+- **Why it bites E2E:** if the test app's configured client id isn't CA-approved, eSTS returns `530021`
+  and blocks the flow *before* the step you're trying to test — so it looks like the feature failed when
+  the app config is the real cause.
 - **Fix:** run with an **approved** app configuration. Many test apps let you pick the app config /
   client id at runtime (a spinner or a build flag). A well-known first-party client id with an OOB
   redirect (e.g. an Office client id) is CA-approved and reaches CA-gated flows, whereas a custom test

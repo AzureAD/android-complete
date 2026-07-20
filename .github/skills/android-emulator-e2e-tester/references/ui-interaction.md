@@ -107,24 +107,23 @@ a few ways — these fixes came from real runs:
 - **Type passwords with special characters literally.** `~ ! # $ & * ( )` are shell metacharacters.
   `deviceui.ps1 input-text` escapes them, but if you call adb directly, single-quote the whole string
   **device-side**: `adb shell "input text 'P@ss~!word'"`. Never echo the password into the transcript.
-- **Some CP/broker WebViews reject programmatic submit entirely.** With `FLAG_SECURE`, typing may work
+- **Some broker WebViews reject programmatic submit entirely.** With `FLAG_SECURE`, typing may work
   but tapping **Sign in** / pressing Enter doesn't register on an emulator. If a secure broker screen
   won't submit, note it as a **harness limitation** (not a defect) and, if the segment under test is
   already proven, stop there — see [mocking-flights-and-segments.md](mocking-flights-and-segments.md).
 
-## Play Store installs (referrer / broker-install flows)
+## Installing an app from the Play Store mid-flow
 
-Installing an app from the Play Store during a flow (e.g. installing Company Portal for a MAM/CA flow):
+Some flows install another app from the Play Store partway through (e.g. a broker or a dependency):
 
 - **Target the real Install button, not the rating chip.** `tap-text "Install"` can hit the "Everyone"
   content-rating label or an unrelated element. Read the button's bounds from `dump` and `tap-xy` its
   center, and dismiss the interstitial **"Got it"** age-rating dialog first if it appears.
 - **Installs are slow and interstitials vary.** Poll for completion by package presence
   (`appcontrol.ps1 is-installed -Package <pkg>`) in a loop rather than assuming a fixed delay.
-- **Mind time-boxed waits.** If the feature parks a request with a TTL (e.g. a sink-wait that expires
-  after N minutes) and a slow emulator install blows past it, the original request may lapse. That's a
-  harness-timing artifact, not a defect: re-trigger the flow with the app already installed to exercise
-  the same resume path, and note the timing in the report.
+- **A slow install can exceed a feature's time-boxed step.** If the flow has a bounded wait and a slow
+  emulator install overruns it, that's a harness-timing artifact, not a defect — note the timing and, if
+  the scenario allows, re-run the step with the app already installed.
 
 ## Keyboard & navigation gotchas
 

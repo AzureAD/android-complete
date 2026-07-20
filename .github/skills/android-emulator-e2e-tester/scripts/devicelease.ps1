@@ -26,7 +26,7 @@
 
 .EXAMPLE
     # Get a leased, booted device for this agent (same reqs you'd pass emulator.ps1 ensure):
-    ./devicelease.ps1 acquire -Owner $AgentId -Feature mam-resume -RequireGoogleApis -ApiLevel 30 -Wait
+    ./devicelease.ps1 acquire -Owner $AgentId -Feature signin-e2e -RequireGoogleApis -ApiLevel 30 -Wait
     #  -> prints SERIAL=<serial>; use it for the whole run.
 
     ./devicelease.ps1 heartbeat -Owner $AgentId -Serial emulator-5554   # keep the lease fresh (each phase)
