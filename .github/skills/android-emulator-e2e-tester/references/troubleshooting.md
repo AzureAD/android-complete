@@ -49,6 +49,8 @@ Table of contents:
 | Stuck snapshot / corrupted state | `-ColdBoot` (`-no-snapshot-load`) to skip the stale snapshot. |
 | Transient "System UI isn't responding" ANR after boot | `deviceui.ps1 tap-text -Text "Wait"`; not a test failure. |
 | Need it faster / CI | `-NoWindow` (headless) — uiautomator still works. |
+| **Everything is slow** (UI, screencap, downloads) | Likely **no host GPU** (Cloud PC / VM / RDP) → software rendering. Run `emulator.ps1 resolve-sdk` to confirm; prefer a **physical device** (`ensure -PreferPhysical`). See [emulator-performance.md](emulator-performance.md). |
+| Emulator not in Android Studio **Running Devices** | The skill starts it standalone; it's still in **Device Manager** (shared AVD home). Start the AVD from Studio and let the skill reuse it. See [emulator-performance.md](emulator-performance.md#android-studio-device-manager--running-devices). |
 
 ## adb device issues
 

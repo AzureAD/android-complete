@@ -16,6 +16,12 @@
     favor one, or `-NoPhysical` to stick to emulators). Real devices are never created/booted —
     they're only used if already connected and booted.
 
+    PERFORMANCE: emulator launches auto-pick the fastest usable `-gpu` mode (host GPU when present,
+    else SwiftShader software) and generous `-cores`/`-memory` from the host. On a GPU-less host
+    (Cloud PC / VM / RDP) the emulator can only do slow software rendering, so `ensure` will
+    automatically prefer a connected physical device when one is available (override with
+    `-NoPhysical`). Run `resolve-sdk` to see the host GPU/perf profile.
+
 .PARAMETER Command
     resolve-sdk | list | list-images | status | pool | create | start | ensure
 
@@ -24,8 +30,10 @@
     ./emulator.ps1 ensure -ApiLevel 34 -RequireGoogleApis -Wait
 
 .EXAMPLE
+    ./emulator.ps1 resolve-sdk                         # SDK paths + host GPU/perf profile
     ./emulator.ps1 ensure -Avd Pixel_7 -Wait          # use/create+start a named AVD
     ./emulator.ps1 ensure -PreferPhysical -Wait        # prefer a connected real device if one fits
+    ./emulator.ps1 ensure -Cores 6 -Memory 6144 -Gpu host -Wait   # tune emulator resources/GPU
     ./emulator.ps1 pool                                # the whole device pool (emulators + real devices)
     ./emulator.ps1 status                             # what is running right now
     ./emulator.ps1 list-images                        # installed system images (for create)
@@ -41,6 +49,9 @@ param(
     [int]$ApiLevel = 0,           # minimum API level requirement (0 = any)
     [string]$Image,               # explicit system-image package id for create
     [string]$Device = 'pixel_7',  # device profile for create
+    [int]$Cores = 0,              # vCPU cores for the emulator (0 = auto: min(6, host/2))
+    [int]$Memory = 0,             # RAM MB for the emulator (0 = auto: 4096, or 6144 when host RAM allows)
+    [string]$Gpu,                 # emulator -gpu mode (host|swiftshader_indirect|auto). Empty = auto-detect.
     [switch]$RequireGoogleApis,   # require google_apis or google_apis_playstore tag (GMS/push)
     [switch]$RequirePlayStore,    # require google_apis_playstore tag
     [switch]$PreferPhysical,      # prefer a connected real device over booting an emulator
@@ -229,6 +240,56 @@ function Get-InstalledImages {
 }
 
 # ---------------------------------------------------------------------------
+# Host performance profiling (GPU / virtualization) — drives fast, correct emulator flags
+# ---------------------------------------------------------------------------
+# Returns $true if the host has a real, emulator-usable GPU. On a Cloud PC / VM / RDP session there is
+# typically only a "Microsoft Basic/Hyper-V/Remote Display" adapter with no dedicated memory, in which
+# case the emulator can only do SLOW SwiftShader software rendering — and a physical device is far better.
+function Test-HostGpuAvailable {
+    try {
+        $vc = Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue
+        foreach ($g in $vc) {
+            $n = "$($g.Name)"
+            if ($n -match 'Microsoft (Basic|Hyper-V|Remote)') { continue }        # virtual/remote adapters
+            if ($n -match 'RDP|Citrix|VMware|VirtualBox|Parsec') { continue }      # remoting adapters
+            if ($g.AdapterRAM -and $g.AdapterRAM -gt 0) { return $true }           # a real GPU with VRAM
+            if ($n -match 'NVIDIA|AMD|Radeon|Intel|Arc|GeForce|Quadro') { return $true }
+        }
+    } catch { }
+    return $false
+}
+
+function Test-VirtualOrRemoteHost {
+    $reasons = @()
+    try {
+        $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue
+        if ("$($cs.Model)" -match 'Virtual Machine|VMware|VirtualBox' -or "$($cs.Manufacturer)" -match 'QEMU|Xen|innotek') { $reasons += "VM ($($cs.Model))" }
+    } catch { }
+    if ($env:SESSIONNAME -and $env:SESSIONNAME -match '^rdp') { $reasons += "RDP session" }
+    if ("$env:COMPUTERNAME" -match '^CPC-') { $reasons += "Cloud PC" }
+    return $reasons
+}
+
+# Pick the fastest emulator -gpu mode the host can actually use.
+function Get-BestGpuMode {
+    param([switch]$Headless)
+    if ($Gpu) { return $Gpu }                                   # explicit override wins
+    if ($Headless) { return 'swiftshader_indirect' }            # headless/CI: software is the safe choice
+    if (Test-HostGpuAvailable) { return 'host' }                # real GPU: hardware acceleration
+    return 'swiftshader_indirect'                               # GPU-less VM/RDP: software (auto would pick this anyway)
+}
+
+# Resolve auto cores/memory from the host (plenty of headroom on a 16-vCPU/64-GB Cloud PC).
+function Resolve-EmuResources {
+    $cs = $null; try { $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue } catch { }
+    $hostCores = if ($cs) { [int]$cs.NumberOfLogicalProcessors } else { 4 }
+    $hostGb = if ($cs) { [math]::Round($cs.TotalPhysicalMemory / 1GB, 0) } else { 8 }
+    $cores = if ($Cores -gt 0) { $Cores } else { [Math]::Max(4, [Math]::Min(6, [int]($hostCores / 2))) }
+    $mem = if ($Memory -gt 0) { $Memory } else { if ($hostGb -ge 32) { 6144 } elseif ($hostGb -ge 16) { 4096 } else { 3072 } }
+    return @{ Cores = $cores; Memory = $mem }
+}
+
+# ---------------------------------------------------------------------------
 # Actions
 # ---------------------------------------------------------------------------
 function Wait-Boot {
@@ -273,9 +334,17 @@ function New-Avd {
 function Start-Emu {
     param($Tools, [string]$Name, [switch]$Cold, [switch]$Headless, [int]$Timeout, [switch]$DoWait)
     $before = (Get-RunningEmulators $Tools).Serial
-    $emuArgs = @('-avd', $Name, '-no-boot-anim', '-netdelay', 'none', '-netspeed', 'full')
+    $res = Resolve-EmuResources
+    $gpuMode = Get-BestGpuMode -Headless:$Headless
+    $emuArgs = @('-avd', $Name, '-no-boot-anim', '-netdelay', 'none', '-netspeed', 'full',
+        '-gpu', $gpuMode, '-cores', "$($res.Cores)", '-memory', "$($res.Memory)")
     if ($Cold) { $emuArgs += '-no-snapshot-load' }
-    if ($Headless) { $emuArgs += '-no-window'; $emuArgs += '-gpu'; $emuArgs += 'swiftshader_indirect' }
+    if ($Headless) { $emuArgs += '-no-window' }
+    if ($gpuMode -eq 'swiftshader_indirect' -and -not $Headless) {
+        $why = (Test-VirtualOrRemoteHost) -join ', '
+        Write-Host "PERF NOTE: no host GPU detected$(if ($why) { " ($why)" }); the emulator will use SLOW software rendering (SwiftShader)." -ForegroundColor Yellow
+        Write-Host "           For a fast run, use a connected physical device: emulator.ps1 ensure -PreferPhysical  (or devicelease.ps1 acquire -PreferPhysical)." -ForegroundColor Yellow
+    }
     Write-Host "Starting emulator: $($Tools.Emulator) $($emuArgs -join ' ')"
     Start-Process -FilePath $Tools.Emulator -ArgumentList $emuArgs -WindowStyle Minimized | Out-Null
     # Wait for a NEW emulator serial to appear that reports the target AVD name.
@@ -307,6 +376,14 @@ switch ($Command) {
         Write-Host "emulator:    $($tools.Emulator)"
         Write-Host "avdmanager:  $($tools.AvdManager)"
         Write-Host "sdkmanager:  $($tools.SdkManager)"
+        # Host perf profile — explains emulator speed and drives the fast defaults.
+        $gpuOk = Test-HostGpuAvailable
+        $virt = (Test-VirtualOrRemoteHost) -join ', '
+        $res = Resolve-EmuResources
+        Write-Host "host GPU:     $(if ($gpuOk) { 'available -> emulator uses HARDWARE (host) rendering' } else { 'NONE -> emulator uses SLOW software (SwiftShader) rendering' })"
+        if ($virt) { Write-Host "host type:    $virt" }
+        Write-Host "emu defaults: -gpu $(Get-BestGpuMode) -cores $($res.Cores) -memory $($res.Memory)"
+        if (-not $gpuOk) { Write-Host "TIP:          use a physical device for a fast run (emulator.ps1 ensure -PreferPhysical)." -ForegroundColor Yellow }
     }
     'list' {
         Write-Host "== AVDs =="
@@ -384,6 +461,21 @@ switch ($Command) {
                 exit 0
             }
             Write-Host "No connected real device meets the requirements; falling back to an emulator."
+        }
+
+        # 0c) On a GPU-less host (Cloud PC / VM / RDP) the emulator is painfully slow (software rendering).
+        #     If a suitable real device is already connected, auto-prefer it — that's what the developer wants.
+        if (-not $PreferPhysical -and -not $NoPhysical -and -not (Test-HostGpuAvailable)) {
+            $physMatch = Get-PhysicalDevices $tools |
+                Where-Object { $_.Booted -and (Test-PhysicalMeetsReqs $_ -MinApi $ApiLevel -NeedGoogle:$RequireGoogleApis -NeedPlay:$RequirePlayStore) } |
+                Select-Object -First 1
+            $why = (Test-VirtualOrRemoteHost) -join ', '
+            if ($physMatch) {
+                Write-Host "No host GPU$(if ($why) { " ($why)" }) => emulator would be slow; using the connected real device instead: $($physMatch.Serial) (model=$($physMatch.Model)). Pass -NoPhysical to force the emulator." -ForegroundColor Yellow
+                Write-Host "SERIAL=$($physMatch.Serial)"
+                exit 0
+            }
+            Write-Host "PERF NOTE: no host GPU$(if ($why) { " ($why)" }); the emulator will use SLOW software rendering. Connect a physical device for a fast run (it will be used automatically)." -ForegroundColor Yellow
         }
 
         # 1) Pick or create an AVD that satisfies the feature's requirements.

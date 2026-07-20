@@ -141,6 +141,14 @@ may run concurrently, lease the device first** (see Phase 2a) so two runs don't 
 fails, see [references/troubleshooting.md](references/troubleshooting.md) (missing images, hypervisor,
 boot hang).
 
+> **Speed check (do this if the run feels slow).** Run `./scripts/emulator.ps1 resolve-sdk` — it prints the
+> host GPU/perf profile. On a **Cloud PC / VM / RDP host there is no GPU**, so the emulator uses slow
+> **software rendering** (SwiftShader) and its NAT makes Play Store downloads crawl — nothing makes an
+> emulator fast there. **Prefer a connected physical device** (the skill auto-prefers one on a GPU-less
+> host; force with `-PreferPhysical`). AVDs the skill creates already appear in **Android Studio's Device
+> Manager** (shared `~/.android/avd`); to see one in Studio's **Running Devices**, start it from Studio and
+> let the skill reuse it. Details: [references/emulator-performance.md](references/emulator-performance.md).
+
 ### Phase 2a — Lease the device (avoid collisions with other tests)
 
 Multiple E2E tests can run at once (different agents/sessions). To stop two runs from driving the same
@@ -276,6 +284,7 @@ Load these as needed (don't preload all):
 | File | Read it when |
 |---|---|
 | [references/app-and-module-map.md](references/app-and-module-map.md) | Choosing/deploying the test app, package discovery, broker pairing, credentials, emulator requirements |
+| [references/emulator-performance.md](references/emulator-performance.md) | The run is slow, you're on a Cloud PC/VM/RDP (software rendering), or you want the emulator to show in Android Studio's Device Manager / Running Devices |
 | [references/log-signals.md](references/log-signals.md) | Interpreting logcat, success/failure patterns, AADSTS codes, per-flow pass criteria, eSTS correlation |
 | [references/ui-interaction.md](references/ui-interaction.md) | Driving auth screens, AI-vs-human inputs, FLAG_SECURE gotcha, selector strategy |
 | [references/mocking-flights-and-segments.md](references/mocking-flights-and-segments.md) | A flag must be set, a dependency/server data is unavailable, or the flow can't run fully E2E (mock it or test in segments) |
