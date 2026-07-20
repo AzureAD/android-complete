@@ -114,9 +114,9 @@ Brokered auth requires **a calling app + a broker app**, both installed:
 - **Never** hardcode, print, or commit real credentials. Type them into the device only; never echo them
   into logs or the transcript.
 
-## Emulator requirements per feature
+## Emulator / real-device requirements per feature
 
-Pass these to `emulator.ps1 ensure`:
+Pass these to `emulator.ps1 ensure` (they gate both AVD selection and real-device eligibility):
 
 - **Broker / push / GMS-dependent flows** → `-RequireGoogleApis` (needs Google Play services for FCM,
   account manager). Prefer a `google_apis` or `google_apis_playstore` image.

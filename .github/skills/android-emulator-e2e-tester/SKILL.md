@@ -1,6 +1,6 @@
 ---
 name: android-emulator-e2e-tester
-description: "Execute and iterate end-to-end (E2E) tests for an in-development Android Auth feature (MSAL, Broker, Common, ADAL, Authenticator) on an Android emulator. Finds or creates a suitable AVD and reuses a running one or boots it, builds/installs the right test app, drives the UI, and verifies via logcat. Use when asked to 'test this feature on the emulator', 'run the E2E test', 'verify the feature end to end', 'does this work on a device', or 'try the sign-in flow' — or automatically once a feature finishes development and is ready for E2E testing. Discovers what to test from the session's design spec, implementation diff, or user-provided test steps. Auto-performs inputs the AI can handle (typing lab test credentials, tapping buttons, granting permissions, simulating a fingerprint) and asks the user when the intent is unclear or a step is a real blocker (push MFA, hardware, missing credentials, implementation gaps). Checks logs to decide pass/fail and drives a fix-and-retest loop until it passes."
+description: "Execute and iterate end-to-end (E2E) tests for an in-development Android Auth feature (MSAL, Broker, Common, ADAL, Authenticator) on an Android emulator or a connected real device. Builds a device pool from emulators and any adb-connected hardware, finds or creates a suitable AVD (or reuses a running emulator / real device), leases the device so concurrent tests don't collide, builds/installs the right test app, drives the UI, and verifies via logcat. Delegates the actual run to a sub-agent (same model as the parent) and waits for its verdict. Use when asked to 'test this feature on the emulator', 'run the E2E test', 'verify the feature end to end', 'does this work on a device', or 'try the sign-in flow' — or automatically once a feature finishes development and is ready for E2E testing. Discovers what to test from the session's design spec, implementation diff, or user-provided test steps. Auto-performs inputs the AI can handle (typing lab test credentials, tapping buttons, granting permissions, simulating a fingerprint), mocks unavailable dependencies and sets feature flags via temporary code changes when needed, and asks the user when the intent is unclear or a step is a real blocker (push MFA, hardware, missing credentials, implementation gaps). Checks logs to decide pass/fail and drives a fix-and-retest loop until it passes."
 ---
 
 # Android Emulator E2E Tester
@@ -33,7 +33,7 @@ All under `scripts/` (PowerShell — the team's cross-platform shell). Run `-?` 
 
 | Script | Purpose | Key commands |
 |---|---|---|
-| `emulator.ps1` | Emulator/AVD lifecycle | `ensure`, `status`, `list`, `list-images`, `create`, `start` |
+| `emulator.ps1` | Device pool: emulators **and** real devices | `ensure`, `status`, `list`, `pool`, `list-images`, `create`, `start` |
 | `appcontrol.ps1` | App build/install/state | `build`, `install`, `launch`, `clear`, `uninstall`, `is-installed`, `grant`, `list-apks` |
 | `deviceui.ps1` | AI-driven UI I/O | `dump`, `wait-text`, `tap-text`, `tap-desc`, `input-text`, `key`, `finger`, `screenshot`, `current-app` |
 | `authlogs.ps1` | Log capture + verdict | `clear`, `scan`, `snapshot`, `grep`, `watch` |
@@ -60,18 +60,29 @@ with an explicit, observable **success criterion** (e.g. "AcquireTokenSilent ret
 **Ask the user if** the scenario is ambiguous, multiple flows could be meant, or you cannot tell what
 "working" looks like. Do not guess a scenario when the intent is unclear.
 
-### Phase 2 — Provision the emulator
+### Phase 2 — Provision the device (emulator or real device)
 
-Derive requirements from the feature (min API, Google Play services for broker/push flows) — see
-"Emulator requirements per feature" in the app-and-module map — then one command finds-or-creates,
-reuses-or-starts, and waits for boot:
+The **device pool** is every usable target: emulators **and** any real device connected over adb.
+`emulator.ps1 pool` lists them. Derive requirements from the feature (min API, Google Play services for
+broker/push flows) — see "Emulator / real-device requirements per feature" in the app-and-module map —
+then one command finds-or-creates, reuses-or-starts, and waits for boot:
 
 ```powershell
 ./scripts/emulator.ps1 ensure -RequireGoogleApis -ApiLevel 30 -Wait
+# prefer a connected real device if one meets the requirements:
+./scripts/emulator.ps1 ensure -RequireGoogleApis -PreferPhysical -Wait
+# pin an exact device (emulator serial or real-device serial):
+./scripts/emulator.ps1 ensure -Serial 39121FDJH003ZK
 # or target a specific AVD: ./scripts/emulator.ps1 ensure -Avd Pixel_7 -Wait
+# stick to emulators only: add -NoPhysical
 ```
-Capture the printed `SERIAL=` and use it as `-Serial` everywhere. If provisioning fails, see
-[references/troubleshooting.md](references/troubleshooting.md) (missing images, hypervisor, boot hang).
+A connected, booted real device that satisfies the requirements is a valid target (real devices are
+never created/booted — only used if already connected). By default `ensure` reuses a running emulator
+first, then a matching real device, then boots/creates an AVD; `-PreferPhysical` flips it to try real
+devices first. Capture the printed `SERIAL=` and use it as `-Serial` everywhere. **When multiple tests
+may run concurrently, lease the device first** (see Phase 2a) so two runs don't collide. If provisioning
+fails, see [references/troubleshooting.md](references/troubleshooting.md) (missing images, hypervisor,
+boot hang).
 
 ### Phase 3 — Deploy the app-under-test
 

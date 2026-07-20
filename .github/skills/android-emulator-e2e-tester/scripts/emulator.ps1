@@ -1,9 +1,9 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 <#
 .SYNOPSIS
-    Android emulator lifecycle helper for E2E testing: resolve the SDK, list/inspect
-    AVDs and running devices, create an AVD, start one, wait for boot, or do all of
-    that in one shot with `ensure`.
+    Android device-pool helper for E2E testing: resolve the SDK, enumerate the device pool
+    (AVDs, running emulators, AND connected real devices), create an AVD, start one, wait for
+    boot, or do all of that in one shot with `ensure`.
 
 .DESCRIPTION
     Self-resolves the Android SDK location (handles unexpanded %LOCALAPPDATA% in
@@ -11,8 +11,13 @@
     (`emulator -list-avds`, reading the system-images/ dir) over the slow
     avdmanager/sdkmanager where possible.
 
+    The "device pool" is emulators PLUS any real devices connected over adb. `ensure` can hand
+    back a connected real device that meets the feature's requirements (use `-PreferPhysical` to
+    favor one, or `-NoPhysical` to stick to emulators). Real devices are never created/booted —
+    they're only used if already connected and booted.
+
 .PARAMETER Command
-    resolve-sdk | list | list-images | status | create | start | ensure
+    resolve-sdk | list | list-images | status | pool | create | start | ensure
 
 .EXAMPLE
     # One-shot: guarantee a booted emulator meeting the feature's needs, print its serial.
@@ -20,24 +25,30 @@
 
 .EXAMPLE
     ./emulator.ps1 ensure -Avd Pixel_7 -Wait          # use/create+start a named AVD
+    ./emulator.ps1 ensure -PreferPhysical -Wait        # prefer a connected real device if one fits
+    ./emulator.ps1 pool                                # the whole device pool (emulators + real devices)
     ./emulator.ps1 status                             # what is running right now
     ./emulator.ps1 list-images                        # installed system images (for create)
 #>
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('resolve-sdk', 'list', 'list-images', 'status', 'create', 'start', 'ensure')]
+    [ValidateSet('resolve-sdk', 'list', 'list-images', 'status', 'pool', 'create', 'start', 'ensure')]
     [string]$Command = 'status',
 
     [string]$Avd,                 # explicit AVD name to use/create
+    [string]$Serial,              # pin an exact device (emulator serial or real-device serial)
     [int]$ApiLevel = 0,           # minimum API level requirement (0 = any)
     [string]$Image,               # explicit system-image package id for create
     [string]$Device = 'pixel_7',  # device profile for create
     [switch]$RequireGoogleApis,   # require google_apis or google_apis_playstore tag (GMS/push)
     [switch]$RequirePlayStore,    # require google_apis_playstore tag
+    [switch]$PreferPhysical,      # prefer a connected real device over booting an emulator
+    [switch]$NoPhysical,          # exclude connected real devices from the pool
     [switch]$Wait,                # wait for full boot
     [switch]$ColdBoot,            # start with a clean state (-no-snapshot-load)
     [switch]$NoWindow,            # headless (-no-window)
+    [switch]$Json,                # machine-readable output (for `pool`)
     [int]$TimeoutSec = 300
 )
 
@@ -140,6 +151,60 @@ function Get-RunningEmulators {
         }
     }
     return $result
+}
+
+# Real hardware connected over adb (USB / Wi-Fi / cloud) — anything in 'device' state whose
+# serial is not an emulator-XXXX console serial. These join the pool alongside emulators.
+function Get-PhysicalDevices {
+    param($Tools)
+    & $Tools.Adb start-server 2>$null | Out-Null
+    $out = & $Tools.Adb devices 2>$null
+    $result = @()
+    foreach ($line in $out) {
+        # SERIAL<TAB|spaces>device  — exclude emulators, the header, and offline/unauthorized states.
+        if ($line -match '^(\S+)\s+device(\s|$)' -and $line -notmatch '^emulator-' -and $Matches[1] -ne 'List') {
+            $serial = $Matches[1]
+            $model = (& $Tools.Adb -s $serial shell getprop ro.product.model 2>$null | Out-String).Trim()
+            $sdk = (& $Tools.Adb -s $serial shell getprop ro.build.version.sdk 2>$null | Out-String).Trim()
+            $api = 0; if ($sdk -match '^\d+$') { $api = [int]$sdk }
+            $gms = (& $Tools.Adb -s $serial shell pm list packages com.google.android.gms 2>$null | Out-String)
+            $play = (& $Tools.Adb -s $serial shell pm list packages com.android.vending 2>$null | Out-String)
+            $booted = (& $Tools.Adb -s $serial shell getprop sys.boot_completed 2>$null | Out-String).Trim()
+            $result += [pscustomobject]@{
+                Serial     = $serial
+                Model      = $model
+                Api        = $api
+                GoogleApis = ($gms -match 'com.google.android.gms')
+                PlayStore  = ($play -match 'com.android.vending')
+                Booted     = ($booted -eq '1')
+            }
+        }
+    }
+    return $result
+}
+
+# Does a real device satisfy the feature's requirements? (Emulator reqs are checked via AVD tags.)
+function Test-PhysicalMeetsReqs {
+    param($Dev, [int]$MinApi, [switch]$NeedGoogle, [switch]$NeedPlay)
+    if ($MinApi -gt 0 -and $Dev.Api -gt 0 -and $Dev.Api -lt $MinApi) { return $false }
+    if ($NeedPlay -and -not $Dev.PlayStore) { return $false }
+    if ($NeedGoogle -and -not $Dev.GoogleApis) { return $false }
+    return $true
+}
+
+# Unified device pool: running emulators + connected real devices, as one list with a Type column.
+function Get-DevicePool {
+    param($Tools, [switch]$NoPhysical)
+    $pool = @()
+    foreach ($e in (Get-RunningEmulators $Tools)) {
+        $pool += [pscustomobject]@{ Type = 'emulator'; Serial = $e.Serial; Name = $e.Avd; Api = $null; GoogleApis = $null; PlayStore = $null; Booted = $e.Booted }
+    }
+    if (-not $NoPhysical) {
+        foreach ($p in (Get-PhysicalDevices $Tools)) {
+            $pool += [pscustomobject]@{ Type = 'physical'; Serial = $p.Serial; Name = $p.Model; Api = $p.Api; GoogleApis = $p.GoogleApis; PlayStore = $p.PlayStore; Booted = $p.Booted }
+        }
+    }
+    return $pool
 }
 
 function Get-InstalledImages {
@@ -246,8 +311,23 @@ switch ($Command) {
     'list' {
         Write-Host "== AVDs =="
         Get-Avds $tools | Format-Table -AutoSize | Out-String | Write-Host
-        Write-Host "== Running =="
+        Write-Host "== Running emulators =="
         Get-RunningEmulators $tools | Format-Table -AutoSize | Out-String | Write-Host
+        if (-not $NoPhysical) {
+            Write-Host "== Connected real devices =="
+            $phys = Get-PhysicalDevices $tools
+            if ($phys) { $phys | Format-Table -AutoSize | Out-String | Write-Host } else { Write-Host "(none)`n" }
+        }
+    }
+    'pool' {
+        $pool = Get-DevicePool $tools -NoPhysical:$NoPhysical
+        if ($Json) {
+            $pool | ConvertTo-Json -Depth 4
+        }
+        else {
+            if (-not $pool) { Write-Host 'Device pool is empty (no running emulator or connected real device).'; exit 0 }
+            $pool | Format-Table -AutoSize Type, Serial, Name, Api, GoogleApis, PlayStore, Booted | Out-String | Write-Host
+        }
     }
     'list-images' {
         Get-InstalledImages $tools | Sort-Object Api | Format-Table -AutoSize | Out-String | Write-Host
@@ -255,8 +335,10 @@ switch ($Command) {
     'status' {
         $running = Get-RunningEmulators $tools
         if ($Avd) { $running = $running | Where-Object { $_.Avd -eq $Avd } }
-        if (-not $running) { Write-Host 'No matching emulator running.'; exit 0 }
-        $running | Format-Table -AutoSize | Out-String | Write-Host
+        $phys = if ($NoPhysical) { @() } else { Get-PhysicalDevices $tools }
+        if (-not $running -and -not $phys) { Write-Host 'No emulator running and no real device connected.'; exit 0 }
+        if ($running) { Write-Host "== Running emulators =="; $running | Format-Table -AutoSize | Out-String | Write-Host }
+        if ($phys) { Write-Host "== Connected real devices =="; $phys | Format-Table -AutoSize | Out-String | Write-Host }
     }
     'create' {
         if (-not $Avd) { throw "Provide -Avd <name> to create." }
@@ -279,6 +361,31 @@ switch ($Command) {
         Write-Host "SERIAL=$serial"
     }
     'ensure' {
+        # 0) If a specific device serial was pinned, verify it's connected and use it as-is.
+        if ($Serial) {
+            $pool = Get-DevicePool $tools -NoPhysical:$NoPhysical
+            $pinned = $pool | Where-Object { $_.Serial -eq $Serial } | Select-Object -First 1
+            if (-not $pinned) { throw "Pinned device '$Serial' is not connected (not in the device pool)." }
+            if ($pinned.Type -eq 'emulator') { Wait-Boot $tools $Serial $TimeoutSec | Out-Null }
+            elseif (-not $pinned.Booted) { throw "Pinned real device '$Serial' is connected but not fully booted." }
+            Write-Host "Using pinned device: $Serial (type=$($pinned.Type))"
+            Write-Host "SERIAL=$Serial"
+            exit 0
+        }
+
+        # 0b) Prefer a connected real device when asked (and one meets the requirements).
+        if ($PreferPhysical -and -not $NoPhysical) {
+            $physMatch = Get-PhysicalDevices $tools |
+                Where-Object { $_.Booted -and (Test-PhysicalMeetsReqs $_ -MinApi $ApiLevel -NeedGoogle:$RequireGoogleApis -NeedPlay:$RequirePlayStore) } |
+                Select-Object -First 1
+            if ($physMatch) {
+                Write-Host "Using connected real device: $($physMatch.Serial) (model=$($physMatch.Model), api=$($physMatch.Api))"
+                Write-Host "SERIAL=$($physMatch.Serial)"
+                exit 0
+            }
+            Write-Host "No connected real device meets the requirements; falling back to an emulator."
+        }
+
         # 1) Pick or create an AVD that satisfies the feature's requirements.
         $target = $null
         $avds = Get-Avds $tools
@@ -302,6 +409,17 @@ switch ($Command) {
             # Prefer an already-running AVD among the matches.
             $runningNames = (Get-RunningEmulators $tools).Avd
             $target = $match | Where-Object { $runningNames -contains $_.Name } | Select-Object -First 1
+            # Next best: a connected real device that meets the requirements (reuse beats a cold boot).
+            if (-not $target -and -not $NoPhysical) {
+                $physMatch = Get-PhysicalDevices $tools |
+                    Where-Object { $_.Booted -and (Test-PhysicalMeetsReqs $_ -MinApi $ApiLevel -NeedGoogle:$RequireGoogleApis -NeedPlay:$RequirePlayStore) } |
+                    Select-Object -First 1
+                if ($physMatch) {
+                    Write-Host "Using connected real device: $($physMatch.Serial) (model=$($physMatch.Model), api=$($physMatch.Api))"
+                    Write-Host "SERIAL=$($physMatch.Serial)"
+                    exit 0
+                }
+            }
             if (-not $target) { $target = $match | Sort-Object Api | Select-Object -First 1 }
             if (-not $target) {
                 # No suitable AVD exists: create one.
