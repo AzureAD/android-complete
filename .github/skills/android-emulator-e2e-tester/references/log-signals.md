@@ -83,9 +83,29 @@ trip (correlation_id) → token saved → `executed successfully`.
 | `AADSTS50126` | Invalid username/password | Wrong test credential |
 | `AADSTS700016` | App not found in tenant | Wrong client id / tenant |
 | `AADSTS50058` | Silent sign-in failed, no session | Expected before an interactive sign-in |
+| `AADSTS530021` | App not approved-client-app (CA) | Wrong/unapproved app config — see troubleshooting |
 
 `AADSTS50011`/`700016` typically indicate a **real defect** in the change under test → root-cause and
 hand to the fix loop. `AADSTS65001`/`50076`/`50058` are often **flow steps**, not defects.
+`AADSTS530021` is an **environment/config** block (the signed-in app config isn't CA-approved) that stops
+the flow *before* the step under test — switch to an approved app config; do not treat it as a defect.
+
+## Broker telemetry keys worth grepping
+
+Brokered flows emit per-request telemetry that is often the clearest pass/fail signal — grep the snapshot
+for these keys (values are logged as `Key: <name>, Value: <...>`):
+
+| Key | Meaning |
+|---|---|
+| `broker_app_used` | `true` = the request was actually serviced through the broker; `false` = it wasn't (e.g. broker ineligible / not found) |
+| `request_eligible_for_broker` | `true` = the request passed broker-eligibility and was routed to the broker |
+| `is_successful` | Overall request success as the SDK reports it |
+| `api_status_code` | e.g. `RequiredBrokerMissing`, `UserCanceled`, a success status |
+| `auth_flow` | `Broker` vs non-broker path taken |
+
+For a brokered scenario, `broker_app_used=true` + `request_eligible_for_broker=true` is a strong PASS
+signal that the broker path executed; `broker_app_used=false` with a `RequiredBrokerMissing` status
+points at broker discovery/eligibility rather than the token exchange.
 
 ## Judging success per flow
 

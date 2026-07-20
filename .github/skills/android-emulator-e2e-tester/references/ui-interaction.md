@@ -85,6 +85,54 @@ and can hide fields from `uiautomator dump`. Mitigations:
   **Mode A** automation tests (they use instrumented hooks that bypass this).
 - If nothing works, treat it as a blocker and tell the user.
 
+## Driving WebView login fields reliably (hard-won)
+
+The eSTS email/password pages are a **WebView**, not native widgets. Typing into them fails silently in
+a few ways — these fixes came from real runs:
+
+- **Tap the field, then confirm focus before typing.** A blind `input-text` goes nowhere if no field is
+  focused. After tapping, verify focus by checking that the soft keyboard is up
+  (`adb shell dumpsys input_method | Select-String mInputShown,mServedView` — a WebView `mServedView`
+  with `mInputShown=true` means the field is focused), then re-`dump` to read the field node.
+- **The visible field is lower than the heading.** On the password page, the big "Enter password" text is
+  *not* the input — the actual `EditText` sits below it. Tapping the heading does nothing. Get the real
+  node's bounds from the accessibility tree (`uiautomator dump` still exposes the WebView's `EditText`
+  node with a `resource-id` like `i0118` even when `FLAG_SECURE` blanks the screenshot) and tap its
+  center.
+- **Verify the text landed before submitting.** For a password field, re-dump and check the node's
+  `text` length or `password="true"` state — do not tap **Sign in** until you've confirmed characters
+  were entered, or you'll loop on a blank field.
+- **Type passwords with special characters literally.** `~ ! # $ & * ( )` are shell metacharacters.
+  `deviceui.ps1 input-text` escapes them, but if you call adb directly, single-quote the whole string
+  **device-side**: `adb shell "input text 'P@ss~!word'"`. Never echo the password into the transcript.
+- **Some CP/broker WebViews reject programmatic submit entirely.** With `FLAG_SECURE`, typing may work
+  but tapping **Sign in** / pressing Enter doesn't register on an emulator. If a secure broker screen
+  won't submit, note it as a **harness limitation** (not a defect) and, if the segment under test is
+  already proven, stop there — see [mocking-flights-and-segments.md](mocking-flights-and-segments.md).
+
+## Play Store installs (referrer / broker-install flows)
+
+Installing an app from the Play Store during a flow (e.g. installing Company Portal for a MAM/CA flow):
+
+- **Target the real Install button, not the rating chip.** `tap-text "Install"` can hit the "Everyone"
+  content-rating label or an unrelated element. Read the button's bounds from `dump` and `tap-xy` its
+  center, and dismiss the interstitial **"Got it"** age-rating dialog first if it appears.
+- **Installs are slow and interstitials vary.** Poll for completion by package presence
+  (`appcontrol.ps1 is-installed -Package <pkg>`) in a loop rather than assuming a fixed delay.
+- **Mind time-boxed waits.** If the feature parks a request with a TTL (e.g. a sink-wait that expires
+  after N minutes) and a slow emulator install blows past it, the original request may lapse. That's a
+  harness-timing artifact, not a defect: re-trigger the flow with the app already installed to exercise
+  the same resume path, and note the timing in the report.
+
+## Keyboard & navigation gotchas
+
+- **`BACK` can exit the app.** On a main screen with nothing to pop, `key BACK` (keyevent 4) closes the
+  activity/app. To only dismiss the soft keyboard, use `key ESCAPE` (keyevent 111), which hides the IME
+  without navigating back.
+- **Re-dump after every action.** The tree changes; a stale dump makes you tap the wrong place.
+- **Compute bounds-center for taps when `tap-text` is unreliable** (icon buttons, WebView chrome,
+  duplicate labels) — read `Bounds` from `dump` and `tap-xy` the midpoint.
+
 ## Robustness tips
 
 - Always `wait-text` for the expected element before acting (default 20s) instead of fixed sleeps.
