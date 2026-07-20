@@ -1,6 +1,6 @@
 ---
 name: android-emulator-e2e-tester
-description: "Execute and iterate end-to-end (E2E) tests for an in-development Android Auth feature (MSAL, Broker, Common, ADAL, Authenticator) on an Android emulator or a connected real device. Builds a device pool from emulators and any adb-connected hardware, finds or creates a suitable AVD (or reuses a running emulator / real device), leases the device so concurrent tests don't collide, builds/installs the right test app, drives the UI, and verifies via logcat. Delegates the actual run to a sub-agent (same model as the parent) and waits for its verdict. Use when asked to 'test this feature on the emulator', 'run the E2E test', 'verify the feature end to end', 'does this work on a device', or 'try the sign-in flow' — or automatically once a feature finishes development and is ready for E2E testing. Discovers what to test from the session's design spec, implementation diff, or user-provided test steps. Auto-performs inputs the AI can handle (typing lab test credentials, tapping buttons, granting permissions, simulating a fingerprint), mocks unavailable dependencies and sets feature flags via temporary code changes when needed, and asks the user when the intent is unclear or a step is a real blocker (push MFA, hardware, missing credentials, implementation gaps). Checks logs to decide pass/fail and drives a fix-and-retest loop until it passes."
+description: "Execute and iterate end-to-end (E2E) tests for an in-development Android Auth feature (MSAL, Broker, Common, ADAL, Authenticator) on an Android emulator or a connected real device. Builds a device pool from emulators and any adb-connected hardware, finds or creates a suitable AVD (or reuses a running emulator / real device), leases the device so concurrent tests don't collide, builds/installs the right test app, drives the UI, and verifies via logcat. Delegates the actual run to a sub-agent (same model as the parent) and waits for its verdict. Use when asked to 'test this feature on the emulator', 'run the E2E test', 'verify the feature end to end', 'does this work on a device', or 'try the sign-in flow' — or automatically once a feature finishes development and is ready for E2E testing. Discovers what to test from user-provided steps, an ADO Test Case work item, a known test-steps file, the session's design spec, or the implementation diff — feature-specific steps live in the test case, not the skill. Auto-performs inputs the AI can handle (typing lab test credentials, tapping buttons, granting permissions, simulating a fingerprint), mocks unavailable dependencies and sets feature flags via temporary code changes when needed, and asks the user when the intent is unclear or a step is a real blocker (push MFA, hardware, missing credentials, implementation gaps). Checks logs to decide pass/fail and drives a fix-and-retest loop until it passes."
 ---
 
 # Android Emulator E2E Tester
@@ -79,9 +79,12 @@ Execute in order. Announce a one-line status at each phase.
 Synthesize a concrete E2E scenario from the session context, in priority order:
 
 1. **User-provided test steps** in the session (explicit steps or a scenario the user described).
-2. **A test plan** (from the `test-planner` skill or a linked ADO test case).
-3. **The design spec** (`design-docs/`) — its acceptance criteria and flows.
-4. **The implementation diff** — `git -C <sub-repo> diff` across changed repos to see what actually
+2. **An ADO Test Case work item** — the primary home for feature-specific steps. Fetch and parse it (see
+   "Sourcing test-case-specific steps" below); the `test-planner` skill can author/export these.
+3. **A known test-steps file** the session points to (an exported plan, a markdown checklist, or a path
+   the user names).
+4. **The design spec** (`design-docs/`) — its acceptance criteria and flows.
+5. **The implementation diff** — `git -C <sub-repo> diff` across changed repos to see what actually
    changed and which app/module it affects.
 
 Produce: the **feature summary**, the **target app/module** (see
@@ -91,6 +94,28 @@ with an explicit, observable **success criterion** (e.g. "AcquireTokenSilent ret
 
 **Ask the user if** the scenario is ambiguous, multiple flows could be meant, or you cannot tell what
 "working" looks like. Do not guess a scenario when the intent is unclear.
+
+**Keep specifics out of the skill.** This skill is generic. Anything specific to one feature — which app
+configuration / client id to select, which lab account, which broker to pair, the exact tap sequence, the
+expected success markers — belongs in the **test case**, not here. Read those specifics from the sources
+above at run time; never hardcode a particular feature's steps into the skill or its scripts.
+
+#### Sourcing test-case-specific steps
+
+- **From ADO** (preferred for anything repeatable): a **Test Case** work item stores its steps in the
+  `Microsoft.VSTS.TCM.Steps` field (HTML/XML — each `<step>` has an action and an expected result). Fetch it:
+  ```powershell
+  az boards work-item show --id <testCaseId> --org <org-url> `
+    --fields "System.Title,Microsoft.VSTS.TCM.Steps" --output json
+  ```
+  Parse the steps into an ordered action/expected list, drive them in Phase 4, and use each step's
+  **expected result** as its success criterion. A linked **Shared Steps** work item is fetched the same
+  way. (The `test-planner` skill authors and pushes these test cases, so the loop is:
+  test-planner → ADO → this skill.)
+- **From a known file**: if the session provides a test-steps file (an exported plan, a markdown
+  checklist, or a path the user names), read the steps from there and treat them like ADO steps.
+- If neither exists and the scenario isn't otherwise clear, **ask the user** rather than inventing
+  feature-specific steps.
 
 ### Phase 2 — Provision the device (emulator or real device)
 
