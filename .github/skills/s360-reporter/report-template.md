@@ -94,7 +94,7 @@ Blue top bar + uppercase label + team name + blue date pill + services line.
       </tr>
     </table>
     <p style="margin:16px 0 0 0; font-size:13px;">
-      Services: <strong>AuthN SDK - MSAL Android</strong> &bull; <strong>AuthN SDK - ADAL Android</strong> &bull; <strong>Microsoft Authenticator - Android</strong>
+      Services: <strong>AuthN SDK - MSAL Android</strong> &bull; <strong>Microsoft Authenticator - Android</strong>
     </p>
   </td>
 </tr>
