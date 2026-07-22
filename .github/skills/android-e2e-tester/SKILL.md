@@ -199,19 +199,27 @@ Clear the log buffer first, then drive the flow:
 ./scripts/authlogs.ps1 clear -Serial <serial>
 ```
 
-Loop per step using [references/ui-interaction.md](references/ui-interaction.md): `wait-text` for the
-expected element → act (`tap-text` / `input-text` / `key` / `finger`) → re-`dump` to confirm. Save a
-`screenshot` at each major step into the run folder.
+Loop per screen using [references/ui-interaction.md](references/ui-interaction.md), following the
+**fast path** (see [references/run-speed.md](references/run-speed.md)): `dump` **once** per screen and
+compute every target from that one XML → act → verify by the **next** screen's anchor with
+`tap-text -Then "<anchor>"` (tap + wait in one call) or `wait-text`, **never a fixed `Start-Sleep`**.
+Batch the dump→tap(s) for a screen into a **single** shell call so process/adb startup is paid once per
+screen, not once per tap. Re-`dump` only when you must read genuinely new state; verify a navigation by its
+anchor, not a reflexive re-dump after every tap. Save a `screenshot` only at **milestones** and only on
+screens that actually render (skip FLAG_SECURE screens — they come back black; capture a `uiautomator dump`
+as evidence instead).
 
 **Auto-handle** everything the AI reasonably can: type lab test credentials, tap Next/Sign in/Accept/
 Allow/Yes, pick an account, grant permissions, simulate a fingerprint (`finger`), enter a TOTP if the
 seed is known, set/enter a device PIN. **Do not** print or commit credentials.
 
 **Typing into eSTS/WebView credential fields (hard-won).** The email/password pages are a WebView and
-Chrome's autofill/passkey overlay silently swallows a bulk `input text` (the value lands in the wrong
-field or is dropped, producing "Enter a valid email"). Type reliably:
+Chrome's autofill/passkey overlay can silently swallow a bulk `input text` (the value lands in the wrong
+field or is dropped, producing "Enter a valid email"). **Try bulk first** (it's fast); only fall back to
+`-CharByChar` if verification shows the value didn't land:
 ```powershell
-./scripts/deviceui.ps1 input-text -Text $upn -Clear -CharByChar -Serial <serial>          # username
+./scripts/deviceui.ps1 input-text -Text $upn -Clear -Serial <serial>                      # bulk first (fast)
+./scripts/deviceui.ps1 input-text -Text $upn -Clear -CharByChar -Serial <serial>          # fallback if it didn't land
 ./scripts/deviceui.ps1 input-text -Text $pw  -Clear -CharByChar -Secret -Serial <serial>  # password (never echoed)
 ```
 `-Clear` empties the field first, `-CharByChar` defeats the overlay, `-Secret` keeps the value out of the

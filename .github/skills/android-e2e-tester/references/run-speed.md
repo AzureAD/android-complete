@@ -72,9 +72,11 @@ Ordered by payoff:
 1. **Keep one long-lived shell for a whole screen/segment.** Batch the dump→parse→tap(s) for a screen into
    a *single* `powershell` call (an async session you reuse) so you pay process/adb startup once per
    segment, not once per tap. This alone removes most of the fresh-process tax (root cause 3).
-2. **Replace fixed sleeps with `wait-text` polling.** `deviceui.ps1 wait-text -Text "<next screen anchor>"`
-   returns the instant the screen is ready instead of always waiting N seconds. Use it after every
-   navigation instead of `Start-Sleep`. Biggest single win (root cause 2).
+2. **Replace fixed sleeps with anchor polling — and fuse tap+wait.** `deviceui.ps1 wait-text -Text
+   "<next screen anchor>"` returns the instant the screen is ready instead of always waiting N seconds.
+   Better still, `tap-text "<button>" -Then "<next anchor>"` performs the tap **and** waits for the next
+   screen in a **single** call (one process, no fixed sleep). Polling defaults to 600 ms (`-PollMs` to tune).
+   Use these after every navigation instead of `Start-Sleep`. Biggest single win (root cause 2).
 3. **Reuse one dump for multiple actions.** When a screen has several fields/buttons, `dump` once, then
    compute all the tap targets from that one XML rather than re-dumping per element.
 4. **Try bulk input first, fall back to char-by-char.** Attempt `input-text` (bulk) once; only switch to
@@ -97,11 +99,13 @@ Ordered by payoff:
 ## Fast-path recipe
 
 Per screen:
-1. `wait-text` on an anchor for the *expected* screen (no fixed sleep).
+1. `wait-text` on an anchor for the *expected* screen (no fixed sleep) — or let the previous screen's
+   `tap-text -Then` land you here (the `-Then` wait doubles as this arrival check).
 2. `dump` **once**; compute every tap/field target from that XML.
-3. Do the taps / `input-text` (bulk first) in the **same** shell call.
-4. Verify **once** by the next screen's anchor (`wait-text`) — that both confirms success *and* is the wait
-   for the following screen. One signal does double duty.
+3. Do the taps / `input-text` (bulk first) in the **same** shell call; for the navigation tap, use
+   `tap-text "<button>" -Then "<next anchor>"` so the tap and the wait-for-next-screen are one call.
+4. Verify **once** by the next screen's anchor — the `-Then` (or a `wait-text`) both confirms success *and*
+   is the wait for the following screen. One signal does double duty.
 5. Screenshot only if the screen is non-secure and you need it as evidence.
 
 ## Expected savings

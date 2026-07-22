@@ -18,13 +18,19 @@ reasonably do, automatically — and stop to ask only when an input genuinely ca
 
 ## Interaction loop
 
-For each step:
-1. `deviceui.ps1 dump` (or `wait-text`) to read what is on screen **now**.
-2. Decide the next action from the visible elements.
-3. Act: `tap-text` / `tap-desc` / `input-text` / `key` / `finger`.
-4. Re-`dump` to confirm the screen advanced. The UI tree changes after every action — never reuse a
-   stale dump.
-5. On an unexpected screen, `screenshot` to a run file and reason about it before continuing.
+Follow the **fast path** (details + rationale in [run-speed.md](run-speed.md)). Per **screen** (not per tap):
+1. `deviceui.ps1 dump` **once** to read what is on screen now, and compute **every** target you need from
+   that single XML (don't re-dump between taps on the same screen).
+2. Act on those targets: `tap-text` / `tap-desc` / `input-text` / `key` / `finger`.
+3. **Verify by the next screen's anchor, not a reflexive re-dump.** Use `tap-text -Then "<anchor>"` so the
+   tap and the wait-for-next-screen happen in **one** call, or `wait-text "<anchor>"` after a non-tap action.
+   Poll (default 600 ms) — **never** a fixed `Start-Sleep`.
+4. Re-`dump` only when you genuinely need new state (a screen actually changed, or you must read a value).
+   The tree does change after navigation — just don't pay for a fresh dump after every micro-action.
+5. On an **unexpected** screen, `screenshot` to a run file (if it renders) and reason about it before continuing.
+
+Batch a screen's `dump`→`tap`(s) into a **single** shell invocation where practical, so process/adb startup
+is paid once per screen instead of once per action — this is the largest, safest latency win.
 
 ## Selector strategy
 
@@ -40,8 +46,8 @@ pick among duplicates). When text is empty (icon-only buttons), use `tap-desc`. 
 | **App first-run / runtime permissions** | Tap `Allow` / `While using the app` / `Continue`; or pre-grant with `appcontrol.ps1 grant`. |
 | **Test app main screen** | Tap the acquire-token control (e.g. `Acquire Token`, `Sign in`, `AcquireTokenSilent`). Set scopes/authority fields first if the scenario needs them. |
 | **Broker account picker** | If the target account is listed, `tap-text` it (SSO). If `Add account` / `Use another account`, tap it to start interactive sign-in. |
-| **eSTS email page** | `input-text` the username (add `-Clear -CharByChar` if autofill steals bulk input), then `tap-text "Next"`. |
-| **eSTS password page** | `input-text -Secret` the password (add `-Clear -CharByChar`), then `tap-text "Sign in"`. Never log the value. Verify by whether the page advances (the field text often doesn't reflect back). See [common-blockers.md](common-blockers.md#chrome-autofill--passkey-overlay-steals-input). |
+| **eSTS email page** | `input-text` the username (bulk first; add `-Clear -CharByChar` only if it didn't land), then `tap-text "Next" -Then "password"` (tap + wait for the next page in one call). |
+| **eSTS password page** | `input-text -Secret` the password (bulk first; add `-Clear -CharByChar` if it didn't land), then `tap-text "Sign in"`. Never log the value. Verify by whether the page advances (the field text often doesn't reflect back). See [common-blockers.md](common-blockers.md#chrome-autofill--passkey-overlay-steals-input). |
 | **Consent / permissions requested** | `tap-text "Accept"` (safe for test apps/accounts). |
 | **"Stay signed in?" / KMSI** | `tap-text "Yes"` (or `No` if the scenario needs a fresh session). |
 | **"Approve sign in request" (push MFA)** | Usually a **blocker** — see below, unless a TOTP/seed is available. |
@@ -134,7 +140,9 @@ Some flows install another app from the Play Store partway through (e.g. a broke
 - **`BACK` can exit the app.** On a main screen with nothing to pop, `key BACK` (keyevent 4) closes the
   activity/app. To only dismiss the soft keyboard, use `key ESCAPE` (keyevent 111), which hides the IME
   without navigating back.
-- **Re-dump after every action.** The tree changes; a stale dump makes you tap the wrong place.
+- **Re-dump on screen changes, not after every tap.** The tree changes across navigation, so never reuse a
+  dump from a *previous* screen — but you don't need a fresh dump after every micro-action on the *same*
+  screen. Verify a navigation by its next-screen anchor (`tap-text -Then` / `wait-text`) instead.
 - **Compute bounds-center for taps when `tap-text` is unreliable** (icon buttons, WebView chrome,
   duplicate labels) — read `Bounds` from `dump` and `tap-xy` the midpoint.
 
@@ -144,4 +152,6 @@ Some flows install another app from the Play Store partway through (e.g. a broke
 - After `input-text`, verify with `find-text` that the value landed (for non-secure fields).
 - Web/ESTS pages load slowly — allow longer `-TimeoutSec` (30–60s) on sign-in pages.
 - If an element isn't found, re-`dump` once more (the page may still be rendering) before deciding it's a blocker.
-- Keep a screenshot per major step in the run folder for the final report.
+- Keep a screenshot at **milestones** in the run folder for the final report — only on screens that
+  actually render (skip FLAG_SECURE pages; they come back black — capture a `uiautomator dump` as evidence
+  instead). Screenshotting every micro-step is a needless per-step cost.

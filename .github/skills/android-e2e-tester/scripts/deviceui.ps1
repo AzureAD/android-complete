@@ -11,9 +11,10 @@
 
 .EXAMPLE
     ./deviceui.ps1 wait-text -Text "Sign in" -TimeoutSec 30
+    ./deviceui.ps1 tap-text -Text "Next" -Then "Enter password"   # tap + verify next screen in ONE call
     ./deviceui.ps1 tap-text -Text "Sign in"
-    ./deviceui.ps1 input-text -Text "user@contoso.com"
-    ./deviceui.ps1 input-text -Text "user@contoso.com" -Clear -CharByChar   # defeat autofill/passkey overlays
+    ./deviceui.ps1 input-text -Text "user@contoso.com"                       # bulk (fast) — try this first
+    ./deviceui.ps1 input-text -Text "user@contoso.com" -Clear -CharByChar    # fall back if autofill ate it
     ./deviceui.ps1 input-text -Text $pw -Clear -CharByChar -Secret          # never echoes the value
     ./deviceui.ps1 key -Text ENTER
     ./deviceui.ps1 finger-status                  # is a fingerprint enrolled?
@@ -24,10 +25,15 @@
 
 .NOTES
     Text matching is case-insensitive substring by default. Use -Exact for equality.
-    Always re-`dump` after an action; the UI tree changes between steps.
+    Speed (see references/run-speed.md): prefer `wait-text` / `tap-text -Then <anchor>` over a fixed
+    Start-Sleep — they return the instant the screen is ready. `-Then` taps and then polls for the next
+    screen's anchor in the SAME process, so a navigate+verify is one tool call, not two. Polling cadence is
+    -PollMs (default 600ms); the first check is immediate. Re-`dump` only when you actually need to read new
+    on-screen state — verify a navigation by its anchor instead of a reflexive re-dump after every tap.
     input-text options: -Clear empties the focused field first (one adb round-trip); -CharByChar types one
     character at a time (defeats Chrome autofill/passkey overlays that swallow a bulk `input text`);
     -Secret suppresses echoing the value to the transcript (prints length only) — always use it for passwords.
+    Try bulk `input-text` first (fast); only add -CharByChar if verification shows the value didn't land.
     Fingerprint: `emu finger` only works on EMULATORS. On a real device a fingerprint must be enrolled
     by the user against the physical sensor — `finger-enroll` will print the steps and ask. When a step
     needs an injectable fingerprint/biometric (App Lock, biometric-gated number-match), prefer an emulator.
@@ -41,11 +47,13 @@ param(
 
     [string]$Serial,
     [string]$Text,
+    [string]$Then,
     [int]$X,
     [int]$Y,
     [int]$Index = 0,
     [switch]$Exact,
     [int]$TimeoutSec = 20,
+    [int]$PollMs = 600,
     [string]$Pin = '1234',
     [string]$Out,
     [switch]$Clear,
@@ -121,6 +129,21 @@ function Find-ByField {
     return $match
 }
 
+function Wait-ForText {
+    # Poll for text/content-desc until found or the deadline passes. Checks immediately, then every
+    # $PollMilliseconds. Returns $true as soon as it appears — the point is to return the instant the
+    # screen is ready instead of paying a fixed Start-Sleep. See references/run-speed.md.
+    param([string]$Query, [int]$TimeoutSeconds, [int]$PollMilliseconds)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ($true) {
+        $m = Find-ByField 'Text' $Query
+        if (-not $m) { $m = Find-ByField 'Desc' $Query }
+        if ($m) { return $true }
+        if ((Get-Date) -ge $deadline) { return $false }
+        Start-Sleep -Milliseconds $PollMilliseconds
+    }
+}
+
 function Encode-Input {
     param([string]$s)
     # adb 'input text' uses %s for space; backslash-escape shell metacharacters.
@@ -182,6 +205,11 @@ switch ($Command) {
         if ($null -eq $t.Cx) { Write-Host "Element '$Text' has no tappable bounds."; exit 3 }
         Adb shell input tap $t.Cx $t.Cy | Out-Null
         Write-Host "Tapped '$Text' at ($($t.Cx),$($t.Cy))"
+        if ($Then) {
+            # Tap + verify the next screen in ONE process — no extra tool call, no fixed sleep.
+            if (Wait-ForText $Then $TimeoutSec $PollMs) { Write-Host "FOUND: '$Then'" }
+            else { Write-Host "TIMEOUT waiting for '$Then' (${TimeoutSec}s)"; exit 4 }
+        }
     }
     'tap-desc' {
         $m = @(Find-ByField 'Desc' $Text)
@@ -189,6 +217,10 @@ switch ($Command) {
         $t = $m[[Math]::Min($Index, $m.Count - 1)]
         Adb shell input tap $t.Cx $t.Cy | Out-Null
         Write-Host "Tapped desc '$Text' at ($($t.Cx),$($t.Cy))"
+        if ($Then) {
+            if (Wait-ForText $Then $TimeoutSec $PollMs) { Write-Host "FOUND: '$Then'" }
+            else { Write-Host "TIMEOUT waiting for '$Then' (${TimeoutSec}s)"; exit 4 }
+        }
     }
     'tap-xy' {
         Adb shell input tap $X $Y | Out-Null
@@ -217,13 +249,7 @@ switch ($Command) {
         }
     }
     'wait-text' {
-        $deadline = (Get-Date).AddSeconds($TimeoutSec)
-        while ((Get-Date) -lt $deadline) {
-            $m = Find-ByField 'Text' $Text
-            if (-not $m) { $m = Find-ByField 'Desc' $Text }
-            if ($m) { Write-Host "FOUND: '$Text'"; exit 0 }
-            Start-Sleep -Seconds 2
-        }
+        if (Wait-ForText $Text $TimeoutSec $PollMs) { Write-Host "FOUND: '$Text'"; exit 0 }
         Write-Host "TIMEOUT waiting for '$Text' (${TimeoutSec}s)"; exit 4
     }
     'screenshot' {
