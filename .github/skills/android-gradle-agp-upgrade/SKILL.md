@@ -155,27 +155,60 @@ the real input.
   drives `kotlin-stdlib` app dependencies, so bumping it is not purely a build-tooling
   change.
 
-## Gradle ↔ Kotlin compatibility (quick reference)
+## Choosing compatible versions — the derivation model
 
-Each Gradle version is tested against a specific Kotlin Gradle plugin (KGP) range.
-An old KGP on a new Gradle fails at plugin-apply time (removed Gradle APIs). Always
-check the version needed for the TARGET Gradle before bumping. Source of truth:
-https://docs.gradle.org/current/userguide/compatibility.html#kotlin
+Never guess versions. They form a one-directional dependency chain; solve it
+**top-down from the Android API level you need**:
 
-| Kotlin (KGP) | Tested with Gradle |
+```mermaid
+flowchart TD
+    A["Need Android API N<br/>(compileSdk = N)"] --> B["Need an AGP new enough<br/>to understand API N"]
+    B --> C["Need Gradle new enough<br/>for that AGP<br/>(AGP's hard minimum Gradle)"]
+    C --> D["Need JDK new enough<br/>for that Gradle + AGP combo"]
+    C --> E["Need Kotlin (KGP) new enough<br/>for that Gradle"]
+```
+
+Read it as: **API level → AGP → Gradle → {JDK, Kotlin}.** Each arrow is a hard
+"minimum required" constraint. Resolve each arrow by FETCHING the authoritative page
+(below) for the *target* level, then pick the lowest version that satisfies it. Also
+check the test framework separately (e.g. Robolectric must support the target SDK and
+may impose its own JDK floor).
+
+Worked example — this repo's April 2026 upgrade to API 37:
+- Need **API 37** (`compileSdk 37`) → the **first AGP that understands API 37 is
+  AGP 9.1.1** (see AGP 9.1.1 release notes) → AGP **9.1.1**.
+- AGP 9.1.1 → hard minimum **Gradle 9** → chose Gradle **9.3.1**.
+- Gradle 9.3.x → Kotlin **KGP 2.2.21** (Gradle↔Kotlin matrix); Kotlin 1.8/1.9 crash on
+  Gradle 9.
+- AGP 9 / Gradle 9 need **JDK 17+**, and Robolectric 4.16 needs **JDK 21** → chose **JDK 21**.
+- Robolectric **4.16.1** (older versions reference `FingerprintManager`, deleted from
+  API 37's `android.jar`).
+- `targetSdk` was **upgraded 35 → 36** as part of this work (Robolectric can't emulate
+  API 37 yet, max 36); `minSdk` left unchanged (24); shipped bytecode kept at Java 8.
+
+## Compatibility sources — FETCH these at runtime (do NOT hardcode the tables)
+
+These pages change as new versions ship, so **do not copy their tables into this
+skill** — they go stale. Instead, `fetch_webpage` the relevant URL during the upgrade
+and read the current matrix:
+
+| What you need to resolve | Fetch this URL |
 | --- | --- |
-| 1.8.10 / 1.8.20 | 8.0 / 8.2 |
-| 1.9.24 | 8.10 |
-| 2.0.20 / 2.0.21 | 8.11 / 8.12 |
-| 2.2.0 | 9.0.0 |
-| 2.2.20 | 9.2.0 |
-| 2.2.21 | 9.3.0 |
-| 2.3.0 | 9.4.0 |
+| **AGP ↔ Android API** (max `compileSdk` per AGP; which AGP first supports API N) and AGP ↔ Gradle/JDK minimums | https://developer.android.com/build/releases/about-agp |
+| **AGP release notes** (e.g. first AGP to support API 37 = AGP 9.1.1) | https://developer.android.com/build/releases/agp-9-1-0-release-notes |
+| **Gradle ↔ JDK** (min/max JDK per Gradle) + full compatibility matrix | https://docs.gradle.org/current/userguide/compatibility.html |
+| **Gradle ↔ Kotlin (KGP)** | https://docs.gradle.org/current/userguide/compatibility.html#kotlin |
 
-Key boundary: **Kotlin 1.8.x/1.9.x do NOT support Gradle 9** (KGP 2.2.0 is the first
-Gradle-9-capable release). Prefer the KGP row matching the target Gradle minor (e.g.
-Gradle 9.3.x → KGP 2.2.21). Moving 1.x → 2.x also brings the K2 compiler and
-kotlin-stdlib 2.x — watch for `strictly` stdlib constraints on other libraries.
+Stable boundary facts (safe to rely on — historical, won't regress):
+- **Kotlin 1.8.x/1.9.x do NOT support Gradle 9** — KGP **2.2.0** is the first
+  Gradle-9-capable release (older KGP crashes on the removed `SelfResolvingDependency`).
+- **AGP has a hard minimum Gradle version** — a new AGP will not run on older Gradle.
+- **AGP 9 / Gradle 9 require JDK 17+** to *run the build* (the builder JDK). Keep
+  `jvmTarget`/`sourceCompatibility` at the project's shipped bytecode level (e.g. 1.8);
+  the builder JDK does not change the published bytecode target.
+- **AGP gates the maximum `compileSdk`** — you cannot compile against API N until AGP
+  supports N. Moving Kotlin 1.x → 2.x also brings the K2 compiler and kotlin-stdlib 2.x
+  (watch for `strictly` stdlib constraints on other libraries).
 
 ## Error categorization scheme
 
