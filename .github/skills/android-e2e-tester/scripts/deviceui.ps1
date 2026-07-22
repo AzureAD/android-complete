@@ -7,7 +7,7 @@
 
 .PARAMETER Command
     dump | find-text | tap-text | tap-desc | input-text | wait-text | screenshot |
-    key | finger | finger-status | finger-enroll | current-app | tap-xy
+    key | finger | finger-status | finger-enroll | current-app | tap-xy | unlock
 
 .EXAMPLE
     ./deviceui.ps1 wait-text -Text "Sign in" -TimeoutSec 30
@@ -15,7 +15,8 @@
     ./deviceui.ps1 tap-text -Text "Sign in"
     ./deviceui.ps1 input-text -Text "user@contoso.com"                       # bulk (fast) — try this first
     ./deviceui.ps1 input-text -Text "user@contoso.com" -Clear -CharByChar    # fall back if autofill ate it
-    ./deviceui.ps1 input-text -Text $pw -Clear -CharByChar -Secret          # never echoes the value
+    ./deviceui.ps1 input-text -SecretRef labpw -Clear -CharByChar            # types a stored password, masked
+    ./deviceui.ps1 unlock -SecretRef devicepin                              # enter the lock-screen PIN, masked
     ./deviceui.ps1 key -Text ENTER
     ./deviceui.ps1 finger-status                  # is a fingerprint enrolled?
     ./deviceui.ps1 finger-enroll                  # enroll one on an emulator (or prompt if a real device)
@@ -33,6 +34,10 @@
     input-text options: -Clear empties the focused field first (one adb round-trip); -CharByChar types one
     character at a time (defeats Chrome autofill/passkey overlays that swallow a bulk `input text`);
     -Secret suppresses echoing the value to the transcript (prints length only) — always use it for passwords.
+    -SecretRef <name> resolves a password/PIN from the encrypted store (scripts/secrets.ps1) and types it
+    without ever printing it (implies -Secret) — prefer this over -Text for anything sensitive so the value
+    never appears in the chat. `unlock -SecretRef <name>` enters a device lock-screen PIN the same way.
+    See references/secrets-and-files.md for how the human seeds secrets and drops APKs/files for a run.
     Try bulk `input-text` first (fast); only add -CharByChar if verification shows the value didn't land.
     Fingerprint: `emu finger` only works on EMULATORS. On a real device a fingerprint must be enrolled
     by the user against the physical sensor — `finger-enroll` will print the steps and ask. When a step
@@ -42,11 +47,12 @@
 param(
     [Parameter(Position = 0)]
     [ValidateSet('dump', 'find-text', 'tap-text', 'tap-desc', 'input-text', 'wait-text',
-        'screenshot', 'key', 'finger', 'finger-status', 'finger-enroll', 'current-app', 'tap-xy')]
+        'screenshot', 'key', 'finger', 'finger-status', 'finger-enroll', 'current-app', 'tap-xy', 'unlock')]
     [string]$Command = 'dump',
 
     [string]$Serial,
     [string]$Text,
+    [string]$SecretRef,
     [string]$Then,
     [int]$X,
     [int]$Y,
@@ -152,6 +158,24 @@ function Encode-Input {
     return $s
 }
 
+function Resolve-SecretValue {
+    # Resolve a named secret WITHOUT ever printing it, so passwords / device PINs stay out of the
+    # transcript. Mirrors scripts/secrets.ps1: env var E2E_SECRET_<NAME> first, then the DPAPI file
+    # %USERPROFILE%\.android-e2e-secrets\<name>.sec. Returns plaintext for on-device typing only.
+    param([Parameter(Mandatory)][string]$Name)
+    $envName = 'E2E_SECRET_' + ($Name.ToUpper() -replace '[^A-Z0-9_]', '_')
+    $envVal = [Environment]::GetEnvironmentVariable($envName)
+    if ($envVal) { return $envVal }
+    $p = Join-Path (Join-Path $env:USERPROFILE '.android-e2e-secrets') ("{0}.sec" -f $Name)
+    if (-not (Test-Path $p)) {
+        throw "No secret named '$Name' (env $envName unset and $p missing). Add it with: scripts/secrets.ps1 set -Name $Name"
+    }
+    $ss = ConvertTo-SecureString (Get-Content -Raw -Path $p)   # DPAPI decrypt (per-user/machine)
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($ss)
+    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+}
+
 function Test-IsEmulator {
     # An explicit emulator-XXXX serial is an emulator; otherwise probe the running device.
     if ($Serial) { return ($Serial -match '^emulator-') }
@@ -226,7 +250,25 @@ switch ($Command) {
         Adb shell input tap $X $Y | Out-Null
         Write-Host "Tapped ($X,$Y)"
     }
+    'unlock' {
+        # Wake the screen, reveal the keyguard PIN pad, and enter a PIN to unlock. Prefer -SecretRef
+        # (the PIN is resolved from the encrypted store and never printed); -Pin is fine for a throwaway
+        # emulator PIN. WARNING: a WRONG PIN counts toward the device lockout/Gatekeeper throttle — only
+        # run this with the correct PIN on a physical device (see references/common-blockers.md).
+        $pinVal = if ($SecretRef) { Resolve-SecretValue $SecretRef } else { $Pin }
+        Adb shell input keyevent 224 | Out-Null                 # KEYCODE_WAKEUP
+        Start-Sleep -Milliseconds 300
+        Adb shell input swipe 540 1600 540 500 150 | Out-Null   # swipe up to reveal the PIN pad
+        Start-Sleep -Milliseconds 400
+        Adb shell input text (Encode-Input $pinVal) | Out-Null
+        Adb shell input keyevent 66 | Out-Null                  # ENTER / confirm
+        Write-Host ("Unlock attempted with a {0}-digit PIN." -f $pinVal.Length)
+    }
     'input-text' {
+        # -SecretRef resolves a stored secret (see scripts/secrets.ps1) and types it WITHOUT ever
+        # echoing it -- use it for passwords instead of putting the value in -Text (which would land
+        # in the chat). It implies -Secret (masked output).
+        if ($SecretRef) { $Text = Resolve-SecretValue $SecretRef; $Secret = $true }
         # Optionally clear the focused field first: MOVE_END then a burst of DEL — all in ONE adb call.
         if ($Clear) {
             $clearCodes = @('input', 'keyevent', '123') + (1..80 | ForEach-Object { '67' })

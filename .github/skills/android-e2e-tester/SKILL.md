@@ -37,10 +37,11 @@ All under `scripts/` (PowerShell — the team's cross-platform shell). Run `-?` 
 | `emulator.ps1` | Device pool: emulators **and** real devices | `ensure`, `status`, `list`, `pool`, `list-images`, `create`, `start` |
 | `devicelease.ps1` | Lease a device so concurrent tests don't collide | `acquire`, `heartbeat`, `release`, `list`, `reap` |
 | `appcontrol.ps1` | App build/install/state | `build`, `install`, `launch`, `clear`, `uninstall`, `is-installed`, `grant`, `list-apks` |
-| `deviceui.ps1` | AI-driven UI I/O | `dump`, `wait-text`, `tap-text`, `tap-desc`, `input-text` (`-Clear`, `-CharByChar`), `key`, `finger`, `finger-status`, `finger-enroll`, `screenshot`, `current-app` |
+| `deviceui.ps1` | AI-driven UI I/O | `dump`, `wait-text`, `tap-text`, `tap-desc`, `input-text` (`-Clear`, `-CharByChar`, `-SecretRef`), `unlock`, `key`, `finger`, `finger-status`, `finger-enroll`, `screenshot`, `current-app` |
 | `authlogs.ps1` | Log capture + verdict | `clear`, `scan`, `snapshot`, `grep`, `watch` |
 | `labapi.ps1` | Provision/reset LAB test accounts (EasyAuth via WAM SSO) | `create-user`, `reset`, `enable-policy`, `disable-policy`, `delete-device`, `open` |
 | `report.ps1` | Render the HTML + Markdown test report (mandatory for ADO test cases) | `render` (from a run JSON) |
+| `secrets.ps1` | Encrypted (DPAPI) store so passwords/PINs never hit the chat | `set`, `list`, `test`, `get-masked`, `remove`, `path` |
 
 ## Execution model — run inside a sub-agent, and supervise it
 
@@ -211,19 +212,24 @@ as evidence instead).
 
 **Auto-handle** everything the AI reasonably can: type lab test credentials, tap Next/Sign in/Accept/
 Allow/Yes, pick an account, grant permissions, simulate a fingerprint (`finger`), enter a TOTP if the
-seed is known, set/enter a device PIN. **Do not** print or commit credentials.
+seed is known, set/enter a device PIN. **Do not** print or commit credentials — when the user gives you
+a password or device PIN, take it via the encrypted store and reference it by name (see
+[references/secrets-and-files.md](references/secrets-and-files.md)), never inline.
 
 **Typing into eSTS/WebView credential fields (hard-won).** The email/password pages are a WebView and
 Chrome's autofill/passkey overlay can silently swallow a bulk `input text` (the value lands in the wrong
 field or is dropped, producing "Enter a valid email"). **Try bulk first** (it's fast); only fall back to
 `-CharByChar` if verification shows the value didn't land:
 ```powershell
-./scripts/deviceui.ps1 input-text -Text $upn -Clear -Serial <serial>                      # bulk first (fast)
-./scripts/deviceui.ps1 input-text -Text $upn -Clear -CharByChar -Serial <serial>          # fallback if it didn't land
-./scripts/deviceui.ps1 input-text -Text $pw  -Clear -CharByChar -Secret -Serial <serial>  # password (never echoed)
+./scripts/deviceui.ps1 input-text -Text $upn -Clear -Serial <serial>                       # bulk first (fast)
+./scripts/deviceui.ps1 input-text -Text $upn -Clear -CharByChar -Serial <serial>           # fallback if it didn't land
+./scripts/deviceui.ps1 input-text -SecretRef labpw -Clear -CharByChar -Serial <serial>     # password from the store (never echoed)
 ```
-`-Clear` empties the field first, `-CharByChar` defeats the overlay, `-Secret` keeps the value out of the
-transcript. Dismiss a passkey/"Save password" bottom sheet with `key ESCAPE` before typing if one appears.
+`-Clear` empties the field first, `-CharByChar` defeats the overlay. For the **password**, prefer
+`-SecretRef <name>` (resolves from the encrypted store and implies `-Secret`) so the value never lands
+in a tool call or the transcript — see [references/secrets-and-files.md](references/secrets-and-files.md);
+`-Text $pw -Secret` still works if you already hold the value out-of-band. Dismiss a passkey/"Save
+password" bottom sheet with `key ESCAPE` before typing if one appears.
 See [references/common-blockers.md](references/common-blockers.md).
 
 **Provision / repair the lab account with the LAB API** when the scenario needs a fresh account or the
@@ -338,12 +344,16 @@ Load these as needed (don't preload all):
 | [references/log-signals.md](references/log-signals.md) | Interpreting logcat, success/failure patterns, AADSTS codes, per-flow pass criteria, eSTS correlation |
 | [references/ui-interaction.md](references/ui-interaction.md) | Driving auth screens, AI-vs-human inputs, FLAG_SECURE gotcha, selector strategy |
 | [references/mocking-flights-and-segments.md](references/mocking-flights-and-segments.md) | A flag must be set, a dependency/server data is unavailable, or the flow can't run fully E2E (mock it or test in segments) |
+| [references/secrets-and-files.md](references/secrets-and-files.md) | The user must hand you a password / device PIN / keystore password, or an APK / test file — keep secrets out of the chat (`secrets.ps1`, `-SecretRef`, `unlock`) and use a file drop-folder |
 | [references/troubleshooting.md](references/troubleshooting.md) | Emulator/build/install/uiautomator/broker failures; env-vs-defect triage |
 
 ## Guardrails
 
 - **Never** print, log, or commit real or lab credentials, tokens, or secrets. Type them onto the device
-  only (use `input-text -Secret` so the value never hits the transcript).
+  only — use `input-text -SecretRef <name>` (or `-Text ... -Secret`) so the value never hits the
+  transcript. When the user needs to hand you a password or device PIN, take it via the encrypted store
+  (`secrets.ps1 set`) and reference it by name; for APKs/files use a drop-folder path. See
+  [references/secrets-and-files.md](references/secrets-and-files.md).
 - **Artifacts stay outside the repo** (the run folder). Never commit logs/screenshots/reports.
 - **For an ADO test case, always generate the HTML + Markdown report** (`report.ps1`) on every outcome —
   PASS, FAIL, BLOCKED, or PARTIAL. A run driven from a test case is not "done" until the report exists.
