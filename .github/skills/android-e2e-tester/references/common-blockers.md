@@ -39,6 +39,16 @@ input you can inject programmatically. Choose up front from the test case's step
 > connected physical device on a Cloud PC). If you start on a physical device and hit an unavoidable
 > fingerprint gate, that's the signal to re-run the biometric segment on an emulator.
 
+> **Caveat — the emulator isn't always available.** On some GPU-less hosts the emulator **won't stay up**:
+> the Bluetooth HAL crash-loops and takes `system_server` down repeatedly, so a heavy app (e.g.
+> Authenticator) can't be driven even after it boots. See the boot recipe and the instability signal in
+> [troubleshooting.md](troubleshooting.md#emulator-wont-start-or-boot). If you've exhausted that recipe and
+> it still won't stabilize, then a **biometric-gated step becomes a genuine blocker on this host** — do the
+> non-biometric parts on the physical device, mark the biometric step BLOCKED with evidence, and ask the
+> user (don't burn the whole run fighting the emulator). Also make sure you install the **right ABI**: use
+> the **universal** APK on emulators — a large `arm64-v8a`-only APK can crash install-time dexopt on an
+> `x86_64` image (see [Install failures](troubleshooting.md#install-failures)).
+
 ## Steps that need a fingerprint / biometric / App Lock
 
 `adb emu finger touch <id>` injects a fingerprint **only on an emulator**. A physical device has no adb
@@ -57,8 +67,15 @@ Options, best first:
    (drive it with `tap-text`), then proceed with password-only steps. Do this early if the scenario
    doesn't specifically test App Lock.
 3. **Fall back to a device PIN.** If a keyguard/biometric prompt also accepts a PIN, set a known PIN during
-   setup and enter it with `deviceui.ps1` (many biometric prompts have a "Use PIN" path).
-4. **Physical device + human.** If the scenario *must* run on hardware, pause and ask the user to press the
+   setup and enter it with `deviceui.ps1` (many biometric prompts have a "Use PIN" path). On an **emulator**
+   you can set one deterministically: `adb -s <emu> shell locksettings set-pin 1234`, then satisfy biometric
+   prompts with `adb -s <emu> emu finger touch 1`.
+4. **Probing an unknown PIN on a physical device — don't brute-force.** `adb shell locksettings verify --old <pin>`
+   tests a guess **non-destructively** (it doesn't change anything), but Android's **Gatekeeper throttles
+   after ~5 wrong tries** and too many failures can lock the user out of their own device. Try at most a
+   couple of obvious values, and if they miss, **stop and ask the user for the PIN** — never loop guesses on
+   hardware you don't own.
+5. **Physical device + human.** If the scenario *must* run on hardware, pause and ask the user to press the
    sensor, then resume — see [Genuine blockers](#genuine-blockers-stop-and-ask).
 
 ## Number-match MFA
@@ -120,6 +137,21 @@ MFA-setup "pair your account to the app" deep-links (e.g. from `aka.ms/mfasetup`
 retry, **re-generate** the link/QR from the setup page rather than reusing the old one, or provision a
 fresh user (`labapi.ps1 create-user`).
 
+**Finding a link that isn't in the accessibility tree.** The pairing hyperlink often lives **inside a
+WebView** and does **not** appear as a tappable node in `uiautomator dump`, so `tap-text` can't find it.
+It's rendered in the usual link **blue**, though, so detect it visually and tap by pixel:
+1. `deviceui.ps1 screenshot` the Chrome page (Chrome is **not** FLAG_SECURE, so it captures fine).
+2. Scan the PNG for link-blue pixels (Python + PIL) and tap the centroid of the topmost blue run. A blue-ish
+   test that works well: `b > 120 and (b - r) > 50 and (b - g) > 30 and r < 120`.
+```powershell
+python -c "from PIL import Image; im=Image.open(r'<png>').convert('RGB'); w,h=im.size; px=im.load(); \
+ys=[(x,y) for y in range(0,h) for x in range(0,w) if (lambda r,g,b: b>120 and b-r>50 and b-g>30 and r<120)(*px[x,y])]; \
+print(min(ys,key=lambda p:p[1]) if ys else 'none')"
+# then: deviceui.ps1 tap -X <x> -Y <y>   (coords are in device pixels)
+```
+Remember screenshot coords are **device pixels**; if you scaled the image, scale the tap back up. Once you
+know the link's rough y-band on a given page you can re-tap it directly without re-scanning.
+
 ## Stale account state between runs
 
 A lab account that already completed first-time MFA setup will **skip** the very registration step you
@@ -154,5 +186,8 @@ These can't be produced by the AI — report them and ask the user (see SKILL "W
 | Verify state on FLAG_SECURE screen | ✅ | Either | `uiautomator dump` + XML (screenshot is black) |
 | Session timed out mid-flow | ✅ | Either | re-drive sign-in; set up biometric/PIN before timed segment |
 | Single-use pairing link reused | ✅ | Either | re-generate the link / fresh temp user |
+| Pairing link inside a WebView (not in uiautomator) | ✅ | Either | screenshot → PIL blue-pixel scan → `tap -X -Y` |
+| Emulator won't stay up (BT-HAL / system_server loop) | ⚠️ host-dependent | — | try boot recipe; if unstable, biometric step is a **blocker** on this host |
+| Wrong-ABI APK on emulator (arm64 on x86_64) | ✅ | Emulator | install the **universal** APK; keep arm64 APK for physical |
 | Stale MFA already registered | ✅ | Either | `labapi.ps1 reset -Operation mfa` or new temp user |
 | SMS / phone / hardware-key / CAPTCHA | ❌ | — | **Blocker** — ask the user |

@@ -1,4 +1,4 @@
-# Copyright (c) Microsoft Corporation. All rights reserved.
+﻿# Copyright (c) Microsoft Corporation. All rights reserved.
 <#
 .SYNOPSIS
     Read and drive an Android device/emulator UI via adb + uiautomator so the agent can

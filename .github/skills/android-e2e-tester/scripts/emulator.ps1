@@ -1,4 +1,4 @@
-# Copyright (c) Microsoft Corporation. All rights reserved.
+﻿# Copyright (c) Microsoft Corporation. All rights reserved.
 <#
 .SYNOPSIS
     Android device-pool helper for E2E testing: resolve the SDK, enumerate the device pool

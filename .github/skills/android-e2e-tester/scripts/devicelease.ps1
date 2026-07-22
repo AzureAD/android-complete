@@ -1,4 +1,4 @@
-# Copyright (c) Microsoft Corporation. All rights reserved.
+﻿# Copyright (c) Microsoft Corporation. All rights reserved.
 <#
 .SYNOPSIS
     Lease a device from the pool so concurrent E2E tests don't collide on the same emulator/real

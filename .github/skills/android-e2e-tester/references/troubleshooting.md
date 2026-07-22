@@ -7,6 +7,7 @@
 
 Table of contents:
 - [SDK / tooling not found](#sdk--tooling-not-found)
+- [PowerShell script encoding (UTF-8 BOM)](#powershell-script-encoding-utf-8-bom)
 - [Emulator won't start or boot](#emulator-wont-start-or-boot)
 - [adb device issues](#adb-device-issues)
 - [Build failures](#build-failures)
@@ -54,8 +55,22 @@ Table of contents:
 | Stuck snapshot / corrupted state | `-ColdBoot` (`-no-snapshot-load`) to skip the stale snapshot. |
 | Transient "System UI isn't responding" ANR after boot | `deviceui.ps1 tap-text -Text "Wait"`; not a test failure. |
 | Need it faster / CI | `-NoWindow` (headless) — uiautomator still works. |
+| **Silent crash right after launch with `-gpu host`** | On a **GPU-less host** (Cloud PC/VM/RDP) `-gpu host` can crash the emulator process instantly. Use `-gpu swiftshader_indirect` (software). See recipe below. |
+| **Boot wedges for 20+ min** | An AVD baked with `hw.gpu.enabled=no` **and** low `hw.ramSize` (e.g. `2G`) can hang boot forever. Override on the CLI: `-gpu swiftshader_indirect -memory 4096`. Don't edit the AVD in place — flags win. |
+| **`-no-boot-anim` makes boot look stuck** | With `-no-boot-anim`, `init.svc.bootanim` stays empty, so polling it never flips. Poll `getprop sys.boot_completed` = `1` instead. |
+| **Repeated tombstones / system_server restarts / `Can't find service: <x>`** | The emulator's **Bluetooth HAL** can crash-loop (`hci_backend_aidl.cc:40 initializationComplete`), dragging `system_server` down again and again. On some hosts this makes a heavy app (e.g. Authenticator) impossible to drive. `-feature -Bluetooth` may not stop it. **If it won't stabilize, abandon the emulator and fall back to a physical device** (note the biometric limitation — see [common-blockers.md](common-blockers.md)). |
 | **Everything is slow** (UI, screencap, downloads) | Likely **no host GPU** (Cloud PC / VM / RDP) → software rendering. Run `emulator.ps1 resolve-sdk` to confirm; prefer a **physical device** (`ensure -PreferPhysical`). See [emulator-performance.md](emulator-performance.md). |
 | Emulator not in Android Studio **Running Devices** | The skill starts it standalone; it's still in **Device Manager** (shared AVD home). Start the AVD from Studio and let the skill reuse it. See [emulator-performance.md](emulator-performance.md#android-studio-device-manager--running-devices). |
+
+**Working cold-boot recipe on a GPU-less host** (booted in <2 min in a real run where every other combo
+failed):
+```powershell
+emulator -avd <name> -no-snapshot -wipe-data -gpu swiftshader_indirect -memory 4096 -no-window -no-boot-anim -no-audio
+# then poll: adb -s emulator-5554 shell getprop sys.boot_completed   # wait for '1'
+```
+`-no-snapshot -wipe-data` gives a clean state; `swiftshader_indirect` + `4096` MB avoids the GPU-crash and
+low-RAM-wedge traps; headless trims overhead. WHPX CPU acceleration still applies. If, after this, the
+system is still unstable (see the Bluetooth-HAL row above), stop fighting it — use a physical device.
 
 ## adb device issues
 
@@ -126,6 +141,7 @@ toolchain is missing:
 | `INSTALL_FAILED_VERSION_DOWNGRADE` | Installing older versionCode | Uninstall the newer build first |
 | `INSTALL_FAILED_INSUFFICIENT_STORAGE` | Emulator disk full | Wipe data / create a larger AVD |
 | `INSTALL_FAILED_NO_MATCHING_ABIS` | APK ABI ≠ emulator ABI | Use an `x86_64` system image, or build a universal APK |
+| **App installs but crashes on launch / dexopt kills `system_server`** | A large **arm64-only** APK on an `x86_64` emulator can pass the ABI check (image lists `x86_64,arm64-v8a`) but crash during **install-time dexopt** — you'll see a Watchdog kill, `Broken pipe`, or `Can't find service: package`. Use the **universal** APK (`app-production-universal-release-signed.apk`) on emulators; keep the `arm64-v8a` APK for **physical** devices. The package sometimes still commits — check `adb shell pm path <pkg>`; a reinstall once dexopt has cached often returns `Success`. |
 | `INSTALL_FAILED_USER_RESTRICTED` | Play-protect / user prompt | Use a non-Play-Store `google_apis` image |
 
 ## Signing & redirect-URI mismatch (AADSTS50011)
@@ -201,3 +217,30 @@ Before blaming the code under test, rule out the harness:
   change → **real defect**, hand to the fix loop with the evidence.
 - If unsure, reproduce once more from a clean state (`clear` app, `clear` logcat, cold-boot if needed).
   A failure that reproduces deterministically from clean state is almost certainly a real defect.
+
+## PowerShell script encoding (UTF-8 BOM)
+
+**Symptom:** a skill script (`report.ps1`, `deviceui.ps1`, …) that runs fine under `pwsh` 7 fails to
+**parse** under **Windows PowerShell 5.1** — `ParserError`, "Unexpected token", or garbled characters like
+`â€"` where an em-dash (`—`) should be.
+
+**Cause:** Windows PowerShell 5.1 decodes a `.ps1` that has **no byte-order mark (BOM)** as **Windows-1252**,
+not UTF-8. Any non-ASCII byte (em-dash, arrows `→`, `×`, box-drawing) then mojibakes and can break the
+parser. `pwsh` 7 defaults to UTF-8, so the same file runs there and the bug hides until a 5.1 host runs it.
+
+**Fix:** save scripts as **UTF-8 *with* BOM** (Microsoft's recommended cross-version encoding). All skill
+scripts are stored this way. Idempotent re-encode (only touches files that have non-ASCII and lack a BOM):
+```powershell
+Get-ChildItem .github/skills/android-e2e-tester/scripts/*.ps1 | ForEach-Object {
+  $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+  $hasBom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
+  $nonAscii = $bytes | Where-Object { $_ -gt 0x7F }
+  if ($nonAscii -and -not $hasBom) {
+    [System.IO.File]::WriteAllBytes($_.FullName, ([byte[]](0xEF,0xBB,0xBF)) + $bytes)
+    "BOM added: $($_.Name)"
+  }
+}
+```
+**Verify under both editions:** `powershell -NoProfile -Command "& { . ./scripts/report.ps1 }"` (5.1) and
+the same with `pwsh`. Prefer ASCII in scripts where practical; when you do use non-ASCII, keep the BOM.
+This is a **tooling** bug in the harness, never a defect in the app under test.

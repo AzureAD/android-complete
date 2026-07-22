@@ -1,4 +1,4 @@
-# Copyright (c) Microsoft Corporation. All rights reserved.
+﻿# Copyright (c) Microsoft Corporation. All rights reserved.
 <#
 .SYNOPSIS
     Call the MSID LAB user-manager API (https://labusermanagerapi.azurewebsites.net) to provision and
@@ -6,7 +6,9 @@
     Authentication), so a service token from `az account get-access-token` is rejected with
     consent_required. This script authenticates the way the LAB "URL generator" web app does: it opens
     the endpoint in **headless Edge**, which reuses your existing Entra WAM SSO session, then parses the
-    JSON the endpoint returns.
+    JSON the endpoint returns. If Edge's `--dump-dom` returns 0 bytes (a known Edge 150+ headless
+    regression), it automatically falls back to the **DevTools protocol (CDP)** over a WebSocket to read
+    the response, so provisioning keeps working across Edge versions.
 
 .DESCRIPTION
     Commands (function endpoints return JSON and are parsed automatically):
@@ -69,6 +71,91 @@ function Get-Edge {
     throw "Microsoft Edge not found. Install Edge, or use 'open' and complete the call in your own browser."
 }
 
+function Get-JsonPayload {
+    # Pull the first JSON object/array out of either a DOM string (-IsHtml) or plain innerText.
+    param([string]$Content, [switch]$IsHtml)
+    if ([string]::IsNullOrWhiteSpace($Content)) { return $null }
+    $payload = $null
+    if ($IsHtml) {
+        # Prefer a <pre> block (text/plain and application/json render inside <pre>).
+        $m = [regex]::Match($Content, '<pre[^>]*>(.*?)</pre>', 'Singleline, IgnoreCase')
+        if ($m.Success) { $payload = [System.Net.WebUtility]::HtmlDecode(($m.Groups[1].Value -replace '<[^>]+>', '')) }
+        if (-not $payload) {
+            $text = [System.Net.WebUtility]::HtmlDecode(([regex]::Replace($Content, '<[^>]+>', ' ')))
+            $jm = [regex]::Match($text, '(\{.*\}|\[.*\])', 'Singleline')
+            if ($jm.Success) { $payload = $jm.Value }
+        }
+    }
+    else {
+        # Plain text (e.g. CDP document.body.innerText): grab the JSON object/array directly.
+        $jm = [regex]::Match($Content, '(\{.*\}|\[.*\])', 'Singleline')
+        if ($jm.Success) { $payload = $jm.Value }
+    }
+    return $payload
+}
+
+function Invoke-CdpEval {
+    # Evaluate a JS expression in a page via a one-shot DevTools (CDP) WebSocket; returns the string value.
+    # Works on Windows PowerShell 5.1+ and PowerShell 7 (System.Net.WebSockets.ClientWebSocket).
+    param([string]$WsUrl, [string]$Expr)
+    $ws = New-Object System.Net.WebSockets.ClientWebSocket
+    $ct = [System.Threading.CancellationToken]::None
+    try {
+        $ws.ConnectAsync([Uri]$WsUrl, $ct).Wait()
+        $req = (@{ id = 1; method = 'Runtime.evaluate'; params = @{ expression = $Expr; returnByValue = $true } } | ConvertTo-Json -Compress)
+        $buf = [System.Text.Encoding]::UTF8.GetBytes($req)
+        $ws.SendAsync([System.ArraySegment[byte]]::new($buf), [System.Net.WebSockets.WebSocketMessageType]::Text, $true, $ct).Wait()
+        $rbuf = New-Object byte[] 131072
+        $sb = New-Object System.Text.StringBuilder
+        do {
+            $r = $ws.ReceiveAsync([System.ArraySegment[byte]]::new($rbuf), $ct); $r.Wait()
+            [void]$sb.Append([System.Text.Encoding]::UTF8.GetString($rbuf, 0, $r.Result.Count))
+        } while (-not $r.Result.EndOfMessage)
+        $reply = $sb.ToString() | ConvertFrom-Json
+        return [string]$reply.result.result.value
+    }
+    finally { try { $ws.Dispose() } catch {} }
+}
+
+function Invoke-LabApiCdp {
+    # Fallback when Edge `--dump-dom` returns 0 bytes (a known Edge 150+ headless regression): drive
+    # headless Edge over the DevTools protocol and read document.body.innerText. A dedicated profile
+    # still gets Entra SSO via the OS WAM broker, so this stays non-interactive after the first consent.
+    param([string]$Endpoint)
+    $edge = Get-Edge
+    $prof = if ($Fresh) { Join-Path $env:TEMP ("labapi_cdp_" + [guid]::NewGuid().ToString('N')) }
+    else { Join-Path $env:TEMP 'labapi_edge_cdp_profile' }
+    $port = Get-Random -Minimum 9300 -Maximum 9599
+    $proc = Start-Process -FilePath $edge -PassThru -WindowStyle Hidden -ArgumentList @(
+        '--headless=new', '--disable-gpu', '--disable-sync',
+        "--remote-debugging-port=$port", "--user-data-dir=$prof",
+        '--no-first-run', '--no-default-browser-check', $Endpoint)
+    try {
+        $deadline = (Get-Date).AddSeconds([Math]::Max(12, $TimeoutSec))
+        $wsUrl = $null
+        while ((Get-Date) -lt $deadline -and -not $wsUrl) {
+            Start-Sleep -Milliseconds 400
+            try { $targets = Invoke-RestMethod "http://127.0.0.1:$port/json/list" -TimeoutSec 3 } catch { continue }
+            # Only the real content page (http/https); skip edge:// dialogs (e.g. sync-confirmation).
+            $page = $targets | Where-Object { $_.type -eq 'page' -and $_.url -like 'http*' } | Select-Object -First 1
+            if ($page) { $wsUrl = $page.webSocketDebuggerUrl }
+        }
+        if (-not $wsUrl) { return '' }
+        $text = ''
+        while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 500
+            try { $text = Invoke-CdpEval -WsUrl $wsUrl -Expr 'document.body.innerText' } catch { $text = '' }
+            if ($text -match '[\{\[]') { break }                                  # JSON payload arrived
+            if ($text -match 'AADSTS|Sign in|Pick an account|Enter password') { break }  # stuck on interactive auth
+        }
+        return $text
+    }
+    finally {
+        try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+        if ($Fresh) { Remove-Item $prof -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 function Invoke-LabApi {
     param([string]$Endpoint)
     $edge = Get-Edge
@@ -87,23 +174,25 @@ function Invoke-LabApi {
         Remove-Item $dom -ErrorAction SilentlyContinue
         if ($Fresh) { Remove-Item $profile -Recurse -Force -ErrorAction SilentlyContinue }
     }
-    if ($Raw) { return [pscustomobject]@{ Raw = $html; Json = $null } }
 
-    # 1) Prefer a <pre> block (text/plain and application/json render inside <pre>).
-    $payload = $null
-    $m = [regex]::Match($html, '<pre[^>]*>(.*?)</pre>', 'Singleline, IgnoreCase')
-    if ($m.Success) { $payload = [System.Net.WebUtility]::HtmlDecode(($m.Groups[1].Value -replace '<[^>]+>', '')) }
-    # 2) Fallback: first balanced-looking JSON object/array in the decoded body text.
+    $payload = Get-JsonPayload -Content $html -IsHtml
+    $probe = $html
+    # Edge 150+ headless `--dump-dom` can return 0 bytes. If the DOM came back empty (or yielded no
+    # JSON), retry over the DevTools protocol, which is unaffected by that regression.
     if (-not $payload) {
-        $text = [System.Net.WebUtility]::HtmlDecode(([regex]::Replace($html, '<[^>]+>', ' ')))
-        $jm = [regex]::Match($text, '(\{.*\}|\[.*\])', 'Singleline')
-        if ($jm.Success) { $payload = $jm.Value }
-    }
-    if (-not $payload) {
-        if ($html -match 'AADSTS|Sign in|login\.microsoftonline|consent') {
-            throw "LAB API call did not return data — Edge appears to need an interactive sign-in/consent. Run '.\labapi.ps1 open -Url `"$Endpoint`"' once in a visible browser to establish the session, then retry."
+        $cdpText = Invoke-LabApiCdp -Endpoint $Endpoint
+        if (-not [string]::IsNullOrWhiteSpace($cdpText)) {
+            $probe = $cdpText
+            $payload = Get-JsonPayload -Content $cdpText
         }
-        throw "Could not extract a JSON payload from the LAB API response. Re-run with -Raw to inspect the DOM."
+    }
+
+    if ($Raw) { return [pscustomobject]@{ Raw = $probe; Json = $null } }
+    if (-not $payload) {
+        if ($probe -match 'AADSTS|Sign in|login\.microsoftonline|consent') {
+            throw "LAB API call did not return data - Edge appears to need an interactive sign-in/consent. Run '.\labapi.ps1 open -Url `"$Endpoint`"' once in a visible browser to establish the session, then retry."
+        }
+        throw "Could not extract a JSON payload from the LAB API response (dump-dom was empty and the CDP fallback found no JSON). Re-run with -Raw to inspect, or use '.\labapi.ps1 open -Url `"$Endpoint`"'."
     }
     $json = $null
     try { $json = $payload | ConvertFrom-Json } catch { }

@@ -29,6 +29,15 @@ in a visible browser to seed the session:
 ./scripts/labapi.ps1 open -Url "https://labusermanagerapi.azurewebsites.net/api/CreateTempUserID4SLab2?usertype=GlobalMFA"
 ```
 
+> **Edge `--dump-dom` regression (Edge 150+).** Newer headless Edge can return **0 bytes** for
+> `--dump-dom` (and even `--version` prints nothing), which silently broke provisioning. `labapi.ps1`
+> now **auto-falls back to the DevTools protocol (CDP)**: it relaunches Edge with
+> `--remote-debugging-port`, finds the real `http(s)` page target (skipping `edge://` dialogs), opens a
+> `System.Net.WebSockets.ClientWebSocket`, and reads `document.body.innerText` via `Runtime.evaluate`.
+> This needs no Node/npm and works on Windows PowerShell 5.1+ and PowerShell 7. You don't do anything —
+> if `--dump-dom` is empty the script switches automatically. If you ever need to debug it, `-Raw` prints
+> whatever raw text the (dump-dom **or** CDP) path captured.
+
 > This is a **harness auth workaround**, not a code path under test. It only works on a machine where the
 > operator is interactively signed in to Edge with an entitled account.
 

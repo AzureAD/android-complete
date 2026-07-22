@@ -69,6 +69,17 @@ When you must use the emulator (no device available), these help — but won't b
   overhead, especially over RDP.
 - **Use x86_64 images on x86 hosts.** ARM images on an x86 host run under slow translation. (On a physical
   ARM phone, native arm64 is fine — build the matching ABI.)
+- **Install the matching APK ABI.** On an `x86_64` emulator, prefer a **universal** APK
+  (`app-production-universal-release-signed.apk`). A large **`arm64-v8a`-only** APK can pass the ABI check
+  (the image lists `x86_64,arm64-v8a`) yet **crash install-time dexopt** — a Watchdog kill / `Broken pipe` /
+  `Can't find service: package`. Keep the arm64 APK for **physical** devices. Details in
+  [troubleshooting.md](troubleshooting.md#install-failures).
+- **Know when to abandon the emulator.** On some GPU-less hosts the emulator boots but stays **unstable** —
+  the Bluetooth HAL crash-loops (`hci_backend_aidl.cc:40 initializationComplete`) and repeatedly restarts
+  `system_server`, so a heavy app can't be driven. `-feature -Bluetooth` may not fix it. Once you've tried the
+  [cold-boot recipe](troubleshooting.md#emulator-wont-start-or-boot) and it still won't settle, **switch to a
+  physical device** rather than burning time — accept that a biometric-gated step then becomes a blocker on
+  that host (see [common-blockers.md](common-blockers.md#decision-emulator-vs-physical-device)).
 - **Raise timeouts, don't fight slowness.** On a slow host, prefer longer `wait-text` / boot / install
   timeouts and poll for completion (e.g. `is-installed` in a loop) instead of fixed sleeps, so a slow-but-
   correct step isn't misread as a failure.
