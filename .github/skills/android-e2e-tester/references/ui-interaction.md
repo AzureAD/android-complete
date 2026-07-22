@@ -12,6 +12,10 @@ Table of contents:
 Drive the UI with `scripts/deviceui.ps1`. The goal: perform every input a human tester *could*
 reasonably do, automatically — and stop to ask only when an input genuinely cannot be produced by the AI.
 
+> **See also:** [common-blockers.md](common-blockers.md) for recurring hiccups and the emulator-vs-device
+> decision (fingerprint/App-Lock, number-match, session timeouts, autofill overlay), and
+> [run-speed.md](run-speed.md) for the fast driving pattern (poll instead of fixed sleeps; batch per screen).
+
 ## Interaction loop
 
 For each step:
@@ -36,8 +40,8 @@ pick among duplicates). When text is empty (icon-only buttons), use `tap-desc`. 
 | **App first-run / runtime permissions** | Tap `Allow` / `While using the app` / `Continue`; or pre-grant with `appcontrol.ps1 grant`. |
 | **Test app main screen** | Tap the acquire-token control (e.g. `Acquire Token`, `Sign in`, `AcquireTokenSilent`). Set scopes/authority fields first if the scenario needs them. |
 | **Broker account picker** | If the target account is listed, `tap-text` it (SSO). If `Add account` / `Use another account`, tap it to start interactive sign-in. |
-| **eSTS email page** | `input-text` the username, then `tap-text "Next"`. |
-| **eSTS password page** | `input-text` the password, then `tap-text "Sign in"`. Never log the value. |
+| **eSTS email page** | `input-text` the username (add `-Clear -CharByChar` if autofill steals bulk input), then `tap-text "Next"`. |
+| **eSTS password page** | `input-text -Secret` the password (add `-Clear -CharByChar`), then `tap-text "Sign in"`. Never log the value. Verify by whether the page advances (the field text often doesn't reflect back). See [common-blockers.md](common-blockers.md#chrome-autofill--passkey-overlay-steals-input). |
 | **Consent / permissions requested** | `tap-text "Accept"` (safe for test apps/accounts). |
 | **"Stay signed in?" / KMSI** | `tap-text "Yes"` (or `No` if the scenario needs a fresh session). |
 | **"Approve sign in request" (push MFA)** | Usually a **blocker** — see below, unless a TOTP/seed is available. |

@@ -1,13 +1,14 @@
 ---
-name: android-emulator-e2e-tester
-description: "Execute and iterate end-to-end (E2E) tests for an in-development Android Auth feature (MSAL, Broker, Common, ADAL, Authenticator) on an Android emulator or a connected real device. Builds a device pool from emulators and any adb-connected hardware, finds or creates a suitable AVD (or reuses a running emulator / real device), leases the device so concurrent tests don't collide, builds/installs the right test app, drives the UI, and verifies via logcat. Delegates the actual run to a sub-agent (same model as the parent) and waits for its verdict. Use when asked to 'test this feature on the emulator', 'run the E2E test', 'verify the feature end to end', 'does this work on a device', or 'try the sign-in flow' — or automatically once a feature finishes development and is ready for E2E testing. Discovers what to test from user-provided steps, an ADO Test Case work item, a known test-steps file, the session's design spec, or the implementation diff — feature-specific steps live in the test case, not the skill. Auto-performs inputs the AI can handle (typing lab test credentials, tapping buttons, granting permissions, simulating a fingerprint), mocks unavailable dependencies and sets feature flags via temporary code changes when needed, and asks the user when the intent is unclear or a step is a real blocker (push MFA, hardware, missing credentials, implementation gaps). Checks logs to decide pass/fail and drives a fix-and-retest loop until it passes."
+name: android-e2e-tester
+description: "Execute and iterate end-to-end (E2E) tests for an in-development Android Auth feature (MSAL, Broker, Common, ADAL, Authenticator) on an Android emulator or a connected real device. Builds a device pool from emulators and any adb-connected hardware, finds or creates a suitable AVD (or reuses a running emulator / real device), leases the device so concurrent tests don't collide, builds/installs the right test app, drives the UI, and verifies via logcat. Delegates the actual run to a sub-agent (same model as the parent) and waits for its verdict. Use when asked to 'run the E2E test', 'test this feature end to end', 'verify the feature on a device or emulator', 'does this work on a device', 'run this ADO test case', or 'try the sign-in flow' — or automatically once a feature finishes development and is ready for E2E testing. Discovers what to test from user-provided steps, an ADO Test Case work item, a known test-steps file, the session's design spec, or the implementation diff — feature-specific steps live in the test case, not the skill. Auto-performs inputs the AI can handle (typing lab test credentials, tapping buttons, granting permissions, simulating a fingerprint, provisioning lab accounts via the LAB API), mocks unavailable dependencies and sets feature flags via temporary code changes when needed, and asks the user when the intent is unclear or a step is a real blocker (push MFA, hardware, missing credentials, implementation gaps). Checks logs to decide pass/fail, drives a fix-and-retest loop until it passes, and — for ADO test cases — always writes an HTML + Markdown test report at the end. Prefers an emulator when a step needs an injectable fingerprint/biometric (App Lock, number-match with biometric gate)."
 ---
 
-# Android Emulator E2E Tester
+# Android E2E Tester
 
-Take an in-development Android Auth feature and prove it works on a real emulator: provision the
-device, deploy the app, run the scenario (auto-handling every input the AI reasonably can), read the
+Take an in-development Android Auth feature and prove it works on a real device or an emulator: provision
+the device, deploy the app, run the scenario (auto-handling every input the AI reasonably can), read the
 logs to decide pass/fail, and loop fix-and-retest until it passes — or stop and ask when genuinely blocked.
+For a test case driven from Azure DevOps, always finish by writing an HTML + Markdown test report.
 
 ## When this runs
 
@@ -36,8 +37,10 @@ All under `scripts/` (PowerShell — the team's cross-platform shell). Run `-?` 
 | `emulator.ps1` | Device pool: emulators **and** real devices | `ensure`, `status`, `list`, `pool`, `list-images`, `create`, `start` |
 | `devicelease.ps1` | Lease a device so concurrent tests don't collide | `acquire`, `heartbeat`, `release`, `list`, `reap` |
 | `appcontrol.ps1` | App build/install/state | `build`, `install`, `launch`, `clear`, `uninstall`, `is-installed`, `grant`, `list-apks` |
-| `deviceui.ps1` | AI-driven UI I/O | `dump`, `wait-text`, `tap-text`, `tap-desc`, `input-text`, `key`, `finger`, `finger-status`, `finger-enroll`, `screenshot`, `current-app` |
+| `deviceui.ps1` | AI-driven UI I/O | `dump`, `wait-text`, `tap-text`, `tap-desc`, `input-text` (`-Clear`, `-CharByChar`), `key`, `finger`, `finger-status`, `finger-enroll`, `screenshot`, `current-app` |
 | `authlogs.ps1` | Log capture + verdict | `clear`, `scan`, `snapshot`, `grep`, `watch` |
+| `labapi.ps1` | Provision/reset LAB test accounts (EasyAuth via WAM SSO) | `create-user`, `reset`, `enable-policy`, `disable-policy`, `delete-device`, `open` |
+| `report.ps1` | Render the HTML + Markdown test report (mandatory for ADO test cases) | `render` (from a run JSON) |
 
 ## Execution model — run inside a sub-agent, and supervise it
 
@@ -204,6 +207,26 @@ expected element → act (`tap-text` / `input-text` / `key` / `finger`) → re-`
 Allow/Yes, pick an account, grant permissions, simulate a fingerprint (`finger`), enter a TOTP if the
 seed is known, set/enter a device PIN. **Do not** print or commit credentials.
 
+**Typing into eSTS/WebView credential fields (hard-won).** The email/password pages are a WebView and
+Chrome's autofill/passkey overlay silently swallows a bulk `input text` (the value lands in the wrong
+field or is dropped, producing "Enter a valid email"). Type reliably:
+```powershell
+./scripts/deviceui.ps1 input-text -Text $upn -Clear -CharByChar -Serial <serial>          # username
+./scripts/deviceui.ps1 input-text -Text $pw  -Clear -CharByChar -Secret -Serial <serial>  # password (never echoed)
+```
+`-Clear` empties the field first, `-CharByChar` defeats the overlay, `-Secret` keeps the value out of the
+transcript. Dismiss a passkey/"Save password" bottom sheet with `key ESCAPE` before typing if one appears.
+See [references/common-blockers.md](references/common-blockers.md).
+
+**Provision / repair the lab account with the LAB API** when the scenario needs a fresh account or the
+account state is stuck (e.g. MFA already registered from a previous run, a CA policy blocking the step):
+```powershell
+./scripts/labapi.ps1 create-user   -UserType GlobalMFA                  # temp user, auto-deletes in 60 min
+./scripts/labapi.ps1 reset         -Upn $upn -Operation mfa             # clear stale MFA registration
+./scripts/labapi.ps1 disable-policy -Upn $upn -Policy GlobalMFA          # unblock a CA-gated segment
+```
+See [references/lab-api.md](references/lab-api.md) for all endpoints, usertypes, and the auth workaround.
+
 **Set flags & mock what's missing (don't fake a pass).** If the scenario needs a feature flag on, or a
 step depends on data/a dependency you can't produce naturally (a server API not deployed yet, a
 collaborator app you can't drive), set the flag and mock the missing piece — including **temporary code
@@ -255,6 +278,21 @@ Summarize: scenario tested, target app/emulator, final verdict, iterations taken
 (success signal + correlation_id, or the blocker), and links to the run-folder artifacts (logs,
 screenshots). If blocked, state exactly what you need from the user to proceed.
 
+**For an ADO Test Case, a written test report is MANDATORY — always generate it, on every outcome
+(PASS / FAIL / BLOCKED / PARTIAL), not only on success.** Render both an HTML and a Markdown report into
+the run folder with `report.ps1`:
+```powershell
+# Build a run JSON (verdict, device/app/account metadata, per-step action/expected/result, evidence,
+# blockers, artifact paths — UPN only, never a password), then render:
+./scripts/report.ps1 render -In <run>\run.json    # writes TestReport.html + TestReport.md next to it
+```
+The step list should mirror the ADO test case's steps, and each step's **result** should be judged
+against that step's **expected result**. Include the ADO ids (`testCaseId`/`planId`/`suiteId`) and a link
+so the report ties back to the test plan. See [references/test-reporting.md](references/test-reporting.md)
+for the JSON schema and a worked example. (For an automation-test run, also attach the
+`build/reports/androidTests/` output.) Present the verdict and the report paths to the user; optionally
+publish the outcome back to the ADO Test Run.
+
 **Release the device lease** so the next test can use it (do this even on failure/blocked):
 ```powershell
 ./scripts/devicelease.ps1 release -Owner $AgentId -Serial $serial
@@ -284,6 +322,10 @@ Load these as needed (don't preload all):
 | File | Read it when |
 |---|---|
 | [references/app-and-module-map.md](references/app-and-module-map.md) | Choosing/deploying the test app, package discovery, broker pairing, credentials, emulator requirements |
+| [references/lab-api.md](references/lab-api.md) | Provisioning/resetting a lab test account, LAB API endpoints/usertypes/policies, the EasyAuth auth workaround, `labapi.ps1` |
+| [references/common-blockers.md](references/common-blockers.md) | Recurring hiccups & when to switch to an emulator (fingerprint/App-Lock, number-match MFA, session timeouts, FLAG_SECURE, autofill/passkey overlay, screenshot corruption) |
+| [references/test-reporting.md](references/test-reporting.md) | Writing the mandatory ADO test report — run-JSON schema, `report.ps1`, worked example |
+| [references/run-speed.md](references/run-speed.md) | The run feels slow; understanding per-step latency sources and how to shorten them |
 | [references/emulator-performance.md](references/emulator-performance.md) | The run is slow, you're on a Cloud PC/VM/RDP (software rendering), or you want the emulator to show in Android Studio's Device Manager / Running Devices |
 | [references/log-signals.md](references/log-signals.md) | Interpreting logcat, success/failure patterns, AADSTS codes, per-flow pass criteria, eSTS correlation |
 | [references/ui-interaction.md](references/ui-interaction.md) | Driving auth screens, AI-vs-human inputs, FLAG_SECURE gotcha, selector strategy |
@@ -292,8 +334,14 @@ Load these as needed (don't preload all):
 
 ## Guardrails
 
-- **Never** print, log, or commit real or lab credentials, tokens, or secrets. Type them onto the device only.
-- **Artifacts stay outside the repo** (the run folder). Never commit logs/screenshots.
+- **Never** print, log, or commit real or lab credentials, tokens, or secrets. Type them onto the device
+  only (use `input-text -Secret` so the value never hits the transcript).
+- **Artifacts stay outside the repo** (the run folder). Never commit logs/screenshots/reports.
+- **For an ADO test case, always generate the HTML + Markdown report** (`report.ps1`) on every outcome —
+  PASS, FAIL, BLOCKED, or PARTIAL. A run driven from a test case is not "done" until the report exists.
+- **Prefer an emulator when a step needs an injectable fingerprint/biometric** (App Lock, biometric-gated
+  number-match). `adb emu finger touch` works only on emulators; a physical device needs a human at the
+  sensor. See [references/common-blockers.md](references/common-blockers.md).
 - **When delegating to a sub-agent, wait for its verdict** before reporting or ending the turn; restart it
   if it hangs and the test isn't done, terminate it once the result is in. Never surface "done" without the
   sub-agent's PASS/FAIL/BLOCKED evidence.

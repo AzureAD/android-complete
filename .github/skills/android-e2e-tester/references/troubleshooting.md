@@ -1,5 +1,10 @@
 # Troubleshooting — Environment, Build, Install, and Test Failures
 
+> For **in-flow UI hiccups** (fingerprint/App-Lock, number-match MFA, session timeouts, autofill overlay,
+> FLAG_SECURE black screenshots, single-use pairing links) see
+> [common-blockers.md](common-blockers.md). This file covers **environment/build/install/tooling**
+> failures — the things that go wrong *before or around* the flow rather than *inside* it.
+
 Table of contents:
 - [SDK / tooling not found](#sdk--tooling-not-found)
 - [Emulator won't start or boot](#emulator-wont-start-or-boot)

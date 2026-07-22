@@ -13,6 +13,8 @@
     ./deviceui.ps1 wait-text -Text "Sign in" -TimeoutSec 30
     ./deviceui.ps1 tap-text -Text "Sign in"
     ./deviceui.ps1 input-text -Text "user@contoso.com"
+    ./deviceui.ps1 input-text -Text "user@contoso.com" -Clear -CharByChar   # defeat autofill/passkey overlays
+    ./deviceui.ps1 input-text -Text $pw -Clear -CharByChar -Secret          # never echoes the value
     ./deviceui.ps1 key -Text ENTER
     ./deviceui.ps1 finger-status                  # is a fingerprint enrolled?
     ./deviceui.ps1 finger-enroll                  # enroll one on an emulator (or prompt if a real device)
@@ -23,8 +25,12 @@
 .NOTES
     Text matching is case-insensitive substring by default. Use -Exact for equality.
     Always re-`dump` after an action; the UI tree changes between steps.
+    input-text options: -Clear empties the focused field first (one adb round-trip); -CharByChar types one
+    character at a time (defeats Chrome autofill/passkey overlays that swallow a bulk `input text`);
+    -Secret suppresses echoing the value to the transcript (prints length only) — always use it for passwords.
     Fingerprint: `emu finger` only works on EMULATORS. On a real device a fingerprint must be enrolled
-    by the user against the physical sensor — `finger-enroll` will print the steps and ask.
+    by the user against the physical sensor — `finger-enroll` will print the steps and ask. When a step
+    needs an injectable fingerprint/biometric (App Lock, biometric-gated number-match), prefer an emulator.
 #>
 [CmdletBinding()]
 param(
@@ -41,7 +47,11 @@ param(
     [switch]$Exact,
     [int]$TimeoutSec = 20,
     [string]$Pin = '1234',
-    [string]$Out
+    [string]$Out,
+    [switch]$Clear,
+    [switch]$CharByChar,
+    [int]$PerCharDelayMs = 60,
+    [switch]$Secret
 )
 
 $ErrorActionPreference = 'Stop'
@@ -185,9 +195,26 @@ switch ($Command) {
         Write-Host "Tapped ($X,$Y)"
     }
     'input-text' {
-        $enc = Encode-Input $Text
-        Adb shell input text $enc | Out-Null
-        Write-Host "Typed: $Text"
+        # Optionally clear the focused field first: MOVE_END then a burst of DEL — all in ONE adb call.
+        if ($Clear) {
+            $clearCodes = @('input', 'keyevent', '123') + (1..80 | ForEach-Object { '67' })
+            Adb shell $clearCodes | Out-Null
+        }
+        if ($CharByChar) {
+            # Type one character at a time. Chrome autofill / passkey overlays swallow a bulk `input text`
+            # (the whole string lands in an unexpected field or is dropped); per-char typing lands reliably.
+            foreach ($ch in $Text.ToCharArray()) {
+                Adb shell input text (Encode-Input ([string]$ch)) | Out-Null
+                if ($PerCharDelayMs -gt 0) { Start-Sleep -Milliseconds $PerCharDelayMs }
+            }
+            if ($Secret) { Write-Host "Typed (char-by-char): [$($Text.Length) chars]" }
+            else { Write-Host "Typed (char-by-char): $Text" }
+        }
+        else {
+            Adb shell input text (Encode-Input $Text) | Out-Null
+            if ($Secret) { Write-Host "Typed: [$($Text.Length) chars]" }
+            else { Write-Host "Typed: $Text" }
+        }
     }
     'wait-text' {
         $deadline = (Get-Date).AddSeconds($TimeoutSec)

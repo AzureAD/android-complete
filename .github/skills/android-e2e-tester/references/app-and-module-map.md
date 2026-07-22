@@ -109,10 +109,14 @@ Brokered auth requires **a calling app + a broker app**, both installed:
 - Interactive tests (Mode B) need a test account. Preferred sources, in order:
   1. A lab account the user provides in the session.
   2. A credential the automation harness/Lab API exposes.
+- **Provision or repair accounts on demand with `scripts/labapi.ps1`** (`create-user`, `reset`,
+  `enable-policy`/`disable-policy`, `delete-device`). Full endpoint list, usertypes/policies, the EasyAuth
+  auth workaround, and entitlements are in **[lab-api.md](lab-api.md)**.
 - **Blocker to raise with the user** if none is available, or if the scenario needs a real MSA/consumer
-  account, a specific tenant/CA policy, or a federated account that the AI cannot provision.
-- **Never** hardcode, print, or commit real credentials. Type them into the device only; never echo them
-  into logs or the transcript.
+  account, a specific tenant/CA policy, or a federated account that the AI cannot provision (try
+  `labapi.ps1 disable-policy` first if it's a lab CA policy).
+- **Never** hardcode, print, or commit real credentials. Type them into the device only (`input-text
+  -Secret`); never echo them into logs or the transcript.
 
 ## Emulator / real-device requirements per feature
 
