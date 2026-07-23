@@ -1,9 +1,11 @@
 ﻿# Copyright (c) Microsoft Corporation. All rights reserved.
 <#
 .SYNOPSIS
-    Render a standard E2E test report (TestReport.html + TestReport.md) from a run-metadata JSON file.
-    For ADO test cases this report is MANDATORY (Phase 7) — generate it on every outcome (PASS / FAIL /
-    BLOCKED / PARTIAL), not only on success.
+    Render a standard E2E test report (TestReport.html + TestReport.md) from a run-metadata JSON file, or
+    (with `summary`) an overall multi-case run report (SUMMARY.html + SUMMARY.md) across a folder of
+    per-case runs. For ADO test cases the per-case report is MANDATORY (Phase 7) — generate it on every
+    outcome (PASS / FAIL / BLOCKED / PARTIAL), not only on success. When a batch of test cases is run,
+    also generate the `summary` report over the batch's run folder.
 
 .DESCRIPTION
     Feed it a JSON file describing the run; it writes TestReport.html and TestReport.md next to it (or to
@@ -32,22 +34,145 @@
 .EXAMPLE
     ./report.ps1 render -In C:\runs\aad-mfa\run.json
     ./report.ps1 render -In C:\runs\aad-mfa\run.json -OutDir C:\runs\aad-mfa
+    ./report.ps1 summary -In C:\runs\wpj-suite-20260723   # overall report across every run.json under the folder
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Position = 0)][ValidateSet('render')][string]$Command = 'render',
+    [Parameter(Position = 0)][ValidateSet('render', 'summary')][string]$Command = 'render',
     [Parameter(Mandatory)][string]$In,
-    [string]$OutDir
+    [string]$OutDir,
+    [string]$Title
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Val($o, $name) { if ($o -and ($o.PSObject.Properties.Name -contains $name)) { return $o.$name } return $null }
+function He([string]$s) { if ($null -eq $s) { return '' } [System.Net.WebUtility]::HtmlEncode([string]$s) }
+
+# ======================= summary: overall report across many per-case runs =======================
+# Scans a batch/run folder for every per-case run.json and emits SUMMARY.html + SUMMARY.md with a
+# per-case verdict table (linked to each TestReport.html) and overall counts. Used whenever more than
+# one ADO test case is run in a single session (see SKILL Phase 7 / "Running multiple test cases").
+if ($Command -eq 'summary') {
+    if (-not (Test-Path $In)) { throw "Summary root not found: $In" }
+    $rootItem = Get-Item $In
+    $root = if ($rootItem.PSIsContainer) { (Resolve-Path $In).Path } else { Split-Path -Parent (Resolve-Path $In).Path }
+    if (-not $OutDir) { $OutDir = $root }
+    if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Force -Path $OutDir | Out-Null }
+    $OutDirFull = (Resolve-Path $OutDir).Path
+    if (-not $Title) { $Title = 'E2E Test Run Summary' }
+
+    $runFiles = Get-ChildItem -Path $root -Recurse -Filter 'run.json' -File -ErrorAction SilentlyContinue | Sort-Object FullName
+    if (-not $runFiles) { throw "No run.json files found under $root" }
+
+    $cases = @()
+    foreach ($rf in $runFiles) {
+        try { $r = Get-Content $rf.FullName -Raw | ConvertFrom-Json } catch { Write-Warning "Skipping unreadable $($rf.FullName)"; continue }
+        $dir = Split-Path -Parent $rf.FullName
+        $htmlFull = Join-Path $dir 'TestReport.html'
+        $rel = ''
+        if (Test-Path $htmlFull) {
+            if ($htmlFull.StartsWith($OutDirFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $rel = $htmlFull.Substring($OutDirFull.Length).TrimStart('\', '/')
+            }
+            else { $rel = $htmlFull }
+        }
+        $adoObj = Val $r 'ado'; $devObj = Val $r 'device'
+        $cases += [pscustomobject]@{
+            tcId     = (Val $adoObj 'testCaseId')
+            title    = [string](Val $r 'title')
+            verdict  = $(if (Val $r 'verdict') { ([string](Val $r 'verdict')).ToUpper() } else { 'UNKNOWN' })
+            note     = [string](Val $r 'verdictNote')
+            device   = $(if ($devObj) { [string](Val $devObj 'serial') } else { '' })
+            provider = [string](Val $r 'provider')
+            report   = $rel
+        }
+    }
+
+    $vColor = @{ PASS = '#107c10'; FAIL = '#d13438'; BLOCKED = '#c19c00'; PARTIAL = '#c19c00'; UNKNOWN = '#605e5c' }
+    $order = @{ FAIL = 0; BLOCKED = 1; PARTIAL = 2; PASS = 3; UNKNOWN = 4 }
+    $cases = @($cases | Sort-Object @{ Expression = { $o = $order[$_.verdict]; if ($null -eq $o) { 5 } else { $o } } }, @{ Expression = { [string]$_.tcId } })
+
+    $counts = [ordered]@{ PASS = 0; FAIL = 0; BLOCKED = 0; PARTIAL = 0; UNKNOWN = 0 }
+    foreach ($c in $cases) { $v = $c.verdict; if (-not $counts.Contains($v)) { $v = 'UNKNOWN' }; $counts[$v]++ }
+    $total = @($cases).Count
+    $overall = if ($counts['FAIL'] -gt 0) { 'FAIL' } elseif ($counts['PASS'] -eq $total) { 'PASS' } else { 'PARTIAL' }
+    $oc = $vColor[$overall]; if (-not $oc) { $oc = '#605e5c' }
+    $countsLine = (@('PASS', 'FAIL', 'BLOCKED', 'PARTIAL', 'UNKNOWN') | Where-Object { $counts[$_] -gt 0 } | ForEach-Object { "$_ $($counts[$_])" }) -join ' · '
+    $plural = if ($total -ne 1) { 's' } else { '' }
+
+    # ---- Markdown ----
+    $sm = New-Object System.Text.StringBuilder
+    [void]$sm.AppendLine("# $Title")
+    [void]$sm.AppendLine("")
+    [void]$sm.AppendLine("**Overall: $overall** — $total case$plural · $countsLine")
+    [void]$sm.AppendLine("")
+    [void]$sm.AppendLine("Generated $(Get-Date -Format 'yyyy-MM-dd HH:mm')")
+    [void]$sm.AppendLine("")
+    [void]$sm.AppendLine("| Test Case | Title | Verdict | Device | Report | Note |")
+    [void]$sm.AppendLine("|---|---|---|---|---|---|")
+    foreach ($c in $cases) {
+        $tc = if ($c.tcId) { "#$($c.tcId)" } else { '' }
+        $ti = ([string]$c.title) -replace '\|', '\|'
+        $nt = ([string]$c.note) -replace '\|', '\|'
+        $rp = if ($c.report) { "[report]($(($c.report) -replace '\\','/'))" } else { '' }
+        [void]$sm.AppendLine("| $tc | $ti | $($c.verdict) | $($c.device) | $rp | $nt |")
+    }
+    [void]$sm.AppendLine("")
+    $smPath = Join-Path $OutDirFull 'SUMMARY.md'
+    $sm.ToString() | Out-File -FilePath $smPath -Encoding utf8
+
+    # ---- HTML ----
+    $srows = ''
+    foreach ($c in $cases) {
+        $rc = $vColor[$c.verdict]; if (-not $rc) { $rc = '#605e5c' }
+        $tc = if ($c.tcId) { "#$(He ([string]$c.tcId))" } else { '' }
+        $rp = if ($c.report) { "<a href='$(He (($c.report) -replace '\\','/'))'>report</a>" } else { '' }
+        $srows += "<tr><td>$tc</td><td>$(He $c.title)</td><td><b style='color:$rc'>$(He $c.verdict)</b></td><td>$(He $c.device)</td><td>$rp</td><td>$(He $c.note)</td></tr>"
+    }
+    $chips = ''
+    foreach ($k in $counts.Keys) { if ($counts[$k] -gt 0) { $cc = $vColor[$k]; $chips += "<span style='display:inline-block;background:$cc;color:#fff;border-radius:12px;padding:3px 10px;margin-right:6px;font-size:13px'>$k $($counts[$k])</span>" } }
+
+    $shtml = @"
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>$(He $Title)</title>
+<style>
+ body{font-family:Segoe UI,Arial,sans-serif;margin:0;background:#faf9f8;color:#201f1e}
+ .wrap{max-width:1100px;margin:0 auto;padding:24px}
+ h1{font-size:22px;margin:0 0 8px}
+ .verdict{display:inline-block;color:#fff;background:$oc;font-weight:700;padding:6px 14px;border-radius:14px;font-size:14px;margin-right:10px}
+ table{border-collapse:collapse;width:100%;font-size:13px;margin-top:12px;background:#fff}
+ th,td{border:1px solid #edebe9;padding:7px 10px;text-align:left;vertical-align:top}
+ th{background:#f3f2f1}
+ tbody tr:nth-child(even){background:#faf9f8}
+ a{color:#0067b8}
+ .foot{color:#a19f9d;font-size:12px;margin-top:28px}
+</style></head><body><div class="wrap">
+<h1>$(He $Title)</h1>
+<div><span class="verdict">$overall</span>$chips</div>
+<p style="color:#605e5c">$total case$plural · generated $(Get-Date -Format 'yyyy-MM-dd HH:mm')</p>
+<table><thead><tr><th>Test Case</th><th>Title</th><th>Verdict</th><th>Device</th><th>Report</th><th>Note</th></tr></thead>
+<tbody>$srows</tbody></table>
+<p class="foot">Generated by the android-e2e-tester skill · $(Get-Date -Format 'yyyy-MM-dd HH:mm')</p>
+</div></body></html>
+"@
+    $shtmlPath = Join-Path $OutDirFull 'SUMMARY.html'
+    $shtml | Out-File -FilePath $shtmlPath -Encoding utf8
+
+    Write-Host "Wrote:"
+    Write-Host "  $shtmlPath"
+    Write-Host "  $smPath"
+    Write-Host "Overall: $overall ($countsLine)"
+    return
+}
+
+# ======================= render: single test-case report =======================
 if (-not (Test-Path $In)) { throw "Run JSON not found: $In" }
 $run = Get-Content $In -Raw | ConvertFrom-Json
 if (-not $OutDir) { $OutDir = Split-Path (Resolve-Path $In) -Parent }
 if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Force -Path $OutDir | Out-Null }
 
-function Val($o, $name) { if ($o -and ($o.PSObject.Properties.Name -contains $name)) { return $o.$name } return $null }
-function He([string]$s) { if ($null -eq $s) { return '' } [System.Net.WebUtility]::HtmlEncode([string]$s) }
 $verdict = ([string](Val $run 'verdict')).ToUpper(); if (-not $verdict) { $verdict = 'UNKNOWN' }
 $vColor = @{ PASS = '#107c10'; FAIL = '#d13438'; BLOCKED = '#c19c00'; PARTIAL = '#c19c00'; UNKNOWN = '#605e5c' }
 $vc = $vColor[$verdict]; if (-not $vc) { $vc = '#605e5c' }

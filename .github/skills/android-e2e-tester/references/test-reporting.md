@@ -11,6 +11,7 @@ Table of contents:
 - [Run-JSON schema](#run-json-schema)
 - [Worked example](#worked-example)
 - [Rendering the report](#rendering-the-report)
+- [Suite report — multiple test cases](#suite-report--multiple-test-cases)
 - [Rules](#rules)
 
 ## Why mandatory
@@ -97,9 +98,38 @@ the account **UPN only**.
 Optionally target a different folder with `-OutDir`. Reports live in the **run folder outside the repo** —
 never commit them.
 
+## Suite report — multiple test cases
+
+When a **batch** of test cases runs in one session (a suite, a test-point list, several ids), generate an
+**overall run summary** in addition to each per-case `TestReport`. It rolls every case up into one
+`SUMMARY.html` + `SUMMARY.md` so the user sees a single verdict and a per-case table instead of hunting
+through N folders.
+
+**Layout it expects.** Put each case in its own subfolder of one batch folder, each with its own `run.json`
+(and rendered `TestReport.html`):
+```
+android-e2e-runs\<suite>-<yyyyMMdd_HHmmss>\
+  tc1561136\  run.json  TestReport.html  TestReport.md  iter1\...
+  tc833550\   run.json  TestReport.html  TestReport.md  iter1\...
+  ...
+```
+
+**Render it** — point `summary` at the batch folder (it recurses for every `run.json`):
+```powershell
+./scripts/report.ps1 summary -In C:\Users\<you>\android-e2e-runs\<suite>-<ts> -Title "<suite name>"
+# → writes SUMMARY.html + SUMMARY.md into that folder
+```
+The summary reads each case's `title`, `verdict`, `verdictNote`, `ado.testCaseId`, and `device.serial`, and
+links each row to that case's `TestReport.html`. Cases are ordered **problems-first** (FAIL → BLOCKED →
+PARTIAL → PASS). The **overall** verdict is `FAIL` if any case failed, `PASS` if all passed, else `PARTIAL`,
+shown with per-verdict counts. No extra schema is needed — it reuses the per-case run-JSON above; render the
+per-case reports first (or at least drop each case's `run.json`), then run `summary`.
+
 ## Rules
 
 - **Mandatory for ADO cases, every outcome.** No report ⇒ the run isn't done.
+- **A batch of ADO cases also needs the overall `summary`** — render each per-case report, then
+  `report.ps1 summary -In <batchFolder>` for the roll-up.
 - **UPN only, never the password/token** in the JSON or report.
 - Distinguish **environment constraint** from **product defect** in `verdictNote`/`blockers` — a BLOCKED
   due to a physical-device biometric gate is not a bug; say so and point at the emulator workaround.

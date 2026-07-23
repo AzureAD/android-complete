@@ -3,6 +3,7 @@
 Table of contents:
 - [Pick the test surface from the feature](#pick-the-test-surface-from-the-feature)
 - [Module → path → typical package](#module--path--typical-package)
+- [Known provided APKs (staged test builds)](#known-provided-apks)
 - [Discover the exact package & launch activity at runtime](#discover-the-exact-package--launch-activity-at-runtime)
 - [Two E2E execution modes](#two-e2e-execution-modes)
 - [Broker pairing rules](#broker-pairing-rules)
@@ -48,6 +49,31 @@ vary by build variant (e.g. `localDebug` often adds a `.local` suffix).
 
 Real production brokers used in some E2E: Microsoft Authenticator `com.azure.authenticator`,
 Intune Company Portal `com.microsoft.windowsintune.companyportal`, Link to Windows `com.microsoft.appmanager`.
+
+## Known provided APKs
+
+<a id="known-provided-apks"></a>
+When the user hands you a folder of APKs (commonly `…\Downloads\ECS` and `…\Downloads\Local`, or
+`…\Downloads\APKs\…`), map them by **filename** so you install the right thing without re-deriving it each
+run. `-signed` = a production-signed release build; `-dist-debug` / `-local-debug` = the test/automation
+harness builds. Always confirm the real `applicationId` after install (next section) — filenames are a
+convenience, not a contract.
+
+| Provided APK filename (with/without `.apk`) | App | Package (verify at runtime) | Role in a test |
+|---|---|---|---|
+| `app-production-universal-release-signed` | **Microsoft Authenticator (app under test)** | `com.azure.authenticator` | The build being tested; **universal** ABI — safe on emulators too. |
+| `app-production-arm64-v8a-release-signed` | Microsoft Authenticator (arm64 only) | `com.azure.authenticator` | Same app, arm64-only — use on a **physical** arm64 device; can fail dexopt on an x86_64 emulator (prefer the universal one there). |
+| `com.microsoft.windowsintune.companyportal-signed` | **Intune Company Portal** | `com.microsoft.windowsintune.companyportal` | Broker / MDM companion for WPJ / device-registration / MAM-CA flows. |
+| `company-portal` | Intune Company Portal | `com.microsoft.windowsintune.companyportal` | Same app, alternate filename. |
+| `teams` | Microsoft Teams | `com.microsoft.teams` | 1P OneAuth client (some brokered/SSO scenarios). |
+| `msalTestApp-dist-debug` | MSAL test app | `com.msft.identity.client.sample(.local)` | Calling client for MSAL / brokered flows (Mode B). |
+| `adalTestApp-dist-debug` | ADAL test app | `com.microsoft.aad.adal.testapp` | Calling client for legacy ADAL flows. |
+| `brokerHost-local-debug` | Broker Host test app | `com.microsoft.identity.testuserapp` | Drives broker APIs directly (Get Accounts / device state). |
+
+**ECS vs Local folders.** When given both an `ECS\` and a `Local\` folder, test the **ECS** build by default
+(the ECS-flighted candidate) unless a specific test case says it is **Local only**. Install the app-under-test
+from the folder the case targets; pull any *other* required app (a broker the case needs but didn't stage,
+Teams, Chrome) from that same folder if present, else the Play Store.
 
 ## Discover the exact package & launch activity at runtime
 

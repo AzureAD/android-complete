@@ -8,6 +8,7 @@ endpoints/parameters is the LAB **URL generator** web app:
 Table of contents:
 - [Authentication (why a normal token fails)](#authentication-why-a-normal-token-fails)
 - [Endpoints](#endpoints)
+- [Account policy (prefer fresh ID4SLAB2 temp users)](#account-policy-prefer-fresh-id4slab2-temp-users)
 - [`labapi.ps1` usage](#labapips1-usage)
 - [Response shape (create-user)](#response-shape-create-user)
 - [When to use which endpoint](#when-to-use-which-endpoint)
@@ -66,6 +67,29 @@ Base URL: `https://labusermanagerapi.azurewebsites.net/api/`
 The two KeyVault items return **portal deep-links to a secret**, not a JSON API — they need an interactive
 browser (`labapi.ps1 open`), and reading the secret needs the DevKV entitlement below.
 
+## Account policy (prefer fresh ID4SLAB2 temp users)
+
+**Default to a brand-new ID4SLAB2 temp user for every case** — even when a test case names a specific
+**MSIDLAB4** (or other legacy-lab) account. MSIDLAB4 is being deprecated, its durable accounts carry state
+from prior runs, and reusing one account across cases is exactly what produces the "already registered, step
+skipped" false pass. `create-user` (→ `CreateTempUserID4SLab2`) hands you a clean, isolated account that
+self-deletes in ~60 min, so there is nothing to tear down.
+
+Map the **capability** the case wanted onto an ID4SLAB2 `usertype` rather than reusing the named account:
+
+| Case asks for… | Use instead |
+|---|---|
+| MSIDLAB4 MAM-CA account | `create-user -UserType MAMCA` |
+| MSIDLAB4 MDM-CA account | `create-user -UserType MDMCA` |
+| A plain/basic Entra user (e.g. old `…?usertype=Basic` endpoint) | `create-user -UserType Basic` |
+| Global-MFA user | `create-user -UserType GlobalMFA` |
+| FIDO / passkey user | `create-user -UserType FIDOBasic` / `FIDOMDM` |
+
+Provision it **just before** the run (the ~60-min TTL), and pair it with a fresh app install for a truly
+independent case. Only fall back to a specific named durable account when the case genuinely needs *that
+identity's* pre-provisioned data (a seeded mailbox, a long-lived group membership) a temp user can't have —
+then read its password with `fetch-password`, and **don't** mutate or tear it down.
+
 ## `labapi.ps1` usage
 
 ```powershell
@@ -82,7 +106,7 @@ browser (`labapi.ps1 open`), and reading the secret needs the DevKV entitlement 
 ./scripts/labapi.ps1 disable-policy -Upn "Locked_xxx@ID4SLab2.onmicrosoft.com" -Policy GlobalMFA
 ./scripts/labapi.ps1 enable-policy  -Upn "Locked_xxx@ID4SLab2.onmicrosoft.com" -Policy GlobalMFA
 
-# Remove a device registration (e.g. clean up after a device-registration test):
+# Remove a stale device registration at the START of a run if a leftover Entra device would interfere:
 ./scripts/labapi.ps1 delete-device  -Upn "Locked_xxx@ID4SLab2.onmicrosoft.com" -DeviceId <objectId>
 
 # Open a KeyVault deep-link (test-account list / tenant password) in a visible browser:
@@ -160,12 +184,16 @@ stops.
 ## When to use which endpoint
 
 - **Need a clean account** → `create-user`. Remember it self-destructs in ~60 min; provision it just
-  before the run, not at the start of a long setup.
+  before the run, not at the start of a long setup. Prefer this over any named MSIDLAB4 account (see
+  [Account policy](#account-policy-prefer-fresh-id4slab2-temp-users)).
 - **A first-time-registration flow already registered on a prior attempt** (so the app skips the very step
   you want to test) → `reset -Operation mfa` to clear MFA, or provision a brand-new user.
 - **A CA policy blocks a segment you're not testing** (e.g. you want to test token acquisition but MFA
   keeps interrupting) → `disable-policy`, run the segment, then `enable-policy` to restore state.
-- **Device-registration test left a stale device** → `delete-device` to clean up so the next run starts fresh.
+- **A device-registration test left a stale device** and the *next* run needs a clean slate → optionally
+  `delete-device` **at the start of the next run**. Per the clean-state policy you do **not** tear down
+  registrations at the end of a case — a fresh app install + fresh account already isolates the next run;
+  use `delete-device` only if a lingering Entra device object would actually interfere.
 - **You need the exact UPNs of the durable, pre-created accounts** (not temp) → open the **List of Test
   Accounts** KeyVault link for your team; get the tenant password via `fetch-password` (CLI, no paste) or
   the **Fetch Password for Tenant** deep-link.

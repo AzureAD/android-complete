@@ -15,6 +15,7 @@ Table of contents:
 - [Screenshot corruption via redirection](#screenshot-corruption-via-redirection)
 - [Single-use pairing / setup links](#single-use-pairing--setup-links)
 - [Stale account state between runs](#stale-account-state-between-runs)
+- [Doing it yourself in System Settings](#doing-it-yourself-in-system-settings)
 - [Genuine blockers (stop and ask)](#genuine-blockers-stop-and-ask)
 - [Quick reference table](#quick-reference-table)
 
@@ -191,6 +192,50 @@ want to test, making the run look like it "passed" without exercising anything. 
 ```
 See [lab-api.md](lab-api.md).
 
+**Clean state comes from a fresh install, at the START of a case — not teardown at the end.** `pm clear`
+does **not** remove work-account entries from AccountManager or an existing broker/WPJ registration; only
+**uninstalling** the app does. So each case's clean slate = **uninstall → reinstall** the app-under-test (and
+any broker it uses) as the first step. Do **not** try to delete accounts/registrations after a case — leave
+them in place for the next run's uninstall (or a human) to clear. Combined with a **fresh temp account per
+case**, this keeps runs independent without brittle post-run cleanup. Device-clock or policy state you changed
+mid-run should still be restored so it doesn't leak into the next case.
+
+## Doing it yourself in System Settings
+
+Some test steps have **no adb command** — advance the device clock, delete a user certificate, toggle a
+system setting, switch language, add/remove an account. That does **not** make them blockers: a human tester
+just opens **Settings** and taps through, and so should you. Drive the Settings app with `deviceui.ps1` the
+same way as any other screen (`dump` → `tap-text`/`tap-desc` → `input-text`) **before** you ever mark a step
+BLOCKED.
+
+Open Settings (or jump straight to a sub-screen via its intent action):
+```powershell
+adb -s <serial> shell am start -a android.settings.SETTINGS                 # top-level Settings
+adb -s <serial> shell am start -a android.settings.DATE_SETTINGS            # Date & time
+adb -s <serial> shell am start -a android.settings.SECURITY_SETTINGS        # Security (credential/cert mgmt is under here)
+adb -s <serial> shell am start -a android.settings.LOCALE_SETTINGS          # Language
+# then: deviceui.ps1 dump / tap-text / tap-desc to drive the screen
+```
+
+**Worked example — advance the clock >1h** (a common token-expiry step). Moving the *device wall clock* needs
+**no root** (only `adb shell date` does):
+1. `am start -a android.settings.DATE_SETTINGS` (Samsung path: Settings → **General management → Date and time**).
+2. `dump` to confirm state, then `tap-text "Automatic date and time"` to turn it **off**.
+3. `tap-text "Set date"` / `tap-text "Set time"`, set a value >1h ahead, confirm with **Done/OK**.
+4. Do the app action you were timing, then restore automatic time afterward if later steps need real time.
+
+**When it *is* still a blocker.** Only fall back to BLOCKED when the surface is genuinely undrivable:
+- A **secure/native system dialog** uiautomator can't read or act on — Samsung **Knox** certificate install,
+  the **keyguard** credential prompt, a **biometric** sensor, a PIN pad on a FLAG_SECURE screen.
+- An action that truly needs **root** — e.g. expiring an app's *internal* monotonic cached-token timer
+  (`SystemClock.elapsedRealtime`), which the wall clock doesn't affect; that belongs on a rooted device or
+  emulator, not a retail phone. (Advancing the *wall clock* above is **not** this case.)
+- A step that would leave **partial/destructive state** on a device you don't own (e.g. a real MDM
+  enrollment) with no clean rollback — pause and ask.
+
+Capture the exact screen (XML dump / screenshot) as evidence and mark just that step BLOCKED, per
+[Genuine blockers](#genuine-blockers-stop-and-ask).
+
 ## Genuine blockers (stop and ask)
 
 These can't be produced by the AI — report them and ask the user (see SKILL "When to ask the user"):
@@ -219,6 +264,8 @@ These can't be produced by the AI — report them and ask the user (see SKILL "W
 | Emulator won't stay up (BT-HAL / system_server loop) | ⚠️ host-dependent | — | try boot recipe; if unstable, biometric step is a **blocker** on this host |
 | Wrong-ABI APK on emulator (arm64 on x86_64) | ✅ | Emulator | install the **universal** APK; keep arm64 APK for physical |
 | Stale MFA already registered | ✅ | Either | `labapi.ps1 reset -Operation mfa` or new temp user |
+| System-settings step (advance clock, delete cert, toggle) | ✅ drive Settings UI · ❌ only if secure/root | Either | `am start -a android.settings.*` → `dump`/`tap-text`; block only on Knox/keyguard/root |
+| Clean slate for a new case | ✅ | Either | **uninstall+reinstall** app-under-test (`pm clear` keeps work accounts/registration); don't tear down after |
 | SMS / phone / hardware-key / CAPTCHA | ❌ | — | **Blocker** — ask the user |
 | Multiple devices / same model attached | ✅ | Either | unique adb serial each; always pass `-Serial`; `adb devices -l` to pick; `secrets.ps1 set-device-pin` to store per-device PIN |
 | Unlock the lock screen with a PIN | ✅ | Either | `secrets.ps1 set-device-pin` once, then `unlock -Serial <s>` (auto-uses saved PIN) — verifies + **stops after 3** tries |

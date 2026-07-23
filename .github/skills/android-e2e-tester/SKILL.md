@@ -1,6 +1,6 @@
 ---
 name: android-e2e-tester
-description: "Execute and iterate end-to-end (E2E) tests for an in-development Android Auth feature (MSAL, Broker, Common, ADAL, Authenticator) on an Android emulator or a connected real device. Builds a device pool from emulators and any adb-connected hardware, finds or creates a suitable AVD (or reuses a running emulator / real device), leases the device so concurrent tests don't collide, builds/installs the right test app, drives the UI, and verifies via logcat. Delegates the actual run to a sub-agent (same model as the parent) and waits for its verdict. Use when asked to 'run the E2E test', 'test this feature end to end', 'verify the feature on a device or emulator', 'does this work on a device', 'run this ADO test case', or 'try the sign-in flow' — or automatically once a feature finishes development and is ready for E2E testing. Discovers what to test from user-provided steps, an ADO Test Case work item, a known test-steps file, the session's design spec, or the implementation diff — feature-specific steps live in the test case, not the skill. Auto-performs inputs the AI can handle (typing lab test credentials, tapping buttons, granting permissions, simulating a fingerprint, provisioning lab accounts via the LAB API), mocks unavailable dependencies and sets feature flags via temporary code changes when needed, and asks the user when the intent is unclear or a step is a real blocker (push MFA, hardware, missing credentials, implementation gaps). Checks logs to decide pass/fail, drives a fix-and-retest loop until it passes, and — for ADO test cases — always writes an HTML + Markdown test report at the end. Prefers an emulator when a step needs an injectable fingerprint/biometric (App Lock, number-match with biometric gate)."
+description: "Execute and iterate end-to-end (E2E) tests for an in-development Android Auth feature (MSAL, Broker, Common, ADAL, Authenticator) on an Android emulator or a connected real device. Builds a device pool from emulators and any adb-connected hardware, finds or creates a suitable AVD (or reuses a running emulator / real device), leases the device so concurrent tests don't collide, builds/installs the right test app, drives the UI, and verifies via logcat. Delegates the actual run to a sub-agent (same model as the parent) and waits for its verdict; when several test cases and several devices are available, splits the cases across devices and runs them in parallel (one sub-agent per case), then writes a per-case report plus an overall run summary. Use when asked to 'run the E2E test', 'test this feature end to end', 'verify the feature on a device or emulator', 'does this work on a device', 'run this ADO test case', or 'try the sign-in flow' — or automatically once a feature finishes development and is ready for E2E testing. Discovers what to test from user-provided steps, an ADO Test Case work item, a known test-steps file, the session's design spec, or the implementation diff — feature-specific steps live in the test case, not the skill. Auto-performs inputs the AI can handle (typing lab test credentials, tapping buttons, granting permissions, simulating a fingerprint, provisioning lab accounts via the LAB API), mocks unavailable dependencies and sets feature flags via temporary code changes when needed, and asks the user when the intent is unclear or a step is a real blocker (push MFA, hardware, missing credentials, implementation gaps). Checks logs to decide pass/fail, drives a fix-and-retest loop until it passes, and — for ADO test cases — always writes an HTML + Markdown test report at the end. Prefers an emulator when a step needs an injectable fingerprint/biometric (App Lock, number-match with biometric gate)."
 ---
 
 # Android E2E Tester
@@ -40,7 +40,7 @@ All under `scripts/` (PowerShell — the team's cross-platform shell). Run `-?` 
 | `deviceui.ps1` | AI-driven UI I/O | `dump`, `wait-text`, `tap-text`, `tap-desc`, `input-text` (`-Clear`, `-CharByChar`, `-SecretRef`), `unlock`, `key`, `finger`, `finger-status`, `finger-enroll`, `screenshot`, `current-app` |
 | `authlogs.ps1` | Log capture + verdict | `clear`, `scan`, `snapshot`, `grep`, `watch` |
 | `labapi.ps1` | Provision/reset LAB test accounts (EasyAuth via WAM SSO); fetch tenant passwords from Key Vault | `create-user`, `reset`, `enable-policy`, `disable-policy`, `delete-device`, `open`, `fetch-password` |
-| `report.ps1` | Render the HTML + Markdown test report (mandatory for ADO test cases) | `render` (from a run JSON) |
+| `report.ps1` | Render the HTML + Markdown test report (mandatory for ADO test cases); `summary` = overall multi-case run report | `render` (a per-case run JSON), `summary` (a batch/run folder) |
 | `secrets.ps1` | Encrypted (DPAPI) store so passwords/PINs never hit the chat | `set`, `set-device-pin`, `list`, `test`, `get-masked`, `remove`, `path` |
 
 ## Execution model — run inside a sub-agent, and supervise it
@@ -73,6 +73,36 @@ performs.
 
 If the harness can't spawn a sub-agent (or you're already the deepest agent), run the phases inline — but
 keep the same discipline: **don't declare done until the verdict is in, and don't loop forever on a hang.**
+
+## Running multiple test cases (batch) — split across devices, run in parallel
+
+When asked to run **more than one** test case (a suite, a list of test points, several ids), treat it as a
+**batch**, not a serial slog:
+
+1. **Enumerate the work and the devices.** Resolve each case's scenario (Phase 1 per case) and list every
+   free device in the pool (`emulator.ps1 pool` / `devicelease.ps1 list`). Count how many you can drive in
+   parallel (respect the lease pool cap, `-MaxPoolSize`).
+2. **Fan out one sub-agent per test case, capped at the device count.** Give each case its own sub-agent
+   (same model as the parent) with a **self-contained** prompt: that case's scenario + success criterion,
+   the app/module + which APKs to install, credential rules (type on device, never print), its run-folder
+   subpath, and "finish with a PASS/FAIL/BLOCKED verdict + evidence". **Each sub-agent leases its OWN
+   device** with its own agent id as owner (`devicelease.ps1 acquire -Owner <caseAgentId>`) so no two lanes
+   touch the same device. If there are **more cases than devices**, each device is a **lane** that runs its
+   queue of cases one after another; the parent keeps every lane busy until the queue drains.
+3. **One shared batch folder, one subfolder per case.** Use a single
+   `…\android-e2e-runs\<suite>-<yyyyMMdd_HHmmss>\` with a `tc<id>\` subfolder per case (each holding that
+   case's `run.json` + `TestReport.html/.md` + artifacts). That layout is exactly what the suite report scans.
+4. **The parent supervises all lanes** with the same watchdog discipline as a single run (progress +
+   `heartbeat` per phase; restart a hung lane; stop a finished one; cap restarts). **Don't end the turn until
+   every case has a verdict.**
+5. **Aggregate into an overall report.** After all cases finish, render the **suite summary** over the batch
+   folder (Phase 7): `./scripts/report.ps1 summary -In <suiteFolder> -Title "<suite>"` → `SUMMARY.html` +
+   `SUMMARY.md` (per-case verdict table linked to each report, plus overall counts). Present the overall
+   verdict and the per-case breakdown — not just the last case.
+
+**Only one device available?** Run the cases **serially** in a single lane (still clean-state per case, still
+a per-case report each, still a final suite summary). **Independence is mandatory:** every case starts from a
+clean state (Phase 3) and must not rely on another case's leftover accounts/registrations.
 
 ## Workflow
 
@@ -184,13 +214,22 @@ $serial = (./scripts/devicelease.ps1 acquire -Owner $AgentId -Feature <feature> 
 2. Prefer an APK Android Studio already built (`appcontrol.ps1 list-apks`); otherwise build
    (`appcontrol.ps1 build -Module <:module>`). Gradle builds need the repo's Maven creds — if they fail
    with 401, that's an environment blocker for the user.
-3. Install, and for a clean run reset state:
+3. **Start every test case from a clean state (unless told otherwise): uninstall, then freshly install all
+   test apps.** A `pm clear` alone is **not** a clean slate — it leaves AccountManager work-account entries
+   and broker/WPJ registration behind; only **uninstalling** the app removes those. So for each app the case
+   needs (app-under-test + any broker/companion), uninstall any existing copy first, then install the
+   provided/built APK:
    ```powershell
-   ./scripts/appcontrol.ps1 install -Module :msalTestApp -Serial <serial>
-   ./scripts/appcontrol.ps1 clear   -Package <pkg> -Serial <serial>   # clean slate
-   ./scripts/appcontrol.ps1 launch  -Package <pkg> -Serial <serial>
+   ./scripts/appcontrol.ps1 uninstall -Package <pkg> -Serial <serial>            # ok if "not installed"
+   ./scripts/appcontrol.ps1 install   -Module :msalTestApp -Serial <serial>      # or -Apk <path> for a provided APK
+   ./scripts/appcontrol.ps1 launch    -Package <pkg> -Serial <serial>
    ```
-   Verify the exact package/activity at runtime (the map shows how) — don't trust hardcoded IDs.
+   Verify the exact package/activity at runtime (the map shows how) — don't trust hardcoded IDs. Known
+   provided-APK filenames (e.g. `app-production-universal-release-signed` = the **Authenticator** under test;
+   `com.microsoft.windowsintune.companyportal-signed` = **Company Portal**) are in
+   [references/app-and-module-map.md](references/app-and-module-map.md#known-provided-apks). **Do not tear
+   down accounts/registrations at the *end* of a case** — leaving them is intended (the *next* run's
+   uninstall clears them, or a tester handles them); see Phase 7.
 
 ### Phase 4 — Execute the scenario (auto-handle inputs)
 
@@ -256,13 +295,30 @@ account state is stuck (e.g. MFA already registered from a previous run, a CA po
 ./scripts/labapi.ps1 disable-policy -Upn $upn -Policy GlobalMFA          # unblock a CA-gated segment
 ./scripts/labapi.ps1 fetch-password -TestTenant ID4SLAB2 -IntoSecret labpw  # pull tenant pw from Key Vault (no paste)
 ```
-See [references/lab-api.md](references/lab-api.md) for all endpoints, usertypes, and the auth workaround.
+**Account policy — prefer fresh ID4SLAB2 temp users, one per case.** Provision a **new temp user for each
+test case** (`create-user` makes an ID4SLab2 user that auto-deletes in ~60 min) instead of reusing one across
+cases — **even when a test case names a fixed MSIDLAB4 account** (that lab is being deprecated): create the
+matching `-UserType` instead (e.g. `MAMCA`, `MDMCA`, `Basic`, `GlobalMFA`). Reuse a specific named/durable
+account only when the case genuinely requires that exact identity, or the user tells you to.
+
+See [references/lab-api.md](references/lab-api.md) for all endpoints, usertypes, the account policy, and the auth workaround.
 
 **Set flags & mock what's missing (don't fake a pass).** If the scenario needs a feature flag on, or a
 step depends on data/a dependency you can't produce naturally (a server API not deployed yet, a
 collaborator app you can't drive), set the flag and mock the missing piece — including **temporary code
 changes** that you revert afterward. If a middle piece genuinely can't be mocked, test the flow in
 **segments**. See [references/mocking-flights-and-segments.md](references/mocking-flights-and-segments.md).
+
+**Do system-settings / on-device actions yourself before calling something blocked.** Some steps have no
+adb command (advance the device clock, delete a user certificate, toggle a system setting, change the
+language). Don't jump straight to BLOCKED — **open the relevant Settings screen and drive it with
+`deviceui.ps1` (`dump` → `tap-text`/`tap-desc` → `input-text`) exactly like a human tester would.** E.g. to
+advance the clock: Settings → *Date & time* (Samsung: *General management → Date and time*) → turn **off**
+automatic date/time → set it manually. Only fall back to a blocker when the surface itself is genuinely
+undrivable — a **secure/native system dialog** (Knox cert install, keyguard credential prompt, biometric
+sensor) uiautomator can't read/act on, or an action that truly needs **root** (e.g. expiring an app's
+*internal* monotonic cached-token timer on a non-rooted retail device — moving the wall clock won't affect
+it). See [references/common-blockers.md](references/common-blockers.md#doing-it-yourself-in-system-settings).
 
 **Stop and ask the user** only for genuine blockers (see the consolidated list below).
 
@@ -324,6 +380,19 @@ for the JSON schema and a worked example. (For an automation-test run, also atta
 `build/reports/androidTests/` output.) Present the verdict and the report paths to the user; optionally
 publish the outcome back to the ADO Test Run.
 
+**When you ran a batch (multiple ADO cases), also generate the overall run summary** — in addition to each
+per-case report — so the user gets one roll-up verdict:
+```powershell
+./scripts/report.ps1 summary -In <suiteFolder> -Title "<suite>"   # SUMMARY.html + SUMMARY.md: per-case table + counts
+```
+
+**Do not tear down accounts or registrations after a case (unless told otherwise).** Leave temp users,
+device/WPJ registrations, and installed apps as they are — the *next* run's clean-state step (Phase 3
+uninstall+reinstall) removes them, or a tester handles them manually. This keeps a failed/blocked case's
+state available for inspection and avoids racing another lane (temp lab users self-destruct in ~60 min
+anyway). The only required end-of-case teardown is **releasing the device lease** (below) and **reverting any
+temporary code/flag/mocks** (Guardrails).
+
 **Release the device lease** so the next test can use it (do this even on failure/blocked):
 ```powershell
 ./scripts/devicelease.ps1 release -Owner $AgentId -Serial $serial
@@ -333,8 +402,10 @@ publish the outcome back to the ADO Test Run.
 
 Ask (don't guess) when:
 - The **scenario/intent is unclear**, or several flows could be meant, or success can't be defined.
-- A **blocker** needs a human: real push-notification MFA on another device, SMS/phone OTP, a hardware
-  key/NFC/QR/camera, CAPTCHA, a credential the AI doesn't have, or a tenant/CA policy it can't provision.
+- A **blocker** needs a human — but only *after* you've tried the on-device/Settings path yourself (Phase 4):
+  real push-notification MFA on another device, SMS/phone OTP, a hardware key/NFC/QR/camera, CAPTCHA, a
+  **secure native system dialog** (Knox cert install, keyguard/biometric prompt), a credential the AI doesn't
+  have, or a tenant/CA policy it can't provision.
 - The **implementation is incomplete** for the path under test (stubs, `TODO`, missing wiring, feature
   flag off with no way to enable) — **first try** to set the flag (temp code change) and mock/segment
   around a missing middle piece (see
@@ -353,8 +424,8 @@ Load these as needed (don't preload all):
 | File | Read it when |
 |---|---|
 | [references/app-and-module-map.md](references/app-and-module-map.md) | Choosing/deploying the test app, package discovery, broker pairing, credentials, emulator requirements |
-| [references/lab-api.md](references/lab-api.md) | Provisioning/resetting a lab test account, LAB API endpoints/usertypes/policies, the EasyAuth auth workaround, fetching tenant passwords from Key Vault, `labapi.ps1` |
-| [references/common-blockers.md](references/common-blockers.md) | Recurring hiccups & when to switch to an emulator (fingerprint/App-Lock, number-match MFA, session timeouts, FLAG_SECURE, autofill/passkey overlay, screenshot corruption) |
+| [references/lab-api.md](references/lab-api.md) | Provisioning/resetting a lab test account, the account policy (prefer fresh ID4SLAB2 temp users over MSIDLAB4), LAB API endpoints/usertypes/policies, the EasyAuth auth workaround, fetching tenant passwords from Key Vault, `labapi.ps1` |
+| [references/common-blockers.md](references/common-blockers.md) | Recurring hiccups & when to switch to an emulator (fingerprint/App-Lock, number-match MFA, session timeouts, FLAG_SECURE, autofill/passkey overlay, screenshot corruption); driving System Settings yourself before declaring a blocker; clean-state between runs |
 | [references/test-reporting.md](references/test-reporting.md) | Writing the mandatory ADO test report — run-JSON schema, `report.ps1`, worked example |
 | [references/run-speed.md](references/run-speed.md) | The run feels slow; understanding per-step latency sources and how to shorten them |
 | [references/emulator-performance.md](references/emulator-performance.md) | The run is slow, you're on a Cloud PC/VM/RDP (software rendering), or you want the emulator to show in Android Studio's Device Manager / Running Devices |
@@ -375,6 +446,18 @@ Load these as needed (don't preload all):
 - **Artifacts stay outside the repo** (the run folder). Never commit logs/screenshots/reports.
 - **For an ADO test case, always generate the HTML + Markdown report** (`report.ps1`) on every outcome —
   PASS, FAIL, BLOCKED, or PARTIAL. A run driven from a test case is not "done" until the report exists.
+- **A batch of ADO cases also needs the overall `report.ps1 summary`** over the batch folder, not just the
+  per-case reports.
+- **Split a multi-case batch across available devices and run in parallel** (one sub-agent per case, each
+  leasing its own device); fall back to serial only when a single device is free. See "Running multiple test
+  cases".
+- **Start each case clean; don't clean up after.** Unless told otherwise, uninstall+reinstall the test apps
+  at the **start** of every case (a `pm clear` doesn't remove work accounts/registrations), and **do not**
+  tear down accounts/registrations at the **end** — leave them for the next run or a tester.
+- **Drive System Settings / on-device UI yourself before declaring a blocker** (advance the clock, delete a
+  cert, toggle a setting) — only block on a genuinely secure/native dialog or a true root requirement.
+- **Prefer fresh ID4SLAB2 temp accounts, one per case** — use `create-user -UserType <matching>` even when a
+  case names a deprecated MSIDLAB4 account, unless a specific durable account is required.
 - **Prefer an emulator when a step needs an injectable fingerprint/biometric** (App Lock, biometric-gated
   number-match). `adb emu finger touch` works only on emulators; a physical device needs a human at the
   sensor. See [references/common-blockers.md](references/common-blockers.md).
