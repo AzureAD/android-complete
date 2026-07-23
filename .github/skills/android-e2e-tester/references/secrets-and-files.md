@@ -25,7 +25,7 @@ Table of contents:
 |---|---|---|
 | A **lab tenant** password (ID4SLab2 etc.) | *Nothing* — the agent pulls it from Key Vault: `scripts/labapi.ps1 fetch-password -TestTenant ID4SLAB2 -IntoSecret labpw` | `deviceui.ps1 input-text -SecretRef labpw` |
 | A lab/account **password** (any other) | `scripts/secrets.ps1 set -Name labpw` (type it at the masked prompt) | `deviceui.ps1 input-text -SecretRef labpw` |
-| A device **lock-screen PIN** | `scripts/secrets.ps1 set -Name devicepin` | `deviceui.ps1 unlock -SecretRef devicepin` |
+| A device **lock-screen PIN** | `scripts/secrets.ps1 set-device-pin` (picks the device, then type it at the masked prompt) | `deviceui.ps1 unlock -Serial <serial>` (auto-uses the saved PIN) |
 | A **keystore** password | `scripts/secrets.ps1 set -Name kspw` | build step reads `E2E_SECRET_KSPW` / `-SecretRef kspw` |
 | An **APK** or other file | Drop it in a folder, give the **path** (paths aren't secret) | `appcontrol.ps1 install -ApkPath <path>` |
 
@@ -48,7 +48,8 @@ a masked prompt so it never reaches the agent:
 ```powershell
 # In YOUR terminal — the value is read with a masked prompt and never echoed:
 ./scripts/secrets.ps1 set  -Name labpw       # lab / account password
-./scripts/secrets.ps1 set  -Name devicepin   # physical-device lock-screen PIN
+./scripts/secrets.ps1 set  -Name devicepin   # device lock-screen PIN (not bound to a serial)
+./scripts/secrets.ps1 set-device-pin         # device lock-screen PIN BOUND to a serial (device picker)
 
 # Safe to run anytime (these NEVER print the value):
 ./scripts/secrets.ps1 list                    # names only (+ any E2E_SECRET_* env names)
@@ -63,7 +64,9 @@ Secrets are stored one file per name at `%USERPROFILE%\.android-e2e-secrets\<nam
 (asterisks + length), both safe to show in chat.
 
 > Naming convention used across the skill: `labpw` (account password), `devicepin` (lock-screen PIN),
-> `kspw` (keystore password). Stick to these so `-SecretRef` calls are predictable.
+> `kspw` (keystore password). Stick to these so `-SecretRef` calls are predictable. For **per-device**
+> PINs, `set-device-pin` stores under `devicepin_<serial>` and `unlock -Serial <serial>` auto-resolves it —
+> see [Unlocking a device with a stored PIN](#unlocking-a-device-with-a-stored-pin).
 
 ## Fetch lab passwords from Key Vault (no paste at all)
 
@@ -107,25 +110,59 @@ sheet) still applies — see [ui-interaction.md](ui-interaction.md).
 
 ## Unlocking a device with a stored PIN
 
-On a real device that sleeps or relocks mid-run, unlock it with the stored PIN — never with the PIN in
-the clear:
+### Save the PIN for a specific device (`set-device-pin`)
+
+The easiest way to seed a lock-screen PIN is `set-device-pin`. It picks the device for you, then you type
+the PIN twice (hidden) and it's stored **bound to that device's serial** as `devicepin_<serial>`:
 
 ```powershell
-./scripts/deviceui.ps1 unlock -SecretRef devicepin -Serial <serial>
-# output is just:  Unlocked on attempt 1/3 with a N-digit PIN.
+./scripts/secrets.ps1 set-device-pin
+# 1 device attached  -> auto-selected
+# 2+ attached        -> numbered menu; choose one:
+#   Multiple devices connected:
+#     [1] R5CXB0P430X    physical  SM-F741U1
+#     [2] emulator-5554  emulator  sdk_gphone64_x86_64
+#   Choose a device [1-2]: 1
+# Enter lock-screen PIN for R5CXB0P430X (input hidden): ****
+# Re-enter the PIN to confirm (input hidden): ****
+# Stored PIN for device R5CXB0P430X as secret 'devicepin_R5CXB0P430X' (DPAPI-encrypted) at ...
 ```
+
+- **Auto-selects** when exactly one device is attached; shows the **numbered menu** when several are (retries
+  up to 3× on a bad choice, then aborts without storing anything). Target one directly with
+  `-Serial <serial>` to skip the menu.
+- **Confirm-twice**: the PIN is typed twice and compared in memory — a typo is caught *now* instead of
+  wasting your 3 real unlock attempts later. The PIN is never printed; only the device serial, the resulting
+  secret name, and the file path are echoed.
+- Override the derived name with `-Name <name>` if you want a custom label.
+
+### Unlock (auto-resolves the per-device PIN)
+
+On a real device that sleeps or relocks mid-run, just pass the **serial** — `unlock` finds the PIN you saved
+for that exact device (`devicepin_<serial>`), so you never type the secret name twice:
+
+```powershell
+./scripts/deviceui.ps1 unlock -Serial <serial>
+# Using stored PIN for device <serial> (secret 'devicepin_<serial>').
+# Unlocked on attempt 1/3 with a N-digit PIN.
+```
+
+You can still force a specific secret with `-SecretRef <name>` (takes precedence), or, for a throwaway
+emulator, skip the store entirely with `-Pin 1234`. If no `-Pin`/`-SecretRef` is given and no
+`devicepin_<serial>` is stored, it stops with a message telling you to run `secrets.ps1 set-device-pin`.
 
 It wakes the screen, swipes up to reveal the keypad, types the resolved PIN, presses ENTER, and then
 **verifies** the keyguard actually cleared (via `dumpsys`). If it's already unlocked it does nothing.
 **Attempts are capped** (`-MaxAttempts`, default **3**): a *wrong* PIN counts toward Android's lockout /
 Gatekeeper throttle, so after 3 unsuccessful tries the tool **stops and exits 3** rather than risk locking
 you out of your own device — it will tell you to re-check the PIN (`secrets.ps1 get-masked -Name <name>`) or
-ask for the right one. For a throwaway emulator you can skip the store and pass `-Pin 1234` directly.
+ask for the right one.
 
 > **Multiple devices / same model?** Each attached device has a **unique adb serial** even if the models are
-> identical (`adb devices -l`), so always pass `-Serial` and store each device's PIN under its own name —
-> e.g. `secrets.ps1 set -Name devicepin_pixel8` then `unlock -SecretRef devicepin_pixel8 -Serial <serial>`.
-> Omitting `-Serial` with several devices attached makes adb error out (safe) rather than act on the wrong one.
+> identical (`adb devices -l`). Save each one's PIN with `set-device-pin` (the menu shows serial + model so
+> you can tell same-model units apart) and always pass `-Serial` to `unlock`. Because the PIN is stored per
+> serial, `unlock -Serial <serial>` always uses the right device's PIN. Omitting `-Serial` with several
+> devices attached makes adb error out (safe) rather than act on the wrong one.
 > See [Targeting the right device](common-blockers.md#targeting-the-right-device-multiple-devices--same-model).
 
 > **PIN vs. biometric.** The stored PIN satisfies a prompt only where Android offers a **device-credential /
@@ -196,12 +233,13 @@ Tips:
 |---|---|
 | **Fetch a lab-tenant password from Key Vault** (no paste) | `labapi.ps1 fetch-password -TestTenant ID4SLAB2 -IntoSecret labpw` |
 | Store a password (masked prompt, your terminal) | `secrets.ps1 set -Name labpw` |
-| Store a device PIN | `secrets.ps1 set -Name devicepin` |
+| Store a device PIN (not serial-bound) | `secrets.ps1 set -Name devicepin` |
+| **Store a device PIN bound to a serial** (device picker) | `secrets.ps1 set-device-pin` |
 | Confirm a secret resolves (safe) | `secrets.ps1 test -Name labpw` → `resolves=yes length=NN` |
 | Show masked value (safe) | `secrets.ps1 get-masked -Name labpw` |
 | List secret names (safe) | `secrets.ps1 list` |
 | Delete a secret | `secrets.ps1 remove -Name labpw` |
 | Type a password on device | `deviceui.ps1 input-text -SecretRef labpw -Clear -CharByChar` |
-| Unlock a device | `deviceui.ps1 unlock -SecretRef devicepin` |
+| Unlock a device (auto-uses saved PIN) | `deviceui.ps1 unlock -Serial <serial>` |
 | Env-var alternative | set `E2E_SECRET_LABPW`, then `-SecretRef labpw` |
 | Install an APK | `appcontrol.ps1 install -ApkPath <path>` |

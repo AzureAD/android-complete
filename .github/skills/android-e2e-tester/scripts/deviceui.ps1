@@ -16,7 +16,8 @@
     ./deviceui.ps1 input-text -Text "user@contoso.com"                       # bulk (fast) — try this first
     ./deviceui.ps1 input-text -Text "user@contoso.com" -Clear -CharByChar    # fall back if autofill ate it
     ./deviceui.ps1 input-text -SecretRef labpw -Clear -CharByChar            # types a stored password, masked
-    ./deviceui.ps1 unlock -SecretRef devicepin -Serial <serial>             # enter the lock-screen PIN, masked; verifies + stops after -MaxAttempts (3)
+    ./deviceui.ps1 unlock -Serial <serial>                                  # auto-uses the PIN saved for that device (secrets.ps1 set-device-pin)
+    ./deviceui.ps1 unlock -SecretRef devicepin -Serial <serial>             # or name the secret explicitly; verifies + stops after -MaxAttempts (3)
     ./deviceui.ps1 key -Text ENTER
     ./deviceui.ps1 finger-status                  # is a fingerprint enrolled?
     ./deviceui.ps1 finger-enroll                  # enroll one on an emulator (or prompt if a real device)
@@ -39,6 +40,8 @@
     never appears in the chat. `unlock -SecretRef <name>` enters a device lock-screen PIN the same way; it
     VERIFIES the keyguard actually cleared and STOPS after -MaxAttempts wrong tries (default 3) so a wrong
     PIN can't drive a physical device into an escalating Gatekeeper lockout (exit code 3 if it gives up).
+    If you omit -SecretRef, `unlock -Serial <serial>` auto-resolves the per-device secret devicepin_<serial>
+    saved by `secrets.ps1 set-device-pin` -- so you never type the serial's PIN name twice.
     See references/secrets-and-files.md for how the human seeds secrets and drops APKs/files for a run.
     Target a specific device with -Serial (each device — even the same model — has a unique adb serial;
     `adb devices -l` lists them). Omitting -Serial while several devices are attached makes adb error out
@@ -182,6 +185,21 @@ function Resolve-SecretValue {
     finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
 }
 
+function Get-DevicePinName {
+    # Per-device secret-name convention shared with scripts/secrets.ps1 (set-device-pin): 'devicepin_' + serial
+    # with non-alphanumerics -> '_'. Lets `unlock -Serial <s>` find the PIN saved for that exact device.
+    param([Parameter(Mandatory)][string]$Serial)
+    return ('devicepin_' + ($Serial -replace '[^A-Za-z0-9]', '_'))
+}
+
+function Test-SecretExists {
+    # True if a named secret resolves (env override or DPAPI file), WITHOUT decrypting/printing it.
+    param([Parameter(Mandatory)][string]$Name)
+    $envName = 'E2E_SECRET_' + ($Name.ToUpper() -replace '[^A-Z0-9_]', '_')
+    if ([Environment]::GetEnvironmentVariable($envName)) { return $true }
+    return (Test-Path (Join-Path (Join-Path $env:USERPROFILE '.android-e2e-secrets') ("{0}.sec" -f $Name)))
+}
+
 function Test-IsEmulator {
     # An explicit emulator-XXXX serial is an emulator; otherwise probe the running device.
     if ($Serial) { return ($Serial -match '^emulator-') }
@@ -283,8 +301,24 @@ switch ($Command) {
         # the device's Gatekeeper lockout throttle, so we check keyguard state after each attempt and STOP as
         # soon as the device is unlocked. Total tries are capped at -MaxAttempts (default 3) so a wrong stored
         # PIN can never drive a physical device into an escalating lockout. Prefer -SecretRef (never printed);
-        # -Pin is fine for a throwaway emulator PIN. See references/common-blockers.md.
-        $pinVal = if ($SecretRef) { Resolve-SecretValue $SecretRef } else { $Pin }
+        # if it's omitted we auto-resolve the per-device secret devicepin_<serial> (see secrets.ps1
+        # set-device-pin); -Pin is a last resort for a throwaway emulator PIN. See references/common-blockers.md.
+        if ($SecretRef) {
+            $pinVal = Resolve-SecretValue $SecretRef
+        }
+        elseif (-not $PSBoundParameters.ContainsKey('Pin') -and $Serial) {
+            $autoName = Get-DevicePinName $Serial
+            if (Test-SecretExists $autoName) {
+                $pinVal = Resolve-SecretValue $autoName
+                Write-Host ("Using stored PIN for device {0} (secret '{1}')." -f $Serial, $autoName)
+            }
+            else {
+                throw "No PIN stored for device '$Serial' (looked for secret '$autoName') and no -SecretRef/-Pin given. Save one with: scripts/secrets.ps1 set-device-pin -Serial $Serial"
+            }
+        }
+        else {
+            $pinVal = $Pin
+        }
         if ((Test-KeyguardLocked) -eq $false) { Write-Host 'Device already unlocked; nothing to do.'; $pinVal = $null; break }
         $ok = $false
         for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {

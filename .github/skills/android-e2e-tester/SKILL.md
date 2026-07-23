@@ -41,7 +41,7 @@ All under `scripts/` (PowerShell — the team's cross-platform shell). Run `-?` 
 | `authlogs.ps1` | Log capture + verdict | `clear`, `scan`, `snapshot`, `grep`, `watch` |
 | `labapi.ps1` | Provision/reset LAB test accounts (EasyAuth via WAM SSO); fetch tenant passwords from Key Vault | `create-user`, `reset`, `enable-policy`, `disable-policy`, `delete-device`, `open`, `fetch-password` |
 | `report.ps1` | Render the HTML + Markdown test report (mandatory for ADO test cases) | `render` (from a run JSON) |
-| `secrets.ps1` | Encrypted (DPAPI) store so passwords/PINs never hit the chat | `set`, `list`, `test`, `get-masked`, `remove`, `path` |
+| `secrets.ps1` | Encrypted (DPAPI) store so passwords/PINs never hit the chat | `set`, `set-device-pin`, `list`, `test`, `get-masked`, `remove`, `path` |
 
 ## Execution model — run inside a sub-agent, and supervise it
 
@@ -236,12 +236,14 @@ password" bottom sheet with `key ESCAPE` before typing if one appears.
 See [references/common-blockers.md](references/common-blockers.md).
 
 **Unlocking the lock screen on a physical device.** If the device sleeps/relocks mid-run and a step needs a
-PIN, seed it once (`secrets.ps1 set -Name devicepin`, done by the human) and let the tool enter + **verify**
-it: `deviceui.ps1 unlock -SecretRef devicepin -Serial <serial>`. It confirms the keyguard actually cleared and
+PIN, seed it once with `secrets.ps1 set-device-pin` (done by the human — it picks the device, or shows a
+numbered menu when several are attached, and stores the PIN as `devicepin_<serial>`), then let the tool enter
++ **verify** it: `deviceui.ps1 unlock -Serial <serial>` **auto-resolves** that per-device PIN (no `-SecretRef`
+needed). It confirms the keyguard actually cleared and
 **stops after 3 attempts** (`-MaxAttempts`, default 3, exits 3 if it gives up) so a wrong PIN never trips
 Android's Gatekeeper lockout — do **not** loop it yourself. With several devices attached (even the same
-model) each has a unique adb serial, so always pass `-Serial` and store per-device PINs under distinct names
-(`devicepin_pixel8`). A PIN only substitutes for biometric where a "Use PIN" path is offered; a
+model) each has a unique adb serial; because the PIN is stored per serial, `unlock -Serial <serial>` always
+uses the right device's PIN. A PIN only substitutes for biometric where a "Use PIN" path is offered; a
 fingerprint-only step needs an emulator (`finger`) or a human. See
 [references/secrets-and-files.md](references/secrets-and-files.md) and
 [references/common-blockers.md](references/common-blockers.md).

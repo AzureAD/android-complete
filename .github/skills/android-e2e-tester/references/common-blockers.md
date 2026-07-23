@@ -65,8 +65,10 @@ Then **always pass `-Serial <serial>`** to every `deviceui.ps1` call so the acti
 device. If you omit `-Serial` while more than one device is attached, adb **errors out** ("more than one
 device/emulator") instead of guessing — a safe failure, not a wrong-device action, but it will stall the run.
 When the human owns several devices, ask which serial to use (or which model), and store each device's PIN
-under its **own** secret name (e.g. `devicepin_pixel8`, `devicepin_pixel8pro`) so `unlock -SecretRef` targets
-the correct one. Serials are stable for a physical device across reconnects; emulator serials (`emulator-55xx`)
+with **`secrets.ps1 set-device-pin`** — it shows a numbered picker (serial + model, so you can tell same-model
+units apart) and saves the PIN under that device's own name `devicepin_<serial>`. Then `unlock -Serial <serial>`
+**auto-resolves** the matching PIN, so it always targets the correct device without you re-typing a secret name.
+Serials are stable for a physical device across reconnects; emulator serials (`emulator-55xx`)
 depend on the console port and can change between boots, so re-check `adb devices -l` at the start of a run.
 
 ## Steps that need a fingerprint / biometric / App Lock
@@ -92,8 +94,8 @@ Options, best first:
    cleared and **stops after 3 tries** (`-MaxAttempts`, default 3) so a wrong PIN can't drive a physical
    device into an escalating lockout:
    ```powershell
-   ./scripts/secrets.ps1 set -Name devicepin_pixel8                     # you paste the PIN, stored DPAPI-encrypted
-   ./scripts/deviceui.ps1 unlock -SecretRef devicepin_pixel8 -Serial <serial>   # verified; gives up after 3
+   ./scripts/secrets.ps1 set-device-pin                                 # picks the device, you paste the PIN (DPAPI-encrypted)
+   ./scripts/deviceui.ps1 unlock -Serial <serial>                       # auto-uses devicepin_<serial>; verified; gives up after 3
    ```
    On an **emulator** you can set one deterministically: `adb -s <emu> shell locksettings set-pin 1234`, then
    satisfy biometric prompts with `adb -s <emu> emu finger touch 1`.
@@ -218,5 +220,5 @@ These can't be produced by the AI — report them and ask the user (see SKILL "W
 | Wrong-ABI APK on emulator (arm64 on x86_64) | ✅ | Emulator | install the **universal** APK; keep arm64 APK for physical |
 | Stale MFA already registered | ✅ | Either | `labapi.ps1 reset -Operation mfa` or new temp user |
 | SMS / phone / hardware-key / CAPTCHA | ❌ | — | **Blocker** — ask the user |
-| Multiple devices / same model attached | ✅ | Either | unique adb serial each; always pass `-Serial`; `adb devices -l` to pick |
-| Unlock the lock screen with a PIN | ✅ | Either | `unlock -SecretRef <name> -Serial <s>` — verifies + **stops after 3** tries |
+| Multiple devices / same model attached | ✅ | Either | unique adb serial each; always pass `-Serial`; `adb devices -l` to pick; `secrets.ps1 set-device-pin` to store per-device PIN |
+| Unlock the lock screen with a PIN | ✅ | Either | `secrets.ps1 set-device-pin` once, then `unlock -Serial <s>` (auto-uses saved PIN) — verifies + **stops after 3** tries |
