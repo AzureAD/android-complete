@@ -19,30 +19,39 @@
       delete-device   -Upn <upn> -DeviceId <id>          DeleteDeviceID4SLab2
       open            -Url <url>                          launch an interactive browser (for KeyVault deep-links:
                                                           "List of Test Accounts" / "Fetch Password for Tenant")
+      fetch-password  -TestTenant <tenant> [-IntoSecret <name>]  read the tenant's shared password straight from
+                                                          the MSIDLabs Key Vault (same secret the "Fetch Password
+                                                          for Tenant" link points at) and cache it locally - no paste
 
     UserType : Basic | GlobalMFA | MAMCA | MDMCA | MFAONSPO | MFAONEXO | FIDOBasic | FIDOMDM | AuthappLBAC | AuthappRichContext
     Policy   : GlobalMFA | MAMCA | MDMCA | MFAONSPO | MFAONEXO | AuthappLBAC | AuthappRichContext
     Operation: mfa | password
+    TestTenant: ID4SLAB2 | ID4SLAB1 | ARLMSIDLAB1 | MNCMSIDLAB1 | MSIDLAB4 | MSIDLAB3 | MSIDLAB8  (the KeyVault secret name)
 
     Auth/entitlements: you must be signed into Edge with an account that holds TM-MSIDLabs-Ext (RO+RW)
-    and, for KeyVault deep-links, TM-MSIDLABS-DevKV (RO+RW). Manage at
+    and, for KeyVault deep-links / fetch-password, TM-MSIDLABS-DevKV (RO+RW). Manage at
     https://coreidentity.microsoft.com/manage/entitlement . See references/lab-api.md.
+    fetch-password reads the vault via your signed-in Azure CLI identity (`az login`), not Edge.
 
 .EXAMPLE
     ./labapi.ps1 create-user -UserType GlobalMFA
     ./labapi.ps1 reset -Upn "Locked_xxx@ID4SLab2.onmicrosoft.com" -Operation mfa
     ./labapi.ps1 disable-policy -Upn "Locked_xxx@ID4SLab2.onmicrosoft.com" -Policy GlobalMFA
+    ./labapi.ps1 fetch-password -TestTenant ID4SLAB2 -IntoSecret labpw   # then: deviceui.ps1 input-text -SecretRef labpw -Secret
 
 .NOTES
-    - Never print the fetched password into the transcript. `create-user` returns the UPN; the password
-      for temp users is the shared lab password the user supplies for the run.
+    - Never print the fetched password into the transcript. `create-user` returns the UPN; the shared
+      password for the tenant can be pulled with `fetch-password` (cached DPAPI-encrypted, never displayed)
+      instead of the user pasting it into chat.
+    - `fetch-password` requires `az login` with a MSIDLABS-DevKV-entitled account; the value is written only
+      to the local DPAPI store (%USERPROFILE%\.android-e2e-secrets) and surfaced as a masked length.
     - The first call in a session may pop a silent WAM prompt; subsequent calls reuse the cached profile
       (a stable, isolated user-data-dir) so they're fast. Use -Fresh to force a throwaway profile.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('create-user', 'reset', 'enable-policy', 'disable-policy', 'delete-device', 'open')]
+    [ValidateSet('create-user', 'reset', 'enable-policy', 'disable-policy', 'delete-device', 'open', 'fetch-password')]
     [string]$Command = 'create-user',
 
     [string]$UserType = 'GlobalMFA',
@@ -54,7 +63,16 @@ param(
     [string]$Url,
     [int]$TimeoutSec = 30,
     [switch]$Fresh,
-    [switch]$Raw
+    [switch]$Raw,
+
+    # fetch-password: read a lab tenant's shared password straight from the MSIDLabs Key Vault (the same
+    # secret the "Fetch Password for Tenant" generator link points at) and cache it in the local DPAPI
+    # store, so it is typed later via `deviceui.ps1 input-text -SecretRef <IntoSecret>` and never printed.
+    [ValidateSet('ID4SLAB2', 'ID4SLAB1', 'ARLMSIDLAB1', 'MNCMSIDLAB1', 'MSIDLAB4', 'MSIDLAB3', 'MSIDLAB8')]
+    [string]$TestTenant = 'ID4SLAB2',
+    [string]$Vault = 'msidlabs',
+    [string]$SecretId,
+    [string]$IntoSecret = 'labpw'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -209,6 +227,35 @@ function Show-Result {
     }
 }
 
+function Get-KvSecretValue {
+    # Read a Key Vault secret VALUE using the operator's signed-in Azure CLI identity, WITHOUT printing it.
+    # Returns the plaintext to the caller only (never to the host). Requires `az` and an entitled login
+    # (TM-MSIDLABS-DevKV / vault access). Throws a clear, actionable error otherwise.
+    param([Parameter(Mandatory)][string]$Id)
+    if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
+        throw "Azure CLI ('az') not found. Install it and run 'az login' with an account entitled to the MSIDLabs vault (TM-MSIDLABS-DevKV)."
+    }
+    # --query value has no parentheses, so it is safe through the az.cmd/cmd.exe wrapper.
+    $val = az keyvault secret show --id $Id --query value -o tsv 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrEmpty($val)) {
+        throw ("Could not read Key Vault secret '$Id'. Ensure 'az login' is done with an account that has " +
+            "GET on that vault (entitlement TM-MSIDLABS-DevKV). Verify interactively with: " +
+            "az keyvault secret show --id `"$Id`" --query `"attributes.enabled`" -o tsv")
+    }
+    return $val
+}
+
+function Save-DpapiSecret {
+    # Cache a plaintext into the local DPAPI store in the exact format scripts/secrets.ps1 uses, so it
+    # resolves via `-SecretRef <Name>`. Nothing is printed here; the caller emits only a masked summary.
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Value)
+    $dir = Join-Path $env:USERPROFILE '.android-e2e-secrets'
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    $ss = ConvertTo-SecureString $Value -AsPlainText -Force
+    $enc = ConvertFrom-SecureString $ss    # DPAPI encrypt (per-user, per-machine)
+    Set-Content -Path (Join-Path $dir ("{0}.sec" -f $Name)) -Value $enc -NoNewline -Encoding ASCII
+}
+
 switch ($Command) {
     'create-user' {
         $ep = "$ApiBase/CreateTempUserID4SLab2?usertype=$([uri]::EscapeDataString($UserType))"
@@ -259,5 +306,15 @@ switch ($Command) {
         # Interactive (non-headless) so KeyVault/Azure Portal deep-links can render for the user.
         & $edge $Url | Out-Null
         Write-Host "Opened in Edge: $Url"
+    }
+    'fetch-password' {
+        # Pull a lab tenant's shared password directly from Key Vault (no browser, no manual paste) and
+        # cache it in the DPAPI store. The plaintext is NEVER printed - only a masked confirmation.
+        $id = if ($SecretId) { $SecretId } else { "https://$Vault.vault.azure.net/secrets/$TestTenant" }
+        Write-Host "Reading password from Key Vault ($id) via your signed-in Azure CLI identity ..."
+        $pw = Get-KvSecretValue -Id $id
+        Save-DpapiSecret -Name $IntoSecret -Value $pw
+        Write-Host ("Fetched password into DPAPI secret '{0}' ({1} chars). Type it later with: deviceui.ps1 input-text -SecretRef {0} -Secret" -f $IntoSecret, $pw.Length)
+        $pw = $null
     }
 }

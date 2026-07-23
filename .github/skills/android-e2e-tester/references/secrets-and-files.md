@@ -11,6 +11,7 @@ Table of contents:
 - [TL;DR](#tldr)
 - [Why not just paste the password in chat](#why-not-just-paste-the-password-in-chat)
 - [The encrypted secret store (recommended)](#the-encrypted-secret-store-recommended)
+- [Fetch lab passwords from Key Vault (no paste at all)](#fetch-lab-passwords-from-key-vault-no-paste-at-all)
 - [Using a stored secret in a run](#using-a-stored-secret-in-a-run)
 - [Unlocking a device with a stored PIN](#unlocking-a-device-with-a-stored-pin)
 - [Environment-variable alternative](#environment-variable-alternative)
@@ -22,7 +23,8 @@ Table of contents:
 
 | You need to give the agent... | Do this | Agent uses |
 |---|---|---|
-| A lab/account **password** | `scripts/secrets.ps1 set -Name labpw` (type it at the masked prompt) | `deviceui.ps1 input-text -SecretRef labpw` |
+| A **lab tenant** password (ID4SLab2 etc.) | *Nothing* — the agent pulls it from Key Vault: `scripts/labapi.ps1 fetch-password -TestTenant ID4SLAB2 -IntoSecret labpw` | `deviceui.ps1 input-text -SecretRef labpw` |
+| A lab/account **password** (any other) | `scripts/secrets.ps1 set -Name labpw` (type it at the masked prompt) | `deviceui.ps1 input-text -SecretRef labpw` |
 | A device **lock-screen PIN** | `scripts/secrets.ps1 set -Name devicepin` | `deviceui.ps1 unlock -SecretRef devicepin` |
 | A **keystore** password | `scripts/secrets.ps1 set -Name kspw` | build step reads `E2E_SECRET_KSPW` / `-SecretRef kspw` |
 | An **APK** or other file | Drop it in a folder, give the **path** (paths aren't secret) | `appcontrol.ps1 install -ApkPath <path>` |
@@ -62,6 +64,29 @@ Secrets are stored one file per name at `%USERPROFILE%\.android-e2e-secrets\<nam
 
 > Naming convention used across the skill: `labpw` (account password), `devicepin` (lock-screen PIN),
 > `kspw` (keystore password). Stick to these so `-SecretRef` calls are predictable.
+
+## Fetch lab passwords from Key Vault (no paste at all)
+
+For the **shared lab-tenant passwords** (ID4SLab2, MSIDLAB4, …) you don't need to type anything: their
+values live in the `msidlabs` Key Vault (the same secret the LAB generator's "Fetch Password for Tenant"
+link points at). If you're signed into the **Azure CLI** (`az login`) with a vault-entitled account
+(**`TM-MSIDLABS-DevKV`**), the agent can read one straight into the store:
+
+```powershell
+# Pull ID4SLab2's shared password from Key Vault into DPAPI secret 'labpw' (prints only a masked length):
+./scripts/labapi.ps1 fetch-password -TestTenant ID4SLAB2 -IntoSecret labpw
+#  -> Fetched password into DPAPI secret 'labpw' (20 chars). ...
+
+# Then type it on-device exactly like any other stored secret:
+./scripts/deviceui.ps1 input-text -SecretRef labpw -Secret
+```
+
+The value is read with `az keyvault secret show ... --query value -o tsv`, written **only** to
+`%USERPROFILE%\.android-e2e-secrets\labpw.sec` (DPAPI-encrypted), and **never** printed. Use `-SecretId
+<uri>` to fetch the exact secret a `create-user` response named in `credentialVaultKeyName`. This is the
+operator's own entitled CLI session being used on their behalf — if `az` isn't signed in or the entitlement
+is missing, `fetch-password` fails with a setup message and you fall back to `secrets.ps1 set -Name labpw`.
+See [lab-api.md → Fetch a tenant password from Key Vault directly](lab-api.md#fetch-a-tenant-password-from-key-vault-directly).
 
 ## Using a stored secret in a run
 
@@ -156,6 +181,7 @@ Tips:
 
 | Task | Command |
 |---|---|
+| **Fetch a lab-tenant password from Key Vault** (no paste) | `labapi.ps1 fetch-password -TestTenant ID4SLAB2 -IntoSecret labpw` |
 | Store a password (masked prompt, your terminal) | `secrets.ps1 set -Name labpw` |
 | Store a device PIN | `secrets.ps1 set -Name devicepin` |
 | Confirm a secret resolves (safe) | `secrets.ps1 test -Name labpw` → `resolves=yes length=NN` |

@@ -39,7 +39,7 @@ All under `scripts/` (PowerShell — the team's cross-platform shell). Run `-?` 
 | `appcontrol.ps1` | App build/install/state | `build`, `install`, `launch`, `clear`, `uninstall`, `is-installed`, `grant`, `list-apks` |
 | `deviceui.ps1` | AI-driven UI I/O | `dump`, `wait-text`, `tap-text`, `tap-desc`, `input-text` (`-Clear`, `-CharByChar`, `-SecretRef`), `unlock`, `key`, `finger`, `finger-status`, `finger-enroll`, `screenshot`, `current-app` |
 | `authlogs.ps1` | Log capture + verdict | `clear`, `scan`, `snapshot`, `grep`, `watch` |
-| `labapi.ps1` | Provision/reset LAB test accounts (EasyAuth via WAM SSO) | `create-user`, `reset`, `enable-policy`, `disable-policy`, `delete-device`, `open` |
+| `labapi.ps1` | Provision/reset LAB test accounts (EasyAuth via WAM SSO); fetch tenant passwords from Key Vault | `create-user`, `reset`, `enable-policy`, `disable-policy`, `delete-device`, `open`, `fetch-password` |
 | `report.ps1` | Render the HTML + Markdown test report (mandatory for ADO test cases) | `render` (from a run JSON) |
 | `secrets.ps1` | Encrypted (DPAPI) store so passwords/PINs never hit the chat | `set`, `list`, `test`, `get-masked`, `remove`, `path` |
 
@@ -228,7 +228,10 @@ field or is dropped, producing "Enter a valid email"). **Try bulk first** (it's 
 `-Clear` empties the field first, `-CharByChar` defeats the overlay. For the **password**, prefer
 `-SecretRef <name>` (resolves from the encrypted store and implies `-Secret`) so the value never lands
 in a tool call or the transcript — see [references/secrets-and-files.md](references/secrets-and-files.md);
-`-Text $pw -Secret` still works if you already hold the value out-of-band. Dismiss a passkey/"Save
+`-Text $pw -Secret` still works if you already hold the value out-of-band. For **shared lab-tenant
+passwords**, don't ask the user to paste — pull it from Key Vault into the store first with
+`./scripts/labapi.ps1 fetch-password -TestTenant ID4SLAB2 -IntoSecret labpw` (needs `az login` +
+`TM-MSIDLABS-DevKV`), then reference `-SecretRef labpw`. Dismiss a passkey/"Save
 password" bottom sheet with `key ESCAPE` before typing if one appears.
 See [references/common-blockers.md](references/common-blockers.md).
 
@@ -238,6 +241,7 @@ account state is stuck (e.g. MFA already registered from a previous run, a CA po
 ./scripts/labapi.ps1 create-user   -UserType GlobalMFA                  # temp user, auto-deletes in 60 min
 ./scripts/labapi.ps1 reset         -Upn $upn -Operation mfa             # clear stale MFA registration
 ./scripts/labapi.ps1 disable-policy -Upn $upn -Policy GlobalMFA          # unblock a CA-gated segment
+./scripts/labapi.ps1 fetch-password -TestTenant ID4SLAB2 -IntoSecret labpw  # pull tenant pw from Key Vault (no paste)
 ```
 See [references/lab-api.md](references/lab-api.md) for all endpoints, usertypes, and the auth workaround.
 
@@ -336,7 +340,7 @@ Load these as needed (don't preload all):
 | File | Read it when |
 |---|---|
 | [references/app-and-module-map.md](references/app-and-module-map.md) | Choosing/deploying the test app, package discovery, broker pairing, credentials, emulator requirements |
-| [references/lab-api.md](references/lab-api.md) | Provisioning/resetting a lab test account, LAB API endpoints/usertypes/policies, the EasyAuth auth workaround, `labapi.ps1` |
+| [references/lab-api.md](references/lab-api.md) | Provisioning/resetting a lab test account, LAB API endpoints/usertypes/policies, the EasyAuth auth workaround, fetching tenant passwords from Key Vault, `labapi.ps1` |
 | [references/common-blockers.md](references/common-blockers.md) | Recurring hiccups & when to switch to an emulator (fingerprint/App-Lock, number-match MFA, session timeouts, FLAG_SECURE, autofill/passkey overlay, screenshot corruption) |
 | [references/test-reporting.md](references/test-reporting.md) | Writing the mandatory ADO test report — run-JSON schema, `report.ps1`, worked example |
 | [references/run-speed.md](references/run-speed.md) | The run feels slow; understanding per-step latency sources and how to shorten them |
@@ -344,7 +348,7 @@ Load these as needed (don't preload all):
 | [references/log-signals.md](references/log-signals.md) | Interpreting logcat, success/failure patterns, AADSTS codes, per-flow pass criteria, eSTS correlation |
 | [references/ui-interaction.md](references/ui-interaction.md) | Driving auth screens, AI-vs-human inputs, FLAG_SECURE gotcha, selector strategy |
 | [references/mocking-flights-and-segments.md](references/mocking-flights-and-segments.md) | A flag must be set, a dependency/server data is unavailable, or the flow can't run fully E2E (mock it or test in segments) |
-| [references/secrets-and-files.md](references/secrets-and-files.md) | The user must hand you a password / device PIN / keystore password, or an APK / test file — keep secrets out of the chat (`secrets.ps1`, `-SecretRef`, `unlock`) and use a file drop-folder |
+| [references/secrets-and-files.md](references/secrets-and-files.md) | The user must hand you a password / device PIN / keystore password, or an APK / test file — keep secrets out of the chat (`secrets.ps1`, `labapi.ps1 fetch-password`, `-SecretRef`, `unlock`) and use a file drop-folder |
 | [references/troubleshooting.md](references/troubleshooting.md) | Emulator/build/install/uiautomator/broker failures; env-vs-defect triage |
 
 ## Guardrails
@@ -352,8 +356,9 @@ Load these as needed (don't preload all):
 - **Never** print, log, or commit real or lab credentials, tokens, or secrets. Type them onto the device
   only — use `input-text -SecretRef <name>` (or `-Text ... -Secret`) so the value never hits the
   transcript. When the user needs to hand you a password or device PIN, take it via the encrypted store
-  (`secrets.ps1 set`) and reference it by name; for APKs/files use a drop-folder path. See
-  [references/secrets-and-files.md](references/secrets-and-files.md).
+  (`secrets.ps1 set`) and reference it by name; for **shared lab-tenant passwords** pull them straight
+  from Key Vault with `labapi.ps1 fetch-password` (no paste needed); for APKs/files use a drop-folder path.
+  See [references/secrets-and-files.md](references/secrets-and-files.md).
 - **Artifacts stay outside the repo** (the run folder). Never commit logs/screenshots/reports.
 - **For an ADO test case, always generate the HTML + Markdown report** (`report.ps1`) on every outcome —
   PASS, FAIL, BLOCKED, or PARTIAL. A run driven from a test case is not "done" until the report exists.

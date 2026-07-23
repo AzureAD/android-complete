@@ -88,6 +88,11 @@ browser (`labapi.ps1 open`), and reading the secret needs the DevKV entitlement 
 # Open a KeyVault deep-link (test-account list / tenant password) in a visible browser:
 ./scripts/labapi.ps1 open -Url "https://labusermanagerapi.azurewebsites.net/api/WebApp"
 
+# Fetch a tenant's shared password straight from Key Vault into the local DPAPI store (no paste, no browser):
+./scripts/labapi.ps1 fetch-password -TestTenant ID4SLAB2 -IntoSecret labpw
+# ...then type it on-device without it ever appearing in chat:
+./scripts/deviceui.ps1 input-text -SecretRef labpw -Secret
+
 # Debug: dump the raw DOM Edge returned instead of parsing JSON:
 ./scripts/labapi.ps1 create-user -UserType Basic -Raw
 ```
@@ -114,9 +119,43 @@ of the cached one).
 }
 ```
 `labapi.ps1 create-user` echoes the full JSON and a convenience `UPN=<upn>` line. The **password** for a
-temp user is the shared lab password (kept in the KeyVault the `passwordUri` points to). In a run, the
-user usually supplies the shared password directly — **never print it into the transcript**; type it with
-`deviceui.ps1 input-text -Secret`.
+temp user is the shared lab password (kept in the KeyVault the `passwordUri` points to). You do **not** need
+the user to paste it: pull it from Key Vault directly with `labapi.ps1 fetch-password` (see next section),
+which caches it DPAPI-encrypted and types it via `deviceui.ps1 input-text -SecretRef <name> -Secret`.
+**Never print the password into the transcript.**
+
+## Fetch a tenant password from Key Vault directly
+
+The "Fetch Password for Tenant" generator link is just an Azure Portal deep-link to a secret in the
+`msidlabs` vault (e.g. `https://msidlabs.vault.azure.net/secrets/ID4SLAB2`). If you are signed into the
+**Azure CLI** (`az login`) with an account that holds **`TM-MSIDLABS-DevKV`** (or equivalent vault GET
+access), you can read that secret straight from the vault — no browser, no manual paste:
+
+```powershell
+# Cache the ID4SLab2 shared password into DPAPI secret 'labpw' (prints only a masked length):
+./scripts/labapi.ps1 fetch-password -TestTenant ID4SLAB2 -IntoSecret labpw
+# -> "Fetched password into DPAPI secret 'labpw' (20 chars). ..."
+
+# Or pass the exact secret URI create-user returned in credentialVaultKeyName / passwordUri:
+./scripts/labapi.ps1 fetch-password -SecretId "https://msidlabs.vault.azure.net/secrets/ID4SLAB2" -IntoSecret labpw
+```
+
+`-TestTenant` accepts the KeyVault secret names: `ID4SLAB2`, `ID4SLAB1`, `ARLMSIDLAB1`, `MNCMSIDLAB1`,
+`MSIDLAB4`, `MSIDLAB3`, `MSIDLAB8` (override the vault with `-Vault`, default `msidlabs`). The command:
+
+- reads the value with `az keyvault secret show --id <uri> --query value -o tsv` (no parentheses in the
+  JMESPath, so it survives the `az.cmd`/cmd.exe wrapper),
+- writes it **only** to the local DPAPI store (`%USERPROFILE%\.android-e2e-secrets\<IntoSecret>.sec`), the
+  same on-disk format `secrets.ps1` uses, and
+- prints **only** a masked confirmation (`... (NN chars).`) — the plaintext never touches the host,
+  pipeline, logs, or git.
+
+Then `deviceui.ps1 input-text -SecretRef labpw -Secret` resolves it in-process and types it on the device.
+
+If `fetch-password` errors with a vault/auth message, it's a **setup blocker**: run `az login` with an
+entitled account (see Entitlements below), or fall back to `secrets.ps1 set -Name labpw` and paste once into
+the hidden prompt. This uses **your** entitled CLI session — if the token expires or you sign out, access
+stops.
 
 ## When to use which endpoint
 
@@ -128,15 +167,16 @@ user usually supplies the shared password directly — **never print it into the
   keeps interrupting) → `disable-policy`, run the segment, then `enable-policy` to restore state.
 - **Device-registration test left a stale device** → `delete-device` to clean up so the next run starts fresh.
 - **You need the exact UPNs of the durable, pre-created accounts** (not temp) → open the **List of Test
-  Accounts** KeyVault link for your team; get the tenant password via **Fetch Password for Tenant**.
+  Accounts** KeyVault link for your team; get the tenant password via `fetch-password` (CLI, no paste) or
+  the **Fetch Password for Tenant** deep-link.
 
 ## Entitlements
 
 Request/manage at <https://coreidentity.microsoft.com/manage/entitlement>:
 
 - **`TM-MSIDLabs-Ext`** — required for **all** LAB APIs. Needs both **RO** and **RW**.
-- **`TM-MSIDLABS-DevKV`** — required to read the **Mobile Build Vault** (the KeyVault deep-links). Needs
-  both **RO** and **RW**.
+- **`TM-MSIDLABS-DevKV`** — required to read the **Mobile Build Vault** (`msidlabs`): the KeyVault
+  deep-links *and* `labapi.ps1 fetch-password` (via `az`). Needs both **RO** and **RW**.
 
 If a call returns a sign-in/consent page instead of data, you're either not signed into Edge with an
 entitled account or you're missing one of the above — that's a **user/setup blocker**, not a defect.
