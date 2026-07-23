@@ -49,6 +49,26 @@ input you can inject programmatically. Choose up front from the test case's step
 > the **universal** APK on emulators — a large `arm64-v8a`-only APK can crash install-time dexopt on an
 > `x86_64` image (see [Install failures](troubleshooting.md#install-failures)).
 
+## Targeting the right device (multiple devices / same model)
+
+Every attached device gets a **unique adb serial**, independent of model — two identical phones still show up
+as two different serials. List them with their model/transport so you can tell them apart:
+
+```powershell
+adb devices -l
+# emulator-5554        device product:sdk_gphone64_x86_64 model:sdk_gphone64_x86_64 transport_id:21
+# 39181FDH2000ABC      device product:husky model:Pixel_8_Pro transport_id:9
+# 39181FDH2000XYZ      device product:husky model:Pixel_8_Pro transport_id:12   <- same model, different serial
+```
+
+Then **always pass `-Serial <serial>`** to every `deviceui.ps1` call so the action lands on the intended
+device. If you omit `-Serial` while more than one device is attached, adb **errors out** ("more than one
+device/emulator") instead of guessing — a safe failure, not a wrong-device action, but it will stall the run.
+When the human owns several devices, ask which serial to use (or which model), and store each device's PIN
+under its **own** secret name (e.g. `devicepin_pixel8`, `devicepin_pixel8pro`) so `unlock -SecretRef` targets
+the correct one. Serials are stable for a physical device across reconnects; emulator serials (`emulator-55xx`)
+depend on the console port and can change between boots, so re-check `adb devices -l` at the start of a run.
+
 ## Steps that need a fingerprint / biometric / App Lock
 
 `adb emu finger touch <id>` injects a fingerprint **only on an emulator**. A physical device has no adb
@@ -67,9 +87,16 @@ Options, best first:
    (drive it with `tap-text`), then proceed with password-only steps. Do this early if the scenario
    doesn't specifically test App Lock.
 3. **Fall back to a device PIN.** If a keyguard/biometric prompt also accepts a PIN, set a known PIN during
-   setup and enter it with `deviceui.ps1` (many biometric prompts have a "Use PIN" path). On an **emulator**
-   you can set one deterministically: `adb -s <emu> shell locksettings set-pin 1234`, then satisfy biometric
-   prompts with `adb -s <emu> emu finger touch 1`.
+   setup and enter it with `deviceui.ps1 unlock` (many biometric prompts have a "Use PIN" path). Seed the PIN
+   once into the encrypted store, then let the tool type + **verify** it — it checks the keyguard actually
+   cleared and **stops after 3 tries** (`-MaxAttempts`, default 3) so a wrong PIN can't drive a physical
+   device into an escalating lockout:
+   ```powershell
+   ./scripts/secrets.ps1 set -Name devicepin_pixel8                     # you paste the PIN, stored DPAPI-encrypted
+   ./scripts/deviceui.ps1 unlock -SecretRef devicepin_pixel8 -Serial <serial>   # verified; gives up after 3
+   ```
+   On an **emulator** you can set one deterministically: `adb -s <emu> shell locksettings set-pin 1234`, then
+   satisfy biometric prompts with `adb -s <emu> emu finger touch 1`.
 4. **Probing an unknown PIN on a physical device — don't brute-force.** `adb shell locksettings verify --old <pin>`
    tests a guess **non-destructively** (it doesn't change anything), but Android's **Gatekeeper throttles
    after ~5 wrong tries** and too many failures can lock the user out of their own device. Try at most a
@@ -191,3 +218,5 @@ These can't be produced by the AI — report them and ask the user (see SKILL "W
 | Wrong-ABI APK on emulator (arm64 on x86_64) | ✅ | Emulator | install the **universal** APK; keep arm64 APK for physical |
 | Stale MFA already registered | ✅ | Either | `labapi.ps1 reset -Operation mfa` or new temp user |
 | SMS / phone / hardware-key / CAPTCHA | ❌ | — | **Blocker** — ask the user |
+| Multiple devices / same model attached | ✅ | Either | unique adb serial each; always pass `-Serial`; `adb devices -l` to pick |
+| Unlock the lock screen with a PIN | ✅ | Either | `unlock -SecretRef <name> -Serial <s>` — verifies + **stops after 3** tries |

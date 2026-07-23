@@ -112,13 +112,26 @@ the clear:
 
 ```powershell
 ./scripts/deviceui.ps1 unlock -SecretRef devicepin -Serial <serial>
-# output is just:  Unlock attempted with a N-digit PIN.
+# output is just:  Unlocked on attempt 1/3 with a N-digit PIN.
 ```
 
-It wakes the screen, swipes up to reveal the keypad, types the resolved PIN, and presses ENTER.
-**Caution:** a *wrong* PIN counts toward Android's lockout / Gatekeeper throttle, so only use it with
-the correct PIN (same caveat as `locksettings verify` in [common-blockers.md](common-blockers.md)). For
-a throwaway emulator you can skip the store and pass `-Pin 1234` directly since it isn't secret.
+It wakes the screen, swipes up to reveal the keypad, types the resolved PIN, presses ENTER, and then
+**verifies** the keyguard actually cleared (via `dumpsys`). If it's already unlocked it does nothing.
+**Attempts are capped** (`-MaxAttempts`, default **3**): a *wrong* PIN counts toward Android's lockout /
+Gatekeeper throttle, so after 3 unsuccessful tries the tool **stops and exits 3** rather than risk locking
+you out of your own device — it will tell you to re-check the PIN (`secrets.ps1 get-masked -Name <name>`) or
+ask for the right one. For a throwaway emulator you can skip the store and pass `-Pin 1234` directly.
+
+> **Multiple devices / same model?** Each attached device has a **unique adb serial** even if the models are
+> identical (`adb devices -l`), so always pass `-Serial` and store each device's PIN under its own name —
+> e.g. `secrets.ps1 set -Name devicepin_pixel8` then `unlock -SecretRef devicepin_pixel8 -Serial <serial>`.
+> Omitting `-Serial` with several devices attached makes adb error out (safe) rather than act on the wrong one.
+> See [Targeting the right device](common-blockers.md#targeting-the-right-device-multiple-devices--same-model).
+
+> **PIN vs. biometric.** The stored PIN satisfies a prompt only where Android offers a **device-credential /
+> "Use PIN"** path (most keyguard and App Lock prompts do). It does **not** substitute when a flow requires a
+> fingerprint specifically — an emulator can inject one (`deviceui.ps1 finger`), a physical device needs a
+> human touch. See [Steps that need a fingerprint / biometric / App Lock](common-blockers.md#steps-that-need-a-fingerprint--biometric--app-lock).
 
 ## Environment-variable alternative
 

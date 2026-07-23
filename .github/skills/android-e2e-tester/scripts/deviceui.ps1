@@ -16,7 +16,7 @@
     ./deviceui.ps1 input-text -Text "user@contoso.com"                       # bulk (fast) — try this first
     ./deviceui.ps1 input-text -Text "user@contoso.com" -Clear -CharByChar    # fall back if autofill ate it
     ./deviceui.ps1 input-text -SecretRef labpw -Clear -CharByChar            # types a stored password, masked
-    ./deviceui.ps1 unlock -SecretRef devicepin                              # enter the lock-screen PIN, masked
+    ./deviceui.ps1 unlock -SecretRef devicepin -Serial <serial>             # enter the lock-screen PIN, masked; verifies + stops after -MaxAttempts (3)
     ./deviceui.ps1 key -Text ENTER
     ./deviceui.ps1 finger-status                  # is a fingerprint enrolled?
     ./deviceui.ps1 finger-enroll                  # enroll one on an emulator (or prompt if a real device)
@@ -36,8 +36,13 @@
     -Secret suppresses echoing the value to the transcript (prints length only) — always use it for passwords.
     -SecretRef <name> resolves a password/PIN from the encrypted store (scripts/secrets.ps1) and types it
     without ever printing it (implies -Secret) — prefer this over -Text for anything sensitive so the value
-    never appears in the chat. `unlock -SecretRef <name>` enters a device lock-screen PIN the same way.
+    never appears in the chat. `unlock -SecretRef <name>` enters a device lock-screen PIN the same way; it
+    VERIFIES the keyguard actually cleared and STOPS after -MaxAttempts wrong tries (default 3) so a wrong
+    PIN can't drive a physical device into an escalating Gatekeeper lockout (exit code 3 if it gives up).
     See references/secrets-and-files.md for how the human seeds secrets and drops APKs/files for a run.
+    Target a specific device with -Serial (each device — even the same model — has a unique adb serial;
+    `adb devices -l` lists them). Omitting -Serial while several devices are attached makes adb error out
+    rather than act on the wrong one.
     Try bulk `input-text` first (fast); only add -CharByChar if verification shows the value didn't land.
     Fingerprint: `emu finger` only works on EMULATORS. On a real device a fingerprint must be enrolled
     by the user against the physical sensor — `finger-enroll` will print the steps and ask. When a step
@@ -65,6 +70,7 @@ param(
     [switch]$Clear,
     [switch]$CharByChar,
     [int]$PerCharDelayMs = 60,
+    [int]$MaxAttempts = 3,
     [switch]$Secret
 )
 
@@ -185,6 +191,28 @@ function Test-IsEmulator {
     return ($chars -match 'emulator')
 }
 
+function Test-KeyguardLocked {
+    # Read-only. Returns $true (keyguard up), $false (unlocked), or 'unknown'. The exact dumpsys flags vary
+    # by Android version, so we combine several signals. Used by 'unlock' to STOP as soon as the device is
+    # unlocked and to never over-attempt a PIN (a wrong PIN counts toward the Gatekeeper lockout throttle).
+    $w = (Adb shell dumpsys window 2>$null | Out-String)
+    if ($w) {
+        if ($w -match 'mDreamingLockscreen=true' -or $w -match 'mShowingLockscreen=true' -or
+            $w -match 'mKeyguardShowing=true' -or $w -match 'KeyguardShowing=true') { return $true }
+        if ($w -match 'mDreamingLockscreen=false' -or $w -match 'mShowingLockscreen=false') { return $false }
+        $m = [regex]::Match($w, 'mCurrentFocus=Window\{[^}]*\}')
+        if ($m.Success) {
+            if ($m.Value -match 'Keyguard|NotificationShade|StatusBar|DreamOverlay') { return $true }
+            if ($m.Value -match '/') { return $false }   # an app/launcher window is focused => unlocked
+        }
+    }
+    # Fallback: KeyguardController block in the activity dump (API 28+).
+    $a = (Adb shell dumpsys activity activities 2>$null | Out-String)
+    if ($a -match 'mKeyguardShowing=true') { return $true }
+    if ($a -match 'mKeyguardShowing=false') { return $false }
+    return 'unknown'
+}
+
 function Get-FingerprintStatus {
     # Best-effort: 'yes' | 'no' | 'unknown'. dumpsys layout varies by API level, so match a few shapes.
     $dump = (Adb shell dumpsys fingerprint 2>$null | Out-String)
@@ -251,18 +279,37 @@ switch ($Command) {
         Write-Host "Tapped ($X,$Y)"
     }
     'unlock' {
-        # Wake the screen, reveal the keyguard PIN pad, and enter a PIN to unlock. Prefer -SecretRef
-        # (the PIN is resolved from the encrypted store and never printed); -Pin is fine for a throwaway
-        # emulator PIN. WARNING: a WRONG PIN counts toward the device lockout/Gatekeeper throttle — only
-        # run this with the correct PIN on a physical device (see references/common-blockers.md).
+        # Wake the screen, reveal the keyguard PIN pad, enter the PIN, and VERIFY. A wrong PIN counts toward
+        # the device's Gatekeeper lockout throttle, so we check keyguard state after each attempt and STOP as
+        # soon as the device is unlocked. Total tries are capped at -MaxAttempts (default 3) so a wrong stored
+        # PIN can never drive a physical device into an escalating lockout. Prefer -SecretRef (never printed);
+        # -Pin is fine for a throwaway emulator PIN. See references/common-blockers.md.
         $pinVal = if ($SecretRef) { Resolve-SecretValue $SecretRef } else { $Pin }
-        Adb shell input keyevent 224 | Out-Null                 # KEYCODE_WAKEUP
-        Start-Sleep -Milliseconds 300
-        Adb shell input swipe 540 1600 540 500 150 | Out-Null   # swipe up to reveal the PIN pad
-        Start-Sleep -Milliseconds 400
-        Adb shell input text (Encode-Input $pinVal) | Out-Null
-        Adb shell input keyevent 66 | Out-Null                  # ENTER / confirm
-        Write-Host ("Unlock attempted with a {0}-digit PIN." -f $pinVal.Length)
+        if ((Test-KeyguardLocked) -eq $false) { Write-Host 'Device already unlocked; nothing to do.'; $pinVal = $null; break }
+        $ok = $false
+        for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+            Adb shell input keyevent 224 | Out-Null                 # KEYCODE_WAKEUP
+            Start-Sleep -Milliseconds 300
+            Adb shell input swipe 540 1600 540 500 150 | Out-Null   # swipe up to reveal the PIN pad
+            Start-Sleep -Milliseconds 400
+            Adb shell input text (Encode-Input $pinVal) | Out-Null
+            Adb shell input keyevent 66 | Out-Null                  # ENTER / confirm
+            Start-Sleep -Milliseconds 800                            # let the keyguard settle before checking
+            $state = Test-KeyguardLocked
+            if ($state -eq $false) {
+                $ok = $true
+                Write-Host ("Unlocked on attempt {0}/{1} with a {2}-digit PIN." -f $attempt, $MaxAttempts, $pinVal.Length)
+                break
+            }
+            $label = if ($state -eq $true) { 'still locked' } else { 'could not confirm' }
+            Write-Host ("Attempt {0}/{1} did not unlock ({2})." -f $attempt, $MaxAttempts, $label)
+        }
+        $pinVal = $null
+        if (-not $ok) {
+            $ref = if ($SecretRef) { $SecretRef } else { '<pin>' }
+            Write-Host ("STOP: device still locked after {0} attempt(s). Not retrying, to avoid the Gatekeeper lockout throttle. Verify the stored PIN with: secrets.ps1 get-masked -Name {1}  (or ask the user for the correct PIN)." -f $MaxAttempts, $ref)
+            exit 3
+        }
     }
     'input-text' {
         # -SecretRef resolves a stored secret (see scripts/secrets.ps1) and types it WITHOUT ever

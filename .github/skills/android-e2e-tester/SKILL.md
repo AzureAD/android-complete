@@ -235,6 +235,17 @@ passwords**, don't ask the user to paste — pull it from Key Vault into the sto
 password" bottom sheet with `key ESCAPE` before typing if one appears.
 See [references/common-blockers.md](references/common-blockers.md).
 
+**Unlocking the lock screen on a physical device.** If the device sleeps/relocks mid-run and a step needs a
+PIN, seed it once (`secrets.ps1 set -Name devicepin`, done by the human) and let the tool enter + **verify**
+it: `deviceui.ps1 unlock -SecretRef devicepin -Serial <serial>`. It confirms the keyguard actually cleared and
+**stops after 3 attempts** (`-MaxAttempts`, default 3, exits 3 if it gives up) so a wrong PIN never trips
+Android's Gatekeeper lockout — do **not** loop it yourself. With several devices attached (even the same
+model) each has a unique adb serial, so always pass `-Serial` and store per-device PINs under distinct names
+(`devicepin_pixel8`). A PIN only substitutes for biometric where a "Use PIN" path is offered; a
+fingerprint-only step needs an emulator (`finger`) or a human. See
+[references/secrets-and-files.md](references/secrets-and-files.md) and
+[references/common-blockers.md](references/common-blockers.md).
+
 **Provision / repair the lab account with the LAB API** when the scenario needs a fresh account or the
 account state is stuck (e.g. MFA already registered from a previous run, a CA policy blocking the step):
 ```powershell
