@@ -15,6 +15,7 @@ Table of contents:
 - [Screenshot corruption via redirection](#screenshot-corruption-via-redirection)
 - [Single-use pairing / setup links](#single-use-pairing--setup-links)
 - [Stale account state between runs](#stale-account-state-between-runs)
+- [Fresh temp user not sign-in-able yet (ESTS propagation lag)](#fresh-temp-user-not-sign-in-able-yet-ests-propagation-lag)
 - [Password rejected at sign-in — don't reset it](#password-rejected-at-sign-in--dont-reset-it)
 - [Doing it yourself in System Settings](#doing-it-yourself-in-system-settings)
 - [Genuine blockers (stop and ask)](#genuine-blockers-stop-and-ask)
@@ -201,6 +202,29 @@ them in place for the next run's uninstall (or a human) to clear. Combined with 
 case**, this keeps runs independent without brittle post-run cleanup. Device-clock or policy state you changed
 mid-run should still be restored so it doesn't leak into the next case.
 
+## Fresh temp user not sign-in-able yet (ESTS propagation lag)
+
+A brand-new temp user from `CreateTempUserID4SLab2` (or any just-created lab account) can take **several
+minutes to become consistently sign-in-able**. During that window the sign-in page shows *"This username may
+be incorrect. Make sure you typed it correctly."* and the error often **flaps** — it clears for one attempt,
+then returns — because the account exists in Graph (you got an `objectId`) but ESTS replication across
+front-end nodes lags behind. Observed lag has exceeded **14 minutes**. This is **not** a typo or a real
+product failure, so per [Password rejected at sign-in](#password-rejected-at-sign-in--dont-reset-it) do **not**
+reset or mutate anything. Options, in order:
+
+1. **Reuse an already-propagated temp user** you created earlier in the same run (they live ~60 min). For flows
+   where the account is incidental — e.g. a *browser* SSO test where only the MSAL APK folder differs between
+   test points — reusing one propagated user across both points is legitimate and does not weaken the
+   assertion. Note the reuse in the report.
+2. **Pre-warm**: create the temp user **early** (at the start of the case, before installing/clean-stating apps)
+   so replication finishes while you do other setup. Better still, create the *next* case's user before you need it.
+3. **Poll politely**: retry sign-in every ~60–90 s (re-type the UPN each time) rather than hammering in a tight
+   loop; tight retries just re-hit the same stale node.
+
+If a case genuinely needs a *distinct fresh* account and it still isn't sign-in-able after a few minutes,
+record the lag as a **PASS-with-note** (if you completed via reuse) or **BLOCKED** with the exact on-screen
+error and the `objectId` as evidence — not a password reset. See [lab-api.md](lab-api.md).
+
 ## Password rejected at sign-in — don't reset it
 
 When eSTS shows *"Your account or password is incorrect"*, *"Your password has expired"*, or *"That Microsoft
@@ -286,6 +310,7 @@ These can't be produced by the AI — report them and ask the user (see SKILL "W
 | Emulator won't stay up (BT-HAL / system_server loop) | ⚠️ host-dependent | — | try boot recipe; if unstable, biometric step is a **blocker** on this host |
 | Wrong-ABI APK on emulator (arm64 on x86_64) | ✅ | Emulator | install the **universal** APK; keep arm64 APK for physical |
 | Stale MFA already registered | ✅ | Either | `labapi.ps1 reset -Operation mfa` or new temp user |
+| Fresh temp user "username may be incorrect" (just created) | ✅ | Either | ESTS propagation lag (can be >14 min) — **don't** reset; reuse an already-propagated temp user or pre-warm/poll ~60–90s |
 | System-settings step (advance clock, delete cert, toggle) | ✅ drive Settings UI · ❌ only if secure/root | Either | `am start -a android.settings.*` → `dump`/`tap-text`; block only on Knox/keyguard/root |
 | Clean slate for a new case | ✅ | Either | **uninstall+reinstall** app-under-test (`pm clear` keeps work accounts/registration); don't tear down after |
 | SMS / phone / hardware-key / CAPTCHA | ❌ | — | **Blocker** — ask the user |
