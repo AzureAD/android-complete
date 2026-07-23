@@ -99,7 +99,8 @@ then read its password with `fetch-password`, and **don't** mutate or tear it do
 # Clear a stale MFA registration so a first-time-setup flow can be re-run cleanly:
 ./scripts/labapi.ps1 reset          -Upn "Locked_xxx@ID4SLab2.onmicrosoft.com" -Operation mfa
 
-# Reset the password of a temp user:
+# Reset the password of a temp user — ONLY when the test case explicitly asks for a password reset/change flow.
+# A rejected password at sign-in is NOT a reason to do this (see "When to use which endpoint" below).
 ./scripts/labapi.ps1 reset          -Upn "Locked_xxx@ID4SLab2.onmicrosoft.com" -Operation password
 
 # Temporarily disable a CA policy that blocks a segment you're not testing, then re-enable it after:
@@ -188,6 +189,14 @@ stops.
   [Account policy](#account-policy-prefer-fresh-id4slab2-temp-users)).
 - **A first-time-registration flow already registered on a prior attempt** (so the app skips the very step
   you want to test) → `reset -Operation mfa` to clear MFA, or provision a brand-new user.
+- **Sign-in says the password is incorrect or expired** → do **NOT** `reset -Operation password`. That message
+  almost always means you're typing the wrong *value* or targeting the wrong *account*, not that the account
+  needs changing. First re-pull the shared value with `fetch-password` (it may have rotated in Key Vault) and
+  double-check the UPN/tenant the case named; also check the account isn't `Locked_…` from an earlier lockout.
+  Only run `reset -Operation password` when the **test case itself** describes a password-change/expiry flow.
+  **Never** reset the password of a **shared durable account** (e.g. `AndroidTBUser1@id4slab2`) — other cases
+  reuse it and a reset breaks them. If the value is confirmed correct and it still fails, mark the run
+  **BLOCKED** with the exact on-screen error instead of mutating the account.
 - **A CA policy blocks a segment you're not testing** (e.g. you want to test token acquisition but MFA
   keeps interrupting) → `disable-policy`, run the segment, then `enable-policy` to restore state.
 - **A device-registration test left a stale device** and the *next* run needs a clean slate → optionally

@@ -342,10 +342,20 @@ fingerprint-only step needs an emulator (`finger`) or a human. See
 account state is stuck (e.g. MFA already registered from a previous run, a CA policy blocking the step):
 ```powershell
 ./scripts/labapi.ps1 create-user   -UserType GlobalMFA                  # temp user, auto-deletes in 60 min
-./scripts/labapi.ps1 reset         -Upn $upn -Operation mfa             # clear stale MFA registration
+./scripts/labapi.ps1 reset         -Upn $upn -Operation mfa             # clear stale MFA registration (temp users only)
 ./scripts/labapi.ps1 disable-policy -Upn $upn -Policy GlobalMFA          # unblock a CA-gated segment
 ./scripts/labapi.ps1 fetch-password -TestTenant ID4SLAB2 -IntoSecret labpw  # pull tenant pw from Key Vault (no paste)
 ```
+**Don't reset a password just because sign-in rejected it.** If the device shows *"Your account or password is
+incorrect"* / *"password has expired"* / *"that Microsoft account doesn't exist"*, do **not** run
+`reset -Operation password` (or any password change) unless the **test case explicitly tells you to**. A wrong
+password almost always means you have the wrong *value* or the wrong *account*, not that the account needs
+changing — so instead: re-pull the shared value with `fetch-password` (it may have rotated in Key Vault), confirm
+the UPN/tenant matches what the case named, and check the account isn't `Locked_…` from a prior lockout. Resetting
+is especially dangerous for **shared durable accounts** (e.g. `AndroidTBUser1@id4slab2`) that other tests reuse —
+changing their password breaks every other case. If the value is genuinely right and it still fails, mark the run
+**BLOCKED** with the exact on-screen error rather than mutating the account.
+
 **Account policy — prefer fresh ID4SLAB2 temp users, one per case.** Provision a **new temp user for each
 test case** (`create-user` makes an ID4SLab2 user that auto-deletes in ~60 min) instead of reusing one across
 cases — **even when a test case names a fixed MSIDLAB4 account** (that lab is being deprecated): create the
@@ -515,6 +525,11 @@ Load these as needed (don't preload all):
   cert, toggle a setting) — only block on a genuinely secure/native dialog or a true root requirement.
 - **Prefer fresh ID4SLAB2 temp accounts, one per case** — use `create-user -UserType <matching>` even when a
   case names a deprecated MSIDLAB4 account, unless a specific durable account is required.
+- **Don't reset/change a password on an auth failure unless the test case says so.** "Incorrect password" or
+  "password expired" on the sign-in screen means re-fetch the value (`fetch-password` — it may have rotated) and
+  re-check the UPN/tenant, **not** `reset -Operation password`. Never change the password of a shared durable
+  account (e.g. `AndroidTBUser1@id4slab2`) — it breaks other tests; if the value is right and it still fails,
+  mark the run **BLOCKED** with the exact error.
 - **Prefer an emulator when a step needs an injectable fingerprint/biometric** (App Lock, biometric-gated
   number-match). `adb emu finger touch` works only on emulators; a physical device needs a human at the
   sensor. See [references/common-blockers.md](references/common-blockers.md).

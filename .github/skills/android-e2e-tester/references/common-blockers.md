@@ -15,6 +15,7 @@ Table of contents:
 - [Screenshot corruption via redirection](#screenshot-corruption-via-redirection)
 - [Single-use pairing / setup links](#single-use-pairing--setup-links)
 - [Stale account state between runs](#stale-account-state-between-runs)
+- [Password rejected at sign-in — don't reset it](#password-rejected-at-sign-in--dont-reset-it)
 - [Doing it yourself in System Settings](#doing-it-yourself-in-system-settings)
 - [Genuine blockers (stop and ask)](#genuine-blockers-stop-and-ask)
 - [Quick reference table](#quick-reference-table)
@@ -200,6 +201,27 @@ them in place for the next run's uninstall (or a human) to clear. Combined with 
 case**, this keeps runs independent without brittle post-run cleanup. Device-clock or policy state you changed
 mid-run should still be restored so it doesn't leak into the next case.
 
+## Password rejected at sign-in — don't reset it
+
+When eSTS shows *"Your account or password is incorrect"*, *"Your password has expired"*, or *"That Microsoft
+account doesn't exist"*, the reflex to "fix" it by resetting the password is almost always **wrong**. Resetting
+mutates a shared lab account and can mask a real product bug. Treat a rejected password as a *value/identity*
+problem first:
+
+1. **Re-fetch the value** — the shared tenant password may have rotated in Key Vault since you cached it:
+   `./scripts/labapi.ps1 fetch-password -TestTenant <tenant> -IntoSecret <name>`, then re-type with
+   `deviceui.ps1 input-text -SecretRef <name> -Secret`.
+2. **Check the identity** — confirm the UPN and tenant match exactly what the test case named (an easy slip is
+   using an `@msidlab4` account with the `id4slab2` password, or vice-versa).
+3. **Check for a lockout** — a `Locked_…` prefix or repeated failures may mean a prior run locked the account;
+   provision a **fresh temp user** instead of hammering it.
+4. **Re-type carefully** — special characters can drop in `-CharByChar` mode; verify the field length matches.
+
+Only run `labapi.ps1 reset -Operation password` when the **test case itself** exercises a password-change /
+expiry flow. **Never** reset a **shared durable account** (e.g. `AndroidTBUser1@id4slab2`) — other cases reuse
+it. If the value is confirmed correct and sign-in still fails, mark the run **BLOCKED** with the exact on-screen
+error rather than changing the account. See [lab-api.md](lab-api.md).
+
 ## Doing it yourself in System Settings
 
 Some test steps have **no adb command** — advance the device clock, delete a user certificate, toggle a
@@ -269,3 +291,4 @@ These can't be produced by the AI — report them and ask the user (see SKILL "W
 | SMS / phone / hardware-key / CAPTCHA | ❌ | — | **Blocker** — ask the user |
 | Multiple devices / same model attached | ✅ | Either | unique adb serial each; always pass `-Serial`; `adb devices -l` to pick; `secrets.ps1 set-device-pin` to store per-device PIN |
 | Unlock the lock screen with a PIN | ✅ | Either | `secrets.ps1 set-device-pin` once, then `unlock -Serial <s>` (auto-uses saved PIN) — verifies + **stops after 3** tries |
+| "Password incorrect / expired" at sign-in | ✅ | Either | **don't** `reset -Operation password`; re-`fetch-password` (may have rotated), re-check UPN/tenant, use a fresh temp user; reset **only** if the case says so; never reset shared durable accounts |
