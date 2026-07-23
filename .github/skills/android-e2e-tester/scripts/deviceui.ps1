@@ -162,7 +162,11 @@ function Wait-ForText {
 function Encode-Input {
     param([string]$s)
     # adb 'input text' uses %s for space; backslash-escape shell metacharacters.
-    $s = $s -replace '([()<>|;&*~"''`$\\])', '\$1'
+    # '#' MUST be escaped: the device shell treats a word-initial '#' as a comment, so a lone
+    # `input text #` (as happens in -CharByChar) is parsed as `input text` with no argument and
+    # throws "Argument expected after text" -- silently DROPPING that character from a password.
+    # Backslash-escaping it (\#) is safe in both bulk and per-char modes (verified on-device).
+    $s = $s -replace '([()<>|;&*~"''`$\\#])', '\$1'
     $s = $s -replace ' ', '%s'
     return $s
 }
