@@ -182,13 +182,19 @@ function Invoke-LabApi {
     else { Join-Path $env:TEMP 'labapi_edge_profile' }
     $dom = Join-Path $env:TEMP ("labapi_dom_" + [guid]::NewGuid().ToString('N') + ".html")
     $budget = [Math]::Max(5000, $TimeoutSec * 1000)
+    $savedEap = $ErrorActionPreference
     try {
+        # Some Edge builds print renderer noise to stderr; under $ErrorActionPreference='Stop' that
+        # becomes a terminating NativeCommandError even with 2>$null, aborting before the CDP fallback
+        # can run. Relax the preference just around the native launch (stderr is still discarded).
+        $ErrorActionPreference = 'Continue'
         & $edge --headless=new --disable-gpu --user-data-dir=$profile --no-first-run --no-default-browser-check `
             --dump-dom --virtual-time-budget=$budget $Endpoint 2>$null |
             Out-File -FilePath $dom -Encoding utf8
         $html = if (Test-Path $dom) { Get-Content $dom -Raw } else { '' }
     }
     finally {
+        $ErrorActionPreference = $savedEap
         Remove-Item $dom -ErrorAction SilentlyContinue
         if ($Fresh) { Remove-Item $profile -Recurse -Force -ErrorAction SilentlyContinue }
     }
