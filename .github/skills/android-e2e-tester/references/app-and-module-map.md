@@ -70,10 +70,25 @@ convenience, not a contract.
 | `adalTestApp-dist-debug` | ADAL test app | `com.microsoft.aad.adal.testapp` | Calling client for legacy ADAL flows. |
 | `brokerHost-local-debug` | Broker Host test app | `com.microsoft.identity.testuserapp` | Drives broker APIs directly (Get Accounts / device state). |
 
-**ECS vs Local folders.** When given both an `ECS\` and a `Local\` folder, test the **ECS** build by default
-(the ECS-flighted candidate) unless a specific test case says it is **Local only**. Install the app-under-test
-from the folder the case targets; pull any *other* required app (a broker the case needs but didn't stage,
-Teams, Chrome) from that same folder if present, else the Play Store.
+## ECS vs Local builds (test-point configuration)
+
+When a case is staged with both an `ECS\` and a `Local\` folder, **which folder you install the app-under-test
+from is decided by the ADO test point's *configuration*, not by a fixed default:**
+
+| Test-point configuration name | Build folder to install from |
+|---|---|
+| contains **`LocalFlights`** (e.g. `RC MSAL - RC Broker (LocalFlights)`) | **`Local\`** |
+| anything else (e.g. plain `RC MSAL - RC Broker`) | **`ECS\`** |
+
+> ⚠️ **Counter-intuitive — read twice.** The `LocalFlights` configuration maps to the **`Local\`** folder, and
+> the *plain* configuration maps to the **`ECS\`** folder. Do **not** assume "LocalFlights → ECS". A case with
+> two test points is therefore installed **from `Local\` for the LocalFlights point and from `ECS\` for the
+> plain point** — i.e. you run that case **twice**, once per folder.
+
+Install the **app-under-test** from the folder the point's configuration selects; pull any *other* required app
+(a broker the case needs but didn't stage, Teams, Chrome) from that **same** folder if present, else the Play
+Store. How to enumerate a case's test points and read each one's configuration is in the SKILL
+([Phase 1 → Test points and configurations](../SKILL.md#test-points-and-configurations-which-build-to-run)).
 
 ## Discover the exact package & launch activity at runtime
 

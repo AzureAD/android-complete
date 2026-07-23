@@ -41,7 +41,7 @@ the account **UPN only**.
 | `verdict` | string | **Required.** `PASS` \| `FAIL` \| `BLOCKED` \| `PARTIAL`. Drives the colored banner. |
 | `verdictNote` | string | One-line justification (esp. for BLOCKED/PARTIAL — say if it's an env constraint). |
 | `feature` | string | Human name of the flow under test. |
-| `ado` | object | `{ testCaseId, planId, suiteId, url }`. |
+| `ado` | object | `{ testCaseId, planId, suiteId, url, testPointId, configuration, buildSource }`. `configuration` = the test point's config name (e.g. `RC MSAL - RC Broker (LocalFlights)`); `buildSource` = `ECS` or `Local` (which staged folder the app came from). Both surface in the report header and the suite **Config** column. |
 | `device` | object | `{ model, serial, os, resolution, type }` (`type`: `physical`/`emulator`). |
 | `app` | object | `{ package, version }`. |
 | `account` | object | `{ upn, usertype, tenant }` — **UPN only, no password**. |
@@ -62,7 +62,8 @@ the account **UPN only**.
   "verdictNote": "Core objective met (account registered); browser number-match blocked by Authenticator App Lock — an environment constraint on a physical device, not a product defect.",
   "feature": "AAD MFA sign-in + first-time MFA setup",
   "ado": { "testCaseId": 1579381, "planId": 714514, "suiteId": 3503165,
-           "url": "https://identitydivision.visualstudio.com/Engineering/_testPlans/define?planId=714514&suiteId=3503165" },
+           "url": "https://identitydivision.visualstudio.com/Engineering/_testPlans/define?planId=714514&suiteId=3503165",
+           "testPointId": 3150404, "configuration": "RC MSAL - RC Broker", "buildSource": "ECS" },
   "device": { "model": "Samsung SM-F741U1", "serial": "R5CXB0P430X", "os": "Android 16 (SDK 36)",
               "resolution": "1080x2640", "type": "physical" },
   "app": { "package": "com.azure.authenticator", "version": "6.2607.4584" },
@@ -105,12 +106,14 @@ When a **batch** of test cases runs in one session (a suite, a test-point list, 
 `SUMMARY.html` + `SUMMARY.md` so the user sees a single verdict and a per-case table instead of hunting
 through N folders.
 
-**Layout it expects.** Put each case in its own subfolder of one batch folder, each with its own `run.json`
-(and rendered `TestReport.html`):
+**Layout it expects.** Put each run in its own subfolder of one batch folder, each with its own `run.json`
+(and rendered `TestReport.html`). When a case has **multiple test points**, give each point its own subfolder
+named `tc<id>-<local|ecs>` so both show up as separate rows:
 ```
 android-e2e-runs\<suite>-<yyyyMMdd_HHmmss>\
-  tc1561136\  run.json  TestReport.html  TestReport.md  iter1\...
-  tc833550\   run.json  TestReport.html  TestReport.md  iter1\...
+  tc831570-ecs\    run.json  TestReport.html  TestReport.md  iter1\...   # plain config → ECS build
+  tc831570-local\  run.json  TestReport.html  TestReport.md  iter1\...   # LocalFlights config → Local build
+  tc833550\        run.json  TestReport.html  TestReport.md  iter1\...   # single test point
   ...
 ```
 
@@ -119,11 +122,13 @@ android-e2e-runs\<suite>-<yyyyMMdd_HHmmss>\
 ./scripts/report.ps1 summary -In C:\Users\<you>\android-e2e-runs\<suite>-<ts> -Title "<suite name>"
 # → writes SUMMARY.html + SUMMARY.md into that folder
 ```
-The summary reads each case's `title`, `verdict`, `verdictNote`, `ado.testCaseId`, and `device.serial`, and
-links each row to that case's `TestReport.html`. Cases are ordered **problems-first** (FAIL → BLOCKED →
-PARTIAL → PASS). The **overall** verdict is `FAIL` if any case failed, `PASS` if all passed, else `PARTIAL`,
-shown with per-verdict counts. No extra schema is needed — it reuses the per-case run-JSON above; render the
-per-case reports first (or at least drop each case's `run.json`), then run `summary`.
+The summary reads each run's `title`, `verdict`, `verdictNote`, `ado.testCaseId`, `device.serial`, and
+`ado.configuration`/`ado.buildSource`, and links each row to that run's `TestReport.html`. It adds a **Config**
+column (e.g. `ECS — RC MSAL - RC Broker`) so a case's two test points are easy to tell apart. Rows are ordered
+**problems-first** (FAIL → BLOCKED → PARTIAL → PASS), then by test-case id, then ECS-before-Local. The
+**overall** verdict is `FAIL` if any run failed, `PASS` if all passed, else `PARTIAL`, shown with per-verdict
+counts (each test point counts as its own run). No extra schema is needed — it reuses the per-case run-JSON
+above; render the per-case reports first (or at least drop each run's `run.json`), then run `summary`.
 
 ## Rules
 

@@ -79,9 +79,11 @@ keep the same discipline: **don't declare done until the verdict is in, and don'
 When asked to run **more than one** test case (a suite, a list of test points, several ids), treat it as a
 **batch**, not a serial slog:
 
-1. **Enumerate the work and the devices.** Resolve each case's scenario (Phase 1 per case) and list every
-   free device in the pool (`emulator.ps1 pool` / `devicelease.ps1 list`). Count how many you can drive in
-   parallel (respect the lease pool cap, `-MaxPoolSize`).
+1. **Enumerate the work and the devices.** Resolve each case's scenario (Phase 1 per case) and **expand each
+   case into its test points** (Phase 1 → "Test points and configurations"): every `(case, test point)` pair
+   is its own unit of work, with its own build folder (`Local\` for a `LocalFlights` config, `ECS\`
+   otherwise). List every free device in the pool (`emulator.ps1 pool` / `devicelease.ps1 list`) and count
+   how many you can drive in parallel (respect the lease pool cap, `-MaxPoolSize`).
 2. **Fan out one sub-agent per test case, capped at the device count.** Give each case its own sub-agent
    (same model as the parent) with a **self-contained** prompt: that case's scenario + success criterion,
    the app/module + which APKs to install, credential rules (type on device, never print), its run-folder
@@ -89,9 +91,12 @@ When asked to run **more than one** test case (a suite, a list of test points, s
    device** with its own agent id as owner (`devicelease.ps1 acquire -Owner <caseAgentId>`) so no two lanes
    touch the same device. If there are **more cases than devices**, each device is a **lane** that runs its
    queue of cases one after another; the parent keeps every lane busy until the queue drains.
-3. **One shared batch folder, one subfolder per case.** Use a single
-   `…\android-e2e-runs\<suite>-<yyyyMMdd_HHmmss>\` with a `tc<id>\` subfolder per case (each holding that
-   case's `run.json` + `TestReport.html/.md` + artifacts). That layout is exactly what the suite report scans.
+3. **One shared batch folder, one subfolder per test point.** Use a single
+   `…\android-e2e-runs\<suite>-<yyyyMMdd_HHmmss>\`. Give each `(case, test point)` its own subfolder named
+   `tc<id>-<local|ecs>` (e.g. `tc831570-ecs\`, `tc831570-local\`); a single-point case may use plain
+   `tc<id>\`. Each subfolder holds that run's `run.json` (recording its `configuration` + `buildSource`) +
+   `TestReport.html/.md` + artifacts. That layout is exactly what the suite report scans — every test point
+   becomes its own row in the **Config** column.
 4. **The parent supervises all lanes** with the same watchdog discipline as a single run (progress +
    `heartbeat` per phase; restart a hung lane; stop a finished one; cap restarts). **Don't end the turn until
    every case has a verdict.**
@@ -150,6 +155,48 @@ above at run time; never hardcode a particular feature's steps into the skill or
   checklist, or a path the user names), read the steps from there and treat them like ADO steps.
 - If neither exists and the scenario isn't otherwise clear, **ask the user** rather than inventing
   feature-specific steps.
+
+#### Test points and configurations (which build to run)
+
+A single ADO **Test Case** can appear in a suite as **one or two *test points*, each carrying a
+*configuration*** (visible as the "Configuration" column on the test point). In the Android **Broker** suite
+the two configurations are `RC MSAL - RC Broker` and `RC MSAL - RC Broker (LocalFlights)`, and the
+configuration decides **which staged build folder you install from**:
+
+> ⚠️ **Counter-intuitive mapping — get this right:**
+> - configuration name **contains `LocalFlights`** → install from the **`Local\`** folder
+> - **any other** configuration (plain, no `LocalFlights`) → install from the **`ECS\`** folder
+>
+> `LocalFlights` does **not** mean the ECS folder. See
+> [references/app-and-module-map.md → ECS vs Local builds](references/app-and-module-map.md#ecs-vs-local-builds-test-point-configuration).
+
+**Run every test point of the case, once each** — a 2-point case runs **twice** (once from `Local\` for the
+LocalFlights point, once from `ECS\` for the plain point); a 1-point case runs once. The **only** exceptions
+are when the **case body itself** says it is ECS-only or Local-only — then run just that one build.
+
+**Enumerate a case's test points + configurations from the Test Plan** (this is the source of truth — a case
+in isolation doesn't tell you its points). Verified recipe:
+```powershell
+$org='https://dev.azure.com/identitydivision'; $project='Engineering'
+$plan=<planId>; $suite=<suiteId>
+$tok = az account get-access-token --resource '499b84ac-1321-427f-aa17-267ca6975798' --query accessToken -o tsv
+$h   = @{ Authorization = "Bearer $tok" }
+$u   = "$org/$project/_apis/testplan/Plans/$plan/Suites/$suite/TestPoint?api-version=7.1-preview.2"
+$pts = (Invoke-RestMethod -Headers $h -Uri $u -Method GET).value
+$pts | ForEach-Object {
+  [pscustomobject]@{
+    testPointId = $_.id
+    caseId      = $_.testCaseReference.id
+    config      = $_.configuration.name
+    build       = if ($_.configuration.name -match 'LocalFlights') { 'Local' } else { 'ECS' }
+  }
+} | Where-Object caseId -eq <testCaseId> | Format-Table
+```
+`499b84ac-1321-427f-aa17-267ca6975798` is the Azure DevOps AAD resource GUID (`az` is already signed in for
+identitydivision). Each returned row is **one run** for this case: feed its `build` into Phase 3 (which folder
+to install from) and record `configuration` + `buildSource` in that run's `run.json` (Phase 7) so the report
+and suite summary show a **Config** column. When you're driving a **batch**, each `(case, test point)` pair is
+its own lane/run (see "Running multiple test cases").
 
 ### Phase 2 — Provision the device (emulator or real device)
 
@@ -213,7 +260,11 @@ $serial = (./scripts/devicelease.ps1 acquire -Owner $AgentId -Feature <feature> 
    calling app + a broker) — see the app-and-module map's pairing rules.
 2. Prefer an APK Android Studio already built (`appcontrol.ps1 list-apks`); otherwise build
    (`appcontrol.ps1 build -Module <:module>`). Gradle builds need the repo's Maven creds — if they fail
-   with 401, that's an environment blocker for the user.
+   with 401, that's an environment blocker for the user. **When the case is staged with both an `ECS\` and a
+   `Local\` folder, the folder to install from is dictated by the test point's configuration** — `Local\`
+   for a `LocalFlights` config, `ECS\` otherwise (Phase 1 → "Test points and configurations";
+   [map](references/app-and-module-map.md#ecs-vs-local-builds-test-point-configuration)). Run the case once
+   per test point, each from its own folder.
 3. **Start every test case from a clean state (unless told otherwise): uninstall, then freshly install all
    test apps.** A `pm clear` alone is **not** a clean slate — it leaves AccountManager work-account entries
    and broker/WPJ registration behind; only **uninstalling** the app removes those. So for each app the case
@@ -375,7 +426,9 @@ the run folder with `report.ps1`:
 ```
 The step list should mirror the ADO test case's steps, and each step's **result** should be judged
 against that step's **expected result**. Include the ADO ids (`testCaseId`/`planId`/`suiteId`) and a link
-so the report ties back to the test plan. See [references/test-reporting.md](references/test-reporting.md)
+so the report ties back to the test plan. **When the run came from a specific test point, also record
+`ado.testPointId`, `ado.configuration` (the config name), and `ado.buildSource` (`ECS` or `Local`)** so the
+report header and the suite summary's **Config** column show which build this run exercised. See [references/test-reporting.md](references/test-reporting.md)
 for the JSON schema and a worked example. (For an automation-test run, also attach the
 `build/reports/androidTests/` output.) Present the verdict and the report paths to the user; optionally
 publish the outcome back to the ADO Test Run.
@@ -446,6 +499,10 @@ Load these as needed (don't preload all):
 - **Artifacts stay outside the repo** (the run folder). Never commit logs/screenshots/reports.
 - **For an ADO test case, always generate the HTML + Markdown report** (`report.ps1`) on every outcome —
   PASS, FAIL, BLOCKED, or PARTIAL. A run driven from a test case is not "done" until the report exists.
+- **Run every test point of a case, and match the build to its configuration.** A Broker-suite case may have
+  two test points; run each once. Install from **`Local\`** when the point's configuration name contains
+  `LocalFlights`, from **`ECS\`** otherwise (⚠️ not the other way round). Skip a point only if the case body
+  says it's ECS-only or Local-only. Record `configuration`/`buildSource` in each run's report.
 - **A batch of ADO cases also needs the overall `report.ps1 summary`** over the batch folder, not just the
   per-case reports.
 - **Split a multi-case batch across available devices and run in parallel** (one sub-agent per case, each
