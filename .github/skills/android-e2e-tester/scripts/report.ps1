@@ -29,7 +29,12 @@
                    "result":"PASS", "notes":"...", "screenshot":"iter1/01_firstrun.png" } ],
       "evidence":  [ "Account appears in Authenticator list (06_authenticator_accountlist.xml)" ],
       "blockers":  [ "App Lock gates browser approval behind device PIN/biometric" ],
-      "artifacts": [ "iter1/logcat_scan.txt", "iter1/01_firstrun.png" ]
+      "artifacts": [ "iter1/logcat_scan.txt", "iter1/01_firstrun.png" ],
+      // OPTIONAL recommendation block — rendered as "Proposed test steps" + "Notes for the e2e-tester skill".
+      // Use it to suggest clearer/automation-friendly wording WITHOUT editing the ADO test case.
+      "proposedSetup": [ "No broker installed (broker would intercept the browser SSO path)" ],
+      "proposedSteps": [ { "n":1, "action":"...", "expected":"...", "automation":"skill hint, e.g. 'ACQUIRETOKEN is in the left-edge-swipe drawer'" } ],
+      "skillNotes":    [ "Pre-warm the temp user to avoid ESTS propagation lag" ]
     }
 
 .EXAMPLE
@@ -230,6 +235,33 @@ function MdList($label, $items) {
 }
 MdList 'Evidence' (Val $run 'evidence')
 MdList 'Blockers' (Val $run 'blockers')
+# ---- Proposed test steps (recommendation only; NOT applied to the ADO test case) ----
+$propSetup = Val $run 'proposedSetup'
+$propSteps = Val $run 'proposedSteps'
+if ($propSetup -or $propSteps) {
+    [void]$md.AppendLine("## Proposed test steps (suggested rewrite — not applied to the ADO test case)")
+    [void]$md.AppendLine("")
+    [void]$md.AppendLine("_Clearer, automation-friendly wording proposed to make this case easier for other engineers to follow and for the android-e2e-tester skill to run reliably. This is a **recommendation only** — the ADO test case was not modified._")
+    [void]$md.AppendLine("")
+    if ($propSetup) {
+        [void]$md.AppendLine("### Preconditions & setup")
+        [void]$md.AppendLine("")
+        foreach ($i in $propSetup) { [void]$md.AppendLine("- $i") }
+        [void]$md.AppendLine("")
+    }
+    if ($propSteps) {
+        [void]$md.AppendLine("### Steps")
+        [void]$md.AppendLine("")
+        [void]$md.AppendLine("| # | Action | Expected result | Automation note (for the skill) |")
+        [void]$md.AppendLine("|---|--------|-----------------|---------------------------------|")
+        foreach ($s in $propSteps) {
+            $n = Val $s 'n'; $a = (Val $s 'action') -replace '\|', '\|'; $e = (Val $s 'expected') -replace '\|', '\|'; $au = (Val $s 'automation') -replace '\|', '\|'
+            [void]$md.AppendLine("| $n | $a | $e | $au |")
+        }
+        [void]$md.AppendLine("")
+    }
+}
+MdList 'Notes for the e2e-tester skill' (Val $run 'skillNotes')
 MdList 'Artifacts' (Val $run 'artifacts')
 $mdPath = Join-Path $OutDir 'TestReport.md'
 $md.ToString() | Out-File -FilePath $mdPath -Encoding utf8
@@ -267,6 +299,22 @@ $devTxt = if ($dev) { (@((Val $dev 'model'), (Val $dev 'os'), (Val $dev 'type'),
 $appTxt = if ($app) { (@((Val $app 'package'), (Val $app 'version') | Where-Object { $_ }) -join ' v') } else { '' }
 $acctTxt = if ($acct) { (@((Val $acct 'upn'), (Val $acct 'usertype'), (Val $acct 'tenant') | Where-Object { $_ }) -join '  ·  ') } else { '' }
 
+# ---- Proposed test steps (recommendation only; NOT applied to the ADO test case) — HTML ----
+$proposedHtml = ''
+if ($propSetup -or $propSteps) {
+    $proposedHtml = "<h2>Proposed test steps (suggested rewrite — not applied to the ADO test case)</h2>" +
+    "<p class='note'>Clearer, automation-friendly wording proposed to make this case easier for other engineers to follow and for the android-e2e-tester skill to run reliably. <b>Recommendation only</b> — the ADO test case was not modified.</p>"
+    if ($propSetup) { $proposedHtml += "<h3>Preconditions &amp; setup</h3>$(HtmlList $propSetup)" }
+    if ($propSteps) {
+        $prows = ''
+        foreach ($s in $propSteps) {
+            $prows += "<tr><td>$(He (Val $s 'n'))</td><td>$(He (Val $s 'action'))</td><td>$(He (Val $s 'expected'))</td><td>$(He (Val $s 'automation'))</td></tr>"
+        }
+        $proposedHtml += "<h3>Steps</h3><table><thead><tr><th>#</th><th>Action</th><th>Expected result</th><th>Automation note (for the skill)</th></tr></thead><tbody>$prows</tbody></table>"
+    }
+}
+$skillNotesHtml = if (Val $run 'skillNotes') { "<h2>Notes for the e2e-tester skill</h2>$(HtmlList (Val $run 'skillNotes'))" } else { '' }
+
 $html = @"
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -275,6 +323,7 @@ $html = @"
  body{font-family:Segoe UI,Arial,sans-serif;margin:0;background:#faf9f8;color:#201f1e}
  .wrap{max-width:1000px;margin:0 auto;padding:24px}
  h1{font-size:22px;margin:0 0 4px} h2{font-size:16px;margin:24px 0 8px;border-bottom:1px solid #edebe9;padding-bottom:4px}
+ h3{font-size:14px;margin:16px 0 6px;color:#323130}
  .verdict{display:inline-block;color:#fff;background:$vc;font-weight:700;padding:6px 14px;border-radius:14px;font-size:14px}
  .note{color:#605e5c;margin:8px 0 0}
  table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px;background:#fff}
@@ -302,6 +351,8 @@ $(MetaRow 'Iterations' (Val $run 'iterations'))
 $(if($rows){"<h2>Steps</h2><table><thead><tr><th>#</th><th>Action</th><th>Expected</th><th>Result</th><th>Notes</th><th>Screenshot</th></tr></thead><tbody>$rows</tbody></table>"})
 $(if(Val $run 'evidence'){"<h2>Evidence</h2>$(HtmlList (Val $run 'evidence'))"})
 $(if(Val $run 'blockers'){"<h2>Blockers</h2>$(HtmlList (Val $run 'blockers'))"})
+$proposedHtml
+$skillNotesHtml
 $(if(Val $run 'artifacts'){"<h2>Artifacts</h2>$(HtmlList (Val $run 'artifacts'))"})
 <p class="foot">Generated by the android-e2e-tester skill · $(Get-Date -Format 'yyyy-MM-dd HH:mm')</p>
 </div></body></html>
