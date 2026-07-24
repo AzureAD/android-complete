@@ -221,9 +221,17 @@ reset or mutate anything. Options, in order:
 3. **Poll politely**: retry sign-in every ~60–90 s (re-type the UPN each time) rather than hammering in a tight
    loop; tight retries just re-hit the same stale node.
 
-If a case genuinely needs a *distinct fresh* account and it still isn't sign-in-able after a few minutes,
-record the lag as a **PASS-with-note** (if you completed via reuse) or **BLOCKED** with the exact on-screen
-error and the `objectId` as evidence — not a password reset. See [lab-api.md](lab-api.md).
+**Freshness gate — poll ≤ 3 min, then recreate or reuse a < 30-min-old user.** Don't wait indefinitely on a
+stuck new account. If a freshly created temp user is not **consistently** sign-in-able within **3 minutes** of
+polite polling, stop waiting on it and either **create another** temp user, **or reuse a previously created temp
+user that is still very fresh — under ~30 minutes old** (comfortably inside its ~60-min TTL, and old enough to
+have finished replicating; one that already signed in once is the safest reuse). Record the substitution —
+which user you abandoned and which you used instead — in the report. This is a time cap on option 1–3 above,
+not a replacement for them.
+
+If a case genuinely needs a *distinct fresh* account and none is sign-in-able even after recreating, record the
+lag as a **PASS-with-note** (if you completed via reuse) or **BLOCKED** with the exact on-screen error and the
+`objectId` as evidence — not a password reset. See [lab-api.md](lab-api.md).
 
 ## Password rejected at sign-in — don't reset it
 
@@ -310,7 +318,7 @@ These can't be produced by the AI — report them and ask the user (see SKILL "W
 | Emulator won't stay up (BT-HAL / system_server loop) | ⚠️ host-dependent | — | try boot recipe; if unstable, biometric step is a **blocker** on this host |
 | Wrong-ABI APK on emulator (arm64 on x86_64) | ✅ | Emulator | install the **universal** APK; keep arm64 APK for physical |
 | Stale MFA already registered | ✅ | Either | `labapi.ps1 reset -Operation mfa` or new temp user |
-| Fresh temp user "username may be incorrect" (just created) | ✅ | Either | ESTS propagation lag (can be >14 min) — **don't** reset; reuse an already-propagated temp user or pre-warm/poll ~60–90s |
+| Fresh temp user "username may be incorrect" (just created) | ✅ | Either | ESTS propagation lag (can be >14 min) — **don't** reset; poll ≤3 min then **recreate** or **reuse a <30-min-old** temp user; pre-warm early |
 | System-settings step (advance clock, delete cert, toggle) | ✅ drive Settings UI · ❌ only if secure/root | Either | `am start -a android.settings.*` → `dump`/`tap-text`; block only on Knox/keyguard/root |
 | Clean slate for a new case | ✅ | Either | **uninstall+reinstall** app-under-test (`pm clear` keeps work accounts/registration); don't tear down after |
 | SMS / phone / hardware-key / CAPTCHA | ❌ | — | **Blocker** — ask the user |

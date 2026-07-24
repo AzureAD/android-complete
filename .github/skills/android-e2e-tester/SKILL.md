@@ -80,23 +80,30 @@ When asked to run **more than one** test case (a suite, a list of test points, s
 **batch**, not a serial slog:
 
 1. **Enumerate the work and the devices.** Resolve each case's scenario (Phase 1 per case) and **expand each
-   case into its test points** (Phase 1 → "Test points and configurations"): every `(case, test point)` pair
-   is its own unit of work, with its own build folder (`Local\` for a `LocalFlights` config, `ECS\`
-   otherwise). List every free device in the pool (`emulator.ps1 pool` / `devicelease.ps1 list`) and count
-   how many you can drive in parallel (respect the lease pool cap, `-MaxPoolSize`).
+   case into its test points** (Phase 1 → "Test points and configurations") so you know how many points each
+   case has and which build each uses (`Local\` for a `LocalFlights` config, `ECS\` otherwise). The **unit of
+   work is the whole case** — all of a case's test points run together and land in **one consolidated report**
+   (a case is one lane; its points run back-to-back within it). List every free device in the pool
+   (`emulator.ps1 pool` / `devicelease.ps1 list`) and count how many you can drive in parallel (respect the
+   lease pool cap, `-MaxPoolSize`).
 2. **Fan out one sub-agent per test case, capped at the device count.** Give each case its own sub-agent
    (same model as the parent) with a **self-contained** prompt: that case's scenario + success criterion,
    the app/module + which APKs to install, credential rules (type on device, never print), its run-folder
-   subpath, and "finish with a PASS/FAIL/BLOCKED verdict + evidence". **Each sub-agent leases its OWN
-   device** with its own agent id as owner (`devicelease.ps1 acquire -Owner <caseAgentId>`) so no two lanes
-   touch the same device. If there are **more cases than devices**, each device is a **lane** that runs its
-   queue of cases one after another; the parent keeps every lane busy until the queue drains.
-3. **One shared batch folder, one subfolder per test point.** Use a single
-   `…\android-e2e-runs\<suite>-<yyyyMMdd_HHmmss>\`. Give each `(case, test point)` its own subfolder named
-   `tc<id>-<local|ecs>` (e.g. `tc831570-ecs\`, `tc831570-local\`); a single-point case may use plain
-   `tc<id>\`. Each subfolder holds that run's `run.json` (recording its `configuration` + `buildSource`) +
-   `TestReport.html/.md` + artifacts. That layout is exactly what the suite report scans — every test point
-   becomes its own row in the **Config** column.
+   subpath, and "finish with a PASS/FAIL/BLOCKED verdict + evidence". The sub-agent **runs every test point
+   for its case** (back-to-back on its leased device) and writes a **single consolidated report** for the
+   case. **Each sub-agent leases its OWN device** with its own agent id as owner
+   (`devicelease.ps1 acquire -Owner <caseAgentId>`) so no two lanes touch the same device. If there are **more
+   cases than devices**, each device is a **lane** that runs its queue of cases one after another; the parent
+   keeps every lane busy until the queue drains.
+3. **One shared batch folder, one folder per case (all its test points inside).** Use a single
+   `…\android-e2e-runs\<suite>-<yyyyMMdd_HHmmss>\`. Give **each case** one folder `tc<id>\` holding a single
+   case-level `run.json` and a single `TestReport.html/.md`. When a case has more than one test point, record
+   the points as a **`testPoints[]` array** in that one `run.json` (each entry carries its own
+   `ado.testPointId` + `configuration` + `buildSource`, steps, evidence, verdict) and put each point's
+   screenshots in a point-scoped subfolder `tc<id>\<ecs|local>\iter<N>\` so paths stay relative. `report.ps1
+   render` then produces **one report per case** with a section per test point + a single shared "Proposed
+   test steps". The suite summary still scans this folder and expands each case's points into their own rows
+   in the **Config** column.
 4. **The parent supervises all lanes** with the same watchdog discipline as a single run (progress +
    `heartbeat` per phase; restart a hung lane; stop a finished one; cap restarts). **Don't end the turn until
    every case has a verdict.**
@@ -362,6 +369,14 @@ cases — **even when a test case names a fixed MSIDLAB4 account** (that lab is 
 matching `-UserType` instead (e.g. `MAMCA`, `MDMCA`, `Basic`, `GlobalMFA`). Reuse a specific named/durable
 account only when the case genuinely requires that exact identity, or the user tells you to.
 
+**Freshness gate — poll ≤ 3 min, then recreate or reuse a < 30-min-old user.** After `create-user`, a brand-new
+temp user can lag ESTS replication and show *"This username may be incorrect"* at sign-in. Don't keep waiting:
+if the new user isn't **consistently** sign-in-able within **3 minutes** of polite polling, **create another**
+temp user, **or reuse a previously created temp user still under ~30 minutes old** (inside its 60-min TTL and
+already propagated — one that already signed in once is safest). Note the swap in the report; never "fix" the lag
+with a password reset. See
+[common-blockers.md → Fresh temp user not sign-in-able yet](references/common-blockers.md#fresh-temp-user-not-sign-in-able-yet-ests-propagation-lag).
+
 See [references/lab-api.md](references/lab-api.md) for all endpoints, usertypes, the account policy, and the auth workaround.
 
 **Set flags & mock what's missing (don't fake a pass).** If the scenario needs a feature flag on, or a
@@ -438,7 +453,17 @@ The step list should mirror the ADO test case's steps, and each step's **result*
 against that step's **expected result**. Include the ADO ids (`testCaseId`/`planId`/`suiteId`) and a link
 so the report ties back to the test plan. **When the run came from a specific test point, also record
 `ado.testPointId`, `ado.configuration` (the config name), and `ado.buildSource` (`ECS` or `Local`)** so the
-report header and the suite summary's **Config** column show which build this run exercised. See [references/test-reporting.md](references/test-reporting.md)
+report header and the suite summary's **Config** column show which build this run exercised.
+
+**If a case has more than one test point, put them all in ONE report** — don't write a separate report per
+point. Give the case one `run.json` with a **`testPoints[]` array**; each entry carries its own point-level
+fields (`ado.testPointId`/`configuration`/`buildSource`, `device`, `app`, `account`, `steps`, `evidence`,
+`blockers`, `verdict`) and references its screenshots by a point-scoped relative path (e.g.
+`ecs/iter1/07_token.png`, `local/iter1/07_token.png`). `render` emits one section per test point and derives
+the overall verdict from the points. Any **"Proposed test steps"** you add live at **case level** and must be
+**generic across every test point** (don't mention ECS/Local or a specific point); give each proposed step an
+optional `attachment` (a screenshot path/URL) to fill the report's **Attachments** column. See
+[references/test-reporting.md](references/test-reporting.md)
 for the JSON schema and a worked example. (For an automation-test run, also attach the
 `build/reports/androidTests/` output.) Present the verdict and the report paths to the user; optionally
 publish the outcome back to the ADO Test Run.

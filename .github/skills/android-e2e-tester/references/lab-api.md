@@ -90,6 +90,14 @@ independent case. Only fall back to a specific named durable account when the ca
 identity's* pre-provisioned data (a seeded mailbox, a long-lived group membership) a temp user can't have —
 then read its password with `fetch-password`, and **don't** mutate or tear it down.
 
+**Freshness gate — poll ≤ 3 min, then recreate or reuse a < 30-min-old user.** A just-created temp user can lag
+ESTS replication and show *"This username may be incorrect"* at sign-in. Don't wait indefinitely: if the new
+user isn't **consistently** sign-in-able within **3 minutes** of polite polling, either **create another** temp
+user, **or reuse a previously created temp user that is still under ~30 minutes old** (inside its 60-min TTL and
+already propagated — one that already signed in once is safest). Note the swap in the report; never "fix" the lag
+with a password reset. See
+[common-blockers.md → Fresh temp user not sign-in-able yet](common-blockers.md#fresh-temp-user-not-sign-in-able-yet-ests-propagation-lag).
+
 ## `labapi.ps1` usage
 
 ```powershell
