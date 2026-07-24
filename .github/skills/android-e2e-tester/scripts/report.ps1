@@ -31,13 +31,13 @@
       "blockers":  [ "App Lock gates browser approval behind device PIN/biometric" ],
       "artifacts": [ "iter1/logcat_scan.txt", "iter1/01_firstrun.png" ],
       // OPTIONAL recommendation block — rendered as "Proposed test steps" + "Notes for the e2e-tester skill".
-      // Use it to suggest clearer/automation-friendly wording WITHOUT editing the ADO test case.
-      // "proposedSteps" is rendered in the ADO Steps format (# / Action / Expected result) so a tester can
-      // paste it straight into the test case editor; each step's "automation" hint is rendered SEPARATELY
-      // (skill-only) so it never pollutes the paste-ready ADO steps.
-      "proposedScope": "Full rewrite of all 3 steps + new preconditions (or e.g. 'Minor — modify steps 1 and 2 only').",
-      "proposedSetup": [ "No broker installed (broker would intercept the browser SSO path)" ],
-      "proposedSteps": [ { "n":1, "action":"...", "expected":"...", "automation":"skill-only hint, rendered below the ADO table" } ],
+      // Use it to suggest clearer wording WITHOUT editing the ADO test case.
+      // "proposedSteps" is rendered in the ADO Steps format (# / Action / Expected result) and MUST be fully
+      // self-contained: fold every prerequisite (account creation, app install, clean state) into the FIRST
+      // numbered steps — there is no separate "preconditions" section, exactly like the ADO Steps editor.
+      // Each step's "automation" hint is rendered SEPARATELY (skill-only) so it never pollutes the paste-ready steps.
+      "proposedScope": "Full rewrite as N self-contained steps (or e.g. 'Minor — modify steps 1 and 2 only').",
+      "proposedSteps": [ { "n":1, "action":"Create a temp user ...", "expected":"...", "automation":"skill-only hint, rendered below the ADO table" } ],
       "proposedMinimalEdits": [ "Step 1: change 'outlook.com' -> 'https://outlook.office.com/mail/'" ],
       "skillNotes":    [ "Pre-warm the temp user to avoid ESTS propagation lag" ]
     }
@@ -242,24 +242,17 @@ MdList 'Evidence' (Val $run 'evidence')
 MdList 'Blockers' (Val $run 'blockers')
 # ---- Proposed test steps (recommendation only; NOT applied to the ADO test case) ----
 $propScope = Val $run 'proposedScope'
-$propSetup = Val $run 'proposedSetup'
 $propSteps = Val $run 'proposedSteps'
 $propMin   = Val $run 'proposedMinimalEdits'
-if ($propScope -or $propSetup -or $propSteps) {
+if ($propScope -or $propSteps) {
     [void]$md.AppendLine("## Proposed test steps (suggested rewrite — not applied to the ADO test case)")
     [void]$md.AppendLine("")
-    [void]$md.AppendLine("_Written in the ADO **Steps** format (# / Action / Expected result) so a tester can paste them directly into the test case editor. This is a **recommendation only** — the ADO test case was not modified._")
+    [void]$md.AppendLine("_Written in the ADO **Steps** format (# / Action / Expected result) and fully self-contained — every prerequisite (account creation, app install, clean state) is a numbered step at the beginning, so a tester unfamiliar with the feature can complete it end-to-end. This is a **recommendation only** — the ADO test case was not modified._")
     [void]$md.AppendLine("")
     if ($propScope) {
         [void]$md.AppendLine("### Scope of change")
         [void]$md.AppendLine("")
         [void]$md.AppendLine($propScope)
-        [void]$md.AppendLine("")
-    }
-    if ($propSetup) {
-        [void]$md.AppendLine("### Preconditions & setup")
-        [void]$md.AppendLine("")
-        foreach ($i in $propSetup) { [void]$md.AppendLine("- $i") }
         [void]$md.AppendLine("")
     }
     if ($propSteps) {
@@ -329,11 +322,10 @@ $acctTxt = if ($acct) { (@((Val $acct 'upn'), (Val $acct 'usertype'), (Val $acct
 
 # ---- Proposed test steps (recommendation only; NOT applied to the ADO test case) — HTML ----
 $proposedHtml = ''
-if ($propScope -or $propSetup -or $propSteps) {
+if ($propScope -or $propSteps) {
     $proposedHtml = "<h2>Proposed test steps (suggested rewrite — not applied to the ADO test case)</h2>" +
-    "<p class='note'>Written in the ADO <b>Steps</b> format (# / Action / Expected result) so a tester can paste them directly into the test case editor. <b>Recommendation only</b> — the ADO test case was not modified.</p>"
+    "<p class='note'>Written in the ADO <b>Steps</b> format (# / Action / Expected result) and fully self-contained — every prerequisite (account creation, app install, clean state) is a numbered step at the beginning, so a tester unfamiliar with the feature can complete it end-to-end. <b>Recommendation only</b> — the ADO test case was not modified.</p>"
     if ($propScope) { $proposedHtml += "<h3>Scope of change</h3><p>$(He $propScope)</p>" }
-    if ($propSetup) { $proposedHtml += "<h3>Preconditions &amp; setup</h3>$(HtmlList $propSetup)" }
     if ($propSteps) {
         $prows = ''
         foreach ($s in $propSteps) {
