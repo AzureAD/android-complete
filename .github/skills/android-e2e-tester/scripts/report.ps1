@@ -32,8 +32,13 @@
       "artifacts": [ "iter1/logcat_scan.txt", "iter1/01_firstrun.png" ],
       // OPTIONAL recommendation block — rendered as "Proposed test steps" + "Notes for the e2e-tester skill".
       // Use it to suggest clearer/automation-friendly wording WITHOUT editing the ADO test case.
+      // "proposedSteps" is rendered in the ADO Steps format (# / Action / Expected result) so a tester can
+      // paste it straight into the test case editor; each step's "automation" hint is rendered SEPARATELY
+      // (skill-only) so it never pollutes the paste-ready ADO steps.
+      "proposedScope": "Full rewrite of all 3 steps + new preconditions (or e.g. 'Minor — modify steps 1 and 2 only').",
       "proposedSetup": [ "No broker installed (broker would intercept the browser SSO path)" ],
-      "proposedSteps": [ { "n":1, "action":"...", "expected":"...", "automation":"skill hint, e.g. 'ACQUIRETOKEN is in the left-edge-swipe drawer'" } ],
+      "proposedSteps": [ { "n":1, "action":"...", "expected":"...", "automation":"skill-only hint, rendered below the ADO table" } ],
+      "proposedMinimalEdits": [ "Step 1: change 'outlook.com' -> 'https://outlook.office.com/mail/'" ],
       "skillNotes":    [ "Pre-warm the temp user to avoid ESTS propagation lag" ]
     }
 
@@ -236,13 +241,21 @@ function MdList($label, $items) {
 MdList 'Evidence' (Val $run 'evidence')
 MdList 'Blockers' (Val $run 'blockers')
 # ---- Proposed test steps (recommendation only; NOT applied to the ADO test case) ----
+$propScope = Val $run 'proposedScope'
 $propSetup = Val $run 'proposedSetup'
 $propSteps = Val $run 'proposedSteps'
-if ($propSetup -or $propSteps) {
+$propMin   = Val $run 'proposedMinimalEdits'
+if ($propScope -or $propSetup -or $propSteps) {
     [void]$md.AppendLine("## Proposed test steps (suggested rewrite — not applied to the ADO test case)")
     [void]$md.AppendLine("")
-    [void]$md.AppendLine("_Clearer, automation-friendly wording proposed to make this case easier for other engineers to follow and for the android-e2e-tester skill to run reliably. This is a **recommendation only** — the ADO test case was not modified._")
+    [void]$md.AppendLine("_Written in the ADO **Steps** format (# / Action / Expected result) so a tester can paste them directly into the test case editor. This is a **recommendation only** — the ADO test case was not modified._")
     [void]$md.AppendLine("")
+    if ($propScope) {
+        [void]$md.AppendLine("### Scope of change")
+        [void]$md.AppendLine("")
+        [void]$md.AppendLine($propScope)
+        [void]$md.AppendLine("")
+    }
     if ($propSetup) {
         [void]$md.AppendLine("### Preconditions & setup")
         [void]$md.AppendLine("")
@@ -252,12 +265,27 @@ if ($propSetup -or $propSteps) {
     if ($propSteps) {
         [void]$md.AppendLine("### Steps")
         [void]$md.AppendLine("")
-        [void]$md.AppendLine("| # | Action | Expected result | Automation note (for the skill) |")
-        [void]$md.AppendLine("|---|--------|-----------------|---------------------------------|")
+        [void]$md.AppendLine("| # | Action | Expected result |")
+        [void]$md.AppendLine("|---|--------|-----------------|")
         foreach ($s in $propSteps) {
-            $n = Val $s 'n'; $a = (Val $s 'action') -replace '\|', '\|'; $e = (Val $s 'expected') -replace '\|', '\|'; $au = (Val $s 'automation') -replace '\|', '\|'
-            [void]$md.AppendLine("| $n | $a | $e | $au |")
+            $n = Val $s 'n'; $a = (Val $s 'action') -replace '\|', '\|'; $e = (Val $s 'expected') -replace '\|', '\|'
+            [void]$md.AppendLine("| $n | $a | $e |")
         }
+        [void]$md.AppendLine("")
+    }
+    if ($propMin) {
+        [void]$md.AppendLine("### Minimal high-value edits (if you prefer not to rewrite the whole case)")
+        [void]$md.AppendLine("")
+        foreach ($i in $propMin) { [void]$md.AppendLine("- $i") }
+        [void]$md.AppendLine("")
+    }
+    # per-step automation hints, rendered SEPARATELY so the ADO-format Steps table stays paste-ready
+    $autoLines = @()
+    if ($propSteps) { foreach ($s in $propSteps) { $au = Val $s 'automation'; if ($au) { $autoLines += "- **Step $(Val $s 'n'):** $au" } } }
+    if ($autoLines.Count) {
+        [void]$md.AppendLine("### Automation notes (for the e2e-tester skill — not part of the ADO steps)")
+        [void]$md.AppendLine("")
+        foreach ($l in $autoLines) { [void]$md.AppendLine($l) }
         [void]$md.AppendLine("")
     }
 }
@@ -301,17 +329,22 @@ $acctTxt = if ($acct) { (@((Val $acct 'upn'), (Val $acct 'usertype'), (Val $acct
 
 # ---- Proposed test steps (recommendation only; NOT applied to the ADO test case) — HTML ----
 $proposedHtml = ''
-if ($propSetup -or $propSteps) {
+if ($propScope -or $propSetup -or $propSteps) {
     $proposedHtml = "<h2>Proposed test steps (suggested rewrite — not applied to the ADO test case)</h2>" +
-    "<p class='note'>Clearer, automation-friendly wording proposed to make this case easier for other engineers to follow and for the android-e2e-tester skill to run reliably. <b>Recommendation only</b> — the ADO test case was not modified.</p>"
+    "<p class='note'>Written in the ADO <b>Steps</b> format (# / Action / Expected result) so a tester can paste them directly into the test case editor. <b>Recommendation only</b> — the ADO test case was not modified.</p>"
+    if ($propScope) { $proposedHtml += "<h3>Scope of change</h3><p>$(He $propScope)</p>" }
     if ($propSetup) { $proposedHtml += "<h3>Preconditions &amp; setup</h3>$(HtmlList $propSetup)" }
     if ($propSteps) {
         $prows = ''
         foreach ($s in $propSteps) {
-            $prows += "<tr><td>$(He (Val $s 'n'))</td><td>$(He (Val $s 'action'))</td><td>$(He (Val $s 'expected'))</td><td>$(He (Val $s 'automation'))</td></tr>"
+            $prows += "<tr><td>$(He (Val $s 'n'))</td><td>$(He (Val $s 'action'))</td><td>$(He (Val $s 'expected'))</td></tr>"
         }
-        $proposedHtml += "<h3>Steps</h3><table><thead><tr><th>#</th><th>Action</th><th>Expected result</th><th>Automation note (for the skill)</th></tr></thead><tbody>$prows</tbody></table>"
+        $proposedHtml += "<h3>Steps</h3><table><thead><tr><th>#</th><th>Action</th><th>Expected result</th></tr></thead><tbody>$prows</tbody></table>"
     }
+    if ($propMin) { $proposedHtml += "<h3>Minimal high-value edits (if you prefer not to rewrite the whole case)</h3>$(HtmlList $propMin)" }
+    $autoItems = @()
+    if ($propSteps) { foreach ($s in $propSteps) { $au = Val $s 'automation'; if ($au) { $autoItems += "Step $(Val $s 'n'): $au" } } }
+    if ($autoItems.Count) { $proposedHtml += "<h3>Automation notes (for the e2e-tester skill — not part of the ADO steps)</h3>$(HtmlList $autoItems)" }
 }
 $skillNotesHtml = if (Val $run 'skillNotes') { "<h2>Notes for the e2e-tester skill</h2>$(HtmlList (Val $run 'skillNotes'))" } else { '' }
 
