@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Runs all required pre-publish checks per SKILL.md "Output checklist":
-      1. No stale-template tokens ({{...}} placeholders or "EXAMPLE CONTENT BELOW" sentinel).
+      1. No stale-template tokens ({{...}} placeholders, "EXAMPLE CONTENT BELOW" sentinel, or the OCE-UNPOPULATED-STUB bootstrap sentinel).
       2. No `devs` / `reqs` in user-facing text (only allowed inside <pre><code> KQL blocks).
       3. No U+FFFD (Unicode replacement character) — catches mojibake from emoji edits.
       4. Section 2 callouts are siblings, NOT nested. Tracks <div> open/close depth
@@ -24,6 +24,13 @@
            9c. .dim-pct content guard — every dim-pct cell must be a short bare
                percentage (no "(...)" annotations, <= 9 chars). A long pct value
                starves the flex name column and collapses real labels to "1...".
+      10. Fabricated-sparkline heuristic: data-trend arrays whose peak sits far
+          below the bucketer's peak-floor are flagged as likely hand-rolled.
+      11. Rolling-window header integrity: the meta-line "Last 7
+          days: <curStart> → <curEnd>" dates must match the filename's end-date
+          (curEnd = end-date, curStart = end-date - 7d). Prevents a stale
+          template stub from being published as if it were fresh, and catches
+          any hand-edit that broke the auto-stamp.
 
     Exits with non-zero status if any HARD check fails (stale tokens, devs/reqs leak,
     U+FFFD, unbalanced div depth, missing layout-guard CSS).
@@ -34,7 +41,7 @@
 
 .EXAMPLE
     .\validate-report.ps1
-    .\validate-report.ps1 -Path C:\path\to\oncall-wow-report-2026-05-03.html
+    .\validate-report.ps1 -Path C:\path\to\oncall-wow-report-2026-07-09.html
 #>
 [CmdletBinding()]
 param(
@@ -70,13 +77,13 @@ Write-Host "Validating: $Path"
 Write-Host ("Size: {0:N0} bytes" -f (Get-Item $Path).Length)
 Write-Host ""
 
-# ---- 1. Stale tokens / EXAMPLE sentinel ----
-$stale = Select-String -Path $Path -Pattern '\{\{|EXAMPLE CONTENT BELOW|EXAMPLE_'
+# ---- 1. Stale tokens / EXAMPLE sentinel / unpopulated-stub sentinel ----
+$stale = Select-String -Path $Path -Pattern '\{\{|EXAMPLE CONTENT BELOW|EXAMPLE_|OCE-UNPOPULATED-STUB'
 if ($stale.Count -gt 0) {
     Add-Fail "Stale template tokens found ($($stale.Count)). First few:"
     $stale | Select-Object -First 5 | ForEach-Object { Write-Host "         L$($_.LineNumber): $($_.Line.Trim().Substring(0, [Math]::Min(110, $_.Line.Trim().Length)))" }
 } else {
-    Pass "No stale {{...}} tokens or EXAMPLE sentinel"
+    Pass "No stale {{...}} tokens, EXAMPLE sentinel, or unpopulated-stub sentinel"
 }
 
 # ---- 2. devs / reqs in user-facing text ----
@@ -299,7 +306,7 @@ foreach ($m in $trendMatches) {
     $arrStr = $m.Groups[1].Value
     $vals = $arrStr.Split(',') | ForEach-Object { try { [double]$_.Trim() } catch { 0 } }
     if ($vals.Count -lt 6) { continue }
-    # Filter 1: trend with all values < 100 is suspicious (real codes don't sit at 30-50 devices/wk for 8 weeks)
+    # Filter 1: trend with all values < 100 is suspicious (real codes don't sit at 30-50 devices/week for 8 weeks)
     $maxVal = ($vals | Measure-Object -Maximum).Maximum
     if ($maxVal -lt 100) {
         $suspectCount++
@@ -311,9 +318,49 @@ foreach ($m in $trendMatches) {
     # Skip this; too easy to false-positive on genuinely monotonic real series like no_tokens_found.
 }
 if ($suspectCount -gt 0) {
-    Add-Warn "$suspectCount data-trend array(s) have peak value < 100 (suspicious — real WoW-table series usually peak >= 100 devices/wk). Likely fabricated. First: [$suspectFirst]. Source from assets/queries/wow-table-sparkline-series.kql instead."
+    Add-Warn "$suspectCount data-trend array(s) have peak value < 100 (suspicious — real WoW-table series usually peak >= 100 devices/week). Likely fabricated. First: [$suspectFirst]. Source from assets/queries/wow-table-sparkline-series.kql instead."
 } else {
     Pass "No suspicious low-peak data-trend arrays detected"
+}
+
+# ---- 11. Rolling-window header integrity ----
+# The meta line must read "Last 7 days: <weekday> <Mon> <D>[, YYYY] -> <weekday>
+# <Mon> <D>, YYYY", and those dates must be self-consistent with the filename's
+# end-date (curEnd = filename date, curStart = curEnd - 7d).
+$filename = Split-Path $Path -Leaf
+if ($filename -match '^oncall-wow-report-(\d{4}-\d{2}-\d{2})\.html$') {
+    $fnEnd = [datetime]::ParseExact($Matches[1], 'yyyy-MM-dd',
+                                    [System.Globalization.CultureInfo]::InvariantCulture)
+    $fnStart = $fnEnd.AddDays(-7)
+
+    # Match: "Last 7 days: <weekday> <Mon> <D>[, YYYY]? -> <weekday> <Mon> <D>, YYYY"
+    # -> may be U+2192 arrow or ASCII "->".
+    $metaRe = 'Last\s+7\s+days:\s*(?:<[^>]+>)?\s*(\w{3})\s+(\w{3})\s+(\d{1,2})(?:,\s*(\d{4}))?\s*(?:[\u2192]|-&gt;|->)\s*(\w{3})\s+(\w{3})\s+(\d{1,2}),\s*(\d{4})'
+    if ($content -match $metaRe) {
+        $s = "$($Matches[2]) $($Matches[3]), $($Matches[8])"  # e.g. "Jul 2, 2026" (year from end side)
+        $e = "$($Matches[6]) $($Matches[7]), $($Matches[8])"
+        try {
+            $mStart = [datetime]::ParseExact($s, 'MMM d, yyyy',
+                                             [System.Globalization.CultureInfo]::InvariantCulture)
+            $mEnd   = [datetime]::ParseExact($e, 'MMM d, yyyy',
+                                             [System.Globalization.CultureInfo]::InvariantCulture)
+            # If the start ended up after the end (year boundary), roll the start back a year.
+            if ($mStart -gt $mEnd) { $mStart = $mStart.AddYears(-1) }
+            if ($mStart -ne $fnStart) {
+                Add-Fail "Meta-line 'Last 7 days' start = $($mStart.ToString('yyyy-MM-dd')) but filename implies $($fnStart.ToString('yyyy-MM-dd')) (filename end $($fnEnd.ToString('yyyy-MM-dd')) - 7d). Header is out of sync with filename -- did you edit dates by hand? Re-run bootstrap-report.ps1."
+            } elseif ($mEnd -ne $fnEnd) {
+                Add-Fail "Meta-line 'Last 7 days' end = $($mEnd.ToString('yyyy-MM-dd')) but filename says $($fnEnd.ToString('yyyy-MM-dd'))."
+            } else {
+                Pass "Meta-line rolling-window dates match filename ($($mStart.ToString('yyyy-MM-dd')) -> $($mEnd.ToString('yyyy-MM-dd')))"
+            }
+        } catch {
+            Add-Warn "Meta-line dates matched pattern but failed to parse: '$s' / '$e'. Skipping integrity check."
+        }
+    } else {
+        Add-Warn "Meta-line 'Last 7 days: ... -> ...' pattern not found. Either the report predates the rolling-window rewrite or the header was hand-edited. Re-run bootstrap-report.ps1 to restore the auto-stamped meta line."
+    }
+} else {
+    Add-Warn "Filename '$filename' does not match 'oncall-wow-report-YYYY-MM-DD.html'; skipping meta-line date consistency check."
 }
 
 Write-Host ""

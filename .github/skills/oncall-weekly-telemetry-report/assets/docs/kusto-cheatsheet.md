@@ -38,6 +38,45 @@ Time filter on materialized views is always **`EventInfo_Time`**. Use `PipelineI
 
 ---
 
+## 3. Rolling 7-day WoW window (PRIMARY / attribution / latency)
+
+**The report's primary window is a **rolling 7-day window** ending at start-of-day UTC on `-EndDate` (default: today), NOT a Sun→Sat calendar week.** Only the 60-day trend section (§ 7 below) still uses `startofweek()` bucketing.
+
+Canonical template — two rows per key (`week` in `{prevStart, curStart}`):
+
+```kql
+let curEnd    = datetime(<CUR_END>);      // exclusive upper bound (e.g. 2026-07-09)
+let curStart  = datetime(<CUR_START>);    // curEnd - 7d
+let prevStart = datetime(<PREV_START>);   // curEnd - 14d
+materialized_view('<view>')
+| where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
+| extend week = iff(EventInfo_Time >= curStart, curStart, prevStart)
+| summarize <aggregations>
+     by week, <keys>
+| order by <keys> asc, week asc
+```
+
+Notes:
+- Use `>= ... and < ...` (half-open) NOT `between (.. .. ..)`. `between` is inclusive-inclusive in Kusto; the half-open form correctly assigns the exact `curEnd` boundary to no bucket (the query drops it because `EventInfo_Time < curEnd`).
+- The window boundaries are always aligned to `00:00 UTC` — this matches Kusto's default datetime semantics and the bootstrap script's `-EndDate` interpretation.
+- `week` values are datetimes; they sort lexicographically (ISO 8601) so downstream JS helpers (`agg.js`, `summarize-attribution.js`) that pick smallest = prev, largest = cur continue to work unchanged.
+- All primary/WoW `.kql` templates in `../queries/` follow this pattern. See `../queries/reliability-auth-only.kql` and `../queries/attr-union-by-dim.kql` for full examples.
+
+Compute the placeholder values via `bootstrap-report.ps1` (which prints them to stdout as `Resolved reporting window (UTC):`) or manually:
+
+| Placeholder | Formula | Example (`-EndDate 2026-07-09`) |
+|---|---|---|
+| `<CUR_END>` | `-EndDate` | `2026-07-09` |
+| `<CUR_START>` | `<CUR_END> - 7d` | `2026-07-02` |
+| `<PREV_START>` | `<CUR_END> - 14d` | `2026-06-25` |
+| `<TREND_END>` | `<CUR_END>` (today) — literal 60d trend upper bound, exclusive | `2026-07-09` |
+| `<TREND_START>` | `<CUR_END> - 60d` | `2026-05-10` |
+| `<TREND_CLASS_END>` | `startofweek(<CUR_END>)` — delta cutoff, `bucket-trends.js --end` | `2026-07-05` |
+| `<SPARK_END>` | `startofweek(<CUR_END>)` — WoW-sparkline upper bound (8 complete weeks) | `2026-07-05` |
+| `<SPARK_START>` | `<SPARK_END> - 56d` | `2026-05-10` |
+
+---
+
 ## 3. THE distinct-device-count gotcha (most important rule)
 
 `countDevices` on `ErrorStats*` is a **per-row distinct count, not additive**. If you sum it across multiple rows you will double-count any device that appeared in more than one slice. **The dashboard never does this.** Every dashboard query computes devices via:
@@ -101,10 +140,14 @@ materialized_view('PerfStatsUpdated')
 
 ## 7. Week alignment — Kusto `startofweek()` is **Sunday-aligned**
 
-If a user says "the week of May 2 → May 9", Kusto buckets it as `startofweek('2026-05-09') == 2026-05-03T00:00:00Z`. **Always confirm**: print the distinct `startofweek(EventInfo_Time)` values from your first query and verify the bucket label matches the user's intent. Off-by-one-week is the #1 silent error.
+> **Scope:** only the 60-day trend section (§ 3 of the report / `bucket-trends.js` pipeline) still uses `startofweek()` weekly buckets. The primary/WoW section uses a rolling 7-day window — see § 3 of this cheatsheet.
 
-For an 8-complete-week 60-day window ending Sat May 9, the buckets are:
-`2026-03-08, 03-15, 03-22, 03-29, 04-05, 04-12, 04-19, 04-26, 05-03` — that's 9 buckets, one of which (the first) was a partial start. Drop the first; keep 8 complete weeks.
+If a user says "the week of May 2 → May 9", Kusto buckets it as `startofweek('2026-05-09') == 2026-05-03T00:00:00Z`. When writing weekly-bucketed queries (60-day trend, `wow-table-sparkline-series.kql`), **always confirm**: print the distinct `startofweek(EventInfo_Time)` values from your first query and verify the bucket labels match your intended range. Off-by-one-week is the #1 silent error in weekly-bucket queries.
+
+For the literal-60-day trend window ending today (say `<CUR_END> = 2026-07-09`, so `<TREND_START> = 2026-05-10`), `startofweek()` produces buckets:
+`2026-05-03, 05-10, 05-17, 05-24, 05-31, 06-07, 06-14, 06-21, 06-28, 07-05` — the first (`05-03`) is a partial start (window opens mid-week `05-10`) and is dropped by `bucket-trends.js --start`; the last (`07-05`) is the **partial current week** — it is charted as the final bar but excluded from delta classification via `--end=<TREND_CLASS_END>` (= `startofweek(today)` = `2026-07-05`) `--include-partial-end`.
+
+The `wow-table-sparkline-series.kql` per-row sparklines are different: they stay on the last **8 complete** weeks (`<SPARK_END> = startofweek(today)`, exclusive, partial week filtered at the source) so no WoW row ends on a misleading partial dip.
 
 ---
 
@@ -148,9 +191,11 @@ union s, i
 
 ### 8b. 60-day error trend (feeds `bucket-trends.js`)
 
+Literal last 60 days ending today (`<TREND_START> = CUR_END - 60d`, `<TREND_END> = CUR_END`). Do NOT drop the partial current week here — it's the chart's final bar. Exclude it from deltas in the bucketer instead: `bucket-trends.js --end=<TREND_CLASS_END> --include-partial-end` where `<TREND_CLASS_END> = startofweek(today)`.
+
 ```kql
 materialized_view('ErrorStatsMetrics')
-| where EventInfo_Time > ago(70d)
+| where EventInfo_Time >= datetime(<TREND_START>) and EventInfo_Time < datetime(<TREND_END>)
 | where isnotempty(error_code) and error_code != 'success'
 | summarize errs = sum(countOverall),
             devs = dcount_hll(hll_merge(countDevicesHll))
@@ -158,22 +203,25 @@ materialized_view('ErrorStatsMetrics')
 | order by error_code asc, week asc
 ```
 
-### 8c. Spike attribution — one slicing dim at a time
+### 8c. Spike attribution — rolling 7-day WoW form (one slicing dim at a time)
 
-The MCP tool can return ~50–700 KB of JSON; multi-dim cartesians blow this out. **Slice one dimension per query**, then post-process with `summarize-attribution.js`:
+The MCP tool can return ~50–700 KB of JSON; multi-dim cartesians blow this out. **Slice one dimension per query**, then post-process with `summarize-attribution.js`. The rolling-window form (see § 3):
 
 ```kql
+let curEnd    = datetime(<CUR_END>);
+let curStart  = datetime(<CUR_START>);
+let prevStart = datetime(<PREV_START>);
 let codes = dynamic(['no_tokens_found','unauthorized_client','Code:-6',
                      'unknown_crypto_error','null_pointer_error','timed_out_execution']);
 materialized_view('ErrorStatsMetrics')
 | extend unified_account_type = MergeAccountType(account_type)
 | extend unified_is_shared_device = MergeIsSharedDevice(is_shared_device)
-| where EventInfo_Time > ago(14d)
+| where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
 | where error_code in (codes)
-| extend wk = startofweek(EventInfo_Time)
+| extend week = iff(EventInfo_Time >= curStart, curStart, prevStart)
 | summarize devs = dcount_hll(hll_merge(countDevicesHll))
-     by wk, error_code, span_name           // <-- swap this dim per query
-| order by error_code asc, wk asc, devs desc
+     by week, error_code, span_name           // <-- swap this dim per query
+| order by error_code asc, week asc, devs desc
 ```
 
 Run once each with the trailing dim set to: `span_name`, `calling_package_name`, `active_broker_package_name`, `broker_version`, `unified_account_type`, `unified_is_shared_device`, `client_sku`. That's the full 7.
@@ -201,12 +249,12 @@ materialized_view('BrokerAdoptionStatsUpdated')
 
 | Script | Purpose |
 |---|---|
-| [`bucket-trends.js`](bucket-trends.js) | Bucket every error code into regression / spike / improvement / flat across an N-week window. Pass `--end=YYYY-MM-DD` (Sunday after the reporting week, exclusive) to drop partial in-progress buckets. |
+| [`bucket-trends.js`](bucket-trends.js) | Bucket every error code into regression / spike / improvement / flat across an N-week window. Pass `--end=YYYY-MM-DD` (= `startofweek(today)`, exclusive) to exclude the partial in-progress week from delta classification, plus `--include-partial-end` to still chart it as the final bar. |
 | [`agg.js`](agg.js) | Per-error per-dim top-N rollup with WoW deltas. Feeds spike-attribution dim blocks. |
 | [`summarize-attribution.js`](summarize-attribution.js) | Roll up 7-dim attribution slices per (error_code, week) — feeds the spike-attribution cards |
 | [`queries/`](queries/) | Canonical KQL templates, one per query — see [`queries/README.md`](queries/README.md) |
 | [`templates/`](templates/) | Copy-paste HTML snippets for cards / footer JS |
-| [`report-template.html`](../templates/report-template.html) | Canonical layout. Copy to `~/android-oce-reports/oncall-wow-report-<sunday>.html` and replace `{{TOKENS}}` only — never restructure CSS |
+| [`report-template.html`](../templates/report-template.html) | Canonical layout. Bootstrap copies it to `~/android-oce-reports/oncall-wow-report-<end-date>.html` and stamps the resolved window into the header. Replace prose/values only — never restructure CSS. |
 
 ---
 
