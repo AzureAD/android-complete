@@ -16,16 +16,19 @@
  *      --label=shared_dev <shared.json> \
  *      --label=client_sku <sku.json>
  *
- *    Per-file schema: row[0] must include `error_code`, `wk`/`week`, `devs`/`countDevices`,
+ *    Per-file schema: row[0] must include `error_code`, `week`, `devs`/`countDevices`,
  *    and exactly one trailing string column (the dimension value).
  *
- * 2) Union mode (NEW, recommended for 2-week WoW attribution — one query covers all dims):
+ * 2) Union mode (recommended for WoW attribution -- one query covers all dims):
  *
  *    node summarize-attribution.js --union <attribution-union.json>
  *
  *    Expected schema (any column order):
  *       dim          string  -- short label e.g. 'span', 'calling_app', 'broker_ver'
- *       wk | week    datetime
+ *       week         datetime  -- for the rolling-window queries this is the
+ *                                 bucket START datetime (prevStart or curStart);
+ *                                 the script sorts them lexicographically and
+ *                                 treats the smallest as prev, largest as cur.
  *       error_code   string  (or `error_type` — use --key=error_type to switch)
  *       val_string   string  } EITHER `val_string`+`val_bool` (Kusto union of
  *       val_bool     bool    } mixed-type slice columns) ...
@@ -33,7 +36,7 @@
  *       devs         long    (use `dcount_hll(hll_merge(countDevicesHll))` upstream)
  *       errs         long    (optional — request count, used for retry-storm detection)
  *
- *    The union form is what Step 5 of SKILL.md now recommends — 1 round-trip vs 7.
+ *    The union form is what Step 5 of SKILL.md recommends — 1 round-trip vs 7.
  *    See assets/queries/attr-union-by-dim.kql.
  *
  * Output: per error_code, per dimension, the top-5 values for each week (prior + curr),
@@ -99,11 +102,11 @@ function loadSliceFile({ label, file }) {
   }
   const cols = Object.keys(schema);
   const idxCode = cols.indexOf(keyCol);
-  let idxWeek = cols.indexOf('wk'); if (idxWeek < 0) idxWeek = cols.indexOf('week');
+  const idxWeek = cols.indexOf('week');
   let idxDevs = cols.indexOf('devs'); if (idxDevs < 0) idxDevs = cols.indexOf('countDevices');
   let idxErrs = cols.indexOf('errs'); if (idxErrs < 0) idxErrs = cols.indexOf('countOverall');
   if (idxCode < 0 || idxWeek < 0 || idxDevs < 0) {
-    throw new Error(`${file}: schema must include ${keyCol}, wk|week, devs|countDevices. Got [${cols.join(', ')}]`);
+    throw new Error(`${file}: schema must include ${keyCol}, week, devs|countDevices. Got [${cols.join(', ')}]`);
   }
   // Find the dim column. When schema was provided as an array (run-kql.ps1) we
   // don't have type info, so fall back to "any remaining column" (typically the
@@ -118,11 +121,11 @@ function loadSliceFile({ label, file }) {
 
   const map = {};
   for (const r of rows.slice(1)) {
-    const code = r[idxCode], wk = r[idxWeek];
+    const code = r[idxCode], week = r[idxWeek];
     const dim = (r[idxDim] === null || r[idxDim] === '') ? '(blank)' : r[idxDim];
     const devs = r[idxDevs] || 0;
     const errs = idxErrs >= 0 ? (r[idxErrs] || 0) : 0;
-    const slot = ((map[code] ||= {})[wk] ||= {})[dim] ||= { devs: 0, errs: 0 };
+    const slot = ((map[code] ||= {})[week] ||= {})[dim] ||= { devs: 0, errs: 0 };
     slot.devs += devs; slot.errs += errs;
   }
   return { label, map };
@@ -134,8 +137,8 @@ function loadUnion(file) {
   const rows = d.results.items;
   const schemaRaw = rows[0];
   // Two schema shapes are supported:
-  //   (a) Object form (MCP tool): { dim: 0, wk: 1, ... } — keys are column names
-  //   (b) Array form  (REST helper assets/scripts/run-kql.ps1): ['dim', 'wk', ...]
+  //   (a) Object form (MCP tool): { dim: 0, week: 1, ... } — keys are column names
+  //   (b) Array form  (REST helper assets/scripts/run-kql.ps1): ['dim', 'week', ...]
   // Detect and normalize to an object map { colName -> index }.
   let schema;
   if (Array.isArray(schemaRaw)) {
@@ -150,7 +153,7 @@ function loadUnion(file) {
   const idx = name => cols.indexOf(name);
   const idxDim  = idx('dim');
   const idxCode = idx(keyCol);
-  let idxWeek = idx('wk'); if (idxWeek < 0) idxWeek = idx('week');
+  const idxWeek = idx('week');
   let idxDevs = idx('devs'); if (idxDevs < 0) idxDevs = idx('countDevices');
   let idxErrs = idx('errs'); if (idxErrs < 0) idxErrs = idx('countOverall');
   // Kusto auto-renames duplicate column names from union branches: a column
@@ -165,14 +168,14 @@ function loadUnion(file) {
     idx('val_bool') >= 0 ? idx('val_bool') :
     idx('val_string_bool');
   if (idxDim < 0 || idxCode < 0 || idxWeek < 0 || idxDevs < 0 || idxValS < 0) {
-    throw new Error(`Union file ${file}: schema must include dim, ${keyCol}, wk|week, devs|countDevices, val_string|val|val_string_string (and optionally val_bool|val_string_bool). Got [${cols.join(', ')}]`);
+    throw new Error(`Union file ${file}: schema must include dim, ${keyCol}, week, devs|countDevices, val_string|val|val_string_string (and optionally val_bool|val_string_bool). Got [${cols.join(', ')}]`);
   }
-  // perDim[label].map[code][wk][dimVal] = { devs, errs }
+  // perDim[label].map[code][week][dimVal] = { devs, errs }
   const byDim = {};
   for (const r of rows.slice(1)) {
     const label = r[idxDim];
     const code  = r[idxCode];
-    const wk    = r[idxWeek];
+    const week    = r[idxWeek];
     const valS  = r[idxValS];
     const valB  = idxValB >= 0 ? r[idxValB] : null;
     let v;
@@ -182,7 +185,7 @@ function loadUnion(file) {
     const devs = r[idxDevs] || 0;
     const errs = idxErrs >= 0 ? (r[idxErrs] || 0) : 0;
     const target = byDim[label] ||= { label, map: {} };
-    const slot = ((target.map[code] ||= {})[wk] ||= {})[v] ||= { devs: 0, errs: 0 };
+    const slot = ((target.map[code] ||= {})[week] ||= {})[v] ||= { devs: 0, errs: 0 };
     slot.devs += devs; slot.errs += errs;
   }
   return Object.values(byDim);
@@ -194,7 +197,7 @@ const slices = unionFile ? loadUnion(unionFile) : inputs.map(loadSliceFile);
 const universe = {};
 for (const s of slices) {
   for (const [code, wks] of Object.entries(s.map)) {
-    for (const wk of Object.keys(wks)) ((universe[code] ||= {})[wk] = true);
+    for (const week of Object.keys(wks)) ((universe[code] ||= {})[week] = true);
   }
 }
 const codes = Object.keys(universe).sort();

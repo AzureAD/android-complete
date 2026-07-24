@@ -18,7 +18,7 @@
 //
 // Inputs:
 //   --service  Raw response from search_active_s360_kpi_action_items keyed by
-//              targetIds (the 3 Android Auth service tree GUIDs).
+//              targetIds (the 2 Android Auth service tree GUIDs).
 //   --person   Raw response from the same tool keyed by assignedTo (team
 //              aliases).
 //   --team     JSON file: { aliases, nameMap, serviceIds?, tenantPatterns? }.
@@ -42,11 +42,10 @@ const path = require('path');
 
 // ── Defaults ──────────────────────────────────────────────────────────────────
 const DEFAULT_SERVICE_IDS = [
-  '937cdc57-1253-4b55-878e-5854368926a2', // AuthN SDK - ADAL Android
   '8d0d308e-cd5c-44a3-9518-43eeeb424b57', // AuthN SDK - MSAL Android
   '0b97f26e-fcfc-4ed1-95e9-1dca3a2fde3b'  // Microsoft Authenticator - Android
 ];
-const DEFAULT_TENANT_PATTERNS = ['auth client', 'msal', 'adal', 'authenticator'];
+const DEFAULT_TENANT_PATTERNS = ['auth client', 'msal', 'authenticator'];
 
 // ── CLI args ──────────────────────────────────────────────────────────────────
 function getArg(name) {
