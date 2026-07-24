@@ -42,7 +42,6 @@ Skip PBI creation, report generation, and email drafting in quick mode.
 
 | Service | Service Tree ID |
 |---------|----------------|
-| AuthN SDK - ADAL Android | `937cdc57-1253-4b55-878e-5854368926a2` |
 | AuthN SDK - MSAL Android | `8d0d308e-cd5c-44a3-9518-43eeeb424b57` |
 | Microsoft Authenticator - Android | `0b97f26e-fcfc-4ed1-95e9-1dca3a2fde3b` |
 
@@ -128,13 +127,12 @@ Fetch items from **two sources** and merge them:
 
 #### 1a: Service-targeted items
 
-Call `mcp_s360-breeze-m_search_active_s360_kpi_action_items` with all three service tree IDs:
+Call `mcp_s360-breeze-m_search_active_s360_kpi_action_items` with both service tree IDs:
 
 ```
 request: {
   "pageSize": 50,
   "targetIds": [
-    "937cdc57-1253-4b55-878e-5854368926a2",
     "8d0d308e-cd5c-44a3-9518-43eeeb424b57",
     "0b97f26e-fcfc-4ed1-95e9-1dca3a2fde3b"
   ]
@@ -162,8 +160,8 @@ that are tied to individuals rather than service tree IDs.
 including items from other team memberships. After fetching, filter results to only include
 items where one of these conditions is met:
 - `TargetType` is `"Person"` AND `TargetId` exactly matches one of the team aliases
-- `TargetId` matches one of our three service tree IDs
-- `CustomDimensions.TenantName` contains "Auth Client", "MSAL", "ADAL", or "Authenticator"
+- `TargetId` matches one of our two service tree IDs
+- `CustomDimensions.TenantName` contains "Auth Client", "MSAL", or "Authenticator"
 
 **Critical — do NOT expand group items**: Each S360 item has exactly one `AssignedTo`
 and one `TargetId`. Treat each item as-is — one row per `KpiActionItemId`. Never split
@@ -200,7 +198,7 @@ inputs.
 
 **Filter logic** (enforced by the script — do not duplicate ad-hoc):
 - `TargetType == "Person"` AND `TargetId` is a team alias  → keep
-- `TargetId` is one of the three service tree GUIDs        → keep
+- `TargetId` is one of the two service tree GUIDs         → keep
 - `CustomDimensions.TenantName` matches an Auth-team pattern → keep
 - **`AssignedTo` alone is NOT sufficient** — the person query already filters by
   `assignedTo`, so every returned item has a team-alias `AssignedTo` but many are
