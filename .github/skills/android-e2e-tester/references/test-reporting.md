@@ -123,7 +123,7 @@ point-level fields in a `testPoints[]` array under a case-level header — see
   "device": { "model": "Samsung SM-F741U1", "serial": "R5CXB0P430X", "os": "Android 16 (SDK 36)",
               "resolution": "1080x2640", "type": "physical" },
   "app": { "package": "com.azure.authenticator", "version": "6.2607.4584" },
-  "account": { "upn": "Locked_5b335908a3@ID4SLab2.onmicrosoft.com", "usertype": "GlobalMFA",
+  "account": { "upn": "Locked_xxx@ID4SLab2.onmicrosoft.com", "usertype": "GlobalMFA",
                "tenant": "ID4SLab2.onmicrosoft.com" },
   "started": "2026-07-21 18:45", "finished": "2026-07-21 19:05", "iterations": 1,
   "steps": [

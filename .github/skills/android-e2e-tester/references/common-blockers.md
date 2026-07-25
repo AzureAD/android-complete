@@ -250,9 +250,9 @@ problem first:
 4. **Re-type carefully** — special characters can drop in `-CharByChar` mode; verify the field length matches.
 
 Only run `labapi.ps1 reset -Operation password` when the **test case itself** exercises a password-change /
-expiry flow. **Never** reset a **shared durable account** (e.g. `AndroidTBUser1@id4slab2`) — other cases reuse
-it. If the value is confirmed correct and sign-in still fails, mark the run **BLOCKED** with the exact on-screen
-error rather than changing the account. See [lab-api.md](lab-api.md).
+expiry flow. **Never** reset a **shared durable account** (a durable, pre-created account, not a temp
+`Locked_…` user) — other cases reuse it. If the value is confirmed correct and sign-in still fails, mark the
+run **BLOCKED** with the exact on-screen error rather than changing the account. See [lab-api.md](lab-api.md).
 
 ## Doing it yourself in System Settings
 

@@ -141,15 +141,15 @@ of the cached one).
 {
   "title": "User Creation Successful",
   "userType": "GlobalMFA",
-  "upn": "Locked_5b335908a3@ID4SLab2.onmicrosoft.com",
+  "upn": "Locked_xxx@ID4SLab2.onmicrosoft.com",
   "passwordUri": "https://ms.portal.azure.com/#@.../Microsoft_Azure_KeyVault/Secret/https://msidlabs.vault.azure.net/secrets/ID4SLAB2",
   "credentialVaultKeyName": "https://msidlabs.vault.azure.net:443/secrets/ID4SLab2",
-  "tenantId": "c7cef333-42af-492c-afb0-21f74a661133",
+  "tenantId": "<tenant-guid>",
   "tenantName": "ID4SLab2.onmicrosoft.com",
   "labName": "ID4SLab2",
   "authority": "https://login.microsoftonline.com/",
-  "objectId": "2007370f-74dc-4e03-b4b6-148838cd4323",
-  "userObject": { "UserPrincipalName": "Locked_5b335908a3@ID4SLab2.onmicrosoft.com", "...": "..." }
+  "objectId": "<object-id>",
+  "userObject": { "UserPrincipalName": "Locked_xxx@ID4SLab2.onmicrosoft.com", "...": "..." }
 }
 ```
 `labapi.ps1 create-user` echoes the full JSON and a convenience `UPN=<upn>` line. The **password** for a
@@ -203,9 +203,9 @@ stops.
   needs changing. First re-pull the shared value with `fetch-password` (it may have rotated in Key Vault) and
   double-check the UPN/tenant the case named; also check the account isn't `Locked_…` from an earlier lockout.
   Only run `reset -Operation password` when the **test case itself** describes a password-change/expiry flow.
-  **Never** reset the password of a **shared durable account** (e.g. `AndroidTBUser1@id4slab2`) — other cases
-  reuse it and a reset breaks them. If the value is confirmed correct and it still fails, mark the run
-  **BLOCKED** with the exact on-screen error instead of mutating the account.
+  **Never** reset the password of a **shared durable account** (a durable, pre-created account, not a temp
+  `Locked_…` user) — other cases reuse it and a reset breaks them. If the value is confirmed correct and it
+  still fails, mark the run **BLOCKED** with the exact on-screen error instead of mutating the account.
 - **A CA policy blocks a segment you're not testing** (e.g. you want to test token acquisition but MFA
   keeps interrupting) → `disable-policy`, run the segment, then `enable-policy` to restore state.
 - **A device-registration test left a stale device** and the *next* run needs a clean slate → optionally
