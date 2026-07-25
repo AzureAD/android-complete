@@ -27,7 +27,7 @@ Table of contents:
 | A lab/account **password** (any other) | `scripts/secrets.ps1 set -Name labpw` (type it at the masked prompt) | `deviceui.ps1 input-text -SecretRef labpw` |
 | A device **lock-screen PIN** | `scripts/secrets.ps1 set-device-pin` (picks the device, then type it at the masked prompt) | `deviceui.ps1 unlock -Serial <serial>` (auto-uses the saved PIN) |
 | A **keystore** password | `scripts/secrets.ps1 set -Name kspw` | build step reads `E2E_SECRET_KSPW` / `-SecretRef kspw` |
-| An **APK** or other file | Drop it in a folder, give the **path** (paths aren't secret) | `appcontrol.ps1 install -ApkPath <path>` |
+| An **APK** or other file | Drop it in a folder, give the **path** (paths aren't secret) | `appcontrol.ps1 install -Apk <path>` |
 
 The secret value is entered **in your own terminal**, encrypted at rest, and referenced later **by
 name**. It never appears in the chat, in a script argument, in `run.json`, or in the report.
@@ -209,14 +209,14 @@ give the agent its path. Two conventions, in order of preference:
    the Authenticator build at
    `C:\Users\zhipanwang\Downloads\APKs\app-production-arm64-v8a-release-signed.apk`.
    ```powershell
-   ./scripts/appcontrol.ps1 install -ApkPath 'C:\Users\zhipanwang\Downloads\APKs\app-production-arm64-v8a-release-signed.apk' -Serial <serial>
+   ./scripts/appcontrol.ps1 install -Apk 'C:\Users\zhipanwang\Downloads\APKs\app-production-arm64-v8a-release-signed.apk' -Serial <serial>
    ```
 2. **Newest-match in a known folder.** If you'll drop a fresh build repeatedly, say "use the newest
    `*-release-signed.apk` in `Downloads\APKs`" and the agent picks it:
    ```powershell
    $apk = Get-ChildItem 'C:\Users\zhipanwang\Downloads\APKs\*-release-signed.apk' |
      Sort-Object LastWriteTime -Descending | Select-Object -First 1
-   ./scripts/appcontrol.ps1 install -ApkPath $apk.FullName -Serial <serial>
+   ./scripts/appcontrol.ps1 install -Apk $apk.FullName -Serial <serial>
    ```
 
 Tips:
@@ -225,7 +225,7 @@ Tips:
   [troubleshooting.md](troubleshooting.md) and [emulator-performance.md](emulator-performance.md).
 - Only a file's *associated password* (e.g. a **keystore** password) is a secret — store that with
   `secrets.ps1 set -Name kspw`; the keystore file itself just needs a path.
-- Prefer `-ApkPath` over pasting file contents; never paste a binary or a large config into chat.
+- Prefer `-Apk` over pasting file contents; never paste a binary or a large config into chat.
 
 ## Quick reference
 
@@ -242,4 +242,4 @@ Tips:
 | Type a password on device | `deviceui.ps1 input-text -SecretRef labpw -Clear -CharByChar` |
 | Unlock a device (auto-uses saved PIN) | `deviceui.ps1 unlock -Serial <serial>` |
 | Env-var alternative | set `E2E_SECRET_LABPW`, then `-SecretRef labpw` |
-| Install an APK | `appcontrol.ps1 install -ApkPath <path>` |
+| Install an APK | `appcontrol.ps1 install -Apk <path>` |

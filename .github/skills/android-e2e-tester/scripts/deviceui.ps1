@@ -289,6 +289,7 @@ switch ($Command) {
         $m = @(Find-ByField 'Desc' $Text)
         if (-not $m) { Write-Host "NOT FOUND (content-desc): '$Text'"; exit 2 }
         $t = $m[[Math]::Min($Index, $m.Count - 1)]
+        if ($null -eq $t.Cx) { Write-Host "Element (content-desc) '$Text' has no tappable bounds."; exit 3 }
         Adb shell input tap $t.Cx $t.Cy | Out-Null
         Write-Host "Tapped desc '$Text' at ($($t.Cx),$($t.Cy))"
         if ($Then) {

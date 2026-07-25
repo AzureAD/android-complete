@@ -23,8 +23,9 @@ signed in; the endpoint validates against that existing session.
 
 `labapi.ps1` reproduces that: it opens the endpoint in **headless Microsoft Edge**
 (`--headless=new --dump-dom`), which reuses your Entra **WAM SSO** session, then parses the JSON the
-endpoint returns. It caches an isolated Edge profile under `%TEMP%\labapi_edge_profile` so the first call
-may do a silent WAM handshake and later calls are fast. If a call comes back needing sign-in, run it once
+endpoint returns. It caches an isolated **per-process** Edge profile under `%TEMP%\labapi_edge_p<pid>` so the
+first call may do a silent WAM handshake and later calls in the same run are fast, while two concurrent runs
+never share one profile. If a call comes back needing sign-in, run it once
 in a visible browser to seed the session:
 ```powershell
 ./scripts/labapi.ps1 open -Url "https://labusermanagerapi.azurewebsites.net/api/CreateTempUserID4SLab2?usertype=GlobalMFA"

@@ -135,27 +135,45 @@ function Invoke-CdpEval {
     finally { try { $ws.Dispose() } catch {} }
 }
 
+function Get-FreePort {
+    # Ask the OS for a currently-free loopback port instead of guessing from a fixed range with no bind
+    # check — two concurrent runs guessing in the same range can land on the same port, and the second
+    # Edge then fails to bind it and (via a shared debug port) could serve the first run's page.
+    $l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+    try { $l.Start(); return [int]$l.LocalEndpoint.Port } finally { $l.Stop() }
+}
+
 function Invoke-LabApiCdp {
     # Fallback when Edge `--dump-dom` returns 0 bytes (a known Edge 150+ headless regression): drive
     # headless Edge over the DevTools protocol and read document.body.innerText. A dedicated profile
     # still gets Entra SSO via the OS WAM broker, so this stays non-interactive after the first consent.
     param([string]$Endpoint)
     $edge = Get-Edge
+    # Per-PROCESS profile, not a fixed shared dir: two concurrent labapi runs must not share one
+    # --user-data-dir, or the second Edge hands off to the first and exits. WAM still brokers Entra SSO
+    # at the OS level for a per-process profile. -Fresh forces a throwaway per-call dir.
     $prof = if ($Fresh) { Join-Path $env:TEMP ("labapi_cdp_" + [guid]::NewGuid().ToString('N')) }
-    else { Join-Path $env:TEMP 'labapi_edge_cdp_profile' }
-    $port = Get-Random -Minimum 9300 -Maximum 9599
+    else { Join-Path $env:TEMP ("labapi_cdp_p$PID") }
+    $port = Get-FreePort
     $proc = Start-Process -FilePath $edge -PassThru -WindowStyle Hidden -ArgumentList @(
         '--headless=new', '--disable-gpu', '--disable-sync',
         "--remote-debugging-port=$port", "--user-data-dir=$prof",
         '--no-first-run', '--no-default-browser-check', $Endpoint)
+    # Accept only a content page whose URL is the endpoint we launched. Without this, if another Edge
+    # instance answers on this port, we would read ITS page and silently return it as our API response.
+    $epNoQuery = ($Endpoint -split '\?', 2)[0]
     try {
         $deadline = (Get-Date).AddSeconds([Math]::Max(12, $TimeoutSec))
         $wsUrl = $null
         while ((Get-Date) -lt $deadline -and -not $wsUrl) {
             Start-Sleep -Milliseconds 400
             try { $targets = Invoke-RestMethod "http://127.0.0.1:$port/json/list" -TimeoutSec 3 } catch { continue }
-            # Only the real content page (http/https); skip edge:// dialogs (e.g. sync-confirmation).
-            $page = $targets | Where-Object { $_.type -eq 'page' -and $_.url -like 'http*' } | Select-Object -First 1
+            # Real content page (http/https) for OUR endpoint; skip edge:// dialogs and unrelated pages.
+            $page = $targets | Where-Object {
+                $_.type -eq 'page' -and $_.url -like 'http*' -and
+                ($_.url.StartsWith($Endpoint, [System.StringComparison]::OrdinalIgnoreCase) -or
+                 $_.url.StartsWith($epNoQuery, [System.StringComparison]::OrdinalIgnoreCase))
+            } | Select-Object -First 1
             if ($page) { $wsUrl = $page.webSocketDebuggerUrl }
         }
         if (-not $wsUrl) { return '' }
@@ -177,9 +195,10 @@ function Invoke-LabApiCdp {
 function Invoke-LabApi {
     param([string]$Endpoint)
     $edge = Get-Edge
-    # Stable, isolated profile caches WAM SSO across calls (fast). -Fresh forces a throwaway dir.
+    # Per-PROCESS profile caches WAM SSO across calls within a run without colliding with a concurrent
+    # run's Edge on a shared --user-data-dir. -Fresh forces a throwaway per-call dir.
     $profile = if ($Fresh) { Join-Path $env:TEMP ("labapi_edge_" + [guid]::NewGuid().ToString('N')) }
-    else { Join-Path $env:TEMP 'labapi_edge_profile' }
+    else { Join-Path $env:TEMP ("labapi_edge_p$PID") }
     $dom = Join-Path $env:TEMP ("labapi_dom_" + [guid]::NewGuid().ToString('N') + ".html")
     $budget = [Math]::Max(5000, $TimeoutSec * 1000)
     $savedEap = $ErrorActionPreference
@@ -223,10 +242,49 @@ function Invoke-LabApi {
     return [pscustomobject]@{ Raw = $payload; Json = $json }
 }
 
+$script:SensitiveNames = @(
+    'password', 'passwd', 'pwd', 'secret', 'clientsecret', 'client_secret',
+    'token', 'accesstoken', 'access_token', 'refreshtoken', 'refresh_token',
+    'idtoken', 'id_token', 'apikey', 'api_key', 'credential', 'credentials', 'key'
+)
+
+function Protect-Sensitive {
+    # Deep-copy $Value, replacing the VALUES of sensitive-NAMED properties with '***REDACTED***'. Property
+    # names are matched EXACTLY (case-insensitive) against $script:SensitiveNames, so documented safe fields
+    # the caller needs - e.g. 'passwordUri', 'credentialVaultKeyName' (a URI / a key-NAME, not a secret) -
+    # are preserved while real secret values never reach the transcript.
+    param($Value, [int]$Depth = 0)
+    if ($null -eq $Value -or $Depth -gt 12) { return $Value }
+    if ($Value -is [string] -or $Value -is [ValueType]) { return $Value }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $out = [ordered]@{}
+        foreach ($k in @($Value.Keys)) {
+            $out[[string]$k] = if ($script:SensitiveNames -contains ([string]$k).ToLowerInvariant()) { '***REDACTED***' }
+            else { Protect-Sensitive $Value[$k] ($Depth + 1) }
+        }
+        return [pscustomobject]$out
+    }
+    if ($Value -is [System.Collections.IEnumerable]) {
+        return @(foreach ($item in $Value) { Protect-Sensitive $item ($Depth + 1) })
+    }
+    $props = $Value.PSObject.Properties
+    if ($props) {
+        $out = [ordered]@{}
+        foreach ($p in $props) {
+            $out[$p.Name] = if ($script:SensitiveNames -contains $p.Name.ToLowerInvariant()) { '***REDACTED***' }
+            else { Protect-Sensitive $p.Value ($Depth + 1) }
+        }
+        return [pscustomobject]$out
+    }
+    return $Value
+}
+
 function Show-Result {
     param($Result)
     if ($Result.Json) {
-        $Result.Json | ConvertTo-Json -Depth 8
+        # Redact secret-named fields so the parsed API response can't leak a password/token into the
+        # transcript, while keeping the *Uri / *Name fields callers rely on (see references/lab-api.md).
+        Protect-Sensitive $Result.Json | ConvertTo-Json -Depth 8
     }
     else {
         Write-Host $Result.Raw
@@ -252,14 +310,29 @@ function Get-KvSecretValue {
 }
 
 function Save-DpapiSecret {
-    # Cache a plaintext into the local DPAPI store in the exact format scripts/secrets.ps1 uses, so it
-    # resolves via `-SecretRef <Name>`. Nothing is printed here; the caller emits only a masked summary.
+    # Cache a plaintext into the local DPAPI store so it resolves via `-SecretRef <Name>`. Reuses
+    # scripts/secrets.ps1's path convention (single source of truth) when that script is present; falls
+    # back to the same inline .android-e2e-secrets/<Name>.sec layout otherwise. Nothing is printed here;
+    # the caller emits only a masked summary.
     param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Value)
-    $dir = Join-Path $env:USERPROFILE '.android-e2e-secrets'
-    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
     $ss = ConvertTo-SecureString $Value -AsPlainText -Force
     $enc = ConvertFrom-SecureString $ss    # DPAPI encrypt (per-user, per-machine)
-    Set-Content -Path (Join-Path $dir ("{0}.sec" -f $Name)) -Value $enc -NoNewline -Encoding ASCII
+    $path = $null
+    $secretsPs1 = Join-Path $PSScriptRoot 'secrets.ps1'
+    if (Test-Path $secretsPs1) {
+        # Resolve the store path via secrets.ps1 inside a CHILD scope (& { ... }). secrets.ps1's param()
+        # block redeclares $Name/$Command/$Serial and would null OUR $Name if dot-sourced in this scope;
+        # running it in a child scope with our own block params ($p/$n) keeps it fully isolated, and its
+        # dot-source guard still suppresses the CLI switch.
+        try { $path = & { param($p, $n) . $p; Get-SecretPath $n } $secretsPs1 $Name } catch { $path = $null }
+    }
+    if (-not $path) {
+        $dir = Join-Path $env:USERPROFILE '.android-e2e-secrets'
+        $path = Join-Path $dir ("{0}.sec" -f $Name)
+    }
+    $parent = Split-Path -Parent $path
+    if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+    Set-Content -Path $path -Value $enc -NoNewline -Encoding ASCII
 }
 
 switch ($Command) {

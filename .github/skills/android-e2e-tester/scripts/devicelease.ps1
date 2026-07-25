@@ -174,7 +174,20 @@ function Try-WriteLease {
 }
 
 $adb = Get-Adb
-function Wait-Booted { param([string]$S) & $adb -s $S wait-for-device 2>$null; $b = (& $adb -s $S shell getprop sys.boot_completed 2>$null | Out-String).Trim(); return ($b -eq '1') }
+function Wait-Booted {
+    # `adb wait-for-device` only blocks until the device is *online* (adbd up), not until Android has
+    # finished booting — so poll sys.boot_completed until it flips to 1 (or the timeout elapses) before
+    # returning success, otherwise callers race ahead and drive a half-booted device.
+    param([string]$S, [int]$TimeoutSec = 120)
+    & $adb -s $S wait-for-device 2>$null
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    do {
+        $b = (& $adb -s $S shell getprop sys.boot_completed 2>$null | Out-String).Trim()
+        if ($b -eq '1') { return $true }
+        Start-Sleep -Milliseconds 750
+    } while ((Get-Date) -lt $deadline)
+    return $false
+}
 
 switch ($Command) {
     'list' {
