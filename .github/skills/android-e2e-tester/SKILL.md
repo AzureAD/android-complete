@@ -57,16 +57,30 @@ performs.
    package, credential-handling rules (type on device, never print), the run-folder path, any
    mocks/flights to apply, and an instruction to **finish with a `PASS` / `FAIL` / `BLOCKED` verdict plus
    evidence** (success signal + correlation_id, or the exact blocker).
-2. **The parent WAITS for the sub-agent to finish.** Start it in the background, then block on its
-   completion (read its result with wait=true). **Do not end your turn, and do not report to the user,
-   until the sub-agent's verdict is in.** This is the #1 real failure mode we hit: the parent returned
-   early, the sub-agent's result and analysis were never surfaced to the user.
-3. **Supervise with a watchdog while waiting:**
-   - **Hang → restart.** The sub-agent should emit a progress line and refresh its device lease
-     (`devicelease.ps1 heartbeat`) at each phase. If there's no progress within a timeout (e.g. ~10–15 min
-     for an install-heavy flow) **and the test isn't done**, treat it as hung: nudge once; if still stuck,
-     **restart** it (fresh sub-agent, resume from the last known state) rather than waiting forever.
-   - **Result in → stop.** If the verdict/evidence is already available, **stop waiting / terminate** the
+2. **The parent SUPERVISES on a wall clock — it does not merely block on a completion.** Start the
+   sub-agent in the background, then poll it in a loop with a **bounded** timeout
+   (`read_agent … wait=true timeout=180`) — **never** a single open-ended wait. **Do not end your turn, and
+   do not report to the user, until the sub-agent's verdict is in.** Returning early is failure mode #1 (the
+   sub-agent's result never reaches the user); its evil twin is failure mode #2: **blocking forever on a
+   wait that can only be woken by a *completion*.** A **hung** sub-agent never completes, so it **never
+   fires a completion notification** — and because it's frozen inside a blocking device call (classically a
+   wedged `adb install`) it **cannot fire its own per-point abort cap either**. If your only wake-up is "the
+   agent finished," a wedged lane hangs the whole turn indefinitely (this is real: two lanes wedged on
+   `adb install` once stalled a suite run for ~6 hours). So the parent owns the **wall-clock watchdog** in
+   step 3, and long device calls are bounded (`appcontrol.ps1 install -TimeoutSec <n>`) so a wedge fails
+   fast instead of freezing the agent.
+3. **Watchdog — detect a STALL on the wall clock, not via notifications:**
+   - **Track liveness yourself every poll.** The sub-agent emits a progress line + refreshes its lease
+     (`devicelease.ps1 heartbeat`) at each phase. Between bounded `read_agent` polls, tail its
+     `tc<id>\progress.log` and note `tool_calls_completed`. **Growth in *either* = alive; no growth in
+     *both* across two consecutive bounded polls (~6–10 min of zero forward motion) = STALLED**, whether or
+     not a completion ever arrives.
+   - **Stalled → abort the lane, don't keep waiting.** Treat a stall as a dead lane: mark the case
+     **ABORTED** from its **partial** `run.json` (the sub-agent renders a skeleton early, so partial
+     evidence survives its death), then **recover the device before reuse** (`adb kill-server;
+     adb start-server`, re-`acquire` the lease under a fresh owner). Re-dispatch a fresh sub-agent from the
+     last known state, or move on — never sit on an unbounded wait.
+   - **Result in → stop.** If the verdict/evidence is already available, stop waiting / terminate the
      sub-agent and move to reporting — don't let a finished run linger.
    - **Cap restarts** (e.g. 2). If still unresolved, escalate to the user with the full evidence trail.
 4. **Only the parent reports to the user.** Collect the sub-agent's verdict + artifact links and present
@@ -74,6 +88,9 @@ performs.
 
 If the harness can't spawn a sub-agent (or you're already the deepest agent), run the phases inline — but
 keep the same discipline: **don't declare done until the verdict is in, and don't loop forever on a hang.**
+Bound any long blocking device call so a wedge can't freeze you past your own cap — install with a timeout
+(`appcontrol.ps1 install -TimeoutSec <n>`; on timeout it kills the `adb install` and throws, so recover with
+`adb kill-server; adb start-server` rather than rebooting the device mid-install).
 
 ## Running multiple test cases (batch) — split across devices, run in parallel
 
@@ -105,9 +122,21 @@ When asked to run **more than one** test case (a suite, a list of test points, s
    render` then produces **one report per case** with a section per test point + a single shared "Proposed
    test steps". The suite summary still scans this folder and expands each case's points into their own rows
    in the **Config** column.
-4. **The parent supervises all lanes** with the same watchdog discipline as a single run (progress +
-   `heartbeat` per phase; restart a hung lane; stop a finished one; cap restarts). **Don't end the turn until
-   every case has a verdict.**
+4. **The parent runs a polling watchdog across ALL lanes — on a wall clock.** Poll each live lane with a
+   **bounded** `read_agent` (e.g. `wait=true timeout=180`), rotating through the lanes; between polls tail
+   each lane's `tc<id>\progress.log` and note its `tool_calls_completed`. Apply the single-run watchdog per
+   lane: **growth in the progress log *or* `tool_calls_completed` = alive; no growth in both across two
+   consecutive polls (~6–10 min of no motion) = STALLED → mark that case ABORTED from its partial report,
+   recover the device (`adb kill-server; adb start-server`, re-lease under a fresh owner), and re-dispatch
+   the next pending case onto the freed lane.** The **parent** — not just the in-agent cap — enforces the
+   per-point wall-clock cap (30 min/point unless told otherwise), because a sub-agent frozen in a blocking
+   call (e.g. a wedged `adb install`) **cannot fire its own cap**. **Never block the turn on a single
+   open-ended wait:** a hung sub-agent emits **no completion notification**, so a notification-only loop
+   hangs forever if every live lane wedges at once (this stalled a real suite run for ~6 hours). Keep the
+   sub-agents' installs bounded (`appcontrol.ps1 install -TimeoutSec <n>`) so a wedge surfaces as a fast
+   failure the agent can record rather than a freeze. Keep every lane busy until the queue drains, and
+   **don't end the turn until every case has a verdict** (including ABORTED for lanes you had to kill, and
+   an explicit "not reached" for cases the batch never got to).
 5. **Aggregate into an overall report.** After all cases finish, render the **suite summary** over the batch
    folder (Phase 7): `./scripts/report.ps1 summary -In <suiteFolder> -Title "<suite>"` → `SUMMARY.html` +
    `SUMMARY.md` (per-case verdict table linked to each report, plus overall counts). Present the overall

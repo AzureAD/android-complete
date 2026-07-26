@@ -35,7 +35,8 @@ param(
     [string]$Activity,           # optional fully-qualified activity for launch
     [string]$Variant = 'localDebug',
     [string]$Permission,
-    [string]$RepoRoot
+    [string]$RepoRoot,
+    [int]$TimeoutSec = 300       # bound a direct-APK 'install' so a wedged `adb install` is killed, not hung forever (0 = no timeout)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -79,6 +80,31 @@ function Adb {
     if ($Serial) { & $adb -s $Serial @args } else { & $adb @args }
 }
 
+# Run an adb invocation in a child process with a hard wall-clock timeout. A hung `adb install`
+# (adb server / device wedged) otherwise blocks the caller — and any supervising agent — forever,
+# defeating the per-point abort cap. On timeout we kill the process tree and throw so the caller
+# fails fast and can recover the adb server instead of freezing.
+function Invoke-AdbTimed {
+    param([string[]]$AdbArgs, [int]$TimeoutSec)
+    $full = @()
+    if ($Serial) { $full += @('-s', $Serial) }
+    $full += $AdbArgs
+    $outFile = [System.IO.Path]::GetTempFileName()
+    $errFile = [System.IO.Path]::GetTempFileName()
+    try {
+        $p = Start-Process -FilePath $adb -ArgumentList $full -NoNewWindow -PassThru `
+            -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        if (-not $p.WaitForExit($TimeoutSec * 1000)) {
+            try { $p.Kill($true) } catch { try { $p.Kill() } catch { } }
+            Get-Content $outFile, $errFile -ErrorAction SilentlyContinue | Write-Host
+            throw "adb $($AdbArgs -join ' ') exceeded ${TimeoutSec}s and was killed. adb/device likely wedged — recover with 'adb kill-server; adb start-server' and re-lease the device; do NOT reboot the device mid-install."
+        }
+        Get-Content $outFile, $errFile -ErrorAction SilentlyContinue | Write-Host
+        return $p.ExitCode
+    }
+    finally { Remove-Item $outFile, $errFile -ErrorAction SilentlyContinue }
+}
+
 switch ($Command) {
     'build' {
         if (-not $Module) { throw "Provide -Module (e.g. :msalTestApp)." }
@@ -93,8 +119,15 @@ switch ($Command) {
     'install' {
         if ($Apk) {
             if (-not (Test-Path $Apk)) { throw "APK not found: $Apk" }
-            Write-Host "Installing (adb -r -g): $Apk"
-            Adb install -r -g $Apk | Write-Host
+            if ($TimeoutSec -gt 0) {
+                Write-Host "Installing (adb -r -g, timeout ${TimeoutSec}s): $Apk"
+                $code = Invoke-AdbTimed -AdbArgs @('install', '-r', '-g', $Apk) -TimeoutSec $TimeoutSec
+                if ($code -ne 0) { throw "adb install exited $code for $Apk" }
+            }
+            else {
+                Write-Host "Installing (adb -r -g, no timeout): $Apk"
+                Adb install -r -g $Apk | Write-Host
+            }
         }
         elseif ($Module) {
             $root = Find-RepoRoot

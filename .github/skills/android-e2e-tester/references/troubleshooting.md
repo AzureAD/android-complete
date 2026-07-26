@@ -143,6 +143,15 @@ toolchain is missing:
 | `INSTALL_FAILED_NO_MATCHING_ABIS` | APK ABI ≠ emulator ABI | Use an `x86_64` system image, or build a universal APK |
 | **App installs but crashes on launch / dexopt kills `system_server`** | A large **arm64-only** APK on an `x86_64` emulator can pass the ABI check (image lists `x86_64,arm64-v8a`) but crash during **install-time dexopt** — you'll see a Watchdog kill, `Broken pipe`, or `Can't find service: package`. Use the **universal** APK (`app-production-universal-release-signed.apk`) on emulators; keep the `arm64-v8a` APK for **physical** devices. The package sometimes still commits — check `adb shell pm path <pkg>`; a reinstall once dexopt has cached often returns `Success`. |
 | `INSTALL_FAILED_USER_RESTRICTED` | Play-protect / user prompt | Use a non-Play-Store `google_apis` image |
+| **`adb install` hangs (never returns)** | adb server or device wedged mid-transfer (common after a slow/interrupted install, a device reboot, or a flaky emulator) — the call blocks the caller **and any supervising agent forever**, defeating the per-point abort cap | Bound the install: `appcontrol.ps1 install -Apk <apk> -TimeoutSec <n>` (default 300s) kills the wedged `adb install` and throws. Recover with `adb kill-server; adb start-server`, re-lease the device, then retry the install. **Do not reboot the device *during* a pending install** — it orphans the install session and the waiting call (this is what turned a wedged install into a multi-hour stall). |
+
+**A hung install is the classic lane-killer.** Because `adb install` is a blocking call, a wedge freezes the
+whole sub-agent — its own 30-min/point cap can't fire while it's stuck inside the call, and (since the agent
+never *completes*) the parent gets **no completion notification** to wake on. Two safeguards, both already in
+the skill: (1) sub-agents install with a bounded `-TimeoutSec` so a wedge fails fast and is recorded; (2) the
+**parent** watches lanes on a wall clock (progress-log / `tool_calls_completed` growth), and on a stall marks
+the case ABORTED, recovers adb, and re-dispatches — it never blocks on an open-ended wait. See the
+"Execution model" and "Running multiple test cases" sections of [SKILL.md](../SKILL.md).
 
 ## Signing & redirect-URI mismatch (AADSTS50011)
 
