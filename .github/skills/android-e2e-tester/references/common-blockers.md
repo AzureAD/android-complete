@@ -11,6 +11,7 @@ Table of contents:
 - [Number-match MFA](#number-match-mfa)
 - [Session timeouts & SSO resets mid-flow](#session-timeouts--sso-resets-mid-flow)
 - [Chrome autofill / passkey overlay steals input](#chrome-autofill--passkey-overlay-steals-input)
+- [Chrome First Run Experience swallows the auth page (blank WebView)](#chrome-first-run-experience-swallows-the-auth-page-blank-webview)
 - [FLAG_SECURE black screenshots](#flag_secure-black-screenshots)
 - [Screenshot corruption via redirection](#screenshot-corruption-via-redirection)
 - [Single-use pairing / setup links](#single-use-pairing--setup-links)
@@ -144,6 +145,30 @@ keeps the value out of the transcript. If a "Save password / use passkey" bottom
 with `key ESCAPE` (not `BACK`, which can exit the app) before typing. **Verify by whether the page
 advances**, not by reading the field's `text` — a WebView often doesn't reflect typed content back in the
 accessibility tree (the password field `i0118` is an exception and does show a length).
+
+## Chrome First Run Experience swallows the auth page (blank WebView)
+
+**Symptom:** on a **fresh Chrome profile** — right after `pm clear com.android.chrome`, or the first-ever
+Chrome launch on a new emulator — an auth handoff (an app's "Sign in" Custom Tab, or a direct
+`login.microsoftonline.com` URL) shows a **blank page** and never returns to the app. It looks like a
+broken WebView; it is **not**.
+
+**Cause:** Chrome's **First Run Experience** (the "Make Chrome your own / Sign in to get your bookmarks…"
+promo + a sync/notifications prompt) intercepts the very first navigation on a fresh profile and **swallows
+the auth URL**, so the `msauth://`/app-link handoff never fires. This repeatedly ABORTed emulator AAD
+registration cases until the root cause was found — past the FRE, the same emulator renders the real MS
+sign-in form (email field `i0116`) normally.
+
+**Fix — dismiss the FRE before any auth handoff** (at case start, and again after ANY Chrome clear):
+```powershell
+adb -s <serial> shell am start -a android.intent.action.VIEW -d 'https://login.microsoftonline.com' com.android.chrome
+./scripts/deviceui.ps1 tap-text -Text "Use without an account" -Serial <serial>   # main FRE button
+./scripts/deviceui.ps1 tap-text -Text "No thanks" -Serial <serial>                # sync/turn-on promo, if shown
+# also dismiss any "Not now"/"Got it"/notification prompt; Chrome is ready when mCurrentFocus=ChromeTabbedActivity
+```
+Then re-run the flow — the sign-in page loads. **If a test step clears the browser cache, re-dismiss the FRE
+afterward** or the next auth page is blank again. This is most common on emulators (fresh profile) but the
+same promo can appear on a freshly-provisioned physical device.
 
 ## FLAG_SECURE black screenshots
 
@@ -311,6 +336,7 @@ These can't be produced by the AI — report them and ask the user (see SKILL "W
 | Real push MFA on another phone | ❌ | — | **Blocker** — ask the user |
 | eSTS password typing | ✅ | Either | `input-text -Clear -CharByChar -Secret` |
 | Autofill/passkey overlay | ✅ | Either | char-by-char + `key ESCAPE` to dismiss sheet |
+| Auth page blank on fresh Chrome profile (post `pm clear` / new emulator) | ✅ | Either | **Chrome First Run Experience** — dismiss "Use without an account" + "No thanks" before the auth handoff |
 | Verify state on FLAG_SECURE screen | ✅ | Either | `uiautomator dump` + XML (screenshot is black) |
 | Session timed out mid-flow | ✅ | Either | re-drive sign-in; set up biometric/PIN before timed segment |
 | Single-use pairing link reused | ✅ | Either | re-generate the link / fresh temp user |
