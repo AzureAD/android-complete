@@ -146,19 +146,19 @@ if ($Command -eq 'summary') {
         }
     }
 
-    $vColor = @{ PASS = '#107c10'; FAIL = '#d13438'; BLOCKED = '#c19c00'; PARTIAL = '#c19c00'; UNKNOWN = '#605e5c' }
-    $order = @{ FAIL = 0; BLOCKED = 1; PARTIAL = 2; PASS = 3; UNKNOWN = 4 }
+    $vColor = @{ PASS = '#107c10'; FAIL = '#d13438'; BLOCKED = '#c19c00'; PARTIAL = '#c19c00'; SKIPPED = '#605e5c'; ABORTED = '#8764b8'; UNKNOWN = '#605e5c' }
+    $order = @{ FAIL = 0; BLOCKED = 1; ABORTED = 2; PARTIAL = 3; SKIPPED = 4; PASS = 5; UNKNOWN = 6 }
     $cases = @($cases | Sort-Object `
-            @{ Expression = { $o = $order[$_.verdict]; if ($null -eq $o) { 5 } else { $o } } }, `
+            @{ Expression = { $o = $order[$_.verdict]; if ($null -eq $o) { 7 } else { $o } } }, `
             @{ Expression = { [string]$_.tcId } }, `
             @{ Expression = { if ($_.build -eq 'ECS') { 0 } elseif ($_.build -eq 'Local') { 1 } else { 2 } } })
 
-    $counts = [ordered]@{ PASS = 0; FAIL = 0; BLOCKED = 0; PARTIAL = 0; UNKNOWN = 0 }
+    $counts = [ordered]@{ PASS = 0; FAIL = 0; BLOCKED = 0; PARTIAL = 0; SKIPPED = 0; ABORTED = 0; UNKNOWN = 0 }
     foreach ($c in $cases) { $v = $c.verdict; if (-not $counts.Contains($v)) { $v = 'UNKNOWN' }; $counts[$v]++ }
     $total = @($cases).Count
     $overall = if ($counts['FAIL'] -gt 0) { 'FAIL' } elseif ($counts['PASS'] -eq $total) { 'PASS' } else { 'PARTIAL' }
     $oc = $vColor[$overall]; if (-not $oc) { $oc = '#605e5c' }
-    $countsLine = (@('PASS', 'FAIL', 'BLOCKED', 'PARTIAL', 'UNKNOWN') | Where-Object { $counts[$_] -gt 0 } | ForEach-Object { "$_ $($counts[$_])" }) -join ' · '
+    $countsLine = (@('PASS', 'FAIL', 'BLOCKED', 'PARTIAL', 'ABORTED', 'SKIPPED', 'UNKNOWN') | Where-Object { $counts[$_] -gt 0 } | ForEach-Object { "$_ $($counts[$_])" }) -join ' · '
     $plural = if ($total -ne 1) { 's' } else { '' }
 
     # ---- Markdown ----
@@ -235,7 +235,7 @@ $run = Get-Content $In -Raw | ConvertFrom-Json
 if (-not $OutDir) { $OutDir = Split-Path (Resolve-Path $In) -Parent }
 if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Force -Path $OutDir | Out-Null }
 
-$vColor = @{ PASS = '#107c10'; FAIL = '#d13438'; BLOCKED = '#c19c00'; PARTIAL = '#c19c00'; UNKNOWN = '#605e5c' }
+$vColor = @{ PASS = '#107c10'; FAIL = '#d13438'; BLOCKED = '#c19c00'; PARTIAL = '#c19c00'; SKIPPED = '#605e5c'; ABORTED = '#8764b8'; UNKNOWN = '#605e5c' }
 function VColor($v) { $c = $vColor[$v]; if (-not $c) { $c = '#605e5c' }; return $c }
 function Vup($o) { $v = ([string](Val $o 'verdict')).ToUpper(); if (-not $v) { $v = 'UNKNOWN' }; return $v }
 function HtmlList($items) { if (-not $items) { return '' } $li = ($items | ForEach-Object { "<li>$(He $_)</li>" }) -join ''; return "<ul>$li</ul>" }
@@ -251,7 +251,7 @@ $points = if ($multi) { @($tps) } else { @($run) }
 if (Val $run 'verdict') { $verdict = Vup $run }
 elseif ($multi) {
     $vs = @($points | ForEach-Object { Vup $_ })
-    $verdict = if ($vs -contains 'FAIL') { 'FAIL' } elseif ($vs -contains 'BLOCKED') { 'BLOCKED' } elseif ($vs -contains 'PARTIAL' -or $vs -contains 'UNKNOWN') { 'PARTIAL' } else { 'PASS' }
+    $verdict = if ($vs -contains 'FAIL') { 'FAIL' } elseif ($vs -contains 'BLOCKED') { 'BLOCKED' } elseif ($vs -contains 'ABORTED') { 'PARTIAL' } elseif ($vs -contains 'PARTIAL' -or $vs -contains 'UNKNOWN') { 'PARTIAL' } elseif (($vs | Where-Object { $_ -ne 'SKIPPED' }).Count -eq 0) { 'SKIPPED' } elseif ($vs -contains 'SKIPPED') { 'PARTIAL' } else { 'PASS' }
 }
 else { $verdict = 'UNKNOWN' }
 $vc = VColor $verdict
