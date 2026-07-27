@@ -70,6 +70,11 @@ convenience, not a contract.
 | `adalTestApp-dist-debug` | ADAL test app | `com.microsoft.aad.adal.testapp` | Calling client for legacy ADAL flows. |
 | `brokerHost-local-debug` | Broker Host test app | `com.microsoft.identity.testuserapp` | Drives broker APIs directly (Get Accounts / device state). |
 
+> **Driving Microsoft Authenticator?** The 4-screen first-run flow, adding an account from the home screen,
+> and the **same-device** AAD Work/School account-add + first-time MFA proof-up (number-match) are documented
+> in [authenticator-app.md](authenticator-app.md) — read it before testing an Authenticator scenario so you
+> don't re-hit the false "needs a second phone" blocker.
+
 ## ECS vs Local builds (test-point configuration)
 
 When a case is staged with both an `ECS\` and a `Local\` folder, **which folder you install the app-under-test

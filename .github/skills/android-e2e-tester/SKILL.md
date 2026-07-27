@@ -542,6 +542,7 @@ Load these as needed (don't preload all):
 | File | Read it when |
 |---|---|
 | [references/app-and-module-map.md](references/app-and-module-map.md) | Choosing/deploying the test app, package discovery, broker pairing, credentials, emulator requirements |
+| [references/authenticator-app.md](references/authenticator-app.md) | Driving **Microsoft Authenticator** — the 4-screen first-run flow, adding an account from home, and the **same-device** AAD Work/School account-add + first-time MFA proof-up (number-match) that is often wrongly marked BLOCKED |
 | [references/lab-api.md](references/lab-api.md) | Provisioning/resetting a lab test account, the account policy (prefer fresh ID4SLAB2 temp users over MSIDLAB4), LAB API endpoints/usertypes/policies, the EasyAuth auth workaround, fetching tenant passwords from Key Vault, `labapi.ps1` |
 | [references/common-blockers.md](references/common-blockers.md) | Recurring hiccups & when to switch to an emulator (fingerprint/App-Lock, number-match MFA, session timeouts, FLAG_SECURE, autofill/passkey overlay, screenshot corruption); driving System Settings yourself before declaring a blocker; clean-state between runs |
 | [references/test-reporting.md](references/test-reporting.md) | Writing the mandatory ADO test report — run-JSON schema, `report.ps1`, worked example |

@@ -118,8 +118,17 @@ automatable **only if** getting into Authenticator isn't biometric-gated:
 - If App Lock is on → satisfy the biometric first (see above) → then read the number from the browser
   (`deviceui.ps1 dump` on the Chrome page — it's **not** FLAG_SECURE) and tap the matching tile in
   Authenticator.
-- If the number appears as a **push you must approve on a *separate* physical phone**, it's a genuine
-  blocker (no TOTP seed) — ask the user.
+- If the number appears as a **push you must approve on a *separate* physical phone** whose Authenticator
+  is *already registered* and you don't control (no TOTP seed), it's a genuine blocker — ask the user.
+
+> **Not a blocker: adding a work account to *this* device's Authenticator (first-time proof-up).** When you
+> add an AAD Work/School account and the tenant requires first-time MFA registration, Authenticator sends
+> you to a browser ("Finish setting up on a web browser / aka.ms/mfasetup") and the number-match bounces
+> back to the app **on the same device** — this is fully automatable and must **not** be marked BLOCKED as
+> "needs a second phone". The critical, easy-to-miss step is tapping the **"Pair your account to the app by
+> clicking this link."** hyperlink (not **Next**, not **Show QR code**) on the *"Now pair Authenticator with
+> your account"* screen. Full step-by-step, plus the exact mistakes that caused false BLOCKEDs before, are in
+> [authenticator-app.md](authenticator-app.md#aad-workschool-account-add-with-proof-up-number-match--same-device).
 
 ## Session timeouts & SSO resets mid-flow
 
@@ -188,6 +197,12 @@ adb shell screencap -p /sdcard/_sc.png ; adb pull /sdcard/_sc.png <out>   # neve
 ```
 
 ## Single-use pairing / setup links
+
+> Driving the **AAD account-add proof-up** end-to-end (where this pairing hyperlink comes from)? See the
+> full same-device flow in
+> [authenticator-app.md](authenticator-app.md#aad-workschool-account-add-with-proof-up-number-match--same-device).
+> The pairing link is reached via Authenticator's own **Open browser** button — don't hand-navigate to
+> `aka.ms/mfasetup`.
 
 MFA-setup "pair your account to the app" deep-links (e.g. from `aka.ms/mfasetup`) and QR codes are often
 **single-use** — a second attempt shows "code already used" or a stale QR. If a pairing step fails on a
@@ -333,7 +348,9 @@ These can't be produced by the AI — report them and ask the user (see SKILL "W
 | Fingerprint / biometric prompt | ✅ emulator · ❌ physical | **Emulator** | `finger-enroll` + `finger`; on physical, human presses sensor |
 | Authenticator **App Lock** re-prompt | ✅ emulator · ⚠️ physical | **Emulator** | inject biometric, or turn App Lock **off**, or use device PIN |
 | Number-match MFA (same device) | ✅ if not biometric-gated | Either | read number from Chrome dump → tap tile in Authenticator |
-| Real push MFA on another phone | ❌ | — | **Blocker** — ask the user |
+| AAD **first-time proof-up** adding a work account (sends you to a browser) | ✅ **same device** | Either | **Not** a "second phone" blocker — tap the app's **Open browser**, then the **"Pair your account…link"** hyperlink; [authenticator-app.md](authenticator-app.md#aad-workschool-account-add-with-proof-up-number-match--same-device) |
+| Real push MFA on another *already-registered* phone | ❌ | — | **Blocker** — ask the user |
+| Authenticator first-run gates (fresh install) | ✅ | Either | 4 screens → Allow · Accept · Continue · **Skip** (upper-right); [authenticator-app.md](authenticator-app.md#first-run-flow-fresh-install--home) |
 | eSTS password typing | ✅ | Either | `input-text -Clear -CharByChar -Secret` |
 | Autofill/passkey overlay | ✅ | Either | char-by-char + `key ESCAPE` to dismiss sheet |
 | Auth page blank on fresh Chrome profile (post `pm clear` / new emulator) | ✅ | Either | **Chrome First Run Experience** — dismiss "Use without an account" + "No thanks" before the auth handoff |
