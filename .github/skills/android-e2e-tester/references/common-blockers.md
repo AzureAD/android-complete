@@ -139,6 +139,14 @@ re-prompts. Mitigations:
 - If you get bounced to sign-in, just re-drive the email/password screens (SSO often re-completes quickly).
 - Don't leave the flow parked while doing long setup on the side — provision the account/emulator first,
   then run the web segment in one go.
+- **Adding a SECOND account in the SAME tenant on the same device? Clear Chrome's SSO first.** When you tap
+  the app's **Open browser** for account #2, Chrome silently re-authenticates the **previous** account via its
+  cached web session — you'll see the wrong account's number-match / proof-up. Run
+  `./scripts/appcontrol.ps1 clear -Package com.android.chrome -Serial <serial>` (or `pm clear
+  com.android.chrome`) **before** the handoff so no SSO cookie is reused, then re-drive; the broker still
+  caches the new account in its chooser so you usually don't retype the password. Expect the **Chrome First
+  Run Experience** afterward (Use without an account / **Stay signed out** → **No thanks**) before the auth
+  page renders.
 
 ## Chrome autofill / passkey overlay steals input
 
@@ -208,6 +216,24 @@ MFA-setup "pair your account to the app" deep-links (e.g. from `aka.ms/mfasetup`
 **single-use** — a second attempt shows "code already used" or a stale QR. If a pairing step fails on a
 retry, **re-generate** the link/QR from the setup page rather than reusing the old one, or provision a
 fresh user (`labapi.ps1 create-user`).
+
+**The same-device "Pair your account…click this link" hyperlink is consumed by the FIRST tap — never
+double-tap it.** Tapping *"Pair your account to the app by clicking this link"* launches Authenticator in the
+**background** and hands it the single-use token; **Chrome stays on the same "Now pair Authenticator" page
+and looks unchanged**, so it's tempting to tap again. A second tap re-opens the (now spent) link and
+Authenticator shows **"QR code already used — You've already used this QR code to add an account,"** which can
+also leave a **duplicate** account entry in the app. Rule: tap the link **exactly once**, then **switch to
+Authenticator's foreground** (pull down the notification shade for its push, or open the app) to continue the
+number-match — do **not** re-tap in Chrome. If you truly need a new token (e.g. it timed out), regenerate it
+via the browser wizard's **Back → Next**, don't re-tap the old link.
+
+**"Set up Passwordless sign-in requests" can fail with "Passkey — Unknown error. Please try again later."**
+on an account that already has a **duplicate / messy registration** (e.g. from a double-tapped pair link
+above). This is a passkey registration on recent Authenticator builds; a duplicated account registration
+reproducibly errors. Before calling it a product defect, retry from a **single clean registration** (fresh
+temp user or uninstall→re-add so there's exactly one entry). If it still fails on a clean single
+registration, then record it as a real **FAIL** with the number-match value + screenshot; if it's entangled
+with a duplicate/timed-out state, mark **PARTIAL** and note the messy precondition.
 
 **Finding a link that isn't in the accessibility tree.** The pairing hyperlink often lives **inside a
 WebView** and does **not** appear as a tappable node in `uiautomator dump`, so `tap-text` can't find it.
@@ -356,8 +382,11 @@ These can't be produced by the AI — report them and ask the user (see SKILL "W
 | Auth page blank on fresh Chrome profile (post `pm clear` / new emulator) | ✅ | Either | **Chrome First Run Experience** — dismiss "Use without an account" + "No thanks" before the auth handoff |
 | Verify state on FLAG_SECURE screen | ✅ | Either | `uiautomator dump` + XML (screenshot is black) |
 | Session timed out mid-flow | ✅ | Either | re-drive sign-in; set up biometric/PIN before timed segment |
-| Single-use pairing link reused | ✅ | Either | re-generate the link / fresh temp user |
+| Single-use pairing link reused | ✅ | Either | re-generate the link / fresh temp user; **tap the same-device "click this link" hyperlink exactly once** (first tap consumes it + launches Authenticator in the background; a 2nd tap → "QR code already used" + duplicate account) |
 | Pairing link inside a WebView (not in uiautomator) | ✅ | Either | screenshot → PIL blue-pixel scan → `tap -X -Y` |
+| UPN typed into Chrome's **address bar**, not the login field | ✅ | Either | `url_bar` is an EditText too — tap the web field by coords, confirm focus is `i0116`/`i0118` (omnibox `focused=false`) before typing |
+| 2nd account, **same tenant**, browser shows the wrong (previous) account | ✅ | Either | `appcontrol.ps1 clear -Package com.android.chrome` **before** Open browser (drops SSO), then handle Chrome FRE |
+| "Set up Passwordless" → **"Passkey — Unknown error"** | ⚠️ | Either | usually a **duplicate/messy registration** — retry from one clean registration (fresh user / re-add); real FAIL only if it fails clean |
 | Emulator won't stay up (BT-HAL / system_server loop) | ⚠️ host-dependent | — | try boot recipe; if unstable, biometric step is a **blocker** on this host |
 | Wrong-ABI APK on emulator (arm64 on x86_64) | ✅ | Emulator | install the **universal** APK; keep arm64 APK for physical |
 | Stale MFA already registered | ✅ | Either | `labapi.ps1 reset -Operation mfa` or new temp user |

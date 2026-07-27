@@ -106,6 +106,14 @@ a few ways — these fixes came from real runs:
   focused. After tapping, verify focus by checking that the soft keyboard is up
   (`adb shell dumpsys input_method | Select-String mInputShown,mServedView` — a WebView `mServedView`
   with `mInputShown=true` means the field is focused), then re-`dump` to read the field node.
+- **Don't match "the first `EditText`" — Chrome's omnibox IS one.** Chrome's address bar
+  (`com.android.chrome:id/url_bar`) is itself an `android.widget.EditText`, so a naive "type into the first
+  EditText" rule types the UPN into the **address bar**, not the web email field (you'll see the sign-in
+  page unchanged and the URL bar full of your UPN; an `ESCAPE` then re-focuses the omnibox and a double
+  `BACK` can exit Chrome entirely). Instead **tap the web field by its on-screen coordinates** and
+  **confirm the focused node is the eSTS field** before typing: the email box is `resource-id="i0116"`, the
+  password box `i0118`, and Next/Sign-in is `idSIButton9` — verify `i0116`/`i0118` has `focused=true` and
+  the omnibox `url_bar` has `focused=false`, then type and re-read the field's `text` to confirm it landed.
 - **The visible field is lower than the heading.** On the password page, the big "Enter password" text is
   *not* the input — the actual `EditText` sits below it. Tapping the heading does nothing. Get the real
   node's bounds from the accessibility tree (`uiautomator dump` still exposes the WebView's `EditText`
