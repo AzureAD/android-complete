@@ -113,7 +113,7 @@ if ($Command -eq 'summary') {
         }
         $adoObj = Val $r 'ado'
         $tcId = (Val $adoObj 'testCaseId')
-        $title = [string](Val $r 'title')
+        $caseTitle = [string](Val $r 'title')
         $tps = Val $r 'testPoints'
         if ($tps) {
             # one row per test point, all linking to the single consolidated case report
@@ -121,7 +121,7 @@ if ($Command -eq 'summary') {
                 $pAdo = Val $pt 'ado'; $pDev = Val $pt 'device'
                 $cases += [pscustomobject]@{
                     tcId    = $tcId
-                    title   = $title
+                    title   = $caseTitle
                     verdict = (Vupper $pt)
                     note    = [string](Val $pt 'verdictNote')
                     device  = $(if ($pDev) { [string](Val $pDev 'serial') } else { '' })
@@ -135,7 +135,7 @@ if ($Command -eq 'summary') {
             $devObj = Val $r 'device'
             $cases += [pscustomobject]@{
                 tcId    = $tcId
-                title   = $title
+                title   = $caseTitle
                 verdict = (Vupper $r)
                 note    = [string](Val $r 'verdictNote')
                 device  = $(if ($devObj) { [string](Val $devObj 'serial') } else { '' })
