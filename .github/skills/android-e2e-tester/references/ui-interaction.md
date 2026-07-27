@@ -97,6 +97,42 @@ and can hide fields from `uiautomator dump`. Mitigations:
   **Mode A** automation tests (they use instrumented hooks that bypass this).
 - If nothing works, treat it as a blocker and tell the user.
 
+## Transient toasts — you will not find them in a dump
+
+A **toast** (the little floating "…succeeded" message) is the confirmation some flows give you *instead of*
+changing the page. Two facts make it easy to miss and then wrongly conclude "nothing happened":
+
+- **`uiautomator dump` never contains a toast.** The dump serialises the **active window's** accessibility
+  hierarchy; a toast is a separate, short-lived `TYPE_TOAST` window that isn't part of it. Its absence from
+  the XML proves **nothing**.
+- **A screenshot taken on the *next* tool call is usually too late.** Toasts live ≈**2 s**
+  (`LENGTH_SHORT`) or ≈**3.5 s** (`LENGTH_LONG`), while a tap→(return)→screenshot round-trip costs 2–5 s of
+  process + adb startup. So the toast has already faded by the time you capture.
+
+Handle it one of three ways, in order of preference:
+
+1. **Assume success and verify by the real downstream signal** *(this is the reliable one — use it)*. If
+   you're certain the control was tapped exactly once, don't make the toast the evidence — verify by what the
+   action actually causes: the other app coming to the **foreground**
+   (`dumpsys window | mCurrentFocus`, or `deviceui.ps1 current-app`), the next screen's anchor, a new item in
+   a list, a log line. A page that legitimately doesn't change is **not** a failed tap.
+2. **Tap and capture in ONE shell call** so you never pay the round-trip:
+   ```powershell
+   ./scripts/deviceui.ps1 tap-xy -X 540 -Y 1526 -Serial <serial>; adb -s <serial> shell screencap -p /sdcard/_t.png; adb -s <serial> pull /sdcard/_t.png <run>\shots\toast.png
+   ```
+   (Pull the file — never redirect `exec-out` into a PowerShell file, it corrupts the PNG.) **Measured
+   reality: even this often misses it** — when the tap also switches apps you capture the *transition
+   animation* instead of the toast. Treat a miss as inconclusive, never as failure.
+3. **Watching logcat for `enqueueToast` — unreliable, don't depend on it.** In principle the system logs each
+   toast as it's posted. **Verified on Android 16 (Samsung): a `logcat` grep for `enqueueToast|ToastRecord|Toast`
+   returned ZERO lines for a toast that demonstrably fired.** Modern builds don't log it at the default level
+   (and the text is never logged anyway). If you try it, a hit is weak positive evidence; **absence of hits
+   proves nothing.** Prefer option 1.
+
+**Never re-tap a control just because the screen looks unchanged.** With single-use links that second tap is
+actively harmful — see
+[common-blockers.md → Single-use pairing / setup links](common-blockers.md#single-use-pairing--setup-links).
+
 ## Driving WebView login fields reliably (hard-won)
 
 The eSTS email/password pages are a **WebView**, not native widgets. Typing into them fails silently in
@@ -122,6 +158,17 @@ a few ways — these fixes came from real runs:
 - **Verify the text landed before submitting.** For a password field, re-dump and check the node's
   `text` length or `password="true"` state — do not tap **Sign in** until you've confirmed characters
   were entered, or you'll loop on a blank field.
+- **⚠️ The dump is NOT masked — a11y XML of the eSTS password page contains the password in PLAINTEXT.**
+  Verified: `i0118` exposes the raw value in `text="…"`. So **treat every `uiautomator dump` XML taken on a
+  login page as a secret**: keep it in the run folder (outside the repo), **never** commit it, never paste
+  its contents into the transcript, and when you verify, print only a **length or a boolean** — never the
+  value.
+- **HTML-decode dump text before comparing lengths.** The XML escapes `&`, `<`, `>`, `"` — so a 20-char
+  password containing `&` reads as **24** characters raw and looks wrong. Decode first:
+  ```powershell
+  $landed = [System.Net.WebUtility]::HtmlDecode($nodeText)
+  if ($landed.Length -eq $expectedLength) { "OK" } else { "retry with -CharByChar" }   # never print $landed
+  ```
 - **Type passwords with special characters literally.** `~ ! # $ & * ( )` are shell metacharacters.
   `deviceui.ps1 input-text` escapes them, but if you call adb directly, single-quote the whole string
   **device-side**: `adb shell "input text 'P@ss~!word'"`. Never echo the password into the transcript.
