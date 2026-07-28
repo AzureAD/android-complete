@@ -47,6 +47,16 @@ const DEFAULT_SERVICE_IDS = [
 ];
 const DEFAULT_TENANT_PATTERNS = ['auth client', 'msal', 'authenticator'];
 
+// Decommissioned service trees we no longer monitor. Enforced as a HARD denylist
+// that overrides everything else: items targeting these GUIDs are always dropped
+// (from both the service and person queries), and the GUID is stripped from any
+// team.json `serviceIds` override. This prevents a stale pasted report (SKILL.md
+// Step 1e) from silently pulling a removed service tree back into scope by way of
+// the override or a re-added targetId in Step 1a.
+const DECOMMISSIONED_SERVICE_IDS = new Set([
+  '937cdc57-1253-4b55-878e-5854368926a2' // AuthN SDK - ADAL Android (removed; no longer monitored)
+]);
+
 // ── CLI args ──────────────────────────────────────────────────────────────────
 function getArg(name) {
   const i = process.argv.indexOf('--' + name);
@@ -80,6 +90,13 @@ const teamAliases = new Set((team.aliases || []).map(a => String(a).toLowerCase(
 const serviceIds = new Set(((team.serviceIds && team.serviceIds.length) ? team.serviceIds : DEFAULT_SERVICE_IDS).map(s => String(s).toLowerCase()));
 const tenantPatterns = (team.tenantPatterns && team.tenantPatterns.length) ? team.tenantPatterns : DEFAULT_TENANT_PATTERNS;
 
+// Enforce the decommissioned denylist even if a team.json override re-adds a removed GUID.
+for (const dead of DECOMMISSIONED_SERVICE_IDS) {
+  if (serviceIds.delete(dead)) {
+    console.error(`WARN: serviceId ${dead} is decommissioned (no longer monitored) and was stripped from scope. Remove it from team.json — it will not be reported.`);
+  }
+}
+
 if (teamAliases.size === 0) {
   console.error('WARN: team.aliases is empty — every person-targeted item will be dropped unless it matches a service ID or tenant pattern.');
 }
@@ -103,6 +120,7 @@ function isTeamRelevant(it) {
   const tgt = String(it.TargetId || '').toLowerCase();
   const tenant = String((it.CustomDimensions && it.CustomDimensions.TenantName) || '').toLowerCase();
 
+  if (DECOMMISSIONED_SERVICE_IDS.has(tgt)) return false; // hard denylist — never in scope
   if (it.TargetType === 'Person' && teamAliases.has(tgt)) return true;
   if (serviceIds.has(tgt)) return true;
   if (tenant && tenantPatterns.some(p => tenant.includes(String(p).toLowerCase()))) return true;
@@ -141,7 +159,20 @@ function stableSort(items) {
   return [...items].sort((a, b) => String(a.KpiActionItemId || '').localeCompare(String(b.KpiActionItemId || '')));
 }
 
-const combined = [...stableSort(svcItems), ...stableSort(filteredPer)];
+// Service items are normally trusted (the query already scoped them by targetIds),
+// but still enforce the decommissioned denylist here so a re-added targetId in
+// Step 1a cannot leak a removed service tree (e.g. ADAL) into the report.
+const svcDropped = [];
+const svcScoped = svcItems.filter(it => {
+  const tgt = String(it.TargetId || '').toLowerCase();
+  if (DECOMMISSIONED_SERVICE_IDS.has(tgt)) { svcDropped.push(it); return false; }
+  return true;
+});
+if (svcDropped.length) {
+  console.error(`Dropped ${svcDropped.length} service items targeting a decommissioned service tree (e.g. ADAL). These are no longer monitored.`);
+}
+
+const combined = [...stableSort(svcScoped), ...stableSort(filteredPer)];
 
 const seen = new Map();
 let dupes = 0;
