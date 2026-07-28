@@ -168,6 +168,12 @@ Produce: the **feature summary**, the **target app/module** (see
 with an explicit, observable **success criterion** (e.g. "AcquireTokenSilent returns a token; logs show
 `executed successfully` with a correlation_id; no crash").
 
+**Check whether the case is already automated.** For **Authenticator** cases especially, the team maintains a
+compiled UIAutomator suite annotated with the same ADO case ids — see
+[references/existing-ui-automation.md](references/existing-ui-automation.md). If the case is in that table,
+say so up front and read the corresponding Kotlin test for its selectors and step ordering (it's the app
+team's own ground truth for what the flow really needs) even if you still drive the case manually here.
+
 **Ask the user if** the scenario is ambiguous, multiple flows could be meant, or you cannot tell what
 "working" looks like. Do not guess a scenario when the intent is unclear.
 
@@ -293,8 +299,22 @@ $serial = (./scripts/devicelease.ps1 acquire -Owner $AgentId -Feature <feature> 
 
 ### Phase 3 — Deploy the app-under-test
 
+0. **Prep the device once (two settings, big payoff).** Before installing anything, disable the autofill
+   overlay and animations on the leased device — the first removes the #1 cause of dropped/misplaced
+   credential input (and lets you type in fast bulk mode instead of char-by-char), the second removes
+   transition latency and mid-flight taps:
+   ```powershell
+   adb -s <serial> shell settings put secure autofill_service null
+   adb -s <serial> shell settings put global window_animation_scale 0
+   adb -s <serial> shell settings put global transition_animation_scale 0
+   adb -s <serial> shell settings put global animator_duration_scale 0
+   ```
+   Both persist on the device. See
+   [references/run-speed.md](references/run-speed.md#device-prep-turn-off-animations-and-autofill).
 1. Decide the test surface and whether a **broker** must also be installed (brokered flows need a
-   calling app + a broker) — see the app-and-module map's pairing rules.
+   calling app + a broker) — see the app-and-module map's pairing rules. **If Authenticator is the app under
+   test, uninstall Teams and Company Portal first** so broker election is deterministic (unless the case
+   deliberately tests one of them as the broker).
 2. Prefer an APK Android Studio already built (`appcontrol.ps1 list-apks`); otherwise build
    (`appcontrol.ps1 build -Module <:module>`). Gradle builds need the repo's Maven creds — if they fail
    with 401, that's an environment blocker for the user. **When the case is staged with both an `ECS\` and a
@@ -345,12 +365,14 @@ a password or device PIN, take it via the encrypted store and reference it by na
 
 **Typing into eSTS/WebView credential fields (hard-won).** The email/password pages are a WebView and
 Chrome's autofill/passkey overlay can silently swallow a bulk `input text` (the value lands in the wrong
-field or is dropped, producing "Enter a valid email"). **Try bulk first** (it's fast); only fall back to
-`-CharByChar` if verification shows the value didn't land:
+field or is dropped, producing "Enter a valid email"). **The durable fix is to disable the autofill service
+in Phase 3 device prep** (`settings put secure autofill_service null`) — with the overlay gone, fast bulk
+typing just works and you avoid the per-character cost and its dropped-character failure mode. Only fall
+back to `-CharByChar` if verification shows a value still didn't land:
 ```powershell
-./scripts/deviceui.ps1 input-text -Text $upn -Clear -Serial <serial>                       # bulk first (fast)
+./scripts/deviceui.ps1 input-text -Text $upn -Clear -Serial <serial>                       # bulk (fast; correct once autofill is off)
+./scripts/deviceui.ps1 input-text -SecretRef labpw -Clear -Serial <serial>                 # password from the store (never echoed)
 ./scripts/deviceui.ps1 input-text -Text $upn -Clear -CharByChar -Serial <serial>           # fallback if it didn't land
-./scripts/deviceui.ps1 input-text -SecretRef labpw -Clear -CharByChar -Serial <serial>     # password from the store (never echoed)
 ```
 `-Clear` empties the field first, `-CharByChar` defeats the overlay. For the **password**, prefer
 `-SecretRef <name>` (resolves from the encrypted store and implies `-Secret`) so the value never lands
@@ -542,6 +564,7 @@ Load these as needed (don't preload all):
 | File | Read it when |
 |---|---|
 | [references/app-and-module-map.md](references/app-and-module-map.md) | Choosing/deploying the test app, package discovery, broker pairing, credentials, emulator requirements |
+| [references/existing-ui-automation.md](references/existing-ui-automation.md) | **Check first for an Authenticator case** — the team's compiled UIAutomator suite already automates ~24 ADO cases (id→test table); where it lives, how it differs, which to use, and the selectors/settings we borrowed from it |
 | [references/authenticator-app.md](references/authenticator-app.md) | Driving **Microsoft Authenticator** — the 4-screen first-run flow, adding an account from home, and the **same-device** AAD Work/School account-add + first-time MFA proof-up (number-match) that is often wrongly marked BLOCKED |
 | [references/lab-api.md](references/lab-api.md) | Provisioning/resetting a lab test account, the account policy (prefer fresh ID4SLAB2 temp users over MSIDLAB4), LAB API endpoints/usertypes/policies, the EasyAuth auth workaround, fetching tenant passwords from Key Vault, `labapi.ps1` |
 | [references/common-blockers.md](references/common-blockers.md) | Recurring hiccups & when to switch to an emulator (fingerprint/App-Lock, number-match MFA, session timeouts, FLAG_SECURE, autofill/passkey overlay, screenshot corruption); driving System Settings yourself before declaring a blocker; clean-state between runs |

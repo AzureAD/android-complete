@@ -145,6 +145,16 @@ Brokered auth requires **a calling app + a broker app**, both installed:
   (`./scripts/appcontrol.ps1 uninstall -Package <pkg>`).
 - Only one active broker is used at a time. If both Authenticator and Company Portal are present, the
   broker-selection logic picks one; for deterministic tests install a single broker (or a mock).
+- **When Authenticator is the app under test, uninstall the competing brokers first** so the broker election
+  can't pick the wrong one:
+  ```powershell
+  ./scripts/appcontrol.ps1 uninstall -Package com.microsoft.teams -Serial <serial>
+  ./scripts/appcontrol.ps1 uninstall -Package com.microsoft.windowsintune.companyportal -Serial <serial>
+  ```
+  Teams and Company Portal both register as brokers, so leaving either installed makes "which broker handled
+  this?" non-deterministic between runs. The Authenticator team's own automated suite does exactly this as a
+  fixed pre-test rule (see [existing-ui-automation.md](existing-ui-automation.md)). Obviously **skip this for
+  a case that deliberately tests Company Portal or Teams as the broker** (e.g. device registration via CP).
 - After installing/replacing a broker, **clear the client app state** (`appcontrol.ps1 clear`) so it
   re-discovers the broker cleanly.
 

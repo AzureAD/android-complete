@@ -17,6 +17,7 @@ and [app-and-module-map.md](app-and-module-map.md#known-provided-apks) (APK file
 - [First-run flow (fresh install → home)](#first-run-flow-fresh-install--home)
 - [Home screen & adding an account](#home-screen--adding-an-account)
 - [AAD Work/School account-add with proof-up (number-match) — SAME DEVICE](#aad-workschool-account-add-with-proof-up-number-match--same-device)
+- [App Lock auto-enables when a device PIN exists](#app-lock-auto-enables-when-a-device-pin-exists)
 - [What went wrong before — and the fix](#what-went-wrong-before--and-the-fix)
 - [Cross-references](#cross-references)
 
@@ -41,6 +42,29 @@ before the home screen**. Drive them in order — each is a `deviceui.ps1 dump` 
 ./scripts/deviceui.ps1 tap-text -Text "Continue" -Then "Skip"     -Serial <serial>   # telemetry → upsell
 ./scripts/deviceui.ps1 tap-text -Text "Skip"     -Serial <serial>                    # upsell → home
 ```
+
+**Prefer the resource IDs when a text tap misses.** Text is locale- and version-fragile; these ids are the
+ones the team's own UIAutomator suite drives, so they're the canonical, stable handles
+([see the automated suite](existing-ui-automation.md)):
+
+| Screen | Resource ID |
+|---|---|
+| Notifications permission — negative button | `android:id/button2` |
+| Privacy agreement — **Accept** | `com.azure.authenticator:id/privacy_consent_button` |
+| "Help us improve" — **Continue** | `com.azure.authenticator:id/privacy_consent_continue_button` |
+| "Peace of mind…" upsell — **Skip** | `com.azure.authenticator:id/frx_skip_button` |
+| Home — **Add account** (zero accounts) | `com.azure.authenticator:id/zero_accounts_add_account_button` |
+| Home — account list | `com.azure.authenticator:id/account_list` |
+| Toolbar — overflow (⋮) | `com.azure.authenticator:id/menu_overflow` |
+| Overflow → **Add account** | `com.azure.authenticator:id/menu_item_add_account` |
+| Overflow → **Settings** | `com.azure.authenticator:id/menu_item_settings` |
+| Overflow → **Check for notifications** | `com.azure.authenticator:id/menu_check_for_notifications` |
+| Number-match — code input | `com.azure.authenticator:id/auth_enter_correct_num_text_input` |
+| Number-match — confirm | `com.azure.authenticator:id/positiveButton` |
+
+The **"+" (add account)** button in the top-right is best matched by **content-description containing
+"Add"** rather than text (it's an icon). The overflow *menu items* are a **Compose popup** whose resource
+ids are unreliable once open — match those by text.
 
 Notes:
 - The **notifications** dialog is an Android 13+ (API 33+) system prompt; on older OS it may appear as an
@@ -151,12 +175,18 @@ number-match back into the app. Drive it end-to-end:
    don't re-tap the link: **go check the app's account list first** — if the account is there (see the
    white/gray rule above), the add is done and you can finish setup entirely in-app (next section). The
    browser wizard is **not** required to enable Passwordless sign-in.
-7. Authenticator fires a push **"Approve sign-in?"** for the account. Bring up the number-match screen by
-   **any** of these (whichever appears first):
+7. Authenticator fires a push **"Approve sign-in?"** for the account. **Give it ~10 s before you look** —
+   the FCM push lands about 2 s after the trigger as a **heads-up banner that covers Chrome's URL bar**, then
+   auto-collapses after ~5 s. Reading the screen too early gets you the banner instead of the page (or an
+   obscured number); reading it too late loses the banner. Then bring up the number-match screen by **any**
+   of these (whichever appears first):
    - pull down the **notification shade**, find **"Approve sign-in?"**, and tap it; **or**
    - **open the Authenticator app** — the number-match screen often pops up on its own; **or**
-   - if it doesn't, **pull-to-refresh** in the app to summon it.
-8. Number-match screen **"Are you trying to sign in?"**. **Two variants exist — check which one you got:**
+   - **Check for notifications** from the overflow menu (⋮ `menu_overflow` →
+     `menu_check_for_notifications`) — a **deterministic** poll, and preferable to the gesture below; **or**
+   - if it still doesn't show, **pull-to-refresh** in the app to summon it.
+8. Number-match screen **"Are you trying to sign in?"** (some versions title it **"Enter the number shown to
+   sign in"**). **Two variants exist — check which one you got:**
    - **Number-entry variant** — an **"Enter number here"** field plus **YES** / **NO, IT'S NOT ME** /
      **I CAN'T SEE THE NUMBER**: type the number from step 6, then tap **Yes**.
    - **Simple approve variant** (verified on Android 16) — **no** number field, just
@@ -206,6 +236,32 @@ end-to-end on a physical Galaxy running Android 16:
 
 **If you get `Passkey — Unknown error` here, you almost certainly opened the GRAY row.** Go back and repeat
 on the white one.
+
+<a id="app-lock-auto-enables-when-a-device-pin-exists"></a>
+## App Lock auto-enables when a device PIN exists
+
+**If the device has a screen lock (PIN/pattern/biometric), Authenticator turns App Lock ON by itself** as
+soon as an account lands — it shows an *"App Lock enabled"* popup (dismiss with **OK**). Nobody asked for it,
+and it then gates **every** return to the app behind a biometric/PIN prompt. That is a silent killer for any
+flow that switches away and back (browser → app → browser), which is exactly what proof-up, number-match and
+PSI all do.
+
+**So unless the case is specifically testing App Lock, turn it off immediately after the account is added:**
+
+1. Dismiss the *"App Lock enabled"* popup → **OK**.
+2. Overflow (⋮ `menu_overflow`) → **Settings** (`menu_item_settings`) → toggle **App Lock** off.
+3. Return to the account list and continue the flow.
+
+This is what the team's own automated suite does as a fixed step in its account-add flow — it is not
+optional hygiene, it is the difference between a flow that switches apps cleanly and one that stalls on a
+biometric prompt you may not be able to satisfy on a physical device. Combine with the
+[fingerprint/App Lock decision](common-blockers.md#steps-that-need-a-fingerprint--biometric--app-lock):
+if a case *does* require App Lock, prefer an emulator so you can inject a fingerprint.
+
+Corollary: if you set a device PIN yourself (via `locksettings set-pin`, see
+[common-blockers.md](common-blockers.md#steps-that-need-a-fingerprint--biometric--app-lock)), **expect App
+Lock to switch on** the moment an account is added — plan the disable step into the flow rather than being
+surprised by it mid-run.
 
 <a id="sign-in-information-may-have-changed-hijack"></a>
 ## "Your sign-in information may have changed" can hijack the run

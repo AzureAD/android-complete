@@ -69,6 +69,21 @@ The three fat segments (5m14s, 4m05s, 4m39s) share the same shape — they're do
 
 Ordered by payoff:
 
+0. <a id="device-prep-turn-off-animations-and-autofill"></a>**Device prep — two settings, once per case, that
+   pay off on every single step.** Run these right after the device is leased (Phase 2/3), before installing:
+   ```powershell
+   # kill the autofill/passkey overlay that forces slow char-by-char typing (see #4 below)
+   adb -s <serial> shell settings put secure autofill_service null
+   # remove animation time from every screen transition (this is what the team's UIAutomator suite does)
+   adb -s <serial> shell settings put global window_animation_scale 0
+   adb -s <serial> shell settings put global transition_animation_scale 0
+   adb -s <serial> shell settings put global animator_duration_scale 0
+   ```
+   Animations at `1.0` add ~200–400 ms of *unobservable-but-real* transition time to every navigation, and —
+   worse — they make an anchor appear **before** it is stable, which is a common source of taps landing on a
+   mid-flight view. At `0` the next screen is present the moment the transition is issued, so anchor polling
+   returns on the first poll instead of the second or third. Both settings are device-persistent, so a
+   dedicated test device only needs this once; re-apply after any factory reset or `pm clear` of Settings.
 1. **Keep one long-lived shell for a whole screen/segment.** Batch the dump→parse→tap(s) for a screen into
    a *single* `powershell` call (an async session you reuse) so you pay process/adb startup once per
    segment, not once per tap. This alone removes most of the fresh-process tax (root cause 3).
@@ -79,10 +94,12 @@ Ordered by payoff:
    Use these after every navigation instead of `Start-Sleep`. Biggest single win (root cause 2).
 3. **Reuse one dump for multiple actions.** When a screen has several fields/buttons, `dump` once, then
    compute all the tap targets from that one XML rather than re-dumping per element.
-4. **Try bulk input first, fall back to char-by-char.** Attempt `input-text` (bulk) once; only switch to
-   `-CharByChar` if verification shows it didn't land. Don't pay per-char cost on fields where the overlay
-   isn't present (root cause 4). `input-text -Clear` already clears in **one** adb call (MOVE_END + bulk
-   DEL) instead of many.
+4. **Disable autofill (step 0), then type in bulk.** With `autofill_service=null` the overlay that steals
+   input is gone, so bulk `input-text` just works and `-CharByChar` becomes a rare fallback rather than the
+   default. That matters: char-by-char is **one adb round-trip per character** (a 20-char password ≈ 20 ×
+   ~120 ms ≈ 2.4 s, vs ~0.15 s bulk) and is also where dropped/reordered characters come from — so this is a
+   correctness win as much as a speed one (root cause 4). `input-text -Clear` already clears in **one** adb
+   call (MOVE_END + bulk DEL) instead of many.
 5. **Verify at decision points, not after every micro-action.** Confirm state only where a wrong turn is
    costly (did the password page advance? is the account in the list?). Skip the reflexive re-dump after
    taps you're confident about.
@@ -95,6 +112,10 @@ Ordered by payoff:
 8. **Prefer a connected physical device on GPU-less hosts.** On a Cloud PC/VM the emulator renders in
    software and is far slower; unless a step needs an injectable fingerprint, a physical device removes a
    whole class of slowness (see [emulator-performance.md](emulator-performance.md)).
+9. **Check whether the case is already automated before driving it by hand.** Several Authenticator ADO cases
+   have a compiled UIAutomator test that runs the same flow in minutes, unattended. See
+   [existing-ui-automation.md](existing-ui-automation.md) — running (or reading) the automated test is often
+   strictly faster and more repeatable than manual UI driving.
 
 ## Fast-path recipe
 

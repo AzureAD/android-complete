@@ -92,17 +92,31 @@ Options, best first:
 2. **Turn App Lock off** so no biometric is required: Authenticator → Settings → toggle **App Lock** off
    (drive it with `tap-text`), then proceed with password-only steps. Do this early if the scenario
    doesn't specifically test App Lock.
-3. **Fall back to a device PIN.** If a keyguard/biometric prompt also accepts a PIN, set a known PIN during
-   setup and enter it with `deviceui.ps1 unlock` (many biometric prompts have a "Use PIN" path). Seed the PIN
-   once into the encrypted store, then let the tool type + **verify** it — it checks the keyguard actually
-   cleared and **stops after 3 tries** (`-MaxAttempts`, default 3) so a wrong PIN can't drive a physical
-   device into an escalating lockout:
+3. **Fall back to a device PIN.** Many biometric prompts have a "Use PIN" path, so a known device PIN often
+   substitutes. Which route you take depends on whether the device **already has a screen lock**:
+
+   **(a) No lock set → provision your own PIN with `locksettings`** (works on emulators *and* physical
+   devices; this is how the team's UIAutomator suite does it, and it's far more reliable than driving the
+   Settings UI). Full lifecycle — set at case start, clear at case end:
+   ```powershell
+   adb -s <serial> shell locksettings set-pin 123456          # only succeeds if NO credential exists yet
+   adb -s <serial> shell locksettings verify --old 123456     # confirm it took
+   adb -s <serial> shell locksettings clear  --old 123456     # remove it when the case is done
+   ```
+   ⚠️ `set-pin` **fails if a credential already exists** — so clear defensively first (`clear --old <pin>`)
+   to recover from a crashed/retried run that left one behind, and always clear at the end so the next case
+   starts from a known state. Note that setting a PIN makes **Authenticator auto-enable App Lock** — see
+   [authenticator-app.md](authenticator-app.md#app-lock-auto-enables-when-a-device-pin-exists).
+
+   **(b) The device already has the user's lock → don't touch it.** Seed the PIN once into the encrypted
+   store, then let the tool type + **verify** it — it checks the keyguard actually cleared and **stops after
+   3 tries** (`-MaxAttempts`, default 3) so a wrong PIN can't drive a physical device into an escalating
+   lockout:
    ```powershell
    ./scripts/secrets.ps1 set-device-pin                                 # picks the device, you paste the PIN (DPAPI-encrypted)
    ./scripts/deviceui.ps1 unlock -Serial <serial>                       # auto-uses devicepin_<serial>; verified; gives up after 3
    ```
-   On an **emulator** you can set one deterministically: `adb -s <emu> shell locksettings set-pin 1234`, then
-   satisfy biometric prompts with `adb -s <emu> emu finger touch 1`.
+   On an **emulator**, satisfy biometric prompts with `adb -s <emu> emu finger touch 1` once a PIN exists.
 4. **Probing an unknown PIN on a physical device — don't brute-force.** `adb shell locksettings verify --old <pin>`
    tests a guess **non-destructively** (it doesn't change anything), but Android's **Gatekeeper throttles
    after ~5 wrong tries** and too many failures can lock the user out of their own device. Try at most a
@@ -160,16 +174,48 @@ re-prompts. Mitigations:
 
 On eSTS **WebView** email/password fields, Chrome's autofill / **passkey** overlay can intercept a bulk
 `input text` — the value lands in the wrong field or is dropped, and eSTS shows "Enter a valid email".
-Fix (baked into `deviceui.ps1`):
+
+**Fix it at the source: turn the autofill service OFF for the whole device.** The overlay is driven by the
+system autofill provider (on a Google-services device that's
+`com.google.android.gms/...AutofillService`), so disabling it removes the interception entirely instead of
+fighting it per-keystroke:
 ```powershell
-./scripts/deviceui.ps1 input-text -Text $upn -Clear -CharByChar -Serial <serial>
-./scripts/deviceui.ps1 input-text -Text $pw  -Clear -CharByChar -Secret -Serial <serial>
+adb -s <serial> shell settings get secure autofill_service          # inspect (e.g. com.google.android.gms/...)
+adb -s <serial> shell settings put secure autofill_service null     # disable — do this once at case start
 ```
-`-Clear` empties the field, `-CharByChar` types one character at a time (defeats the overlay), `-Secret`
-keeps the value out of the transcript. If a "Save password / use passkey" bottom sheet pops, dismiss it
-with `key ESCAPE` (not `BACK`, which can exit the app) before typing. **Verify by whether the page
-advances**, not by reading the field's `text` — a WebView often doesn't reflect typed content back in the
-accessibility tree (the password field `i0118` is an exception and does show a length).
+This is **device-persistent** and safe to leave on a test device; restore with
+`settings put secure autofill_service com.google.android.gms/com.google.android.gms.autofill.service.AutofillService`
+if a case genuinely needs autofill. Do it in Phase 2/3 device prep alongside
+[animations-off](run-speed.md#device-prep-turn-off-animations-and-autofill).
+
+With autofill disabled, **bulk typing works** — which matters because `-CharByChar` costs one adb round-trip
+per character (a 20-char password ≈ 20 × ~120 ms ≈ 2.4 s vs ~0.15 s bulk, and it's where dropped/reordered
+characters come from). So:
+```powershell
+# 1. preferred — autofill disabled at case start, then bulk:
+./scripts/deviceui.ps1 input-text -Text $upn -Clear -Serial <serial>
+./scripts/deviceui.ps1 input-text -SecretRef labpw -Clear -Serial <serial>
+# 2. fallback only if a value still doesn't land (OEM autofill, or the setting was re-enabled):
+./scripts/deviceui.ps1 input-text -Text $upn -Clear -CharByChar -Serial <serial>
+```
+`-Clear` empties the field, `-CharByChar` types one character at a time (defeats a still-present overlay),
+`-SecretRef`/`-Secret` keeps the value out of the transcript.
+
+**Dismissing the prompts that still appear.** Chrome's own password manager is separate from the autofill
+service and can't be disabled from the shell (`/data/data/com.android.chrome/` isn't shell-writable), so a
+**"Save password?" InfoBar** may still show after sign-in:
+
+> ⚠️ **Never press BACK (or `key ESCAPE` at the page level) to dismiss "Save password?"** — it navigates the
+> *page* backwards, e.g. from "Keep your account secure" back to the password page, silently undoing a step.
+
+Dismiss it on the InfoBar itself, in this order: tap **"No thanks"** → tap **"Never"** → tap the close (X)
+button `com.android.chrome:id/infobar_close_button`. If none is present, **just proceed** — the InfoBar
+auto-dismisses after a few seconds and page interactions (e.g. tapping "Next") still work underneath it.
+A "use passkey" *bottom sheet* is different and can be dismissed with `key ESCAPE` before typing.
+
+**Verify by whether the page advances**, not by reading the field's `text` — a WebView often doesn't reflect
+typed content back in the accessibility tree (the password field `i0118` is an exception and does show a
+length).
 
 ## Chrome First Run Experience swallows the auth page (blank WebView)
 
@@ -194,6 +240,14 @@ adb -s <serial> shell am start -a android.intent.action.VIEW -d 'https://login.m
 Then re-run the flow — the sign-in page loads. **If a test step clears the browser cache, re-dismiss the FRE
 afterward** or the next auth page is blank again. This is most common on emulators (fresh profile) but the
 same promo can appear on a freshly-provisioned physical device.
+
+**The Chrome identity prompt is a *separate* thing and survives a data clear.** "Sign in as … / Continue as …
+/ **Stay signed out**" and the "**Chrome notifications**" dialog come from Chrome's *account-consistency*
+system reading the **Android device accounts** — not from cookies — so `pm clear` does **not** prevent them,
+and on a device with a personal Google account signed in they reappear every launch. Dismiss with the first
+match of: `Stay signed out` → `No thanks` (also the answer to the *Chrome notifications* dialog) →
+`Continue without` → `dismiss` → `Turn off` → the negative button
+`com.android.chrome:id/negative_button`. On a clean CI device with no Google account this is a no-op.
 
 ## FLAG_SECURE black screenshots
 
@@ -402,8 +456,15 @@ These can't be produced by the AI — report them and ask the user (see SKILL "W
 | AAD **first-time proof-up** adding a work account (sends you to a browser) | ✅ **same device** | Either | **Not** a "second phone" blocker — tap the app's **Open browser**, then the **"Pair your account…link"** hyperlink; [authenticator-app.md](authenticator-app.md#aad-workschool-account-add-with-proof-up-number-match--same-device) |
 | Real push MFA on another *already-registered* phone | ❌ | — | **Blocker** — ask the user |
 | Authenticator first-run gates (fresh install) | ✅ | Either | 4 screens → Allow · Accept · Continue · **Skip** (upper-right); [authenticator-app.md](authenticator-app.md#first-run-flow-fresh-install--home) |
-| eSTS password typing | ✅ | Either | `input-text -Clear -CharByChar -Secret` |
-| Autofill/passkey overlay | ✅ | Either | char-by-char + `key ESCAPE` to dismiss sheet |
+| eSTS password typing | ✅ | Either | disable autofill in device prep (`settings put secure autofill_service null`), then bulk `input-text -Clear -SecretRef <name>`; `-CharByChar` only as fallback |
+| Autofill/passkey overlay | ✅ | Either | **`settings put secure autofill_service null`** at case start (durable fix); `key ESCAPE` for a passkey bottom sheet; char-by-char as fallback |
+| Chrome **"Save password?"** InfoBar after sign-in | ✅ | Either | tap "No thanks"/"Never"/`infobar_close_button` — **never BACK** (it navigates the page backwards); or ignore it, it auto-dismisses |
+| Chrome **"Stay signed out" / "Chrome notifications"** prompt | ✅ | Either | comes from *device Google accounts*, so `pm clear` doesn't stop it — tap `Stay signed out` / `No thanks` / `negative_button` |
+| Slow transitions / taps landing mid-animation | ✅ | Either | zero the three `*_animation_scale` settings in device prep — [run-speed.md](run-speed.md#device-prep-turn-off-animations-and-autofill) |
+| Need a device PIN and **no lock is set** | ✅ | Either | `locksettings set-pin <pin>` → `verify --old` → `clear --old` at the end (fails if a lock already exists) |
+| Authenticator turned **App Lock on by itself** | ✅ | Either | happens automatically once a device PIN exists — dismiss the popup, then Settings → App Lock **off**; [authenticator-app.md](authenticator-app.md#app-lock-auto-enables-when-a-device-pin-exists) |
+| Push notification not showing in the app | ✅ | Either | overflow ⋮ → **Check for notifications** (`menu_check_for_notifications`) — deterministic, better than pull-to-refresh |
+| Case might already be automated | ✅ | Either | check the ADO-id → test table in [existing-ui-automation.md](existing-ui-automation.md) before driving it by hand |
 | Auth page blank on fresh Chrome profile (post `pm clear` / new emulator) | ✅ | Either | **Chrome First Run Experience** — dismiss "Use without an account" + "No thanks" before the auth handoff |
 | Verify state on FLAG_SECURE screen | ✅ | Either | `uiautomator dump` + XML (screenshot is black) |
 | Session timed out mid-flow | ✅ | Either | re-drive sign-in; set up biometric/PIN before timed segment |
