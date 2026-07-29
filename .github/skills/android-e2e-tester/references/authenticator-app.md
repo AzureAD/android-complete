@@ -17,6 +17,7 @@ and [app-and-module-map.md](app-and-module-map.md#known-provided-apks) (APK file
 - [First-run flow (fresh install → home)](#first-run-flow-fresh-install--home)
 - [Home screen & adding an account](#home-screen--adding-an-account)
 - [AAD Work/School account-add with proof-up (number-match) — SAME DEVICE](#aad-workschool-account-add-with-proof-up-number-match--same-device)
+- [Enabling Passwordless sign-in (PSI) on an account](#enabling-passwordless-sign-in-psi-on-an-account)
 - [App Lock auto-enables when a device PIN exists](#app-lock-auto-enables-when-a-device-pin-exists)
 - [What went wrong before — and the fix](#what-went-wrong-before--and-the-fix)
 - [Cross-references](#cross-references)
@@ -236,6 +237,24 @@ end-to-end on a physical Galaxy running Android 16:
 
 **If you get `Passkey — Unknown error` here, you almost certainly opened the GRAY row.** Go back and repeat
 on the white one.
+
+### ⚠️ Run PSI on a PHYSICAL device — it needs WPJ, which fails on the emulator
+
+The walkthrough above was verified on a **physical** Galaxy. On a **Google-APIs emulator (API 36)** the same
+flow inserts an extra gate after step 5's **Continue**: **"Register your device"** → *"Help us keep your
+device secure"* → **Register** → screen-lock passkey credential → and then dead-ends at
+**"Device isn't registered"**. Reproduced on **2 independent end-to-end attempts** (an earlier expired-session
+attempt instead surfaced *"Passkey — Unknown error"*, which is the number-match TTL, not this).
+
+Consequences to plan around:
+- **PSI-enabled state is unreachable on an emulator**, so the account's gear menu never offers
+  **"Disable Passwordless Sign in"** (only **Remove account**) — any teardown step that depends on disabling
+  PSI first is unverifiable there.
+- The failure is at **AAD device registration**, *not* at the PSI request/number-match flow — that half
+  succeeds cleanly (approval → *"Let's secure your account"* → Continue). Say so in the report.
+- Budget **~12 minutes** for WPJ; if it fails twice, record the exact error as the blocker and move on.
+- Registering a **shared** physical phone leaves durable state — that's a legitimate reason to mark the step
+  BLOCKED rather than proceed. Use a dedicated/disposable real device when PSI must actually be proven.
 
 <a id="app-lock-auto-enables-when-a-device-pin-exists"></a>
 ## App Lock auto-enables when a device PIN exists

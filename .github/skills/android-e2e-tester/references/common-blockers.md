@@ -9,6 +9,9 @@ Table of contents:
 - [Decision: emulator vs physical device](#decision-emulator-vs-physical-device)
 - [Steps that need a fingerprint / biometric / App Lock](#steps-that-need-a-fingerprint--biometric--app-lock)
 - [Number-match MFA](#number-match-mfa)
+- [WPJ device registration fails on the emulator (blocks Passwordless Sign-In)](#wpj-device-registration-fails-on-the-emulator-blocks-passwordless-sign-in)
+- [Verification codes read from Gmail — the list preview goes stale](#verification-codes-read-from-gmail--the-list-preview-goes-stale)
+- [A pre-granted runtime permission suppresses the in-app consent prompt](#a-pre-granted-runtime-permission-suppresses-the-in-app-consent-prompt)
 - [Session timeouts & SSO resets mid-flow](#session-timeouts--sso-resets-mid-flow)
 - [Chrome autofill / passkey overlay steals input](#chrome-autofill--passkey-overlay-steals-input)
 - [Chrome First Run Experience swallows the auth page (blank WebView)](#chrome-first-run-experience-swallows-the-auth-page-blank-webview)
@@ -38,6 +41,9 @@ input you can inject programmatically. Choose up front from the test case's step
 - You're on a **GPU-less host** (Cloud PC / VM / RDP) where the emulator is painfully slow — a physical
   device is much faster there (see [emulator-performance.md](emulator-performance.md)).
 - The feature needs real hardware (real FCM push, real SIM) — though real push MFA is still a human step.
+- The step needs **Workplace Join (WPJ) device registration** — it does **not** complete on the emulator, so
+  anything gated behind it (notably **Passwordless Sign-In**) can only be proven on a real device
+  ([below](#wpj-device-registration-fails-on-the-emulator-blocks-passwordless-sign-in)).
 
 > Rule of thumb: **biometric/App-Lock → emulator; everything else → whatever is fastest** (usually a
 > connected physical device on a Cloud PC). If you start on a physical device and hit an unavoidable
@@ -143,6 +149,84 @@ automatable **only if** getting into Authenticator isn't biometric-gated:
 > clicking this link."** hyperlink (not **Next**, not **Show QR code**) on the *"Now pair Authenticator with
 > your account"* screen. Full step-by-step, plus the exact mistakes that caused false BLOCKEDs before, are in
 > [authenticator-app.md](authenticator-app.md#aad-workschool-account-add-with-proof-up-number-match--same-device).
+
+### The number-match session expires in ~1–2 minutes — collapse the steps around it
+
+The pending number-match session is **short-lived (~1–2 min)**. Any detour you take between the browser
+showing the number and you approving it in the app can kill it — the app then shows nothing to approve, or
+the browser errors out ("we're having trouble verifying", *"Passkey — Unknown error"*, "couldn't add
+account"). Real cases where this bit:
+- Toggling **airplane mode** on/off to prove offline behaviour burned the session mid-toggle.
+- Chasing a missing push through Settings/notification-shade UI took longer than the TTL.
+
+**Fix: make the whole detour one scripted shell call** so the wall-clock cost is seconds, not minutes. E.g.
+offline-then-refresh in a single ~21 s call:
+```powershell
+adb -s $s shell cmd connectivity airplane-mode enable
+adb -s $s shell uiautomator dump /sdcard/off.xml            # evidence: nothing surfaced offline
+adb -s $s shell cmd connectivity airplane-mode disable
+Start-Sleep -Seconds 6                                       # let Wi-Fi reassociate
+# overflow ⋮ → Check for notifications, then dump
+```
+Batching it this way reproduced the re-surface **3×** in a row on a case that had previously been ABORTED.
+If the session *does* expire, don't fight it — re-trigger from the browser to get a **fresh** number rather
+than retrying the dead one.
+
+## WPJ device registration fails on the emulator (blocks Passwordless Sign-In)
+
+**Passwordless Sign-In (PSI)** in Authenticator is gated behind **Workplace Join / device registration**: the
+setup flow goes *Set up Passwordless sign-in requests* → number-match approval → *"Let's secure your account"*
+→ **"Register your device"** → Register → screen-lock/passkey credential.
+
+On a **Google-APIs emulator (verified API 36)** the number-match and passkey portions succeed, but the AAD
+device-registration step then fails with **"Device isn't registered"** — reproduced on 2 independent
+end-to-end attempts. So:
+
+- **PSI-enabled state is unreachable on an emulator.** Anything downstream of it — most importantly
+  *"Disable Passwordless Sign in"* in the account's gear menu — can't be exercised there either (the menu
+  only offers **Remove account**).
+- **Don't burn the run on it.** Give WPJ ~12 minutes; if it fails twice, record the exact error as the
+  blocker and move on. It is a genuine, reportable finding, not a harness bug to work around.
+- **Use a real device you're willing to register** if the case genuinely requires PSI. Note that registering
+  a *shared* physical phone leaves durable state — decide deliberately (a disposable/dedicated device is the
+  right answer; declining to WPJ a shared phone is a legitimate reason to mark the step BLOCKED).
+- The **failure is at device registration, not at the PSI request flow** — say so in the report, since the
+  approval half genuinely passed.
+
+## Verification codes read from Gmail — the list preview goes stale
+
+When a flow emails a one-time code (e.g. MSA email-2SV) and you read it from the Gmail app, **the message
+list's preview text is cached and can lag by many minutes**. Reading the code from that preview gives you a
+**previous** run's code, which the site rejects — and the rejection looks exactly like "wrong code typed",
+so it's easy to keep retrying the same dead value. This cost ~11 minutes on one run: the same stale code was
+typed **4×** before the real one was found.
+
+**Rule: never read a code from the message-list preview. Open the message and check its timestamp.**
+1. Note the wall-clock time you requested the code.
+2. Open Gmail, **tap into the message** (don't read the list row).
+3. Confirm the message's own timestamp is **newer than** the request time. If it isn't, the mail hasn't
+   arrived yet — pull to refresh and wait, don't type what you can see.
+4. Read the code from the opened message body.
+
+Same caution applies to any notification-shade preview of an incoming code.
+
+## A pre-granted runtime permission suppresses the in-app consent prompt
+
+If a test step's expected result **is the permission prompt itself** (e.g. an LBAC / location-based access
+case whose assertion is *"Share your precise location with &lt;tenant&gt;"* appearing in-app), then
+**pre-granting that permission during device prep destroys the thing you're trying to observe** — Android
+never shows a consent dialog for an already-granted permission, and the step looks like a silent failure.
+
+- **Don't** `appcontrol.ps1 grant` (or `pm grant`) a permission the case expects the user to be *asked* for.
+  Pre-granting is only a time-saver for permissions that are incidental to the assertion.
+- If you already granted it, **revoke and re-trigger**:
+  ```powershell
+  adb -s $s shell pm revoke <pkg> android.permission.ACCESS_FINE_LOCATION
+  adb -s $s shell pm revoke <pkg> android.permission.ACCESS_COARSE_LOCATION
+  ```
+  then re-run the step — the prompt surfaces normally.
+- Read the case's expected results **before** device prep and keep a short "do not pre-grant" list for that
+  case.
 
 ## Session timeouts & SSO resets mid-flow
 
@@ -453,6 +537,11 @@ These can't be produced by the AI — report them and ask the user (see SKILL "W
 | Fingerprint / biometric prompt | ✅ emulator · ❌ physical | **Emulator** | `finger-enroll` + `finger`; on physical, human presses sensor |
 | Authenticator **App Lock** re-prompt | ✅ emulator · ⚠️ physical | **Emulator** | inject biometric, or turn App Lock **off**, or use device PIN |
 | Number-match MFA (same device) | ✅ if not biometric-gated | Either | read number from Chrome dump → tap tile in Authenticator |
+| Number-match **expired** during a detour (airplane toggle, hunting the push) | ✅ | Either | session TTL is **~1–2 min** — collapse the detour into **one scripted call** (~21 s); if it still expires, re-trigger for a **fresh** number, don't retry the dead one |
+| **Passwordless Sign-In (PSI)** setup / *Disable Passwordless Sign in* | ⚠️ **physical only** | **Physical** | needs **WPJ device registration**, which fails on the emulator (**"Device isn't registered"**, reproduced 2×) — cap WPJ at ~12 min then record the blocker; note the failure is at *device registration*, not the PSI approval |
+| Verification code read from **Gmail** rejected repeatedly | ✅ | Either | the **list preview is stale** — **open the message** and confirm its timestamp post-dates your request before typing the code |
+| Step's expected result **is a permission prompt** (e.g. LBAC location consent) | ✅ | Either | **don't pre-grant** that permission in device prep — it suppresses the dialog; `pm revoke` + re-trigger if you already did |
+| Confirming the **browser** finished signing in while the app is foregrounded | ⚠️ | Either | Chrome suspends the page poll in the background — single-device runs often can't observe it; assert app-side state instead and note the limitation |
 | AAD **first-time proof-up** adding a work account (sends you to a browser) | ✅ **same device** | Either | **Not** a "second phone" blocker — tap the app's **Open browser**, then the **"Pair your account…link"** hyperlink; [authenticator-app.md](authenticator-app.md#aad-workschool-account-add-with-proof-up-number-match--same-device) |
 | Real push MFA on another *already-registered* phone | ❌ | — | **Blocker** — ask the user |
 | Authenticator first-run gates (fresh install) | ✅ | Either | 4 screens → Allow · Accept · Continue · **Skip** (upper-right); [authenticator-app.md](authenticator-app.md#first-run-flow-fresh-install--home) |
