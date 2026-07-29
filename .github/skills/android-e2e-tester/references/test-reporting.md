@@ -54,8 +54,8 @@ the account **UPN only**.
 | `blockers` | array of string | What stopped a full E2E pass. |
 | `artifacts` | array of string | Relative paths to logs/screenshots/XML in the run folder. |
 | `testPoints` | array | **Multi-point cases.** One entry per ADO test point; each carries its own **point-level** fields (`ado.testPointId`/`configuration`/`buildSource`, `device`, `app`, `account`, `started`/`finished`/`iterations`, `steps`, `evidence`, `blockers`, `artifacts`, `verdict`, `verdictNote`). When present, the top-level `verdict` is optional (**derived** from the points) and top-level `ado` holds only the **case-level** ids. Omit it for a single-point run — the run object itself is the one point (backward compatible). See [Multiple test points](#multiple-test-points--one-consolidated-report-per-case). |
-| `proposedScope` | string | Optional recommendation (see [Proposed test steps](#proposed-test-steps-recommendation-not-applied-to-ado)). One-line scope, e.g. "Full rewrite as 5 steps" or "Minor — steps 1–2 only". |
-| `proposedSteps` | array | Optional suggested ADO steps: `{ n, action, expected, attachment, automation }`. Rendered **once at case level** as a `# / Action / Expected result / Attachments` table; `attachment` = a screenshot path/URL that fills that step's **Attachments** cell; `automation` renders in a separate skill-only list. Must be **generic across all test points** and **self-contained** (no preconditions block — fold prerequisites into the first steps). |
+| `proposedScope` | string | **REQUIRED for an ADO case** (see [Proposed test steps](#proposed-test-steps-recommendation-not-applied-to-ado)). One-line scope, e.g. "Full rewrite as 5 steps", "Minor — steps 1–2 only", or `"No change needed"` when the case really is fine as written. |
+| `proposedSteps` | array | **REQUIRED for an ADO case** (may be `[]` only when `proposedScope` is `"No change needed"`). Suggested ADO steps: `{ n, action, expected, attachment, automation }`. Rendered **once at case level** as a `# / Action / Expected result / Attachments` table; `attachment` = a screenshot path/URL that fills that step's **Attachments** cell; `automation` renders in a separate skill-only list. Must be **generic across all test points** and **self-contained** (no preconditions block — fold prerequisites into the first steps). |
 | `proposedMinimalEdits` | array of string | Optional — smallest high-value wording edits if you'd rather not rewrite the whole case. |
 | `skillNotes` | array of string | Optional notes for the e2e-tester skill (rendered separately; not part of the ADO steps). |
 
@@ -89,7 +89,14 @@ array into **one row per point** (all linking to the one report).
 
 ## Proposed test steps (recommendation, not applied to ADO)
 
-Use the optional proposed-steps block to suggest **clearer wording without editing the ADO test case**. It is
+> **MANDATORY for every ADO test case — every app, every run, every verdict.** This was silently skipped on
+> **all 26** Authenticator runs while 39/39 Broker runs had it, purely because the field used to read
+> "optional". It is not optional: you have just executed the case step-by-step and are the best-placed
+> reviewer it will ever get. If the case genuinely needs no change, say so explicitly with
+> `proposedScope: "No change needed"` and `proposedSteps: []` — an empty block is a *conclusion*, silence is
+> an *omission*. `report.ps1 render` prints a visible **⚠ MISSING** warning when the block is absent.
+
+Use the proposed-steps block to suggest **clearer wording without editing the ADO test case**. It is
 authored **once at case level** and must be **generic across every test point** — never mention ECS/Local or a
 specific point. Rendered at the **end** of the report in the ADO **Steps** format:
 

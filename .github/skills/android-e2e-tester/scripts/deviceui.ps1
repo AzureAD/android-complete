@@ -55,12 +55,14 @@
 param(
     [Parameter(Position = 0)]
     [ValidateSet('dump', 'find-text', 'tap-text', 'tap-desc', 'input-text', 'wait-text',
-        'screenshot', 'key', 'finger', 'finger-status', 'finger-enroll', 'current-app', 'tap-xy', 'unlock')]
+        'screenshot', 'key', 'finger', 'finger-status', 'finger-enroll', 'current-app', 'tap-xy', 'unlock',
+        'flow')]
     [string]$Command = 'dump',
 
     [string]$Serial,
     [string]$Text,
     [string]$SecretRef,
+    [string]$Spec,
     [string]$Then,
     [int]$X,
     [int]$Y,
@@ -154,6 +156,18 @@ function Wait-ForText {
         $m = Find-ByField 'Text' $Query
         if (-not $m) { $m = Find-ByField 'Desc' $Query }
         if ($m) { return $true }
+        if ((Get-Date) -ge $deadline) { return $false }
+        Start-Sleep -Milliseconds $PollMilliseconds
+    }
+}
+
+function Wait-ForField {
+    # Same as Wait-ForText but polls a SPECIFIC node field (Res/Text/Desc). Resource-ids are the most
+    # stable anchors (locale- and version-proof), so a flow can verify arrival by id instead of text.
+    param([string]$Field, [string]$Query, [int]$TimeoutSeconds, [int]$PollMilliseconds)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ($true) {
+        if (Find-ByField $Field $Query) { return $true }
         if ((Get-Date) -ge $deadline) { return $false }
         Start-Sleep -Milliseconds $PollMilliseconds
     }
@@ -258,6 +272,209 @@ function Get-FingerprintStatus {
         return 'no'
     }
     return 'unknown'
+}
+
+function Get-SpecVal {
+    # Tolerant property read off a ConvertFrom-Json object (missing property -> default).
+    param($Obj, [string]$Name, $Default = $null)
+    if ($null -ne $Obj -and $Obj.PSObject.Properties.Name -contains $Name) { return $Obj.$Name }
+    return $Default
+}
+
+function Invoke-TapNode {
+    # Shared tap: resolve by resource-id / content-desc / text, then tap its center.
+    param([string]$Field, [string]$Query, [int]$Idx = 0)
+    $m = @(Find-ByField $Field $Query)
+    if (-not $m -and $Field -eq 'Text') { $m = @(Find-ByField 'Desc' $Query) }
+    if (-not $m) { return $null }
+    $t = $m[[Math]::Min($Idx, $m.Count - 1)]
+    if ($null -eq $t.Cx) { return $null }
+    Adb shell input tap $t.Cx $t.Cy | Out-Null
+    return $t
+}
+
+function Invoke-UiFlow {
+    <#
+      Run a whole KNOWN screen sequence in ONE process.
+
+      Driving a deterministic preamble screen-by-screen costs one agent round-trip (fresh shell + adb
+      startup + reasoning) per tap; a documented flow has no decisions in it, so all of that is pure
+      overhead. This executes the entire sequence locally with anchor polling and prints a single
+      per-step trace, turning ~20 minutes of round-trips into one call. See references/run-speed.md.
+
+      Each step (JSON object) may set:
+        label       friendly name for the trace
+        wait        anchor text/content-desc to poll for BEFORE acting
+        waitRes     anchor RESOURCE-ID to poll for BEFORE acting (more stable than text — prefer it)
+        waitSec     per-step wait timeout (default -TimeoutSec)
+        optional    $true => if `wait` never appears, SKIP this step and continue (conditional screens
+                    like a "Save password?" infobar or an "App Lock enabled" popup)
+        tap         tap by text (falls back to content-desc)
+        tapDesc     tap strictly by content-desc
+        tapRes      tap by resource-id (most stable — prefer it when you know the id)
+        index       which match to tap when several (default 0)
+        exact       exact match instead of substring
+        input       type this text
+        secretRef   type a STORED secret instead (never echoed)
+        clear       clear the field first
+        charByChar  per-character typing fallback
+        key         send a keyevent (BACK/ENTER/ESCAPE/...)
+        then        anchor to verify AFTER the action (arrival check, doubles as the next wait)
+        thenRes     same, but by resource-id
+        thenSec     per-step `then` timeout
+        screenshot  save a PNG to this path after the step
+        sleepMs     explicit pause (use sparingly — prefer `then`)
+    #>
+    param([object[]]$Steps, [string]$TraceOut)
+
+    $keymap = @{ BACK = 4; HOME = 3; ENTER = 66; TAB = 61; MENU = 82; APP_SWITCH = 187; DEL = 67; ESCAPE = 111; SEARCH = 84 }
+    $trace = New-Object System.Collections.Generic.List[string]
+    $ok = 0; $skipped = 0; $failed = 0; $failIdx = -1; $failWhy = ''
+    $flowStart = Get-Date
+
+    for ($i = 0; $i -lt $Steps.Count; $i++) {
+        $s = $Steps[$i]
+        $n = '{0:d2}' -f ($i + 1)
+        $label = Get-SpecVal $s 'label' ''
+        $t0 = Get-Date
+
+        if ($failed -gt 0) {
+            $line = "[$n] ---- SKIPPED (earlier step failed) $label"
+            $trace.Add($line); Write-Host $line
+            continue
+        }
+
+        # Per-step matching mode (Find-ByField reads the script-scoped $Exact).
+        $script:Exact = [bool](Get-SpecVal $s 'exact' $false)
+        $idx = [int](Get-SpecVal $s 'index' 0)
+        $isOptional = [bool](Get-SpecVal $s 'optional' $false)
+
+        # --- 1. wait for the screen anchor (by text/desc, or by the more stable resource-id) ---
+        $waitFor = Get-SpecVal $s 'wait' $null
+        $waitRes = Get-SpecVal $s 'waitRes' $null
+        if ($waitFor -or $waitRes) {
+            $ws = [int](Get-SpecVal $s 'waitSec' $TimeoutSec)
+            $anchor = if ($waitRes) { $waitRes } else { $waitFor }
+            $found = if ($waitRes) { Wait-ForField 'Res' $waitRes $ws $PollMs } else { Wait-ForText $waitFor $ws $PollMs }
+            if (-not $found) {
+                if ($isOptional) {
+                    $skipped++
+                    $line = "[$n] {0,5:N1}s SKIP  (optional; '$anchor' absent) $label" -f ((Get-Date) - $t0).TotalSeconds
+                    $trace.Add($line); Write-Host $line
+                    continue
+                }
+                $failed++; $failIdx = $i + 1; $failWhy = "anchor '$anchor' never appeared (${ws}s)"
+                $line = "[$n] {0,5:N1}s FAIL  $failWhy $label" -f ((Get-Date) - $t0).TotalSeconds
+                $trace.Add($line); Write-Host $line
+                continue
+            }
+        }
+
+        # --- 2. act ---
+        $did = @()
+        $tapRes = Get-SpecVal $s 'tapRes' $null
+        $tapDesc = Get-SpecVal $s 'tapDesc' $null
+        $tapTxt = Get-SpecVal $s 'tap' $null
+        $target = $null; $tapQuery = $null; $tapField = $null
+        if ($tapRes) { $tapField = 'Res'; $tapQuery = $tapRes }
+        elseif ($tapDesc) { $tapField = 'Desc'; $tapQuery = $tapDesc }
+        elseif ($tapTxt) { $tapField = 'Text'; $tapQuery = $tapTxt }
+
+        if ($tapField) {
+            $target = Invoke-TapNode $tapField $tapQuery $idx
+            if (-not $target) {
+                if ($isOptional) {
+                    $skipped++
+                    $line = "[$n] {0,5:N1}s SKIP  (optional; no '$tapQuery') $label" -f ((Get-Date) - $t0).TotalSeconds
+                    $trace.Add($line); Write-Host $line
+                    continue
+                }
+                $failed++; $failIdx = $i + 1; $failWhy = "no tappable '$tapQuery' ($tapField)"
+                $line = "[$n] {0,5:N1}s FAIL  $failWhy $label" -f ((Get-Date) - $t0).TotalSeconds
+                $trace.Add($line); Write-Host $line
+                continue
+            }
+            $did += "tap $tapField='$tapQuery'"
+        }
+
+        $secRef = Get-SpecVal $s 'secretRef' $null
+        $inTxt = Get-SpecVal $s 'input' $null
+        if ($secRef -or $null -ne $inTxt) {
+            $masked = $false
+            if ($secRef) { $inTxt = Resolve-SecretValue $secRef; $masked = $true }
+            if (Get-SpecVal $s 'clear' $false) {
+                $clearCodes = @('input', 'keyevent', '123') + (1..80 | ForEach-Object { '67' })
+                Adb shell $clearCodes | Out-Null
+            }
+            if (Get-SpecVal $s 'charByChar' $false) {
+                foreach ($ch in $inTxt.ToCharArray()) {
+                    Adb shell input text (Encode-Input ([string]$ch)) | Out-Null
+                    if ($PerCharDelayMs -gt 0) { Start-Sleep -Milliseconds $PerCharDelayMs }
+                }
+            }
+            else { Adb shell input text (Encode-Input $inTxt) | Out-Null }
+            $did += $(if ($masked) { "type [$($inTxt.Length) chars]" } else { "type '$inTxt'" })
+        }
+
+        $k = Get-SpecVal $s 'key' $null
+        if ($k) {
+            $code = if ($keymap.ContainsKey($k.ToUpper())) { $keymap[$k.ToUpper()] } else { $k }
+            Adb shell input keyevent $code | Out-Null
+            $did += "key $k"
+        }
+
+        $ms = [int](Get-SpecVal $s 'sleepMs' 0)
+        if ($ms -gt 0) { Start-Sleep -Milliseconds $ms; $did += "sleep ${ms}ms" }
+
+        # --- 3. verify arrival ---
+        $thenAnchor = Get-SpecVal $s 'then' $null
+        $thenRes = Get-SpecVal $s 'thenRes' $null
+        if ($thenAnchor -or $thenRes) {
+            $ts = [int](Get-SpecVal $s 'thenSec' $TimeoutSec)
+            $tAnchor = if ($thenRes) { $thenRes } else { $thenAnchor }
+            $reached = if ($thenRes) { Wait-ForField 'Res' $thenRes $ts $PollMs } else { Wait-ForText $thenAnchor $ts $PollMs }
+            if (-not $reached) {
+                if ($isOptional) {
+                    $skipped++
+                    $line = "[$n] {0,5:N1}s SKIP  (optional; '$tAnchor' not reached) $label" -f ((Get-Date) - $t0).TotalSeconds
+                    $trace.Add($line); Write-Host $line
+                    continue
+                }
+                $failed++; $failIdx = $i + 1; $failWhy = "did not reach '$tAnchor' (${ts}s) after $($did -join ' + ')"
+                $line = "[$n] {0,5:N1}s FAIL  $failWhy $label" -f ((Get-Date) - $t0).TotalSeconds
+                $trace.Add($line); Write-Host $line
+                continue
+            }
+            $did += "-> '$tAnchor'"
+        }
+
+        $shot = Get-SpecVal $s 'screenshot' $null
+        if ($shot) {
+            $sd = Split-Path $shot -Parent
+            if ($sd -and -not (Test-Path $sd)) { New-Item -ItemType Directory -Force -Path $sd | Out-Null }
+            Adb shell screencap -p /sdcard/_sc.png | Out-Null
+            Adb pull /sdcard/_sc.png $shot | Out-Null
+            Adb shell rm -f /sdcard/_sc.png | Out-Null
+            $did += "shot"
+        }
+
+        $ok++
+        $line = "[$n] {0,5:N1}s OK    {1} {2}" -f ((Get-Date) - $t0).TotalSeconds, ($did -join ' + '), $label
+        $trace.Add($line); Write-Host $line
+    }
+
+    $total = ((Get-Date) - $flowStart).TotalSeconds
+    $summary = "FLOW: $ok ok, $skipped skipped, $failed failed in {0:N1}s" -f $total
+    if ($failed -gt 0) { $summary += " -- FAILED AT STEP $failIdx : $failWhy" }
+    $trace.Add($summary); Write-Host $summary
+
+    if ($TraceOut) {
+        $td = Split-Path $TraceOut -Parent
+        if ($td -and -not (Test-Path $td)) { New-Item -ItemType Directory -Force -Path $td | Out-Null }
+        $trace | Set-Content -Path $TraceOut -Encoding UTF8
+        Write-Host "Trace: $TraceOut"
+    }
+    if ($failed -gt 0) { exit 5 }
 }
 
 switch ($Command) {
@@ -379,6 +596,34 @@ switch ($Command) {
     'wait-text' {
         if (Wait-ForText $Text $TimeoutSec $PollMs) { Write-Host "FOUND: '$Text'"; exit 0 }
         Write-Host "TIMEOUT waiting for '$Text' (${TimeoutSec}s)"; exit 4
+    }
+    'flow' {
+        # Run a whole known screen sequence in ONE process: -Spec <file.json>, or inline JSON via -Text.
+        $json = $null
+        if ($Spec) {
+            if (-not (Test-Path $Spec)) { Write-Host "Flow spec not found: $Spec"; exit 2 }
+            $json = Get-Content $Spec -Raw
+        }
+        elseif ($Text) { $json = $Text }
+        else { Write-Host "flow needs -Spec <file.json> or -Text '<inline json>'"; exit 2 }
+
+        try { $parsed = $json | ConvertFrom-Json }
+        catch { Write-Host "Flow spec is not valid JSON: $($_.Exception.Message)"; exit 2 }
+
+        # Accept a bare array of steps, { "steps": [...] }, or a single step object. Note
+        # ConvertFrom-Json UNWRAPS a one-element array into a bare object, so a valid one-step
+        # flow arrives here as a PSCustomObject — treat any object carrying step keys as one step.
+        $steps = $null
+        if ($parsed -is [System.Array]) { $steps = $parsed }
+        elseif ($null -ne (Get-SpecVal $parsed 'steps' $null)) { $steps = Get-SpecVal $parsed 'steps' $null }
+        else {
+            $stepKeys = @('label', 'wait', 'waitRes', 'tap', 'tapDesc', 'tapRes', 'input', 'secretRef', 'key', 'then', 'thenRes', 'screenshot', 'sleepMs')
+            $names = @($parsed.PSObject.Properties.Name)
+            if (@($names | Where-Object { $stepKeys -contains $_ }).Count -gt 0) { $steps = @($parsed) }
+        }
+        if (-not $steps) { Write-Host "Flow spec has no steps."; exit 2 }
+        Write-Host "FLOW: $(@($steps).Count) steps on $(if($Serial){$Serial}else{'default device'})"
+        Invoke-UiFlow -Steps @($steps) -TraceOut $Out
     }
     'screenshot' {
         if (-not $Out) { $Out = Join-Path (Get-Location) ("screen_{0}.png" -f (Get-Date -Format 'yyyyMMdd_HHmmss')) }

@@ -16,6 +16,7 @@ and [app-and-module-map.md](app-and-module-map.md#known-provided-apks) (APK file
 
 - [First-run flow (fresh install → home)](#first-run-flow-fresh-install--home)
 - [Home screen & adding an account](#home-screen--adding-an-account)
+- [Ready-made flow specs (copy-paste)](#ready-made-flow-specs-copy-paste)
 - [AAD Work/School account-add with proof-up (number-match) — SAME DEVICE](#aad-workschool-account-add-with-proof-up-number-match--same-device)
 - [Enabling Passwordless sign-in (PSI) on an account](#enabling-passwordless-sign-in-psi-on-an-account)
 - [App Lock auto-enables when a device PIN exists](#app-lock-auto-enables-when-a-device-pin-exists)
@@ -101,6 +102,57 @@ Add-account chooser sequence:
 can open `com.microsoft.identity.common…BrokerAuthorizationActivity` showing **"Pick an account"** with the
 existing accounts listed. To add a *new* one, tap **"Use another account"** — otherwise you silently re-add
 an account that's already there.
+
+## Ready-made flow specs (copy-paste)
+
+The sequences above are **deterministic** — they contain no decisions — so driving them one tool call per
+screen wastes a 60–120 s agent round-trip on each for ~3 s of device work
+([why](run-speed.md#the-dominant-cost-agent-round-trips-not-device-time)). Run each as **one**
+`deviceui.ps1 flow` call instead. Steps that only *sometimes* appear are marked `"optional": true`, so the
+same spec works on API 30 and API 33+, and on a device where a permission was already granted.
+
+**First run → home screen** (the whole 4-gate preamble, one call, ~15–40 s):
+```powershell
+./scripts/deviceui.ps1 flow -Serial <serial> -Text '[
+ {"label":"notifications Allow","tap":"Allow","optional":true,"waitSec":8},
+ {"label":"privacy Accept","tapRes":"com.azure.authenticator:id/privacy_consent_button","waitSec":30},
+ {"label":"telemetry Continue","tapRes":"com.azure.authenticator:id/privacy_consent_continue_button","waitSec":20},
+ {"label":"upsell Skip","tapRes":"com.azure.authenticator:id/frx_skip_button","waitSec":20},
+ {"label":"home - account list","waitRes":"com.azure.authenticator:id/account_list","waitSec":20,"optional":true},
+ {"label":"home - zero accounts","waitRes":"com.azure.authenticator:id/zero_accounts_add_account_button","waitSec":5,"optional":true},
+ {"label":"evidence","screenshot":"01_home.png"}
+]'
+```
+Resource-ids are matched first because they're locale- and version-proof. **Check the trace**: if *both* the
+`account_list` and `zero_accounts_add_account_button` steps SKIP, you did **not** reach home — dump the screen
+and investigate rather than continuing.
+
+> **Verified on-device** (emulator API 30, ECS `app-production-universal-release-signed.apk`): this exact spec
+> ran **6 ok · 1 skipped · 0 failed in 16.2 s** and landed on the empty account list. The skipped step was the
+> notifications dialog — API 30 doesn't show the Android 13+ prompt, which is precisely why it's
+> `"optional": true`. The same spec therefore works on both older and newer OS levels.
+
+**Home → eSTS sign-in page for a Work/School account** (add-account chooser, one call):
+```powershell
+./scripts/deviceui.ps1 flow -Serial <serial> -Text '[
+ {"label":"tap + (add account)","tapDesc":"Add","optional":true},
+ {"label":"or Add account button","tapRes":"com.azure.authenticator:id/zero_accounts_add_account_button","optional":true},
+ {"label":"account type chooser","wait":"Work or school account","waitSec":20},
+ {"label":"pick Work or school","tap":"Work or school account","waitSec":20},
+ {"label":"Sign in","tap":"Sign in","optional":true,"waitSec":10},
+ {"label":"broker chooser (only if work accounts exist)","tap":"Use another account","optional":true,"waitSec":6},
+ {"label":"eSTS email page","waitSec":45,"wait":"Sign in"},
+ {"label":"evidence","screenshot":"02_ests.png"}
+]'
+```
+
+> **Never put a credential in a flow spec.** Use `"secretRef":"<name>"` (resolves from the encrypted store and
+> is never echoed), or a separate `input-text -SecretRef <name>` call — never `"input":"<the password>"`.
+> See [secrets-and-files.md](secrets-and-files.md).
+
+Full step-key reference is in the `Invoke-UiFlow` doc-comment in `scripts/deviceui.ps1`:
+`label, wait, waitRes, waitSec, optional, tap, tapDesc, tapRes, index, exact, input, secretRef, clear,
+charByChar, key, then, thenRes, thenSec, screenshot, sleepMs`.
 
 <a id="duplicate-account-rows-white-vs-gray"></a>
 ## Duplicate account rows — white = official, gray = ignore

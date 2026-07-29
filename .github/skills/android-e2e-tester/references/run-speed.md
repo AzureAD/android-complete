@@ -6,6 +6,7 @@ default driving pattern should follow the "fast path" below.
 
 Table of contents:
 - [Measured timeline](#measured-timeline)
+- [The dominant cost: agent round-trips, not device time](#the-dominant-cost-agent-round-trips-not-device-time)
 - [Where the time actually goes](#where-the-time-actually-goes)
 - [Root causes](#root-causes)
 - [Speed-ups (what to do differently)](#speed-ups-what-to-do-differently)
@@ -30,6 +31,63 @@ Timestamps are screenshot capture times; the gap is the time that segment took.
 A human does the same flow in **~3–4 minutes**. The gap is almost entirely **harness overhead**, not the
 device or the network.
 
+## The dominant cost: agent round-trips, not device time
+
+This was re-measured on a 6-case Authenticator batch (`authn-rerun-tier12-20260729_121549`) and the result
+overturns the intuitive explanation. **Process startup is ~nothing. The agent's own think-time is everything.**
+
+Benchmarked on a live emulator — the *same* 4-screen sequence, run two ways:
+
+| | Shell time |
+|---|---:|
+| 4 separate `deviceui.ps1` calls | 10.8s |
+| the identical steps as one `deviceui.ps1 flow` call | 10.5s |
+
+**A 3% difference.** Batching saves almost nothing *in shell time*, because the cost is the adb round-trips,
+which you pay either way. But in a real run those 4 calls were **4 separate tool calls**, and the batch's
+`progress.log` files show consecutive entries landing **60–120 s apart** while the device work in between was
+only ~2–4 s. So per screen:
+
+```
+one screen driven as its own tool call ≈ 60–120 s   (of which ~3 s is the device)
+```
+
+**~95%+ of per-screen wall clock is the agent deciding what to do next, not the phone doing it.** That is the
+number that matters, and it means the only lever with real leverage is **issuing fewer, larger calls** —
+collapsing a whole known screen sequence into ONE call (see speed-up #1). Micro-optimising adb is rearranging
+deck chairs.
+
+### What this cost the batch
+
+Reconstructed from each case's `progress.log` (work time = spans with gaps ≤ 10 min):
+
+| Case | iters | work (min) | span (min) | idle gap (min) |
+|---|---:|---:|---:|---:|
+| 1579397 | 2 | 58 | 94 | **36** |
+| 1579401 | 1 | 26 | 26 | 0 |
+| 1579411 | 2 | 65 | 155 | **90** |
+| 1579416 | 1 | 11 | 11 | 0 |
+| 1579417 | 2 | 67 | 100 | **33** |
+| 1579425 | 1 | 39 | 39 | 0 |
+
+Three findings, none of which is "the 30-minute cap was ignored" (it wasn't — every *iteration* came in at
+11–39 min):
+
+1. **The cap was per-ITERATION, not per-CASE.** A second iteration silently reset the budget, so a case could
+   legitimately consume ~60+ min. Fixed by adding a per-case total budget — see
+   [SKILL.md](../SKILL.md) Phase 1/batch section.
+2. **159 minutes of pure dead time** (36 + 90 + 33) with *no work happening at all*. Cause: a `write_agent`
+   follow-up is only delivered once the target agent's **entire turn** completes, so a follow-up queued behind
+   a lane that still had 4 cases to run sat idle for **90 minutes**. **Never queue a follow-up behind a busy
+   lane — dispatch it as a fresh agent on a free lane.**
+3. **Inside a ~28-min iteration, ~20 min was fixed setup preamble and only ~5 min was the actual test.** For
+   1579397: provision → clean install → 4 first-run gates → add account → eSTS sign-in → proof-up pairing →
+   App Lock disable ran 12:19→12:39; the assertions the case actually cares about ran 12:42→12:47. That same
+   ~20-min preamble was paid **~9 times** across the batch (6 cases + 3 re-iterations) ≈ **3 hours of setup to
+   run ~30 minutes of assertions** — and the preamble is 100% deterministic, contains zero decisions, and is
+   already fully written down in [authenticator-app.md](authenticator-app.md). Every round-trip in it is pure
+   waste. **This is what speed-up #1 exists to remove.**
+
 ## Where the time actually goes
 
 The three fat segments (5m14s, 4m05s, 4m39s) share the same shape — they're dominated by the
@@ -42,9 +100,11 @@ The three fat segments (5m14s, 4m05s, 4m39s) share the same shape — they're do
 2. **Fixed sleeps instead of polling.** Waiting a flat `Start-Sleep -Seconds 3–5` after every tap "to be
    safe" is the single biggest tax. Screens that were ready in 300 ms still cost the full sleep; multiply
    by dozens of actions across a run.
-3. **Fresh process per tool call.** Every `powershell` tool call is a brand-new process that re-resolves
-   `adb`, re-reads env, and re-establishes the adb client each time — hundreds of ms of pure startup, paid
-   on every micro-step because steps were issued as separate calls.
+3. **One tool call per micro-step.** Every `powershell` tool call is a fresh process — but the process
+   startup itself turned out to be **negligible** (measured: 3% on a 4-step sequence). What is *not*
+   negligible is that each call is a separate **agent round-trip**, costing 60–120 s of model think-time for
+   ~3 s of device work. Issuing steps as separate calls is the single largest tax in the whole run; see
+   [The dominant cost](#the-dominant-cost-agent-round-trips-not-device-time).
 4. **Char-by-char typing.** The autofill/passkey overlay forces one-character-at-a-time input at ~55–60 ms
    per character; a 20-char password + a UPN is a couple of seconds *just typing*, before any verification.
 5. **Screenshot capture + pull + view.** `screencap` on-device → `adb pull` → open the PNG is ~1–2 s each;
@@ -57,8 +117,8 @@ The three fat segments (5m14s, 4m05s, 4m39s) share the same shape — they're do
 
 ## Root causes
 
-- **Chatty, one-action-per-call driving** with a fresh shell each time → startup + round-trip cost paid
-  hundreds of times.
+- **Chatty, one-action-per-call driving** — not because of process startup (measured negligible) but because
+  every call is a separate agent round-trip, so a 12-screen deterministic sequence costs 12 think-cycles.
 - **Pessimistic fixed sleeps** substituting for readiness signals.
 - **Verify-by-re-dump / verify-by-screenshot** after every action instead of only at decision points.
 - **Overlay-forced char-by-char** typing on every field, even when bulk would have worked.
@@ -84,9 +144,27 @@ Ordered by payoff:
    mid-flight view. At `0` the next screen is present the moment the transition is issued, so anchor polling
    returns on the first poll instead of the second or third. Both settings are device-persistent, so a
    dedicated test device only needs this once; re-apply after any factory reset or `pm clear` of Settings.
-1. **Keep one long-lived shell for a whole screen/segment.** Batch the dump→parse→tap(s) for a screen into
-   a *single* `powershell` call (an async session you reuse) so you pay process/adb startup once per
-   segment, not once per tap. This alone removes most of the fresh-process tax (root cause 3).
+1. <a id="batch-a-known-sequence-into-one-flow-call"></a>**Batch a KNOWN sequence into one `flow` call —
+   the single biggest lever.** Any run of screens whose order you already know (app first-run gates, an
+   add-account wizard, a settings path) has **no decisions in it**, so driving it one tool call per screen
+   burns a 60–120 s agent round-trip on each of them for ~3 s of device work. `deviceui.ps1 flow` executes the
+   whole sequence in **one** call:
+   ```powershell
+   ./scripts/deviceui.ps1 flow -Serial <serial> -Spec <sequence.json>
+   # or inline:
+   ./scripts/deviceui.ps1 flow -Serial <serial> -Text '[{"tap":"Allow","then":"privacy"},{"tap":"Accept"}]'
+   ```
+   Each step is `{ label?, wait|tap|tapDesc|tapRes|input|secretRef|key, then?, waitSec?, optional?, exact?,
+   clear?, charByChar?, screenshot?, sleepMs? }`. It prints a per-step trace with timings and a
+   `N ok, N skipped, N failed` summary, stops at the first **required** failure (exit **5**, remaining steps
+   marked SKIPPED), and — critically — **`"optional": true` steps that don't appear are SKIPPED, not failed**,
+   which is what makes it safe for real sequences where a screen only *sometimes* shows (a Save-password
+   infobar, an "App Lock enabled" popup, a permission dialog that was pre-granted).
+   Ready-made specs for the Authenticator preamble are in
+   [authenticator-app.md](authenticator-app.md#ready-made-flow-specs-copy-paste). Turning a ~12-screen,
+   ~20-minute preamble into one call that finishes in **~40 s of device time** is where the hours are.
+   *(Corollary: this supersedes the old advice to "keep one long-lived shell" — the saving was never the shell,
+   it was the round-trip.)*
 2. **Replace fixed sleeps with anchor polling — and fuse tap+wait.** `deviceui.ps1 wait-text -Text
    "<next screen anchor>"` returns the instant the screen is ready instead of always waiting N seconds.
    Better still, `tap-text "<button>" -Then "<next anchor>"` performs the tap **and** waits for the next
@@ -131,9 +209,16 @@ Per screen:
 
 ## Expected savings
 
-The three fat segments are ~80% overhead. Realistic targets:
-- **Fixed-sleep → poll** and **batch-per-screen** together typically cut those segments by **50–70%**.
+The three fat segments are ~80% overhead, and (per the measurement above) that overhead is **agent
+round-trips**, not the device. Realistic targets:
+- **Collapse every known sequence into a `flow` call** — this is the big one. A ~12-screen preamble goes from
+  ~20 minutes (12 round-trips) to **~40 s of device time in one call**. Applied to the reference batch that is
+  ~3 hours of setup recovered.
+- **Fixed-sleep → poll** and **verify-by-anchor** together cut the remaining decision-driven segments by
+  **50–70%**.
 - Dropping FLAG_SECURE screenshots and redundant re-dumps trims another chunk.
+- **Don't queue a `write_agent` follow-up behind a busy lane** — dispatch a fresh agent on a free lane. That
+  alone was 159 minutes of dead air in the reference batch.
 - A ~16m40s UI run should land around **5–7 minutes** — within ~2× of a human instead of ~5×, with the
   remainder being genuine eSTS/WebView load and any real re-auths.
 

@@ -38,7 +38,7 @@ All under `scripts/` (PowerShell — the team's cross-platform shell). Run `-?` 
 | `emulator.ps1` | Device pool: emulators **and** real devices | `ensure`, `status`, `list`, `pool`, `list-images`, `create`, `start` |
 | `devicelease.ps1` | Lease a device so concurrent tests don't collide | `acquire`, `heartbeat`, `release`, `list`, `reap` |
 | `appcontrol.ps1` | App build/install/state | `build`, `install`, `launch`, `clear`, `uninstall`, `is-installed`, `grant`, `list-apks` |
-| `deviceui.ps1` | AI-driven UI I/O | `dump`, `wait-text`, `tap-text`, `tap-desc`, `input-text` (`-Clear`, `-CharByChar`, `-SecretRef`), `unlock`, `key`, `finger`, `finger-status`, `finger-enroll`, `screenshot`, `current-app` |
+| `deviceui.ps1` | AI-driven UI I/O | `dump`, `wait-text`, `tap-text`, `tap-desc`, `input-text` (`-Clear`, `-CharByChar`, `-SecretRef`), **`flow`** (run a whole known screen sequence in ONE call), `unlock`, `key`, `finger`, `finger-status`, `finger-enroll`, `screenshot`, `current-app` |
 | `authlogs.ps1` | Log capture + verdict | `clear`, `scan`, `snapshot`, `grep`, `watch` |
 | `labapi.ps1` | Provision/reset LAB test accounts (EasyAuth via WAM SSO); fetch tenant passwords from Key Vault | `create-user`, `reset`, `enable-policy`, `disable-policy`, `delete-device`, `open`, `fetch-password` |
 | `report.ps1` | Render the HTML + Markdown test report (mandatory for ADO test cases); `summary` = overall multi-case run report | `render` (a per-case run JSON), `summary` (a batch/run folder) |
@@ -129,12 +129,32 @@ When asked to run **more than one** test case (a suite, a list of test points, s
    consecutive polls (~6–10 min of no motion) = STALLED → mark that case ABORTED from its partial report,
    recover the device (`adb kill-server; adb start-server`, re-lease under a fresh owner), and re-dispatch
    the next pending case onto the freed lane.** The **parent** — not just the in-agent cap — enforces the
-   per-point wall-clock cap (30 min/point unless told otherwise), because a sub-agent frozen in a blocking
-   call (e.g. a wedged `adb install`) **cannot fire its own cap**. **Never block the turn on a single
+   wall-clock caps below, because a sub-agent frozen in a blocking call (e.g. a wedged `adb install`)
+   **cannot fire its own cap**.
+
+   > **⏱️ Two caps, and the second one is the one that gets forgotten.**
+   > - **Per test point: 30 min** (unless told otherwise) — one attempt at one point.
+   > - **Per CASE: 45 min TOTAL across *all* iterations and retries** — this is a *separate*, *cumulative*
+   >   budget. A re-dispatch after a partial result does **not** reset the clock. Without it a case silently
+   >   costs 60–100+ min: in one measured batch, three cases ran a second iteration and landed at 58, 65 and
+   >   67 minutes of work each while every *individual* iteration was honestly under 30. **Track case-start
+   >   wall time in the parent and stop the case when it hits the total**, recording whatever verdict the
+   >   partial evidence supports (PARTIAL/ABORTED) rather than buying another 30 minutes.
+
+   **Never block the turn on a single
    open-ended wait:** a hung sub-agent emits **no completion notification**, so a notification-only loop
    hangs forever if every live lane wedges at once (this stalled a real suite run for ~6 hours). Keep the
    sub-agents' installs bounded (`appcontrol.ps1 install -TimeoutSec <n>`) so a wedge surfaces as a fast
-   failure the agent can record rather than a freeze. Keep every lane busy until the queue drains, and
+   failure the agent can record rather than a freeze.
+
+   > **🚫 Never queue a `write_agent` follow-up behind a busy lane.** A `write_agent` message is only
+   > delivered once the target agent's **entire turn** completes. Sending a follow-up to a lane that still
+   > has a queue of cases means it sits undelivered until that whole queue drains — measured cost in one
+   > batch: a follow-up queued at 12:50 was not picked up until 14:20, **90 minutes of dead air**, and the
+   > batch lost **159 minutes total** this way. If you need a follow-up run, **dispatch it as a fresh agent
+   > on a free lane**; only use `write_agent` on a lane that is idle or about to be.
+
+   Keep every lane busy until the queue drains, and
    **don't end the turn until every case has a verdict** (including ABORTED for lanes you had to kill, and
    an explicit "not reached" for cases the batch never got to).
 5. **Aggregate into an overall report.** After all cases finish, render the **suite summary** over the batch
@@ -351,11 +371,38 @@ Loop per screen using [references/ui-interaction.md](references/ui-interaction.m
 **fast path** (see [references/run-speed.md](references/run-speed.md)): `dump` **once** per screen and
 compute every target from that one XML → act → verify by the **next** screen's anchor with
 `tap-text -Then "<anchor>"` (tap + wait in one call) or `wait-text`, **never a fixed `Start-Sleep`**.
-Batch the dump→tap(s) for a screen into a **single** shell call so process/adb startup is paid once per
-screen, not once per tap. Re-`dump` only when you must read genuinely new state; verify a navigation by its
+Re-`dump` only when you must read genuinely new state; verify a navigation by its
 anchor, not a reflexive re-dump after every tap. Save a `screenshot` only at **milestones** and only on
 screens that actually render (skip FLAG_SECURE screens — they come back black; capture a `uiautomator dump`
 as evidence instead).
+
+> **⚡ Drive a KNOWN sequence with `deviceui.ps1 flow`, not one call per screen.** Measured: a screen driven
+> as its own tool call costs **60–120 s** of agent round-trip for **~3 s** of device work — so a deterministic
+> ~12-screen preamble (app first-run gates, an add-account wizard, a settings path) burns ~20 minutes to do
+> ~40 seconds of work, and in one measured batch that same preamble was paid **9 times ≈ 3 hours**. Batching
+> is *not* about process startup (measured: 3%) — it's about **removing round-trips from sequences that
+> contain no decisions**:
+> ```powershell
+> ./scripts/deviceui.ps1 flow -Serial <serial> -Spec <sequence.json>
+> ./scripts/deviceui.ps1 flow -Serial <serial> -Text '[{"tap":"Allow","optional":true},{"tapRes":"...:id/accept"}]'
+> ```
+> Steps support `wait`/`waitRes`/`tap`/`tapDesc`/`tapRes`/`input`/`secretRef`/`key`/`then`/`thenRes`/
+> `screenshot`, plus **`"optional": true`** for screens that only *sometimes* appear (a permission dialog
+> already granted, a "Save password?" infobar) — those SKIP instead of failing. It stops at the first required
+> failure (exit 5) and prints a per-step trace, so a failure is still precisely located. Reserve one-call-per-
+> screen for the genuinely *decision-driven* parts of the test — which is the part the case is actually about.
+> Ready-made Authenticator specs:
+> [authenticator-app.md](references/authenticator-app.md#ready-made-flow-specs-copy-paste).
+
+> **Do only what the case asks.** Setup that the case doesn't need is pure cost — one measured run completed a
+> full passwordless/device-registration setup and then logged *"backing out … (out of scope)"*, spending
+> minutes on something it then discarded. Before any multi-step setup, check it's required by a step you must
+> execute; if not, skip it.
+
+> **Trigger a time-limited challenge only when you're ready to consume it.** A number-match/push approval has
+> a short TTL (~1–2 min). Don't fire the sign-in that raises it and *then* start figuring out how to read the
+> notification — have the approval path resolved first, then trigger, then approve in one continuous
+> sequence (ideally one `flow` call). Otherwise the request expires and the whole segment is repeated.
 
 **Auto-handle** everything the AI reasonably can: type lab test credentials, tap Next/Sign in/Accept/
 Allow/Yes, pick an account, grant permissions, simulate a fingerprint (`finger`), enter a TOTP if the
@@ -512,9 +559,16 @@ point. Give the case one `run.json` with a **`testPoints[]` array**; each entry 
 fields (`ado.testPointId`/`configuration`/`buildSource`, `device`, `app`, `account`, `steps`, `evidence`,
 `blockers`, `verdict`) and references its screenshots by a point-scoped relative path (e.g.
 `ecs/iter1/07_token.png`, `local/iter1/07_token.png`). `render` emits one section per test point and derives
-the overall verdict from the points. Any **"Proposed test steps"** you add live at **case level** and must be
-**generic across every test point** (don't mention ECS/Local or a specific point); give each proposed step an
-optional `attachment` (a screenshot path/URL) to fill the report's **Attachments** column. See
+the overall verdict from the points.
+
+**Every ADO case report MUST carry a "Proposed test steps" block — this is not optional.** You have just
+walked the case step-by-step, so you are the best-placed reviewer it will get: record how the steps should be
+reworded to be correct and unambiguous. It lives at **case level** and must be **generic across every test
+point** (don't mention ECS/Local or a specific point); give each proposed step an optional `attachment` (a
+screenshot path/URL) to fill the report's **Attachments** column. If the case truly reads fine, still say so
+explicitly — `proposedScope: "No change needed"` with `proposedSteps: []`. **An empty block is a conclusion;
+an absent block is an omission**, and `report.ps1 render` flags it as **⚠ MISSING**. (This applies to *every*
+app — it was historically done for Broker cases but silently skipped on all 26 Authenticator ones.) See
 [references/test-reporting.md](references/test-reporting.md)
 for the JSON schema and a worked example. (For an automation-test run, also attach the
 `build/reports/androidTests/` output.) Present the verdict and the report paths to the user; optionally
@@ -588,6 +642,9 @@ Load these as needed (don't preload all):
 - **Artifacts stay outside the repo** (the run folder). Never commit logs/screenshots/reports.
 - **For an ADO test case, always generate the HTML + Markdown report** (`report.ps1`) on every outcome —
   PASS, FAIL, BLOCKED, or PARTIAL. A run driven from a test case is not "done" until the report exists.
+- **Every ADO case report must include "Proposed test steps"** (`proposedScope` + `proposedSteps`) — for
+  **every app**, not just Broker. If the case needs no change, state that explicitly
+  (`proposedScope: "No change needed"`, `proposedSteps: []`); never just leave it out.
 - **Run every test point of a case, and match the build to its configuration.** A Broker-suite case may have
   two test points; run each once. Install from **`Local\`** when the point's configuration name contains
   `LocalFlights`, from **`ECS\`** otherwise (⚠️ not the other way round). Skip a point only if the case body
@@ -620,5 +677,16 @@ Load these as needed (don't preload all):
   mock; leave a `TODO: REVERT` marker and confirm the tree is clean before finishing.
 - **Environment problems are not code defects** — fix setup and re-run; only hand real defects to the fix loop.
 - **Cap the loop** (3–5 iterations) and escalate with evidence rather than looping indefinitely.
+- **Honour BOTH wall-clock caps: 30 min per test point AND 45 min per case across *all* iterations.** A
+  re-dispatch does not reset the case budget; stop and record a PARTIAL/ABORTED verdict instead of buying
+  another 30 minutes.
+- **Batch deterministic screen sequences into one `deviceui.ps1 flow` call.** One tool call per screen costs
+  60–120 s of round-trip for ~3 s of device work; a preamble with no decisions in it must not be driven
+  screen-by-screen. Keep per-screen driving for the decision-heavy part the case is actually testing.
+- **Never queue a `write_agent` follow-up behind a lane that still has work** — it isn't delivered until that
+  lane's whole turn ends (measured: 90 min of dead air). Dispatch a fresh agent on a free lane instead.
+- **Don't do setup the case doesn't require**, and **don't trigger a time-limited challenge (number-match /
+  push approval, ~1–2 min TTL) until the approval path is ready** — otherwise it expires and you repeat the
+  segment.
 - **Require a positive success signal** matching the scenario before declaring PASS.
 - Follow repo conventions when fixing code (Kotlin for new code, the `Logger` class, minimal changes).

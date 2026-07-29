@@ -29,8 +29,18 @@ Follow the **fast path** (details + rationale in [run-speed.md](run-speed.md)). 
    The tree does change after navigation — just don't pay for a fresh dump after every micro-action.
 5. On an **unexpected** screen, `screenshot` to a run file (if it renders) and reason about it before continuing.
 
-Batch a screen's `dump`→`tap`(s) into a **single** shell invocation where practical, so process/adb startup
-is paid once per screen instead of once per action — this is the largest, safest latency win.
+**Collapse a whole KNOWN sequence into one `deviceui.ps1 flow` call — this is the largest latency win by far.**
+It is *not* about process/adb startup (measured: batching 4 steps saved only **3%** of shell time). It's that
+every separate call is a separate **agent round-trip**, costing 60–120 s of think-time for ~3 s of device work.
+So any run of screens whose order you already know — app first-run gates, an add-account wizard, a settings
+path — should be **one** call:
+```powershell
+./scripts/deviceui.ps1 flow -Serial <serial> -Text '[{"tap":"Allow","optional":true},{"tapRes":"...:id/accept"}]'
+```
+Mark conditionally-appearing screens `"optional": true` so they SKIP instead of failing. Measured: the whole
+Authenticator 4-gate first-run preamble runs in **16 s** as one call, versus ~4 separate round-trips before.
+Keep one-call-per-screen for the **decision-driven** parts — the part the test is actually about.
+See [run-speed.md](run-speed.md#the-dominant-cost-agent-round-trips-not-device-time).
 
 ## Selector strategy
 
