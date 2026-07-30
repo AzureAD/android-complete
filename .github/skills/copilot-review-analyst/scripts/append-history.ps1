@@ -3,7 +3,7 @@
     Appends a snapshot of the current analysis run to the persistent history file.
 
 .DESCRIPTION
-    Reads final_classification.json and precise.json from the intermediate data directory,
+    Reads final_classification.json from the intermediate data directory,
     computes aggregate statistics, and appends a timestamped snapshot to history.json.
     This enables trend tracking across multiple analysis runs.
 
@@ -15,7 +15,7 @@
     End date of the analysis period (YYYY-MM-DD). Defaults to today.
 
 .PARAMETER InputDir
-    Directory containing final_classification.json and precise.json.
+    Directory containing final_classification.json.
     Default: $env:TEMP\copilot-review-analysis
 
 .PARAMETER HistoryFile
@@ -43,7 +43,6 @@ $ErrorActionPreference = "Stop"
 
 # --- Load data ---
 $finalPath = Join-Path $InputDir "final_classification.json"
-$precisePath = Join-Path $InputDir "precise.json"
 
 if (-not (Test-Path $finalPath)) {
     Write-Error "final_classification.json not found at $finalPath. Run Phase 4 first."
@@ -51,10 +50,6 @@ if (-not (Test-Path $finalPath)) {
 }
 
 $data = Get-Content $finalPath -Raw | ConvertFrom-Json
-$precise = @()
-if (Test-Path $precisePath) {
-    $precise = Get-Content $precisePath -Raw | ConvertFrom-Json
-}
 
 # --- Load coverage (Tier 2.4), if present ---
 # coverage.json is emitted by analyze.ps1 and records, per repo, how many merged human PRs
