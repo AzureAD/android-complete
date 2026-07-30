@@ -106,8 +106,9 @@ an account that's already there.
 ## Ready-made flow specs (copy-paste)
 
 The sequences above are **deterministic** — they contain no decisions — so driving them one tool call per
-screen wastes a 60–120 s agent round-trip on each for ~3 s of device work
-([why](run-speed.md#the-dominant-cost-agent-round-trips-not-device-time)). Run each as **one**
+screen wastes a ~25 s median agent round-trip on each for ~2.5 s of device work, and that overhead is the same
+whether the step is obvious or hard
+([why](run-speed.md#the-overhead-is-fixed-per-call--it-is-not-thinking-time)). Run each as **one**
 `deviceui.ps1 flow` call instead. Steps that only *sometimes* appear are marked `"optional": true`, so the
 same spec works on API 30 and API 33+, and on a device where a permission was already granted.
 

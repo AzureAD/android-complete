@@ -7,6 +7,7 @@ default driving pattern should follow the "fast path" below.
 Table of contents:
 - [Measured timeline](#measured-timeline)
 - [The dominant cost: agent round-trips, not device time](#the-dominant-cost-agent-round-trips-not-device-time)
+  - [The overhead is FIXED per call — it is not thinking time](#the-overhead-is-fixed-per-call--it-is-not-thinking-time)
 - [Where the time actually goes](#where-the-time-actually-goes)
 - [Root causes](#root-causes)
 - [Speed-ups (what to do differently)](#speed-ups-what-to-do-differently)
@@ -44,18 +45,54 @@ Benchmarked on a live emulator — the *same* 4-screen sequence, run two ways:
 | the identical steps as one `deviceui.ps1 flow` call | 10.5s |
 
 **A 3% difference.** Batching saves almost nothing *in shell time*, because the cost is the adb round-trips,
-which you pay either way. But in a real run those 4 calls were **4 separate tool calls**, and the batch's
-`progress.log` files show consecutive entries landing **60–120 s apart** while the device work in between was
-only ~2–4 s. So per screen:
+which you pay either way. But in a real run those 4 calls were **4 separate tool calls** — and a tool call is
+a full agent turn.
+
+Measured properly on the densest available sample (`tc2579657-main-20260727_094717\shots`, 108 artifacts, one
+written per device interaction, so consecutive file mtimes = consecutive round-trips):
+
+| | Seconds between consecutive device interactions |
+|---|---:|
+| min | 2.3 |
+| p25 | 19.9 |
+| **median** | **24.4** |
+| p75 | 35.8 |
+| p90 | 59.6 |
+| max | 120.6 |
+
+Against a directly measured device cost of **2.53 s** for one `dump` (3-run mean, physical device), returning
+**~13 k chars ≈ 3.3 k tokens** of UI XML:
 
 ```
-one screen driven as its own tool call ≈ 60–120 s   (of which ~3 s is the device)
+one screen driven as its own tool call ≈ 25 s median   (of which ~2.5 s is the device)
 ```
 
-**~95%+ of per-screen wall clock is the agent deciding what to do next, not the phone doing it.** That is the
-number that matters, and it means the only lever with real leverage is **issuing fewer, larger calls** —
-collapsing a whole known screen sequence into ONE call (see speed-up #1). Micro-optimising adb is rearranging
-deck chairs.
+**~90% of per-screen wall clock is turn overhead, not the phone.** Note "overhead", not "deliberation" — see
+the next section for why that distinction decides which fix works.
+
+### The overhead is FIXED per call — it is not thinking time
+
+The obvious objection is: *if the test steps are clear, the next action is obvious, so why does it take 25 s?*
+The data says the objection is right about the decision and wrong about the cause. Splitting the same run's
+gaps by how hard the decision actually was:
+
+| Step class | n | median | mean |
+|---|---:|---:|---:|
+| **Easy** — deterministic nav (privacy/telemetry/upsell/home/settings) | 16 | **25.7 s** | 37.2 s |
+| **Hard** — eSTS, proof-up, pairing, number-match, error screens | 22 | **27.5 s** | 32.2 s |
+
+**Essentially identical — 1.8 s apart on a ~26 s baseline.** Tapping *Accept* on a privacy screen, which needs
+zero deliberation, costs the same as diagnosing a proof-up failure. So the time is *not* the model working out
+what to do; it is the fixed cost of a turn: emitting the call, running it, and reading a multi-thousand-token
+UI dump back into a growing context.
+
+Two consequences, and they are the whole point:
+
+1. **"Think faster" is not available as a lever** — there is little thinking in the 25 s to remove.
+2. **"Take fewer turns" is the only lever, and it works best exactly where the steps are most obvious.** A
+   deterministic preamble is *all* fixed cost and *no* decisions, so collapsing its N screens into one call
+   removes ~(N−1) × 25 s and loses nothing. This is why speed-up #1 is the flow runner, and why it should be
+   pointed at the boring parts of a run, not the interesting ones.
 
 ### What this cost the batch
 
@@ -102,9 +139,10 @@ The three fat segments (5m14s, 4m05s, 4m39s) share the same shape — they're do
    by dozens of actions across a run.
 3. **One tool call per micro-step.** Every `powershell` tool call is a fresh process — but the process
    startup itself turned out to be **negligible** (measured: 3% on a 4-step sequence). What is *not*
-   negligible is that each call is a separate **agent round-trip**, costing 60–120 s of model think-time for
-   ~3 s of device work. Issuing steps as separate calls is the single largest tax in the whole run; see
-   [The dominant cost](#the-dominant-cost-agent-round-trips-not-device-time).
+   negligible is that each call is a separate **agent turn**, costing a ~25 s median round-trip for ~2.5 s of
+   device work, and that cost is **fixed regardless of how obvious the step is** (25.7 s for easy nav vs
+   27.5 s for hard auth screens). Issuing steps as separate calls is the single largest tax in the whole run;
+   see [The overhead is FIXED per call](#the-overhead-is-fixed-per-call--it-is-not-thinking-time).
 4. **Char-by-char typing.** The autofill/passkey overlay forces one-character-at-a-time input at ~55–60 ms
    per character; a 20-char password + a UPN is a couple of seconds *just typing*, before any verification.
 5. **Screenshot capture + pull + view.** `screencap` on-device → `adb pull` → open the PNG is ~1–2 s each;
@@ -118,7 +156,8 @@ The three fat segments (5m14s, 4m05s, 4m39s) share the same shape — they're do
 ## Root causes
 
 - **Chatty, one-action-per-call driving** — not because of process startup (measured negligible) but because
-  every call is a separate agent round-trip, so a 12-screen deterministic sequence costs 12 think-cycles.
+  every call is a separate agent turn at a fixed ~25 s, so a 12-screen deterministic sequence costs 12 of them
+  (~5 min) to do ~30 s of device work.
 - **Pessimistic fixed sleeps** substituting for readiness signals.
 - **Verify-by-re-dump / verify-by-screenshot** after every action instead of only at decision points.
 - **Overlay-forced char-by-char** typing on every field, even when bulk would have worked.
@@ -147,8 +186,9 @@ Ordered by payoff:
 1. <a id="batch-a-known-sequence-into-one-flow-call"></a>**Batch a KNOWN sequence into one `flow` call —
    the single biggest lever.** Any run of screens whose order you already know (app first-run gates, an
    add-account wizard, a settings path) has **no decisions in it**, so driving it one tool call per screen
-   burns a 60–120 s agent round-trip on each of them for ~3 s of device work. `deviceui.ps1 flow` executes the
-   whole sequence in **one** call:
+   burns a ~25 s agent round-trip on each of them for ~2.5 s of device work — and since that overhead is
+   *fixed* rather than proportional to difficulty, a no-decision sequence is the case where batching wins
+   most and risks least. `deviceui.ps1 flow` executes the whole sequence in **one** call:
    ```powershell
    ./scripts/deviceui.ps1 flow -Serial <serial> -Spec <sequence.json>
    # or inline:
@@ -209,11 +249,15 @@ Per screen:
 
 ## Expected savings
 
-The three fat segments are ~80% overhead, and (per the measurement above) that overhead is **agent
-round-trips**, not the device. Realistic targets:
-- **Collapse every known sequence into a `flow` call** — this is the big one. A ~12-screen preamble goes from
-  ~20 minutes (12 round-trips) to **~40 s of device time in one call**. Applied to the reference batch that is
-  ~3 hours of setup recovered.
+The three fat segments are ~80% overhead, and (per the measurement above) that overhead is **agent turns**,
+not the device. Realistic targets:
+- **Collapse every known sequence into a `flow` call** — this is the big one. Sizing it honestly: the observed
+  ~20-min preamble (12:19→12:39) is *not* 12 round-trips; at a ~25 s median it is on the order of ~45 turns,
+  and it also contains irreducible real time (APK install, account provisioning, eSTS network, typing). `flow`
+  removes only the **turn overhead of the deterministic UI navigation** — but that is the bulk of it. Measured
+  anchor point: the 4-gate first-run preamble went from 4 turns (~100 s) to **16.2 s in one call**. Collapsing
+  the ~30 navigation turns in a preamble into ~3 flow calls saves ~27 × 25 s ≈ **11 minutes per iteration**;
+  across the reference batch's ~9 preambles that is the bulk of the ~3 hours.
 - **Fixed-sleep → poll** and **verify-by-anchor** together cut the remaining decision-driven segments by
   **50–70%**.
 - Dropping FLAG_SECURE screenshots and redundant re-dumps trims another chunk.

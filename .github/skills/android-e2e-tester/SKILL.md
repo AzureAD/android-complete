@@ -377,11 +377,12 @@ screens that actually render (skip FLAG_SECURE screens — they come back black;
 as evidence instead).
 
 > **⚡ Drive a KNOWN sequence with `deviceui.ps1 flow`, not one call per screen.** Measured: a screen driven
-> as its own tool call costs **60–120 s** of agent round-trip for **~3 s** of device work — so a deterministic
-> ~12-screen preamble (app first-run gates, an add-account wizard, a settings path) burns ~20 minutes to do
-> ~40 seconds of work, and in one measured batch that same preamble was paid **9 times ≈ 3 hours**. Batching
-> is *not* about process startup (measured: 3%) — it's about **removing round-trips from sequences that
-> contain no decisions**:
+> as its own tool call costs a **~25 s median** agent round-trip (p90 60 s) for **~2.5 s** of device work — so a
+> deterministic ~12-screen preamble (app first-run gates, an add-account wizard, a settings path) burns ~5+
+> minutes to do ~30 seconds of work, and in one measured batch that same preamble was paid **9 times**. The
+> overhead is **fixed per call, not proportional to how hard the decision is** — measured, easy deterministic
+> steps cost 25.7 s and hard auth/error steps cost 27.5 s, i.e. the same. So it can't be fixed by "thinking
+> less"; it's fixed by **taking fewer turns**, which pays off best precisely where the steps are most obvious:
 > ```powershell
 > ./scripts/deviceui.ps1 flow -Serial <serial> -Spec <sequence.json>
 > ./scripts/deviceui.ps1 flow -Serial <serial> -Text '[{"tap":"Allow","optional":true},{"tapRes":"...:id/accept"}]'
@@ -680,8 +681,9 @@ Load these as needed (don't preload all):
 - **Honour BOTH wall-clock caps: 30 min per test point AND 45 min per case across *all* iterations.** A
   re-dispatch does not reset the case budget; stop and record a PARTIAL/ABORTED verdict instead of buying
   another 30 minutes.
-- **Batch deterministic screen sequences into one `deviceui.ps1 flow` call.** One tool call per screen costs
-  60–120 s of round-trip for ~3 s of device work; a preamble with no decisions in it must not be driven
+- **Batch deterministic screen sequences into one `deviceui.ps1 flow` call.** One tool call per screen costs a
+  ~25 s median round-trip for ~2.5 s of device work, and that overhead is **fixed** — measured, an obvious step
+  costs the same as a hard one (25.7 s vs 27.5 s). So a preamble with no decisions in it must not be driven
   screen-by-screen. Keep per-screen driving for the decision-heavy part the case is actually testing.
 - **Never queue a `write_agent` follow-up behind a lane that still has work** — it isn't delivered until that
   lane's whole turn ends (measured: 90 min of dead air). Dispatch a fresh agent on a free lane instead.

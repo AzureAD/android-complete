@@ -31,9 +31,11 @@ Follow the **fast path** (details + rationale in [run-speed.md](run-speed.md)). 
 
 **Collapse a whole KNOWN sequence into one `deviceui.ps1 flow` call — this is the largest latency win by far.**
 It is *not* about process/adb startup (measured: batching 4 steps saved only **3%** of shell time). It's that
-every separate call is a separate **agent round-trip**, costing 60–120 s of think-time for ~3 s of device work.
-So any run of screens whose order you already know — app first-run gates, an add-account wizard, a settings
-path — should be **one** call:
+every separate call is a separate **agent turn**, costing a ~25 s median round-trip (p90 60 s) for ~2.5 s of
+device work. Crucially that overhead is **fixed, not proportional to decision difficulty** — measured, obvious
+navigation steps cost 25.7 s and hard auth/error steps cost 27.5 s. So batching pays off *most* exactly where
+the steps are most predictable. Any run of screens whose order you already know — app first-run gates, an
+add-account wizard, a settings path — should be **one** call:
 ```powershell
 ./scripts/deviceui.ps1 flow -Serial <serial> -Text '[{"tap":"Allow","optional":true},{"tapRes":"...:id/accept"}]'
 ```
