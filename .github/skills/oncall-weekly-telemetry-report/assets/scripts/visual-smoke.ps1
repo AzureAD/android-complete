@@ -30,7 +30,7 @@
 
 .EXAMPLE
     .\visual-smoke.ps1
-    # checks the latest report + writes ~/android-oce-reports/_visual/oncall-wow-report-<sunday>.png
+    # checks the latest report + writes ~/android-oce-reports/_visual/oncall-wow-report-<end-date>.png
 
 .EXAMPLE
     .\visual-smoke.ps1 -Path C:\path\to\report.html

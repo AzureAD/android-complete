@@ -15,16 +15,23 @@
  *
  * Input shape: a Kusto MCP JSON file produced by:
  *
+ *   let curEnd    = datetime(<CUR_END>);
+ *   let curStart  = datetime(<CUR_START>);
+ *   let prevStart = datetime(<PREV_START>);
  *   let codes = dynamic([...]);
  *   materialized_view('ErrorStatsMetrics')
- *   | where EventInfo_Time between (datetime(<prev_week>) .. datetime(<this_week_end>))
+ *   | where EventInfo_Time >= prevStart and EventInfo_Time < curEnd
  *   | where error_code in (codes)            // or unified_error_type in (types)
- *   | extend wk = startofweek(EventInfo_Time)
- *   | where wk < datetime(<reporting_week_end_sunday>)   // drop partial end!
+ *   | extend week = iff(EventInfo_Time >= curStart, curStart, prevStart)
  *   | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
  *               errs = sum(countOverall)
- *        by wk, error_code, <ONE_DIMENSION>
- *   | order by error_code asc, wk asc, devs desc
+ *        by week, error_code, <ONE_DIMENSION>
+ *   | order by error_code asc, week asc, devs desc
+ *
+ * (`week` is now the START datetime of the 7-day window -- one of two values:
+ * prevStart or curStart. The script sorts wks lexicographically and treats
+ * the smallest as "prev" and the largest as "cur", so any pair of sortable
+ * bucket labels works.)
  *
  * Usage:
  *   node agg.js <input.json> <error_key> <dim_col> [<dim_col2> ...] [--top=N] [--metric=devs|reqs]
@@ -67,7 +74,7 @@ function pct(a, b) {
 }
 
 const { items, schema } = load(file);
-const wkIdx = schema.indexOf('wk');
+const wkIdx = schema.indexOf('week');
 const errIdx = schema.indexOf(errKey);
 const valIdx = schema.indexOf(metric === 'devs' ? 'devs' : 'errs');
 const dimIdxs = dimCols.map(c => {
@@ -79,20 +86,20 @@ const dimIdxs = dimCols.map(c => {
   return i;
 });
 if (wkIdx < 0 || errIdx < 0 || valIdx < 0) {
-  console.error(`Required columns missing. schema=${schema.join(', ')} need wk, ${errKey}, ${metric === 'devs' ? 'devs' : 'errs'}`);
+  console.error(`Required columns missing. schema=${schema.join(', ')} need week, ${errKey}, ${metric === 'devs' ? 'devs' : 'errs'}`);
   process.exit(2);
 }
 
-// group: err -> dimkey -> wk -> value
+// group: err -> dimkey -> week -> value
 const m = {};
 const wks = new Set();
 for (const r of items) {
-  const wk = r[wkIdx], err = r[errIdx], val = r[valIdx];
+  const week = r[wkIdx], err = r[errIdx], val = r[valIdx];
   const dimKey = dimIdxs.map(i => (r[i] === null || r[i] === undefined || r[i] === '') ? '(blank)' : r[i]).join(' | ');
-  wks.add(wk);
+  wks.add(week);
   m[err] = m[err] || {};
   m[err][dimKey] = m[err][dimKey] || {};
-  m[err][dimKey][wk] = (m[err][dimKey][wk] || 0) + val;
+  m[err][dimKey][week] = (m[err][dimKey][week] || 0) + val;
 }
 const sortedWks = [...wks].sort();
 if (sortedWks.length < 2) {
