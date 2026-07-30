@@ -581,6 +581,15 @@ per-case report — so the user gets one roll-up verdict:
 ./scripts/report.ps1 summary -In <suiteFolder> -Title "<suite>"   # SUMMARY.html + SUMMARY.md: per-case table + counts
 ```
 
+**Re-running a case? Update its existing report — and keep the old verdict as history.** When a case already
+has a `tc<id>\run.json` from an earlier run, write the new outcome into **that same file** rather than starting
+a fresh batch folder, and append the previous outcome to a **`runHistory[]`** array (oldest first, last entry's
+verdict = the current `verdict`). Put the re-run's screenshots in their own subfolder
+(`tc<id>\rerun-<yyyyMMdd>\iter<N>\`) so the earlier evidence survives. The report then renders a *Run history*
+table and the suite summary gains a **Was** column (`BLOCKED → PASS`), which is the only way a reader can tell
+which re-run actually rescued which case. Omit `runHistory` for a case that has only ever run once. See
+[references/test-reporting.md → Re-running a case](references/test-reporting.md#re-running-a-case--record-the-trajectory-dont-overwrite-it).
+
 **Do not tear down accounts or registrations after a case (unless told otherwise).** Leave temp users,
 device/WPJ registrations, and installed apps as they are — the *next* run's clean-state step (Phase 3
 uninstall+reinstall) removes them, or a tester handles them manually. This keeps a failed/blocked case's

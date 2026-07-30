@@ -9,6 +9,7 @@ Table of contents:
 - [Why mandatory](#why-mandatory)
 - [How it works](#how-it-works)
 - [Run-JSON schema](#run-json-schema)
+- [Re-running a case — record the trajectory, don't overwrite it](#re-running-a-case--record-the-trajectory-dont-overwrite-it)
 - [Multiple test points — one consolidated report per case](#multiple-test-points--one-consolidated-report-per-case)
 - [Proposed test steps (recommendation, not applied to ADO)](#proposed-test-steps-recommendation-not-applied-to-ado)
 - [Worked example](#worked-example)
@@ -57,7 +58,38 @@ the account **UPN only**.
 | `proposedScope` | string | **REQUIRED for an ADO case** (see [Proposed test steps](#proposed-test-steps-recommendation-not-applied-to-ado)). One-line scope, e.g. "Full rewrite as 5 steps", "Minor — steps 1–2 only", or `"No change needed"` when the case really is fine as written. |
 | `proposedSteps` | array | **REQUIRED for an ADO case** (may be `[]` only when `proposedScope` is `"No change needed"`). Suggested ADO steps: `{ n, action, expected, attachment, automation }`. Rendered **once at case level** as a `# / Action / Expected result / Attachments` table; `attachment` = a screenshot path/URL that fills that step's **Attachments** cell; `automation` renders in a separate skill-only list. Must be **generic across all test points** and **self-contained** (no preconditions block — fold prerequisites into the first steps). |
 | `proposedMinimalEdits` | array of string | Optional — smallest high-value wording edits if you'd rather not rewrite the whole case. |
+| `runHistory` | array | Optional — **re-run trajectory**. One entry per run of this case, **oldest first**: `{ label, date, verdict, note }`. Renders as a *Run history* table and drives the suite summary's **Was** column (`BLOCKED → PASS`). See [Re-running a case](#re-running-a-case--record-the-trajectory-dont-overwrite-it). |
 | `skillNotes` | array of string | Optional notes for the e2e-tester skill (rendered separately; not part of the ADO steps). |
+
+## Re-running a case — record the trajectory, don't overwrite it
+
+When you re-run a case that already has a report, you are **updating** a record, not creating one. Write the
+new outcome into the **same** `tc<id>\run.json` — but first append the *previous* outcome to `runHistory`, so
+the report answers "did the re-run actually fix it?" rather than just showing today's verdict:
+
+```jsonc
+"verdict": "PASS",                       // the CURRENT outcome (must equal the LAST runHistory entry)
+"runHistory": [
+  { "label":"Initial run", "date":"2026-07-26", "verdict":"BLOCKED",
+    "note":"Proof-up wall: aka.ms/mfasetup returned BadRequest; pairing never offered." },
+  { "label":"Re-run after pairing-link fix", "date":"2026-07-29", "verdict":"PASS",
+    "note":"Used the 'Pair your account' link (not Next); number-match completed in one pass." }
+]
+```
+
+Rules that make this worth doing:
+- **Oldest first**, and the **last entry's verdict must equal the top-level `verdict`** — otherwise the
+  report contradicts itself.
+- **Omit `runHistory` entirely for a case that has only run once.** A one-row history table is noise; the
+  summary's **Was** column only appears when at least one case in the batch actually has a trajectory.
+- **Keep the earlier evidence.** Put the re-run's screenshots in their own subfolder
+  (`tc<id>\rerun-<yyyyMMdd>\iter<N>\`) instead of overwriting `iter1\`, so a reader can compare the two runs.
+- Make each `note` explain **why** the verdict moved. "Now passes" is useless; "pairing link is single-use and
+  the first run consumed it" tells the next person what to do.
+
+> **Why this exists:** an earlier batch was re-run twice and each wave overwrote the previous verdicts in
+> place. The only surviving record of the original outcomes was a side table, and reconstructing "which
+> re-run actually rescued which case" cost far more than recording it would have.
 
 ## Multiple test points — one consolidated report per case
 

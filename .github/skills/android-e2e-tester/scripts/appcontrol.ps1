@@ -1,4 +1,4 @@
-# Copyright (c) Microsoft Corporation. All rights reserved.
+﻿# Copyright (c) Microsoft Corporation. All rights reserved.
 <#
 .SYNOPSIS
     Build, install, launch, and reset the app-under-test on a device/emulator for E2E runs.

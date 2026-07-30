@@ -61,6 +61,17 @@
       "proposedSteps": [ { "n":1, "action":"Create a temp user ...", "expected":"...", "attachment":"ecs/iter1/01_setup.png",
                            "automation":"skill-only hint, rendered below the ADO table" } ],
       "proposedMinimalEdits": [ "Step 1: change 'outlook.com' -> 'https://outlook.office.com/mail/'" ],
+      // OPTIONAL trajectory block — add it when a case has been RE-RUN, so the report shows how the verdict moved
+      // over time instead of silently overwriting the earlier outcome. Order OLDEST first; the LAST entry's verdict
+      // must match the run's current top-level "verdict". The suite summary reads runHistory[0].verdict to render a
+      // "Was" column (e.g. "BLOCKED → PASS"), so a batch shows at a glance which cases a re-run actually rescued.
+      // Omit it entirely for a case that has only ever run once — a one-row history is noise.
+      "runHistory": [
+        { "label":"Initial run",  "date":"2026-07-26", "verdict":"BLOCKED",
+          "note":"What blocked it, in enough detail to judge whether the re-run really fixed the cause." },
+        { "label":"Re-run (proof-up fix)", "date":"2026-07-29", "verdict":"PASS",
+          "note":"What changed and why it passed this time." }
+      ],
       "skillNotes":    [ "Pre-warm the temp user to avoid ESTS propagation lag" ]
     }
 
@@ -82,6 +93,54 @@ $ErrorActionPreference = 'Stop'
 
 function Val($o, $name) { if ($o -and ($o.PSObject.Properties.Name -contains $name)) { return $o.$name } return $null }
 function He([string]$s) { if ($null -eq $s) { return '' } [System.Net.WebUtility]::HtmlEncode([string]$s) }
+# 'device' may be a structured object {model,serial,os,type} or a free-text string; tolerate both.
+function DevText($d) {
+    if (-not $d) { return '' }
+    if ($d -is [string]) { return $d }
+    return (@((Val $d 'model'), (Val $d 'os'), (Val $d 'type'), (Val $d 'resolution') | Where-Object { $_ }) -join ' · ')
+}
+function DevSerial($d) {
+    if (-not $d) { return '' }
+    if ($d -is [string]) { if ($d -match '(emulator-\d+)') { return $Matches[1] } return $d }
+    return [string](Val $d 'serial')
+}
+
+# Always do file I/O as explicit UTF-8, independent of the host shell.# Windows PowerShell 5.1 reads a BOM-less file as ANSI/CP1252 (mangling every non-ASCII char in a
+# run.json written by python or by pwsh 7), and its `Out-File -Encoding utf8` emits a BOM while
+# pwsh 7's does not. .NET's ReadAllText auto-detects a BOM and otherwise assumes UTF-8, so reads are
+# correct either way; writes are pinned to UTF-8 *without* BOM so output is byte-identical on both shells.
+function Read-TextUtf8([string]$path) { [System.IO.File]::ReadAllText($path) }
+function Write-TextUtf8([string]$path, [string]$text) {
+    [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+# pwsh 7's ConvertFrom-Json silently turns an ISO-8601 string into a [datetime]; PS 5.1 leaves it a
+# string. Interpolating the former yields a locale-dependent "07/29/2026 12:20:00", so the same run.json
+# renders differently per shell/machine. Normalize to a fixed, culture-invariant form.
+function TimeText($v) {
+    if ($null -eq $v) { return '' }
+    if ($v -is [datetime]) { return $v.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) }
+    if ($v -is [datetimeoffset]) { return $v.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture) }
+    $s = [string]$v
+    # PS 5.1 leaves an ISO-8601 string alone, so normalize it here too -- otherwise the same run.json
+    # renders "2026-07-29T12:20:00-07:00" on 5.1 and "2026-07-29 12:20" on 7. Friendlier formats
+    # (e.g. "2026-07-21 18:45") are already stable and pass through untouched.
+    if ($s -match '^\d{4}-\d{2}-\d{2}T') {
+        [datetimeoffset]$parsed = [datetimeoffset]::MinValue
+        if ([datetimeoffset]::TryParse($s, [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::None, [ref]$parsed)) {
+            return $parsed.ToString('yyyy-MM-dd HH:mm', [Globalization.CultureInfo]::InvariantCulture)
+        }
+    }
+    return $s
+}
+# Same hazard for date-only values (runHistory.date): keep them yyyy-MM-dd, never "07/26/2026 00:00:00".
+function DateText($v) {
+    if ($null -eq $v) { return '' }
+    if ($v -is [datetime]) { return $v.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
+    if ($v -is [datetimeoffset]) { return $v.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture) }
+    return [string]$v
+}
 
 # ======================= summary: overall report across many per-case runs =======================
 # Scans a batch/run folder for every per-case run.json and emits SUMMARY.html + SUMMARY.md with a
@@ -105,7 +164,7 @@ if ($Command -eq 'summary') {
     $cases = @()
     $missingProposed = @()
     foreach ($rf in $runFiles) {
-        try { $r = Get-Content $rf.FullName -Raw | ConvertFrom-Json } catch { Write-Warning "Skipping unreadable $($rf.FullName)"; continue }
+        try { $r = Read-TextUtf8 $rf.FullName | ConvertFrom-Json } catch { Write-Warning "Skipping unreadable $($rf.FullName)"; continue }
         $dir = Split-Path -Parent $rf.FullName
         $htmlFull = Join-Path $dir 'TestReport.html'
         $rel = ''
@@ -124,6 +183,11 @@ if ($Command -eq 'summary') {
             $missingProposed += [string]$tcId
         }
         $tps = Val $r 'testPoints'
+        # Trajectory: if the case carries a runHistory, surface "was X" so a re-run batch
+        # shows progress at a glance instead of only its latest verdict.
+        $hist = Val $r 'runHistory'
+        $wasV = ''
+        if ($hist) { $h0 = @($hist)[0]; $wasV = [string](Val $h0 'verdict') }
         if ($tps) {
             # one row per test point, all linking to the single consolidated case report
             foreach ($pt in @($tps)) {
@@ -132,8 +196,9 @@ if ($Command -eq 'summary') {
                     tcId    = $tcId
                     title   = $caseTitle
                     verdict = (Vupper $pt)
+                    was     = $wasV
                     note    = [string](Val $pt 'verdictNote')
-                    device  = $(if ($pDev) { [string](Val $pDev 'serial') } else { '' })
+                    device  = $(DevSerial $pDev)
                     config  = [string](Val $pAdo 'configuration')
                     build   = [string](Val $pAdo 'buildSource')
                     report  = $rel
@@ -146,8 +211,9 @@ if ($Command -eq 'summary') {
                 tcId    = $tcId
                 title   = $caseTitle
                 verdict = (Vupper $r)
+                was     = $wasV
                 note    = [string](Val $r 'verdictNote')
-                device  = $(if ($devObj) { [string](Val $devObj 'serial') } else { '' })
+                device  = $(DevSerial $devObj)
                 config  = [string](Val $adoObj 'configuration')
                 build   = [string](Val $adoObj 'buildSource')
                 report  = $rel
@@ -183,19 +249,23 @@ if ($Command -eq 'summary') {
     }
     [void]$sm.AppendLine("Generated $(Get-Date -Format 'yyyy-MM-dd HH:mm')")
     [void]$sm.AppendLine("")
-    [void]$sm.AppendLine("| Test Case | Config | Title | Verdict | Device | Report | Note |")
-    [void]$sm.AppendLine("|---|---|---|---|---|---|---|")
+    $anyHist = @($cases | Where-Object { $_.was }).Count -gt 0
+    $vh = if ($anyHist) { ' Was |' } else { '' }
+    $vhSep = if ($anyHist) { '---|' } else { '' }
+    [void]$sm.AppendLine("| Test Case | Config | Title |$vh Verdict | Device | Report | Note |")
+    [void]$sm.AppendLine("|---|---|---|$vhSep---|---|---|---|")
     foreach ($c in $cases) {
         $tc = if ($c.tcId) { "#$($c.tcId)" } else { '' }
         $cfgDisp = ((@($c.build, $c.config) | Where-Object { $_ }) -join ' — ') -replace '\|', '\|'
         $ti = ([string]$c.title) -replace '\|', '\|'
         $nt = ([string]$c.note) -replace '\|', '\|'
         $rp = if ($c.report) { "[report]($(($c.report) -replace '\\','/'))" } else { '' }
-        [void]$sm.AppendLine("| $tc | $cfgDisp | $ti | $($c.verdict) | $($c.device) | $rp | $nt |")
+        $wasCell = if ($anyHist) { " $(if($c.was){"$($c.was) →"}else{''}) |" } else { '' }
+        [void]$sm.AppendLine("| $tc | $cfgDisp | $ti |$wasCell $($c.verdict) | $($c.device) | $rp | $nt |")
     }
     [void]$sm.AppendLine("")
     $smPath = Join-Path $OutDirFull 'SUMMARY.md'
-    $sm.ToString() | Out-File -FilePath $smPath -Encoding utf8
+    Write-TextUtf8 $smPath $sm.ToString()
 
     # ---- HTML ----
     $srows = ''
@@ -204,8 +274,14 @@ if ($Command -eq 'summary') {
         $tc = if ($c.tcId) { "#$(He ([string]$c.tcId))" } else { '' }
         $cfgDisp = (@($c.build, $c.config) | Where-Object { $_ }) -join ' — '
         $rp = if ($c.report) { "<a href='$(He (($c.report) -replace '\\','/'))'>report</a>" } else { '' }
-        $srows += "<tr><td>$tc</td><td>$(He $cfgDisp)</td><td>$(He $c.title)</td><td><b style='color:$rc'>$(He $c.verdict)</b></td><td>$(He $c.device)</td><td>$rp</td><td>$(He $c.note)</td></tr>"
+        $wasCell = ''
+        if ($anyHist) {
+            $wc = $vColor[[string]$c.was]; if (-not $wc) { $wc = '#605e5c' }
+            $wasCell = "<td>$(if($c.was){"<span style='color:$wc'>$(He ([string]$c.was))</span> &rarr;"}else{''})</td>"
+        }
+        $srows += "<tr><td>$tc</td><td>$(He $cfgDisp)</td><td>$(He $c.title)</td>$wasCell<td><b style='color:$rc'>$(He $c.verdict)</b></td><td>$(He $c.device)</td><td>$rp</td><td>$(He $c.note)</td></tr>"
     }
+    $wasHdr = if ($anyHist) { '<th>Was</th>' } else { '' }
     $chips = ''
     foreach ($k in $counts.Keys) { if ($counts[$k] -gt 0) { $cc = $vColor[$k]; $chips += "<span style='display:inline-block;background:$cc;color:#fff;border-radius:12px;padding:3px 10px;margin-right:6px;font-size:13px'>$k $($counts[$k])</span>" } }
     $mpHtml = ''
@@ -234,13 +310,13 @@ if ($Command -eq 'summary') {
 <div><span class="verdict">$overall</span>$chips</div>
 <p style="color:#605e5c">$total test point$plural · generated $(Get-Date -Format 'yyyy-MM-dd HH:mm')</p>
 $mpHtml
-<table><thead><tr><th>Test Case</th><th>Config</th><th>Title</th><th>Verdict</th><th>Device</th><th>Report</th><th>Note</th></tr></thead>
+<table><thead><tr><th>Test Case</th><th>Config</th><th>Title</th>$wasHdr<th>Verdict</th><th>Device</th><th>Report</th><th>Note</th></tr></thead>
 <tbody>$srows</tbody></table>
 <p class="foot">Generated by the android-e2e-tester skill · $(Get-Date -Format 'yyyy-MM-dd HH:mm')</p>
 </div></body></html>
 "@
     $shtmlPath = Join-Path $OutDirFull 'SUMMARY.html'
-    $shtml | Out-File -FilePath $shtmlPath -Encoding utf8
+    Write-TextUtf8 $shtmlPath $shtml
 
     Write-Host "Wrote:"
     Write-Host "  $shtmlPath"
@@ -255,7 +331,7 @@ $mpHtml
 
 # ======================= render: single test-case report (multi-test-point aware) =======================
 if (-not (Test-Path $In)) { throw "Run JSON not found: $In" }
-$run = Get-Content $In -Raw | ConvertFrom-Json
+$run = Read-TextUtf8 $In | ConvertFrom-Json
 if (-not $OutDir) { $OutDir = Split-Path (Resolve-Path $In) -Parent }
 if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Force -Path $OutDir | Out-Null }
 
@@ -299,6 +375,39 @@ function AttachHtml($att) {
     $p = ([string]$att) -replace '\\', '/'
     $leaf = if ($att -match '^[a-zA-Z]+://') { 'screenshot' } else { try { Split-Path $att -Leaf } catch { $att } }
     return "<a href='$(He $p)'>$(He $leaf)</a>"
+}
+
+# ---- Run history (re-runs of the same case across batches) ----
+# A case re-run after skill/environment fixes must show its TRAJECTORY, not just the latest verdict:
+# the reader needs to see "was BLOCKED, now PASS" at a glance and what changed.
+function HistoryMd($case) {
+    $h = Val $case 'runHistory'
+    if (-not $h) { return '' }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.AppendLine("## Run history")
+    [void]$sb.AppendLine("")
+    [void]$sb.AppendLine("| Run | Date | Verdict | What changed / why |")
+    [void]$sb.AppendLine("|-----|------|---------|--------------------|")
+    foreach ($r in $h) {
+        $lbl = (Val $r 'label') -replace '\|', '\|'
+        $d = (DateText (Val $r 'date')) -replace '\|', '\|'
+        $v = Val $r 'verdict'
+        $n = (Val $r 'note') -replace '\|', '\|'
+        [void]$sb.AppendLine("| $lbl | $d | **$v** | $n |")
+    }
+    [void]$sb.AppendLine("")
+    return $sb.ToString()
+}
+function HistoryHtml($case) {
+    $h = Val $case 'runHistory'
+    if (-not $h) { return '' }
+    $rows = ''
+    foreach ($r in $h) {
+        $v = [string](Val $r 'verdict')
+        $vc = switch -Regex ($v) { 'PASS' { '#107c10' } 'FAIL' { '#a80000' } 'BLOCK' { '#8a8886' } 'ABORT' { '#8a8886' } default { '#c19c00' } }
+        $rows += "<tr><td>$(He (Val $r 'label'))</td><td>$(He (DateText (Val $r 'date')))</td><td><b style='color:$vc'>$(He $v)</b></td><td>$(He (Val $r 'note'))</td></tr>"
+    }
+    return "<h2>Run history</h2><table><thead><tr><th>Run</th><th>Date</th><th>Verdict</th><th>What changed / why</th></tr></thead><tbody>$rows</tbody></table>"
 }
 
 # ---- Proposed test steps (case-level, rendered ONCE; recommendation only — NOT applied to the ADO test case) ----
@@ -391,16 +500,17 @@ function AddPointMd($sb, $pt, $isMulti) {
     }
     $d = Val $pt 'device'
     if ($d) {
-        $dtxt = (@((Val $d 'model'), (Val $d 'os'), (Val $d 'type'), (Val $d 'resolution') | Where-Object { $_ }) -join ' · ')
+        $dtxt = DevText $d
         if ($dtxt) { [void]$sb.AppendLine("- **Device:** $dtxt") }
-        if (Val $d 'serial') { [void]$sb.AppendLine("- **Serial:** $(Val $d 'serial')") }
+        $dser = DevSerial $d
+        if ($dser -and $dser -ne $dtxt) { [void]$sb.AppendLine("- **Serial:** $dser") }
     }
     $ap = Val $pt 'app'
     if ($ap) { $t = (@((Val $ap 'package'), (Val $ap 'version') | Where-Object { $_ }) -join ' v'); if ($t) { [void]$sb.AppendLine("- **App:** $t") } }
     $ac = Val $pt 'account'
     if ($ac) { $t = (@((Val $ac 'upn'), (Val $ac 'usertype') | Where-Object { $_ }) -join '  ·  '); if ($t) { [void]$sb.AppendLine("- **Account:** $t") } }
-    if (Val $pt 'started') { [void]$sb.AppendLine("- **Started:** $(Val $pt 'started')") }
-    if (Val $pt 'finished') { [void]$sb.AppendLine("- **Finished:** $(Val $pt 'finished')") }
+    if (Val $pt 'started') { [void]$sb.AppendLine("- **Started:** $(TimeText (Val $pt 'started'))") }
+    if (Val $pt 'finished') { [void]$sb.AppendLine("- **Finished:** $(TimeText (Val $pt 'finished'))") }
     if (Val $pt 'iterations') { [void]$sb.AppendLine("- **Iterations:** $(Val $pt 'iterations')") }
     [void]$sb.AppendLine("")
     $steps = Val $pt 'steps'
@@ -434,15 +544,16 @@ function PointHtml($pt, $isMulti) {
     $rows = ''
     if (-not $isMulti) { $rows += MetaRow 'Feature' (Val $run 'feature') }
     if ($a) { $rows += MetaRow 'Config' (Val $a 'configuration'); $rows += MetaRow 'Build' (Val $a 'buildSource') }
-    $devTxt = if ($d) { (@((Val $d 'model'), (Val $d 'os'), (Val $d 'type'), (Val $d 'resolution') | Where-Object { $_ }) -join ' · ') } else { '' }
+    $devTxt = DevText $d
     $rows += MetaRow 'Device' $devTxt
-    $rows += MetaRow 'Serial' $(if ($d) { Val $d 'serial' })
+    $devSer = DevSerial $d
+    $rows += MetaRow 'Serial' $(if ($devSer -ne $devTxt) { $devSer } else { '' })
     $appTxt = if ($ap) { (@((Val $ap 'package'), (Val $ap 'version') | Where-Object { $_ }) -join ' v') } else { '' }
     $rows += MetaRow 'App' $appTxt
     $acctTxt = if ($ac) { (@((Val $ac 'upn'), (Val $ac 'usertype'), (Val $ac 'tenant') | Where-Object { $_ }) -join '  ·  ') } else { '' }
     $rows += MetaRow 'Account' $acctTxt
-    $rows += MetaRow 'Started' (Val $pt 'started')
-    $rows += MetaRow 'Finished' (Val $pt 'finished')
+    $rows += MetaRow 'Started' (TimeText (Val $pt 'started'))
+    $rows += MetaRow 'Finished' (TimeText (Val $pt 'finished'))
     $rows += MetaRow 'Iterations' (Val $pt 'iterations')
     $frag += "<table class='meta'>$rows</table>"
     $steps = Val $pt 'steps'
@@ -483,12 +594,14 @@ if ($multi) {
     [void]$md.AppendLine("")
 }
 foreach ($pt in $points) { AddPointMd $md $pt $multi }
+$hmd = HistoryMd $run
+if ($hmd) { [void]$md.Append($hmd) }
 $pmd = ProposedMd $run
 if ($pmd) { [void]$md.Append($pmd) }
 $sn = Val $run 'skillNotes'
 if ($sn) { [void]$md.AppendLine("## Notes for the e2e-tester skill"); [void]$md.AppendLine(""); foreach ($i in $sn) { [void]$md.AppendLine("- $i") }; [void]$md.AppendLine("") }
 $mdPath = Join-Path $OutDir 'TestReport.md'
-$md.ToString() | Out-File -FilePath $mdPath -Encoding utf8
+Write-TextUtf8 $mdPath $md.ToString()
 
 # ---------- HTML ----------
 $adoTxt = ''
@@ -513,6 +626,7 @@ $caseMeta = if ($caseMetaRows) { "<h2>Run details</h2><table class='meta'>$caseM
 $pointsHtml = ''
 foreach ($pt in $points) { $pointsHtml += (PointHtml $pt $multi) }
 $proposedHtml = ProposedHtml $run
+$historyHtml = HistoryHtml $run
 $skillNotesHtml = if (Val $run 'skillNotes') { "<h2>Notes for the e2e-tester skill</h2>$(HtmlList (Val $run 'skillNotes'))" } else { '' }
 
 $html = @"
@@ -540,13 +654,14 @@ $(if (Val $run 'verdictNote'){"<p class='note'>$(He (Val $run 'verdictNote'))</p
 $tpSummary
 $caseMeta
 $pointsHtml
+$historyHtml
 $proposedHtml
 $skillNotesHtml
 <p class="foot">Generated by the android-e2e-tester skill · $(Get-Date -Format 'yyyy-MM-dd HH:mm')</p>
 </div></body></html>
 "@
 $htmlPath = Join-Path $OutDir 'TestReport.html'
-$html | Out-File -FilePath $htmlPath -Encoding utf8
+Write-TextUtf8 $htmlPath $html
 
 Write-Host "Wrote:"
 Write-Host "  $htmlPath"
