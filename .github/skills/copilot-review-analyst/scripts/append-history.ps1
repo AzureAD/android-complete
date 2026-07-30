@@ -96,6 +96,7 @@ $notHelpfulPct = if ($total -gt 0) { [math]::Round(($confirmedNotHelpful / $tota
 $notHelpfulIncorrectPct = if ($total -gt 0) { [math]::Round(($confirmedNotHelpfulIncorrect / $total) * 100, 1) } else { 0 }
 $declinedPct = if ($total -gt 0) { [math]::Round(($declinedCount / $total) * 100, 1) } else { 0 }
 $unresolvedPct = if ($total -gt 0) { [math]::Round(($unresolved / $total) * 100, 1) } else { 0 }
+$unknownPct = if ($total -gt 0) { [math]::Round(($unknownCount / $total) * 100, 1) } else { 0 }
 $repliedHelpfulRate = if ($replied -gt 0) { [math]::Round(($repliedHelpful / $replied) * 100, 1) } else { 0 }
 # Copilot precision: when Copilot was evaluable for correctness (helpful + genuinely incorrect), how often it was correct
 $precisionDenom = $confirmedHelpful + $confirmedNotHelpfulIncorrect
@@ -178,12 +179,23 @@ $snapshot = [ordered]@{
     notHelpfulIncorrect = [ordered]@{ count = $confirmedNotHelpfulIncorrect; pct = $notHelpfulIncorrectPct }
     declined           = [ordered]@{ count = $declinedCount; pct = $declinedPct }
     unresolved         = [ordered]@{ count = $unresolved; pct = $unresolvedPct }
+    unknown            = [ordered]@{ count = $unknownCount; pct = $unknownPct }
     precision          = $precision
     repliedHelpfulRate = $repliedHelpfulRate
     silentAdoptions    = [ordered]@{ count = $silentHelpful; promotedBySignal = $promotedBySignal }
     coverage           = $coverageBlock
     repos              = $repoStats
     engineers          = $engineerStats
+}
+
+# --- Self-consistency: canonical additive buckets must reconcile to total ---
+# (helpful + incorrect + declined + unresolved + unknown). notHelpful is a derived
+# combined bucket (incorrect + declined), so it is intentionally excluded here.
+# Mirrors the gate in final-classification.ps1 so history stays consistent with the
+# classification output — a nonzero unknown that was dropped would silently under-sum.
+$bucketSum = $confirmedHelpful + $confirmedNotHelpfulIncorrect + $declinedCount + $unresolved + $unknownCount
+if ($bucketSum -ne $total) {
+    Write-Warning "Snapshot buckets ($bucketSum) do not reconcile to total ($total) — off by $($total - $bucketSum). Check for verdicts outside the canonical taxonomy."
 }
 
 # --- Load or create history ---
@@ -233,6 +245,7 @@ Write-Host "  Helpful: $helpfulPct% ($confirmedHelpful)  [silent adoptions: $sil
 Write-Host "  Declined: $declinedPct% ($declinedCount)"
 Write-Host "  Incorrect: $notHelpfulIncorrectPct% ($confirmedNotHelpfulIncorrect)"
 Write-Host "  Unresolved: $unresolvedPct% ($unresolved)"
+Write-Host "  Unknown: $unknownPct% ($unknownCount)"
 Write-Host "  Precision: $precision%"
 if ($coverageBlock) { Write-Host "  Coverage: $($coverageBlock.overallPct)% ($($coverageBlock.reviewedPRs)/$($coverageBlock.mergedHumanPRs) merged human PRs reviewed)" }
 Write-Host "  History entries: $($sorted.Count)"
