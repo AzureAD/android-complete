@@ -1,0 +1,20 @@
+# Where the Code Complete Date (CCD) comes from — the system of record.
+#
+# The orchestrator SEEDS CCD from this pipeline at `init`, and when you change
+# CCD (`set-ccd`) or skip the release (`skip-release`) it WRITES BACK to these
+# same variables — gated (explicit --confirm) and audited (reason + event log).
+#
+# CCD rule (mirrors the pipeline's own YAML):
+#   * override_variable, if set AND its month == the release month  -> use it
+#   * otherwise                                                     -> 2nd Wednesday of the month
+#
+# Per-phase anchors (e.g. Phase 0 opens CCD-7) live next to each phase in
+# phases.yaml as `anchor: "CCD-7"`. This file only says WHERE CCD comes from.
+
+ccd_source:
+  pipeline_id: 3038
+  org: "https://identitydivision.visualstudio.com"
+  project: "Engineering"
+  name: "Code Complete Calendar Checker"
+  override_variable: "overrideCodeCompleteDate"   # YYYY-MM-DD, month-scoped
+  skip_variable: "skipRelease"                     # any non-empty value suppresses the release

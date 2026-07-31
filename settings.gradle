@@ -186,23 +186,23 @@ project(':labapi').projectDir = new File('common/labapi')
 include(":keyvault")
 project(':keyvault').projectDir = new File('common/keyvault')
 
-include(":AcaPlugin")
-project(':AcaPlugin').projectDir = new File('plugins/buildsystem')
+//include(":AcaPlugin")
+//project(':AcaPlugin').projectDir = new File('plugins/buildsystem')
 
 include(":broker4j")
 project(':broker4j').projectDir = new File('broker/broker4j')
 
-include(":LinuxBroker")
-project(':LinuxBroker').projectDir = new File('broker/LinuxBroker')
+//include(":LinuxBroker")
+//project(':LinuxBroker').projectDir = new File('broker/LinuxBroker')
 
 include(':LabApiUtilities')
 project(':LabApiUtilities').projectDir = new File('common/LabApiUtilities')
 
-include(':java-linux-test-app')
-project(':java-linux-test-app').projectDir = new File('broker/java-linux-test-app')
+//include(':java-linux-test-app')
+//project(':java-linux-test-app').projectDir = new File('broker/java-linux-test-app')
 
-include(":LinuxBrokerPackage")
-project(':LinuxBrokerPackage').projectDir = new File('/broker/LinuxBrokerPackage')
+//include(":LinuxBrokerPackage")
+//project(':LinuxBrokerPackage').projectDir = new File('/broker/LinuxBrokerPackage')
 
 include(":AzureSample")
 project(':AzureSample').projectDir = new File('azuresample/app')
@@ -219,8 +219,8 @@ project(':mockltw').projectDir = new File('broker/mockbrokers/mockltw')
 include(":mockbrokerapplib")
 project(':mockbrokerapplib').projectDir = new File('broker/mockbrokers/mockbrokerapplib')
 
-include(":NativeAuthSample")
-project(':NativeAuthSample').projectDir = new File('nativeauthsample/app')
+//include(":NativeAuthSample")
+//project(':NativeAuthSample').projectDir = new File('nativeauthsample/app')
 
 // Authenticator App Projects — only included when the opt-in flag is set.
 if (includeAuthenticatorApp) {

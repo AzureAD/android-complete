@@ -1,0 +1,114 @@
+# Release Orchestrator — external dependency manifest (single source of truth).
+#
+# Lists everything the tool needs on a machine, so a DIFFERENT release engineer
+# can verify their setup is complete. `bootstrap.ps1` reads this file and checks
+# each entry (or, for MCP servers, prints them for the engineer to confirm in Scout).
+#
+# KEEP THIS UPDATED: whenever a feature or phase agent introduces a new dependency
+# (a CLI, a Python package, or an MCP server), add it here in the same change.
+#
+# Entry fields:
+#   id           unique short id
+#   name         human name
+#   type         cli | python | host | mcp
+#   required_by  which part(s) of the tool need it (traceability)
+#   check        shell command that succeeds (exit 0) when present   [cli/python/host]
+#   install      how to install it (shown when the check fails)      [cli/python/host]
+#   note         guidance (used for `mcp` entries — not shell-checkable)
+
+requirements:
+  - id: scout
+    name: "Microsoft Scout (host app)"
+    type: host
+    required_by: [everything — the skill runs inside Scout]
+    # Detected by the presence of the Scout profile dir (~/.scout). This is a soft
+    # check surfaced by `infra`; if absent, the engineer must install Scout FIRST
+    # (MCP servers can't be registered without it).
+    check: "cmd /c \"if exist \"%USERPROFILE%\\.scout\" (exit 0) else (exit 1)\""
+    install: "Install Microsoft Scout first, then re-run bootstrap. (Get it from your team's Scout distribution / the internal Scout install page.)"
+
+  - id: python
+    name: "Python 3.9+"
+    type: host
+    required_by: [engine]
+    check: "python --version"
+    install: "Install Python 3.9 or newer from https://www.python.org/downloads/"
+
+  - id: pyyaml
+    name: "PyYAML"
+    type: python
+    required_by: [engine (reads config/*.yaml)]
+    check: "python -c \"import yaml\""
+    install: "python -m pip install pyyaml"
+
+  - id: azure-cli
+    name: "Azure CLI (az)"
+    type: cli
+    required_by: [readiness.build_access]
+    check: "az version"
+    install: "https://learn.microsoft.com/cli/azure/install-azure-cli"
+
+  - id: azure-devops-ext
+    name: "Azure CLI 'azure-devops' extension"
+    type: cli
+    required_by: [readiness.build_access]
+    check: "az extension show --name azure-devops"
+    install: "az extension add --name azure-devops"
+
+  - id: az-login
+    name: "Signed in to Azure DevOps (az login)"
+    type: cli
+    required_by: [readiness.build_access]
+    check: "az account show"
+    install: "az login   (must have access to the release build definitions)"
+
+  - id: agency-cli
+    name: "Agency CLI (provides the ICM MCP server)"
+    type: cli
+    required_by: [readiness.oncall_now, mcp.icm]
+    check: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
+    install: "Install the Agency platform: https://aka.ms/agency (provides agency.exe under %APPDATA%\\agency)"
+
+# MCP servers the skill needs inside Scout. Unlike CLIs these live in Scout's own
+# config (~/.scout/m-mcp-servers.json) and load at startup — so `bootstrap.ps1`
+# REGISTERS any missing ones (create-if-absent, backing up the file first) and then
+# tells the engineer to RESTART Scout for them to load. Each entry:
+#   id          short id
+#   name        human name
+#   scout_key   the key to use under "servers" in m-mcp-servers.json
+#   provider    a shell check that the launcher exists (so we don't register a broken server)
+#   command     absolute launcher path (supports %APPDATA% etc.; expanded at register time)
+#   args        launcher args
+#   required_by which part(s) of the tool need it
+#   note        guidance
+mcp_servers:
+  - id: icm
+    name: "ICM MCP server (on-call / incidents)"
+    scout_key: icm
+    provider: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
+    command: "%APPDATA%\\agency\\CurrentVersion\\agency.exe"
+    args: ["mcp", "icm"]
+    required_by: [readiness.oncall_now, on-call lookups]
+    note: "Provided by the Agency CLI. After registering, RESTART Scout so it loads; then Scout auto-discovers the ICM tools."
+
+  - id: kusto
+    name: "Kusto / ADX MCP server (query telemetry)"
+    scout_key: kusto
+    provider: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
+    command: "%APPDATA%\\agency\\CurrentVersion\\agency.exe"
+    args: ["mcp", "kusto"]
+    # Multi-cluster: infra appends '--known-services <json>' built from the
+    # `kusto_clusters` list below, so ALL our clusters are queryable through one
+    # MCP. Add a cluster there (data only) to make it available — no code change.
+    known_services_from: kusto_clusters
+    required_by: [monitoring/ADX dashboards, Play vitals, crash metrics, readiness.adx_access]
+    note: "Provided by the Agency CLI (uvx microsoft-fabric-rti-mcp). After registering, RESTART Scout. Add clusters under kusto_clusters."
+
+# Kusto/ADX clusters the tool queries (data — infra wires these into the kusto MCP
+# via --known-services). Add an entry per cluster we use.
+kusto_clusters:
+  - service_uri: "https://idsharedeus2.eastus2.kusto.windows.net"
+    default_database: "d496be22d62a46b0a3cf67ea2e736fd8"
+    description: "ID shared EastUS2 (idsharedeus2) — Android release telemetry"
+
+
