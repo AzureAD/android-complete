@@ -1,0 +1,62 @@
+// Authenticator — BROKER API RESPONSIVENESS, week over week.
+//
+// This is the seam between the two reports. Authenticator calls into the Broker via a small set
+// of named APIs; this query measures how those calls behave FROM THE AUTHENTICATOR SIDE.
+// A regression here should always be cross-checked against the Broker report for the same window
+// before it is attributed to Authenticator — and vice-versa. Cite the sibling report explicitly.
+//
+// ⚠️ RAW TABLE — not a materialized view. Two consequences:
+//   1. The time column is PipelineInfo_IngestionTime (NOT EventDate, NOT EventInfo_Time). Using
+//      the wrong one silently returns an empty or wildly wrong window.
+//   2. It is expensive. Keep the window at 14 days, keep the projection narrow, and expect this
+//      to be the slowest query in the run. If the Kusto MCP times out, use run-kql.ps1.
+//      Scale check (verified live): ~113M BrokerApi* events/day, so a 14-day window scans ~1.6B
+//      rows. A 2-day probe returns in seconds; if the full window struggles, narrow to 7 days and
+//      compare against the prior 7 rather than dropping the query.
+//
+// BrokerApiName and BrokerApiElapsedTimeMs live inside the AdditionalProperties string and must be
+// extracted, not projected.
+//
+// ✅ VERIFIED LIVE — table name, all three OperationName literals, both extract() patterns, and
+//    DeviceInfo_Id all confirmed to exist and return data. Facts worth knowing:
+//    • The three operations are genuinely distinct: BrokerApiCallCompleted always carries
+//      BrokerApiSuccess=true, and failures arrive as their own BrokerApiCallFailed operation.
+//      Do NOT try to derive failures from a BrokerApiSuccess=false filter — that set is empty.
+//    • BrokerApiElapsedTimeMs is present ONLY on Completed/Failed, never on Initiated. The
+//      extract yields null there and percentile() ignores nulls, so the latency numbers are
+//      correctly computed over resolved calls only. This is intended — do not "fix" it.
+//    • Initiated exceeds Completed+Failed by ~2%. That gap is real abandonment, not a bug; it is
+//      why SuccessRate is computed against Initiated rather than against Completed+Failed.
+//    • Typical API mix: getBrokerAccounts.Entra (~80% of volume, P50 ~468ms, P95 ~3.6s),
+//      getAllEntries (~18%, P50 ~106ms), then a long tail. installCert is low-volume but slow
+//      (P95 tens of seconds) — do not flag it as a regression without a real WoW delta.
+//
+// Cluster:  https://idsharedeus2.eastus2.kusto.windows.net
+// Database: d496be22d62a46b0a3cf67ea2e736fd8
+//
+// Tokens: <CUR_START> <CUR_END> <PREV_START>
+let curStart  = datetime(<CUR_START>);
+let curEnd    = datetime(<CUR_END>);
+let prevStart = datetime(<PREV_START>);
+brokeroperations
+| where PipelineInfo_IngestionTime >= prevStart and PipelineInfo_IngestionTime < curEnd
+| where OperationName in ("BrokerApiCallInitiated", "BrokerApiCallCompleted", "BrokerApiCallFailed")
+| extend
+    ApiName   = extract("BrokerApiName=([^,}]+)", 1, tostring(AdditionalProperties)),
+    ElapsedMs = toint(extract("BrokerApiElapsedTimeMs=([0-9]+)", 1, tostring(AdditionalProperties))),
+    Window    = iff(PipelineInfo_IngestionTime >= curStart, "current", "previous")
+| where isnotempty(ApiName)
+| summarize
+    Initiated = countif(OperationName == "BrokerApiCallInitiated"),
+    Completed = countif(OperationName == "BrokerApiCallCompleted"),
+    Failed    = countif(OperationName == "BrokerApiCallFailed"),
+    Devices   = dcount(DeviceInfo_Id),
+    P50Ms     = percentile(ElapsedMs, 50),
+    P95Ms     = percentile(ElapsedMs, 95),
+    P99Ms     = percentile(ElapsedMs, 99)
+    by ApiName, Window
+| extend
+    SuccessRate = round(case(Initiated > 0, todouble(Completed) / todouble(Initiated) * 100, 0.0), 2),
+    FailureRate = round(case(Initiated > 0, todouble(Failed)    / todouble(Initiated) * 100, 0.0), 2)
+| project ApiName, Window, Initiated, Completed, Failed, SuccessRate, FailureRate, Devices, P50Ms, P95Ms, P99Ms
+| order by ApiName asc, Window desc

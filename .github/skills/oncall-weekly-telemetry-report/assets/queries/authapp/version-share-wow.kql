@@ -1,0 +1,43 @@
+// Authenticator — APP VERSION SHARE, week over week (rollout / denominator check).
+//
+// Purpose: before you call any scenario rate change a regression, check whether the version mix
+// moved. A new build ramping from 5% to 60% of the population can move every scenario's rate at
+// once without a single line of scenario code having changed. This is the Authenticator analogue
+// of the Broker report's broker-version-share check, and it carries the same hard rule:
+// a denominator caveat must CITE this query's output and name the version cohort — never hand-wave.
+//
+// ⚠️ This is a telemetry-active-device proxy, NOT a product DAU. It counts devices that emitted
+//    at least one Entra MFA push-notification event in the window. Label it that way in the
+//    report; do not print it as "daily active users".
+//
+// The MFA PN+CFA view is used as the population source because it is the highest-volume
+// Authenticator MV — resolving version share from it is far cheaper than a `union *` scan.
+//
+// Cluster:  https://idsharedeus2.eastus2.kusto.windows.net
+// Database: d496be22d62a46b0a3cf67ea2e736fd8
+//
+// Tokens: <CUR_START> <CUR_END> <PREV_START>
+let curStart  = datetime(<CUR_START>);
+let curEnd    = datetime(<CUR_END>);
+let prevStart = datetime(<PREV_START>);
+let pop =
+    Entra_MFA_Push_Notification_And_CheckForAuth_MV_V1
+    | where EventDate >= prevStart and EventDate < curEnd
+    | where isnotempty(AppVersion)
+    | summarize Devices = sum(NotificationInitiatedDCount)
+        by AppVersion, Window = iff(EventDate >= curStart, "current", "previous");
+let totals = pop | summarize WindowDevices = sum(Devices) by Window;
+pop
+| join kind=inner (totals) on Window
+| extend SharePct = round(todouble(Devices) / todouble(WindowDevices) * 100, 2)
+| summarize
+    CurDevices  = sumif(Devices,  Window == "current"),
+    PrevDevices = sumif(Devices,  Window == "previous"),
+    CurSharePct = sumif(SharePct, Window == "current"),
+    PrevSharePct= sumif(SharePct, Window == "previous")
+    by AppVersion
+| extend
+    DeltaSharePts = round(CurSharePct - PrevSharePct, 2),
+    DeltaDevicesPct = round(case(PrevDevices > 0, (todouble(CurDevices) - PrevDevices) / PrevDevices * 100, 0.0), 1)
+| project AppVersion, CurDevices, CurSharePct, PrevDevices, PrevSharePct, DeltaSharePts, DeltaDevicesPct
+| order by CurDevices desc

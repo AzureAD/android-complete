@@ -1,0 +1,91 @@
+// Authenticator — WEEK-OVER-WEEK push-notification completion + reacted split, all 4 PN families.
+//
+// PN families have no Succeeded/Failed columns. The funnel is two-stage:
+//   stage 1  <PN_INIT_MV>     notifications initiated / received   (the denominator)
+//   stage 2  <PN_RESULTS_MV>  the subset the user REACTED to, split by FinalResult
+//
+//   CompletionRate = (Approved + Denied) / NotificationInitiated
+//   ApprovedRate / DeniedRate / ErrorRate are shares of the REACTED total, not of initiated.
+//
+// ✅ FinalResult — full distinct set enumerated live, do not assume it is only three values:
+//       Approved   (~97% of reacted)   Denied   Error   Cancelled   ""  (empty)
+//    The filter below deliberately keeps only {Approved, Denied, Error}. Cancelled and empty are
+//    ~0.1% of MFA volume and are NOT reactions that complete an auth, so excluding them is
+//    correct — and they are excluded from the CompletionRate numerator either way. If that share
+//    ever grows materially, surface it rather than silently dropping it.
+//
+// A drop in CompletionRate with a flat ApprovedRate means notifications are not reaching or not
+// being acted on (delivery / lifecycle), NOT that auth is failing. Say which one in the report.
+//
+// Cluster:  https://idsharedeus2.eastus2.kusto.windows.net
+// Database: d496be22d62a46b0a3cf67ea2e736fd8
+//
+// Tokens: <CUR_START> <CUR_END> <PREV_START>   (baseline window end is always <CUR_START>)
+//
+// MSA note: BOTH the init MV and the results MV carry IsNGC ("true" → NGC, "false" → SA).
+// The filter must be applied on BOTH sides or the two halves of the funnel disagree.
+//
+// KQL NOTE: in a `let` lambda, TABULAR parameters must be declared BEFORE scalar ones, so both
+// helpers take `(T, label)` — not `(label, T)`. See scenario-outcomes-wow.kql's gotcha header.
+// Verified live: the `join ... on Scenario, Window` below needs NO $left./$right. qualification.
+let curStart  = datetime(<CUR_START>);
+let curEnd    = datetime(<CUR_END>);
+let prevStart = datetime(<PREV_START>);
+let win = (d:datetime) { iff(d >= curStart, "current", "previous") };
+let inits = (T:(EventDate:datetime, Ini:long, IniD:long), label:string) {
+    T
+    | where EventDate >= prevStart and EventDate < curEnd
+    | summarize Initiated = sum(Ini), InitiatedDevices = sum(IniD) by Window = win(EventDate)
+    | extend Scenario = label
+};
+let reacted = (T:(EventDate:datetime, FinalResult:string, React:long, ReactD:long), label:string) {
+    T
+    | where EventDate >= prevStart and EventDate < curEnd
+    | where FinalResult in ("Approved", "Denied", "Error")
+    | summarize R = sum(React), RD = sum(ReactD) by Window = win(EventDate), FinalResult
+    | summarize
+        Approved = sumif(R, FinalResult == "Approved"),
+        Denied   = sumif(R, FinalResult == "Denied"),
+        Error    = sumif(R, FinalResult == "Error"),
+        ApprovedDevices = sumif(RD, FinalResult == "Approved"),
+        DeniedDevices   = sumif(RD, FinalResult == "Denied"),
+        ErrorDevices    = sumif(RD, FinalResult == "Error")
+        by Window
+    | extend Scenario = label
+};
+let allInits =
+    union
+      inits((Entra_MFA_Push_Notification_And_CheckForAuth_MV_V1
+            | project EventDate, Ini = NotificationInitiated, IniD = NotificationInitiatedDCount), "Entra MFA PN+CFA"),
+      inits((Entra_PSI_Push_Notification_And_CheckForAuth_MV_V1
+            | project EventDate, Ini = NotificationInitiated, IniD = NotificationInitiatedDCount), "Entra PSI PN+CFA"),
+      inits((Entra_MSA_Push_Notification_And_CheckForAuth_MV_V1
+            | where IsNGC == "true"
+            | project EventDate, Ini = NotificationReceivedInitiated, IniD = NotificationReceivedInitiatedDCount), "MSA NGC PN+CFA"),
+      inits((Entra_MSA_Push_Notification_And_CheckForAuth_MV_V1
+            | where IsNGC == "false"
+            | project EventDate, Ini = NotificationReceivedInitiated, IniD = NotificationReceivedInitiatedDCount), "MSA SA PN+CFA");
+let allReacted =
+    union
+      reacted((Entra_MFA_Push_Notification_And_CheckForAuth_Results_MV_V1
+              | project EventDate, FinalResult, React = RequestTimeInitiated, ReactD = RequestTimeInitiatedDCount), "Entra MFA PN+CFA"),
+      reacted((Entra_PSI_Push_Notification_And_CheckForAuth_Results_MV_V1
+              | project EventDate, FinalResult, React = RequestTimeInitiated, ReactD = RequestTimeInitiatedDCount), "Entra PSI PN+CFA"),
+      reacted((Entra_MSA_Push_Notification_And_CheckForAuth_Results_MV_V1
+              | where IsNGC == "true"
+              | project EventDate, FinalResult, React = SessionTimeInitiated, ReactD = SessionTimeInitiatedDCount), "MSA NGC PN+CFA"),
+      reacted((Entra_MSA_Push_Notification_And_CheckForAuth_Results_MV_V1
+              | where IsNGC == "false"
+              | project EventDate, FinalResult, React = SessionTimeInitiated, ReactD = SessionTimeInitiatedDCount), "MSA SA PN+CFA");
+allInits
+| join kind=leftouter (allReacted) on Scenario, Window
+| extend Reacted = Approved + Denied + Error
+| extend
+    CompletionRate = round(case(Initiated > 0, todouble(Approved + Denied) / todouble(Initiated) * 100, 0.0), 2),
+    ApprovedRate   = round(case(Reacted > 0, todouble(Approved) / todouble(Reacted) * 100, 0.0), 2),
+    DeniedRate     = round(case(Reacted > 0, todouble(Denied)   / todouble(Reacted) * 100, 0.0), 2),
+    ErrorRate      = round(case(Reacted > 0, todouble(Error)    / todouble(Reacted) * 100, 0.0), 2)
+| project Scenario, Window, Initiated, Reacted, Approved, Denied, Error,
+          CompletionRate, ApprovedRate, DeniedRate, ErrorRate,
+          InitiatedDevices, ApprovedDevices, DeniedDevices, ErrorDevices
+| order by Scenario asc, Window desc

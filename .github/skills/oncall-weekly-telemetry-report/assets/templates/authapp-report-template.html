@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<!-- TEMPLATE - Authenticator app report structural reference. This file is a realistic populated
+     prior-window report kept as the canonical layout for the Authenticator half of the weekly
+     Android OCE report. Bootstrap stamps the rolling window into the title and meta block;
+     authors then edit the KPI values, scenario rows, attribution prose, and PR citations in place. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Authenticator Android · On-Call Weekly Report · Jul 23 → Jul 30, 2026</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px; line-height: 1.5; color: #1f2328;
+    background: linear-gradient(180deg, #f6f8fa 0%, #eef1f4 100%);
+    background-attachment: fixed;
+  }
+  .container { max-width: 1400px; margin: 0 auto; padding: 32px 28px 80px; }
+
+  h1 { font-size: 28px; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.5px; color: #0d1117; }
+  h2 { font-size: 18px; font-weight: 700; margin: 36px 0 14px; padding-bottom: 8px;
+       border-bottom: 1px solid #d0d7de; color: #0d1117; letter-spacing: -0.2px; }
+  h2 .count { font-size: 13px; font-weight: 500; color: #656d76; margin-left: 8px; }
+  h3 { font-size: 13px; font-weight: 600; margin: 20px 0 8px; color: #656d76;
+       text-transform: uppercase; letter-spacing: 0.5px; }
+  p { margin: 0 0 8px; }
+  code { font-family: "SF Mono", "JetBrains Mono", Consolas, Monaco, monospace;
+         font-size: 12.5px; background: rgba(175,184,193,0.2);
+         padding: 1px 6px; border-radius: 4px; }
+
+  .header { display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 8px; flex-wrap: wrap; gap: 16px; }
+  .header .meta { color: #656d76; font-size: 13px; }
+  .header .meta strong { color: #1f2328; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px;
+           font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
+           text-transform: uppercase; vertical-align: middle; }
+  .badge-live { background: #dafbe1; color: #1a7f37; }
+
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+              gap: 14px; margin: 18px 0 28px; }
+  .kpi { background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+         padding: 16px 18px; transition: all 0.15s ease;
+         box-shadow: 0 1px 0 rgba(31,35,40,0.04); }
+  .kpi:hover { box-shadow: 0 4px 12px rgba(31,35,40,0.08); transform: translateY(-1px); }
+  .kpi .label { color: #656d76; font-size: 11px; text-transform: uppercase;
+                letter-spacing: 0.4px; font-weight: 600; }
+  .kpi .value { font-size: 24px; font-weight: 700; margin-top: 6px; color: #0d1117;
+                font-variant-numeric: tabular-nums; letter-spacing: -0.5px; }
+  .kpi .delta { font-size: 12px; font-weight: 500; margin-top: 4px; }
+  .kpi .spark { margin-top: 8px; height: 28px; }
+  .delta-up { color: #cf222e; } .delta-down { color: #1a7f37; } .delta-flat { color: #656d76; }
+
+  .callout { border-radius: 10px; padding: 14px 18px; margin: 10px 0 16px;
+             border: 1px solid; position: relative; }
+  .callout.urgent { background: #fff8f8; border-color: #ffcecb; }
+  .callout.urgent::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+                            background: #cf222e; border-radius: 10px 0 0 10px; }
+  .callout.watch { background: #fff8c5; border-color: #d4a72c; }
+  .callout.watch::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+                           background: #bf8700; border-radius: 10px 0 0 10px; }
+  .callout.win { background: #dafbe1; border-color: #aceebb; }
+  .callout.win::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+                         background: #1a7f37; border-radius: 10px 0 0 10px; }
+  .callout-title { font-size: 14px; font-weight: 700; margin-bottom: 6px; display: flex;
+                   align-items: center; gap: 8px; }
+  .callout-title .icon { font-size: 16px; }
+  .callout p, .callout li { font-size: 13px; line-height: 1.55; }
+  .callout ul { margin: 6px 0 0; padding-left: 22px; }
+  .callout li { margin: 3px 0; }
+  .callout li code { background: rgba(255,255,255,0.6); }
+
+  .table-card { background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+                overflow: hidden; box-shadow: 0 1px 0 rgba(31,35,40,0.04); margin-bottom: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  thead th { background: #f6f8fa; text-align: left; padding: 10px 12px; font-weight: 600;
+             color: #656d76; border-bottom: 1px solid #d0d7de; font-size: 11px;
+             text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap; position: sticky; top: 0; }
+  tbody td { padding: 10px 12px; border-bottom: 1px solid #f0f3f6; vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #f6f8fa; }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.code-cell { font-family: "SF Mono", Consolas, Monaco, monospace; font-size: 12.5px;
+                 font-weight: 500; color: #0550ae; }
+  td.bad { color: #cf222e; font-weight: 600; }
+  td.good { color: #1a7f37; font-weight: 600; }
+  td.warn { color: #9a6700; font-weight: 600; }
+  td.muted { color: #656d76; }
+
+  svg.sparkline { display: block; }
+  .spark-cell { vertical-align: middle; }
+
+  .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+                gap: 14px; margin: 14px 0 24px; }
+  .chart-card { background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+                padding: 16px 18px 14px; box-shadow: 0 1px 0 rgba(31,35,40,0.04); }
+  .chart-card .chart-title { font-size: 13px; font-weight: 600; color: #1f2328; margin-bottom: 4px; }
+  .chart-card .chart-subtitle { font-size: 11px; color: #656d76; margin-bottom: 12px; }
+  .chart-card svg { width: 100%; height: auto; display: block; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11px; color: #656d76; }
+  .legend-item { display: flex; align-items: center; gap: 5px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+  details { background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+            margin: 10px 0; box-shadow: 0 1px 0 rgba(31,35,40,0.04); }
+  details summary { cursor: pointer; padding: 12px 16px; font-weight: 600;
+                    color: #0d1117; user-select: none; list-style: none; font-size: 13px; }
+  details summary::before { content: "▶"; display: inline-block; margin-right: 8px;
+                            color: #656d76; font-size: 10px; transition: transform 0.15s; }
+  details[open] summary::before { transform: rotate(90deg); }
+  details summary:hover { background: #f6f8fa; border-radius: 10px 10px 0 0; }
+  details > div { padding: 0 16px 16px; }
+
+  .glossary { background: #f6f8fa; border-left: 3px solid #d0d7de;
+              padding: 10px 14px; margin: 8px 0 16px; font-size: 12px; color: #656d76;
+              border-radius: 0 6px 6px 0; }
+  .glossary strong { color: #1f2328; }
+
+  .toc { background: #fff; border: 1px solid #d0d7de; border-radius: 10px;
+         padding: 12px 18px; margin-bottom: 24px; font-size: 13px;
+         box-shadow: 0 1px 0 rgba(31,35,40,0.04); }
+  .toc ul { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; padding: 0; list-style: none; }
+  .toc a { color: #0550ae; text-decoration: none; font-weight: 500; }
+  .toc a:hover { text-decoration: underline; }
+
+  /* ==================== ATTRIBUTION CARDS ==================== */
+  .attr-grid { display: grid; grid-template-columns: 1fr; gap: 16px; margin: 12px 0 20px; }
+  .attr-card {
+    background: #fff; border: 1px solid #d0d7de; border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(31,35,40,0.06); overflow: hidden;
+    /* Spacing when cards are rendered as siblings (no .attr-grid wrapper) —
+       e.g. a head+body+footer rebuild that emits .attr-card directly under <h2>.
+       Without this, consecutive cards visually touch. Discovered in v8 rebuild. */
+    margin-bottom: 16px;
+  }
+  .attr-card + .attr-card { margin-top: 16px; }
+  .attr-header {
+    padding: 14px 18px; background: linear-gradient(180deg, #fafbfc 0%, #f6f8fa 100%);
+    border-bottom: 1px solid #d0d7de; display: flex; align-items: center;
+    justify-content: space-between; flex-wrap: wrap; gap: 10px;
+  }
+  .attr-header.urgent { background: linear-gradient(180deg, #fff8f8 0%, #ffeef0 100%); border-bottom-color: #ffcecb; }
+  .attr-header.watch  { background: linear-gradient(180deg, #fffbe8 0%, #fff8c5 100%); border-bottom-color: #d4a72c; }
+  .attr-name {
+    font-family: "SF Mono", Consolas, monospace; font-size: 15px; font-weight: 700; color: #0d1117;
+  }
+  .attr-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 9px; border-radius: 12px; font-size: 11px;
+    font-weight: 600; white-space: nowrap;
+  }
+  .tag-bad   { background: #ffeef0; color: #cf222e; }
+  .tag-warn  { background: #fff8c5; color: #9a6700; }
+  .tag-info  { background: #ddf4ff; color: #0550ae; }
+  .tag-muted { background: #f0f3f6; color: #656d76; }
+
+  .attr-body { padding: 14px 18px; }
+  .attr-verdict {
+    background: #f6f8fa; border-left: 3px solid #0550ae; padding: 10px 14px;
+    margin-bottom: 14px; border-radius: 0 6px 6px 0; font-size: 13px;
+  }
+  .attr-verdict.bad  { border-left-color: #cf222e; background: #fff8f8; }
+  .attr-verdict strong { color: #0d1117; }
+
+  /* .attr-dims grid + .dim cards — long calling-app / version names MUST truncate,
+     never wrap or bleed out. Two flexbox traps to be aware of (v8 regression):
+       1. text-overflow:ellipsis is silently IGNORED on display:inline elements.
+          The name <span> must be display:block (or inline-block) for ellipsis.
+       2. Flex children won't shrink below their content size unless min-width:0
+          is set explicitly on the child AND every flex ancestor.
+     Both fixes are baked into the rules below. Authors who hand-write .dim-row
+     markup may use either classed (.dim-name + .dim-pct) or unclassed (<span>
+     + <span>) — both are covered. */
+  .attr-dims { min-width: 0; display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+  }
+  .dim {
+    background: #fafbfc; border: 1px solid #eaeef2; border-radius: 8px;
+    padding: 10px 12px;
+    min-width: 0; overflow: hidden;
+  }
+  .dim-label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    color: #656d76; letter-spacing: 0.4px; margin-bottom: 6px;
+  }
+  .dim-row {
+    display: flex; align-items: center;
+    flex-wrap: nowrap;
+    gap: 8px; padding: 3px 0; font-size: 12px;
+    min-width: 0; width: 100%;
+  }
+  /* Bar-track fixed width — must not flex */
+  .dim-row > .dim-bar-track {
+    flex: 0 0 56px; width: 56px; min-width: 56px;
+    height: 4px; background: #eaeef2; border-radius: 2px;
+    margin-top: 0; overflow: hidden;
+  }
+  /* Name column — classed (.dim-name) OR first unclassed <span>.
+     KEY: display:block + flex:1 1 0 + min-width:0 to make ellipsis engage. */
+  .dim-row .dim-name,
+  .dim-row > span:first-of-type {
+    display: block;
+    flex: 1 1 0; min-width: 0; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: "SF Mono", Consolas, monospace; font-size: 11.5px; color: #0d1117;
+  }
+  /* Percent column — classed (.dim-pct) OR last unclassed <span>.
+     MUST be a short bare percentage (e.g. "50.7%"). flex-shrink:1 + a hard
+     max-width cap guarantee that even if an author wrongly stuffs a long value
+     (e.g. "75% (+111%)") into this cell it truncates ITSELF instead of starving
+     the flex name column and collapsing real labels to "1...". The validator
+     (check 9c) additionally fails the build on overlong/annotated pct cells. */
+  .dim-row .dim-pct,
+  .dim-row > span:last-of-type {
+    flex: 0 1 auto;
+    font-variant-numeric: tabular-nums; color: #656d76; font-size: 11px;
+    min-width: 38px; max-width: 72px; overflow: hidden; text-overflow: ellipsis;
+    text-align: right; white-space: nowrap;
+  }
+  /* Single-span placeholder rows (e.g. "Not sliced — …") — allow wrap, not truncate.
+     Long inline <code> blocks should wrap inside the cell rather than expanding
+     it horizontally. Truncation/ellipsis is for the name+bar+pct rows only. */
+  .dim-row > span:only-child,
+  .dim-row:not(:has(> .dim-bar-track)) > span {
+    display: block; flex: 1 1 0; min-width: 0; max-width: 100%;
+    overflow: hidden; text-overflow: clip; white-space: normal;
+    overflow-wrap: anywhere; word-break: break-word;
+  }
+  /* Dominant row styling — works whether .dominant is on the row OR derived
+     from the bar-fill class (the body-generated markup only marks the fill). */
+  .dim-row.dominant .dim-name,
+  .dim-row.dominant > span:first-of-type,
+  .dim-row:has(> .dim-bar-track > .dim-bar-fill.dominant) > span:first-of-type { font-weight: 700; }
+  .dim-row.dominant .dim-pct,
+  .dim-row.dominant > span:last-of-type,
+  .dim-row:has(> .dim-bar-track > .dim-bar-fill.dominant) > span:last-of-type { color: #cf222e; font-weight: 700; }
+  .dim-bar-fill { height: 100%; background: #0969da; border-radius: 2px; }
+  .dim-bar-fill.dominant { background: #cf222e; }
+  .dim-bar-fill.split    { background: #9a6700; }
+
+  .split-row { display: flex; gap: 8px; align-items: center; padding: 3px 0; font-size: 12px; }
+  .split-row .split-bar {
+    flex: 1; height: 8px; border-radius: 4px; overflow: hidden;
+    display: flex; background: #eaeef2;
+  }
+  .split-row .split-seg { height: 100%; }
+  .seg-aad     { background: #0969da; }
+  .seg-msa     { background: #8250df; }
+  .seg-unknown { background: #6e7781; }
+  .seg-shared  { background: #bf8700; }
+  .seg-personal{ background: #1a7f37; }
+  .split-legend { display: flex; gap: 10px; font-size: 10px; color: #656d76; margin-top: 4px; flex-wrap: wrap; }
+  .split-legend .li { display: flex; align-items: center; gap: 4px; }
+  .split-legend .sw { width: 8px; height: 8px; border-radius: 2px; }
+
+  /* ==================== CODE ATTRIBUTION ==================== */
+  .code-attr {
+    margin-top: 14px; padding: 12px 14px;
+    background: linear-gradient(180deg, #f6f8fa 0%, #eef1f4 100%);
+    border: 1px solid #d0d7de; border-radius: 8px;
+  }
+  .code-attr-title {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    color: #656d76; letter-spacing: 0.5px; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .code-attr-title::before { content: "🔬"; font-size: 13px; }
+
+  .origin-row {
+    display: grid; grid-template-columns: 110px 1fr; gap: 10px;
+    padding: 6px 0; font-size: 12px; align-items: start;
+  }
+  .origin-row + .origin-row { border-top: 1px dashed #d0d7de; }
+  .origin-label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    color: #656d76; letter-spacing: 0.4px; padding-top: 2px;
+  }
+  .origin-value { color: #0d1117; }
+  .origin-value code { font-size: 11.5px; }
+  .origin-value .stack {
+    font-family: "SF Mono", Consolas, monospace; font-size: 11px;
+    color: #0550ae; background: rgba(208,215,222,0.3);
+    padding: 1px 6px; border-radius: 3px; word-break: break-all;
+  }
+
+  .pr-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+  .pr-card {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 8px 10px; background: #fff; border: 1px solid #d0d7de;
+    border-radius: 6px; font-size: 12px;
+  }
+  .pr-conf {
+    flex-shrink: 0; padding: 2px 8px; border-radius: 10px;
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.4px; align-self: flex-start; min-width: 70px; text-align: center;
+  }
+  .pr-conf-high   { background: #ffeef0; color: #cf222e; }
+  .pr-conf-medium { background: #fff8c5; color: #9a6700; }
+  .pr-conf-low    { background: #ddf4ff; color: #0550ae; }
+  .pr-conf-none   { background: #f0f3f6; color: #656d76; }
+  .pr-body { flex: 1; line-height: 1.4; }
+  .pr-body .pr-id {
+    font-family: "SF Mono", Consolas, monospace; font-weight: 600; color: #0550ae;
+    text-decoration: none;
+  }
+  .pr-body .pr-id:hover { text-decoration: underline; }
+  .pr-body .pr-id::after { content: " \2197"; font-size: 9px; opacity: 0.7; }
+  .pr-body .pr-title { color: #0d1117; }
+  .pr-body .pr-meta { font-size: 11px; color: #656d76; margin-top: 2px; }
+  .pr-body .pr-why  { font-size: 11.5px; color: #1f2328; margin-top: 4px; font-style: italic; }
+
+  .origin-tag {
+    display: inline-block; padding: 1px 7px; border-radius: 10px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.3px;
+    margin-right: 6px; vertical-align: middle;
+  }
+  .origin-broker { background: #ffeef0; color: #cf222e; }
+  .origin-android { background: #fff4e0; color: #9a6700; }
+  .origin-thirdparty { background: #ddf4ff; color: #0550ae; }
+  .origin-env { background: #f0f3f6; color: #656d76; }
+
+  /* ==================== Section 2 callout flat-row items ==================== */
+  /* Use .item-list inside .callout for the at-a-glance bullet list in WoW /     */
+  /* Slow-burn / Wins callouts. Each .item is a single divider-separated row    */
+  /* with name + inline metric chips + a one-line body. Do NOT use nested       */
+  /* card chrome (no left bars, no boxes) — the parent .callout border is the   */
+  /* only severity affordance. Deep dive lives in .attr-card under              */
+  /* #attribution further down.                                                 */
+  .item-list { display: flex; flex-direction: column; gap: 0; margin-top: 8px; }
+  .item {
+    padding: 9px 0;
+    border-top: 1px solid #eaeef2;
+    min-width: 0;
+  }
+  .item:first-child { border-top: none; padding-top: 4px; }
+  .item-head {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 6px 10px; line-height: 1.4;
+  }
+  .item-name {
+    font-family: "SF Mono", Consolas, monospace; font-weight: 700;
+    font-size: 13.5px; color: #0d1117;
+  }
+  .item-name .kind {
+    color: #656d76; font-weight: 500; font-size: 10.5px;
+    background: #f0f3f6; padding: 1px 6px; border-radius: 8px;
+    margin-left: 4px; vertical-align: 1px;
+    font-family: -apple-system, "Segoe UI", sans-serif;
+    text-transform: lowercase; letter-spacing: 0.3px;
+  }
+     seeing whether the series was flat for seven weeks or bouncing all along,
+     so every attention row carries its own 9-week shape inline. Charts live
+     WITH the finding, not in a separate browsable catalog. */
+  .item-spark {
+    display: inline-flex; align-items: center; line-height: 0;
+    padding: 2px 6px; border-radius: 6px;
+    background: #fff; border: 1px solid #eaeef2;
+  }
+  .item-spark svg { display: block; }
+  .spark-cap {
+    font-size: 10px; color: #8c959f; font-weight: 500;
+    letter-spacing: 0.2px; white-space: nowrap;
+  }
+  .tag-new     { background: #ffeef0; color: #cf222e; border: 1px solid #ffc1c0; }
+  .tag-accel   { background: #fff1e5; color: #bc4c00; border: 1px solid #ffd8b5; }
+  .tag-ongoing { background: #f0f3f6; color: #656d76; }
+
+  /* ---- Collapsed reference material ------------------------------------------
+     Anything that is elevated-but-plateaued, flat, or already-known is reference,
+     not this week's news. It stays reachable (an OCE may need to confirm a level)
+     but must not occupy vertical space or imply "triage me". */
+  details.fold {
+    margin-top: 10px; border: 1px solid #eaeef2;
+    border-radius: 6px; background: #fbfcfd;
+  }
+  details.fold > summary {
+    cursor: pointer; padding: 8px 12px; font-size: 12.5px;
+    font-weight: 600; color: #1f2328; list-style: none; user-select: none;
+  }
+  details.fold > summary::-webkit-details-marker { display: none; }
+  details.fold > summary::before { content: "\25B8  "; color: #656d76; }
+  details.fold[open] > summary::before { content: "\25BE  "; }
+  details.fold > summary .count { font-weight: 400; color: #656d76; }
+  details.fold > .fold-body { padding: 0 12px 12px; }
+  details.fold > .fold-body > .item-list { margin-top: 0; }
+
+  /* ---- Quiet week -------------------------------------------------------------
+     A week with nothing new must LOOK like a week with nothing new. */
+  .quiet-banner {
+    border: 1px solid #1a7f37; background: #dafbe1; color: #116329;
+    border-radius: 6px; padding: 12px 14px; margin: 12px 0; font-size: 13px;
+  }
+  .quiet-banner strong { color: #1a7f37; }
+  .metric {
+    display: inline-flex; align-items: baseline; gap: 4px;
+    font-size: 12px; color: #1f2328; font-variant-numeric: tabular-nums;
+    padding: 1px 8px; border-radius: 10px; background: #f6f8fa;
+    white-space: nowrap;
+  }
+  .metric .m-label { color: #656d76; font-size: 10.5px; font-weight: 500; }
+  .metric .m-value { font-weight: 700; }
+  .metric.up   .m-value { color: #cf222e; }
+  .metric.down .m-value { color: #1a7f37; }
+  .item-tags { display: inline-flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
+  .item-body {
+    font-size: 12px; line-height: 1.5; color: #1f2328;
+    margin-top: 4px;
+  }
+  .item-body code {
+    background: #f6f8fa; padding: 1px 4px; border-radius: 3px;
+    font-size: 11px; color: #0550ae;
+  }
+  .item-body em { color: #656d76; font-style: italic; }
+  .item-body .action-flag { color: #cf222e; font-weight: 700; }
+  .item-foot {
+    font-size: 11px; color: #656d76; margin-top: 3px;
+    display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center;
+  }
+  .item-foot strong { color: #1f2328; }
+  .item-foot .arrow-link {
+    margin-left: auto; color: #0550ae; text-decoration: none; font-weight: 600;
+  }
+  .item-foot .arrow-link:hover { text-decoration: underline; }
+
+
+  /* ==================== AUTHENTICATOR-SPECIFIC ADDITIONS ==================== */
+  .seg-approved { background: #1a7f37; }
+  .seg-denied   { background: #bf8700; }
+  .seg-error    { background: #cf222e; }
+  .tag-low-volume,
+  .low-volume { background: #f0f3f6; color: #656d76; border: 1px solid #d0d7de; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="header">
+  <div>
+    <h1>Microsoft Authenticator (Android) · On-Call Report</h1>
+    <div class="meta">
+      <strong>Last 7 days: Thu Jul 23 → Thu Jul 30, 2026</strong> &nbsp;vs&nbsp; <strong>Thu Jul 16 → Thu Jul 23</strong> &nbsp;·&nbsp;
+      60-day trend: <strong>Sun May 31 → Wed Jul 29, 2026</strong> (last 60 days; final bar in progress) &nbsp;·&nbsp;
+      Source: <code>Authenticator scenario materialized views</code> &nbsp;·&nbsp;
+      Generated <strong>2026-07-30</strong>
+    </div>
+  </div>
+  <span class="badge badge-live">v1 · Live data</span>
+</div>
+
+<div class="callout watch">
+  <div class="callout-title"><span class="icon">↔️</span> Companion report: <a href="oncall-wow-report-2026-07-30.html">Android Broker →</a></div>
+  <p>Use the same reporting window when cross-checking Broker API regressions or push-notification completion changes.</p>
+</div>
+
+<nav class="toc">
+  <ul>
+    <li><a href="#health">📊 Top-line health</a></li>
+    <li><a href="#scoreboard">Scenario scoreboard</a></li>
+    <li><a href="#attention">🚨 Needs attention</a></li>
+    <li><a href="#trend60d">📈 60-day trend</a></li>
+    <li><a href="#attribution">🔎 Error attribution</a></li>
+    <li><a href="#unknown">Unknown analysis</a></li>
+    <li><a href="#pn">Push notification split</a></li>
+    <li><a href="#brokerapi">Broker API</a></li>
+    <li><a href="#stability">Crash &amp; stability</a></li>
+    <li><a href="#adoption">Version adoption</a></li>
+    <li><a href="#appendix">Appendix</a></li>
+  </ul>
+</nav>
+
+<!-- ================ TOP-LINE HEALTH ================ -->
+<h2 id="health">📊 Top-line health <span class="count">— Authenticator scenario denominator</span></h2>
+<div class="kpi-grid">
+  <div class="kpi"><div class="label">Telemetry-active devices</div><div class="value">22.8 M</div><div class="delta delta-up">+1.9% WoW</div><div class="spark" data-spark='[21.1,21.5,21.9,22,21.8,22.2,22.4,22.3,22.8]' data-color="#0969da"></div></div>
+  <div class="kpi"><div class="label">Total scenario initiates</div><div class="value">55.4 M</div><div class="delta delta-up">+3.2% WoW</div><div class="spark" data-spark='[49.8,51.2,52.4,53.1,52.7,53.8,54.1,53.7,55.4]' data-color="#0969da"></div></div>
+  <div class="kpi"><div class="label">Overall scenario success rate</div><div class="value">97.64%</div><div class="delta delta-up">−0.42 pts WoW</div><div class="spark" data-spark='[98.18,98.05,98.02,97.96,97.91,97.83,98.06,98.02,97.64]' data-color="#cf222e"></div></div>
+  <div class="kpi"><div class="label">Overall unknown / abandonment rate</div><div class="value">1.18%</div><div class="delta delta-up">+0.29 pts WoW</div><div class="spark" data-spark='[0.74,0.79,0.83,0.88,0.84,0.91,0.87,0.89,1.18]' data-color="#cf222e"></div></div>
+  <div class="kpi"><div class="label">Broker-API success rate</div><div class="value">99.12%</div><div class="delta delta-up">−0.31 pts WoW</div><div class="spark" data-spark='[99.55,99.48,99.46,99.42,99.39,99.37,99.43,99.43,99.12]' data-color="#cf222e"></div></div>
+  <div class="kpi"><div class="label">Crash rate per 1k devices</div><div class="value">0.42</div><div class="delta delta-up">+0.05 WoW</div><div class="spark" data-spark='[0.31,0.32,0.29,0.34,0.33,0.36,0.35,0.37,0.42]' data-color="#cf222e"></div></div>
+</div>
+
+<!-- ================ SCENARIO SCOREBOARD ================ -->
+<h2 id="scoreboard">Scenario scoreboard <span class="count">— one row per Authenticator scenario family</span></h2>
+<div class="table-card"><table>
+  <thead><tr><th>Scenario</th><th class="num">Initiated</th><th class="num">Success rate</th><th class="num">Δ success rate (pts)</th><th class="num">Failure rate</th><th class="num">Unknown rate</th><th class="num">Δ unknown (pts)</th><th class="num">Devices</th><th>8-week sparkline</th><th>Status</th></tr></thead>
+  <tbody>
+<tr><td class="code-cell">Passkey WebAuthN Registration</td><td class="num">48,320</td><td class="num good">91.8%</td><td class="num good">+0.6</td><td class="num">4.7%</td><td class="num ">3.5%</td><td class="num muted">-0.3</td><td class="num">38,940</td><td class="spark-cell"><div class="trend" data-trend='[89.7,90.1,90.6,91,91.3,91.5,91.2,91.8]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">healthy</span></td></tr>
+<tr><td class="code-cell">Passkey InApp Registration</td><td class="num">22,410</td><td class="num ">88.2%</td><td class="num muted">-0.4</td><td class="num">6.9%</td><td class="num ">4.9%</td><td class="num muted">+0.2</td><td class="num">19,120</td><td class="spark-cell"><div class="trend" data-trend='[87.9,88,88.4,88.8,88.5,88.7,88.6,88.2]' data-color="#bf8700" data-w="160" data-h="28"></div></td><td><span class="tag tag-warn">watch</span></td></tr>
+<tr><td class="code-cell">Passkey WebAuthN Authentication</td><td class="num">612,900</td><td class="num bad">94.1%</td><td class="num bad">-1.4</td><td class="num">3.2%</td><td class="num bad">2.7%</td><td class="num bad">+0.8</td><td class="num">402,100</td><td class="spark-cell"><div class="trend" data-trend='[96.4,96.2,95.8,95.5,95.3,95.1,95.5,94.1]' data-color="#cf222e" data-w="160" data-h="28"></div></td><td><span class="tag tag-bad">regressed</span></td></tr>
+<tr><td class="code-cell">Entra MFA Registration (QR)</td><td class="num">1,245,000</td><td class="num ">97.6%</td><td class="num muted">+0.3</td><td class="num">1.2%</td><td class="num ">1.2%</td><td class="num muted">-0.2</td><td class="num">902,400</td><td class="spark-cell"><div class="trend" data-trend='[97.1,97,97.2,97.3,97.4,97.5,97.3,97.6]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">healthy</span></td></tr>
+<tr><td class="code-cell">Entra MFA Registration (No-QR)</td><td class="num">336,200</td><td class="num ">95.0%</td><td class="num muted">-0.1</td><td class="num">2.8%</td><td class="num ">2.2%</td><td class="num muted">0.0</td><td class="num">248,900</td><td class="spark-cell"><div class="trend" data-trend='[95.1,95.4,95.2,95.3,95,95.2,95.1,95]' data-color="#656d76" data-w="160" data-h="28"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
+<tr><td class="code-cell">Entra MFA PN+CFA</td><td class="num">42,800,000</td><td class="num bad">98.4%</td><td class="num bad">-0.9</td><td class="num">0.7%</td><td class="num bad">0.9%</td><td class="num muted">+0.5</td><td class="num">18,700,000</td><td class="spark-cell"><div class="trend" data-trend='[99.1,99,98.9,98.8,98.6,98.5,99,98.4]' data-color="#cf222e" data-w="160" data-h="28"></div></td><td><span class="tag tag-bad">regressed</span></td></tr>
+<tr><td class="code-cell">Entra PSI Registration</td><td class="num">188,500</td><td class="num good">93.6%</td><td class="num good">+1.2</td><td class="num">4.4%</td><td class="num good">2.0%</td><td class="num good">-0.6</td><td class="num">131,800</td><td class="spark-cell"><div class="trend" data-trend='[91.9,92.2,92.6,92.8,93,93.2,92.4,93.6]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">win</span></td></tr>
+<tr><td class="code-cell">Entra PSI PN Registration</td><td class="num">74,900</td><td class="num ">92.1%</td><td class="num muted">+0.4</td><td class="num">5.1%</td><td class="num ">2.8%</td><td class="num muted">-0.2</td><td class="num">58,600</td><td class="spark-cell"><div class="trend" data-trend='[91.2,91.5,91.4,91.8,91.7,92,91.8,92.1]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">healthy</span></td></tr>
+<tr><td class="code-cell">Entra PSI PN+CFA</td><td class="num">4,920,000</td><td class="num bad">96.8%</td><td class="num bad">-0.6</td><td class="num">1.4%</td><td class="num bad">1.8%</td><td class="num muted">+0.4</td><td class="num">2,860,000</td><td class="spark-cell"><div class="trend" data-trend='[97.4,97.3,97.2,97.1,97,97,97.4,96.8]' data-color="#bf8700" data-w="160" data-h="28"></div></td><td><span class="tag tag-warn">watch</span></td></tr>
+<tr><td class="code-cell">MSA NGC Registration</td><td class="num">91,300</td><td class="num good">89.5%</td><td class="num good">+0.8</td><td class="num">7.2%</td><td class="num good">3.3%</td><td class="num muted">-0.4</td><td class="num">72,100</td><td class="spark-cell"><div class="trend" data-trend='[88.1,88.4,88.9,89,88.7,89.2,88.9,89.5]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">healthy</span></td></tr>
+<tr><td class="code-cell">MSA SA Registration</td><td class="num">19,800</td><td class="num ">86.4%</td><td class="num muted">+0.2</td><td class="num">8.4%</td><td class="num ">5.2%</td><td class="num muted">-0.1</td><td class="num">16,400</td><td class="spark-cell"><div class="trend" data-trend='[85.8,86,85.9,86.2,86.1,86.4,86.2,86.4]' data-color="#656d76" data-w="160" data-h="28"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
+<tr><td class="code-cell">MSA NGC PN+CFA</td><td class="num">3,760,000</td><td class="num ">97.2%</td><td class="num muted">+0.5</td><td class="num">1.1%</td><td class="num good">1.7%</td><td class="num muted">-0.4</td><td class="num">1,940,000</td><td class="spark-cell"><div class="trend" data-trend='[96.2,96.4,96.6,96.8,96.9,97,96.8,97.2]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">win</span></td></tr>
+<tr><td class="code-cell">MSA SA PN+CFA</td><td class="num">1,185,000</td><td class="num ">95.4%</td><td class="num muted">-0.2</td><td class="num">2.2%</td><td class="num ">2.4%</td><td class="num muted">+0.1</td><td class="num">764,000</td><td class="spark-cell"><div class="trend" data-trend='[95.3,95.5,95.2,95.6,95.4,95.5,95.6,95.4]' data-color="#656d76" data-w="160" data-h="28"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
+  </tbody>
+</table></div>
+
+<!-- ================ NEEDS ATTENTION ================ -->
+<!--
+  ORDERING IS BY NOVELTY, NOT BY VOLUME OR BY SEVERITY OF THE DELTA.
+  Render classify-novelty.js's `attention` set (NEW + ACCELERATING) and nothing else at
+  the top level. ONGOING scenarios go inside the collapsed fold below. Budget: <= 8
+  visible rows -- validate-report.ps1 check 17 warns above that.
+
+  MANDATORY: every visible row carries an inline .item-spark holding its 9-week success-rate
+  series. Check 16 hard-fails a visible row without one. The shape is what separates a real
+  step change from ordinary week-to-week wobble, and it has to sit next to the claim.
+-->
+
+<h2 id="attention">🚨 Needs attention</h2>
+
+<!--
+  QUIET WEEK: if classify-novelty.js reports quietWeek:true (empty attention set), replace
+  BOTH callouts below with just this banner and keep the fold closed. Do not promote an
+  ONGOING scenario to fill the gap -- a short honest report beats a padded one.
+
+  <div class="quiet-banner">
+    <strong>Quiet week.</strong> No Authenticator scenario took a new step change and none of the
+    known regressions accelerated. The <span class="mono">EXAMPLE_N</span> long-running items are in
+    the fold below, unchanged. Nothing here needs a page.
+  </div>
+-->
+
+<div class="callout urgent">
+  <div class="callout-title"><span class="icon">🔴</span> New this week <span class="count">— clean step change off a flat baseline</span></div>
+  <div class="item-list">
+    <div class="item">
+      <div class="item-head">
+        <span class="item-name">EXAMPLE_scenario_name</span>
+        <span class="item-spark trend" data-trend="[96.4,96.2,96.3,96.4,96.1,96.3,96.2,94.1]" data-w="120" data-h="22" data-color="#cf222e"></span>
+        <span class="spark-cap">9 wk</span>
+        <span class="metric up"><span class="m-label">success Δ</span><span class="m-value">EXAMPLE −2.1 pts</span></span>
+        <span class="metric"><span class="m-label">initiated</span><span class="m-value">EXAMPLE 42.8 M</span></span>
+        <span class="item-tags"><span class="tag tag-new">NEW</span><span class="tag tag-warn">high volume</span></span>
+      </div>
+      <div class="item-body">EXAMPLE — flat at 96.2-96.4% for seven weeks, then 94.1% this week. State the shape, the size, and the first dimension that explains it. A body that would read identically on another row is a validator failure.</div>
+      <div class="item-foot"><span><strong>Owner:</strong> EXAMPLE</span><a class="arrow-link" href="#attribution">Attribution card →</a></div>
+    </div>
+    <!--
+      If several scenarios in the same family moved together (e.g. all three PN+CFA variants),
+      report them as ONE row naming the family. Related scenarios moving in lockstep are one
+      root cause, not N findings.
+      If the NEW set is empty, replace this whole item-list with:
+      <div class="item"><div class="item-body">No Authenticator scenario took a new step change this week.</div></div>
+    -->
+  </div>
+</div>
+
+<div class="callout watch">
+  <div class="callout-title"><span class="icon">🟠</span> Getting worse <span class="count">— already degraded and still sliding</span></div>
+  <div class="item-list">
+    <div class="item">
+      <div class="item-head">
+        <span class="item-name">EXAMPLE_accelerating_scenario</span>
+        <span class="item-spark trend" data-trend="[97.4,97.3,97.2,97.0,96.6,96.1,95.4,94.6]" data-w="120" data-h="22" data-color="#bc4c00"></span>
+        <span class="spark-cap">9 wk</span>
+        <span class="metric up"><span class="m-label">success Δ</span><span class="m-value">EXAMPLE −0.8 pts</span></span>
+        <span class="metric"><span class="m-label">vs 60d median</span><span class="m-value">EXAMPLE −2.4 pts</span></span>
+        <span class="item-tags"><span class="tag tag-accel">ACCELERATING</span><span class="tag tag-ongoing">elevated 5w</span></span>
+      </div>
+      <div class="item-body">EXAMPLE — this is the "known issue is deteriorating" bucket. It is only here because it is STILL sliding; a scenario that is degraded but level belongs in the fold. Say how much steeper this week is than the prior slope.</div>
+      <div class="item-foot"><span><strong>Owner:</strong> EXAMPLE</span><a class="arrow-link" href="#attribution">Attribution card →</a></div>
+    </div>
+    <!-- If ACCELERATING is empty, delete this entire callout. -->
+  </div>
+</div>
+
+<details class="fold">
+  <summary>Ongoing / known — EXAMPLE_N scenarios still below their baseline, none accelerating</summary>
+  <div class="fold-body">
+    <!--
+      ONGOING scenarios: degraded, but level or easing. They are recorded, not headlined.
+      No sparklines needed here -- the 60-day scoreboard below already charts every scenario.
+      One line each: what it is, how long it has been like this, and who owns it.
+    -->
+    <div class="item-list">
+      <div class="item">
+        <div class="item-head">
+          <span class="item-name">EXAMPLE_ongoing_scenario</span>
+          <span class="metric"><span class="m-label">success</span><span class="m-value">EXAMPLE 96.8%</span></span>
+          <span class="item-tags"><span class="tag tag-ongoing">ONGOING</span><span class="tag tag-ongoing">elevated 6w</span></span>
+        </div>
+        <div class="item-body">EXAMPLE — down ~0.6 pts since May and flat since; tracked under EXAMPLE_bug. No change this week.</div>
+      </div>
+    </div>
+  </div>
+</details>
+
+<div class="callout win">
+  <div class="callout-title"><span class="icon">🟢</span> Wins <span class="count">— recoveries and quality gains</span></div>
+  <div class="item-list">
+    <div class="item">
+      <div class="item-head">
+        <span class="item-name">EXAMPLE_recovered_scenario</span>
+        <span class="item-spark trend" data-trend="[91.9,92.2,92.6,92.8,93.0,93.2,92.4,93.6]" data-w="120" data-h="22" data-color="#1a7f37"></span>
+        <span class="spark-cap">9 wk</span>
+        <span class="metric down"><span class="m-label">success Δ</span><span class="m-value">EXAMPLE +1.2 pts</span></span>
+        <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 132 K</span></span>
+        <span class="item-tags"><span class="tag" style="background:#dafbe1;color:#1a7f37;">recovered</span></span>
+      </div>
+      <div class="item-body">EXAMPLE — a win is a shape claim too, so it carries a sparkline. Name the fix or PR that landed, and say whether the gain has held for more than one week.</div>
+      <div class="item-foot"><span><strong>Owner:</strong> EXAMPLE</span><a class="arrow-link" href="#trend60d">Attribution card →</a></div>
+    </div>
+  </div>
+</div>
+
+<!--
+  LOW-VOLUME SCENARIOS: anything under the Authenticator volume floor does not belong in this
+  section at all, however large its percentage move -- put it in the appendix. A 2x move on 820
+  devices is noise, and promoting it here is exactly what trains an on-call engineer to skim.
+-->
+
+<!-- ================ 60-DAY TREND ================ -->
+<h2 id="trend60d">📈 60-day per-scenario trend <span class="count">— weekly buckets; final bar in progress</span></h2>
+<div class="table-card"><table>
+  <thead><tr><th>Scenario</th><th class="num">First week</th><th class="num">Last week</th><th class="num">First → last delta</th><th>Weekly sparkline</th><th>Classification</th></tr></thead>
+  <tbody>
+<tr><td class="code-cell">Passkey WebAuthN Registration</td><td class="num">89.7%</td><td class="num">91.8%</td><td class="num good">+2.1 pts</td><td class="spark-cell"><div class="trend" data-trend='[89.7,90.1,90.6,91,91.3,91.5,91.2,91.8]' data-color="#656d76" data-w="220" data-h="32"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
+<tr><td class="code-cell">Passkey InApp Registration</td><td class="num">87.9%</td><td class="num">88.2%</td><td class="num muted">+0.3 pts</td><td class="spark-cell"><div class="trend" data-trend='[87.9,88,88.4,88.8,88.5,88.7,88.6,88.2]' data-color="#656d76" data-w="220" data-h="32"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
+<tr><td class="code-cell">Passkey WebAuthN Authentication</td><td class="num">96.4%</td><td class="num">94.1%</td><td class="num bad">-2.3 pts</td><td class="spark-cell"><div class="trend" data-trend='[96.4,96.2,95.8,95.5,95.3,95.1,95.5,94.1]' data-color="#cf222e" data-w="220" data-h="32"></div></td><td><span class="tag tag-bad">regression</span></td></tr>
+<tr><td class="code-cell">Entra MFA Registration (QR)</td><td class="num">97.1%</td><td class="num">97.6%</td><td class="num good">+0.5 pts</td><td class="spark-cell"><div class="trend" data-trend='[97.1,97,97.2,97.3,97.4,97.5,97.3,97.6]' data-color="#656d76" data-w="220" data-h="32"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
+<tr><td class="code-cell">Entra MFA Registration (No-QR)</td><td class="num">95.1%</td><td class="num">95.0%</td><td class="num muted">-0.1 pts</td><td class="spark-cell"><div class="trend" data-trend='[95.1,95.4,95.2,95.3,95,95.2,95.1,95]' data-color="#656d76" data-w="220" data-h="32"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
+<tr><td class="code-cell">Entra MFA PN+CFA</td><td class="num">99.1%</td><td class="num">98.4%</td><td class="num bad">-0.7 pts</td><td class="spark-cell"><div class="trend" data-trend='[99.1,99,98.9,98.8,98.6,98.5,99,98.4]' data-color="#bf8700" data-w="220" data-h="32"></div></td><td><span class="tag tag-warn">spike</span></td></tr>
+<tr><td class="code-cell">Entra PSI Registration</td><td class="num">91.9%</td><td class="num">93.6%</td><td class="num good">+1.7 pts</td><td class="spark-cell"><div class="trend" data-trend='[91.9,92.2,92.6,92.8,93,93.2,92.4,93.6]' data-color="#1a7f37" data-w="220" data-h="32"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">improvement</span></td></tr>
+<tr><td class="code-cell">Entra PSI PN Registration</td><td class="num">91.2%</td><td class="num">92.1%</td><td class="num good">+0.9 pts</td><td class="spark-cell"><div class="trend" data-trend='[91.2,91.5,91.4,91.8,91.7,92,91.8,92.1]' data-color="#656d76" data-w="220" data-h="32"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
+<tr><td class="code-cell">Entra PSI PN+CFA</td><td class="num">97.4%</td><td class="num">96.8%</td><td class="num bad">-0.6 pts</td><td class="spark-cell"><div class="trend" data-trend='[97.4,97.3,97.2,97.1,97,97,97.4,96.8]' data-color="#cf222e" data-w="220" data-h="32"></div></td><td><span class="tag tag-warn">slow regression</span></td></tr>
+<tr><td class="code-cell">MSA NGC Registration</td><td class="num">88.1%</td><td class="num">89.5%</td><td class="num good">+1.4 pts</td><td class="spark-cell"><div class="trend" data-trend='[88.1,88.4,88.9,89,88.7,89.2,88.9,89.5]' data-color="#656d76" data-w="220" data-h="32"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
+<tr><td class="code-cell">MSA SA Registration</td><td class="num">85.8%</td><td class="num">86.4%</td><td class="num good">+0.6 pts</td><td class="spark-cell"><div class="trend" data-trend='[85.8,86,85.9,86.2,86.1,86.4,86.2,86.4]' data-color="#656d76" data-w="220" data-h="32"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
+<tr><td class="code-cell">MSA NGC PN+CFA</td><td class="num">96.2%</td><td class="num">97.2%</td><td class="num good">+1.0 pts</td><td class="spark-cell"><div class="trend" data-trend='[96.2,96.4,96.6,96.8,96.9,97,96.8,97.2]' data-color="#1a7f37" data-w="220" data-h="32"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">improvement</span></td></tr>
+<tr><td class="code-cell">MSA SA PN+CFA</td><td class="num">95.3%</td><td class="num">95.4%</td><td class="num muted">+0.1 pts</td><td class="spark-cell"><div class="trend" data-trend='[95.3,95.5,95.2,95.6,95.4,95.5,95.6,95.4]' data-color="#656d76" data-w="220" data-h="32"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
+  </tbody>
+</table></div>
+
+<!-- ================ ATTRIBUTION ================ -->
+<h2 id="attribution">🔎 Error attribution cards <span class="count">— regressed Authenticator scenarios</span></h2>
+<div class="glossary">Authenticator scenario attribution uses exactly three dimensions: <code>AppVersion</code>, <code>OsLevel</code>, and <code>DeviceInfoMake</code>. Broker-only calling-app, active-broker, account-type, and shared-device-mode dimensions are intentionally not used here.</div>
+<div class="attr-grid">
+<div class="attr-card" id="attr-entra-mfa-pncfa">
+  <div class="attr-header urgent">
+    <div>
+      <div class="attr-name">Entra MFA PN+CFA</div>
+      <div style="font-size:11px;color:#656d76;margin-top:2px;">Success 99.0% → 98.4% WoW (−0.6 pts); unknown 0.4% → 0.9% (+0.5 pts); 42.8 M initiates.</div>
+    </div>
+    <div class="attr-tags"><span class="tag tag-bad">WoW regression</span><span class="tag tag-warn">60d rising</span><span class="tag tag-info">push reacted split</span></div>
+  </div>
+  <div class="attr-body">
+    <h3>Top error reasons</h3>
+    <div class="table-card"><table>
+      <thead><tr><th>Reason</th><th class="num">Current errors</th><th class="num">Prev errors</th><th class="num">Δ%</th><th class="num">Devices</th><th>NEW</th></tr></thead>
+      <tbody><tr><td class="code-cell">NotificationReactionTimeout</td><td class="num">318,400</td><td class="num muted">172,900</td><td class="num bad">+84%</td><td class="num">221,000</td><td><span class="tag tag-muted">seen</span></td></tr>
+<tr><td class="code-cell">CfaNumberMismatch</td><td class="num">74,200</td><td class="num muted">51,900</td><td class="num bad">+43%</td><td class="num">62,100</td><td><span class="tag tag-muted">seen</span></td></tr>
+<tr><td class="code-cell">PushChannelRegistrationExpired</td><td class="num">31,600</td><td class="num muted">6,900</td><td class="num bad">+358%</td><td class="num">29,500</td><td><span class="tag tag-bad">NEW</span></td></tr></tbody>
+    </table></div>
+    <div class="attr-dims">
+      <div class="dim"><div class="dim-label">AppVersion</div><div class="dim-row"><span class="dim-name">6.2507.5123</span><span class="dim-pct">67.8%</span></div><div class="dim-bar-track"><div class="dim-bar-fill split" style="width:67.8%"></div></div>
+<div class="dim-row"><span class="dim-name">6.2507.4801</span><span class="dim-pct">19.4%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:19.4%"></div></div>
+<div class="dim-row"><span class="dim-name">6.2506.4210</span><span class="dim-pct">8.1%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:8.1%"></div></div>
+<div class="dim-row"><span class="dim-name">other</span><span class="dim-pct">4.7%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:4.7%"></div></div></div>
+      <div class="dim"><div class="dim-label">OsLevel</div><div class="dim-row"><span class="dim-name">Android 14</span><span class="dim-pct">41.7%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:41.7%"></div></div>
+<div class="dim-row"><span class="dim-name">Android 15</span><span class="dim-pct">32.6%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:32.6%"></div></div>
+<div class="dim-row"><span class="dim-name">Android 13</span><span class="dim-pct">18.5%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:18.5%"></div></div>
+<div class="dim-row"><span class="dim-name">other</span><span class="dim-pct">7.2%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:7.2%"></div></div></div>
+      <div class="dim"><div class="dim-label">DeviceInfoMake</div><div class="dim-row"><span class="dim-name">Samsung</span><span class="dim-pct">54.9%</span></div><div class="dim-bar-track"><div class="dim-bar-fill split" style="width:54.9%"></div></div>
+<div class="dim-row"><span class="dim-name">Xiaomi</span><span class="dim-pct">16.4%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:16.4%"></div></div>
+<div class="dim-row"><span class="dim-name">Google</span><span class="dim-pct">12.1%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:12.1%"></div></div>
+<div class="dim-row"><span class="dim-name">Oppo</span><span class="dim-pct">7.7%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:7.7%"></div></div></div>
+    </div>
+    <div class="attr-verdict bad"><strong>Verdict — High-volume regression with a version-plus-OEM concentration.</strong> The regression is mostly in the latest production version and over-indexes on Samsung devices, with the dominant symptom being no terminal reaction after the notification is delivered. Cross-check the companion Broker report before assigning ownership because this family depends on Broker callback timing.</div>
+    <div class="code-attr">
+      <div class="code-attr-title">Authenticator attribution</div>
+      <table style="width:100%;font-size:12px;">
+        <tbody>
+          <tr><td style="width:150px;color:#656d76;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:0.4px;">Likely cause</td><td>Push reaction callback not closing the MFA session before the scenario window expires.</td></tr>
+          <tr><td style="color:#656d76;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:0.4px;">Concentration</td><td>AppVersion 6.2507.5123 carries 67.8% of current errors; Samsung carries 54.9%.</td></tr>
+          <tr><td style="color:#656d76;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:0.4px;">Suspect PRs</td><td><a href="https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/1827349" target="_blank" rel="noopener">PR 1827349</a> push reaction debounce cleanup (medium).</td></tr>
+          <tr><td style="color:#656d76;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:0.4px;">Next step (named owner)</td><td>Aditi Rao to compare callback latency against Broker API completion in the companion report and validate Samsung notification-channel state.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<div class="attr-card" id="attr-passkey-webauthn-authentication">
+  <div class="attr-header urgent">
+    <div>
+      <div class="attr-name">Passkey WebAuthN Authentication</div>
+      <div style="font-size:11px;color:#656d76;margin-top:2px;">Success 95.5% → 94.1% WoW (−1.4 pts); unknown 1.9% → 2.7% (+0.8 pts); 612.9 K initiates.</div>
+    </div>
+    <div class="attr-tags"><span class="tag tag-bad">WoW regression</span><span class="tag tag-info">passkey</span><span class="tag tag-warn">Android 15 skew</span></div>
+  </div>
+  <div class="attr-body">
+    <h3>Top error reasons</h3>
+    <div class="table-card"><table>
+      <thead><tr><th>Reason</th><th class="num">Current errors</th><th class="num">Prev errors</th><th class="num">Δ%</th><th class="num">Devices</th><th>NEW</th></tr></thead>
+      <tbody><tr><td class="code-cell">CredentialProviderSilentCancel</td><td class="num">12,840</td><td class="num muted">6,320</td><td class="num bad">+103%</td><td class="num">10,900</td><td><span class="tag tag-muted">seen</span></td></tr>
+<tr><td class="code-cell">WebAuthnChallengeMismatch</td><td class="num">4,710</td><td class="num muted">1,880</td><td class="num bad">+151%</td><td class="num">3,960</td><td><span class="tag tag-bad">NEW</span></td></tr>
+<tr><td class="code-cell">AuthenticatorAttachmentMissing</td><td class="num">2,180</td><td class="num muted">1,940</td><td class="num bad">+12%</td><td class="num">1,870</td><td><span class="tag tag-muted">seen</span></td></tr></tbody>
+    </table></div>
+    <div class="attr-dims">
+      <div class="dim"><div class="dim-label">AppVersion</div><div class="dim-row"><span class="dim-name">6.2507.5123</span><span class="dim-pct">58.2%</span></div><div class="dim-bar-track"><div class="dim-bar-fill split" style="width:58.2%"></div></div>
+<div class="dim-row"><span class="dim-name">6.2507.4801</span><span class="dim-pct">23.0%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:23%"></div></div>
+<div class="dim-row"><span class="dim-name">6.2506.4210</span><span class="dim-pct">12.6%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:12.6%"></div></div>
+<div class="dim-row"><span class="dim-name">other</span><span class="dim-pct">6.2%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:6.2%"></div></div></div>
+      <div class="dim"><div class="dim-label">OsLevel</div><div class="dim-row"><span class="dim-name">Android 15</span><span class="dim-pct">61.5%</span></div><div class="dim-bar-track"><div class="dim-bar-fill split" style="width:61.5%"></div></div>
+<div class="dim-row"><span class="dim-name">Android 14</span><span class="dim-pct">26.0%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:26%"></div></div>
+<div class="dim-row"><span class="dim-name">Android 13</span><span class="dim-pct">8.8%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:8.8%"></div></div>
+<div class="dim-row"><span class="dim-name">other</span><span class="dim-pct">3.7%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:3.7%"></div></div></div>
+      <div class="dim"><div class="dim-label">DeviceInfoMake</div><div class="dim-row"><span class="dim-name">Google</span><span class="dim-pct">38.9%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:38.9%"></div></div>
+<div class="dim-row"><span class="dim-name">Samsung</span><span class="dim-pct">34.5%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:34.5%"></div></div>
+<div class="dim-row"><span class="dim-name">OnePlus</span><span class="dim-pct">9.7%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:9.7%"></div></div>
+<div class="dim-row"><span class="dim-name">other</span><span class="dim-pct">16.9%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:16.9%"></div></div></div>
+    </div>
+    <div class="attr-verdict bad"><strong>Verdict — Passkey authentication regression is concentrated on Android 15.</strong> The AppVersion split is broad enough that OS behavior is the stronger signal. The new challenge-mismatch reason points to the passkey handoff path rather than network or service failure.</div>
+    <div class="code-attr">
+      <div class="code-attr-title">Authenticator attribution</div>
+      <table style="width:100%;font-size:12px;">
+        <tbody>
+          <tr><td style="width:150px;color:#656d76;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:0.4px;">Likely cause</td><td>Credential Manager response handling changed under Android 15 and leaves some sessions without a terminal result.</td></tr>
+          <tr><td style="color:#656d76;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:0.4px;">Concentration</td><td>OsLevel Android 15 carries 61.5% of current errors against roughly 39% scenario share.</td></tr>
+          <tr><td style="color:#656d76;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:0.4px;">Suspect PRs</td><td><a href="https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/1826012" target="_blank" rel="noopener">PR 1826012</a> passkey assertion parcel normalization (low).</td></tr>
+          <tr><td style="color:#656d76;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:0.4px;">Next step (named owner)</td><td>Miguel Santos to sample Android 15 traces and verify whether Credential Manager returns cancellation before the app records failure.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<div class="attr-card" id="attr-entra-psi-pncfa">
+  <div class="attr-header watch">
+    <div>
+      <div class="attr-name">Entra PSI PN+CFA</div>
+      <div style="font-size:11px;color:#656d76;margin-top:2px;">Success 97.4% → 96.8% over 60 days (−0.6 pts); unknown 1.4% → 1.8% (+0.4 pts); 4.92 M initiates.</div>
+    </div>
+    <div class="attr-tags"><span class="tag tag-warn">slow-burn</span><span class="tag tag-info">PSI</span><span class="tag tag-info">no single version</span></div>
+  </div>
+  <div class="attr-body">
+    <h3>Top error reasons</h3>
+    <div class="table-card"><table>
+      <thead><tr><th>Reason</th><th class="num">Current errors</th><th class="num">Prev errors</th><th class="num">Δ%</th><th class="num">Devices</th><th>NEW</th></tr></thead>
+      <tbody><tr><td class="code-cell">PsiSessionExpiredBeforeCfa</td><td class="num">41,900</td><td class="num muted">27,100</td><td class="num bad">+55%</td><td class="num">36,400</td><td><span class="tag tag-muted">seen</span></td></tr>
+<tr><td class="code-cell">PhoneSignInNonceMissing</td><td class="num">18,300</td><td class="num muted">15,600</td><td class="num bad">+17%</td><td class="num">14,900</td><td><span class="tag tag-muted">seen</span></td></tr>
+<tr><td class="code-cell">PushApproveStateLost</td><td class="num">7,800</td><td class="num muted">1,200</td><td class="num bad">+550%</td><td class="num">7,100</td><td><span class="tag tag-bad">NEW</span></td></tr></tbody>
+    </table></div>
+    <div class="attr-dims">
+      <div class="dim"><div class="dim-label">AppVersion</div><div class="dim-row"><span class="dim-name">6.2507.5123</span><span class="dim-pct">45.5%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:45.5%"></div></div>
+<div class="dim-row"><span class="dim-name">6.2507.4801</span><span class="dim-pct">32.4%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:32.4%"></div></div>
+<div class="dim-row"><span class="dim-name">6.2506.4210</span><span class="dim-pct">15.1%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:15.1%"></div></div>
+<div class="dim-row"><span class="dim-name">other</span><span class="dim-pct">7.0%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:7%"></div></div></div>
+      <div class="dim"><div class="dim-label">OsLevel</div><div class="dim-row"><span class="dim-name">Android 14</span><span class="dim-pct">37.1%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:37.1%"></div></div>
+<div class="dim-row"><span class="dim-name">Android 15</span><span class="dim-pct">35.8%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:35.8%"></div></div>
+<div class="dim-row"><span class="dim-name">Android 13</span><span class="dim-pct">19.5%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:19.5%"></div></div>
+<div class="dim-row"><span class="dim-name">other</span><span class="dim-pct">7.6%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:7.6%"></div></div></div>
+      <div class="dim"><div class="dim-label">DeviceInfoMake</div><div class="dim-row"><span class="dim-name">Samsung</span><span class="dim-pct">33.8%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:33.8%"></div></div>
+<div class="dim-row"><span class="dim-name">Google</span><span class="dim-pct">20.6%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:20.6%"></div></div>
+<div class="dim-row"><span class="dim-name">Xiaomi</span><span class="dim-pct">18.9%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:18.9%"></div></div>
+<div class="dim-row"><span class="dim-name">other</span><span class="dim-pct">26.7%</span></div><div class="dim-bar-track"><div class="dim-bar-fill" style="width:26.7%"></div></div></div>
+    </div>
+    <div class="attr-verdict "><strong>Verdict — Broad slow-burn with no single dominant dimension.</strong> This looks like a session-lifetime edge rather than a rollout-specific code regression. Keep it on watch, but avoid paging unless the unknown rate crosses 2.5% or the error rate grows another 0.5 points.</div>
+    <div class="code-attr">
+      <div class="code-attr-title">Authenticator attribution</div>
+      <table style="width:100%;font-size:12px;">
+        <tbody>
+          <tr><td style="width:150px;color:#656d76;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:0.4px;">Likely cause</td><td>PSI session expiry racing with push approval state persistence.</td></tr>
+          <tr><td style="color:#656d76;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:0.4px;">Concentration</td><td>No dimension exceeds 46%; issue is broad across app versions, OS levels, and device makes.</td></tr>
+          <tr><td style="color:#656d76;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:0.4px;">Suspect PRs</td><td><a href="https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/1824180" target="_blank" rel="noopener">PR 1824180</a> PSI state cache compaction (low).</td></tr>
+          <tr><td style="color:#656d76;font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:0.4px;">Next step (named owner)</td><td>Priya Nair to extend PSI session-expiry query by tenant ring and check whether the new cache compaction is enabled.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- ================ UNKNOWN ================ -->
+<h2 id="unknown">Unknown / abandonment analysis</h2>
+<div class="glossary"><strong>Definition:</strong> Unknown = <code>Initiated − (Succeeded + Failed)</code>, meaning a session started but produced no terminal result inside the reporting window. This is an Authenticator-specific abandonment signal with no Broker equivalent.</div>
+<div class="table-card"><table>
+  <thead><tr><th>Scenario</th><th class="num">Unknown rate</th><th class="num">Δ pts</th><th class="num">Devices affected</th><th>8-week sparkline</th></tr></thead>
+  <tbody>
+<tr><td class="code-cell">Passkey WebAuthN Authentication</td><td class="num bad">2.7%</td><td class="num bad">+0.8</td><td class="num">71,200</td><td class="spark-cell"><div class="trend" data-trend='[1.8,1.9,2,2.1,2.2,2.3,1.9,2.7]' data-color="#cf222e" data-w="180" data-h="28"></div></td></tr>
+<tr><td class="code-cell">Passkey InApp Registration</td><td class="num ">4.9%</td><td class="num muted">+0.2</td><td class="num">1,080</td><td class="spark-cell"><div class="trend" data-trend='[4.5,4.7,4.6,4.8,5.1,4.9,4.7,4.9]' data-color="#bf8700" data-w="180" data-h="28"></div></td></tr>
+<tr><td class="code-cell">Entra MFA PN+CFA</td><td class="num bad">0.9%</td><td class="num bad">+0.5</td><td class="num">386,000</td><td class="spark-cell"><div class="trend" data-trend='[0.5,0.5,0.6,0.6,0.7,0.6,0.4,0.9]' data-color="#cf222e" data-w="180" data-h="28"></div></td></tr>
+<tr><td class="code-cell">Entra PSI PN+CFA</td><td class="num bad">1.8%</td><td class="num bad">+0.4</td><td class="num">88,400</td><td class="spark-cell"><div class="trend" data-trend='[1.3,1.4,1.4,1.5,1.6,1.5,1.4,1.8]' data-color="#bf8700" data-w="180" data-h="28"></div></td></tr>
+<tr><td class="code-cell">MSA SA Registration</td><td class="num ">5.2%</td><td class="num muted">-0.1</td><td class="num">820</td><td class="spark-cell"><div class="trend" data-trend='[5.6,5.4,5.5,5.3,5.1,5.4,5.3,5.2]' data-color="#656d76" data-w="180" data-h="28"></div></td></tr>
+  </tbody>
+</table></div>
+
+<!-- ================ PUSH NOTIFICATION SPLIT ================ -->
+<h2 id="pn">Push-notification reacted split</h2>
+<div class="split-legend"><span class="li"><span class="sw seg-approved"></span>Approved</span><span class="li"><span class="sw seg-denied"></span>Denied</span><span class="li"><span class="sw seg-error"></span>Error</span></div>
+<div class="table-card"><table>
+  <thead><tr><th>Family</th><th class="num">Notifications initiated</th><th class="num">Reacted</th><th class="num">Completion rate</th><th class="num">Approved %</th><th class="num">Denied %</th><th class="num">Error %</th><th>WoW deltas</th></tr></thead>
+  <tbody>
+<tr><td class="code-cell">Entra MFA PN+CFA<div class="split-row"><div class="split-bar"><div class="split-seg seg-approved" style="width:91.2%"></div><div class="split-seg seg-denied" style="width:6.1%"></div><div class="split-seg seg-error" style="width:2.7%"></div></div></div></td><td class="num">42,800,000</td><td class="num">41,920,000</td><td class="num">97.9%</td><td class="num good">91.2%</td><td class="num warn">6.1%</td><td class="num bad">2.7%</td><td>completion −0.8 pts · error +0.5 pts</td></tr>
+<tr><td class="code-cell">Entra PSI PN+CFA<div class="split-row"><div class="split-bar"><div class="split-seg seg-approved" style="width:88.6%"></div><div class="split-seg seg-denied" style="width:7.4%"></div><div class="split-seg seg-error" style="width:4%"></div></div></div></td><td class="num">4,920,000</td><td class="num">4,780,000</td><td class="num">97.2%</td><td class="num good">88.6%</td><td class="num warn">7.4%</td><td class="num bad">4.0%</td><td>completion −0.4 pts · error +0.3 pts</td></tr>
+<tr><td class="code-cell">MSA NGC PN+CFA<div class="split-row"><div class="split-bar"><div class="split-seg seg-approved" style="width:93.5%"></div><div class="split-seg seg-denied" style="width:4.1%"></div><div class="split-seg seg-error" style="width:2.4%"></div></div></div></td><td class="num">3,760,000</td><td class="num">3,690,000</td><td class="num">98.1%</td><td class="num good">93.5%</td><td class="num warn">4.1%</td><td class="num bad">2.4%</td><td>completion +0.6 pts · denied −0.3 pts</td></tr>
+<tr><td class="code-cell">MSA SA PN+CFA<div class="split-row"><div class="split-bar"><div class="split-seg seg-approved" style="width:86%"></div><div class="split-seg seg-denied" style="width:9.8%"></div><div class="split-seg seg-error" style="width:4.2%"></div></div></div></td><td class="num">1,185,000</td><td class="num">1,126,000</td><td class="num">95.0%</td><td class="num good">86.0%</td><td class="num warn">9.8%</td><td class="num bad">4.2%</td><td>completion −0.1 pts · flat</td></tr>
+  </tbody>
+</table></div>
+
+<!-- ================ BROKER API ================ -->
+<h2 id="brokerapi">Broker API responsiveness</h2>
+<div class="callout watch"><div class="callout-title"><span class="icon">⚠️</span> Cross-check required</div><p>Any regression in this section must be cross-checked against the companion Broker report for the same window before it is attributed to Authenticator.</p></div>
+<div class="table-card"><table>
+  <thead><tr><th>BrokerApiName</th><th class="num">Initiated</th><th class="num">Completed</th><th class="num">Failed</th><th class="num">Success rate</th><th class="num">p50 ms</th><th class="num">p95 ms</th><th class="num">p99 ms</th><th class="num">Devices</th><th>WoW deltas</th></tr></thead>
+  <tbody>
+<tr><td class="code-cell">GetAccounts</td><td class="num">8,420,000</td><td class="num">8,374,000</td><td class="num">46,000</td><td class="num ">99.45%</td><td class="num">104</td><td class="num">418</td><td class="num">1180</td><td class="num">6,880,000</td><td>success −0.18 pts · p95 +36 ms</td></tr>
+<tr><td class="code-cell">AcquireTokenSilent</td><td class="num">5,310,000</td><td class="num">5,241,000</td><td class="num">69,000</td><td class="num warn">98.70%</td><td class="num">188</td><td class="num">910</td><td class="num">2410</td><td class="num">4,260,000</td><td>success −0.42 pts · p99 +210 ms</td></tr>
+<tr><td class="code-cell">BrokerDeviceMode</td><td class="num">2,980,000</td><td class="num">2,976,000</td><td class="num">4,000</td><td class="num ">99.87%</td><td class="num">34</td><td class="num">82</td><td class="num">190</td><td class="num">2,410,000</td><td>flat</td></tr>
+<tr><td class="code-cell">GetCurrentAccount</td><td class="num">1,640,000</td><td class="num">1,637,000</td><td class="num">3,000</td><td class="num ">99.82%</td><td class="num">42</td><td class="num">130</td><td class="num">310</td><td class="num">1,220,000</td><td>flat</td></tr>
+<tr><td class="code-cell">RemoveAccount</td><td class="num">118,000</td><td class="num">116,900</td><td class="num">1,100</td><td class="num ">99.07%</td><td class="num">96</td><td class="num">510</td><td class="num">1600</td><td class="num">104,000</td><td>success +0.20 pts</td></tr>
+  </tbody>
+</table></div>
+
+<!-- ================ STABILITY ================ -->
+<h2 id="stability">Crash &amp; stability (App Center)</h2>
+<div class="callout watch"><div class="callout-title"><span class="icon">ℹ️</span> App Center token note</div><p>This section is skipped when the App Center token is unavailable; keep the visible note so readers know crash telemetry was not collected for the run.</p></div>
+<!-- Empty-state variant when skipped: Not collected this run — App Center token unavailable. Crash clusters and crash rate were not collected. -->
+<div class="kpi-grid">
+  <div class="kpi"><div class="label">Crashes per 1,000 active devices</div><div class="value">0.42</div><div class="delta delta-up">+0.05 WoW</div><div class="spark" data-spark='[0.31,0.32,0.29,0.34,0.33,0.36,0.35,0.37,0.42]' data-color="#cf222e"></div></div>
+  <div class="kpi"><div class="label">Crash-free active devices</div><div class="value">99.958%</div><div class="delta delta-flat">flat WoW</div><div class="spark" data-spark='[99.966,99.965,99.968,99.963,99.964,99.962,99.963,99.961,99.958]' data-color="#656d76"></div></div>
+</div>
+<div class="table-card"><table>
+  <thead><tr><th>Cluster</th><th class="num">Count</th><th class="num">Affected devices</th><th>First seen</th><th>App version</th></tr></thead>
+  <tbody>
+    <tr><td class="code-cell">PushApprovalActivity.onResume NullReference</td><td class="num">4,820</td><td class="num">3,940</td><td>2026-07-24</td><td class="code-cell">6.2507.5123</td></tr>
+    <tr><td class="code-cell">CredentialProviderBridge.parseResponse IllegalState</td><td class="num">2,140</td><td class="num">1,860</td><td>2026-07-22</td><td class="code-cell">6.2507.4801</td></tr>
+    <tr><td class="code-cell">PsiSessionStore.commit TimeoutCancellation</td><td class="num">1,380</td><td class="num">1,020</td><td>2026-07-25</td><td class="code-cell">6.2507.5123</td></tr>
+  </tbody>
+</table></div>
+
+<!-- ================ ADOPTION ================ -->
+<h2 id="adoption">Version adoption + PR attribution</h2>
+<div class="table-card"><table>
+  <thead><tr><th>AppVersion</th><th class="num">Devices</th><th class="num">Share %</th><th class="num">Δ share pts</th></tr></thead>
+  <tbody>
+<tr><td class="code-cell">6.2507.5123</td><td class="num">12,840,000</td><td class="num">56.3%</td><td class="num bad">+18.4</td></tr>
+<tr><td class="code-cell">6.2507.4801</td><td class="num">5,960,000</td><td class="num">26.1%</td><td class="num good">-9.8</td></tr>
+<tr><td class="code-cell">6.2506.4210</td><td class="num">2,380,000</td><td class="num">10.4%</td><td class="num good">-5.1</td></tr>
+<tr><td class="code-cell">6.2505.3902</td><td class="num">910,000</td><td class="num">4.0%</td><td class="num good">-2.1</td></tr>
+<tr><td class="code-cell">Older</td><td class="num">730,000</td><td class="num">3.2%</td><td class="num good">-1.4</td></tr>
+  </tbody>
+</table></div>
+<div class="pr-list">
+  <div class="pr-card"><div class="pr-conf pr-conf-medium">medium</div><div class="pr-body"><a class="pr-id" href="https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/1827349" target="_blank" rel="noopener">PR 1827349</a> <span class="pr-title">Debounce push reaction callbacks after CFA approval</span><div class="pr-meta">Merged 2026-07-21 · first broadly visible in 6.2507.5123</div><div class="pr-why">Touches the path implicated by the Entra MFA PN+CFA unknown-rate regression.</div></div></div>
+  <div class="pr-card"><div class="pr-conf pr-conf-low">low</div><div class="pr-body"><a class="pr-id" href="https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/1826012" target="_blank" rel="noopener">PR 1826012</a> <span class="pr-title">Normalize passkey assertion parcel before Credential Manager handoff</span><div class="pr-meta">Merged 2026-07-18 · aligns with Android 15 passkey signature</div><div class="pr-why">Code path matches, but OS-level concentration is stronger than app-version concentration.</div></div></div>
+  <div class="pr-card"><div class="pr-conf pr-conf-none">none</div><div class="pr-body"><span style="color:#656d76;font-weight:600;">No direct PR</span> <span class="pr-title">MSA NGC PN+CFA win appears traffic-quality driven</span><div class="pr-meta">No code change required</div><div class="pr-why">Approval mix improved across all live versions with no rollout-aligned step change.</div></div></div>
+</div>
+
+<!-- ================ APPENDIX ================ -->
+<h2 id="appendix">Appendix</h2>
+<details open>
+  <summary>Query provenance</summary>
+  <div>
+    <p><strong>Cluster:</strong> <code>https://idsharedeus2.eastus2.kusto.windows.net</code> · <strong>Database:</strong> <code>d496be22d62a46b0a3cf67ea2e736fd8</code></p>
+    <p><strong>Resolved windows:</strong> current <code>2026-07-23T00:00:00Z → 2026-07-30T00:00:00Z</code>; baseline <code>2026-07-16T00:00:00Z → 2026-07-23T00:00:00Z</code>; 60-day <code>2026-05-31T00:00:00Z → 2026-07-30T00:00:00Z</code>.</p>
+    <ul>
+      <li><code>assets/queries/authapp/scenario-outcomes-wow.kql</code></li>
+      <li><code>assets/queries/authapp/scenario-sparkline-series.kql</code></li>
+      <li><code>assets/queries/authapp/scenario-60d-trend.kql</code></li>
+      <li><code>assets/queries/authapp/scenario-errors-wow.kql</code></li>
+      <li><code>assets/queries/authapp/scenario-errors-by-dim.kql</code></li>
+      <li><code>assets/queries/authapp/pn-completion-wow.kql</code></li>
+      <li><code>assets/queries/authapp/broker-api-responsiveness-wow.kql</code></li>
+      <li><code>assets/queries/authapp/version-share-wow.kql</code></li>
+    </ul>
+  </div>
+</details>
+
+</div>
+
+<script>
+  // Sparkline color palette (mirror of assets/templates/template-readme.md):
+  //   #cf222e red    bad / regression       data-color on .trend in regression rows
+  //   #1a7f37 green  good / improvement     reliability KPI sparks; recovery trends
+  //   #0969da blue   neutral                traffic-volume KPI sparks
+  //   #0550ae blueD  latency                p95 KPI sparks
+  //   #9a6700 amber  watch / spike          ephemeral peak-then-recover trends
+  //   #656d76 grey   flat                   long-tail rows
+  function makeSparkline(values, opts = {}) {
+    const w = opts.w || 100, h = opts.h || 24, color = opts.color || "#0969da", pad = 2;
+    if (!values || values.length === 0) return "";
+    const min = Math.min(...values), max = Math.max(...values);
+    const range = max - min || 1;
+    const step = (w - pad * 2) / (values.length - 1);
+    const points = values.map((v, i) => [pad + i * step, h - pad - ((v - min) / range) * (h - pad * 2)]);
+    const linePath = "M" + points.map(p => p.join(",")).join(" L");
+    const fillPath = linePath + ` L${points[points.length-1][0]},${h} L${points[0][0]},${h} Z`;
+    const last = points[points.length-1];
+    return `<svg class="sparkline" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
+      <path d="${fillPath}" fill="${color}" opacity="0.12"/>
+      <path d="${linePath}" fill="none" stroke="${color}" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="${last[0]}" cy="${last[1]}" r="2" fill="${color}"/>
+    </svg>`;
+  }
+
+  document.querySelectorAll(".spark[data-spark]").forEach(el => {
+    el.innerHTML = makeSparkline(JSON.parse(el.dataset.spark), { w: 180, h: 28, color: el.dataset.color });
+  });
+  document.querySelectorAll(".trend[data-trend]").forEach(el => {
+    const w = parseInt(el.dataset.w) || 220;
+    const h = parseInt(el.dataset.h) || 32;
+    el.innerHTML = makeSparkline(JSON.parse(el.dataset.trend), { w: w, h: h, color: el.dataset.color });
+  });
+</script>
+
+</body>
+</html>
