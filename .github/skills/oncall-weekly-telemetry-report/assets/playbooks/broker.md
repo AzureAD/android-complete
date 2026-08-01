@@ -46,6 +46,11 @@
      > 60-day section below it carried **38 charts**; a reader could not tell which of the 13 was this
      > week's story. `validate-report.ps1` check 17 warns above 8 rows and it counts **every** visible
      > `.item` row in Section 2, wins included — so budget accordingly.
+     >
+     > **This budget caps VISIBILITY, never COVERAGE.** Step 5's rule that every regressed code/type
+     > must get an attribution card still holds in full — the surplus cards go into a collapsed fold,
+     > they are never dropped. See the boxed note under Step 5 for the exact resolution. If you ever
+     > find yourself deleting a mandated card to hit 8 rows, you have misread both rules.
 
      Emit these sub-groups **in this order**, omitting any that are empty:
 
@@ -409,6 +414,20 @@ Three codes, each flat for seven straight weeks, all stepping up in the *same* w
 
 **⚠️ Two different WoW bases exist — do not conflate them.** The report headline ΔWoW is a **rolling 7-day** window (`[CUR_START, CUR_END)` vs the 7 days before). The classifier's `WoW` is **calendar Sun–Sat weeks**. They legitimately disagree — `authorization_pending` read **+3.5%** rolling and **−37.1%** weekly on the same data. Use novelty as *history and context* ("flat for seven weeks, first step this week"), **never** as a competing delta number, or the report will appear to contradict its own tables.
 
+> **The division of labour, stated plainly so you do not have to derive it:**
+>
+> | Use the **rolling 7-day** numbers for… | Use the **calendar-week** classifier for… |
+> |---|---|
+> | Every KPI tile, table cell, and Δ% chip | Which rows are promoted (`attention` set) |
+> | Any number a reader can see | Which label a row carries (NEW / ACCELERATING / …) |
+> | The sentence "X rose N% this week" | The sentence "…and it has been climbing for six weeks" |
+>
+> **Rule: every *number* in the report comes from the rolling window; the classifier contributes
+> *selection and narrative*, never a figure.** The one place the two meet is a row that is
+> `ACCELERATING` on calendar weeks while the rolling delta is flat or negative — keep it in
+> "Getting worse", keep the heading verbatim, and resolve it in the row body by stating both
+> numbers and letting the sparkline settle it. Do not invent a hedged sub-group for these.
+
 ---
 
 
@@ -475,6 +494,23 @@ For errors with no broker code in the stack (Android system errors like `Code:-1
 ### Step 5 — Spike attribution dimensions
 
 **Coverage rule: every `error_code` AND every `error_type` that lands in either the WoW regression list OR the 60-day regression list MUST get a spike-attribution card.** No silent skips.
+
+> **⚠️ Coverage and the ≤ 8 visible-row budget are NOT in conflict — they govern different things.**
+> This is the most-reported ambiguity in the playbook, so read it carefully:
+> - The **≤ 8 budget (§2) limits what is VISIBLE at the top level.** It is about what the on-call
+>   engineer is asked to read first.
+> - The **coverage rule here limits what may be OMITTED.** It is about what must exist somewhere in
+>   the document, so a regression can never silently vanish.
+>
+> **Resolution: cards beyond the budget go into a collapsed fold, they do not get dropped.** Render
+> the `attention` set (plus ≤ 2 wins) as visible cards, and put every remaining mandated card in a
+> `<details>` fold titled *"Full attribution coverage (N more codes/types)"*. Coverage is satisfied
+> by the card **existing and being reachable**, not by it being expanded on load. A run with 12
+> mandated cards and 7 visible rows is correct and expected — that is the design working, not a
+> budget violation.
+>
+> Never resolve this the other way: do **not** expand Section 2 past 8 rows to fit the cards, and do
+> **not** skip a mandated card to protect the budget.
 
 **`ErrorStatsMetrics` already carries `account_type` and `is_shared_device`** (use the `MergeAccountType` / `MergeIsSharedDevice` helpers to normalize) — so you do **not** need a fallback to raw `android_spans` for these dims. Earlier versions of this skill claimed otherwise; that was wrong. The only dim that requires `android_spans` is `DeviceInfo_OsVersion` (OEM/version slicing).
 

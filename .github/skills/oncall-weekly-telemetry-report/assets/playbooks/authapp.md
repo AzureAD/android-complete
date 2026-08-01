@@ -98,7 +98,7 @@ both sides of the init↔results join or the two funnels quietly contaminate eac
 | [`find-suspect-prs.ps1`](../scripts/find-suspect-prs.ps1) | `git log -S` / `--grep` — run with `-Repos authenticator` |
 | [`bootstrap-report.ps1`](../scripts/bootstrap-report.ps1) | Bootstrap the report. Run with `-App authapp`. |
 | [`validate-report.ps1`](../scripts/validate-report.ps1) | Pre-publish validator. Run with `-App authapp`. |
-| [`run-kql.ps1`](../scripts/run-kql.ps1) | Direct-REST Kusto helper. Run with `-App authapp`. |
+| [`run-kql.ps1`](../scripts/run-kql.ps1) | Direct-REST Kusto helper. Run with `-App authapp`. Signature is `-Query <kql-string> -Out <path.json>` (**not** `-File`/`-OutFile`). |
 | [`fetch-appcenter-crashes.js`](../../../release-monitoring-report/assets/scripts/fetch-appcenter-crashes.js) | Crash clusters — **App Center only, not Kusto** |
 
 ---
@@ -114,6 +114,14 @@ both sides of the init↔results join or the two funnels quietly contaminate eac
    indistinguishable from a scenario that was never checked. Columns: scenario, initiated,
    success rate, Δ success (pts), failure rate, unknown rate, Δ unknown (pts), devices, 8-week
    sparkline, status pill. Rows under the volume floor carry a `low-volume` tag.
+
+   > **The 4 push-notification rows cannot fill the success/failure/unknown columns — that is
+   > expected, not a gap.** PN has no success/failure/Unknown model (see the outcome-model warning
+   > above; `Denied` is a healthy outcome, so a "failure rate" would be a lie). For the 4 PN rows
+   > put the **completion rate** in the success-rate column, the **error rate** in the failure
+   > column, and a literal `n/a` in the unknown-rate and Δ-unknown cells. Do **not** leave the cells
+   > blank (blank reads as "not measured") and do **not** synthesise an Unknown bucket for them.
+   > Footnote the table once: *"PN scenarios report completion/error; they have no Unknown state."*
 
 3. **Needs attention** — callouts using the `.item` flat-row pattern, ordered by **novelty, not
    volume** (see Step 4b). Render the classifier's `attention` set (`NEW` + `ACCELERATING`) at the
@@ -317,13 +325,14 @@ Read it straight off the sidecar:
 If your Needs-attention section is longer than the `attention` array, you promoted rows the
 classifier did not — that is the defect this step exists to prevent.
 
-> **Which series get classified: outcome funnels only — the PN funnel is NOT run through the
-> classifier.** Feed `classify-novelty.js` the **13 scenario success-rate series** and nothing else.
-> The push-notification funnel (Section 7) is deliberately excluded, for two reasons: its
-> `FinalResult` set has **two shapes** across the window so a weekly series is not comparable
-> week-to-week, and **`Denied` is a healthy outcome** — a rising `Denied` share is a user correctly
-> rejecting a prompt, which the classifier would read as a regression. Never let a PN family appear
-> in Section 3's `attention` set.
+> **Which series get classified: the outcome funnels only — the PN funnel is NOT run through the
+> classifier.** Feed `classify-novelty.js` the **9 outcome-funnel bad-outcome series** and nothing
+> else. The 13 scenarios in Section 5's scoreboard are **9 outcome funnels + 4 push-notification
+> families**; only the 9 are classifiable. The PN families (Section 7) are deliberately excluded for
+> two reasons: their `FinalResult` set has **two shapes** across the window so a weekly series is not
+> comparable week-to-week, and **`Denied` is a healthy outcome** — a rising `Denied` share is a user
+> correctly rejecting a prompt, which the classifier would read as a regression. Never let a PN
+> family appear in Section 3's `attention` set.
 >
 > PN still gets trend treatment, just not novelty classification: chart each family's **completion
 > rate** in Section 7 with its own sparkline and report the WoW delta there. If a PN family moves
@@ -420,7 +429,15 @@ It is the slowest query in the run — start it while writing up Step 6.
 
 Traps (all three are silent failures): the time column is **`PipelineInfo_IngestionTime`**;
 `BrokerApiName` and `BrokerApiElapsedTimeMs` must be **extracted** from `AdditionalProperties`;
-if the Kusto MCP times out, fall back to `run-kql.ps1 -App authapp`.
+if the Kusto MCP times out, fall back to `run-kql.ps1 -App authapp`. Its parameters are
+`-Query <kql-string>` and `-Out <path.json>` — both mandatory, and it takes the **query text**, not
+a `.kql` file path, so read the file in first:
+
+```pwsh
+$S = '.github\skills\oncall-weekly-telemetry-report\assets\scripts'
+$q = [IO.File]::ReadAllText("$A\queries\authapp\scenario-outcomes-wow.kql")   # then substitute the window tokens
+& "$S\run-kql.ps1" -App authapp -Query $q -Out "$D\scenario-outcomes-wow.json"
+```
 
 **This section is the seam between the two reports.** A regression here is a shared finding:
 check the companion Broker report for the same window before attributing it to Authenticator, and
@@ -430,8 +447,20 @@ error-code spike, both reports should reference each other.
 ### Step 9 — Crash & stability
 
 ```pwsh
-node .github\skills\release-monitoring-report\assets\scripts\fetch-appcenter-crashes.js --days 14
+# The script lives in the sibling release-monitoring-report skill and takes a SUBCOMMAND
+# (groups | enrich | diff) plus --owner/--app/--version. There is no bare "--days" form.
+# --version is the current production Authenticator version from Step 2's version-share query.
+$FC = '.github\skills\release-monitoring-report\assets\scripts\fetch-appcenter-crashes.js'
+node $FC groups --owner authapp-t7qc `
+     --app Microsoft-Authenticator-Android-Prod-App-Center `
+     --version <CURRENT_PROD_VERSION> --days 14 --top 15 `
+     --out "$env:USERPROFILE\android-oce-reports\_data\authapp-<curEnd>\crash-groups.json"
 ```
+
+Auth comes from `--token-file <path>`, `$APPCENTER_API_TOKEN`, or
+`~/.android-release-reports/appcenter.token`, in that order. **If none is present the section is
+skipped — that is expected and is not a failure.** Render the empty state (below) and move on;
+never block the report on the crash layer.
 
 Crash data is **App Center only — there is no Kusto source.** If the App Center token is
 unavailable, render the section's "Not collected this run" empty state. Do **not** omit the
