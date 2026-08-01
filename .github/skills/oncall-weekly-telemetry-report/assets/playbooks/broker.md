@@ -61,15 +61,17 @@
         over the window, ≥ 10% above its own median, and not falling WoW). This is the "known issue is
         deteriorating" bucket and it is the *only* multi-week category that stays visible.
 
-        > **When the classifier and the headline WoW disagree, keep the row here and show both numbers.**
-        > The classifier's "not falling" gate runs on **complete Sun–Sat calendar weeks**; the report's
-        > headline `Δ WoW` runs on the **rolling 7-day** window. These are different bases and they
-        > legitimately disagree — a code can be `ACCELERATING` on calendar weeks while showing a small
-        > rolling-window decline. That is *not* a reason to demote it, rename the group, or hedge the
-        > heading. Keep the group heading exactly **"Getting worse"**, and resolve it *in the row body*:
-        > *"Up 18% over the last three complete weeks; the rolling 7-day window shows −4% as the ramp
-        > flattens. Still ~30% above its own 60-day median — watch, don't close."* The sparkline settles
-        > it visually, which is why the row has one. Do **not** invent a "needs verification" group.
+        > **The classifier's WoW and the headline WoW are the SAME number** — both are the rolling
+        > 7-day window, since the trend's final `bin_at` bucket is that window. They should agree to
+        > within HLL noise. A sign disagreement means `--start`/`--end` were passed wrong; go fix the
+        > invocation rather than writing a hedge into the report. (Before the `bin_at` fix the two ran
+        > on different bases and could disagree by 100 points — that was the bug, not a feature.)
+        >
+        > A row can still be `ACCELERATING` while its **multi-week** climb outpaces this week's step —
+        > e.g. up 18% over three weeks but +2% in the last one. Keep the group heading exactly
+        > **"Getting worse"** and resolve it *in the row body*: *"Up 18% over three weeks, +2% this
+        > week as the ramp flattens. Still ~30% above its own 60-day median — watch, don't close."*
+        > The sparkline settles it visually. Do **not** invent a "needs verification" group.
      3. **🔵 Ongoing / known** — label `ONGOING`: elevated but flat. **These go inside a collapsed
         `<details class="fold">`**, summarised by one line ("N codes remain elevated, none accelerating").
         They are still in the report — a reader can open the fold — but they no longer compete with the
@@ -257,11 +259,20 @@ materialized_view('ErrorStatsMetrics')
 | where isnotempty(error_code) and error_code != 'success'
 | summarize errs = sum(countOverall),
             devs = dcount_hll(hll_merge(countDevicesHll))
-     by week = startofweek(EventInfo_Time), error_code
+     by week = bin_at(EventInfo_Time, 7d, datetime(<TREND_END>)), error_code
 | order by error_code asc, week asc
 ```
 
-**Do NOT filter the partial in-progress week here.** The chart wants it as the final bar (the window ends today). The partial week is excluded from the regression/improvement **delta math** by `bucket-trends.js` via `--end=<TREND_CLASS_END> --include-partial-end` (see 3c), not at the source — a partial week driving the delta would read as a fake −99% improvement, which is exactly why classification and display are split in the JS.
+**`bin_at`, not `startofweek` — this is load-bearing.** Anchoring the 7-day bins at `<TREND_END>`
+(= `curEnd`) makes the newest bucket exactly `[curEnd − 7d, curEnd)`, i.e. **the report's own WoW
+window**, so the novelty classifier grades the same period the tables print. Under the old
+`startofweek()` bucketing the classifier lagged by up to a week and silently suppressed real risers
+(`authorization_pending` +63.2% in the report, −37.1% to the classifier). See the ⚠️ block in Step 4.
+
+**Every bucket here is a complete 7 days**, so there is no partial end bar and nothing to exclude
+from the delta math — `--include-partial-end` and `TREND_CLASS_END` are obsolete. Because 60 isn't a
+multiple of 7, the *oldest* bucket (`curEnd − 63d`) is the 4-day stub; `--start` drops it, leaving
+8 clean rolling weeks.
 
 #### 3b. Per-error-type trend (same rigor)
 
@@ -272,7 +283,7 @@ materialized_view('ErrorStatsMetrics')
 | where isnotempty(unified_error_type)
 | summarize errs = sum(countOverall),
             devs = dcount_hll(hll_merge(countDevicesHll))
-     by week = startofweek(EventInfo_Time), unified_error_type
+     by week = bin_at(EventInfo_Time, 7d, datetime(<TREND_END>)), unified_error_type
 | order by unified_error_type asc, week asc
 ```
 
@@ -284,18 +295,22 @@ materialized_view('ErrorStatsMetrics')
 
 ```pwsh
 # Error codes — by devices, then by requests.
-#   TREND_START     = curEnd - 60d           (literal 60d start)
-#   TREND_CLASS_END = startofweek(today)     ("Trend delta cutoff" printed by bootstrap)
-# --include-partial-end charts the current partial week while excluding it from deltas.
-node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <codes.json> --start=<TREND_START> --end=<TREND_CLASS_END> --include-partial-end
-node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <codes.json> --start=<TREND_START> --end=<TREND_CLASS_END> --include-partial-end --metric=reqs
+#   TREND_START = curEnd - 60d   TREND_END = curEnd    (both printed by bootstrap-report.ps1)
+# Pass BOTH --start and --end. See the note below for why --end is not optional.
+node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <codes.json> --start=<TREND_START> --end=<TREND_END>
+node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <codes.json> --start=<TREND_START> --end=<TREND_END> --metric=reqs
 
 # Error types — by devices, then by requests (note --key)
-node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <types.json> --start=<TREND_START> --end=<TREND_CLASS_END> --include-partial-end --key=unified_error_type
-node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <types.json> --start=<TREND_START> --end=<TREND_CLASS_END> --include-partial-end --key=unified_error_type --metric=reqs
+node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <types.json> --start=<TREND_START> --end=<TREND_END> --key=unified_error_type
+node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js <types.json> --start=<TREND_START> --end=<TREND_END> --key=unified_error_type --metric=reqs
 ```
 
-`--end` is `<TREND_CLASS_END>` = `startofweek(today)` (exclusive) — the Sunday that opens the current in-progress week. Weeks at or after it (the partial current week) are excluded from delta classification; `--include-partial-end` keeps that week in the emitted `series` so the chart ends today. The script also auto-detects partial end-buckets and warns if `--end` is omitted, but passing it explicitly is safer.
+**⚠️ `--end=<TREND_END>` is mandatory even though it filters nothing.** Every bucket label is
+`< curEnd` by construction, so `--end` removes no data — its job is to **disable the partial-end
+auto-drop heuristic**, which is guarded by `if (!endArg …)`. Under rolling alignment the newest
+bucket is genuinely complete, so leaving the heuristic armed means a real 70% collapse could be
+discarded as "looks partial". The script warns if you omit `--end`; treat that warning as an error.
+`--include-partial-end` is a retained no-op — do not add it to new invocations.
 
 Take the **union** of all four regression sets. Both `error_code` and `error_type` regressions get a spike-attribution card in Step 5.
 
@@ -412,21 +427,39 @@ Three codes, each flat for seven straight weeks, all stepping up in the *same* w
 
 **Families.** The classifier clusters keys sharing a prefix before `_` when ≥2 members share the same label. Report a family as ONE row. Error *types* are CamelCase and produce no families under `_` — that is correct, not a bug.
 
-**⚠️ Two different WoW bases exist — do not conflate them.** The report headline ΔWoW is a **rolling 7-day** window (`[CUR_START, CUR_END)` vs the 7 days before). The classifier's `WoW` is **calendar Sun–Sat weeks**. They legitimately disagree — `authorization_pending` read **+3.5%** rolling and **−37.1%** weekly on the same data. Use novelty as *history and context* ("flat for seven weeks, first step this week"), **never** as a competing delta number, or the report will appear to contradict its own tables.
+**⚠️ The classifier and the report now share ONE basis. This used to be a bug.** Both the headline
+`Δ WoW` and the classifier's `WoW` are computed on the **same rolling 7-day window**
+(`[CUR_START, CUR_END)` vs the 7 days before), because the 60-day trend is bucketed with
+`bin_at(t, 7d, curEnd)` and its final bucket **is** that window. **If a classifier `WoW` ever
+disagrees in sign or by more than HLL noise from the number in the table, the pipeline is
+misconfigured — stop and check that `--start`/`--end` were passed as bootstrap printed them.**
 
-> **The division of labour, stated plainly so you do not have to derive it:**
+> **Why this warning exists.** Buckets used to be Sun–Sat calendar weeks cut off at
+> `startofweek(curEnd)`, and the two bases were documented as "legitimately disagreeing". They did
+> not legitimately disagree — the calendar basis lagged the report by up to a full week and was blind
+> to anything that turned in the last ~6 days. On the 2026-08-01 run the classifier's current week
+> was 07/19–07/26 against a report window of 07/25–08/01, **one day of overlap**:
 >
-> | Use the **rolling 7-day** numbers for… | Use the **calendar-week** classifier for… |
+> | code | report ΔWoW | old classifier WoW | old verdict |
+> |---|---|---|---|
+> | `authorization_pending` | **+63.2%** (171,897 → 280,572) | −37.1% | ONGOING — "do not re-triage" |
+> | `expired_token` | **+26.7%** (86,255 → 109,251) | −51.0% | ONGOING — "do not re-triage" |
+>
+> Both were real risers the on-call engineer had already spotted by hand, and the report silently
+> suppressed both. Re-bucketing on `bin_at` promoted them to ACCELERATING **and** demoted
+> `access_denied` — an ONGOING-worthy code the old basis had wrongly promoted (actually −53.2%).
+> The attention set went 4 → 5 keys, not 4 → 15. **Do not reintroduce `startofweek()` here.**
+
+> **What the classifier still contributes.** Selection and narrative, not numbers:
+>
+> | Take from the query results | Take from `classify-novelty.js` |
 > |---|---|
-> | Every KPI tile, table cell, and Δ% chip | Which rows are promoted (`attention` set) |
-> | Any number a reader can see | Which label a row carries (NEW / ACCELERATING / …) |
-> | The sentence "X rose N% this week" | The sentence "…and it has been climbing for six weeks" |
+> | Every KPI tile, table cell, and Δ% chip | Which rows are promoted (the `attention` set) |
+> | The sentence "X rose N% this week" | Which label a row carries (NEW / ACCELERATING / …) |
+> | | The sentence "…and it has been climbing for six weeks" |
 >
-> **Rule: every *number* in the report comes from the rolling window; the classifier contributes
-> *selection and narrative*, never a figure.** The one place the two meet is a row that is
-> `ACCELERATING` on calendar weeks while the rolling delta is flat or negative — keep it in
-> "Getting worse", keep the heading verbatim, and resolve it in the row body by stating both
-> numbers and letting the sparkline settle it. Do not invent a hedged sub-group for these.
+> The classifier's job is to answer *"is this new?"*, which a single delta cannot. It is no longer a
+> second source of truth for *"how much did it move?"* — there is only one answer to that now.
 
 ---
 
@@ -589,12 +622,15 @@ Do this section in three parts. Traffic changes (up *or* down) need the same lev
 
 ```kql
 materialized_view('BrokerAdoptionStatsUpdated')
-| where EventInfo_Time > ago(70d)
+| where EventInfo_Time >= datetime(<TREND_START>) and EventInfo_Time < datetime(<TREND_END>)
 | summarize totalReq = sum(countRequests),
             totalDev = dcount_hll(hll_merge(countDevicesHll))
-     by week = startofweek(EventInfo_Time)
+     by week = bin_at(EventInfo_Time, 7d, datetime(<TREND_END>))
 | order by week asc
 ```
+
+Same `bin_at` anchoring as 3a/3b, so the final bucket is the report's WoW window and this traffic
+series lines up bucket-for-bucket with the error trends you compare it against.
 
 For each of the following, report direction + magnitude:
 - Total requests (WoW %, 60d %)
@@ -680,7 +716,7 @@ The validator hard-fails on:
 6. **Chartless KPI grid** — if more than half the `.kpi` tiles lack a `data-spark` element (catches the v7 regression where the body was rebuilt without sparklines). Also warns when total chart count (sparks + trends + inline svgs) is &lt; 15.
 7. **Code-attribution depth** — each `.attr-card`'s "Code attribution" block must contain an `Originator` row (proxy for the full 8-field structure: Originator / Top throw site / Wrapper / Caller hot-spots / Underlying cause / Top error_messages / Likely PRs / Next step). Catches the v7-third-pass regression where cards shipped with a `pr-list`-only stub.
 8. **Attribution-card layout guards (v8)** — the CSS must define `.attr-card { margin-bottom: 16px }` AND `.dim-row` overflow rules (`text-overflow: ellipsis` + `min-width: 0`). Catches the "cards touching" and "text bleeding out of dim boxes" regressions from a stale `<head>` block.
-9. **Fabricated-sparkline heuristic (v8)** — warns when a `data-trend` array's peak value is < 100 (almost certainly hand-rolled rather than sourced from real data). See [`assets/queries/wow-table-sparkline-series.kql`](../queries/wow-table-sparkline-series.kql) for the canonical KQL that pulls real 8-week series for every code in the WoW tables. Its `<SPARK_START>` / `<SPARK_END>` tokens are the last **8 complete** Sun-Sat weeks (`<SPARK_END>` = `startofweek(today)`, exclusive) — deliberately distinct from the trend-chart's `<TREND_START>` / `<TREND_END>` (literal last 60 days ending today). Per-row sparklines stay on complete weeks so a partial final point doesn't create a misleading dip in every WoW row.
+9. **Fabricated-sparkline heuristic (v8)** — warns when a `data-trend` array's peak value is < 100 (almost certainly hand-rolled rather than sourced from real data). See [`assets/queries/wow-table-sparkline-series.kql`](../queries/wow-table-sparkline-series.kql) for the canonical KQL that pulls real 8-week series for every code in the WoW tables. Its `<SPARK_START>` / `<SPARK_END>` tokens are the last **8 complete rolling weeks** anchored at `curEnd` (`<SPARK_END>` = `curEnd`, exclusive; `<SPARK_START>` = `curEnd − 56d`) — the same `bin_at` basis as the trend chart, just a shorter span. Every point is a full 7 days, so no row can end on a misleading partial dip.
 
 Then:
 - **Run the visual smoke test (recommended)** — catches rendered-layout bugs that pure HTML/CSS validation can't see:
@@ -706,8 +742,16 @@ Then:
 > They apply here too and are NOT repeated below: never carry a telemetry number forward between
 > runs · never hardcode the Generated date · never compose report HTML via a PowerShell `@'...'@`
 > heredoc (UTF-8 strip) · never bulk-regex-edit balanced HTML · no `devs`/`reqs` in user-facing
-> text · same-end-date collision requires an explicit delta statement · no separate Markdown
-> summary · never commit the report. **Read them before writing any HTML.**
+> text · **every red/amber table pill is either promoted into attention or explained in a
+> `.reconcile-note`** (validator check 19) · same-end-date collision requires an explicit delta
+> statement · no separate Markdown summary · never commit the report.
+> **Read them before writing any HTML.**
+>
+> The reconciliation rule bites on Broker too, for the same structural reason it does on the
+> Authenticator: a code whose 60-day **peak** sits under the 10,000-device floor is excluded from
+> classification outright, so it can hold a red pill indefinitely while attention says "quiet week".
+> Now that both bases are rolling, disagreement on *direction* is a bug — what legitimately remains
+> is disagreement on **classifiability**. Say which it is.
 >
 > The rules below are Broker-specific and do **not** transfer to the Authenticator playbook.
 
@@ -717,7 +761,7 @@ Then:
 - **Never sum percentiles.** Latency is a TDigest sketch — `percentile_tdigest(tdigest_merge(responseTimeTDigest), N, typeof(long))` only.
 - **Always apply `MergeAccountType` / `MergeIsSharedDevice` / `MergeUiRequiredExceptions`** so this report agrees with the dashboard.
 - **Confirm the week bucket label matches the user's intent** before writing the rest of the queries (Sunday-aligned).
-- **Do NOT filter the partial in-progress week at the source in the 60-day trend queries** — the chart ends today and wants that partial week as its final bar. Exclude it from the regression/improvement **delta math** instead by running `bucket-trends.js --end=<startofweek(today)> --include-partial-end`: the `--end` cutoff drops the partial week from first/last/delta classification while `--include-partial-end` keeps it in the emitted `series`. Skipping `--end` (or the cutoff) would make `bucket-trends.js` show every error as a fake −99% improvement. The per-row `wow-table-sparkline-series.kql` is the exception — it keeps 8 complete weeks (`<SPARK_END>` = `startofweek(today)`, with the partial week filtered at the source) so no WoW row ends on a misleading partial dip.
+- **Bucket the 60-day trend with `bin_at(EventInfo_Time, 7d, datetime(<TREND_END>))`, never `startofweek()`.** Anchoring at `curEnd` makes the newest bucket exactly the report's WoW window, so the noise gate grades the period the tables print. `startofweek()` bucketing lagged by up to 6 days and structurally suppressed anything that turned late in the window — that is how `authorization_pending` shipped as "ONGOING, do not re-triage" while the report showed it up 63.2%. Every bucket is now a complete 7 days (the 4-day stub is the *oldest* bucket and `--start` drops it), so there is nothing to exclude from the delta math: `--include-partial-end` and `TREND_CLASS_END` are obsolete. **Always pass both `--start` and `--end` to `bucket-trends.js`** — `--end` filters no rows but disables the partial-end auto-drop heuristic, which would otherwise be free to discard a real collapse. `wow-table-sparkline-series.kql` uses the same `bin_at` basis over 8 weeks.
 - **Originator pre-check is mandatory.** A card cannot claim `Originator: Broker` without first running [`assets/queries/error-message-and-location.kql`](../queries/error-message-and-location.kql) and reading the throw site + top 3 `error_message` strings. If the throw site is in `common/ExceptionAdapter.{getExceptionFromTokenErrorResponse, exceptionFromAuthorizationResult}` AND the message starts with `AADSTS`, the originator is **eSTS, not broker** — see the AADSTS reference in [`assets/docs/kusto-cheatsheet.md`](../docs/kusto-cheatsheet.md).
 - **WoW-movers pass is mandatory.** The 60d bucketer's `--peak-floor` silently drops sub-10K-device codes, so [`assets/queries/wow-movers.kql`](../queries/wow-movers.kql) MUST be run as a separate pass for both `error_code` and `error_type` (per Step 3d). Its output is **merged into the single regression callout** and then grouped by Step 3e's novelty labels. Do not render a separate "emerging" callout. Skipping the pass is how the Apr 26 `Failed to parse JWT` spike (7 → 3,461 devs over 7 weeks) hid for two reports running.
 - **Novelty classification is mandatory, and Section 2 is ordered by it — never by volume.** Run [`classify-novelty.js`](../scripts/classify-novelty.js) (Step 3e) and lead with `NEW`. Ranking the attention list by device count is a known, reported defect: it put `IntuneAppProtectionPolicyRequiredException` (ΔWoW **+0.1%**, classifier says `ONGOING` and *falling*) at #1 while the genuinely new `ipc_*` family sat at #6/#9/#10. If the `NEW` bucket is empty, write "nothing new this week" — do not backfill it with `ONGOING` items.
@@ -755,7 +799,7 @@ Then:
 
 - [ ] New `oncall-wow-report-YYYY-MM-DD.html` (where `YYYY-MM-DD` is the resolved `curEnd` — the end-date of the rolling 7-day window) exists at `$env:USERPROFILE\android-oce-reports\` (NOT at repo root). If a file for this end-date already existed, the chat session explicitly stated what changed before regenerating.
 - [ ] All sections present and populated (incl. 🚚 Traffic Attribution — even if “None this week”)
-- [ ] **60-day trend bucketing run on the full cross-product** — `{error_code, error_type} × {devices, requests}` = 4 runs — union of regressions reported. Per-request retry storms (e.g. small device pool, exploding request count) are flagged on both axes. Source KQL spans the literal last 60 days ending today (no source-side partial-week filter); the partial current week is excluded from delta classification via `bucket-trends.js --end=<startofweek(today)> --include-partial-end` and charted as the final bar.
+- [ ] **60-day trend bucketing run on the full cross-product** — `{error_code, error_type} × {devices, requests}` = 4 runs — union of regressions reported. Per-request retry storms (e.g. small device pool, exploding request count) are flagged on both axes. Source KQL spans the literal last 60 days ending today and buckets with `bin_at(…, 7d, <TREND_END>)`, so the newest bucket **is** the report's WoW window; every `bucket-trends.js` invocation passed **both** `--start` and `--end`.
 - [ ] **WoW-movers pass run** ([`wow-movers.kql`](../queries/wow-movers.kql)) for BOTH `error_code` and `error_type`. Its output rows are **merged into the single regression callout in Section 2**. Every row carries throw-site, dominant message, originator, and a next step. If the callout is empty (rare), render "None this week" rather than omit.
 - [ ] **Novelty classification run** ([`classify-novelty.js`](../scripts/classify-novelty.js)) on every `bucket-trends.js` sidecar. Section 2 is grouped 🆕 New → 🟠 Getting worse → 🔵 Ongoing (collapsed fold) → 🔁 Volatile → ↩️ Recovery, **not** sorted by device count. No `VOLATILE`/`RECOVERY` row headlines a percentage. Families are reported as one row. Every row body is specific — no sentence repeats across rows.
 - [ ] **Attention section is short and charted.** Visible rows == the classifier's `attention` set (`NEW` + `ACCELERATING`), ≤ 8 of them, each with an `.item-spark` 9-week sparkline. `ONGOING` rows live inside a collapsed fold. If `quietWeek: true`, the quiet-week banner is shown and nothing was promoted to fill the gap.

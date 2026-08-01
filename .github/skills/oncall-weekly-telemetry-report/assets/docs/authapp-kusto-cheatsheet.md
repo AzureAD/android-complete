@@ -47,8 +47,8 @@ same shape `bucket-trends.js` and `agg.js` already parse.
 
 Outcome columns each have a `…DCount` distinct-device twin.
 **Registration / Authentication MVs expose only `Initiated / Succeeded / Failed` (+`DCount`) and
-`TotalUniqueDevices`. There is NO `Cancelled` and NO `PartiallySucceeded` column** — do not
-invent one. PN MVs carry only an initiated counter; the terminal outcome lives in the paired
+`TotalUniqueDevices`. There is NO `Cancelled` column and NO separate partly-succeeded outcome column**
+— do not invent one. PN MVs carry only an initiated counter; the terminal outcome lives in the paired
 `_Results_MV_V1`.
 
 | Scenario | Outcome MV | Initiate column |
@@ -223,13 +223,17 @@ estimating a crash rate from Kusto. There is no Kusto proxy for crash rate; do n
 
 ## 10. Weekly bucketing
 
-`startofweek()` is **Sunday-aligned**, same as on the Broker side:
-`startofweek('2026-05-09') == 2026-05-03T00:00:00Z`. Print the distinct week values from the
-first weekly query of the run and eyeball them. Off-by-one-week is the most common silent error
-in weekly-bucketed KQL and it survives every other check in the pipeline.
+Weekly trend queries are rolling 7-day buckets anchored at `curEnd`, not calendar weeks. Use the
+view's time column with `bin_at(EventDate, 7d, datetime(<TREND_END>))` for scenario MVs (or the
+appropriate raw-table time column for non-MV queries). The newest bucket is `[curEnd - 7d, curEnd)`,
+which is exactly the same window as the report's displayed WoW numbers.
 
-The 60-day trend deliberately **includes** the partial current week (it is the chart's final bar)
-and excludes it from delta classification via
-`bucket-trends.js --end=<startofweek(curEnd)> --include-partial-end`.
-The 8-week sparkline series deliberately **excludes** it at the source. Both behaviours are
-intentional and are not the same thing.
+The 60-day trend filters `[curEnd - 60d, curEnd)`. Because 60 is not a multiple of 7, the **oldest**
+bucket label falls before `<TREND_START>` and covers only 4 days of the filtered data. Invoke
+`bucket-trends.js --start=<TREND_START> --end=<TREND_END>` so `--start` drops that oldest short
+bucket and `--end` disables the legacy partial-end auto-drop heuristic. The 8-week sparkline series
+uses the same `curEnd` anchor (`<SPARK_START> = curEnd - 56d`, `<SPARK_END> = curEnd`).
+
+> **⚠️ Historical note:** these queries used to use `startofweek()` calendar buckets and a separate
+> classification cutoff. Do not restore that model; it can lag the rolling report window by up to a
+> full week.
