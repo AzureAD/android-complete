@@ -501,8 +501,9 @@ class Orchestrator:
             steps_view = []
             for s in steps:
                 sid = s["id"]
+                stp = self.state.get_step(phase["id"], sid)
                 s_done = self.state.is_done(phase["id"], sid)
-                s_blocked = self.state.get_step(phase["id"], sid).status == "blocked"
+                s_blocked = stp.status == "blocked"
                 is_gate = bool(s.get("gate"))
                 is_rem = self._is_reminder(s)
                 is_scout = s.get("source") == "scout"
@@ -523,6 +524,7 @@ class Orchestrator:
                 steps_view.append({
                     "id": sid, "name": s["name"], "status": status,
                     "needs_owner": needs,
+                    "note": stp.note,          # agent result / block reason / detail
                     "now": bool(sid == cur and not s_done and (is_gate or is_rem or is_scout or is_attest or s_blocked)),
                 })
             opens = self._phase_anchor_date(phase)
@@ -607,6 +609,7 @@ class Orchestrator:
                 "reminder": self._is_reminder(s),
                 "owner": s.get("owner", "agent"),
                 "state": s_state,
+                "note": rec.get("note"),          # agent result / block reason / detail
             })
         return out
 

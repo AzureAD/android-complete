@@ -132,6 +132,12 @@ def _page_name(state, n: int = 1) -> str:
     return f"{base} {n} Release" if n and n >= 2 else f"{base} Release"
 
 
+def _wiki_url(org: str, project: str, wiki: str, path: str) -> str:
+    """Browser URL for an ADO wiki page (so the result links to the created page)."""
+    from urllib.parse import quote
+    return f"{(org or '').rstrip('/')}/{project}/_wiki/wikis/{wiki}?pagePath={quote(path or '')}"
+
+
 def run_wiki(phase_id: str, step: dict, dry_run: bool, state=None) -> StepResult:
     cfg = _load_cfg().get("wiki", {})
     org = cfg.get("org")
@@ -144,7 +150,8 @@ def run_wiki(phase_id: str, step: dict, dry_run: bool, state=None) -> StepResult
         return StepResult(
             True,
             f"[dry-run] Would create payload wiki subpage '{base_name}' under "
-            f"'{parent}' (duplicate-safe: a second numbered page if it already exists).",
+            f"'{parent}' (duplicate-safe: a second numbered page if it already exists).\n"
+            f"Would live at: {_wiki_url(org, project, wiki, base_path)}",
             "agent",
         )
     if not (org and project and wiki and parent):
@@ -165,7 +172,8 @@ def run_wiki(phase_id: str, step: dict, dry_run: bool, state=None) -> StepResult
                 return StepResult(
                     True,
                     f"⚠ A payload page already exists for this month ('{base_name}'). "
-                    f"Left it untouched and created a SECOND page: '{cand_name}'. ({res.detail})",
+                    f"Left it untouched and created a SECOND page: '{cand_name}'.\n"
+                    f"Link: {_wiki_url(org, project, wiki, cand_path)}",
                     "agent",
                 )
             n += 1
@@ -174,7 +182,12 @@ def run_wiki(phase_id: str, step: dict, dry_run: bool, state=None) -> StepResult
     res = create_wiki_page(org, project, wiki, base_path, _payload_template(state))
     if not res.ok:
         return StepResult(False, f"wiki: could not create '{base_path}' — {res.detail}", "agent")
-    return StepResult(True, f"Payload wiki subpage ready: '{base_name}' ({res.detail})", "agent")
+    return StepResult(
+        True,
+        f"Payload wiki subpage ready: '{base_name}'.\n"
+        f"Link: {_wiki_url(org, project, wiki, base_path)}",
+        "agent",
+    )
 
 
 # ---- Component Governance alerts (report-only) -----------------------------

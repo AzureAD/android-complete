@@ -38,9 +38,22 @@ def check_ado_build_def(org: str, project: str, def_id: int, timeout: int = 30) 
         return CheckResult(False, False, f"failed to run az: {e}")
     if out.returncode == 0 and out.stdout.strip():
         return CheckResult(True, True, f"accessible: '{out.stdout.strip()}'")
-    err = (out.stderr or "").strip().splitlines()
+    err_text = (out.stderr or "").strip()
+    low = err_text.lower()
+    # Distinguish a real ACCESS problem from an az-not-authenticated-to-ADO state
+    # (org rejects the CLI's AAD token — often Conditional Access — and returns the
+    # sign-in page / 401). Give an actionable message instead of a raw 401.
+    if ("requires user authentication" in low or "unauthorized" in low
+            or "sign in" in low or "tf400813" in low or "no credentials" in low):
+        return CheckResult(
+            False, True,
+            f"az is not authenticated to Azure DevOps (build def {def_id}); the org "
+            f"rejected the CLI token. Run `az login`; if it still fails (Conditional "
+            f"Access), sign in with a PAT: `az devops login --organization {org}` "
+            f"(Build: Read scope).")
+    err = err_text.splitlines()
     msg = err[-1] if err else f"cannot access build def {def_id}"
-    return CheckResult(False, True, msg[:160])
+    return CheckResult(False, True, msg[:200])
 
 
 def current_az_user(timeout: int = 20):

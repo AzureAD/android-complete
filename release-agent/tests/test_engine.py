@@ -853,8 +853,76 @@ def test_registry_register_list_deregister():
         assert len(reg.list()) == 1
 
 
-# ---- Phase-0 real pre-flight agents (breaking detect, wiki payload) ----
+# ---- inter-process state lock (parallel CLI mutation safety) ----
 
+def test_state_lock_is_exclusive_then_releases():
+    """While a release's state lock is held, a second acquisition blocks (times
+    out); once released it can be acquired again."""
+    import threading
+    with tempfile.TemporaryDirectory() as rr:
+        R = "2099-02"
+        os.makedirs(os.path.join(rr, R))
+        acquired, timed_out = [], []
+        with C.state_lock(rr, R):
+            orig = C._LOCK_TIMEOUT
+            C._LOCK_TIMEOUT = 0.3
+            def try_acquire():
+                try:
+                    with C.state_lock(rr, R):
+                        acquired.append(True)
+                except TimeoutError:
+                    timed_out.append(True)
+            t = threading.Thread(target=try_acquire)
+            t.start(); t.join()
+            C._LOCK_TIMEOUT = orig
+            assert timed_out and not acquired      # blocked while held
+        with C.state_lock(rr, R):                  # released -> acquirable
+            acquired.append("after")
+        assert "after" in acquired
+
+
+def test_concurrent_record_check_both_persist():
+    """Two record-check CLI invocations fired at the same instant must BOTH
+    persist — the per-release lock prevents the last-writer-wins clobber that
+    dropped `notice` in the live test (parallel state-write race)."""
+    import threading
+    from orchestrator import cli as _cli
+    with tempfile.TemporaryDirectory() as rr:
+        R = "2099-03"
+        _cli.main(["--runs-root", rr, "init", "--release", R,
+                   "--owner-email", "t@example.com", "--owner-name", "T"])
+        barrier = threading.Barrier(2)
+
+        def rec(item):
+            barrier.wait()                         # maximize overlap
+            _cli.main(["--runs-root", rr, "record-check", "--release", R,
+                       "--item", item, "--status", "pass", "--detail", item])
+        threads = [threading.Thread(target=rec, args=(i,))
+                   for i in ("oncall_now", "adx_access")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        st = C.load_state(rr, R)
+        assert st.readiness_items.get("oncall_now", {}).get("status") == "pass"
+        assert st.readiness_items.get("adx_access", {}).get("status") == "pass"
+
+
+def test_status_surfaces_agent_result_notes_and_wiki_link():
+    """Agent results are stored as the step note and surfaced in status: the
+    Results & activity section shows each done agent's output, incl. the wiki link."""
+    from orchestrator import render
+    st, orch = _ccd_orch("2026-07-02")          # Phase 0 open
+    orch.run_until_gate()                        # runs breaking/cg/cron/wiki (set notes)
+    r = orch.status_report()
+    steps = {s["id"]: s for s in r["current_steps"]}
+    assert steps["cg"].get("note") and steps["wiki"].get("note")
+    view = render.status_view(r)
+    assert "Results & activity" in view
+    assert "Would live at" in view               # the wiki link surfaces (dry-run)
+
+
+# ---- Phase-0 real pre-flight agents (breaking detect, wiki payload) ----
 _SAMPLE_CHANGELOG = """vNext
 ----------
 - [MINOR] add a thing (#1)

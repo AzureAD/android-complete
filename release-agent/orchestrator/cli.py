@@ -46,7 +46,12 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    # Serialize state read-modify-write per release so parallel CLI invocations
+    # (e.g. the skill firing record-step calls at once) can't clobber each other.
+    runs_root = getattr(args, "runs_root", None)
+    release = C.effective_release(runs_root, getattr(args, "release", None))
+    with C.state_lock(runs_root, release):
+        return args.func(args)
 
 
 if __name__ == "__main__":

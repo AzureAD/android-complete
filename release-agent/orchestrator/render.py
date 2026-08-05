@@ -174,6 +174,19 @@ def status_view(r: dict) -> str:
             tag = " 🚦" if s["gate"] else (" 📌" if s.get("reminder") else "")
             lines.append(f"| {icon} | {s['name']}{tag} | {word} |")
 
+        # 3b) Results & activity — surface each step's stored outcome (agent report,
+        # created link, block reason) so a done/blocked step isn't just "Done" with
+        # no evidence. Full multi-line notes (e.g. the CG report) are preserved.
+        results = [s for s in r["current_steps"]
+                   if s.get("note") and s["state"] in ("done", "blocked")]
+        if results:
+            lines += ["", "### Results & activity"]
+            for s in results:
+                mark = "⛔" if s["state"] == "blocked" else "✅"
+                note_lines = [ln.rstrip() for ln in str(s["note"]).strip().split("\n")]
+                body = "  \n".join(ln for ln in note_lines if ln)  # markdown hard breaks
+                lines += ["", f"{mark} **{s['name']}**  ", body]
+
     return "\n".join(lines)
 
 

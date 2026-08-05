@@ -12,6 +12,8 @@ easy to reuse and test.
 from __future__ import annotations
 
 import os
+import time
+from contextlib import contextmanager
 
 from orchestrator.state import ReleaseState
 from orchestrator.engine import Orchestrator
@@ -27,6 +29,80 @@ SCHEDULE_CONFIG = os.path.join(ROOT, "config", "schedule.yaml")
 REQUIREMENTS_CONFIG = os.path.join(ROOT, "config", "requirements.yaml")
 # runs live OUTSIDE release-agent/, in android-complete/.release-runs (gitignored)
 DEFAULT_RUNS_ROOT = os.path.join(os.path.dirname(ROOT), ".release-runs")
+
+# ---- inter-process state lock ----
+_LOCK_TIMEOUT = 30.0    # max seconds to wait for another CLI process to release
+_LOCK_STALE = 120.0     # a lock older than this is treated as abandoned (crashed proc)
+
+
+@contextmanager
+def state_lock(runs_root: str, release):
+    """Serialize a release's state read-modify-write ACROSS CLI processes.
+
+    Every mutating command loads state, mutates, then saves. Two running at once
+    (e.g. the skill firing `record-step` calls in parallel, or an hourly `tick`
+    overlapping an interactive command) would clobber each other — a last-writer-
+    wins lost update. This exclusive per-release lock makes each CLI invocation
+    atomic: a second process blocks until the first has saved and released.
+    Read-only commands hold it only for their brief duration.
+
+    No release (e.g. `list`, `infra`) → no lock: nothing release-scoped to guard.
+    A lock older than _LOCK_STALE is stolen (its owner crashed).
+    """
+    if not release:
+        yield
+        return
+    lock_dir = os.path.join(runs_root, release)
+    os.makedirs(lock_dir, exist_ok=True)
+    lock_path = os.path.join(lock_dir, ".state.lock")
+    deadline = time.monotonic() + _LOCK_TIMEOUT
+    fd = None
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode())
+            break
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(lock_path) > _LOCK_STALE:
+                    os.remove(lock_path)          # abandoned by a crashed process
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    f"could not acquire state lock for release {release} within "
+                    f"{_LOCK_TIMEOUT:.0f}s — another CLI process is holding it")
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.remove(lock_path)
+        except OSError:
+            pass
+
+
+def effective_release(runs_root, release):
+    """The release id to lock on. The explicit `--release` when given; otherwise,
+    for discovery-mode mutating commands (e.g. the hourly `tick`), the single
+    active release so it's still serialized against interactive commands. Returns
+    None when ambiguous / none exist (nothing to serialize on)."""
+    if release:
+        return release
+    if not runs_root:
+        return None
+    try:
+        res = discovery.resolve(runs_root, None)
+        if res.get("resolution") == "one" and res.get("release"):
+            return res["release"].get("release_id")
+    except Exception:
+        pass
+    return None
 
 
 # ---- paths / state ----
