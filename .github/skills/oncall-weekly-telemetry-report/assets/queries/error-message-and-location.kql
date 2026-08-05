@@ -11,30 +11,34 @@
 // THIS TEMPLATE COVERS BOTH error_code AND error_type IN ONE ROUND-TRIP.
 // Pass an empty list for the side you don't want to slice.
 //
+// Rolling 7-day window. See SKILL.md and bootstrap-report.ps1.
+//
 // Inputs:
 //   <CODES_LIST>  e.g. 'invalid_resource', 'null_pointer_error'  (or empty)
 //   <TYPES_LIST>  e.g. 'IntuneAppProtectionPolicyRequiredException'  (or empty)
-//   <START>       datetime — should be the reporting-week Sunday (e.g. 2026-05-03).
-//                 Use the FULL 7-day reporting window, NOT a narrower 3-5 day slice
-//                 (low-volume types like SSLHandshakeException / Intune* may return
-//                 zero rows in a sub-week window).
-//   <END>         datetime of next Sunday (exclusive)
+//   <CUR_START>   datetime -- start of the current 7-day window (e.g. 2026-07-02)
+//                 Use the FULL 7-day window, NOT a narrower 3-5 day slice
+//                 (low-volume types like SSLHandshakeException / Intune* may
+//                 return zero rows in a sub-window slice).
+//   <CUR_END>     datetime -- exclusive upper bound (e.g. 2026-07-09)
 //
-// Tip: if the reporting window returns no rows for a low-volume code/type, fall
-// back to the prior 14-day window (`<START> - 7d .. <END>`) before giving up.
+// Tip: if the current 7-day window returns no rows for a low-volume code/type,
+// fall back to the prior 14 days (<PREV_START> .. <CUR_END>) before giving up.
 //
 // Output column 'loc' is a JSON blob {"ClassName":"...","MethodName":"...","LineNumber":N}
-// — this is normal. Read it as text. To project the method name only, use
+// -- this is normal. Read it as text. To project the method name only, use
 //   parse_json(loc).MethodName
 //
 // HARD RULE (per SKILL.md Step 4): if the throw site is in
 // ExceptionAdapter.{getExceptionFromTokenErrorResponse, exceptionFromAuthorizationResult}
 // AND the message starts with "AADSTS", the originator is eSTS, not broker.
 
+let curStart = datetime(<CUR_START>);
+let curEnd   = datetime(<CUR_END>);
 let codes = dynamic([<CODES_LIST>]);
 let types = dynamic([<TYPES_LIST>]);
 android_spans
-| where PipelineInfo_IngestionTime between (datetime(<START>) .. datetime(<END>))
+| where PipelineInfo_IngestionTime >= curStart and PipelineInfo_IngestionTime < curEnd
 | where (array_length(codes) > 0 and error_code in (codes))
      or (array_length(types) > 0 and error_type in (types))
 | extend loc = tostring(error_location),

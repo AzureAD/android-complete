@@ -45,6 +45,22 @@ Skip PBI creation, report generation, and email drafting in quick mode.
 | AuthN SDK - MSAL Android | `8d0d308e-cd5c-44a3-9518-43eeeb424b57` |
 | Microsoft Authenticator - Android | `0b97f26e-fcfc-4ed1-95e9-1dca3a2fde3b` |
 
+## Decommissioned Scope
+
+These service trees were **removed** and are **no longer monitored**. They must never be
+re-added to the fetch scope — even if they still appear in a pasted "last week's report"
+and even if their items are still active in S360:
+
+| Service (removed) | Service Tree ID |
+|-------------------|----------------|
+| AuthN SDK - ADAL Android | `937cdc57-1253-4b55-878e-5854368926a2` |
+
+`merge-items.js` enforces this as a **hard denylist**: items targeting these GUIDs are
+always dropped (from both the service and person queries), and the GUID is stripped even
+if passed via a `team.json` `serviceIds` override. Do **not** attempt to work around it by
+adding the owning manager's alias or the GUID to "recover" such items — see Step 1e's
+decommissioned-scope guard.
+
 ## KPIs Where ETA Is Not Applicable
 
 Some S360 KPIs do not have an ETA column in the portal. For items belonging to these KPIs,
@@ -112,7 +128,11 @@ choices: ["I'll paste it now", "Skip — find it automatically"]
    - **AB# references** — extract numeric ADO work item IDs (e.g., `AB#12345`, `Product Backlog Item 12345`, or `Bug 12345`)
    - **ADO work item URLs** — links like `dev.azure.com/.../workitems/12345`
    - **SLA states** — Missed SLA, Near SLA, In SLA
-2. Build a **previous report map**: title → { pbi, owner, slaState }
+2. Build a **previous report map**: title → { pbi, owner, slaState }.
+   **Exclude any items belonging to a decommissioned service** (see "Decommissioned
+   Scope", e.g. ADAL Android). They are out of scope this week and must not enter the
+   week-over-week diff — do not list them as resolved and do not use them to expand the
+   fetch scope.
 3. Store this map for use in:
    - **Step 1e** (resolved items = items in last week's map but NOT in current active set)
    - **Step 3** (existing PBIs = AB# numbers from the map)
@@ -251,6 +271,15 @@ against last week's report:
 
 2. **Identify resolved items**: Items that appeared in last week's report but are NOT
    in the current active set (from 1c) are considered resolved.
+
+   **Decommissioned-scope guard (critical)**: If an item from last week's report belongs
+   to a decommissioned service (e.g. ADAL Android — see "Decommissioned Scope"), it is
+   **out of scope, not resolved**. Exclude it from the diff entirely: do **not** report it
+   as resolved, and do **not** "recover" it by re-adding the service tree GUID or the
+   owning manager's alias to the fetch (in Step 1a/1b or via `team.json`). These items are
+   intentionally no longer monitored even though they may still be active in S360;
+   `merge-items.js` will drop them regardless. A missing decommissioned item is expected —
+   it is not a false-resolved to be corrected.
 
 3. **For each resolved item**, look up its ADO PBI state:
    - If the PBI is `Done` or `Removed`, mark as resolved with its AB# and assignee.
