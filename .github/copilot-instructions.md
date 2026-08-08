@@ -166,7 +166,7 @@ The `design-docs/` folder contains the `AuthLibrariesApiReview` ADO repo (cloned
 |--------|-------------|
 | common / common4j | `AzureAD/microsoft-authentication-library-common-for-android` |
 | msal | `AzureAD/microsoft-authentication-library-for-android` |
-| broker / broker4j | `identity-authnz-teams/ad-accounts-for-android` (GHE) |
+| broker / broker4j | `security/ad-accounts-for-android` (GHE) |
 | adal | `AzureAD/azure-activedirectory-library-for-android` |
 | 1ES-Pipelines | `IdentityDivision/Engineering/_git/AuthClientAndroidPipelines` (ADO) |
 

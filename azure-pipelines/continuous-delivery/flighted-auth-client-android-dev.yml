@@ -22,10 +22,10 @@ resources:
       ref: dev
       endpoint: ANDROID_GITHUB
     - repository: broker
-      type: github
-      name: AzureAD/ad-accounts-for-android
+      type: githubenterprise
+      name: security/ad-accounts-for-android
       ref: dev
-      endpoint: ANDROID_GITHUB
+      endpoint: MSFT_GHE_SECURITY
     - repository: msal
       type: github
       name: AzureAD/microsoft-authentication-library-for-android

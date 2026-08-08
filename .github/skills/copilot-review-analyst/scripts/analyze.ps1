@@ -15,33 +15,21 @@ $ErrorActionPreference = "Continue"
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
 # ========================================
-# AUTH: Switch to EMU account (has access to all repos including private broker)
-# EMU accounts follow the *_microsoft naming convention.
+# AUTH: common/msal live on github.com; broker lives on msft.ghe.com.
+# Both hosts must be authenticated — gh routes per-host, so no account switching.
 # ========================================
-$originalAccount = gh api user --jq '.login' 2>$null
+$originalAccount = $null
 
-# Find the EMU account from gh auth status output
-$emuAccount = (gh auth status 2>&1 | Select-String 'Logged in to github.com account (\S+_microsoft)' | 
-    ForEach-Object { $_.Matches[0].Groups[1].Value } | Select-Object -First 1)
-
-if (-not $emuAccount) {
-    Write-Host "ERROR: No EMU account (*_microsoft) found in 'gh auth status'." -ForegroundColor Red
-    Write-Host "  Run: gh auth login  (and authenticate with your EMU account)" -ForegroundColor Yellow
+if (-not (gh auth status --hostname github.com 2>&1 | Select-String 'Logged in')) {
+    Write-Host "ERROR: not logged in to github.com." -ForegroundColor Red
+    Write-Host "  Run: gh auth login --hostname github.com" -ForegroundColor Yellow
     exit 1
 }
 
-if ($originalAccount -ne $emuAccount) {
-    Write-Host "Switching from '$originalAccount' to EMU account '$emuAccount'..." -ForegroundColor Cyan
-    gh auth switch --user $emuAccount 2>&1 | Out-Null
-    $currentAccount = gh api user --jq '.login' 2>$null
-    if ($currentAccount -ne $emuAccount) {
-        Write-Host "ERROR: Failed to switch to EMU account '$emuAccount'." -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "  Switched to '$emuAccount'. Will restore '$originalAccount' on completion." -ForegroundColor Green
-} else {
-    Write-Host "Already using EMU account '$emuAccount'." -ForegroundColor Green
-    $originalAccount = $null  # no restore needed
+if (-not (gh auth status --hostname msft.ghe.com 2>&1 | Select-String 'Logged in')) {
+    Write-Host "ERROR: not logged in to msft.ghe.com (required for the broker repo)." -ForegroundColor Red
+    Write-Host "  Run: gh auth login --hostname msft.ghe.com" -ForegroundColor Yellow
+    exit 1
 }
 
 # Copilot uses "Copilot" for inline review comments
@@ -49,9 +37,9 @@ $COPILOT_USERS = @("Copilot", "copilot-pull-request-reviewer[bot]")
 $BOT_AUTHORS = @("app/copilot-swe-agent", "Copilot", "dependabot[bot]", "github-actions[bot]")
 
 $repos = @(
-    @{ Label = "common"; Slug = "AzureAD/microsoft-authentication-library-common-for-android" },
-    @{ Label = "msal";   Slug = "AzureAD/microsoft-authentication-library-for-android" },
-    @{ Label = "broker"; Slug = "identity-authnz-teams/ad-accounts-for-android" }
+    @{ Label = "common"; Slug = "AzureAD/microsoft-authentication-library-common-for-android"; PrRepo = "AzureAD/microsoft-authentication-library-common-for-android"; ApiRepo = "https://api.github.com/repos/AzureAD/microsoft-authentication-library-common-for-android" },
+    @{ Label = "msal";   Slug = "AzureAD/microsoft-authentication-library-for-android";        PrRepo = "AzureAD/microsoft-authentication-library-for-android";        ApiRepo = "https://api.github.com/repos/AzureAD/microsoft-authentication-library-for-android" },
+    @{ Label = "broker"; Slug = "security/ad-accounts-for-android";                            PrRepo = "msft.ghe.com/security/ad-accounts-for-android";                ApiRepo = "https://msft.ghe.com/api/v3/repos/security/ad-accounts-for-android" }
 )
 
 # ========================================
@@ -64,11 +52,11 @@ $repos = @(
 # ("The Force-Push Confound"). Commit SHA lists are fetched once per PR and cached.
 # ========================================
 $prCommitShaCache = @{}
-function Get-PRCommitShas($slug, $prNum) {
-    $key = "$slug/$prNum"
+function Get-PRCommitShas($apiRepo, $prNum) {
+    $key = "$apiRepo/$prNum"
     if (-not $prCommitShaCache.ContainsKey($key)) {
         try {
-            $shas = gh api "repos/$slug/pulls/$prNum/commits" --paginate --jq '.[].sha' 2>&1
+            $shas = gh api "$apiRepo/pulls/$prNum/commits" --paginate --jq '.[].sha' 2>&1
             $prCommitShaCache[$key] = @($shas | Where-Object { $_ -match '^[0-9a-f]{40}$' })
         } catch {
             $prCommitShaCache[$key] = @()
@@ -95,12 +83,12 @@ function Get-PRCommitShas($slug, $prNum) {
 # Never let this DEMOTE a comment. Commits are fetched once per PR and cached.
 # ========================================
 $prApplyCache = @{}
-function Get-PRApplyCommits($slug, $prNum) {
-    $key = "$slug/$prNum"
+function Get-PRApplyCommits($apiRepo, $prNum) {
+    $key = "$apiRepo/$prNum"
     if (-not $prApplyCache.ContainsKey($key)) {
         $out = @()
         try {
-            $commits = gh api "repos/$slug/pulls/$prNum/commits" --paginate 2>&1 | ConvertFrom-Json
+            $commits = gh api "$apiRepo/pulls/$prNum/commits" --paginate 2>&1 | ConvertFrom-Json
             foreach ($cmt in $commits) {
                 $msg = $cmt.commit.message
                 $tier = $null
@@ -110,7 +98,7 @@ function Get-PRApplyCommits($slug, $prNum) {
                 if ($tier) {
                     $files = @()
                     try {
-                        $det = gh api "repos/$slug/commits/$($cmt.sha)" 2>$null | ConvertFrom-Json
+                        $det = gh api "$apiRepo/commits/$($cmt.sha)" 2>$null | ConvertFrom-Json
                         $files = @($det.files | ForEach-Object { $_.filename })
                     } catch {}
                     $out += [PSCustomObject]@{
@@ -136,6 +124,7 @@ $reviewSummaries = @()
 foreach ($repo in $repos) {
     $label = $repo.Label
     $slug = $repo.Slug
+    $apiRepo = $repo.ApiRepo
     Write-Host "`n========================================" -ForegroundColor Cyan
     Write-Host "Processing: $label ($slug)" -ForegroundColor Cyan
     Write-Host "========================================" -ForegroundColor Cyan
@@ -148,7 +137,7 @@ foreach ($repo in $repos) {
     $prsFile = "$env:TEMP\${label}_prs.json"
     if (-not (Test-Path $prsFile)) {
         Write-Host "  Fetching MERGED PR list ($StartDate..$EndDate)..."
-        gh pr list --repo $slug --state merged --limit 300 --json number,title,author,createdAt,mergedAt,state --search "merged:$StartDate..$EndDate" 2>&1 | Out-File -FilePath $prsFile -Encoding utf8
+        gh pr list --repo $repo.PrRepo --state merged --limit 300 --json number,title,author,createdAt,mergedAt,state --search "merged:$StartDate..$EndDate" 2>&1 | Out-File -FilePath $prsFile -Encoding utf8
     }
     
     $allPRs = Get-Content $prsFile | ConvertFrom-Json
@@ -167,7 +156,7 @@ foreach ($repo in $repos) {
         
         # Get ALL review comments (inline code comments) for this PR
         try {
-            $commentsRaw = gh api "repos/$slug/pulls/$prNum/comments" --paginate 2>&1
+            $commentsRaw = gh api "$apiRepo/pulls/$prNum/comments" --paginate 2>&1
             $comments = $commentsRaw | ConvertFrom-Json
         } catch {
             Write-Host "  PR #$prNum - parse error, skipping" -ForegroundColor Yellow
@@ -206,7 +195,7 @@ foreach ($repo in $repos) {
                 # reviewed (original_commit_id) still in the PR's commit list?
                 $origCommit = $cc.original_commit_id
                 $diffHunk = $cc.diff_hunk
-                $prShas = Get-PRCommitShas $slug $prNum
+                $prShas = Get-PRCommitShas $apiRepo $prNum
                 $reviewedRewritten = $false
                 if ($origCommit -and $prShas.Count -gt 0) {
                     $reviewedRewritten = -not ($prShas -contains $origCommit)
@@ -230,7 +219,7 @@ foreach ($repo in $repos) {
                 if ($ccCreated) {
                     $tierRank = @{ 'native-apply' = 3; 'autofix' = 2; 'coauthor' = 1 }
                     $best = 0
-                    foreach ($ac in (Get-PRApplyCommits $slug $prNum)) {
+                    foreach ($ac in (Get-PRApplyCommits $apiRepo $prNum)) {
                         $acDate = $null; try { $acDate = [datetime]$ac.Date } catch {}
                         if ($acDate -and $acDate -gt $ccCreated -and ($ac.Files -contains $commentPath)) {
                             $applyCandidate = $true
@@ -268,7 +257,7 @@ foreach ($repo in $repos) {
         
         # Also check the review-level summary comments from copilot
         try {
-            $reviewsRaw = gh api "repos/$slug/pulls/$prNum/reviews" 2>&1
+            $reviewsRaw = gh api "$apiRepo/pulls/$prNum/reviews" 2>&1
             $reviews = $reviewsRaw | ConvertFrom-Json
             # Coverage: a PR counts as "reviewed by Copilot" if Copilot posted ANY review
             # (even a body-less APPROVED/COMMENTED), not only ones with a summary body.
@@ -414,12 +403,3 @@ Write-Host "  review_summaries.json ($($reviewSummaries.Count) summaries)"
 Write-Host "================================================================"
 Write-Host "`nNext: Run Phase 2 (precise.ps1) for diff verification," -ForegroundColor Yellow
 Write-Host "then Phase 3 (AI classification of all replied comments)." -ForegroundColor Yellow
-
-# ========================================
-# RESTORE: Switch back to original GitHub account
-# ========================================
-if ($originalAccount) {
-    Write-Host "`nRestoring GitHub CLI to original account '$originalAccount'..." -ForegroundColor Cyan
-    gh auth switch --user $originalAccount 2>&1 | Out-Null
-    Write-Host "  Restored to '$originalAccount'." -ForegroundColor Green
-}

@@ -590,7 +590,7 @@
       <tr><td><code>429</code> (eSTS rate-limit)</td><td class="num">~10</td><td class="num warn">218 K (week Mar 22)</td><td class="num good">2.5 K</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L24.285714285714285,25.543803291327453 L46.57142857142857,23.002120180261215 L68.85714285714286,2 L91.14285714285714,23.690049838003542 L113.42857142857142,24.35132580103347 L135.71428571428572,10.1533872403697 L158,25.724211357190715 L158,28 L2,28 Z" fill="#bf8700" opacity="0.12"/><path d="M2,26 L24.285714285714285,25.543803291327453 L46.57142857142857,23.002120180261215 L68.85714285714286,2 L91.14285714285714,23.690049838003542 L113.42857142857142,24.35132580103347 L135.71428571428572,10.1533872403697 L158,25.724211357190715" fill="none" stroke="#bf8700" stroke-width="1.4"/><circle cx="158" cy="25.724211357190715" r="2" fill="#bf8700"/></svg></td></tr>
     </tbody>
   </table>
-  <p style="margin-top:6px;font-size:12.5px;">Both <code>unknown_authority</code> (common <a href="https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/3082" target="_blank">#3082</a> ABBA deadlock fix) and <code>timed_out_execution</code> (broker <a href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank">#141</a> flight gating) are recovering. <strong>Recommendation:</strong> add Aria guardrail at &gt;1M devices/week for <code>unknown_authority</code> to detect any future excursion early.</p>
+  <p style="margin-top:6px;font-size:12.5px;">Both <code>unknown_authority</code> (common <a href="https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/3082" target="_blank">#3082</a> ABBA deadlock fix) and <code>timed_out_execution</code> (broker <a href="https://msft.ghe.com/security/ad-accounts-for-android/pull/141" target="_blank">#141</a> flight gating) are recovering. <strong>Recommendation:</strong> add Aria guardrail at &gt;1M devices/week for <code>unknown_authority</code> to detect any future excursion early.</p>
 </div>
 
 <div class="callout win">
@@ -605,7 +605,7 @@
       <tr><td><code>null_object</code>, <code>device_network_not_available</code>, <code>access_denied</code>, <code>ONLY_SUPPORTS_ACCOUNT_MANAGER_ERROR_CODE</code>, <code>invalid_key</code></td><td colspan="3" class="muted">all −17% to −78% over 8 wks (see appendix)</td><td></td></tr>
     </tbody>
   </table>
-  <p style="margin-top:6px;font-size:12.5px;"><strong>Note:</strong> the <code>timed_out</code> drop and <code>timed_out_execution</code> climb are partly the same event — broker <a href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank">#141</a> reclassifies legacy <code>timed_out</code> into the more specific <code>timed_out_execution</code>. The reclassification is net-neutral but the new code is louder; treat the <code>timed_out</code> "win" with caution.</p>
+  <p style="margin-top:6px;font-size:12.5px;"><strong>Note:</strong> the <code>timed_out</code> drop and <code>timed_out_execution</code> climb are partly the same event — broker <a href="https://msft.ghe.com/security/ad-accounts-for-android/pull/141" target="_blank">#141</a> reclassifies legacy <code>timed_out</code> into the more specific <code>timed_out_execution</code>. The reclassification is net-neutral but the new code is louder; treat the <code>timed_out</code> "win" with caution.</p>
 </div>
 
 <div class="callout">
@@ -687,7 +687,7 @@
     <div class="attr-tags"><span class="tag tag-bad">60d regression</span><span class="tag tag-warn">peak-then-recover</span><span class="tag tag-info">AppManager-heavy</span></div>
   </div>
   <div class="attr-body">
-    <div class="attr-verdict bad"><strong>Verdict — 60d regression with WoW recovery underway.</strong> Almost entirely on <code>AcquireTokenSilent</code> (99.9%). The peak at 143 M devices (week of Apr 12) and subsequent drop to 53.4 M is consistent with broker <a href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank">#141</a> (HTTP cancellation on ATS command-level timeout) being flight-rolled out and then partially gated back. AppManager (Link to Windows) is the dominant active broker (53% this week, was 69% prior), and most-affected calling app: Outlook 32% / AppManager 25% / Teams 24%. <strong>Action:</strong> confirm the flight rollout schedule for #141 and check whether the timeout threshold needs tuning before re-enabling broadly. Watch for downstream client retry storms (it converts silent thread-leak into an explicit error → callers must retry cleanly).</div>
+    <div class="attr-verdict bad"><strong>Verdict — 60d regression with WoW recovery underway.</strong> Almost entirely on <code>AcquireTokenSilent</code> (99.9%). The peak at 143 M devices (week of Apr 12) and subsequent drop to 53.4 M is consistent with broker <a href="https://msft.ghe.com/security/ad-accounts-for-android/pull/141" target="_blank">#141</a> (HTTP cancellation on ATS command-level timeout) being flight-rolled out and then partially gated back. AppManager (Link to Windows) is the dominant active broker (53% this week, was 69% prior), and most-affected calling app: Outlook 32% / AppManager 25% / Teams 24%. <strong>Action:</strong> confirm the flight rollout schedule for #141 and check whether the timeout threshold needs tuning before re-enabling broadly. Watch for downstream client retry storms (it converts silent thread-leak into an explicit error → callers must retry cleanly).</div>
     <div class="attr-dims"><div class="dim"><div class="dim-label">Span</div><div class="dim-row dominant"><span class="dim-name">AcquireTokenSilent</span><span class="dim-pct">99.9%</span></div>
         <div class="dim-bar-track"><div class="dim-bar-fill dominant" style="width:99.9%"></div></div>
 <div class="dim-row "><span class="dim-name">ATISilently</span><span class="dim-pct">0.1%</span></div>
@@ -717,7 +717,7 @@
       <div class="code-attr-title">Code attribution</div>
       <div class="pr-list"><div class="pr-card">
       <div class="pr-conf pr-conf-high">high</div>
-      <div class="pr-body"><a class="pr-id" href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank" rel="noopener">broker#141</a> <span class="pr-title">Add flight-gated HTTP cancellation on ATS command-level timeout to eliminate zombie worker threads (AB#3542516)</span>
+      <div class="pr-body"><a class="pr-id" href="https://msft.ghe.com/security/ad-accounts-for-android/pull/141" target="_blank" rel="noopener">broker#141</a> <span class="pr-title">Add flight-gated HTTP cancellation on ATS command-level timeout to eliminate zombie worker threads (AB#3542516)</span>
         <div class="pr-why">This PR explicitly converts long-running ATS calls into timed_out_execution. The 60d trajectory matches the flight rollout perfectly. The reciprocal drop in legacy timed_out (-86%) confirms the reclassification.</div>
       </div>
     </div></div>
@@ -837,7 +837,7 @@
     <div class="attr-tags"><span class="tag tag-warn">60d regression</span><span class="tag tag-info">silent path</span><span class="tag tag-info">LTW + Authenticator</span></div>
   </div>
   <div class="attr-body">
-    <div class="attr-verdict bad"><strong>Verdict — Steady 60d climb in NPE crashes; small absolute volume but trajectory worth flagging.</strong> Span: <code>AcquireTokenSilent</code> 98%. Active broker: AppManager (LTW) 53% / Authenticator 26% / Intune CP 20%. Calling app: AppManager 35% / Teams 28% / Outlook 21%. The over-representation of LTW (53% vs ~5-10% fleet share for that active broker) is a strong signal — there's likely a null path specific to the LTW broker process. <strong>Action:</strong> bucket by error_location / stack-trace prefix and route to LTW team. Cite <a href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank">broker #141</a> as a possible secondary contributor (timeout cancellation can interact with deferred work that holds a null reference).</div>
+    <div class="attr-verdict bad"><strong>Verdict — Steady 60d climb in NPE crashes; small absolute volume but trajectory worth flagging.</strong> Span: <code>AcquireTokenSilent</code> 98%. Active broker: AppManager (LTW) 53% / Authenticator 26% / Intune CP 20%. Calling app: AppManager 35% / Teams 28% / Outlook 21%. The over-representation of LTW (53% vs ~5-10% fleet share for that active broker) is a strong signal — there's likely a null path specific to the LTW broker process. <strong>Action:</strong> bucket by error_location / stack-trace prefix and route to LTW team. Cite <a href="https://msft.ghe.com/security/ad-accounts-for-android/pull/141" target="_blank">broker #141</a> as a possible secondary contributor (timeout cancellation can interact with deferred work that holds a null reference).</div>
     <div class="attr-dims"><div class="dim"><div class="dim-label">Span</div><div class="dim-row dominant"><span class="dim-name">AcquireTokenSilent</span><span class="dim-pct">98.5%</span></div>
         <div class="dim-bar-track"><div class="dim-bar-fill dominant" style="width:98.5%"></div></div>
 <div class="dim-row "><span class="dim-name">DeviceRegistrationApi</span><span class="dim-pct">1.0%</span></div>
@@ -867,7 +867,7 @@
       <div class="code-attr-title">Code attribution</div>
       <div class="pr-list"><div class="pr-card">
       <div class="pr-conf pr-conf-low">low</div>
-      <div class="pr-body"><a class="pr-id" href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank" rel="noopener">broker#141</a> <span class="pr-title">HTTP cancellation on ATS timeout (LTW broker process)</span>
+      <div class="pr-body"><a class="pr-id" href="https://msft.ghe.com/security/ad-accounts-for-android/pull/141" target="_blank" rel="noopener">broker#141</a> <span class="pr-title">HTTP cancellation on ATS timeout (LTW broker process)</span>
         <div class="pr-why">Active broker is heavily LTW (53% vs ~7% fleet share). The same ATS timeout cancellation path may be racing with a null-checked reference in a deferred callback. Needs stack-trace bucketing to confirm.</div>
       </div>
     </div><div class="pr-card">

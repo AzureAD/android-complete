@@ -26,7 +26,7 @@ Determine which repo(s) each PBI targets based on the architectural layer:
 | common | `AzureAD/microsoft-authentication-library-common-for-android` | Shared utilities, IPC logic, data models, base classes, command architecture, token cache, crypto, telemetry primitives, AIDL contracts |
 | common4j | (same repo as common) | Pure Java/Kotlin shared logic with no Android dependency |
 | msal | `AzureAD/microsoft-authentication-library-for-android` | Client-facing API, AcquireToken/AcquireTokenSilent flows, MSAL-specific controllers, public configuration |
-| broker | `identity-authnz-teams/ad-accounts-for-android` | Broker-side auth processing, PRT acquisition/rotation, device registration, eSTS communication, IPC entry points |
+| broker | `security/ad-accounts-for-android` | Broker-side auth processing, PRT acquisition/rotation, device registration, eSTS communication, IPC entry points |
 | broker4j | (same repo as broker) | Pure Java/Kotlin broker business logic, Protobuf schemas |
 | adal | `AzureAD/azure-activedirectory-library-for-android` | Legacy ADAL changes only (rare — maintenance mode, bug fixes only) |
 | 1ES-Pipelines | `IdentityDivision/Engineering/_git/AuthClientAndroidPipelines` (ADO) | Pipeline YAML changes: release orchestration, hotfix pipelines, templates, validation, publishing, scripts |

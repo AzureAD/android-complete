@@ -19,10 +19,10 @@ schedules:
 resources:
   repositories:
     - repository: broker
-      type: github
-      name: AzureAD/ad-accounts-for-android
+      type: githubenterprise
+      name: security/ad-accounts-for-android
       ref: $(local_ad_accounts_branch)
-      endpoint: ANDROID_GITHUB
+      endpoint: MSFT_GHE_SECURITY
 
 jobs:
   - job: build_deb

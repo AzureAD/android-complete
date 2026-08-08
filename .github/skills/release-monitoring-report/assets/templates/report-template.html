@@ -834,7 +834,7 @@
         <div class="pr-card">
           <span class="pr-conf pr-conf-low">low-med</span>
           <div class="pr-body">
-            <a class="pr-id" href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/176">broker#176</a>
+            <a class="pr-id" href="https://msft.ghe.com/security/ad-accounts-for-android/pull/176">broker#176</a>
             <span class="pr-title">supportsBoundService default → true</span>
             <div class="pr-meta">68126018c · Pedro Romero Vargas · AB#3571860</div>
             <div class="pr-why">Flips <code>supportsBoundService</code> from <code>false</code> to <code>true</code> in <code>DeviceRegistrationClientApplication</code>, changing IPC-strategy selection toward the bound-service path — a plausible driver of the <code>interaction_required</code> rise on the <code>MSAL_PerformIpcStrategy</code> span (+3.38 pp). Needs eSTS-side confirmation.</div>
@@ -843,7 +843,7 @@
         <div class="pr-card">
           <span class="pr-conf pr-conf-none">excluded</span>
           <div class="pr-body">
-            <a class="pr-id" href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/174">broker#174</a>
+            <a class="pr-id" href="https://msft.ghe.com/security/ad-accounts-for-android/pull/174">broker#174</a>
             <span class="pr-title">null object get cache record + 2023 common#2222 false-positive</span>
             <div class="pr-meta">9c9906686 · @siddhijain · AB#3607178</div>
             <div class="pr-why">broker#174 touches the silent cache path but addresses a <em>different</em> code (<code>null_object</code>), <em>reduces</em> errors, and is gated to <code>SdkType.MSAL_CPP</code> (OneAuth) — not the Authenticator MSAL path. Note: the 2023 <code>common#2222</code> (PoP re-key) is <strong>not in this release</strong> — it surfaced earlier only because the range tool resolved common's own <code>v16.x</code> tag namespace instead of the submodule pointer.</div>
