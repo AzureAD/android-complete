@@ -306,7 +306,7 @@ For each candidate PR, **read the diff** to confirm it touches the throw site / 
 | Repo | URL pattern |
 |------|-------------|
 | `common/` | `https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/<num>` |
-| `broker/` | `https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/<num>` |
+| `broker/` | `https://msft.ghe.com/security/ad-accounts-for-android/pull/<num>` |
 | `msal/` | `https://github.com/AzureAD/microsoft-authentication-library-for-android/pull/<num>` |
 | `adal/` | `https://github.com/AzureAD/azure-activedirectory-library-for-android/pull/<num>` |
 

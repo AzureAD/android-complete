@@ -42,39 +42,29 @@ $ErrorActionPreference = "Continue"
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
 # ========================================
-# AUTH: switch to the EMU account (has access to all repos incl. private broker).
-# Identical logic to analyze.ps1 so preflight validates the SAME identity the run will use.
+# AUTH: common/msal live on github.com; broker lives on msft.ghe.com.
+# Identical logic to analyze.ps1 so preflight validates the SAME identities the run will use.
 # ========================================
-$originalAccount = gh api user --jq '.login' 2>$null
-$emuAccount = (gh auth status 2>&1 | Select-String 'Logged in to github.com account (\S+_microsoft)' |
-    ForEach-Object { $_.Matches[0].Groups[1].Value } | Select-Object -First 1)
+$originalAccount = $null
 
-if (-not $emuAccount) {
-    Write-Host "ERROR: No EMU account (*_microsoft) found in 'gh auth status'." -ForegroundColor Red
-    Write-Host "  Run: gh auth login  (authenticate with your EMU account)" -ForegroundColor Yellow
+if (-not (gh auth status --hostname github.com 2>&1 | Select-String 'Logged in')) {
+    Write-Host "ERROR: not logged in to github.com." -ForegroundColor Red
+    Write-Host "  Run: gh auth login --hostname github.com" -ForegroundColor Yellow
     exit 1
 }
-if ($originalAccount -ne $emuAccount) {
-    Write-Host "Switching from '$originalAccount' to EMU account '$emuAccount'..." -ForegroundColor Cyan
-    gh auth switch --user $emuAccount 2>&1 | Out-Null
-    $currentAccount = gh api user --jq '.login' 2>$null
-    if ($currentAccount -ne $emuAccount) {
-        Write-Host "ERROR: Failed to switch to EMU account '$emuAccount'." -ForegroundColor Red
-        exit 1
-    }
-    Write-Host "  Switched to '$emuAccount'." -ForegroundColor Green
-} else {
-    Write-Host "Already using EMU account '$emuAccount'." -ForegroundColor Green
-    $originalAccount = $null
+if (-not (gh auth status --hostname msft.ghe.com 2>&1 | Select-String 'Logged in')) {
+    Write-Host "ERROR: not logged in to msft.ghe.com (required for the broker repo)." -ForegroundColor Red
+    Write-Host "  Run: gh auth login --hostname msft.ghe.com" -ForegroundColor Yellow
+    exit 1
 }
 
 $COPILOT_USERS = @("Copilot", "copilot-pull-request-reviewer[bot]")
 $BOT_AUTHORS = @("app/copilot-swe-agent", "Copilot", "dependabot[bot]", "github-actions[bot]")
 
 $repos = @(
-    @{ Label = "common"; Slug = "AzureAD/microsoft-authentication-library-common-for-android" },
-    @{ Label = "msal";   Slug = "AzureAD/microsoft-authentication-library-for-android" },
-    @{ Label = "broker"; Slug = "identity-authnz-teams/ad-accounts-for-android" }
+    @{ Label = "common"; Slug = "AzureAD/microsoft-authentication-library-common-for-android"; PrRepo = "AzureAD/microsoft-authentication-library-common-for-android"; ApiRepo = "https://api.github.com/repos/AzureAD/microsoft-authentication-library-common-for-android" },
+    @{ Label = "msal";   Slug = "AzureAD/microsoft-authentication-library-for-android";        PrRepo = "AzureAD/microsoft-authentication-library-for-android";        ApiRepo = "https://api.github.com/repos/AzureAD/microsoft-authentication-library-for-android" },
+    @{ Label = "broker"; Slug = "security/ad-accounts-for-android";                            PrRepo = "msft.ghe.com/security/ad-accounts-for-android";                ApiRepo = "https://msft.ghe.com/api/v3/repos/security/ad-accounts-for-android" }
 )
 
 Write-Host ""
@@ -88,7 +78,7 @@ $hardFail = $false
 $silentZeroRisk = $false
 
 foreach ($r in $repos) {
-    $label = $r.Label; $slug = $r.Slug
+    $label = $r.Label; $slug = $r.Slug; $apiRepo = $r.ApiRepo
     $repoReadable = $false
     $prListable = $false
     $mergedInWindow = 0
@@ -97,7 +87,7 @@ foreach ($r in $repos) {
     $notes = @()
 
     # (1) repo readable?
-    $repoJson = gh api "repos/$slug" 2>$null
+    $repoJson = gh api "$apiRepo" 2>$null
     if ($LASTEXITCODE -eq 0 -and $repoJson) {
         $repoReadable = $true
     } else {
@@ -107,7 +97,7 @@ foreach ($r in $repos) {
     # (2) merged human PRs in-window?
     $prs = @()
     if ($repoReadable) {
-        $prJson = gh pr list --repo $slug --state merged --search "merged:$StartDate..$EndDate" `
+        $prJson = gh pr list --repo $r.PrRepo --state merged --search "merged:$StartDate..$EndDate" `
             --limit 200 --json number,author,mergedAt 2>$null
         if ($LASTEXITCODE -eq 0 -and $prJson) {
             try { $prs = @($prJson | ConvertFrom-Json) } catch { $prs = @() }
@@ -125,7 +115,7 @@ foreach ($r in $repos) {
             Sort-Object { $_.mergedAt } -Descending | Select-Object -First $SampleSize)
         $sampledPRs = $sample.Count
         foreach ($pr in $sample) {
-            $reviews = gh api "repos/$slug/pulls/$($pr.number)/reviews" --paginate 2>$null | ConvertFrom-Json
+            $reviews = gh api "$apiRepo/pulls/$($pr.number)/reviews" --paginate 2>$null | ConvertFrom-Json
             if ($reviews) {
                 $hasCopilot = $reviews | Where-Object { $_.user.login -in $COPILOT_USERS }
                 if ($hasCopilot) { $prsWithCopilotReview++ }
@@ -169,7 +159,6 @@ foreach ($r in $repos) {
 
 $auditObj = [PSCustomObject]@{
     generatedAt = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-    account     = $emuAccount
     window      = @{ start = $StartDate; end = $EndDate }
     sampleSize  = $SampleSize
     repos       = $audit
@@ -178,9 +167,6 @@ $auditObj = [PSCustomObject]@{
 }
 $auditPath = Join-Path $OutputDir "coverage_audit.json"
 $auditObj | ConvertTo-Json -Depth 6 | Out-File $auditPath -Encoding utf8
-
-# Restore original account if we switched.
-if ($originalAccount) { gh auth switch --user $originalAccount 2>&1 | Out-Null }
 
 Write-Host ""
 Write-Host "  coverage_audit.json -> $auditPath"

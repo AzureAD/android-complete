@@ -67,7 +67,7 @@ if (-not $RepoRoot) {
 if (-not $GrepRegex) { $GrepRegex = [regex]::Escape($Symbol) }
 
 $repos = @(
-    @{ Name='broker'; Path=(Join-Path $RepoRoot 'broker'); UrlBase='https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/' }
+    @{ Name='broker'; Path=(Join-Path $RepoRoot 'broker'); UrlBase='https://msft.ghe.com/security/ad-accounts-for-android/pull/' }
     @{ Name='common'; Path=(Join-Path $RepoRoot 'common'); UrlBase='https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/' }
 )
 
@@ -80,7 +80,7 @@ if ($availableRepos.Count -eq 0) {
 Neither broker/ nor common/ found under -RepoRoot $RepoRoot.
 
 Expected layout:
-  $RepoRoot\broker\   (clone of identity-authnz-teams/ad-accounts-for-android)
+  $RepoRoot\broker\   (clone of security/ad-accounts-for-android)
   $RepoRoot\common\   (clone of AzureAD/microsoft-authentication-library-common-for-android)
 
 Pass -RepoRoot pointing at the parent of those two clones. The android-complete
