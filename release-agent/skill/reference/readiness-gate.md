@@ -17,6 +17,13 @@ If any item is unsatisfied the gate stays closed. If the engineer can't satisfy 
 
 ## Flow
 
+> **DESIGN INVARIANT — do not "optimize" this away.** The gate renders the checklist table **twice on purpose**, and the FIRST render (step 1) must stay the model's **opening, display-first action** — a `checklist` table shown *before* any silent auto-check work. This is not redundant:
+> - A table render that is the model's **first action** is pasted **verbatim** (showing it IS the action).
+> - A table render placed **after** a chain of silent tool calls (verify, record-check, m_get_settings) gets **summarized into a plain list** — the model switches to wrap-up mode. (This was a real regression: moving to a single end-of-flow render broke the display.)
+> - The first render also **primes** the model to keep pasting verbatim, which is why the second render (step 3b) also comes out as a table.
+>
+> So: **always render the table first (step 1) as the opening move, then again at 3b. Never collapse to a single render placed after the silent checks.** The double-print is the mechanism, not waste.
+
 1. **Show the checklist table FIRST — the first substantive thing the user sees, every time.** Run `checklist --release <id> --verify` (runs Python auto checks + prints the canonical markdown table) and **reproduce its stdout verbatim as live markdown — NOT fenced** (see the core "render CLI output" golden rule). There are exactly **two types**: `[auto]` (Scout verifies) and `[attest]` (you confirm); all must be satisfied. At this point `silent_perms`, `oncall_now`, `adx_access` show Outstanding — expected; you resolve them next. **Never jump to permissions/attestations without first rendering this table.**
 
 2. **Enable unattended (silent) runs — right after the table, before the attestations.** The daily digest, Teams reminders, browser (CCOA/lockdown) checks, **and the readiness on-call/telemetry checks (ICM + Kusto MCP)** run without focus, so they must not stall on a prompt. This is the `silent_perms` item. Call **`m_get_settings`**, read `permissions.servers` **silently — never paste raw JSON**; surface only the plain-language choice. Satisfied when ALL `required_servers` (`shell`, `workiq`, `playwright`, `kusto`, `icm`) are **Allow** (`autoApprove: true`). **Never hard-blocks.**
