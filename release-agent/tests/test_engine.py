@@ -204,34 +204,6 @@ def test_auto_two_types_only():
     assert adx["cluster_uri"] and adx["database"]
 
 
-def test_attest_prompt_welded_only_after_auto_done():
-    """render.readiness_table appends the '✋ Your confirmation needed' section ONLY
-    when every auto item is satisfied and attests remain — not before (so an early
-    render can't prematurely prompt for attestations)."""
-    from orchestrator import render
-    _stub_build_defs("pass")
-    st = ReleaseState(release_id="t", dry_run=True, ccd="2026-07-08", ccd_source="default")
-    orch = Orchestrator(CONFIG, st)
-    # BEFORE auto checks: no confirmation section
-    out_early = render.readiness_table(orch.gate.checklist(), "t")
-    assert "Your confirmation needed" not in out_early
-    # resolve all auto items (python-verified + scout-assisted)
-    orch.gate.verify()
-    orch.gate.record_check("silent_perms", "pass", "auto-approved")
-    orch.gate.record_check("oncall_now", "pass", "not on roster")
-    orch.gate.record_check("adx_access", "pass", "print 1 ok")
-    out_ready = render.readiness_table(orch.gate.checklist(), "t")
-    assert "Your confirmation needed" in out_ready
-    # lists each outstanding attest item
-    for label in ("Play Console access", "Free during release window", "SAW + AME", "YubiKey in hand"):
-        assert label in out_ready
-    # ...and once signed, the section is gone
-    orch.gate.sign(["play_console_access", "oncall_window", "saw_ame", "yubikey"], note="ok")
-    out_signed = render.readiness_table(orch.gate.checklist(), "t")
-    assert "Your confirmation needed" not in out_signed
-    assert "entry gate cleared" in out_signed
-
-
 def test_oncall_window_shows_computed_dates():
     """The windowed attest item exposes CCD-relative dates (CCD-7 .. CCD+14)."""
     from orchestrator import render

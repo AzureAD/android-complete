@@ -63,39 +63,7 @@ def readiness_table(chk: dict, release_id: str) -> str:
     else:
         pending = [i["label"] for i in chk["items"] if not i["satisfied"]]
         lines.append("**Outstanding:** " + ", ".join(pending))
-        # When every AUTO item is satisfied and only human ATTEST items remain, weld an
-        # explicit confirmation section onto the table. This makes the table and the
-        # attestation ask a SINGLE deterministic output: the skill just pastes this and
-        # fires m_ask_user with the listed items — it can't show the table without the
-        # prompt, and the prompt only appears once the auto checks are actually done.
-        prompt = _attest_prompt_block(chk)
-        if prompt:
-            lines.append("")
-            lines.append(prompt)
     return "\n".join(lines)
-
-
-def _attest_prompt_block(chk: dict) -> str:
-    """The 'your confirmation needed' section, or '' when it's not time yet.
-    Only returned when: gate unsigned, not blocked, ALL auto items satisfied, and
-    at least one attest item is still outstanding."""
-    auto = [i for i in chk["items"] if i["verify"] == "auto"]
-    if auto and not all(i["satisfied"] for i in auto):
-        return ""  # auto checks not finished — don't prompt for attestations yet
-    outstanding = [i for i in chk["items"]
-                   if i["verify"] == "attest" and not i["satisfied"]]
-    if not outstanding:
-        return ""
-    out = ["---", "### ✋ Your confirmation needed",
-           "The automated checks are done. I'll sign **only** what you explicitly "
-           "confirm — please verify each:", ""]
-    for it in outstanding:
-        detail = it.get("detail") or it.get("text") or ""
-        win = it.get("window")
-        if win and win.get("start") and win.get("end"):
-            detail = f"{detail} (window: {win['start']} → {win['end']})".strip()
-        out.append(f"- **{_cell(it.get('label') or it['id'])}** — {_cell(detail)}")
-    return "\n".join(out)
 
 
 # ---- release status ----
