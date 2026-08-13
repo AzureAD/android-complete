@@ -145,10 +145,12 @@ class ReadinessGate:
         self._refresh_signed()
         return self.checklist()
 
-    def sign(self, item_ids=None) -> dict:
+    def sign(self, item_ids=None, note=None) -> dict:
         """Attest human (attest) items and run auto verifiers. item_ids=None
-        attests every attest item. Auto items are only set by verification —
-        they cannot be hand-waved through. Signs when all items are satisfied."""
+        attests every attest item (library convenience — the CLI never does this;
+        it requires explicit item ids). Auto items are only set by verification —
+        they cannot be hand-waved through. `note` records the human's confirmation
+        as evidence on each attested item. Signs when all items are satisfied."""
         if not self.config:
             self.state.readiness_signed = True
             self.state.readiness_signed_at = _now()
@@ -158,7 +160,10 @@ class ReadinessGate:
         attest_ids = [it["id"] for it in all_items if it.get("verify", "attest") == "attest"]
         targets = attest_ids if item_ids is None else [i for i in item_ids if i in attest_ids]
         for iid in targets:
-            self.state.readiness_items[iid] = {"status": "attested", "at": _now()}
+            rec = {"status": "attested", "at": _now()}
+            if note:
+                rec["note"] = note
+            self.state.readiness_items[iid] = rec
         self._refresh_signed()
         return self.checklist()
 

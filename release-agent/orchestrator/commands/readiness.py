@@ -36,17 +36,35 @@ def cmd_verify(args):
 
 def cmd_sign(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config)
-    ids = None if args.all else (args.item or [])
-    chk = orch.gate.sign(ids)
+    ids = args.item or []
+    if not ids:
+        # No blanket sign: the engineer must name the item(s) they confirmed.
+        # This closes the integrity hole where `sign --all` attested every human
+        # item in one blind call with no evidence and no per-item confirmation.
+        print("Refusing to sign: name the item(s) you confirmed with --item "
+              "(repeatable). Attest only what the engineer explicitly confirmed.")
+        return 2
+    # Validate the ids are real attest items before recording anything.
+    chk_before = orch.gate.checklist()
+    attest_ids = {i["id"] for i in chk_before["attest_items"]}
+    unknown = [i for i in ids if i not in attest_ids]
+    if unknown:
+        print(f"Not attestable (unknown or not an attest item): {', '.join(unknown)}")
+        return 2
+    chk = orch.gate.sign(ids, note=args.note or None)
     C.save_state(st, args.runs_root, args.release)
-    C.elog(args.runs_root, args.release).log(
-        "readiness_signed" if chk["signed"] else "readiness_partial",
-        items=("all" if ids is None else ids), signed=chk["signed"])
+    el = C.elog(args.runs_root, args.release)
+    # Log EACH attestation individually with its evidence note, so the trail shows
+    # exactly what was confirmed (not one opaque items:"all").
+    for iid in ids:
+        el.log("readiness_attested", item=iid, driver=args.note or None)
+    el.log("readiness_signed" if chk["signed"] else "readiness_partial",
+           items=ids, signed=chk["signed"])
     if chk["signed"]:
         print(f"Readiness signed at {chk['signed_at']}. Entry gate cleared — you can now start Phase 0.")
     else:
         pending = [i["id"] for i in chk["items"] if not i["satisfied"]]
-        print(f"Recorded. Still pending: {', '.join(pending)}")
+        print(f"Recorded {', '.join(ids)}. Still pending: {', '.join(pending)}")
     return 0
 
 
@@ -110,8 +128,10 @@ def register(sub):
 
     sg = sub.add_parser("sign", help="Attest human readiness items (also runs auto verify)")
     sg.add_argument("--release", required=True)
-    sg.add_argument("--all", action="store_true", help="Attest every human item")
-    sg.add_argument("--item", action="append", help="Attest a specific item id (repeatable)")
+    sg.add_argument("--item", action="append",
+                    help="Attest a specific item id the engineer confirmed (repeatable, required)")
+    sg.add_argument("--note", default="",
+                    help="Evidence: what the engineer confirmed (recorded per item)")
     sg.set_defaults(func=cmd_sign)
 
     dc = sub.add_parser("decline", help="Declare you CANNOT satisfy an item (may block ownership)")

@@ -64,13 +64,15 @@ items:
 
   - id: silent_perms
     label: "Silent-run permissions"
-    text: "Permissions allow fully unattended runs — shell, WorkIQ (email + Teams), and the browser are auto-approved so scheduled work never stalls on a prompt"
-    detail: "Scout checks shell, WorkIQ (email + Teams), and the browser are all auto-approved so the daily automation runs silently when Scout isn't focused."
+    text: "Permissions allow fully unattended runs — shell, WorkIQ (email + Teams), the browser, and the ICM + Kusto/ADX MCP servers are auto-approved so scheduled work and the on-call/telemetry checks never stall on a prompt"
+    detail: "Scout checks shell, WorkIQ (email + Teams), the browser, and the ICM + Kusto/ADX MCP servers are all auto-approved so the daily automation and the readiness on-call/telemetry checks run silently when Scout isn't focused."
     verify: auto
     source: scout          # only the skill can read Scout's own settings (m_get_settings)
     verifier: silent_perms
     # The servers that must be auto-approved for a fully-silent run (kept as data).
-    required_servers: [shell, workiq, playwright]
+    # Includes the MCP servers the readiness auto-checks call: `kusto` (adx_access) and
+    # `icm` (oncall_now) — otherwise those checks prompt on first run.
+    required_servers: [shell, workiq, playwright, kusto, icm]
     # OPT-OUT (soft): enabling silent runs needs the user to turn on the Scout master
     # toggle "Allow AI to request permission changes" (allowModelPermissionsChange) —
     # which ONLY the user can flip in the UI. The skill offers to enable silent runs;

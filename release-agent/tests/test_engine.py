@@ -121,6 +121,45 @@ def test_partial_sign_does_not_clear():
     assert st.status == "readiness_gate"
 
 
+def test_sign_records_evidence_note():
+    """Attestations carry the engineer's confirmation as evidence (note)."""
+    st, orch = _orch(signed=False)
+    _pass_scout_checks(orch)
+    orch.gate.sign(["play_console_access", "oncall_window", "saw_ame", "yubikey"],
+                   note="engineer confirmed all four")
+    assert st.readiness_signed
+    assert st.readiness_items["yubikey"].get("note") == "engineer confirmed all four"
+
+
+def test_cli_sign_refuses_bare_and_has_no_all_flag():
+    """The CLI must NOT let a bare `sign` (or a blanket --all) clear the gate — that
+    was the integrity hole where every human item got attested with no confirmation.
+    A bare sign returns non-zero and signs nothing; --all no longer exists."""
+    import argparse, tempfile, os as _os
+    from orchestrator.commands import readiness as rcmd
+    # --all must be gone from the parser
+    sub = argparse.ArgumentParser().add_subparsers()
+    rcmd.register(sub)
+    sign_parser = sub.choices["sign"]
+    opt_strings = {s for a in sign_parser._actions for s in a.option_strings}
+    assert "--all" not in opt_strings
+    assert "--item" in opt_strings and "--note" in opt_strings
+    # a bare sign (no --item) refuses and does not sign
+    with tempfile.TemporaryDirectory() as tmp:
+        _stub_build_defs("pass")
+        ns = argparse.Namespace(runs_root=tmp, release="t", config=CONFIG,
+                                item=None, note="")
+        # seed a release so load_orch works
+        from orchestrator.state import ReleaseState
+        st0 = ReleaseState(release_id="t", dry_run=True)
+        from orchestrator import cli_common as _C
+        _C.save_state(st0, tmp, "t")
+        rc = rcmd.cmd_sign(ns)
+        assert rc != 0
+        st_after, _ = _C.load_orch(tmp, "t", CONFIG)
+        assert not st_after.readiness_signed
+
+
 def test_decline_any_item_blocks_gate():
     """Every item is required — declining ANY item blocks the gate."""
     st, orch = _orch(signed=False)
@@ -269,7 +308,7 @@ def test_silent_perms_is_required_scout_item():
     # required_servers is exposed as data for the skill (m_get_settings check)
     sp = next(i for i in orch.gate.checklist()["items"] if i["id"] == "silent_perms")
     assert sp["verify"] == "auto" and sp["source"] == "scout"
-    assert sp["required_servers"] == ["shell", "workiq", "playwright"]
+    assert sp["required_servers"] == ["shell", "workiq", "playwright", "kusto", "icm"]
     # everything else satisfied but silent_perms → gate still closed
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")

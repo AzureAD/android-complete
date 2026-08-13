@@ -93,9 +93,13 @@ The conductor is **stateless**: on each invocation it loads the record, (later) 
 
 ## Quick start
 
+Run the one-time setup from the **`release-agent` folder of your `android-complete` clone**,
+using PowerShell 7 (`pwsh`):
+
 ```powershell
-# one-time
-pwsh ./setup/bootstrap.ps1
+# one-time — from the release-agent folder
+cd C:\repos\android-complete\release-agent    # adjust to your clone location
+pwsh .\setup\bootstrap.ps1
 ```
 
 `bootstrap.ps1` runs an **infrastructure preflight** first (`python -m orchestrator.cli infra`),
