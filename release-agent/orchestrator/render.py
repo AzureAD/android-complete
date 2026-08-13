@@ -255,9 +255,10 @@ def status_view(r: dict) -> str:
         else:
             lines.append(f"▶ **{label}.**")
 
-    # 2) Phase map (overview).
+    # 2) Phase map (overview). Icon is prefixed onto the Phase name (no separate
+    # empty-header icon column — that renders with a huge gap in Scout's tables).
     if r.get("phases"):
-        lines += ["", "### Phases", "| | # | Phase | Done |", "|---|---|---|---|"]
+        lines += ["", "### Phases", "| # | Phase | Done |", "|---|---|---|"]
         for p in r["phases"]:
             icon = _PHASE_ICON.get(p["state"], "⬜")
             note = ""
@@ -265,18 +266,18 @@ def status_view(r: dict) -> str:
                 note = "  ← you are here"
             elif p["state"] == "scheduled" and p.get("opens"):
                 note = f"  · opens {p['opens']} ({_delta_phrase(p.get('opens_in_days'))})"
-            lines.append(f"| {icon} | {p['num']} | {p['name']}{note} | {p['done']}/{p['total']} |")
+            lines.append(f"| {p['num']} | {icon} {p['name']}{note} | {p['done']}/{p['total']} |")
         lines.append("✅ done · ⏸ in progress · 🗓 scheduled · ⬜ not started")
 
-    # 3) Current-phase detail (drill-down).
+    # 3) Current-phase detail (drill-down). Icon prefixed onto the Step name.
     if r.get("current_steps"):
         lines += ["", f"### ▶ Current phase — {r.get('current_phase_name','')}",
-                  "| | Step | State |", "|---|---|---|"]
+                  "| Step | State |", "|---|---|"]
         for s in r["current_steps"]:
             icon = _STEP_ICON.get(s["state"], "⬜")
             word = _STEP_STATE_WORD.get(s["state"], s["state"])
             tag = " 🚦" if s["gate"] else (" 📌" if s.get("reminder") else "")
-            lines.append(f"| {icon} | {s['name']}{tag} | {word} |")
+            lines.append(f"| {icon} {s['name']}{tag} | {word} |")
 
         # 3b) Results & activity — surface each step's stored outcome (agent report,
         # created link, block reason) so a done/blocked step isn't just "Done" with
