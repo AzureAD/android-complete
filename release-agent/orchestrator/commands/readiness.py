@@ -15,6 +15,12 @@ def cmd_checklist(args):
     if getattr(args, "json", False):
         print(_json.dumps(chk, indent=2))
         return 0
+    if getattr(args, "attest_prompt", False):
+        # ONLY the '✋ Your confirmation needed' block (no table). Used as the second
+        # readiness render, after the full table + silent auto checks — so the table
+        # shows exactly once but the attestation ask still comes from the engine.
+        C.emit(args.runs_root, args.release, render.attest_prompt(chk), kind="readiness_attest_prompt")
+        return 0
     # canonical, consistent display block (the template) — same for every engineer.
     # auto-logged as scout output so the log always records what was shown.
     C.emit(args.runs_root, args.release, render.readiness_table(chk, args.release), kind="readiness_checklist")
@@ -110,6 +116,8 @@ def register(sub):
     c = sub.add_parser("checklist", help="Show the readiness entry-gate checklist")
     c.add_argument("--release", required=True)
     c.add_argument("--verify", action="store_true", help="Run auto verifiers before showing")
+    c.add_argument("--attest-prompt", dest="attest_prompt", action="store_true",
+                   help="Emit ONLY the '✋ Your confirmation needed' block (no table) — the second readiness render")
     c.add_argument("--json", action="store_true")
     c.set_defaults(func=cmd_checklist)
 

@@ -17,12 +17,12 @@ If any item is unsatisfied the gate stays closed. If the engineer can't satisfy 
 
 ## Flow
 
-> **DESIGN INVARIANT — do not "optimize" this away.** The gate renders the checklist table **twice on purpose**, and the FIRST render (step 1) must stay the model's **opening, display-first action** — a `checklist` table shown *before* any silent auto-check work. This is not redundant:
-> - A table render that is the model's **first action** is pasted **verbatim** (showing it IS the action).
-> - A table render placed **after** a chain of silent tool calls (verify, record-check, m_get_settings) gets **summarized into a plain list** — the model switches to wrap-up mode. (This was a real regression: moving to a single end-of-flow render broke the display.)
-> - The first render also **primes** the model to keep pasting verbatim, which is why the second render (step 3b) also comes out as a table.
+> **DESIGN INVARIANT — do not "optimize" this away.** The **full table renders exactly ONCE** (step 1), as the model's **opening, display-first action** — before any silent auto-check work. The attestation ask (step 3b) is a **separate, short "✋ Your confirmation needed" block** from `checklist --attest-prompt`, NOT the full table again. Why it's structured this way:
+> - A table render that is the model's **first action** is pasted **verbatim** (showing it IS the action) — and it **primes** the model to keep pasting subsequent CLI output verbatim.
+> - A **full table** render placed **after** a chain of silent tool calls (verify, record-check, m_get_settings) gets **summarized into a plain list** — the model switches to wrap-up mode. (Proven regression.) So never move the full table after the silent checks, and never render the full table twice.
+> - Step 3b emits only the compact confirmation block (the four attest items, from the CLI) — short and primed, so it pastes cleanly without repeating the table.
 >
-> So: **always render the table first (step 1) as the opening move, then again at 3b. Never collapse to a single render placed after the silent checks.** The double-print is the mechanism, not waste.
+> Net: **one full table (step 1) + one short confirmation block (step 3b).** Don't add a second full-table render, and don't collapse step 1 into the post-check phase.
 
 1. **Show the checklist table FIRST — the first substantive thing the user sees, every time.** Run `checklist --release <id> --verify` (runs Python auto checks + prints the canonical markdown table) and **reproduce its stdout verbatim as live markdown — NOT fenced** (see the core "render CLI output" golden rule). There are exactly **two types**: `[auto]` (Scout verifies) and `[attest]` (you confirm); all must be satisfied. At this point `silent_perms`, `oncall_now`, `adx_access` show Outstanding — expected; you resolve them next. **Never jump to permissions/attestations without first rendering this table.**
 
@@ -54,7 +54,7 @@ If any item is unsatisfied the gate stays closed. If the engineer can't satisfy 
         - Fails → `--status fail --detail "<error>"`.
     - A `fail` on `oncall_now`/`adx_access` keeps the gate closed — resolve or hand off. Do NOT attest these; they're `auto` items.
 
-3b. **Re-anchor on the TABLE, then attest — in ONE message.** Run `checklist --release <id>` again and **paste its updated output verbatim into the same assistant message as your attestation question** — auto items now ✅. Because all auto items are satisfied, that output now ends with a **"✋ Your confirmation needed"** section listing the outstanding attest items (this comes from the CLI — you do NOT hand-build it). Running the command is not enough; the user only sees what you paste. **Do NOT send an attestation question in a message that lacks the table.** Then `m_ask_user` for the four attestations (`play_console_access`; `oncall_window` — CCD‑7→CCD+14 dates in the table; `saw_ame`; `yubikey`). Offer: **"All confirmed"**, **"I'm scheduled on-call during the window"**, **"I can't open Play Console"**, **"I don't have a SAW machine"**, **"I don't have a YubiKey"**. Never replace the table with a prose list.
+3b. **Show the confirmation block, then attest — in ONE message.** Run `checklist --release <id> --attest-prompt` and **paste its output verbatim** — this is the compact **"✋ Your confirmation needed"** block listing the outstanding attest items (from the CLI — you do NOT hand-build it; the full table is already shown above from step 1, so don't re-render it). Running the command is not enough; the user only sees what you paste. **Do NOT send the attestation question in a message that lacks this block.** Then, in the same message, `m_ask_user` for the four attestations (`play_console_access`; `oncall_window`; `saw_ame`; `yubikey`). Offer: **"All confirmed"**, **"I'm scheduled on-call during the window"**, **"I can't open Play Console"**, **"I don't have a SAW machine"**, **"I don't have a YubiKey"**. Never replace the block with your own prose list.
 
    > ⛔ **NEVER assume attestation.** Only sign items the engineer **explicitly confirmed in their own reply**. An `m_ask_user` result that merely echoes the offered options is **NOT** confirmation — if ambiguous, ask again and wait. Do not narrate "All four confirmed" or run `sign` until the user actually said so. Attesting on an assumption is a release-integrity violation.
 

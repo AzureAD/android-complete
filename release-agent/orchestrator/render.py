@@ -63,16 +63,27 @@ def readiness_table(chk: dict, release_id: str) -> str:
     else:
         pending = [i["label"] for i in chk["items"] if not i["satisfied"]]
         lines.append("**Outstanding:** " + ", ".join(pending))
-        # When every AUTO item is satisfied and only human ATTEST items remain, weld an
-        # explicit confirmation section onto the table. This makes the table and the
-        # attestation ask a SINGLE deterministic output: the skill just pastes this and
-        # fires m_ask_user with the listed items — it can't show the table without the
-        # prompt, and the prompt only appears once the auto checks are actually done.
-        prompt = _attest_prompt_block(chk)
-        if prompt:
-            lines.append("")
-            lines.append(prompt)
     return "\n".join(lines)
+
+
+def attest_prompt(chk: dict) -> str:
+    """Public: the '✋ Your confirmation needed' block on its own (no table), or a
+    short status line when it's not time yet / nothing to attest. Rendered as the
+    SECOND readiness output — after the full table (render #1) and the silent auto
+    checks — so the table appears exactly ONCE while the attestation ask still comes
+    deterministically from the engine (the item list is not hand-built by the skill)."""
+    block = _attest_prompt_block(chk)
+    if block:
+        return block
+    if chk.get("signed"):
+        return "✅ All items satisfied — entry gate cleared. Ready to start Phase 0."
+    # auto checks not yet complete
+    auto_pending = [i["label"] for i in chk["items"]
+                    if i["verify"] == "auto" and not i["satisfied"]]
+    if auto_pending:
+        return ("Automated checks still pending: " + ", ".join(auto_pending)
+                + " — resolve these before the attestations.")
+    return "No attestations outstanding."
 
 
 def _attest_prompt_block(chk: dict) -> str:

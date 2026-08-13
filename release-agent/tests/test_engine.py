@@ -204,32 +204,36 @@ def test_auto_two_types_only():
     assert adx["cluster_uri"] and adx["database"]
 
 
-def test_attest_prompt_welded_only_after_auto_done():
-    """render.readiness_table appends the '✋ Your confirmation needed' section ONLY
-    when every auto item is satisfied and attests remain — not before (so an early
-    render can't prematurely prompt for attestations)."""
+def test_attest_prompt_is_separate_render_never_in_table():
+    """The table (render #1) NEVER contains the confirmation block — that keeps the
+    table showing exactly once. The '✋ Your confirmation needed' block is a SEPARATE
+    render (render.attest_prompt), which only lists items once all auto items pass."""
     from orchestrator import render
     _stub_build_defs("pass")
     st = ReleaseState(release_id="t", dry_run=True, ccd="2026-07-08", ccd_source="default")
     orch = Orchestrator(CONFIG, st)
-    # BEFORE auto checks: no confirmation section
-    out_early = render.readiness_table(orch.gate.checklist(), "t")
-    assert "Your confirmation needed" not in out_early
-    # resolve all auto items (python-verified + scout-assisted)
+    # The full table never carries the confirmation block, before OR after auto checks.
+    early = render.readiness_table(orch.gate.checklist(), "t")
+    assert "Your confirmation needed" not in early
+    # attest_prompt before auto done → not the confirmation block (auto still pending)
+    ap_early = render.attest_prompt(orch.gate.checklist())
+    assert "Your confirmation needed" not in ap_early
+    assert "still pending" in ap_early
+    # resolve all auto items
     orch.gate.verify()
     orch.gate.record_check("silent_perms", "pass", "auto-approved")
     orch.gate.record_check("oncall_now", "pass", "not on roster")
     orch.gate.record_check("adx_access", "pass", "print 1 ok")
-    out_ready = render.readiness_table(orch.gate.checklist(), "t")
-    assert "Your confirmation needed" in out_ready
-    # lists each outstanding attest item
+    # table STILL has no confirmation block (shows once)
+    assert "Your confirmation needed" not in render.readiness_table(orch.gate.checklist(), "t")
+    # attest_prompt now lists each outstanding attest item
+    ap = render.attest_prompt(orch.gate.checklist())
+    assert "Your confirmation needed" in ap
     for label in ("Play Console access", "Free during release window", "SAW + AME", "YubiKey in hand"):
-        assert label in out_ready
-    # ...and once signed, the section is gone
+        assert label in ap
+    # once signed, attest_prompt reports cleared
     orch.gate.sign(["play_console_access", "oncall_window", "saw_ame", "yubikey"], note="ok")
-    out_signed = render.readiness_table(orch.gate.checklist(), "t")
-    assert "Your confirmation needed" not in out_signed
-    assert "entry gate cleared" in out_signed
+    assert "entry gate cleared" in render.attest_prompt(orch.gate.checklist())
 
 
 def test_oncall_window_shows_computed_dates():
