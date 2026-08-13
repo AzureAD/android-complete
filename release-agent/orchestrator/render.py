@@ -109,7 +109,68 @@ def _attest_prompt_block(chk: dict) -> str:
     return "\n".join(out)
 
 
-# ---- release status ----
+# Short "can't satisfy" card title + one-line description per attest item, so the
+# m_ask_user card is self-describing even when no markdown table renders.
+_ATTEST_CARD = {
+    "play_console_access": ("I can't open Play Console", "Play Console dashboard doesn't load"),
+    "oncall_window":       ("I'm on-call during the window", "Scheduled Android on-call during the release window"),
+    "saw_ame":             ("I don't have a SAW machine", "Can't access SAW / AME"),
+    "yubikey":             ("I don't have a YubiKey", "No YubiKey in hand"),
+}
+
+
+def attest_prompt_payload(chk: dict, release_id: str) -> dict:
+    """DETERMINISTIC m_ask_user payload for the readiness attestations — the engine
+    owns the exact question + answer cards so the (always-rendered) Scout card is the
+    source of truth, independent of whether the markdown table rendered.
+
+    Returns a dict:
+      { ready: bool, release, question, answers:[{title,description,action,item?}],
+        confirm_items:[ids], recommendedIndex, reason }
+    `ready` is False (with `reason`) when it's not time to attest yet (auto checks
+    pending) or nothing is outstanding — the skill should not prompt in that case."""
+    auto = [i for i in chk["items"] if i["verify"] == "auto"]
+    if auto and not all(i["satisfied"] for i in auto):
+        pend = ", ".join(i["label"] for i in auto if not i["satisfied"])
+        return {"ready": False, "release": release_id,
+                "reason": f"auto checks pending: {pend}"}
+    outstanding = [i for i in chk["items"]
+                   if i["verify"] == "attest" and not i["satisfied"]]
+    if not outstanding:
+        return {"ready": False, "release": release_id,
+                "reason": "no attestations outstanding"}
+
+    # "All confirmed" description: concise per-item summary (with the on-call dates).
+    bits = []
+    for it in outstanding:
+        lbl = it.get("label") or it["id"]
+        win = it.get("window")
+        if it["id"] == "oncall_window" and win and win.get("start") and win.get("end"):
+            bits.append(f"free of on-call {win['start']}–{win['end']}")
+        else:
+            bits.append(lbl)
+    confirm_desc = " · ".join(bits)
+
+    answers = [{"title": "All confirmed", "description": _cell(confirm_desc),
+                "action": "confirm_all"}]
+    for it in outstanding:
+        title, desc = _ATTEST_CARD.get(
+            it["id"], (f"Can't satisfy {it.get('label') or it['id']}", ""))
+        answers.append({"title": title, "description": desc,
+                        "action": "decline", "item": it["id"]})
+
+    return {
+        "ready": True,
+        "release": release_id,
+        "question": (f"Automated readiness checks passed — confirm all "
+                     f"{len(outstanding)} remaining item(s) to start release {release_id}?"),
+        "answers": answers,
+        "confirm_items": [it["id"] for it in outstanding],
+        "recommendedIndex": 0,
+    }
+
+
+
 # Plain-language labels for internal engine states (never show raw state names).
 _STATE_LABEL = {
     "not_started": "Not started",

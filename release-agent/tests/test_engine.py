@@ -236,6 +236,39 @@ def test_attest_prompt_is_separate_render_never_in_table():
     assert "entry gate cleared" in render.attest_prompt(orch.gate.checklist())
 
 
+def test_attest_prompt_payload_is_deterministic_card():
+    """render.attest_prompt_payload builds the exact m_ask_user card the engine owns:
+    ready:false until auto checks pass, then a confirm_all + one decline-per-item card
+    set with confirm_items — so the always-rendered Scout card is the source of truth."""
+    from orchestrator import render
+    _stub_build_defs("pass")
+    st = ReleaseState(release_id="2026-07", dry_run=True, ccd="2026-07-08", ccd_source="default")
+    orch = Orchestrator(CONFIG, st)
+    # Not ready before auto checks
+    p0 = render.attest_prompt_payload(orch.gate.checklist(), "2026-07")
+    assert p0["ready"] is False and "pending" in p0["reason"]
+    # Resolve auto items
+    orch.gate.verify()
+    orch.gate.record_check("silent_perms", "pass", "auto-approved")
+    orch.gate.record_check("oncall_now", "pass", "not on roster")
+    orch.gate.record_check("adx_access", "pass", "print 1 ok")
+    p = render.attest_prompt_payload(orch.gate.checklist(), "2026-07")
+    assert p["ready"] is True
+    assert p["recommendedIndex"] == 0
+    # first card is confirm_all; the rest are one decline per outstanding attest item
+    assert p["answers"][0]["action"] == "confirm_all"
+    decline_items = {a["item"] for a in p["answers"] if a["action"] == "decline"}
+    assert decline_items == {"play_console_access", "oncall_window", "saw_ame", "yubikey"}
+    assert set(p["confirm_items"]) == {"play_console_access", "oncall_window", "saw_ame", "yubikey"}
+    # the on-call window dates are surfaced in the confirm_all description
+    assert "2026-07-01" in p["answers"][0]["description"]
+    # 2-5 cards (valid m_ask_user answer count)
+    assert 2 <= len(p["answers"]) <= 5
+    # once signed, not ready (nothing outstanding)
+    orch.gate.sign(["play_console_access", "oncall_window", "saw_ame", "yubikey"], note="ok")
+    assert render.attest_prompt_payload(orch.gate.checklist(), "2026-07")["ready"] is False
+
+
 def test_oncall_window_shows_computed_dates():
     """The windowed attest item exposes CCD-relative dates (CCD-7 .. CCD+14)."""
     from orchestrator import render

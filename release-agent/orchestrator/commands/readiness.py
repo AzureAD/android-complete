@@ -12,13 +12,18 @@ def cmd_checklist(args):
         orch.gate.verify()
         C.save_state(st, args.runs_root, args.release)
     chk = orch.gate.checklist()
+    attest = getattr(args, "attest_prompt", False)
     if getattr(args, "json", False):
-        print(_json.dumps(chk, indent=2))
+        # `--attest-prompt --json` → the DETERMINISTIC m_ask_user payload (question +
+        # answer cards) the skill passes straight to m_ask_user, so the always-rendered
+        # Scout card is the source of truth regardless of whether the table rendered.
+        if attest:
+            print(_json.dumps(render.attest_prompt_payload(chk, args.release), indent=2))
+        else:
+            print(_json.dumps(chk, indent=2))
         return 0
-    if getattr(args, "attest_prompt", False):
-        # ONLY the '✋ Your confirmation needed' block (no table). Used as the second
-        # readiness render, after the full table + silent auto checks — so the table
-        # shows exactly once but the attestation ask still comes from the engine.
+    if attest:
+        # Human-readable: ONLY the '✋ Your confirmation needed' block (no table).
         C.emit(args.runs_root, args.release, render.attest_prompt(chk), kind="readiness_attest_prompt")
         return 0
     # canonical, consistent display block (the template) — same for every engineer.
