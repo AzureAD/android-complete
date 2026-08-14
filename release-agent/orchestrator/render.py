@@ -267,7 +267,10 @@ def status_view(r: dict) -> str:
             elif p["state"] == "scheduled" and p.get("opens"):
                 note = f"  · opens {p['opens']} ({_delta_phrase(p.get('opens_in_days'))})"
             lines.append(f"| {p['num']} | {icon} {p['name']}{note} | {p['done']}/{p['total']} |")
-        lines.append("✅ done · ⏸ in progress · 🗓 scheduled · ⬜ not started")
+        # Blank line BEFORE the legend so markdown ends the table and renders the
+        # legend as its own caption paragraph — otherwise it's absorbed as a row
+        # (all glued into one column).
+        lines += ["", "_✅ done · ⏸ in progress · 🗓 scheduled · ⬜ not started_"]
 
     # 3) Current-phase detail (drill-down). Icon prefixed onto the Step name.
     if r.get("current_steps"):

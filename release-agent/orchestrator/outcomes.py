@@ -1,0 +1,76 @@
+"""Step outcomes — the ONE uniform return contract for every release step.
+
+Historically the engine had two disjoint mechanisms: `agent` steps returned a
+`StepResult` and were run in-process, while `scout` steps had no runner at all —
+the engine just held, and the skill did the work via ad-hoc `prepare-X` commands
+scattered across `orchestrator/commands/`. That split is why adding a scout step
+touched ~6 files.
+
+This module gives EVERY step one vocabulary. A step handler returns exactly one
+of these, and the engine/skill react uniformly:
+
+    Done       — the step is complete (an agent did it, or nothing to do).
+    Blocked    — an agent hit a real problem the owner must resolve.
+    NeedsHuman — a person must confirm/act (attestation or reminder).
+    NeedsSkill — scout-assisted: the SKILL must run `tool` with `payload` (an MCP
+                 call the engine can't make), then record the step. The step
+                 DESCRIBES the action as data, so the skill executor is generic —
+                 no per-step instructions in the skill's reference docs.
+
+Pure data — no IO, no engine imports — so it's trivially testable and shared by
+the engine, the CLI, and the step handlers.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Optional
+
+
+@dataclass
+class Done:
+    note: str = ""
+    by: str = "agent"          # 'agent' | 'human'
+    kind: str = "done"
+
+
+@dataclass
+class Blocked:
+    reason: str
+    kind: str = "blocked"
+
+
+@dataclass
+class NeedsHuman:
+    prompt: str
+    attest: bool = False       # True → attestation (confirm), False → plain reminder/to-do
+    kind: str = "needs_human"
+
+
+@dataclass
+class NeedsSkill:
+    """A scout-assisted action the SKILL must execute (an MCP/browser call the
+    deterministic engine can't make), described as data so the skill is generic.
+
+      tool       — the skill tool/verb to run, e.g. 'workiq_send_email',
+                   'workiq_send_chat_message', or a follow-up engine command name.
+      payload    — kwargs for that tool (already resolved: recipients, subject,
+                   html body, chat target, …). The skill passes it through.
+      record_as  — the step id to `record-step` once the tool succeeds.
+      summary    — a one-line human description ('email the code-complete notice
+                   to <n> recipients') for the skill to show / log.
+      dry_run    — echoes the release mode so the skill can note '[DRY-RUN → owner]'.
+      note       — optional detail stored with the recorded step.
+    """
+    tool: str
+    payload: dict = field(default_factory=dict)
+    record_as: str = ""
+    summary: str = ""
+    dry_run: bool = False
+    note: str = ""
+    kind: str = "needs_skill"
+
+
+def as_dict(outcome: Any) -> dict:
+    """Serialize any outcome to a plain dict (for `--json` CLI output / the skill)."""
+    d = {k: v for k, v in vars(outcome).items()}
+    return d

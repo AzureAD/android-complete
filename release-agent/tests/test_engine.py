@@ -1054,21 +1054,23 @@ def test_parse_breaking_none_when_no_major():
 def test_breaking_agent_dry_run_simulates(monkeypatch=None):
     """Dry-run must NOT hit the network — it describes what it would do."""
     from phases.agents import preflight as pa
+    from steps.preflight import breaking as _bk
     called = {"n": 0}
-    orig = pa._fetch_text
-    pa._fetch_text = lambda *a, **k: called.__setitem__("n", called["n"] + 1) or ""
+    orig = _bk._fetch_text
+    _bk._fetch_text = lambda *a, **k: called.__setitem__("n", called["n"] + 1) or ""
     try:
         st = ReleaseState(release_id="2026-08", dry_run=True)
         r = pa.run_breaking("preflight", {"id": "breaking"}, True, st)
         assert r.ok and "dry-run" in r.action.lower() and called["n"] == 0
     finally:
-        pa._fetch_text = orig
+        _bk._fetch_text = orig
 
 
 def test_breaking_agent_detects_and_drafts():
     from phases.agents import preflight as pa
-    orig = pa._fetch_text
-    pa._fetch_text = lambda *a, **k: _SAMPLE_CHANGELOG
+    from steps.preflight import breaking as _bk
+    orig = _bk._fetch_text
+    _bk._fetch_text = lambda *a, **k: _SAMPLE_CHANGELOG
     try:
         st = ReleaseState(release_id="2026-08", dry_run=False)
         r = pa.run_breaking("preflight", {"id": "breaking"}, False, st)
@@ -1076,34 +1078,36 @@ def test_breaking_agent_detects_and_drafts():
         assert "Detected 1 breaking" in r.action
         assert "(#2)" in r.action and "DRAFT COMMS" in r.action
     finally:
-        pa._fetch_text = orig
+        _bk._fetch_text = orig
 
 
 def test_breaking_agent_none_found_passes():
     from phases.agents import preflight as pa
-    orig = pa._fetch_text
-    pa._fetch_text = lambda *a, **k: "vNext\n----------\n- [MINOR] x (#1)\nVersion 1.0.0\n"
+    from steps.preflight import breaking as _bk
+    orig = _bk._fetch_text
+    _bk._fetch_text = lambda *a, **k: "vNext\n----------\n- [MINOR] x (#1)\nVersion 1.0.0\n"
     try:
         r = pa.run_breaking("preflight", {"id": "breaking"}, False,
                             ReleaseState(release_id="2026-08", dry_run=False))
         assert r.ok and "No breaking" in r.action
     finally:
-        pa._fetch_text = orig
+        _bk._fetch_text = orig
 
 
 def test_breaking_agent_fetch_error_holds():
     from phases.agents import preflight as pa
-    orig = pa._fetch_text
+    from steps.preflight import breaking as _bk
+    orig = _bk._fetch_text
 
     def _boom(*a, **k):
         raise RuntimeError("network down")
-    pa._fetch_text = _boom
+    _bk._fetch_text = _boom
     try:
         r = pa.run_breaking("preflight", {"id": "breaking"}, False,
                             ReleaseState(release_id="2026-08", dry_run=False))
         assert not r.ok and "could not fetch" in r.action
     finally:
-        pa._fetch_text = orig
+        _bk._fetch_text = orig
 
 
 def test_wiki_agent_dry_run_simulates():

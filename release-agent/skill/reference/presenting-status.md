@@ -10,5 +10,7 @@ _Loaded on demand. How to render the CLI's `status` / `checklist` output._
 
 Alongside the table, tell the user exactly what each outstanding step needs (run the scout steps yourself; for `attest` steps spell out what to confirm). Do **not** replace the table with your own summarized list.
 
+**Render once per advance pass — after the work, not before.** When a turn both advances the release (`next` + executing scout/agent steps) and shows status, do the work first and paste the `status` table **once**, at the end, reflecting the settled state. Don't paste a table before running the scout steps and then a second one after — the pre-work render is immediately stale and just duplicates the final one. One pass → one table.
+
 **Structured fields for branching** (`status --json`):
 `release_id, status, dry_run, ccd, ccd_source, as_of, done, total, percent, current_phase_name, current_step_name, gate, action, scheduled, pending_human, readiness_signed, blocked`.

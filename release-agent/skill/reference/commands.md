@@ -12,7 +12,8 @@ _Loaded on demand. Run all from `C:\repos\android-complete\release-agent`._
 | Attest human items (+auto verify) | `python -m orchestrator.cli sign --release <YYYY-MM> --item <id> [--item <id> …] --note "<what they confirmed>"` |
 | Record a scout-assisted check (e.g. ICM on-call) | `python -m orchestrator.cli record-check --release <YYYY-MM> --item <id> --status pass\|fail\|degraded --detail "..."` |
 | Decide CCOA lockdown overlap | `python -m orchestrator.cli check-lockdown --release <YYYY-MM> --periods-json '[{"name","environment","start","end"}]'` |
-| Prepare early code-complete notice (JSON) | `python -m orchestrator.cli prepare-notice --release <YYYY-MM> [--variant initial\|update]` |
+| Resolve a migrated step → outcome JSON (done\|blocked\|needs_human\|needs_skill) | `python -m orchestrator.cli step-action --release <YYYY-MM> --step <id> [--phase <p>] [--param k=v …]` |
+| Prepare early code-complete notice (JSON) — _legacy; prefer `step-action --step notice`_ | `python -m orchestrator.cli prepare-notice --release <YYYY-MM> [--variant initial\|update]` |
 | Prepare flight & string reminders (JSON) | `python -m orchestrator.cli prepare-flight-reminder --release <YYYY-MM>` |
 | Record a scout-assisted phase step | `python -m orchestrator.cli record-step --release <YYYY-MM> --step <id> --status pass\|attention --detail "..."` |
 | Declare you CANNOT satisfy an item | `python -m orchestrator.cli decline --release <YYYY-MM> --item <id>` |
@@ -41,6 +42,16 @@ _Loaded on demand. Run all from `C:\repos\android-complete\release-agent`._
 - **resume** — clear a halt and continue.
 
 Map natural language to these ("skip the CG report, doesn't apply" → `skip … --reason`; "halt, we have an incident" → `halt --reason`; "resume" → `resume`). Never skip or halt without capturing the user's reason.
+
+## `step-action` — the generic step dispatcher
+`step-action` resolves a **migrated** step into one uniform outcome JSON (`kind`). It replaces the per-step `prepare-*` commands — react by `kind`:
+- **`done`** — already complete; nothing to run.
+- **`blocked`** — surface `reason` to the owner; don't proceed.
+- **`needs_human`** — show `prompt` (attestation or reminder to-do).
+- **`needs_skill`** — run `tool` with `payload` (an MCP/browser call the engine can't make, already fully resolved), then confirm with `record-step --step <record_as> --status pass\|attention`. `dry_run:true` means recipients were redirected to the release owner (subject carries `[DRY-RUN → owner]`).
+
+If a step isn't migrated yet, `step-action` returns `{"error": …}` with exit 1. **Use `step-action` for scout steps** (`needs_skill` → run the tool, then `record-step`) **and attest steps** (`needs_human` → show the `prompt` via `m_ask_user`, then clear with `done --step <id>`). Migrated: scout — `preflight.notice`, `preflight.flight_reminder`, `preflight.lockdown` (gather-then-decide: its `needs_skill` carries a `_gather` browser-scrape directive + a `check-lockdown` follow-up); attest — `preflight.confirm_reminders`, `preflight.vitals`. **Agent steps** (`preflight.breaking`, `cg`, `cron`, `wiki`) are migrated too but the **engine runs them in-process during `next`** — `step-action` refuses them (exit 1); relay their results from the `status` table.
+
 
 The human-readable commands (`checklist`, `status`, `next`, `approve`, `deny`, `decline` without `--json`) emit a **canonical block AND auto-log it**. Prefer these and show their output; use `--json` only for your own logic.
 
