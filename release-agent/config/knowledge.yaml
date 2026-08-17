@@ -112,7 +112,7 @@ preflight.cg:
     the step to re-check. To proceed anyway, skip the step with a reason (audited).
   links:
     - name: "Component Governance alerts"
-      url: "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android?path=/&_a=alerts"
+      url: "https://msazure.visualstudio.com/One/_componentGovernance/AD-MFA-phonefactor-phoneApp-android"
   faqs:
     - q: "Does a Medium/Low alert block?"
       a: "No — only active High/Critical alerts block. Medium/Low are reported but don't hold the release."

@@ -462,6 +462,7 @@ _PILL = {
     "approval":  ("Your approval",        "#b54708", "#fffaeb"),
     "confirm":   ("Your confirmation",    "#b54708", "#fffaeb"),
     "action":    ("Your action",          "#b54708", "#fffaeb"),
+    "scout":     ("Scout runs this",       "#475467", "#f2f4f7"),
     "auto":      ("Automatic — pending",  "#475467", "#f2f4f7"),
 }
 

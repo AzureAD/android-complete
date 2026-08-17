@@ -25,8 +25,8 @@ CONFIG = {
     "branch": "working",
     "high_severities": ["critical", "high"],               # surfaced/flagged as high-priority
     # Portal link to the repo's CG alerts page — stored as a link so the owner can
-    # jump straight to the alerts. Verify/adjust if the portal path differs.
-    "alerts_url": "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android?path=/&_a=alerts",
+    # jump straight to the alerts.
+    "alerts_url": "https://msazure.visualstudio.com/One/_componentGovernance/AD-MFA-phonefactor-phoneApp-android",
 }
 
 # Properties this step exposes to mocks.local.yaml (see `mock-spec`).

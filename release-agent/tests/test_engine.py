@@ -1729,7 +1729,7 @@ def test_step_links_stored_on_state_and_rendered():
     steps = {s["id"]: s for s in orch.status_report()["current_steps"]}
     # CG: config alerts page + the per-alert deep link, both stored
     cg_urls = [l["url"] for l in steps["cg"]["links"]]
-    assert "https://ado/alert/1" in cg_urls and any("_a=alerts" in u for u in cg_urls)
+    assert "https://ado/alert/1" in cg_urls and any("_componentGovernance" in u for u in cg_urls)
     # wiki: its page url stored as a structured link
     assert steps["wiki"]["links"] and "pagePath=" in steps["wiki"]["links"][0]["url"]
     # rendered column carries the link markdown
@@ -1807,6 +1807,26 @@ def test_step_modules_and_config_stay_in_sync():
             assert c == "scout", f"{key}: module KIND=scout but config classifies as {c}"
         elif k == "attest":
             assert c in ("attest", "reminder"), f"{key}: module KIND=attest but config={c}"
+
+
+def test_pending_scout_step_is_not_a_user_action():
+    """A pending scout step (Scout scrapes/sends it, e.g. lockdown) must NOT render
+    as 'Your action' — it's Scout's automatic work. It shows status 'scout' and is
+    not flagged needs_owner. Only when it BLOCKS does it become a user task."""
+    st, orch = _mock_orch({})            # nothing mocked; lockdown holds as scout
+    orch.run_until_gate()
+    ld = next(s for s in orch.status_report()["active_phase"]["steps"]
+              if s["id"] == "lockdown")
+    assert ld["status"] == "scout" and not ld["needs_owner"]
+    # attest steps ARE user tasks (contrast) — still flagged
+    vt = next(s for s in orch.status_report()["active_phase"]["steps"]
+              if s["id"] == "vitals")
+    assert vt["needs_owner"]
+    # a scout step recorded as attention (overlap) DOES become a user task
+    orch.record_scout_step("preflight", "lockdown", "attention", "CCOA overlap — shift CCD")
+    ld2 = next(s for s in orch.status_report()["active_phase"]["steps"]
+               if s["id"] == "lockdown")
+    assert ld2["status"] == "blocked" and ld2["needs_owner"]
 
 
 if __name__ == "__main__":

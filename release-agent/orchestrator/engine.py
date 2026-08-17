@@ -551,16 +551,21 @@ class Orchestrator:
                     status = "approval"
                 elif is_attest:
                     status = "confirm"
-                elif is_rem or is_scout:
-                    status = "action"
+                elif is_rem:
+                    status = "action"          # a human to-do — the user must act
+                elif is_scout:
+                    status = "scout"           # Scout runs it automatically (scrape/send via MCP)
                 else:
                     status = "auto"
-                needs = bool((is_gate or is_rem or is_scout or is_attest or s_blocked) and not s_done)
+                # needs_owner = a genuine USER task. A pending scout step is Scout's
+                # automatic work (not the user's) until it BLOCKS (s_blocked), so it is
+                # NOT flagged — only gates, reminders, attests, and blocks are.
+                needs = bool((is_gate or is_rem or is_attest or s_blocked) and not s_done)
                 steps_view.append({
                     "id": sid, "name": s["name"], "status": status,
                     "needs_owner": needs,
                     "note": stp.note,          # agent result / block reason / detail
-                    "now": bool(sid == cur and not s_done and (is_gate or is_rem or is_scout or is_attest or s_blocked)),
+                    "now": bool(sid == cur and not s_done and (is_gate or is_rem or is_attest or s_blocked)),
                 })
             opens = self._phase_anchor_date(phase)
             return {
