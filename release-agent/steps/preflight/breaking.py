@@ -2,17 +2,28 @@
 
 Reads the common-for-android changelog, finds breaking ([MAJOR]) entries in the
 unreleased "vNext" section, and drafts the OneAuth comms. Read-only. Deterministic
-(HTTP only) → an `agent` step the engine runs in-process; a dry-run simulates.
+(HTTP only) → an `agent` step the engine runs in-process.
 """
 from __future__ import annotations
+import re
 from urllib import request as _request
 
 from orchestrator.outcomes import Done, Blocked
 from orchestrator.phase_config import load_phase_config
 from steps.lib.agent import legacy_run
+from steps.lib.mockctx import mock_input
 
 ID = "breaking"
 KIND = "agent"
+
+# Properties this step exposes to mocks.local.yaml (see `mock-spec`).
+MOCKABLE = {
+    "changelog": {
+        "kind": "input",
+        "desc": ("Inject changelog text; the REAL [MAJOR] parse + comms draft runs "
+                 "on it — no network fetch."),
+    },
+}
 
 
 def _fetch_text(url: str, timeout: int = 20) -> str:
@@ -27,7 +38,9 @@ def parse_breaking(changelog_text: str, section: str = "vNext",
 
     The changelog is a flat text file: a section header line (e.g. "vNext"),
     an underline, then `- [SEVERITY] ... (#PR)` bullets, until the next
-    "Version X.Y.Z" header. We scan only the requested section.
+    "Version X.Y.Z" header. We scan only the requested section. Each returned
+    entry is normalized: the leading bullet marker (`- ` / `* `) is stripped so
+    callers can add their own bullet without doubling it.
     """
     entries, in_section = [], False
     for raw in changelog_text.splitlines():
@@ -39,7 +52,7 @@ def parse_breaking(changelog_text: str, section: str = "vNext",
         if s.startswith("Version "):
             break
         if tag in raw:
-            entries.append(s)
+            entries.append(re.sub(r"^[-*]\s+", "", s))   # drop leading bullet marker
     return entries
 
 
@@ -61,15 +74,17 @@ def build(state):
     url = cfg.get("changelog_url")
     section = cfg.get("section", "vNext")
     tag = cfg.get("breaking_tag", "[MAJOR]")
-    if state.dry_run:
-        return Done(f"[dry-run] Would scan the '{section}' changelog section for {tag} "
-                    f"(breaking) entries and draft OneAuth comms.")
-    if not url:
+    # Injected changelog (mocks.local.yaml) → run the REAL parse/draft on your text.
+    injected = mock_input("changelog")
+    if injected is not None:
+        text = injected
+    elif not url:
         return Blocked("breaking: no changelog_url configured")
-    try:
-        text = _fetch_text(url)
-    except Exception as e:  # noqa: BLE001 - network/parse errors -> hold for human
-        return Blocked(f"breaking: could not fetch changelog ({e})")
+    else:
+        try:
+            text = _fetch_text(url)
+        except Exception as e:  # noqa: BLE001 - network/parse errors -> hold for human
+            return Blocked(f"breaking: could not fetch changelog ({e})")
     entries = parse_breaking(text, section, tag)
     if not entries:
         return Done(f"No breaking ({tag}) changes in '{section}' — no OneAuth comms needed.")

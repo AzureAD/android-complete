@@ -18,7 +18,7 @@ runs each step's agent, and **holds at gates** for the release engineer to decid
                           relays your approve/deny                 the BRAIN — fully unit-tested
 ```
 
-- **Engine = the brain.** Decides what's next, runs stubbed agents, holds at gates, persists run-state. No LLM — unit-tested and dry-run replayable.
+- **Engine = the brain.** Decides what's next, runs stubbed agents, holds at gates, persists run-state. No LLM — unit-tested and replayable.
 - **Skill = the mouth & ears.** Presents the gate, collects your decision, relays it. Never decides the flow.
 
 ## Layout
@@ -63,7 +63,7 @@ release-agent/                     COMMITTED (distributed with android-complete)
 ├─ tools/checks.py                 real IO (az / http), isolated
 ├─ skill/SKILL.md                  the /release-agent Scout skill
 ├─ setup/bootstrap.ps1             one-time setup (infra preflight, installs skill)
-└─ tests/test_engine.py            unit + full dry-run-replay tests
+└─ tests/test_engine.py            unit + full flow-replay tests
 
 .release-runs/<YYYY-MM>/           GENERATED, gitignored (per-release working state)
 ├─ release-state.json              the per-release metadata + run-state (owner, CCD, steps, gates, …)
@@ -72,7 +72,7 @@ release-agent/                     COMMITTED (distributed with android-complete)
 ```
 
 **Two homes for data (by lifetime):**
-- **Release metadata + run-state** → `.release-runs/<id>/release-state.json` (per-release; the `ReleaseState` record). Holds `owner_email`/`owner_name` (the release owner, resolved from the signed-in `az` user at `init`; reminders email this person), `ccd`/`ccd_source`/`ccd_conflict`, `dry_run`, step completion, gate decisions, `last_notified`, etc. Add release-scoped fields here.
+- **Release metadata + run-state** → `.release-runs/<id>/release-state.json` (per-release; the `ReleaseState` record). Holds `owner_email`/`owner_name` (the release owner, resolved from the signed-in `az` user at `init`; reminders email this person), `ccd`/`ccd_source`/`ccd_conflict`, step completion, gate decisions, `last_notified`, etc. Add release-scoped fields here.
 - **Tool config** → `release-agent/config/*.yaml` (not release-specific; committed): `phases.yaml`, `readiness.yaml`, `schedule.yaml`, `requirements.yaml`.
 
 ## Architecture — three layers (so it adapts to other interfaces)
@@ -118,7 +118,7 @@ python -m orchestrator.cli infra --no-register  # report only
 ```
 
 ```powershell
-# drive a release (dry-run by default)
+# drive a release (runs are real; keep a mocks.local.yaml for safe testing)
 cd release-agent
 python -m orchestrator.cli init   --release 2026-07
 python -m orchestrator.cli next   --release 2026-07     # runs until the first gate
@@ -143,7 +143,7 @@ and reports any conflict.
   nothing and status shows *"opens `<date>` (in N days)"*. Other phases are
   dependency-driven for now; add an `anchor:` to any phase to time-gate it too.
 - **Simulated clock:** every read/advance command takes `--as-of YYYY-MM-DD` so a
-  dry-run can jump to CCD-7 and prove a phase opens on schedule. Real runs use today.
+  `--as-of` can jump to CCD-7 and prove a phase opens on schedule. Normal runs use today.
 - **Resolving a conflict / changing the CCD.** `set-ccd` and `skip-release`
   **write back** to pipeline 3038 (override / `skipRelease`) — real production
   changes, so they're gated: preview first, then re-run with `--confirm` (a
@@ -154,7 +154,7 @@ and reports any conflict.
 ```powershell
 python -m orchestrator.cli set-ccd --release 2026-07 --date 2026-07-15 --reason "more bake time"   # preview
 python -m orchestrator.cli set-ccd --release 2026-07 --date 2026-07-15 --reason "more bake time" --confirm
-python -m orchestrator.cli status  --release 2026-07 --as-of 2026-07-01   # jump the clock in dry-run
+python -m orchestrator.cli status  --release 2026-07 --as-of 2026-07-01   # jump the clock
 python -m orchestrator.cli done    --release 2026-07 --note "China upload complete"   # clear a reminder hold
 ```
 
@@ -223,11 +223,11 @@ Events captured include: `release_started`, `readiness_verified/signed/declined`
 
 ```powershell
 cd release-agent
-python tests/test_engine.py        # unit + full dry-run replay + readiness + eventlog
+python tests/test_engine.py        # unit + full flow replay + readiness + eventlog
 ```
 
 ## Design constraints honored (from §7.1 of the stabilization plan)
-1. Dry-run/replay is the primary test method (never test on live monthly releases).
+1. Real-by-default with a personal `mocks.local.yaml` (skip/redirect/inject per step) is the test method — never blast the real DL from a test (use a `send_to` redirect).
 2. Run-state schema defined once, upfront (X5), shared by all agents.
 3. Sequence by risk/value — agents are independent plug-ins on the backbone.
 4. Manual overrides are first-class (approve/deny gates; activate conditional phases).

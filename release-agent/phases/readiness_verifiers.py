@@ -4,7 +4,7 @@ An auto verifier must FULLY verify its item — it returns pass or fail, never a
 half-measure. If something cannot be fully proven programmatically, it must NOT
 be an auto item (make it an attest item in readiness.yaml instead).
 
-Contract:  verify(item, dry_run) -> VerifyResult(status, message)
+Contract:  verify(item) -> VerifyResult(status, message)
   status: "pass" | "fail"
 """
 from __future__ import annotations
@@ -23,7 +23,7 @@ class VerifyResult:
         return self.status == "pass"
 
 
-def verify_build_defs(item: dict, dry_run: bool) -> VerifyResult:
+def verify_build_defs(item: dict) -> VerifyResult:
     """Confirm the engineer can access every configured ADO build definition,
     using `az pipelines build definition show`. Fully verified access — pass/fail.
     Returns per-check details (name, url, ok) so the display can link each one."""
@@ -43,7 +43,7 @@ def verify_build_defs(item: dict, dry_run: bool) -> VerifyResult:
     return VerifyResult("fail" if any_fail else "pass", msg, details)
 
 
-def verify_mcp_servers(item: dict, dry_run: bool) -> VerifyResult:
+def verify_mcp_servers(item: dict) -> VerifyResult:
     """Confirm every MCP server the skill needs (ICM, Kusto/ADX) is registered in
     Scout's config. Reuses the infra preflight in READ-ONLY mode (register=False)
     against config/requirements.yaml — the single source of truth for MCP deps.

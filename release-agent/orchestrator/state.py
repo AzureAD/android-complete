@@ -11,7 +11,7 @@ state) is a separate concern handled by tools/reconcile.py (stubbed for now).
 from __future__ import annotations
 import json
 import os
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -30,6 +30,7 @@ class StepState:
     completed_at: Optional[str] = None
     note: Optional[str] = None
     by: Optional[str] = None         # 'agent' (stub) or 'human'
+    links: list = field(default_factory=list)   # [{name, url}] — durable refs (wiki page, CG alerts)
 
 
 @dataclass
@@ -49,7 +50,6 @@ class ReleaseState:
     release_id: str = ""             # e.g. 2026-07
     created_at: str = field(default_factory=_now)
     updated_at: str = field(default_factory=_now)
-    dry_run: bool = True
     # Release owner — the engineer running this release (release metadata). The
     # push reminders email this address; resolved from the signed-in user at init.
     owner_email: Optional[str] = None
@@ -86,7 +86,12 @@ class ReleaseState:
     def load(cls, path: str) -> "ReleaseState":
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-        return cls(**data)
+        # Tolerate unknown/legacy keys: a persisted state file may predate a
+        # field rename/removal (or be hand-edited), and this loader runs in an
+        # unattended automation — an unexpected key must never hard-crash it.
+        # Only keys matching a declared field are applied; the rest are dropped.
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
 
     def save(self, path: str) -> None:
         self.updated_at = _now()

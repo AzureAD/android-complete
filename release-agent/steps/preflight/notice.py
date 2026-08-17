@@ -13,9 +13,24 @@ from orchestrator.outcomes import NeedsSkill, Done, Blocked
 from orchestrator.phase_config import load_phase_config
 from steps.lib import templating as T
 from steps.lib.context import release_ctx, resolve_recipients
+from steps.lib.mockctx import mock_input
 
 ID = "notice"
 KIND = "scout"
+
+# Properties this step exposes to mocks.local.yaml (see `mock-spec`).
+#   payload knobs → rewrite the send (applied by step-action).
+#   input knobs   → replace an input so the real build logic runs on your value.
+MOCKABLE = {
+    "send_to": {
+        "kind": "payload", "sets": "to", "as": "list", "tag_subject": True,
+        "desc": "Send the email for real, but only to these address(es) (DL → you).",
+    },
+    "variant": {
+        "kind": "input",
+        "desc": "Force the notice variant: initial (CCD-7) | update (CCD-day).",
+    },
+}
 
 # Fixed external link inside the notice body (see EXTERNAL-REFERENCES.md).
 HOTFIX_GUIDE_URL = ("https://eng.ms/docs/microsoft-security/identity/"
@@ -62,7 +77,7 @@ def build(state, variant: str | None = None):
         return Blocked("no CCD set for this release")
 
     cfg = load_phase_config("preflight", "notice")
-    variant = variant or cfg.get("variant", "initial")
+    variant = variant or mock_input("variant") or cfg.get("variant", "initial")
     tpl_rel = cfg.get("template", "templates/early-code-complete-notice.md")
     parsed = T.load_template(tpl_rel, variant)
     if isinstance(parsed, dict) and "error" in parsed:
@@ -89,6 +104,5 @@ def build(state, variant: str | None = None):
         },
         record_as=ID,
         summary=f"Email the code-complete notice to {len(recipients)} recipient(s) ({rnote})",
-        dry_run=state.dry_run,
         note=f"sent to {', '.join(recipients) if recipients else '(no recipients)'}",
     )

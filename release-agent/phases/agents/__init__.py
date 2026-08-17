@@ -1,7 +1,7 @@
 """Phase-agent registry — aggregates every phase's agents into one lookup.
 
 Each phase's real agents live in `phases/agents/<phase>.py`, which exposes a
-module-level `REGISTRY = {agent_id: run(phase_id, step, dry_run, state) -> StepResult}`.
+module-level `REGISTRY = {agent_id: run(phase_id, step, state) -> StepResult}`.
 This package merges them all into a single `REGISTRY` so the engine does ONE
 lookup, and guards against two phases claiming the same agent id.
 

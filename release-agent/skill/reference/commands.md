@@ -5,8 +5,8 @@ _Loaded on demand. Run all from `C:\repos\android-complete\release-agent`._
 | Intent | Command |
 | --- | --- |
 | Discover releases | `python -m orchestrator.cli list --json` |
-| Start a new release (dry-run) | `python -m orchestrator.cli init --release <YYYY-MM>` |
-| Start for real | `python -m orchestrator.cli init --release <YYYY-MM> --live` |
+| Start a new release | `python -m orchestrator.cli init --release <YYYY-MM>` |
+| List what a step exposes to `mocks.local.yaml` | `python -m orchestrator.cli mock-spec` |
 | Show readiness entry checklist | `python -m orchestrator.cli checklist --release <YYYY-MM> [--verify] [--json]` |
 | Run auto readiness verifiers | `python -m orchestrator.cli verify --release <YYYY-MM>` |
 | Attest human items (+auto verify) | `python -m orchestrator.cli sign --release <YYYY-MM> --item <id> [--item <id> …] --note "<what they confirmed>"` |
@@ -48,7 +48,7 @@ Map natural language to these ("skip the CG report, doesn't apply" → `skip …
 - **`done`** — already complete; nothing to run.
 - **`blocked`** — surface `reason` to the owner; don't proceed.
 - **`needs_human`** — show `prompt` (attestation or reminder to-do).
-- **`needs_skill`** — run `tool` with `payload` (an MCP/browser call the engine can't make, already fully resolved), then confirm with `record-step --step <record_as> --status pass\|attention`. `dry_run:true` means recipients were redirected to the release owner (subject carries `[DRY-RUN → owner]`).
+- **`needs_skill`** — run `tool` with `payload` (an MCP/browser call the engine can't make, already fully resolved), then confirm with `record-step --step <record_as> --status pass\|attention`. Runs are real — the payload targets the real DL/chat unless the engineer's `mocks.local.yaml` has a `send_to` redirect (then `payload.to`/`chatId` points at them and the subject carries `[TEST → me]`).
 
 If a step isn't migrated yet, `step-action` returns `{"error": …}` with exit 1. **Use `step-action` for scout steps** (`needs_skill` → run the tool, then `record-step`) **and attest steps** (`needs_human` → show the `prompt` via `m_ask_user`, then clear with `done --step <id>`). Migrated: scout — `preflight.notice`, `preflight.flight_reminder`, `preflight.lockdown` (gather-then-decide: its `needs_skill` carries a `_gather` browser-scrape directive + a `check-lockdown` follow-up); attest — `preflight.confirm_reminders`, `preflight.vitals`. **Agent steps** (`preflight.breaking`, `cg`, `cron`, `wiki`) are migrated too but the **engine runs them in-process during `next`** — `step-action` refuses them (exit 1); relay their results from the `status` table.
 

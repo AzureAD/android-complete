@@ -94,12 +94,6 @@ items:
     cluster_uri: "https://idsharedeus2.eastus2.kusto.windows.net"
     database: "d496be22d62a46b0a3cf67ea2e736fd8"
 
-  - id: play_console_access
-    label: "Play Console access"
-    text: "You can open the Play Console app dashboard (sign in and confirm it loads)"
-    detail: "Open the [Play Console dashboard](https://play.google.com/console/u/0/developers/6720847872553662727/app/4972501392087484764/app-dashboard) and confirm it loads."
-    verify: attest
-
   - id: oncall_now
     label: "Not on-call now"
     text: "You are NOT currently the Android on-call (Scout verifies via ICM)"
@@ -109,6 +103,12 @@ items:
     verifier: oncall
     team_id: 78848
     team_name: "Auth Client Android Shield"
+
+  - id: play_console_access
+    label: "Play Console access"
+    text: "You can open the Play Console app dashboard (sign in and confirm it loads)"
+    detail: "Open the [Play Console dashboard](https://play.google.com/console/u/0/developers/6720847872553662727/app/4972501392087484764/app-dashboard) and confirm it loads."
+    verify: attest
 
   - id: oncall_window
     label: "Free during release window"

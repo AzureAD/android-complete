@@ -23,7 +23,6 @@ def _summarize(state_file: str) -> Optional[dict]:
     return {
         "release_id": data.get("release_id"),
         "status": data.get("status"),
-        "dry_run": data.get("dry_run", True),
         "current_phase": data.get("current_phase"),
         "current_step": data.get("current_step"),
         "updated_at": data.get("updated_at"),

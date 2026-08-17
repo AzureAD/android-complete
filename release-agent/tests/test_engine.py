@@ -1,4 +1,4 @@
-"""Unit + dry-run-replay tests for the Release Orchestrator (X4+X5).
+"""Unit + flow-replay tests for the Release Orchestrator (X4+X5).
 
 Run:  python tests/test_engine.py     (plain-run smoke)
  or:  python -m pytest tests -q
@@ -14,6 +14,7 @@ sys.path.insert(0, ROOT)
 from orchestrator.state import ReleaseState
 from orchestrator.engine import Orchestrator
 from orchestrator import cli_common as C
+from orchestrator import mocks as _mocks_mod
 
 CONFIG = os.path.join(ROOT, "config", "phases.yaml")
 
@@ -23,7 +24,7 @@ CONFIG = os.path.join(ROOT, "config", "phases.yaml")
 import phases.readiness_verifiers as _rv
 from phases.readiness_verifiers import VerifyResult
 def _bd_result(status):
-    def _fn(item, dry_run):
+    def _fn(item):
         details = [{"name": c.get("name", str(c.get("id"))), "url": c.get("url"),
                     "ok": status == "pass", "detail": "stubbed"}
                    for c in item.get("checks", [])]
@@ -31,6 +32,33 @@ def _bd_result(status):
     return _fn
 
 _rv.REGISTRY = {"build_defs": _bd_result("pass"), "mcp_servers": _bd_result("pass")}
+
+
+# Safe-agent profile: injected inputs so Phase-0 agents run their REAL logic
+# offline (no network / no ADO write) during run_until_gate. Replaces what the old
+# removed simulate branches used to do — now offline via injected inputs.
+def _recent_iso():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+_SAFE_AGENTS = {
+    "preflight.cg": {"alerts": []},                                     # → 0 active → pass
+    "preflight.cron": {"run": {"queueTime": _recent_iso(), "result": "succeeded"}},  # fresh → pass
+    "preflight.breaking": {"changelog": "vNext\n----\n- [MINOR] x (#1)\nVersion 1.0.0\n"},  # no [MAJOR] → pass
+    "preflight.wiki": {"outcome": "done", "note": "wiki payload page ready (test)"},  # skip ADO write
+}
+
+
+def _safe(mocks=None):
+    """Merge the safe-agent profile with a test's specific mocks (test wins)."""
+    return {**_SAFE_AGENTS, **(mocks or {})}
+
+
+# Every test flow (incl. tests that build Orchestrator(CONFIG, st) directly) runs
+# with the safe-agent profile so agents never hit the network — replaces the
+# offline via injected inputs. Tests needing specific mocks pass mocks= explicitly.
+_mocks_mod.load_mocks = lambda *a, **k: dict(_SAFE_AGENTS)
 
 
 def _stub_build_defs(status):
@@ -77,7 +105,7 @@ def _orch(signed=True):
     """Fresh orchestrator. By default the readiness entry gate is pre-signed so
     tests can focus on the phase flow; readiness itself is tested separately."""
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="t", dry_run=True)
+    st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
     if signed:
         # scout-assisted checks (skill records them) + attest the rest + verify auto
@@ -151,7 +179,7 @@ def test_cli_sign_refuses_bare_and_has_no_all_flag():
                                 item=None, note="")
         # seed a release so load_orch works
         from orchestrator.state import ReleaseState
-        st0 = ReleaseState(release_id="t", dry_run=True)
+        st0 = ReleaseState(release_id="t")
         from orchestrator import cli_common as _C
         _C.save_state(st0, tmp, "t")
         rc = rcmd.cmd_sign(ns)
@@ -210,7 +238,7 @@ def test_attest_prompt_is_separate_render_never_in_table():
     render (render.attest_prompt), which only lists items once all auto items pass."""
     from orchestrator import render
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="t", dry_run=True, ccd="2026-07-08", ccd_source="default")
+    st = ReleaseState(release_id="t", ccd="2026-07-08", ccd_source="default")
     orch = Orchestrator(CONFIG, st)
     # The full table never carries the confirmation block, before OR after auto checks.
     early = render.readiness_table(orch.gate.checklist(), "t")
@@ -242,7 +270,7 @@ def test_attest_prompt_payload_is_deterministic_card():
     set with confirm_items — so the always-rendered Scout card is the source of truth."""
     from orchestrator import render
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="2026-07", dry_run=True, ccd="2026-07-08", ccd_source="default")
+    st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
     orch = Orchestrator(CONFIG, st)
     # Not ready before auto checks
     p0 = render.attest_prompt_payload(orch.gate.checklist(), "2026-07")
@@ -273,7 +301,7 @@ def test_oncall_window_shows_computed_dates():
     """The windowed attest item exposes CCD-relative dates (CCD-7 .. CCD+14)."""
     from orchestrator import render
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="2026-07", dry_run=True, ccd="2026-07-08", ccd_source="default")
+    st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
     orch = Orchestrator(CONFIG, st)
     win = next(i for i in orch.gate.checklist()["items"] if i["id"] == "oncall_window")["window"]
     assert win == {"start": "2026-07-01", "end": "2026-07-22"}   # CCD-7 .. CCD+14
@@ -292,7 +320,7 @@ def test_no_blocking_attribute():
 def test_failing_auto_keeps_gate_closed():
     """An auto check that FAILS is not satisfiable by attestation — gate stays shut."""
     _stub_build_defs("fail")
-    st = ReleaseState(release_id="t", dry_run=True)
+    st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
     orch.gate.sign()  # attests humans, verifies auto (fails)
     assert not st.readiness_signed
@@ -304,7 +332,7 @@ def test_failing_auto_keeps_gate_closed():
 
 def test_passing_auto_plus_attest_clears_gate():
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="t", dry_run=True)
+    st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
     _pass_scout_checks(orch)   # scout-assisted (ICM + Kusto)
     orch.gate.sign()
@@ -319,7 +347,7 @@ def test_verify_skips_scout_assisted_item():
     """The Python verify() must NOT run or fail a source:scout item — the skill
     records it. It should stay pending until record_check is called."""
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="t", dry_run=True)
+    st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
     orch.gate.verify()
     assert st.readiness_items["build_access"]["status"] == "pass"   # python auto ran
@@ -328,7 +356,7 @@ def test_verify_skips_scout_assisted_item():
 
 def test_record_check_pass_then_sign_clears_gate():
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="t", dry_run=True)
+    st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
     orch.gate.record_check("adx_access", "pass", "can query")
     orch.gate.record_check("silent_perms", "pass", "servers auto-approved")
@@ -341,7 +369,7 @@ def test_record_check_pass_then_sign_clears_gate():
 def test_record_check_fail_keeps_gate_closed():
     """If the ICM check says you ARE on-call, the item fails and the gate stays shut."""
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="t", dry_run=True)
+    st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
     orch.gate.sign()
     orch.gate.record_check("oncall_now", "fail", "you are on-call this rotation")
@@ -365,7 +393,7 @@ def test_silent_perms_is_required_scout_item():
     """silent_perms (source: scout) is a required auto item — the gate stays closed
     until the skill records it, and it carries required_servers as data."""
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="t", dry_run=True)
+    st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
     # it's a scout item, so verify() must NOT touch it
     orch.gate.verify()
@@ -386,7 +414,7 @@ def test_silent_perms_is_required_scout_item():
 def test_mcp_servers_is_python_auto_item():
     """mcp_servers is a Python-verified auto item — verify() runs it (not the skill)."""
     _stub_build_defs("pass")           # also stubs mcp_servers -> pass in test REGISTRY
-    st = ReleaseState(release_id="t", dry_run=True)
+    st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
     orch.gate.verify()
     assert st.readiness_items["mcp_servers"]["status"] == "pass"
@@ -398,7 +426,7 @@ def test_silent_perms_opt_out_degraded_satisfies_gate():
     """silent_perms is soft/opt-out: recording 'degraded' (user proceeds without
     silent runs) SATISFIES the gate, unlike a normal auto item where only pass counts."""
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="t", dry_run=True)
+    st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")
@@ -414,7 +442,7 @@ def test_silent_perms_opt_out_degraded_satisfies_gate():
 def test_degraded_rejected_for_non_opt_out_item():
     """'degraded' is only valid for opt_out items — a normal scout item rejects it."""
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="t", dry_run=True)
+    st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
     res = orch.gate.record_check("oncall_now", "degraded", "nope")
     assert "error" in res
@@ -471,7 +499,7 @@ def test_deny_blocks():
     assert any("denied" in p for p in st.pending_human)
 
 
-def test_full_dry_run_replay_completes():
+def test_full_flow_replay_completes():
     st, orch = _orch()
     guard = 0
     while st.status != "complete" and guard < 100:
@@ -491,7 +519,7 @@ def test_full_dry_run_replay_completes():
 def test_persistence_roundtrip():
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "s.json")
-        st = ReleaseState(release_id="rt", dry_run=True)
+        st = ReleaseState(release_id="rt")
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch)
         orch.gate.sign()
@@ -579,7 +607,7 @@ def test_eventlog_per_release_and_captures_interaction():
     from orchestrator.eventlog import EventLog, summarize
     with tempfile.TemporaryDirectory() as tmp:
         el = EventLog(tmp, "2026-10")
-        el.log("release_started", mode="dry-run")
+        el.log("release_started", mode="real")
         el.scout_said("Readiness gate — confirm items?", kind="prompt",
                       options=["All confirmed", "I AM on-call"])
         el.user_said("All confirmed", kind="choice", choice="A")
@@ -632,7 +660,7 @@ def test_resolve_ccd_default_and_conflict():
 
 
 def test_ccd_conflict_surfaced_in_status():
-    st = ReleaseState(release_id="2026-07", dry_run=True, ccd="2026-07-08",
+    st = ReleaseState(release_id="2026-07", ccd="2026-07-08",
                       ccd_source="default", ccd_conflict="2026-07-09")
     orch = Orchestrator(CONFIG, st)
     rpt = orch.status_report()
@@ -657,7 +685,7 @@ def _ccd_orch(as_of):
     """Signed orchestrator with CCD=2026-07-08 (Phase 0 opens 2026-07-01)."""
     from datetime import date
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="2026-07", dry_run=True, ccd="2026-07-08", ccd_source="default")
+    st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
     orch = Orchestrator(CONFIG, st, as_of=date(*[int(x) for x in as_of.split("-")]))
     _pass_scout_checks(orch)
     orch.gate.sign()
@@ -759,7 +787,7 @@ def test_notify_unsigned_readiness_is_silent():
     from orchestrator import render
     from datetime import date
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="2026-08", dry_run=True, ccd="2026-08-12", ccd_source="default")
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-12", ccd_source="default")
     orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 6))  # after CCD-7 but unsigned
     assert render.notification(orch.status_report()) == ""
 
@@ -808,7 +836,7 @@ def test_notify_silent_when_halted_or_complete():
 
 
 def test_owner_stored_and_in_status():
-    st = ReleaseState(release_id="2026-08", dry_run=True, ccd="2026-08-12",
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-12",
                       ccd_source="default", owner_email="pedroro@microsoft.com",
                       owner_name="Pedro Romero Vargas")
     orch = Orchestrator(CONFIG, st)
@@ -1014,7 +1042,7 @@ def test_concurrent_record_check_both_persist():
 
 def test_status_surfaces_agent_result_notes_and_wiki_link():
     """Agent results are stored as the step note and surfaced in status: the
-    Results & activity section shows each done agent's output, incl. the wiki link."""
+    Details column shows each step's outcome; multi-line reports expand below."""
     from orchestrator import render
     st, orch = _ccd_orch("2026-07-02")          # Phase 0 open
     orch.run_until_gate()                        # runs breaking/cg/cron/wiki (set notes)
@@ -1022,8 +1050,8 @@ def test_status_surfaces_agent_result_notes_and_wiki_link():
     steps = {s["id"]: s for s in r["current_steps"]}
     assert steps["cg"].get("note") and steps["wiki"].get("note")
     view = render.status_view(r)
-    assert "Results & activity" in view
-    assert "Would live at" in view               # the wiki link surfaces (dry-run)
+    assert "| Details |" in view                 # the third column exists
+    assert "Component Governance" in view        # cg's real report note surfaces
 
 
 # ---- Phase-0 real pre-flight agents (breaking detect, wiki payload) ----
@@ -1043,6 +1071,7 @@ def test_parse_breaking_only_scans_vnext_section():
     hits = parse_breaking(_SAMPLE_CHANGELOG, section="vNext", tag="[MAJOR]")
     assert len(hits) == 1
     assert "(#2)" in hits[0] and "(#0)" not in hits[0]
+    assert hits[0].startswith("[MAJOR]")          # leading "- " bullet stripped (no doubling)
 
 
 def test_parse_breaking_none_when_no_major():
@@ -1051,29 +1080,14 @@ def test_parse_breaking_none_when_no_major():
     assert parse_breaking(txt) == []
 
 
-def test_breaking_agent_dry_run_simulates(monkeypatch=None):
-    """Dry-run must NOT hit the network — it describes what it would do."""
-    from phases.agents import preflight as pa
-    from steps.preflight import breaking as _bk
-    called = {"n": 0}
-    orig = _bk._fetch_text
-    _bk._fetch_text = lambda *a, **k: called.__setitem__("n", called["n"] + 1) or ""
-    try:
-        st = ReleaseState(release_id="2026-08", dry_run=True)
-        r = pa.run_breaking("preflight", {"id": "breaking"}, True, st)
-        assert r.ok and "dry-run" in r.action.lower() and called["n"] == 0
-    finally:
-        _bk._fetch_text = orig
-
-
 def test_breaking_agent_detects_and_drafts():
     from phases.agents import preflight as pa
     from steps.preflight import breaking as _bk
     orig = _bk._fetch_text
     _bk._fetch_text = lambda *a, **k: _SAMPLE_CHANGELOG
     try:
-        st = ReleaseState(release_id="2026-08", dry_run=False)
-        r = pa.run_breaking("preflight", {"id": "breaking"}, False, st)
+        st = ReleaseState(release_id="2026-08")
+        r = pa.run_breaking("preflight", {"id": "breaking"}, st)
         assert r.ok
         assert "Detected 1 breaking" in r.action
         assert "(#2)" in r.action and "DRAFT COMMS" in r.action
@@ -1087,8 +1101,8 @@ def test_breaking_agent_none_found_passes():
     orig = _bk._fetch_text
     _bk._fetch_text = lambda *a, **k: "vNext\n----------\n- [MINOR] x (#1)\nVersion 1.0.0\n"
     try:
-        r = pa.run_breaking("preflight", {"id": "breaking"}, False,
-                            ReleaseState(release_id="2026-08", dry_run=False))
+        r = pa.run_breaking("preflight", {"id": "breaking"},
+                            ReleaseState(release_id="2026-08"))
         assert r.ok and "No breaking" in r.action
     finally:
         _bk._fetch_text = orig
@@ -1103,18 +1117,11 @@ def test_breaking_agent_fetch_error_holds():
         raise RuntimeError("network down")
     _bk._fetch_text = _boom
     try:
-        r = pa.run_breaking("preflight", {"id": "breaking"}, False,
-                            ReleaseState(release_id="2026-08", dry_run=False))
+        r = pa.run_breaking("preflight", {"id": "breaking"},
+                            ReleaseState(release_id="2026-08"))
         assert not r.ok and "could not fetch" in r.action
     finally:
         _bk._fetch_text = orig
-
-
-def test_wiki_agent_dry_run_simulates():
-    from phases.agents import preflight as pa
-    st = ReleaseState(release_id="2026-08", dry_run=True)
-    r = pa.run_wiki("preflight", {"id": "wiki"}, True, st)
-    assert r.ok and "dry-run" in r.action.lower() and "August 2026 Release" in r.action
 
 
 def test_wiki_page_name_convention():
@@ -1136,8 +1143,8 @@ def test_wiki_agent_real_create(monkeypatch=None):
     checks.create_wiki_page = _fake
     checks.wiki_page_exists = lambda *a, **k: False    # month page absent
     try:
-        st = ReleaseState(release_id="2026-08", dry_run=False)
-        r = pa.run_wiki("preflight", {"id": "wiki"}, False, st)
+        st = ReleaseState(release_id="2026-08")
+        r = pa.run_wiki("preflight", {"id": "wiki"}, st)
         assert r.ok and seen["path"].endswith("August 2026 Release")
         assert seen["project"] == "IdentityWiki"
     finally:
@@ -1161,8 +1168,8 @@ def test_wiki_agent_duplicate_creates_numbered_and_notifies():
     checks.wiki_page_exists = _exists
     checks.create_wiki_page = _create
     try:
-        st = ReleaseState(release_id="2026-08", dry_run=False)
-        r = pa.run_wiki("preflight", {"id": "wiki"}, False, st)
+        st = ReleaseState(release_id="2026-08")
+        r = pa.run_wiki("preflight", {"id": "wiki"}, st)
         assert r.ok
         assert created["path"].endswith("August 2026 2 Release")
         assert "already exist" in r.action.lower() and "SECOND" in r.action
@@ -1200,7 +1207,7 @@ def test_tick_advances_and_reports(tmp=None):
         rid = "2026-07"
         # signed release, CCD reached so Phase 0 is open
         _stub_build_defs("pass")
-        st = ReleaseState(release_id=rid, dry_run=True, ccd="2026-07-08",
+        st = ReleaseState(release_id=rid, ccd="2026-07-08",
                           ccd_source="default", owner_email="o@x.com")
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch)
@@ -1233,7 +1240,7 @@ def test_tick_dedup_same_day():
     with _tf.TemporaryDirectory() as d:
         rid = "2026-07"
         _stub_build_defs("pass")
-        st = ReleaseState(release_id=rid, dry_run=True, ccd="2026-07-08",
+        st = ReleaseState(release_id=rid, ccd="2026-07-08",
                           ccd_source="default", owner_email="o@x.com")
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch)
@@ -1257,7 +1264,7 @@ def test_notification_html_lists_all_tasks_and_flags_attention():
     from orchestrator import render
     from datetime import date
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="2026-08", dry_run=True, ccd="2026-08-12",
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-12",
                       ccd_source="default", owner_email="o@x.com")
     orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 5))
     _pass_scout_checks(orch)
@@ -1279,7 +1286,7 @@ def test_notification_html_silent_when_plain_is_silent():
     from orchestrator import render
     from datetime import date
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="2026-08", dry_run=True, ccd="2026-08-12",
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-12",
                       ccd_source="default")
     orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 6))  # unsigned → silent
     assert render.notification_html(orch.status_report()) == ""
@@ -1330,7 +1337,7 @@ def test_check_lockdown_pass_and_attention():
     with _tf.TemporaryDirectory() as d:
         rid = "2026-08"
         _stub_build_defs("pass")
-        st = ReleaseState(release_id=rid, dry_run=True, ccd="2026-08-12", ccd_source="default")
+        st = ReleaseState(release_id=rid, ccd="2026-08-12", ccd_source="default")
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch); orch.gate.sign()
         C.save_state(st, d, rid)
@@ -1359,82 +1366,6 @@ def test_check_lockdown_pass_and_attention():
         assert st3.status == "awaiting_action"
 
 
-def test_prepare_notice_dry_run_targets_owner():
-    """prepare-notice fills the template and, in dry-run, redirects to the owner."""
-    import tempfile as _tf, json as _json, io, contextlib
-    from orchestrator.commands import notice as ncmd
-    with _tf.TemporaryDirectory() as d:
-        rid = "2026-08"
-        st = ReleaseState(release_id=rid, dry_run=True, ccd="2026-08-12",
-                          ccd_source="default", owner_email="pedroro@microsoft.com",
-                          owner_name="Pedro")
-        C.save_state(st, d, rid)
-
-        class A:
-            runs_root = d; release = rid; config = CONFIG; variant = None
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            ncmd.cmd_prepare_notice(A)
-        out = _json.loads(buf.getvalue())
-        assert out["dry_run"] is True
-        assert out["recipients"] == ["pedroro@microsoft.com"]     # redirected
-        assert "August" in out["subject"] and "[DRY-RUN" in out["subject"]
-        assert "Wednesday, August 12th, 2026" in out["body"]
-        assert "08/12/2026" in out["body"] and "@pedroro" in out["body"]
-
-
-def test_prepare_notice_live_uses_real_recipients():
-    import tempfile as _tf, json as _json, io, contextlib
-    from orchestrator.commands import notice as ncmd
-    with _tf.TemporaryDirectory() as d:
-        rid = "2026-08"
-        st = ReleaseState(release_id=rid, dry_run=False, ccd="2026-08-12",
-                          ccd_source="default", owner_email="pedroro@microsoft.com")
-        C.save_state(st, d, rid)
-
-        class A:
-            runs_root = d; release = rid; config = CONFIG; variant = None
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            ncmd.cmd_prepare_notice(A)
-        out = _json.loads(buf.getvalue())
-        assert out["dry_run"] is False
-        assert "androididentity@microsoft.com" in out["recipients"]
-        assert "jialh@microsoft.com" in out["recipients"]
-        assert not out["subject"].startswith("[DRY-RUN")
-
-
-def test_prepare_notice_html_has_table_and_clean_link():
-    """The HTML notice uses a real <table> and a clean <a href> (no raw URL text),
-    so Outlook renders it properly instead of mangling markdown."""
-    import tempfile as _tf, json as _json, io, contextlib
-    from orchestrator.commands import notice as ncmd
-    with _tf.TemporaryDirectory() as d:
-        rid = "2026-08"
-        st = ReleaseState(release_id=rid, dry_run=True, ccd="2026-08-12",
-                          ccd_source="default", owner_email="pedroro@microsoft.com",
-                          owner_name="Pedro")
-        C.save_state(st, d, rid)
-
-        class A:
-            runs_root = d; release = rid; config = CONFIG; variant = None
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            ncmd.cmd_prepare_notice(A)
-        out = _json.loads(buf.getvalue())
-        html = out["html"]
-        assert "<table" in html and "</table>" in html
-        assert '>the hotfix cherry-pick guide</a>' in html   # clean anchor text
-        assert ncmd.HOTFIX_GUIDE_URL in html
-        assert "August" in html and "08/12/2026" in html and "@pedroro" in html
-
-
-def test_ordinal_suffix():
-    from orchestrator.commands.notice import _ordinal
-    assert _ordinal(1) == "1st" and _ordinal(2) == "2nd" and _ordinal(3) == "3rd"
-    assert _ordinal(11) == "11th" and _ordinal(12) == "12th" and _ordinal(21) == "21st"
-
-
 def test_record_step_generic_pass():
     """record-step marks a scout-assisted step done (skill's post-send call)."""
     import tempfile as _tf
@@ -1442,7 +1373,7 @@ def test_record_step_generic_pass():
     with _tf.TemporaryDirectory() as d:
         rid = "t"
         _stub_build_defs("pass")
-        st = ReleaseState(release_id=rid, dry_run=True)
+        st = ReleaseState(release_id=rid)
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch); orch.gate.sign()
         C.save_state(st, d, rid)
@@ -1454,47 +1385,21 @@ def test_record_step_generic_pass():
         assert C.load_state(d, rid).is_done("preflight", "notice")
 
 
-def test_prepare_flight_reminder_dry_run_and_live():
-    """Flight reminder: dry-run targets the owner's own chat with a [DRY-RUN] prefix;
-    live targets the Android Core Team group chat id. Content has all 3 reminders."""
-    import tempfile as _tf, json as _json, io, contextlib
-    from orchestrator.commands import notice as ncmd
-    with _tf.TemporaryDirectory() as d:
-        rid = "2026-08"
-        # dry-run
-        st = ReleaseState(release_id=rid, dry_run=True, ccd="2026-08-12",
-                          ccd_source="default", owner_email="pedroro@microsoft.com",
-                          owner_name="Pedro")
-        C.save_state(st, d, rid)
-
-        class A:
-            runs_root = d; release = rid; config = CONFIG
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            ncmd.cmd_prepare_flight_reminder(A)
-        out = _json.loads(buf.getvalue())
-        assert out["dry_run"] is True and out["send_to"] == "owner"
-        assert out["chat_id"] is None and out["owner_email"] == "pedroro@microsoft.com"
-        assert "[DRY-RUN" in out["content"]
-        # all four reminders present
-        assert "Update local flights" in out["content"]
-        assert "pre-mortem" in out["content"]
-        assert "user-facing string" in out["content"]
-        assert "Feature-flag freeze" in out["content"] and "EcsFlight.kt" in out["content"]
-        assert out["content"].count("<li>") == 4
-        assert "variableGroupId=40" in out["content"]      # variable-group link
-
-        # live
-        st2 = ReleaseState(release_id=rid, dry_run=False, ccd="2026-08-12",
-                           ccd_source="default", owner_email="pedroro@microsoft.com")
-        C.save_state(st2, d, rid)
-        buf2 = io.StringIO()
-        with contextlib.redirect_stdout(buf2):
-            ncmd.cmd_prepare_flight_reminder(A)
-        out2 = _json.loads(buf2.getvalue())
-        assert out2["dry_run"] is False and out2["send_to"] == "group"
-        assert out2["chat_id"] == "19:976a859f167f44e59c4ceca8b1d23581@thread.v2"
-        assert "[DRY-RUN" not in out2["content"]
+def test_notice_build_real_recipients_and_html():
+    """Real send: notice.build targets the REAL DL and renders a proper <table> +
+    clean hotfix anchor. (Redirect to yourself is the send_to mock knob, not automatic.)"""
+    from steps.preflight import notice
+    from steps.lib import templating as T
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-12", ccd_source="default",
+                      owner_email="pedroro@microsoft.com", owner_name="Pedro")
+    out = notice.build(st)
+    html = out.payload["body"]
+    assert "<table" in html and "</table>" in html
+    assert ">the hotfix cherry-pick guide</a>" in html          # clean anchor, no raw URL
+    assert "August" in html and "08/12/2026" in html and "@pedroro" in html
+    assert "androididentity@microsoft.com" in out.payload["to"]  # real DL by default
+    assert not out.payload["subject"].startswith("[TEST")
+    assert T.ordinal(12) == "12th" and T.ordinal(21) == "21st"
 
 
 def test_no_localization_strings_step():
@@ -1572,12 +1477,6 @@ def test_cg_report_summarizes_and_flags_high():
     assert "CVE-OLD" not in rep and "CVE-FIXED" not in rep   # non-active excluded
 
 
-def test_cg_agent_dry_run_simulates():
-    from phases.agents import preflight as pa
-    r = pa.run_cg_alerts("preflight", {"id": "cg"}, True, None)
-    assert r.ok and "dry-run" in r.action.lower()
-
-
 def test_cg_agent_blocks_on_high():
     """High/Critical active alerts BLOCK the step (ok=False) with a fix-and-rerun message."""
     from phases.agents import preflight as pa
@@ -1588,7 +1487,7 @@ def test_cg_agent_blocks_on_high():
          "component": {"displayName": "pkg", "displayVersion": "1.0"}},
     ], "ok")
     try:
-        r = pa.run_cg_alerts("preflight", {"id": "cg"}, False, None)
+        r = pa.run_cg_alerts("preflight", {"id": "cg"}, None)
         assert not r.ok                       # High → blocks
         assert "CVE-9" in r.action and "RERUN" in r.action
     finally:
@@ -1604,7 +1503,7 @@ def test_cg_agent_passes_when_no_high():
         {"alertState": "active", "severity": "medium", "title": "CVE-M"},
     ], "ok")
     try:
-        r = pa.run_cg_alerts("preflight", {"id": "cg"}, False, None)
+        r = pa.run_cg_alerts("preflight", {"id": "cg"}, None)
         assert r.ok and "1 active" in r.action
     finally:
         checks.fetch_cg_alerts = orig
@@ -1617,7 +1516,7 @@ def test_cg_blocked_step_reruns_and_clears_when_fixed():
     from phases.stub_runner import StepResult
     flag = {"high": True}
 
-    def fake_cg(phase, step, dry_run, st):
+    def fake_cg(phase, step, st):
         if flag["high"]:
             return StepResult(False, "CG: 1 critical active\n→ Fix and RERUN or skip.", "agent")
         return StepResult(True, "CG: 0 active alerts.", "agent")
@@ -1664,16 +1563,10 @@ def test_cg_agent_fetch_error_holds():
     orig = checks.fetch_cg_alerts
     checks.fetch_cg_alerts = lambda *a, **k: (False, [], "403 forbidden")
     try:
-        r = pa.run_cg_alerts("preflight", {"id": "cg"}, False, None)
+        r = pa.run_cg_alerts("preflight", {"id": "cg"}, None)
         assert not r.ok and "could not read alerts" in r.action
     finally:
         checks.fetch_cg_alerts = orig
-
-
-def test_cron_check_dry_run_simulates():
-    from phases.agents import preflight as pa
-    r = pa.run_cron_check("preflight", {"id": "cron"}, True, None)
-    assert r.ok and "dry-run" in r.action.lower()
 
 
 def test_cron_check_passes_on_recent_scheduled_run():
@@ -1685,7 +1578,7 @@ def test_cron_check_passes_on_recent_scheduled_run():
     checks.latest_scheduled_build = lambda *a, **k: (True, {
         "queueTime": now_iso, "result": "succeeded", "status": "completed"}, "ok")
     try:
-        r = pa.run_cron_check("preflight", {"id": "cron"}, False, None)
+        r = pa.run_cron_check("preflight", {"id": "cron"}, None)
         assert r.ok and "scheduled and firing" in r.action
     finally:
         checks.latest_scheduled_build = orig
@@ -1698,7 +1591,7 @@ def test_cron_check_blocks_when_stale():
     checks.latest_scheduled_build = lambda *a, **k: (True, {
         "queueTime": "2026-01-01T06:00:00Z", "result": "succeeded", "status": "completed"}, "ok")
     try:
-        r = pa.run_cron_check("preflight", {"id": "cron"}, False, None)
+        r = pa.run_cron_check("preflight", {"id": "cron"}, None)
         assert not r.ok and "stale" in r.action
     finally:
         checks.latest_scheduled_build = orig
@@ -1710,7 +1603,7 @@ def test_cron_check_blocks_when_no_scheduled_run():
     orig = checks.latest_scheduled_build
     checks.latest_scheduled_build = lambda *a, **k: (True, None, "no scheduled runs in recent history")
     try:
-        r = pa.run_cron_check("preflight", {"id": "cron"}, False, None)
+        r = pa.run_cron_check("preflight", {"id": "cron"}, None)
         assert not r.ok and "no scheduled run" in r.action
     finally:
         checks.latest_scheduled_build = orig
@@ -1729,6 +1622,180 @@ def test_vitals_is_attestation_hold():
     assert step["status"] == "confirm" and step["needs_owner"]
     orch.complete_step("preflight", "vitals", "reviewed vitals + policy status in Play Console")
     assert st.is_done("preflight", "vitals")
+
+
+# ---- local step mocks (personal mocks.local.yaml, injected as mocks=) --------
+def _mock_orch(mocks, as_of="2026-07-02"):
+    """Signed, Phase-0-open orchestrator with an explicit mocks map (isolated from
+    any developer's mocks.local.yaml)."""
+    from datetime import date
+    _stub_build_defs("pass")
+    st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
+    orch = Orchestrator(CONFIG, st, as_of=date(*[int(x) for x in as_of.split("-")]), mocks=_safe(mocks))
+    _pass_scout_checks(orch)
+    orch.gate.sign()
+    return st, orch
+
+
+def test_local_mock_blocks_agent_step():
+    """A mock `outcome: blocked` replaces a real agent step and holds it; other
+    (unmocked) steps still run for real."""
+    st, orch = _mock_orch({"preflight.cg": {"outcome": "blocked", "reason": "mocked: boom"}})
+    orch.run_until_gate()
+    assert st.get_step("preflight", "cg").status == "blocked"
+    assert "preflight.cg" in st.pending_human
+    assert st.get_step("preflight", "cg").note == "mocked: boom"
+    assert st.is_done("preflight", "wiki")            # unmocked agent ran for real
+
+
+def test_local_mock_completes_scout_step():
+    """A mock `outcome: done` on a scout step auto-resolves it during `next` — the
+    skill is never asked to send — while other scout steps still hold."""
+    st, orch = _mock_orch({"preflight.notice": {"outcome": "done", "note": "mocked send"}})
+    orch.run_until_gate()
+    assert st.is_done("preflight", "notice")
+    assert "preflight.notice" not in st.pending_human
+    assert st.get_step("preflight", "notice").note == "mocked send"
+    assert "preflight.flight_reminder" in st.pending_human   # unmocked scout still holds
+
+
+def test_local_mock_never_mocks_a_gate():
+    """Gate steps are not mockable — a gate still holds for a real decision even if
+    someone lists it in the mock file."""
+    st, orch = _mock_orch({"ccd.branch_cut": {"outcome": "done"}})
+    _clear_phase0_scout(orch)          # clear Phase-0 holds so we reach the Phase-1 gate
+    orch.run_until_gate()
+    assert not st.is_done("ccd", "branch_cut")
+    assert st.status == "holding_gate"
+
+
+def test_local_mock_applies_to_later_phases():
+    """Engine-level mocks work for ANY phase's steps, not just Phase 0 — here a
+    Phase-1 step is forced to block before the branch-cut gate."""
+    st, orch = _mock_orch({"ccd.final_reminder": {"outcome": "blocked", "reason": "mocked P1"}})
+    _clear_phase0_scout(orch)          # advance out of Phase 0
+    orch.run_until_gate()
+    assert st.get_step("ccd", "final_reminder").status == "blocked"
+    assert "ccd.final_reminder" in st.pending_human
+    assert st.get_step("ccd", "final_reminder").note == "mocked P1"
+
+
+def test_local_mock_input_feeds_real_logic():
+    """An `input` knob (cg `alerts`) injects data and the step's REAL report/block
+    logic runs on it — a Critical alert blocks (no az call)."""
+    st, orch = _mock_orch({"preflight.cg": {"alerts": [
+        {"severity": "critical", "alertState": "active", "title": "CVE-2026-1"}]}})
+    orch.run_until_gate()
+    cg = st.get_step("preflight", "cg")
+    assert cg.status == "blocked"                       # real _cg_summary/_cg_report decided
+    assert "critical" in cg.note.lower()
+    assert "preflight.cg" in st.pending_human
+
+
+def test_local_mock_input_variant_on_scout_step():
+    """An `input` knob on a scout step is visible to build() via mock_input — here
+    notice's `variant` flips the rendered body to the CCD-day 'update' wording."""
+    from steps.preflight import notice
+    from steps.lib import mockctx
+    st = ReleaseState(release_id="2026-07", ccd="2026-07-08",
+                      owner_email="me@x.com")
+    with mockctx.active({"variant": "update"}):
+        out = notice.build(st)
+    assert "Today" in out.payload["body"]              # 'update' variant renders "Today"
+
+
+def test_readiness_mock_clears_auto_gate_offline():
+    """`readiness.<item>` mocks force the entry-gate AUTO checks (real ADO/config/
+    MCP) pass/fail without the real calls — lets a test clear the gate offline."""
+    from datetime import date
+    st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
+    mocks = {f"readiness.{i}": {"outcome": "pass"} for i in
+             ("build_access", "mcp_servers", "silent_perms", "adx_access", "oncall_now")}
+    orch = Orchestrator(CONFIG, st, as_of=date(2026, 7, 2), mocks=mocks)
+    orch.gate.verify()                        # no _stub_build_defs → real verifier bypassed
+    items = st.readiness_items
+    assert items["build_access"]["status"] == "pass"      # python-auto mocked
+    assert items["oncall_now"]["status"] == "pass"        # scout-auto mocked too
+
+
+def test_step_detail_summarizes_note_for_column():
+    """The Details column summary: one line, pipe-safe, first URL as a compact link,
+    and an em dash for outstanding (no-note) steps."""
+    from orchestrator.render import step_detail
+    # multi-line note → lead line only; embedded URL → [link](…)
+    d = step_detail({"state": "done", "note":
+        "Payload wiki subpage ready: 'August 2026 Release'.\nLink: https://wiki/x?a=1"})
+    assert d.startswith("Payload wiki subpage ready") and "[link](https://wiki/x?a=1)" in d
+    assert "\n" not in d
+    # pipes escaped so the table can't break
+    assert step_detail({"state": "done", "note": "a | b | c"}) == "a \\| b \\| c"
+    # outstanding step with no note → em dash; already-done with no note → empty
+    assert step_detail({"state": "reminder", "note": None}) == "—"
+    assert step_detail({"state": "done", "note": None}) == ""
+
+
+def test_step_links_stored_on_state_and_rendered():
+    """Durable links (wiki page, CG alerts) are stored as structured StepState.links
+    — not just embedded in note text — and surface in the Details column."""
+    from datetime import date
+    from orchestrator import render
+    from tools import checks
+    st = ReleaseState(release_id="2026-09", ccd="2026-09-09", ccd_source="default",
+                      owner_email="pedroro@microsoft.com")
+    mocks = _safe({"preflight.cg": {"alerts": [
+        {"alertState": "active", "severity": "high", "title": "CVE-X",
+         "url": "https://ado/alert/1"}]}})
+    # let wiki.build run its real link logic offline
+    checks.wiki_page_exists = lambda *a, **k: False
+    checks.create_wiki_page = lambda *a, **k: checks.CheckResult(True, True, "created")
+    mocks.pop("preflight.wiki", None)               # unmock wiki → real build (link)
+    orch = Orchestrator(CONFIG, st, as_of=date(2026, 9, 2), mocks=mocks)
+    _pass_scout_checks(orch); orch.gate.sign()
+    orch.run_until_gate()
+    steps = {s["id"]: s for s in orch.status_report()["current_steps"]}
+    # CG: config alerts page + the per-alert deep link, both stored
+    cg_urls = [l["url"] for l in steps["cg"]["links"]]
+    assert "https://ado/alert/1" in cg_urls and any("_a=alerts" in u for u in cg_urls)
+    # wiki: its page url stored as a structured link
+    assert steps["wiki"]["links"] and "pagePath=" in steps["wiki"]["links"][0]["url"]
+    # rendered column carries the link markdown
+    view = render.status_view(orch.status_report())
+    assert "[CVE-X](https://ado/alert/1)" in view
+
+
+def test_step_knowledge_base_answers_step_questions():
+    """The knowledge base returns accurate per-step help; the vitals entry carries
+    the correct Play Console navigation, and unknown steps return None (honest)."""
+    from orchestrator import knowledge as kb
+    v = kb.get_knowledge("preflight", "vitals")
+    assert v and any("Monitor and improve" in w and "Android vitals" in w for w in v["where"])
+    assert any("Policy and programs" in w and "Policy status" in w for w in v["where"])
+    # rendered markdown surfaces the FAQ answers
+    md = kb.render_knowledge("preflight", "vitals", v)
+    assert "Where is policy status?" in md
+    # every Phase-0 step has an entry
+    for sid in ("notice", "flight_reminder", "confirm_reminders", "lockdown",
+                "breaking", "cg", "vitals", "cron", "wiki"):
+        assert kb.get_knowledge("preflight", sid), sid
+    # a step with no entry → None (skill says "no knowledge yet", doesn't invent)
+    assert kb.get_knowledge("monitor", "adoption") is None
+
+
+def test_step_knowledge_module_overlays_yaml():
+    """A step module's KNOWLEDGE overlays the yaml per-field (module wins)."""
+    from orchestrator import knowledge as kb
+    import steps.preflight.cg as cgmod
+    saved = getattr(cgmod, "KNOWLEDGE", None)
+    cgmod.KNOWLEDGE = {"summary": "OVERRIDDEN"}
+    try:
+        k = kb.get_knowledge("preflight", "cg")
+        assert k["summary"] == "OVERRIDDEN"        # module field wins
+        assert k.get("what")                        # yaml fields still present
+    finally:
+        if saved is None:
+            delattr(cgmod, "KNOWLEDGE")
+        else:
+            cgmod.KNOWLEDGE = saved
 
 
 if __name__ == "__main__":

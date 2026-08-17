@@ -12,7 +12,7 @@ existing tests keep working while the logic lives under `steps/`.
   step `cron`     (S10) -> steps.preflight.cron
 
 Each step's `run` is `legacy_run(build)` (Outcome → StepResult), so the engine
-still dispatches `run(phase_id, step, dry_run, state) -> StepResult` unchanged.
+still dispatches `run(phase_id, step, state) -> StepResult` unchanged.
 """
 from __future__ import annotations
 

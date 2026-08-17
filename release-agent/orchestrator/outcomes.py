@@ -30,12 +30,14 @@ from typing import Any, Optional
 class Done:
     note: str = ""
     by: str = "agent"          # 'agent' | 'human'
+    links: list = field(default_factory=list)   # [{name, url}] durable refs
     kind: str = "done"
 
 
 @dataclass
 class Blocked:
     reason: str
+    links: list = field(default_factory=list)   # [{name, url}] durable refs
     kind: str = "blocked"
 
 
@@ -58,14 +60,12 @@ class NeedsSkill:
       record_as  — the step id to `record-step` once the tool succeeds.
       summary    — a one-line human description ('email the code-complete notice
                    to <n> recipients') for the skill to show / log.
-      dry_run    — echoes the release mode so the skill can note '[DRY-RUN → owner]'.
       note       — optional detail stored with the recorded step.
     """
     tool: str
     payload: dict = field(default_factory=dict)
     record_as: str = ""
     summary: str = ""
-    dry_run: bool = False
     note: str = ""
     kind: str = "needs_skill"
 

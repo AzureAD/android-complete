@@ -113,6 +113,5 @@ def build(state):
         },
         record_as=ID,
         summary=f"Scrape CCOA No-Fly Zones, then check-lockdown decides overlap vs {window}",
-        dry_run=state.dry_run,
         note="awaiting CCOA scrape + deterministic overlap decision",
     )

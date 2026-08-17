@@ -7,7 +7,7 @@ Responsibilities (per §7.1):
   3. Persist run-state via ReleaseState (X5).
 
 The engine is the BRAIN: it decides what's next. The skill is only the mouth/ears.
-No LLM logic here — this is fully unit-testable and dry-run-replayable.
+No LLM logic here — this is fully unit-testable and replayable.
 """
 from __future__ import annotations
 import os
@@ -20,6 +20,8 @@ import yaml
 from .state import ReleaseState, StepState, GateDecision, _now
 from .readiness import ReadinessGate
 from . import schedule
+from . import mocks as mocks_mod
+from steps.lib import mockctx
 from phases import agents
 
 
@@ -39,7 +41,7 @@ class Orchestrator:
     presentation lives in render.py. This class holds no formatting logic."""
 
     def __init__(self, config_path: str, state: ReleaseState, readiness_path: str = None,
-                 as_of: date = None):
+                 as_of: date = None, mocks: dict = None):
         with open(config_path, "r", encoding="utf-8") as fh:
             self.config = yaml.safe_load(fh)
         readiness_cfg = None
@@ -50,8 +52,12 @@ class Orchestrator:
                 readiness_cfg = yaml.safe_load(fh)
         self.state = state
         self.gate = ReadinessGate(readiness_cfg, state)
+        # Local step mocks (personal, gitignored mocks.local.yaml). Absent → {}.
+        # Pass mocks={} in tests for isolation from any developer's local file.
+        self.mocks = mocks if mocks is not None else mocks_mod.load_mocks()
+        self.gate.mocks = self.mocks             # readiness.<item> mocks for the entry gate
         # The simulated clock. Defaults to today; `--as-of` overrides it so a
-        # dry-run can jump to CCD-7 and prove a phase opens on schedule.
+        # `--as-of` can jump to CCD-7 and prove a phase opens on schedule.
         self.as_of = as_of or schedule.today()
 
     # ---- time anchoring (CCD-relative phase windows) ----
@@ -125,6 +131,13 @@ class Orchestrator:
         if step.get("owner") == "human":
             return "reminder"
         return "auto"
+
+    def _is_mocked(self, pid: str, step: dict) -> bool:
+        """True if a local mock replaces this step. Gate steps are never mockable
+        (a gate needs a real human decision)."""
+        return ((not step.get("gate"))
+                and mocks_mod.stepresult_for(self.mocks, pid, step["id"]) is not None)
+
 
     def _deps_met(self, pid: str, step: dict) -> bool:
         """True when every step this one depends_on is done (deps are within-phase)."""
@@ -204,6 +217,11 @@ class Orchestrator:
                     if not self.state.is_done(phase["id"], s["id"]))
         self.state.current_step = step["id"]
 
+        # A locally-mocked step is resolved right here (skips its real scout/attest/
+        # agent handling) so the flow advances naturally under Scout.
+        if self._is_mocked(phase["id"], step):
+            return self._run_auto_step(phase, step, block_holds=True)
+
         if step.get("gate") and not self._gate_approved(phase["id"], step["id"]):
             self.state.status = "holding_gate"
             return NextAction(
@@ -250,7 +268,9 @@ class Orchestrator:
             if not ready(s):
                 continue
             kind = self._step_kind(s)
-            runnable = kind == "auto" or (kind == "gate" and self._gate_approved(pid, s["id"]))
+            runnable = (kind == "auto"
+                        or (kind == "gate" and self._gate_approved(pid, s["id"]))
+                        or self._is_mocked(pid, s))          # mocked steps run here too
             if not runnable:
                 continue
             key = f"{pid}.{s['id']}"
@@ -304,12 +324,20 @@ class Orchestrator:
         drain continues with independent steps."""
         pid = phase["id"]
         agent_id = step.get("agent", "stub")
-        runner = agents.get_runner(agent_id)
-        result = runner(pid, step, self.state.dry_run, self.state)
+        # A local mock short-circuits the real runner (agent call), returning the
+        # declared StepResult (done → complete; blocked → hold).
+        result = mocks_mod.stepresult_for(self.mocks, pid, step["id"])
+        if result is None:
+            runner = agents.get_runner(agent_id)
+            # Expose any declared `input` knobs (e.g. cg `alerts`) to the step's
+            # build() so its REAL logic runs on the injected data.
+            with mockctx.active(self.mocks.get(f"{pid}.{step['id']}", {})):
+                result = runner(pid, step, self.state)
         key = f"{pid}.{step['id']}"
         if not result.ok:
             self.state.set_step(pid, step["id"],
-                                StepState(status="blocked", note=result.action, by=result.by))
+                                StepState(status="blocked", note=result.action, by=result.by,
+                                          links=list(getattr(result, "links", None) or [])))
             if key not in self.state.pending_human:
                 self.state.pending_human.append(key)
             if block_holds:
@@ -321,7 +349,8 @@ class Orchestrator:
                               message=f"BLOCKED — {step['name']}: {result.action}")
         self.state.set_step(pid, step["id"],
                             StepState(status="done", completed_at=_now(),
-                                      note=result.action, by=result.by))
+                                      note=result.action, by=result.by,
+                                      links=list(getattr(result, "links", None) or [])))
         if result.by == "human":
             self.state.pending_human = [p for p in self.state.pending_human if p != key]
         self.state.status = "running"
@@ -610,6 +639,7 @@ class Orchestrator:
                 "owner": s.get("owner", "agent"),
                 "state": s_state,
                 "note": rec.get("note"),          # agent result / block reason / detail
+                "links": rec.get("links") or [],  # durable refs (wiki page, CG alerts)
             })
         return out
 
@@ -660,7 +690,6 @@ class Orchestrator:
         return {
             "release_id": self.state.release_id,
             "status": self.state.status,
-            "dry_run": self.state.dry_run,
             "owner_email": self.state.owner_email,
             "owner_name": self.state.owner_name,
             "ccd": self.state.ccd,

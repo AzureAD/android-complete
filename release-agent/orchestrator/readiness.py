@@ -24,6 +24,9 @@ class ReadinessGate:
         # config is the parsed readiness.yaml (or None if not configured)
         self.config = config
         self.state = state
+        # Local test mocks (set by the engine). `readiness.<item>` entries force an
+        # AUTO item pass/fail without the real ADO/config check.
+        self.mocks = {}
 
     def _window(self, it: dict):
         """Compute a CCD-relative window {start,end} for an item that declares
@@ -101,10 +104,19 @@ class ReadinessGate:
         Items with source: scout are skipped here — the skill runs those via its
         MCP tools and records the result with record_check()."""
         from phases.readiness_verifiers import get_verifier
+        from . import mocks as mocks_mod
         if not self.config:
             return self.checklist()
         for it in self.config.get("items", []):
             if it.get("verify") != "auto":
+                continue
+            # Local test mock: force ANY auto item (python OR scout-assisted) pass/fail,
+            # skipping the real ADO/config/MCP check — lets a test clear the gate offline.
+            mock = mocks_mod.readiness_result(self.mocks, it["id"])
+            if mock is not None:
+                status, message = mock
+                self.state.readiness_items[it["id"]] = {
+                    "status": status, "message": message, "at": _now()}
                 continue
             if it.get("source") == "scout":
                 continue                     # skill-run (MCP) — not executable here
@@ -113,7 +125,7 @@ class ReadinessGate:
                 self.state.readiness_items[it["id"]] = {"status": "fail",
                     "message": f"no verifier '{it.get('verifier')}' registered", "at": _now()}
                 continue
-            res = vf(it, self.state.dry_run)
+            res = vf(it)
             rec = {"status": res.status, "message": res.message, "at": _now()}
             if getattr(res, "details", None):
                 rec["checks"] = res.details

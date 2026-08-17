@@ -3,16 +3,31 @@
 Creates '<Month> <Year> Release' under the standing history page (a real ADO write;
 Phase 2 later fills in built versions). Duplicate-safe: if the month's page already
 exists it is left untouched and the next free numbered page is created instead.
-Deterministic → an `agent` step the engine runs in-process; a dry-run simulates.
+Deterministic → an `agent` step the engine runs in-process.
 """
 from __future__ import annotations
 
 from orchestrator.outcomes import Done, Blocked
 from orchestrator.phase_config import load_phase_config
 from steps.lib.agent import legacy_run
+from steps.lib.mockctx import mock_input
 
 ID = "wiki"
 KIND = "agent"
+
+# Properties this step exposes to mocks.local.yaml (see `mock-spec`).
+MOCKABLE = {
+    "page_name": {
+        "kind": "input",
+        "desc": ("Use this exact payload page name instead of the default "
+                 "'<Month> <Year> Release' (a REAL create on your named page)."),
+    },
+    "name_suffix": {
+        "kind": "input",
+        "desc": ("Append to the default payload page name (e.g. ' (TEST)') so a REAL "
+                 "create lands on a safe, non-colliding page."),
+    },
+}
 
 
 def _payload_template(state=None) -> str:
@@ -55,13 +70,9 @@ def build(state):
     project = cfg.get("project")
     wiki = cfg.get("wiki")
     parent = (cfg.get("parent_path") or "").rstrip("/")
-    base_name = _page_name(state)
+    # page_name overrides the whole name; name_suffix appends to the default.
+    base_name = (mock_input("page_name") or _page_name(state)) + (mock_input("name_suffix") or "")
     base_path = f"{parent}/{base_name}"
-    if state.dry_run:
-        return Done(
-            f"[dry-run] Would create payload wiki subpage '{base_name}' under "
-            f"'{parent}' (duplicate-safe: a second numbered page if it already exists).\n"
-            f"Would live at: {_wiki_url(org, project, wiki, base_path)}")
     if not (org and project and wiki and parent):
         return Blocked("wiki: incomplete configuration")
     from tools.checks import create_wiki_page, wiki_page_exists
@@ -77,19 +88,22 @@ def build(state):
                 res = create_wiki_page(org, project, wiki, cand_path, _payload_template(state))
                 if not res.ok:
                     return Blocked(f"wiki: could not create '{cand_path}' — {res.detail}")
+                url = _wiki_url(org, project, wiki, cand_path)
                 return Done(
                     f"⚠ A payload page already exists for this month ('{base_name}'). "
                     f"Left it untouched and created a SECOND page: '{cand_name}'.\n"
-                    f"Link: {_wiki_url(org, project, wiki, cand_path)}")
+                    f"Link: {url}",
+                    links=[{"name": cand_name, "url": url}])
             n += 1
         return Blocked(f"wiki: too many existing pages for '{base_name}'")
 
     res = create_wiki_page(org, project, wiki, base_path, _payload_template(state))
     if not res.ok:
         return Blocked(f"wiki: could not create '{base_path}' — {res.detail}")
+    url = _wiki_url(org, project, wiki, base_path)
     return Done(
-        f"Payload wiki subpage ready: '{base_name}'.\n"
-        f"Link: {_wiki_url(org, project, wiki, base_path)}")
+        f"Payload wiki subpage ready: '{base_name}'.\nLink: {url}",
+        links=[{"name": base_name, "url": url}])
 
 
 run = legacy_run(build)

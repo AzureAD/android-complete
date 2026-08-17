@@ -6,6 +6,55 @@ it its own way. These are pure functions: data in, string out. No state, no IO.
 """
 from __future__ import annotations
 
+import re
+
+# First URL anywhere in a note (e.g. the wiki page link) — surfaced as a compact
+# [link](…) in the Details column instead of a long raw URL.
+_URL_RE = re.compile(r"https?://[^\s)>\]]+")
+
+
+def _cell(text: str) -> str:
+    """Make arbitrary text safe for a single markdown table cell: collapse all
+    whitespace/newlines to one line and escape pipes."""
+    return re.sub(r"\s+", " ", str(text)).replace("|", "\\|").strip()
+
+
+def step_detail(s: dict, limit: int = 160) -> str:
+    """One-line 'Details' summary of a step's execution, from its stored note.
+
+    Generic — works for ANY step (current or future phases) because every step
+    records its outcome as `note` (agent report, block reason, …) and may attach
+    structured `links` ([{name,url}], e.g. the wiki page or CG alerts page).
+    Prefers the stored `links` for the reference; falls back to the first URL found
+    in the note. Empty when nothing ran yet; an em dash for outstanding items.
+    """
+    note = s.get("note")
+    links = s.get("links") or []
+    if not note and not links:
+        state = s.get("state")
+        return "—" if state in ("pending", "scheduled", "reminder", "gate") else ""
+    text = str(note or "").strip()
+    lead = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+    # Prefer STRUCTURED links (first-class, stored on state) over URL-in-prose.
+    if links:
+        link_md = "  ·  ".join(f"[{l.get('name', 'link')}]({l['url']})"
+                               for l in links if l.get("url"))
+        lead_c = _cell(lead).rstrip(" :.—-")
+        if len(lead_c) > limit:
+            lead_c = lead_c[: limit - 1].rstrip() + "…"
+        return f"{lead_c} · {link_md}" if lead_c else link_md
+    url = _URL_RE.search(text)
+    if url and url.group(0) in lead:
+        # lead itself carries the URL — strip it, we re-add it as a clean link
+        lead = lead.replace(url.group(0), "")
+    lead_c = _cell(lead).rstrip(" :.—-")
+    if len(lead_c) > limit:
+        lead_c = lead_c[: limit - 1].rstrip() + "…"
+    if url:
+        link = f"[link]({url.group(0)})"
+        return f"{lead_c} · {link}" if lead_c else link
+    return lead_c
+
 
 # ---- readiness entry gate (the frozen table) ----
 _ICON = {"pass": "✅", "attested": "✅", "fail": "❌", "unable": "⛔",
@@ -194,14 +243,13 @@ _STEP_STATE_WORD = {"done": "Done", "gate": "Awaiting your approval",
 def status_view(r: dict) -> str:
     """Human-readable status: next-action headline → phase map → current-phase steps.
     `r` is Orchestrator.status_report()."""
-    mode = "DRY-RUN" if r["dry_run"] else "LIVE"
     bars = 20
     filled = round(bars * r["done"] / r["total"]) if r["total"] else 0
     bar = "█" * filled + "░" * (bars - filled)
     label = _STATE_LABEL.get(r["status"], r["status"])
 
     lines = [
-        f"## Release {r['release_id']} · {mode} · {r['done']}/{r['total']} ({r['percent']}%)",
+        f"## Release {r['release_id']} · {r['done']}/{r['total']} ({r['percent']}%)",
         f"`{bar}`",
     ]
     # Code Complete Date anchor line (when known).
@@ -273,27 +321,39 @@ def status_view(r: dict) -> str:
         lines += ["", "_✅ done · ⏸ in progress · 🗓 scheduled · ⬜ not started_"]
 
     # 3) Current-phase detail (drill-down). Icon prefixed onto the Step name.
+    # A third "Details" column captures each step's execution outcome (from its
+    # stored note): where a lockdown clashed, the breaking change, CG alerts found,
+    # the created wiki link, etc. Generic — any step that records a note shows it.
     if r.get("current_steps"):
         lines += ["", f"### ▶ Current phase — {r.get('current_phase_name','')}",
-                  "| Step | State |", "|---|---|"]
+                  "| Step | State | Details |", "|---|---|---|"]
         for s in r["current_steps"]:
             icon = _STEP_ICON.get(s["state"], "⬜")
             word = _STEP_STATE_WORD.get(s["state"], s["state"])
             tag = " 🚦" if s["gate"] else (" 📌" if s.get("reminder") else "")
-            lines.append(f"| {icon} {s['name']}{tag} | {word} |")
+            detail = step_detail(s)
+            lines.append(f"| {icon} {s['name']}{tag} | {word} | {detail} |")
 
-        # 3b) Results & activity — surface each step's stored outcome (agent report,
-        # created link, block reason) so a done/blocked step isn't just "Done" with
-        # no evidence. Full multi-line notes (e.g. the CG report) are preserved.
-        results = [s for s in r["current_steps"]
-                   if s.get("note") and s["state"] in ("done", "blocked")]
-        if results:
-            lines += ["", "### Results & activity"]
-            for s in results:
-                mark = "⛔" if s["state"] == "blocked" else "✅"
-                note_lines = [ln.rstrip() for ln in str(s["note"]).strip().split("\n")]
+        # 3b) Expanded detail — only for steps whose note has MORE than the one-line
+        # summary the column shows (e.g. the CG report's full High/Critical CVE list,
+        # or the breaking-change draft comms). Simple one-line notes (lockdown "no
+        # overlap", cron "firing") are already fully shown in the column, so they're
+        # not repeated here. Generic: any step with a multi-line note expands.
+        def _multiline(note):
+            return len([ln for ln in str(note).splitlines() if ln.strip()]) > 1
+
+        rich = [s for s in r["current_steps"]
+                if (s.get("note") and _multiline(s["note"])) or s.get("links")]
+        if rich:
+            lines += ["", "### Step details"]
+            for s in rich:
+                mark = _STEP_ICON.get(s["state"], "•")
+                note_lines = [ln.rstrip() for ln in str(s.get("note") or "").strip().split("\n")]
                 body = "  \n".join(ln for ln in note_lines if ln)  # markdown hard breaks
                 lines += ["", f"{mark} **{s['name']}**  ", body]
+                for l in (s.get("links") or []):
+                    if l.get("url"):
+                        lines.append(f"🔗 [{l.get('name', 'link')}]({l['url']})  ")
 
     return "\n".join(lines)
 
@@ -425,7 +485,6 @@ def notification_html(r: dict) -> str:
     done, total = ap.get("done", 0), ap.get("total", 0)
     pct = round(100 * done / total) if total else 0
     steps = ap.get("steps", [])
-    dry = r.get("dry_run")
 
     # The single item that needs the owner right now (the live hold), if any.
     hold = r.get("gate") or r.get("action")
@@ -457,10 +516,7 @@ def notification_html(r: dict) -> str:
             f'&mdash; {hold_kind}.</div></td></tr>'
         )
 
-    dry_badge = (
-        '<span style="display:inline-block;margin-left:8px;padding:2px 8px;border-radius:10px;'
-        'font-size:11px;font-weight:600;color:#475467;background:#f2f4f7;">DRY-RUN</span>'
-        if dry else "")
+    dry_badge = ""
 
     return f"""\
 <div style="margin:0;padding:24px 0;background:#f5f6f8;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">

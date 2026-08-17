@@ -1,0 +1,159 @@
+# Step knowledge base — reference/help content the skill uses to answer a user's
+# questions about a step ("what does this do?", "where do I find X?", "how do I
+# resolve it?"). This is DATA (not code): edit here to keep answers accurate.
+#
+# Keyed by "<phase>.<step>". Fields (all optional):
+#   summary : one-line description
+#   what    : what the step does / why it matters
+#   where   : navigation / where to look (list of precise paths)
+#   how     : how to complete or resolve it
+#   links   : [{name, url}] reference links
+#   faqs    : [{q, a}] common questions with accurate answers
+#
+# A step MODULE may also declare KNOWLEDGE (co-located); the resolver overlays the
+# module on top of this file, so code and this data compose. Steps without an entry
+# report "no knowledge yet" honestly rather than guessing.
+
+version: 1
+
+# ============================== Phase 0 · preflight ==============================
+
+preflight.notice:
+  summary: "Email the early code-complete notice to the Android distribution list."
+  what: >
+    Sends a heads-up that code complete for the month's release is approaching, so
+    teams stop landing feature work and switch to the hotfix cherry-pick process
+    after code complete. Filled from a local template with the CCD and release owner.
+  how: >
+    Scout resolves the email (subject, HTML body, recipients) and sends it via
+    WorkIQ, then records the step. Recipients are the configured distribution list;
+    for a test, redirect with the `send_to` mock knob.
+  links:
+    - name: "Hotfix cherry-pick guide (linked in the email)"
+      url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/microsoft-authenticator/microsoft-authenticator/release/cherry-pick-to-hotfix-guidelines"
+  faqs:
+    - q: "Who receives it?"
+      a: "The configured distribution list (androididentity@microsoft.com, jialh@microsoft.com). Redirect for a test with preflight.notice.send_to."
+    - q: "What's the difference between the 'initial' and 'update' variant?"
+      a: "'initial' is the CCD-7 heads-up; 'update' is the CCD-day reminder ('code complete is Today'). Set via --param variant=update."
+
+preflight.flight_reminder:
+  summary: "Post the combined feature-owner reminders to the Android Core Team Teams chat."
+  what: >
+    One Teams message with four reminders as code complete approaches: update local
+    flights, write flight pre-mortem docs, merge user-facing strings by CCD-7, and
+    complete the feature-flag freeze / default-OFF review.
+  how: >
+    Scout posts the message to the Android Core Team group chat and records the step.
+    For a test, redirect to your own chat with the `send_to: me` mock knob.
+  links:
+    - name: "release variable group (local flights)"
+      url: "https://identitydivision.visualstudio.com/Engineering/_library?itemType=VariableGroups&view=VariableGroupView&variableGroupId=40&path=release"
+    - name: "Localization instructions"
+      url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/combined-release-checklist/localization"
+    - name: "EcsFlight.kt history (flag-freeze review)"
+      url: "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android?path=/PhoneFactor/ExperimentationLibrary/src/main/java/com/microsoft/authenticator/experimentation/ecs/entities/EcsFlight.kt&version=GBworking"
+  faqs:
+    - q: "Why CCD-7 for strings?"
+      a: "Strings merged inside the 1-week window aren't guaranteed to be localized in time, so user-facing strings must land by CCD-7."
+
+preflight.confirm_reminders:
+  summary: "Attest that feature owners completed the reminded pre-code-complete work."
+  what: >
+    Sending the reminders doesn't prove the work got done. This step holds until the
+    owner confirms feature owners actually: updated local flights, wrote pre-mortem
+    docs, merged user-facing strings by CCD-7, and left features default-OFF (or got
+    default-ON approved in the release wiki).
+  how: "Confirm with the feature owners, then mark the step done. If you can't confirm, leave it holding."
+
+preflight.lockdown:
+  summary: "Detect whether a CCOA lockdown / holiday no-fly zone overlaps the release window."
+  what: >
+    Reads the CCOA 'No-Fly Zones' and checks whether any PRODUCTION-environment
+    lockdown overlaps the release window (CCD-7 through CCD+14). Banner-only
+    advisories don't block; a Production overlap holds the step so the owner can
+    shift the CCD past it.
+  where:
+    - "CCOA periods page: the change-manager site — 'Upcoming CCOA periods' and the current-year 'Past NoFly Zones' table."
+  how: >
+    Scout scrapes the page (AAD SSO), the engine decides overlap deterministically.
+    On an overlap it names the clashing lockdown(s); shift the CCD with set-ccd if
+    you want to proceed. On no overlap it passes.
+  links:
+    - name: "CCOA periods (change-manager)"
+      url: "https://prod.change-manager.msidentity.com/ccoa-periods"
+  faqs:
+    - q: "Which lockdowns actually block?"
+      a: "Only Production-environment CCOA periods that intersect CCD-7..CCD+14. Banner-only advisories are ignored."
+
+preflight.breaking:
+  summary: "Detect BREAKING-OneAuth changes in the common-for-android changelog and draft comms."
+  what: >
+    Scans the unreleased 'vNext' section of the common-for-android changelog for
+    [MAJOR] (breaking) entries — the changes shipping in this release that OneAuth
+    consumers must handle — and drafts the notification comms. Read-only.
+  where:
+    - "Source: the common-for-android changelog.txt (dev branch), 'vNext' section."
+  how: "Review any detected [MAJOR] entries and send the drafted comms to the OneAuth team. No breaking changes → nothing to do."
+  links:
+    - name: "common-for-android changelog"
+      url: "https://raw.githubusercontent.com/AzureAD/microsoft-authentication-library-common-for-android/dev/changelog.txt"
+
+preflight.cg:
+  summary: "Report active Component Governance alerts; block on High/Critical."
+  what: >
+    Reads Component Governance alerts for the governed Android repo and reports
+    active alerts by severity. It BLOCKS (holds) when there are active High/Critical
+    alerts — the owner fixes them and reruns the check, or skips to override.
+  where:
+    - "Component Governance alerts page for the repo (see link) — review the active High/Critical items."
+  how: >
+    If blocked, fix or wait for remediation of the High/Critical alerts, then rerun
+    the step to re-check. To proceed anyway, skip the step with a reason (audited).
+  links:
+    - name: "Component Governance alerts"
+      url: "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android?path=/&_a=alerts"
+  faqs:
+    - q: "Does a Medium/Low alert block?"
+      a: "No — only active High/Critical alerts block. Medium/Low are reported but don't hold the release."
+
+preflight.vitals:
+  summary: "Attest that Google Play Console app health (Android vitals + Policy status) is acceptable."
+  what: >
+    Play Console has no API for policy status, so this is a manual confirmation:
+    review the app's technical health (crash rate / ANR rate) and its policy standing
+    (open issues or warnings), and confirm both are acceptable before code complete.
+  where:
+    - "Android vitals: Play Console → left panel → 'Monitor and improve' → 'Android vitals' → Overview."
+    - "Policy status: Play Console → left panel → 'Monitor and improve' → 'Policy and programs' → 'Policy status'."
+  how: >
+    Open both pages, confirm crash/ANR are within acceptable bounds (no regression)
+    and there are no open policy issues/warnings, then mark the step done. An
+    unresolved policy issue or a vitals regression → leave it holding.
+  links:
+    - name: "Google Play Console"
+      url: "https://play.google.com/console"
+  faqs:
+    - q: "Where do I find Android vitals?"
+      a: "Play Console → left panel → Monitor and improve → Android vitals → Overview."
+    - q: "Where is policy status?"
+      a: "Play Console → left panel → Monitor and improve → Policy and programs → Policy status."
+
+preflight.cron:
+  summary: "Verify the Code Complete Calendar Checker pipeline is scheduled and firing."
+  what: >
+    Pipeline 3038's cron lives in YAML (not exposed in its triggers), so the check
+    proves it's actually firing by confirming a recent schedule-reason run in its
+    build history. Blocks if there's no recent scheduled run or it's stale.
+  how: "If blocked, investigate the pipeline's schedule (it may be disabled/broken), fix it, and rerun the step — or skip to override."
+  links:
+    - name: "Code Complete Calendar Checker (pipeline 3038)"
+      url: "https://identitydivision.visualstudio.com/Engineering/_build?definitionId=3038"
+
+preflight.wiki:
+  summary: "Create the per-release payload wiki subpage under the history parent page."
+  what: >
+    Creates '<Month> <Year> Release' under the standing Monthly Releases Payloads
+    History page; Phase 2 later fills in the built versions. Duplicate-safe: if the
+    month's page already exists it's left untouched and a numbered page is created.
+  how: "Runs automatically; the created page link is stored on the step and shown in the status Details column."

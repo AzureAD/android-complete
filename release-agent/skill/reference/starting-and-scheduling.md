@@ -10,7 +10,7 @@ When no release is active (or the user says "start a release"), call **`m_ask_us
 - **"Current month (`<YYYY-MM>`)"** ← recommended
 - **"A different month"**
 
-Pick current → `init --release <id>` immediately. Pick different → follow-up `m_ask_user` free-text (hint: "e.g. next month, or 2026-08"); accept natural answers ("this month", "August") and do the date math yourself. Default to **dry-run**; only `--live` if explicitly asked.
+Pick current → `init --release <id>` immediately. Pick different → follow-up `m_ask_user` free-text (hint: "e.g. next month, or 2026-08"); accept natural answers ("this month", "August") and do the date math yourself. Runs are real — for test runs the engineer keeps a `mocks.local.yaml` (skip/redirect/inject per step; see `mock-spec`).
 
 `init` records the **release owner** (the engineer running it) from the signed-in `az` user; reminders email that address. Pass `--owner-email`/`--owner-name` for a richer profile (e.g. from `workiq_get_my_profile`), or change later with `set-owner`. Never hardcode a recipient.
 
@@ -48,7 +48,7 @@ Either resolution clears the conflict. Never pick for the user.
 
 - **Phase 0 opens at CCD‑7.** You can `init` anytime, but until CCD‑7 the release sits in **`scheduled`** — the engine runs nothing. Status says *"🗓 Scheduled — Pre‑flight opens `<date>` (in N days)."* Relay plainly; don't force it.
 - At CCD‑7, `next` opens Phase 0 and runs to the first gate.
-- **Testing the clock:** every read/advance command accepts `--as-of YYYY-MM-DD` (dry-run only). Real runs use today.
+- **Testing the clock:** every read/advance command accepts `--as-of YYYY-MM-DD` to simulate the date. Normal runs use today.
 
 **Changing the CCD (real production change).** `set-ccd` **writes the pipeline override** — gated: run without `--confirm` first (preview) → present → explicit yes (a `--reason` is always required) → re-run with `--confirm`. Month-scoped (date must be in the release month). `--default` reverts to 2nd-Wednesday.
 

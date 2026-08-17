@@ -6,8 +6,9 @@ Teams message to the Android Core Team. Posting to Teams needs the WorkIQ MCP th
 engine can't reach, so this is a `scout` step: `build()` resolves the message +
 target and returns a NeedsSkill(workiq_send_chat_message) for the skill to send.
 
-DRY-RUN posts to the owner's own Teams chat (safe rehearsal); a live release posts
-to the configured group chat. See EXTERNAL-REFERENCES.md for the fixed links.
+Posts to the configured Android Core Team group chat. To test, the engineer's
+`mocks.local.yaml` `send_to` knob redirects it to their own chat. See
+EXTERNAL-REFERENCES.md for the fixed links.
 """
 from __future__ import annotations
 
@@ -15,10 +16,19 @@ from orchestrator import schedule
 from orchestrator.outcomes import NeedsSkill, Blocked
 from orchestrator.phase_config import load_phase_config
 from steps.lib import templating as T
-from steps.lib.context import release_ctx, resolve_chat_target
+from steps.lib.context import release_ctx, resolve_chat_target, SELF_CHAT_ID
 
 ID = "flight_reminder"
 KIND = "scout"
+
+# Knobs this step exposes to mocks.local.yaml (see `mock-spec`). Keeps the Teams
+# post REAL but redirects it — the applier rewrites payload.chatId.
+MOCKABLE = {
+    "send_to": {
+        "kind": "payload", "sets": "chatId", "aliases": {"me": SELF_CHAT_ID, "self": SELF_CHAT_ID},
+        "desc": "Post to Teams for real, but to this chat ('me' = your own chat).",
+    },
+}
 
 
 def _html(ctx: dict, links: dict) -> str:
@@ -53,16 +63,11 @@ def build(state):
     html = _html(ctx, cfg.get("links", {}) or {})
     chat_id, target_note, prefix = resolve_chat_target(
         state, cfg.get("live_chat_id"), cfg.get("live_chat_name", "the group chat"))
-    if prefix:
-        html = (f"<p><i>{prefix}this would go to the "
-                f"{T.esc(cfg.get('live_chat_name', 'Android Core Team'))} group chat.</i></p>"
-                + html)
 
     return NeedsSkill(
         tool="workiq_send_chat_message",
         payload={"chatId": chat_id, "content": html, "contentType": "html"},
         record_as=ID,
         summary=f"Post the flight & string reminders to {target_note}",
-        dry_run=state.dry_run,
         note=f"posted to {target_note}",
     )

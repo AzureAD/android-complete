@@ -18,8 +18,10 @@ def build(state):
     return NeedsHuman(
         prompt=(
             "Open Google Play Console and confirm the app is healthy before I proceed:\n"
-            "  • Android vitals — crash rate & ANR rate within acceptable bounds (no regression)\n"
-            "  • Policy status — no open policy issues or warnings\n"
+            "  • Android vitals — left panel → Monitor and improve → Android vitals → Overview: "
+            "crash rate & ANR rate within acceptable bounds (no regression)\n"
+            "  • Policy status — left panel → Monitor and improve → Policy and programs → Policy "
+            "status: no open policy issues or warnings\n"
             "If both look acceptable, I'll mark it done (`done --step vitals`). "
             "An unresolved policy issue or a vitals regression → leave it holding."),
         attest=True,

@@ -2,10 +2,10 @@
 
 Any step that emails or messages people needs the same two things:
   1. a date/owner context to fill templates (`release_ctx`), and
-  2. recipient resolution with the DRY-RUN safety redirect (`resolve_recipients`):
-     a dry-run sends only to the release owner (safe rehearsal), a live run uses
-     the configured distribution list. Centralized here so every step gets the
-     redirect right — never a hardcoded recipient.
+  2. recipient resolution (`resolve_recipients` / `resolve_chat_target`): runs are
+     real, so these return the configured distribution list / group chat. To
+     redirect for testing, use the step's `send_to` mock knob (never a hardcoded
+     recipient).
 """
 from __future__ import annotations
 
@@ -28,32 +28,21 @@ def release_ctx(state) -> dict:
 
 
 def resolve_recipients(state, live_recipients):
-    """Return (recipients, note, subject_prefix) applying the DRY-RUN redirect.
+    """Return (recipients, note, prefix) — the configured real recipients.
 
-    dry-run  → the release owner only; subject prefixed '[DRY-RUN → owner] '.
-    live     → the configured `live_recipients` list, no prefix.
-    Never returns a hardcoded address; the owner comes from run-state.
+    Runs are real: recipients default to the configured distribution list. To
+    redirect for testing, use the step's `send_to` mock knob (applied at the
+    step-action boundary), which keeps the send real but points it at you.
     """
-    if state.dry_run:
-        owner_email = state.owner_email or ""
-        recipients = [owner_email] if owner_email else []
-        return recipients, "dry-run: redirected to release owner", "[DRY-RUN → owner] "
-    return list(live_recipients or []), "live recipients", ""
+    return list(live_recipients or []), "recipients", ""
 
 
-# The signed-in user's own Teams chat ("You"), a well-known chat id. Used as the
-# safe DRY-RUN target for any step that posts to Teams — a live release posts to
-# the configured group chat instead.
+# The signed-in user's own Teams chat ("You"), a well-known chat id. Referenced by
+# a step's `send_to: me` mock alias to redirect a real post to your own chat.
 SELF_CHAT_ID = "48:notes"
 
 
 def resolve_chat_target(state, live_chat_id, live_chat_name="the group chat"):
-    """Return (chat_id, note, prefix) applying the DRY-RUN redirect for Teams sends.
-
-    dry-run  → the owner's own Teams self-chat (SELF_CHAT_ID); prefix '[DRY-RUN → owner] '.
-    live     → the configured group chat id, no prefix.
-    Mirrors `resolve_recipients` so every comms step gets the same redirect.
-    """
-    if state.dry_run:
-        return SELF_CHAT_ID, "owner's own Teams chat (dry-run)", "[DRY-RUN → owner] "
+    """Return (chat_id, note, prefix) — the configured real group chat. Redirect
+    for testing via the step's `send_to` mock knob, not automatically."""
     return live_chat_id, live_chat_name, ""

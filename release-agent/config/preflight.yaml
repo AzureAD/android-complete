@@ -2,8 +2,8 @@
 #
 # Unlike the readiness scout-assisted checks (ICM/Kusto, which have no CLI and are
 # run by the skill via MCP), these steps talk to systems that DO have a CLI/HTTP
-# surface, so they are plain Python agents — testable and LLM-free. In a dry-run
-# release they SIMULATE (no network, no writes); only a real release acts.
+# surface, so they are plain Python agents — testable and LLM-free. Runs are real;
+# for testing, inject inputs per step via mocks.local.yaml (see `mock-spec`).
 
 version: 1
 
@@ -18,6 +18,10 @@ cg:
   governed_repo_id: 104410                              # AD-MFA-phonefactor-phoneApp-android
   branch: "working"
   high_severities: ["critical", "high"]                # surfaced/flagged as high-priority
+  # Portal link to this repo's Component Governance alerts page — surfaced (as a
+  # stored link) so the owner can jump straight to the alerts. Verify/adjust if the
+  # portal path differs for your org/project.
+  alerts_url: "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android?path=/&_a=alerts"
 
 # Step `cron` (maps_to S10): "Verify Calendar Checker scheduled".
 # Pipeline 3038's cron lives in YAML (not exposed in definition triggers), but its
@@ -67,20 +71,20 @@ lockdown:
   window_end_anchor: "CCD+14"
 
 # Step `notice` (maps_to S0): "Send early release notice".
-# Fills the local template deterministically and sends it. RECIPIENTS: in a
-# dry-run every outbound email goes to the release owner (safe rehearsal); a live
-# release uses the real `recipients` list below. See EXTERNAL-REFERENCES.md.
+# Fills the local template deterministically and sends it to the `recipients` list
+# below (the real DL). To test, redirect with the `send_to` mock knob. See
+# EXTERNAL-REFERENCES.md.
 notice:
   template: "templates/early-code-complete-notice.md"
   variant: "initial"                     # initial (CCD-7) | update (CCD-day)
-  recipients:                            # LIVE only; dry-run redirects to owner
+  recipients:                            # the real DL (redirect for tests via send_to)
     - "androididentity@microsoft.com"    # "Azure Identity Android SDK"
     - "jialh@microsoft.com"
 
 # Step `flight_reminder` (maps_to S3/S4/S5): "Feature-owner flight & string reminders".
 # Three checklist reminders combined into ONE Teams message to the Android Core Team
-# group chat. Scout-assisted (Teams send needs WorkIQ). DRY-RUN → the message goes to
-# the release owner's own Teams chat; LIVE → the group chat below. See EXTERNAL-REFERENCES.md.
+# group chat (the real target). Scout-assisted (Teams send needs WorkIQ). Redirect
+# for tests with the `send_to` mock knob. See EXTERNAL-REFERENCES.md.
 flight_reminder:
   live_chat_id: "19:976a859f167f44e59c4ceca8b1d23581@thread.v2"   # "Android Core Team"
   live_chat_name: "Android Core Team"

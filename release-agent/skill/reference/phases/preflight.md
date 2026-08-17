@@ -23,11 +23,11 @@ Both are now co-located step modules (`steps/preflight/`). Don't use their old `
 python -m orchestrator.cli step-action --release <id> --step <notice|flight_reminder> [--param variant=update]
 ```
 
-It returns `{"kind":"needs_skill","tool":..., "payload":{...}, "record_as":..., "dry_run":...}` fully resolved (recipients/chat target already picked by mode). Steps:
+It returns `{"kind":"needs_skill","tool":..., "payload":{...}, "record_as":...}` fully resolved (recipients/chat target = the real DL/chat unless a `send_to` mock redirects). Steps:
 1. **Run `step-action`** for the current step. `kind:"blocked"` (e.g. no CCD) → surface `reason`, stop. `kind:"needs_skill"` → continue.
 2. **Execute `tool` with `payload` verbatim** — don't override recipients/chatId/body; the mode already decided them:
-   - **`notice`** → `workiq_send_email` (payload has `to`, `subject`, `body` (HTML), `isHtml:true`). Dry-run → owner only, subject prefixed `[DRY-RUN → owner]`; live → the real DL (see EXTERNAL-REFERENCES.md). `--param variant=update` swaps the CCD-day wording.
-   - **`flight_reminder`** → `workiq_send_chat_message` (payload has `chatId`, `content` (HTML), `contentType:"html"`). Dry-run `chatId` is `48:notes` (owner's own Teams chat); live is the Android Core Team thread — both directly sendable, no `workiq_create_chat_by_email` needed.
+   - **`notice`** → `workiq_send_email` (payload has `to`, `subject`, `body` (HTML), `isHtml:true`). Real run → the real DL (see EXTERNAL-REFERENCES.md); to test, the engineer's `mocks.local.yaml` `preflight.notice.send_to` redirects it to them (`[TEST → me]` subject). `--param variant=update` swaps the CCD-day wording.
+   - **`flight_reminder`** → `workiq_send_chat_message` (payload has `chatId`, `content` (HTML), `contentType:"html"`). Real run → the Android Core Team thread; to test, `preflight.flight_reminder.send_to: me` redirects to the engineer's own chat (`48:notes`). Directly sendable, no `workiq_create_chat_by_email` needed.
 3. **Record.** `record-step --release <id> --step <record_as> --status pass --detail "<note>"`; on failure `--status attention --detail "<why>"`.
 
 ## `confirm_reminders` — attestation (after flight_reminder)

@@ -3,16 +3,26 @@
 Confirms pipeline 3038 is scheduled AND firing by finding a recent `schedule`-reason
 run within the staleness window. Passes if fresh; BLOCKS (fix + rerun, or skip) if
 there's no scheduled run or it's stale. Deterministic (az CLI) → an `agent` step the
-engine runs in-process; a dry-run simulates.
+engine runs in-process.
 """
 from __future__ import annotations
 
 from orchestrator.outcomes import Done, Blocked
 from orchestrator.phase_config import load_phase_config
 from steps.lib.agent import legacy_run
+from steps.lib.mockctx import mock_input, MISSING
 
 ID = "cron"
 KIND = "agent"
+
+# Properties this step exposes to mocks.local.yaml (see `mock-spec`).
+MOCKABLE = {
+    "run": {
+        "kind": "input",
+        "desc": ("Inject the latest scheduled-build dict (or null for 'none'); the "
+                 "REAL staleness logic runs on it — no build-history read."),
+    },
+}
 
 
 def _iso_age_days(iso: str):
@@ -33,15 +43,17 @@ def _iso_age_days(iso: str):
 def build(state):
     cfg = load_phase_config("preflight").get("cron", {})
     name = cfg.get("name", "Calendar Checker")
-    if state.dry_run:
-        return Done(f"[dry-run] Would verify '{name}' (pipeline {cfg.get('pipeline_id')}) has a "
-                    f"recent scheduled run.")
-    if not all(cfg.get(k) for k in ("pipeline_id", "org", "project")):
+    # Injected run (mocks.local.yaml) → run the REAL staleness logic on your data.
+    injected = mock_input("run", MISSING)
+    if injected is not MISSING:
+        run_ = injected
+    elif not all(cfg.get(k) for k in ("pipeline_id", "org", "project")):
         return Blocked("cron: incomplete configuration")
-    from tools.checks import latest_scheduled_build
-    ok, run_, detail = latest_scheduled_build(cfg["org"], cfg["project"], cfg["pipeline_id"])
-    if not ok:
-        return Blocked(f"cron: could not read build history — {detail}")
+    else:
+        from tools.checks import latest_scheduled_build
+        ok, run_, detail = latest_scheduled_build(cfg["org"], cfg["project"], cfg["pipeline_id"])
+        if not ok:
+            return Blocked(f"cron: could not read build history — {detail}")
     if not run_:
         return Blocked(
             f"{name}: no scheduled run found in recent history — the cron may be "

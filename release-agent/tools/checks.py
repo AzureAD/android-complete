@@ -165,7 +165,7 @@ def set_pipeline_variable(org: str, project: str, def_id: int, name: str,
 # ---- ADO wiki (payload subpage) --------------------------------------------
 #
 # Creates a wiki page via `az devops wiki page create`. A real production write,
-# so callers must gate it (the pre-flight agent only calls this on a non-dry-run
+# so callers must gate it (the pre-flight agent only calls this on a real
 # release). Idempotent-ish: an already-existing page is treated as success.
 
 def wiki_page_exists(org: str, project: str, wiki: str, path: str,

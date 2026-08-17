@@ -88,7 +88,7 @@ def anchor_date(ccd: date, spec: str) -> date:
 
 
 def today() -> date:
-    """'Now' at date granularity. `--as-of` overrides this for testable dry-runs."""
+    """'Now' at date granularity. `--as-of` overrides this for a testable clock."""
     return date.today()
 
 

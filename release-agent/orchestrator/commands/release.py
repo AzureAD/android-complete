@@ -16,7 +16,7 @@ def cmd_init(args):
     if os.path.exists(sp) and not args.force:
         print(f"Release {args.release} already exists at {sp} (use --force to recreate).")
         return 1
-    st = ReleaseState(release_id=args.release, dry_run=not args.live, status="not_started")
+    st = ReleaseState(release_id=args.release, status="not_started")
 
     # Release owner (the engineer running this release) — release metadata.
     # Priority: explicit --owner-email (skill can pass the richer profile) then
@@ -48,14 +48,13 @@ def cmd_init(args):
         note = "  (release id isn't YYYY-MM — CCD not set; use set-ccd)"
     st.save(sp)
 
-    mode = "LIVE" if args.live else "dry-run"
     C.elog(args.runs_root, args.release).log(
-        "release_started", mode=mode, forced=bool(args.force),
+        "release_started", forced=bool(args.force),
         ccd=st.ccd, ccd_source=st.ccd_source, ccd_conflict=st.ccd_conflict, owner=st.owner_email)
     owner_line = f"  Owner: {st.owner_name + ' ' if st.owner_name else ''}{st.owner_email or '(unresolved)'}{owner_note}"
     if st.ccd:
         opens = schedule.anchor_date(default, "CCD-7").isoformat()
-        lines = [f"Initialized release {args.release} ({mode}).", f"  state: {sp}", owner_line,
+        lines = [f"Initialized release {args.release}.", f"  state: {sp}", owner_line,
                  f"  Code Complete Date: {st.ccd} (2nd Wednesday){note}",
                  f"  Phase 0 (Pre-flight) opens {opens} (CCD-7). Until then nothing fires."]
         if conflict:
@@ -63,7 +62,7 @@ def cmd_init(args):
                          f"2nd-Wednesday default. Confirm which is the real CCD before proceeding.")
         print("\n".join(lines))
     else:
-        print(f"Initialized release {args.release} ({mode}).\n  state: {sp}\n{owner_line}\n{note}")
+        print(f"Initialized release {args.release}.\n  state: {sp}\n{owner_line}\n{note}")
     return 0
 
 
@@ -83,8 +82,7 @@ def cmd_list(args):
     print(f"Found {len(all_)} release(s):")
     for r in all_:
         mark = "->" if r is res["release"] else "  "
-        mode = "dry-run" if r["dry_run"] else "LIVE"
-        print(f"  {mark} {r['release_id']}  [{r['status']}, {mode}]  updated {r['updated_at']}")
+        print(f"  {mark} {r['release_id']}  [{r['status']}]  updated {r['updated_at']}")
     if res["resolution"] == "ambiguous":
         print(f"\nMultiple releases found — assuming most recent: {res['release']['release_id']} "
               f"(confirm before acting).")
@@ -216,9 +214,8 @@ def cmd_activate(args):
 
 
 def register(sub):
-    i = sub.add_parser("init", help="Start a new release run (dry-run by default)")
+    i = sub.add_parser("init", help="Start a new release run")
     i.add_argument("--release", required=True)
-    i.add_argument("--live", action="store_true")
     i.add_argument("--force", action="store_true")
     i.add_argument("--owner-email", default=None, help="Release owner email (default: signed-in az user)")
     i.add_argument("--owner-name", default=None, help="Release owner display name (optional)")

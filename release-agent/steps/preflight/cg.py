@@ -3,16 +3,27 @@
 Reads active CG alerts (read-only, via `az rest`) and reports counts + High/Critical
 items. Report-only in general, but BLOCKS (holds) when there are active High/Critical
 alerts — the owner must fix them and RERUN, or skip to override. Deterministic → an
-`agent` step the engine runs in-process; a dry-run simulates.
+`agent` step the engine runs in-process.
 """
 from __future__ import annotations
 
 from orchestrator.outcomes import Done, Blocked
 from orchestrator.phase_config import load_phase_config
 from steps.lib.agent import legacy_run
+from steps.lib.mockctx import mock_input
 
 ID = "cg"
 KIND = "agent"
+
+# Properties this step exposes to mocks.local.yaml (see `mock-spec`).
+MOCKABLE = {
+    "alerts": {
+        "kind": "input",
+        "desc": ("Inject a CG alerts list (each {severity, alertState, title, …}); "
+                 "the REAL report/block logic runs on it — no az call. Great for "
+                 "rehearsing the High/Critical block path."),
+    },
+}
 
 
 def _cg_summary(alerts: list, high_sev: list):
@@ -45,29 +56,57 @@ def _cg_report(active: list, high: list) -> str:
     return "\n".join(lines)
 
 
+def _alert_link(a: dict):
+    """Best-effort per-alert portal URL from the raw CG alert, if present."""
+    url = a.get("url") or (((a.get("_links") or {}).get("web") or {}).get("href"))
+    if not url:
+        return None
+    title = a.get("title") or a.get("summary") or "alert"
+    return {"name": str(title)[:60], "url": url}
+
+
+def _cg_links(cfg: dict, high: list) -> list:
+    """Durable refs for the CG step: the repo's alerts page (from config) + any
+    per-alert deep links the API returned."""
+    links = []
+    page = cfg.get("alerts_url")
+    if page:
+        links.append({"name": "Component Governance alerts", "url": page})
+    for a in high:
+        lk = _alert_link(a)
+        if lk:
+            links.append(lk)
+    return links
+
+
 def build(state):
     cfg = load_phase_config("preflight").get("cg", {})
-    if state.dry_run:
-        return Done("[dry-run] Would query Component Governance for active alerts and "
-                    "report counts + High/Critical items (blocking on High/Critical).")
-    required = ("resource", "governance_host", "project_id", "governed_repo_id", "branch")
-    if not all(cfg.get(k) for k in required):
-        return Blocked("cg: incomplete configuration")
-    from tools.checks import fetch_cg_alerts
-    ok, alerts, detail = fetch_cg_alerts(
-        cfg["resource"], cfg["governance_host"], cfg["project_id"],
-        cfg["governed_repo_id"], cfg["branch"])
-    if not ok:
-        return Blocked(f"cg: could not read alerts — {detail}")
+    # Injected `alerts` (mocks.local.yaml) → run the REAL report/block logic on your
+    # data, skipping the live az call.
+    injected = mock_input("alerts")
+    if injected is not None:
+        alerts = injected
+    else:
+        required = ("resource", "governance_host", "project_id", "governed_repo_id", "branch")
+        if not all(cfg.get(k) for k in required):
+            return Blocked("cg: incomplete configuration")
+        from tools.checks import fetch_cg_alerts
+        ok, alerts, detail = fetch_cg_alerts(
+            cfg["resource"], cfg["governance_host"], cfg["project_id"],
+            cfg["governed_repo_id"], cfg["branch"])
+        if not ok:
+            return Blocked(f"cg: could not read alerts — {detail}")
     active, high = _cg_summary(alerts, cfg.get("high_severities", ["critical", "high"]))
     report = _cg_report(active, high)
+    links = _cg_links(cfg, high)
     if high:
         # Block: the report is shown, the step holds. The owner fixes the alerts
         # and reruns this step (re-checks), or skips to override.
         return Blocked(
             report + "\n→ Fix the High/Critical alerts (or wait for remediation), then "
-            "RERUN this step to re-check — or skip to override with a reason.")
-    return Done(report)
+            "RERUN this step to re-check — or skip to override with a reason.",
+            links=links)
+    return Done(report, links=links)
 
 
 run = legacy_run(build)
