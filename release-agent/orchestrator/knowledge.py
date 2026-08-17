@@ -66,6 +66,8 @@ def render_knowledge(phase_id: str, step_id: str, k: dict) -> str:
         lines += ["", f"_{k['summary']}_"]
     if k.get("what"):
         lines += ["", "**What it does**", k["what"].strip()]
+    if k.get("who"):
+        lines += ["", "**Who owns it**", k["who"].strip()]
     if k.get("where"):
         lines += ["", "**Where to look**"] + [f"- {w}" for w in k["where"]]
     if k.get("how"):
