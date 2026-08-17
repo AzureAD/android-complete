@@ -23,6 +23,10 @@ def cmd_log(args):
         src = e.get("source", "engine")
         loc = f" {e['phase']}/{e.get('step','')}" if e.get("phase") else ""
         extra = ""
+        if e.get("event") == "step_qa":
+            q = (e.get("question") or "").replace("\n", " ")
+            a = (e.get("answer") or "").replace("\n", " ")
+            extra += f"  Q=\"{q[:60]}{'…' if len(q) > 60 else ''}\"  A=\"{a[:60]}{'…' if len(a) > 60 else ''}\""
         if e.get("driver"):
             extra += f"  driver=\"{e['driver']}\""
         if e.get("text"):
@@ -39,6 +43,10 @@ def cmd_journal(args):
     The skill calls this so the per-release log captures the real conversation
     for debugging. Best-effort; never affects the flow."""
     el = C.elog(args.runs_root, args.release)
+    if args.kind == "qa":
+        el.qa(args.question or args.text or "", args.answer or "",
+              phase=args.phase or None, step=args.step or None)
+        return 0
     if args.source == "scout":
         el.scout_said(args.text or "", kind=args.kind or "message", options=args.option or None)
     else:
@@ -54,11 +62,16 @@ def register(sub):
     lg.add_argument("--json", action="store_true")
     lg.set_defaults(func=cmd_log)
 
-    jn = sub.add_parser("journal", help="Record an interaction event (scout output / user input)")
+    jn = sub.add_parser("journal", help="Record an interaction event (scout output / user input / step Q&A)")
     jn.add_argument("--release", required=True)
-    jn.add_argument("--source", required=True, choices=["scout", "user"])
+    jn.add_argument("--source", choices=["scout", "user"], default="user",
+                    help="Who produced it (ignored for --kind qa, which is two-sided)")
     jn.add_argument("--text", default="", help="What was shown / said")
-    jn.add_argument("--kind", default="", help="e.g. prompt, checklist, message, choice, input")
+    jn.add_argument("--kind", default="", help="e.g. prompt, checklist, message, choice, input, qa")
     jn.add_argument("--choice", default="", help="For user: the option id/label chosen")
     jn.add_argument("--option", action="append", help="For scout: an option presented (repeatable)")
+    jn.add_argument("--question", default="", help="For --kind qa: the question the user asked")
+    jn.add_argument("--answer", default="", help="For --kind qa: the answer Scout gave")
+    jn.add_argument("--phase", default="", help="For --kind qa: the phase the question was about")
+    jn.add_argument("--step", default="", help="For --kind qa: the step the question was about")
     jn.set_defaults(func=cmd_journal)

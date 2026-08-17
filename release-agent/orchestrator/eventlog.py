@@ -61,6 +61,12 @@ class EventLog:
     def user_said(self, text: str, kind: str = "input", choice=None) -> dict:
         return self.log("user_input", source="user", kind=kind, text=text, choice=choice)
 
+    def qa(self, question: str, answer: str, phase=None, step=None) -> dict:
+        """A free-form question the engineer asked about a step and Scout's answer.
+        One record captures both sides so the log shows the real interaction."""
+        return self.log("step_qa", source="scout", kind="qa", question=question,
+                        answer=answer, phase=phase, step=step)
+
     def read(self, limit: int = None) -> list:
         return _read_jsonl(self.path, limit)
 
@@ -84,12 +90,14 @@ def _read_jsonl(path: str, limit: int = None) -> list:
 def summarize(events: list) -> dict:
     """Roll up a single release's events for quick debugging."""
     by_event, by_source = {}, {}
-    gate_decisions, declines, interactions = [], [], 0
+    gate_decisions, declines, interactions, qas = [], [], 0, 0
     for e in events:
         by_event[e.get("event")] = by_event.get(e.get("event"), 0) + 1
         by_source[e.get("source")] = by_source.get(e.get("source"), 0) + 1
         if e.get("source") in ("scout", "user"):
             interactions += 1
+        if e.get("event") == "step_qa":
+            qas += 1
         if e.get("event") in ("gate_approved", "gate_denied"):
             gate_decisions.append({"phase": e.get("phase"), "step": e.get("step"),
                                    "decision": "approved" if e["event"] == "gate_approved" else "denied",
@@ -103,6 +111,7 @@ def summarize(events: list) -> dict:
         "by_source": by_source,
         "by_event": by_event,
         "interactions_logged": interactions,
+        "questions_answered": qas,
         "gate_decisions": gate_decisions,
         "declines": declines,
     }

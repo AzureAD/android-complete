@@ -632,6 +632,24 @@ def test_eventlog_never_raises_on_bad_path():
     el.scout_said("x"); el.user_said("y")
 
 
+def test_eventlog_step_qa_is_captured_and_counted():
+    from orchestrator.eventlog import EventLog, summarize
+    with tempfile.TemporaryDirectory() as tmp:
+        el = EventLog(tmp, "2026-10")
+        el.qa("who fixes this alert?", "the release owner creates the fix PR",
+              phase="preflight", step="cg")
+        events = el.read()
+        assert len(events) == 1
+        e = events[0]
+        assert e["event"] == "step_qa"
+        assert e["question"] == "who fixes this alert?"
+        assert e["answer"].startswith("the release owner")
+        assert e["phase"] == "preflight" and e["step"] == "cg"
+        s = summarize(events)
+        assert s["questions_answered"] == 1
+        assert s["interactions_logged"] == 1   # scout-sourced → counts as interaction
+
+
 # ---- CCD schedule math (pure) ----
 
 def test_second_wednesday():
