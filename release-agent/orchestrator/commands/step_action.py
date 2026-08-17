@@ -15,8 +15,8 @@ and prints the outcome as JSON. The skill reads `kind` and reacts uniformly:
     needs_human  → show `prompt` (attestation or reminder).
     needs_skill  → run `tool` with `payload`, then `record-step --step <record_as>`.
 
-Adding a scout step is now: write ONE module under steps/<phase>/ and register it
-in steps/__init__._STEPS — no new CLI command, no skill-reference edits.
+Adding a scout step is now: write ONE module under steps/<phase>/ (auto-discovered)
+— no CLI command, no registry, no skill-reference edits.
 """
 from __future__ import annotations
 import inspect

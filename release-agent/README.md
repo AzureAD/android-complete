@@ -26,19 +26,20 @@ runs each step's agent, and **holds at gates** for the release engineer to decid
 ```
 release-agent/                     COMMITTED (distributed with android-complete)
 ├─ config/
-│  ├─ phases.yaml                  the state machine (phases → steps → gates + CCD anchors), as data
-│  ├─ preflight.yaml               Phase-0 config (config/<phase>.yaml convention; loaded by phase id)
+│  ├─ phases.yaml                  the state machine COMPOSITION (phases → steps → gates, order, deps), as data
 │  ├─ readiness.yaml               the entry-gate checklist, as data
+│  ├─ knowledge.yaml               per-step help (what/where/how/links/faqs) for `step-info` — data (a step module may override via KNOWLEDGE)
 │  ├─ schedule.yaml                where CCD comes from (pipeline 3038 coords), as data
 │  └─ requirements.yaml            external dependencies (CLIs, extensions, MCP servers) — single source of truth
 ├─ orchestrator/                   three layers: logic → data → presentation
-│  ├─ engine.py                    the conductor: state machine + dispatch + gates + time-anchoring + status_report
+│  ├─ engine.py                    the conductor: state machine + dispatch (resolves steps via steps.get_step) + gates + status_report
 │  ├─ readiness.py                 ReadinessGate: entry-gate logic (verify/sign/decline) → structured data
 │  ├─ schedule.py                  CCD math (2nd Wednesday, override, phase anchors) — pure, no IO
-│  ├─ phase_config.py              per-phase config loader (config/<phase>.yaml, by phase id)
+│  ├─ mocks.py                     local test overlay loader (mocks.local.yaml): outcome / readiness / stepresult
+│  ├─ knowledge.py                 step knowledge resolver (config/knowledge.yaml + module KNOWLEDGE overlay)
 │  ├─ infra.py                     infra preflight: check CLIs + register/verify MCP servers into Scout config
 │  ├─ render.py                    presentation only: structured data → text/markdown (swap for other UIs)
-│  ├─ state.py                     Release State Record / run-state (X5)
+│  ├─ state.py                     Release State Record / run-state (X5); StepState carries note + links
 │  ├─ discovery.py                 find releases (none / one / many)
 │  ├─ registry.py                  automation registry (track provisioned automations for teardown)
 │  ├─ eventlog.py                  per-release interaction + event log
@@ -49,27 +50,49 @@ release-agent/                     COMMITTED (distributed with android-complete)
 │     ├─ readiness.py              entry gate: checklist/verify/sign/decline
 │     ├─ pipeline.py               real pipeline writes (gated): set-ccd / skip-release
 │     ├─ notify.py                 daily phase digest (tick advances + reports; notify = read-only) + set-owner
-│     ├─ lockdown.py               CCOA overlap check: check-lockdown
-│     ├─ notice.py                 Phase-0 scout steps: prepare-notice / prepare-flight-reminder / record-step
+│     ├─ lockdown.py               CCOA overlap recorder: check-lockdown
+│     ├─ step_action.py            generic scout-step dispatcher + mock-spec + step-info
+│     ├─ notice.py                 record-step (scout-step recorder)
 │     ├─ logs.py                   event log: log / journal
 │     ├─ automation.py             automation registry command
 │     └─ infra_cmd.py              infra preflight command
+├─ steps/                          THE STEP HOME — one self-contained module per step (auto-discovered)
+│  ├─ __init__.py                  discover()/get_step(): scans steps/<phase>/*.py — NO hand-maintained registry
+│  ├─ lib/                         shared step helpers (context, templating, agent adapter, mock-input ctx)
+│  └─ preflight/                   Phase-0 step modules — each declares ID/KIND/build + optional MOCKABLE/KNOWLEDGE/CONFIG
+│     ├─ notice.py  flight_reminder.py  lockdown.py   (scout)
+│     ├─ breaking.py  cg.py  cron.py  wiki.py          (agent — run in-engine)
+│     └─ confirm_reminders.py  vitals.py               (attest)
 ├─ phases/
-│  ├─ stub_runner.py               mock phase agents (replaced one at a time)
-│  ├─ readiness_verifiers.py       auto verifiers for the entry gate (pass/fail)
-│  └─ agents/                      real phase agents — one module per phase, merged into one registry
-│     ├─ __init__.py               aggregator: merges every phase's REGISTRY (dup-id guarded)
-│     └─ preflight.py              Phase-0 agents (breaking · wiki · cg · cron)
+│  ├─ stub_runner.py               generic runner for steps that have no module yet (later phases)
+│  └─ readiness_verifiers.py       auto verifiers for the entry gate (pass/fail)
 ├─ tools/checks.py                 real IO (az / http), isolated
 ├─ skill/SKILL.md                  the /release-agent Scout skill
+├─ mocks.local.example.yaml        template → copy to mocks.local.yaml (gitignored) for local testing
 ├─ setup/bootstrap.ps1             one-time setup (infra preflight, installs skill)
-└─ tests/test_engine.py            unit + full flow-replay tests
+└─ tests/test_engine.py            unit + full flow-replay + structural guardrail tests
 
 .release-runs/<YYYY-MM>/           GENERATED, gitignored (per-release working state)
 ├─ release-state.json              the per-release metadata + run-state (owner, CCD, steps, gates, …)
 └─ events.jsonl                    the per-release event/interaction log
 .release-runs/_automations.json    GENERATED, gitignored — registry of provisioned Scout automations
 ```
+
+## Adding a step (the modular contract)
+
+A step is **one self-contained module**; everything else is derived, so there are no
+hand-maintained registries to forget. Adding a Phase-0 step touches **2 files**:
+
+1. **`steps/preflight/<step>.py`** — the step. Declare `ID`, `KIND` (`agent`|`scout`|
+   `attest`), `build(state) -> Outcome`, and optionally `MOCKABLE` (mock knobs),
+   `KNOWLEDGE` (help), `CONFIG` (the step's config). Agent steps add `run = legacy_run(build)`.
+   It is **auto-discovered** — no registry edit.
+2. **`config/phases.yaml`** — one line placing the step in the flow (id, name, order,
+   deps, gate/attest/source flags).
+
+That's it. Mocking works automatically (`outcome`/knobs); `step-info` shows its knowledge;
+`step-action`/`mock-spec` find it. The **`test_step_modules_and_config_stay_in_sync`**
+guardrail fails loudly if a module and `phases.yaml` drift, so nothing silently breaks.
 
 **Two homes for data (by lifetime):**
 - **Release metadata + run-state** → `.release-runs/<id>/release-state.json` (per-release; the `ReleaseState` record). Holds `owner_email`/`owner_name` (the release owner, resolved from the signed-in `az` user at `init`; reminders email this person), `ccd`/`ccd_source`/`ccd_conflict`, step completion, gate decisions, `last_notified`, etc. Add release-scoped fields here.

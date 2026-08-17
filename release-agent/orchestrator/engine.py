@@ -22,7 +22,8 @@ from .readiness import ReadinessGate
 from . import schedule
 from . import mocks as mocks_mod
 from steps.lib import mockctx
-from phases import agents
+import steps
+from phases import stub_runner
 
 
 @dataclass
@@ -323,12 +324,17 @@ class Orchestrator:
         (block_holds=False) mark it blocked + register it, but return 'ran' so the
         drain continues with independent steps."""
         pid = phase["id"]
-        agent_id = step.get("agent", "stub")
         # A local mock short-circuits the real runner (agent call), returning the
         # declared StepResult (done → complete; blocked → hold).
         result = mocks_mod.stepresult_for(self.mocks, pid, step["id"])
         if result is None:
-            runner = agents.get_runner(agent_id)
+            # Resolve the runner from the co-located step module (KIND == 'agent');
+            # steps without a module fall back to the stub. No agent registry.
+            mod = steps.get_step(pid, step["id"])
+            if mod is not None and getattr(mod, "KIND", None) == "agent" and hasattr(mod, "run"):
+                runner = mod.run
+            else:
+                runner = stub_runner.run_stub
             # Expose any declared `input` knobs (e.g. cg `alerts`) to the step's
             # build() so its REAL logic runs on the injected data.
             with mockctx.active(self.mocks.get(f"{pid}.{step['id']}", {})):

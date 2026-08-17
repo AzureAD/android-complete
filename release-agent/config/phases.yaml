@@ -1,14 +1,14 @@
 # Release Orchestrator — state machine definition (data, not code).
 # The conductor reads this to know phases -> steps -> gates -> transitions.
-# Phase 0 (preflight) has REAL agents (see phases/agents/preflight.py); later
-# phases are still `agent: stub` and get a real agent id as each is implemented.
+# This file is pure COMPOSITION: which steps run, in what order, their deps and
+# flags. A step's LOGIC lives in its co-located module `steps/<phase>/<step>.py`
+# (auto-discovered); steps without a module yet run the generic stub.
 #
 # Field reference:
 #   phases[].id/name          : phase identifier + label
 #   phases[].checklist_phase  : maps to the human checklist Phase number
 #   phases[].execution        : sequential (default) | parallel (independent steps)
-#   steps[].id/name           : step identifier + label
-#   steps[].agent             : which phase-agent handles it ('stub' until built)
+#   steps[].id/name           : step identifier + label (id matches the step module's ID)
 #   steps[].gate              : if true, conductor HOLDS at this step for human approval
 #   steps[].owner             : agent | human  (who acts; gates are always human-decided)
 #   steps[].source            : scout -> the skill runs it via MCP + record-step
@@ -25,106 +25,108 @@ phases:
     anchor: "CCD-7"          # opens 7 days before the Code Complete Date (start window)
     execution: parallel      # steps are independent; a hold on one doesn't block the others
     steps:
-      - { id: notice,          name: "Send early release notice",              agent: stub, owner: agent, source: scout, maps_to: [S0] }
-      - { id: flight_reminder, name: "Send feature-owner reminders (flights · strings · flag-freeze)",  agent: stub, owner: agent, source: scout, maps_to: [S3, S4, S5] }
-      - { id: confirm_reminders, name: "Confirm feature owners completed flight / string / flag-freeze work", agent: stub, owner: human, attest: true, depends_on: [flight_reminder], maps_to: [S3, S4, S5, S6] }
-      - { id: lockdown,        name: "Detect lockdown/holiday overlap",         agent: stub, owner: agent, source: scout, maps_to: [S1] }
-      - { id: breaking,        name: "Detect BREAKING-OneAuth + draft comms",   agent: breaking_detect, owner: agent, maps_to: [S2] }
-      - { id: cg,              name: "Report critical CG alerts",               agent: cg_alerts, owner: agent, maps_to: [S8] }
-      - { id: vitals,          name: "Confirm Play Console vitals & policy status reviewed", agent: stub, owner: human, attest: true, maps_to: [S9] }
-      - { id: cron,            name: "Verify Calendar Checker scheduled",       agent: cron_check, owner: agent, maps_to: [S10] }
-      - { id: wiki,            name: "Create release payload wiki subpage",     agent: wiki_payload, owner: agent, maps_to: [S0] }
+      - { id: notice,          name: "Send early release notice",              owner: agent, source: scout, maps_to: [S0] }
+      - { id: flight_reminder, name: "Send feature-owner reminders (flights · strings · flag-freeze)",  owner: agent, source: scout, maps_to: [S3, S4, S5] }
+      - { id: confirm_reminders, name: "Confirm feature owners completed flight / string / flag-freeze work", owner: human, attest: true, depends_on: [flight_reminder], maps_to: [S3, S4, S5, S6] }
+      - { id: lockdown,        name: "Detect lockdown/holiday overlap",         owner: agent, source: scout, maps_to: [S1] }
+      - { id: breaking,        name: "Detect BREAKING-OneAuth + draft comms",   owner: agent, maps_to: [S2] }
+      - { id: cg,              name: "Report critical CG alerts",               owner: agent, maps_to: [S8] }
+      - { id: vitals,          name: "Confirm Play Console vitals & policy status reviewed", owner: human, attest: true, maps_to: [S9] }
+      - { id: cron,            name: "Verify Calendar Checker scheduled",       owner: agent, maps_to: [S10] }
+      - { id: wiki,            name: "Create release payload wiki subpage",     owner: agent, maps_to: [S0] }
 
   - id: ccd
     name: "Code Complete Day"
     checklist_phase: 1
     steps:
-      - { id: final_reminder,  name: "CCD final code-complete reminder",        agent: stub, owner: agent, maps_to: [P1-1] }
-      - { id: localization,    name: "Trigger localization pipeline (PR)",      agent: stub, owner: agent, maps_to: [P1-2] }
-      - { id: precheck_prs,    name: "Pre-check open required PRs",             agent: stub, owner: agent, maps_to: [P1-3a] }
-      - { id: branch_cut,      name: "Cut the release branch",                  agent: stub, owner: human, gate: true, maps_to: [P1-3b] }
-      - { id: verify_trigger,  name: "Verify orchestrator fired overnight",     agent: stub, owner: agent, maps_to: [P1-4] }
+      - { id: final_reminder,  name: "CCD final code-complete reminder",        owner: agent, maps_to: [P1-1] }
+      - { id: localization,    name: "Trigger localization pipeline (PR)",      owner: agent, maps_to: [P1-2] }
+      - { id: precheck_prs,    name: "Pre-check open required PRs",             owner: agent, maps_to: [P1-3a] }
+      - { id: branch_cut,      name: "Cut the release branch",                  owner: human, gate: true, maps_to: [P1-3b] }
+      - { id: verify_trigger,  name: "Verify orchestrator fired overnight",     owner: agent, maps_to: [P1-4] }
 
   - id: build_verify
     name: "Build & Lib Verification"
     checklist_phase: 2
     steps:
-      - { id: stages_ok,       name: "Verify pipeline completed expected stages", agent: stub, owner: agent, maps_to: [B1] }
-      - { id: retain,          name: "Retain the build",                        agent: stub, owner: agent, maps_to: [B1r] }
-      - { id: health,          name: "Assess build-completeness + product health", agent: stub, owner: agent, maps_to: [B2] }
-      - { id: ui_auto,         name: "Assess UI automation results",            agent: stub, owner: agent, maps_to: [B3] }
-      - { id: payload,         name: "Write built versions into payload wiki",  agent: stub, owner: agent, maps_to: [B6] }
-      - { id: mrwp_rc,         name: "Point MRWP at cut RC Auth App branch",    agent: stub, owner: agent, maps_to: [B4] }
-      - { id: go_test,         name: "Proceed to bug bash",                     agent: stub, owner: human, gate: true }
+      - { id: stages_ok,       name: "Verify pipeline completed expected stages", owner: agent, maps_to: [B1] }
+      - { id: retain,          name: "Retain the build",                        owner: agent, maps_to: [B1r] }
+      - { id: health,          name: "Assess build-completeness + product health", owner: agent, maps_to: [B2] }
+      - { id: ui_auto,         name: "Assess UI automation results",            owner: agent, maps_to: [B3] }
+      - { id: payload,         name: "Write built versions into payload wiki",  owner: agent, maps_to: [B6] }
+      - { id: mrwp_rc,         name: "Point MRWP at cut RC Auth App branch",    owner: agent, maps_to: [B4] }
+      - { id: go_test,         name: "Proceed to bug bash",                     owner: human, gate: true }
 
   - id: bug_bash
     name: "Test / Bug Bash"
     checklist_phase: 3
     steps:
-      - { id: clone_plans,     name: "Clone/rename test plans",                 agent: stub, owner: agent, maps_to: [T3] }
-      - { id: coordinate,      name: "Bug Bash coordinator (invite/monitor/aggregate)", agent: stub, owner: agent, maps_to: [T2] }
-      - { id: ui_failures,     name: "Surface Phase 2 UI failure list",         agent: stub, owner: human, maps_to: [T4] }
-      - { id: signoffs,        name: "Chase DID/Dublin sign-offs + telemetry",  agent: stub, owner: agent, maps_to: [T5] }
-      - { id: bash_done,       name: "Bug bash complete + signed off",          agent: stub, owner: human, gate: true }
+      - { id: clone_plans,     name: "Clone/rename test plans",                 owner: agent, maps_to: [T3] }
+      - { id: coordinate,      name: "Bug Bash coordinator (invite/monitor/aggregate)", owner: agent, maps_to: [T2] }
+      - { id: ui_failures,     name: "Surface Phase 2 UI failure list",         owner: human, maps_to: [T4] }
+      - { id: signoffs,        name: "Chase DID/Dublin sign-offs + telemetry",  owner: agent, maps_to: [T5] }
+      - { id: bash_done,       name: "Bug bash complete + signed off",          owner: human, gate: true }
 
   - id: finalize
     name: "Finalize & Publish"
     checklist_phase: 4
     steps:
-      - { id: gate_watch,      name: "Watch orchestrator gates (1-click approve)", agent: stub, owner: human, gate: true, maps_to: [F1] }
-      - { id: integ_prs,       name: "Auto-create integration PRs",             agent: stub, owner: agent, maps_to: [F2] }
-      - { id: verify_pub,      name: "Verify Maven Central + GitHub publication", agent: stub, owner: agent, maps_to: [F3] }
-      - { id: final_comms,     name: "Send final broker email + Teams",         agent: stub, owner: agent, maps_to: [F4] }
-      - { id: nonrc_pin,       name: "Final non-RC pin PR + kick + retain",     agent: stub, owner: agent, maps_to: [F5] }
-      - { id: tag,             name: "Tag the release commit",                  agent: stub, owner: agent, maps_to: [F6] }
-      - { id: backmerge,       name: "Back-merge to working",                   agent: stub, owner: agent, maps_to: [F7] }
+      - { id: gate_watch,      name: "Watch orchestrator gates (1-click approve)", owner: human, gate: true, maps_to: [F1] }
+      - { id: integ_prs,       name: "Auto-create integration PRs",             owner: agent, maps_to: [F2] }
+      - { id: verify_pub,      name: "Verify Maven Central + GitHub publication", owner: agent, maps_to: [F3] }
+      - { id: final_comms,     name: "Send final broker email + Teams",         owner: agent, maps_to: [F4] }
+      - { id: nonrc_pin,       name: "Final non-RC pin PR + kick + retain",     owner: agent, maps_to: [F5] }
+      - { id: tag,             name: "Tag the release commit",                  owner: agent, maps_to: [F6] }
+      - { id: backmerge,       name: "Back-merge to working",                   owner: agent, maps_to: [F7] }
 
   - id: rollout_start
     name: "Rollout Start"
     checklist_phase: 5
     steps:
-      - { id: notice,          name: "Send initial Auth App release notice",    agent: stub, owner: agent, maps_to: [R1] }
-      - { id: artifact,        name: "Verify final non-RC artifact is used",    agent: stub, owner: agent, maps_to: [R2] }
-      - { id: signoff_start,   name: "Start Release Sign Off (1-click)",        agent: stub, owner: human, gate: true, maps_to: [R3] }
+      - { id: notice,          name: "Send initial Auth App release notice",    owner: agent, maps_to: [R1] }
+      - { id: artifact,        name: "Verify final non-RC artifact is used",    owner: agent, maps_to: [R2] }
+      - { id: signoff_start,   name: "Start Release Sign Off (1-click)",        owner: human, gate: true, maps_to: [R3] }
 
   - id: monitor
     name: "Monitoring & Ring Advancement"
     checklist_phase: 6
     steps:
-      - { id: health_report,   name: "Crash-% health report (halt/hotfix/proceed)", agent: stub, owner: agent, maps_to: [M1] }
-      - { id: adoption,        name: "Adoption % vs ring threshold",            agent: stub, owner: agent, maps_to: [M2] }
-      - { id: guards,          name: "Check advancement guard rules",           agent: stub, owner: agent, maps_to: [M4] }
-      - { id: advance,         name: "Ring advance / halt decision",            agent: stub, owner: human, gate: true, maps_to: [M3] }
-      - { id: progress_email,  name: "Send progression email on advance",       agent: stub, owner: agent, maps_to: [M5] }
-      - { id: dashboard,       name: "Update ADX dashboard params",             agent: stub, owner: agent, maps_to: [M6] }
-      - { id: crash_annot,     name: "Flag new vs existing crashes",            agent: stub, owner: human, maps_to: [M7] }
-      - { id: hotfix_eval,     name: "Surface hotfix-trigger criteria",         agent: stub, owner: human, maps_to: [M8] }
+      - { id: health_report,   name: "Crash-% health report (halt/hotfix/proceed)", owner: agent, maps_to: [M1] }
+      - { id: adoption,        name: "Adoption % vs ring threshold",            owner: agent, maps_to: [M2] }
+      - { id: guards,          name: "Check advancement guard rules",           owner: agent, maps_to: [M4] }
+      - { id: advance,         name: "Ring advance / halt decision",            owner: human, gate: true, maps_to: [M3] }
+      - { id: progress_email,  name: "Send progression email on advance",       owner: agent, maps_to: [M5] }
+      - { id: dashboard,       name: "Update ADX dashboard params",             owner: agent, maps_to: [M6] }
+      - { id: crash_annot,     name: "Flag new vs existing crashes",            owner: human, maps_to: [M7] }
+      - { id: hotfix_eval,     name: "Surface hotfix-trigger criteria",         owner: human, maps_to: [M8] }
 
   - id: partner
     name: "Partner Stores"
     checklist_phase: 7
     steps:
-      - { id: china,           name: "China publish flow",                      agent: stub, owner: human, maps_to: [PT1] }
-      - { id: samsung,         name: "Samsung portal upload",                   agent: stub, owner: human, maps_to: [PT1s] }
-      - { id: ngms,            name: "Verify nGMS upload",                      agent: stub, owner: agent, maps_to: [PT2] }
-      - { id: teams_dev,       name: "Teams Devices announcement",              agent: stub, owner: agent, maps_to: [PT3] }
-      - { id: approvals,       name: "Track partner approvals + final notice",  agent: stub, owner: agent, maps_to: [PT4] }
-      - { id: review_times,    name: "Maintain review-times table",             agent: stub, owner: agent, maps_to: [PT5] }
+      - { id: china,           name: "China publish flow",                      owner: human, maps_to: [PT1] }
+      - { id: samsung,         name: "Samsung portal upload",                   owner: human, maps_to: [PT1s] }
+      - { id: ngms,            name: "Verify nGMS upload",                      owner: agent, maps_to: [PT2] }
+      - { id: teams_dev,       name: "Teams Devices announcement",              owner: agent, maps_to: [PT3] }
+      - { id: approvals,       name: "Track partner approvals + final notice",  owner: agent, maps_to: [PT4] }
+      - { id: review_times,    name: "Maintain review-times table",             owner: agent, maps_to: [PT5] }
 
   - id: hotfix
     name: "Hotfix (conditional)"
     checklist_phase: 8
     conditional: true
     steps:
-      - { id: cherry,          name: "Cherry-pick PRs",                         agent: stub, owner: agent, maps_to: [H1] }
-      - { id: rebuild,         name: "Rebuild + retain hotfix build",           agent: stub, owner: agent, maps_to: [H2] }
-      - { id: smoke,           name: "P0 smoke subset",                         agent: stub, owner: human, gate: true, maps_to: [H3] }
-      - { id: expedite,        name: "Expedited rollout",                       agent: stub, owner: agent, maps_to: [H4] }
-      - { id: alpha_orgs,      name: "Track alpha-mitigation orgs to remove",   agent: stub, owner: agent, maps_to: [H5] }
+      - { id: cherry,          name: "Cherry-pick PRs",                         owner: agent, maps_to: [H1] }
+      - { id: rebuild,         name: "Rebuild + retain hotfix build",           owner: agent, maps_to: [H2] }
+      - { id: smoke,           name: "P0 smoke subset",                         owner: human, gate: true, maps_to: [H3] }
+      - { id: expedite,        name: "Expedited rollout",                       owner: agent, maps_to: [H4] }
+      - { id: alpha_orgs,      name: "Track alpha-mitigation orgs to remove",   owner: agent, maps_to: [H5] }
 
   - id: close
     name: "Release Close"
     checklist_phase: 9
     steps:
-      - { id: closeout,        name: "Close-out checklist (approvals/comms/bugs)", agent: stub, owner: agent, maps_to: [C1] }
-      - { id: done,            name: "Release complete",                        agent: stub, owner: human, gate: true }
+      - { id: closeout,        name: "Close-out checklist (approvals/comms/bugs)", owner: agent, maps_to: [C1] }
+      - { id: done,            name: "Release complete",                        owner: human, gate: true }
+
+

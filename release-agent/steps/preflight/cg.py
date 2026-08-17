@@ -8,12 +8,26 @@ alerts — the owner must fix them and RERUN, or skip to override. Deterministic
 from __future__ import annotations
 
 from orchestrator.outcomes import Done, Blocked
-from orchestrator.phase_config import load_phase_config
 from steps.lib.agent import legacy_run
 from steps.lib.mockctx import mock_input
 
 ID = "cg"
 KIND = "agent"
+
+# Step config (co-located — this module is the single home for the step).
+# Component Governance alerts for the governed repo, read (read-only) from the CG
+# governance host via `az rest`; reports ACTIVE alerts and blocks on High/Critical.
+CONFIG = {
+    "resource": "499b84ac-1321-427f-aa17-267ca6975798",   # Azure DevOps resource id (for `az rest`)
+    "governance_host": "https://msazure.governance.visualstudio.com",
+    "project_id": "b32aa71e-8ed2-41b2-9d77-5bc261222004",  # msazure/One
+    "governed_repo_id": 104410,                            # AD-MFA-phonefactor-phoneApp-android
+    "branch": "working",
+    "high_severities": ["critical", "high"],               # surfaced/flagged as high-priority
+    # Portal link to the repo's CG alerts page — stored as a link so the owner can
+    # jump straight to the alerts. Verify/adjust if the portal path differs.
+    "alerts_url": "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android?path=/&_a=alerts",
+}
 
 # Properties this step exposes to mocks.local.yaml (see `mock-spec`).
 MOCKABLE = {
@@ -80,7 +94,7 @@ def _cg_links(cfg: dict, high: list) -> list:
 
 
 def build(state):
-    cfg = load_phase_config("preflight").get("cg", {})
+    cfg = CONFIG
     # Injected `alerts` (mocks.local.yaml) → run the REAL report/block logic on your
     # data, skipping the live az call.
     injected = mock_input("alerts")

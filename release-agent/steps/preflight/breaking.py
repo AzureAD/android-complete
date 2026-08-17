@@ -9,12 +9,19 @@ import re
 from urllib import request as _request
 
 from orchestrator.outcomes import Done, Blocked
-from orchestrator.phase_config import load_phase_config
 from steps.lib.agent import legacy_run
 from steps.lib.mockctx import mock_input
 
 ID = "breaking"
 KIND = "agent"
+
+# Step config (co-located). common-for-android records breaking changes as [MAJOR]
+# entries in changelog.txt; the unreleased "vNext" section holds THIS release's.
+CONFIG = {
+    "changelog_url": "https://raw.githubusercontent.com/AzureAD/microsoft-authentication-library-common-for-android/dev/changelog.txt",
+    "section": "vNext",          # scan the unreleased section only
+    "breaking_tag": "[MAJOR]",   # breaking-change marker convention in this changelog
+}
 
 # Properties this step exposes to mocks.local.yaml (see `mock-spec`).
 MOCKABLE = {
@@ -70,7 +77,7 @@ def _draft_breaking_comms(entries: list, state=None) -> str:
 
 
 def build(state):
-    cfg = load_phase_config("preflight").get("breaking", {})
+    cfg = CONFIG
     url = cfg.get("changelog_url")
     section = cfg.get("section", "vNext")
     tag = cfg.get("breaking_tag", "[MAJOR]")

@@ -14,12 +14,24 @@ from __future__ import annotations
 
 from orchestrator import schedule
 from orchestrator.outcomes import NeedsSkill, Blocked
-from orchestrator.phase_config import load_phase_config
 from steps.lib import templating as T
 from steps.lib.context import release_ctx, resolve_chat_target, SELF_CHAT_ID
 
 ID = "flight_reminder"
 KIND = "scout"
+
+# Step config (co-located). Posts to the real Android Core Team group chat
+# (redirect for tests with the send_to mock knob).
+CONFIG = {
+    "live_chat_id": "19:976a859f167f44e59c4ceca8b1d23581@thread.v2",   # "Android Core Team"
+    "live_chat_name": "Android Core Team",
+    "links": {
+        "variable_group": "https://identitydivision.visualstudio.com/Engineering/_library?itemType=VariableGroups&view=VariableGroupView&variableGroupId=40&path=release",
+        "premortem_example": "https://microsoft-my.sharepoint-df.com/:w:/p/rapong/cQpEZp0cXp1sQYo4A4M3PQWCEgUCDj364FJa-rq-msg59WlBsw",
+        "localization": "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/combined-release-checklist/localization",
+        "ecs_flight_history": "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android?path=/PhoneFactor/ExperimentationLibrary/src/main/java/com/microsoft/authenticator/experimentation/ecs/entities/EcsFlight.kt&version=GBworking",
+    },
+}
 
 # Knobs this step exposes to mocks.local.yaml (see `mock-spec`). Keeps the Teams
 # post REAL but redirects it — the applier rewrites payload.chatId.
@@ -55,7 +67,7 @@ def build(state):
     if not state.ccd:
         return Blocked("no CCD set for this release")
 
-    cfg = load_phase_config("preflight", "flight_reminder")
+    cfg = CONFIG
     ctx = release_ctx(state)
     ccd = schedule.parse_date(state.ccd)
     ctx["ccd7_date"] = schedule.anchor_date(ccd, "CCD-7").strftime("%m/%d/%Y")

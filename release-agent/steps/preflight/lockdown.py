@@ -17,14 +17,22 @@ from __future__ import annotations
 
 from orchestrator import schedule
 from orchestrator.outcomes import NeedsSkill, Blocked
-from orchestrator.phase_config import load_phase_config
 
 ID = "lockdown"
 KIND = "scout"
 
+# Step config (co-located). The skill scrapes the CCOA No-Fly Zones page; the
+# engine decides overlap deterministically against CCD-7 .. CCD+14, Production only.
+CONFIG = {
+    "url": "https://prod.change-manager.msidentity.com/ccoa-periods",
+    "blocking_environment": "Production",     # only Production-env CCOA periods block
+    "window_start_anchor": "CCD-7",
+    "window_end_anchor": "CCD+14",
+}
+
 
 def _cfg() -> dict:
-    return load_phase_config("preflight", "lockdown")
+    return CONFIG
 
 
 def release_window(state, cfg: dict | None = None):

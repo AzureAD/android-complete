@@ -1067,7 +1067,7 @@ Version 24.5.0
 
 
 def test_parse_breaking_only_scans_vnext_section():
-    from phases.agents.preflight import parse_breaking
+    from steps.preflight.breaking import parse_breaking
     hits = parse_breaking(_SAMPLE_CHANGELOG, section="vNext", tag="[MAJOR]")
     assert len(hits) == 1
     assert "(#2)" in hits[0] and "(#0)" not in hits[0]
@@ -1075,19 +1075,19 @@ def test_parse_breaking_only_scans_vnext_section():
 
 
 def test_parse_breaking_none_when_no_major():
-    from phases.agents.preflight import parse_breaking
+    from steps.preflight.breaking import parse_breaking
     txt = "vNext\n----------\n- [MINOR] x (#1)\nVersion 1.0.0\n----------\n"
     assert parse_breaking(txt) == []
 
 
 def test_breaking_agent_detects_and_drafts():
-    from phases.agents import preflight as pa
+    from steps.preflight import breaking, wiki, cg, cron
     from steps.preflight import breaking as _bk
     orig = _bk._fetch_text
     _bk._fetch_text = lambda *a, **k: _SAMPLE_CHANGELOG
     try:
         st = ReleaseState(release_id="2026-08")
-        r = pa.run_breaking("preflight", {"id": "breaking"}, st)
+        r = breaking.run("preflight", {"id": "breaking"}, st)
         assert r.ok
         assert "Detected 1 breaking" in r.action
         assert "(#2)" in r.action and "DRAFT COMMS" in r.action
@@ -1096,12 +1096,12 @@ def test_breaking_agent_detects_and_drafts():
 
 
 def test_breaking_agent_none_found_passes():
-    from phases.agents import preflight as pa
+    from steps.preflight import breaking, wiki, cg, cron
     from steps.preflight import breaking as _bk
     orig = _bk._fetch_text
     _bk._fetch_text = lambda *a, **k: "vNext\n----------\n- [MINOR] x (#1)\nVersion 1.0.0\n"
     try:
-        r = pa.run_breaking("preflight", {"id": "breaking"},
+        r = breaking.run("preflight", {"id": "breaking"},
                             ReleaseState(release_id="2026-08"))
         assert r.ok and "No breaking" in r.action
     finally:
@@ -1109,7 +1109,7 @@ def test_breaking_agent_none_found_passes():
 
 
 def test_breaking_agent_fetch_error_holds():
-    from phases.agents import preflight as pa
+    from steps.preflight import breaking, wiki, cg, cron
     from steps.preflight import breaking as _bk
     orig = _bk._fetch_text
 
@@ -1117,7 +1117,7 @@ def test_breaking_agent_fetch_error_holds():
         raise RuntimeError("network down")
     _bk._fetch_text = _boom
     try:
-        r = pa.run_breaking("preflight", {"id": "breaking"},
+        r = breaking.run("preflight", {"id": "breaking"},
                             ReleaseState(release_id="2026-08"))
         assert not r.ok and "could not fetch" in r.action
     finally:
@@ -1125,14 +1125,14 @@ def test_breaking_agent_fetch_error_holds():
 
 
 def test_wiki_page_name_convention():
-    from phases.agents.preflight import _page_name
+    from steps.preflight.wiki import _page_name
     st = ReleaseState(release_id="2026-08")
     assert _page_name(st) == "August 2026 Release"
     assert _page_name(st, 2) == "August 2026 2 Release"
 
 
 def test_wiki_agent_real_create(monkeypatch=None):
-    from phases.agents import preflight as pa
+    from steps.preflight import breaking, wiki, cg, cron
     from tools import checks
     orig_create, orig_exists = checks.create_wiki_page, checks.wiki_page_exists
     seen = {}
@@ -1144,7 +1144,7 @@ def test_wiki_agent_real_create(monkeypatch=None):
     checks.wiki_page_exists = lambda *a, **k: False    # month page absent
     try:
         st = ReleaseState(release_id="2026-08")
-        r = pa.run_wiki("preflight", {"id": "wiki"}, st)
+        r = wiki.run("preflight", {"id": "wiki"}, st)
         assert r.ok and seen["path"].endswith("August 2026 Release")
         assert seen["project"] == "IdentityWiki"
     finally:
@@ -1154,7 +1154,7 @@ def test_wiki_agent_real_create(monkeypatch=None):
 def test_wiki_agent_duplicate_creates_numbered_and_notifies():
     """If the month's page exists, the agent leaves it alone, NOTIFIES, and
     creates the next free numbered page."""
-    from phases.agents import preflight as pa
+    from steps.preflight import breaking, wiki, cg, cron
     from tools import checks
     orig_create, orig_exists = checks.create_wiki_page, checks.wiki_page_exists
     created = {}
@@ -1169,7 +1169,7 @@ def test_wiki_agent_duplicate_creates_numbered_and_notifies():
     checks.create_wiki_page = _create
     try:
         st = ReleaseState(release_id="2026-08")
-        r = pa.run_wiki("preflight", {"id": "wiki"}, st)
+        r = wiki.run("preflight", {"id": "wiki"}, st)
         assert r.ok
         assert created["path"].endswith("August 2026 2 Release")
         assert "already exist" in r.action.lower() and "SECOND" in r.action
@@ -1180,22 +1180,15 @@ def test_wiki_agent_duplicate_creates_numbered_and_notifies():
 def test_failing_agent_holds_as_action_needed():
     """A pre-flight agent that returns ok=False must HOLD the release as
     awaiting_action (not silently mark the step done)."""
-    from phases import agents as pa
-    from phases.stub_runner import StepResult
-    orig = pa.REGISTRY.get("breaking_detect")
-    pa.REGISTRY["breaking_detect"] = lambda *a, **k: StepResult(False, "boom", "agent")
-    try:
-        st, orch = _ccd_orch("2026-07-08")   # signed, Phase 0 open
-        _clear_phase0_scout(orch)
-        orch.run_until_gate()
-        assert st.status == "awaiting_action"
-        assert "preflight.breaking" in st.pending_human
-        # human resolves + marks done -> flow resumes
-        orch.complete_step("preflight", "breaking", "handled")
-        assert st.status == "running"
-    finally:
-        if orig is not None:
-            pa.REGISTRY["breaking_detect"] = orig
+    st, orch = _mock_orch({"preflight.breaking": {"outcome": "blocked", "reason": "boom"}},
+                          as_of="2026-07-08")
+    _clear_phase0_scout(orch)
+    orch.run_until_gate()
+    assert st.status == "awaiting_action"
+    assert "preflight.breaking" in st.pending_human
+    # human resolves + marks done -> flow resumes
+    orch.complete_step("preflight", "breaking", "handled")
+    assert st.status == "running"
 
 
 def test_tick_advances_and_reports(tmp=None):
@@ -1460,7 +1453,7 @@ def test_parallel_autos_run_despite_pending_holds():
 
 def test_cg_report_summarizes_and_flags_high():
     """The CG report groups active alerts by severity and lists High/Critical."""
-    from phases.agents.preflight import _cg_summary, _cg_report
+    from steps.preflight.cg import _cg_summary, _cg_report
     alerts = [
         {"alertState": "active", "severity": "high", "title": "CVE-1",
          "component": {"displayName": "io.netty:x", "displayVersion": "4.2.15"},
@@ -1479,7 +1472,7 @@ def test_cg_report_summarizes_and_flags_high():
 
 def test_cg_agent_blocks_on_high():
     """High/Critical active alerts BLOCK the step (ok=False) with a fix-and-rerun message."""
-    from phases.agents import preflight as pa
+    from steps.preflight import breaking, wiki, cg, cron
     from tools import checks
     orig = checks.fetch_cg_alerts
     checks.fetch_cg_alerts = lambda *a, **k: (True, [
@@ -1487,7 +1480,7 @@ def test_cg_agent_blocks_on_high():
          "component": {"displayName": "pkg", "displayVersion": "1.0"}},
     ], "ok")
     try:
-        r = pa.run_cg_alerts("preflight", {"id": "cg"}, None)
+        r = cg.run("preflight", {"id": "cg"}, None)
         assert not r.ok                       # High → blocks
         assert "CVE-9" in r.action and "RERUN" in r.action
     finally:
@@ -1496,14 +1489,14 @@ def test_cg_agent_blocks_on_high():
 
 def test_cg_agent_passes_when_no_high():
     """Only Medium/Low active alerts → the step passes (report captured)."""
-    from phases.agents import preflight as pa
+    from steps.preflight import breaking, wiki, cg, cron
     from tools import checks
     orig = checks.fetch_cg_alerts
     checks.fetch_cg_alerts = lambda *a, **k: (True, [
         {"alertState": "active", "severity": "medium", "title": "CVE-M"},
     ], "ok")
     try:
-        r = pa.run_cg_alerts("preflight", {"id": "cg"}, None)
+        r = cg.run("preflight", {"id": "cg"}, None)
         assert r.ok and "1 active" in r.action
     finally:
         checks.fetch_cg_alerts = orig
@@ -1512,65 +1505,46 @@ def test_cg_agent_passes_when_no_high():
 def test_cg_blocked_step_reruns_and_clears_when_fixed():
     """A CG block holds the step; fixing (alerts now clean) + rerunning `next`
     re-checks and lets the flow continue."""
-    from phases import agents as pa
-    from phases.stub_runner import StepResult
-    flag = {"high": True}
-
-    def fake_cg(phase, step, st):
-        if flag["high"]:
-            return StepResult(False, "CG: 1 critical active\n→ Fix and RERUN or skip.", "agent")
-        return StepResult(True, "CG: 0 active alerts.", "agent")
-    orig = pa.REGISTRY["cg_alerts"]
-    pa.REGISTRY["cg_alerts"] = fake_cg
-    try:
-        st, orch = _orch()
-        _clear_phase0_scout(orch)          # clear the earlier scout/human holds
-        orch.run_until_gate()
-        assert st.status == "awaiting_action" and st.current_step == "cg"
-        assert st.get_step("preflight", "cg").status == "blocked"
-        # the digest shows it blocked / needs owner
-        step = next(s for s in orch.status_report()["active_phase"]["steps"] if s["id"] == "cg")
-        assert step["status"] == "blocked" and step["needs_owner"]
-        # FIX: alerts now clean → RERUN (next) re-checks and passes
-        flag["high"] = False
-        orch.run_until_gate()
-        assert st.is_done("preflight", "cg")
-    finally:
-        pa.REGISTRY["cg_alerts"] = orig
+    st, orch = _mock_orch({"preflight.cg": {"outcome": "blocked",
+                          "reason": "CG: 1 critical active\n→ Fix and RERUN or skip."}})
+    _clear_phase0_scout(orch)          # clear the earlier scout/human holds
+    orch.run_until_gate()
+    assert st.status == "awaiting_action" and st.current_step == "cg"
+    assert st.get_step("preflight", "cg").status == "blocked"
+    # the digest shows it blocked / needs owner
+    step = next(s for s in orch.status_report()["active_phase"]["steps"] if s["id"] == "cg")
+    assert step["status"] == "blocked" and step["needs_owner"]
+    # FIX: alerts now clean → RERUN (next) re-checks and passes
+    orch.mocks["preflight.cg"] = {"outcome": "done", "note": "CG: 0 active alerts."}
+    orch.run_until_gate()
+    assert st.is_done("preflight", "cg")
 
 
 def test_cg_blocked_step_skip_override():
     """The owner can override a CG block by skipping the step (with a reason)."""
-    from phases import agents as pa
-    from phases.stub_runner import StepResult
-    orig = pa.REGISTRY["cg_alerts"]
-    pa.REGISTRY["cg_alerts"] = lambda *a, **k: StepResult(False, "CG: 1 high active", "agent")
-    try:
-        st, orch = _orch()
-        _clear_phase0_scout(orch)
-        orch.run_until_gate()
-        assert st.current_step == "cg" and st.get_step("preflight", "cg").status == "blocked"
-        orch.skip_step("preflight", "cg", "accepted risk; tracked separately")
-        assert st.is_done("preflight", "cg")   # skipped counts as done
-        assert st.get_step("preflight", "cg").status == "skipped"
-    finally:
-        pa.REGISTRY["cg_alerts"] = orig
+    st, orch = _mock_orch({"preflight.cg": {"outcome": "blocked", "reason": "CG: 1 high active"}})
+    _clear_phase0_scout(orch)
+    orch.run_until_gate()
+    assert st.current_step == "cg" and st.get_step("preflight", "cg").status == "blocked"
+    orch.skip_step("preflight", "cg", "accepted risk; tracked separately")
+    assert st.is_done("preflight", "cg")   # skipped counts as done
+    assert st.get_step("preflight", "cg").status == "skipped"
 
 
 def test_cg_agent_fetch_error_holds():
-    from phases.agents import preflight as pa
+    from steps.preflight import breaking, wiki, cg, cron
     from tools import checks
     orig = checks.fetch_cg_alerts
     checks.fetch_cg_alerts = lambda *a, **k: (False, [], "403 forbidden")
     try:
-        r = pa.run_cg_alerts("preflight", {"id": "cg"}, None)
+        r = cg.run("preflight", {"id": "cg"}, None)
         assert not r.ok and "could not read alerts" in r.action
     finally:
         checks.fetch_cg_alerts = orig
 
 
 def test_cron_check_passes_on_recent_scheduled_run():
-    from phases.agents import preflight as pa
+    from steps.preflight import breaking, wiki, cg, cron
     from tools import checks
     from datetime import datetime, timezone
     orig = checks.latest_scheduled_build
@@ -1578,32 +1552,32 @@ def test_cron_check_passes_on_recent_scheduled_run():
     checks.latest_scheduled_build = lambda *a, **k: (True, {
         "queueTime": now_iso, "result": "succeeded", "status": "completed"}, "ok")
     try:
-        r = pa.run_cron_check("preflight", {"id": "cron"}, None)
+        r = cron.run("preflight", {"id": "cron"}, None)
         assert r.ok and "scheduled and firing" in r.action
     finally:
         checks.latest_scheduled_build = orig
 
 
 def test_cron_check_blocks_when_stale():
-    from phases.agents import preflight as pa
+    from steps.preflight import breaking, wiki, cg, cron
     from tools import checks
     orig = checks.latest_scheduled_build
     checks.latest_scheduled_build = lambda *a, **k: (True, {
         "queueTime": "2026-01-01T06:00:00Z", "result": "succeeded", "status": "completed"}, "ok")
     try:
-        r = pa.run_cron_check("preflight", {"id": "cron"}, None)
+        r = cron.run("preflight", {"id": "cron"}, None)
         assert not r.ok and "stale" in r.action
     finally:
         checks.latest_scheduled_build = orig
 
 
 def test_cron_check_blocks_when_no_scheduled_run():
-    from phases.agents import preflight as pa
+    from steps.preflight import breaking, wiki, cg, cron
     from tools import checks
     orig = checks.latest_scheduled_build
     checks.latest_scheduled_build = lambda *a, **k: (True, None, "no scheduled runs in recent history")
     try:
-        r = pa.run_cron_check("preflight", {"id": "cron"}, None)
+        r = cron.run("preflight", {"id": "cron"}, None)
         assert not r.ok and "no scheduled run" in r.action
     finally:
         checks.latest_scheduled_build = orig
@@ -1796,6 +1770,43 @@ def test_step_knowledge_module_overlays_yaml():
             delattr(cgmod, "KNOWLEDGE")
         else:
             cgmod.KNOWLEDGE = saved
+
+
+def test_step_modules_and_config_stay_in_sync():
+    """STRUCTURAL GUARDRAIL — makes the modular structure self-enforcing so adding a
+    step can't silently drift. Every auto-discovered step module must map to a
+    config/phases.yaml step, and its KIND must match the config flags. This fails
+    LOUDLY if a module's ID is wrong/orphaned or its KIND disagrees with the flow."""
+    import yaml
+    import steps
+    cfg = yaml.safe_load(open(CONFIG, encoding="utf-8"))
+    cfg_steps = {f"{ph['id']}.{s['id']}": s
+                 for ph in cfg["phases"] for s in ph["steps"]}
+
+    def cfg_kind(s):
+        if s.get("gate"):
+            return "gate"
+        if s.get("source") == "scout":
+            return "scout"
+        if s.get("attest"):
+            return "attest"
+        if s.get("owner") == "human":
+            return "reminder"
+        return "agent"
+
+    discovered = steps.discover()
+    assert discovered, "no step modules discovered — auto-discovery broke"
+    for key, mod in discovered.items():
+        # 1. no orphan module: every module corresponds to a real flow step
+        assert key in cfg_steps, f"step module '{key}' has no config/phases.yaml entry"
+        # 2. KIND matches the config's classification (no drift)
+        k, c = getattr(mod, "KIND", None), cfg_kind(cfg_steps[key])
+        if k == "agent":
+            assert c == "agent", f"{key}: module KIND=agent but config classifies as {c}"
+        elif k == "scout":
+            assert c == "scout", f"{key}: module KIND=scout but config classifies as {c}"
+        elif k == "attest":
+            assert c in ("attest", "reminder"), f"{key}: module KIND=attest but config={c}"
 
 
 if __name__ == "__main__":

@@ -8,12 +8,20 @@ Deterministic → an `agent` step the engine runs in-process.
 from __future__ import annotations
 
 from orchestrator.outcomes import Done, Blocked
-from orchestrator.phase_config import load_phase_config
 from steps.lib.agent import legacy_run
 from steps.lib.mockctx import mock_input
 
 ID = "wiki"
 KIND = "agent"
+
+# Step config (co-located). Creates the per-release payload page under the standing
+# history parent page (Phase 2 later writes the built versions into it).
+CONFIG = {
+    "org": "https://identitydivision.visualstudio.com",
+    "project": "IdentityWiki",
+    "wiki": "IdentityWiki.wiki",
+    "parent_path": "/IdentityWiki/Services/Microsoft Authenticator/Release/Android/Monthly Releases Payloads History",
+}
 
 # Properties this step exposes to mocks.local.yaml (see `mock-spec`).
 MOCKABLE = {
@@ -65,7 +73,7 @@ def _wiki_url(org: str, project: str, wiki: str, path: str) -> str:
 
 
 def build(state):
-    cfg = load_phase_config("preflight").get("wiki", {})
+    cfg = CONFIG
     org = cfg.get("org")
     project = cfg.get("project")
     wiki = cfg.get("wiki")

@@ -1,22 +1,32 @@
 """Step: `notice` — the early code-complete notice email (Phase 0, maps to S0).
 
-ONE home for the whole step (was spread across commands/notice.py, templates/,
-config/preflight.yaml, and skill/reference/phases/preflight.md). Sending email
-needs the WorkIQ MCP the engine can't reach, so this is a `scout` step: `build()`
-resolves everything deterministically and returns a NeedsSkill action describing
-the exact `workiq_send_email` call for the skill to execute — no per-step skill
+ONE self-contained home for the whole step: logic (`build`), mock knobs
+(`MOCKABLE`), and config (`CONFIG`). Sending email needs the WorkIQ MCP the engine
+can't reach, so this is a `scout` step: `build()` resolves everything
+deterministically and returns a NeedsSkill action describing the exact
+`workiq_send_email` call for the skill to execute — no per-step skill
 instructions required.
 """
 from __future__ import annotations
 
 from orchestrator.outcomes import NeedsSkill, Done, Blocked
-from orchestrator.phase_config import load_phase_config
 from steps.lib import templating as T
 from steps.lib.context import release_ctx, resolve_recipients
 from steps.lib.mockctx import mock_input
 
 ID = "notice"
 KIND = "scout"
+
+# Step config (co-located). Filled from the local template and sent to the real DL
+# (redirect for tests with the send_to mock knob).
+CONFIG = {
+    "template": "templates/early-code-complete-notice.md",
+    "variant": "initial",                    # initial (CCD-7) | update (CCD-day)
+    "recipients": [                          # the real DL (redirect for tests via send_to)
+        "androididentity@microsoft.com",     # "Azure Identity Android SDK"
+        "jialh@microsoft.com",
+    ],
+}
 
 # Properties this step exposes to mocks.local.yaml (see `mock-spec`).
 #   payload knobs → rewrite the send (applied by step-action).
@@ -76,7 +86,7 @@ def build(state, variant: str | None = None):
     if not state.ccd:
         return Blocked("no CCD set for this release")
 
-    cfg = load_phase_config("preflight", "notice")
+    cfg = CONFIG
     variant = variant or mock_input("variant") or cfg.get("variant", "initial")
     tpl_rel = cfg.get("template", "templates/early-code-complete-notice.md")
     parsed = T.load_template(tpl_rel, variant)
