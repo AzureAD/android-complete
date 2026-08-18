@@ -94,6 +94,15 @@ def _clear_phase0_scout(orch):
     orch.complete_step("preflight", "vitals", "test: vitals & policy reviewed")
 
 
+def _clear_ccd_scout(orch):
+    """Clear the Phase-1 scout comms/trigger holds (final_reminder + pr_reminder +
+    localization) so the flow can advance to the branch_cut gate. Separate from
+    Phase-0 clearing so a test can still target these steps individually."""
+    orch.record_scout_step("ccd", "final_reminder", "pass", "test: reminder emailed")
+    orch.record_scout_step("ccd", "pr_reminder", "pass", "test: PR reminder posted")
+    orch.record_scout_step("ccd", "localization", "pass", "test: localization triggered")
+
+
 def _clear_early_phase0_scout(orch):
     """Clear the first two Phase-0 scout/human holds (notice + flight_reminder) but LEAVE
     confirm_reminders holding — so the flow stays IN Phase 0 with progress + a hold."""
@@ -112,6 +121,7 @@ def _orch(signed=True):
         _pass_scout_checks(orch)
         orch.gate.sign()  # attest attest-items + verify python-auto
         _clear_phase0_scout(orch)   # skill-run notice + CCOA lockdown → pass
+        _clear_ccd_scout(orch)      # Phase-1 comms/trigger scout steps → pass (reach branch_cut)
     return st, orch
 
 
@@ -135,6 +145,7 @@ def test_signing_clears_entry_gate():
     orch.gate.sign()
     assert st.readiness_signed
     _clear_phase0_scout(orch)
+    _clear_ccd_scout(orch)
     orch.run_until_gate()
     # pre-flight is all reminders/auto now; the first real gate is the branch cut
     assert st.current_step == "branch_cut"
@@ -468,8 +479,10 @@ def test_holds_at_first_gate():
     actions = orch.run_until_gate()
     assert actions[-1].kind == "gate"
     assert actions[-1].step == "branch_cut"      # Phase 0 has no gate now; first gate is the branch cut
-    # auto steps that run: Phase-0 breaking/cg/cron/wiki (4) + Phase-1 final_reminder/localization/precheck_prs (3)
-    assert sum(1 for a in actions if a.kind == "ran") == 7
+    # auto steps that RUN: Phase-0 breaking/cg/cron/wiki (4) + Phase-1 precheck_prs (1).
+    # The Phase-1 scout comms/trigger steps (final_reminder/pr_reminder/localization)
+    # are pre-recorded by _orch's _clear_ccd_scout, so they don't count as "ran".
+    assert sum(1 for a in actions if a.kind == "ran") == 5
 
 
 def test_gate_blocks_until_approved():
@@ -524,6 +537,7 @@ def test_persistence_roundtrip():
         _pass_scout_checks(orch)
         orch.gate.sign()
         _clear_phase0_scout(orch)
+        _clear_ccd_scout(orch)
         orch.run_until_gate()
         st.save(path)
         # reload — simulates resuming next day
@@ -1420,6 +1434,79 @@ def test_no_localization_strings_step():
     assert "strings" not in [s["id"] for s in preflight["steps"]]
 
 
+# ---- Phase 1 (ccd) step modules ----
+
+def _ccd_state():
+    return ReleaseState(release_id="2026-09", ccd="2026-09-09", ccd_source="default",
+                        owner_email="pedroro@microsoft.com", owner_name="Pedro")
+
+
+def test_ccd_final_reminder_build_is_ccd_day_email():
+    """final_reminder resolves to a real workiq_send_email with the CCD-day 'update'
+    variant (subject says 'Today'), the real DL, and a rendered table."""
+    from steps.ccd import final_reminder
+    out = final_reminder.build(_ccd_state())
+    assert out.kind == "needs_skill" and out.tool == "workiq_send_email"
+    assert out.record_as == "final_reminder"
+    assert "androididentity@microsoft.com" in out.payload["to"]      # real DL
+    assert "(Today)" in out.payload["subject"]                        # update variant
+    assert not out.payload["subject"].startswith("[TEST")
+    html = out.payload["body"]
+    assert "<table" in html and "September" in html and "@pedroro" in html
+
+
+def test_ccd_pr_reminder_build_targets_code_reviews_with_deadlines():
+    """pr_reminder posts to the fixed 'Code reviews' chat and names the 11 PM branch
+    cut, Moumita's approval, and the noon localization cutoff."""
+    from steps.ccd import pr_reminder
+    out = pr_reminder.build(_ccd_state())
+    assert out.kind == "needs_skill" and out.tool == "workiq_send_chat_message"
+    assert out.payload["chatId"] == pr_reminder.CONFIG["live_chat_id"]
+    assert out.payload["contentType"] == "html"
+    body = out.payload["content"]
+    assert "11:00 PM" in body                       # branch cut deadline
+    assert "moghosh@microsoft.com" in body and "Moumita" in body  # approver
+    assert "noon" in body                           # localization cutoff
+
+
+def test_ccd_localization_build_triggers_pipeline_405133():
+    """localization resolves to a pipeline-run action for 405133 with
+    isCreatePrSelected=true, an az fallback, and the repo-PR link."""
+    from steps.ccd import localization
+    out = localization.build(_ccd_state())
+    assert out.kind == "needs_skill" and out.tool == "azure_devops-pipelines_run_pipeline"
+    assert out.payload["pipelineId"] == 405133
+    assert out.payload["variables"] == {"isCreatePrSelected": {"value": "true"}}
+    trig = out.payload["_trigger"]
+    assert "az pipelines run --id 405133" in trig["az_fallback"]
+    urls = [l["url"] for l in out.payload["links"]]
+    assert any("pullrequests" in u for u in urls)   # where the OneLoc PR lands
+
+
+def test_ccd_steps_blocked_without_ccd():
+    """Every ccd comms/trigger step blocks cleanly if the release has no CCD."""
+    from steps.ccd import final_reminder, pr_reminder, localization
+    st = ReleaseState(release_id="x")               # no ccd
+    for mod in (final_reminder, pr_reminder, localization):
+        out = mod.build(st)
+        assert out.kind == "blocked"
+
+
+def test_ccd_phase_shape_and_scout_kinds():
+    """Phase 1 has the expected ordered steps; the three comms/trigger steps are
+    scout (source: scout) and branch_cut stays the human gate."""
+    import yaml
+    cfg = yaml.safe_load(open(CONFIG, encoding="utf-8"))
+    ccd = next(p for p in cfg["phases"] if p["id"] == "ccd")
+    ids = [s["id"] for s in ccd["steps"]]
+    assert ids == ["final_reminder", "pr_reminder", "localization",
+                   "precheck_prs", "branch_cut", "verify_trigger"]
+    by = {s["id"]: s for s in ccd["steps"]}
+    for sid in ("final_reminder", "pr_reminder", "localization"):
+        assert by[sid].get("source") == "scout", f"{sid} should be a scout step"
+    assert by["branch_cut"].get("gate") is True
+
+
 def test_confirm_reminders_is_attestation_hold():
     """In the parallel Phase 0, confirm_reminders is a human attestation that becomes
     ready only after flight_reminder is sent; it surfaces as a hold with a confirm
@@ -1656,6 +1743,7 @@ def test_local_mock_never_mocks_a_gate():
     someone lists it in the mock file."""
     st, orch = _mock_orch({"ccd.branch_cut": {"outcome": "done"}})
     _clear_phase0_scout(orch)          # clear Phase-0 holds so we reach the Phase-1 gate
+    _clear_ccd_scout(orch)             # clear Phase-1 scout comms so we reach branch_cut
     orch.run_until_gate()
     assert not st.is_done("ccd", "branch_cut")
     assert st.status == "holding_gate"

@@ -13,6 +13,7 @@ Legend for **Access**: `anon` = no auth · `az` = Azure CLI signed-in user ·
 | Ref | What | Used by | Access | Notes |
 |---|---|---|---|---|
 | ADO pipeline **3038** | "Code Complete Calendar Checker" — CCD source of record | CCD seed, `set-ccd`, `skip-release`, Phase-0 `cron` (verify scheduled) | az | org identitydivision / project Engineering. Real writes gated by --confirm. `cron` step verifies a recent `schedule`-reason run. |
+| ADO pipeline **405133** | Localization build (org msazure / project One) | Phase-1 `localization` | MCP (ADO) / az | triggered at noon on CCD with `isCreatePrSelected=true`; its OneLocBuild@3 task auto-opens a translations PR in the Auth App repo IFF there are new strings |
 | ADO build def **2828** | Auth Client Android build (org identitydivision / project Engineering) | readiness `build_access` | az | access check only |
 | ADO build def **397224** | Android Build Release (org msazure / project One) | readiness `build_access` | az | access check only |
 | ADO wiki **IdentityWiki.wiki** page **59148** | "Monthly Releases Payloads History" (parent) | Phase-0 `wiki` agent | az (`az devops wiki`) | child page `<Month> <Year> Release`; dup-safe numbering |
@@ -29,6 +30,8 @@ Legend for **Access**: `anon` = no auth · `az` = Azure CLI signed-in user ·
 | Flight pre-mortem example doc | https://microsoft-my.sharepoint-df.com/:w:/p/rapong/cQpEZp0cXp1sQYo4A4M3PQWCEgUCDj364FJa-rq-msg59WlBsw | Phase-0 `flight_reminder` (link only) | AAD-SSO | example shared with feature owners |
 | Localization instructions | https://eng.ms/docs/.../combined-release-checklist/localization | Phase-0 `flight_reminder` (link only) | AAD-SSO | confirmed valid 2026-07-29 |
 | **Teams chat: "Android Core Team"** | thread `19:976a859f167f44e59c4ceca8b1d23581@thread.v2` | Phase-0 `flight_reminder` target | MCP (WorkIQ) | real target; redirect for tests via the `send_to` mock knob |
+| **Teams chat: "Code reviews"** | thread `19:meeting_Y2Y3OGRjZGMtZGVkYi00MTkzLThhZjktNDAxYWVkMjZlMmE3@thread.v2` | Phase-1 `pr_reminder` target | MCP (WorkIQ) | CCD PR-merge reminder; redirect for tests via the `send_to` mock knob |
+| **CCD-delay / cherry-pick approver: Moumita Ghosh** | moghosh@microsoft.com | Phase-1 `pr_reminder` (named in message) | — | both a CCD delay and a post-CCD cherry-pick require her approval |
 | **EcsFlight.kt** (Auth App ECS flights) | https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android?path=/.../ecs/entities/EcsFlight.kt&version=GBworking | Phase-0 `flight_reminder` bullet 4 (link only) | az/web | reviewers check its history since last code complete |
 | Early code-complete notice template | https://eng.ms/docs/.../combined-release-checklist/early-code-complete-notice-email-template | Phase-0 `notice` | AAD-SSO | copied locally to `templates/early-code-complete-notice.md` — **re-sync if upstream edits** |
 | Hotfix cherry-pick guide | https://eng.ms/docs/.../release/cherry-pick-to-hotfix-guidelines | link inside notice email body | AAD-SSO | referenced, not fetched |
@@ -43,6 +46,7 @@ Legend for **Access**: `anon` = no auth · `az` = Azure CLI signed-in user ·
 | Step | To | Notes |
 |---|---|---|
 | Phase-0 `notice` (early code-complete) | androididentity@microsoft.com ("Azure Identity Android SDK"), jialh@microsoft.com | provided by release owner 2026-07-29 |
+| Phase-1 `final_reminder` (CCD-day code-complete) | androididentity@microsoft.com ("Azure Identity Android SDK"), jialh@microsoft.com | same DL as `notice`; CCD-day "update" variant |
 
 ## Tooling / infra (provisioned by bootstrap)
 

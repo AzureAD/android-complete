@@ -39,8 +39,9 @@ phases:
     name: "Code Complete Day"
     checklist_phase: 1
     steps:
-      - { id: final_reminder,  name: "CCD final code-complete reminder",        owner: agent, maps_to: [P1-1] }
-      - { id: localization,    name: "Trigger localization pipeline (PR)",      owner: agent, maps_to: [P1-2] }
+      - { id: final_reminder,  name: "CCD final code-complete reminder (email)",  owner: agent, source: scout, maps_to: [P1-1] }
+      - { id: pr_reminder,     name: "Remind Code Reviews chat of the CCD PR-merge deadline", owner: agent, source: scout, maps_to: [P1-1b] }
+      - { id: localization,    name: "Trigger localization pipeline (PR)",      owner: agent, source: scout, maps_to: [P1-2] }
       - { id: precheck_prs,    name: "Pre-check open required PRs",             owner: agent, maps_to: [P1-3a] }
       - { id: branch_cut,      name: "Cut the release branch",                  owner: human, gate: true, maps_to: [P1-3b] }
       - { id: verify_trigger,  name: "Verify orchestrator fired overnight",     owner: agent, maps_to: [P1-4] }
