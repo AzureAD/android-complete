@@ -2,6 +2,8 @@
 
 _Loaded on demand by the core skill. The entry gate runs right after `init`, before Phase 0._
 
+> **User asks ABOUT a gate item** ("what does build_access check?", "why do I need YubiKey?", "how do I get Play Console access?", "who fixes this?", "what if I'm the primary on-call?"): run `gate-info --item <id>` and answer from it — do NOT guess. It returns the item's what/who/where/how/links/FAQs (curated in `config/knowledge.yaml` under `readiness.<id>`). If it says "no knowledge entry yet", say so rather than inventing. Item ids: build_access, mcp_servers, silent_perms, teams_notify, adx_access, oncall_now, play_console_access, oncall_window, saw_ame, yubikey.
+
 Immediately after `init`, the very first thing is the **readiness checklist** — the entry gate. The engine's `next` refuses to run any step (reports `readiness_gate`) until it's cleared. **Every item is equally required** — there is no priority or "hard vs soft" distinction. The only difference between items is **who resolves them**:
 
 - **`auto`** — **Scout resolves it** (verifies programmatically, pass/fail). Two execution sources, both shown as `[auto]`:

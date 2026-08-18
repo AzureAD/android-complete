@@ -2322,6 +2322,45 @@ def test_step_knowledge_base_answers_step_questions():
     assert kb.get_knowledge("monitor", "adoption") is None
 
 
+def test_gate_knowledge_covers_every_readiness_item():
+    """GUARDRAIL: every entry-gate readiness item has a knowledge entry (readiness.<id>)
+    so `gate-info` can answer gate questions accurately instead of guessing."""
+    import yaml
+    from orchestrator import knowledge as kb
+    items = [x["id"] for x in yaml.safe_load(open(
+        os.path.join(os.path.dirname(CONFIG), "readiness.yaml"), encoding="utf-8"))["items"]]
+    assert items, "no readiness items loaded"
+    for iid in items:
+        k = kb.get_knowledge("readiness", iid)
+        assert k and k.get("summary") and k.get("what"), f"missing gate knowledge for {iid}"
+    # spot-check specifics we curated
+    ba = kb.get_knowledge("readiness", "build_access")
+    assert any("Broker" in w for w in ba["where"]) and any("Authenticator" in w for w in ba["where"])
+    pc = kb.get_knowledge("readiness", "play_console_access")
+    assert any("google-play-console" in l["url"] for l in pc.get("links", []))
+
+
+def test_gate_info_command_renders_and_handles_unknown():
+    """`gate-info --item <id>` prints the rendered knowledge; unknown item is honest."""
+    import io, contextlib
+    from orchestrator.commands import step_action as sa
+
+    class A:
+        item = "oncall_now"; json = False
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        sa.cmd_gate_info(A)
+    out = buf.getvalue()
+    assert "readiness.oncall_now" in out and "primary" in out.lower()
+
+    class B:
+        item = "does_not_exist"; json = False
+    buf2 = io.StringIO()
+    with contextlib.redirect_stdout(buf2):
+        sa.cmd_gate_info(B)
+    assert "No knowledge entry yet" in buf2.getvalue()
+
+
 def test_step_knowledge_module_overlays_yaml():
     """A step module's KNOWLEDGE overlays the yaml per-field (module wins)."""
     from orchestrator import knowledge as kb

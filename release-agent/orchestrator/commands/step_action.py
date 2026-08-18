@@ -253,6 +253,23 @@ def cmd_step_info(args):
     return 0
 
 
+def cmd_gate_info(args):
+    """Answer a user's question about an ENTRY-GATE readiness item from the knowledge
+    base — what it verifies, who resolves it, where to look, how to satisfy/clear it,
+    links, FAQs. Gate items live under the `readiness.<id>` key. Consult this before
+    answering gate questions so the info is accurate (not guessed)."""
+    k = kb.get_knowledge("readiness", args.item)
+    if getattr(args, "json", False):
+        print(_json.dumps({"item": args.item, "knowledge": k}))
+        return 0
+    if not k:
+        print(f"No knowledge entry yet for readiness.{args.item}. "
+              f"Add one to config/knowledge.yaml under 'readiness.{args.item}'.")
+        return 0
+    print(kb.render_knowledge("readiness", args.item, k))
+    return 0
+
+
 def register(sub):
     sp = sub.add_parser(
         "step-action",
@@ -279,4 +296,11 @@ def register(sub):
     si.add_argument("--step", required=True)
     si.add_argument("--json", action="store_true", help="Emit the knowledge as JSON")
     si.set_defaults(func=cmd_step_info)
+
+    gi = sub.add_parser(
+        "gate-info",
+        help="Show an entry-gate readiness item's knowledge (what it verifies, who resolves it, how to clear it, links, FAQs)")
+    gi.add_argument("--item", required=True, help="Readiness item id, e.g. build_access, oncall_now, yubikey")
+    gi.add_argument("--json", action="store_true", help="Emit the knowledge as JSON")
+    gi.set_defaults(func=cmd_gate_info)
 
