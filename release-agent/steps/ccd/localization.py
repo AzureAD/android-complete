@@ -16,8 +16,9 @@ per-release poller automation + this deterministic decider):
                     do the manual steps (localization doc), and hold the step.
                   * completed → read the OneLocBuild@3 task log for
                     `Pull request created with ID '<n>'`:
-                      - PR id found → POST that PR to the Code reviews chat for review
-                        and mark the step done (with the PR link).
+                      - PR id found → POST that PR to the Code reviews chat, @mention
+                        the release engineer to merge it before EOD, and mark the
+                        step done (with the PR link).
                       - no PR      → no new strings this release; mark done.
 
 All the decision logic here is PURE (no IO) so it's fully testable; the IO (run the
@@ -160,12 +161,29 @@ def _timeout_email(state, cfg: dict) -> dict:
 
 
 def _review_post(state, cfg: dict, pr_id: str, url: str) -> dict:
-    content = (
+    """The Code reviews chat post for a completed loc PR — @mentions the release
+    engineer (owner) so they ensure it's merged before EOD. Returns the
+    workiq_send_chat_message payload (html + a mentions array)."""
+    owner_email = state.owner_email or ""
+    display = state.owner_name or (owner_email.split("@")[0] if owner_email else "") or "release engineer"
+
+    payload = {"chatId": cfg["code_reviews_chat_id"], "contentType": "html"}
+    if owner_email:
+        # <at> tag + matching mentions entry (id/UPN accepted as the user id).
+        who = f'<at id="0">{display}</at>'
+        payload["mentions"] = [{
+            "id": 0, "mentionText": display,
+            "mentioned": {"user": {"id": owner_email, "displayName": display,
+                                   "userIdentityType": "aadUser"}},
+        }]
+    else:
+        who = display
+    payload["content"] = (
         f"<p><b>Localization PR ready for review — {state.release_id}</b></p>"
-        f"<p>The localization pipeline created translations PR "
-        f"<a href=\"{url}\">#{pr_id}</a>. Please review &amp; merge it into the release "
-        f"branch.</p>")
-    return {"chatId": cfg["code_reviews_chat_id"], "content": content, "contentType": "html"}
+        f"<p>{who} — the localization pipeline created translations PR "
+        f"<a href=\"{url}\">#{pr_id}</a>. Please review and ensure it is "
+        f"<b>merged before EOD</b>.</p>")
+    return payload
 
 
 def decide(state, is_complete: bool, logs: str = None, now=None, cfg: dict = None) -> dict:
@@ -286,7 +304,8 @@ KNOWLEDGE = {
         "or run the manual localization steps. When it completes, Scout reads the "
         "OneLocBuild@3 task log: if it created a translations PR ('Pull request "
         "created with ID <n>'), there ARE new strings — Scout posts that PR to the "
-        "Code reviews chat for review; if no PR, there were no new strings."),
+        "Code reviews chat and @mentions the release engineer to ensure it's merged "
+        "before EOD; if no PR, there were no new strings."),
     "who": (
         "Scout runs the whole flow automatically (trigger + poll + notify/post). The "
         "release engineer only steps in if the 3-hour timeout email arrives, or to "

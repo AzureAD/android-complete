@@ -1660,9 +1660,26 @@ def test_localization_decide_branches():
     assert dpr["decision"] == "complete_pr" and dpr["pr_id"] == "16790317"
     assert dpr["chat"]["chatId"] == L.CONFIG["code_reviews_chat_id"]
     assert any("16790317" in l["url"] for l in dpr["links"])
+    # the Code reviews post @mentions the release engineer + asks for an EOD merge
+    assert '<at id="0">' in dpr["chat"]["content"] and "merged before EOD" in dpr["chat"]["content"]
+    m = dpr["chat"]["mentions"][0]
+    assert m["mentioned"]["user"]["id"] == "pedroro@microsoft.com"
 
     dn = L.decide(st3, True, "no strings changed", now)
     assert dn["decision"] == "complete_none"
+
+
+def test_localization_review_post_no_owner_has_no_mention():
+    """With no owner email, the post still goes out but without an @mention array."""
+    from steps.ccd import localization as L
+    st = _loc_state(started_min_ago=60)
+    st.owner_email = ""
+    st.owner_name = ""
+    from datetime import datetime, timezone
+    d = L.decide(st, True, _PR_LOG, datetime.now(timezone.utc))
+    assert d["decision"] == "complete_pr"
+    assert "mentions" not in d["chat"]
+    assert "merged before EOD" in d["chat"]["content"]
 
 
 def test_localization_command_lifecycle_wait_then_complete():
