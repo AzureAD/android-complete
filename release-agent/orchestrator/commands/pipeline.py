@@ -1,10 +1,72 @@
 """Pipeline-write commands (real production changes to ADO pipeline 3038):
-set-ccd and skip-release. Both are gated (preview → --confirm) and audited."""
+set-ccd and skip-release. Both are gated (preview → --confirm) and audited.
+Also `check-ccd` (read-only) — reconcile the release CCD with the pipeline override
+for the entry gate."""
 from __future__ import annotations
+import json as _json
 
 from orchestrator import schedule
 from orchestrator import cli_common as C
 from tools import checks
+
+
+def cmd_check_ccd(args):
+    """Read-only CCD reconciliation for the entry gate. Re-reads pipeline 3038's
+    override variable and classifies the release CCD vs the pipeline:
+
+        match      — CCD set and agrees with the pipeline (no override, or override == CCD)
+        conflict   — pipeline override is an in-month date that DIFFERS from the CCD
+        unreadable — couldn't read the pipeline (transient / auth) — can't validate
+        unset      — no CCD on the release (release id isn't YYYY-MM)
+
+    Prints JSON {release, ccd, ccd_source, override, ccd_conflict, status}. The skill
+    records the `ccd_confirmed` gate item from this: match→pass; conflict→reconcile via
+    set-ccd then re-check; unreadable→attest the CCD manually."""
+    st = C.load_state(args.runs_root, args.release)
+    out = {"release": st.release_id, "ccd": st.ccd, "ccd_source": st.ccd_source,
+           "override": None, "ccd_conflict": None, "status": "unset"}
+    if not st.ccd:
+        if getattr(args, "json", False):
+            print(_json.dumps(out))
+        else:
+            print("No CCD set for this release (release id isn't YYYY-MM). Use set-ccd.")
+        return 0
+
+    src = C.ccd_source()
+    if not src.get("pipeline_id"):
+        # No pipeline configured to reconcile against — treat as match (nothing to compare).
+        out["status"] = "match"
+    else:
+        ok, val, detail = checks.read_pipeline_variable(
+            src["org"], src["project"], src["pipeline_id"], src["override_variable"])
+        if not ok:
+            out["status"] = "unreadable"
+            out["detail"] = detail
+        else:
+            out["override"] = val or None
+            conflict = schedule.pipeline_conflict(st.release_id, val, st.ccd)
+            if conflict:
+                out["status"] = "conflict"
+                out["ccd_conflict"] = conflict.isoformat()
+                st.ccd_conflict = conflict.isoformat()
+            else:
+                out["status"] = "match"
+                st.ccd_conflict = None
+            C.save_state(st, args.runs_root, args.release)
+
+    if getattr(args, "json", False):
+        print(_json.dumps(out))
+        return 0
+    msg = {
+        "match": f"CCD {st.ccd} is reconciled with the pipeline (source: {st.ccd_source}).",
+        "conflict": f"⚠ Pipeline override {out['ccd_conflict']} DIFFERS from CCD {st.ccd} — "
+                    f"reconcile with set-ccd before proceeding.",
+        "unreadable": f"Couldn't read the pipeline override to validate CCD {st.ccd} "
+                      f"({out.get('detail','')}). Confirm the CCD manually.",
+        "unset": "No CCD set.",
+    }[out["status"]]
+    print(msg)
+    return 0
 
 
 def cmd_set_ccd(args):
@@ -89,6 +151,11 @@ def cmd_skip_release(args):
 
 
 def register(sub):
+    cc = sub.add_parser("check-ccd", help="Reconcile the release CCD with the pipeline override (read-only; for the entry gate)")
+    cc.add_argument("--release", required=True)
+    cc.add_argument("--json", action="store_true", help="Emit {release,ccd,override,ccd_conflict,status}")
+    cc.set_defaults(func=cmd_check_ccd)
+
     sc = sub.add_parser("set-ccd", help="Change the Code Complete Date (writes pipeline override; --confirm)")
     sc.add_argument("--release", required=True)
     sc.add_argument("--date", default="", help="New CCD (YYYY-MM-DD), must be in the release month")

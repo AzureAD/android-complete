@@ -55,6 +55,14 @@ items:
   # Everything the tool needs to run UNATTENDED (machine on, Scout not focused):
   # the MCP servers registered, and the permissions set so scheduled work (the
   # daily digest, Teams reminders, browser checks) runs without a prompt.
+  - id: ccd_confirmed
+    label: "CCD reconciled with pipeline"
+    text: "The Code Complete Date is set and reconciled with the pipeline (no unresolved override)"
+    detail: "Scout re-reads pipeline 3038's CCD override and confirms it agrees with this release's CCD — because EVERY phase is CCD-relative, a wrong CCD misaligns the whole release. A pipeline override that differs BLOCKS until you reconcile it (set-ccd)."
+    verify: auto
+    source: scout          # the SKILL runs check-ccd (reads the pipeline via az) + may reconcile interactively
+    verifier: ccd_confirmed
+
   - id: mcp_servers
     label: "MCP servers registered"
     text: "The MCP servers the release needs (ICM on-call, Kusto/ADX telemetry, Teams comms) are registered in Scout"

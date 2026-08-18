@@ -243,6 +243,36 @@ readiness.build_access:
     - q: "It failed with a 401 — what now?"
       a: "Usually you're not signed into az, or you lack access to one of the two orgs (they're separate). Sign in / request access to the failing org, then re-run the gate."
 
+readiness.ccd_confirmed:
+  summary: "The Code Complete Date is set and reconciled with the pipeline override."
+  what: >
+    Every phase of the release is CCD-relative (Phase 0 opens at CCD-7, Code
+    Complete Day IS the CCD, later phases follow), so a wrong CCD misaligns the
+    whole run. This item re-reads the CCD override variable on pipeline 3038
+    (Engineering) and confirms it agrees with the CCD this release is anchored to.
+    A pipeline override that DIFFERS blocks the gate until you reconcile it.
+  who: >
+    Scout runs the check (`check-ccd`, reads the pipeline via az). If the pipeline
+    override differs from the release CCD, Scout shows you both and YOU decide which
+    is correct; Scout then writes the resolution with `set-ccd`. If the pipeline
+    can't be read, you confirm the CCD manually (attest fallback).
+  where:
+    - "CCD override variable — Broker pipeline (Engineering #3038): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=3038"
+  how: >
+    Scout runs `check-ccd --json` and acts on the status: `match` → records the item
+    pass; `conflict` → presents the pipeline override vs the release CCD and asks you
+    which to keep, then runs `set-ccd` (`--date <override>` to adopt the pipeline, or
+    `--default` to keep the 2nd-Wednesday default) with `--confirm --reason`, re-checks,
+    and records pass; `unreadable` → asks you to confirm the CCD by hand and records a
+    pass with an attest note; `unset` → the release id isn't YYYY-MM, so no CCD exists.
+  faqs:
+    - q: "Why does a CCD mismatch block the release?"
+      a: "The phase schedule is computed from the CCD. If the pipeline is building to a different date than the orchestrator thinks, every reminder, gate, and deadline is off. Reconciling once up front keeps them in lockstep."
+    - q: "The pipeline has no override — is that a problem?"
+      a: "No. No override means the pipeline uses the same 2nd-Wednesday default the orchestrator does, so they already agree — that's a `match`."
+    - q: "Scout couldn't read the pipeline — can I still proceed?"
+      a: "Yes. On an unreadable pipeline the item falls back to attestation: you confirm the CCD manually and Scout records it with a note. It never silently passes."
+
 readiness.mcp_servers:
   summary: "The MCP servers the release needs are registered in Scout."
   what: >

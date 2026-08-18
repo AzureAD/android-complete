@@ -72,6 +72,7 @@ def _pass_scout_checks(orch):
     orch.gate.record_check("adx_access", "pass", "stubbed: can query cluster")
     orch.gate.record_check("silent_perms", "pass", "stubbed: all servers auto-approved")
     orch.gate.record_check("teams_notify", "pass", "stubbed: Scout Teams bot reachable")
+    orch.gate.record_check("ccd_confirmed", "pass", "stubbed: CCD reconciled with pipeline")
 
 
 def _clear_notice(orch):
@@ -266,6 +267,7 @@ def test_attest_prompt_is_separate_render_never_in_table():
     orch.gate.record_check("oncall_now", "pass", "not on roster")
     orch.gate.record_check("adx_access", "pass", "print 1 ok")
     orch.gate.record_check("teams_notify", "pass", "teams reachable")
+    orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
     # table STILL has no confirmation block (shows once)
     assert "Your confirmation needed" not in render.readiness_table(orch.gate.checklist(), "t")
     # attest_prompt now lists each outstanding attest item
@@ -295,6 +297,7 @@ def test_attest_prompt_payload_is_deterministic_card():
     orch.gate.record_check("oncall_now", "pass", "not on roster")
     orch.gate.record_check("adx_access", "pass", "print 1 ok")
     orch.gate.record_check("teams_notify", "pass", "teams reachable")
+    orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
     p = render.attest_prompt_payload(orch.gate.checklist(), "2026-07")
     assert p["ready"] is True
     assert p["recommendedIndex"] == 0
@@ -376,6 +379,7 @@ def test_record_check_pass_then_sign_clears_gate():
     orch.gate.record_check("adx_access", "pass", "can query")
     orch.gate.record_check("silent_perms", "pass", "servers auto-approved")
     orch.gate.record_check("teams_notify", "pass", "teams reachable")
+    orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
     orch.gate.sign()                       # everything but oncall_now satisfied
     assert not st.readiness_signed
     orch.gate.record_check("oncall_now", "pass", "not in roster")
@@ -422,6 +426,7 @@ def test_silent_perms_is_required_scout_item():
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")
     orch.gate.record_check("teams_notify", "pass", "teams reachable")
+    orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
     orch.gate.sign()
     assert not st.readiness_signed
     orch.gate.record_check("silent_perms", "pass", "all servers auto-approved")
@@ -448,6 +453,7 @@ def test_silent_perms_opt_out_degraded_satisfies_gate():
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")
     orch.gate.record_check("teams_notify", "pass", "teams reachable")
+    orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
     # user opts out of silent runs -> degraded, but the gate still clears on sign
     res = orch.gate.record_check("silent_perms", "degraded", "proceeding without silent runs")
     assert "error" not in res
@@ -482,6 +488,7 @@ def test_teams_notify_is_scout_optout_item():
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")
     orch.gate.record_check("silent_perms", "pass", "auto-approved")
+    orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
     orch.gate.sign()
     assert not st.readiness_signed
     # degraded (Teams unreachable → email only) satisfies the opt-out item
@@ -490,6 +497,64 @@ def test_teams_notify_is_scout_optout_item():
     tn2 = next(i for i in orch.gate.checklist()["items"] if i["id"] == "teams_notify")
     assert tn2["status"] == "degraded" and tn2["satisfied"]
     assert st.readiness_signed
+
+
+def test_ccd_confirmed_is_required_scout_item():
+    """ccd_confirmed (source: scout) is a REQUIRED, non-opt_out auto item: Python
+    verify() must not touch it, and the gate stays shut until the skill records it."""
+    _stub_build_defs("pass")
+    st = ReleaseState(release_id="t")
+    orch = Orchestrator(CONFIG, st)
+    orch.gate.verify()
+    assert st.readiness_items.get("ccd_confirmed", {}).get("status", "pending") == "pending"
+    cc = next(i for i in orch.gate.checklist()["items"] if i["id"] == "ccd_confirmed")
+    assert cc["verify"] == "auto" and cc["source"] == "scout" and not cc.get("opt_out")
+    # everything else satisfied but ccd_confirmed → gate still closed
+    orch.gate.record_check("oncall_now", "pass", "not on-call")
+    orch.gate.record_check("adx_access", "pass", "can query")
+    orch.gate.record_check("silent_perms", "pass", "auto-approved")
+    orch.gate.record_check("teams_notify", "pass", "teams reachable")
+    orch.gate.sign()
+    assert not st.readiness_signed
+    orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled with pipeline")
+    assert st.readiness_signed
+    # 'degraded' is rejected — it's not an opt-out item (a wrong CCD must block)
+    assert "error" in orch.gate.record_check("ccd_confirmed", "degraded", "nope")
+
+
+def test_check_ccd_classifies_pipeline_reconciliation():
+    """check-ccd re-reads the pipeline override and classifies match/conflict/
+    unreadable/unset so the skill can decide how to satisfy the gate item."""
+    import tempfile as _tf, json as _json, io, contextlib, argparse
+    from orchestrator.commands import pipeline as pcmd
+    from orchestrator import cli_common as _C
+    src = {"org": "o", "project": "p", "pipeline_id": "3038",
+           "override_variable": "CodeCompleteDate"}
+    orig_src, orig_read = _C.ccd_source, pcmd.checks.read_pipeline_variable
+
+    def _run(rid, ccd, read_ret):
+        with _tf.TemporaryDirectory() as d:
+            st = ReleaseState(release_id=rid, ccd=ccd, ccd_source="pipeline-default")
+            _C.save_state(st, d, rid)
+            _C.ccd_source = lambda: dict(src)
+            pcmd.checks.read_pipeline_variable = lambda *a, **k: read_ret
+            ns = argparse.Namespace(runs_root=d, release=rid, json=True)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                pcmd.cmd_check_ccd(ns)
+            return _json.loads(buf.getvalue())
+    try:
+        # no override on the pipeline → match
+        assert _run("2026-09", "2026-09-09", (True, "", ""))["status"] == "match"
+        # override differs, in-month → conflict (+ ccd_conflict surfaced)
+        conf = _run("2026-09", "2026-09-09", (True, "2026-09-16", ""))
+        assert conf["status"] == "conflict" and conf["ccd_conflict"] == "2026-09-16"
+        # pipeline unreadable → attest-fallback territory
+        assert _run("2026-09", "2026-09-09", (False, None, "auth"))["status"] == "unreadable"
+        # no CCD at all → unset
+        assert _run("t", None, (True, "", ""))["status"] == "unset"
+    finally:
+        _C.ccd_source, pcmd.checks.read_pipeline_variable = orig_src, orig_read
 
 
 
