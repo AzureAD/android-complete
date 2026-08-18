@@ -135,7 +135,10 @@ def ensure_mcp_servers(req: dict, register: bool) -> list:
             "builtin": False,
             "config": {"name": name.split(" MCP")[0].strip() or key,
                        "type": "command", "command": cmd, "args": args},
-            "tools": [],
+            # Command-based servers: Scout reads this allowlist STATICALLY and drops
+            # the server if it's empty for a server that needs it. Honor a declared
+            # `tools` list (e.g. the Teams MCP's 36 tools); default [] otherwise.
+            "tools": list(m.get("tools", []) or []),
         }
         dirty = True
         results.append({**rec, "status": "registered",

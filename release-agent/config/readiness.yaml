@@ -57,8 +57,8 @@ items:
   # daily digest, Teams reminders, browser checks) runs without a prompt.
   - id: mcp_servers
     label: "MCP servers registered"
-    text: "The MCP servers the release needs (ICM on-call, Kusto/ADX telemetry) are registered in Scout"
-    detail: "Scout checks the ICM + Kusto/ADX MCP servers are registered in your Scout config (needed for the on-call and telemetry checks)."
+    text: "The MCP servers the release needs (ICM on-call, Kusto/ADX telemetry, Teams comms) are registered in Scout"
+    detail: "Scout checks the ICM + Kusto/ADX + Teams MCP servers are registered in your Scout config (needed for the on-call and telemetry checks, and to fill Teams comms gaps WorkIQ lacks)."
     verify: auto
     verifier: mcp_servers
 

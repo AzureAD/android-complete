@@ -1001,6 +1001,47 @@ def test_infra_registers_missing_mcp():
             infra.scout_mcp_config_path = orig
 
 
+def test_infra_registers_declared_tools_allowlist():
+    """A server declaring a `tools` list is registered WITH it (Scout drops
+    command-based servers whose allowlist is empty); no `tools` → []."""
+    from orchestrator import infra
+    import json, sys as _sys
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = os.path.join(tmp, "m-mcp-servers.json")
+        with open(cfg, "w", encoding="utf-8") as fh:
+            json.dump({"servers": {}}, fh)
+        orig = infra.scout_mcp_config_path
+        infra.scout_mcp_config_path = lambda: cfg
+        try:
+            req = {"mcp_servers": [
+                {"id": "teams", "name": "Teams MCP", "scout_key": "teams",
+                 "provider": f'"{_sys.executable}" --version',
+                 "command": _sys.executable, "args": ["-m", "teams"],
+                 "tools": ["CreateChat", "AddChatMember", "SendMessageToChat"]},
+                {"id": "bare", "name": "Bare MCP", "scout_key": "bare",
+                 "provider": f'"{_sys.executable}" --version',
+                 "command": _sys.executable, "args": ["-m", "bare"]},
+            ]}
+            infra.ensure_mcp_servers(req, register=True)
+            d = json.load(open(cfg, encoding="utf-8"))
+            assert d["servers"]["teams"]["tools"] == ["CreateChat", "AddChatMember", "SendMessageToChat"]
+            assert d["servers"]["bare"]["tools"] == []      # no declaration → empty
+        finally:
+            infra.scout_mcp_config_path = orig
+
+
+def test_requirements_declares_teams_mcp_with_tools():
+    """The repo requirements.yaml ships the Teams MCP with a populated tools
+    allowlist, so the entry-gate mcp_servers check includes it and infra registers
+    it correctly (empty allowlist would make Scout drop it)."""
+    from orchestrator import infra
+    root = os.path.dirname(os.path.abspath(__file__))
+    req = infra.load_requirements(os.path.join(os.path.dirname(root), "config", "requirements.yaml"))
+    teams = next((m for m in req.get("mcp_servers", []) if m.get("scout_key") == "teams"), None)
+    assert teams is not None, "Teams MCP missing from requirements.yaml"
+    assert "CreateChat" in teams.get("tools", []) and len(teams["tools"]) >= 30
+
+
 def test_infra_provider_missing_not_registered():
     """If the launcher/provider is absent, infra must NOT register a broken server."""
     from orchestrator import infra

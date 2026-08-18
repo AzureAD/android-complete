@@ -44,8 +44,8 @@ def verify_build_defs(item: dict) -> VerifyResult:
 
 
 def verify_mcp_servers(item: dict) -> VerifyResult:
-    """Confirm every MCP server the skill needs (ICM, Kusto/ADX) is registered in
-    Scout's config. Reuses the infra preflight in READ-ONLY mode (register=False)
+    """Confirm every MCP server the skill needs (ICM, Kusto/ADX, Teams) is registered
+    in Scout's config. Reuses the infra preflight in READ-ONLY mode (register=False)
     against config/requirements.yaml — the single source of truth for MCP deps.
     Fully verified: pass only if all are `present`, else fail listing the missing
     ones (fix = run bootstrap / `infra --register`, then RESTART Scout)."""

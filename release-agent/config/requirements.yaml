@@ -104,6 +104,55 @@ mcp_servers:
     required_by: [monitoring/ADX dashboards, Play vitals, crash metrics, readiness.adx_access]
     note: "Provided by the Agency CLI (uvx microsoft-fabric-rti-mcp). After registering, RESTART Scout. Add clusters under kusto_clusters."
 
+  - id: teams
+    name: "Microsoft Teams MCP server (Agency — group chats + rich messaging)"
+    scout_key: teams
+    provider: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
+    command: "%APPDATA%\\agency\\CurrentVersion\\agency.exe"
+    args: ["mcp", "teams"]
+    required_by: [Teams notification gaps, group-chat creation, rich Teams messaging]
+    # CRITICAL: command-based servers read this allowlist STATICALLY — an empty list
+    # makes Scout silently DROP the server. These are the 36 Agency Teams tools
+    # (namespaced microsoft_teams-* once loaded). Keep this populated.
+    tools:
+      - ListTeams
+      - ListChats
+      - ListChannels
+      - GetTeam
+      - ListTeamMembers
+      - GetChat
+      - CreateChat
+      - DeleteChat
+      - UpdateChat
+      - GetChannel
+      - CreateChannel
+      - UpdateChannel
+      - ListChatMembers
+      - ListChannelMembers
+      - AddChatMember
+      - AddChannelMember
+      - UpdateChannelMember
+      - SendFileToChat
+      - SendFileToUser
+      - SendFileToChannel
+      - ListChannelFiles
+      - SendMessageToUser
+      - ListChatMessages
+      - ListChannelMessages
+      - SendMessageToChat
+      - SendMessageToSelf
+      - SendMessageToChannel
+      - GetChatMessage
+      - UpdateChatMessage
+      - DeleteChatMessage
+      - ReplyToChannelMessage
+      - ListChannelMessageReplies
+      - GetRichMessageFormats
+      - GetUserPresence
+      - SearchTeamsMessages
+      - SearchTeamMessagesQueryParameters
+    note: "Provided by the Agency CLI (agency mcp teams). Fills Teams gaps WorkIQ lacks (group-chat creation, add members, channel posts). After registering, RESTART Scout. NOT auto-approved — Teams writes prompt for confirmation; see docs/teams-mcp-setup.md."
+
 # Kusto/ADX clusters the tool queries (data — infra wires these into the kusto MCP
 # via --known-services). Add an entry per cluster we use.
 kusto_clusters:
