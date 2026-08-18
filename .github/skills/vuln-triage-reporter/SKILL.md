@@ -1,6 +1,6 @@
 ---
 name: vuln-triage-reporter
-description: Triage, classify, AND remediate MSRC/ITD security vulnerabilities filed against Android Authenticator & Broker. Right-sizes the security team's filed severity with evidence-based codebase analysis, produces on-call/WBR reports, and (when asked) executes the fix end-to-end — implementing the change, writing tests, and opening a public-repo-safe PR. Use this skill when an on-call engineer needs to process recent [MSRC]- or [ITD]-tagged IcMs, decide whether to agree with the filed severity or rebut it with code evidence, generate per-finding + aggregate reports, OR implement and ship the remediation for a kept finding. Triggers include "triage MSRC", "classify these vulnerabilities", "investigate ITD findings", "on-call security report", "review FireWatch findings", "are these MSRCs really that severe", "fix this finding", "remediate the MSRC", "execute the fix and open a PR", or any request to assess/right-size OR remediate a security vulnerability for Android Auth.
+description: Triage, classify, AND remediate MSRC/ITD security vulnerabilities filed against Android Authenticator & Broker. Right-sizes the security team's filed severity with evidence-based codebase analysis, produces on-call/WBR reports, and (when asked) executes the fix end-to-end — implementing the change, writing tests, and opening a public-repo-safe PR. Use this skill when an on-call engineer needs to process recent [MSRC]- or [ITD]-tagged IcMs, decide whether to agree with the filed severity or rebut it with code evidence, generate per-finding + aggregate reports, OR implement and ship the remediation for a kept finding. Triggers include "triage MSRC", "my MSRC", "I have an MSRC", "look at this MSRC/ITD", "classify these vulnerabilities", "investigate ITD findings", "on-call security report", "review FireWatch findings", "are these MSRCs really that severe", "should we fix this MSRC", "is this a real vulnerability", "can we mark this won't-fix", "what severity is this security bug", "security bug filed against us", "fix this finding", "remediate the MSRC", "execute the fix and open a PR", or any request to assess/right-size OR remediate a security vulnerability for Android Auth.
 ---
 
 # Vulnerability Triage, Reporter & Remediation
@@ -50,6 +50,12 @@ This skill is for **on-call engineers during their on-call week**. Default scope
 > If any is missing, **stop and tell the user exactly what to fix** — partial environments produce wrong
 > verdicts (e.g. a missing submodule makes a real sink look absent → a finding gets wrongly down-classified).
 > Run the verification block, report PASS/FAIL per item, and only proceed on an all-PASS.
+>
+> **Order of operations:** run the **intake interview** (Step -1) *first* — it takes ~60 seconds and
+> tells you what the engineer actually wants — then run this environment gate **before launching any
+> agent**, and fold any FAILs into the plan echo. Don't make someone answer four questions only to be
+> told their checkout is unusable, and don't burn 30 minutes investigating the wrong thing in a
+> perfectly-configured environment.
 
 ### 1. Full `android-complete` checkout WITH submodules
 The investigation greps **real source**. The app/broker code lives in **git-ignored submodules** that are
@@ -203,6 +209,25 @@ ways — never claim "safe" *or* "exploitable" about a boundary you couldn't ver
     tier, parent, area/iteration, assignee) and **wait for the user to confirm** before creating anything.
     Never auto-create, never assume the parent or assignee. This is non-negotiable — unwanted work items
     are noise the team has to clean up.
+15. **Run the intake interview FIRST — one message, four questions.** Before any discovery or agent
+    launch, ask what to look at (specific ids · this shift · a date range/week · an ITD report · the
+    engineer's own existing findings · just finalize), how deep (Fast/Standard/Deep), and what outcome
+    they want (verdict · +report · +options · +implement). Then **echo the resolved plan — scope, depth,
+    ETA, and the absolute output folder — and wait for a "go."** Ask everything at once; skip anything
+    already stated; accept "defaults". See [references/intake-interview.md](references/intake-interview.md).
+16. **PRESENT REMEDIATION OPTIONS BEFORE WRITING ANY FIX.** Never jump from "this is a real finding" to
+    editing code. For every kept finding, first present **2–3 candidate approaches** with tradeoffs
+    (blast radius · regression risk · flightability · effort · what each does and does not close), name a
+    **recommended** one and say why, and **wait for the engineer to choose.** An engineer who has not seen
+    the alternatives cannot trust the fix — and did not, when this was skipped. See Step 4.5 and
+    [references/remediation-spec.md](references/remediation-spec.md).
+17. **Every run WRITES ITS ARTIFACTS — a chat answer is not a deliverable.** Findings that end in
+    `Won't-Fix`, `Already-Covered`, or "out of scope (root-only)" get a written report **too** — those
+    are exactly the verdicts an engineer must justify back to the security team, and they are the ones
+    most often lost to chat. Close every run with
+    `python scripts/verify_outputs.py` and **tell the user the absolute folder path**. A non-zero exit
+    means the run is **not** done. (This is a real reported failure: a full session produced a verdict
+    and zero files.)
 
 ## The two-pass model (verify before you trust)
 
@@ -228,23 +253,83 @@ what you missed*. Every finding goes through two independent `codebase-researche
 Run the challenger passes in **parallel** across findings, just like Pass 1. Both passes' evidence and audits
 go into the finding's report (Pass 2 under an `## Adversarial Verification` section).
 
+### Pass 1 is never a verdict (hard rule)
+
+**Do not report Pass 1's conclusion to the engineer as an answer.** Report it as *"Pass 1 says X —
+challenging it now."* This has already bitten us: **Pass 1 concluded "no fix needed"; Pass 2 challenged it
+and found the real root cause.** Had the engineer acted on Pass 1, a genuine vulnerability would have been
+closed as a non-issue.
+
+**When the two passes disagree** (challenger breaks Pass 1, or reaches a different root cause):
+
+1. **The challenger's finding wins by default** — it had strictly more information (Pass 1's conclusion
+   plus the code). Never average the two or pick the more convenient one.
+2. **Run one short reconciliation pass** scoped to the *specific* point of disagreement only (not a third
+   full investigation) — give it both conclusions and the one question that separates them.
+3. **Set Confidence = Low** and **say the passes disagreed, in the report**, with both conclusions
+   preserved. A disagreement is signal for the human reviewer, not noise to smooth over.
+4. If reconciliation cannot settle it, **surface it as a Decision Needed** rather than picking a side.
+
+> In **Fast mode** (single pass, by explicit engineer choice) there is no challenger — so the output is a
+> **direction, not a verdict**. Stamp Confidence = **Low**, label it `PRELIMINARY` in the report, and
+> recommend a Standard re-run before anyone acts on it or closes an IcM with it.
+
+
 ## Timing & ETA (tell the user up front, and watch for hangs)
 
 Each `codebase-researcher` pass is a deep investigation. **Observed timings** (one finding, against a
-full local checkout): a single pass runs **~4–8 minutes** (typically ~3.5 min for a contained
-Authenticator-app finding, up to ~7–8 min for a cross-module `common`/`broker` finding with many sinks).
+full local checkout):
+
+| Finding shape | Single pass |
+|---------------|-------------|
+| Contained Authenticator-app finding | ~4–8 min |
+| Cross-module `common`/`broker` finding with many sinks | **~10–15+ min** |
+
+> ⚠️ **Do not quote the optimistic number.** A real run took **>15 min per pass, ~35 min end-to-end** for
+> one finding. Quote the **range**, quote the **upper end** for anything touching `common`/`broker`, and
+> never promise a number you have not measured for that shape of finding.
 
 Because Pass 1 and Pass 2 both run **in parallel across findings**, wall-clock time is roughly:
 
-> **ETA ≈ (longest Pass 1 ≈ 8 min) + (longest Pass 2 ≈ 8 min) + reporting ≈ 5 min ≈ 20 minutes**, largely
-> independent of how many findings (parallelism), as long as the agent fleet can run them concurrently.
+> **ETA ≈ (longest Pass 1) + (longest Pass 2) + reporting ≈ 5 min** — i.e. **~15 min best case, ~35 min
+> for a cross-module finding**, largely independent of how *many* findings (parallelism), as long as the
+> agent fleet can run them concurrently.
 
 **Always give the user an ETA before launching** (e.g. *"Investigating N findings in two parallel passes —
-expect ~15–25 minutes"*) so they know what to expect.
+expect ~20–35 min for `common`/`broker`, ~15–20 min for an app-only finding"*), and **post a progress note
+at each pass boundary** ("Pass 1 done for both — challenger launched") so a long run never looks hung.
 
-**Hang detection — important.** Background agents can occasionally stall or be cleared (e.g. a long idle gap
-between turns). Rules:
-- If a pass has not returned in **~12 minutes** (≈1.5× the worst-case single-pass time), treat it as hung.
+### Depth modes — let the engineer buy speed explicitly
+
+Duration is the top complaint. It is legitimate to trade rigor for speed, but only as an **informed,
+explicit choice** — never silently. Offer these at intake (Non-Negotiable #15):
+
+| Mode | Passes | ETA / finding | Use when | Verdict status |
+|------|--------|---------------|----------|----------------|
+| **Fast** | Pass 1 only | ~5–8 min | "Is this even worth my afternoon?" · obviously-out-of-scope triage · a first read before a meeting | **PRELIMINARY** — Confidence forced to **Low**, not safe to close an IcM with |
+| **Standard** *(default)* | Pass 1 + adversarial Pass 2 | ~15–25 min | Everything normal | Final |
+| **Deep** | + targeted follow-up sweeps | 30 min+ | Cross-module, Important+, or a Pass-1/Pass-2 disagreement | Final |
+
+### Keep each pass bounded (this is where the time goes)
+
+Runaway passes come from unscoped investigation, not from thinking too hard. Every
+`codebase-researcher` dispatch **must** carry:
+
+- **A scope allow-list** — the specific modules/paths to search, derived from the finding's component.
+  Never "search the repo"; the submodules are enormous and an unscoped ignored-file grep times out.
+- **A concrete question list** (the sink, reachability, the named controls to check) rather than
+  "investigate this vulnerability."
+- **A time budget + partial-results instruction:** *"If you are not converging by ~10 minutes, stop and
+  report what you have, explicitly listing what you did NOT get to."* A bounded partial answer plus a
+  known gap beats a 20-minute silence.
+- **Pass 2 is scoped to the claims, not the whole finding.** The challenger is not a second full
+  investigation: hand it Pass 1's specific claims ("mitigated by control X at `<file>`", "not reachable
+  because Y") and have it attack *those*. This is both faster and sharper than re-deriving everything.
+
+### Hang detection — important
+
+Background agents can occasionally stall or be cleared (e.g. a long idle gap between turns). Rules:
+- If a pass has not returned in **~20 minutes** (≈1.5× the worst-case single-pass time), treat it as hung.
 - Check status; if it is gone/stalled, **relaunch that specific pass** (the others' results are unaffected).
 - Do **not** silently wait indefinitely — surface the stall to the user and restart the affected pass.
 - Each pass is independent and idempotent, so relaunching one finding's pass does not disturb the others.
@@ -267,9 +352,44 @@ these unless you pass `includeIgnoredFiles: true`. Rules the subagents MUST foll
 
 ## Workflow
 
+### Step -1 — Intake interview (ALWAYS FIRST, one message)
+
+**Do not run discovery, launch an agent, or open a file before this.** Ask the four intake questions in a
+**single** message — what to look at · how deep · what outcome · anything I should know — then **echo the
+resolved plan and wait for a "go."** Full menu, answer→mode mapping, and cold-start troubleshooting:
+[references/intake-interview.md](references/intake-interview.md).
+
+Skip any question already answered by the engineer's opening message (if they said *"triage IcM NNNNNN"*,
+Q1 is done). If they say *"defaults"* or *"just go"*, take **current shift → Standard → verdict + report**.
+
+The plan echo is short and **must** include the absolute output folder:
+
+```
+Plan:   <scope — which findings / which window>
+Depth:  <Fast | Standard | Deep>  (passes + what that means for the verdict)
+ETA:    <range — quote the upper end for anything touching common/broker>
+Output: <absolute path to the shift folder>     <- your report lands here, on disk
+Then:   verdicts + a menu of next actions. Nothing auto-runs.
+
+Go?
+```
+
+> **Why the output path goes in the plan, up front:** an engineer once completed an entire session and
+> found **no report anywhere** on their machine. Naming the folder before the run makes a missing artifact
+> impossible to miss at the end — and Non-Negotiable #17 verifies it for real when the run closes.
+
+The intake **also** covers two entry points the rest of this workflow does not:
+
+- **"Here are findings I already investigated"** (a notes/markdown file). Do **not** start from scratch —
+  read their work, run the **adversarial pass against their conclusions first**, and only launch a full
+  Pass 1 if the challenge opens a gap. This is the cheapest useful run the skill offers; say so, and
+  credit their evidence rather than silently re-deriving it.
+- **"This week"/"Aug 3–10"** style windows. Convert to explicit dates and **echo them back** — never
+  silently guess a year or a boundary. Feed them to `shift.py` as `--date` or `--start/--end`.
+
 ### On-call mode — pick an entry point first
-This skill runs during an **on-call rotation** (primary is **Wednesday → Wednesday**). Before doing
-anything, **ask the engineer which mode they want** — the right answer depends on where they are in the week:
+This skill runs during an **on-call rotation** (primary is **Wednesday → Wednesday**). The mode falls out
+of the Step -1 intake answer — this table is the mapping:
 
 | Mode | When to use | What it does |
 |------|-------------|--------------|
@@ -277,6 +397,7 @@ anything, **ask the engineer which mode they want** — the right answer depends
 | **(b) Sweep my shift window** *(default)* | Catching up / mid-shift | Query the 4 teams for findings in `[shift-start … now]`, **diff against the manifest**, triage only the **new** ones, append. |
 | **(c) Finalize / refresh roll-up** | End of shift, or after a hang | Re-render the master report + roll-up from existing findings — **no new research** (fast, safe). |
 | **(d) Re-run one finding** | A pass hung or evidence looks thin | Re-investigate a single finding and replace its record. |
+| **(e) Verify my own findings** | The engineer already investigated and has notes | Read their file, run the **adversarial pass against their conclusions first**, and only do a full Pass 1 if the challenge opens a gap. Fastest path to a defensible verdict. |
 
 > **Recommended default = (b)**. If the engineer is unsure, offer (b) and tell them it only researches
 > findings not already in the shift report.
@@ -340,11 +461,38 @@ or **already resolved** before — it may be a duplicate, a regression, or have 
 - **IcM similar incidents:** call the IcM MCP `get_similar_incidents` on the finding's IcM id.
 - **Past incidents + TSGs:** query the `android-dri-search` MCP (`get_incident` / `batch_search` /
   `search_tsgs`) for the vuln class / component / key API names.
+- **Prior shifts on disk:** grep the workspace's earlier shift folders
+  (`$VULN_TRIAGE_WORKSPACE/msrc/*/`) for the vuln class and the sink's API names. Our own past triage is
+  the highest-signal prior art we have and it is *not* in any MCP.
 - **Record the result on the finding** in a `**Prior incidents:**` field (and the research-page tile):
   *None found*, or a short list of IcM ids + one-line outcome (e.g. "AB#/IcM NNN — fixed in <area>, "
   the same sink"). If a prior **resolved** incident clearly covers it, say so up front — the on-call can
   short-circuit (link the prior fix / close as duplicate) instead of re-triaging. Cite, don't assume:
   a *similar* title is a lead, not proof — still confirm against current code in Step 3.
+
+> #### Search the vulnerability CLASS, not just this finding's entry point
+>
+> **This is a known miss.** A prior MSRC with the *same root cause* was not surfaced because it came in
+> through a **different Android component type** — the past one was reached via an `Activity`, the new one
+> via a `Service`. Title/component matching found nothing; the two were the same bug.
+>
+> So run **at least three** query shapes, not one:
+>
+> | Shape | Example |
+> |-------|---------|
+> | **Vuln class alone** — no component, no ids | "unprotected exported component", "intent redirection", "PendingIntent mutability" |
+> | **Sink API / method name alone** | the actual method the finding lands on, searched bare across all prior findings |
+> | **Class × each component type** — deliberately swap the entry point | the same class re-queried against `Activity`, `Service`, `BroadcastReceiver`, `ContentProvider`, deep link, and IPC/bound-service entry |
+>
+> Also search **who else has triaged in this area** — a teammate's prior MSRC on the same class is prior
+> art even when the ids, titles, and components share nothing.
+>
+> **A near-miss is still a hit.** Record related-but-not-identical prior findings as
+> `**Related prior art:**` with the delta spelled out ("same root cause, different entry point:
+> `Service` here vs `Activity` there"). Then **feed them into the Pass 1 dispatch** — a challenger that
+> already knows how this class was exploited before is faster *and* sharper. Only report
+> *None found* after all three shapes came back empty, and say which shapes you ran.
+
 
 ### Step 2 — ITD manual intake (FireWatch is not MCP-reachable)
 FireWatch/Glasswing findings are **not** available through the Security MCP server (confirmed). They must
@@ -435,9 +583,59 @@ Use [references/remediation-spec.md](references/remediation-spec.md). It must be
 an engineer or the Copilot coding agent / `pbi-creator` without further investigation. For Intern-eligible
 findings, a lighter **Fix Notes** block is sufficient.
 
+#### 🛑 Gate: present OPTIONS before any code (Non-Negotiable #16)
+
+**Reported failure:** asked to help with a fix, the skill went **straight to writing one**. The engineer
+had to interrupt to ask *how* it planned to fix it — and did not trust the result. A fix the engineer
+didn't get to choose is a fix they can't defend in review.
+
+So: **the first thing you produce for a kept finding is an options table, not a diff.**
+
+```markdown
+### Fix Options — [MSRC|ITD] <id>
+
+**Root cause:** <1–2 sentences, cited>
+
+| # | Approach | Closes | Does NOT close | Blast radius | Regression risk | Flightable | Effort |
+|---|----------|--------|----------------|--------------|-----------------|-----------|--------|
+| 1 | <e.g. reuse the hardened sibling control at the same admission point> | … | … | <files/modules> | Low/Med/High | Yes (default-OFF) | <n>d |
+| 2 | <e.g. gate the component at the manifest boundary> | … | … | … | … | … | <n>d |
+| 3 | <e.g. validate at the sink> | … | … | … | … | … | <n>d |
+
+**Recommended: #<n>** — <why: usually smallest diff that fully closes the sink, reusing a proven
+sibling control, flightable to default-OFF>
+**Rejected #<n> because** — <the real reason, not a formality>
+**Open question for you:** <the judgment call that is genuinely the engineer's to make>
+
+Which do you want? (Or tell me what I've got wrong.)
+```
+
+Rules for the gate:
+
+- **Always at least 2 real options.** If you genuinely believe only one is viable, still present the
+  "do nothing / accept the risk" option and say why it loses — that is the comparison the engineer needs.
+  Options must be *materially* different, not three phrasings of one patch.
+- **Name a recommendation and defend it.** A neutral menu pushes the work back onto the engineer; the
+  point is an opinion they can challenge.
+- **Say what each option does NOT close.** This is the column engineers actually read, and the one an
+  eager fix silently omits.
+- **Wait for a choice.** Do not begin Step 4.6, do not touch a file, do not create a branch. Only after
+  the engineer picks (or amends) an option does the spec's **Fix Approach** get filled in with it.
+- **Applies to Intern-eligible findings too** — a lighter, two-row version.
+- **If the engineer explicitly says "just fix it"**, still show the options table *as a single message*,
+  state your pick, and proceed unless they object. Cost: ~30 seconds. Value: they can catch the wrong
+  approach before the diff exists rather than after.
+
+
 ### Step 4.6 — Execute the fix & open the PR (optional, public-repo-safe)
 When the user wants the skill to **implement** a kept finding (not just dispatch it), follow
-[references/remediation-execution.md](references/remediation-execution.md). **Pre-flight FIRST: re-verify the
+[references/remediation-execution.md](references/remediation-execution.md).
+
+> 🛑 **Entry condition: the engineer has picked an option from the Step 4.5 Fix Options table.** If they
+> have not, you are not in Step 4.6 yet — go back and present the options. "Fix it" is a request to start
+> the remediation *conversation*, not permission to skip it.
+
+**Pre-flight FIRST: re-verify the
 finding is still live on the current base-branch HEAD** — trace the untrusted input back to its
 admission/classifier point; if an upstream allow-list/validator already gates the sink, the finding is
 **already mitigated → STOP and re-triage (Won't-Fix/Low)** rather than shipping a redundant fix (findings are
@@ -468,6 +666,21 @@ get explicit go/no-go before any push or PR**, and run the public-token sweep fi
 > sanitized, the tracker is the bridge.
 
 ### Step 5 — Report (two coordinated artifacts per finding)
+
+> 🛑 **This step is NOT optional and NOT conditional on the verdict** (Non-Negotiable #17).
+>
+> **Every finding gets written to disk — including the ones that end in `Won't-Fix`,
+> `Already-Covered`, or "out of scope: root/physical access only".** Those feel like they need no
+> paperwork, which is exactly why they go missing — and they are the verdicts the engineer must later
+> **justify back to the security team** when closing the IcM. A rebuttal that exists only in a chat
+> window cannot be pasted into an IcM, reviewed by a peer, or found again next quarter.
+>
+> The same applies to a **single-IcM run** (mode (a)) and to **Fast mode**: one finding still produces a
+> finding report + a master report, and the Fast-mode report is stamped `PRELIMINARY`.
+>
+> **Never end a run with a verdict delivered only in chat.** Close with
+> `python scripts/verify_outputs.py` and hand the engineer the absolute folder path.
+
 Each finding yields a **human report** and a **machine-readable agent spec** — see
 [references/agent-spec-template.md](references/agent-spec-template.md) for the dual-output rationale + schema.
 
@@ -595,6 +808,18 @@ items) — never in the repo.
 
 ### Step 8 — After the report: confirm next actions (nothing auto-runs)
 
+**First, prove the run actually produced something:**
+
+```
+python .github/skills/vuln-triage-reporter/scripts/verify_outputs.py
+```
+
+It checks the shift folder for the required artifacts (manifest · per-finding report(s) · master report)
+and warns on the recommended ones (research subpages · agent specs · roll-up · CSV). **A non-zero exit
+means the run is not finished** — generate what's missing and re-run it. Then **give the engineer the
+absolute folder path and the `file:///` link it prints.** Do not say "done" without that path: an
+engineer who is told a verdict but can't find a file has, from their side, received nothing.
+
 Generating the report is **not** the end — but the report is the **decision point**, and the engineer
 drives what happens next. Once the master report + research pages exist, **summarize the outcome and ask
 the engineer which follow-ups to run** (offer as a short menu — do **not** silently proceed):
@@ -609,7 +834,9 @@ the engineer which follow-ups to run** (offer as a short menu — do **not** sil
 3. **Dispatch / execute a fix?** *(opt-in)* — each engineer-owned finding already has a machine-actionable
    `.agent.md` dispatch spec. Offer to hand it to a coding agent (e.g. the `pbi-dispatcher` skill or the
    Copilot coding agent) to draft a PR. **Execution only happens on the engineer's go-ahead, per finding**,
-   and the spec's `blocked_on` / "do-not-proceed-until" gates (the external-validation ⚗ items) must be
+   and **only after they have picked an approach from the Step 4.5 Fix Options table** — never go from
+   "yes, fix it" straight to a diff (Non-Negotiable #16). The spec's `blocked_on` /
+   "do-not-proceed-until" gates (the external-validation ⚗ items) must be
    honored — a finding gated on an unverified server/runtime condition is **not** auto-dispatched; surface
    it for the engineer to confirm first.
 4. **Weekly status report?** *(opt-in — Step 7)* — offer to (re)generate the manager email table.
