@@ -523,8 +523,9 @@ def test_ccd_confirmed_is_required_scout_item():
 
 
 def test_check_ccd_classifies_pipeline_reconciliation():
-    """check-ccd re-reads the pipeline override and classifies match/conflict/
-    unreadable/unset so the skill can decide how to satisfy the gate item."""
+    """check-ccd validates the CCD end-to-end — temporal (past/compressed) layered
+    on pipeline reconciliation — so the skill can decide how to satisfy the gate item.
+    `as_of` pins the clock so the classification is deterministic."""
     import tempfile as _tf, json as _json, io, contextlib, argparse
     from orchestrator.commands import pipeline as pcmd
     from orchestrator import cli_common as _C
@@ -532,20 +533,21 @@ def test_check_ccd_classifies_pipeline_reconciliation():
            "override_variable": "CodeCompleteDate"}
     orig_src, orig_read = _C.ccd_source, pcmd.checks.read_pipeline_variable
 
-    def _run(rid, ccd, read_ret):
+    def _run(rid, ccd, read_ret, as_of="2026-08-18"):
         with _tf.TemporaryDirectory() as d:
             st = ReleaseState(release_id=rid, ccd=ccd, ccd_source="pipeline-default")
             _C.save_state(st, d, rid)
             _C.ccd_source = lambda: dict(src)
             pcmd.checks.read_pipeline_variable = lambda *a, **k: read_ret
-            ns = argparse.Namespace(runs_root=d, release=rid, json=True)
+            ns = argparse.Namespace(runs_root=d, release=rid, json=True, as_of=as_of)
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 pcmd.cmd_check_ccd(ns)
             return _json.loads(buf.getvalue())
     try:
-        # no override on the pipeline → match
-        assert _run("2026-09", "2026-09-09", (True, "", ""))["status"] == "match"
+        # future-dated, no override on the pipeline → match (not compressed: 22 days out)
+        m = _run("2026-09", "2026-09-09", (True, "", ""))
+        assert m["status"] == "match" and m["compressed"] is False and m["days_to_ccd"] == 22
         # override differs, in-month → conflict (+ ccd_conflict surfaced)
         conf = _run("2026-09", "2026-09-09", (True, "2026-09-16", ""))
         assert conf["status"] == "conflict" and conf["ccd_conflict"] == "2026-09-16"
@@ -553,6 +555,15 @@ def test_check_ccd_classifies_pipeline_reconciliation():
         assert _run("2026-09", "2026-09-09", (False, None, "auth"))["status"] == "unreadable"
         # no CCD at all → unset
         assert _run("t", None, (True, "", ""))["status"] == "unset"
+        # CCD in the PAST (current-month release whose 2nd-Wed default already passed) →
+        # `past` wins over reconciliation; a future override is still surfaced to adopt
+        past = _run("2026-08", "2026-08-12", (True, "2026-08-26", ""))
+        assert past["status"] == "past" and past["days_to_ccd"] == -6
+        assert past["override"] == "2026-08-26"    # resolver can offer to adopt it
+        # CCD two days out → not past, but Phase 0's 7-day window is compressed (WARN)
+        comp = _run("2026-08", "2026-08-20", (True, "", ""))
+        assert comp["status"] == "match" and comp["compressed"] is True
+        assert comp["runway_days"] == 2 and comp["days_to_ccd"] == 2
     finally:
         _C.ccd_source, pcmd.checks.read_pipeline_variable = orig_src, orig_read
 
@@ -807,6 +818,28 @@ def test_anchor_offset_and_date():
     assert schedule.anchor_offset("CCD+1") == 1
     assert schedule.anchor_offset("CCD") == 0
     assert schedule.anchor_date(date(2026, 7, 8), "CCD-7") == date(2026, 7, 1)
+
+
+def test_ccd_viability_past_compressed_healthy():
+    """ccd_viability is the single source of temporal truth: past (invalid),
+    compressed (Phase 0 window squeezed — warn), and healthy (full runway)."""
+    from orchestrator import schedule
+    from datetime import date
+    # PAST — a current-month release whose 2nd-Wed default already slipped by
+    p = schedule.ccd_viability(date(2026, 8, 12), date(2026, 8, 18))
+    assert p["past"] is True and p["days_to_ccd"] == -6 and p["runway_days"] == 0
+    # COMPRESSED — CCD two days out: inside the CCD-7 window, only 2 prep days left
+    c = schedule.ccd_viability(date(2026, 8, 20), date(2026, 8, 18))
+    assert c["past"] is False and c["compressed"] is True and c["runway_days"] == 2
+    # HEALTHY — CCD well in the future: full 7-day window, not compressed
+    h = schedule.ccd_viability(date(2026, 9, 9), date(2026, 8, 18))
+    assert h["past"] is False and h["compressed"] is False and h["runway_days"] == 7
+    # BOUNDARY — as_of exactly at CCD-7 is still a full window (not yet compressed)
+    b = schedule.ccd_viability(date(2026, 9, 9), date(2026, 9, 2))
+    assert b["compressed"] is False and b["runway_days"] == 7
+    # BOUNDARY — CCD today: not past, but zero prep days → compressed
+    t = schedule.ccd_viability(date(2026, 8, 18), date(2026, 8, 18))
+    assert t["past"] is False and t["compressed"] is True and t["runway_days"] == 0
 
 
 # ---- phase time-anchoring (Phase 0 opens CCD-7) ----

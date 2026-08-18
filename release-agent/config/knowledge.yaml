@@ -244,32 +244,40 @@ readiness.build_access:
       a: "Usually you're not signed into az, or you lack access to one of the two orgs (they're separate). Sign in / request access to the failing org, then re-run the gate."
 
 readiness.ccd_confirmed:
-  summary: "The Code Complete Date is set and reconciled with the pipeline override."
+  summary: "The Code Complete Date is a valid future date, reconciled with the pipeline."
   what: >
-    Every phase of the release is CCD-relative (Phase 0 opens at CCD-7, Code
-    Complete Day IS the CCD, later phases follow), so a wrong CCD misaligns the
-    whole run. This item re-reads the CCD override variable on pipeline 3038
-    (Engineering) and confirms it agrees with the CCD this release is anchored to.
-    A pipeline override that DIFFERS blocks the gate until you reconcile it.
+    Validates the CCD end-to-end, because every phase is CCD-relative and a wrong
+    CCD misaligns the whole run. Two hard checks (either BLOCKS): the CCD must be
+    FUTURE-DATED — a past CCD (e.g. a current-month release whose 2nd-Wednesday
+    default already passed) can't be code-completed — and it must AGREE with
+    pipeline 3038's override. Plus one advisory: if the CCD leaves Phase 0
+    (CCD-7→CCD) with less than its normal 7-day window, Scout WARNS about the
+    compressed prep window but lets you proceed.
   who: >
-    Scout runs the check (`check-ccd`, reads the pipeline via az). If the pipeline
-    override differs from the release CCD, Scout shows you both and YOU decide which
-    is correct; Scout then writes the resolution with `set-ccd`. If the pipeline
-    can't be read, you confirm the CCD manually (attest fallback).
+    Scout runs the check (`check-ccd`, reads the pipeline via az). On a past CCD or a
+    differing pipeline override, Scout shows you the options and YOU decide the real
+    date; Scout writes it with `set-ccd`. On a compressed Phase 0 window Scout warns
+    and you choose to proceed or move the CCD out. If the pipeline can't be read, you
+    confirm the CCD manually (attest fallback).
   where:
     - "CCD override variable — Broker pipeline (Engineering #3038): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=3038"
   how: >
-    Scout runs `check-ccd --json` and acts on the status: `match` → records the item
-    pass; `conflict` → presents the pipeline override vs the release CCD and asks you
-    which to keep, then runs `set-ccd` (`--date <override>` to adopt the pipeline, or
-    `--default` to keep the 2nd-Wednesday default) with `--confirm --reason`, re-checks,
-    and records pass; `unreadable` → asks you to confirm the CCD by hand and records a
-    pass with an attest note; `unset` → the release id isn't YYYY-MM, so no CCD exists.
+    Scout runs `check-ccd --json` and acts on the status: `past` → the CCD is before
+    today; reschedule to a future date with `set-ccd --date <future> --confirm`
+    (adopt a future pipeline override if one exists), re-check. `conflict` → pipeline
+    override differs; pick which is right, `set-ccd`, re-check. `unreadable` → confirm
+    the CCD by hand (attest). `match` → record the item pass. On `compressed: true`
+    (any non-past status) Scout warns that Phase 0 has only `runway_days` of the
+    normal 7 and lets you proceed or move the CCD.
   faqs:
+    - q: "I started a release this month and the CCD is in the past — why?"
+      a: "The default CCD is the 2nd Wednesday of the release month. If that day has already passed, the default is in the past and invalid. The gate blocks until you set a future Code Complete Date (or target a later release month)."
     - q: "Why does a CCD mismatch block the release?"
       a: "The phase schedule is computed from the CCD. If the pipeline is building to a different date than the orchestrator thinks, every reminder, gate, and deadline is off. Reconciling once up front keeps them in lockstep."
+    - q: "My CCD is only a couple of days out and Scout warned about Phase 0 — is that a blocker?"
+      a: "No. Phase 0 normally runs CCD-7→CCD (7 days). A nearer CCD squeezes that window, so Scout flags how many prep days remain, but you can still proceed (e.g. for a hotfix) or move the CCD out with set-ccd."
     - q: "The pipeline has no override — is that a problem?"
-      a: "No. No override means the pipeline uses the same 2nd-Wednesday default the orchestrator does, so they already agree — that's a `match`."
+      a: "No. No override means the pipeline uses the same 2nd-Wednesday default the orchestrator does, so they already agree — that's a `match` (as long as the date is still in the future)."
     - q: "Scout couldn't read the pipeline — can I still proceed?"
       a: "Yes. On an unreadable pipeline the item falls back to attestation: you confirm the CCD manually and Scout records it with a note. It never silently passes."
 

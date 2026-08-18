@@ -103,3 +103,37 @@ def humanize_delta(days: int) -> str:
     if days > 0:
         return f"in {days} days"
     return f"{-days} days ago"
+
+
+def ccd_viability(ccd: date, as_of: date, open_spec: str = "CCD-7") -> dict:
+    """Is a CCD temporally viable, measured against the clock `as_of`?
+
+    Reconciliation with the pipeline (pipeline_conflict) answers *which* date;
+    this answers whether that date is even runnable on the calendar. `open_spec`
+    is the earliest phase anchor (Phase 0 opens "CCD-7"), so the normal prep
+    window is open_spec..CCD.
+
+    Returns:
+      days_to_ccd  : (ccd - as_of).days           (negative ⇒ CCD already past)
+      past         : ccd < as_of                   (INVALID — can't code-complete in the past)
+      phase0_open  : the CCD-7 date (when prep normally starts)
+      normal_window: len of a full prep window in days (e.g. 7 for CCD-7)
+      runway_days  : prep days actually left = days from max(as_of, phase0_open)..ccd (>=0)
+      compressed   : not past, but as_of is already inside the CCD-7 window
+                     (runway_days < normal_window) ⇒ Phase 0 is squeezed — WARN, don't block
+    """
+    days_to_ccd = (ccd - as_of).days
+    phase0_open = anchor_date(ccd, open_spec)
+    normal_window = -anchor_offset(open_spec)          # "CCD-7" -> 7
+    past = days_to_ccd < 0
+    start = max(as_of, phase0_open)
+    runway_days = max((ccd - start).days, 0)
+    compressed = (not past) and runway_days < normal_window
+    return {
+        "days_to_ccd": days_to_ccd,
+        "past": past,
+        "phase0_open": phase0_open.isoformat(),
+        "normal_window": normal_window,
+        "runway_days": runway_days,
+        "compressed": compressed,
+    }

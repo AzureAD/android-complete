@@ -11,17 +11,23 @@ from tools import checks
 
 
 def cmd_check_ccd(args):
-    """Read-only CCD reconciliation for the entry gate. Re-reads pipeline 3038's
-    override variable and classifies the release CCD vs the pipeline:
+    """Read-only CCD validation for the entry gate. Answers the complete
+    "is this CCD good?" question — temporally viable AND reconciled with the
+    pipeline. Classifies (priority order):
 
-        match      — CCD set and agrees with the pipeline (no override, or override == CCD)
-        conflict   — pipeline override is an in-month date that DIFFERS from the CCD
-        unreadable — couldn't read the pipeline (transient / auth) — can't validate
         unset      — no CCD on the release (release id isn't YYYY-MM)
+        past       — CCD is before today: INVALID, can't code-complete in the past (BLOCK)
+        conflict   — pipeline override is an in-month date that DIFFERS from the CCD (BLOCK)
+        unreadable — couldn't read the pipeline (transient / auth) — attest fallback
+        match      — CCD is future-dated and agrees with the pipeline
 
-    Prints JSON {release, ccd, ccd_source, override, ccd_conflict, status}. The skill
-    records the `ccd_confirmed` gate item from this: match→pass; conflict→reconcile via
-    set-ccd then re-check; unreadable→attest the CCD manually."""
+    Regardless of status (once a CCD is set) it also emits the calendar picture —
+    days_to_ccd, phase0_open, runway_days, compressed — so the gate can WARN when
+    Phase 0's normal CCD-7 window is squeezed (compressed) without blocking.
+
+    Prints JSON. The skill records the `ccd_confirmed` gate item from this:
+    match→pass (warn if compressed); past/conflict→resolve via set-ccd then re-check;
+    unreadable→attest the CCD manually."""
     st = C.load_state(args.runs_root, args.release)
     out = {"release": st.release_id, "ccd": st.ccd, "ccd_source": st.ccd_source,
            "override": None, "ccd_conflict": None, "status": "unset"}
@@ -32,37 +38,53 @@ def cmd_check_ccd(args):
             print("No CCD set for this release (release id isn't YYYY-MM). Use set-ccd.")
         return 0
 
+    # Reconciliation with the pipeline (which date) — populate override/conflict first
+    # so the resolver has the pipeline value on hand even when temporal wins below.
+    recon = "match"
     src = C.ccd_source()
-    if not src.get("pipeline_id"):
-        # No pipeline configured to reconcile against — treat as match (nothing to compare).
-        out["status"] = "match"
-    else:
+    if src.get("pipeline_id"):
         ok, val, detail = checks.read_pipeline_variable(
             src["org"], src["project"], src["pipeline_id"], src["override_variable"])
         if not ok:
-            out["status"] = "unreadable"
+            recon = "unreadable"
             out["detail"] = detail
         else:
             out["override"] = val or None
             conflict = schedule.pipeline_conflict(st.release_id, val, st.ccd)
             if conflict:
-                out["status"] = "conflict"
+                recon = "conflict"
                 out["ccd_conflict"] = conflict.isoformat()
                 st.ccd_conflict = conflict.isoformat()
             else:
-                out["status"] = "match"
                 st.ccd_conflict = None
             C.save_state(st, args.runs_root, args.release)
+
+    # Temporal viability (whether that date is even runnable) — layered on top.
+    as_of = C.parse_as_of(args) or schedule.today()
+    ccd_d = schedule.parse_date(st.ccd)
+    via = schedule.ccd_viability(ccd_d, as_of) if ccd_d else {}
+    out.update({"today": as_of.isoformat(), **{k: via.get(k) for k in
+                ("days_to_ccd", "phase0_open", "runway_days", "compressed")}})
+    # `past` is the worst problem — it overrides the reconciliation status (a past CCD
+    # must be rescheduled regardless of whether it matches the pipeline). override/
+    # ccd_conflict stay populated so the resolver can offer a future override to adopt.
+    out["status"] = "past" if via.get("past") else recon
 
     if getattr(args, "json", False):
         print(_json.dumps(out))
         return 0
+    when = schedule.humanize_delta(via.get("days_to_ccd", 0)) if via else ""
+    warn = (f"  ⚠ Phase 0 is compressed: only {via.get('runway_days')} of the normal "
+            f"{via.get('normal_window', 7)} prep days remain." if via.get("compressed") else "")
     msg = {
-        "match": f"CCD {st.ccd} is reconciled with the pipeline (source: {st.ccd_source}).",
-        "conflict": f"⚠ Pipeline override {out['ccd_conflict']} DIFFERS from CCD {st.ccd} — "
-                    f"reconcile with set-ccd before proceeding.",
+        "match": f"CCD {st.ccd} ({when}) is future-dated and reconciled with the pipeline.{warn}",
+        "compressed": "",  # folded into match/others via `warn`
+        "past": f"⛔ CCD {st.ccd} is in the PAST ({when}) — reschedule to a future date "
+                f"with set-ccd before proceeding.",
+        "conflict": f"⚠ Pipeline override {out['ccd_conflict']} DIFFERS from CCD {st.ccd} "
+                    f"({when}) — reconcile with set-ccd before proceeding.{warn}",
         "unreadable": f"Couldn't read the pipeline override to validate CCD {st.ccd} "
-                      f"({out.get('detail','')}). Confirm the CCD manually.",
+                      f"({out.get('detail','')}). Confirm the CCD manually.{warn}",
         "unset": "No CCD set.",
     }[out["status"]]
     print(msg)
@@ -151,9 +173,10 @@ def cmd_skip_release(args):
 
 
 def register(sub):
-    cc = sub.add_parser("check-ccd", help="Reconcile the release CCD with the pipeline override (read-only; for the entry gate)")
+    cc = sub.add_parser("check-ccd", help="Validate the release CCD — past/reconciled/compressed (read-only; for the entry gate)")
     cc.add_argument("--release", required=True)
-    cc.add_argument("--json", action="store_true", help="Emit {release,ccd,override,ccd_conflict,status}")
+    cc.add_argument("--as-of", dest="as_of", default="", help="Simulated clock YYYY-MM-DD (default: today)")
+    cc.add_argument("--json", action="store_true", help="Emit {ccd,override,ccd_conflict,status,days_to_ccd,runway_days,compressed,...}")
     cc.set_defaults(func=cmd_check_ccd)
 
     sc = sub.add_parser("set-ccd", help="Change the Code Complete Date (writes pipeline override; --confirm)")
