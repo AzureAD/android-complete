@@ -64,11 +64,6 @@ _STATUS_WORD = {"pass": "PASS", "attested": "Confirmed", "fail": "FAIL",
                 "pending": "Outstanding"}
 
 
-def _cell(s: str) -> str:
-    """Single-line, pipe-safe text for a markdown table cell."""
-    return (s or "").replace("\n", " ").replace("|", "\\|").strip()
-
-
 def readiness_table(chk: dict, release_id: str) -> str:
     """Canonical markdown table for the entry gate (frozen layout).
     `chk` is ReadinessGate.checklist()."""
@@ -392,96 +387,101 @@ def notification_subject(r: dict) -> str:
     return f"Release {r.get('release_id','?')} — Phase {ap.get('num')} status"
 
 
-def notification(r: dict) -> str:
-    """The DAILY PHASE DIGEST emailed to the release owner, or "" to stay silent.
-    `r` is Orchestrator.status_report(). The push automation sends whatever this
-    returns; the once-per-day cadence is enforced by the CLI (last_notified_date).
+def _digest_model(r: dict):
+    """The digest's content model, or None to STAY SILENT — the single source of
+    truth shared by the plain-text and markdown renderers (the HTML email uses a
+    fuller step table but reuses this as its silence gate).
 
-    Model (established with the user):
-      * Setup (readiness + CCD) is interactive in Scout — NO push. So an unsigned
-        release, a blocked entry gate, or a halted release stay silent here.
-      * The FIRST push is a phase opening (Phase 0 at CCD-7). Nothing before it
-        (no pre-open heads-up).
-      * While a phase is open with outstanding steps, report its status daily.
-      * Each phase gets its own digest when it opens (general pattern).
+    Silence rules (established with the user):
+      * Setup (readiness + CCD) is interactive in Scout — NO push. An unsigned
+        release, a blocked entry gate, or a halted/complete release stay silent.
+      * The FIRST push is a phase opening (Phase 0 at CCD-7). Nothing before it.
+      * While a phase is open (due) with outstanding steps, report status daily.
     """
-    rid = r.get("release_id", "?")
     if (r.get("halted") or r.get("blocked") or r.get("status") == "complete"
             or not r.get("readiness_signed")):
-        return ""                              # setup / paused — no push
-
+        return None                            # setup / paused — no push
     ap = r.get("active_phase")
     if not ap or not ap.get("due"):
-        return ""                              # nothing open yet (scheduled) — no push
+        return None                            # nothing open yet (scheduled) — no push
 
-    head = f"Release {rid} — Phase {ap['num']}: {ap['name']}"
-    lines = [head]
-    if not ap["started"]:
-        opened = f" (opened {ap['opens']})" if ap.get("opens") else ""
-        lines.append(f"Phase {ap['num']} has opened{opened} — {ap['total']} steps to work through, none done yet.")
-    else:
-        lines.append(f"Progress: {ap['done']} of {ap['total']} steps done.")
-
-    # What the orchestrator has already handled automatically (this phase).
-    completed = ap.get("completed") or []
-    if completed:
-        lines.append(f"Completed ({len(completed)}):")
-        for name in completed[:8]:
-            lines.append(f"  ✓ {name}")
-
-    # What needs the owner right now (a live hold), then the human touchpoints ahead.
+    hold = None
     if r.get("gate"):
-        lines.append(f"Waiting on your decision: {r['gate']['step_name']} (approve or deny).")
+        hold = ("gate", r["gate"]["step_name"])
     elif r.get("action"):
-        lines.append(f"Action needed now: {r['action']['step_name']} (do it, then mark done).")
+        hold = ("action", r["action"]["step_name"])
+    human_all = [o for o in ap.get("outstanding", []) if o["gate"] or o["reminder"]]
+    completed_all = ap.get("completed") or []
+    return {
+        "rid": r.get("release_id", "?"),
+        "ap": ap,
+        "started": bool(ap.get("started")),
+        "completed": completed_all[:8],
+        "completed_total": len(completed_all),
+        "hold": hold,                          # (kind, step_name) or None
+        "human": human_all[:6],
+        "human_total": len(human_all),
+    }
 
-    human = [o for o in ap.get("outstanding", []) if o["gate"] or o["reminder"]]
-    if human:
-        lines.append(f"Still needs you ({len(human)}):")
-        for o in human[:6]:
-            what = "your approval" if o["gate"] else "your action"
-            lines.append(f"  • {o['name']} — {what}")
 
+def _progress_line(m: dict, bold: bool = False) -> str:
+    """The opened/progress line, shared by both text renderers."""
+    ap = m["ap"]
+    if not m["started"]:
+        opened = f" (opened {ap['opens']})" if ap.get("opens") else ""
+        total = f"**{ap['total']}**" if bold else str(ap["total"])
+        return f"Phase {ap['num']} has opened{opened} — {total} steps to work through, none done yet."
+    prog = f"**{ap['done']} of {ap['total']}**" if bold else f"{ap['done']} of {ap['total']}"
+    return f"Progress: {prog} steps done."
+
+
+def notification(r: dict) -> str:
+    """The DAILY PHASE DIGEST emailed to the release owner, or "" to stay silent.
+    `r` is Orchestrator.status_report(). Plain-text form (email fallback / logs);
+    the markdown and HTML forms render the same model differently. The once-per-day
+    cadence is enforced by the CLI (last_notified_date)."""
+    m = _digest_model(r)
+    if m is None:
+        return ""
+    ap = m["ap"]
+    lines = [f"Release {m['rid']} — Phase {ap['num']}: {ap['name']}", _progress_line(m)]
+    if m["completed"]:
+        lines.append(f"Completed ({m['completed_total']}):")
+        lines += [f"  ✓ {name}" for name in m["completed"]]
+    if m["hold"]:
+        kind, name = m["hold"]
+        lines.append(f"Waiting on your decision: {name} (approve or deny)." if kind == "gate"
+                     else f"Action needed now: {name} (do it, then mark done).")
+    if m["human"]:
+        lines.append(f"Still needs you ({m['human_total']}):")
+        lines += [f"  • {o['name']} — {'your approval' if o['gate'] else 'your action'}"
+                  for o in m["human"]]
     lines.append("Open Scout to continue the release.")
     return "\n".join(lines)
 
 
 def notification_markdown(r: dict) -> str:
-    """Teams-bot-friendly MARKDOWN digest. The Scout bot renders markdown and
-    COLLAPSES single newlines into spaces, so the plain-text digest (notification())
-    turns into one run-on paragraph there. This mirrors that content but with
-    blank-line paragraph breaks, `-` bullets, and `**bold**` so it renders correctly
-    via m_send_teams_message. Empty when notification() is empty."""
-    if not notification(r):        # reuse the same "should we push?" decision
+    """Teams-bot-friendly MARKDOWN digest — same content as notification() but with
+    blank-line paragraph breaks, `-` bullets and `**bold**`. The Scout bot renders
+    markdown and COLLAPSES single newlines, so the plain-text form would arrive as
+    one run-on paragraph. Empty under the same silence rules."""
+    m = _digest_model(r)
+    if m is None:
         return ""
-    rid = r.get("release_id", "?")
-    ap = r["active_phase"]
-    blocks = [f"**Release {rid} — Phase {ap['num']}: {ap['name']}**"]
-
-    if not ap["started"]:
-        opened = f" (opened {ap['opens']})" if ap.get("opens") else ""
-        blocks.append(f"Phase {ap['num']} has opened{opened} — **{ap['total']}** steps to work through, none done yet.")
-    else:
-        blocks.append(f"Progress: **{ap['done']} of {ap['total']}** steps done.")
-
-    completed = ap.get("completed") or []
-    if completed:
-        rows = [f"**Completed ({len(completed)}):**"] + [f"- ✓ {n}" for n in completed[:8]]
+    ap = m["ap"]
+    blocks = [f"**Release {m['rid']} — Phase {ap['num']}: {ap['name']}**", _progress_line(m, bold=True)]
+    if m["completed"]:
+        blocks.append("\n".join([f"**Completed ({m['completed_total']}):**"]
+                                + [f"- ✓ {n}" for n in m["completed"]]))
+    if m["hold"]:
+        kind, name = m["hold"]
+        blocks.append(f"**Waiting on your decision:** {name} (approve or deny)." if kind == "gate"
+                      else f"**Action needed now:** {name} (do it, then mark done).")
+    if m["human"]:
+        rows = [f"**Still needs you ({m['human_total']}):**"]
+        rows += [f"- {o['name']} — {'your approval' if o['gate'] else 'your action'}"
+                 for o in m["human"]]
         blocks.append("\n".join(rows))
-
-    if r.get("gate"):
-        blocks.append(f"**Waiting on your decision:** {r['gate']['step_name']} (approve or deny).")
-    elif r.get("action"):
-        blocks.append(f"**Action needed now:** {r['action']['step_name']} (do it, then mark done).")
-
-    human = [o for o in ap.get("outstanding", []) if o["gate"] or o["reminder"]]
-    if human:
-        rows = [f"**Still needs you ({len(human)}):**"]
-        for o in human[:6]:
-            what = "your approval" if o["gate"] else "your action"
-            rows.append(f"- {o['name']} — {what}")
-        blocks.append("\n".join(rows))
-
     blocks.append("_Open Scout to continue the release._")
     return "\n\n".join(blocks)      # blank line between blocks survives markdown collapse
 
@@ -516,9 +516,9 @@ def _pill(status: str) -> str:
 
 def notification_html(r: dict) -> str:
     """HTML version of the daily phase digest. Returns "" under the exact same
-    silence rules as notification() (reuses it as the guard). Presents EVERY step
-    in the active phase with a status pill, and flags what needs the owner now."""
-    if not notification(r):                       # same silence rules / dedup gate
+    silence rules as the other renderers (shares `_digest_model`). Presents EVERY
+    step in the active phase with a status pill, and flags what needs the owner now."""
+    if _digest_model(r) is None:                  # same silence rules / dedup gate
         return ""
     rid = _esc(r.get("release_id", "?"))
     ap = r.get("active_phase") or {}
@@ -557,13 +557,11 @@ def notification_html(r: dict) -> str:
             f'&mdash; {hold_kind}.</div></td></tr>'
         )
 
-    dry_badge = ""
-
     return f"""\
 <div style="margin:0;padding:24px 0;background:#f5f6f8;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(16,24,40,0.08);">
   <tr><td style="background:#1f2a44;padding:20px 24px;">
-    <div style="color:#ffffff;font-size:18px;font-weight:700;">Release {rid}{dry_badge}</div>
+    <div style="color:#ffffff;font-size:18px;font-weight:700;">Release {rid}</div>
     <div style="color:#c3cad9;font-size:14px;margin-top:2px;">{phase_title}</div>
   </td></tr>
   <tr><td style="padding:18px 24px 6px;">

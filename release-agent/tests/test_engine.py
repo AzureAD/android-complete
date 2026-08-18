@@ -1519,7 +1519,34 @@ def test_tick_payload_carries_teams_block_when_enabled():
         assert p2["message"] == "" and p2["teams"] is None
 
 
-def test_notification_markdown_has_paragraph_breaks_and_bullets():
+def test_notification_renderers_share_one_silence_gate():
+    """All three digest renderers (plain/markdown/html) derive silence from the same
+    _digest_model — so they're empty together and non-empty together. Guards against
+    the three functions drifting apart."""
+    from orchestrator import render
+    from datetime import date
+    # unsigned setup release → all silent
+    st0 = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
+    r0 = Orchestrator(CONFIG, st0).status_report()
+    assert render.notification(r0) == "" and render.notification_markdown(r0) == "" \
+        and render.notification_html(r0) == ""
+    assert render._digest_model(r0) is None
+    # signed + due → all non-empty, and the model caps counts (shows totals)
+    _stub_build_defs("pass")
+    st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default",
+                      owner_email="o@x.com")
+    orch = Orchestrator(CONFIG, st)
+    _pass_scout_checks(orch); orch.gate.sign()
+    orch.as_of = date(2026, 7, 8); orch.run_until_gate()
+    r = orch.status_report()
+    m = render._digest_model(r)
+    assert m is not None
+    assert m["completed_total"] == len(r["active_phase"].get("completed") or [])
+    assert len(m["completed"]) <= 8 and len(m["human"]) <= 6
+    assert render.notification(r) and render.notification_markdown(r) and render.notification_html(r)
+
+
+
     """The Teams-bot markdown digest uses blank-line paragraph breaks (survive the
     Scout bot's newline collapse), `-` bullets, and bold — unlike the plain text."""
     from orchestrator import render
