@@ -2,11 +2,16 @@
 
 `config/notifications.yaml` declares the channels (email always; Teams optional) and
 the Teams target. `tick`/`notify` call this to (1) report which channels are on and
-(2) build a ready-to-send Teams `chat` block when a digest is actually due. The
-engine still produces exactly ONE digest (render.notification / _html); this module
-only fans it out.
+(2) build a Teams delivery descriptor when a digest is actually due. The engine still
+produces exactly ONE digest (render.notification / _html); this module only fans it
+out.
 
-Pure + IO-light (reads one yaml) so it's trivially testable and the mailer/poster
+Teams has TWO possible destinations:
+  * 'scout' (default) → the Scout Teams bot DM (m_send_teams_message). This is the
+    release owner's Scout notification channel — plain-text digest.
+  * an explicit chat id → workiq_send_chat_message to that chat (rich HTML).
+
+Pure + IO-light (reads one yaml) so it's trivially testable; the actual send
 side-effects stay in the automation.
 """
 from __future__ import annotations
@@ -15,11 +20,13 @@ import os
 
 import yaml
 
-from steps.lib.context import SELF_CHAT_ID
-
 # Conservative default when the file is absent: email only (today's behavior),
-# Teams off. Adding the file with channels.teams: true opts in.
-_DEFAULTS = {"channels": {"email": True, "teams": False}, "teams": {"chat": "self"}}
+# Teams off. Adding the file with channels.teams: true opts in. Teams target
+# defaults to the Scout bot.
+_DEFAULTS = {"channels": {"email": True, "teams": False}, "teams": {"target": "scout"}}
+
+# Aliases that all mean "the Scout Teams bot" (delivered via m_send_teams_message).
+_SCOUT_ALIASES = {None, "scout", "scout_bot", "bot", "self", "me", "owner"}
 
 
 def notifications_path(config_path: str) -> str:
@@ -49,17 +56,29 @@ def channels(cfg: dict) -> dict:
     return dict(cfg.get("channels", {}))
 
 
-def teams_chat_id(cfg: dict) -> str:
-    """Resolve the Teams target. 'self'/'me'/'owner'/None → the owner's own chat
-    (48:notes); any other value is treated as an explicit chat id."""
-    chat = (cfg.get("teams") or {}).get("chat", "self")
-    if chat in (None, "self", "me", "owner"):
-        return SELF_CHAT_ID
-    return chat
+def teams_target(cfg: dict) -> str:
+    """The configured Teams target string ('scout' or an explicit chat id)."""
+    return (cfg.get("teams") or {}).get("target", "scout")
 
 
-def teams_block(cfg: dict, html: str, message: str) -> dict:
-    """The workiq_send_chat_message payload for the digest (prefers HTML, falls back
-    to the plain-text message wrapped in <pre>)."""
-    content = html or f"<pre>{message}</pre>"
-    return {"chatId": teams_chat_id(cfg), "content": content, "contentType": "html"}
+def _is_scout_bot(target) -> bool:
+    return target in _SCOUT_ALIASES
+
+
+def teams_delivery(cfg: dict, html: str, message: str):
+    """How to deliver the Teams copy, or None if Teams is off.
+
+    Scout bot (default):
+        {"via": "scout_bot", "text": <plain digest>}
+        → the automation calls m_send_teams_message(message=text).
+    Explicit chat id:
+        {"via": "chat", "chatId": <id>, "content": <html>, "contentType": "html"}
+        → the automation calls workiq_send_chat_message(**block).
+    """
+    if not channels(cfg).get("teams"):
+        return None
+    target = teams_target(cfg)
+    if _is_scout_bot(target):
+        return {"via": "scout_bot", "text": message}
+    return {"via": "chat", "chatId": target,
+            "content": html or f"<pre>{message}</pre>", "contentType": "html"}

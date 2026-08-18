@@ -87,11 +87,11 @@ def _notify_payload(args, rid, advance):
         except Exception:
             pass
     # Fan-out channels (config/notifications.yaml). Email is the existing path; when
-    # Teams is on and a digest is actually due, attach a ready-to-send chat block for
-    # the release owner's own Teams chat.
+    # Teams is on and a digest is actually due, attach a delivery descriptor (Scout
+    # bot by default, or an explicit chat).
     ncfg = notif.load_config(getattr(args, "config", None))
     ch = notif.channels(ncfg)
-    teams = notif.teams_block(ncfg, html, msg) if (fresh and msg and ch.get("teams")) else None
+    teams = notif.teams_delivery(ncfg, html, msg) if (fresh and msg and ch.get("teams")) else None
     return {"message": msg if fresh else "", "html": html if fresh else "",
             "subject": subject, "owner_email": st.owner_email,
             "owner_name": st.owner_name, "release": rid,

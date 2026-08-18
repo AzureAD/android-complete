@@ -1368,35 +1368,39 @@ def test_tick_dedup_same_day():
 # ---- notification channels (email + Teams) ----
 
 def test_notifications_config_defaults_and_target():
-    """Missing file → email only, Teams off. 'self' target resolves to the owner's
-    own chat (48:notes); an explicit id passes through."""
+    """Missing file → email only, Teams off. Default target is the Scout bot; an
+    explicit chat id passes through."""
     from orchestrator import notifications as N
-    from steps.lib.context import SELF_CHAT_ID
     cfg = N.load_config("no/such/phases.yaml")     # file absent → defaults
     assert cfg["channels"] == {"email": True, "teams": False}
-    assert N.teams_chat_id({"teams": {"chat": "self"}}) == SELF_CHAT_ID
-    assert N.teams_chat_id({"teams": {"chat": "me"}}) == SELF_CHAT_ID
-    assert N.teams_chat_id({"teams": {}}) == SELF_CHAT_ID          # default is self
-    assert N.teams_chat_id({"teams": {"chat": "19:abc@thread.v2"}}) == "19:abc@thread.v2"
-    blk = N.teams_block({"teams": {"chat": "self"}}, "<b>hi</b>", "hi")
-    assert blk["chatId"] == SELF_CHAT_ID and blk["contentType"] == "html" and "hi" in blk["content"]
+    # Scout-bot delivery (default + aliases)
+    for t in ("scout", "self", "me", "owner", "bot"):
+        d = N.teams_delivery({"channels": {"teams": True}, "teams": {"target": t}}, "<b>x</b>", "x")
+        assert d["via"] == "scout_bot" and d["text"] == "x"
+    # explicit chat id → workiq html chat block
+    d2 = N.teams_delivery({"channels": {"teams": True}, "teams": {"target": "19:abc@thread.v2"}},
+                          "<b>hi</b>", "hi")
+    assert d2["via"] == "chat" and d2["chatId"] == "19:abc@thread.v2"
+    assert d2["contentType"] == "html" and "hi" in d2["content"]
+    # teams off → no delivery
+    assert N.teams_delivery({"channels": {"teams": False}, "teams": {"target": "scout"}}, "h", "m") is None
 
 
-def test_notifications_repo_config_enables_teams():
-    """The repo's config/notifications.yaml opts Teams in (email + Teams)."""
+def test_notifications_repo_config_targets_scout_bot():
+    """The repo's config/notifications.yaml enables Teams and targets the Scout bot."""
     from orchestrator import notifications as N
     cfg = N.load_config(CONFIG)                     # real config/ dir
     assert cfg["channels"]["email"] is True
     assert cfg["channels"]["teams"] is True
+    assert N.teams_target(cfg) == "scout"
 
 
 def test_tick_payload_carries_teams_block_when_enabled():
-    """When a digest is due and Teams is enabled, the tick payload includes a
-    ready-to-send Teams chat block for the owner's own chat; the plain email path is
-    unchanged. Second same-day tick (deduped) carries no Teams block."""
+    """When a digest is due and Teams is enabled, the tick payload includes a Teams
+    delivery descriptor. The repo config targets the Scout bot, so it's a scout_bot
+    delivery carrying the plain-text digest. Deduped second tick carries none."""
     import tempfile as _tf
     from orchestrator.commands import notify as ncmd
-    from steps.lib.context import SELF_CHAT_ID
     with _tf.TemporaryDirectory() as d:
         rid = "2026-07"
         _stub_build_defs("pass")
@@ -1413,9 +1417,9 @@ def test_tick_payload_carries_teams_block_when_enabled():
         p = ncmd._notify_payload(A, rid, advance=True)
         assert p["channels"]["teams"] is True
         assert p["message"] and p["teams"] is not None
-        assert p["teams"]["chatId"] == SELF_CHAT_ID
-        assert p["teams"]["contentType"] == "html" and p["teams"]["content"]
-        # deduped second tick → message empty AND no teams block
+        assert p["teams"]["via"] == "scout_bot"
+        assert p["teams"]["text"] == p["message"]     # plain digest for the Scout bot
+        # deduped second tick → message empty AND no teams delivery
         p2 = ncmd._notify_payload(A, rid, advance=True)
         assert p2["message"] == "" and p2["teams"] is None
 
