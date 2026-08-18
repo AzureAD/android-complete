@@ -27,8 +27,21 @@ Right after `init`, make sure the **push-reminder automation** exists for THIS r
 
 Do it silently as part of start (the user already opted into push). **Why hourly, not once at 9am:** `tick` is idempotent (advancing no-ops once holding; digest de-dupes to one email/day), so a tick missed while the machine was off is picked up by the next. A single daily trigger would be skipped that day.
 
+## Provision the timed phase automations (config-driven, per release)
+
+Some steps must fire at a specific time of day (not just "on their date") — e.g. the CCD-day comms at 09:00 and the localization trigger at noon. These are declared as DATA in `config/automations.yaml`, which maps each automation to the exact steps it drives; the fire time is derived from each step module's `fire_at_local`. Provision them **after `init` and once the CCD is set**:
+
+1. `python -m orchestrator.cli automation plan --release <YYYY-MM> --json` — returns the concrete automations to create (`name`, `schedule`, `steps`, `purpose`, `prompt`). If `problems` is non-empty, STOP and report — the config/step mapping drifted.
+2. For each automation in the result, skip if `automation list --release <YYYY-MM> --json` already has one whose `steps` match (don't duplicate). Otherwise `m_create_automation`:
+   - **name / schedule / prompt:** exactly the values from the plan (schedule is a one-shot on the CCD date; set **oneShot:true**).
+   - **teamsNotify:** `never` (it emails/posts via the steps themselves).
+3. **Register it WITH its steps** so the linkage is recorded and it's torn down at close — copy the plan's `register:` line, filling the real Scout id:
+   `automation register --id <scout-id> --name "<name>" --release <YYYY-MM> --purpose "<purpose>" --step <phase.step> [--step …]`
+
+**Traceability:** every timed step is owned by exactly one automation (a guardrail test enforces this). To answer "which automation runs step X?" → `automation list --release <YYYY-MM> --step-filter <phase.step>`. To see "what does this automation drive?" → `automation list --release <YYYY-MM>` (each row shows `drives: …`). At runtime each automation journals `<slug> ran <step>` into the release event log, so the whole chain (config → registered automation → step execution) is inspectable.
+
 ### Any automation you provision MUST be registered (for teardown)
-- **Per-release** (normal, e.g. push reminders, a phase watcher) → `--release <YYYY-MM>`. **Removed when that release closes.**
+- **Per-release** (normal, e.g. push reminders, the CCD phase automations) → `--release <YYYY-MM>` (+ `--step` for step-driving ones). **Removed when that release closes.**
 - **Shared/persistent** (rare — genuinely meant to outlive every release) → `--shared`. Not torn down. Default per-release.
 
 At **release close** (status complete / Release Close phase / user asks to "clean up automations"):

@@ -1,0 +1,38 @@
+# Per-release automation definitions — the SINGLE source of truth for which Scout
+# automations a release provisions and WHICH STEPS each one drives (traceability).
+#
+# This is DATA, not code. The engine/CLI never call Scout's automation API; the
+# skill does (m_create_automation / m_delete_automation). `automation plan
+# --release <id>` reads this file + the release CCD and emits the concrete
+# automations to create; each is then recorded in _automations.json WITH its steps,
+# so automation<->step linkage is queryable and torn down cleanly at release close.
+#
+# Timing is NOT specified here — it is DERIVED from each step module's
+# `fire_at_local` (steps/<phase>/<step>.py CONFIG). All steps in one automation must
+# share the same fire_at_local; a guardrail test enforces that every scheduled step
+# (one that declares fire_at_local) is owned by exactly ONE automation here.
+#
+# Fields:
+#   slug     : stable short id for this automation (used in the registry + names)
+#   name     : display name; "{release}" is filled with the release id (YYYY-MM)
+#   phase    : the phase these steps belong to (all steps must be in it)
+#   steps    : "<phase>.<step>" ids this automation runs, in order
+#   purpose  : one-line description (stored in the registry)
+
+version: 1
+
+automations:
+  - slug: ccd-morning
+    name: "Release {release} — CCD morning reminders"
+    phase: ccd
+    steps:
+      - ccd.final_reminder      # email: code complete is TODAY
+      - ccd.pr_reminder         # Teams: merge required PRs before the 11 PM cut
+    purpose: "Send the CCD-day code-complete email + the Code reviews PR-merge reminder"
+
+  - slug: ccd-noon
+    name: "Release {release} — CCD noon localization"
+    phase: ccd
+    steps:
+      - ccd.localization        # trigger pipeline 405133 (isCreatePrSelected=true)
+    purpose: "Trigger the localization pipeline at noon"

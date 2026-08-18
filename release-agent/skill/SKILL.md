@@ -32,7 +32,7 @@ Discover → (if no gate cleared, run the entry gate) → `next` to advance → 
 
 ## Behaviour dispatch
 - **"status" / "where are we":** discover. If the entry gate isn't cleared (`readiness_gate`/not signed, or `blocked`) → the useful answer IS the checklist: run `checklist --release <id> --verify` and show that table (don't ask permission). Otherwise show `status`. No release → say so, offer to start.
-- **"start a release":** `m_ask_user` current-month vs other (you compute `YYYY-MM`) → `init` → ensure push-reminder automation exists → run the **entry gate** → `next` → present status. *(→ starting-and-scheduling.md, readiness-gate.md)*
+- **"start a release":** `m_ask_user` current-month vs other (you compute `YYYY-MM`) → `init` → ensure push-reminder automation exists → provision the timed phase automations (`automation plan`) → run the **entry gate** → `next` → present status. *(→ starting-and-scheduling.md, readiness-gate.md)*
 - **Engine HOLDS at a gate:** present it; `m_ask_user` Approve/Deny; run `approve`/`deny --comment` with their reason; present new status.
 - **Engine HOLDS for a reminder** (`awaiting_action`, a human to-do): present as "you need to do X"; when done, `done --release <id> --note "<what they did>"`. Not a decision — no Approve/Deny.
 - **A step is BLOCKED** (agent found a real problem, e.g. `cg` on High/Critical CG alerts, `cron` on a stale Calendar Checker): show the note plainly. Two exits: **(a) fix** → `next` re-runs the check; **(b) override** → `skip --release <id> --phase <p> --step <s> --reason "<why>"`. No other way to clear it.

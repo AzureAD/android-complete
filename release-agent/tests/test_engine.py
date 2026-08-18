@@ -1017,6 +1017,52 @@ def test_registry_register_list_deregister():
         assert len(reg.list()) == 1
 
 
+def test_registry_records_step_linkage_and_reverse_lookup():
+    """An automation entry records the steps it drives; list(step=...) is the
+    reverse lookup (which automation owns a step) — the traceability link."""
+    from orchestrator.registry import AutomationRegistry
+    with tempfile.TemporaryDirectory() as tmp:
+        reg = AutomationRegistry(tmp)
+        reg.register("m", "CCD morning", release="2026-09", purpose="reminders",
+                     steps=["ccd.final_reminder", "ccd.pr_reminder"])
+        reg.register("n", "CCD noon", release="2026-09", purpose="loc",
+                     steps=["ccd.localization"])
+        # forward: automation -> steps
+        m = reg.list(release="2026-09")[0]
+        assert m["steps"] == ["ccd.final_reminder", "ccd.pr_reminder"]
+        # reverse: step -> automation
+        owners = reg.list(step="ccd.localization")
+        assert [e["id"] for e in owners] == ["n"]
+        assert reg.list(step="ccd.pr_reminder")[0]["id"] == "m"
+        # a step nobody drives → empty
+        assert reg.list(step="ccd.branch_cut") == []
+
+
+def test_automations_cover_every_scheduled_step():
+    """SELF-ENFORCING TRACEABILITY GUARDRAIL — every step that declares a
+    fire_at_local must be owned by EXACTLY ONE automation in config/automations.yaml,
+    and each automation's steps must exist and share one fire time. Fails LOUDLY on
+    drift so a timed step can't be added without wiring its automation."""
+    from orchestrator import automations as A
+    problems = A.validate(CONFIG)
+    assert problems == [], "automation/step mapping drift:\n  " + "\n  ".join(problems)
+
+
+def test_automation_plan_derives_specs_from_ccd():
+    """`plan` turns automations.yaml + the release CCD into concrete specs: a
+    one-shot schedule at each step's fire time, the steps it drives, and the
+    registration args (so linkage is captured when it's created)."""
+    from orchestrator import automations as A
+    result = A.plan(CONFIG, "2026-09", "2026-09-09")   # CCD is a Wednesday
+    assert result["problems"] == []
+    by = {a["slug"]: a for a in result["automations"]}
+    assert by["ccd-morning"]["steps"] == ["ccd.final_reminder", "ccd.pr_reminder"]
+    assert by["ccd-morning"]["fire_at"] == "09:00"
+    assert by["ccd-morning"]["schedule"] == "every wednesday at 9am"
+    assert by["ccd-noon"]["schedule"] == "every wednesday at 12pm"
+    assert by["ccd-noon"]["registration"]["steps"] == ["ccd.localization"]
+
+
 # ---- inter-process state lock (parallel CLI mutation safety) ----
 
 def test_state_lock_is_exclusive_then_releases():

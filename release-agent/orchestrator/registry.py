@@ -3,8 +3,10 @@ for a release, so they can be cleanly torn down at release close.
 
 The engine/CLI never call Scout's automation API (creating/deleting automations is
 the skill's job via m_create_automation / m_delete_automation). This module only
-RECORDS which automations exist, tagged by release + scope, so the skill knows
-exactly what to remove at the end — nothing gets orphaned.
+RECORDS which automations exist, tagged by release + scope + the STEPS each drives,
+so the skill knows exactly what to remove at the end (nothing gets orphaned) and so
+automation<->step linkage is queryable both ways (`list(release=…)` shows an
+automation's steps; `list(step=…)` shows which automation owns a step).
 
 Two scopes:
   * shared  — machine-wide, reused across releases (e.g. "Release push reminders").
@@ -45,14 +47,17 @@ class AutomationRegistry:
         os.replace(tmp, self.path)
 
     def register(self, auto_id: str, name: str, release: str = None,
-                 shared: bool = False, purpose: str = "") -> dict:
-        """Record an automation (upsert by id). Shared automations store release=None."""
+                 shared: bool = False, purpose: str = "", steps: list = None) -> dict:
+        """Record an automation (upsert by id). Shared automations store release=None.
+        `steps` is the list of '<phase>.<step>' ids this automation drives — the
+        automation<->step linkage used for traceability."""
         entry = {
             "id": auto_id,
             "name": name,
             "scope": "shared" if shared else "release",
             "release": None if shared else release,
             "purpose": purpose,
+            "steps": list(steps or []),
             "registered_at": _now(),
         }
         entries = [e for e in self._load() if e.get("id") != auto_id]  # upsert
@@ -66,12 +71,16 @@ class AutomationRegistry:
         self._save(kept)
         return len(kept) != len(entries)
 
-    def list(self, release: str = None, scope: str = None) -> list:
+    def list(self, release: str = None, scope: str = None, step: str = None) -> list:
         """List entries. `release` filters to that release's automations (scope
-        'release' whose release matches). `scope` filters by 'shared'/'release'."""
+        'release' whose release matches). `scope` filters by 'shared'/'release'.
+        `step` filters to automations that DRIVE that '<phase>.<step>' id (reverse
+        lookup — which automation owns a step)."""
         entries = self._load()
         if release is not None:
             entries = [e for e in entries if e.get("release") == release]
         if scope is not None:
             entries = [e for e in entries if e.get("scope") == scope]
+        if step is not None:
+            entries = [e for e in entries if step in (e.get("steps") or [])]
         return entries
