@@ -6,7 +6,7 @@ Immediately after `init`, the very first thing is the **readiness checklist** �
 
 - **`auto`** — **Scout resolves it** (verifies programmatically, pass/fail). Two execution sources, both shown as `[auto]`:
   - *Python-verified* (default): `build_access` (both ADO build definitions, via `az`) and `mcp_servers` (ICM + Kusto/ADX MCP servers registered in Scout). The engine's `verify`/`sign` runs these.
-  - *Scout-assisted* (`source: scout`): the engine can't reach the MCP/Scout-settings, so **YOU run the check** and record the result (step 3). Fail-closed **except `silent_perms`**. Today: `oncall_now` (ICM current on-call), `adx_access` (Kusto `print 1`), `silent_perms` (Scout permissions allow unattended runs).
+  - *Scout-assisted* (`source: scout`): the engine can't reach the MCP/Scout-settings, so **YOU run the check** and record the result (step 3). Fail-closed **except the opt-out items `silent_perms` and `teams_notify`**. Today: `oncall_now` (ICM current on-call), `adx_access` (Kusto `print 1`), `silent_perms` (Scout permissions allow unattended runs), `teams_notify` (Scout Teams bot reachable for the digest — degrades to email-only).
 - **`attest`** — **the engineer resolves it** (confirms): `play_console_access`, `oncall_window`, `saw_ame`, `yubikey`.
 
 **On-call is TWO items (hybrid)** because Scout only sees the *current* rotation, not the future:
@@ -50,6 +50,11 @@ If any item is unsatisfied the gate stays closed. If the engineer can't satisfy 
         - Succeeds → `record-check --release <id> --item adx_access --status pass --detail "print 1 succeeded"`.
         - Fails → `--status fail --detail "<error>"`.
     - A `fail` on `oncall_now`/`adx_access` keeps the gate closed — resolve or hand off. Do NOT attest these; they're `auto` items.
+    - **`teams_notify` (Scout Teams bot):** verifies the daily digest can also reach the user over Teams (email is the guaranteed channel; Teams is a bonus). Read `config/notifications.yaml` (or the `tick --json` payload's `channels`):
+        - **`channels.teams` is OFF** → Teams isn't requested: `record-check --release <id> --item teams_notify --status pass --detail "teams channel disabled — email only"`.
+        - **`channels.teams` is ON** → call **`m_relay_status`**; if not `connected`, call **`m_relay_connect`** and re-check. Then send a silent handshake via **`m_send_teams_message`** (e.g. "✅ Scout Teams notifications are set up for your release digests.").
+            - Relay connected AND the handshake sends → `record-check … --item teams_notify --status pass --detail "relay connected; Scout bot reachable"`.
+            - Relay won't connect, OR the handshake fails/404s (the Scout bot has no conversation yet — the user has never messaged it) → `record-check … --item teams_notify --status degraded --detail "Teams unreachable — digest will use email only"`. **`degraded` satisfies the gate** (shows ⚠️). Tell the user once: *"I couldn't reach the Scout Teams bot, so your release digest will come by email only. To also get it in Teams, open the Microsoft Scout chat in Teams and send it any message once, then it'll work next time."* Do NOT block.
 
 4. **NOW render the fully-evaluated gate — the ONE table.** Every `[auto]` item is resolved, so the table shows the complete picture (auto items ✅, only `[attest]` items Outstanding). Run `checklist --release <id>` and **paste its full stdout verbatim as live markdown — NOT fenced, and do NOT summarize it into a plain list.** This is the gate presentation the user has been waiting for; it must be the actual table. Then immediately continue to the attestation card (step 5) in the same message.
 

@@ -81,6 +81,18 @@ items:
     # checks will PROMPT when Scout isn't focused and can stall until the user opens Scout.
     opt_out: true
 
+  - id: teams_notify
+    label: "Scout Teams notifications"
+    text: "The daily release digest can reach you over the Scout Teams bot (in addition to email)"
+    detail: "Scout checks the Teams relay is connected and the Scout bot is reachable, so the hourly `tick` digest can be delivered to you in Teams as well as email. Falls back to email-only if Teams isn't reachable."
+    verify: auto
+    source: scout          # only the skill can reach the relay (m_relay_status/connect) + bot (m_send_teams_message)
+    verifier: teams_notify
+    # OPT-OUT (soft): email is the guaranteed channel, so Teams is a bonus. If the relay
+    # won't connect or the Scout bot has no conversation yet (never messaged), the skill
+    # records `degraded` (email-only) and the gate still clears — it never blocks a release.
+    opt_out: true
+
   # ---- ATTEST: the engineer confirms (Scout cannot fully prove these) ----
   # `detail` is the table-cell text and MAY contain inline markdown links
   # (they render fine inside Scout table cells).

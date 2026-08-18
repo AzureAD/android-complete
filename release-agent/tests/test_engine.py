@@ -67,10 +67,11 @@ def _stub_build_defs(status):
 
 def _pass_scout_checks(orch):
     """Record all scout-assisted (source: scout) auto checks as pass — mirrors the
-    skill running the ICM + Kusto + settings checks and recording their results."""
+    skill running the ICM + Kusto + settings + Teams checks and recording results."""
     orch.gate.record_check("oncall_now", "pass", "stubbed: not on-call")
     orch.gate.record_check("adx_access", "pass", "stubbed: can query cluster")
     orch.gate.record_check("silent_perms", "pass", "stubbed: all servers auto-approved")
+    orch.gate.record_check("teams_notify", "pass", "stubbed: Scout Teams bot reachable")
 
 
 def _clear_notice(orch):
@@ -264,6 +265,7 @@ def test_attest_prompt_is_separate_render_never_in_table():
     orch.gate.record_check("silent_perms", "pass", "auto-approved")
     orch.gate.record_check("oncall_now", "pass", "not on roster")
     orch.gate.record_check("adx_access", "pass", "print 1 ok")
+    orch.gate.record_check("teams_notify", "pass", "teams reachable")
     # table STILL has no confirmation block (shows once)
     assert "Your confirmation needed" not in render.readiness_table(orch.gate.checklist(), "t")
     # attest_prompt now lists each outstanding attest item
@@ -292,6 +294,7 @@ def test_attest_prompt_payload_is_deterministic_card():
     orch.gate.record_check("silent_perms", "pass", "auto-approved")
     orch.gate.record_check("oncall_now", "pass", "not on roster")
     orch.gate.record_check("adx_access", "pass", "print 1 ok")
+    orch.gate.record_check("teams_notify", "pass", "teams reachable")
     p = render.attest_prompt_payload(orch.gate.checklist(), "2026-07")
     assert p["ready"] is True
     assert p["recommendedIndex"] == 0
@@ -372,6 +375,7 @@ def test_record_check_pass_then_sign_clears_gate():
     orch = Orchestrator(CONFIG, st)
     orch.gate.record_check("adx_access", "pass", "can query")
     orch.gate.record_check("silent_perms", "pass", "servers auto-approved")
+    orch.gate.record_check("teams_notify", "pass", "teams reachable")
     orch.gate.sign()                       # everything but oncall_now satisfied
     assert not st.readiness_signed
     orch.gate.record_check("oncall_now", "pass", "not in roster")
@@ -417,6 +421,7 @@ def test_silent_perms_is_required_scout_item():
     # everything else satisfied but silent_perms → gate still closed
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")
+    orch.gate.record_check("teams_notify", "pass", "teams reachable")
     orch.gate.sign()
     assert not st.readiness_signed
     orch.gate.record_check("silent_perms", "pass", "all servers auto-approved")
@@ -442,6 +447,7 @@ def test_silent_perms_opt_out_degraded_satisfies_gate():
     orch = Orchestrator(CONFIG, st)
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")
+    orch.gate.record_check("teams_notify", "pass", "teams reachable")
     # user opts out of silent runs -> degraded, but the gate still clears on sign
     res = orch.gate.record_check("silent_perms", "degraded", "proceeding without silent runs")
     assert "error" not in res
@@ -458,6 +464,32 @@ def test_degraded_rejected_for_non_opt_out_item():
     orch = Orchestrator(CONFIG, st)
     res = orch.gate.record_check("oncall_now", "degraded", "nope")
     assert "error" in res
+
+
+def test_teams_notify_is_scout_optout_item():
+    """teams_notify (source: scout, opt_out) is a required auto item verified by the
+    skill; Python verify() must not touch it, and 'degraded' (email-only fallback)
+    satisfies the gate — a Teams hiccup never blocks a release."""
+    _stub_build_defs("pass")
+    st = ReleaseState(release_id="t")
+    orch = Orchestrator(CONFIG, st)
+    # it's a scout item → verify() leaves it pending for the skill
+    orch.gate.verify()
+    assert st.readiness_items.get("teams_notify", {}).get("status", "pending") == "pending"
+    tn = next(i for i in orch.gate.checklist()["items"] if i["id"] == "teams_notify")
+    assert tn["verify"] == "auto" and tn["source"] == "scout" and tn["opt_out"] is True
+    # gate stays closed until it's recorded
+    orch.gate.record_check("oncall_now", "pass", "not on-call")
+    orch.gate.record_check("adx_access", "pass", "can query")
+    orch.gate.record_check("silent_perms", "pass", "auto-approved")
+    orch.gate.sign()
+    assert not st.readiness_signed
+    # degraded (Teams unreachable → email only) satisfies the opt-out item
+    res = orch.gate.record_check("teams_notify", "degraded", "Teams unreachable — email only")
+    assert "error" not in res
+    tn2 = next(i for i in orch.gate.checklist()["items"] if i["id"] == "teams_notify")
+    assert tn2["status"] == "degraded" and tn2["satisfied"]
+    assert st.readiness_signed
 
 
 
@@ -2134,7 +2166,7 @@ def test_readiness_mock_clears_auto_gate_offline():
     from datetime import date
     st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
     mocks = {f"readiness.{i}": {"outcome": "pass"} for i in
-             ("build_access", "mcp_servers", "silent_perms", "adx_access", "oncall_now")}
+             ("build_access", "mcp_servers", "silent_perms", "adx_access", "oncall_now", "teams_notify")}
     orch = Orchestrator(CONFIG, st, as_of=date(2026, 7, 2), mocks=mocks)
     orch.gate.verify()                        # no _stub_build_defs → real verifier bypassed
     items = st.readiness_items
