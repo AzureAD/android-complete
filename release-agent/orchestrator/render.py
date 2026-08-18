@@ -404,6 +404,12 @@ def _digest_model(r: dict):
     ap = r.get("active_phase")
     if not ap or not ap.get("due"):
         return None                            # nothing open yet (scheduled) — no push
+    # Scout still owes automatic steps on the open phase (notice / reminders / lockdown
+    # not yet run). The digest reports the *settled* "here's what needs YOU" picture, so
+    # sending it now would be premature and half-run — stay silent until Scout drains its
+    # own steps (a blocked scout step is status 'blocked', not 'scout', so it still pushes).
+    if r.get("scout_pending"):
+        return None
 
     hold = None
     if r.get("gate"):

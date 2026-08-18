@@ -112,6 +112,17 @@ def _clear_early_phase0_scout(orch):
     orch.record_scout_step("preflight", "flight_reminder", "pass", "test: reminders posted")
 
 
+def _drain_phase0_scout_only(orch):
+    """Run the three Phase-0 SCOUT steps (notice, flight_reminder, lockdown) — Scout's
+    own automatic work — but LEAVE the human holds (confirm_reminders, vitals). This is
+    the state where the daily digest is actually DUE: Scout has finished its own steps,
+    and the phase is still open on the human's confirmations. (A headless `tick` can't
+    reach this state on its own — the skill drains scout steps; tests simulate that.)"""
+    _clear_notice(orch)
+    orch.record_scout_step("preflight", "flight_reminder", "pass", "test: reminders posted")
+    _clear_lockdown(orch)
+
+
 def _orch(signed=True):
     """Fresh orchestrator. By default the readiness entry gate is pre-signed so
     tests can focus on the phase flow; readiness itself is tested separately."""
@@ -956,13 +967,36 @@ def test_notify_unsigned_readiness_is_silent():
 
 
 def test_notify_phase0_digest_when_open():
-    """Signed + Phase 0 open → a daily phase digest (not-started form)."""
+    """Phase 0 open but Scout's own steps not yet run → SILENT (premature — the digest
+    reports the settled 'needs YOU' picture, so it holds until Scout drains its steps).
+    Once notice/reminders/lockdown are done, the daily phase digest fires."""
     from orchestrator import render
     st, orch = _ccd_orch("2026-07-01")   # Phase 0 opens today, signed by _ccd_orch
+    # premature: Scout still owes notice/flight_reminder/lockdown → no push yet
+    assert render.notification(orch.status_report()) == ""
+    _drain_phase0_scout_only(orch)       # Scout runs its 3 steps; human holds remain
     msg = render.notification(orch.status_report())
     assert "Phase 0" in msg and "Pre-flight" in msg
-    assert "has opened" in msg
     assert render.notification_subject(orch.status_report()) == "Release 2026-07 — Phase 0 status"
+
+
+def test_digest_silent_while_scout_pending():
+    """CORE OF THIS FIX: the daily digest reports the SETTLED 'needs YOU' picture, so
+    while the open phase still has un-run Scout steps (scout_pending) every renderer
+    stays silent — no premature email that lists Scout's own undone work. Draining the
+    scout steps flips all three renderers on together."""
+    from orchestrator import render
+    st, orch = _ccd_orch("2026-07-01")          # signed, Phase 0 open
+    r = orch.status_report()
+    assert r["scout_pending"] == ["notice", "flight_reminder", "lockdown"]
+    assert render._digest_model(r) is None       # premature → silent
+    assert (render.notification(r) == "" and render.notification_markdown(r) == ""
+            and render.notification_html(r) == "")
+    _drain_phase0_scout_only(orch)               # Scout finishes its own steps
+    r2 = orch.status_report()
+    assert r2["scout_pending"] == []
+    assert render._digest_model(r2) is not None   # now the settled digest is due
+    assert render.notification(r2) and render.notification_html(r2)
 
 
 def test_notify_digest_reports_gate_and_progress():
@@ -1493,8 +1527,10 @@ def test_failing_agent_holds_as_action_needed():
 
 
 def test_tick_advances_and_reports(tmp=None):
-    """`tick` advances the release (runs Phase-0 agent steps to the first gate)
-    AND returns a digest that lists completed steps + what needs the user."""
+    """A headless `tick` advances AGENT steps but can't run Scout steps, so while the
+    open phase still has scout_pending the digest STAYS SILENT (no premature email).
+    Once Scout's steps are drained (the skill's job — simulated here), the next tick
+    returns a digest listing completed steps + what needs the user."""
     import tempfile as _tf
     from orchestrator.commands import notify as ncmd
     with _tf.TemporaryDirectory() as d:
@@ -1506,7 +1542,6 @@ def test_tick_advances_and_reports(tmp=None):
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch)
         orch.gate.sign()
-        _clear_early_phase0_scout(orch)       # first 3 scout steps done; hold at flag reminder (Phase 0)
         C.save_state(st, d, rid)
 
         class A:
@@ -1516,6 +1551,14 @@ def test_tick_advances_and_reports(tmp=None):
             as_of = "2026-07-08"
             force = False
             json = True
+        # Scout steps still pending → tick advances agent steps but the digest is SILENT
+        premature = ncmd._notify_payload(A, rid, advance=True)
+        assert premature["message"] == ""
+        # skill runs the Phase-0 scout steps; now the digest is genuinely due
+        st_now = C.load_state(d, rid)
+        orch2 = Orchestrator(CONFIG, st_now)
+        _drain_phase0_scout_only(orch2)
+        C.save_state(st_now, d, rid)
         payload = ncmd._notify_payload(A, rid, advance=True)
         # advanced: state file now shows Phase-0 progress + holding at a gate
         st2 = C.load_state(d, rid)
@@ -1539,6 +1582,7 @@ def test_tick_dedup_same_day():
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch)
         orch.gate.sign()
+        _drain_phase0_scout_only(orch)        # skill ran Scout's steps → digest now due
         C.save_state(st, d, rid)
 
         class A:
@@ -1597,6 +1641,7 @@ def test_tick_payload_carries_teams_block_when_enabled():
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch)
         orch.gate.sign()
+        _drain_phase0_scout_only(orch)        # skill ran Scout's steps → digest now due
         C.save_state(st, d, rid)
 
         class A:
@@ -1636,6 +1681,7 @@ def test_notification_renderers_share_one_silence_gate():
     orch = Orchestrator(CONFIG, st)
     _pass_scout_checks(orch); orch.gate.sign()
     orch.as_of = date(2026, 7, 8); orch.run_until_gate()
+    _drain_phase0_scout_only(orch)          # Scout's own steps done → digest is due
     r = orch.status_report()
     m = render._digest_model(r)
     assert m is not None
@@ -1656,6 +1702,7 @@ def test_notification_renderers_share_one_silence_gate():
     _pass_scout_checks(orch); orch.gate.sign()
     orch.as_of = date(2026, 7, 8)
     orch.run_until_gate()
+    _drain_phase0_scout_only(orch)          # Scout's own steps done → digest is due
     r = orch.status_report()
     md = render.notification_markdown(r)
     assert md and "\n\n" in md              # paragraph breaks
@@ -1676,8 +1723,8 @@ def test_notification_html_lists_all_tasks_and_flags_attention():
     orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 5))
     _pass_scout_checks(orch)
     orch.gate.sign()
-    _clear_early_phase0_scout(orch)       # clear notice + flight_reminder; hold at lockdown (still Phase 0)
-    orch.run_until_gate()                 # holds at lockdown scout step
+    _drain_phase0_scout_only(orch)        # Scout's own steps done; hold at confirm_reminders
+    orch.run_until_gate()
     html = render.notification_html(orch.status_report())
     assert html.startswith("<div") and "Release 2026-08" in html
     # every Phase-0 step name appears in the table
