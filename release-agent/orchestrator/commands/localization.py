@@ -17,6 +17,8 @@ import json as _json
 from datetime import datetime, timezone
 
 from orchestrator import cli_common as C
+from orchestrator import mocks as mocks_mod
+from steps.lib.context import SELF_CHAT_ID
 from steps.ccd import localization as L
 
 
@@ -80,6 +82,15 @@ def cmd_check_localization(args):
 
     decision = L.decide(st, is_complete=_truthy(args.complete), logs=logs, now=now)
     d = decision["decision"]
+
+    # mocks.local.yaml send_to → redirect the completion PR post to your own chat.
+    if d == "complete_pr" and decision.get("chat"):
+        spec = mocks_mod.load_mocks().get("ccd.localization") or {}
+        if "send_to" in spec:
+            val = spec["send_to"]
+            val = {"me": SELF_CHAT_ID, "self": SELF_CHAT_ID}.get(val, val)
+            decision["chat"]["chatId"] = val
+            decision["test_redirect"] = {"send_to": val}
 
     if d == "wait":
         # Not terminal — keep in-flight, just record progress on the step.

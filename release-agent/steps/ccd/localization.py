@@ -76,10 +76,24 @@ CONFIG = {
     },
 }
 
-# No per-step mock knobs on the trigger; engine-level `outcome: done|blocked` still
-# lets you clear/hold it offline (see `mock-spec`). The poll decider is tested via
-# decide() directly.
-MOCKABLE = {}
+# Mock knobs (mocks.local.yaml). `create_pr` overrides the trigger variable
+# (set false to run the pipeline WITHOUT creating a PR); `send_to` redirects the
+# completion PR post to your own chat ('me'). `send_to` is applied by
+# check-localization (the post happens in the poll decider, not build()).
+from steps.lib.context import SELF_CHAT_ID as _SELF_CHAT_ID   # noqa: E402
+
+MOCKABLE = {
+    "create_pr": {
+        "kind": "input",
+        "desc": "Override isCreatePrSelected on the trigger (true/false). Set false to "
+                "run the pipeline without creating a PR.",
+    },
+    "send_to": {
+        "kind": "post", "sets": "chatId", "aliases": {"me": _SELF_CHAT_ID, "self": _SELF_CHAT_ID},
+        "desc": "Redirect the completion PR post to this chat ('me' = your own chat). "
+                "Applied by check-localization.",
+    },
+}
 
 
 # ----------------------------- pure helpers (testable) -----------------------------
@@ -257,7 +271,13 @@ def build(state):
     if not all(cfg.get(k) for k in ("org", "project", "pipeline_id")):
         return Blocked("localization: incomplete pipeline configuration")
 
-    variables = cfg.get("variables", {}) or {}
+    variables = dict(cfg.get("variables", {}) or {})
+    # mocks.local.yaml `create_pr` overrides isCreatePrSelected (e.g. false = run
+    # the pipeline without creating a PR).
+    from steps.lib.mockctx import mock_input, MISSING
+    cp = mock_input("create_pr", MISSING)
+    if cp is not MISSING:
+        variables["isCreatePrSelected"] = "true" if str(cp).lower() in ("true", "1", "yes") else "false"
     mcp_vars = {k: {"value": str(v)} for k, v in variables.items()}
     var_str = ", ".join(f"{k}={v}" for k, v in variables.items())
 

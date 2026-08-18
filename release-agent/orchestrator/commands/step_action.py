@@ -45,7 +45,7 @@ def _apply_overrides(out: dict, mockable: dict, spec: dict) -> None:
     reserved = {"outcome", "note", "reason"}          # handled by the engine, not here
     applied = {}
     for key, rule in (mockable or {}).items():
-        if rule.get("kind") == "input":               # consumed by build(), not here
+        if rule.get("kind") != "payload":            # input → build(); post → check-localization
             continue
         if key not in spec:
             continue
