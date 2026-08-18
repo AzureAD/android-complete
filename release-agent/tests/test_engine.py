@@ -1365,6 +1365,61 @@ def test_tick_dedup_same_day():
         assert first["message"] and second["message"] == ""
 
 
+# ---- notification channels (email + Teams) ----
+
+def test_notifications_config_defaults_and_target():
+    """Missing file → email only, Teams off. 'self' target resolves to the owner's
+    own chat (48:notes); an explicit id passes through."""
+    from orchestrator import notifications as N
+    from steps.lib.context import SELF_CHAT_ID
+    cfg = N.load_config("no/such/phases.yaml")     # file absent → defaults
+    assert cfg["channels"] == {"email": True, "teams": False}
+    assert N.teams_chat_id({"teams": {"chat": "self"}}) == SELF_CHAT_ID
+    assert N.teams_chat_id({"teams": {"chat": "me"}}) == SELF_CHAT_ID
+    assert N.teams_chat_id({"teams": {}}) == SELF_CHAT_ID          # default is self
+    assert N.teams_chat_id({"teams": {"chat": "19:abc@thread.v2"}}) == "19:abc@thread.v2"
+    blk = N.teams_block({"teams": {"chat": "self"}}, "<b>hi</b>", "hi")
+    assert blk["chatId"] == SELF_CHAT_ID and blk["contentType"] == "html" and "hi" in blk["content"]
+
+
+def test_notifications_repo_config_enables_teams():
+    """The repo's config/notifications.yaml opts Teams in (email + Teams)."""
+    from orchestrator import notifications as N
+    cfg = N.load_config(CONFIG)                     # real config/ dir
+    assert cfg["channels"]["email"] is True
+    assert cfg["channels"]["teams"] is True
+
+
+def test_tick_payload_carries_teams_block_when_enabled():
+    """When a digest is due and Teams is enabled, the tick payload includes a
+    ready-to-send Teams chat block for the owner's own chat; the plain email path is
+    unchanged. Second same-day tick (deduped) carries no Teams block."""
+    import tempfile as _tf
+    from orchestrator.commands import notify as ncmd
+    from steps.lib.context import SELF_CHAT_ID
+    with _tf.TemporaryDirectory() as d:
+        rid = "2026-07"
+        _stub_build_defs("pass")
+        st = ReleaseState(release_id=rid, ccd="2026-07-08",
+                          ccd_source="default", owner_email="o@x.com")
+        orch = Orchestrator(CONFIG, st)
+        _pass_scout_checks(orch)
+        orch.gate.sign()
+        C.save_state(st, d, rid)
+
+        class A:
+            runs_root = d; release = rid; config = CONFIG
+            as_of = "2026-07-08"; force = False; json = True
+        p = ncmd._notify_payload(A, rid, advance=True)
+        assert p["channels"]["teams"] is True
+        assert p["message"] and p["teams"] is not None
+        assert p["teams"]["chatId"] == SELF_CHAT_ID
+        assert p["teams"]["contentType"] == "html" and p["teams"]["content"]
+        # deduped second tick → message empty AND no teams block
+        p2 = ncmd._notify_payload(A, rid, advance=True)
+        assert p2["message"] == "" and p2["teams"] is None
+
+
 def test_notification_html_lists_all_tasks_and_flags_attention():
     """The HTML digest shows every step with a status pill and flags the hold."""
     from orchestrator import render

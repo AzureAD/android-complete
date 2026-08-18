@@ -22,8 +22,12 @@ Right after `init`, make sure the **push-reminder automation** exists for THIS r
    - **name:** `Release push reminders`
    - **schedule:** `every hour`
    - **teamsNotify:** `never`
-   - **prompt:** from `C:\repos\android-complete\release-agent` run `python -m orchestrator.cli tick --json` (ADVANCES the active release — runs agent steps, holds at gates/actions — then returns `{message, html, subject, owner_email, owner_name, release}`); if `message` non-empty and `owner_email` set, email via `workiq_send_email` (`to:[owner_email]`, `subject:` the value, `body:` the `html` with `isHtml:true` — fall back to plain `message`/`isHtml:false` only if `html` empty); if `message` empty, do nothing. (Recipient from `owner_email` — never hardcode. Do NOT use `m_send_teams_message` (bot relay 404s) or the Teams self-chat (delivers silently).)
-3. **Register it** so it's torn down at close: `automation register --id <id> --name "Release push reminders" --release <YYYY-MM> --purpose "hourly advance + phase digest email to owner"` — no `--step`, so it's recorded as a **release-level** automation (it advances the whole release, owns no step).
+   - **prompt:** from `C:\repos\android-complete\release-agent` run `python -m orchestrator.cli tick --json` (ADVANCES the active release — runs agent steps, holds at gates/actions — then returns `{message, html, subject, owner_email, owner_name, release, channels, teams}`). If `message` is empty, do nothing. Otherwise deliver on every enabled channel:
+     - **Email** (when `channels.email`): `workiq_send_email` (`to:[owner_email]`, `subject:` the value, `body:` the `html` with `isHtml:true` — fall back to plain `message`/`isHtml:false` only if `html` empty). Recipient from `owner_email` — never hardcode.
+     - **Teams** (when `channels.teams` and `teams` is non-null): `workiq_send_chat_message` with **exactly** the `teams` block (`chatId`, `content`, `contentType`) — it targets the release owner's own Teams chat. Do NOT use `m_send_teams_message` (bot relay 404s). The `teams` block is only present when a digest is actually due (it respects the same once-per-day de-dup), so posting it never double-notifies.
+
+     The digest content is identical across channels — send it verbatim, don't embellish. Channels are configured in `config/notifications.yaml`.
+3. **Register it** so it's torn down at close: `automation register --id <id> --name "Release push reminders" --release <YYYY-MM> --purpose "hourly advance + phase digest to owner (email + Teams)"` — no `--step`, so it's recorded as a **release-level** automation (it advances the whole release, owns no step).
 
 Do it silently as part of start (the user already opted into push). **Why hourly, not once at 9am:** `tick` is idempotent (advancing no-ops once holding; digest de-dupes to one email/day), so a tick missed while the machine was off is picked up by the next. A single daily trigger would be skipped that day.
 
@@ -71,12 +75,13 @@ Either resolution clears the conflict. Never pick for the user.
 
 ## Push reminders — the daily phase digest (reaching the user when Scout is closed)
 
-Everything else is **pull** (seen when the user opens Scout). The **push** layer is a **daily phase status digest** emailed to the owner:
-- **Setup is interactive — no push.** Readiness checklist + establishing CCD happen live in Scout; never emailed. Unsigned / blocked / halted releases stay silent.
-- **The first push is a phase opening.** Phase 0 opens at CCD‑7 — the first email. Nothing before a phase opens.
+Everything else is **pull** (seen when the user opens Scout). The **push** layer is a **daily phase status digest** delivered to the release owner — by **email and (if enabled) Teams**:
+- **Setup is interactive — no push.** Readiness checklist + establishing CCD happen live in Scout; never pushed. Unsigned / blocked / halted releases stay silent.
+- **The first push is a phase opening.** Phase 0 opens at CCD‑7 — the first digest. Nothing before a phase opens.
 - **Daily while a phase has outstanding work.** Once open, the owner gets a **once‑per‑day** digest (progress + what needs them) until the phase's actions are done; the next phase's digest takes over when it opens.
+- **Channels** are set in `config/notifications.yaml` (`channels.email`, `channels.teams`; `teams.chat: self` → the owner's own Teams chat). Purpose: keep the **release owner** aware and pull them in when a step needs them. Anyone else is notified only when a specific step requires it (that's the step-driving automations, e.g. the CCD reminders) — not this digest.
 
-`tick` is the deterministic automation half: `tick --json` first **advances** the release (runs runnable steps, holds at gates/actions — idempotent), then returns `{message, html, subject, owner_email, owner_name, release}` — `message` plain-text digest, `html` rich version, both empty when nothing's due or already sent today. (`notify --json` is the read-only variant — same payload, does NOT advance.) `--as-of <date>` debug clock; `--force` bypasses once‑per‑day.
+`tick` is the deterministic automation half: `tick --json` first **advances** the release (runs runnable steps, holds at gates/actions — idempotent), then returns `{message, html, subject, owner_email, owner_name, release, channels, teams}` — `message` plain-text digest, `html` rich version, `channels` the enabled map, `teams` a ready-to-send chat block (or null); all empty/null when nothing's due or already sent today. (`notify --json` is the read-only variant — same payload, does NOT advance.) `--as-of <date>` debug clock; `--force` bypasses once‑per‑day.
 
 The **"Release push reminders"** automation runs `tick --json` (discovery mode) **hourly** and emails non-empty `message` to `owner_email` (subject from JSON) — never a hardcoded address; empty → silent. Per‑release: auto‑provisioned at start, torn down at close. Email is the channel because it reliably notifies (the `m_send_teams_message` bot relay 404s without a conversation reference; the Teams self‑chat delivers silently).
 

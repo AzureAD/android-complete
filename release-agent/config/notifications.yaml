@@ -1,0 +1,25 @@
+# Release digest delivery channels — DATA (not code) for how the daily `tick`
+# digest reaches the release owner. The engine builds ONE digest; this file says
+# where it goes. Read by `tick`/`notify`, which add a `channels` map and (when
+# Teams is on and a digest is due) a ready-to-send `teams` block to their payload.
+#
+# Purpose: keep the RELEASE OWNER (the engineer running the release) aware of status
+# and pull them in when a step needs them. Broadcasting to anyone else only happens
+# when a specific step requires it (that's the step-driving automations' job, e.g.
+# the CCD reminders) — NOT this digest.
+#
+# Fields:
+#   channels.email : email the digest to owner_email (existing behavior).
+#   channels.teams : ALSO post the digest to the release owner's own Teams chat.
+#   teams.chat     : 'self' (the owner's own Teams "You"/notes chat, 48:notes — the
+#                    automation runs in the owner's Scout session, so this always
+#                    reaches whoever is the current owner) or an explicit chat id.
+
+version: 1
+
+channels:
+  email: true
+  teams: true
+
+teams:
+  chat: self

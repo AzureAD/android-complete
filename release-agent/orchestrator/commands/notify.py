@@ -6,8 +6,17 @@ import os
 from orchestrator.state import ReleaseState
 from orchestrator.engine import Orchestrator
 from orchestrator import render, schedule
+from orchestrator import notifications as notif
 from orchestrator import cli_common as C
 from tools import checks
+
+
+def _empty_payload(rid, config_path=None):
+    """The 'nothing to send' payload — still reports which channels are configured
+    so callers see a stable shape."""
+    ch = notif.channels(notif.load_config(config_path)) if config_path else {"email": True, "teams": False}
+    return {"message": "", "html": "", "subject": "", "owner_email": None,
+            "owner_name": None, "release": rid, "channels": ch, "teams": None}
 
 
 def cmd_set_owner(args):
@@ -35,8 +44,7 @@ def cmd_notify(args):
     want_json = getattr(args, "json", False)
     if not rid:
         if want_json:
-            print(_json.dumps({"message": "", "html": "", "subject": "", "owner_email": None,
-                               "owner_name": None, "release": None}))
+            print(_json.dumps(_empty_payload(None, getattr(args, "config", None))))
         return 0
     payload = _notify_payload(args, rid, advance=False)
     if want_json:
@@ -53,8 +61,7 @@ def _notify_payload(args, rid, advance):
     `message` is "" unless a digest is due AND not already sent today (or --force)."""
     sp = C.state_path(args.runs_root, rid)
     if not os.path.exists(sp):
-        return {"message": "", "html": "", "subject": "", "owner_email": None,
-                "owner_name": None, "release": rid}
+        return _empty_payload(rid, getattr(args, "config", None))
     as_of = C.parse_as_of(args)
     if advance:
         # Auto-advance: run every agent step that can run, holding at the first
@@ -79,9 +86,16 @@ def _notify_payload(args, rid, advance):
             C.elog(args.runs_root, rid).log("notified", text=msg, owner=st.owner_email)
         except Exception:
             pass
+    # Fan-out channels (config/notifications.yaml). Email is the existing path; when
+    # Teams is on and a digest is actually due, attach a ready-to-send chat block for
+    # the release owner's own Teams chat.
+    ncfg = notif.load_config(getattr(args, "config", None))
+    ch = notif.channels(ncfg)
+    teams = notif.teams_block(ncfg, html, msg) if (fresh and msg and ch.get("teams")) else None
     return {"message": msg if fresh else "", "html": html if fresh else "",
             "subject": subject, "owner_email": st.owner_email,
-            "owner_name": st.owner_name, "release": rid}
+            "owner_name": st.owner_name, "release": rid,
+            "channels": ch, "teams": teams}
 
 
 def cmd_tick(args):
@@ -93,8 +107,7 @@ def cmd_tick(args):
     (machine off) — the next tick after the machine is on picks it up."""
     rid = C.resolve_release_id(args.runs_root, args.release)
     if not rid:
-        print(_json.dumps({"message": "", "html": "", "subject": "", "owner_email": None,
-                           "owner_name": None, "release": None}))
+        print(_json.dumps(_empty_payload(None, getattr(args, "config", None))))
         return 0
     payload = _notify_payload(args, rid, advance=True)
     if getattr(args, "json", False):
