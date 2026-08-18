@@ -1604,6 +1604,10 @@ def _loc_state(started_min_ago=None):
 
 
 _PR_LOG = "2026-09-09T20:00:00 blah\nPull request created with ID '16790317'\nmore lines"
+# The real OneLocBuild@3 log prints the full PR URL after the id (build 176407869):
+_PR_LOG_WITH_URL = ("OneLocBuildClient.exe Information: 0 : Pull request created with ID "
+                    "'16790317': https://msazure.visualstudio.com/DefaultCollection/One/"
+                    "_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/16790317")
 
 
 def test_localization_poll_helpers():
@@ -1617,6 +1621,25 @@ def test_localization_poll_helpers():
     assert L.extract_pr_id(_PR_LOG) == "16790317"
     assert L.extract_pr_id("no pr line here") is None
     assert L.pr_url("16790317").endswith("/pullrequest/16790317")
+    # extract_pr: no URL in log → fall back to the template
+    pid, url = L.extract_pr(_PR_LOG)
+    assert pid == "16790317" and url == L.pr_url("16790317")
+    # extract_pr: real log with the full URL → use exactly that URL
+    pid2, url2 = L.extract_pr(_PR_LOG_WITH_URL)
+    assert pid2 == "16790317"
+    assert url2 == ("https://msazure.visualstudio.com/DefaultCollection/One/_git/"
+                    "AD-MFA-phonefactor-phoneApp-android/pullrequest/16790317")
+
+
+def test_localization_az_read_recipe_is_wired():
+    """The step carries the exact az reads for msazure/One (MCP can't reach it)."""
+    from steps.ccd import localization as L
+    st = ReleaseState(release_id="2026-09", ccd="2026-09-09", owner_email="p@ms.com")
+    trig = L.build(st).payload["_trigger"]
+    az = trig["az_read"]
+    assert "az pipelines build show" in az["status"]
+    assert "resource timeline" in az["log_id"] and "OneLocBuild@3" in az["log_id"]
+    assert "resource logs" in az["log"] and "{build_id}" in az["log"] and "{log_id}" in az["log"]
 
 
 def test_localization_decide_branches():

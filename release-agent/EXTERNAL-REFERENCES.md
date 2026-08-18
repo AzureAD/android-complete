@@ -8,6 +8,15 @@ Review this list when something stops working or when onboarding a new release o
 Legend for **Access**: `anon` = no auth · `az` = Azure CLI signed-in user ·
 `AAD-SSO` = browser Microsoft sign-in · `MCP` = via an MCP server · `Google` = Google account (not automatable in Scout).
 
+## Azure DevOps orgs & projects (we work across TWO)
+
+| Project | Org | Host aliases | How we read it |
+|---|---|---|---|
+| **Engineering** | identitydivision | `identitydivision.visualstudio.com` = `dev.azure.com/identitydivision` | ADO **MCP** (bound here) or `az` |
+| **One** | msazure | `msazure.visualstudio.com` = `dev.azure.com/msazure` | **`az` only** — the ADO MCP can't reach it |
+
+> The ADO **MCP is bound to identitydivision/Engineering**. Calling it for project **One** fails with `TF200016: project does not exist`. Reads against **msazure/One** must use the **`az` CLI** (verified working as the signed-in user, no Conditional-Access 401): `az pipelines build show`, and `az devops invoke --area build --resource timeline|logs`. Engineering resources: pipeline 3038, build def 2828. One resources: pipeline 405133 (localization), build def 397224, CG repo 104410, the Auth App git repo.
+
 ## Systems of record (read/write)
 
 | Ref | What | Used by | Access | Notes |

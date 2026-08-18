@@ -44,9 +44,27 @@ CONFIG = {
     "poll_interval_min": 10,                  # re-check the run every N minutes
     "timeout_hours": 3,                       # escalate to the engineer if not done by then
     "oneloc_task": "OneLocBuild@3",           # the task whose log carries the PR id
-    # The OneLoc task logs e.g.  Pull request created with ID '16790317'
+    # The OneLoc task logs e.g.
+    #   Pull request created with ID '16790317': https://msazure.visualstudio.com/DefaultCollection/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/16790317
     "pr_id_pattern": r"Pull request created with ID '(\d+)'",
-    "pr_url_template": "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/{id}",
+    # Capture the id AND (optionally) the full PR URL the log prints after it.
+    "pr_line_pattern": r"Pull request created with ID '(\d+)'(?::\s*(https?://\S+))?",
+    "pr_url_template": "https://msazure.visualstudio.com/DefaultCollection/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/{id}",
+    # How to READ the run from msazure/One. The ADO MCP is bound to
+    # identitydivision/Engineering and canNOT reach msazure/One (TF200016), so the
+    # poller uses these az CLI reads (verified working as the signed-in user, no 401).
+    # {build_id} / {log_id} are filled in by the runner; {org}/{project}/{oneloc_task}
+    # come from this CONFIG.
+    "az_read": {
+        "status": ("az pipelines build show --id {build_id} --org {org} "
+                   "--project {project} --query \"{{status:status,result:result}}\" -o json"),
+        "log_id": ("az devops invoke --org {org} --area build --resource timeline "
+                   "--route-parameters project={project} buildId={build_id} "
+                   "--api-version 7.1 --query \"records[?name=='{oneloc_task}'].log.id | [0]\" -o tsv"),
+        "log": ("az devops invoke --org {org} --area build --resource logs "
+                "--route-parameters project={project} buildId={build_id} logId={log_id} "
+                "--api-version 7.1"),
+    },
     # Post the resulting PR to the same "Code reviews" chat pr_reminder uses.
     "code_reviews_chat_id": "19:meeting_Y2Y3OGRjZGMtZGVkYi00MTkzLThhZjktNDAxYWVkMjZlMmE3@thread.v2",
     "code_reviews_chat_name": "Code reviews",
@@ -108,6 +126,18 @@ def extract_pr_id(logs: str, pattern: str = None) -> "str | None":
     return m.group(1) if m else None
 
 
+def extract_pr(logs: str, cfg: dict = None) -> tuple:
+    """Return (pr_id, pr_url) from the OneLocBuild@3 log. The log prints the full PR
+    URL after the id; prefer it, else build one from the id. (None, None) if no PR."""
+    cfg = cfg or CONFIG
+    m = re.search(cfg.get("pr_line_pattern", cfg["pr_id_pattern"]), logs or "")
+    if not m:
+        return None, None
+    pr_id = m.group(1)
+    url = (m.group(2) if m.lastindex and m.lastindex >= 2 else None) or pr_url(pr_id, cfg)
+    return pr_id, url
+
+
 def pr_url(pr_id: str, cfg: dict = None) -> str:
     cfg = cfg or CONFIG
     return cfg["pr_url_template"].format(id=pr_id)
@@ -164,9 +194,8 @@ def decide(state, is_complete: bool, logs: str = None, now=None, cfg: dict = Non
                         f"emailed the release engineer to check it / do the manual steps"}
 
     # completed
-    pr_id = extract_pr_id(logs, cfg.get("pr_id_pattern"))
+    pr_id, url = extract_pr(logs, cfg)
     if pr_id:
-        url = pr_url(pr_id, cfg)
         return {"decision": "complete_pr", "pr_id": pr_id, "pr_url": url,
                 "chat": _review_post(state, cfg, pr_id, url),
                 "links": [{"name": f"Localization PR #{pr_id}", "url": url}],
@@ -187,6 +216,15 @@ def _links(cfg: dict) -> list:
     if lk.get("repo_prs"):
         out.append({"name": "Auth App PRs (OneLoc PR lands here)", "url": lk["repo_prs"]})
     return out
+
+
+def _az_read(cfg: dict) -> dict:
+    """The concrete az read commands (templated) for the poller to read msazure/One."""
+    r = cfg.get("az_read", {}) or {}
+    fill = {"org": cfg["org"], "project": cfg["project"],
+            "oneloc_task": cfg.get("oneloc_task", "OneLocBuild@3"),
+            "build_id": "{build_id}", "log_id": "{log_id}"}
+    return {k: v.format(**fill) for k, v in r.items()}
 
 
 def build(state):
@@ -220,6 +258,8 @@ def build(state):
                     f"az pipelines run --id {cfg['pipeline_id']} "
                     f"--org {cfg['org']} --project {cfg['project']} "
                     f"--variables {var_str}"),
+                # The ADO MCP can't reach msazure/One — the poller reads via az.
+                "az_read": _az_read(cfg),
                 "after": (
                     "Note the queued build id, then run "
                     "`record-localization-run --release <id> --build-id <buildId>` "
@@ -254,7 +294,8 @@ KNOWLEDGE = {
     "where": [
         "Pipeline run: https://dev.azure.com/msazure/One/_build?definitionId=405133 (open the OneLocBuild@3 task log).",
         "The PR id appears in that log as: Pull request created with ID '<n>'.",
-        "Resulting PR: https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequests",
+        "Resulting PR: https://msazure.visualstudio.com/DefaultCollection/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequests",
+        "Reads use az (the ADO MCP is bound to identitydivision/Engineering and can't reach msazure/One): az pipelines build show for status; az devops invoke --area build --resource timeline to find the OneLocBuild@3 log id; then --resource logs to read it.",
     ],
     "how": (
         "Automatic. If the timeout email arrives, open the pipeline and either wait/"
@@ -270,6 +311,8 @@ KNOWLEDGE = {
         {"q": "What happens if the pipeline hangs?",
          "a": "After 3 hours Scout emails the release engineer to check the run or do the manual localization steps (see the doc link)."},
         {"q": "How does Scout find the PR to post?",
-         "a": "It reads the OneLocBuild@3 task log for the line \"Pull request created with ID '<n>'\" and builds the PR link from that id. No line = no new strings."},
+         "a": "It reads the OneLocBuild@3 task log (via az devops invoke against msazure/One) for the line \"Pull request created with ID '<n>'\" and uses the PR URL printed there. No line = no new strings."},
+        {"q": "Why not the ADO MCP?",
+         "a": "The ADO MCP is bound to identitydivision/Engineering; msazure/One returns TF200016 (project not found). The az CLI reaches msazure/One as the signed-in user, so the poller reads via az."},
     ],
 }
