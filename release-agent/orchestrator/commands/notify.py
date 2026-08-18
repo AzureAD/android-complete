@@ -76,6 +76,7 @@ def _notify_payload(args, rid, advance):
     report = orch.status_report()
     msg = render.notification(report)
     html = render.notification_html(report)
+    md = render.notification_markdown(report)
     subject = render.notification_subject(report)
     today = (as_of or schedule.today()).isoformat()
     fresh = bool(msg) and (getattr(args, "force", False) or st.last_notified_date != today)
@@ -91,7 +92,7 @@ def _notify_payload(args, rid, advance):
     # bot by default, or an explicit chat).
     ncfg = notif.load_config(getattr(args, "config", None))
     ch = notif.channels(ncfg)
-    teams = notif.teams_delivery(ncfg, html, msg) if (fresh and msg and ch.get("teams")) else None
+    teams = notif.teams_delivery(ncfg, html, msg, md) if (fresh and msg and ch.get("teams")) else None
     return {"message": msg if fresh else "", "html": html if fresh else "",
             "subject": subject, "owner_email": st.owner_email,
             "owner_name": st.owner_name, "release": rid,

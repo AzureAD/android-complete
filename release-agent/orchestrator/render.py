@@ -446,6 +446,46 @@ def notification(r: dict) -> str:
     return "\n".join(lines)
 
 
+def notification_markdown(r: dict) -> str:
+    """Teams-bot-friendly MARKDOWN digest. The Scout bot renders markdown and
+    COLLAPSES single newlines into spaces, so the plain-text digest (notification())
+    turns into one run-on paragraph there. This mirrors that content but with
+    blank-line paragraph breaks, `-` bullets, and `**bold**` so it renders correctly
+    via m_send_teams_message. Empty when notification() is empty."""
+    if not notification(r):        # reuse the same "should we push?" decision
+        return ""
+    rid = r.get("release_id", "?")
+    ap = r["active_phase"]
+    blocks = [f"**Release {rid} — Phase {ap['num']}: {ap['name']}**"]
+
+    if not ap["started"]:
+        opened = f" (opened {ap['opens']})" if ap.get("opens") else ""
+        blocks.append(f"Phase {ap['num']} has opened{opened} — **{ap['total']}** steps to work through, none done yet.")
+    else:
+        blocks.append(f"Progress: **{ap['done']} of {ap['total']}** steps done.")
+
+    completed = ap.get("completed") or []
+    if completed:
+        rows = [f"**Completed ({len(completed)}):**"] + [f"- ✓ {n}" for n in completed[:8]]
+        blocks.append("\n".join(rows))
+
+    if r.get("gate"):
+        blocks.append(f"**Waiting on your decision:** {r['gate']['step_name']} (approve or deny).")
+    elif r.get("action"):
+        blocks.append(f"**Action needed now:** {r['action']['step_name']} (do it, then mark done).")
+
+    human = [o for o in ap.get("outstanding", []) if o["gate"] or o["reminder"]]
+    if human:
+        rows = [f"**Still needs you ({len(human)}):**"]
+        for o in human[:6]:
+            what = "your approval" if o["gate"] else "your action"
+            rows.append(f"- {o['name']} — {what}")
+        blocks.append("\n".join(rows))
+
+    blocks.append("_Open Scout to continue the release._")
+    return "\n\n".join(blocks)      # blank line between blocks survives markdown collapse
+
+
 # ---- HTML digest (nice email UX) -------------------------------------------
 # Email-safe: inline styles + table layout (Outlook-friendly), no external CSS.
 

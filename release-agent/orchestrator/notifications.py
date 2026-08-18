@@ -65,12 +65,14 @@ def _is_scout_bot(target) -> bool:
     return target in _SCOUT_ALIASES
 
 
-def teams_delivery(cfg: dict, html: str, message: str):
+def teams_delivery(cfg: dict, html: str, message: str, markdown: str = None):
     """How to deliver the Teams copy, or None if Teams is off.
 
     Scout bot (default):
-        {"via": "scout_bot", "text": <plain digest>}
-        → the automation calls m_send_teams_message(message=text).
+        {"via": "scout_bot", "text": <markdown digest>}
+        → the automation calls m_send_teams_message(message=text). The Scout bot
+          renders markdown and collapses single newlines, so we send the markdown
+          digest (blank-line paragraphs / bullets), NOT the plain-text one.
     Explicit chat id:
         {"via": "chat", "chatId": <id>, "content": <html>, "contentType": "html"}
         → the automation calls workiq_send_chat_message(**block).
@@ -79,6 +81,6 @@ def teams_delivery(cfg: dict, html: str, message: str):
         return None
     target = teams_target(cfg)
     if _is_scout_bot(target):
-        return {"via": "scout_bot", "text": message}
+        return {"via": "scout_bot", "text": markdown or message}
     return {"via": "chat", "chatId": target,
             "content": html or f"<pre>{message}</pre>", "contentType": "html"}

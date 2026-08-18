@@ -1418,10 +1418,37 @@ def test_tick_payload_carries_teams_block_when_enabled():
         assert p["channels"]["teams"] is True
         assert p["message"] and p["teams"] is not None
         assert p["teams"]["via"] == "scout_bot"
-        assert p["teams"]["text"] == p["message"]     # plain digest for the Scout bot
+        # scout bot gets the MARKDOWN digest (blank-line paragraphs survive collapse)
+        from orchestrator import render
+        st_now = C.load_state(d, rid)
+        expected_md = render.notification_markdown(Orchestrator(CONFIG, st_now).status_report())
+        assert p["teams"]["text"] == expected_md
+        assert "\n\n" in p["teams"]["text"] and "**Release" in p["teams"]["text"]
         # deduped second tick → message empty AND no teams delivery
         p2 = ncmd._notify_payload(A, rid, advance=True)
         assert p2["message"] == "" and p2["teams"] is None
+
+
+def test_notification_markdown_has_paragraph_breaks_and_bullets():
+    """The Teams-bot markdown digest uses blank-line paragraph breaks (survive the
+    Scout bot's newline collapse), `-` bullets, and bold — unlike the plain text."""
+    from orchestrator import render
+    from datetime import date
+    _stub_build_defs("pass")
+    st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default",
+                      owner_email="o@x.com")
+    orch = Orchestrator(CONFIG, st)
+    _pass_scout_checks(orch); orch.gate.sign()
+    orch.as_of = date(2026, 7, 8)
+    orch.run_until_gate()
+    r = orch.status_report()
+    md = render.notification_markdown(r)
+    assert md and "\n\n" in md              # paragraph breaks
+    assert md.startswith("**Release 2026-07 — Phase 0")
+    assert "\n- " in md                     # markdown bullets
+    # silent states → empty, same rule as notification()
+    st2 = ReleaseState(release_id="x")       # unsigned
+    assert render.notification_markdown(Orchestrator(CONFIG, st2).status_report()) == ""
 
 
 def test_notification_html_lists_all_tasks_and_flags_attention():
