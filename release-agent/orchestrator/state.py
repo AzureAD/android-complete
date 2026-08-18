@@ -31,6 +31,7 @@ class StepState:
     note: Optional[str] = None
     by: Optional[str] = None         # 'agent' (stub) or 'human'
     links: list = field(default_factory=list)   # [{name, url}] — durable refs (wiki page, CG alerts)
+    data: dict = field(default_factory=dict)    # step-private scratch (e.g. localization build id/start)
 
 
 @dataclass

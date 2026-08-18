@@ -17,6 +17,11 @@
 #   name     : display name; "{release}" is filled with the release id (YYYY-MM)
 #   phase    : the phase these steps belong to (all steps must be in it)
 #   steps    : "<phase>.<step>" ids this automation runs, in order
+#   every    : OPTIONAL. If set (e.g. "10 minutes"), this is an INTERVAL/poller
+#              automation on that cadence instead of a one-shot at a step's
+#              fire_at_local. Interval automations may share a step with a
+#              time-of-day one (e.g. noon triggers localization, a poller watches it)
+#              and their steps need not declare fire_at_local.
 #   purpose  : one-line description (stored in the registry)
 
 version: 1
@@ -36,3 +41,12 @@ automations:
     steps:
       - ccd.localization        # trigger pipeline 405133 (isCreatePrSelected=true)
     purpose: "Trigger the localization pipeline at noon"
+
+  - slug: ccd-localization-poller
+    name: "Release {release} — localization poller"
+    phase: ccd
+    every: "10 minutes"
+    steps:
+      - ccd.localization        # poll the triggered run (check-localization)
+    purpose: "Poll the localization run every 10 min; email on 3h timeout, post the PR on completion"
+

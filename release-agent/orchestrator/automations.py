@@ -61,42 +61,50 @@ def _all_scheduled_steps(config_path: str) -> dict:
 def validate(config_path: str) -> list:
     """Return a list of human-readable problems (empty = healthy). Enforces:
       1. every automation step exists (has a discovered module),
-      2. all steps in one automation share ONE fire_at_local (that's its fire time),
-      3. every automation step declares fire_at_local,
-      4. no step is owned by two automations,
-      5. every scheduled step (declares fire_at_local) is owned by SOME automation."""
+      2. every TIME-OF-DAY automation's steps share ONE fire_at_local (its fire time)
+         and each declares fire_at_local,
+      3. no step is owned by two TIME-OF-DAY automations,
+      4. every scheduled step (declares fire_at_local) is owned by SOME time-of-day
+         automation.
+    INTERVAL automations (those with `every:`, e.g. a poller) are exempt from the
+    fire_at_local accounting — they may share a step with a time-of-day automation
+    and their steps need not declare fire_at_local — but their steps must still exist.
+    """
     problems = []
     defs = load_defs(config_path)
-    owned = {}                       # step_key -> slug
+    owned = {}                       # step_key -> slug (time-of-day only)
     for d in defs:
         slug = d.get("slug", "?")
         s_steps = d.get("steps", []) or []
         if not s_steps:
             problems.append(f"automation '{slug}' has no steps")
             continue
+        interval = bool(d.get("every"))
         fires = set()
         for sk in s_steps:
-            if sk in owned:
-                problems.append(f"step '{sk}' is owned by two automations "
-                                f"('{owned[sk]}' and '{slug}')")
-            owned[sk] = slug
             mod = steps_pkg.get_step(*sk.split(".", 1)) if "." in sk else None
             if mod is None:
                 problems.append(f"automation '{slug}' references unknown step '{sk}'")
                 continue
+            if interval:
+                continue             # pollers are exempt from fire-time accounting
+            if sk in owned:
+                problems.append(f"step '{sk}' is owned by two time-of-day automations "
+                                f"('{owned[sk]}' and '{slug}')")
+            owned[sk] = slug
             fire = (getattr(mod, "CONFIG", {}) or {}).get("fire_at_local")
             if not fire:
                 problems.append(f"step '{sk}' (in '{slug}') declares no fire_at_local")
             else:
                 fires.add(fire)
-        if len(fires) > 1:
+        if not interval and len(fires) > 1:
             problems.append(f"automation '{slug}' groups steps with different fire "
                             f"times {sorted(fires)} — split them")
 
     for sk in _all_scheduled_steps(config_path):
         if sk not in owned:
             problems.append(f"scheduled step '{sk}' (has fire_at_local) is not owned "
-                            f"by any automation in automations.yaml")
+                            f"by any time-of-day automation in automations.yaml")
     return problems
 
 
@@ -113,14 +121,49 @@ def _fmt_time_nl(hhmm: str) -> str:
 
 def _prompt_for(spec: dict, release: str) -> str:
     """A concrete instruction the automation runs. Scout resolves each step via
-    step-action, executes the send/trigger, records it, and journals it."""
+    step-action, executes the send/trigger, records it, and journals it. The
+    localization trigger and its poller have bespoke prompts (they don't just
+    record-step done)."""
     step_list = ", ".join(spec["steps"])
+    steps = spec.get("steps") or []
+
+    # Localization poller (interval) — poll the in-flight run.
+    if spec.get("interval") and steps == ["ccd.localization"]:
+        return (
+            f"Release {release} — localization poller.\n"
+            f"If localization for {release} is in-flight (it was triggered at noon and "
+            f"isn't done/blocked yet), poll it once:\n"
+            f"1. Read the localization run's status for the stored build id (from the "
+            f"ADO pipeline). If it has completed, also read the OneLocBuild@3 task log.\n"
+            f"2. Run `check-localization --release {release} --complete <true|false> "
+            f"[--logs \"<OneLocBuild@3 log>\"]`.\n"
+            f"3. Act on the printed decision: `timeout` → send the given email; "
+            f"`complete_pr` → post the given chat message to the Code reviews chat; "
+            f"`wait`/`complete_none`/`not_started`/`already_final` → nothing to send.\n"
+            f"Silently journal: `journal --release {release} --source scout --kind "
+            f"automation --text \"localization-poller: <decision>\"`. Stay silent if "
+            f"there is nothing to do.")
+
+    # Localization trigger (one-shot, noon) — trigger then hand off to the poller.
+    if not spec.get("interval") and steps == ["ccd.localization"]:
+        return (
+            f"Release {release} — trigger localization.\n"
+            f"1. run `step-action --release {release} --phase ccd --step localization`;\n"
+            f"2. run the returned needs_skill action to start pipeline 405133 "
+            f"(isCreatePrSelected=true); note the queued build id;\n"
+            f"3. run `record-localization-run --release {release} --build-id <buildId>` "
+            f"— this leaves the step IN-FLIGHT (do NOT record-step done; the poller "
+            f"finishes it once the run completes or times out);\n"
+            f"4. silently journal: `journal --release {release} --source scout --kind "
+            f"automation --text \"ccd-noon triggered ccd.localization\"`.")
+
+    # Default: send/trigger + record-step done (reminders).
     return (
         f"Release {release} — {spec['name'].format(release=release)}.\n"
         f"It is Code Complete Day. For EACH of these steps in order: {step_list} —\n"
         f"1. run `step-action --release {release} --phase {spec['phase']} --step <step>`;\n"
         f"2. execute the returned needs_skill action (send the email / post the Teams "
-        f"message / trigger the pipeline) with the given payload;\n"
+        f"message) with the given payload;\n"
         f"3. `record-step --release {release} --phase {spec['phase']} --step <step> "
         f"--status pass` (or blocked with a reason);\n"
         f"4. silently journal it: `journal --release {release} --source scout "
@@ -143,10 +186,15 @@ def plan(config_path: str, release: str, ccd: str) -> dict:
     for d in defs:
         slug = d.get("slug", "?")
         s_steps = d.get("steps", []) or []
-        fire_at = _step_fire_at(s_steps[0]) if s_steps else None
+        interval = d.get("every")
         name = d.get("name", slug).format(release=release)
-        sched = (f"every {weekday.lower()} at {_fmt_time_nl(fire_at)}"
-                 if weekday and fire_at else None)
+        if interval:
+            fire_at, sched, one_shot = None, f"every {interval}", False
+        else:
+            fire_at = _step_fire_at(s_steps[0]) if s_steps else None
+            sched = (f"every {weekday.lower()} at {_fmt_time_nl(fire_at)}"
+                     if weekday and fire_at else None)
+            one_shot = True
         spec = {
             "slug": slug,
             "name": name,
@@ -157,8 +205,9 @@ def plan(config_path: str, release: str, ccd: str) -> dict:
             "fire_at": fire_at,
             "ccd_date": ccd_date.isoformat() if ccd_date else None,
             "weekday": weekday,
-            "schedule": sched,          # one-shot on the CCD date
-            "one_shot": True,
+            "schedule": sched,          # one-shot on the CCD date, or an interval poller
+            "one_shot": one_shot,
+            "interval": interval or None,
         }
         spec["prompt"] = _prompt_for(spec, release)
         # Exactly what to record after creating it, so linkage is captured.

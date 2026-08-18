@@ -32,6 +32,8 @@ _Loaded on demand. Run all from `C:\repos\android-complete\release-agent`._
 | Show / analyze this release's log | `python -m orchestrator.cli log --release <YYYY-MM> [--analyze] [--json]` |
 | Journal interaction (silent) | `python -m orchestrator.cli journal --release <YYYY-MM> --source scout\|user --text "..."` |
 | Journal a step Q&A (silent) | `python -m orchestrator.cli journal --release <YYYY-MM> --kind qa --phase <p> --step <id> --question "..." --answer "..."` |
+| Localization: record trigger | `python -m orchestrator.cli record-localization-run --release <YYYY-MM> --build-id <buildId>` — store the queued build; leaves the step in-flight |
+| Localization: one poll | `python -m orchestrator.cli check-localization --release <YYYY-MM> --complete <true\|false> [--logs "<OneLocBuild@3 log>"]` — wait / timeout(email) / complete(post PR); acts on the printed decision |
 | Activate conditional hotfix phase | `python -m orchestrator.cli activate --release <YYYY-MM> --phase hotfix` |
 | **Notify** — push line if something needs me | `python -m orchestrator.cli notify [--release <YYYY-MM>] [--as-of <date>] [--force]` |
 | **Plan timed automations** | `automation plan --release <YYYY-MM> [--json]` — derive the per-release CCD automations (name/schedule/steps/prompt) from `config/automations.yaml` + CCD |

@@ -6,7 +6,7 @@ handler via `set_defaults(func=...)`. `cli.py` imports REGISTRARS and calls each
 one, so adding a command is a localized change (new/edited module only).
 """
 from . import (release, readiness, pipeline, notify, infra_cmd, automation,
-               logs, lockdown, notice, step_action)
+               logs, lockdown, notice, step_action, localization)
 
 # Order controls how subcommands appear in --help.
 REGISTRARS = [
@@ -17,6 +17,7 @@ REGISTRARS = [
     lockdown.register,
     step_action.register,
     notice.register,
+    localization.register,
     logs.register,
     automation.register,
     infra_cmd.register,

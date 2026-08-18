@@ -201,33 +201,9 @@ ccd.pr_reminder:
       a: "The localization pipeline is triggered at noon; strings merged after it aren't guaranteed to be localized this release."
 
 ccd.localization:
-  summary: "Trigger the localization pipeline at noon; it opens a translations PR if there are new strings."
-  what: >
-    At noon on CCD, pipeline 405133 (msazure/One) is triggered with
-    isCreatePrSelected=true. When it finishes, its OneLocBuild@3 task auto-creates a
-    translations PR in the Auth App repo IFF there are new/updated user-facing
-    strings. PR created → there ARE strings to merge; no PR → nothing to merge.
-  who: >
-    Scout triggers it automatically (a scout step) at noon via the per-release
-    CCD-noon automation. The release owner reviews/merges the resulting OneLoc PR.
-  where:
-    - "Pipeline: https://dev.azure.com/msazure/One/_build?definitionId=405133 (look for the OneLocBuild@3 task)."
-    - "Resulting PR: https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequests"
-  how: >
-    Runs via step-action → azure_devops-pipelines_run_pipeline (az fallback in the
-    payload if the MCP can't reach msazure/One under Conditional Access). After the
-    run completes, check the repo PRs for the OneLoc PR and merge it if present.
-  links:
-    - name: "Localization pipeline (405133)"
-      url: "https://dev.azure.com/msazure/One/_build?definitionId=405133"
-    - name: "Auth App PRs (OneLoc PR lands here)"
-      url: "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequests"
-  faqs:
-    - q: "How do I know if there are strings to merge?"
-      a: "If the run's OneLocBuild@3 task created a PR in the Auth App repo, there ARE strings — review + merge that PR. No PR means no new strings this release."
-  links:
-    - name: "Code Complete Calendar Checker (pipeline 3038)"
-      url: "https://identitydivision.visualstudio.com/Engineering/_build?definitionId=3038"
+  # Knowledge for this step is co-located in the step module (steps/ccd/localization.py
+  # KNOWLEDGE) — the trigger→poll→timeout/complete→post-PR flow. Kept there so it
+  # can't drift from the logic. No yaml override needed.
 
 preflight.wiki:
   summary: "Create the per-release payload wiki subpage under the history parent page."

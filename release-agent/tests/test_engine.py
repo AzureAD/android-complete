@@ -1589,6 +1589,142 @@ def test_ccd_phase_shape_and_scout_kinds():
     assert not any(s.get("gate") for s in ccd["steps"])
 
 
+# ---- localization trigger → poll → complete/timeout state machine ----
+
+def _loc_state(started_min_ago=None):
+    from datetime import datetime, timezone, timedelta
+    st = ReleaseState(release_id="2026-09", ccd="2026-09-09",
+                      owner_email="pedroro@microsoft.com", owner_name="Pedro")
+    if started_min_ago is not None:
+        start = datetime.now(timezone.utc) - timedelta(minutes=started_min_ago)
+        step = st.get_step("ccd", "localization")
+        step.data["started_at"] = start.isoformat()
+        st.set_step("ccd", "localization", step)
+    return st
+
+
+_PR_LOG = "2026-09-09T20:00:00 blah\nPull request created with ID '16790317'\nmore lines"
+
+
+def test_localization_poll_helpers():
+    from steps.ccd import localization as L
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    started = (now - timedelta(minutes=20)).isoformat()
+    assert L.poll_status(False, started, now, 3) == "wait"
+    assert L.poll_status(False, (now - timedelta(hours=4)).isoformat(), now, 3) == "timeout"
+    assert L.poll_status(True, started, now, 3) == "complete"
+    assert L.extract_pr_id(_PR_LOG) == "16790317"
+    assert L.extract_pr_id("no pr line here") is None
+    assert L.pr_url("16790317").endswith("/pullrequest/16790317")
+
+
+def test_localization_decide_branches():
+    from steps.ccd import localization as L
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+
+    st = _loc_state(started_min_ago=20)
+    assert L.decide(st, False, None, now)["decision"] == "wait"
+
+    st2 = _loc_state(started_min_ago=4 * 60 + 5)          # 4h+ → timeout
+    d = L.decide(st2, False, None, now)
+    assert d["decision"] == "timeout"
+    assert d["email"]["to"] == ["pedroro@microsoft.com"]
+
+    st3 = _loc_state(started_min_ago=60)
+    dpr = L.decide(st3, True, _PR_LOG, now)
+    assert dpr["decision"] == "complete_pr" and dpr["pr_id"] == "16790317"
+    assert dpr["chat"]["chatId"] == L.CONFIG["code_reviews_chat_id"]
+    assert any("16790317" in l["url"] for l in dpr["links"])
+
+    dn = L.decide(st3, True, "no strings changed", now)
+    assert dn["decision"] == "complete_none"
+
+
+def test_localization_command_lifecycle_wait_then_complete():
+    """record-localization-run leaves the step in-flight; a wait poll keeps it
+    pending; a complete poll with a PR log marks it done with the PR link."""
+    from orchestrator.commands import localization as lc
+    with tempfile.TemporaryDirectory() as d:
+        rid = "2026-09"
+        st = ReleaseState(release_id=rid, ccd="2026-09-09",
+                          owner_email="p@ms.com", owner_name="P")
+        C.save_state(st, d, rid)
+
+        class RR:
+            runs_root = d; release = rid
+            build_id = "176407869"; run_url = None; started_at = "2026-09-09T19:00:00Z"
+        lc.cmd_record_localization_run(RR)
+        s1 = C.load_state(d, rid).get_step("ccd", "localization")
+        assert s1.data["build_id"] == "176407869" and s1.status == "pending"
+
+        class CKwait:
+            runs_root = d; release = rid; config = CONFIG
+            complete = "false"; logs = None; logs_file = None
+            now = "2026-09-09T19:30:00Z"; as_of = None
+        lc.cmd_check_localization(CKwait)
+        assert C.load_state(d, rid).get_step("ccd", "localization").status == "pending"
+
+        class CKdone:
+            runs_root = d; release = rid; config = CONFIG
+            complete = "true"; logs = _PR_LOG; logs_file = None
+            now = "2026-09-09T20:00:00Z"; as_of = None
+        lc.cmd_check_localization(CKdone)
+        done = C.load_state(d, rid).get_step("ccd", "localization")
+        assert done.status == "done"
+        assert any("16790317" in l["url"] for l in done.links)
+        assert done.data["build_id"] == "176407869"     # data preserved through completion
+
+
+def test_localization_command_timeout_holds():
+    """A poll past the 3h timeout blocks the step (awaiting the engineer)."""
+    from orchestrator.commands import localization as lc
+    with tempfile.TemporaryDirectory() as d:
+        rid = "2026-09"
+        st = ReleaseState(release_id=rid, ccd="2026-09-09", owner_email="p@ms.com")
+        C.save_state(st, d, rid)
+
+        class RR:
+            runs_root = d; release = rid
+            build_id = "1"; run_url = None; started_at = "2026-09-09T12:00:00Z"
+        lc.cmd_record_localization_run(RR)
+
+        class CK:
+            runs_root = d; release = rid; config = CONFIG
+            complete = "false"; logs = None; logs_file = None
+            now = "2026-09-09T15:30:00Z"; as_of = None      # 3.5h later
+        lc.cmd_check_localization(CK)
+        assert C.load_state(d, rid).get_step("ccd", "localization").status == "blocked"
+
+
+def test_stepstate_data_persists():
+    """StepState.data (localization build id / start time) survives save/load."""
+    with tempfile.TemporaryDirectory() as tmp:
+        p = os.path.join(tmp, "s.json")
+        st = ReleaseState(release_id="d")
+        step = st.get_step("ccd", "localization")
+        step.data = {"build_id": "42", "started_at": "2026-09-09T12:00:00Z"}
+        st.set_step("ccd", "localization", step)
+        st.save(p)
+        st2 = ReleaseState.load(p)
+        assert st2.get_step("ccd", "localization").data["build_id"] == "42"
+
+
+def test_automation_localization_poller_is_interval():
+    """The poller is an INTERVAL automation (every 10 min); it shares ccd.localization
+    with the noon trigger, which is allowed. validate() stays clean."""
+    from orchestrator import automations as A
+    assert A.validate(CONFIG) == []
+    by = {a["slug"]: a for a in A.plan(CONFIG, "2026-09", "2026-09-09")["automations"]}
+    poller = by["ccd-localization-poller"]
+    assert poller["interval"] == "10 minutes"
+    assert poller["schedule"] == "every 10 minutes" and poller["one_shot"] is False
+    assert poller["steps"] == ["ccd.localization"]
+    # the noon trigger also drives localization (one-shot) — shared step is fine
+    assert by["ccd-noon"]["steps"] == ["ccd.localization"] and by["ccd-noon"]["one_shot"] is True
+
+
 def test_confirm_reminders_is_attestation_hold():
     """In the parallel Phase 0, confirm_reminders is a human attestation that becomes
     ready only after flight_reminder is sent; it surfaces as a hold with a confirm
