@@ -89,6 +89,47 @@ mcp_servers:
     command: "%APPDATA%\\agency\\CurrentVersion\\agency.exe"
     args: ["mcp", "icm"]
     required_by: [readiness.oncall_now, on-call lookups]
+    # Populated allowlist (Scout auto-discovers on a good first load, but an empty
+    # list risks a first-load DROP for command servers — so ship the tools).
+    tools:
+      - get_contact_by_id
+      - get_incident_details_by_id
+      - search_incidents_by_owning_team_id
+      - mitigate_incident
+      - get_impacted_azure_priority0_customers
+      - update_incident_severity
+      - transfer_incident
+      - get_incident_discussion_entries_and_insights
+      - get_incident_context
+      - reactivate_incident
+      - get_teams_by_public_id
+      - post_discussion_entry
+      - get_ai_summary
+      - get_teams_by_name
+      - acknowledge_incident
+      - get_team_by_id
+      - update_incident
+      - request_assistance
+      - is_specific_customer_impacted
+      - get_incident_customer_impact
+      - get_similar_incidents
+      - get_contact_by_alias
+      - get_services_by_names
+      - search_teams_or_services
+      - get_support_requests_crisit
+      - get_support_answer
+      - get_incident_location
+      - get_impacted_services_regions_clouds
+      - get_impacted_ace_customers
+      - get_on_call_schedule_by_team_id
+      - post_incident_insight
+      - get_mitigation_hints
+      - resolve_incident
+      - get_outage_high_priority_events
+      - get_my_icm_context
+      - get_impacted_s500_customers
+      - search_incidents
+      - get_impacted_subscription_count
     note: "Provided by the Agency CLI. After registering, RESTART Scout so it loads; then Scout auto-discovers the ICM tools."
 
   - id: kusto
@@ -102,6 +143,22 @@ mcp_servers:
     # MCP. Add a cluster there (data only) to make it available — no code change.
     known_services_from: kusto_clusters
     required_by: [monitoring/ADX dashboards, Play vitals, crash metrics, readiness.adx_access]
+    # Populated allowlist (non-empty avoids a first-load DROP; Scout still discovers
+    # any additional tools the MCP advertises). readiness.adx_access needs kusto_query.
+    tools:
+      - kusto_query
+      - kusto_command
+      - kusto_list_entities
+      - kusto_describe_database
+      - kusto_describe_database_entity
+      - kusto_sample_entity
+      - kusto_show_queryplan
+      - kusto_graph_query
+      - kusto_diagnostics
+      - kusto_ingest_inline_into_table
+      - kusto_deeplink_from_query
+      - kusto_get_shots
+      - kusto_known_services
     note: "Provided by the Agency CLI (uvx microsoft-fabric-rti-mcp). After registering, RESTART Scout. Add clusters under kusto_clusters."
 
   - id: teams

@@ -1042,6 +1042,23 @@ def test_requirements_declares_teams_mcp_with_tools():
     assert "CreateChat" in teams.get("tools", []) and len(teams["tools"]) >= 30
 
 
+def test_all_command_mcps_ship_nonempty_tool_allowlists():
+    """GUARDRAIL: every command-based MCP in requirements.yaml must ship a NON-EMPTY
+    `tools` allowlist — an empty list risks Scout silently dropping the server on a
+    first-load hiccup. (Builtins auto-discover and are exempt, but requirements.yaml
+    only lists command servers.)"""
+    from orchestrator import infra
+    root = os.path.dirname(os.path.abspath(__file__))
+    req = infra.load_requirements(os.path.join(os.path.dirname(root), "config", "requirements.yaml"))
+    for m in req.get("mcp_servers", []):
+        tools = m.get("tools") or []
+        assert len(tools) >= 1, f"MCP '{m.get('scout_key')}' has an empty tools allowlist"
+    # spot-check the ones we care about
+    by = {m["scout_key"]: m for m in req["mcp_servers"]}
+    assert "get_on_call_schedule_by_team_id" in by["icm"]["tools"]   # readiness.oncall_now
+    assert "kusto_query" in by["kusto"]["tools"]                     # readiness.adx_access
+
+
 def test_infra_provider_missing_not_registered():
     """If the launcher/provider is absent, infra must NOT register a broken server."""
     from orchestrator import infra
