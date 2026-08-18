@@ -307,11 +307,17 @@ class Orchestrator:
                 self.state.pending_human.append(key)
         if non_gate:
             self.state.status = "awaiting_action"
-            self.state.current_step = non_gate[0]["id"]
+            # Scout steps are the SKILL's automated work (it runs them via step-action),
+            # NOT a user hold — so the current-step / action cue should point at a
+            # genuine USER hold (attest / blocked / reminder) when one exists, and only
+            # fall back to a scout step when scout work is all that's left.
+            user_holds = [s for s in non_gate if self._step_kind(s) != "scout"]
+            focus = (user_holds or non_gate)[0]
+            self.state.current_step = focus["id"]
             names = "; ".join(s["name"] for s in non_gate)
-            return NextAction(kind="reminder", phase=pid, step=non_gate[0]["id"],
-                              name=non_gate[0]["name"],
-                              message=f"{len(non_gate)} item(s) need you: {names}")
+            return NextAction(kind="reminder", phase=pid, step=focus["id"],
+                              name=focus["name"],
+                              message=f"{len(non_gate)} item(s) need attention: {names}")
 
         # Not complete, but nothing is ready — remaining steps wait on unmet deps.
         self.state.status = "awaiting_action"
@@ -694,10 +700,26 @@ class Orchestrator:
         if self.state.status == "holding_gate" and self.state.current_phase:
             gate = self._hold_view(current_phase_name, current_step_name)
         elif self.state.status == "awaiting_action" and self.state.current_phase:
-            action = self._hold_view(current_phase_name, current_step_name)
+            # A scout step is the SKILL's work (run via step-action), not a USER action —
+            # never surface it as `action` (which the digest reads as "Action needed now").
+            phase = next((p for p in self.config["phases"]
+                          if p["id"] == self.state.current_phase), None)
+            cur = next((s for s in (phase or {}).get("steps", [])
+                        if s["id"] == self.state.current_step), None) if self.state.current_step else None
+            is_scout_focus = bool(cur and cur.get("source") == "scout" and not cur.get("attest"))
+            cur_blocked = (self.state.get_step(self.state.current_phase, self.state.current_step).status
+                           == "blocked") if self.state.current_step else False
+            if not is_scout_focus or cur_blocked:
+                action = self._hold_view(current_phase_name, current_step_name)
         scheduled = self._scheduled_view()
 
         chk = self.gate.checklist()
+        active_phase = self._active_phase_report()
+        # Scout steps ready for the SKILL to execute (perform the MCP send/scrape, then
+        # record-step). They are NOT user holds — the skill drains these itself; only if
+        # a scout step records 'attention' does it become a blocked user task.
+        scout_pending = [s["id"] for s in (active_phase or {}).get("steps", [])
+                         if s.get("status") == "scout"]
         return {
             "release_id": self.state.release_id,
             "status": self.state.status,
@@ -726,7 +748,8 @@ class Orchestrator:
             "gate": gate,
             "action": action,
             "scheduled": scheduled,
-            "active_phase": self._active_phase_report(),
+            "active_phase": active_phase,
+            "scout_pending": scout_pending,
             "pending_human": list(self.state.pending_human),
             "gate_decisions": len(self.state.gate_decisions),
             "updated_at": self.state.updated_at,

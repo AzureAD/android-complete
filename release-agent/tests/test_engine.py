@@ -1617,25 +1617,58 @@ def test_lockdown_overlap_only_production():
 
 
 def test_engine_holds_scout_assisted_lockdown():
-    """The scout/human steps hold the flow in sequence. run_until_gate walks
-    notice → flight_reminder → confirm_reminders → lockdown as each is cleared."""
+    """Scout steps are the SKILL's work: they surface in `scout_pending` (for the
+    skill to run via step-action), NOT as the user's `current_step`/`action`. Clearing
+    them drains the list; an attest step (confirm_reminders) becomes a real user hold."""
     st, orch = _orch(signed=False)
     _pass_scout_checks(orch)
     orch.gate.sign()                 # NOTE: no scout steps cleared yet
     orch.run_until_gate()
     assert st.status == "awaiting_action"
-    assert st.current_step == "notice"          # first scout step holds
+    rep = orch.status_report()
+    # the three scout steps are pending FOR THE SKILL — not surfaced as a user action
+    assert set(rep["scout_pending"]) == {"notice", "flight_reminder", "lockdown"}
+    assert (rep["action"] or {}).get("step") not in ("notice", "flight_reminder", "lockdown")
     assert "preflight.notice" in st.pending_human
+    # the skill runs each scout step (record_scout_step = its step-action + record-step)
     _clear_notice(orch)
     orch.run_until_gate()
-    assert st.current_step == "flight_reminder"  # send step holds
+    assert "notice" not in orch.status_report()["scout_pending"]
     orch.record_scout_step("preflight", "flight_reminder", "pass", "posted")
     orch.run_until_gate()
-    assert st.current_step == "confirm_reminders" # attestation holds
+    assert "flight_reminder" not in orch.status_report()["scout_pending"]
+    # confirm_reminders (attest, dep on flight_reminder now done) is a genuine user hold
+    assert "preflight.confirm_reminders" in st.pending_human
     orch.complete_step("preflight", "confirm_reminders", "owner confirmed")
+    orch.record_scout_step("preflight", "lockdown", "pass", "no overlap")
     orch.run_until_gate()
-    assert st.current_step == "lockdown"         # lockdown scout step holds
-    assert "preflight.lockdown" in st.pending_human
+    assert orch.status_report()["scout_pending"] == []   # all scout work drained
+
+
+def test_scout_pending_exposed_and_action_is_not_scout():
+    """REGRESSION GUARD: pending scout steps are surfaced in `scout_pending` for the
+    skill to run, and are NEVER the `action` (user-hold) cue nor announced as an
+    'Action needed now' in the digest — that's what made scout steps silently stall."""
+    from orchestrator import render
+    st, orch = _orch(signed=False)
+    _pass_scout_checks(orch); orch.gate.sign()
+    orch.run_until_gate()
+    rep = orch.status_report()
+    assert set(rep["scout_pending"]) == {"notice", "flight_reminder", "lockdown"}
+    # action (if any) is a genuine user hold, never a scout step
+    if rep["action"]:
+        assert rep["action"]["step"] not in ("notice", "flight_reminder", "lockdown")
+    # the email digest must NOT tell the user to do a scout step
+    msg = render.notification(rep)
+    assert "Send early release notice" not in msg
+    assert "Action needed now: Send feature-owner" not in msg
+
+
+def test_scout_pending_empty_when_all_scout_done():
+    """Once the skill has run every scout step, scout_pending is empty."""
+    st, orch = _orch()   # _orch clears phase-0 scout + ccd scout via helpers
+    orch.run_until_gate()
+    assert orch.status_report()["scout_pending"] == []
 
 
 def test_check_lockdown_pass_and_attention():
