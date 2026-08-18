@@ -86,7 +86,7 @@ def _clear_lockdown(orch):
 
 def _clear_phase0_scout(orch):
     """Clear ALL Phase-0 human/scout holds (notice + flight_reminder + confirm_reminders
-    + lockdown) so the flow can advance out of Phase 0 to the first gate (branch_cut)."""
+    + lockdown) so the flow can advance out of Phase 0."""
     _clear_notice(orch)
     orch.record_scout_step("preflight", "flight_reminder", "pass", "test: reminders posted")
     orch.complete_step("preflight", "confirm_reminders", "test: owner confirmed")
@@ -96,8 +96,8 @@ def _clear_phase0_scout(orch):
 
 def _clear_ccd_scout(orch):
     """Clear the Phase-1 scout comms/trigger holds (final_reminder + pr_reminder +
-    localization) so the flow can advance to the branch_cut gate. Separate from
-    Phase-0 clearing so a test can still target these steps individually."""
+    localization) so the flow can advance out of the (gateless) Phase 1. Separate
+    from Phase-0 clearing so a test can still target these steps individually."""
     orch.record_scout_step("ccd", "final_reminder", "pass", "test: reminder emailed")
     orch.record_scout_step("ccd", "pr_reminder", "pass", "test: PR reminder posted")
     orch.record_scout_step("ccd", "localization", "pass", "test: localization triggered")
@@ -121,7 +121,7 @@ def _orch(signed=True):
         _pass_scout_checks(orch)
         orch.gate.sign()  # attest attest-items + verify python-auto
         _clear_phase0_scout(orch)   # skill-run notice + CCOA lockdown → pass
-        _clear_ccd_scout(orch)      # Phase-1 comms/trigger scout steps → pass (reach branch_cut)
+        _clear_ccd_scout(orch)      # Phase-1 comms/trigger scout steps → pass (Phase 1 is gateless)
     return st, orch
 
 
@@ -147,8 +147,9 @@ def test_signing_clears_entry_gate():
     _clear_phase0_scout(orch)
     _clear_ccd_scout(orch)
     orch.run_until_gate()
-    # pre-flight is all reminders/auto now; the first real gate is the branch cut
-    assert st.current_step == "branch_cut"
+    # Phase 0 and Phase 1 have no gate (branch cut is automatic); the first real
+    # gate is go_test at the end of Build & Lib Verification.
+    assert st.current_step == "go_test"
     assert st.status == "holding_gate"
 
 
@@ -478,11 +479,11 @@ def test_holds_at_first_gate():
     st, orch = _orch()
     actions = orch.run_until_gate()
     assert actions[-1].kind == "gate"
-    assert actions[-1].step == "branch_cut"      # Phase 0 has no gate now; first gate is the branch cut
-    # auto steps that RUN: Phase-0 breaking/cg/cron/wiki (4) + Phase-1 precheck_prs (1).
-    # The Phase-1 scout comms/trigger steps (final_reminder/pr_reminder/localization)
-    # are pre-recorded by _orch's _clear_ccd_scout, so they don't count as "ran".
-    assert sum(1 for a in actions if a.kind == "ran") == 5
+    assert actions[-1].step == "go_test"      # Phases 0 & 1 are gateless; first gate is go_test (Phase 2)
+    # auto steps that RUN before the first gate: Phase-0 breaking/cg/cron/wiki (4) +
+    # Phase-2 build_verify stages_ok/retain/health/ui_auto/payload/mrwp_rc (6). The
+    # Phase-1 scout steps are pre-recorded by _orch's _clear_ccd_scout (not "ran").
+    assert sum(1 for a in actions if a.kind == "ran") == 10
 
 
 def test_gate_blocks_until_approved():
@@ -491,17 +492,17 @@ def test_gate_blocks_until_approved():
     assert st.status == "holding_gate"
     orch.run_until_gate()
     assert st.status == "holding_gate"
-    assert not st.is_done("ccd", "branch_cut")
+    assert not st.is_done("build_verify", "go_test")
 
 
 def test_approve_advances():
     st, orch = _orch()
     orch.run_until_gate()
     orch.approve_gate("ok")
-    assert st.is_done("ccd", "branch_cut")
+    assert st.is_done("build_verify", "go_test")
     orch.run_until_gate()
-    assert st.current_step == "go_test"          # next gate after the branch cut
-    assert st.status == "holding_gate"
+    assert st.current_step == "ui_failures"      # next stop after go_test: a bug-bash human to-do
+    assert st.status == "awaiting_action"
 
 
 def test_deny_blocks():
@@ -543,11 +544,11 @@ def test_persistence_roundtrip():
         # reload — simulates resuming next day
         st2 = ReleaseState.load(path)
         assert st2.status == "holding_gate"
-        assert st2.current_step == "branch_cut"
+        assert st2.current_step == "go_test"
         assert st2.readiness_signed  # readiness survives the roundtrip
         orch2 = Orchestrator(CONFIG, st2)
         orch2.approve_gate("resumed")
-        assert st2.is_done("ccd", "branch_cut")
+        assert st2.is_done("build_verify", "go_test")
 
 
 def test_conditional_hotfix_excluded_by_default():
@@ -567,31 +568,31 @@ def test_conditional_hotfix_excluded_by_default():
 
 def test_skip_requires_reason():
     st, orch = _orch()
-    orch.run_until_gate()   # holds at branch_cut
-    act = orch.skip_step("ccd", "branch_cut", "")   # no reason
+    orch.run_until_gate()   # holds at go_test
+    act = orch.skip_step("build_verify", "go_test", "")   # no reason
     assert act.kind == "idle"
-    assert not st.is_done("ccd", "branch_cut")       # unchanged
+    assert not st.is_done("build_verify", "go_test")       # unchanged
 
 
 def test_skip_advances_past_gate():
     st, orch = _orch()
     orch.run_until_gate()
-    orch.skip_step("ccd", "branch_cut", "n/a this release")
-    assert st.is_done("ccd", "branch_cut")                  # skipped counts as done
-    rec = st.steps[st.key("ccd", "branch_cut")]
+    orch.skip_step("build_verify", "go_test", "n/a this release")
+    assert st.is_done("build_verify", "go_test")            # skipped counts as done
+    rec = st.steps[st.key("build_verify", "go_test")]
     assert rec["status"] == "skipped"
     orch.run_until_gate()
-    assert st.current_step == "go_test"                     # advanced to next gate
+    assert st.current_step == "ui_failures"                 # advanced past the gate to the next hold
 
 
 def test_reopen_step():
     st, orch = _orch()
     orch.run_until_gate(); orch.approve_gate("ok")
-    assert st.is_done("ccd", "branch_cut")
-    orch.reopen_step("ccd", "branch_cut")
-    assert not st.is_done("ccd", "branch_cut")              # back to pending
+    assert st.is_done("build_verify", "go_test")
+    orch.reopen_step("build_verify", "go_test")
+    assert not st.is_done("build_verify", "go_test")        # back to pending
     orch.run_until_gate()
-    assert st.current_step == "branch_cut"                  # gate re-holds
+    assert st.current_step == "go_test"                     # gate re-holds
 
 
 def test_halt_blocks_then_resume():
@@ -837,10 +838,10 @@ def test_notify_phase0_digest_when_open():
 def test_notify_digest_reports_gate_and_progress():
     from orchestrator import render
     st, orch = _orch()                   # signed, no CCD → phase due immediately
-    orch.run_until_gate()                # Phase 0 all reminders/auto; holds at branch_cut (Phase 1)
+    orch.run_until_gate()                # Phases 0 & 1 gateless; holds at go_test (Phase 2)
     msg = render.notification(orch.status_report())
     assert "Progress:" in msg
-    assert "Waiting on your decision" in msg and "Cut the release branch" in msg
+    assert "Waiting on your decision" in msg and "Proceed to bug bash" in msg
     assert "your approval" in msg       # lists the human touchpoint
 
 
@@ -1035,7 +1036,7 @@ def test_registry_records_step_linkage_and_reverse_lookup():
         assert [e["id"] for e in owners] == ["n"]
         assert reg.list(step="ccd.pr_reminder")[0]["id"] == "m"
         # a step nobody drives → empty
-        assert reg.list(step="ccd.branch_cut") == []
+        assert reg.list(step="build_verify.go_test") == []
         # steps present → kind auto-derives to step-driving
         assert kind_of(m) == "step-driving"
 
@@ -1573,18 +1574,19 @@ def test_ccd_steps_blocked_without_ccd():
 
 
 def test_ccd_phase_shape_and_scout_kinds():
-    """Phase 1 has the expected ordered steps; the three comms/trigger steps are
-    scout (source: scout) and branch_cut stays the human gate."""
+    """Phase 1 is three scout comms/trigger steps and NO gate — the branch cut is
+    automatic (at 11 PM), so there's no manual cut step; the next gate is go_test in
+    Phase 2."""
     import yaml
     cfg = yaml.safe_load(open(CONFIG, encoding="utf-8"))
     ccd = next(p for p in cfg["phases"] if p["id"] == "ccd")
     ids = [s["id"] for s in ccd["steps"]]
-    assert ids == ["final_reminder", "pr_reminder", "localization",
-                   "precheck_prs", "branch_cut", "verify_trigger"]
+    assert ids == ["final_reminder", "pr_reminder", "localization"]
     by = {s["id"]: s for s in ccd["steps"]}
     for sid in ("final_reminder", "pr_reminder", "localization"):
         assert by[sid].get("source") == "scout", f"{sid} should be a scout step"
-    assert by["branch_cut"].get("gate") is True
+    # Phase 1 has no gate anymore
+    assert not any(s.get("gate") for s in ccd["steps"])
 
 
 def test_confirm_reminders_is_attestation_hold():
@@ -1821,11 +1823,11 @@ def test_local_mock_completes_scout_step():
 def test_local_mock_never_mocks_a_gate():
     """Gate steps are not mockable — a gate still holds for a real decision even if
     someone lists it in the mock file."""
-    st, orch = _mock_orch({"ccd.branch_cut": {"outcome": "done"}})
-    _clear_phase0_scout(orch)          # clear Phase-0 holds so we reach the Phase-1 gate
-    _clear_ccd_scout(orch)             # clear Phase-1 scout comms so we reach branch_cut
+    st, orch = _mock_orch({"build_verify.go_test": {"outcome": "done"}})
+    _clear_phase0_scout(orch)          # clear Phase-0 holds so we reach the Phase-2 gate
+    _clear_ccd_scout(orch)             # clear Phase-1 scout comms (Phase 1 is gateless)
     orch.run_until_gate()
-    assert not st.is_done("ccd", "branch_cut")
+    assert not st.is_done("build_verify", "go_test")
     assert st.status == "holding_gate"
 
 

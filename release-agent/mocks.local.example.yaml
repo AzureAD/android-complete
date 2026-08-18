@@ -70,11 +70,9 @@ preflight.cg:
 # preflight.wiki:              { outcome: done }                  # agent
 
 # ---- Phase 1 · ccd ----
-# ccd.final_reminder:  { outcome: done }   # agent
-# ccd.localization:    { outcome: done }   # agent
-# ccd.precheck_prs:    { outcome: done }   # agent
-# ccd.branch_cut:      🚦 gate — NOT mockable
-# ccd.verify_trigger:  { outcome: done }   # agent
+# ccd.final_reminder:  { outcome: done }  ·  send_to: <email>   # scout (email)
+# ccd.pr_reminder:     { outcome: done }  ·  send_to: me         # scout (Teams)
+# ccd.localization:    { outcome: done }                         # scout (pipeline trigger)
 
 # ---- Phase 2 · build_verify ----
 # build_verify.stages_ok:  { outcome: done }   # agent
