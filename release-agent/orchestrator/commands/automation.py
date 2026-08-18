@@ -4,7 +4,7 @@ release close."""
 from __future__ import annotations
 import json as _json
 
-from orchestrator.registry import AutomationRegistry
+from orchestrator.registry import AutomationRegistry, kind_of
 from orchestrator import automations as auto_plan
 from orchestrator import cli_common as C
 
@@ -20,12 +20,17 @@ def cmd_automation(args):
         if not (args.id and args.name):
             print("register needs --id and --name.")
             return 1
-        e = reg.register(args.id, args.name, release=args.release,
-                         shared=args.shared, purpose=args.purpose or "",
-                         steps=getattr(args, "step", None) or [])
+        try:
+            e = reg.register(args.id, args.name, release=args.release,
+                             shared=args.shared, purpose=args.purpose or "",
+                             steps=getattr(args, "step", None) or [],
+                             kind=getattr(args, "kind", None) or None)
+        except ValueError as ex:
+            print(f"register error: {ex}")
+            return 1
         where = "shared" if e["scope"] == "shared" else f"release {e['release']}"
-        drives = f" — drives {', '.join(e['steps'])}" if e.get("steps") else ""
-        print(f"Registered automation {e['id']} ({where}): {e['name']}{drives}")
+        drives = f" — drives {', '.join(e['steps'])}" if e.get("steps") else " — owns no steps"
+        print(f"Registered automation {e['id']} [{e['kind']}] ({where}): {e['name']}{drives}")
         return 0
     if args.action == "deregister":
         if not args.id:
@@ -35,7 +40,8 @@ def cmd_automation(args):
         return 0
     # list
     items = reg.list(release=args.release, scope=(args.scope or None),
-                     step=(getattr(args, "step_filter", None) or None))
+                     step=(getattr(args, "step_filter", None) or None),
+                     kind=(getattr(args, "kind", None) or None))
     if args.json:
         print(_json.dumps(items, indent=2))
         return 0
@@ -45,8 +51,10 @@ def cmd_automation(args):
         return 0
     for e in items:
         where = "shared" if e.get("scope") == "shared" else (e.get("release") or "?")
-        drives = f"  drives: {', '.join(e.get('steps') or [])}" if e.get("steps") else ""
-        print(f"  {e['id']}  [{where}]  {e['name']}  — {e.get('purpose','')}{drives}")
+        k = kind_of(e)
+        drives = (f"  drives: {', '.join(e.get('steps') or [])}" if e.get("steps")
+                  else "  (release-level — no steps)")
+        print(f"  {e['id']}  [{k}] [{where}]  {e['name']}  — {e.get('purpose','')}{drives}")
     return 0
 
 
@@ -89,6 +97,8 @@ def register(sub):
     au.add_argument("--release", default=None, help="Release scope (omit + --shared for machine-wide)")
     au.add_argument("--shared", action="store_true", help="Mark as shared/persistent (not torn down per release)")
     au.add_argument("--scope", default=None, choices=["shared", "release"], help="Filter list by scope")
+    au.add_argument("--kind", default=None, choices=["release-level", "step-driving"],
+                    help="For register: override the auto-derived kind. For list: filter by kind.")
     au.add_argument("--step", action="append", default=[],
                     help="For register: a '<phase>.<step>' id this automation drives (repeatable)")
     au.add_argument("--step-filter", default=None, dest="step_filter",

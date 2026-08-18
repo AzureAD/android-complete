@@ -1018,9 +1018,9 @@ def test_registry_register_list_deregister():
 
 
 def test_registry_records_step_linkage_and_reverse_lookup():
-    """An automation entry records the steps it drives; list(step=...) is the
-    reverse lookup (which automation owns a step) — the traceability link."""
-    from orchestrator.registry import AutomationRegistry
+    """An automation entry records the steps it drives + its kind; list(step=...) is
+    the reverse lookup (which automation owns a step) — the traceability link."""
+    from orchestrator.registry import AutomationRegistry, kind_of
     with tempfile.TemporaryDirectory() as tmp:
         reg = AutomationRegistry(tmp)
         reg.register("m", "CCD morning", release="2026-09", purpose="reminders",
@@ -1028,7 +1028,7 @@ def test_registry_records_step_linkage_and_reverse_lookup():
         reg.register("n", "CCD noon", release="2026-09", purpose="loc",
                      steps=["ccd.localization"])
         # forward: automation -> steps
-        m = reg.list(release="2026-09")[0]
+        m = reg.list(release="2026-09", step="ccd.final_reminder")[0]
         assert m["steps"] == ["ccd.final_reminder", "ccd.pr_reminder"]
         # reverse: step -> automation
         owners = reg.list(step="ccd.localization")
@@ -1036,6 +1036,40 @@ def test_registry_records_step_linkage_and_reverse_lookup():
         assert reg.list(step="ccd.pr_reminder")[0]["id"] == "m"
         # a step nobody drives → empty
         assert reg.list(step="ccd.branch_cut") == []
+        # steps present → kind auto-derives to step-driving
+        assert kind_of(m) == "step-driving"
+
+
+def test_registry_kind_taxonomy_and_guard():
+    """kind is 'step-driving' when steps are present, 'release-level' when not; the
+    two can't contradict. Old entries without the field derive their kind."""
+    from orchestrator.registry import AutomationRegistry, kind_of
+    with tempfile.TemporaryDirectory() as tmp:
+        reg = AutomationRegistry(tmp)
+        # no steps → release-level (e.g. the hourly push-reminder / tick automation)
+        pr = reg.register("pr", "Release push reminders", release="2026-09",
+                          purpose="hourly advance + digest")
+        assert pr["kind"] == "release-level" and pr["steps"] == []
+        assert reg.list(kind="release-level")[0]["id"] == "pr"
+        # steps → step-driving
+        m = reg.register("m", "CCD morning", release="2026-09", steps=["ccd.final_reminder"])
+        assert m["kind"] == "step-driving"
+        assert reg.list(kind="step-driving")[0]["id"] == "m"
+        # contradictions are rejected
+        try:
+            reg.register("bad", "Bad", release="2026-09", kind="step-driving")
+            assert False, "expected ValueError for step-driving with no steps"
+        except ValueError:
+            pass
+        try:
+            reg.register("bad2", "Bad2", release="2026-09", steps=["ccd.x"], kind="release-level")
+            assert False, "expected ValueError for release-level with steps"
+        except ValueError:
+            pass
+        # derivation for a legacy entry that predates the kind field
+        assert kind_of({"steps": ["a.b"]}) == "step-driving"
+        assert kind_of({"steps": []}) == "release-level"
+        assert kind_of({}) == "release-level"
 
 
 def test_automations_cover_every_scheduled_step():

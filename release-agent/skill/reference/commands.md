@@ -35,7 +35,7 @@ _Loaded on demand. Run all from `C:\repos\android-complete\release-agent`._
 | Activate conditional hotfix phase | `python -m orchestrator.cli activate --release <YYYY-MM> --phase hotfix` |
 | **Notify** — push line if something needs me | `python -m orchestrator.cli notify [--release <YYYY-MM>] [--as-of <date>] [--force]` |
 | **Plan timed automations** | `automation plan --release <YYYY-MM> [--json]` — derive the per-release CCD automations (name/schedule/steps/prompt) from `config/automations.yaml` + CCD |
-| **Track automations** | `automation register --id <id> --name "<n>" [--shared\|--release <YYYY-MM>] [--purpose "..."] [--step <phase.step> …]` · `automation list [--release <YYYY-MM>] [--step-filter <phase.step>] [--json]` · `automation deregister --id <id>` |
+| **Track automations** | `automation register --id <id> --name "<n>" [--shared\|--release <YYYY-MM>] [--purpose "..."] [--step <phase.step> …] [--kind step-driving\|release-level]` · `automation list [--release <YYYY-MM>] [--step-filter <phase.step>] [--kind …] [--json]` · `automation deregister --id <id>` |
 
 ## Manual overrides (steer when reality diverges from the plan)
 - **skip** — a step doesn't apply, or was done manually outside the tool. **Reason required** (audited). Confirm the reason, then run.

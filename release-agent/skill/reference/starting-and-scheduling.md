@@ -23,7 +23,7 @@ Right after `init`, make sure the **push-reminder automation** exists for THIS r
    - **schedule:** `every hour`
    - **teamsNotify:** `never`
    - **prompt:** from `C:\repos\android-complete\release-agent` run `python -m orchestrator.cli tick --json` (ADVANCES the active release — runs agent steps, holds at gates/actions — then returns `{message, html, subject, owner_email, owner_name, release}`); if `message` non-empty and `owner_email` set, email via `workiq_send_email` (`to:[owner_email]`, `subject:` the value, `body:` the `html` with `isHtml:true` — fall back to plain `message`/`isHtml:false` only if `html` empty); if `message` empty, do nothing. (Recipient from `owner_email` — never hardcode. Do NOT use `m_send_teams_message` (bot relay 404s) or the Teams self-chat (delivers silently).)
-3. **Register it** so it's torn down at close: `automation register --id <id> --name "Release push reminders" --release <YYYY-MM> --purpose "hourly advance + phase digest email to owner"`
+3. **Register it** so it's torn down at close: `automation register --id <id> --name "Release push reminders" --release <YYYY-MM> --purpose "hourly advance + phase digest email to owner"` — no `--step`, so it's recorded as a **release-level** automation (it advances the whole release, owns no step).
 
 Do it silently as part of start (the user already opted into push). **Why hourly, not once at 9am:** `tick` is idempotent (advancing no-ops once holding; digest de-dupes to one email/day), so a tick missed while the machine was off is picked up by the next. A single daily trigger would be skipped that day.
 
@@ -38,7 +38,7 @@ Some steps must fire at a specific time of day (not just "on their date") — e.
 3. **Register it WITH its steps** so the linkage is recorded and it's torn down at close — copy the plan's `register:` line, filling the real Scout id:
    `automation register --id <scout-id> --name "<name>" --release <YYYY-MM> --purpose "<purpose>" --step <phase.step> [--step …]`
 
-**Traceability:** every timed step is owned by exactly one automation (a guardrail test enforces this). To answer "which automation runs step X?" → `automation list --release <YYYY-MM> --step-filter <phase.step>`. To see "what does this automation drive?" → `automation list --release <YYYY-MM>` (each row shows `drives: …`). At runtime each automation journals `<slug> ran <step>` into the release event log, so the whole chain (config → registered automation → step execution) is inspectable.
+**Traceability:** every timed step is owned by exactly one automation (a guardrail test enforces this). Each registry entry has a **kind** — `step-driving` (owns steps, e.g. the CCD automations) or `release-level` (whole-release, no steps, e.g. push reminders), auto-derived from whether you pass `--step`. To answer "which automation runs step X?" → `automation list --release <YYYY-MM> --step-filter <phase.step>`. To see "what does this automation drive?" → `automation list --release <YYYY-MM>` (each row shows its `[kind]` and `drives: …`, or `(release-level — no steps)`). At runtime each step-driving automation journals `<slug> ran <step>` into the release event log, so the whole chain (config → registered automation → step execution) is inspectable.
 
 ### Any automation you provision MUST be registered (for teardown)
 - **Per-release** (normal, e.g. push reminders, the CCD phase automations) → `--release <YYYY-MM>` (+ `--step` for step-driving ones). **Removed when that release closes.**

@@ -13,6 +13,11 @@ Two scopes:
               NOT torn down per release.
   * release — provisioned for one release; removed when that release closes.
 
+Two kinds (what an automation acts on):
+  * step-driving — runs one or more named steps at a fire time (owns steps[]).
+  * release-level — operates on the whole release, not a step (e.g. the hourly
+                    `tick` push-reminder). Owns NO steps.
+
 Stored machine-wide at <runs_root>/_automations.json (gitignored runtime state).
 """
 from __future__ import annotations
@@ -20,6 +25,17 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
+
+KINDS = ("release-level", "step-driving")
+
+
+def kind_of(entry: dict) -> str:
+    """The automation's kind, deriving it for older entries that predate the field:
+    an entry that drives steps is step-driving, otherwise release-level."""
+    k = entry.get("kind")
+    if k in KINDS:
+        return k
+    return "step-driving" if (entry.get("steps") or []) else "release-level"
 
 
 def _now() -> str:
@@ -47,17 +63,33 @@ class AutomationRegistry:
         os.replace(tmp, self.path)
 
     def register(self, auto_id: str, name: str, release: str = None,
-                 shared: bool = False, purpose: str = "", steps: list = None) -> dict:
+                 shared: bool = False, purpose: str = "", steps: list = None,
+                 kind: str = None) -> dict:
         """Record an automation (upsert by id). Shared automations store release=None.
         `steps` is the list of '<phase>.<step>' ids this automation drives — the
-        automation<->step linkage used for traceability."""
+        automation<->step linkage used for traceability.
+
+        `kind` is 'step-driving' (owns steps) or 'release-level' (whole-release, no
+        steps). Omit to auto-derive from `steps`. The two can't contradict:
+        step-driving requires steps; release-level forbids them."""
+        steps = list(steps or [])
+        derived = "step-driving" if steps else "release-level"
+        if kind is None:
+            kind = derived
+        elif kind not in KINDS:
+            raise ValueError(f"kind must be one of {KINDS}, got {kind!r}")
+        elif kind == "step-driving" and not steps:
+            raise ValueError("a 'step-driving' automation must declare at least one step")
+        elif kind == "release-level" and steps:
+            raise ValueError("a 'release-level' automation must not own steps")
         entry = {
             "id": auto_id,
             "name": name,
+            "kind": kind,
             "scope": "shared" if shared else "release",
             "release": None if shared else release,
             "purpose": purpose,
-            "steps": list(steps or []),
+            "steps": steps,
             "registered_at": _now(),
         }
         entries = [e for e in self._load() if e.get("id") != auto_id]  # upsert
@@ -71,11 +103,12 @@ class AutomationRegistry:
         self._save(kept)
         return len(kept) != len(entries)
 
-    def list(self, release: str = None, scope: str = None, step: str = None) -> list:
+    def list(self, release: str = None, scope: str = None, step: str = None,
+             kind: str = None) -> list:
         """List entries. `release` filters to that release's automations (scope
         'release' whose release matches). `scope` filters by 'shared'/'release'.
         `step` filters to automations that DRIVE that '<phase>.<step>' id (reverse
-        lookup — which automation owns a step)."""
+        lookup). `kind` filters by 'step-driving'/'release-level'."""
         entries = self._load()
         if release is not None:
             entries = [e for e in entries if e.get("release") == release]
@@ -83,4 +116,6 @@ class AutomationRegistry:
             entries = [e for e in entries if e.get("scope") == scope]
         if step is not None:
             entries = [e for e in entries if step in (e.get("steps") or [])]
+        if kind is not None:
+            entries = [e for e in entries if kind_of(e) == kind]
         return entries

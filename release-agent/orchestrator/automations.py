@@ -152,6 +152,7 @@ def plan(config_path: str, release: str, ccd: str) -> dict:
             "name": name,
             "phase": d.get("phase"),
             "steps": s_steps,
+            "kind": "step-driving",     # everything in automations.yaml drives steps
             "purpose": d.get("purpose", ""),
             "fire_at": fire_at,
             "ccd_date": ccd_date.isoformat() if ccd_date else None,
@@ -163,7 +164,7 @@ def plan(config_path: str, release: str, ccd: str) -> dict:
         # Exactly what to record after creating it, so linkage is captured.
         spec["registration"] = {
             "name": name, "release": release, "purpose": d.get("purpose", ""),
-            "steps": s_steps,
+            "steps": s_steps, "kind": "step-driving",
         }
         out.append(spec)
     return {"release": release, "ccd": ccd, "problems": problems, "automations": out}
