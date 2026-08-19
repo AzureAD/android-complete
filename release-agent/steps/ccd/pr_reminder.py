@@ -93,4 +93,5 @@ def build(state):
         record_as=ID,
         summary=f"Post the CCD PR-merge reminder to {target_note}",
         note=f"posted to {target_note}",
+        outbound=True,
     )

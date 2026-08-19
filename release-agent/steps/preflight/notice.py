@@ -115,4 +115,5 @@ def build(state, variant: str | None = None):
         record_as=ID,
         summary=f"Email the code-complete notice to {len(recipients)} recipient(s) ({rnote})",
         note=f"sent to {', '.join(recipients) if recipients else '(no recipients)'}",
+        outbound=True,
     )

@@ -312,6 +312,7 @@ def build(state):
         summary=f"Trigger localization pipeline {cfg['pipeline_id']} ({var_str}), then poll to completion",
         note=f"triggered pipeline {cfg['pipeline_id']} with {var_str}; polling every "
              f"{cfg.get('poll_interval_min', 10)}m (timeout {cfg.get('timeout_hours', 3)}h)",
+        outbound=True,
     )
 
 

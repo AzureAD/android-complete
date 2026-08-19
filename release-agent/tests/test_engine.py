@@ -1816,6 +1816,28 @@ def test_scout_pending_empty_when_all_scout_done():
     assert orch.status_report()["scout_pending"] == []
 
 
+def test_scout_steps_declare_outbound_effect():
+    """Every scout step that sends something EXTERNAL (email / Teams post / pipeline
+    trigger) carries outbound=True, so the autonomous automation posts a one-line Scout-DM
+    copy of what went out. A local follow-up like lockdown's check-lockdown is outbound=False
+    (nothing left the box) and stays quiet."""
+    from orchestrator.outcomes import as_dict
+    import steps as _steps
+    st = ReleaseState(release_id="2026-09", ccd="2026-09-09", ccd_source="default")
+    expect = {
+        ("preflight", "notice"): True,           # workiq_send_email
+        ("preflight", "flight_reminder"): True,  # workiq_send_chat_message
+        ("preflight", "lockdown"): False,        # check-lockdown (local follow-up)
+        ("ccd", "final_reminder"): True,         # workiq_send_email
+        ("ccd", "pr_reminder"): True,            # workiq_send_chat_message
+        ("ccd", "localization"): True,           # azure_devops-pipelines_run_pipeline
+    }
+    for (phase, sid), want in expect.items():
+        out = as_dict(_steps.get_step(phase, sid).build(st))
+        assert out["kind"] == "needs_skill", f"{phase}.{sid} not needs_skill"
+        assert out.get("outbound") is want, f"{phase}.{sid} outbound={out.get('outbound')} want {want}"
+
+
 def test_check_lockdown_pass_and_attention():
     """check-lockdown records pass when nothing overlaps and holds (attention)
     when a Production CCOA overlaps the release window."""

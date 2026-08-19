@@ -82,4 +82,5 @@ def build(state):
         record_as=ID,
         summary=f"Post the flight & string reminders to {target_note}",
         note=f"posted to {target_note}",
+        outbound=True,
     )

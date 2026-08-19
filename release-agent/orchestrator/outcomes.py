@@ -61,12 +61,18 @@ class NeedsSkill:
       summary    — a one-line human description ('email the code-complete notice
                    to <n> recipients') for the skill to show / log.
       note       — optional detail stored with the recorded step.
+      outbound   — True when performing this action sends something EXTERNAL
+                   (an email, a Teams post, a pipeline trigger) as opposed to a
+                   local follow-up engine command (e.g. check-lockdown). When an
+                   automation runs the step headless, an outbound action gets a
+                   courtesy copy to the owner's Scout DM so they see what went out.
     """
     tool: str
     payload: dict = field(default_factory=dict)
     record_as: str = ""
     summary: str = ""
     note: str = ""
+    outbound: bool = False
     kind: str = "needs_skill"
 
 
