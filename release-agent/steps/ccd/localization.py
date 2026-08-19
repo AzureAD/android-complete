@@ -200,13 +200,33 @@ def _review_post(state, cfg: dict, pr_id: str, url: str) -> dict:
     return payload
 
 
+def _run_link(state, cfg: dict) -> dict | None:
+    """A proof link to the triggered pipeline RUN itself — always available once the
+    build is recorded, whether or not a PR was created. Prefers the exact run_url
+    stored at trigger time; otherwise builds the standard build-results URL from the
+    recorded build id + configured org/project."""
+    data = state.get_step("ccd", "localization").data or {}
+    url = data.get("run_url")
+    bid = data.get("build_id")
+    if not url and bid and cfg.get("org") and cfg.get("project"):
+        url = f"{cfg['org'].rstrip('/')}/{cfg['project']}/_build/results?buildId={bid}"
+    if not url:
+        return None
+    label = f"Localization pipeline run{f' (build {bid})' if bid else ''}"
+    return {"name": label, "url": url}
+
+
 def decide(state, is_complete: bool, logs: str = None, now=None, cfg: dict = None) -> dict:
     """Pure poll decision. Returns a dict with a `decision` and the payload the poller
     should act on:
       wait          -> {decision, elapsed_min, poll_in_min, note}
       timeout       -> {decision, email:{...}, note}          (hold the step)
       complete_pr   -> {decision, pr_id, pr_url, chat:{...}, links, note}  (done)
-      complete_none -> {decision, note}                        (done, no strings)
+      complete_none -> {decision, links, note}                (done, no strings)
+
+    Both terminal (complete_*) branches ALWAYS carry a proof `links` entry so the
+    step's Details box has evidence: the PR link when a PR was created, plus the
+    pipeline RUN link in every case (the run is the proof it fired even with no PR).
     """
     cfg = cfg or CONFIG
     started = state.get_step("ccd", "localization").data.get("started_at")
@@ -225,15 +245,20 @@ def decide(state, is_complete: bool, logs: str = None, now=None, cfg: dict = Non
                 "note": f"localization pipeline did not complete within {hrs}h — "
                         f"emailed the release engineer to check it / do the manual steps"}
 
-    # completed
+    # completed — always include the run link as proof; add the PR link when present.
+    run_link = _run_link(state, cfg)
     pr_id, url = extract_pr(logs, cfg)
     if pr_id:
+        links = [{"name": f"Localization PR #{pr_id}", "url": url}]
+        if run_link:
+            links.append(run_link)
         return {"decision": "complete_pr", "pr_id": pr_id, "pr_url": url,
                 "chat": _review_post(state, cfg, pr_id, url),
-                "links": [{"name": f"Localization PR #{pr_id}", "url": url}],
+                "links": links,
                 "note": f"localization complete — translations PR #{pr_id} created; "
                         f"posted to {cfg.get('code_reviews_chat_name', 'Code reviews')} for review"}
     return {"decision": "complete_none",
+            "links": [run_link] if run_link else [],
             "note": "localization complete — no new strings this release "
                     "(no OneLoc PR was created)"}
 

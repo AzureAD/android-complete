@@ -2021,7 +2021,7 @@ def test_ccd_phase_shape_and_scout_kinds():
 
 # ---- localization trigger → poll → complete/timeout state machine ----
 
-def _loc_state(started_min_ago=None):
+def _loc_state(started_min_ago=None, build_id="177219192"):
     from datetime import datetime, timezone, timedelta
     st = ReleaseState(release_id="2026-09", ccd="2026-09-09",
                       owner_email="pedroro@microsoft.com", owner_name="Pedro")
@@ -2029,6 +2029,8 @@ def _loc_state(started_min_ago=None):
         start = datetime.now(timezone.utc) - timedelta(minutes=started_min_ago)
         step = st.get_step("ccd", "localization")
         step.data["started_at"] = start.isoformat()
+        if build_id:
+            step.data["build_id"] = build_id     # so decide() can attach the run proof link
         st.set_step("ccd", "localization", step)
     return st
 
@@ -2090,6 +2092,8 @@ def test_localization_decide_branches():
     assert dpr["decision"] == "complete_pr" and dpr["pr_id"] == "16790317"
     assert dpr["chat"]["chatId"] == L.CONFIG["code_reviews_chat_id"]
     assert any("16790317" in l["url"] for l in dpr["links"])
+    # proof: the PR case ALSO carries the pipeline run link (build id)
+    assert any("buildId=177219192" in l["url"] for l in dpr["links"])
     # the Code reviews post @mentions the release engineer + asks for an EOD merge
     assert '<at id="0">' in dpr["chat"]["content"] and "merged before EOD" in dpr["chat"]["content"]
     m = dpr["chat"]["mentions"][0]
@@ -2097,6 +2101,8 @@ def test_localization_decide_branches():
 
     dn = L.decide(st3, True, "no strings changed", now)
     assert dn["decision"] == "complete_none"
+    # proof: even with NO PR, the Details box gets the pipeline run link as evidence
+    assert dn["links"] and any("buildId=177219192" in l["url"] for l in dn["links"])
 
 
 def test_localization_review_post_no_owner_has_no_mention():
