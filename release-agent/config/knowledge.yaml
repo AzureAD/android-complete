@@ -105,24 +105,34 @@ preflight.cg:
   what: >
     Reads Component Governance alerts for the governed Android repo and reports
     active alerts by severity. It BLOCKS (holds) when there are active High/Critical
-    alerts — the release owner fixes them and reruns the check, or skips to override.
+    alerts — the release engineer fixes them and reruns the check. Overriding to ship
+    WITHOUT a fix is allowed only with the release engineer's MANAGER's approval
+    (recorded in the skip reason).
   who: >
-    The RELEASE OWNER is responsible for remediating Component Governance alerts —
-    this includes creating the fix PR (e.g. bumping the flagged dependency to a
-    patched version) and driving it to merge, not just pinging another team. CG
-    remediation is a release-owner duty, not something delegated to the component
-    owner by default.
+    The RELEASE ENGINEER (release owner) is responsible for remediating Component
+    Governance alerts — this includes creating the fix PR (e.g. bumping the flagged
+    dependency to a patched version) and driving it to merge, not just pinging another
+    team. CG remediation is a release-owner duty, not something delegated to the
+    component owner by default. The ONE exception to fixing is an override to ship as-is,
+    which is not the engineer's call alone — it requires their MANAGER's approval.
   where:
     - "Component Governance alerts page for the repo (see link) — review the active High/Critical items."
     - "The flagged dependency's version is pinned in the repo's version catalog (gradle/libs.versions.toml) or the module build.gradle — that's where the fix PR changes it."
   how: >
-    As release owner: open the alert, identify the flagged dependency and patched
-    version, raise the fix PR (update the pin, e.g. httpcore5 5.3 -> 5.4.3), get it
-    merged, then rerun this step to re-check. To proceed without fixing, skip the
-    step with a documented reason (audited).
+    Preferred path — FIX: as release engineer, open the alert, identify the flagged
+    dependency and patched version, raise the fix PR (update the pin, e.g.
+    httpcore5 5.3 -> 5.4.3), get it merged, then rerun this step to re-check.
+    Override path — SHIP WITHOUT FIXING: this needs your MANAGER's explicit approval
+    first. Once the manager signs off, skip the step with a reason that NAMES the
+    approving manager and why (audited), e.g.
+    `skip --release <id> --phase preflight --step cg --reason "High CG alert X — ship
+    as-is approved by <manager alias> on <date>; fix tracked in <work item>"`.
+    Never override on your own authority.
   faqs:
     - q: "Who fixes the alert / creates the PR?"
-      a: "The release owner. Remediating CG alerts — including authoring and landing the fix PR — is a release-owner responsibility, not the component owner's."
+      a: "The release engineer (release owner). Remediating CG alerts — including authoring and landing the fix PR — is a release-owner responsibility, not the component owner's."
+    - q: "Can I ship with an open High/Critical CG alert?"
+      a: "Only as an override, and only with your MANAGER's approval. The release engineer cannot waive a High/Critical CG block on their own — get manager sign-off, then skip the step with a reason that records who approved it and links the follow-up fix. If there's no manager approval, fix the alert first."
     - q: "Does a Medium/Low alert block?"
       a: "No — only active High/Critical alerts block. Medium/Low are reported but don't hold the release."
   links:
