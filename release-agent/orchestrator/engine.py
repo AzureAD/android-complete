@@ -120,6 +120,14 @@ class Orchestrator:
             return phase
         return None
 
+    def current_phase_id(self) -> Optional[str]:
+        """Public: id of the first included phase with incomplete steps, or None when
+        the release is complete. The engine's authoritative 'where are we' — derived
+        from config order + the done-map, not the cached cursor. Used by the simulator
+        to know when a fast-forward has reached a target phase."""
+        p = self._current_phase()
+        return p["id"] if p else None
+
     @staticmethod
     def _step_kind(step: dict) -> str:
         """Classify a step: gate | scout | attest | reminder | auto."""

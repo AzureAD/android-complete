@@ -1,0 +1,40 @@
+# Fast-forward all the way to Phase 2's go_test gate — the four verification steps
+# resolve from deterministic OFFLINE mocks (no az), leaving the release holding at the
+# human "RC verified — proceed to bug bash" decision. Use this to exercise the gate
+# hold, the status render, and the RC digest one-liner without touching the network.
+#
+#   release-agent sim run --scenario at_rc_gate
+#
+name: at_rc_gate
+release_id: 2026-08
+ccd: 2026-08-26
+ccd_source: confirmed
+as_of: CCD+2
+target: { phase: build_verify, at: gate }
+data: mock
+mocks:
+  build_verify.checker_fired:
+    triggering: { run: { id: 1678599, queueTime: "2026-08-13T06:00:00Z" }, result: succeeded }
+  build_verify.orchestrator_health:
+    run:
+      id: 1678611
+      tags: [ "AuthenticatorBranch=release-2026-08-13", "NextCommonVersion=24.6.0",
+              "NextMsalVersion=8.4.2", "NextBrokerVersion=16.5.0",
+              "RC-ECS=1678863", "RC-Local=1678864" ]
+    stages:
+      - { name: "Validate Branch and Versions availability", state: completed, result: succeeded }
+      - { name: "Create Release Branches", state: completed, result: succeeded }
+      - { name: "Trigger RC Testing", state: completed, result: succeeded }
+      - { name: "Remove RC Tags", state: pending, result: null }
+  build_verify.mrwp_ecs:
+    mrwp_id: "1678863"
+    stages:
+      - { name: "Build", state: completed, result: succeeded }
+      - { name: "UI Automation", state: completed, result: failed }
+    tests: { total: 5871, passed: 5767, failed: 104 }
+  build_verify.mrwp_local:
+    mrwp_id: "1678864"
+    stages:
+      - { name: "Build", state: completed, result: succeeded }
+      - { name: "UI Automation", state: completed, result: failed }
+    tests: { total: 5856, passed: 5756, failed: 100 }

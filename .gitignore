@@ -66,6 +66,7 @@ plugins/buildsystem/bin
 ICM-investigation/
 # Release Orchestrator generated run-state (per-release, ephemeral)
 .release-runs/
+.sim-runs/
 
 # Python bytecode
 __pycache__/

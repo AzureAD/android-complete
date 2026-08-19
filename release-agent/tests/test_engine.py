@@ -2113,6 +2113,150 @@ def test_digest_shows_rc_line_when_build_verify_active():
     assert "RC pipelines:" not in render.notification(r2)
 
 
+def test_sim_fast_forwards_to_rc_gate_offline():
+    """The at_rc_gate scenario (fine input mocks, no az) fast-forwards Phases 0-1,
+    runs the 4 build_verify steps for real on injected inputs, stashes the pipeline
+    ids, and halts at the go_test gate — all offline."""
+    import tempfile
+    from orchestrator import sim as SIM
+    with tempfile.TemporaryDirectory() as tmp:
+        res = SIM.run_scenario("at_rc_gate", runs_root=tmp)
+    assert res.reached and res.stop_kind == "gate"
+    st = res.state
+    # earlier phases complete
+    assert all(st.is_done("preflight", s) for s in
+               ("notice", "confirm_reminders", "vitals", "wiki"))
+    assert all(st.is_done("ccd", s) for s in ("final_reminder", "localization"))
+    # the 4 verification steps ran (real build() on mocks) and are done
+    for s in ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local"):
+        assert st.is_done("build_verify", s), s
+    assert not st.is_done("build_verify", "go_test")          # gate still holding
+    # pipeline ids were stashed by the steps during the sim
+    assert st.pipeline_runs.get("orchestrator") == "1678611"
+    assert st.pipeline_runs.get("mrwp_ecs") == "1678863"
+    assert st.readiness_signed
+
+
+def test_sim_open_positions_at_target_entry():
+    """`at: open` (data: mock) completes every phase before the target and stops at the
+    target's entry with nothing in it run — the drop-in point for live validation."""
+    import tempfile
+    from orchestrator import sim as SIM
+    scenario = {"name": "t_open", "release_id": "2026-08", "ccd": "2026-08-26",
+                "as_of": "CCD+1", "data": "mock",
+                "target": {"phase": "build_verify", "at": "open"}}
+    with tempfile.TemporaryDirectory() as tmp:
+        res = SIM.run_scenario(scenario, runs_root=tmp)
+    assert res.reached and res.stop_kind == "open"
+    st = res.state
+    assert st.is_done("preflight", "wiki") and st.is_done("ccd", "localization")
+    # nothing in the target phase has run
+    assert not any(st.is_done("build_verify", s) for s in
+                   ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local", "go_test"))
+    assert st.current_phase == "build_verify"
+
+
+def test_sim_done_mode_completes_phase_and_advances():
+    """`at: done` auto-approves the target's gate and lands at the next phase."""
+    import tempfile
+    from orchestrator import sim as SIM
+    scenario = {"name": "t_done", "release_id": "2026-08", "ccd": "2026-08-26",
+                "as_of": "CCD+2", "data": "mock",
+                "target": {"phase": "build_verify", "at": "done"}}
+    with tempfile.TemporaryDirectory() as tmp:
+        res = SIM.run_scenario(scenario, runs_root=tmp)
+    st = res.state
+    assert all(st.is_done("build_verify", s) for s in
+               ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local", "go_test"))
+    assert "build_verify.go_test" in res.gates_approved
+    from orchestrator.engine import Orchestrator
+    orch = Orchestrator(CONFIG, st)
+    assert orch.current_phase_id() == "bug_bash"
+
+
+def test_sim_surfaces_blocked_target_step():
+    """A genuine block in the target phase (a never-ran MRWP stage) stops the sim and
+    is reported as a problem — this is what live validation is meant to catch."""
+    import tempfile
+    from orchestrator import sim as SIM
+    scenario = {"name": "t_block", "release_id": "2026-08", "ccd": "2026-08-26",
+                "as_of": "CCD+2", "data": "mock",
+                "target": {"phase": "build_verify", "at": "gate"},
+                "mocks": {"build_verify.mrwp_ecs": {
+                    "mrwp_id": "555",
+                    "stages": [{"name": "Build", "state": "completed", "result": "succeeded"},
+                               {"name": "UI Automation", "state": "pending", "result": None}]}}}
+    with tempfile.TemporaryDirectory() as tmp:
+        res = SIM.run_scenario(scenario, runs_root=tmp)
+    assert not res.reached and res.stop_kind == "blocked"
+    assert any("mrwp_ecs" in p and "UI Automation" in p for p in res.problems)
+
+
+def test_sim_freeze_writes_fixture(tmp_path=None):
+    """--freeze snapshots the engine-produced state to a fixture that reloads cleanly."""
+    import tempfile, os
+    from orchestrator import sim as SIM
+    from orchestrator.state import ReleaseState
+    scenario = {"name": "t_freeze", "release_id": "2026-08", "ccd": "2026-08-26",
+                "as_of": "CCD+1", "data": "mock",
+                "target": {"phase": "build_verify", "at": "open"}}
+    fixture = os.path.join(SIM.FIXTURE_DIR, "t_freeze.json")
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            res = SIM.run_scenario(scenario, runs_root=tmp, freeze=True)
+        assert res.frozen_to == fixture and os.path.exists(fixture)
+        reloaded = ReleaseState.load(fixture)     # engine-produced fixture round-trips
+        assert reloaded.is_done("ccd", "localization")
+    finally:
+        if os.path.exists(fixture):
+            os.remove(fixture)
+
+
+def test_sim_as_of_before_window_reports_scheduled():
+    """If as_of is before an EARLIER phase's anchor, the fast-forward can't complete it
+    (the engine holds 'scheduled') and the sim surfaces that as a problem instead of
+    silently pretending. Target ccd at CCD-30: preflight (opens CCD-7) isn't due yet."""
+    import tempfile
+    from orchestrator import sim as SIM
+    scenario = {"name": "t_sched", "release_id": "2026-08", "ccd": "2026-08-26",
+                "as_of": "CCD-30", "data": "mock",
+                "target": {"phase": "ccd", "at": "open"}}
+    with tempfile.TemporaryDirectory() as tmp:
+        res = SIM.run_scenario(scenario, runs_root=tmp)
+    assert res.stop_kind == "scheduled" and not res.reached
+    assert any("scheduled" in p for p in res.problems)
+
+
+def test_sim_surfaces_blocked_step_in_parallel_phase():
+    """A blocked auto step in a PARALLEL target phase (preflight) is surfaced as
+    'blocked', not spun to the iteration cap. Regression guard for the parallel
+    block-detection in the fast-forward's 'ran' branch."""
+    import tempfile
+    from orchestrator import sim as SIM
+    scenario = {"name": "t_par_block", "release_id": "2026-08", "ccd": "2026-08-26",
+                "as_of": "CCD-6", "data": "mock",
+                "target": {"phase": "preflight", "at": "gate"},
+                "mocks": {"preflight.cg": {"outcome": "blocked", "reason": "sim: CG alert"}}}
+    with tempfile.TemporaryDirectory() as tmp:
+        res = SIM.run_scenario(scenario, runs_root=tmp)
+    assert res.stop_kind == "blocked" and res.steps_forwarded < 50
+    assert any("preflight.cg" in p for p in res.problems)
+
+
+def test_sim_gate_mode_on_gateless_phase_reports_problem():
+    """`at: gate` on a phase with no gate step (partner) doesn't hang — it completes the
+    phase and reports that the gate was never reached (reached=False)."""
+    import tempfile
+    from orchestrator import sim as SIM
+    scenario = {"name": "t_nogate", "release_id": "2026-08", "ccd": "2026-08-26",
+                "as_of": "CCD+30", "data": "mock",
+                "target": {"phase": "partner", "at": "gate"}}
+    with tempfile.TemporaryDirectory() as tmp:
+        res = SIM.run_scenario(scenario, runs_root=tmp)
+    assert not res.reached
+    assert any("no gate" in p for p in res.problems)
+
+
 def test_lockdown_overlap_only_production():
     """Overlap rule: only Production-env periods that intersect the window count;
     Banner-only advisories are ignored even if they overlap."""
