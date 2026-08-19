@@ -38,6 +38,7 @@ phases:
   - id: ccd
     name: "Code Complete Day"
     checklist_phase: 1
+    anchor: "CCD"            # opens ON the Code Complete Date — these are CCD-DAY comms; must not fire early
     steps:
       - { id: final_reminder,  name: "CCD final code-complete reminder (email)",  owner: agent, source: scout, maps_to: [P1-1] }
       - { id: pr_reminder,     name: "Remind Code Reviews chat of the CCD PR-merge deadline", owner: agent, source: scout, maps_to: [P1-1b] }

@@ -2437,10 +2437,37 @@ def test_local_mock_never_mocks_a_gate():
     assert st.status == "holding_gate"
 
 
+def test_ccd_phase_not_due_before_ccd_and_no_scout_pending():
+    """REGRESSION (Phase 1 ran early): the ccd phase (Code Complete Day) is anchored to
+    CCD, so before the CCD it holds as 'scheduled' AND exposes NO scout_pending — the
+    autonomous automation drains scout steps off scout_pending, so a non-empty list here
+    would fire the CCD-day comms (final_reminder / pr_reminder / localization) days early."""
+    from datetime import date
+    _stub_build_defs("pass")
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-26", ccd_source="confirmed")
+    orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 19))   # CCD-7: Phase 0 open, Phase 1 NOT
+    _pass_scout_checks(orch); orch.gate.sign()
+    _clear_phase0_scout(orch)                                   # finish Phase 0
+    orch.run_until_gate()
+    r = orch.status_report()
+    # Phase 1 holds scheduled (opens on the CCD), nothing drained
+    assert r["status"] == "scheduled"
+    assert r["scout_pending"] == [], r["scout_pending"]
+    assert next(p["done"] for p in r["phases"] if p["id"] == "ccd") == 0
+    # advance the clock to the CCD → Phase 1 opens and its scout steps become pending
+    orch.as_of = date(2026, 8, 26)
+    orch.run_until_gate()
+    r2 = orch.status_report()
+    assert r2["current_phase"] == "ccd"
+    assert set(r2["scout_pending"]) == {"final_reminder", "pr_reminder", "localization"}
+
+
 def test_local_mock_applies_to_later_phases():
     """Engine-level mocks work for ANY phase's steps, not just Phase 0 — here a
-    Phase-1 step is forced to block before the branch-cut gate."""
-    st, orch = _mock_orch({"ccd.final_reminder": {"outcome": "blocked", "reason": "mocked P1"}})
+    Phase-1 step is forced to block. Phase 1 (Code Complete Day) is anchored to CCD,
+    so the clock must be at/after the CCD for it to be due."""
+    st, orch = _mock_orch({"ccd.final_reminder": {"outcome": "blocked", "reason": "mocked P1"}},
+                          as_of="2026-07-08")   # CCD day → Phase 1 open
     _clear_phase0_scout(orch)          # advance out of Phase 0
     orch.run_until_gate()
     assert st.get_step("ccd", "final_reminder").status == "blocked"

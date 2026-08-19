@@ -723,8 +723,12 @@ class Orchestrator:
         # Scout steps ready for the SKILL to execute (perform the MCP send/scrape, then
         # record-step). They are NOT user holds — the skill drains these itself; only if
         # a scout step records 'attention' does it become a blocked user task.
-        scout_pending = [s["id"] for s in (active_phase or {}).get("steps", [])
-                         if s.get("status") == "scout"]
+        # GATED ON PHASE DUE: a phase that hasn't reached its anchor (e.g. Code Complete
+        # Day before the CCD) must expose NO pending scout work — otherwise the autonomous
+        # automation would drain those steps early, running CCD-day comms ahead of the CCD.
+        scout_pending = ([s["id"] for s in (active_phase or {}).get("steps", [])
+                          if s.get("status") == "scout"]
+                         if (active_phase and active_phase.get("due")) else [])
         return {
             "release_id": self.state.release_id,
             "status": self.state.status,
