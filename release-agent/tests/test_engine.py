@@ -2059,6 +2059,60 @@ def test_rc_report_flags_never_ran_stage_as_problem():
             setattr(P, n, f)
 
 
+def test_mrwp_run_ids_picks_newest_on_retrigger():
+    """A re-triggered 'Trigger RC Testing' stage leaves MULTIPLE RC-<provider> tags on
+    the orchestrator run (old + new). mrwp_run_ids must pick the NEWEST (max build id) so
+    the fresh MRWP run wins over the stale failed one."""
+    from tools import pipelines as P
+    run = {"id": 20, "tags": ["RC-ECS=1678863", "RC-ECS=1679999",
+                              "RC-Local=1678864", "RC-Local=1679000"]}
+    ok, ids, _, source = P.mrwp_run_ids("O", "P", run)
+    assert ok and source == "tags"
+    assert ids["ECS"] == "1679999" and ids["Local"] == "1679000"
+    # single tag per provider still works (no re-trigger)
+    ok2, ids2, _, _ = P.mrwp_run_ids("O", "P", {"id": 1, "tags": ["RC-ECS=5", "RC-Local=6"]})
+    assert ok2 and ids2 == {"ECS": "5", "Local": "6"}
+
+
+def test_build_verify_persists_pipeline_run_ids():
+    """The build_verify steps stash the resolved checker/orchestrator/MRWP run ids onto
+    state.pipeline_runs, and they round-trip through save/load (used by status + digest)."""
+    import tempfile
+    from orchestrator import cli_common as _C
+    st, orch = _bv_state({})
+    for sid in ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local"):
+        _bv_build(orch, st, sid)
+    pr = st.pipeline_runs
+    assert pr.get("checker") == "1678599"
+    assert pr.get("orchestrator") == "1678611"
+    assert pr.get("mrwp_ecs") == "900001" and pr.get("mrwp_local") == "900002"
+    assert "Broker 1.0.0" in (pr.get("versions") or "") and pr.get("resolved_at")
+    with tempfile.TemporaryDirectory() as tmp:
+        _C.save_state(st, tmp, "2026-08")
+        again = _C.load_state(tmp, "2026-08")
+        assert again.pipeline_runs.get("mrwp_ecs") == "900001"
+
+
+def test_digest_shows_rc_line_when_build_verify_active():
+    """When Phase 2 (build_verify) is the active phase and run ids are on state, the daily
+    digest carries a one-line RC summary; other phases don't show it."""
+    from orchestrator import render
+    r = {"release_id": "2026-08", "readiness_signed": True,
+         "active_phase": {"id": "build_verify", "name": "Build & RC", "num": 2,
+                          "due": True, "started": True, "done": 2, "total": 5,
+                          "outstanding": [], "completed": ["checker_fired", "orchestrator_health"]},
+         "pipeline_runs": {"checker": "1678599", "orchestrator": "1678611",
+                           "versions": "Broker 1.0.0", "mrwp_ecs": "900001",
+                           "mrwp_local": "900002"}}
+    text = render.notification(r)
+    md = render.notification_markdown(r)
+    assert "RC pipelines:" in text and "orchestrator 1678611" in text
+    assert "MRWP ECS 900001 / Local 900002" in md
+    # a non-build_verify active phase omits the RC line
+    r2 = dict(r, active_phase=dict(r["active_phase"], id="prep", name="Prep"))
+    assert "RC pipelines:" not in render.notification(r2)
+
+
 def test_lockdown_overlap_only_production():
     """Overlap rule: only Production-env periods that intersect the window count;
     Banner-only advisories are ignored even if they overlap."""

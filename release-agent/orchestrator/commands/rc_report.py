@@ -18,11 +18,34 @@ def cmd_rc_report(args):
     month = getattr(st, "release_id", None) or args.release
     model = P.release_report(K.ORG, K.PROJECT, month,
                              checker_def=K.CHECKER_DEF, orch_def=K.ORCHESTRATOR_DEF)
+    _persist(st, model, args)
     if getattr(args, "json", False):
         print(_json.dumps(model, indent=2))
         return 0
     print(_format(model))
     return 1 if model.get("problems") else 0
+
+
+def _persist(st, model, args):
+    """Record the resolved run ids on state so status/digest can show them without a
+    live read. Best-effort — a report must never fail because the state write did."""
+    if st is None:
+        return
+    ch = model.get("checker") or {}
+    o = model.get("orchestrator") or {}
+    mr = model.get("mrwp") or {}
+    v = o.get("versions") or {}
+    vstr = ", ".join(f"{k} {v[k]}" for k in ("Common", "Msal", "Broker") if v.get(k)) or None
+    try:
+        K.stash_runs(st,
+                     checker=ch.get("run_id"),
+                     orchestrator=o.get("run_id"),
+                     versions=vstr,
+                     mrwp_ecs=(mr.get("ECS") or {}).get("run_id"),
+                     mrwp_local=(mr.get("Local") or {}).get("run_id"))
+        C.save_state(st, args.runs_root, args.release)
+    except Exception:
+        pass
 
 
 def _u(build_id):

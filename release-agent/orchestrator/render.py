@@ -236,6 +236,28 @@ _STEP_STATE_WORD = {"done": "Done", "gate": "Awaiting your approval",
                     "scout": "Scout runs this — automatic", "blocked": "Blocked — needs you"}
 
 
+def _pipelines_line(r: dict) -> str:
+    """Compact one-line summary of the Phase-2 release-pipeline run ids recorded on
+    state (checker → orchestrator → the two MRWP runs). Empty string when none resolved
+    yet. Shared by the status view and the daily digest so both read from state (no live
+    az call in the render path)."""
+    pr = r.get("pipeline_runs") or {}
+    parts = []
+    if pr.get("checker"):
+        parts.append(f"checker {pr['checker']}")
+    if pr.get("orchestrator"):
+        v = f" ({pr['versions']})" if pr.get("versions") else ""
+        parts.append(f"orchestrator {pr['orchestrator']}{v}")
+    mr = []
+    if pr.get("mrwp_ecs"):
+        mr.append(f"ECS {pr['mrwp_ecs']}")
+    if pr.get("mrwp_local"):
+        mr.append(f"Local {pr['mrwp_local']}")
+    if mr:
+        parts.append("MRWP " + " / ".join(mr))
+    return " · ".join(parts)
+
+
 def status_view(r: dict) -> str:
     """Human-readable status: next-action headline → phase map → current-phase steps.
     `r` is Orchestrator.status_report()."""
@@ -330,6 +352,12 @@ def status_view(r: dict) -> str:
             detail = step_detail(s)
             lines.append(f"| {icon} {s['name']}{tag} | {word} | {detail} |")
 
+        # Phase-2 pipeline run ids (checker/orchestrator/MRWP) — recorded on state as
+        # the verification steps resolve the chain, so they show without a live read.
+        pl = _pipelines_line(r)
+        if pl:
+            lines += ["", f"**Pipelines:** {pl}"]
+
         # 3b) Expanded detail — only for steps whose note has MORE than the one-line
         # summary the column shows (e.g. the CG report's full High/Critical CVE list,
         # or the breaking-change draft comms). Simple one-line notes (lockdown "no
@@ -419,6 +447,9 @@ def _digest_model(r: dict):
         hold = ("action", r["action"]["step_name"])
     human_all = [o for o in ap.get("outstanding", []) if o["gate"] or o["reminder"]]
     completed_all = ap.get("completed") or []
+    # Phase-2 RC one-liner — only while build_verify is the active phase, best-effort
+    # (reads state.pipeline_runs; never a live call). Empty until the chain resolves.
+    rc_line = _pipelines_line(r) if ap.get("id") == "build_verify" else ""
     return {
         "rid": r.get("release_id", "?"),
         "ap": ap,
@@ -428,6 +459,7 @@ def _digest_model(r: dict):
         "hold": hold,                          # (kind, step_name) or None
         "human": human_all[:6],
         "human_total": len(human_all),
+        "pipelines": rc_line,                  # RC id one-liner (build_verify only)
     }
 
 
@@ -452,6 +484,8 @@ def notification(r: dict) -> str:
         return ""
     ap = m["ap"]
     lines = [f"Release {m['rid']} — Phase {ap['num']}: {ap['name']}", _progress_line(m)]
+    if m.get("pipelines"):
+        lines.append(f"RC pipelines: {m['pipelines']}")
     if m["completed"]:
         lines.append(f"Completed ({m['completed_total']}):")
         lines += [f"  ✓ {name}" for name in m["completed"]]
@@ -477,6 +511,8 @@ def notification_markdown(r: dict) -> str:
         return ""
     ap = m["ap"]
     blocks = [f"**Release {m['rid']} — Phase {ap['num']}: {ap['name']}**", _progress_line(m, bold=True)]
+    if m.get("pipelines"):
+        blocks.append(f"**RC pipelines:** {m['pipelines']}")
     if m["completed"]:
         blocks.append("\n".join([f"**Completed ({m['completed_total']}):**"]
                                 + [f"- ✓ {n}" for n in m["completed"]]))

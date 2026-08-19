@@ -80,6 +80,11 @@ class ReleaseState:
     pending_human: list = field(default_factory=list) # outstanding human actions
     last_notified: Optional[str] = None               # last push message (legacy; kept for load compat)
     last_notified_date: Optional[str] = None          # YYYY-MM-DD of the last daily digest sent
+    # Phase-2 release-pipeline run ids (checker / orchestrator / the two MRWP runs),
+    # refreshed each time Phase 2 resolves the chain. Because a re-triggered 'Trigger RC
+    # Testing' stage spawns NEW MRWP runs, these are re-resolved (newest wins) — not a
+    # fixed cache. Surfaced in status details + the daily digest.
+    pipeline_runs: dict = field(default_factory=dict)  # {checker, orchestrator, mrwp_ecs, mrwp_local, mrwp_id_source, resolved_at}
     notes: list = field(default_factory=list)
 
     # ---- persistence ----

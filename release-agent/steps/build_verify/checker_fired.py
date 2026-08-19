@@ -45,7 +45,7 @@ def build(state):
             return Blocked(
                 f"No Code Complete Checker run triggered the release in {month} "
                 f"(no run with a succeeded '{job}' job).")
-        return _verdict(injected.get("run") or {}, injected.get("result"), job)
+        return _verdict(state, injected.get("run") or {}, injected.get("result"), job)
 
     ok, runs, detail = P.find_checker_runs(cfg["org"], cfg["project"], cfg["def_id"], month)
     if not ok:
@@ -66,7 +66,7 @@ def build(state):
             continue
         rec = P.named_record(recs, job)
         if rec is not None and rec.get("result") == "succeeded":
-            return _verdict(run, "succeeded", job)
+            return _verdict(state, run, "succeeded", job)
         last = run
     # If we matched nothing AND some timeline read failed, don't misdiagnose as
     # "not triggered" — surface the read failure (with the az-login hint on auth).
@@ -81,7 +81,7 @@ def build(state):
         f"hasn't arrived this is expected; otherwise investigate the checker.")
 
 
-def _verdict(run, result, job):
+def _verdict(state, run, result, job):
     bid = (run or {}).get("id")
     when = ((run or {}).get("queueTime") or "")[:16]
     links = K.links_for(bid, "Code Complete Checker run")
@@ -89,6 +89,7 @@ def _verdict(run, result, job):
         return Blocked(
             f"Code Complete Checker '{job}' did not succeed (result={result}) in run "
             f"{bid} ({when}) — the orchestrator was not launched.{K.UNBLOCK_HELP}", links=links)
+    K.stash_runs(state, checker=bid)
     return Done(
         f"Code Complete Checker fired the release — run {bid} ({when}), '{job}' succeeded.",
         links=links)

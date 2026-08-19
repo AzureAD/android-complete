@@ -45,6 +45,20 @@ def links_for(build_id, name="ADO run"):
     return [{"name": name, "url": build_url(build_id)}]
 
 
+def stash_runs(state, **ids):
+    """Record resolved pipeline run ids on state.pipeline_runs (drop None values),
+    stamped with resolved_at. Called each time Phase 2 resolves the chain so the ids
+    are in state (for status details + the digest). Re-resolved on every pass, so a
+    re-triggered MRWP run (new id) overwrites the old one."""
+    from datetime import datetime, timezone
+    pr = dict(getattr(state, "pipeline_runs", {}) or {})
+    for k, v in ids.items():
+        if v is not None:
+            pr[k] = str(v)
+    pr["resolved_at"] = datetime.now(timezone.utc).isoformat()
+    state.pipeline_runs = pr
+
+
 def verify_mrwp(state, provider):
     """Shared body for the mrwp_ecs / mrwp_local steps. `provider` is 'ECS' or 'Local'.
 
@@ -116,5 +130,6 @@ def verify_mrwp(state, provider):
     if comp["yellow"]:
         extras.append(f"{len(comp['yellow'])} yellow")
     extra = f" ({', '.join(extras)} — triaged later)" if extras else ""
+    stash_runs(state, **{f"mrwp_{provider.lower()}": mid})
     return Done(
         f"{label} run {mid} ran to completion — {stage_note}{extra}.{tnote}", links=links)

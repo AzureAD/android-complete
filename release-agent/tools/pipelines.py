@@ -123,12 +123,30 @@ def _ado_rest_get_text(url, timeout):
 
 def _tag_value(tags, key):
     """Return the value of a `key=value` build tag (e.g. RC-ECS=1678863 → '1678863'),
-    or None. Case-sensitive key match."""
+    or None. Case-sensitive key match; first match wins."""
     pfx = f"{key}="
     for t in tags or []:
         if t.startswith(pfx):
             return t[len(pfx):]
     return None
+
+
+def _tag_values(tags, key):
+    """All values for a `key=value` build tag. A re-triggered 'Trigger RC Testing'
+    stage adds NEW RC-<provider>=<id> tags alongside the old, so a provider can have
+    several — use `_newest_id` to pick the current run."""
+    pfx = f"{key}="
+    return [t[len(pfx):] for t in (tags or []) if t.startswith(pfx)]
+
+
+def _newest_id(ids):
+    """The newest build id from a list. ADO build ids increase monotonically, so the
+    max numeric id is the most-recent run — this is how a re-trigger's fresh MRWP run
+    wins over the failed earlier one. Returns a string, or None if empty."""
+    nums = [str(i) for i in (ids or []) if str(i).isdigit()]
+    if nums:
+        return str(max(int(i) for i in nums))
+    return (ids[0] if ids else None)
 
 
 def find_orchestrator_run(org, project, def_id, release_month, timeout=60):
@@ -181,11 +199,14 @@ def mrwp_run_ids(org, project, orch_run, timeout=90):
     `source` is 'tags' or 'logs' so callers can note which path was used.
     """
     tags = (orch_run or {}).get("tags") or []
-    ecs, local = _tag_value(tags, "RC-ECS"), _tag_value(tags, "RC-Local")
+    ecs = _newest_id(_tag_values(tags, "RC-ECS"))
+    local = _newest_id(_tag_values(tags, "RC-Local"))
     if ecs and local:
         return (True, {"ECS": ecs, "Local": local}, "", "tags")
 
-    # Fallback: parse the trigger-task logs from the orchestrator's timeline.
+    # Fallback: parse the trigger-task logs from the orchestrator's timeline. On a
+    # re-trigger there are extra 'Trigger ADO Pipeline' tasks — collect ALL ids per
+    # provider and take the newest so the fresh run wins.
     bid = (orch_run or {}).get("id")
     if not bid:
         return (False, None, "orchestrator run has no id", "logs")
@@ -200,7 +221,7 @@ def mrwp_run_ids(org, project, orch_run, timeout=90):
                      if r.get("type") == "Task" and r.get("name") == "Trigger ADO Pipeline"
                      and (r.get("log") or {}).get("id")]
     import re as _re
-    found = {}
+    found = {"ECS": [], "Local": []}
     base = org.rstrip("/")
     for t in trigger_tasks:
         log_id = t["log"]["id"]
@@ -212,9 +233,10 @@ def mrwp_run_ids(org, project, orch_run, timeout=90):
         m_pr = _re.search(r"Flight Provider:\s*(ECS|Local)", txt, _re.IGNORECASE)
         if m_id and m_pr:
             prov = "ECS" if m_pr.group(1).upper() == "ECS" else "Local"
-            found[prov] = m_id.group(1)
-    if found.get("ECS") and found.get("Local"):
-        return (True, {"ECS": found["ECS"], "Local": found["Local"]}, "", "logs")
+            found[prov].append(m_id.group(1))
+    ecs, local = _newest_id(found["ECS"]), _newest_id(found["Local"])
+    if ecs and local:
+        return (True, {"ECS": ecs, "Local": local}, "", "logs")
     return (False, None, f"could not resolve both MRWP ids (got {found or 'none'})", "logs")
 
 

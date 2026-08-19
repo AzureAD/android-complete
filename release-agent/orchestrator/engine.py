@@ -761,6 +761,7 @@ class Orchestrator:
             "scout_pending": scout_pending,
             "pending_human": list(self.state.pending_human),
             "gate_decisions": len(self.state.gate_decisions),
+            "pipeline_runs": dict(getattr(self.state, "pipeline_runs", {}) or {}),
             "updated_at": self.state.updated_at,
         }
 
