@@ -58,6 +58,26 @@ def cmd_sim_run(args):
     return 0 if res.reached else 1
 
 
+def cmd_sim_status(args):
+    """Render the status of the sim sandbox (the last scenario's state) so you don't
+    need the long --runs-root path or to remember the release id."""
+    from orchestrator import discovery
+    from orchestrator.engine import Orchestrator
+    runs_root = getattr(args, "runs_root", None) or S.DEFAULT_SIM_RUNS
+    rel = getattr(args, "release", None)
+    if not rel:
+        rel = ((discovery.resolve(runs_root, None) or {}).get("release") or {}).get("release_id")
+    if not rel:
+        print(f"No sim release under {runs_root}. Run `sim run --scenario <name>` first.")
+        return 1
+    st = S.C.load_state(runs_root, rel)
+    orch = Orchestrator(getattr(args, "config", None) or S.C.DEFAULT_CONFIG, st,
+                        as_of=S.schedule.parse_date(st.ccd) if st.ccd else None)
+    print(f"(sim sandbox · runs-root {runs_root})\n")
+    print(render.status_view(orch.status_report()))
+    return 0
+
+
 def register(sub):
     sp = sub.add_parser("sim", help="Fast-forward the engine to a mid-release point (testing)")
     ssub = sp.add_subparsers(dest="sim_cmd", required=True)
@@ -73,3 +93,9 @@ def register(sub):
     rp.add_argument("--freeze", action="store_true", help="Snapshot produced state to tests/fixtures/<name>.json")
     rp.add_argument("--json", action="store_true", help="Emit the raw SimResult")
     rp.set_defaults(func=cmd_sim_run)
+
+    stp = ssub.add_parser("status", help="Show the status of the sim sandbox (the last run)")
+    stp.add_argument("--runs-root", default=S.DEFAULT_SIM_RUNS,
+                     help="Sim runs-root to read (default: .sim-runs)")
+    stp.add_argument("--release", help="Release id (auto-discovered when a single sim release exists)")
+    stp.set_defaults(func=cmd_sim_status)
