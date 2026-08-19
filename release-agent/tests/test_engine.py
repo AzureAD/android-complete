@@ -1985,6 +1985,80 @@ def test_build_verify_phase_shape():
     assert gate["id"] == "go_test" and gate.get("gate") and gate.get("owner") == "human"
 
 
+def test_rc_report_aggregates_and_formats():
+    """release_report composes the helpers into one model, and the rc-report formatter
+    renders the chain + test breakdown. Helpers are monkeypatched so it's offline."""
+    from tools import pipelines as P
+    from orchestrator.commands import rc_report as RR
+    orig = {n: getattr(P, n) for n in
+            ("find_checker_runs", "get_timeline", "find_orchestrator_run", "get_stages",
+             "mrwp_run_ids", "get_test_summary")}
+    try:
+        P.find_checker_runs = lambda *a, **k: (True, [{"id": 10, "queueTime": "2026-08-13T06:00:00Z"}], "")
+        P.get_timeline = lambda *a, **k: (True, [{"type": "Job", "name": "Trigger Monthly Release",
+                                                  "result": "succeeded"}], "")
+        P.find_orchestrator_run = lambda *a, **k: (True, {"id": 20, "tags": [
+            "AuthenticatorBranch=release-2026-08-13", "NextCommonVersion=24.6.0",
+            "NextMsalVersion=8.4.2", "NextBrokerVersion=16.5.0"]}, "")
+
+        def _stages(org, project, bid, timeout=90):
+            if bid == 20:   # orchestrator: pre-gate green, parked
+                return (True, [
+                    {"name": "Validate Branch and Versions availability", "state": "completed", "result": "succeeded"},
+                    {"name": "Create Release Branches", "state": "completed", "result": "succeeded"},
+                    {"name": "Trigger RC Testing", "state": "completed", "result": "succeeded"},
+                    {"name": "Remove RC Tags", "state": "pending", "result": None}], "")
+            return (True, [{"name": "Build", "state": "completed", "result": "succeeded"},
+                           {"name": "UI Automation", "state": "completed", "result": "failed"}], "")
+        P.get_stages = _stages
+        P.mrwp_run_ids = lambda *a, **k: (True, {"ECS": 111, "Local": 222}, "", "tags")
+        P.get_test_summary = lambda org, project, bid, timeout=90: (
+            True, {"total": 100, "passed": 96, "failed": 4,
+                   "runs": [{"name": "UI", "total": 20, "passed": 16, "failed": 4}]}, "")
+
+        m = P.release_report("O", "P", "2026-08")
+        assert m["checker"]["fired"] and m["checker"]["run_id"] == 10
+        assert m["orchestrator"]["healthy"] and m["orchestrator"]["parked"]
+        assert m["orchestrator"]["versions"]["Common"] == "24.6.0"
+        assert m["mrwp"]["ECS"]["complete"] and m["mrwp"]["Local"]["complete"]
+        assert m["mrwp"]["ECS"]["failed_stages"] == ["UI Automation"]
+        assert m["problems"] == []                      # red stages/tests don't add problems
+        text = RR._format(m)
+        assert "RC Pipeline Status" in text and "parked at 'Remove RC Tags'" in text
+        assert "MRWP ECS" in text and "MRWP Local" in text and "No blocking issues" in text
+    finally:
+        for n, f in orig.items():
+            setattr(P, n, f)
+
+
+def test_rc_report_flags_never_ran_stage_as_problem():
+    """A never-ran MRWP stage becomes a reported problem (the report surfaces it even
+    though the report itself never gates)."""
+    from tools import pipelines as P
+    orig = {n: getattr(P, n) for n in
+            ("find_checker_runs", "get_timeline", "find_orchestrator_run", "get_stages",
+             "mrwp_run_ids", "get_test_summary")}
+    try:
+        P.find_checker_runs = lambda *a, **k: (True, [{"id": 10, "queueTime": "t"}], "")
+        P.get_timeline = lambda *a, **k: (True, [{"type": "Job", "name": "Trigger Monthly Release", "result": "succeeded"}], "")
+        P.find_orchestrator_run = lambda *a, **k: (True, {"id": 20, "tags": []}, "")
+        P.get_stages = lambda org, project, bid, timeout=90: (
+            (True, [{"name": "Validate Branch and Versions availability", "state": "completed", "result": "succeeded"},
+                    {"name": "Create Release Branches", "state": "completed", "result": "succeeded"},
+                    {"name": "Trigger RC Testing", "state": "completed", "result": "succeeded"}], "")
+            if bid == 20 else
+            (True, [{"name": "Build", "state": "completed", "result": "succeeded"},
+                    {"name": "UI Automation", "state": "pending", "result": None}], ""))
+        P.mrwp_run_ids = lambda *a, **k: (True, {"ECS": 111, "Local": 222}, "", "logs")
+        P.get_test_summary = lambda *a, **k: (False, None, "no tests")
+        m = P.release_report("O", "P", "2026-08")
+        assert not m["mrwp"]["ECS"]["complete"]
+        assert any("did NOT run to completion" in p for p in m["problems"])
+    finally:
+        for n, f in orig.items():
+            setattr(P, n, f)
+
+
 def test_lockdown_overlap_only_production():
     """Overlap rule: only Production-env periods that intersect the window count;
     Banner-only advisories are ignored even if they overlap."""

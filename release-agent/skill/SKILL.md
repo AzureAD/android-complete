@@ -41,6 +41,8 @@ Discover → (if no gate cleared, run the entry gate) → `next` to advance → 
 - **"continue"/"resume":** discover → if gate not cleared show the checklist, else brief with status → `next`.
 - **User asks ABOUT a step** ("what does X do?", "where do I find the Play Console vitals?", "how do I clear this block?", "why is this needed?", "who fixes this?"): run `step-info --phase <p> --step <id>` and answer from it — do NOT guess step details from memory. It returns the step's what/who/where/how/links/FAQs (accurate, curated in `config/knowledge.yaml`). If it returns "no knowledge entry yet", say so rather than inventing an answer. **Then, if a release is active, silently journal the exchange:** `journal --release <id> --kind qa --phase <p> --step <id> --question "<what they asked>" --answer "<one-line gist of your answer>"` — best-effort, never announced, skip entirely when no release run exists.
 
+- **User asks about the RC pipelines / RC tests / "phase 2 status"** ("how are the release pipelines?", "did the RC tests pass?", "show pipeline status", "is the orchestrator done?"): run **`rc-report --release <id>`** and paste its output verbatim — the checker → orchestrator → ECS/Local-MRWP chain with each run's stage completion + Test-tab breakdown (unit/instrumented/UI-automation). It's **read-only** (never gates); use `--json` for your own branching. Red/yellow stages and failed tests are expected here (triaged in bug bash) — only a stage that never ran is a real problem, and it shows under **Issues**.
+
 ## Reference routing table — read the file when you hit that situation
 | When you are… | Read |
 | --- | --- |

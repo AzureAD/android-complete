@@ -297,3 +297,117 @@ def get_test_summary(org, project, build_id, timeout=60):
         out_runs.append({"name": r.get("name"), "total": t, "passed": p, "failed": f})
     return (True, {"total": tot, "passed": passed, "failed": max(tot - passed, 0),
                    "runs": out_runs}, "")
+
+
+# Coordinates for the release chain (identitydivision/Engineering). The build_verify
+# steps carry their own copies in steps/build_verify/_common.py; this default lets the
+# report aggregator run standalone.
+CHECKER_DEF = 3038
+ORCHESTRATOR_DEF = 2828
+MRWP_DEF = 2519
+TRIGGER_JOB = "Trigger Monthly Release"
+ORCH_REQUIRED_STAGES = [
+    "Validate Branch and Versions availability",
+    "Create Release Branches",
+    "Trigger RC Testing",
+]
+ORCH_PARK_STAGE = "Remove RC Tags"
+
+
+def release_report(org, project, release_month, checker_def=CHECKER_DEF,
+                   orch_def=ORCHESTRATOR_DEF, timeout=90):
+    """Assemble the full Phase-2 RC-pipeline + test report for a release month — a pure
+    read aggregator over the other helpers (does NOT gate; it reports). Returns a model:
+
+      {release, checker:{fired,run_id,when},
+       orchestrator:{run_id, found, healthy, parked, park_stage, failed_stages, versions},
+       mrwp:{ECS:{...}, Local:{...}},   # each: run_id, complete, ran, total, failed_stages,
+                                        #       yellow_stages, never_ran, tests:{total,passed,failed,runs}
+       problems:[...]}                  # human-readable issues (empty = all good)
+
+    Any field that couldn't be read carries an `error` note; those also land in
+    `problems` so the caller can surface them without crashing.
+    """
+    model = {"release": release_month, "checker": {}, "orchestrator": {},
+             "mrwp": {}, "problems": []}
+    P = problems = model["problems"]
+
+    # --- checker (did the release fire?) ---
+    ok, runs, detail = find_checker_runs(org, project, checker_def, release_month, timeout)
+    fired = None
+    if not ok:
+        model["checker"] = {"error": detail}
+        problems.append(f"Checker: could not read runs ({detail}).")
+    else:
+        for run in (runs or [])[:25]:
+            ok2, recs, _ = get_timeline(org, project, run.get("id"), timeout)
+            if not ok2:
+                continue
+            rec = named_record(recs, TRIGGER_JOB)
+            if rec is not None and rec.get("result") == "succeeded":
+                fired = run
+                break
+        if fired:
+            model["checker"] = {"fired": True, "run_id": fired.get("id"),
+                                "when": (fired.get("queueTime") or "")[:16]}
+        else:
+            model["checker"] = {"fired": False}
+            problems.append("Checker: no run has a succeeded 'Trigger Monthly Release' job "
+                            "(release not triggered yet, or before Code Complete Day).")
+
+    # --- orchestrator (healthy? parked?) ---
+    ok, orun, detail = find_orchestrator_run(org, project, orch_def, release_month, timeout)
+    if not ok:
+        model["orchestrator"] = {"found": False, "error": detail}
+        problems.append(f"Orchestrator: could not read runs ({detail}).")
+        return model                             # can't resolve MRWP without the orchestrator
+    if not orun:
+        model["orchestrator"] = {"found": False}
+        problems.append(f"Orchestrator: no run found for {release_month}.")
+        return model
+
+    oid, tags = orun.get("id"), (orun.get("tags") or [])
+    versions = {k: _tag_value(tags, f"Next{k}Version") for k in ("Common", "Msal", "Broker")}
+    ok, ostages, detail = get_stages(org, project, oid, timeout)
+    o = {"found": True, "run_id": oid, "versions": versions,
+         "park_stage": ORCH_PARK_STAGE, "failed_stages": [], "healthy": None, "parked": None}
+    if not ok:
+        o["error"] = detail
+        problems.append(f"Orchestrator: could not read stages ({detail}).")
+    else:
+        by = {s.get("name"): s for s in ostages}
+        o["failed_stages"] = [n for n in ORCH_REQUIRED_STAGES
+                              if (by.get(n) or {}).get("result") != "succeeded"]
+        o["healthy"] = not o["failed_stages"]
+        park = by.get(ORCH_PARK_STAGE)
+        o["parked"] = bool(park and park.get("state") != "completed")
+        if o["failed_stages"]:
+            problems.append("Orchestrator: pre-gate stage(s) not green: "
+                            + ", ".join(o["failed_stages"]) + ".")
+    model["orchestrator"] = o
+
+    # --- the two MRWP runs (ran to completion? tests?) ---
+    ok, ids, detail, source = mrwp_run_ids(org, project, orun, timeout)
+    if not ok:
+        problems.append(f"MRWP: could not resolve run ids ({detail}).")
+        return model
+    model["mrwp_id_source"] = source            # 'tags' or 'logs'
+    for provider in ("ECS", "Local"):
+        bid = ids.get(provider)
+        entry = {"run_id": bid}
+        ok, stages, detail = get_stages(org, project, bid, timeout)
+        if not ok:
+            entry["error"] = detail
+            problems.append(f"MRWP {provider}: could not read stages ({detail}).")
+        else:
+            comp = stage_completion(stages)
+            entry.update({"complete": comp["complete"], "ran": comp["ran"],
+                          "total": comp["total"], "failed_stages": comp["failed"],
+                          "yellow_stages": comp["yellow"], "never_ran": comp["never_ran"]})
+            if not comp["complete"]:
+                nv = ", ".join(n for n in comp["never_ran"] if n) or "(unknown)"
+                problems.append(f"MRWP {provider}: did NOT run to completion — never-ran: {nv}.")
+        okt, tests, _ = get_test_summary(org, project, bid, timeout)
+        entry["tests"] = tests if okt else None
+        model["mrwp"][provider] = entry
+    return model
