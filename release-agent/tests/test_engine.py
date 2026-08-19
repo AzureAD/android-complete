@@ -2257,6 +2257,26 @@ def test_sim_gate_mode_on_gateless_phase_reports_problem():
     assert any("no gate" in p for p in res.problems)
 
 
+def test_sim_backs_up_existing_state_before_seeding():
+    """Seeding over an existing release backs the old state up first (a real release is
+    never lost to a seed)."""
+    import tempfile, os
+    from orchestrator import sim as SIM
+    from orchestrator import cli_common as _C
+    from orchestrator.state import ReleaseState
+    scenario = {"name": "t_seed", "release_id": "2026-08", "ccd": "2026-08-26",
+                "as_of": "CCD+1", "data": "mock",
+                "target": {"phase": "build_verify", "at": "open"}}
+    with tempfile.TemporaryDirectory() as tmp:
+        # a pre-existing "real" state at this id
+        _C.save_state(ReleaseState(release_id="2026-08", current_phase="ccd"), tmp, "2026-08")
+        res = SIM.run_scenario(scenario, runs_root=tmp)
+        assert res.backed_up_to and os.path.exists(res.backed_up_to)
+        # backup preserved the OLD cursor; the live state now reflects the seed
+        assert ReleaseState.load(res.backed_up_to).current_phase == "ccd"
+        assert _C.load_state(tmp, "2026-08").current_phase == "build_verify"
+
+
 def test_lockdown_overlap_only_production():
     """Overlap rule: only Production-env periods that intersect the window count;
     Banner-only advisories are ignored even if they overlap."""

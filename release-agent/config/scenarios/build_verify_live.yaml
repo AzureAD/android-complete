@@ -1,7 +1,7 @@
-# Test Phase 2 END-TO-END against the REAL pipelines: fast-forwards Phases 0-1
-# offline, then runs the four verification steps LIVE (real `az` reads of the
-# 2026-08 checker → orchestrator → ECS/Local MRWP runs) and halts at the go_test
-# gate. This is the "validate Phase 2 for real" scenario.
+# Test Phase 2 END-TO-END against the REAL pipelines: fast-forwards Phases 0-1,
+# then runs the four verification steps LIVE (real `az` reads of the 2026-08
+# checker → orchestrator → ECS/Local MRWP runs) and lands holding at the go_test
+# gate. Seeds the real release, so afterwards use the normal skill: status / approve.
 #
 #   release-agent sim run --scenario build_verify_live
 #

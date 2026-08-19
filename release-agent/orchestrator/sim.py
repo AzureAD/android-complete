@@ -53,9 +53,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)                                   # release-agent/
 SCENARIO_DIR = os.path.join(ROOT, "config", "scenarios")
 FIXTURE_DIR = os.path.join(ROOT, "tests", "fixtures")
-# Sim releases live in their OWN runs-root so a scenario can never clobber a real
-# release that happens to share an id. Overridable via run_scenario(runs_root=...).
-DEFAULT_SIM_RUNS = os.path.join(os.path.dirname(ROOT), ".sim-runs")
+# A scenario seeds the REAL runs-root by default — the whole point is that the release
+# skill then reads it as a normal release ("status" / "next" / "approve" just work).
+# Any existing state at that id is backed up first (see _backup_existing). Pass an
+# explicit runs_root to run_scenario() to target a throwaway sandbox instead.
+DEFAULT_SEED_RUNS = C.DEFAULT_RUNS_ROOT
 
 _AT_MODES = ("open", "gate", "done")
 
@@ -98,6 +100,7 @@ class SimResult:
     gates_approved: list = field(default_factory=list)
     problems: list = field(default_factory=list)
     frozen_to: Optional[str] = None
+    backed_up_to: Optional[str] = None
     runs_root: Optional[str] = None
     state: Optional[ReleaseState] = None
 
@@ -298,16 +301,17 @@ def _find_step(config: dict, phase_id: str, step_id: str) -> Optional[dict]:
 # ---------------------------------------------------------------- entry point
 def run_scenario(name_or_dict, runs_root: str = None, config_path: str = None,
                  freeze: bool = False, save: bool = True) -> SimResult:
-    """Fast-forward the engine to a scenario's target and return a SimResult.
+    """Fast-forward the engine to a scenario's target and SEED that state as the real
+    release, returning a SimResult.
 
     `name_or_dict` is a scenario name (config/scenarios/<name>.yaml) or a scenario
-    dict. State is written under `runs_root`/<release_id> (default .sim-runs) so
-    follow-up CLI commands can inspect it. `freeze` also snapshots the produced state
-    to tests/fixtures/<name>.json.
+    dict. State is written under `runs_root`/<release_id> — default is the REAL runs-root
+    so the release skill drives it as a normal release. Any existing state at that id is
+    backed up first. `freeze` also snapshots the produced state to tests/fixtures/<name>.json.
     """
     sc = name_or_dict if isinstance(name_or_dict, dict) else load_scenario(name_or_dict)
     config_path = config_path or C.DEFAULT_CONFIG
-    runs_root = runs_root or DEFAULT_SIM_RUNS
+    runs_root = runs_root or DEFAULT_SEED_RUNS
 
     with open(config_path, "r", encoding="utf-8") as fh:
         config = yaml.safe_load(fh)
@@ -368,10 +372,26 @@ def run_scenario(name_or_dict, runs_root: str = None, config_path: str = None,
         problems=stop["problems"], runs_root=runs_root, state=st)
 
     if save:
+        res.backed_up_to = _backup_existing(runs_root, release_id)
         C.save_state(st, runs_root, release_id)
     if freeze:
         res.frozen_to = _freeze(sc.get("name", release_id), st)
     return res
+
+
+def _backup_existing(runs_root: str, release_id: str) -> Optional[str]:
+    """If a state file already exists at this id, copy it aside before the seed
+    overwrites it (so a real release is never lost to a seed). Returns the backup path
+    or None when there was nothing to back up."""
+    import shutil
+    from datetime import datetime
+    src = C.state_path(runs_root, release_id)
+    if not os.path.exists(src):
+        return None
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dst = os.path.join(os.path.dirname(src), f"release-state.pre-seed-{ts}.json")
+    shutil.copy2(src, dst)
+    return dst
 
 
 def _freeze(name: str, st: ReleaseState) -> str:
