@@ -136,9 +136,22 @@ def cmd_set_ccd(args):
     C.elog(args.runs_root, args.release).log(
         "ccd_changed", value=value or "(default)", source=source, driver=args.reason.strip())
     opens = schedule.anchor_date(new_ccd, "CCD-7").isoformat()
+    # The CCD-day automations are cron-pinned to the CCD — a moved CCD makes them stale.
+    # Tell the skill to re-sync so the live schedules follow the new date.
+    sync_note = ""
+    try:
+        from orchestrator.registry import AutomationRegistry
+        sd = [e for e in AutomationRegistry(args.runs_root).list(release=args.release)
+              if e.get("kind") == "step-driving"]
+        if sd:
+            sync_note = ("\n  ⚠ CCD-day automations are pinned to the CCD — run "
+                         f"`automation sync --release {args.release} --json` and apply any "
+                         "schedule updates (m_update_automation) so they fire on the new date.")
+    except Exception:
+        pass
     C.emit(args.runs_root, args.release,
            f"✅ CCD set to **{st.ccd}** ({source}); pipeline updated. "
-           f"Phase 0 opens {opens} (CCD-7).\n  {res.detail}", kind="ccd")
+           f"Phase 0 opens {opens} (CCD-7).\n  {res.detail}{sync_note}", kind="ccd")
     return 0
 
 

@@ -16,6 +16,8 @@ def cmd_automation(args):
     reg = AutomationRegistry(args.runs_root)
     if args.action == "plan":
         return _cmd_plan(args)
+    if args.action == "sync":
+        return _cmd_sync(args)
     if args.action == "register":
         if not (args.id and args.name):
             print("register needs --id and --name.")
@@ -24,7 +26,9 @@ def cmd_automation(args):
             e = reg.register(args.id, args.name, release=args.release,
                              shared=args.shared, purpose=args.purpose or "",
                              steps=getattr(args, "step", None) or [],
-                             kind=getattr(args, "kind", None) or None)
+                             kind=getattr(args, "kind", None) or None,
+                             schedule=getattr(args, "schedule", None) or None,
+                             slug=getattr(args, "slug", None) or None)
         except ValueError as ex:
             print(f"register error: {ex}")
             return 1
@@ -85,13 +89,76 @@ def _cmd_plan(args):
         print(f"    purpose:  {a['purpose']}")
         print(f"    register: automation register --id <scout-id> --name \"{a['name']}\" "
               f"--release {args.release} --purpose \"{a['purpose']}\" "
+              f"--slug \"{a['slug']}\" --schedule \"{sched}\" "
               + " ".join(f"--step {s}" for s in a["steps"]))
     return 0 if not result["problems"] else 1
 
 
+def _cmd_sync(args):
+    """Detect step-driving automations whose SCHEDULE is stale vs the current CCD, and
+    emit what to change so the skill can re-apply it via m_update_automation. The CCD-day
+    automations are cron-pinned to the CCD; if the CCD moves (set-ccd) the live schedule
+    must move with it. Matches each REGISTERED automation to its desired schedule by the
+    set of steps it drives. Emits {release, ccd, updates:[{id, name, steps,
+    current_schedule, desired_schedule, changed}], problems}.
+
+    The skill: for every entry with changed=true → m_update_automation(id,
+    schedule=desired_schedule), then `automation register` it again WITH --schedule
+    <desired> so the registry records the newly-applied schedule."""
+    config_path = getattr(args, "config", None) or C.DEFAULT_CONFIG
+    st = C.load_state(args.runs_root, args.release)
+    ccd = getattr(st, "ccd", None)
+    reg = AutomationRegistry(args.runs_root)
+    registered = reg.list(release=args.release, kind="step-driving")
+    plan = auto_plan.plan(config_path, args.release, ccd)
+    desired_by_slug = {a["slug"]: a for a in plan["automations"]}
+    desired_by_steps = {tuple(sorted(a["steps"])): a for a in plan["automations"]}
+
+    updates = []
+    for e in registered:
+        # Match by slug (stable, unambiguous). Fall back to steps for older registry
+        # entries that predate slug — but only when the step set is unique.
+        spec = desired_by_slug.get(e.get("slug"))
+        if spec is None and e.get("slug") is None:
+            key = tuple(sorted(e.get("steps") or []))
+            if sum(1 for a in plan["automations"] if tuple(sorted(a["steps"])) == key) == 1:
+                spec = desired_by_steps.get(key)
+        if spec is None:
+            continue                       # no unambiguous desired spec — skip
+        desired = spec.get("schedule")
+        current = e.get("schedule")
+        updates.append({
+            "id": e["id"], "name": e["name"], "slug": e.get("slug") or spec["slug"],
+            "steps": e.get("steps") or [],
+            "current_schedule": current, "desired_schedule": desired,
+            "changed": bool(desired) and desired != current,
+        })
+    result = {"release": args.release, "ccd": ccd, "problems": plan["problems"],
+              "updates": updates}
+
+    if args.json:
+        print(_json.dumps(result, indent=2))
+        return 0
+    if not ccd:
+        print(f"Release {args.release} has no CCD — set it before syncing automations.")
+        return 1
+    changed = [u for u in updates if u["changed"]]
+    if not registered:
+        print(f"No step-driving automations registered for release {args.release}.")
+    elif not changed:
+        print(f"All {len(updates)} CCD automation(s) already in sync with CCD {ccd}.")
+    else:
+        print(f"{len(changed)} automation(s) need a schedule update for CCD {ccd}:")
+        for u in changed:
+            print(f"  • {u['name']} ({u['id']}): {u['current_schedule']} → {u['desired_schedule']}")
+            print(f"    m_update_automation(id={u['id']}, schedule=\"{u['desired_schedule']}\"), "
+                  f"then re-register with --schedule \"{u['desired_schedule']}\"")
+    return 0
+
+
 def register(sub):
-    au = sub.add_parser("automation", help="Track provisioned automations (plan/register/list/deregister) for teardown")
-    au.add_argument("action", choices=["plan", "register", "list", "deregister"])
+    au = sub.add_parser("automation", help="Track provisioned automations (plan/register/list/deregister/sync) for teardown + CCD re-pin")
+    au.add_argument("action", choices=["plan", "register", "list", "deregister", "sync"])
     au.add_argument("--id", default=None, help="Scout automation id")
     au.add_argument("--name", default="", help="Automation name (for register)")
     au.add_argument("--release", default=None, help="Release scope (omit + --shared for machine-wide)")
@@ -104,5 +171,9 @@ def register(sub):
     au.add_argument("--step-filter", default=None, dest="step_filter",
                     help="For list: show only automations that drive this '<phase>.<step>' id")
     au.add_argument("--purpose", default="", help="Short description")
+    au.add_argument("--schedule", default=None,
+                    help="For register: the Scout schedule the automation was created with (stored so `sync` can detect CCD drift)")
+    au.add_argument("--slug", default=None,
+                    help="For register: the stable slug from automations.yaml (sync's unambiguous match key)")
     au.add_argument("--json", action="store_true")
     au.set_defaults(func=cmd_automation)

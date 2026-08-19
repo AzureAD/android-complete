@@ -1373,6 +1373,49 @@ def test_automation_plan_derives_specs_from_ccd():
     assert by["ccd-noon"]["registration"]["steps"] == ["ccd.localization"]
     # the poller stays an interval automation (not date-pinned)
     assert by["ccd-localization-poller"]["schedule"] == "every 10 minutes"
+    # registration carries slug + schedule so sync can re-pin on a CCD move
+    assert by["ccd-morning"]["registration"]["slug"] == "ccd-morning"
+    assert by["ccd-morning"]["registration"]["schedule"] == "cron: 0 9 9 9 *"
+
+
+def test_automation_sync_repins_on_ccd_change():
+    """When the CCD moves, `automation sync` reports which registered CCD automations
+    have a stale cron and the new schedule to apply — matching by slug so the noon
+    trigger and the poller (which share the ccd.localization step) aren't confused."""
+    import tempfile as _tf, json as _json, io, contextlib, argparse
+    from orchestrator import cli_common as C
+    from orchestrator.registry import AutomationRegistry
+    from orchestrator.commands import automation as A
+    with _tf.TemporaryDirectory() as d:
+        rid = "2026-08"
+        st = ReleaseState(release_id=rid, ccd="2026-08-26", ccd_source="confirmed")
+        C.save_state(st, d, rid)
+        reg = AutomationRegistry(d)
+        reg.register("a-morn", "CCD morning", release=rid, slug="ccd-morning",
+                     steps=["ccd.final_reminder", "ccd.pr_reminder"], schedule="cron: 0 9 26 8 *")
+        reg.register("a-noon", "CCD noon", release=rid, slug="ccd-noon",
+                     steps=["ccd.localization"], schedule="cron: 0 12 26 8 *")
+        reg.register("a-poll", "poller", release=rid, slug="ccd-localization-poller",
+                     steps=["ccd.localization"], schedule="every 10 minutes")
+
+        def sync():
+            ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, json=True)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                A._cmd_sync(ns)
+            return _json.loads(buf.getvalue())
+
+        # in sync → nothing changed
+        u0 = {u["slug"]: u for u in sync()["updates"]}
+        assert all(not u["changed"] for u in u0.values())
+        # noon matched to the CRON, not the poller's 'every 10 minutes' (slug disambiguates)
+        assert u0["ccd-noon"]["desired_schedule"] == "cron: 0 12 26 8 *"
+        # move the CCD within the month → the two cron automations go stale, poller unchanged
+        st.ccd = "2026-08-27"; C.save_state(st, d, rid)
+        u1 = {u["slug"]: u for u in sync()["updates"]}
+        assert u1["ccd-morning"]["changed"] and u1["ccd-morning"]["desired_schedule"] == "cron: 0 9 27 8 *"
+        assert u1["ccd-noon"]["changed"] and u1["ccd-noon"]["desired_schedule"] == "cron: 0 12 27 8 *"
+        assert not u1["ccd-localization-poller"]["changed"]
 
 
 def test_ccd_cron_pins_to_exact_date():

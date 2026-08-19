@@ -64,10 +64,16 @@ class AutomationRegistry:
 
     def register(self, auto_id: str, name: str, release: str = None,
                  shared: bool = False, purpose: str = "", steps: list = None,
-                 kind: str = None) -> dict:
+                 kind: str = None, schedule: str = None, slug: str = None) -> dict:
         """Record an automation (upsert by id). Shared automations store release=None.
         `steps` is the list of '<phase>.<step>' ids this automation drives — the
         automation<->step linkage used for traceability.
+
+        `slug` is the stable identity from config/automations.yaml (e.g. 'ccd-noon').
+        It's the reliable key for `automation sync` — matching by steps alone is
+        ambiguous when two automations share a step (the noon trigger and the poller
+        both drive ccd.localization). `schedule` is the Scout schedule it was created
+        with, stored so sync can detect when a CCD change made a cron schedule stale.
 
         `kind` is 'step-driving' (owns steps) or 'release-level' (whole-release, no
         steps). Omit to auto-derive from `steps`. The two can't contradict:
@@ -85,11 +91,13 @@ class AutomationRegistry:
         entry = {
             "id": auto_id,
             "name": name,
+            "slug": slug or None,
             "kind": kind,
             "scope": "shared" if shared else "release",
             "release": None if shared else release,
             "purpose": purpose,
             "steps": steps,
+            "schedule": schedule or None,
             "registered_at": _now(),
         }
         entries = [e for e in self._load() if e.get("id") != auto_id]  # upsert

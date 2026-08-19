@@ -225,10 +225,11 @@ def plan(config_path: str, release: str, ccd: str) -> dict:
             "interval": interval or None,
         }
         spec["prompt"] = _prompt_for(spec, release)
-        # Exactly what to record after creating it, so linkage is captured.
+        # Exactly what to record after creating it, so linkage + schedule are captured
+        # (schedule lets `automation sync` detect CCD drift and re-pin the cron).
         spec["registration"] = {
             "name": name, "release": release, "purpose": d.get("purpose", ""),
-            "steps": s_steps, "kind": "step-driving",
+            "steps": s_steps, "kind": "step-driving", "schedule": sched, "slug": slug,
         }
         out.append(spec)
     return {"release": release, "ccd": ccd, "problems": problems, "automations": out}

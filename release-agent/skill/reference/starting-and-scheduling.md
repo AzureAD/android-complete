@@ -38,14 +38,14 @@ Do it silently as part of start (the user already opted into push). **Why hourly
 
 ## Provision the timed phase automations (config-driven, per release)
 
-Some steps must fire at a specific time of day (not just "on their date") — e.g. the CCD-day comms at 09:00 and the localization trigger at noon. These are declared as DATA in `config/automations.yaml`, which maps each automation to the exact steps it drives; the fire time is derived from each step module's `fire_at_local`. Provision them **after `init` and once the CCD is set**:
+Some steps must fire at a specific time of day (not just "on their date") — e.g. the CCD-day comms at 09:00 and the localization trigger at noon. These are declared as DATA in `config/automations.yaml`, which maps each automation to the exact steps it drives; the fire time is derived from each step module's `fire_at_local`. **Provision them only once the CCD is CONFIRMED** — the schedules are cron-pinned to the CCD date, so a wrong/unsettled CCD pins them to the wrong day. Concretely: wait until the CCD is settled (`status --json` shows no `ccd_conflict`, and — for a normal start — the entry gate's `ccd_confirmed` item has passed). Then:
 
-1. `python -m orchestrator.cli automation plan --release <YYYY-MM> --json` — returns the concrete automations to create (`name`, `schedule`, `steps`, `purpose`, `prompt`). If `problems` is non-empty, STOP and report — the config/step mapping drifted.
-2. For each automation in the result, skip if `automation list --release <YYYY-MM> --json` already has one whose `steps` match (don't duplicate). Otherwise `m_create_automation`:
-   - **name / schedule / prompt:** exactly the values from the plan (the schedule is a **cron pinned to the exact CCD date** — e.g. `cron: 0 9 26 8 *` for 09:00 on Aug 26 — NOT `every wednesday`, which fires the next weekday and would run the CCD-day comms a week early; set **oneShot:true**).
+1. `python -m orchestrator.cli automation plan --release <YYYY-MM> --json` — returns the concrete automations to create (`name`, `schedule`, `steps`, `slug`, `purpose`, `prompt`, `registration`). If `problems` is non-empty, STOP and report — the config/step mapping drifted. If `ccd` is null, STOP — set the CCD first.
+2. For each automation in the result, skip if `automation list --release <YYYY-MM> --json` already has one with the same `slug` (don't duplicate). Otherwise `m_create_automation`:
+   - **name / schedule / prompt:** exactly the values from the plan (the schedule is a **cron pinned to the exact CCD date** — e.g. `cron: 0 9 26 8 *` for 09:00 on Aug 26 — NOT `every wednesday`, which fires the next weekday and would run the CCD-day comms a week early; set **oneShot:true** for the cron ones).
    - **teamsNotify:** `never` (it emails/posts via the steps themselves).
-3. **Register it WITH its steps** so the linkage is recorded and it's torn down at close — copy the plan's `register:` line, filling the real Scout id:
-   `automation register --id <scout-id> --name "<name>" --release <YYYY-MM> --purpose "<purpose>" --step <phase.step> [--step …]`
+3. **Register it WITH its steps, slug, and schedule** so the linkage is recorded (torn down at close) AND the schedule is stored (so `automation sync` can re-pin it if the CCD moves) — copy the plan spec's `registration` fields, filling the real Scout id:
+   `automation register --id <scout-id> --name "<name>" --release <YYYY-MM> --slug <slug> --schedule "<schedule>" --purpose "<purpose>" --step <phase.step> [--step …]`
 
 **Traceability:** every timed step is owned by exactly one automation (a guardrail test enforces this). Each registry entry has a **kind** — `step-driving` (owns steps, e.g. the CCD automations) or `release-level` (whole-release, no steps, e.g. push reminders), auto-derived from whether you pass `--step`. To answer "which automation runs step X?" → `automation list --release <YYYY-MM> --step-filter <phase.step>`. To see "what does this automation drive?" → `automation list --release <YYYY-MM>` (each row shows its `[kind]` and `drives: …`, or `(release-level — no steps)`). At runtime each step-driving automation journals `<slug> ran <step>` into the release event log, so the whole chain (config → registered automation → step execution) is inspectable.
 
@@ -73,6 +73,8 @@ Either resolution clears the conflict. Never pick for the user.
 - **Testing the clock:** every read/advance command accepts `--as-of YYYY-MM-DD` to simulate the date. Normal runs use today.
 
 **Changing the CCD (real production change).** `set-ccd` **writes the pipeline override** — gated: run without `--confirm` first (preview) → present → explicit yes (a `--reason` is always required) → re-run with `--confirm`. Month-scoped (date must be in the release month). `--default` reverts to 2nd-Wednesday.
+
+**After ANY confirmed CCD change, re-sync the CCD-day automations.** Their cron schedules are pinned to the old CCD, so a moved CCD leaves them firing on the wrong day (`set-ccd` prints a ⚠ reminder when step-driving automations are registered). Run **`automation sync --release <YYYY-MM> --json`** → `{ccd, updates:[{id, name, slug, current_schedule, desired_schedule, changed}]}`. For every entry with **`changed: true`**: call **`m_update_automation`** with `id` and `schedule: desired_schedule`, then **re-register** it so the stored schedule matches: `automation register --id <id> --name "<name>" --release <YYYY-MM> --slug <slug> --schedule "<desired_schedule>" --step <…>`. Entries with `changed:false` are already correct — skip them. (The interval poller never changes.) Do this silently as part of the CCD change.
 
 **Skipping/cancelling the release.** Same gated pattern: `skip-release` sets the pipeline `skipRelease` switch (preview → confirm, reason required); `--clear` re-enables. Suppresses the monthly trigger — confirm before `--confirm`.
 
