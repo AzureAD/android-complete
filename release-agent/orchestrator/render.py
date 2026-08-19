@@ -229,10 +229,11 @@ _STATE_LABEL = {
 }
 _PHASE_ICON = {"done": "✅", "current": "⏸", "pending": "⬜", "scheduled": "🗓"}
 _STEP_ICON = {"done": "✅", "gate": "⏸", "reminder": "📌", "scheduled": "🗓",
-              "pending": "⬜", "skipped": "⏭️"}
+              "pending": "⬜", "skipped": "⏭️", "scout": "🤖", "blocked": "⛔"}
 _STEP_STATE_WORD = {"done": "Done", "gate": "Awaiting your approval",
                     "reminder": "Do this — then mark done", "scheduled": "Not open yet",
-                    "pending": "Pending", "skipped": "Skipped"}
+                    "pending": "Pending", "skipped": "Skipped",
+                    "scout": "Scout runs this — automatic", "blocked": "Blocked — needs you"}
 
 
 def status_view(r: dict) -> str:

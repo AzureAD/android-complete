@@ -637,12 +637,17 @@ class Orchestrator:
         out = []
         for s in current_phase_obj["steps"]:
             rec = self.state.steps.get(self.state.key(current_phase_obj["id"], s["id"]), {}) or {}
+            is_scout = s.get("source") == "scout" and not s.get("attest")
             if rec.get("status") == "skipped":
                 s_state = "skipped"
             elif self.state.is_done(current_phase_obj["id"], s["id"]):
                 s_state = "done"
+            elif rec.get("status") == "blocked":
+                s_state = "blocked"          # a step hit a real problem — needs the owner
             elif s["id"] == self.state.current_step and self.state.status == "holding_gate":
                 s_state = "gate"
+            elif is_scout:
+                s_state = "scout"            # Scout's automatic work — never a user "do this"
             elif s["id"] == self.state.current_step and self.state.status == "awaiting_action":
                 s_state = "reminder"
             elif not phase_due:

@@ -1809,6 +1809,33 @@ def test_scout_pending_exposed_and_action_is_not_scout():
     assert "Action needed now: Send feature-owner" not in msg
 
 
+def test_current_steps_label_scout_not_user_action():
+    """REGRESSION: a scout step that is the current cursor under awaiting_action must
+    render as 'Scout runs this' — NOT 'Do this — then mark done' (a human reminder).
+    All three Phase-1 (ccd) steps are scout, so none should look like a user to-do."""
+    from datetime import date
+    from orchestrator import render
+    _stub_build_defs("pass")
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-26", ccd_source="default")
+    orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 26))   # CCD day → Phase 1 due
+    _pass_scout_checks(orch); orch.gate.sign()
+    _clear_phase0_scout(orch)                                   # finish Phase 0 → into ccd
+    orch.run_until_gate()
+    r = orch.status_report()
+    assert r["current_phase"] == "ccd"
+    # every current step is a scout step → state 'scout', not 'reminder'
+    for s in r["current_steps"]:
+        assert s["state"] == "scout", f"{s['id']} state={s['state']}"
+        assert s["reminder"] is False
+    # and it's never surfaced as a user action
+    assert r["action"] is None
+    assert set(r["scout_pending"]) == {"final_reminder", "pr_reminder", "localization"}
+    # the rendered current-phase table says 'Scout runs this', never 'Do this'
+    view = render.status_view(r)
+    assert "Scout runs this" in view
+    assert "Do this — then mark done" not in view
+
+
 def test_scout_pending_empty_when_all_scout_done():
     """Once the skill has run every scout step, scout_pending is empty."""
     st, orch = _orch()   # _orch clears phase-0 scout + ccd scout via helpers
