@@ -1357,18 +1357,36 @@ def test_automations_cover_every_scheduled_step():
 
 
 def test_automation_plan_derives_specs_from_ccd():
-    """`plan` turns automations.yaml + the release CCD into concrete specs: a
-    one-shot schedule at each step's fire time, the steps it drives, and the
-    registration args (so linkage is captured when it's created)."""
+    """`plan` turns automations.yaml + the release CCD into concrete specs: a one-shot
+    pinned to the EXACT CCD date (cron on the CCD's day+month, NOT 'every <weekday>'
+    which would fire the next matching weekday a week early), the steps it drives, and
+    the registration args (so linkage is captured when it's created)."""
     from orchestrator import automations as A
-    result = A.plan(CONFIG, "2026-09", "2026-09-09")   # CCD is a Wednesday
+    result = A.plan(CONFIG, "2026-09", "2026-09-09")   # CCD Sept 9 (a Wednesday)
     assert result["problems"] == []
     by = {a["slug"]: a for a in result["automations"]}
     assert by["ccd-morning"]["steps"] == ["ccd.final_reminder", "ccd.pr_reminder"]
     assert by["ccd-morning"]["fire_at"] == "09:00"
-    assert by["ccd-morning"]["schedule"] == "every wednesday at 9am"
-    assert by["ccd-noon"]["schedule"] == "every wednesday at 12pm"
+    # cron: minute hour day month * → 0 9 9 9 * = 09:00 on Sept 9 exactly
+    assert by["ccd-morning"]["schedule"] == "cron: 0 9 9 9 *"
+    assert by["ccd-noon"]["schedule"] == "cron: 0 12 9 9 *"
     assert by["ccd-noon"]["registration"]["steps"] == ["ccd.localization"]
+    # the poller stays an interval automation (not date-pinned)
+    assert by["ccd-localization-poller"]["schedule"] == "every 10 minutes"
+
+
+def test_ccd_cron_pins_to_exact_date():
+    """_ccd_cron builds a cron 'M H D Mo *' targeting the CCD's day+month+time, so a
+    one-shot fires ON the CCD — never the next matching weekday (the early-fire bug)."""
+    from orchestrator import automations as A
+    from datetime import date
+    assert A._ccd_cron(date(2026, 8, 26), "09:00") == "cron: 0 9 26 8 *"
+    assert A._ccd_cron(date(2026, 8, 26), "12:00") == "cron: 0 12 26 8 *"
+    assert A._ccd_cron(date(2026, 12, 9), "13:30") == "cron: 30 13 9 12 *"
+    # missing/invalid inputs → None (caller falls back / skips)
+    assert A._ccd_cron(None, "09:00") is None
+    assert A._ccd_cron(date(2026, 8, 26), "") is None
+    assert A._ccd_cron(date(2026, 8, 26), "nonsense") is None
 
 
 # ---- inter-process state lock (parallel CLI mutation safety) ----

@@ -42,7 +42,7 @@ Some steps must fire at a specific time of day (not just "on their date") — e.
 
 1. `python -m orchestrator.cli automation plan --release <YYYY-MM> --json` — returns the concrete automations to create (`name`, `schedule`, `steps`, `purpose`, `prompt`). If `problems` is non-empty, STOP and report — the config/step mapping drifted.
 2. For each automation in the result, skip if `automation list --release <YYYY-MM> --json` already has one whose `steps` match (don't duplicate). Otherwise `m_create_automation`:
-   - **name / schedule / prompt:** exactly the values from the plan (schedule is a one-shot on the CCD date; set **oneShot:true**).
+   - **name / schedule / prompt:** exactly the values from the plan (the schedule is a **cron pinned to the exact CCD date** — e.g. `cron: 0 9 26 8 *` for 09:00 on Aug 26 — NOT `every wednesday`, which fires the next weekday and would run the CCD-day comms a week early; set **oneShot:true**).
    - **teamsNotify:** `never` (it emails/posts via the steps themselves).
 3. **Register it WITH its steps** so the linkage is recorded and it's torn down at close — copy the plan's `register:` line, filling the real Scout id:
    `automation register --id <scout-id> --name "<name>" --release <YYYY-MM> --purpose "<purpose>" --step <phase.step> [--step …]`

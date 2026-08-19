@@ -108,15 +108,20 @@ def validate(config_path: str) -> list:
     return problems
 
 
-def _fmt_time_nl(hhmm: str) -> str:
-    """'09:00' -> '9am', '12:00' -> '12pm', '13:30' -> '1:30pm' (for a Scout schedule)."""
+def _ccd_cron(ccd_date, hhmm: str):
+    """A cron schedule pinned to the EXACT Code Complete Date + fire time — NOT a
+    recurring weekday. `every <weekday>` fires on the NEXT matching weekday, which for
+    a CCD more than a week out (these are provisioned at release start) is the wrong
+    date — it fired the CCD-day comms a week early. Cron `M H D Mo *` targets the CCD's
+    day-of-month + month exactly, so a one-shot fires ON the CCD. Returns the NL Scout
+    accepts (e.g. 'cron: 0 9 26 8 *') or None if inputs are missing/invalid."""
+    if not ccd_date or not hhmm:
+        return None
     try:
         t = datetime.strptime(hhmm, "%H:%M")
     except ValueError:
-        return hhmm
-    h12 = t.strftime("%I").lstrip("0") or "12"
-    ampm = t.strftime("%p").lower()
-    return f"{h12}{ampm}" if t.minute == 0 else f"{h12}:{t.strftime('%M')}{ampm}"
+        return None
+    return f"cron: {t.minute} {t.hour} {ccd_date.day} {ccd_date.month} *"
 
 
 def _prompt_for(spec: dict, release: str) -> str:
@@ -201,8 +206,9 @@ def plan(config_path: str, release: str, ccd: str) -> dict:
             fire_at, sched, one_shot = None, f"every {interval}", False
         else:
             fire_at = _step_fire_at(s_steps[0]) if s_steps else None
-            sched = (f"every {weekday.lower()} at {_fmt_time_nl(fire_at)}"
-                     if weekday and fire_at else None)
+            # Pin to the EXACT CCD date via cron — never 'every <weekday>' (which fires
+            # the next matching weekday, a week early for a CCD provisioned in advance).
+            sched = _ccd_cron(ccd_date, fire_at)
             one_shot = True
         spec = {
             "slug": slug,
