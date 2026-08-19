@@ -47,6 +47,30 @@ _SAFE_AGENTS = {
     "preflight.cron": {"run": {"queueTime": _recent_iso(), "result": "succeeded"}},  # fresh → pass
     "preflight.breaking": {"changelog": "vNext\n----\n- [MINOR] x (#1)\nVersion 1.0.0\n"},  # no [MAJOR] → pass
     "preflight.wiki": {"outcome": "done", "note": "wiki payload page ready (test)"},  # skip ADO write
+    # Phase-2 build_verify agent steps — injected offline inputs so they pass without az.
+    "build_verify.checker_fired": {
+        "triggering": {"run": {"id": 1678599, "queueTime": "2026-07-08T06:00:00Z"},
+                       "result": "succeeded"}},
+    "build_verify.orchestrator_health": {
+        "run": {"id": 1678611, "tags": ["AuthenticatorBranch=release-2026-07-08",
+                                        "NextCommonVersion=1.0.0", "NextMsalVersion=1.0.0",
+                                        "NextBrokerVersion=1.0.0"]},
+        "stages": [
+            {"name": "Validate Branch and Versions availability", "state": "completed", "result": "succeeded"},
+            {"name": "Create Release Branches", "state": "completed", "result": "succeeded"},
+            {"name": "Trigger RC Testing", "state": "completed", "result": "succeeded"},
+            {"name": "Remove RC Tags", "state": "pending", "result": None},
+        ]},
+    "build_verify.mrwp_ecs": {
+        "mrwp_id": "900001",
+        "stages": [{"name": "Build", "state": "completed", "result": "succeeded"},
+                   {"name": "UI Automation", "state": "completed", "result": "failed"}],
+        "tests": {"total": 100, "passed": 96, "failed": 4}},
+    "build_verify.mrwp_local": {
+        "mrwp_id": "900002",
+        "stages": [{"name": "Build", "state": "completed", "result": "succeeded"},
+                   {"name": "UI Automation", "state": "completed", "result": "failed"}],
+        "tests": {"total": 100, "passed": 98, "failed": 2}},
 }
 
 
@@ -600,9 +624,9 @@ def test_holds_at_first_gate():
     assert actions[-1].kind == "gate"
     assert actions[-1].step == "go_test"      # Phases 0 & 1 are gateless; first gate is go_test (Phase 2)
     # auto steps that RUN before the first gate: Phase-0 breaking/cg/cron/wiki (4) +
-    # Phase-2 build_verify stages_ok/retain/health/ui_auto/payload/mrwp_rc (6). The
-    # Phase-1 scout steps are pre-recorded by _orch's _clear_ccd_scout (not "ran").
-    assert sum(1 for a in actions if a.kind == "ran") == 10
+    # Phase-2 build_verify checker_fired/orchestrator_health/mrwp_ecs/mrwp_local (4).
+    # The Phase-1 scout steps are pre-recorded by _orch's _clear_ccd_scout (not "ran").
+    assert sum(1 for a in actions if a.kind == "ran") == 8
 
 
 def test_gate_blocks_until_approved():
@@ -1056,7 +1080,7 @@ def test_notify_digest_reports_gate_and_progress():
     orch.run_until_gate()                # Phases 0 & 1 gateless; holds at go_test (Phase 2)
     msg = render.notification(orch.status_report())
     assert "Progress:" in msg
-    assert "Waiting on your decision" in msg and "Proceed to bug bash" in msg
+    assert "Waiting on your decision" in msg and "proceed to bug bash" in msg.lower()
     assert "your approval" in msg       # lists the human touchpoint
 
 
@@ -1856,6 +1880,109 @@ def test_notification_html_silent_when_plain_is_silent():
                       ccd_source="default")
     orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 6))  # unsigned → silent
     assert render.notification_html(orch.status_report()) == ""
+
+
+# ---- Phase 2 (build_verify) — RC pipeline verification ----
+
+def test_stage_completion_rule():
+    """The core Phase-2 rule: a run 'ran to completion' iff every stage executed
+    (state completed AND result succeeded/succeededWithIssues/failed). Red/yellow are
+    OK; skipped/canceled/pending = never-ran = block."""
+    from tools import pipelines as P
+    healthy = [
+        {"name": "A", "state": "completed", "result": "succeeded"},
+        {"name": "B", "state": "completed", "result": "succeededWithIssues"},
+        {"name": "C", "state": "completed", "result": "failed"},           # red is fine
+    ]
+    c = P.stage_completion(healthy)
+    assert c["complete"] and c["ran"] == 3 and c["never_ran"] == []
+    assert c["failed"] == ["C"] and c["yellow"] == ["B"]
+    # skipped / canceled / pending → never-ran → NOT complete
+    for bad in ("skipped", "canceled"):
+        s = healthy + [{"name": "X", "state": "completed", "result": bad}]
+        cc = P.stage_completion(s)
+        assert not cc["complete"] and "X" in cc["never_ran"]
+    pend = healthy + [{"name": "Y", "state": "pending", "result": None}]
+    assert not P.stage_completion(pend)["complete"]
+    # empty timeline is not "complete" (nothing ran)
+    assert not P.stage_completion([])["complete"]
+
+
+def _bv_state(mocks):
+    """A signed release positioned in Phase 2 with the given build_verify mocks."""
+    from datetime import date
+    _stub_build_defs("pass")
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-26", ccd_source="confirmed")
+    orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 26), mocks=_safe(mocks))
+    return st, orch
+
+
+def _bv_build(orch, st, sid):
+    """Build a build_verify step outcome with its mock context active (as the engine
+    does), so injected inputs apply instead of hitting live az."""
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    with mockctx.active(orch.mocks.get(f"build_verify.{sid}", {})):
+        return as_dict(_steps.get_step("build_verify", sid).build(st))
+
+
+def test_build_verify_steps_pass_with_healthy_mocks():
+    """With injected healthy inputs, all four build_verify agent steps return done —
+    and mrwp steps surface the test summary + red/yellow counts in the note."""
+    st, orch = _bv_state({})       # _safe() carries the healthy build_verify profile
+    outs = {sid: _bv_build(orch, st, sid)
+            for sid in ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local")}
+    assert all(o["kind"] == "done" for o in outs.values()), outs
+    assert "parked at 'Remove RC Tags'" in outs["orchestrator_health"]["note"]
+    assert "ran to completion" in outs["mrwp_ecs"]["note"]
+    assert "Tests:" in outs["mrwp_ecs"]["note"] and "1 red" in outs["mrwp_ecs"]["note"]
+
+
+def test_build_verify_mrwp_blocks_on_never_ran_stage():
+    """An MRWP run with a skipped/pending stage blocks (aborted pipeline), with the
+    recovery TSG + escalation in the reason."""
+    st, orch = _bv_state({"build_verify.mrwp_ecs": {
+        "mrwp_id": "555",
+        "stages": [{"name": "Build", "state": "completed", "result": "succeeded"},
+                   {"name": "UI Automation", "state": "pending", "result": None}]}})
+    out = _bv_build(orch, st, "mrwp_ecs")
+    assert out["kind"] == "blocked"
+    assert "did NOT run to completion" in out["reason"] and "UI Automation" in out["reason"]
+    assert "release-orchestrator-recovery" in out["reason"]        # TSG surfaced
+
+
+def test_build_verify_orchestrator_blocks_on_failed_pregate_stage():
+    """A failed pre-gate orchestrator stage (e.g. Create Release Branches) blocks."""
+    st, orch = _bv_state({"build_verify.orchestrator_health": {
+        "run": {"id": 42, "tags": []},
+        "stages": [
+            {"name": "Validate Branch and Versions availability", "state": "completed", "result": "succeeded"},
+            {"name": "Create Release Branches", "state": "completed", "result": "failed"},
+            {"name": "Trigger RC Testing", "state": "pending", "result": None},
+        ]}})
+    out = _bv_build(orch, st, "orchestrator_health")
+    assert out["kind"] == "blocked"
+    assert "Create Release Branches" in out["reason"]
+
+
+def test_build_verify_checker_blocks_when_not_triggered():
+    """checker_fired blocks when no run has a succeeded 'Trigger Monthly Release' job."""
+    st, orch = _bv_state({"build_verify.checker_fired": {"triggering": None}})
+    out = _bv_build(orch, st, "checker_fired")
+    assert out["kind"] == "blocked" and "triggered the release" in out["reason"]
+
+
+def test_build_verify_phase_shape():
+    """Phase 2 has the 4 verification agent steps + the go_test human gate, and the
+    old action stubs (retain/payload/mrwp_rc/health/ui_auto/stages_ok) are gone."""
+    import yaml as _yaml
+    cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
+    bv = next(p for p in cfg["phases"] if p["id"] == "build_verify")
+    ids = [s["id"] for s in bv["steps"]]
+    assert ids == ["checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local", "go_test"]
+    gate = bv["steps"][-1]
+    assert gate["id"] == "go_test" and gate.get("gate") and gate.get("owner") == "human"
 
 
 def test_lockdown_overlap_only_production():

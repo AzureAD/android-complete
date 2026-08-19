@@ -223,6 +223,91 @@ preflight.wiki:
     month's page already exists it's left untouched and a numbered page is created.
   how: "Runs automatically; the created page link is stored on the step and shown in the status Details column."
 
+# ======================= Phase 2 · build_verify (RC verification) =======================
+# Read-only checks over the Engineering release pipelines: the checker (3038) fired the
+# orchestrator (2828), the orchestrator is healthy + parked at Remove RC Tags, and both
+# MRWP (2519) RC-testing runs (ECS + Local) ran to completion. Each blocks with the
+# recovery TSG + escalation chat.
+
+build_verify.checker_fired:
+  summary: "Confirm the Code Complete Calendar Checker fired the release on the CCD."
+  what: >
+    The checker (def 3038) runs daily; its 'Trigger Monthly Release' job is SKIPPED on
+    ordinary days and only runs (succeeds) on the actual Code Complete Day, when it
+    launches the Release Orchestrator. This step scans the month's checker runs for the
+    one whose 'Trigger Monthly Release' job succeeded.
+  where:
+    - "Code Complete Calendar Checker (def 3038): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=3038"
+  how: >
+    If it blocks: before Code Complete Day this is EXPECTED (nothing has triggered yet).
+    After the CCD, a missing/failed 'Trigger Monthly Release' means the release wasn't
+    kicked off — check the checker's latest run and its schedule, fix, and rerun the step.
+  faqs:
+    - q: "It's blocked but the CCD hasn't arrived — is that a problem?"
+      a: "No. The trigger job only runs on Code Complete Day; before then there's nothing to confirm. It clears once the checker fires the release."
+
+build_verify.orchestrator_health:
+  summary: "Confirm the Release Orchestrator is healthy and parked at the Remove RC Tags gate."
+  what: >
+    Finds this release's orchestrator run (def 2828) by its AuthenticatorBranch tag and
+    confirms the pre-gate stages — Validate Branch and Versions, Create Release Branches,
+    Trigger RC Testing — all succeeded, and that it is PAUSED at 'Remove RC Tags' (a manual
+    approval the owner clears in a LATER phase). This step never approves that gate. Reports
+    the RC versions (Common/MSAL/Broker).
+  who: >
+    Scout verifies it automatically (read-only). If a pre-gate stage failed, the RELEASE
+    ENGINEER follows the failed stage's guidance + the recovery TSG, retries the stage, then
+    reruns this step. Approving Remove RC Tags is a separate, later step — not here.
+  where:
+    - "Release Orchestrator (def 2828): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=2828"
+    - "Recovery TSG: https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/release-orchestrator-recovery"
+  how: >
+    Each stage is descriptive — the failed stage's output explains the root cause and
+    suggested fix. Follow it, click Retry on the failed stage, then rerun this step. If
+    unresolved within 2h, escalate to the release Teams chat.
+  faqs:
+    - q: "It says 'parked at Remove RC Tags' — is that bad?"
+      a: "No — that's the healthy expected state. The orchestrator pauses at Remove RC Tags for a human approval that happens in a later phase. Phase 2 only confirms it got there cleanly; it never approves it."
+    - q: "A pre-gate stage failed — what do I do?"
+      a: "Open the failed stage; its output describes the root cause + corrective action. Fix it, click Retry on that stage, then rerun this step. Recovery steps: the release-orchestrator-recovery TSG. Escalate to the release chat if stuck > 2h."
+
+build_verify.mrwp_ecs:
+  summary: "Confirm the ECS Monthly Release Work Pipeline run ran to completion + report its tests."
+  what: >
+    The orchestrator triggers MRWP (def 2519) twice — once per flight provider. This checks
+    the ECS run 'ran to completion': EVERY stage executed (state completed, result
+    succeeded/succeededWithIssues/failed). Red (failed) and yellow (warnings) stages are
+    acceptable — they're triaged later. The ONLY blocker is a stage that never ran (pending,
+    skipped, or canceled — i.e. the pipeline aborted partway). Also reports the Test-tab
+    results (unit / instrumented / UI-automation totals).
+  where:
+    - "Monthly Release Work Pipeline (def 2519): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=2519"
+  how: >
+    If it blocks, a stage never ran — the pipeline aborted. Open the run, find the stage that
+    didn't execute, follow its output + the recovery TSG, Retry, then rerun this step. Failing
+    tests do NOT block here; they're triaged in the bug-bash phase.
+  faqs:
+    - q: "The run has red stages / failing tests — why did it still pass?"
+      a: "By design. A run is valid as long as every stage EXECUTED. Red/yellow stages and failed tests are expected at this checkpoint and triaged later. Only a stage that never ran (aborted pipeline) blocks."
+    - q: "How is the ECS run identified?"
+      a: "From the orchestrator run's RC-ECS=<build id> tag (or, for runs predating that tag, the orchestrator's trigger-task log). The run is then read directly by build id."
+
+build_verify.mrwp_local:
+  summary: "Confirm the Local-flighting MRWP run ran to completion + report its tests."
+  what: >
+    Local-flighting counterpart to the ECS check: confirms the Local MRWP (def 2519) run 'ran
+    to completion' (every stage executed; skipped/canceled/pending = block) and reports its
+    Test-tab results. Red/yellow stages and failed tests do NOT block — triaged later.
+  where:
+    - "Monthly Release Work Pipeline (def 2519): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=2519"
+  how: >
+    Same as the ECS check: only a stage that never ran (aborted pipeline) blocks. Follow the
+    aborted stage's output + the recovery TSG, Retry, rerun the step. Failing tests are triaged
+    in the bug-bash phase.
+  faqs:
+    - q: "What's the difference between the ECS and Local runs?"
+      a: "The orchestrator triggers MRWP twice with different flight providers — ECS (server-driven flights) and Local (local flight overrides). Both must run to completion; they're verified separately."
+
 # ========================== Entry gate · readiness ==========================
 # Keyed "readiness.<item>". Queried via `gate-info --item <id>`. Same fields as the
 # step entries (summary/what/who/where/how/links/faqs).

@@ -48,13 +48,11 @@ phases:
     name: "Build & Lib Verification"
     checklist_phase: 2
     steps:
-      - { id: stages_ok,       name: "Verify pipeline completed expected stages", owner: agent, maps_to: [B1] }
-      - { id: retain,          name: "Retain the build",                        owner: agent, maps_to: [B1r] }
-      - { id: health,          name: "Assess build-completeness + product health", owner: agent, maps_to: [B2] }
-      - { id: ui_auto,         name: "Assess UI automation results",            owner: agent, maps_to: [B3] }
-      - { id: payload,         name: "Write built versions into payload wiki",  owner: agent, maps_to: [B6] }
-      - { id: mrwp_rc,         name: "Point MRWP at cut RC Auth App branch",    owner: agent, maps_to: [B4] }
-      - { id: go_test,         name: "Proceed to bug bash",                     owner: human, gate: true }
+      - { id: checker_fired,       name: "Verify Code Complete Checker fired the release", owner: agent, maps_to: [B0] }
+      - { id: orchestrator_health, name: "Verify Release Orchestrator health (parked at Remove RC Tags)", owner: agent, maps_to: [B1] }
+      - { id: mrwp_ecs,            name: "Verify MRWP (ECS) ran to completion + tests",  owner: agent, maps_to: [B2] }
+      - { id: mrwp_local,          name: "Verify MRWP (Local) ran to completion + tests", owner: agent, maps_to: [B3] }
+      - { id: go_test,             name: "RC verified — proceed to bug bash",            owner: human, gate: true }
 
   - id: bug_bash
     name: "Test / Bug Bash"
