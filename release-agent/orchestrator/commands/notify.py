@@ -69,7 +69,7 @@ def _notify_payload(args, rid, advance):
         st, orch = C.load_orch(args.runs_root, rid, args.config, as_of)
         actions = orch.run_until_gate()
         C.save_state(st, args.runs_root, rid)
-        C.log_actions(C.elog(args.runs_root, rid), actions)
+        C.log_actions(C.elog(args.runs_root, rid), actions, state=st)
     else:
         st = ReleaseState.load(sp)
         orch = Orchestrator(args.config, st, as_of=as_of)

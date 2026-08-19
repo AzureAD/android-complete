@@ -759,6 +759,57 @@ def test_eventlog_per_release_and_captures_interaction():
         assert s["gate_decisions"][0]["driver"] == "flags reviewed with lead"
 
 
+def test_log_actions_records_step_outcome_and_blocks():
+    """log_actions(state=...) enriches phase/step events with the recorded OUTCOME
+    (status + note), and a ran step that recorded a block is logged as step_blocked —
+    so the log is self-contained (queryable finding/reason), not just 'it ran'."""
+    from orchestrator import cli_common as C
+    from orchestrator.eventlog import EventLog
+    from datetime import date
+    _stub_build_defs("pass")
+    with tempfile.TemporaryDirectory() as tmp:
+        st = ReleaseState(release_id="2026-08", ccd="2026-08-26", ccd_source="confirmed")
+        # cg blocks with a real-shaped reason; breaking/cron/wiki run clean
+        mocks = _safe({"preflight.cg": {"outcome": "blocked",
+                                        "reason": "High CG alert: CVE-2026-54399 httpcore5 5.3"}})
+        orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 19), mocks=mocks)
+        _pass_scout_checks(orch); orch.gate.sign()
+        actions = orch.run_until_gate()
+        el = EventLog(tmp, "2026-08")
+        C.log_actions(el, actions, state=st)
+        events = el.read()
+        by_step = {(e.get("step")): e for e in events if e.get("event") in ("step_ran", "step_blocked")}
+        # a clean agent step → step_ran WITH its finding note + done status
+        assert by_step["breaking"]["event"] == "step_ran"
+        assert by_step["breaking"]["status"] == "done"
+        assert by_step["breaking"].get("note")            # the actual result is present
+        # the blocked step → step_blocked WITH the block reason
+        assert by_step["cg"]["event"] == "step_blocked"
+        assert by_step["cg"]["status"] == "blocked"
+        assert "CVE-2026-54399" in by_step["cg"]["note"]
+
+
+def test_advance_log_summary_is_compact_no_status_table():
+    """The advance journal form carries the per-action outcome lines but NOT the full
+    rendered status table (that's presentation + already captured structurally), so
+    events.jsonl stays lean."""
+    from orchestrator import cli_common as C
+    from datetime import date
+    _stub_build_defs("pass")
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-26", ccd_source="confirmed")
+    orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 19))
+    _pass_scout_checks(orch); orch.gate.sign()
+    actions = orch.run_until_gate()
+    full = C.advance_block(actions, orch)
+    compact = C.advance_log_summary(actions)
+    # the full block embeds the status table; the compact log must not
+    assert "### ▶ Current phase" in full
+    assert "### ▶ Current phase" not in compact and "| Step | State |" not in compact
+    assert len(compact) < len(full)
+    # but the compact form still names what happened (the action tags)
+    assert "[" in compact and "]" in compact
+
+
 def test_eventlog_never_raises_on_bad_path():
     from orchestrator.eventlog import EventLog
     el = EventLog("\x00::invalid::", "x")

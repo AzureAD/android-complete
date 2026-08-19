@@ -145,12 +145,19 @@ def elog(runs_root: str, release: str) -> EventLog:
     return EventLog(runs_root, release)
 
 
-def emit(runs_root: str, release: str, text: str, kind: str = "message", options=None):
+def emit(runs_root: str, release: str, text: str, kind: str = "message", options=None,
+         log_text: str = None):
     """Print a user-facing block AND auto-log it as scout output, so the log
-    always captures 'what was shown' without relying on the skill/LLM to journal."""
+    always captures 'what was shown' without relying on the skill/LLM to journal.
+
+    `log_text` lets the caller journal a COMPACT form while still printing the full
+    block to the console — used for the `advance`/`status` renders whose full status
+    table is pure presentation (the structured step events already capture the state),
+    so we don't bloat events.jsonl with repeated multi-KB table snapshots."""
     print(text)
     try:
-        elog(runs_root, release).scout_said(text, kind=kind, options=options)
+        elog(runs_root, release).scout_said(
+            log_text if log_text is not None else text, kind=kind, options=options)
     except Exception:
         pass
 
@@ -161,8 +168,14 @@ TAGS = {"ran": "[ok]", "gate": "[gate]", "reminder": "[action]", "scheduled": "[
         "blocked": "[BLOCKED]", "halted": "[HALTED]"}
 
 
-def log_actions(el: EventLog, actions):
-    """Record engine actions as events (step_ran / gate_hold / complete / blocked)."""
+def log_actions(el: EventLog, actions, state=None):
+    """Record engine actions as events (step_ran / step_blocked / gate_hold / …).
+
+    When `state` is provided, phase/step events are enriched with the step's recorded
+    OUTCOME — `status` (done/blocked/skipped) and `note` (the actual result or block
+    reason) — so the event log is self-contained and queryable without scraping the
+    rendered `scout_output` blobs. A step that ran but recorded a block is logged as
+    `step_blocked` (not `step_ran`) so failures are directly filterable."""
     events = {
         "ran": "step_ran", "gate": "gate_hold", "reminder": "reminder_hold",
         "scheduled": "scheduled_hold", "readiness": "readiness_hold",
@@ -173,7 +186,20 @@ def log_actions(el: EventLog, actions):
         if not name:
             continue
         if a.kind in ("ran", "gate", "reminder", "scheduled"):
-            el.log(name, phase=a.phase, step=a.step, name=a.name)
+            fields = {"phase": a.phase, "step": a.step, "name": a.name}
+            # Enrich with the step's recorded outcome (the finding / block reason),
+            # not just the fact that it ran.
+            if state is not None and a.phase and a.step:
+                stp = state.get_step(a.phase, a.step)
+                if stp is not None:
+                    if getattr(stp, "status", None):
+                        fields["status"] = stp.status
+                    if getattr(stp, "note", None):
+                        fields["note"] = stp.note
+            # A ran step that recorded a block is a failure → log it distinctly.
+            if a.kind == "ran" and fields.get("status") == "blocked":
+                name = "step_blocked"
+            el.log(name, **fields)
         else:
             el.log(name)
 
@@ -185,6 +211,16 @@ def advance_block(actions, orch, lead=None) -> str:
         out.append(f"  {TAGS.get(a.kind, '-')} {a.message}")
     out.append("\n" + render.status_view(orch.status_report()))
     return "\n".join(out)
+
+
+def advance_log_summary(actions, lead=None) -> str:
+    """Compact journal form of an advance — the per-action outcome lines only, WITHOUT
+    the appended full status table (presentation; the structured step_ran/step_blocked
+    events already record the state). Keeps events.jsonl lean and self-describing."""
+    out = [l.strip() for l in (lead or [])]
+    for a in actions:
+        out.append(f"{TAGS.get(a.kind, '-')} {a.message}")
+    return "\n".join(l for l in out if l).strip()
 
 
 # ---- CCD / pipeline helpers ----

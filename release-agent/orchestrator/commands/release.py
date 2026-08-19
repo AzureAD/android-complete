@@ -96,7 +96,10 @@ def cmd_status(args):
     if getattr(args, "json", False):
         print(_json.dumps(orch.status_report(), indent=2))
         return 0
-    C.emit(args.runs_root, args.release, render.status_view(orch.status_report()), kind="status")
+    rep = orch.status_report()
+    C.emit(args.runs_root, args.release, render.status_view(rep), kind="status",
+           log_text=(f"status viewed — {rep['release_id']} {rep['done']}/{rep['total']} "
+                     f"({rep['percent']}%), phase: {rep.get('current_phase_name','')}"))
     return 0
 
 
@@ -104,8 +107,9 @@ def cmd_next(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     actions = orch.run_until_gate()
     C.save_state(st, args.runs_root, args.release)   # persist BEFORE any display
-    C.log_actions(C.elog(args.runs_root, args.release), actions)
-    C.emit(args.runs_root, args.release, C.advance_block(actions, orch), kind="advance")
+    C.log_actions(C.elog(args.runs_root, args.release), actions, state=st)
+    C.emit(args.runs_root, args.release, C.advance_block(actions, orch), kind="advance",
+           log_text=C.advance_log_summary(actions))
     return 0
 
 
@@ -118,9 +122,10 @@ def cmd_approve(args):
         el.log("gate_approved", phase=gate_phase, step=gate_step, driver=args.comment or None)
     actions = orch.run_until_gate()
     C.save_state(st, args.runs_root, args.release)   # persist BEFORE any display
-    C.log_actions(el, actions)
+    C.log_actions(el, actions, state=st)
     C.emit(args.runs_root, args.release,
-           C.advance_block(actions, orch, lead=[f"  {act.message}"]), kind="advance")
+           C.advance_block(actions, orch, lead=[f"  {act.message}"]), kind="advance",
+           log_text=C.advance_log_summary(actions, lead=[act.message]))
     return 0
 
 
@@ -133,7 +138,8 @@ def cmd_deny(args):
             "gate_denied", phase=gate_phase, step=gate_step, driver=args.comment or None)
     C.save_state(st, args.runs_root, args.release)
     C.emit(args.runs_root, args.release,
-           f"  {act.message}\n\n" + render.status_view(orch.status_report()), kind="deny")
+           f"  {act.message}\n\n" + render.status_view(orch.status_report()), kind="deny",
+           log_text=act.message)
     return 0
 
 
@@ -148,9 +154,10 @@ def cmd_done(args):
     el.log("reminder_done", phase=act.phase, step=act.step, driver=args.note or None)
     actions = orch.run_until_gate()
     C.save_state(st, args.runs_root, args.release)
-    C.log_actions(el, actions)
+    C.log_actions(el, actions, state=st)
     C.emit(args.runs_root, args.release,
-           C.advance_block(actions, orch, lead=[f"  {act.message}"]), kind="advance")
+           C.advance_block(actions, orch, lead=[f"  {act.message}"]), kind="advance",
+           log_text=C.advance_log_summary(actions, lead=[act.message]))
     return 0
 
 
