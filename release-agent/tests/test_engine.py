@@ -2561,6 +2561,86 @@ def test_mrwp_run_ids_picks_newest_on_retrigger():
     assert ok2 and ids2 == {"ECS": "5", "Local": "6"}
 
 
+def _run_poll_rc(runs_root, rid, now_iso):
+    """Run `poll-rc` with the drain stubbed (no live az) and return the decision dict."""
+    import io, contextlib, json as _json
+    from unittest.mock import patch
+    from orchestrator.commands import rc_poll as RP
+
+    class A:
+        runs_root = None; release = None; config = CONFIG; as_of = None; now = None
+    A.runs_root, A.release, A.now = runs_root, rid, now_iso
+    buf = io.StringIO()
+    with patch("orchestrator.engine.Orchestrator.run_until_gate", lambda self, **k: []):
+        with contextlib.redirect_stdout(buf):
+            rc = RP.cmd_poll_rc(A)
+    assert rc == 0
+    return _json.loads(buf.getvalue().strip().splitlines()[-1])
+
+
+def test_poll_rc_waits_then_nudges_once_at_6h():
+    """The RC poller returns `waiting` while the run is in-flight, sends ONE courtesy
+    nudge to the owner once it has been in-flight >= 6h, and does not repeat the nudge."""
+    import tempfile
+    from orchestrator.state import StepState
+    with tempfile.TemporaryDirectory() as d:
+        rid = "2026-08"
+        _stub_build_defs("pass")
+        st = ReleaseState(release_id=rid, ccd="2026-08-26", ccd_source="confirmed",
+                          owner_email="dev@microsoft.com", owner_name="Dev")
+        st.set_step("build_verify", "mrwp_ecs",
+                    StepState(status="in_flight", note="RC running",
+                              data={"in_flight_since": "2026-08-20T00:00:00+00:00",
+                                    "poll_in_min": 30}))
+        C.save_state(st, d, rid)
+        # +2h → still waiting
+        dec = _run_poll_rc(d, rid, "2026-08-20T02:00:00+00:00")
+        assert dec["decision"] == "waiting" and dec["step"] == "mrwp_ecs"
+        assert abs(dec["elapsed_hours"] - 2.0) < 0.01 and dec["poll_in_min"] == 30
+        # +7h → nudge (once), addressed to the owner
+        dec = _run_poll_rc(d, rid, "2026-08-20T07:00:00+00:00")
+        assert dec["decision"] == "nudge"
+        assert dec["nudge"]["email"]["to"] == ["dev@microsoft.com"]
+        assert "polling" in dec["nudge"]["teams"]["text"]
+        # nudged_at stamped → a later poll is waiting again (no repeat nudge)
+        dec = _run_poll_rc(d, rid, "2026-08-20T09:00:00+00:00")
+        assert dec["decision"] == "waiting"
+
+
+def test_poll_rc_resolved_blocked_idle():
+    """Once no verify step is in-flight, the poller reports the terminal verdict:
+    resolved (rc_report done) / blocked (rc_report blocked) / idle (nothing running)."""
+    import tempfile
+    from orchestrator.state import StepState
+    with tempfile.TemporaryDirectory() as d:
+        rid = "2026-08"
+        _stub_build_defs("pass")
+        st = ReleaseState(release_id=rid, ccd="2026-08-26", ccd_source="confirmed")
+        C.save_state(st, d, rid)
+        assert _run_poll_rc(d, rid, "2026-08-20T09:00:00+00:00")["decision"] == "idle"
+
+        st.set_step("build_verify", "rc_report", StepState(status="done", note="UI CLEAN"))
+        C.save_state(st, d, rid)
+        assert _run_poll_rc(d, rid, "2026-08-20T09:00:00+00:00")["decision"] == "resolved"
+
+        st.set_step("build_verify", "rc_report", StepState(status="blocked", note="UI 80%"))
+        C.save_state(st, d, rid)
+        r = _run_poll_rc(d, rid, "2026-08-20T09:00:00+00:00")
+        assert r["decision"] == "blocked" and r["note"] == "UI 80%"
+
+
+def test_rc_poller_automation_is_on_demand_interval():
+    """The build-verify-rc-poller is planned as an on-demand 30-min interval automation
+    driving rc_report, with a bespoke poll prompt (not the default step-action prompt)."""
+    from orchestrator import automations as A
+    assert A.validate(CONFIG) == []
+    plan = A.plan(CONFIG, "2026-08", "2026-08-26")
+    rc = next(a for a in plan["automations"] if a["slug"] == "build-verify-rc-poller")
+    assert rc["on_demand"] and rc["interval"] == "30 minutes"
+    assert rc["steps"] == ["build_verify.rc_report"]
+    assert "poll-rc --release 2026-08" in rc["prompt"] and "6h" in rc["prompt"]
+
+
 def test_build_verify_persists_pipeline_run_ids():
     """The build_verify steps stash the checker/orchestrator/MRWP runs onto
     state.pipeline_runs in the nested RC schema, and it round-trips through save/load."""

@@ -82,3 +82,29 @@ def build(state):
         note=gate["detail"],
         outbound=True,
     )
+
+
+def automation_prompt(release: str, spec: dict) -> str:
+    """Bespoke instruction for the interval RC poller (owned here, like localization's).
+    Only the poller shape is used — rc_report has no time-of-day automation."""
+    if not spec.get("interval"):
+        return ""       # rc_report is driven by next/tick, not a one-shot automation
+    return (
+        f"Release {release} — RC verification poller (Phase 2, every 30 min).\n"
+        f"Only act if Build & RC Verification is holding on an IN-FLIGHT re-triggered RC "
+        f"(the human ran `rc-retriggered`). Poll it once:\n"
+        f"1. run `poll-rc --release {release}`.\n"
+        f"2. act on the printed decision:\n"
+        f"   • waiting  → still running; send nothing.\n"
+        f"   • nudge    → running past 6h; send the courtesy heads-up in decision.nudge "
+        f"(email decision.nudge.email to the owner AND post decision.nudge.teams.text to "
+        f"the owner's Scout chat). It is stamped, so it goes out at most once.\n"
+        f"   • resolved → the new RC completed and PASSED the gate; Phase 2 advanced. "
+        f"Deregister THIS poller (`automation deregister --id <this automation's id>`) — "
+        f"it is no longer needed — and report the pass.\n"
+        f"   • blocked  → the new RC completed but re-blocked the UI gate (still failing). "
+        f"Surface the block to the owner (the 3-exit choice: re-trigger / cherry-pick / "
+        f"override) and leave the poller in place for the next re-trigger.\n"
+        f"   • idle     → nothing in-flight; stay silent.\n"
+        f"Silently journal: `journal --release {release} --source scout --kind automation "
+        f"--text \"rc-poller: <decision>\"`. Stay silent when there is nothing to send.")

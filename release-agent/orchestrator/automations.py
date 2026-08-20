@@ -210,6 +210,10 @@ def plan(config_path: str, release: str, ccd: str) -> dict:
             "schedule": sched,          # one-shot on the CCD date, or an interval poller
             "one_shot": one_shot,
             "interval": interval or None,
+            # ON-DEMAND automations (e.g. the RC poller) are NOT provisioned at release
+            # start — the skill creates them only when their trigger condition arises
+            # (an in-flight re-triggered RC) and tears them down when it clears.
+            "on_demand": bool(d.get("on_demand")),
         }
         spec["prompt"] = _prompt_for(spec, release)
         # Exactly what to record after creating it, so linkage + schedule are captured

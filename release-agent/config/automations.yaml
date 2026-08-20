@@ -50,3 +50,17 @@ automations:
       - ccd.localization        # poll the triggered run (check-localization)
     purpose: "Poll the localization run every 10 min; email on 3h timeout, post the PR on completion"
 
+  # ON-DEMAND (not provisioned at release start). Created only when Build & RC
+  # Verification is holding on an in-flight re-triggered RC (the human ran
+  # `rc-retriggered`); torn down when `poll-rc` reports `resolved`. Interval automation,
+  # so its step needs no fire_at_local.
+  - slug: build-verify-rc-poller
+    name: "Release {release} — RC verification poller"
+    phase: build_verify
+    every: "30 minutes"
+    on_demand: true
+    steps:
+      - build_verify.rc_report  # poll the in-flight RC (poll-rc): re-gate on completion, nudge at 6h
+    purpose: "Poll a re-triggered RC every 30 min; hold while in-flight, re-apply the gate on completion, courtesy-nudge the owner at 6h"
+
+
