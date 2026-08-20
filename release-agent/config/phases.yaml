@@ -53,8 +53,10 @@ phases:
       - { id: orchestrator_health, name: "Verify Release Orchestrator health (parked at Remove RC Tags)", owner: agent, maps_to: [B1] }
       - { id: mrwp_ecs,            name: "Verify MRWP (ECS) ran to completion + tests",  owner: agent, maps_to: [B2] }
       - { id: mrwp_local,          name: "Verify MRWP (Local) ran to completion + tests", owner: agent, maps_to: [B3] }
-      - { id: rc_report,           name: "Email RC verification report to release owner", owner: agent, source: scout, maps_to: [B4] }
-      - { id: go_test,             name: "RC verified — proceed to bug bash",            owner: human, gate: true }
+      # rc_report is the Phase-2 go/no-go: it emails the RC report AND applies the 90% UI
+      # gate — clean/warn (>=90%) proceed to bug bash; <90% BLOCKS for owner investigation.
+      # No separate human approval step: the gate IS the decision.
+      - { id: rc_report,           name: "Email RC verification report + apply the 90% UI gate", owner: agent, source: scout, maps_to: [B4] }
 
   - id: bug_bash
     name: "Test / Bug Bash"

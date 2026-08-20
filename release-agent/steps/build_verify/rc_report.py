@@ -1,16 +1,18 @@
 """Step: `rc_report` — email the RC verification report to the release owner AND apply
-the Phase-2 UI-automation quality gate (Phase 2, build_verify), right before the
-go_test approval gate.
+the Phase-2 UI-automation quality gate (Phase 2, build_verify). This is the terminal
+Phase-2 step and the go/no-go — there is no separate human approval gate.
 
 When the four verification steps have resolved the chain, this step composes the
 Phase-2 RC report (checker → orchestrator → ECS/Local MRWP + per-run test failures)
 from LIVE pipeline data and emails it to the release owner, so the engineer wakes to
 the report on CCD+1. The report is ALWAYS sent (the owner gets the dashboard of
-failures + links either way). The step's OUTCOME is then decided by the UI gate: if the
-UI-automation pass rate across both MRWP runs is >= RC_UI_PASS_THRESHOLD (90%) it
-records `pass` and the flow advances to go_test; below the bar it records `attention`
-(the step BLOCKS) so the owner investigates the large failure (usually a fix + MRWP
-re-run) before proceeding.
+failures + links either way). The step's OUTCOME is then decided by the three-tier UI
+gate on the combined UI-automation pass rate across both MRWP runs: 100% is a clean
+pass; >= RC_UI_PASS_THRESHOLD (90%) but < 100% passes with a warning (investigate the
+failing tests in parallel — bug bash is NOT blocked); below 90% records `attention`
+(the step BLOCKS) so the owner investigates the large failure and rules on it (patch +
+re-trigger RC, or proceed as an automation flake). On a clean/warn pass the release
+auto-advances into Phase 3 (bug bash).
 
 Sending email needs the WorkIQ MCP the engine can't reach, so this is a `scout`
 step: `build()` composes the email deterministically and returns a
@@ -51,9 +53,14 @@ def build(state):
         return Blocked(f"rc_report: could not build the RC report ({e}).")
 
     gate = K.rc_ui_gate(model)
-    if gate["verdict"] == "pass":
+    v = gate["verdict"]
+    if v == "clean":
         summary = (f"Email the RC verification report to the release owner ({to}) — "
-                   f"UI gate PASS")
+                   f"UI gate CLEAN (100%)")
+    elif v == "warn":
+        summary = (f"Email the RC verification report to the release owner ({to}) — "
+                   f"UI gate PASS with warning ({gate['pass_pct']}%); proceed + investigate "
+                   f"failing UI tests in parallel")
     else:
         summary = (f"Email the RC verification report to the release owner ({to}) — "
                    f"UI gate FAIL ({gate['pass_pct']}% < {int(K.RC_UI_PASS_THRESHOLD)}%); "

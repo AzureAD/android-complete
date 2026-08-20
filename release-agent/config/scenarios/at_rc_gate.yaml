@@ -1,7 +1,9 @@
-# Fast-forward all the way to Phase 2's go_test gate — the four verification steps
-# resolve from deterministic OFFLINE mocks (no az), leaving the release holding at the
-# human "RC verified — proceed to bug bash" decision. Use this to exercise the gate
-# hold, the status render, and the RC digest one-liner without touching the network.
+# Fast-forward THROUGH Phase 2 (Build & RC Verification): the four verification steps
+# resolve from deterministic OFFLINE mocks (no az) and stash the pipeline ids, then the
+# rc_report step auto-advances (go_test was removed — rc_report's 90% UI gate is the
+# decision). Lands positioned at the entry of Phase 3 (bug bash). Use this to exercise
+# the RC verification chain, the pipeline-id stash, and the status render without touching
+# the network.
 #
 #   release-agent sim run --scenario at_rc_gate
 #
@@ -10,7 +12,7 @@ release_id: 2026-08
 ccd: 2026-08-26
 ccd_source: confirmed
 as_of: CCD+2
-target: { phase: build_verify, at: gate }
+target: { phase: build_verify, at: done }
 data: mock
 mocks:
   build_verify.checker_fired:

@@ -81,7 +81,7 @@ preflight.cg:
 # build_verify.ui_auto:    { outcome: done }   # agent
 # build_verify.payload:    { outcome: done }   # agent
 # build_verify.mrwp_rc:    { outcome: done }   # agent
-# build_verify.go_test:    🚦 gate — NOT mockable
+# build_verify.rc_report:  { outcome: done }   # scout (emails RC report + applies the 90% UI gate)
 
 # ---- Phase 3 · bug_bash ----
 # bug_bash.clone_plans:  { outcome: done }   # agent

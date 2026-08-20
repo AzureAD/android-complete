@@ -43,7 +43,7 @@ Discover → (if no gate cleared, run the entry gate) → `next` to advance → 
 
 - **User asks about the RC pipelines / RC tests / "phase 2 status"** ("how are the release pipelines?", "did the RC tests pass?", "show pipeline status", "is the orchestrator done?"): run **`rc-report --release <id>`** and paste its output verbatim — the checker → orchestrator → ECS/Local-MRWP chain with each run's stage completion + Test-tab breakdown (unit/instrumented/UI-automation). It's **read-only** (never gates); use `--json` for your own branching. Red/yellow stages and failed tests are expected here (triaged in bug bash) — only a stage that never ran is a real problem, and it shows under **Issues**.
 - **User wants to test/validate a phase mid-release without running one from scratch** ("test phase 2", "simulate phase 2", "let me test the RC phase", "drop me in at the RC gate", "test the bug-bash phase"): this is the **sim** — it SEEDS the real release to a mid-release point so you then drive it with the normal skill. Run it for them via the shell; don't hand them python. Pick the scenario by intent (`sim list` shows all):
-  - "test phase 2" / "test phase 2 against the real pipelines" / "does phase 2 work" → **`sim run --scenario build_verify_live`** (fast-forwards Phases 0-1, runs the 4 verification steps against the **real** 2026-08 `az` runs, lands holding at the go_test gate).
+  - "test phase 2" / "test phase 2 against the real pipelines" / "does phase 2 work" → **`sim run --scenario build_verify_live`** (fast-forwards Phases 0-1, runs the 4 verification steps against the **real** 2026-08 `az` runs, auto-advances rc_report, lands positioned at the bug-bash entry).
   - "test phase 2 offline / quickly / without the network" → **`sim run --scenario at_rc_gate`** (same flow, fully mocked).
   - "drop me at phase 2 so I can step through it myself" → **`sim run --scenario mid_build_verify_open`** (positions at entry, runs nothing — then use `next` to run each step live).
 
@@ -55,7 +55,7 @@ Discover → (if no gate cleared, run the entry gate) → `next` to advance → 
 | Running the readiness entry gate (right after `init`) | `reference/readiness-gate.md` |
 | Starting a release / handling CCD / setting up push reminders & automations | `reference/starting-and-scheduling.md` |
 | Advancing **Phase 0 (Pre-flight)** — notice, flight reminders, lockdown, confirm, vitals | `reference/phases/preflight.md` |
-| Advancing **Phase 2 (Build & RC Verification)** — verification chain, RC report email + 90% UI gate, go_test | `reference/phases/build_verify.md` |
+| Advancing **Phase 2 (Build & RC Verification)** — verification chain, RC report email + three-tier 90% UI gate (no separate gate) | `reference/phases/build_verify.md` |
 | Rendering `status`/`checklist` output | `reference/presenting-status.md` |
 | Looking up a command / manual override / event-logging detail | `reference/commands.md` |
 | Building a NEW phase's guidance | `reference/phases/_TEMPLATE.md` |

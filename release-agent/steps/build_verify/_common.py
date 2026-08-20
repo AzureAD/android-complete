@@ -93,13 +93,35 @@ def rc_run_links(model) -> list:
     return out
 
 
+def _ui_failing_suites_summary(model, limit=6) -> str:
+    """A compact 'Top UI failures' list across both providers, or '' when none."""
+    suites = []
+    for prov in ("ECS", "Local"):
+        for s in (((model.get("mrwp") or {}).get(prov) or {}).get("failed_suites") or []):
+            if s.get("category", "ui") == "ui" and s.get("failed"):
+                suites.append((prov, s))
+    suites.sort(key=lambda ps: -ps[1]["failed"])
+    if not suites:
+        return ""
+    return "\nTop UI failures:\n" + "\n".join(
+        f"  \u2022 [{prov}] {s['name']}: {s['failed']}/{s['total']} failed"
+        for prov, s in suites[:limit])
+
+
 def rc_ui_gate(model) -> dict:
-    """The Phase-2 RC quality gate. Aggregates UI-automation results across BOTH MRWP
-    providers (ECS + Local) and decides whether RC quality clears the bar. Returns
-      {ui_total, ui_passed, ui_failed, pass_pct, threshold, verdict, detail}
-    `verdict` is 'pass' when pass_pct >= RC_UI_PASS_THRESHOLD (or no UI tests were found),
-    else 'attention' (below the bar → the rc_report step must block for investigation).
-    `detail` is the human note recorded on the step / shown to the owner."""
+    """The Phase-2 RC quality gate — a THREE-tier decision on the combined UI-automation
+    pass rate across both MRWP providers (ECS + Local). Returns
+      {ui_total, ui_passed, ui_failed, pass_pct, threshold, verdict, blocking, detail}
+    where `verdict` is:
+      * 'clean'     — 100% UI pass (or no UI tests found): proceed, no action.
+      * 'warn'      — >= RC_UI_PASS_THRESHOLD (90%) but < 100%: proceed to bug bash, but
+                      the owner should investigate the failing UI tests IN PARALLEL (a
+                      later step confirms the retest — bug bash is NOT blocked).
+      * 'attention' — < 90%: BLOCK. A large failure the owner must investigate and rule
+                      on (patch a real bug + re-trigger RC, or proceed as an automation
+                      flake to re-run later).
+    `blocking` is True only for 'attention'. `detail` is the note recorded on the step /
+    shown to the owner."""
     ui_total = ui_pass = ui_fail = 0
     for prov in ("ECS", "Local"):
         ui = (((model.get("mrwp") or {}).get(prov) or {}).get("tests") or {}) \
@@ -108,42 +130,38 @@ def rc_ui_gate(model) -> dict:
         ui_pass += ui.get("passed") or 0
         ui_fail += ui.get("failed") or 0
     thr = RC_UI_PASS_THRESHOLD
+    base = {"ui_total": ui_total, "ui_passed": ui_pass, "ui_failed": ui_fail, "threshold": thr}
     if not ui_total:
-        return {"ui_total": 0, "ui_passed": 0, "ui_failed": 0, "pass_pct": None,
-                "threshold": thr, "verdict": "pass",
+        return {**base, "pass_pct": None, "verdict": "clean", "blocking": False,
                 "detail": ("\u26a0 No UI-automation tests were found in either MRWP run — "
                            "nothing to gate on. Proceeding, but verify RC test coverage.")}
     pass_pct = round(ui_pass * 100.0 / ui_total, 1)
-    ok = pass_pct >= thr
     head = (f"UI-automation pass rate {pass_pct}% ({ui_pass}/{ui_total} passed, "
             f"{ui_fail} failed) across ECS + Local")
-    if ok:
-        detail = f"{head} \u2014 at or above the {thr:.0f}% gate. RC quality OK to proceed."
-    else:
-        detail = (f"{head} \u2014 BELOW the {thr:.0f}% gate. This is a large UI failure; "
-                  f"investigate the root cause (it likely needs a fix + an MRWP re-run). "
-                  f"The failing suites are in the RC report email. Once fixed and re-run, "
-                  f"re-run this step (`next`); to override, `skip`.")
-        suites = []
-        for prov in ("ECS", "Local"):
-            for s in (((model.get("mrwp") or {}).get(prov) or {}).get("failed_suites") or []):
-                if s.get("category", "ui") == "ui" and s.get("failed"):
-                    suites.append((prov, s))
-        suites.sort(key=lambda ps: -ps[1]["failed"])
-        if suites:
-            detail += "\nTop UI failures:\n" + "\n".join(
-                f"  \u2022 [{prov}] {s['name']}: {s['failed']}/{s['total']} failed"
-                for prov, s in suites[:6])
-    return {"ui_total": ui_total, "ui_passed": ui_pass, "ui_failed": ui_fail,
-            "pass_pct": pass_pct, "threshold": thr,
-            "verdict": "pass" if ok else "attention", "detail": detail}
+    if pass_pct >= 100.0:
+        return {**base, "pass_pct": pass_pct, "verdict": "clean", "blocking": False,
+                "detail": (f"UI-automation pass rate 100% ({ui_pass}/{ui_total}) — all UI "
+                           f"tests passed. Proceeding to bug bash.")}
+    if pass_pct >= thr:
+        return {**base, "pass_pct": pass_pct, "verdict": "warn", "blocking": False,
+                "detail": (f"{head} \u2014 at or above the {thr:.0f}% gate but not clean. "
+                           f"Proceeding to bug bash; release owner: investigate the {ui_fail} "
+                           f"failing UI test(s) in parallel (a later step confirms the retest, "
+                           f"so bug bash is not blocked)." + _ui_failing_suites_summary(model))}
+    return {**base, "pass_pct": pass_pct, "verdict": "attention", "blocking": True,
+            "detail": (f"{head} \u2014 BELOW the {thr:.0f}% gate. Large UI failure: investigate "
+                       f"the root cause and decide \u2014 patch a real bug + re-trigger RC, or "
+                       f"(if it's an automation flake to re-run later) proceed to bug bash. This "
+                       f"step stays BLOCKED until you `next` after a re-run, or `skip --reason` "
+                       f"to override." + _ui_failing_suites_summary(model))}
 
 
 def rc_email_subject(model) -> str:
     rid = model.get("release", "?")
-    action = ("approve to proceed to bug bash"
-              if rc_ui_gate(model)["verdict"] == "pass"
-              else "investigate UI failures before proceeding")
+    v = rc_ui_gate(model)["verdict"]
+    action = {"clean": "approve to proceed to bug bash",
+              "warn": "proceeding to bug bash — investigate failing UI tests in parallel",
+              "attention": "investigate UI failures before proceeding"}[v]
     return f"Release {rid} — RC verification report (Phase 2) · action: {action}"
 
 

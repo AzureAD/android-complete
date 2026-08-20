@@ -309,26 +309,30 @@ build_verify.mrwp_local:
       a: "The orchestrator triggers MRWP twice with different flight providers — ECS (server-driven flights) and Local (local flight overrides). Both must run to completion; they're verified separately."
 
 build_verify.rc_report:
-  summary: "Email the RC verification report (pipeline health + test failures) to the release owner."
+  summary: "Email the RC verification report + apply the three-tier 90% UI gate (the Phase-2 go/no-go)."
   what: >
     Once the four verification steps have resolved the chain, this composes the Phase-2 RC report —
     checker fired, orchestrator healthy/parked, both MRWP runs' stage completion, and each run's
-    failing test suites — from LIVE pipeline data and emails it to the release owner. It runs right
-    before the go_test gate so the engineer wakes (on CCD+1) to the report and can review before
-    approving. Scout-assisted (source: scout): the engine composes it; the skill sends via WorkIQ.
+    failing test suites — from LIVE pipeline data and emails it to the release owner (on CCD+1). It
+    is the terminal Phase-2 step and the go/no-go: after sending, `record-rc-report` applies a
+    three-tier gate on the combined UI-automation pass rate across both MRWP runs — 100% is a clean
+    pass, >=90% passes with a warning (investigate the failing tests in parallel, bug bash not
+    blocked), and <90% BLOCKS for owner investigation. There is no separate approval gate.
+    Scout-assisted (source: scout): the engine composes it; the skill sends via WorkIQ.
   who: >
     Scout composes the email; the skill sends it via workiq_send_email to the release owner
     (state.owner_email). Redirect for testing with the step's `send_to` payload knob.
   where:
-    - "Release Orchestrator run (versions + parked gate): via the run link in the email"
-    - "MRWP ECS / Local runs (Test tab): via the run links in the email"
+    - "Release Orchestrator run (versions + parked gate): via the run link in the email + the step's Details"
+    - "MRWP ECS / Local runs (Test tab): via the run links in the email + the step's Details"
   how: >
     If it blocks with 'no release owner email', set it with `set-owner --email <you@microsoft.com>`
-    and rerun. The email frames failing tests as bug-bash triage (not blockers) unless a stage never
-    ran. After it sends, the go_test gate holds for the owner's approval.
+    and rerun. On a clean/warn pass (>=90% UI) the release auto-advances into bug bash. On a <90%
+    block, the owner investigates and rules on it (patch a real bug + re-trigger RC, or proceed as an
+    automation flake): fix + re-run then `next`, or `skip --reason` to override.
   faqs:
     - q: "Who gets the email?"
-      a: "The release owner on record (owner_email). It's a personal review copy, not the broad DL — the owner reviews the RC failures, then approves the go_test gate."
+      a: "The release owner on record (owner_email). It's a personal review copy, not the broad DL — the owner reviews the RC failures; the 90% UI gate then decides go/no-go automatically."
     - q: "Does the sim send this email?"
       a: "No. In a sim the step is marked done without sending; only the real skill flow composes + sends it via WorkIQ."
 

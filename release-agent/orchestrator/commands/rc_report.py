@@ -55,10 +55,11 @@ def _u(build_id):
 def cmd_record_rc_report(args):
     """Record the rc_report step's outcome AFTER the skill has emailed the RC report.
 
-    Re-reads the live model, applies the UI-automation quality gate (K.rc_ui_gate),
-    records `pass` (>=90% UI pass → step done, flow advances to go_test) or `attention`
-    (<90% → step BLOCKS for owner investigation), and stashes the evaluated pipeline-run
-    links on the step so its Details point at every artifact behind the verdict.
+    Re-reads the live model, applies the three-tier UI-automation gate (K.rc_ui_gate),
+    records `pass` (>=90% UI pass — clean/warn → step done, release auto-advances into bug
+    bash) or `attention` (<90% → step BLOCKS for owner investigation), and stashes the
+    evaluated pipeline-run links on the step so its Details point at every artifact behind
+    the verdict.
 
     This is the follow-up the rc_report NeedsSkill names (`payload.followup_command`), so
     the skill runs it instead of a blind `record-step --status pass`."""
@@ -71,7 +72,7 @@ def cmd_record_rc_report(args):
 
     gate = K.rc_ui_gate(model)
     links = K.rc_run_links(model)
-    status = "pass" if gate["verdict"] == "pass" else "attention"
+    status = "attention" if gate["blocking"] else "pass"
     orch.record_scout_step("build_verify", "rc_report", status, gate["detail"])
 
     # record_scout_step doesn't carry links — attach the evaluated-run refs (and stamp

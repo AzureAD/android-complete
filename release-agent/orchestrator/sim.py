@@ -24,7 +24,7 @@ A scenario is data, not code:
     as_of: CCD+1                   # CCD-relative or absolute YYYY-MM-DD; default: ccd
     target: {phase: build_verify, at: open}   # at: open | gate | done
     data: live                     # live | mock (default: mock)
-    approve_gates: [go_test]       # gates to auto-approve while fast-forwarding (see note)
+    approve_gates: [bash_done]     # gates to auto-approve while fast-forwarding (see note)
     mocks:                         # merged last (win); fine-grained inputs or outcome mocks
       build_verify.checker_fired: { triggering: {...} }
     seed:                          # direct ReleaseState field overrides (e.g. pipeline_runs)

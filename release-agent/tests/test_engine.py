@@ -163,6 +163,15 @@ def _orch(signed=True):
     return st, orch
 
 
+def _advance_to_first_gate(orch):
+    """Now that go_test is gone, the first real GATE is Phase-3 `bug_bash.bash_done`,
+    reached after the Phase-3 `ui_failures` human reminder. Drive to that reminder, clear
+    it, then drive to the bash_done gate."""
+    orch.run_until_gate()                                     # holds at ui_failures (reminder)
+    orch.complete_step("bug_bash", "ui_failures", "test: UI failures reviewed")
+    orch.run_until_gate()                                     # holds at bash_done (gate)
+
+
 # ---- readiness entry gate ----
 
 def test_entry_gate_blocks_before_signing():
@@ -185,10 +194,10 @@ def test_signing_clears_entry_gate():
     _clear_phase0_scout(orch)
     _clear_ccd_scout(orch)
     orch.run_until_gate()
-    # Phase 0 and Phase 1 have no gate (branch cut is automatic); the first real
-    # gate is go_test at the end of Build & Lib Verification.
-    assert st.current_step == "go_test"
-    assert st.status == "holding_gate"
+    # Phases 0, 1 and 2 have no human gate (rc_report's 90% UI gate is auto); the first
+    # hold is the Phase-3 'ui_failures' human reminder.
+    assert st.current_step == "ui_failures"
+    assert st.status == "awaiting_action"
 
 
 def test_partial_sign_does_not_clear():
@@ -619,40 +628,40 @@ def test_render_is_consistent_and_has_links():
 
 # ---- phase flow (readiness pre-signed) ----
 
-def test_holds_at_first_gate():
+def test_holds_at_first_hold():
     st, orch = _orch()
     actions = orch.run_until_gate()
-    assert actions[-1].kind == "gate"
-    assert actions[-1].step == "go_test"      # Phases 0 & 1 are gateless; first gate is go_test (Phase 2)
-    # auto steps that RUN before the first gate: Phase-0 breaking/cg/cron/wiki (4) +
-    # Phase-2 build_verify checker_fired/orchestrator_health/mrwp_ecs/mrwp_local (4) +
-    # rc_report (scout email, mocked done here) (1). The Phase-1 scout steps are
-    # pre-recorded by _orch's _clear_ccd_scout (not "ran").
-    assert sum(1 for a in actions if a.kind == "ran") == 9
+    assert actions[-1].kind == "reminder"
+    assert actions[-1].step == "ui_failures"   # Phases 0-2 gateless (rc_report auto); first hold is Phase-3 ui_failures
+    # auto steps that RUN before the first hold: Phase-0 breaking/cg/cron/wiki (4) +
+    # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local (4) + rc_report (scout
+    # email, mocked done here) (1) + Phase-3 clone_plans/coordinate stubs (2). The Phase-1
+    # scout steps are pre-recorded by _orch's _clear_ccd_scout (not "ran").
+    assert sum(1 for a in actions if a.kind == "ran") == 11
 
 
 def test_gate_blocks_until_approved():
     st, orch = _orch()
-    orch.run_until_gate()
+    _advance_to_first_gate(orch)
     assert st.status == "holding_gate"
     orch.run_until_gate()
     assert st.status == "holding_gate"
-    assert not st.is_done("build_verify", "go_test")
+    assert not st.is_done("bug_bash", "bash_done")
 
 
 def test_approve_advances():
     st, orch = _orch()
-    orch.run_until_gate()
+    _advance_to_first_gate(orch)
     orch.approve_gate("ok")
-    assert st.is_done("build_verify", "go_test")
+    assert st.is_done("bug_bash", "bash_done")
     orch.run_until_gate()
-    assert st.current_step == "ui_failures"      # next stop after go_test: a bug-bash human to-do
-    assert st.status == "awaiting_action"
+    assert st.current_step == "gate_watch"       # next stop after bash_done: the Phase-4 finalize gate
+    assert st.status == "holding_gate"
 
 
 def test_deny_blocks():
     st, orch = _orch()
-    orch.run_until_gate()
+    _advance_to_first_gate(orch)
     orch.deny_gate("flag not approved")
     assert st.status == "blocked"
     assert any("denied" in p for p in st.pending_human)
@@ -684,16 +693,16 @@ def test_persistence_roundtrip():
         orch.gate.sign()
         _clear_phase0_scout(orch)
         _clear_ccd_scout(orch)
-        orch.run_until_gate()
+        _advance_to_first_gate(orch)
         st.save(path)
         # reload — simulates resuming next day
         st2 = ReleaseState.load(path)
         assert st2.status == "holding_gate"
-        assert st2.current_step == "go_test"
+        assert st2.current_step == "bash_done"
         assert st2.readiness_signed  # readiness survives the roundtrip
         orch2 = Orchestrator(CONFIG, st2)
         orch2.approve_gate("resumed")
-        assert st2.is_done("build_verify", "go_test")
+        assert st2.is_done("bug_bash", "bash_done")
 
 
 def test_conditional_hotfix_excluded_by_default():
@@ -713,31 +722,31 @@ def test_conditional_hotfix_excluded_by_default():
 
 def test_skip_requires_reason():
     st, orch = _orch()
-    orch.run_until_gate()   # holds at go_test
-    act = orch.skip_step("build_verify", "go_test", "")   # no reason
+    _advance_to_first_gate(orch)   # holds at bash_done
+    act = orch.skip_step("bug_bash", "bash_done", "")   # no reason
     assert act.kind == "idle"
-    assert not st.is_done("build_verify", "go_test")       # unchanged
+    assert not st.is_done("bug_bash", "bash_done")       # unchanged
 
 
 def test_skip_advances_past_gate():
     st, orch = _orch()
-    orch.run_until_gate()
-    orch.skip_step("build_verify", "go_test", "n/a this release")
-    assert st.is_done("build_verify", "go_test")            # skipped counts as done
-    rec = st.steps[st.key("build_verify", "go_test")]
+    _advance_to_first_gate(orch)
+    orch.skip_step("bug_bash", "bash_done", "n/a this release")
+    assert st.is_done("bug_bash", "bash_done")            # skipped counts as done
+    rec = st.steps[st.key("bug_bash", "bash_done")]
     assert rec["status"] == "skipped"
     orch.run_until_gate()
-    assert st.current_step == "ui_failures"                 # advanced past the gate to the next hold
+    assert st.current_step == "gate_watch"                # advanced past the gate to the Phase-4 gate
 
 
 def test_reopen_step():
     st, orch = _orch()
-    orch.run_until_gate(); orch.approve_gate("ok")
-    assert st.is_done("build_verify", "go_test")
-    orch.reopen_step("build_verify", "go_test")
-    assert not st.is_done("build_verify", "go_test")        # back to pending
+    _advance_to_first_gate(orch); orch.approve_gate("ok")
+    assert st.is_done("bug_bash", "bash_done")
+    orch.reopen_step("bug_bash", "bash_done")
+    assert not st.is_done("bug_bash", "bash_done")        # back to pending
     orch.run_until_gate()
-    assert st.current_step == "go_test"                     # gate re-holds
+    assert st.current_step == "bash_done"                 # gate re-holds
 
 
 def test_halt_blocks_then_resume():
@@ -978,7 +987,7 @@ def test_no_anchor_when_ccd_unknown_runs_immediately():
     """Backward-compatible: with no CCD stored, the anchor is inert and Phase 0 runs."""
     st, orch = _orch()   # ccd is None
     orch.run_until_gate()
-    assert st.status == "holding_gate"   # reached flag_freeze, not 'scheduled'
+    assert st.status == "awaiting_action"   # reached the first hold (Phase-3 ui_failures), not 'scheduled'
 
 
 # ---- reminder steps (human, non-gate → hold until done) ----
@@ -1079,11 +1088,11 @@ def test_digest_silent_while_scout_pending():
 def test_notify_digest_reports_gate_and_progress():
     from orchestrator import render
     st, orch = _orch()                   # signed, no CCD → phase due immediately
-    orch.run_until_gate()                # Phases 0 & 1 gateless; holds at go_test (Phase 2)
+    orch.run_until_gate()                # Phases 0-2 gateless; holds at the Phase-3 ui_failures action
     msg = render.notification(orch.status_report())
     assert "Progress:" in msg
-    assert "Waiting on your decision" in msg and "proceed to bug bash" in msg.lower()
-    assert "your approval" in msg       # lists the human touchpoint
+    assert "Action needed now" in msg    # ui_failures is the live hold
+    assert "your approval" in msg        # the bash_done gate is listed among the human touchpoints
 
 
 def test_notify_json_carries_owner_and_subject():
@@ -1976,19 +1985,20 @@ def test_build_verify_checker_blocks_when_not_triggered():
 
 
 def test_build_verify_phase_shape():
-    """Phase 2 has the 4 verification agent steps + the rc_report scout email + the
-    go_test human gate (in order), CCD+1 anchored, and the old action stubs are gone."""
+    """Phase 2 has the 4 verification agent steps + the rc_report scout step (which emails
+    the RC report AND applies the 90% UI gate). rc_report is the terminal step — there is
+    NO separate human gate (the gate IS the decision). CCD+1 anchored."""
     import yaml as _yaml
     cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
     bv = next(p for p in cfg["phases"] if p["id"] == "build_verify")
     ids = [s["id"] for s in bv["steps"]]
     assert ids == ["checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",
-                   "rc_report", "go_test"]
+                   "rc_report"]
     assert bv.get("anchor") == "CCD+1"
     rc = next(s for s in bv["steps"] if s["id"] == "rc_report")
     assert rc.get("source") == "scout" and rc.get("owner") == "agent"
-    gate = bv["steps"][-1]
-    assert gate["id"] == "go_test" and gate.get("gate") and gate.get("owner") == "human"
+    assert bv["steps"][-1]["id"] == "rc_report"          # terminal Phase-2 step
+    assert not any(s.get("gate") for s in bv["steps"])   # no human gate in Phase 2
 
 
 def test_build_verify_rc_report_emails_owner():
@@ -2040,9 +2050,10 @@ def test_build_verify_rc_report_emails_owner():
 
 
 def test_rc_ui_gate_and_run_links():
-    """The Phase-2 UI gate aggregates UI-automation results across BOTH MRWP providers:
-    >=90% combined pass → 'pass'; below → 'attention' (with a failing-suite summary);
-    no UI tests → pass with a warning. rc_run_links surfaces every evaluated run."""
+    """The Phase-2 UI gate is three-tier on the combined UI pass rate across BOTH MRWP
+    providers: 100% → 'clean'; >=90% & <100% → 'warn' (non-blocking, investigate in
+    parallel); <90% → 'attention' (blocking, with a failing-suite summary); no UI tests →
+    'clean' with a warning. rc_run_links surfaces every evaluated run."""
     from steps.build_verify import _common as K
 
     def _model(ecs_ui, local_ui, ecs_suites=None):
@@ -2056,24 +2067,32 @@ def test_rc_ui_gate_and_run_links():
                 "Local": {"run_id": 444, "failed_suites": [],
                           "tests": {"categories": {"ui": local_ui}}}}}
 
-    # 180/200 = 90.0% → exactly at the bar → pass
+    # 200/200 = 100% → clean (non-blocking)
+    g0 = K.rc_ui_gate(_model({"total": 100, "passed": 100, "failed": 0},
+                             {"total": 100, "passed": 100, "failed": 0}))
+    assert g0["verdict"] == "clean" and g0["blocking"] is False and g0["pass_pct"] == 100.0
+
+    # 180/200 = 90.0% → exactly at the bar, not clean → warn (non-blocking)
     g = K.rc_ui_gate(_model({"total": 100, "passed": 100, "failed": 0},
                             {"total": 100, "passed": 80, "failed": 20}))
-    assert g["verdict"] == "pass" and g["pass_pct"] == 90.0 and g["ui_total"] == 200
+    assert g["verdict"] == "warn" and g["blocking"] is False
+    assert g["pass_pct"] == 90.0 and g["ui_total"] == 200
+    assert "in parallel" in g["detail"]
 
-    # 160/200 = 80% → below the bar → attention, with the failing suite listed
+    # 160/200 = 80% → below the bar → attention (blocking), with the failing suite listed
     fail_model = _model({"total": 100, "passed": 60, "failed": 40},
                         {"total": 100, "passed": 100, "failed": 0},
                         ecs_suites=[{"name": "PROD MSAL - RC Broker (API 32)",
                                      "failed": 40, "total": 100, "category": "ui"}])
     g2 = K.rc_ui_gate(fail_model)
-    assert g2["verdict"] == "attention" and g2["pass_pct"] == 80.0
+    assert g2["verdict"] == "attention" and g2["blocking"] is True and g2["pass_pct"] == 80.0
     assert "BELOW" in g2["detail"] and "PROD MSAL - RC Broker (API 32)" in g2["detail"]
 
-    # no UI tests anywhere → pass with a warning (absence of data is not a failure)
+    # no UI tests anywhere → clean with a warning (absence of data is not a failure)
     g3 = K.rc_ui_gate({"mrwp": {"ECS": {"tests": {"categories": {}}},
                                 "Local": {"tests": {"categories": {}}}}})
-    assert g3["verdict"] == "pass" and g3["ui_total"] == 0 and "No UI-automation" in g3["detail"]
+    assert g3["verdict"] == "clean" and g3["blocking"] is False
+    assert g3["ui_total"] == 0 and "No UI-automation" in g3["detail"]
 
     # every evaluated run becomes a durable link
     links = K.rc_run_links(fail_model)
@@ -2341,23 +2360,24 @@ def test_digest_shows_rc_line_when_build_verify_active():
 
 
 def test_sim_fast_forwards_to_rc_gate_offline():
-    """The at_rc_gate scenario (fine input mocks, no az) fast-forwards Phases 0-1,
-    runs the 4 build_verify steps for real on injected inputs, stashes the pipeline
-    ids, and halts at the go_test gate — all offline."""
+    """The at_rc_gate scenario (fine input mocks, no az) fast-forwards Phases 0-1, runs the
+    4 build_verify steps for real on injected inputs, stashes the pipeline ids, auto-advances
+    rc_report, and lands past Phase 2 at the bug-bash entry — all offline."""
     import tempfile
     from orchestrator import sim as SIM
     with tempfile.TemporaryDirectory() as tmp:
         res = SIM.run_scenario("at_rc_gate", runs_root=tmp)
-    assert res.reached and res.stop_kind == "gate"
+    assert res.reached and res.stop_kind == "done"
     st = res.state
     # earlier phases complete
     assert all(st.is_done("preflight", s) for s in
                ("notice", "confirm_reminders", "vitals", "wiki"))
     assert all(st.is_done("ccd", s) for s in ("final_reminder", "localization"))
-    # the 4 verification steps ran (real build() on mocks) and are done
-    for s in ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local"):
+    # the 4 verification steps ran (real build() on mocks) and rc_report auto-advanced
+    for s in ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local", "rc_report"):
         assert st.is_done("build_verify", s), s
-    assert not st.is_done("build_verify", "go_test")          # gate still holding
+    from orchestrator.engine import Orchestrator as _O
+    assert _O(CONFIG, st).current_phase_id() == "bug_bash"   # positioned past Phase 2
     # pipeline ids were stashed by the steps during the sim
     assert st.pipeline_runs.get("orchestrator") == "1678611"
     assert st.pipeline_runs.get("mrwp_ecs") == "1678863"
@@ -2379,12 +2399,13 @@ def test_sim_open_positions_at_target_entry():
     assert st.is_done("preflight", "wiki") and st.is_done("ccd", "localization")
     # nothing in the target phase has run
     assert not any(st.is_done("build_verify", s) for s in
-                   ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local", "go_test"))
+                   ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local", "rc_report"))
     assert st.current_phase == "build_verify"
 
 
 def test_sim_done_mode_completes_phase_and_advances():
-    """`at: done` auto-approves the target's gate and lands at the next phase."""
+    """`at: done` runs the whole target phase and lands at the next phase (Phase 2 has no
+    gate now — rc_report auto-advances)."""
     import tempfile
     from orchestrator import sim as SIM
     scenario = {"name": "t_done", "release_id": "2026-08", "ccd": "2026-08-26",
@@ -2394,8 +2415,7 @@ def test_sim_done_mode_completes_phase_and_advances():
         res = SIM.run_scenario(scenario, runs_root=tmp)
     st = res.state
     assert all(st.is_done("build_verify", s) for s in
-               ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local", "go_test"))
-    assert "build_verify.go_test" in res.gates_approved
+               ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local", "rc_report"))
     from orchestrator.engine import Orchestrator
     orch = Orchestrator(CONFIG, st)
     assert orch.current_phase_id() == "bug_bash"
@@ -2855,8 +2875,8 @@ def test_ccd_steps_blocked_without_ccd():
 
 def test_ccd_phase_shape_and_scout_kinds():
     """Phase 1 is three scout comms/trigger steps and NO gate — the branch cut is
-    automatic (at 11 PM), so there's no manual cut step; the next gate is go_test in
-    Phase 2."""
+    automatic (at 11 PM), so there's no manual cut step; the next hold is the Phase-3
+    ui_failures reminder (Phase 2's rc_report gate is automatic)."""
     import yaml
     cfg = yaml.safe_load(open(CONFIG, encoding="utf-8"))
     ccd = next(p for p in cfg["phases"] if p["id"] == "ccd")
@@ -3285,11 +3305,11 @@ def test_local_mock_completes_scout_step():
 def test_local_mock_never_mocks_a_gate():
     """Gate steps are not mockable — a gate still holds for a real decision even if
     someone lists it in the mock file."""
-    st, orch = _mock_orch({"build_verify.go_test": {"outcome": "done"}}, as_of="2026-07-09")
-    _clear_phase0_scout(orch)          # clear Phase-0 holds so we reach the Phase-2 gate
+    st, orch = _mock_orch({"bug_bash.bash_done": {"outcome": "done"}}, as_of="2026-07-09")
+    _clear_phase0_scout(orch)          # clear Phase-0 holds
     _clear_ccd_scout(orch)             # clear Phase-1 scout comms (Phase 1 is gateless)
-    orch.run_until_gate()
-    assert not st.is_done("build_verify", "go_test")
+    _advance_to_first_gate(orch)       # Phases 0-2 gateless; clear ui_failures → hold at bash_done
+    assert not st.is_done("bug_bash", "bash_done")
     assert st.status == "holding_gate"
 
 
