@@ -12,6 +12,12 @@ orchestrator, an auth failure). A blocked step → show the note, then **fix + `
 re-check, or **`skip … --reason`** to override. When the chain is green the scout
 `rc_report` step runs — it is the last Phase-2 step and the go/no-go.
 
+**In-flight vs blocked.** An MRWP step whose RC run is still executing is **`in_flight`**
+(⏳ "RC running — Scout is polling"), **not** blocked — a stage that hasn't run *yet* on a
+live run is not an aborted pipeline. It needs **no owner action**: the engine holds the
+phase and the 30-min poller re-checks until the run completes, then the normal stage rule
++ UI gate apply. Only a stage that never ran on a **completed** run blocks.
+
 ## Automated steps (no skill action — relay from the `status` table)
 `checker_fired`, `orchestrator_health`, `mrwp_ecs`, `mrwp_local` — read-only `az` agent
 steps run inside `next`. Each records the ADO run it evaluated as a Details 🔗 link.
@@ -34,11 +40,26 @@ This is the Phase-2 go/no-go — there is **no separate approval gate**.
   - **≥ 90% & < 100% → `warn`** — step done; auto-advances into bug bash, but the owner
     should investigate the failing UI tests **in parallel** (a later step confirms the
     retest — bug bash is **not** blocked).
-  - **< 90% → `attention`** — the step **BLOCKS** (`awaiting_action`). Large UI failure: the
-    owner investigates and decides — patch a real bug + re-trigger RC, or (if it's an
-    automation flake to re-run later) proceed to bug bash. Exits: fix + re-run, then
-    `next` re-runs `rc_report`; or `skip … --reason` to override.
-  - (No UI tests found → `clean` with a ⚠ note.)
+  - **< 90% → `attention`** — the step **BLOCKS** (`awaiting_action`). This is a large UI
+    failure. Present the note plainly, then walk the owner through **three exits** (do NOT
+    reduce it to "fix or override"):
+    1. **Re-trigger (flaky)** — if the owner judges the failures are automation flakiness,
+       they re-run the failed RC test run, then signal **`rc-retriggered --release <id>
+       --reason "..."`**. That reopens `mrwp_ecs`/`mrwp_local`/`rc_report` so Scout
+       re-evaluates the **newest** RC. While the new run is still executing the verify step
+       is **`in_flight`** (⏳ "RC running — Scout is polling") — **no owner action**; the
+       `build-verify-rc-poller` re-checks every 30 min and re-applies this gate the moment
+       the run completes. If it runs past 6h the owner gets one courtesy nudge.
+    2. **Cherry-pick (real bug)** — if a product bug is driving the failures, the owner
+       patches it via the **broker cherry-pick process**
+       (`…/internal-release-checklist/cherry-pick-process-for-broker-libraries`); the
+       orchestrator then triggers a fresh RC. Same signal: **`rc-retriggered --release
+       <id>`** so Scout tracks the newest RC to completion.
+    3. **Override (LAST RESORT)** — **`skip … --step rc_report --reason "<why>"`**. Frame
+       this explicitly as the last option: proceeding to Bug Bash with this many UI
+       failures is a **team decision** and should be **discussed with the team first**, not
+       taken as a default. The reason is recorded for audit.
+    (No UI tests found → `clean` with a ⚠ note.)
   It records the failing-suite summary + stashes the checker/orchestrator/ECS/Local run
   links on the step.
 - The command prints `{verdict, blocking, pass_pct, ui_total, detail, links}` for your

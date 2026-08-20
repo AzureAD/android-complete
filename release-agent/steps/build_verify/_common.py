@@ -110,6 +110,13 @@ def stash_mrwp(state, provider, snapshot):
 # (a large UI failure usually means a real regression → fix + re-run MRWP).
 RC_UI_PASS_THRESHOLD = 90.0
 
+# The broker-libraries cherry-pick process — the exit for a REAL product bug behind the
+# UI failures (patch → orchestrator triggers a fresh RC). Surfaced in the block detail.
+CHERRY_PICK_TSG = ("https://eng.ms/docs/microsoft-security/identity/"
+                   "entra-developer-application-platform/auth-client/"
+                   "authn-sdk-msal-android/android-auth-libraries/releases/"
+                   "internal-release-checklist/cherry-pick-process-for-broker-libraries")
+
 
 # ---------------------------------------------------------------- RC report email
 def rc_report_model(state, timeout=120):
@@ -222,11 +229,24 @@ def rc_ui_gate(model) -> dict:
                            f"failing UI test(s) in parallel (a later step confirms the retest, "
                            f"so bug bash is not blocked)." + _ui_failing_suites_summary(model))}
     return {**base, "pass_pct": pass_pct, "verdict": "attention", "blocking": True,
-            "detail": (f"{head} \u2014 BELOW the {thr:.0f}% gate. Large UI failure: investigate "
-                       f"the root cause and decide \u2014 patch a real bug + re-trigger RC, or "
-                       f"(if it's an automation flake to re-run later) proceed to bug bash. This "
-                       f"step stays BLOCKED until you `next` after a re-run, or `skip --reason` "
-                       f"to override." + _ui_failing_suites_summary(model))}
+            "detail": (
+                f"{head} \u2014 BELOW the {thr:.0f}% gate. The RC report was emailed; the "
+                f"autonomous tick then halted here (it will NOT auto-advance while blocked). "
+                f"First decide whether this is automation flakiness or a real product bug, "
+                f"then take ONE of three exits:\n"
+                f"1) Re-trigger (flaky) \u2014 if these are flaky suites, re-run the failed RC "
+                f"test run, then signal `rc-retriggered --release <id> --reason \"...\"`. Scout "
+                f"tracks the NEW RC: it holds (no action) while the run is in-flight, polls "
+                f"every 30 min, and re-applies this gate the moment it completes.\n"
+                f"2) Cherry-pick (real bug) \u2014 if a product bug is driving the failures, patch "
+                f"it via the broker cherry-pick process ({CHERRY_PICK_TSG}); the orchestrator "
+                f"then triggers a fresh RC. Signal `rc-retriggered --release <id>` so Scout "
+                f"tracks the newest RC to completion.\n"
+                f"3) Override (LAST RESORT) \u2014 `skip --release <id> --phase build_verify "
+                f"--step rc_report --reason \"<why>\"`. Only after discussing with the team: "
+                f"proceeding to Bug Bash with this many UI failures is a team decision, not a "
+                f"default. The reason is recorded for audit."
+                + _ui_failing_suites_summary(model))}
 
 
 def recovered_unit_tests(model) -> list:

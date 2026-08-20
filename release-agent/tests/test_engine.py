@@ -2204,6 +2204,10 @@ def test_rc_ui_gate_and_run_links():
     g2 = K.rc_ui_gate(fail_model)
     assert g2["verdict"] == "attention" and g2["blocking"] is True and g2["pass_pct"] == 80.0
     assert "BELOW" in g2["detail"] and "PROD MSAL - RC Broker (API 32)" in g2["detail"]
+    # the three exits are spelled out: re-trigger (flaky) / cherry-pick (bug) / override
+    assert "rc-retriggered" in g2["detail"]
+    assert "cherry-pick-process-for-broker-libraries" in g2["detail"]
+    assert "LAST RESORT" in g2["detail"] and "skip" in g2["detail"]
 
     # no UI tests anywhere → clean with a warning (absence of data is not a failure)
     g3 = K.rc_ui_gate({"mrwp": {"ECS": {"tests": {"categories": {}}},
