@@ -177,6 +177,17 @@ def _format(m) -> str:
         L += ["", "**Issues:**"]
         for p in probs:
             L.append(f"  - {p}")
+    # Unit retry warning — failed-then-passed on retry (counted as passed).
+    recovered = sorted({t for prov in ("ECS", "Local")
+                        for t in ((((m.get("mrwp") or {}).get(prov) or {}).get("tests") or {})
+                                  .get("categories", {}).get("unit", {}).get("recovered") or [])})
+    if recovered:
+        L += ["", f"⚠ **Retry warning** — {len(recovered)} unit test(s) failed then passed "
+                  f"on retry (counted as passed):"]
+        for t in recovered[:20]:
+            L.append(f"  - {t}")
+        if len(recovered) > 20:
+            L.append(f"  … and {len(recovered) - 20} more")
     return "\n".join(L)
 
 

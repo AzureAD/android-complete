@@ -238,6 +238,19 @@ def rc_ui_gate(model) -> dict:
                        f"to override." + _ui_failing_suites_summary(model))}
 
 
+def recovered_unit_tests(model) -> list:
+    """Unit tests that FAILED then PASSED on retry (the unit retry rule) across both MRWP
+    providers — counted as passed, but surfaced as a warning in the report. De-duplicated,
+    sorted."""
+    out = set()
+    for prov in ("ECS", "Local"):
+        cats = (((model.get("mrwp") or {}).get(prov) or {}).get("tests") or {}) \
+            .get("categories", {})
+        for t in ((cats.get("unit") or {}).get("recovered") or []):
+            out.add(t)
+    return sorted(out)
+
+
 def rc_email_subject(model) -> str:
     rid = model.get("release", "?")
     v = rc_ui_gate(model)["verdict"]
@@ -315,6 +328,14 @@ def _rc_email_plain(model, ctx) -> str:
     if probs:
         L.append("BLOCKING ISSUES (a stage that never ran = the pipeline aborted):")
         L += [f"  - {p}" for p in probs]
+        L.append("")
+    recovered = recovered_unit_tests(model)
+    if recovered:
+        L.append(f"\u26a0 RETRY WARNING — {len(recovered)} unit test(s) FAILED then PASSED "
+                 f"on retry (counted as passed; verify they aren't genuinely flaky):")
+        L += [f"  - {t}" for t in recovered[:20]]
+        if len(recovered) > 20:
+            L.append(f"  … and {len(recovered) - 20} more")
         L.append("")
     L.append("NEXT: review the failing tests above. If they're acceptable to carry into "
              "bug bash, approve the gate (advances to Phase 3 — Test / Bug Bash). "
@@ -448,6 +469,20 @@ def _rc_email_html(model, ctx) -> str:
                + "".join(f"<li>{T.esc(p)}</li>" for p in probs) + "</ul></div>")
               if probs else "")
 
+    recovered = recovered_unit_tests(model)
+    retry_warn = ""
+    if recovered:
+        shown = recovered[:15]
+        more = (f"<li style='list-style:none;color:#b54708;'>&hellip; and "
+                f"{len(recovered) - len(shown)} more</li>" if len(recovered) > len(shown) else "")
+        retry_warn = (
+            "<div style='margin:12px 0;padding:10px 12px;background:#fffaeb;border:1px solid #fedf89;"
+            "border-radius:8px;color:#b54708;'><strong>&#9888; Retry warning</strong> &mdash; "
+            f"{len(recovered)} unit test(s) failed then <strong>passed on retry</strong> (counted as "
+            "passed; verify they aren&rsquo;t genuinely flaky):"
+            "<ul style='margin:6px 0 0 18px;font-family:Consolas,ui-monospace,monospace;font-size:12px;'>"
+            + "".join(f"<li>{T.esc(t)}</li>" for t in shown) + more + "</ul></div>")
+
     return f"""\
 <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:#101828;line-height:1.5;max-width:720px;margin:0 auto;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-radius:10px;background:#0b5cad;">
@@ -484,6 +519,7 @@ def _rc_email_html(model, ctx) -> str:
   {mrwp_card('ECS')}
   {mrwp_card('Local')}
   {issues}
+  {retry_warn}
 
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0;border-radius:8px;background:#f9fafb;border:1px solid #eef0f3;">
     <tr><td style="padding:12px 16px;">

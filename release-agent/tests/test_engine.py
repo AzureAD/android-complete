@@ -2189,6 +2189,91 @@ def test_active_phase_report_steps_carry_links():
     assert ap and all("links" in s for s in ap["steps"])
 
 
+def test_reconcile_retries_pure():
+    """reconcile_retries collapses per-attempt results by title: passed if any attempt
+    passed; recovered if it also failed; failed only if it never passed; NA ignored."""
+    from tools import pipelines as P
+    res = [
+        {"testCaseTitle": "testNullDrsMetadata", "outcome": "Passed"},
+        {"testCaseTitle": "testNullDrsMetadata", "outcome": "Failed"},
+        {"testCaseTitle": "testNullDrsMetadata", "outcome": "Passed"},   # flaky → recovered
+        {"testCaseTitle": "testAlwaysGreen", "outcome": "Passed"},
+        {"testCaseTitle": "testHardFail", "outcome": "Failed"},
+        {"testCaseTitle": "testHardFail", "outcome": "Failed"},          # failed every attempt
+        {"testCaseTitle": "testSkipped", "outcome": "NotExecuted"},      # ignored
+    ]
+    r = P.reconcile_retries(res)
+    assert r["passed"] == 2 and r["failed"] == 1
+    assert r["recovered"] == ["testNullDrsMetadata"]
+    assert r["total"] == 3 and r["na"] == 1
+    assert P.reconcile_retries([]) == {"passed": 0, "failed": 0, "recovered": [], "total": 0, "na": 0}
+
+
+def test_get_test_summary_unit_retry_reconciles():
+    """A UNIT run whose only failure is a flaky test that passed on retry reconciles to
+    0 failed + a `recovered` warning — even though ADO's run aggregate said 1 failed.
+    (The rule is unit-only; UI/instrumented use the aggregate unchanged.)"""
+    from tools import pipelines as P
+    runs = {"value": [{"id": 700, "name": "broker4j_UnitTests",
+                       "totalTests": 5, "passedTests": 4, "notApplicableTests": 0}]}
+    results = {"value": [
+        {"testCaseTitle": "testNullDrsMetadata", "outcome": "Passed"},
+        {"testCaseTitle": "testNullDrsMetadata", "outcome": "Failed"},
+        {"testCaseTitle": "testNullDrsMetadata", "outcome": "Passed"},
+        {"testCaseTitle": "t2", "outcome": "Passed"},
+        {"testCaseTitle": "t3", "outcome": "Passed"},
+        {"testCaseTitle": "t4", "outcome": "Passed"},
+    ]}
+    orig = P._ado_rest_get
+    P._ado_rest_get = lambda url, timeout: (True, runs if "buildUri" in url else results, "")
+    try:
+        ok, s, _ = P.get_test_summary("O", "P", 700)
+        assert ok
+        unit = s["categories"]["unit"]
+        assert unit["failed"] == 0 and unit["recovered"] == ["testNullDrsMetadata"]
+        assert unit["passed"] == 4 and unit["total"] == 4
+    finally:
+        P._ado_rest_get = orig
+
+
+def test_get_failed_tests_drops_fully_recovered_unit_suite():
+    """A unit suite whose only failure recovered on retry produces NO failing suite."""
+    from tools import pipelines as P
+    runs = {"value": [{"id": 701, "name": "broker4j_UnitTests # 700_build.1",
+                       "totalTests": 5, "passedTests": 4, "notApplicableTests": 0}]}
+    results = {"value": [
+        {"testCaseTitle": "flaky", "outcome": "Failed"},
+        {"testCaseTitle": "flaky", "outcome": "Passed"},
+    ]}
+    orig = P._ado_rest_get
+    P._ado_rest_get = lambda url, timeout: (True, runs if "buildUri" in url else results, "")
+    try:
+        ok, suites, _ = P.get_failed_tests("O", "P", 701)
+        assert ok and suites == []          # the only failure recovered → no failing suite
+    finally:
+        P._ado_rest_get = orig
+
+
+def test_rc_report_email_shows_retry_warning():
+    """When a unit test recovered on retry, the RC report (plain + HTML) surfaces a retry
+    warning that lists it (counted as passed but flagged)."""
+    from steps.build_verify import _common as K
+    model = {"release": "2026-08", "checker": {"run_id": 1},
+             "orchestrator": {"run_id": 2, "versions": {}, "parked": True},
+             "mrwp": {"ECS": {"run_id": 3, "ran": 23, "total": 23,
+                              "tests": {"categories": {
+                                  "unit": {"total": 100, "passed": 100, "failed": 0,
+                                           "recovered": ["testNullDrsMetadata"]},
+                                  "ui": {"total": 10, "passed": 10, "failed": 0}}}},
+                      "Local": {"run_id": 4, "ran": 23, "total": 23, "tests": {"categories": {}}}},
+             "problems": []}
+    assert K.recovered_unit_tests(model) == ["testNullDrsMetadata"]
+    plain = K._rc_email_plain(model, {})
+    html = K._rc_email_html(model, {})
+    assert "RETRY WARNING" in plain and "testNullDrsMetadata" in plain
+    assert "Retry warning" in html and "testNullDrsMetadata" in html
+
+
 def test_classify_test_run_categories():
     """The test-run classifier buckets into exactly three: unit / instrumented / ui;
     anything that isn't unit/instrumented is UI ('the rest are UI', incl. Lab Api Tests)."""

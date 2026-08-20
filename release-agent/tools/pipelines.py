@@ -317,11 +317,73 @@ def classify_test_run(name):
     return "ui"
 
 
+# Outcomes that are neither a pass nor a real failure (skipped / not run / inconclusive).
+_NA_OUTCOMES = {"NotExecuted", "NotApplicable", "None", "Inconclusive", "Warning", None}
+
+
+def reconcile_retries(results):
+    """Collapse ADO's per-attempt test results into ONE verdict per test (by title).
+
+    UNIT tests run under a RETRY rule: a flaky test can appear several times in the same
+    run — e.g. Passed, Failed, Passed. ADO's run aggregate still counts that as a failure,
+    but the test ultimately PASSED. This groups results by testCaseTitle and rules:
+      * PASSED    — at least one attempt Passed.
+      * RECOVERED — Passed AND Failed on different attempts (a flaky pass — surfaced as a
+                    warning, but counted as passed).
+      * FAILED    — has a real (non-NA) attempt and NEVER passed.
+    Not-executed / not-applicable attempts are ignored. Counts are DISTINCT tests. Returns
+      {passed, failed, recovered:[titles], total, na}."""
+    import collections
+    by = collections.defaultdict(set)
+    for r in results or []:
+        title = (r.get("testCaseTitle") or r.get("automatedTestName") or "").strip()
+        if not title:
+            continue
+        by[title].add(r.get("outcome"))
+    passed = failed = na = 0
+    recovered = []
+    for title, outs in by.items():
+        eff = {o for o in outs if o not in _NA_OUTCOMES}
+        if not eff:
+            na += 1
+            continue
+        if "Passed" in eff:
+            passed += 1
+            if "Failed" in eff:
+                recovered.append(title)
+        else:
+            failed += 1
+    return {"passed": passed, "failed": failed, "recovered": sorted(recovered),
+            "total": passed + failed, "na": na}
+
+
+def _run_results(org, project, run_id, timeout=90, page=1000, cap=10000):
+    """All test results for a run (paged). Returns (ok, [results], detail)."""
+    base = org.rstrip("/")
+    out, skip = [], 0
+    while len(out) < cap:
+        url = (f"{base}/{project}/_apis/test/Runs/{run_id}/results"
+               f"?api-version=7.1&$top={page}&$skip={skip}")
+        ok, data, detail = _ado_rest_get(url, timeout)
+        if not ok:
+            return (False, out, detail)
+        batch = (data or {}).get("value", []) or []
+        out.extend(batch)
+        if len(batch) < page:
+            break
+        skip += page
+    return (True, out, "")
+
+
 def get_test_summary(org, project, build_id, timeout=60):
     """Return (ok, summary, detail) for a build's Test-tab results. summary =
-    {total, passed, failed, runs:[{name,total,passed,failed,category}],
-     categories:{unit|instrumented|ui|other: {total,passed,failed}}} aggregated across
-    all test runs, classified into unit / instrumented / UI-automation / other.
+    {total, passed, failed, runs:[{name,total,passed,failed,category,recovered}],
+     categories:{unit|instrumented|ui: {total,passed,failed,recovered:[titles]}}}
+    aggregated across all test runs, classified into unit / instrumented / UI-automation.
+
+    UNIT runs apply the retry rule (reconcile_retries): a run WITH failures is re-read at
+    the per-result level so a flaky test that failed-then-passed counts as passed (and is
+    reported as `recovered`). UI/instrumented runs use ADO's run aggregate unchanged.
 
     Uses the Test Runs REST API directly (az devops invoke mis-routes this one)."""
     base = org.rstrip("/")
@@ -332,21 +394,31 @@ def get_test_summary(org, project, build_id, timeout=60):
         return (False, None, detail)
     runs = (data or {}).get("value", []) or []
     out_runs, tot, passed = [], 0, 0
-    cats = {c: {"total": 0, "passed": 0, "failed": 0} for c in TEST_CATEGORIES}
+    cats = {c: {"total": 0, "passed": 0, "failed": 0, "recovered": []} for c in TEST_CATEGORIES}
     for r in runs:
         t = r.get("totalTests") or 0
         p = r.get("passedTests") or 0
         na = r.get("notApplicableTests") or 0
         f = max(t - p - na, 0)
         cat = classify_test_run(r.get("name"))
+        recovered = []
+        # UNIT retry rule: re-read a failing unit run per-result and reconcile flaky passes.
+        if cat == "unit" and f > 0:
+            ok2, results, _ = _run_results(org, project, r.get("id"), timeout)
+            if ok2 and results:
+                rec = reconcile_retries(results)
+                t, p, f, recovered = rec["total"], rec["passed"], rec["failed"], rec["recovered"]
         tot += t
         passed += p
         cats[cat]["total"] += t
         cats[cat]["passed"] += p
         cats[cat]["failed"] += f
+        if recovered:
+            cats[cat]["recovered"].extend(recovered)
         out_runs.append({"name": r.get("name"), "total": t, "passed": p,
-                         "failed": f, "category": cat})
-    return (True, {"total": tot, "passed": passed, "failed": max(tot - passed, 0),
+                         "failed": f, "category": cat, "recovered": recovered})
+    failed_total = sum(c["failed"] for c in cats.values())
+    return (True, {"total": tot, "passed": passed, "failed": failed_total,
                    "runs": out_runs, "categories": cats}, "")
 
 
@@ -359,9 +431,14 @@ def _suite_base_name(name):
 def get_failed_tests(org, project, build_id, max_result_calls=20, per_suite_cap=40, timeout=90):
     """Return (ok, suites, detail) — the individual FAILING tests for a build, aggregated
     by suite name (the same suite appears as multiple runs; merged). suites is a list of
-    {name, failed, total, tests:[test titles]}, sorted by failure count desc. Test titles
-    are fetched for the worst runs first, bounded by max_result_calls; per suite capped at
-    per_suite_cap names."""
+    {name, failed, total, category, tests:[titles], recovered:[titles]}, sorted by failure
+    count desc. Test titles are fetched for the worst runs first, bounded by
+    max_result_calls; per suite capped at per_suite_cap names.
+
+    UNIT suites apply the retry rule: a failing unit run is re-read per-result and
+    reconciled (reconcile_retries), so a flaky test that failed-then-passed is NOT listed
+    as a failure — it's collected under `recovered` and a suite that fully recovers is
+    dropped."""
     base = org.rstrip("/")
     url = (f"{base}/{project}/_apis/test/runs"
            f"?buildUri=vstfs:///Build/Build/{build_id}&api-version=7.1")
@@ -378,8 +455,33 @@ def get_failed_tests(org, project, build_id, max_result_calls=20, per_suite_cap=
     suites, calls = {}, 0
     for r in failing:
         name = _suite_base_name(r.get("name"))
+        cat = classify_test_run(name)
         s = suites.setdefault(name, {"name": name, "failed": 0, "total": 0,
-                                     "category": classify_test_run(name), "tests": []})
+                                     "category": cat, "tests": [], "recovered": []})
+        # UNIT retry rule: reconcile per-result so flaky-recovered tests aren't failures.
+        if cat == "unit":
+            ok2, results, _ = _run_results(org, project, r.get("id"), timeout)
+            if ok2:
+                rec = reconcile_retries(results)
+                s["failed"] += rec["failed"]
+                s["total"] += rec["total"]
+                for t in rec["recovered"]:
+                    if t not in s["recovered"]:
+                        s["recovered"].append(t)
+                # only the tests that truly failed (never passed) — reconcile again for names
+                import collections
+                by = collections.defaultdict(set)
+                for res in results:
+                    title = (res.get("testCaseTitle") or res.get("automatedTestName") or "").strip()
+                    if title:
+                        by[title].add(res.get("outcome"))
+                for title, outs in by.items():
+                    eff = {o for o in outs if o not in _NA_OUTCOMES}
+                    if eff and "Passed" not in eff and title not in s["tests"] \
+                            and len(s["tests"]) < per_suite_cap:
+                        s["tests"].append(title)
+            continue
+        # NON-unit (UI / instrumented) — ADO aggregate + the failed titles (unchanged).
         s["failed"] += fcount(r)
         s["total"] += r.get("totalTests") or 0
         if calls < max_result_calls:
@@ -392,7 +494,9 @@ def get_failed_tests(org, project, build_id, max_result_calls=20, per_suite_cap=
                     title = (res.get("testCaseTitle") or res.get("automatedTestName") or "").strip()
                     if title and title not in s["tests"] and len(s["tests"]) < per_suite_cap:
                         s["tests"].append(title)
-    return (True, sorted(suites.values(), key=lambda x: -x["failed"]), "")
+    # Drop suites whose failures all recovered on retry (unit); keep real failures.
+    real = [s for s in suites.values() if s["failed"] > 0]
+    return (True, sorted(real, key=lambda x: -x["failed"]), "")
 
 
 # Coordinates for the release chain (identitydivision/Engineering). The build_verify
