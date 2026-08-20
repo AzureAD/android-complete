@@ -260,6 +260,25 @@ def named_record(records, name, types=("Job", "Phase", "Stage")):
     return None
 
 
+def get_build_status(org, project, build_id, timeout=60):
+    """Return (ok, status, result, detail) for a build's OVERALL run.
+
+    status  ∈ {notStarted, inProgress, completed, cancelling, postponed, none}
+    result  ∈ {succeeded, partiallySucceeded, failed, canceled, none} (only meaningful
+             once status == 'completed').
+
+    This is the Phase-2 completion signal: a run is DONE only when status == 'completed'.
+    While it's notStarted/inProgress the verify step must treat un-run stages as
+    'not run YET' (in-flight), NOT as an aborted release."""
+    ok, data, detail = _az_json(
+        ["pipelines", "build", "show", "--org", org, "--project", project,
+         "--id", str(build_id), "--query", "{status:status,result:result}"], timeout)
+    if not ok:
+        return (False, None, None, detail)
+    d = data or {}
+    return (True, d.get("status"), d.get("result"), "")
+
+
 def get_stages(org, project, build_id, timeout=60):
     """Return (ok, stages, detail). `stages` is an ORDER-sorted list of
     {name, state, result} from the build's timeline (Stage records only)."""

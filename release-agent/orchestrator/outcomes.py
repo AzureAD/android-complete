@@ -42,6 +42,21 @@ class Blocked:
 
 
 @dataclass
+class InProgress:
+    """An agent step whose underlying work is STILL RUNNING (not a failure, not done).
+
+    Used by the Phase-2 MRWP verification when the RC pipeline run's overall status is
+    notStarted/inProgress: the step must NOT block as 'aborted' (a never-ran stage during
+    an in-flight run is just not-run-YET). The engine holds the phase as 'waiting on the
+    pipeline' — no user action — and a poller re-runs the step every `poll_in_min` minutes
+    until the run completes, at which point the normal Done/Blocked rules apply."""
+    note: str = ""
+    links: list = field(default_factory=list)
+    poll_in_min: int = 30
+    kind: str = "in_progress"
+
+
+@dataclass
 class NeedsHuman:
     prompt: str
     attest: bool = False       # True → attestation (confirm), False → plain reminder/to-do

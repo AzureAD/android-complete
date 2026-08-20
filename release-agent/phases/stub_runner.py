@@ -19,6 +19,8 @@ class StepResult:
     action: str          # human-readable description of what happened / should happen
     by: str              # 'agent' (stub did it) or 'human' (needs a person)
     links: list = None   # optional [{name, url}] durable refs (wiki page, CG alerts)
+    in_flight: bool = False   # True → the work is still RUNNING (poll again); not done, not blocked
+    poll_in_min: int = 30     # re-check cadence when in_flight
 
 
 def run_stub(phase_id: str, step: dict, state=None) -> StepResult:

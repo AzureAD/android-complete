@@ -74,7 +74,7 @@ def migrate_pipeline_runs(pr) -> dict:
 @dataclass
 class StepState:
     """Persisted state for a single step."""
-    status: str = "pending"          # pending | done | skipped | blocked
+    status: str = "pending"          # pending | done | skipped | blocked | in_flight
     completed_at: Optional[str] = None
     note: Optional[str] = None
     by: Optional[str] = None         # 'agent' (stub) or 'human'

@@ -15,21 +15,25 @@ unchanged.
 """
 from __future__ import annotations
 
-from orchestrator.outcomes import Done, Blocked
+from orchestrator.outcomes import Done, Blocked, InProgress
 from phases.stub_runner import StepResult
 
 
 def to_step_result(outcome) -> StepResult:
-    """Map a uniform Outcome to the engine's StepResult (agent steps only ever
-    return Done/Blocked — never NeedsSkill/NeedsHuman)."""
+    """Map a uniform Outcome to the engine's StepResult. Agent steps return Done/Blocked,
+    or InProgress when their underlying pipeline run is still executing (poll again)."""
     if isinstance(outcome, Done):
         return StepResult(ok=True, action=outcome.note, by=outcome.by,
                           links=list(outcome.links or []))
     if isinstance(outcome, Blocked):
         return StepResult(ok=False, action=outcome.reason, by="agent",
                           links=list(outcome.links or []))
+    if isinstance(outcome, InProgress):
+        return StepResult(ok=False, action=outcome.note, by="agent",
+                          links=list(outcome.links or []),
+                          in_flight=True, poll_in_min=outcome.poll_in_min)
     raise TypeError(
-        f"agent step returned {type(outcome).__name__}; expected Done or Blocked")
+        f"agent step returned {type(outcome).__name__}; expected Done/Blocked/InProgress")
 
 
 def legacy_run(build):

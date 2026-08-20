@@ -229,7 +229,8 @@ _STATE_LABEL = {
 }
 _PHASE_ICON = {"done": "✅", "current": "⏸", "pending": "⬜", "scheduled": "🗓"}
 _STEP_ICON = {"done": "✅", "gate": "⏸", "reminder": "📌", "scheduled": "🗓",
-              "pending": "⬜", "skipped": "⏭️", "scout": "🤖", "auto": "🤖", "blocked": "⛔"}
+              "pending": "⬜", "skipped": "⏭️", "scout": "🤖", "auto": "🤖", "blocked": "⛔",
+              "in_flight": "⏳"}
 _STEP_STATE_WORD = {"done": "Done", "gate": "Awaiting your approval",
                     "reminder": "Do this — then mark done", "scheduled": "Not open yet",
                     "pending": "Pending", "skipped": "Skipped",
@@ -237,7 +238,10 @@ _STEP_STATE_WORD = {"done": "Done", "gate": "Awaiting your approval",
                     # Scout's automatic work — shown identically so the human sees one message
                     # (no action needed), never a confusing "Pending" next to "automatic".
                     "auto": "Scout runs this — automatic",
-                    "scout": "Scout runs this — automatic", "blocked": "Blocked — needs you"}
+                    "scout": "Scout runs this — automatic", "blocked": "Blocked — needs you",
+                    # in_flight = the pipeline run is still executing. No user action — Scout
+                    # is polling every 30 min and re-evaluates when the run completes.
+                    "in_flight": "RC running — Scout is polling"}
 
 
 def _pipelines_line(r: dict) -> str:
@@ -559,6 +563,7 @@ _PILL = {
     "action":    ("Your action",          "#b54708", "#fffaeb"),
     "scout":     ("Scout runs this",       "#475467", "#f2f4f7"),
     "auto":      ("Automatic — pending",  "#475467", "#f2f4f7"),
+    "in_flight": ("⏳ RC running — polling", "#475467", "#f2f4f7"),
 }
 
 

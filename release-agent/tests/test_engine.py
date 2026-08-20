@@ -2005,6 +2005,39 @@ def test_build_verify_steps_pass_with_healthy_mocks():
     assert "Tests:" in outs["mrwp_ecs"]["note"] and "1 red" in outs["mrwp_ecs"]["note"]
 
 
+def test_build_verify_mrwp_in_flight_when_run_still_executing():
+    """An MRWP run whose OVERALL status is still inProgress is NOT a failure — verify
+    returns in_progress (Scout polls + re-evaluates on completion) instead of blocking it
+    as an aborted pipeline. A pending stage on an in-flight run is 'not run YET'."""
+    st, orch = _bv_state({"build_verify.mrwp_ecs": {
+        "mrwp_id": "999", "build_status": "inProgress"}})
+    out = _bv_build(orch, st, "mrwp_ecs")
+    assert out["kind"] == "in_progress"
+    assert "still running" in out["note"] and "poll" in out["note"].lower()
+    assert out["poll_in_min"] == 30
+    # a completed run still runs the normal rule (control): injected stages, no in-flight
+    st2, orch2 = _bv_state({})
+    assert _bv_build(orch2, st2, "mrwp_ecs")["kind"] == "done"
+
+
+def test_engine_in_flight_step_holds_without_flagging_owner():
+    """The engine records an in-flight agent step as status 'in_flight' (not blocked):
+    it is NOT added to pending_human, the release stays 'running' (no user action), the
+    drain returns a 'waiting' action, and first-seen time is stamped for the 6h nudge."""
+    st, orch = _bv_state({"build_verify.mrwp_ecs": {
+        "mrwp_id": "999", "build_status": "inProgress"}})
+    phase = next(p for p in orch.config["phases"] if p["id"] == "build_verify")
+    step = next(s for s in phase["steps"] if s["id"] == "mrwp_ecs")
+    act = orch._run_auto_step(phase, step, block_holds=True)
+    assert act.kind == "waiting"
+    rec = st.get_step("build_verify", "mrwp_ecs")
+    assert rec.status == "in_flight"
+    assert "build_verify.mrwp_ecs" not in st.pending_human
+    assert st.status == "running"
+    assert rec.data.get("in_flight_since") and rec.data.get("poll_in_min") == 30
+    assert not st.is_done("build_verify", "mrwp_ecs")     # not done → re-runs on next poll
+
+
 def test_build_verify_mrwp_blocks_on_never_ran_stage():
     """An MRWP run with a skipped/pending stage blocks (aborted pipeline), with the
     recovery TSG + escalation in the reason."""

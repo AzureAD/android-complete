@@ -20,7 +20,7 @@ from tools.pipelines import (
     ORCH_REQUIRED_STAGES, ORCH_PARK_STAGE, format_versions,
 )
 from orchestrator.state import migrate_pipeline_runs
-from orchestrator.outcomes import Done, Blocked
+from orchestrator.outcomes import Done, Blocked, InProgress
 from steps.lib.mockctx import mock_input, MISSING
 
 # Surfaced in every block reason so the engineer knows how to recover / escalate.
@@ -574,6 +574,21 @@ def verify_mrwp(state, provider):
             return Blocked(f"{label}: orchestrator didn't record a {provider} RC-testing run.")
 
     links = links_for(mid, f"{label} run")
+
+    # 1.5) overall run status — an in-flight run is NOT a failure. If the MRWP run is
+    # still notStarted/inProgress, its un-run stages just haven't run YET; hold the step
+    # as in-flight and let the 30-min poller re-evaluate when it completes, instead of
+    # false-blocking it as an aborted release. `build_status` mock drives this in sim/tests;
+    # when stages are injected (no live call) we assume the run is complete.
+    bstatus = mock_input("build_status", MISSING)
+    if bstatus is MISSING and mock_input("stages", MISSING) is MISSING:
+        ok_s, bstatus, _bres, _bdetail = P.get_build_status(ORG, PROJECT, mid)
+        if not ok_s:
+            bstatus = None   # status unknown → fall through to the stage rule (best-effort)
+    if bstatus not in (MISSING, None) and bstatus != "completed":
+        return InProgress(
+            f"{label} run {mid} is still running (status: {bstatus}) — Scout is polling "
+            f"every 30 min and will re-evaluate the RC when it completes.", links=links)
 
     # 2) stage-completion rule
     stages = mock_input("stages", MISSING)

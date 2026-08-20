@@ -37,6 +37,7 @@ class StatusViewMixin:
                 stp = self.state.get_step(phase["id"], sid)
                 s_done = self.state.is_done(phase["id"], sid)
                 s_blocked = stp.status == "blocked"
+                s_inflight = stp.status == "in_flight"
                 is_gate = bool(s.get("gate"))
                 is_rem = self._is_reminder(s)
                 is_scout = s.get("source") == "scout"
@@ -45,6 +46,8 @@ class StatusViewMixin:
                     status = "done"
                 elif s_blocked:
                     status = "blocked"
+                elif s_inflight:
+                    status = "in_flight"       # pipeline run still executing — Scout polling
                 elif is_gate:
                     status = "approval"
                 elif is_attest:
@@ -147,6 +150,8 @@ class StatusViewMixin:
                 s_state = "done"
             elif rec.get("status") == "blocked":
                 s_state = "blocked"          # a step hit a real problem — needs the owner
+            elif rec.get("status") == "in_flight":
+                s_state = "in_flight"        # pipeline run still executing — Scout is polling
             elif s["id"] == self.state.current_step and self.state.status == "holding_gate":
                 s_state = "gate"
             elif is_scout:

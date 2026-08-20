@@ -423,6 +423,23 @@ class Orchestrator(StatusViewMixin):
             with mockctx.active(self.mocks.get(f"{pid}.{step['id']}", {})):
                 result = runner(pid, step, self.state)
         key = f"{pid}.{step['id']}"
+        # IN-FLIGHT: the step's underlying pipeline run is still executing — NOT a failure.
+        # Hold the phase as 'waiting on the pipeline' (no user action) and let the poller /
+        # tick re-run the step until the run completes. Stamp when we first saw it in-flight
+        # so a poller can send the 6h courtesy nudge.
+        if getattr(result, "in_flight", False):
+            prev = self.state.get_step(pid, step["id"])
+            data = dict(getattr(prev, "data", {}) or {})
+            data.setdefault("in_flight_since", _now())
+            data["poll_in_min"] = getattr(result, "poll_in_min", 30)
+            self.state.set_step(pid, step["id"],
+                                StepState(status="in_flight", note=result.action, by="agent",
+                                          links=list(getattr(result, "links", None) or []),
+                                          data=data))
+            self.state.pending_human = [p for p in self.state.pending_human if p != key]
+            self.state.status = "running"
+            return NextAction(kind="waiting", phase=pid, step=step["id"], name=step["name"],
+                              message=f"WAITING — {step['name']}: {result.action}")
         if not result.ok:
             self.state.set_step(pid, step["id"],
                                 StepState(status="blocked", note=result.action, by=result.by,
@@ -455,7 +472,7 @@ class Orchestrator(StatusViewMixin):
         for _ in range(max_steps):
             act = self.step_once(attempted)
             actions.append(act)
-            if act.kind in ("gate", "reminder", "scheduled", "complete", "readiness", "blocked", "halted"):
+            if act.kind in ("gate", "reminder", "scheduled", "complete", "readiness", "blocked", "halted", "waiting"):
                 break
         return actions
 
