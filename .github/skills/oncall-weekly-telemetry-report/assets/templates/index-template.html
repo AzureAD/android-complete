@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<!-- TEMPLATE - built by assets/scripts/build-index.ps1 in `both` mode. The script replaces the
+     INDEX:* comment sentinels below with values scraped from the two finished reports. It is a
+     DIGEST, not an analysis: every number on this page must already exist in one of the two
+     linked reports. Do not hand-author findings here. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title><!--INDEX:TITLE--></title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px; line-height: 1.5; color: #1f2328;
+    background: linear-gradient(180deg, #f6f8fa 0%, #eef1f4 100%);
+    background-attachment: fixed;
+  }
+  .container { max-width: 1100px; margin: 0 auto; padding: 40px 28px 80px; }
+
+  h1 { font-size: 28px; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.5px; color: #0d1117; }
+  h2 { font-size: 18px; font-weight: 700; margin: 32px 0 14px; padding-bottom: 8px;
+       border-bottom: 1px solid #d0d7de; color: #0d1117; letter-spacing: -0.2px; }
+  p { margin: 0 0 8px; }
+  a { color: #0969da; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: "SF Mono", "JetBrains Mono", Consolas, Monaco, monospace;
+         font-size: 12.5px; background: rgba(175,184,193,0.2);
+         padding: 1px 6px; border-radius: 4px; }
+
+  .meta { color: #656d76; font-size: 13px; margin-bottom: 4px; }
+  .meta strong { color: #1f2328; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px;
+           font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
+           text-transform: uppercase; vertical-align: middle;
+           background: #dafbe1; color: #1a7f37; }
+
+  .report-card { background: #fff; border: 1px solid #d0d7de; border-radius: 12px;
+                 padding: 22px 24px; margin: 18px 0;
+                 box-shadow: 0 1px 0 rgba(31,35,40,0.04); }
+  .report-card .card-head { display: flex; align-items: baseline; justify-content: space-between;
+                            flex-wrap: wrap; gap: 12px; margin-bottom: 6px; }
+  .report-card h3 { font-size: 17px; font-weight: 700; margin: 0; color: #0d1117; letter-spacing: -0.2px; }
+  .report-card .card-sub { color: #656d76; font-size: 12.5px; margin-bottom: 16px; }
+  .report-card .open-link { font-size: 13px; font-weight: 600; white-space: nowrap; }
+
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+              gap: 12px; margin-top: 4px; }
+  .kpi { background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 8px; padding: 12px 14px; }
+  .kpi .label { color: #656d76; font-size: 10.5px; text-transform: uppercase;
+                letter-spacing: 0.4px; font-weight: 600; }
+  .kpi .value { font-size: 20px; font-weight: 700; margin-top: 4px; color: #0d1117;
+                font-variant-numeric: tabular-nums; letter-spacing: -0.4px; }
+  .kpi .delta { font-size: 11.5px; font-weight: 500; margin-top: 3px; }
+  .delta-up { color: #cf222e; }
+  .delta-down { color: #1a7f37; }
+  .delta-flat { color: #656d76; }
+
+  .empty { color: #656d76; font-style: italic; font-size: 13px; }
+
+  .note { background: #fff8c5; border: 1px solid #d4a72c; border-left-width: 4px;
+          border-radius: 8px; padding: 12px 16px; margin: 22px 0; font-size: 13px; }
+  .footer { color: #656d76; font-size: 12px; margin-top: 40px;
+            padding-top: 16px; border-top: 1px solid #d0d7de; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Android Auth &middot; Weekly On-Call Digest</h1>
+  <div class="meta"><!--INDEX:WINDOW--></div>
+  <div class="meta">Generated <strong><!--INDEX:GENERATED--></strong> &nbsp;&middot;&nbsp; <span class="badge">Live data</span></div>
+
+  <div class="note">
+    This page is an <strong>index, not an analysis</strong>. Every number below is lifted verbatim
+    from the linked reports &mdash; open a report to see the attribution, dimension slicing, and
+    suspect PRs behind it. Cross-app findings are written into <em>both</em> reports, not here.
+  </div>
+
+  <!--INDEX:CARDS-->
+
+  <div class="footer">
+    Built by <code>assets/scripts/build-index.ps1</code> from the two reports linked above.
+    Reports live outside the repo under <code>~/android-oce-reports/</code> and are never committed.
+  </div>
+
+</div>
+</body>
+</html>
