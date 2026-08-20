@@ -147,8 +147,10 @@ class StatusViewMixin:
                 s_state = "reminder"
             elif not phase_due:
                 s_state = "scheduled"
+            elif s.get("owner") == "human" or s.get("attest") or self._is_reminder(s):
+                s_state = "pending"          # a human step queued behind a dependency
             else:
-                s_state = "pending"
+                s_state = "auto"             # an agent step Scout runs itself — no user action
             out.append({
                 "id": s["id"], "name": s["name"],
                 "gate": bool(s.get("gate")),

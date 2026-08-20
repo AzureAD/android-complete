@@ -32,7 +32,7 @@ def step_detail(s: dict, limit: int = 160) -> str:
     links = s.get("links") or []
     if not note and not links:
         state = s.get("state")
-        return "—" if state in ("pending", "scheduled", "reminder", "gate") else ""
+        return "—" if state in ("pending", "scheduled", "reminder", "gate", "auto") else ""
     text = str(note or "").strip()
     lead = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
     # Prefer STRUCTURED links (first-class, stored on state) over URL-in-prose.
@@ -229,10 +229,14 @@ _STATE_LABEL = {
 }
 _PHASE_ICON = {"done": "✅", "current": "⏸", "pending": "⬜", "scheduled": "🗓"}
 _STEP_ICON = {"done": "✅", "gate": "⏸", "reminder": "📌", "scheduled": "🗓",
-              "pending": "⬜", "skipped": "⏭️", "scout": "🤖", "blocked": "⛔"}
+              "pending": "⬜", "skipped": "⏭️", "scout": "🤖", "auto": "🤖", "blocked": "⛔"}
 _STEP_STATE_WORD = {"done": "Done", "gate": "Awaiting your approval",
                     "reminder": "Do this — then mark done", "scheduled": "Not open yet",
                     "pending": "Pending", "skipped": "Skipped",
+                    # 'auto' (engine-run agent step) and 'scout' (skill-run MCP step) are BOTH
+                    # Scout's automatic work — shown identically so the human sees one message
+                    # (no action needed), never a confusing "Pending" next to "automatic".
+                    "auto": "Scout runs this — automatic",
                     "scout": "Scout runs this — automatic", "blocked": "Blocked — needs you"}
 
 
@@ -410,7 +414,7 @@ def _phase_num(r: dict, phase_id: str):
 
 def _next_pending_step(r: dict):
     for s in r.get("current_steps", []):
-        if s["state"] in ("pending", "gate"):
+        if s["state"] in ("pending", "gate", "auto"):
             return s["name"]
     return None
 

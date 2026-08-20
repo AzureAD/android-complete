@@ -2189,6 +2189,33 @@ def test_active_phase_report_steps_carry_links():
     assert ap and all("links" in s for s in ap["steps"])
 
 
+def test_agent_steps_render_as_automatic_not_pending():
+    """UX contract: engine-run agent steps ('auto') read IDENTICALLY to skill-run scout
+    steps — 'Scout runs this — automatic', 🤖 — so a human never sees a confusing
+    'Pending' next to 'automatic' for work that needs no action. 'Pending' stays distinct
+    (a human step still to come)."""
+    from orchestrator import render
+    assert render._STEP_STATE_WORD["auto"] == render._STEP_STATE_WORD["scout"] == \
+        "Scout runs this — automatic"
+    assert render._STEP_ICON["auto"] == render._STEP_ICON["scout"] == "🤖"
+    assert render._STEP_STATE_WORD["pending"] != render._STEP_STATE_WORD["auto"]
+
+    # And the classifier tags the (pending, engine-run) build_verify agent steps as 'auto',
+    # the scout email as 'scout', never 'pending'. Force Phases 0-1 done so build_verify is
+    # the current phase with its steps still pending.
+    from orchestrator.state import StepState
+    st, orch = _mock_orch({}, as_of="2026-07-09")     # build_verify anchor CCD+1 → due
+    for pid in ("preflight", "ccd"):
+        ph = next(p for p in orch.config["phases"] if p["id"] == pid)
+        for s in ph["steps"]:
+            orch.state.set_step(pid, s["id"], StepState(status="done", by="test"))
+    orch.state.current_phase = "build_verify"          # the engine sets this during `next`
+    steps = {s["id"]: s for s in orch.status_report()["current_steps"]}
+    for sid in ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local"):
+        assert steps[sid]["state"] == "auto", (sid, steps[sid]["state"])
+    assert steps["rc_report"]["state"] == "scout"
+
+
 def test_reconcile_retries_pure():
     """reconcile_retries collapses per-attempt results by title: passed if any attempt
     passed; recovered if it also failed; failed only if it never passed; NA ignored."""
