@@ -47,11 +47,13 @@ phases:
   - id: build_verify
     name: "Build & Lib Verification"
     checklist_phase: 2
+    anchor: "CCD+1"          # opens the day AFTER Code Complete — the engineer wakes to a resume
     steps:
       - { id: checker_fired,       name: "Verify Code Complete Checker fired the release", owner: agent, maps_to: [B0] }
       - { id: orchestrator_health, name: "Verify Release Orchestrator health (parked at Remove RC Tags)", owner: agent, maps_to: [B1] }
       - { id: mrwp_ecs,            name: "Verify MRWP (ECS) ran to completion + tests",  owner: agent, maps_to: [B2] }
       - { id: mrwp_local,          name: "Verify MRWP (Local) ran to completion + tests", owner: agent, maps_to: [B3] }
+      - { id: rc_report,           name: "Email RC verification report to release owner", owner: agent, source: scout, maps_to: [B4] }
       - { id: go_test,             name: "RC verified — proceed to bug bash",            owner: human, gate: true }
 
   - id: bug_bash

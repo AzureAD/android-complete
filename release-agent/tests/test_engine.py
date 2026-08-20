@@ -71,6 +71,7 @@ _SAFE_AGENTS = {
         "stages": [{"name": "Build", "state": "completed", "result": "succeeded"},
                    {"name": "UI Automation", "state": "completed", "result": "failed"}],
         "tests": {"total": 100, "passed": 98, "failed": 2}},
+    "build_verify.rc_report": {"outcome": "done", "note": "RC report emailed (test)"},  # skip live az + send
 }
 
 
@@ -624,9 +625,10 @@ def test_holds_at_first_gate():
     assert actions[-1].kind == "gate"
     assert actions[-1].step == "go_test"      # Phases 0 & 1 are gateless; first gate is go_test (Phase 2)
     # auto steps that RUN before the first gate: Phase-0 breaking/cg/cron/wiki (4) +
-    # Phase-2 build_verify checker_fired/orchestrator_health/mrwp_ecs/mrwp_local (4).
-    # The Phase-1 scout steps are pre-recorded by _orch's _clear_ccd_scout (not "ran").
-    assert sum(1 for a in actions if a.kind == "ran") == 8
+    # Phase-2 build_verify checker_fired/orchestrator_health/mrwp_ecs/mrwp_local (4) +
+    # rc_report (scout email, mocked done here) (1). The Phase-1 scout steps are
+    # pre-recorded by _orch's _clear_ccd_scout (not "ran").
+    assert sum(1 for a in actions if a.kind == "ran") == 9
 
 
 def test_gate_blocks_until_approved():
@@ -1974,15 +1976,54 @@ def test_build_verify_checker_blocks_when_not_triggered():
 
 
 def test_build_verify_phase_shape():
-    """Phase 2 has the 4 verification agent steps + the go_test human gate, and the
-    old action stubs (retain/payload/mrwp_rc/health/ui_auto/stages_ok) are gone."""
+    """Phase 2 has the 4 verification agent steps + the rc_report scout email + the
+    go_test human gate (in order), CCD+1 anchored, and the old action stubs are gone."""
     import yaml as _yaml
     cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
     bv = next(p for p in cfg["phases"] if p["id"] == "build_verify")
     ids = [s["id"] for s in bv["steps"]]
-    assert ids == ["checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local", "go_test"]
+    assert ids == ["checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",
+                   "rc_report", "go_test"]
+    assert bv.get("anchor") == "CCD+1"
+    rc = next(s for s in bv["steps"] if s["id"] == "rc_report")
+    assert rc.get("source") == "scout" and rc.get("owner") == "agent"
     gate = bv["steps"][-1]
     assert gate["id"] == "go_test" and gate.get("gate") and gate.get("owner") == "human"
+
+
+def test_build_verify_rc_report_emails_owner():
+    """rc_report composes the RC report email to the release owner as a
+    NeedsSkill(workiq_send_email); blocks when no owner email is set. release_report is
+    monkeypatched so it's offline."""
+    from orchestrator.outcomes import as_dict
+    from tools import pipelines as P
+    import steps as _steps
+    orig = P.release_report
+    P.release_report = lambda *a, **k: {
+        "release": "2026-08", "checker": {"fired": True, "run_id": 1678599},
+        "orchestrator": {"found": True, "healthy": True, "parked": True, "run_id": 1678611,
+                         "versions": {"Common": "24.6.0", "Msal": "8.4.2", "Broker": "16.5.0"}},
+        "mrwp": {"ECS": {"run_id": 1678863, "complete": True, "ran": 23, "total": 23,
+                         "failed_stages": ["UI Automation"],
+                         "tests": {"total": 5871, "passed": 5767, "failed": 104,
+                                   "runs": [{"name": "PROD MSAL - RC Broker", "total": 44, "failed": 18}]}},
+                 "Local": {"run_id": 1678864, "complete": True, "ran": 23, "total": 23,
+                           "failed_stages": [], "tests": {"total": 5856, "passed": 5756, "failed": 100, "runs": []}}},
+        "problems": []}
+    try:
+        st = ReleaseState(release_id="2026-08", ccd="2026-08-26",
+                          owner_email="dev@microsoft.com", owner_name="Dev")
+        out = as_dict(_steps.get_step("build_verify", "rc_report").build(st))
+        assert out["kind"] == "needs_skill" and out["tool"] == "workiq_send_email"
+        assert out["payload"]["to"] == ["dev@microsoft.com"] and out["payload"]["isHtml"]
+        assert "104 failed" in out["payload"]["body"] and "1678863" in out["payload"]["body"]
+        assert out["record_as"] == "rc_report" and out["outbound"] is True
+        # no owner → blocked
+        st2 = ReleaseState(release_id="2026-08", ccd="2026-08-26")
+        out2 = as_dict(_steps.get_step("build_verify", "rc_report").build(st2))
+        assert out2["kind"] == "blocked" and "owner" in out2["reason"]
+    finally:
+        P.release_report = orig
 
 
 def test_rc_report_aggregates_and_formats():
@@ -2966,7 +3007,7 @@ def test_local_mock_completes_scout_step():
 def test_local_mock_never_mocks_a_gate():
     """Gate steps are not mockable — a gate still holds for a real decision even if
     someone lists it in the mock file."""
-    st, orch = _mock_orch({"build_verify.go_test": {"outcome": "done"}})
+    st, orch = _mock_orch({"build_verify.go_test": {"outcome": "done"}}, as_of="2026-07-09")
     _clear_phase0_scout(orch)          # clear Phase-0 holds so we reach the Phase-2 gate
     _clear_ccd_scout(orch)             # clear Phase-1 scout comms (Phase 1 is gateless)
     orch.run_until_gate()

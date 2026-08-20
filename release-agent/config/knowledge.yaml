@@ -308,6 +308,30 @@ build_verify.mrwp_local:
     - q: "What's the difference between the ECS and Local runs?"
       a: "The orchestrator triggers MRWP twice with different flight providers — ECS (server-driven flights) and Local (local flight overrides). Both must run to completion; they're verified separately."
 
+build_verify.rc_report:
+  summary: "Email the RC verification report (pipeline health + test failures) to the release owner."
+  what: >
+    Once the four verification steps have resolved the chain, this composes the Phase-2 RC report —
+    checker fired, orchestrator healthy/parked, both MRWP runs' stage completion, and each run's
+    failing test suites — from LIVE pipeline data and emails it to the release owner. It runs right
+    before the go_test gate so the engineer wakes (on CCD+1) to the report and can review before
+    approving. Scout-assisted (source: scout): the engine composes it; the skill sends via WorkIQ.
+  who: >
+    Scout composes the email; the skill sends it via workiq_send_email to the release owner
+    (state.owner_email). Redirect for testing with the step's `send_to` payload knob.
+  where:
+    - "Release Orchestrator run (versions + parked gate): via the run link in the email"
+    - "MRWP ECS / Local runs (Test tab): via the run links in the email"
+  how: >
+    If it blocks with 'no release owner email', set it with `set-owner --email <you@microsoft.com>`
+    and rerun. The email frames failing tests as bug-bash triage (not blockers) unless a stage never
+    ran. After it sends, the go_test gate holds for the owner's approval.
+  faqs:
+    - q: "Who gets the email?"
+      a: "The release owner on record (owner_email). It's a personal review copy, not the broad DL — the owner reviews the RC failures, then approves the go_test gate."
+    - q: "Does the sim send this email?"
+      a: "No. In a sim the step is marked done without sending; only the real skill flow composes + sends it via WorkIQ."
+
 # ========================== Entry gate · readiness ==========================
 # Keyed "readiness.<item>". Queried via `gate-info --item <id>`. Same fields as the
 # step entries (summary/what/who/where/how/links/faqs).
