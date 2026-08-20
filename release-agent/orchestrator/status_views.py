@@ -89,6 +89,13 @@ class StatusViewMixin:
         total = done = 0
         current_phase_name = current_step_name = None
         current_phase_obj = None
+        # The authoritative CURRENT phase is the FRONTIER — the first included phase with
+        # incomplete steps — NOT merely "any phase with progress". Deriving it here (rather
+        # than trusting p_done > 0) means exactly ONE phase shows as current, even when an
+        # upstream reopen left stale progress in a later phase (which would otherwise render
+        # as a confusing second "in progress" phase).
+        frontier = self._current_phase()
+        frontier_id = frontier["id"] if frontier else None
         for idx, phase in enumerate(self.config["phases"]):
             if not self._phase_included(phase):
                 continue
@@ -96,17 +103,18 @@ class StatusViewMixin:
             p_done = sum(1 for s in phase["steps"] if self.state.is_done(phase["id"], s["id"]))
             total += p_total
             done += p_done
-            is_current = self.state.current_phase == phase["id"]
+            is_current = phase["id"] == frontier_id
             due = self._phase_due(phase)
             opens = self._phase_anchor_date(phase)
             if p_total and p_done == p_total:
                 state = "done"
             elif not due and p_done == 0:
-                state = "scheduled"
-            elif is_current or p_done > 0:
+                state = "scheduled"        # not open yet — even if it's the frontier
+            elif is_current:
                 state = "current"
             else:
-                state = "pending"
+                state = "pending"          # not the frontier — a later phase, even if it has
+                                           # stale partial progress, is not "in progress" now
             if is_current:
                 current_phase_name = phase["name"]
                 current_phase_obj = phase
@@ -120,7 +128,7 @@ class StatusViewMixin:
                 "opens_in_days": (opens - self.as_of).days if opens else None,
             })
             for s in phase["steps"]:
-                if s["id"] == self.state.current_step and phase["id"] == self.state.current_phase:
+                if s["id"] == self.state.current_step and phase["id"] == frontier_id:
                     current_step_name = s["name"]
         return phases, total, done, current_phase_name, current_phase_obj, current_step_name
 

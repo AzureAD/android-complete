@@ -974,6 +974,28 @@ def test_phase0_opens_on_ccd_minus_7():
     assert st.is_done("preflight", "notice")
 
 
+def test_only_frontier_phase_shows_current_despite_stale_downstream_progress():
+    """Issue-B regression: exactly ONE phase (the frontier = first incomplete) renders as
+    'current'. A LATER phase left with stale partial progress (e.g. after reopening an
+    upstream phase) must NOT also show as 'current' — it's 'pending'."""
+    from orchestrator.state import StepState
+    st, orch = _mock_orch({}, as_of="2026-07-09")
+    # Phases 0-1 done; build_verify (Phase 2) incomplete = the frontier; bug_bash (Phase 3)
+    # carries stale progress (2 steps done) as if an upstream reopen rolled Phase 2 back.
+    for pid in ("preflight", "ccd"):
+        for s in next(p for p in orch.config["phases"] if p["id"] == pid)["steps"]:
+            orch.state.set_step(pid, s["id"], StepState(status="done", by="test"))
+    for sid in ("clone_plans", "coordinate"):
+        orch.state.set_step("bug_bash", sid, StepState(status="done", by="test"))
+    phases = {p["id"]: p for p in orch.status_report()["phases"]}
+    assert phases["build_verify"]["state"] == "current" and phases["build_verify"]["current"]
+    assert phases["bug_bash"]["state"] == "pending"        # stale progress ≠ a 2nd current
+    assert phases["bug_bash"]["done"] == 2                 # the leftover count still shows
+    assert not phases["bug_bash"]["current"]
+    # exactly one phase is current
+    assert sum(1 for p in phases.values() if p["state"] == "current") == 1
+
+
 def test_phase_map_marks_scheduled():
     st, orch = _ccd_orch("2026-06-28")
     orch.run_until_gate()
