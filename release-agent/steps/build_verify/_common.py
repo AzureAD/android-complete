@@ -1,26 +1,21 @@
 """Shared config + helpers for the Phase 2 (build_verify) release-verification steps.
 
-Underscore-prefixed so steps.discover() skips it (it's not a step). Holds the ADO
-coordinates for the three Engineering release pipelines and the recovery / escalation
-links surfaced when a step blocks, plus small resolvers the step modules reuse.
+Underscore-prefixed so steps.discover() skips it (it's not a step). This whole package is
+scoped to ONE ADO target — identitydivision/Engineering (the release-verification chain) —
+so the local `ORG`/`PROJECT` names here are unambiguous. Their VALUES are imported from
+`tools.pipelines` (the single source; other areas like localization use a DIFFERENT org),
+so a coordinate change happens in exactly one place. This module adds the recovery /
+escalation links surfaced when a step blocks, plus small resolvers the step modules reuse.
 """
 from __future__ import annotations
 
-ORG = "https://identitydivision.visualstudio.com"
-PROJECT = "Engineering"
-
-CHECKER_DEF = 3038          # Code Complete Calendar Checker (fires the release on the CCD)
-ORCHESTRATOR_DEF = 2828     # Release Orchestrator (the spine)
-MRWP_DEF = 2519             # Monthly Release Work Pipeline (RC testing; runs ECS + Local)
-
-# The orchestrator stages that must be green before RC testing is trustworthy, and the
-# stage it should be PARKED at (a human approval gate the owner clears in a later phase).
-ORCH_REQUIRED_STAGES = [
-    "Validate Branch and Versions availability",
-    "Create Release Branches",
-    "Trigger RC Testing",
-]
-ORCH_PARK_STAGE = "Remove RC Tags"
+# This package is Engineering-only; alias the explicitly-named source constants to the
+# short local names the step CONFIGs use. (Do NOT use these for msazure/One calls.)
+from tools.pipelines import (
+    ENGINEERING_ORG as ORG, ENGINEERING_PROJECT as PROJECT,
+    CHECKER_DEF, ORCHESTRATOR_DEF, MRWP_DEF,
+    ORCH_REQUIRED_STAGES, ORCH_PARK_STAGE,
+)
 
 # Surfaced in every block reason so the engineer knows how to recover / escalate.
 RECOVERY_TSG = ("https://eng.ms/docs/microsoft-security/identity/"
@@ -116,11 +111,10 @@ RC_UI_PASS_THRESHOLD = 90.0
 def rc_report_model(state, timeout=120):
     """The Phase-2 RC report model — assembled from the RECORD in state.pipeline_runs
     (the verification steps stored it), NOT a live re-discovery. Uses the LATEST RC
-    iteration (rcs[-1]). Shape mirrors tools.pipelines.release_report so the gate + email
-    builders consume it unchanged:
-      {release, checker{fired,run_id,when}, orchestrator{found,healthy,parked,run_id,versions},
-       mrwp{ECS{...}, Local{...}}, problems[], rc}
+    iteration (rcs[-1]) and routes through `tools.pipelines.assemble_rc_model` — the SAME
+    assembler the live path uses — so the state-based model can't drift from the live one.
     """
+    from tools import pipelines as P
     from orchestrator.state import migrate_pipeline_runs
     pr = migrate_pipeline_runs(getattr(state, "pipeline_runs", None) or {})
     ch = pr.get("checker") or {}
@@ -128,20 +122,16 @@ def rc_report_model(state, timeout=120):
     rcs = pr.get("rcs") or []
     rc = rcs[-1] if rcs else {}
 
-    model = {
-        "release": state.release_id,
-        "checker": {"fired": bool(ch.get("run_id")), "run_id": ch.get("run_id"),
-                    "when": ch.get("when")},
-        "orchestrator": {"found": bool(o.get("run_id")), "healthy": True,
-                         "run_id": o.get("run_id"), "versions": o.get("versions") or {},
-                         "parked": o.get("parked")},
-        "mrwp": {}, "problems": [], "rc": rc.get("rc"),
-    }
+    checker = {"fired": bool(ch.get("run_id")), "run_id": ch.get("run_id"), "when": ch.get("when")}
+    orchestrator = {"found": bool(o.get("run_id")), "healthy": True,
+                    "run_id": o.get("run_id"), "versions": o.get("versions") or {},
+                    "parked": o.get("parked")}
+    mrwp = {}
     for slot, prov in (("ecs", "ECS"), ("local", "Local")):
         s = rc.get(slot)
         if not s:
             continue
-        model["mrwp"][prov] = {
+        mrwp[prov] = {
             "run_id": s.get("run_id"), "complete": s.get("complete"),
             "ran": s.get("ran"), "total": s.get("total"),
             "failed_stages": s.get("failed_stages") or [],
@@ -149,11 +139,7 @@ def rc_report_model(state, timeout=120):
             "never_ran": s.get("never_ran") or [],
             "tests": s.get("tests"), "failed_suites": s.get("failed_suites"),
         }
-        if not s.get("complete") and s.get("never_ran"):
-            model["problems"].append(
-                f"MRWP {prov}: did NOT run to completion — never-ran: "
-                f"{', '.join(n for n in s['never_ran'] if n)}.")
-    return model
+    return P.assemble_rc_model(state.release_id, checker, orchestrator, mrwp, rc=rc.get("rc"))
 
 
 def rc_run_links(model) -> list:

@@ -2274,6 +2274,32 @@ def test_rc_report_email_shows_retry_warning():
     assert "Retry warning" in html and "testNullDrsMetadata" in html
 
 
+def test_rc_model_shape_agrees_across_live_and_state_paths():
+    """H1 guard: the live builder (pipelines.release_report → assemble_rc_model) and the
+    state builder (steps._common.rc_report_model → assemble_rc_model) produce the SAME
+    top-level model shape, so the gate/email/diagnostic never drift."""
+    from tools import pipelines as P
+    from steps.build_verify import _common as K
+    # a canonical assembled model has exactly these top-level keys
+    m = P.assemble_rc_model("2026-08", {"fired": True, "run_id": 1},
+                            {"found": True, "healthy": True, "run_id": 2, "versions": {}},
+                            {"ECS": {"run_id": 3, "complete": True}}, rc=1, id_source="tags")
+    assert set(m) == {"release", "checker", "orchestrator", "mrwp", "problems", "rc", "mrwp_id_source"}
+    # the state path yields the same core keys (no id_source — that's live-only)
+    st = ReleaseState(release_id="2026-08")
+    _seed_rc_pipeline(st, {"total": 10, "passed": 10, "failed": 0},
+                      {"total": 10, "passed": 10, "failed": 0})
+    sm = K.rc_report_model(st)
+    assert {"release", "checker", "orchestrator", "mrwp", "problems", "rc"} <= set(sm)
+    assert sm["rc"] == 1 and sm["problems"] == []
+    # a never-ran MRWP snapshot yields the SAME problem string the live path derives
+    st2 = ReleaseState(release_id="2026-08")
+    from steps.build_verify import _common as K2
+    K2.stash_mrwp(st2, "ECS", {"run_id": "9", "complete": False, "never_ran": ["UI Automation"]})
+    pm = K2.rc_report_model(st2)
+    assert any("did NOT run to completion" in p and "UI Automation" in p for p in pm["problems"])
+
+
 def test_classify_test_run_categories():
     """The test-run classifier buckets into exactly three: unit / instrumented / ui;
     anything that isn't unit/instrumented is UI ('the rest are UI', incl. Lab Api Tests)."""

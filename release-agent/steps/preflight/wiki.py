@@ -10,14 +10,16 @@ from __future__ import annotations
 from orchestrator.outcomes import Done, Blocked
 from steps.lib.agent import legacy_run
 from steps.lib.mockctx import mock_input
+from tools.pipelines import IDENTITYDIVISION
 
 ID = "wiki"
 KIND = "agent"
 
 # Step config (co-located). Creates the per-release payload page under the standing
-# history parent page (Phase 2 later writes the built versions into it).
+# history parent page (Phase 2 later writes the built versions into it). NOTE: this is a
+# DIFFERENT project (IdentityWiki) from the release chain — only the org host is shared.
 CONFIG = {
-    "org": "https://identitydivision.visualstudio.com",
+    "org": IDENTITYDIVISION,     # same collection host as Engineering, different project
     "project": "IdentityWiki",
     "wiki": "IdentityWiki.wiki",
     "parent_path": "/IdentityWiki/Services/Microsoft Authenticator/Release/Android/Monthly Releases Payloads History",

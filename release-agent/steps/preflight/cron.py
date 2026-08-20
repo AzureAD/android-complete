@@ -10,16 +10,17 @@ from __future__ import annotations
 from orchestrator.outcomes import Done, Blocked
 from steps.lib.agent import legacy_run
 from steps.lib.mockctx import mock_input, MISSING
+from tools.pipelines import ENGINEERING_ORG, ENGINEERING_PROJECT
 
 ID = "cron"
 KIND = "agent"
 
 # Step config (co-located). Pipeline 3038's cron proves it's FIRING via a recent
-# schedule-reason run in its build history.
+# schedule-reason run in its build history. It's the Engineering Calendar Checker.
 CONFIG = {
     "pipeline_id": 3038,
-    "org": "https://identitydivision.visualstudio.com",
-    "project": "Engineering",
+    "org": ENGINEERING_ORG,
+    "project": ENGINEERING_PROJECT,
     "name": "Code Complete Calendar Checker",
     "max_staleness_days": 2,     # a daily cron should never be older than this
 }
