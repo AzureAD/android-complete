@@ -74,6 +74,18 @@ def rc_email_subject(model) -> str:
             f"action: approve to proceed to bug bash")
 
 
+def _fail_rate(failed, total) -> float:
+    """Failure percentage (1 decimal). 0 when total is 0/None."""
+    try:
+        return round((failed or 0) * 100.0 / total, 1) if total else 0.0
+    except (TypeError, ZeroDivisionError):
+        return 0.0
+
+
+# Test-run category labels (mirrors tools.pipelines.classify_test_run).
+_CAT_LABEL = {"unit": "Unit", "instrumented": "Instrumented", "ui": "UI automation"}
+
+
 def _rc_email_plain(model, ctx) -> str:
     """Plain-text form of the RC report email (fallback + logging)."""
     L = []
@@ -96,20 +108,31 @@ def _rc_email_plain(model, ctx) -> str:
     L.append(f"      Versions: {vstr}")
     L.append(f"      {build_url(o.get('run_id'))}")
     L.append("")
-    L.append("RC TESTING — both provider runs ran to completion:")
+    L.append("RC TESTING — results by category (both provider runs ran to completion):")
     for prov in ("ECS", "Local"):
         r = (model.get("mrwp") or {}).get(prov) or {}
         t = r.get("tests") or {}
+        cats = t.get("categories") or {}
+        ui = cats.get("ui") or {}
         L.append(f"  MRWP {prov} — run {r.get('run_id')} ({r.get('ran')}/{r.get('total')} stages)")
-        if t:
-            L.append(f"      Tests: {t.get('passed')}/{t.get('total')} passed, {t.get('failed')} FAILED")
+        for cat in ("unit", "instrumented", "ui"):
+            c = cats.get(cat) or {}
+            if not c.get("total"):
+                continue
+            tag = "  <-- RC gate" if cat == "ui" else ""
+            L.append(f"      {_CAT_LABEL.get(cat, cat):14} {c.get('passed')}/{c.get('total')} passed"
+                     f" · {c.get('failed')} failed · {_fail_rate(c.get('failed'), c.get('total'))}% fail{tag}")
         fs = r.get("failed_stages") or []
         if fs:
             L.append(f"      Red stages ({len(fs)}): {', '.join(fs)}")
-        for s in (r.get("failed_suites") or []):
-            L.append(f"      {s['name']} — {s['failed']} failed / {s['total']}:")
+        _ord = {"ui": 0, "instrumented": 1, "unit": 2}
+        for s in sorted((r.get("failed_suites") or []),
+                        key=lambda s: (_ord.get(s.get("category", "ui"), 9), -s["failed"])):
+            sr = _fail_rate(s["failed"], s["total"])
+            L.append(f"      [{_CAT_LABEL.get(s.get('category', 'ui'), 'UI automation')}] "
+                     f"{s['name']} — {s['failed']}/{s['total']} failed ({sr}%):")
             names = s.get("tests", [])
-            for tname in names[:12]:
+            for tname in names[:10]:
                 L.append(f"          - {tname}")
             if len(names) < s["failed"]:
                 L.append(f"          … and {s['failed'] - len(names)} more (see the run)")
@@ -129,72 +152,174 @@ def _rc_email_plain(model, ctx) -> str:
 
 
 def _rc_email_html(model, ctx) -> str:
-    """Email-safe HTML form of the RC report (inline styles; Outlook-friendly)."""
+    """Email-safe HTML form of the RC report — a compact visual dashboard (inline styles,
+    table-based bars; Outlook-friendly)."""
     from steps.lib import templating as T
     rid = model.get("release", "?")
     o = model.get("orchestrator") or {}
     v = o.get("versions") or {}
     vstr = ", ".join(f"{k} {v[k]}" for k in ("Common", "Msal", "Broker") if v.get(k)) or "n/a"
     ch = model.get("checker") or {}
-    park = ("parked at &lsquo;Remove RC Tags&rsquo; (awaiting approval, later phase)"
-            if o.get("parked") else "gate already cleared")
+    park = ("parked at &lsquo;Remove RC Tags&rsquo;"
+            if o.get("parked") else "gate cleared")
 
-    def mrwp_block(prov):
+    def _split_bar(pass_pct, h=10):
+        """A green(pass)/red(fail) horizontal bar as a 2-cell table (Outlook-safe)."""
+        p = max(0, min(100, int(round(pass_pct))))
+        f = 100 - p
+        pcell = (f"<td width='{p}%' bgcolor='#12b76a' style='font-size:0;line-height:0;'>&nbsp;</td>"
+                 if p > 0 else "")
+        fcell = (f"<td width='{f}%' bgcolor='#f04438' style='font-size:0;line-height:0;'>&nbsp;</td>"
+                 if f > 0 else "")
+        return (f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
+                f"style='border-collapse:separate;height:{h}px;border-radius:{h//2}px;overflow:hidden;'>"
+                f"<tr>{pcell}{fcell}</tr></table>")
+
+    def _chip(text, bg, fg):
+        return (f"<span style='display:inline-block;padding:2px 8px;border-radius:10px;"
+                f"background:{bg};color:{fg};font-size:12px;font-weight:600;'>{text}</span>")
+
+    def _cat_row(cat, c):
+        total = c.get("total") or 0
+        if not total:
+            return ""
+        passed, failed = c.get("passed") or 0, c.get("failed") or 0
+        fr = _fail_rate(failed, total)
+        is_ui = cat == "ui"
+        lbl_style = "font-weight:700;color:#101828;" if is_ui else "color:#475467;"
+        gate = (" <span style='font-size:11px;color:#0b5cad;'>&larr; RC gate</span>"
+                if is_ui else "")
+        pct_color = "#b42318" if fr >= 1 else ("#b54708" if fr > 0 else "#067647")
+        return (f"<tr>"
+                f"<td style='padding:5px 0;font-size:13px;{lbl_style}'>{_CAT_LABEL.get(cat, cat)}{gate}</td>"
+                f"<td style='padding:5px 10px;font-size:12px;color:#98a2b3;white-space:nowrap;'>{passed}/{total}</td>"
+                f"<td width='130' style='padding:5px 0;'>{_split_bar(100 - fr, h=6)}</td>"
+                f"<td align='right' style='padding:5px 0 5px 10px;font-size:13px;font-weight:700;"
+                f"color:{pct_color};white-space:nowrap;'>{fr}%</td></tr>")
+
+    def mrwp_card(prov):
         r = (model.get("mrwp") or {}).get(prov) or {}
         t = r.get("tests") or {}
+        cats = t.get("categories") or {}
+        ui = cats.get("ui") or {}
+        ui_total, ui_pass, ui_fail = ui.get("total") or 0, ui.get("passed") or 0, ui.get("failed") or 0
+        ui_rate = _fail_rate(ui_fail, ui_total)
         fs = r.get("failed_stages") or []
-        tline = (f"<strong>{t.get('passed')}/{t.get('total')}</strong> passed, "
-                 f"<strong style='color:#b42318;'>{t.get('failed')} failed</strong>" if t else "n/a")
-        red = (f"<div style='margin:4px 0;color:#b42318;font-size:13px;'>Red stages "
+        red = (f"<div style='margin:8px 0 0;color:#b42318;font-size:12px;'>Red stages "
                f"({len(fs)}): {T.esc(', '.join(fs))}</div>" if fs else "")
-        # Failing tests grouped by suite (repeated runs merged), each with its test names.
+
+        cat_table = "".join(_cat_row(c, cats.get(c) or {}) for c in
+                            ("unit", "instrumented", "ui"))
+
+        # Failing suites — UI first, then instrumented/unit; each tagged by category.
+        _ord = {"ui": 0, "instrumented": 1, "unit": 2}
+        suites = sorted((r.get("failed_suites") or []),
+                        key=lambda s: (_ord.get(s.get("category", "ui"), 9), -s["failed"]))
         suite_html = ""
-        for s in (r.get("failed_suites") or []):
+        for s in suites:
+            sr = _fail_rate(s["failed"], s["total"])
             names = s.get("tests", [])
             items = "".join(
-                f"<li style='margin:1px 0;color:#475467;'>{T.esc(n)}</li>" for n in names[:12])
+                f"<li style='margin:1px 0;color:#475467;'>{T.esc(n)}</li>" for n in names[:4])
             more = (f"<li style='margin:1px 0;color:#98a2b3;list-style:none;'>… and "
-                    f"{s['failed'] - len(names)} more (see the run)</li>"
-                    if len(names) < s["failed"] else "")
+                    f"{s['failed'] - len(names)} more</li>" if len(names) < s["failed"] else "")
+            tag = _chip(_CAT_LABEL.get(s.get("category", "ui"), "UI automation"), "#eef4ff", "#0b5cad")
             suite_html += (
-                f"<div style='margin:6px 0;'>"
-                f"<div style='font-size:13px;'><strong style='color:#b42318;'>{s['failed']}</strong>"
-                f"<span style='color:#667085;'> / {s['total']}</span> &nbsp;{T.esc(s['name'])}</div>"
-                f"<ul style='margin:2px 0 0 20px;padding:0;font-size:12px;font-family:Consolas,monospace;'>"
-                f"{items}{more}</ul></div>")
-        return (f"<div style='margin:10px 0;padding:10px 12px;border:1px solid #e4e7ec;border-radius:6px;'>"
-                f"<div style='font-weight:600;'>MRWP {prov} — run {r.get('run_id')} "
-                f"<span style='color:#667085;font-weight:400;'>({r.get('ran')}/{r.get('total')} stages)</span></div>"
-                f"<div style='margin:4px 0;'>Tests: {tline}</div>{red}{suite_html}"
-                f"<div style='margin-top:6px;'><a href='{build_url(r.get('run_id'))}' "
-                f"style='color:#0b5cad;font-size:13px;'>open run {r.get('run_id')}</a></div></div>")
+                f"<div style='margin:9px 0 0;'>"
+                f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0'><tr>"
+                f"<td style='font-size:13px;font-weight:600;color:#1d2939;'>{T.esc(s['name'])} &nbsp;{tag}</td>"
+                f"<td align='right' style='font-size:13px;white-space:nowrap;'>"
+                f"<strong style='color:#b42318;'>{s['failed']}</strong>"
+                f"<span style='color:#98a2b3;'>/{s['total']}</span> "
+                f"<span style='color:#b42318;font-weight:600;'>&middot; {sr}%</span></td></tr></table>"
+                f"<ul style='margin:2px 0 0 18px;padding:0;font-size:12px;"
+                f"font-family:Consolas,ui-monospace,monospace;'>{items}{more}</ul></div>")
+
+        rate_color = "#b42318" if ui_rate >= 5 else ("#b54708" if ui_rate > 0 else "#067647")
+        return (
+            f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
+            f"style='border:1px solid #e4e7ec;border-radius:10px;margin:10px 0;'>"
+            f"<tr><td style='padding:14px 16px;'>"
+            f"<table role='presentation' width='100%'><tr>"
+            f"<td style='font-size:15px;font-weight:700;color:#101828;'>MRWP {prov}"
+            f"<span style='color:#98a2b3;font-weight:400;font-size:13px;'> &middot; run {r.get('run_id')} "
+            f"&middot; {r.get('ran')}/{r.get('total')} stages</span></td>"
+            f"<td align='right'>{_chip('completed', '#ecfdf3', '#067647')}</td></tr></table>"
+            # headline = UI-automation failure rate (the RC-critical bucket)
+            f"<div style='margin:10px 0 2px;'>"
+            f"<span style='font-size:26px;font-weight:800;color:{rate_color};'>{ui_rate}%</span>"
+            f"<span style='font-size:13px;color:#667085;'> UI-automation failure rate &nbsp;·&nbsp; "
+            f"<strong style='color:#12b76a;'>{ui_pass}</strong> passed / "
+            f"<strong style='color:#b42318;'>{ui_fail}</strong> failed of {ui_total} UI tests</span></div>"
+            f"{_split_bar(100 - ui_rate)}"
+            # per-category breakdown
+            f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
+            f"style='margin:10px 0 0;border-top:1px solid #eef0f3;'>{cat_table}</table>"
+            f"{red}{suite_html}"
+            f"<div style='margin-top:10px;'><a href='{build_url(r.get('run_id'))}' "
+            f"style='color:#0b5cad;font-size:13px;'>Open run {r.get('run_id')} &rsaquo;</a></div>"
+            f"</td></tr></table>")
+
+    # Overall headline — UI-automation failures ONLY (the RC-critical bucket), across both providers.
+    def _ui_sum(field):
+        return sum((((model.get("mrwp") or {}).get(p) or {}).get("tests", {})
+                    .get("categories", {}).get("ui", {}).get(field, 0) or 0)
+                   for p in ("ECS", "Local"))
+    tot_f, tot_t = _ui_sum("failed"), _ui_sum("total")
+    overall_rate = _fail_rate(tot_f, tot_t)
 
     probs = model.get("problems") or []
     issues = (("<div style='margin:12px 0;padding:10px 12px;background:#fef3f2;border:1px solid #fda29b;"
-               "border-radius:6px;color:#b42318;'><strong>Blocking issues</strong> (a stage that never "
+               "border-radius:8px;color:#b42318;'><strong>Blocking issues</strong> (a stage that never "
                "ran = pipeline aborted):<ul style='margin:6px 0 0 18px;'>"
                + "".join(f"<li>{T.esc(p)}</li>" for p in probs) + "</ul></div>")
               if probs else "")
 
     return f"""\
-<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:#101828;line-height:1.5;max-width:720px;">
-  <p>Hi {T.esc(ctx.get('owner','there'))},</p>
-  <p>The Release Candidate for <strong>{T.esc(rid)}</strong> has been built and RC testing has completed.
-     Review the results below and approve <strong>&ldquo;RC verified &mdash; proceed to bug bash&rdquo;</strong> when ready.</p>
-  <p style="margin:14px 0 4px;font-weight:600;">Pipeline health</p>
-  <ul style="margin:0 0 6px 18px;padding:0;">
-    <li>Code Complete Checker: fired the release (run {ch.get('run_id')}).</li>
-    <li>Release Orchestrator: healthy &mdash; pre-gate stages green, {park}.<br>
-        <span style="color:#667085;">Versions: {T.esc(vstr)}</span> &middot;
-        <a href="{build_url(o.get('run_id'))}" style="color:#0b5cad;">run {o.get('run_id')}</a></li>
-  </ul>
-  <p style="margin:14px 0 4px;font-weight:600;">RC testing &mdash; both provider runs ran to completion</p>
-  {mrwp_block('ECS')}
-  {mrwp_block('Local')}
+<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:#101828;line-height:1.5;max-width:720px;margin:0 auto;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-radius:10px;background:#0b5cad;">
+    <tr><td style="padding:18px 20px;color:#ffffff;">
+      <div style="font-size:19px;font-weight:800;">RC Verification Report</div>
+      <div style="font-size:13px;opacity:.92;margin-top:2px;">Release {T.esc(rid)} &middot; Phase 2 &mdash; Build &amp; RC testing</div>
+    </td></tr>
+  </table>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:12px 0;border:1px solid #e4e7ec;border-radius:10px;">
+    <tr>
+      <td style="padding:12px 16px;border-right:1px solid #eef0f3;" width="33%">
+        <div style="font-size:12px;color:#667085;">UI-automation failure rate</div>
+        <div style="font-size:22px;font-weight:800;color:{'#b42318' if overall_rate >= 5 else '#b54708'};">{overall_rate}%</div>
+        <div style="font-size:12px;color:#98a2b3;">{tot_f} failed / {tot_t} UI tests</div>
+      </td>
+      <td style="padding:12px 16px;border-right:1px solid #eef0f3;" width="33%">
+        <div style="font-size:12px;color:#667085;">Checker</div>
+        <div style="font-size:15px;font-weight:700;color:#067647;">&#10003; Fired</div>
+        <div style="font-size:12px;color:#98a2b3;">run {ch.get('run_id')}</div>
+      </td>
+      <td style="padding:12px 16px;" width="34%">
+        <div style="font-size:12px;color:#667085;">Orchestrator</div>
+        <div style="font-size:15px;font-weight:700;color:#067647;">&#10003; Healthy</div>
+        <div style="font-size:12px;color:#98a2b3;">{park}</div>
+      </td>
+    </tr>
+  </table>
+
+  <p style="margin:6px 0;color:#475467;">Versions: <strong>{T.esc(vstr)}</strong> &middot;
+     <a href="{build_url(o.get('run_id'))}" style="color:#0b5cad;">orchestrator run {o.get('run_id')}</a></p>
+
+  <p style="margin:16px 0 2px;font-size:15px;font-weight:700;">UI-automation results</p>
+  {mrwp_card('ECS')}
+  {mrwp_card('Local')}
   {issues}
-  <p><strong>Next:</strong> if the failures are acceptable to carry into bug bash, approve the gate
-     (the release advances to Phase 3 &mdash; Test / Bug Bash). Otherwise investigate the red suites first.</p>
-  <p style="color:#667085;">&mdash; Release Orchestrator (Scout)</p>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0;border-radius:8px;background:#f9fafb;border:1px solid #eef0f3;">
+    <tr><td style="padding:12px 16px;">
+      <strong>Next:</strong> review the failing suites above. If acceptable to carry into bug bash,
+      approve <strong>&ldquo;RC verified &mdash; proceed to bug bash&rdquo;</strong>
+      (advances to Phase 3). Otherwise investigate the red suites first.
+    </td></tr>
+  </table>
+  <p style="color:#98a2b3;font-size:12px;">&mdash; Release Orchestrator (Scout)</p>
 </div>"""
 
 

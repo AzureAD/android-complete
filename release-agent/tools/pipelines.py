@@ -295,10 +295,33 @@ def stage_completion(stages):
             "failed": failed, "yellow": yellow, "complete": not never and total > 0}
 
 
+import re as _re_mod
+_UI_API_RE = _re_mod.compile(r"\(API\s*\d+\)", _re_mod.IGNORECASE)
+TEST_CATEGORIES = ("unit", "instrumented", "ui")
+_CATEGORY_LABEL = {"unit": "Unit", "instrumented": "Instrumented", "ui": "UI automation"}
+
+
+def classify_test_run(name):
+    """Bucket a test-run/suite name into one of THREE categories:
+      * '*_UnitTests'          → unit
+      * '*_InstrumentedTests'  → instrumented
+      * everything else        → ui   (the device UI-automation suites, which carry an
+                                       '(API NN)' tag, plus any other run such as
+                                       'Lab Api Tests' — 'the rest are UI').
+    """
+    low = (name or "").lower()
+    if "unittest" in low:
+        return "unit"
+    if "instrumentedtest" in low:
+        return "instrumented"
+    return "ui"
+
+
 def get_test_summary(org, project, build_id, timeout=60):
     """Return (ok, summary, detail) for a build's Test-tab results. summary =
-    {total, passed, failed, runs:[{name,total,passed,failed}]} aggregated across all
-    test runs associated with the build (unit / instrumented / UI-automation).
+    {total, passed, failed, runs:[{name,total,passed,failed,category}],
+     categories:{unit|instrumented|ui|other: {total,passed,failed}}} aggregated across
+    all test runs, classified into unit / instrumented / UI-automation / other.
 
     Uses the Test Runs REST API directly (az devops invoke mis-routes this one)."""
     base = org.rstrip("/")
@@ -309,16 +332,22 @@ def get_test_summary(org, project, build_id, timeout=60):
         return (False, None, detail)
     runs = (data or {}).get("value", []) or []
     out_runs, tot, passed = [], 0, 0
+    cats = {c: {"total": 0, "passed": 0, "failed": 0} for c in TEST_CATEGORIES}
     for r in runs:
         t = r.get("totalTests") or 0
         p = r.get("passedTests") or 0
         na = r.get("notApplicableTests") or 0
         f = max(t - p - na, 0)
+        cat = classify_test_run(r.get("name"))
         tot += t
         passed += p
-        out_runs.append({"name": r.get("name"), "total": t, "passed": p, "failed": f})
+        cats[cat]["total"] += t
+        cats[cat]["passed"] += p
+        cats[cat]["failed"] += f
+        out_runs.append({"name": r.get("name"), "total": t, "passed": p,
+                         "failed": f, "category": cat})
     return (True, {"total": tot, "passed": passed, "failed": max(tot - passed, 0),
-                   "runs": out_runs}, "")
+                   "runs": out_runs, "categories": cats}, "")
 
 
 def _suite_base_name(name):
@@ -349,7 +378,8 @@ def get_failed_tests(org, project, build_id, max_result_calls=20, per_suite_cap=
     suites, calls = {}, 0
     for r in failing:
         name = _suite_base_name(r.get("name"))
-        s = suites.setdefault(name, {"name": name, "failed": 0, "total": 0, "tests": []})
+        s = suites.setdefault(name, {"name": name, "failed": 0, "total": 0,
+                                     "category": classify_test_run(name), "tests": []})
         s["failed"] += fcount(r)
         s["total"] += r.get("totalTests") or 0
         if calls < max_result_calls:

@@ -97,14 +97,25 @@ def _format(m) -> str:
         L.append(f"{icon} **MRWP {provider}** run {r['run_id']} — {verdict}: {r.get('ran')}/{r.get('total')} stages{ex}.")
         if not r.get("complete") and r.get("never_ran"):
             L.append(f"   never ran: {', '.join(n for n in r['never_ran'] if n)}")
-        t = r.get("tests")
-        if t:
-            L.append(f"   tests: {t['passed']}/{t['total']} passed, {t['failed']} failed")
-        # Failing tests, grouped by suite (repeated runs merged), with the test names.
+        t = r.get("tests") or {}
+        cats = t.get("categories") or {}
+        _lbl = {"unit": "Unit", "instrumented": "Instrumented", "ui": "UI automation"}
+        for cat in ("unit", "instrumented", "ui"):
+            c = cats.get(cat) or {}
+            if not c.get("total"):
+                continue
+            fr = round((c.get("failed", 0)) * 100.0 / c["total"], 1)
+            gate = "  ← RC gate" if cat == "ui" else ""
+            L.append(f"   {_lbl[cat]:13} {c.get('passed')}/{c.get('total')} passed · "
+                     f"{c.get('failed')} failed · {fr}%{gate}")
+        # Failing tests, grouped by suite (UI first), each tagged by category.
         suites = r.get("failed_suites")
         if suites:
-            for s in suites:
-                L.append(f"   • {s['name']}: {s['failed']} failed / {s['total']}")
+            _ord = {"ui": 0, "instrumented": 1, "unit": 2}
+            for s in sorted(suites, key=lambda s: (_ord.get(s.get("category", "ui"), 9), -s["failed"])):
+                cat = _lbl.get(s.get("category", "ui"), "UI automation")
+                fr = round(s["failed"] * 100.0 / s["total"], 1) if s["total"] else 0.0
+                L.append(f"   • [{cat}] {s['name']}: {s['failed']}/{s['total']} failed ({fr}%)")
                 for tname in s.get("tests", []):
                     L.append(f"       - {tname}")
                 shown = len(s.get("tests", []))

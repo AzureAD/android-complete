@@ -2005,10 +2005,18 @@ def test_build_verify_rc_report_emails_owner():
                          "versions": {"Common": "24.6.0", "Msal": "8.4.2", "Broker": "16.5.0"}},
         "mrwp": {"ECS": {"run_id": 1678863, "complete": True, "ran": 23, "total": 23,
                          "failed_stages": ["UI Automation"],
-                         "tests": {"total": 5871, "passed": 5767, "failed": 104,
-                                   "runs": [{"name": "PROD MSAL - RC Broker", "total": 44, "failed": 18}]}},
+                         "tests": {"total": 5871, "passed": 5767, "failed": 104, "runs": [],
+                                   "categories": {
+                                       "unit": {"total": 5248, "passed": 5248, "failed": 0},
+                                       "instrumented": {"total": 442, "passed": 440, "failed": 2},
+                                       "ui": {"total": 165, "passed": 63, "failed": 102}}},
+                         "failed_suites": [{"name": "PROD MSAL - RC Broker (API 32)",
+                                            "failed": 18, "total": 44, "category": "ui",
+                                            "tests": ["test_1_Foo", "test_2_Bar"]}]},
                  "Local": {"run_id": 1678864, "complete": True, "ran": 23, "total": 23,
-                           "failed_stages": [], "tests": {"total": 5856, "passed": 5756, "failed": 100, "runs": []}}},
+                           "failed_stages": [], "tests": {"total": 5856, "passed": 5756, "failed": 100,
+                                                          "runs": [], "categories": {}},
+                           "failed_suites": []}},
         "problems": []}
     try:
         st = ReleaseState(release_id="2026-08", ccd="2026-08-26",
@@ -2016,7 +2024,12 @@ def test_build_verify_rc_report_emails_owner():
         out = as_dict(_steps.get_step("build_verify", "rc_report").build(st))
         assert out["kind"] == "needs_skill" and out["tool"] == "workiq_send_email"
         assert out["payload"]["to"] == ["dev@microsoft.com"] and out["payload"]["isHtml"]
-        assert "104 failed" in out["payload"]["body"] and "1678863" in out["payload"]["body"]
+        body = out["payload"]["body"]
+        assert "1678863" in body                          # run id present
+        assert "UI-automation failure rate" in body       # per-category headline metric
+        assert "61.8%" in body                            # 102/165 UI failures — the real UI rate
+        assert "Unit" in body and "Instrumented" in body and "UI automation" in body
+        assert "test_1_Foo" in body                       # failing test names still listed
         assert out["record_as"] == "rc_report" and out["outbound"] is True
         # no owner → blocked
         st2 = ReleaseState(release_id="2026-08", ccd="2026-08-26")
@@ -2024,6 +2037,18 @@ def test_build_verify_rc_report_emails_owner():
         assert out2["kind"] == "blocked" and "owner" in out2["reason"]
     finally:
         P.release_report = orig
+
+
+def test_classify_test_run_categories():
+    """The test-run classifier buckets into exactly three: unit / instrumented / ui;
+    anything that isn't unit/instrumented is UI ('the rest are UI', incl. Lab Api Tests)."""
+    from tools import pipelines as P
+    assert P.classify_test_run("common4j_UnitTests") == "unit"
+    assert P.classify_test_run("common_InstrumentedTests") == "instrumented"
+    assert P.classify_test_run("PROD MSAL - RC Broker (API 32)") == "ui"
+    assert P.classify_test_run("RC MSAL - PROD Broker (API 28) # 123_build.1") == "ui"
+    assert P.classify_test_run("Lab Api Tests") == "ui"             # NOT 'other'
+    assert P.classify_test_run("") == "ui"
 
 
 def test_get_failed_tests_aggregates_repeated_suites():
