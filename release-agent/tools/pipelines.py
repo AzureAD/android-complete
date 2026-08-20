@@ -321,6 +321,50 @@ def get_test_summary(org, project, build_id, timeout=60):
                    "runs": out_runs}, "")
 
 
+def _suite_base_name(name):
+    """The test API returns the same suite as several runs, each named
+    '<suite> # <buildlabel>' — strip the ' # …' run suffix so same-suite runs merge."""
+    return ((name or "").split(" # ")[0].strip()) or "(unnamed suite)"
+
+
+def get_failed_tests(org, project, build_id, max_result_calls=20, per_suite_cap=40, timeout=90):
+    """Return (ok, suites, detail) — the individual FAILING tests for a build, aggregated
+    by suite name (the same suite appears as multiple runs; merged). suites is a list of
+    {name, failed, total, tests:[test titles]}, sorted by failure count desc. Test titles
+    are fetched for the worst runs first, bounded by max_result_calls; per suite capped at
+    per_suite_cap names."""
+    base = org.rstrip("/")
+    url = (f"{base}/{project}/_apis/test/runs"
+           f"?buildUri=vstfs:///Build/Build/{build_id}&api-version=7.1")
+    ok, data, detail = _ado_rest_get(url, timeout)
+    if not ok:
+        return (False, None, detail)
+
+    def fcount(r):
+        return max((r.get("totalTests") or 0) - (r.get("passedTests") or 0)
+                   - (r.get("notApplicableTests") or 0), 0)
+
+    failing = sorted((r for r in (data or {}).get("value", []) if fcount(r) > 0),
+                     key=lambda r: -fcount(r))
+    suites, calls = {}, 0
+    for r in failing:
+        name = _suite_base_name(r.get("name"))
+        s = suites.setdefault(name, {"name": name, "failed": 0, "total": 0, "tests": []})
+        s["failed"] += fcount(r)
+        s["total"] += r.get("totalTests") or 0
+        if calls < max_result_calls:
+            calls += 1
+            rurl = (f"{base}/{project}/_apis/test/Runs/{r.get('id')}/results"
+                    f"?outcomes=Failed&$top=100&api-version=7.1")
+            ok2, rdata, _ = _ado_rest_get(rurl, timeout)
+            if ok2:
+                for res in (rdata or {}).get("value", []):
+                    title = (res.get("testCaseTitle") or res.get("automatedTestName") or "").strip()
+                    if title and title not in s["tests"] and len(s["tests"]) < per_suite_cap:
+                        s["tests"].append(title)
+    return (True, sorted(suites.values(), key=lambda x: -x["failed"]), "")
+
+
 # Coordinates for the release chain (identitydivision/Engineering). The build_verify
 # steps carry their own copies in steps/build_verify/_common.py; this default lets the
 # report aggregator run standalone.
@@ -337,18 +381,20 @@ ORCH_PARK_STAGE = "Remove RC Tags"
 
 
 def release_report(org, project, release_month, checker_def=CHECKER_DEF,
-                   orch_def=ORCHESTRATOR_DEF, timeout=90):
+                   orch_def=ORCHESTRATOR_DEF, timeout=90, with_failed_tests=True):
     """Assemble the full Phase-2 RC-pipeline + test report for a release month — a pure
     read aggregator over the other helpers (does NOT gate; it reports). Returns a model:
 
       {release, checker:{fired,run_id,when},
        orchestrator:{run_id, found, healthy, parked, park_stage, failed_stages, versions},
        mrwp:{ECS:{...}, Local:{...}},   # each: run_id, complete, ran, total, failed_stages,
-                                        #       yellow_stages, never_ran, tests:{total,passed,failed,runs}
+                                        #       yellow_stages, never_ran, tests:{total,passed,failed,runs},
+                                        #       failed_suites:[{name,failed,total,tests:[titles]}]
        problems:[...]}                  # human-readable issues (empty = all good)
 
-    Any field that couldn't be read carries an `error` note; those also land in
-    `problems` so the caller can surface them without crashing.
+    `with_failed_tests` (default True) also fetches the individual failing test names per
+    suite (extra REST calls — set False for a faster stage-only view). Any field that
+    couldn't be read carries an `error` note; those also land in `problems`.
     """
     model = {"release": release_month, "checker": {}, "orchestrator": {},
              "mrwp": {}, "problems": []}
@@ -431,5 +477,9 @@ def release_report(org, project, release_month, checker_def=CHECKER_DEF,
                 problems.append(f"MRWP {provider}: did NOT run to completion — never-ran: {nv}.")
         okt, tests, _ = get_test_summary(org, project, bid, timeout)
         entry["tests"] = tests if okt else None
+        # Individual failing tests, aggregated by suite (deduped across repeated runs).
+        if with_failed_tests and bid and tests and tests.get("failed"):
+            okf, suites, _ = get_failed_tests(org, project, bid, timeout=timeout)
+            entry["failed_suites"] = suites if okf else None
         model["mrwp"][provider] = entry
     return model

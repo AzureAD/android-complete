@@ -100,15 +100,25 @@ def _format(m) -> str:
         t = r.get("tests")
         if t:
             L.append(f"   tests: {t['passed']}/{t['total']} passed, {t['failed']} failed")
-            failing = [ru for ru in (t.get("runs") or []) if ru.get("failed")]
-            for ru in sorted(failing, key=lambda x: -x["failed"])[:6]:
-                L.append(f"     • {ru['name']}: {ru['failed']} failed / {ru['total']}")
+        # Failing tests, grouped by suite (repeated runs merged), with the test names.
+        suites = r.get("failed_suites")
+        if suites:
+            for s in suites:
+                L.append(f"   • {s['name']}: {s['failed']} failed / {s['total']}")
+                for tname in s.get("tests", []):
+                    L.append(f"       - {tname}")
+                shown = len(s.get("tests", []))
+                if shown < s["failed"]:
+                    L.append(f"       … and {s['failed'] - shown} more (see the run)")
+        elif t and t.get("failed"):
+            L.append(f"   (failing test names unavailable — open the run)")
         L.append(f"   {_u(r.get('run_id'))}")
 
     probs = m.get("problems") or []
-    L += ["", ("**Issues:**" if probs else "**No blocking issues** — red/yellow stages and failed tests are triaged in bug bash.")]
-    for p in probs:
-        L.append(f"  - {p}")
+    if probs:
+        L += ["", "**Issues:**"]
+        for p in probs:
+            L.append(f"  - {p}")
     return "\n".join(L)
 
 

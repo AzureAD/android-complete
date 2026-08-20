@@ -2026,6 +2026,48 @@ def test_build_verify_rc_report_emails_owner():
         P.release_report = orig
 
 
+def test_get_failed_tests_aggregates_repeated_suites():
+    """get_failed_tests merges the SAME suite that appears as several runs (the cause of
+    the confusing duplicates) into one entry, summing failures and collecting test names."""
+    from tools import pipelines as P
+    calls = {"n": 0}
+    runs = {"value": [
+        {"id": 1, "name": "PROD MSAL - RC Broker (API 32) # 1678863_MRWP_main.1",
+         "totalTests": 44, "passedTests": 26, "notApplicableTests": 0},   # 18 failed
+        {"id": 2, "name": "LTW, RC MSAL - RC Broker (API 32) # 1678863_MRWP_main.1",
+         "totalTests": 8, "passedTests": 6, "notApplicableTests": 0},     # 2 failed
+        {"id": 3, "name": "LTW, RC MSAL - RC Broker (API 32) # 1678863_MRWP_main.2",
+         "totalTests": 8, "passedTests": 6, "notApplicableTests": 0},     # 2 failed (same suite!)
+    ]}
+    results = {
+        1: {"value": [{"testCaseTitle": f"test_a{i}"} for i in range(18)]},
+        2: {"value": [{"testCaseTitle": "test_ltw_x"}, {"testCaseTitle": "test_ltw_y"}]},
+        3: {"value": [{"testCaseTitle": "test_ltw_y"}, {"testCaseTitle": "test_ltw_z"}]},  # y dup
+    }
+    orig = P._ado_rest_get
+
+    def fake(url, timeout):
+        calls["n"] += 1
+        if "buildUri" in url:
+            return (True, runs, "")
+        import re
+        rid = int(re.search(r"/Runs/(\d+)/results", url).group(1))
+        return (True, results[rid], "")
+    P._ado_rest_get = fake
+    try:
+        ok, suites, _ = P.get_failed_tests("O", "P", 1678863)
+        assert ok
+        by = {s["name"]: s for s in suites}
+        # the two LTW runs merged into one suite: 2+2 failed, total 16, names deduped
+        ltw = by["LTW, RC MSAL - RC Broker (API 32)"]
+        assert ltw["failed"] == 4 and ltw["total"] == 16
+        assert sorted(ltw["tests"]) == ["test_ltw_x", "test_ltw_y", "test_ltw_z"]
+        # sorted by failure count desc → PROD MSAL suite (18) first
+        assert suites[0]["name"] == "PROD MSAL - RC Broker (API 32)" and suites[0]["failed"] == 18
+    finally:
+        P._ado_rest_get = orig
+
+
 def test_rc_report_aggregates_and_formats():
     """release_report composes the helpers into one model, and the rc-report formatter
     renders the chain + test breakdown. Helpers are monkeypatched so it's offline."""
@@ -2033,8 +2075,11 @@ def test_rc_report_aggregates_and_formats():
     from orchestrator.commands import rc_report as RR
     orig = {n: getattr(P, n) for n in
             ("find_checker_runs", "get_timeline", "find_orchestrator_run", "get_stages",
-             "mrwp_run_ids", "get_test_summary")}
+             "mrwp_run_ids", "get_test_summary", "get_failed_tests")}
     try:
+        P.get_failed_tests = lambda *a, **k: (True, [
+            {"name": "PROD MSAL - RC Broker (API 32)", "failed": 2, "total": 44,
+             "tests": ["test_1_Foo", "test_2_Bar"]}], "")
         P.find_checker_runs = lambda *a, **k: (True, [{"id": 10, "queueTime": "2026-08-13T06:00:00Z"}], "")
         P.get_timeline = lambda *a, **k: (True, [{"type": "Job", "name": "Trigger Monthly Release",
                                                   "result": "succeeded"}], "")
@@ -2063,10 +2108,13 @@ def test_rc_report_aggregates_and_formats():
         assert m["orchestrator"]["versions"]["Common"] == "24.6.0"
         assert m["mrwp"]["ECS"]["complete"] and m["mrwp"]["Local"]["complete"]
         assert m["mrwp"]["ECS"]["failed_stages"] == ["UI Automation"]
+        assert m["mrwp"]["ECS"]["failed_suites"][0]["tests"] == ["test_1_Foo", "test_2_Bar"]
         assert m["problems"] == []                      # red stages/tests don't add problems
         text = RR._format(m)
         assert "RC Pipeline Status" in text and "parked at 'Remove RC Tags'" in text
-        assert "MRWP ECS" in text and "MRWP Local" in text and "No blocking issues" in text
+        assert "MRWP ECS" in text and "MRWP Local" in text
+        assert "test_1_Foo" in text                     # individual failing tests listed
+        assert "triaged in bug bash" not in text        # the dismissive line was removed
     finally:
         for n, f in orig.items():
             setattr(P, n, f)

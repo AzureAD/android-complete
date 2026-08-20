@@ -106,23 +106,23 @@ def _rc_email_plain(model, ctx) -> str:
         fs = r.get("failed_stages") or []
         if fs:
             L.append(f"      Red stages ({len(fs)}): {', '.join(fs)}")
-        failing = sorted((ru for ru in (t.get("runs") or []) if ru.get("failed")),
-                         key=lambda x: -x["failed"])
-        for ru in failing[:6]:
-            L.append(f"        {ru['failed']:>3} failed / {ru['total']:<4} {ru['name'][:64]}")
+        for s in (r.get("failed_suites") or []):
+            L.append(f"      {s['name']} — {s['failed']} failed / {s['total']}:")
+            names = s.get("tests", [])
+            for tname in names[:12]:
+                L.append(f"          - {tname}")
+            if len(names) < s["failed"]:
+                L.append(f"          … and {s['failed'] - len(names)} more (see the run)")
         L.append(f"      {build_url(r.get('run_id'))}")
         L.append("")
     probs = model.get("problems") or []
     if probs:
         L.append("BLOCKING ISSUES (a stage that never ran = the pipeline aborted):")
         L += [f"  - {p}" for p in probs]
-    else:
-        L.append("No blocking issues — every stage executed. The failures above are "
-                 "test failures to triage during bug bash, not pipeline aborts.")
-    L.append("")
-    L.append("NEXT: If the failures are acceptable to carry into bug bash, approve the "
-             "gate (advances to Phase 3 — Test / Bug Bash). Otherwise investigate the "
-             "red suites first.")
+        L.append("")
+    L.append("NEXT: review the failing tests above. If they're acceptable to carry into "
+             "bug bash, approve the gate (advances to Phase 3 — Test / Bug Bash). "
+             "Otherwise investigate the red suites first.")
     L.append("")
     L.append("— Release Orchestrator (Scout)")
     return "\n".join(L)
@@ -143,29 +143,30 @@ def _rc_email_html(model, ctx) -> str:
         r = (model.get("mrwp") or {}).get(prov) or {}
         t = r.get("tests") or {}
         fs = r.get("failed_stages") or []
-        failing = sorted((ru for ru in (t.get("runs") or []) if ru.get("failed")),
-                         key=lambda x: -x["failed"])[:6]
-        rows = "".join(
-            f"<tr><td style='padding:3px 10px;border:1px solid #e4e7ec;text-align:right;"
-            f"color:#b42318;font-variant-numeric:tabular-nums;'>{ru['failed']}</td>"
-            f"<td style='padding:3px 10px;border:1px solid #e4e7ec;color:#667085;'>/ {ru['total']}</td>"
-            f"<td style='padding:3px 10px;border:1px solid #e4e7ec;'>{T.esc(ru['name'][:70])}</td></tr>"
-            for ru in failing)
         tline = (f"<strong>{t.get('passed')}/{t.get('total')}</strong> passed, "
                  f"<strong style='color:#b42318;'>{t.get('failed')} failed</strong>" if t else "n/a")
         red = (f"<div style='margin:4px 0;color:#b42318;font-size:13px;'>Red stages "
                f"({len(fs)}): {T.esc(', '.join(fs))}</div>" if fs else "")
-        table = (f"<table role='presentation' cellpadding='0' cellspacing='0' "
-                 f"style='border-collapse:collapse;margin:6px 0;font-size:12px;'>"
-                 f"<tr style='background:#f9fafb;'><th style='padding:3px 10px;border:1px solid #e4e7ec;"
-                 f"text-align:left;'>Failed</th><th style='padding:3px 10px;border:1px solid #e4e7ec;'></th>"
-                 f"<th style='padding:3px 10px;border:1px solid #e4e7ec;text-align:left;'>Test suite</th></tr>"
-                 f"{rows}</table>" if rows else "")
+        # Failing tests grouped by suite (repeated runs merged), each with its test names.
+        suite_html = ""
+        for s in (r.get("failed_suites") or []):
+            names = s.get("tests", [])
+            items = "".join(
+                f"<li style='margin:1px 0;color:#475467;'>{T.esc(n)}</li>" for n in names[:12])
+            more = (f"<li style='margin:1px 0;color:#98a2b3;list-style:none;'>… and "
+                    f"{s['failed'] - len(names)} more (see the run)</li>"
+                    if len(names) < s["failed"] else "")
+            suite_html += (
+                f"<div style='margin:6px 0;'>"
+                f"<div style='font-size:13px;'><strong style='color:#b42318;'>{s['failed']}</strong>"
+                f"<span style='color:#667085;'> / {s['total']}</span> &nbsp;{T.esc(s['name'])}</div>"
+                f"<ul style='margin:2px 0 0 20px;padding:0;font-size:12px;font-family:Consolas,monospace;'>"
+                f"{items}{more}</ul></div>")
         return (f"<div style='margin:10px 0;padding:10px 12px;border:1px solid #e4e7ec;border-radius:6px;'>"
                 f"<div style='font-weight:600;'>MRWP {prov} — run {r.get('run_id')} "
                 f"<span style='color:#667085;font-weight:400;'>({r.get('ran')}/{r.get('total')} stages)</span></div>"
-                f"<div style='margin:4px 0;'>Tests: {tline}</div>{red}{table}"
-                f"<div style='margin-top:4px;'><a href='{build_url(r.get('run_id'))}' "
+                f"<div style='margin:4px 0;'>Tests: {tline}</div>{red}{suite_html}"
+                f"<div style='margin-top:6px;'><a href='{build_url(r.get('run_id'))}' "
                 f"style='color:#0b5cad;font-size:13px;'>open run {r.get('run_id')}</a></div></div>")
 
     probs = model.get("problems") or []
@@ -173,10 +174,7 @@ def _rc_email_html(model, ctx) -> str:
                "border-radius:6px;color:#b42318;'><strong>Blocking issues</strong> (a stage that never "
                "ran = pipeline aborted):<ul style='margin:6px 0 0 18px;'>"
                + "".join(f"<li>{T.esc(p)}</li>" for p in probs) + "</ul></div>")
-              if probs else
-              ("<div style='margin:12px 0;padding:10px 12px;background:#ecfdf3;border:1px solid #a6f4c5;"
-               "border-radius:6px;color:#067647;'>No blocking issues — every stage executed. The "
-               "failures above are test failures to triage during bug bash, not pipeline aborts.</div>"))
+              if probs else "")
 
     return f"""\
 <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:#101828;line-height:1.5;max-width:720px;">
