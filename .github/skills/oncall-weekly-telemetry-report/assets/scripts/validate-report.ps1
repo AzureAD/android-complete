@@ -31,6 +31,17 @@
           (curEnd = end-date, curStart = end-date - 7d). Prevents a stale
           template stub from being published as if it were fresh, and catches
           any hand-edit that broke the auto-stamp.
+      (12 is reserved.)
+      13. Section 2 boilerplate uniformity — every attention row needs its own
+          one-line body, not one sentence copy-pasted across rows.
+      14. The top attention row must not be flat — Section 2 leads with what is
+          NEW (classify-novelty.js), never with the highest-volume row.
+      15. VOLATILE / RECOVERY rows must not headline a WoW percentage — their
+          ratio is measured off an anomalous prior week and is meaningless.
+      16. Every visible attention row carries an inline .item-spark sparkline.
+      17. Section 2 visible-row budget (<= 8 rows including wins).
+      18. The 60-day section is a slow-burn DETECTOR, not a browsable chart
+          catalog — at most 6 charts outside a collapsed fold.
 
     Exits with non-zero status if any HARD check fails (stale tokens, devs/reqs leak,
     U+FFFD, unbalanced div depth, missing layout-guard CSS).
@@ -169,7 +180,13 @@ if ($kpiTiles -ge 4 -and $sparkCount -lt [Math]::Ceiling($kpiTiles / 2)) {
     Pass "KPI tiles have data-spark coverage ($sparkCount/$kpiTiles)"
 }
 if ($totalCharts -lt 15) {
-    Add-Warn "Only $totalCharts chart elements found. Expected ~30+ (KPI sparks + 60d-trend rows + WoW-table rows). Did you forget to add data-trend attributes to the WoW / trend tables?"
+    # Threshold deliberately LOW. This check guards against a body rebuilt with the
+    # data-trend attributes dropped entirely -- it is not a "more charts is better"
+    # signal. The redesign that moved sparklines into the attention rows and collapsed
+    # the 60-day catalog cut a real report from ~226 chart elements to a few dozen, and
+    # that is the intended direction: charts belong next to findings. Check 18 enforces
+    # the upper bound; this one only catches "the charts vanished".
+    Add-Warn "Only $totalCharts chart elements found. Expect at least one per KPI tile plus one per visible attention row. Did the body get rebuilt without data-trend attributes?"
 } else {
     Pass "Overall chart coverage looks reasonable ($totalCharts elements)"
 }
@@ -302,12 +319,24 @@ if ($hasAttrCard) {
 $trendMatches = [regex]::Matches($content, "data-trend=['""]?\[([0-9.,e\s+\-]+)\]")
 $suspectCount = 0
 $suspectFirst = $null
+$flatCount    = 0
+$flatFirst    = $null
 foreach ($m in $trendMatches) {
     $arrStr = $m.Groups[1].Value
     $vals = $arrStr.Split(',') | ForEach-Object { try { [double]$_.Trim() } catch { 0 } }
     if ($vals.Count -lt 6) { continue }
-    # Filter 1: trend with all values < 100 is suspicious (real codes don't sit at 30-50 devices/week for 8 weeks)
     $maxVal = ($vals | Measure-Object -Maximum).Maximum
+    $minVal = ($vals | Measure-Object -Minimum).Minimum
+
+    # A perfectly flat series is fabricated in ANY app profile -- real telemetry
+    # never repeats a value 8 weeks running.
+    if ($maxVal -eq $minVal) {
+        $flatCount++
+        if (-not $flatFirst) { $flatFirst = $arrStr }
+        continue
+    }
+
+    # Filter 1: trend with all values < 100 is suspicious (real codes don't sit at 30-50 devices/week for 8 weeks)
     if ($maxVal -lt 100) {
         $suspectCount++
         if (-not $suspectFirst) { $suspectFirst = $arrStr }
@@ -317,10 +346,13 @@ foreach ($m in $trendMatches) {
     # Filter 3: implausibly regular - if every consecutive delta has the same sign AND is < 5% of the value, that's a fake.
     # Skip this; too easy to false-positive on genuinely monotonic real series like no_tokens_found.
 }
+if ($flatCount -gt 0) {
+    Add-Warn "$flatCount data-trend array(s) are perfectly flat (every value identical). Real telemetry never does this. First: [$flatFirst]."
+}
 if ($suspectCount -gt 0) {
-    Add-Warn "$suspectCount data-trend array(s) have peak value < 100 (suspicious — real WoW-table series usually peak >= 100 devices/week). Likely fabricated. First: [$suspectFirst]. Source from assets/queries/wow-table-sparkline-series.kql instead."
-} else {
-    Pass "No suspicious low-peak data-trend arrays detected"
+    Add-Warn "$suspectCount data-trend array(s) have an implausible magnitude (peak < 100). Likely fabricated. First: [$suspectFirst]. Source from assets/queries/wow-table-sparkline-series.kql instead."
+} elseif ($flatCount -eq 0) {
+    Pass "No suspicious data-trend arrays detected"
 }
 
 # ---- 11. Rolling-window header integrity ----
@@ -361,6 +393,174 @@ if ($filename -match '^oncall-wow-report-(\d{4}-\d{2}-\d{2})\.html$') {
     }
 } else {
     Add-Warn "Filename '$filename' does not match 'oncall-wow-report-YYYY-MM-DD.html'; skipping meta-line date consistency check."
+}
+
+# ---- 13. Section 2 boilerplate uniformity (HARD FAIL) ----
+# The v9 report shipped with the SAME sentence on all 10 red-callout rows
+# ("Current-window movement needs owner triage; deep dive below has originator and
+# dimensions."), plus 10 identical slow-burn bodies and 8 identical win bodies.
+# The reader complaint that produced this check was, verbatim: "it's actually hard
+# to understand what's actually changed from last week ... no idea what's existing
+# regression vs new this week". A body that would read identically on any other row
+# carries zero information -- it is worse than no body, because it occupies the slot
+# where the specific finding should have been.
+$attStart = $content.IndexOf('id="attention"')
+$attEnd   = $content.IndexOf('id="trend60d"')
+if ($attEnd -lt 0) { $attEnd = $content.IndexOf('id="trend"') }
+if ($attStart -ge 0 -and $attEnd -gt $attStart) {
+    $attSec = $content.Substring($attStart, $attEnd - $attStart)
+
+    # NOTE: 'Singleline' is load-bearing. Without it `.` does not cross newlines, so this
+    # only matched when the generating agent happened to emit .item-body on ONE line. The
+    # template pretty-prints these blocks across several lines, so a copied-from-template
+    # row would silently skip the check -- a check that no-ops while printing nothing is
+    # worse than no check. Same applies to the .item-head regex below.
+    $bodies = [regex]::Matches($attSec, '<div class="item-body">(.*?)</div>', 'Singleline') |
+              ForEach-Object {
+                  # Strip inline markup + collapse whitespace so two bodies that differ
+                  # only by a <code> wrapper still count as duplicates.
+                  (([regex]::Replace($_.Groups[1].Value, '<[^>]+>', ' ')) -replace '\s+', ' ').Trim()
+              } | Where-Object { $_.Length -gt 0 }
+
+    if ($bodies.Count -eq 0) {
+        Add-Warn "No .item-body rows found in Section 2 -- cannot check for boilerplate. If the attention section uses different markup, this check needs updating."
+    } else {
+        $dupes = $bodies | Group-Object | Where-Object { $_.Count -ge 3 } | Sort-Object Count -Descending
+        if ($dupes) {
+            foreach ($d in $dupes) {
+                $snip = $d.Name.Substring(0, [Math]::Min(80, $d.Name.Length))
+                Add-Fail "Section 2 boilerplate: $($d.Count) attention rows share the identical body `"$snip...`". Every row must say what changed, from what to what, and why it is or isn't alarming. If there is nothing row-specific to say, the row does not belong in Section 2."
+            }
+        } else {
+            Pass "Section 2 row bodies are row-specific (no sentence repeated 3+ times)"
+        }
+    }
+
+    # ---- 14. Top attention row should not be a flat mover (WARN) ----
+    # Ranking the attention list by device count is how a code with a +0.1% WoW delta
+    # ended up at position #1 while the genuinely new ipc_* family sat at #6/#9/#10.
+    # Section 2 is ordered by NOVELTY (classify-novelty.js), not volume -- so a
+    # near-zero delta in the lead slot means the ordering was never applied.
+    #
+    # The delta label has been observed spelled "Δ WoW", "&Delta; WoW" and "Delta WoW"
+    # across runs. Match all of them: a check that silently no-ops on a spelling
+    # variant is worse than no check, because it reports nothing and looks healthy.
+    $dLabel = '(?:&Delta;|&#916;|\u0394|Delta)\s*WoW'
+    $heads  = [regex]::Matches($attSec, '<div class="item-head">(.*?)</div>', 'Singleline')
+    if ($heads.Count -eq 0) {
+        Add-Warn "No .item-head rows found in Section 2 -- lead-row and volatile-chip checks skipped. If the attention markup changed, these checks need updating."
+    } else {
+        $firstHead = $heads[0].Groups[1].Value
+        $nameM = [regex]::Match($firstHead, '<span class="item-name">\s*([^<]+)')
+        $nm = if ($nameM.Success) { $nameM.Groups[1].Value.Trim() } else { '(unnamed)' }
+        $dw = [regex]::Match($firstHead, "$dLabel</span><span class=`"m-value`">([+\-]?[\d.]+)%")
+        if (-not $dw.Success) {
+            Add-Warn "Could not parse a WoW delta chip on the top attention row '$nm' -- lead-row flatness check did not run. Expected an m-label matching 'Delta WoW'."
+        } elseif ([Math]::Abs([double]$dw.Groups[1].Value) -lt 5) {
+            Add-Warn "Top attention row '$nm' has a WoW delta of $($dw.Groups[1].Value)% -- essentially flat. Section 2 must lead with what is NEW (classify-novelty.js label NEW), not with the highest-volume row. If genuinely nothing is new this week, say so explicitly instead of promoting a flat mover."
+        } else {
+            Pass "Top attention row '$nm' has a material WoW delta ($($dw.Groups[1].Value)%)"
+        }
+
+        # ---- 15. VOLATILE / RECOVERY rows must not headline a WoW percentage ----
+        # These carry suppressRatio:true because their ratio is measured off an
+        # anomalous prior week. 429 shipped as "+401.8%" while sitting 94.5% BELOW
+        # its own 60-day median -- tagging the row VOLATILE and caveating in the body
+        # is NOT sufficient, because the chip row is the loudest element and the eye
+        # reads it first. Replace the Δ WoW chip with a "vs 60d median" chip.
+        $offenders = @()
+        foreach ($h in $heads) {
+            $hv = $h.Groups[1].Value
+            if ($hv -notmatch '>(VOLATILE|RECOVERY)<') { continue }
+            $m = [regex]::Match($hv, "$dLabel</span><span class=`"m-value`">([+\-]?[\d.]+)%")
+            if ($m.Success -and [Math]::Abs([double]$m.Groups[1].Value) -ge 25) {
+                $n2 = [regex]::Match($hv, '<span class="item-name">\s*([^<]+)')
+                $who = if ($n2.Success) { $n2.Groups[1].Value.Trim() } else { '(unnamed)' }
+                $offenders += "$who ($($m.Groups[1].Value)%)"
+            }
+        }
+        if ($offenders.Count -gt 0) {
+            Add-Fail "VOLATILE/RECOVERY rows still headline a WoW percentage: $($offenders -join ', '). Their ratio is an artifact of a depressed prior week and the chip is the first thing a reader sees -- a caveat in the body does not undo it. Replace the 'Δ WoW' chip with a 'vs 60d median' chip showing the absolute level's position in the band."
+        } else {
+            Pass "No VOLATILE/RECOVERY row headlines a WoW percentage"
+        }
+    }
+
+    # ---- 16. Every VISIBLE attention row must carry its own sparkline (HARD FAIL) ----
+    # The 2026-07-31 report shipped 13 attention rows with ZERO charts, while the 60-day
+    # catalog below it carried 38. The reader's complaint was exactly that inversion:
+    # "I don't see any graphs for the things that need attention this week".
+    #
+    # This is not decoration. "+25.7% WoW" is unreadable on its own -- the reader cannot
+    # tell a flat-for-seven-weeks series that just stepped up (a real regression) from one
+    # that has been bouncing all along (noise wearing a big percentage). The 9-week shape
+    # IS the novelty argument, so it has to sit in the row that makes the claim.
+    #
+    # Rows inside a collapsed <details> fold are reference material and are exempt.
+    $attVisible = [regex]::Replace($attSec, '<details\b.*?</details>', '', 'Singleline')
+    $visHeads   = [regex]::Matches($attVisible, '<div class="item-head">(.*?)</div>', 'Singleline')
+    if ($visHeads.Count -eq 0) {
+        Add-Warn "No visible .item-head rows in Section 2 -- sparkline-coverage check skipped."
+    } else {
+        $noSpark = @()
+        foreach ($h in $visHeads) {
+            $hv = $h.Groups[1].Value
+            if ($hv -match 'item-spark' -or $hv -match 'data-trend') { continue }
+            $n = [regex]::Match($hv, '<span class="item-name">\s*([^<]+)')
+            $noSpark += $(if ($n.Success) { $n.Groups[1].Value.Trim() } else { '(unnamed)' })
+        }
+        if ($noSpark.Count -gt 0) {
+            Add-Fail "$($noSpark.Count) of $($visHeads.Count) visible attention row(s) have no inline sparkline: $($noSpark -join ', '). Every attention row must carry a .item-spark with data-trend holding its 9-week series -- the shape is what distinguishes a step change from ordinary variance. Charts belong WITH the finding, not in a separate browsable section."
+        } else {
+            Pass "All $($visHeads.Count) visible attention row(s) carry an inline sparkline"
+        }
+
+        # ---- 17. Attention section must stay short (WARN) ----
+        # classify-novelty.js emits an ATTENTION set (NEW + ACCELERATING). On real broker
+        # data that is 5 series out of 53. If the rendered section is much larger than
+        # that, the classifier's set was ignored and volume ranking crept back in --
+        # which is what produced 13 rows for what turned out to be one incident.
+        if ($visHeads.Count -gt 8) {
+            Add-Warn "Section 2 has $($visHeads.Count) visible attention rows. classify-novelty.js's ATTENTION set (NEW + ACCELERATING) is typically 3-6 series; anything much larger means plateaued or flat codes were promoted. Move ONGOING/STABLE rows into the collapsed fold -- a long attention list trains the reader to skim the one section that must not be skimmed."
+        } else {
+            Pass "Section 2 attention list is short ($($visHeads.Count) visible row(s))"
+        }
+    }
+} else {
+    Add-Warn "Could not locate the attention section -- skipping boilerplate + lead-row checks."
+}
+
+# ---- 18. The 60-day section must not be a browsable chart catalog (HARD FAIL) ----
+# The 60-day pass exists to catch slow burns that week-over-week structurally cannot see
+# (it found `Failed to parse JWT` going 7 -> 3,461 devices). That is its whole job.
+#
+# What it must NOT be is a scrollable list of every classified code with a chart each.
+# Measured on the 2026-07-31 report: 29 rows / 38 charts in this section, of which 27 were
+# duplicated verbatim into the error-code and error-type tables further down -- ~93%
+# redundant. Combined with the error tables the report rendered 100 sparklines for a single
+# incident, and the four series that actually changed were indistinguishable from the rest.
+#
+# Rule: only findings get charts in the main flow, and a finding is either NEW/ACCELERATING
+# (already charted in Section 2) or a promoted slow burn. Everything else goes in a
+# collapsed fold WITHOUT charts. Charts inside <details> are exempt -- the reader opted in.
+#
+# Broker's universe is 40-50 error codes, so charting "everything" is exactly the catalog
+# failure this check exists to stop.
+$t60Cap = 6
+$t60Start = $content.IndexOf('id="trend60d"')
+if ($t60Start -ge 0) {
+    $t60End = $content.IndexOf('<h2', $t60Start + 10)
+    if ($t60End -lt 0) { $t60End = $content.Length }
+    $t60 = $content.Substring($t60Start, $t60End - $t60Start)
+    $t60Visible = [regex]::Replace($t60, '<details\b.*?</details>', '', 'Singleline')
+    $t60Charts = [regex]::Matches($t60Visible, 'data-trend=|<svg\b').Count
+    if ($t60Charts -gt $t60Cap) {
+        Add-Fail "The 60-day section renders $t60Charts chart(s) outside any collapsed fold (cap $t60Cap). It is a slow-burn DETECTOR, not a catalog -- chart only the entries it flags that are NOT already in Section 2, and move the full classification into a <details> fold with no charts. A previous run shipped 38 charts here against 0 in the attention section, which is precisely backwards."
+    } else {
+        Pass "60-day section is a detector, not a catalog ($t60Charts visible chart(s), cap $t60Cap)"
+    }
+} else {
+    Add-Warn "Could not locate the 60-day section -- skipping the chart-catalog check."
 }
 
 Write-Host ""

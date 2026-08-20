@@ -129,12 +129,30 @@ Required spark/trend coverage in every report:
 | Where | Attribute | Length | Color (see palette below) |
 |---|---|---|---|
 | Every KPI tile in `.kpi-grid` (Top-line health) | `<div class="spark" data-spark='[...]' data-color="..."></div>` inside the tile | 8–9 weekly values | blue/green/dark-blue per metric semantic |
-| **Every** row in the 60-day trend tables — true regressions, **ephemeral spikes**, and **true improvements** (all three callout tables) | `<span class="trend" data-trend='[...]' data-color="..." data-w="160"></span>` in the trajectory cell | ~9 weekly values (incl. the current partial week as the final point) | red regression / amber spike / green improvement / grey flat |
+| **Every visible row in the Section 2 attention list** — including the wins | `<span class="item-spark trend" data-trend='[...]' data-color="..." data-w="120" data-h="22"></span>` right after `.item-name` | 9 weekly values | red worsening / orange accelerating / green improving / amber volatile |
+| 60-day section: **only the promoted slow burns** (rising on 60d, not already in Section 2 — often zero) | `<span class="trend" data-trend='[...]' data-color="..." data-w="160"></span>` in the trajectory cell | ~9 weekly values (incl. the current partial week as the final point) | red regression / amber spike / green improvement |
 | Every row in the error-codes WoW table and error-types WoW table | `<span class="trend" data-trend='[...]' data-color="..."></span>` in the 60d-trend column | 8 complete weekly values (no partial week — see `wow-table-sparkline-series.kql`) | same palette |
+
+> **📌 The two WoW reference tables keep a sparkline on every row — deliberate exemption, decided
+> explicitly. Do not strip them when reducing noise.** They are **lookup tables**: the reader arrives
+> with a code in mind and scans for it, so the sparkline is glanceable context in a cell their eye is
+> already on. The noise failure was the *60-day trend catalog* — a section read top-to-bottom whose
+> rows ~93% duplicated these tables — not the tables themselves.
+
+> **⚠️ Charts go WITH the finding, not in a browsable section.** The 60-day section used to chart
+> every classified code — 38 charts, ~93% duplicating rows in the error tables below, while the
+> attention section above had **zero**. The full 60-day classification now lives in a `<details>` fold
+> **without** a chart column; only promoted slow burns are charted in the main flow.
+> `validate-report.ps1` check 16 hard-fails a visible attention row missing its sparkline, and check 18
+> hard-fails a 60-day section that renders more than 6 charts outside a fold.
+> Charts *inside* a `<details>` fold are exempt from both — the reader opted in. **Checks 16/17/18 are
+> scoped to Section 2 and the 60-day section only** — they intentionally say nothing about the WoW
+> reference tables above.
 
 **Past failure modes:**
 - v7 first pass: the body rebuild emitted *zero* `data-spark` / `data-trend` (validator now hard-fails this).
-- v7 second pass: only the *true regressions* table got sparklines; the **ephemeral spikes** and **true improvements** tables were left text-only. All three tables in the 60-day trend section need the trajectory column with a sparkline — the validator's overall-coverage warn (≥15) catches this approximately, but the rule of thumb is: **if a row reports an 8-week delta, it gets a sparkline.**
+- v7 second pass: only the *true regressions* table got sparklines; the ephemeral-spike and improvement rows were left text-only. Rule of thumb at the time: *"if a row reports an 8-week delta, it gets a sparkline."*
+- v9: that rule was over-applied and became the opposite problem — **100 sparklines across the report, none of them next to a finding.** The rule is now **"if a row is a finding, it gets a sparkline"**; volume of charts is not coverage.
 
 ## Traffic-shape callout styling
 
