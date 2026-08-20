@@ -447,9 +447,10 @@ def _digest_model(r: dict):
         hold = ("action", r["action"]["step_name"])
     human_all = [o for o in ap.get("outstanding", []) if o["gate"] or o["reminder"]]
     completed_all = ap.get("completed") or []
-    # Phase-2 RC one-liner — only while build_verify is the active phase, best-effort
-    # (reads state.pipeline_runs; never a live call). Empty until the chain resolves.
-    rc_line = _pipelines_line(r) if ap.get("id") == "build_verify" else ""
+    # Phase-2 RC one-liner — only while a phase that opts in (show_pipeline_runs) is
+    # active, best-effort (reads state.pipeline_runs; never a live call). Empty until the
+    # chain resolves.
+    rc_line = _pipelines_line(r) if ap.get("show_pipeline_runs") else ""
     return {
         "rid": r.get("release_id", "?"),
         "ap": ap,

@@ -1453,6 +1453,19 @@ def test_automation_sync_repins_on_ccd_change():
         assert not u1["ccd-localization-poller"]["changed"]
 
 
+def test_automation_prompt_delegates_to_step_module():
+    """The planner is generic: a step that declares `automation_prompt` owns its bespoke
+    instruction (localization trigger vs poller), and steps without one get the default
+    send + record-step prompt — no step id is special-cased in automations.py."""
+    from orchestrator import automations as A
+    by = {a["slug"]: a for a in A.plan(CONFIG, "2026-09", "2026-09-09")["automations"]}
+    # localization's module owns both bespoke prompts (delegated, not hardcoded here)
+    assert "trigger localization" in by["ccd-noon"]["prompt"]
+    assert "localization poller" in by["ccd-localization-poller"]["prompt"]
+    # a plain multi-step reminder automation uses the generic default prompt
+    assert "For EACH of these steps in order" in by["ccd-morning"]["prompt"]
+
+
 def test_ccd_cron_pins_to_exact_date():
     """_ccd_cron builds a cron 'M H D Mo *' targeting the CCD's day+month+time, so a
     one-shot fires ON the CCD — never the next matching weekday (the early-fire bug)."""
@@ -2340,11 +2353,12 @@ def test_build_verify_persists_pipeline_run_ids():
 
 
 def test_digest_shows_rc_line_when_build_verify_active():
-    """When Phase 2 (build_verify) is the active phase and run ids are on state, the daily
-    digest carries a one-line RC summary; other phases don't show it."""
+    """When a phase that opts in (show_pipeline_runs) is active and run ids are on state,
+    the daily digest carries a one-line RC summary; phases that don't opt in omit it."""
     from orchestrator import render
     r = {"release_id": "2026-08", "readiness_signed": True,
          "active_phase": {"id": "build_verify", "name": "Build & RC", "num": 2,
+                          "show_pipeline_runs": True,
                           "due": True, "started": True, "done": 2, "total": 5,
                           "outstanding": [], "completed": ["checker_fired", "orchestrator_health"]},
          "pipeline_runs": {"checker": "1678599", "orchestrator": "1678611",
@@ -2354,8 +2368,9 @@ def test_digest_shows_rc_line_when_build_verify_active():
     md = render.notification_markdown(r)
     assert "RC pipelines:" in text and "orchestrator 1678611" in text
     assert "MRWP ECS 900001 / Local 900002" in md
-    # a non-build_verify active phase omits the RC line
-    r2 = dict(r, active_phase=dict(r["active_phase"], id="prep", name="Prep"))
+    # a phase that doesn't opt in omits the RC line
+    r2 = dict(r, active_phase=dict(r["active_phase"], id="prep", name="Prep",
+                                   show_pipeline_runs=False))
     assert "RC pipelines:" not in render.notification(r2)
 
 

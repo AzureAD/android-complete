@@ -341,6 +341,49 @@ def build(state):
     )
 
 
+def automation_prompt(release: str, spec: dict) -> str:
+    """The bespoke automation instruction for THIS step — owned here (single source of
+    truth, like `fire_at_local`) so the generic automations planner doesn't special-case
+    the step id. Two shapes: the interval POLLER vs the one-shot noon TRIGGER (the planner
+    passes the automation `spec`; `interval` set ⇒ poller)."""
+    if spec.get("interval"):
+        return (
+            f"Release {release} — localization poller.\n"
+            f"If localization for {release} is in-flight (it was triggered at noon and "
+            f"isn't done/blocked yet), poll it once. The ADO MCP can't reach "
+            f"msazure/One, so read via az (build id is stored on the step):\n"
+            f"1. status: `az pipelines build show --id <buildId> "
+            f"--org https://msazure.visualstudio.com --project One "
+            f"--query \"{{status:status,result:result}}\" -o json`.\n"
+            f"2. if completed, find the OneLocBuild@3 log id: `az devops invoke "
+            f"--org https://msazure.visualstudio.com --area build --resource timeline "
+            f"--route-parameters project=One buildId=<buildId> --api-version 7.1 "
+            f"--query \"records[?name=='OneLocBuild@3'].log.id | [0]\" -o tsv`, then read "
+            f"it: `az devops invoke --org https://msazure.visualstudio.com --area build "
+            f"--resource logs --route-parameters project=One buildId=<buildId> "
+            f"logId=<logId> --api-version 7.1`.\n"
+            f"3. run `check-localization --release {release} --complete <true|false> "
+            f"[--logs \"<OneLocBuild@3 log>\"]`.\n"
+            f"4. act on the printed decision: `timeout` → send the given email; "
+            f"`complete_pr` → post the given chat message to the Code reviews chat; "
+            f"`wait`/`complete_none`/`not_started`/`already_final` → nothing to send.\n"
+            f"Silently journal: `journal --release {release} --source scout --kind "
+            f"automation --text \"localization-poller: <decision>\"`. Stay silent if "
+            f"there is nothing to do.")
+
+    # One-shot (noon) trigger — trigger then hand off to the poller.
+    return (
+        f"Release {release} — trigger localization.\n"
+        f"1. run `step-action --release {release} --phase ccd --step localization`;\n"
+        f"2. run the returned needs_skill action to start pipeline 405133 "
+        f"(isCreatePrSelected=true); note the queued build id;\n"
+        f"3. run `record-localization-run --release {release} --build-id <buildId>` "
+        f"— this leaves the step IN-FLIGHT (do NOT record-step done; the poller "
+        f"finishes it once the run completes or times out);\n"
+        f"4. silently journal: `journal --release {release} --source scout --kind "
+        f"automation --text \"ccd-noon triggered ccd.localization\"`.")
+
+
 KNOWLEDGE = {
     "summary": "Trigger the loc pipeline at noon, poll it to completion, then post the translations PR for review.",
     "what": (

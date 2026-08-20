@@ -48,6 +48,7 @@ phases:
     name: "Build & Lib Verification"
     checklist_phase: 2
     anchor: "CCD+1"          # opens the day AFTER Code Complete — the engineer wakes to a resume
+    show_pipeline_runs: true # surface the RC pipeline-run one-liner (checker/orchestrator/MRWP) in status + digest
     steps:
       - { id: checker_fired,       name: "Verify Code Complete Checker fired the release", owner: agent, maps_to: [B0] }
       - { id: orchestrator_health, name: "Verify Release Orchestrator health (parked at Remove RC Tags)", owner: agent, maps_to: [B1] }

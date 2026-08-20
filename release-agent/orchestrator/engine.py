@@ -655,6 +655,7 @@ class Orchestrator:
             return {
                 "id": phase["id"], "name": phase["name"],
                 "num": phase.get("checklist_phase"),
+                "show_pipeline_runs": bool(phase.get("show_pipeline_runs")),
                 "done": done, "total": len(steps),
                 "due": self._phase_due(phase), "started": done > 0,
                 "opens": opens.isoformat() if opens else None,

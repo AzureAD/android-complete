@@ -138,50 +138,25 @@ def _ccd_cron(ccd_date, hhmm: str):
 
 def _prompt_for(spec: dict, release: str) -> str:
     """A concrete instruction the automation runs. Scout resolves each step via
-    step-action, executes the send/trigger, records it, and journals it. The
-    localization trigger and its poller have bespoke prompts (they don't just
-    record-step done)."""
-    step_list = ", ".join(spec["steps"])
+    step-action, executes the send/trigger, records it, and journals it.
+
+    A step MAY OWN a bespoke prompt by declaring `automation_prompt(release, spec)` on its
+    module (the single source of truth, like `fire_at_local`) — used for genuinely bespoke
+    flows such as the localization trigger + poller. This keeps the planner generic: it
+    never special-cases a step id. Steps without one get the default send + record-step
+    prompt below."""
     steps = spec.get("steps") or []
+    step_list = ", ".join(steps)
 
-    # Localization poller (interval) — poll the in-flight run.
-    if spec.get("interval") and steps == ["ccd.localization"]:
-        return (
-            f"Release {release} — localization poller.\n"
-            f"If localization for {release} is in-flight (it was triggered at noon and "
-            f"isn't done/blocked yet), poll it once. The ADO MCP can't reach "
-            f"msazure/One, so read via az (build id is stored on the step):\n"
-            f"1. status: `az pipelines build show --id <buildId> "
-            f"--org https://msazure.visualstudio.com --project One "
-            f"--query \"{{status:status,result:result}}\" -o json`.\n"
-            f"2. if completed, find the OneLocBuild@3 log id: `az devops invoke "
-            f"--org https://msazure.visualstudio.com --area build --resource timeline "
-            f"--route-parameters project=One buildId=<buildId> --api-version 7.1 "
-            f"--query \"records[?name=='OneLocBuild@3'].log.id | [0]\" -o tsv`, then read "
-            f"it: `az devops invoke --org https://msazure.visualstudio.com --area build "
-            f"--resource logs --route-parameters project=One buildId=<buildId> "
-            f"logId=<logId> --api-version 7.1`.\n"
-            f"3. run `check-localization --release {release} --complete <true|false> "
-            f"[--logs \"<OneLocBuild@3 log>\"]`.\n"
-            f"4. act on the printed decision: `timeout` → send the given email; "
-            f"`complete_pr` → post the given chat message to the Code reviews chat; "
-            f"`wait`/`complete_none`/`not_started`/`already_final` → nothing to send.\n"
-            f"Silently journal: `journal --release {release} --source scout --kind "
-            f"automation --text \"localization-poller: <decision>\"`. Stay silent if "
-            f"there is nothing to do.")
-
-    # Localization trigger (one-shot, noon) — trigger then hand off to the poller.
-    if not spec.get("interval") and steps == ["ccd.localization"]:
-        return (
-            f"Release {release} — trigger localization.\n"
-            f"1. run `step-action --release {release} --phase ccd --step localization`;\n"
-            f"2. run the returned needs_skill action to start pipeline 405133 "
-            f"(isCreatePrSelected=true); note the queued build id;\n"
-            f"3. run `record-localization-run --release {release} --build-id <buildId>` "
-            f"— this leaves the step IN-FLIGHT (do NOT record-step done; the poller "
-            f"finishes it once the run completes or times out);\n"
-            f"4. silently journal: `journal --release {release} --source scout --kind "
-            f"automation --text \"ccd-noon triggered ccd.localization\"`.")
+    # Single-step automation whose step owns a bespoke prompt → delegate to the module.
+    if len(steps) == 1:
+        phase, _, sid = steps[0].partition(".")
+        mod = steps_pkg.get_step(phase, sid)
+        fn = getattr(mod, "automation_prompt", None)
+        if callable(fn):
+            prompt = fn(release, spec)
+            if prompt:
+                return prompt
 
     # Default: send/trigger + record-step done (reminders).
     return (
