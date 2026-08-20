@@ -57,7 +57,7 @@ def build(state):
     links = K.links_for(bid, "Release Orchestrator run")
     versions = {k: P._tag_value(tags, f"Next{k}Version")
                 for k in ("Common", "Msal", "Broker")}
-    vstr = ", ".join(f"{k} {v}" for k, v in versions.items() if v) or "versions n/a"
+    vstr = P.format_versions(versions, fallback="versions n/a")
 
     stages = mock_input("stages", MISSING)
     if stages is MISSING:

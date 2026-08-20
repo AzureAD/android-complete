@@ -242,6 +242,7 @@ def _pipelines_line(r: dict) -> str:
     resolved yet. Reads the nested pipeline_runs schema (migrating a legacy flat shape);
     no live az call in the render path."""
     from orchestrator.state import migrate_pipeline_runs
+    from tools.pipelines import format_versions
     pr = migrate_pipeline_runs(r.get("pipeline_runs") or {})
     parts = []
     ch = pr.get("checker") or {}
@@ -249,8 +250,7 @@ def _pipelines_line(r: dict) -> str:
         parts.append(f"checker {ch['run_id']}")
     o = pr.get("orchestrator") or {}
     if o.get("run_id"):
-        v = o.get("versions") or {}
-        vstr = ", ".join(f"{k} {v[k]}" for k in ("Common", "Msal", "Broker") if v.get(k))
+        vstr = format_versions(o.get("versions"))
         parts.append(f"orchestrator {o['run_id']}" + (f" ({vstr})" if vstr else ""))
     rcs = pr.get("rcs") or []
     rc = rcs[-1] if rcs else {}

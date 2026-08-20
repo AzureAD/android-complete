@@ -300,6 +300,16 @@ _UI_API_RE = _re_mod.compile(r"\(API\s*\d+\)", _re_mod.IGNORECASE)
 TEST_CATEGORIES = ("unit", "instrumented", "ui")
 _CATEGORY_LABEL = {"unit": "Unit", "instrumented": "Instrumented", "ui": "UI automation"}
 
+_VERSION_KEYS = ("Common", "Msal", "Broker")
+
+
+def format_versions(versions, fallback: str = "") -> str:
+    """'Common X, Msal Y, Broker Z' from a {Common,Msal,Broker} dict — fixed order,
+    blanks omitted. Returns `fallback` when nothing is set. One place so every report /
+    status render formats RC versions identically."""
+    v = versions or {}
+    return ", ".join(f"{k} {v[k]}" for k in _VERSION_KEYS if v.get(k)) or fallback
+
 
 def classify_test_run(name):
     """Bucket a test-run/suite name into one of THREE categories:

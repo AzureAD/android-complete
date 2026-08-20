@@ -18,7 +18,7 @@ import sys
 try:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
-except Exception:
+except (AttributeError, ValueError):    # non-reconfigurable stream / unsupported encoding
     pass
 
 HERE = os.path.dirname(os.path.abspath(__file__))

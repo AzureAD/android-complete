@@ -18,7 +18,7 @@ def _summarize(state_file: str) -> Optional[dict]:
     try:
         with open(state_file, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-    except Exception:
+    except (OSError, ValueError):          # missing/unreadable file or bad JSON → skip it
         return None
     return {
         "release_id": data.get("release_id"),

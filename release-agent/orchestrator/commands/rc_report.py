@@ -115,8 +115,7 @@ def _format(m) -> str:
         err = f" ({o['error']})" if "error" in o else ""
         L.append(f"⛔ **Release Orchestrator** — no run found{err}.")
     else:
-        v = o.get("versions") or {}
-        vstr = ", ".join(f"{k} {v[k]}" for k in ("Common", "Msal", "Broker") if v.get(k)) or "versions n/a"
+        vstr = K.format_versions(o.get("versions"), fallback="versions n/a")
         if o.get("healthy"):
             park = "parked at 'Remove RC Tags' (awaiting owner approval)" if o.get("parked") \
                 else f"'{o.get('park_stage')}' already cleared"
@@ -158,8 +157,7 @@ def _format(m) -> str:
         # Failing tests, grouped by suite (UI first), each tagged by category.
         suites = r.get("failed_suites")
         if suites:
-            _ord = {"ui": 0, "instrumented": 1, "unit": 2}
-            for s in sorted(suites, key=lambda s: (_ord.get(s.get("category", "ui"), 9), -s["failed"])):
+            for s in K.sort_failed_suites(suites):
                 cat = _lbl.get(s.get("category", "ui"), "UI automation")
                 fr = round(s["failed"] * 100.0 / s["total"], 1) if s["total"] else 0.0
                 L.append(f"   • [{cat}] {s['name']}: {s['failed']}/{s['total']} failed ({fr}%)")
@@ -178,9 +176,7 @@ def _format(m) -> str:
         for p in probs:
             L.append(f"  - {p}")
     # Unit retry warning — failed-then-passed on retry (counted as passed).
-    recovered = sorted({t for prov in ("ECS", "Local")
-                        for t in ((((m.get("mrwp") or {}).get(prov) or {}).get("tests") or {})
-                                  .get("categories", {}).get("unit", {}).get("recovered") or [])})
+    recovered = K.recovered_unit_tests(m)
     if recovered:
         L += ["", f"⚠ **Retry warning** — {len(recovered)} unit test(s) failed then passed "
                   f"on retry (counted as passed):"]

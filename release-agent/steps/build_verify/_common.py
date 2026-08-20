@@ -9,13 +9,19 @@ escalation links surfaced when a step blocks, plus small resolvers the step modu
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 # This package is Engineering-only; alias the explicitly-named source constants to the
 # short local names the step CONFIGs use. (Do NOT use these for msazure/One calls.)
+from tools import pipelines as P
 from tools.pipelines import (
     ENGINEERING_ORG as ORG, ENGINEERING_PROJECT as PROJECT,
     CHECKER_DEF, ORCHESTRATOR_DEF, MRWP_DEF,
-    ORCH_REQUIRED_STAGES, ORCH_PARK_STAGE,
+    ORCH_REQUIRED_STAGES, ORCH_PARK_STAGE, format_versions,
 )
+from orchestrator.state import migrate_pipeline_runs
+from orchestrator.outcomes import Done, Blocked
+from steps.lib.mockctx import mock_input, MISSING
 
 # Surfaced in every block reason so the engineer knows how to recover / escalate.
 RECOVERY_TSG = ("https://eng.ms/docs/microsoft-security/identity/"
@@ -41,13 +47,11 @@ def links_for(build_id, name="ADO run"):
 
 
 def _now_iso():
-    from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
 
 
 def _pipeline_runs(state) -> dict:
     """The nested pipeline_runs container on state (migrating a legacy flat shape)."""
-    from orchestrator.state import migrate_pipeline_runs
     return migrate_pipeline_runs(getattr(state, "pipeline_runs", None) or {})
 
 
@@ -114,8 +118,6 @@ def rc_report_model(state, timeout=120):
     iteration (rcs[-1]) and routes through `tools.pipelines.assemble_rc_model` — the SAME
     assembler the live path uses — so the state-based model can't drift from the live one.
     """
-    from tools import pipelines as P
-    from orchestrator.state import migrate_pipeline_runs
     pr = migrate_pipeline_runs(getattr(state, "pipeline_runs", None) or {})
     ch = pr.get("checker") or {}
     o = pr.get("orchestrator") or {}
@@ -123,6 +125,9 @@ def rc_report_model(state, timeout=120):
     rc = rcs[-1] if rcs else {}
 
     checker = {"fired": bool(ch.get("run_id")), "run_id": ch.get("run_id"), "when": ch.get("when")}
+    # healthy=True is true by construction here: rc_report only runs AFTER orchestrator_health
+    # passed (a failed pre-gate stage blocks that step, so we never reach this with an
+    # unhealthy orchestrator). The live path (release_report) derives it from stages.
     orchestrator = {"found": bool(o.get("run_id")), "healthy": True,
                     "run_id": o.get("run_id"), "versions": o.get("versions") or {},
                     "parked": o.get("parked")}
@@ -257,14 +262,25 @@ def _fail_rate(failed, total) -> float:
 # Test-run category labels (mirrors tools.pipelines.classify_test_run).
 _CAT_LABEL = {"unit": "Unit", "instrumented": "Instrumented", "ui": "UI automation"}
 
+# Failing-suite display order: UI first (the RC-critical bucket), then instrumented, unit.
+_SUITE_ORDER = {"ui": 0, "instrumented": 1, "unit": 2}
+
+
+def sort_failed_suites(suites):
+    """Failing suites ordered UI-first then instrumented/unit, each by descending failure
+    count. One helper so every RC renderer (plain email, HTML email, CLI report) lists
+    them identically."""
+    return sorted(suites or [],
+                  key=lambda s: (_SUITE_ORDER.get(s.get("category", "ui"), 9),
+                                 -(s.get("failed") or 0)))
+
 
 def _rc_email_plain(model, ctx) -> str:
     """Plain-text form of the RC report email (fallback + logging)."""
     L = []
     rid = model.get("release", "?")
     o = model.get("orchestrator") or {}
-    v = o.get("versions") or {}
-    vstr = ", ".join(f"{k} {v[k]}" for k in ("Common", "Msal", "Broker") if v.get(k)) or "n/a"
+    vstr = format_versions(o.get("versions"), fallback="n/a")
     L.append(f"Hi {ctx.get('owner', 'there')},")
     L.append("")
     L.append(f"The Release Candidate for {rid} has been built and RC testing has "
@@ -297,9 +313,7 @@ def _rc_email_plain(model, ctx) -> str:
         fs = r.get("failed_stages") or []
         if fs:
             L.append(f"      Red stages ({len(fs)}): {', '.join(fs)}")
-        _ord = {"ui": 0, "instrumented": 1, "unit": 2}
-        for s in sorted((r.get("failed_suites") or []),
-                        key=lambda s: (_ord.get(s.get("category", "ui"), 9), -s["failed"])):
+        for s in sort_failed_suites(r.get("failed_suites")):
             sr = _fail_rate(s["failed"], s["total"])
             L.append(f"      [{_CAT_LABEL.get(s.get('category', 'ui'), 'UI automation')}] "
                      f"{s['name']} — {s['failed']}/{s['total']} failed ({sr}%):")
@@ -337,8 +351,7 @@ def _rc_email_html(model, ctx) -> str:
     from steps.lib import templating as T
     rid = model.get("release", "?")
     o = model.get("orchestrator") or {}
-    v = o.get("versions") or {}
-    vstr = ", ".join(f"{k} {v[k]}" for k in ("Common", "Msal", "Broker") if v.get(k)) or "n/a"
+    vstr = format_versions(o.get("versions"), fallback="n/a")
     ch = model.get("checker") or {}
     park = ("parked at &lsquo;Remove RC Tags&rsquo;"
             if o.get("parked") else "gate cleared")
@@ -392,9 +405,7 @@ def _rc_email_html(model, ctx) -> str:
                             ("unit", "instrumented", "ui"))
 
         # Failing suites — UI first, then instrumented/unit; each tagged by category.
-        _ord = {"ui": 0, "instrumented": 1, "unit": 2}
-        suites = sorted((r.get("failed_suites") or []),
-                        key=lambda s: (_ord.get(s.get("category", "ui"), 9), -s["failed"]))
+        suites = sort_failed_suites(r.get("failed_suites"))
         suite_html = ""
         for s in suites:
             sr = _fail_rate(s["failed"], s["total"])
@@ -540,10 +551,6 @@ def verify_mrwp(state, provider):
       tests   : inject the test summary {total,passed,failed[,runs]}
     Returns a Done/Blocked outcome.
     """
-    from orchestrator.outcomes import Done, Blocked
-    from steps.lib.mockctx import mock_input, MISSING
-    from tools import pipelines as P
-
     label = f"MRWP {provider}"
     # 1) resolve the MRWP build id for this provider
     mid = mock_input("mrwp_id", MISSING)

@@ -33,7 +33,7 @@ def get_tz(name: Optional[str] = None):
     try:
         from zoneinfo import ZoneInfo
         return ZoneInfo(name or DEFAULT_TZ)
-    except Exception:
+    except (ImportError, KeyError, ValueError):   # no tzdata / unknown zone name
         return None
 
 
