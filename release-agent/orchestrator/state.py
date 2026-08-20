@@ -23,6 +23,54 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _versions_str_to_dict(v) -> dict:
+    """'Common 24.6.0, Msal 8.4.2, Broker 16.5.0' -> {Common,Msal,Broker}. A dict passes
+    through; anything unparseable yields {}."""
+    if isinstance(v, dict):
+        return {k: val for k, val in v.items() if val}
+    if not isinstance(v, str) or not v.strip():
+        return {}
+    out = {}
+    for part in v.split(","):
+        toks = part.strip().split()
+        if len(toks) >= 2:
+            out[toks[0]] = toks[1]
+    return out
+
+
+def migrate_pipeline_runs(pr) -> dict:
+    """Normalize the pipeline_runs container to the nested RC schema (idempotent).
+
+    Accepts the legacy FLAT shape
+      {checker, orchestrator, versions, mrwp_ecs, mrwp_local, mrwp_id_source, resolved_at}
+    and lifts it to
+      {checker:{run_id,...}, orchestrator:{run_id,versions:{},...}, rcs:[{rc:1,ecs,local}]}.
+    A value already in the nested shape (has 'rcs', or a dict 'checker') is returned as-is.
+    Empty/None -> {}."""
+    if not pr or not isinstance(pr, dict):
+        return {}
+    # Already nested? (rcs present, or checker is an object)
+    if "rcs" in pr or isinstance(pr.get("checker"), dict) or isinstance(pr.get("orchestrator"), dict):
+        return pr
+    out = {}
+    if pr.get("checker"):
+        out["checker"] = {"run_id": str(pr["checker"]), "resolved_at": pr.get("resolved_at")}
+    if pr.get("orchestrator"):
+        out["orchestrator"] = {"run_id": str(pr["orchestrator"]),
+                               "versions": _versions_str_to_dict(pr.get("versions")),
+                               "resolved_at": pr.get("resolved_at")}
+    ecs, local = pr.get("mrwp_ecs"), pr.get("mrwp_local")
+    if ecs or local:
+        rc = {"rc": 1, "resolved_at": pr.get("resolved_at")}
+        src = pr.get("mrwp_id_source")
+        if ecs:
+            rc["ecs"] = {"run_id": str(ecs), "id_source": src}
+        if local:
+            rc["local"] = {"run_id": str(local), "id_source": src}
+        out["rcs"] = [rc]
+    return out
+
+
 @dataclass
 class StepState:
     """Persisted state for a single step."""
@@ -88,7 +136,17 @@ class ReleaseState:
     # refreshed each time Phase 2 resolves the chain. Because a re-triggered 'Trigger RC
     # Testing' stage spawns NEW MRWP runs, these are re-resolved (newest wins) — not a
     # fixed cache. Surfaced in status details + the daily digest.
-    pipeline_runs: dict = field(default_factory=dict)  # {checker, orchestrator, mrwp_ecs, mrwp_local, mrwp_id_source, resolved_at}
+    # Phase-2 release-pipeline runs — the RECORD of what verification resolved, reused by
+    # the RC report + gate (no re-discovery). Nested schema (see migrate_pipeline_runs):
+    #   { checker:      {run_id, when, resolved_at},
+    #     orchestrator: {run_id, versions:{Common,Msal,Broker}, parked, resolved_at},
+    #     rcs: [ {rc, ecs:{run_id,id_source,complete,ran,total,failed_stages,
+    #                       yellow_stages,never_ran,tests,failed_suites,resolved_at},
+    #            local:{...same...}, resolved_at} ] }
+    # There is exactly ONE checker + ONE orchestrator, but MULTIPLE RC iterations (each a
+    # re-trigger of RC Testing spawns a new ecs/local pair). The LATEST RC is rcs[-1] — the
+    # report + gate always use it. A per-provider id change appends a new rc entry.
+    pipeline_runs: dict = field(default_factory=dict)
     notes: list = field(default_factory=list)
 
     # ---- persistence ----
@@ -101,7 +159,11 @@ class ReleaseState:
         # unattended automation — an unexpected key must never hard-crash it.
         # Only keys matching a declared field are applied; the rest are dropped.
         known = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in known})
+        obj = cls(**{k: v for k, v in data.items() if k in known})
+        # Migrate the flat pre-nested pipeline_runs shape to the nested RC schema so
+        # older/hand-edited state files load cleanly and readers see one shape.
+        obj.pipeline_runs = migrate_pipeline_runs(obj.pipeline_runs)
+        return obj
 
     def save(self, path: str) -> None:
         self.updated_at = _now()

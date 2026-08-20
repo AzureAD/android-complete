@@ -19,7 +19,8 @@ KIND = "agent"
 MOCKABLE = {
     "mrwp_id": {"kind": "input", "desc": "Inject the ECS MRWP build id (skip orchestrator lookup)."},
     "stages": {"kind": "input", "desc": "Inject the ECS run's stage list [{name,state,result}]."},
-    "tests": {"kind": "input", "desc": "Inject the ECS test summary {total,passed,failed}."},
+    "tests": {"kind": "input", "desc": "Inject the ECS test summary {total,passed,failed,categories}."},
+    "suites": {"kind": "input", "desc": "Inject the ECS failing suites [{name,failed,total,category,tests}]."},
 }
 
 

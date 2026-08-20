@@ -17,7 +17,8 @@ KIND = "agent"
 MOCKABLE = {
     "mrwp_id": {"kind": "input", "desc": "Inject the Local MRWP build id (skip orchestrator lookup)."},
     "stages": {"kind": "input", "desc": "Inject the Local run's stage list [{name,state,result}]."},
-    "tests": {"kind": "input", "desc": "Inject the Local test summary {total,passed,failed}."},
+    "tests": {"kind": "input", "desc": "Inject the Local test summary {total,passed,failed,categories}."},
+    "suites": {"kind": "input", "desc": "Inject the Local failing suites [{name,failed,total,category,tests}]."},
 }
 
 

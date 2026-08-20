@@ -82,9 +82,11 @@ def build(state):
 
     # The park stage should be PENDING (waiting for the owner). If it already ran, the
     # gate was approved — surface it (out of the expected Phase-2 state), don't hard-fail.
-    K.stash_runs(state, orchestrator=bid, versions=vstr)
     park = by_name.get(cfg["park_stage"])
-    if park is not None and park.get("state") == "completed":
+    park_done = bool(park is not None and park.get("state") == "completed")
+    K.stash_orchestrator(state, bid, versions={k: v for k, v in versions.items() if v},
+                         parked=not park_done)
+    if park_done:
         return Done(
             f"Release Orchestrator run {bid} healthy ({vstr}); NOTE '{cfg['park_stage']}' "
             f"already ran (result={park.get('result')}) — the approval gate was cleared. "

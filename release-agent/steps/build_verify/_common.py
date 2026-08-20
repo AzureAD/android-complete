@@ -45,17 +45,64 @@ def links_for(build_id, name="ADO run"):
     return [{"name": name, "url": build_url(build_id)}]
 
 
-def stash_runs(state, **ids):
-    """Record resolved pipeline run ids on state.pipeline_runs (drop None values),
-    stamped with resolved_at. Called each time Phase 2 resolves the chain so the ids
-    are in state (for status details + the digest). Re-resolved on every pass, so a
-    re-triggered MRWP run (new id) overwrites the old one."""
+def _now_iso():
     from datetime import datetime, timezone
-    pr = dict(getattr(state, "pipeline_runs", {}) or {})
-    for k, v in ids.items():
-        if v is not None:
-            pr[k] = str(v)
-    pr["resolved_at"] = datetime.now(timezone.utc).isoformat()
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _pipeline_runs(state) -> dict:
+    """The nested pipeline_runs container on state (migrating a legacy flat shape)."""
+    from orchestrator.state import migrate_pipeline_runs
+    return migrate_pipeline_runs(getattr(state, "pipeline_runs", None) or {})
+
+
+def stash_checker(state, run_id, when=None):
+    """Record the (single) Code Complete Checker run that fired the release."""
+    pr = _pipeline_runs(state)
+    pr["checker"] = {"run_id": str(run_id), "when": when, "resolved_at": _now_iso()}
+    state.pipeline_runs = pr
+
+
+def stash_orchestrator(state, run_id, versions=None, parked=None):
+    """Record the (single) Release Orchestrator run + its RC versions and parked flag."""
+    pr = _pipeline_runs(state)
+    pr["orchestrator"] = {"run_id": str(run_id),
+                          "versions": versions or {},
+                          "parked": parked,
+                          "resolved_at": _now_iso()}
+    state.pipeline_runs = pr
+
+
+def latest_rc(state) -> dict:
+    """The current RC iteration (the last entry in rcs), or {} when none resolved yet."""
+    rcs = _pipeline_runs(state).get("rcs") or []
+    return rcs[-1] if rcs else {}
+
+
+def stash_mrwp(state, provider, snapshot):
+    """Record an MRWP provider run's FULL verification snapshot into the current RC
+    iteration. `provider` is 'ECS' or 'Local'; `snapshot` carries run_id + stage/test
+    results (run_id, id_source, complete, ran, total, failed_stages, yellow_stages,
+    never_ran, tests, failed_suites).
+
+    RC iterations are a list; the LATEST is rcs[-1]. When this provider's slot in the
+    current RC already holds a DIFFERENT run_id, RC Testing was re-triggered → a NEW rc
+    entry is appended (rc = last+1) and the snapshot lands there. Same id → idempotent
+    update. So ecs/local resolving in separate steps (any order) merge into one rc, and a
+    re-trigger rolls forward to the next rc."""
+    key = provider.lower()                       # 'ecs' | 'local'
+    pr = _pipeline_runs(state)
+    rcs = pr.setdefault("rcs", [])
+    cur = rcs[-1] if rcs else None
+    existing = (cur or {}).get(key) or {}
+    if cur is None or (existing.get("run_id") and existing["run_id"] != str(snapshot.get("run_id"))):
+        cur = {"rc": (rcs[-1]["rc"] + 1) if rcs else 1}
+        rcs.append(cur)
+    snap = dict(snapshot)
+    snap["run_id"] = str(snapshot.get("run_id"))
+    snap["resolved_at"] = _now_iso()
+    cur[key] = snap
+    cur["resolved_at"] = _now_iso()
     state.pipeline_runs = pr
 
 
@@ -67,11 +114,46 @@ RC_UI_PASS_THRESHOLD = 90.0
 
 # ---------------------------------------------------------------- RC report email
 def rc_report_model(state, timeout=120):
-    """The full Phase-2 RC report model (checker → orchestrator → ECS/Local MRWP +
-    per-run test breakdown) for this release. Pure read; see tools.pipelines."""
-    from tools import pipelines as P
-    return P.release_report(ORG, PROJECT, state.release_id,
-                            checker_def=CHECKER_DEF, orch_def=ORCHESTRATOR_DEF, timeout=timeout)
+    """The Phase-2 RC report model — assembled from the RECORD in state.pipeline_runs
+    (the verification steps stored it), NOT a live re-discovery. Uses the LATEST RC
+    iteration (rcs[-1]). Shape mirrors tools.pipelines.release_report so the gate + email
+    builders consume it unchanged:
+      {release, checker{fired,run_id,when}, orchestrator{found,healthy,parked,run_id,versions},
+       mrwp{ECS{...}, Local{...}}, problems[], rc}
+    """
+    from orchestrator.state import migrate_pipeline_runs
+    pr = migrate_pipeline_runs(getattr(state, "pipeline_runs", None) or {})
+    ch = pr.get("checker") or {}
+    o = pr.get("orchestrator") or {}
+    rcs = pr.get("rcs") or []
+    rc = rcs[-1] if rcs else {}
+
+    model = {
+        "release": state.release_id,
+        "checker": {"fired": bool(ch.get("run_id")), "run_id": ch.get("run_id"),
+                    "when": ch.get("when")},
+        "orchestrator": {"found": bool(o.get("run_id")), "healthy": True,
+                         "run_id": o.get("run_id"), "versions": o.get("versions") or {},
+                         "parked": o.get("parked")},
+        "mrwp": {}, "problems": [], "rc": rc.get("rc"),
+    }
+    for slot, prov in (("ecs", "ECS"), ("local", "Local")):
+        s = rc.get(slot)
+        if not s:
+            continue
+        model["mrwp"][prov] = {
+            "run_id": s.get("run_id"), "complete": s.get("complete"),
+            "ran": s.get("ran"), "total": s.get("total"),
+            "failed_stages": s.get("failed_stages") or [],
+            "yellow_stages": s.get("yellow_stages") or [],
+            "never_ran": s.get("never_ran") or [],
+            "tests": s.get("tests"), "failed_suites": s.get("failed_suites"),
+        }
+        if not s.get("complete") and s.get("never_ran"):
+            model["problems"].append(
+                f"MRWP {prov}: did NOT run to completion — never-ran: "
+                f"{', '.join(n for n in s['never_ran'] if n)}.")
+    return model
 
 
 def rc_run_links(model) -> list:
@@ -481,7 +563,8 @@ def verify_mrwp(state, provider):
 
     # 3) test summary (best-effort — never blocks; red/yellow tests are triaged later)
     tests = mock_input("tests", MISSING)
-    if tests is MISSING:
+    tests_injected = tests is not MISSING
+    if not tests_injected:
         ok, tests, _ = P.get_test_summary(ORG, PROJECT, mid)
         if not ok:
             tests = None
@@ -495,6 +578,25 @@ def verify_mrwp(state, provider):
     if comp["yellow"]:
         extras.append(f"{len(comp['yellow'])} yellow")
     extra = f" ({', '.join(extras)} — triaged later)" if extras else ""
-    stash_runs(state, **{f"mrwp_{provider.lower()}": mid})
+
+    # 4) failing suites (individual test names) — snapshot alongside the summary so the RC
+    # report + gate read everything from state (no re-discovery). Mockable via `suites`.
+    # Only fetch LIVE when the summary was read live (tests not injected) — an injected
+    # summary means an offline/test context, so we don't make the extra network call.
+    suites = mock_input("suites", MISSING)
+    if suites is MISSING:
+        suites = None
+        if not tests_injected and tests and tests.get("failed"):
+            okf, fsuites, _ = P.get_failed_tests(ORG, PROJECT, mid)
+            if okf:
+                suites = fsuites
+
+    # 5) stash the FULL per-provider snapshot into the current RC iteration.
+    stash_mrwp(state, provider, {
+        "run_id": mid, "complete": comp["complete"], "ran": comp["ran"],
+        "total": comp["total"], "failed_stages": comp["failed"],
+        "yellow_stages": comp["yellow"], "never_ran": comp["never_ran"],
+        "tests": tests, "failed_suites": suites,
+    })
     return Done(
         f"{label} run {mid} ran to completion — {stage_note}{extra}.{tnote}", links=links)

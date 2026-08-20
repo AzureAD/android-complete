@@ -237,24 +237,31 @@ _STEP_STATE_WORD = {"done": "Done", "gate": "Awaiting your approval",
 
 
 def _pipelines_line(r: dict) -> str:
-    """Compact one-line summary of the Phase-2 release-pipeline run ids recorded on
-    state (checker → orchestrator → the two MRWP runs). Empty string when none resolved
-    yet. Shared by the status view and the daily digest so both read from state (no live
-    az call in the render path)."""
-    pr = r.get("pipeline_runs") or {}
+    """Compact one-line summary of the Phase-2 release-pipeline runs recorded on state
+    (checker → orchestrator → the LATEST RC's two MRWP runs). Empty string when none
+    resolved yet. Reads the nested pipeline_runs schema (migrating a legacy flat shape);
+    no live az call in the render path."""
+    from orchestrator.state import migrate_pipeline_runs
+    pr = migrate_pipeline_runs(r.get("pipeline_runs") or {})
     parts = []
-    if pr.get("checker"):
-        parts.append(f"checker {pr['checker']}")
-    if pr.get("orchestrator"):
-        v = f" ({pr['versions']})" if pr.get("versions") else ""
-        parts.append(f"orchestrator {pr['orchestrator']}{v}")
+    ch = pr.get("checker") or {}
+    if ch.get("run_id"):
+        parts.append(f"checker {ch['run_id']}")
+    o = pr.get("orchestrator") or {}
+    if o.get("run_id"):
+        v = o.get("versions") or {}
+        vstr = ", ".join(f"{k} {v[k]}" for k in ("Common", "Msal", "Broker") if v.get(k))
+        parts.append(f"orchestrator {o['run_id']}" + (f" ({vstr})" if vstr else ""))
+    rcs = pr.get("rcs") or []
+    rc = rcs[-1] if rcs else {}
     mr = []
-    if pr.get("mrwp_ecs"):
-        mr.append(f"ECS {pr['mrwp_ecs']}")
-    if pr.get("mrwp_local"):
-        mr.append(f"Local {pr['mrwp_local']}")
+    if (rc.get("ecs") or {}).get("run_id"):
+        mr.append(f"ECS {rc['ecs']['run_id']}")
+    if (rc.get("local") or {}).get("run_id"):
+        mr.append(f"Local {rc['local']['run_id']}")
     if mr:
-        parts.append("MRWP " + " / ".join(mr))
+        tag = f" (RC{rc['rc']})" if rc.get("rc") and len(rcs) > 1 else ""
+        parts.append("MRWP" + tag + " " + " / ".join(mr))
     return " · ".join(parts)
 
 

@@ -27,22 +27,28 @@ def cmd_rc_report(args):
 
 
 def _persist(st, model, args):
-    """Record the resolved run ids on state so status/digest can show them without a
-    live read. Best-effort — a report must never fail because the state write did."""
+    """Record the resolved runs (+ snapshots) on state so status/digest/rc_report read
+    them without a live call. Best-effort — a report must never fail because the state
+    write did. (This is the LIVE `rc-report` diagnostic refreshing the record; the verify
+    steps are the primary writers.)"""
     if st is None:
         return
-    ch = model.get("checker") or {}
-    o = model.get("orchestrator") or {}
-    mr = model.get("mrwp") or {}
-    v = o.get("versions") or {}
-    vstr = ", ".join(f"{k} {v[k]}" for k in ("Common", "Msal", "Broker") if v.get(k)) or None
     try:
-        K.stash_runs(st,
-                     checker=ch.get("run_id"),
-                     orchestrator=o.get("run_id"),
-                     versions=vstr,
-                     mrwp_ecs=(mr.get("ECS") or {}).get("run_id"),
-                     mrwp_local=(mr.get("Local") or {}).get("run_id"))
+        ch = model.get("checker") or {}
+        if ch.get("run_id"):
+            K.stash_checker(st, ch["run_id"], ch.get("when"))
+        o = model.get("orchestrator") or {}
+        if o.get("run_id"):
+            K.stash_orchestrator(st, o["run_id"],
+                                 versions={k: v for k, v in (o.get("versions") or {}).items() if v},
+                                 parked=o.get("parked"))
+        mr = model.get("mrwp") or {}
+        for slot in ("ECS", "Local"):
+            m = mr.get(slot) or {}
+            if m.get("run_id"):
+                K.stash_mrwp(st, slot, {k: m.get(k) for k in
+                                        ("run_id", "complete", "ran", "total", "failed_stages",
+                                         "yellow_stages", "never_ran", "tests", "failed_suites")})
         C.save_state(st, args.runs_root, args.release)
     except Exception:
         pass

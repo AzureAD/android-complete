@@ -89,7 +89,7 @@ def _verdict(state, run, result, job):
         return Blocked(
             f"Code Complete Checker '{job}' did not succeed (result={result}) in run "
             f"{bid} ({when}) — the orchestrator was not launched.{K.UNBLOCK_HELP}", links=links)
-    K.stash_runs(state, checker=bid)
+    K.stash_checker(state, bid, when)
     return Done(
         f"Code Complete Checker fired the release — run {bid} ({when}), '{job}' succeeded.",
         links=links)
