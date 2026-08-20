@@ -195,6 +195,47 @@ def cmd_reopen(args):
     return 0
 
 
+# The Phase-2 RC-testing steps a re-triggered RC invalidates: the two MRWP verifications
+# and the terminal RC report/gate. checker_fired / orchestrator_health are NOT reopened —
+# a re-triggered RC re-runs MRWP against the same orchestrator run.
+_RC_RETRIGGER_STEPS = ("mrwp_ecs", "mrwp_local", "rc_report")
+
+
+def cmd_rc_retriggered(args):
+    """The human explicitly signals that a NEW RC has been triggered (a flaky-run
+    re-trigger, or the orchestrator re-running RC testing after a broker cherry-pick).
+
+    Reopens the Phase-2 RC-testing steps so the engine re-resolves the NEWEST MRWP run
+    (mrwp_run_ids already picks the highest id) and re-applies the gate. Scout's poller /
+    next then holds while the new run is in-flight and re-evaluates on completion — so an
+    early poll can't mark an in-progress RC as a false failure."""
+    st, orch = C.load_orch(args.runs_root, args.release, args.config)
+    reason = (args.reason or "RC re-triggered").strip()
+    reopened = []
+    for sid in _RC_RETRIGGER_STEPS:
+        act = orch.reopen_step("build_verify", sid, reason)
+        if act.kind != "idle":
+            reopened.append(sid)
+        # a reopened step is no longer an owner action / block
+        key = f"build_verify.{sid}"
+        st.pending_human = [p for p in st.pending_human if p != key]
+    if not reopened:
+        print("No Phase-2 RC steps found to reopen (is this release in Build & RC "
+              "Verification?).")
+        return 1
+    if st.status in ("awaiting_action", "holding_gate", "complete", "halted"):
+        st.status = "running"
+    C.save_state(st, args.runs_root, args.release)
+    C.elog(args.runs_root, args.release).log(
+        "rc_retriggered", driver=reason, steps=",".join(reopened))
+    msg = (f"RC re-trigger acknowledged — reopened {', '.join(reopened)}. Scout will "
+           f"re-resolve the newest RC and re-apply the gate; it holds (no action needed) "
+           f"while the run is still in-flight and polls every 30 min. Reason: {reason}")
+    C.emit(args.runs_root, args.release, msg, kind="override")
+    print(msg)
+    return 0
+
+
 def cmd_halt(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config)
     act = orch.halt(args.reason or "")
@@ -292,6 +333,15 @@ def register(sub):
     ro.add_argument("--step", required=True)
     ro.add_argument("--reason", default="", help="Why (optional)")
     ro.set_defaults(func=cmd_reopen)
+
+    rt = sub.add_parser("rc-retriggered",
+                        help="Signal a NEW RC was triggered — reopens the Phase-2 RC steps "
+                             "so Scout re-evaluates the newest RC (holds while in-flight)")
+    rt.add_argument("--release", required=True)
+    rt.add_argument("--reason", default="",
+                    help="Why it was re-triggered (e.g. 'flaky broker suite re-run' or "
+                         "'broker cherry-pick #123') — recorded for audit")
+    rt.set_defaults(func=cmd_rc_retriggered)
 
     ht = sub.add_parser("halt", help="Emergency hold — nothing advances until resume (reason REQUIRED)")
     ht.add_argument("--release", required=True)

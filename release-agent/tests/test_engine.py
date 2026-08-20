@@ -749,6 +749,36 @@ def test_reopen_step():
     assert st.current_step == "bash_done"                 # gate re-holds
 
 
+def test_rc_retriggered_reopens_phase2_rc_steps():
+    """`rc-retriggered` reopens the two MRWP verifies + rc_report so Scout re-evaluates the
+    NEWEST RC, clears them from pending_human, and flips status back to running — while
+    leaving checker_fired / orchestrator_health (which a re-triggered RC doesn't invalidate)
+    untouched."""
+    import tempfile, argparse
+    from orchestrator.commands import release as R
+    from orchestrator.state import StepState
+    from orchestrator import cli_common as _C
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-26", ccd_source="confirmed")
+    for sid in ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local"):
+        st.set_step("build_verify", sid, StepState(status="done"))
+    st.set_step("build_verify", "rc_report", StepState(status="blocked", note="UI 88%"))
+    st.pending_human = ["build_verify.rc_report"]
+    st.status = "awaiting_action"
+    with tempfile.TemporaryDirectory() as d:
+        _C.save_state(st, d, "2026-08")
+        ns = argparse.Namespace(runs_root=d, release="2026-08", config=CONFIG,
+                                reason="flaky broker suite re-run")
+        assert R.cmd_rc_retriggered(ns) == 0
+        again = _C.load_state(d, "2026-08")
+    assert not again.is_done("build_verify", "mrwp_ecs")
+    assert not again.is_done("build_verify", "mrwp_local")
+    assert again.get_step("build_verify", "rc_report").status == "pending"
+    assert again.is_done("build_verify", "checker_fired")        # untouched
+    assert again.is_done("build_verify", "orchestrator_health")  # untouched
+    assert "build_verify.rc_report" not in again.pending_human
+    assert again.status == "running"
+
+
 def test_halt_blocks_then_resume():
     st, orch = _orch()
     orch.halt("prod incident")
