@@ -52,6 +52,46 @@ def _u(build_id):
     return K.build_url(build_id) if build_id else ""
 
 
+def cmd_record_rc_report(args):
+    """Record the rc_report step's outcome AFTER the skill has emailed the RC report.
+
+    Re-reads the live model, applies the UI-automation quality gate (K.rc_ui_gate),
+    records `pass` (>=90% UI pass → step done, flow advances to go_test) or `attention`
+    (<90% → step BLOCKS for owner investigation), and stashes the evaluated pipeline-run
+    links on the step so its Details point at every artifact behind the verdict.
+
+    This is the follow-up the rc_report NeedsSkill names (`payload.followup_command`), so
+    the skill runs it instead of a blind `record-step --status pass`."""
+    _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    try:
+        model = K.rc_report_model(orch.state)
+    except Exception as e:                       # pragma: no cover - defensive
+        print(_json.dumps({"error": f"could not build the RC model ({e})."}))
+        return 1
+
+    gate = K.rc_ui_gate(model)
+    links = K.rc_run_links(model)
+    status = "pass" if gate["verdict"] == "pass" else "attention"
+    orch.record_scout_step("build_verify", "rc_report", status, gate["detail"])
+
+    # record_scout_step doesn't carry links — attach the evaluated-run refs (and stamp
+    # the recorder as scout) on the resulting step, preserving its status/note.
+    step = orch.state.get_step("build_verify", "rc_report")
+    step.links = links
+    step.by = "scout"
+    orch.state.set_step("build_verify", "rc_report", step)
+    C.save_state(orch.state, args.runs_root, args.release)
+
+    C.emit(args.runs_root, args.release,
+           f"[{'ok' if status == 'pass' else 'attention'}] rc_report: "
+           f"{gate['detail'].splitlines()[0]}", kind="step")
+    print(_json.dumps({"verdict": gate["verdict"], "status": status,
+                       "pass_pct": gate["pass_pct"], "ui_total": gate["ui_total"],
+                       "ui_failed": gate["ui_failed"], "threshold": gate["threshold"],
+                       "detail": gate["detail"], "links": links}))
+    return 0 if status == "pass" else 2
+
+
 def _format(m) -> str:
     L = [f"## RC Pipeline Status — Release {m['release']}", ""]
 
@@ -138,3 +178,11 @@ def register(sub):
     rp.add_argument("--release", required=True)
     rp.add_argument("--json", action="store_true", help="Emit the raw report model")
     rp.set_defaults(func=cmd_rc_report)
+
+    rr = sub.add_parser(
+        "record-rc-report",
+        help="Record the rc_report step after emailing: apply the 90%% UI gate "
+             "(pass|attention/block) + stash the evaluated run links")
+    rr.add_argument("--release", required=True)
+    rr.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
+    rr.set_defaults(func=cmd_record_rc_report)

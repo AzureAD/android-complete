@@ -59,6 +59,12 @@ def stash_runs(state, **ids):
     state.pipeline_runs = pr
 
 
+# The Phase-2 quality bar: at least this % of UI-automation tests must pass for RC to
+# clear to bug bash. Below it, the rc_report step blocks for owner investigation
+# (a large UI failure usually means a real regression → fix + re-run MRWP).
+RC_UI_PASS_THRESHOLD = 90.0
+
+
 # ---------------------------------------------------------------- RC report email
 def rc_report_model(state, timeout=120):
     """The full Phase-2 RC report model (checker → orchestrator → ECS/Local MRWP +
@@ -68,10 +74,77 @@ def rc_report_model(state, timeout=120):
                             checker_def=CHECKER_DEF, orch_def=ORCHESTRATOR_DEF, timeout=timeout)
 
 
+def rc_run_links(model) -> list:
+    """Durable links to EVERY pipeline run the RC verification evaluated — the Code
+    Complete Checker, the Release Orchestrator, and both MRWP (ECS + Local) runs — so the
+    recorded step points at each artifact behind the verdict (surfaced in the step's
+    Details). Only runs with a resolved id are included."""
+    out = []
+    ch = (model.get("checker") or {}).get("run_id")
+    if ch:
+        out.append({"name": "Code Complete Checker run", "url": build_url(ch)})
+    orid = (model.get("orchestrator") or {}).get("run_id")
+    if orid:
+        out.append({"name": "Release Orchestrator run", "url": build_url(orid)})
+    for prov in ("ECS", "Local"):
+        rid = ((model.get("mrwp") or {}).get(prov) or {}).get("run_id")
+        if rid:
+            out.append({"name": f"MRWP {prov} run", "url": build_url(rid)})
+    return out
+
+
+def rc_ui_gate(model) -> dict:
+    """The Phase-2 RC quality gate. Aggregates UI-automation results across BOTH MRWP
+    providers (ECS + Local) and decides whether RC quality clears the bar. Returns
+      {ui_total, ui_passed, ui_failed, pass_pct, threshold, verdict, detail}
+    `verdict` is 'pass' when pass_pct >= RC_UI_PASS_THRESHOLD (or no UI tests were found),
+    else 'attention' (below the bar → the rc_report step must block for investigation).
+    `detail` is the human note recorded on the step / shown to the owner."""
+    ui_total = ui_pass = ui_fail = 0
+    for prov in ("ECS", "Local"):
+        ui = (((model.get("mrwp") or {}).get(prov) or {}).get("tests") or {}) \
+            .get("categories", {}).get("ui") or {}
+        ui_total += ui.get("total") or 0
+        ui_pass += ui.get("passed") or 0
+        ui_fail += ui.get("failed") or 0
+    thr = RC_UI_PASS_THRESHOLD
+    if not ui_total:
+        return {"ui_total": 0, "ui_passed": 0, "ui_failed": 0, "pass_pct": None,
+                "threshold": thr, "verdict": "pass",
+                "detail": ("\u26a0 No UI-automation tests were found in either MRWP run — "
+                           "nothing to gate on. Proceeding, but verify RC test coverage.")}
+    pass_pct = round(ui_pass * 100.0 / ui_total, 1)
+    ok = pass_pct >= thr
+    head = (f"UI-automation pass rate {pass_pct}% ({ui_pass}/{ui_total} passed, "
+            f"{ui_fail} failed) across ECS + Local")
+    if ok:
+        detail = f"{head} \u2014 at or above the {thr:.0f}% gate. RC quality OK to proceed."
+    else:
+        detail = (f"{head} \u2014 BELOW the {thr:.0f}% gate. This is a large UI failure; "
+                  f"investigate the root cause (it likely needs a fix + an MRWP re-run). "
+                  f"The failing suites are in the RC report email. Once fixed and re-run, "
+                  f"re-run this step (`next`); to override, `skip`.")
+        suites = []
+        for prov in ("ECS", "Local"):
+            for s in (((model.get("mrwp") or {}).get(prov) or {}).get("failed_suites") or []):
+                if s.get("category", "ui") == "ui" and s.get("failed"):
+                    suites.append((prov, s))
+        suites.sort(key=lambda ps: -ps[1]["failed"])
+        if suites:
+            detail += "\nTop UI failures:\n" + "\n".join(
+                f"  \u2022 [{prov}] {s['name']}: {s['failed']}/{s['total']} failed"
+                for prov, s in suites[:6])
+    return {"ui_total": ui_total, "ui_passed": ui_pass, "ui_failed": ui_fail,
+            "pass_pct": pass_pct, "threshold": thr,
+            "verdict": "pass" if ok else "attention", "detail": detail}
+
+
 def rc_email_subject(model) -> str:
     rid = model.get("release", "?")
-    return (f"Release {rid} — RC verification report (Phase 2) · "
-            f"action: approve to proceed to bug bash")
+    action = ("approve to proceed to bug bash"
+              if rc_ui_gate(model)["verdict"] == "pass"
+              else "investigate UI failures before proceeding")
+    return f"Release {rid} — RC verification report (Phase 2) · action: {action}"
 
 
 def _fail_rate(failed, total) -> float:

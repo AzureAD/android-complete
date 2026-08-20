@@ -55,6 +55,7 @@ Discover → (if no gate cleared, run the entry gate) → `next` to advance → 
 | Running the readiness entry gate (right after `init`) | `reference/readiness-gate.md` |
 | Starting a release / handling CCD / setting up push reminders & automations | `reference/starting-and-scheduling.md` |
 | Advancing **Phase 0 (Pre-flight)** — notice, flight reminders, lockdown, confirm, vitals | `reference/phases/preflight.md` |
+| Advancing **Phase 2 (Build & RC Verification)** — verification chain, RC report email + 90% UI gate, go_test | `reference/phases/build_verify.md` |
 | Rendering `status`/`checklist` output | `reference/presenting-status.md` |
 | Looking up a command / manual override / event-logging detail | `reference/commands.md` |
 | Building a NEW phase's guidance | `reference/phases/_TEMPLATE.md` |

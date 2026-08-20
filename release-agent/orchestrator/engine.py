@@ -648,6 +648,7 @@ class Orchestrator:
                     "needs_owner": needs,
                     "time_ready": self._step_time_ready(phase, s),   # False = waits for its fire_at_local
                     "note": stp.note,          # agent result / block reason / detail
+                    "links": list(getattr(stp, "links", None) or []),  # durable refs to items evaluated
                     "now": bool(sid == cur and not s_done and (is_gate or is_rem or is_attest or s_blocked)),
                 })
             opens = self._phase_anchor_date(phase)

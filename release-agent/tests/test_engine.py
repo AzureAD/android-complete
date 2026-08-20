@@ -2039,6 +2039,119 @@ def test_build_verify_rc_report_emails_owner():
         P.release_report = orig
 
 
+def test_rc_ui_gate_and_run_links():
+    """The Phase-2 UI gate aggregates UI-automation results across BOTH MRWP providers:
+    >=90% combined pass → 'pass'; below → 'attention' (with a failing-suite summary);
+    no UI tests → pass with a warning. rc_run_links surfaces every evaluated run."""
+    from steps.build_verify import _common as K
+
+    def _model(ecs_ui, local_ui, ecs_suites=None):
+        return {
+            "release": "2026-08",
+            "checker": {"fired": True, "run_id": 111},
+            "orchestrator": {"found": True, "run_id": 222},
+            "mrwp": {
+                "ECS": {"run_id": 333, "failed_suites": ecs_suites or [],
+                        "tests": {"categories": {"ui": ecs_ui}}},
+                "Local": {"run_id": 444, "failed_suites": [],
+                          "tests": {"categories": {"ui": local_ui}}}}}
+
+    # 180/200 = 90.0% → exactly at the bar → pass
+    g = K.rc_ui_gate(_model({"total": 100, "passed": 100, "failed": 0},
+                            {"total": 100, "passed": 80, "failed": 20}))
+    assert g["verdict"] == "pass" and g["pass_pct"] == 90.0 and g["ui_total"] == 200
+
+    # 160/200 = 80% → below the bar → attention, with the failing suite listed
+    fail_model = _model({"total": 100, "passed": 60, "failed": 40},
+                        {"total": 100, "passed": 100, "failed": 0},
+                        ecs_suites=[{"name": "PROD MSAL - RC Broker (API 32)",
+                                     "failed": 40, "total": 100, "category": "ui"}])
+    g2 = K.rc_ui_gate(fail_model)
+    assert g2["verdict"] == "attention" and g2["pass_pct"] == 80.0
+    assert "BELOW" in g2["detail"] and "PROD MSAL - RC Broker (API 32)" in g2["detail"]
+
+    # no UI tests anywhere → pass with a warning (absence of data is not a failure)
+    g3 = K.rc_ui_gate({"mrwp": {"ECS": {"tests": {"categories": {}}},
+                                "Local": {"tests": {"categories": {}}}}})
+    assert g3["verdict"] == "pass" and g3["ui_total"] == 0 and "No UI-automation" in g3["detail"]
+
+    # every evaluated run becomes a durable link
+    links = K.rc_run_links(fail_model)
+    names = [l["name"] for l in links]
+    assert names == ["Code Complete Checker run", "Release Orchestrator run",
+                     "MRWP ECS run", "MRWP Local run"]
+    assert all("buildId=" in l["url"] for l in links)
+
+
+def test_record_rc_report_applies_ui_gate_and_stashes_links():
+    """`record-rc-report` (the follow-up the skill runs after emailing) applies the 90%
+    UI gate: >=90% → step done; <90% → step BLOCKS (awaiting_action). Either way it
+    stashes the evaluated run links on the step. release_report is monkeypatched offline."""
+    import tempfile as _tf
+    from tools import pipelines as P
+    from orchestrator.commands import rc_report as RR
+    from orchestrator.state import StepState
+
+    def _model(ecs_ui, local_ui):
+        return {"release": "2026-08",
+                "checker": {"fired": True, "run_id": 111},
+                "orchestrator": {"found": True, "run_id": 222},
+                "mrwp": {"ECS": {"run_id": 333, "failed_suites": [],
+                                 "tests": {"categories": {"ui": ecs_ui}}},
+                         "Local": {"run_id": 444, "failed_suites": [],
+                                   "tests": {"categories": {"ui": local_ui}}}},
+                "problems": []}
+
+    orig = P.release_report
+    with _tf.TemporaryDirectory() as d:
+        rid = "2026-08"
+        _stub_build_defs("pass")
+        st = ReleaseState(release_id=rid, ccd="2026-08-26", owner_email="dev@microsoft.com")
+        orch = Orchestrator(CONFIG, st)
+        _pass_scout_checks(orch); orch.gate.sign()
+        C.save_state(st, d, rid)
+
+        class A:
+            runs_root = d; release = rid; config = CONFIG; as_of = None
+
+        try:
+            # PASS: 190/200 = 95% ≥ 90 → step done, links stashed
+            P.release_report = lambda *a, **k: _model(
+                {"total": 100, "passed": 95, "failed": 5},
+                {"total": 100, "passed": 95, "failed": 5})
+            assert RR.cmd_record_rc_report(A) == 0
+            s1 = C.load_state(d, rid)
+            assert s1.is_done("build_verify", "rc_report")
+            step1 = s1.get_step("build_verify", "rc_report")
+            assert [l["name"] for l in step1.links] == [
+                "Code Complete Checker run", "Release Orchestrator run",
+                "MRWP ECS run", "MRWP Local run"]
+
+            # reset the step, then FAIL: 120/200 = 60% < 90 → blocked, links still stashed
+            s1.set_step("build_verify", "rc_report", StepState())
+            C.save_state(s1, d, rid)
+            P.release_report = lambda *a, **k: _model(
+                {"total": 100, "passed": 60, "failed": 40},
+                {"total": 100, "passed": 60, "failed": 40})
+            assert RR.cmd_record_rc_report(A) == 2
+            s2 = C.load_state(d, rid)
+            step2 = s2.get_step("build_verify", "rc_report")
+            assert step2.status == "blocked" and not s2.is_done("build_verify", "rc_report")
+            assert s2.status == "awaiting_action"
+            assert "build_verify.rc_report" in s2.pending_human
+            assert "BELOW" in step2.note and len(step2.links) == 4
+        finally:
+            P.release_report = orig
+
+
+def test_active_phase_report_steps_carry_links():
+    """The digest's active-phase step model exposes each step's durable `links` so the
+    links to items a step evaluated aren't dropped from the phase report."""
+    st, orch = _mock_orch({})
+    ap = orch.status_report()["active_phase"]
+    assert ap and all("links" in s for s in ap["steps"])
+
+
 def test_classify_test_run_categories():
     """The test-run classifier buckets into exactly three: unit / instrumented / ui;
     anything that isn't unit/instrumented is UI ('the rest are UI', incl. Lab Api Tests)."""
