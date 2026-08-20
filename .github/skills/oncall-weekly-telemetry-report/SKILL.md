@@ -52,8 +52,10 @@ crash layer, which needs a secret), `--end YYYY-MM-DD` (see § Reporting window)
    Resolved reporting window (UTC):   # example values for a run on 2026-07-15
      Last 7 days:   2026-07-08 -> 2026-07-15  (exclusive upper bound)
      Baseline:      2026-07-01 -> 2026-07-08
-     60-day trend:  2026-05-16 -> 2026-07-15  (literal 60d ending today; chart includes current partial week)
-     Trend delta cutoff: weeks < 2026-07-12  (startofweek(curEnd); pass as bucket-trends.js --end)
+     60-day trend:  2026-05-16 -> 2026-07-15  (literal 60d ending today; rolling 7d buckets anchored at curEnd)
+     Trend buckets: 8 complete rolling weeks; final bucket == the Last-7-days window above (classifier WoW == displayed WoW)
+     bucket-trends.js: --start=2026-05-16 --end=2026-07-15   (pass BOTH; --end disables the partial-end auto-drop heuristic)
+     Sparkline (8 rolling weeks): 2026-05-20 -> 2026-07-15  (SPARK_START -> SPARK_END, exclusive; no Sunday alignment needed)
    ```
    These dates are stamped into each report's `<title>`, `<div class="meta">`, and Generated banner
    during bootstrap — you do not hand-edit them.
@@ -85,17 +87,32 @@ crash layer, which needs a secret), `--end YYYY-MM-DD` (see § Reporting window)
    (`[curEnd - 14d, curEnd - 7d)`). No user input.
 
 3. **60-day trend window** — auto-computed as the **literal last 60 days ending today**
-   (`[curEnd - 60d, curEnd)`), so both bounds move with `-EndDate`. Trend sections are Sun-Sat
-   weekly-bucketed (Kusto `startofweek()` is Sunday-aligned) because the trend needs stable weekly
-   denominators, but the final bar is the **current in-progress (partial) week** — the chart ends
-   today. Regression/improvement **delta classification is still computed on complete weeks only**
-   (`bucket-trends.js --end=startofweek(curEnd) --include-partial-end`); a partial week as "last"
-   would read as a fake −99% improvement, so it is charted but excluded from the delta math.
+   (`[curEnd - 60d, curEnd)`), so both bounds move with `-EndDate`. Trend and sparkline sections are
+   bucketed into **rolling 7-day windows anchored at `curEnd`** (`bin_at(t, 7d, datetime(curEnd))`),
+   **not** Sun-Sat calendar weeks. The final bucket is therefore `[curEnd - 7d, curEnd)` — byte-for-byte
+   the same window as the headline WoW numbers — so **the novelty classifier's WoW equals the WoW the
+   report prints**, by construction. Every bucket is a complete 7 days; there is no partial end bar and
+   no separate classification cutoff. Invoke as
+   `bucket-trends.js --start=<curEnd-60d> --end=<curEnd>` (**pass both** — see the note below).
 
-**Kusto note (weekly-bucketed queries only):** `startofweek()` is Sunday-aligned, so
-`startofweek('2026-05-09') == 2026-05-03T00:00:00Z`. When authoring weekly-bucketed queries, verify
-by printing the distinct week values from your first query. Off-by-one-week is the #1 silent error
-in weekly-bucket queries.
+   Because 60 is not a multiple of 7, the **oldest** bucket (`curEnd - 63d`) covers 4 days and is the
+   partial one — the safe end to be partial on. `--start` drops it, leaving 8 complete rolling weeks.
+
+> **⚠️ Why not `startofweek()`.** Calendar-week bucketing cut off at `startofweek(curEnd)` lagged the
+> report's rolling window by up to a full week, so anything that turned in the last ~6 days was
+> structurally invisible to the noise gate — exactly the period an on-call engineer cares about most.
+> On the 2026-08-01 run the gate's "current" week was 07/19–07/26 against a report window of
+> 07/25–08/01 (**one day of overlap**): `authorization_pending` read **+63.2%** in the report and
+> **−37.1%** to the classifier, and was filed *"ONGOING — do not re-triage"*. Same for `expired_token`
+> (+26.7% vs −51.0%). Re-bucketing on `bin_at` promoted both to ACCELERATING **and** demoted
+> `access_denied`, a former false positive (actually −53.2%). Alignment adds real signal *and* removes
+> phantom signal — it is not merely "more alerts". **Do not reintroduce `startofweek()`.**
+
+> **⚠️ Always pass `--end=<curEnd>` to `bucket-trends.js`, not just `--start`.** Its partial-end
+> auto-drop heuristic is guarded by `if (!endArg …)`. Under rolling alignment the newest bucket is
+> genuinely complete, so omitting `--end` would let a **real** 70% collapse be silently discarded as
+> "looks partial". Passing `--end` filters nothing (every bucket label is `< curEnd` by construction)
+> and disables the heuristic. The script now warns if you omit it.
 
 ---
 
@@ -210,6 +227,19 @@ Never carry a convention across the two playbooks.
 - **A moved metric is a question, not a verdict.** Never publish a regression verdict without the
   app's diagnostic ladder having been walked (Broker: Originator pre-check + dim slicing;
   Authenticator: volume floor + rate normalisation + error-reason decomposition).
+- **Every red/amber table pill must be reconciled.** The scoreboard / WoW tables colour a row from
+  its own rolling delta; the attention section is populated from `classify-novelty.js`'s **novelty**
+  verdict. Those answer different questions, so a row can be legitimately red in the table and
+  legitimately absent from attention — but a reader who sees that mismatch with no explanation
+  concludes the report is broken. Precedent: `Passkey WebAuthN Registration` shipped carrying
+  `tag-bad` (−1.27 pts, worst delta in the table) directly above the words *"Quiet week — 0 NEW or
+  ACCELERATING"*. Both statements were true: the scenario peaks at ~732 bad-outcome devices, under
+  the 1,000-device peak-floor, so it is **structurally excluded** from classification and can never
+  appear in attention however sharply it moves. Every `tag-bad`/`tag-warn` row must therefore be
+  **either** promoted into attention **or** named in a muted `<div class="reconcile-note">` giving
+  the reason it is not escalated — test the reasons in this order: (1) below the classification
+  floor, (2) within its own normal band, (3) ONGOING and flat. `validate-report.ps1` check 19
+  hard-fails an unreconciled pill.
 - **Filename collision rule.** If a report already exists for the same end-date, do not silently
   overwrite. Open it, list its top-3 findings, and explicitly state in chat what changed in the new
   data before regenerating. A second run on the same window without a delta is wasted work.

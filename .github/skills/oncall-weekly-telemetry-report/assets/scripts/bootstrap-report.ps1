@@ -155,29 +155,32 @@ $prevStart = $curEnd.AddDays(-14)
 $prevEnd   = $curStart
 
 # 60-day trend spans the LITERAL last 60 days ending curEnd (today), so BOTH
-# bounds move with -EndDate (the trend ends today rather than 3-6 days ago on
-# the last complete Sunday). The trend CHART shows the
-# current in-progress week as its final (partial) bar, but bucket-trends.js still
-# computes regression/improvement DELTAS on complete Sun-Sat weeks only -- a
-# partial week as "last" would read as a fake -99% improvement. So we resolve two
-# distinct things:
-#   * data/chart window   [sixtyDayStart, sixtyDayEnd) = [curEnd-60d, curEnd)
-#                         -> queried and charted (final bucket is the partial week)
-#   * classification cutoff  trendClassEnd = startofweek(curEnd)
-#                         -> passed to bucket-trends.js as --end so the partial
-#                            current week is excluded from the delta math while
-#                            still being drawn.
-# Per-week bucketing stays Sun-Sat aligned (Kusto startofweek() is Sunday-based),
-# so the first and last buckets are partial by construction.
-$curEndDow      = [int]$curEnd.DayOfWeek  # Sun=0 .. Sat=6
+# bounds move with -EndDate.
+#
+# ⚠️ Trend/sparkline buckets are ROLLING 7-day windows anchored at curEnd
+# (`bin_at(t, 7d, curEnd)` in KQL), NOT Sun-Sat calendar weeks. The FINAL bucket is
+# therefore [curEnd-7d, curEnd) -- byte-for-byte the same window as the headline WoW
+# numbers -- so the novelty classifier and the report agree by construction. Every
+# bucket is a COMPLETE 7 days, so there is no partial end bar, no separate
+# classification cutoff, and no --include-partial-end.
+#
+# This replaced startofweek() bucketing, which lagged the report's rolling window by
+# up to a full week and silently suppressed genuinely-rising keys (for a 2026-08-01
+# run the classifier's "current" week was 07/19-07/26 against a report window of
+# 07/25-08/01: authorization_pending read +63.2% in the report and -37.1% to the
+# classifier, and was filed "ONGOING -- do not re-triage"). Do not reintroduce a
+# separate calendar-week cutoff here.
+#
+# Because 60 is not a multiple of 7, the OLDEST bucket (curEnd-63d) covers 4 days
+# and IS partial -- the safe end to be partial on. It is dropped by passing
+# --start=$sixtyDayStart to bucket-trends.js, leaving 8 complete rolling weeks.
 $sixtyDayStart  = $curEnd.AddDays(-60)             # literal 60 days ending today
-$sixtyDayEnd    = $curEnd                          # exclusive upper bound == today; chart includes the partial current week
-$trendClassEnd  = $curEnd.AddDays(-$curEndDow)     # startofweek(curEnd): weeks >= this are the in-progress (partial) week, excluded from delta classification
-# Sparkline window: last 8 COMPLETE Sun-Sat weeks. sparkEnd is exclusive and is by construction a
-# Sunday, so sparkEnd-56d is also exactly a Sunday. These are emitted below so the author never
-# hand-computes them: an off-by-one sparkStart does NOT error in Kusto, it silently makes the first
-# sparkline bucket partial and skews its rate (verified live against Entra MFA Registration No-QR).
-$sparkEnd       = $trendClassEnd
+$sixtyDayEnd    = $curEnd                          # exclusive upper bound == today == the bin_at anchor
+# Sparkline window: last 8 ROLLING weeks, same anchor. Because buckets are defined by
+# 7-day steps back from curEnd, sparkStart has NO Sunday-alignment requirement -- the
+# old "an off-by-one sparkStart silently makes bucket 1 partial" trap (verified live
+# against Entra MFA Registration No-QR) cannot occur under bin_at.
+$sparkEnd       = $curEnd
 $sparkStart     = $sparkEnd.AddDays(-56)
 
 # Sanity check: curEnd is an exclusive 00:00-UTC date boundary and must be today
@@ -197,9 +200,10 @@ $prevEndStr   = $prevEnd.ToString('yyyy-MM-dd')
 Write-Host "Resolved reporting window (UTC) for -App $App :"
 Write-Host "  Last 7 days:   $curStartStr -> $curEndStr  (exclusive upper bound)"
 Write-Host "  Baseline:      $prevStartStr -> $prevEndStr"
-Write-Host "  60-day trend:  $($sixtyDayStart.ToString('yyyy-MM-dd')) -> $($sixtyDayEnd.ToString('yyyy-MM-dd'))  (literal 60d ending today; chart includes current partial week)"
-Write-Host "  Trend delta cutoff: weeks < $($trendClassEnd.ToString('yyyy-MM-dd'))  (startofweek(curEnd); pass as bucket-trends.js --end)"
-Write-Host "  Sparkline (8 complete weeks): $($sparkStart.ToString('yyyy-MM-dd')) -> $($sparkEnd.ToString('yyyy-MM-dd'))  (SPARK_START -> SPARK_END, exclusive; both land on Sunday -- do not adjust by hand)"
+Write-Host "  60-day trend:  $($sixtyDayStart.ToString('yyyy-MM-dd')) -> $($sixtyDayEnd.ToString('yyyy-MM-dd'))  (literal 60d ending today; rolling 7d buckets anchored at curEnd)"
+Write-Host "  Trend buckets: 8 complete rolling weeks; final bucket == the Last-7-days window above (classifier WoW == displayed WoW)"
+Write-Host "  bucket-trends.js: --start=$($sixtyDayStart.ToString('yyyy-MM-dd')) --end=$curEndStr   (pass BOTH; --end disables the partial-end auto-drop heuristic)"
+Write-Host "  Sparkline (8 rolling weeks): $($sparkStart.ToString('yyyy-MM-dd')) -> $($sparkEnd.ToString('yyyy-MM-dd'))  (SPARK_START -> SPARK_END, exclusive; no Sunday alignment needed)"
 # NOTE: Console output uses ASCII '->'; the HTML stamp below uses U+2192 arrows
 # and U+00B7 middle-dots to match the template's canonical visual style. This
 # is safe because $outText is written via [System.Text.UTF8Encoding]::new($false)
@@ -303,8 +307,8 @@ $curLabel        = "$(Format-DateHuman $curStart -IncludeYear:$false) $arrow $(F
 $prevLabel       = "$(Format-DateHuman $prevStart -IncludeYear:$false) $arrow $(Format-DateHuman $prevEnd -IncludeYear:$false)"
 # 60-day trend: literal 60 days ending curEnd (today). curEnd is the exclusive
 # upper bound, so the last calendar day carrying data is curEnd - 1 (yesterday).
-# The final weekly bucket is the current in-progress week (partial) -- see
-# bootstrap's $trendClassEnd note and bucket-trends.js --include-partial-end.
+# Buckets are rolling 7-day windows anchored at curEnd, so the FINAL bar is a
+# complete week and is identical to the "Last 7 days" window above.
 $sixtyDayLabel   = "$(Format-DateHuman $sixtyDayStart -IncludeYear:$false) $arrow $(Format-DateHuman ($sixtyDayEnd.AddDays(-1)) -IncludeYear:$true)"
 $todayStr         = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
 
@@ -319,7 +323,7 @@ $outText  = [regex]::Replace($outText, '<title>[^<]*</title>', "<title>$newTitle
 $newMeta = @"
 <div class="meta">
       <strong>Last 7 days: $curLabel</strong> &nbsp;vs&nbsp; <strong>$prevLabel</strong> &nbsp;$dot&nbsp;
-      60-day trend: <strong>$sixtyDayLabel</strong> (last 60 days; final bar in progress) &nbsp;$dot&nbsp;
+      60-day trend: <strong>$sixtyDayLabel</strong> (last 60 days; rolling 7-day buckets) &nbsp;$dot&nbsp;
       $($appProfile.SourceHtml) &nbsp;$dot&nbsp;
       Generated <strong>$todayStr</strong>
     </div>
