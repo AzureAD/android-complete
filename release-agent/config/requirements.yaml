@@ -41,6 +41,20 @@ requirements:
     check: "python -c \"import yaml\""
     install: "python -m pip install pyyaml"
 
+  - id: tzdata
+    name: "tzdata (IANA timezone database)"
+    type: python
+    required_by: [engine (owner-timezone due-ness + fire_at_local gating)]
+    check: "python -c \"from zoneinfo import ZoneInfo; ZoneInfo('America/Los_Angeles')\""
+    install: "python -m pip install tzdata"
+
+  - id: tzlocal
+    name: "tzlocal (detect the owner's local timezone)"
+    type: python
+    required_by: [init (captures the owner's IANA timezone)]
+    check: "python -c \"import tzlocal\""
+    install: "python -m pip install tzlocal"
+
   - id: azure-cli
     name: "Azure CLI (az)"
     type: cli

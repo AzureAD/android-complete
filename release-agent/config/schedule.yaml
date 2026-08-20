@@ -11,6 +11,12 @@
 # Per-phase anchors (e.g. Phase 0 opens CCD-7) live next to each phase in
 # phases.yaml as `anchor: "CCD-7"`. This file only says WHERE CCD comes from.
 
+# The release owner's timezone. Phase due-ness and every step's `fire_at_local` are
+# evaluated on THIS wall clock — not the host's — so a UTC automation host doesn't
+# roll the date (and open phases / fire timed comms) hours early. IANA name; needs the
+# `tzdata` package on Windows. Defaults to America/Los_Angeles if omitted/unloadable.
+timezone: America/Los_Angeles
+
 ccd_source:
   pipeline_id: 3038
   org: "https://identitydivision.visualstudio.com"

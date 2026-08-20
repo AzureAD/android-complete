@@ -16,8 +16,44 @@ from __future__ import annotations
 
 import calendar
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Optional
+
+# The release runs on the OWNER's wall clock, not the host's. On a UTC host, a bare
+# date.today() rolls to the next day at UTC-midnight (evening the day before, Pacific),
+# which opened phases — and fired timed comms — hours early. So "today"/"now" are
+# computed in this zone unless a caller overrides it. Needs the `tzdata` package on
+# Windows (no system IANA db); falls back to host-local if the zone can't be loaded.
+DEFAULT_TZ = "America/Los_Angeles"
+
+
+def get_tz(name: Optional[str] = None):
+    """A tzinfo for `name` (default DEFAULT_TZ), or None if it can't be loaded
+    (missing tzdata) — callers then fall back to host-local time."""
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name or DEFAULT_TZ)
+    except Exception:
+        return None
+
+
+def detect_local_tz() -> Optional[str]:
+    """The IANA name of the machine's local timezone (e.g. 'America/Los_Angeles'), or
+    None if it can't be determined. Captured at `init` (on the owner's interactive
+    machine) and persisted, so later headless automation runs — which may execute in a
+    UTC process context — use the OWNER's zone, not the host's."""
+    try:
+        import tzlocal
+        return tzlocal.get_localzone_name()
+    except Exception:
+        return None
+
+
+def now_local(tz=None) -> datetime:
+    """Timezone-aware 'now' in the release zone (default DEFAULT_TZ). Falls back to a
+    naive host-local now only if the zone can't be loaded."""
+    z = tz if tz is not None else get_tz()
+    return datetime.now(z) if z is not None else datetime.now()
 
 
 def parse_release_month(release_id: str) -> Tuple[int, int]:
@@ -87,9 +123,10 @@ def anchor_date(ccd: date, spec: str) -> date:
     return ccd + timedelta(days=anchor_offset(spec))
 
 
-def today() -> date:
-    """'Now' at date granularity. `--as-of` overrides this for a testable clock."""
-    return date.today()
+def today(tz=None) -> date:
+    """'Now' at date granularity, in the release timezone (default DEFAULT_TZ) — NOT
+    the host's, so a UTC host doesn't roll the date early. `--as-of` overrides this."""
+    return now_local(tz).date()
 
 
 def humanize_delta(days: int) -> str:

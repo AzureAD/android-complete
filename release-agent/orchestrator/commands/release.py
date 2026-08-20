@@ -25,6 +25,14 @@ def cmd_init(args):
     st.owner_name = getattr(args, "owner_name", None) or None
     owner_note = "" if st.owner_email else "  (couldn't resolve owner — set with set-owner)"
 
+    # Capture the owner's timezone NOW (at init, on their interactive machine) and
+    # persist it — so later headless automation runs, which may execute in a UTC process
+    # context, still evaluate due-ness + fire_at_local on the OWNER's clock. Priority:
+    # explicit --timezone, else auto-detect the local IANA zone; falls back to the
+    # config/schedule.yaml default when neither is available.
+    st.timezone = (getattr(args, "timezone", None) or schedule.detect_local_tz())
+    tz_note = "" if st.timezone else "  (couldn't detect — using default)"
+
     # CCD is canonically the 2nd Wednesday. We still READ the pipeline override,
     # but we do NOT silently adopt it — if it differs, we flag a conflict for the
     # user to resolve (2nd-Wed default vs the pipeline date).
@@ -50,11 +58,13 @@ def cmd_init(args):
 
     C.elog(args.runs_root, args.release).log(
         "release_started", forced=bool(args.force),
-        ccd=st.ccd, ccd_source=st.ccd_source, ccd_conflict=st.ccd_conflict, owner=st.owner_email)
+        ccd=st.ccd, ccd_source=st.ccd_source, ccd_conflict=st.ccd_conflict,
+        owner=st.owner_email, timezone=st.timezone)
     owner_line = f"  Owner: {st.owner_name + ' ' if st.owner_name else ''}{st.owner_email or '(unresolved)'}{owner_note}"
+    tz_line = f"  Timezone: {st.timezone or schedule.DEFAULT_TZ}{tz_note}"
     if st.ccd:
         opens = schedule.anchor_date(default, "CCD-7").isoformat()
-        lines = [f"Initialized release {args.release}.", f"  state: {sp}", owner_line,
+        lines = [f"Initialized release {args.release}.", f"  state: {sp}", owner_line, tz_line,
                  f"  Code Complete Date: {st.ccd} (2nd Wednesday){note}",
                  f"  Phase 0 (Pre-flight) opens {opens} (CCD-7). Until then nothing fires."]
         if conflict:
@@ -62,7 +72,7 @@ def cmd_init(args):
                          f"2nd-Wednesday default. Confirm which is the real CCD before proceeding.")
         print("\n".join(lines))
     else:
-        print(f"Initialized release {args.release}.\n  state: {sp}\n{owner_line}\n{note}")
+        print(f"Initialized release {args.release}.\n  state: {sp}\n{owner_line}\n{tz_line}\n{note}")
     return 0
 
 
@@ -226,6 +236,8 @@ def register(sub):
     i.add_argument("--force", action="store_true")
     i.add_argument("--owner-email", default=None, help="Release owner email (default: signed-in az user)")
     i.add_argument("--owner-name", default=None, help="Release owner display name (optional)")
+    i.add_argument("--timezone", default=None,
+                   help="Owner IANA timezone (default: auto-detected from this machine, e.g. America/Los_Angeles)")
     i.set_defaults(func=cmd_init)
 
     l = sub.add_parser("list", help="Discover releases (none/one/many)")

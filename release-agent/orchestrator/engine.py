@@ -12,7 +12,7 @@ No LLM logic here — this is fully unit-testable and replayable.
 from __future__ import annotations
 import os
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, time
 from typing import Optional
 
 import yaml
@@ -42,7 +42,7 @@ class Orchestrator:
     presentation lives in render.py. This class holds no formatting logic."""
 
     def __init__(self, config_path: str, state: ReleaseState, readiness_path: str = None,
-                 as_of: date = None, mocks: dict = None):
+                 as_of: date = None, mocks: dict = None, tz=None, now: datetime = None):
         with open(config_path, "r", encoding="utf-8") as fh:
             self.config = yaml.safe_load(fh)
         readiness_cfg = None
@@ -57,9 +57,41 @@ class Orchestrator:
         # Pass mocks={} in tests for isolation from any developer's local file.
         self.mocks = mocks if mocks is not None else mocks_mod.load_mocks()
         self.gate.mocks = self.mocks             # readiness.<item> mocks for the entry gate
-        # The simulated clock. Defaults to today; `--as-of` overrides it so a
-        # `--as-of` can jump to CCD-7 and prove a phase opens on schedule.
-        self.as_of = as_of or schedule.today()
+        # The simulated clock, in the OWNER's timezone (not the host's — a UTC host must
+        # not roll the date early). Precedence: an explicit tz arg → the tz captured on
+        # the release at init (state.timezone) → config/schedule.yaml → DEFAULT_TZ.
+        # `self.as_of` is the date used for phase due-ness; `self.now_local` is the
+        # wall-clock time used to gate a step's fire_at_local.
+        tz_name = getattr(state, "timezone", None) or self._config_timezone(config_path)
+        self.tz = tz if tz is not None else schedule.get_tz(tz_name)
+        if now is not None:                      # explicit datetime (precise tests / callers)
+            self.now_local = now
+            self.as_of = (as_of.date() if isinstance(as_of, datetime)
+                          else as_of) or now.date()
+        elif isinstance(as_of, datetime):        # a datetime passed as as_of
+            self.now_local = as_of
+            self.as_of = as_of.date()
+        elif as_of is not None:                  # a bare DATE (debug clock / most tests):
+            # keep it as the due-date, and treat the wall clock as end-of-day so a
+            # date-only test still sees fire_at_local steps as past their fire time.
+            self.as_of = as_of
+            self.now_local = datetime.combine(as_of, time(23, 59, 59), self.tz)
+        else:                                    # live: real now in the owner's zone
+            self.now_local = schedule.now_local(self.tz)
+            self.as_of = self.now_local.date()
+
+    @staticmethod
+    def _config_timezone(config_path: str) -> Optional[str]:
+        """Read the release timezone from config/schedule.yaml (`timezone:`), or None
+        (⇒ schedule.DEFAULT_TZ). Best-effort; never fails the engine."""
+        try:
+            p = os.path.join(os.path.dirname(config_path), "schedule.yaml")
+            if os.path.exists(p):
+                with open(p, "r", encoding="utf-8") as fh:
+                    return (yaml.safe_load(fh) or {}).get("timezone")
+        except Exception:
+            pass
+        return None
 
     # ---- time anchoring (CCD-relative phase windows) ----
     def _ccd(self) -> Optional[date]:
@@ -77,6 +109,29 @@ class Orchestrator:
         """A phase is due once the clock reaches its anchor. No anchor ⇒ always due."""
         ad = self._phase_anchor_date(phase)
         return ad is None or self.as_of >= ad
+
+    def _step_time_ready(self, phase: dict, step: dict) -> bool:
+        """A step that declares a `fire_at_local` (e.g. the 09:00 CCD comms) is NOT
+        runnable by the engine's automatic paths until that wall-clock time arrives, in
+        the owner's timezone, on its fire day. This stops the every-hour worker from
+        draining a timed step the instant its phase goes due — the step is left for its
+        dedicated cron-pinned automation (which calls step-action directly and so isn't
+        gated). Non-timed steps are always ready."""
+        from orchestrator import automations
+        fire = automations.fire_at(phase["id"], step["id"])
+        if not fire:
+            return True
+        try:
+            hh, mm = (int(x) for x in str(fire).split(":")[:2])
+        except (ValueError, TypeError):
+            return True                          # malformed fire_at_local ⇒ don't gate
+        anchor = self._phase_anchor_date(phase)
+        if anchor is not None:
+            if self.as_of > anchor:              # past the fire day ⇒ run ASAP (catch-up)
+                return True
+            if self.as_of < anchor:              # before it (phase not due) ⇒ not ready
+                return False
+        return self.now_local.time() >= time(hh, mm)
 
     @staticmethod
     def _is_reminder(step: dict) -> bool:
@@ -231,6 +286,18 @@ class Orchestrator:
         if self._is_mocked(phase["id"], step):
             return self._run_auto_step(phase, step, block_holds=True)
 
+        # TIME GATE (within the day): a step with a fire_at_local isn't runnable until
+        # its wall-clock time — hold as scheduled so the every-hour worker doesn't fire
+        # it early; its dedicated cron automation runs it at the pinned time.
+        if not self._step_time_ready(phase, step):
+            from orchestrator import automations
+            fire = automations.fire_at(phase["id"], step["id"])
+            self.state.status = "scheduled"
+            return NextAction(
+                kind="scheduled", phase=phase["id"], step=step["id"], name=step["name"],
+                message=f"{phase['name']} → {step['name']} is scheduled for {fire} "
+                        f"(fires via its timed automation). Nothing to do yet.")
+
         if step.get("gate") and not self._gate_approved(phase["id"], step["id"]):
             self.state.status = "holding_gate"
             return NextAction(
@@ -269,7 +336,8 @@ class Orchestrator:
         pid = phase["id"]
 
         def ready(s):
-            return (not self.state.is_done(pid, s["id"])) and self._deps_met(pid, s)
+            return ((not self.state.is_done(pid, s["id"])) and self._deps_met(pid, s)
+                    and self._step_time_ready(phase, s))
 
         # 1) Run ONE ready, not-yet-attempted runnable step (auto agent, or an
         #    already-approved gate). Independent steps progress even if a sibling holds.
@@ -578,6 +646,7 @@ class Orchestrator:
                 steps_view.append({
                     "id": sid, "name": s["name"], "status": status,
                     "needs_owner": needs,
+                    "time_ready": self._step_time_ready(phase, s),   # False = waits for its fire_at_local
                     "note": stp.note,          # agent result / block reason / detail
                     "now": bool(sid == cur and not s_done and (is_gate or is_rem or is_attest or s_blocked)),
                 })
@@ -734,8 +803,11 @@ class Orchestrator:
         # GATED ON PHASE DUE: a phase that hasn't reached its anchor (e.g. Code Complete
         # Day before the CCD) must expose NO pending scout work — otherwise the autonomous
         # automation would drain those steps early, running CCD-day comms ahead of the CCD.
+        # ALSO GATED ON fire_at_local: a timed step (e.g. the 09:00 CCD comms) is excluded
+        # until its wall-clock time arrives, so the every-hour worker doesn't fire it early
+        # — its dedicated cron automation runs it at the pinned time.
         scout_pending = ([s["id"] for s in (active_phase or {}).get("steps", [])
-                          if s.get("status") == "scout"]
+                          if s.get("status") == "scout" and s.get("time_ready", True)]
                          if (active_phase and active_phase.get("due")) else [])
         return {
             "release_id": self.state.release_id,

@@ -47,6 +47,12 @@ def _step_fire_at(step_key: str):
     return (getattr(mod, "CONFIG", {}) or {}).get("fire_at_local")
 
 
+def fire_at(phase_id: str, step_id: str):
+    """Public: the `fire_at_local` (HH:MM) a step declares, or None. Used by the engine
+    to gate a timed step until its wall-clock time."""
+    return _step_fire_at(f"{phase_id}.{step_id}")
+
+
 def _all_scheduled_steps(config_path: str) -> dict:
     """{ '<phase>.<step>': fire_at_local } for every discovered module that declares
     a fire_at_local — i.e. every step that a timed automation must own."""

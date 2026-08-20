@@ -2366,6 +2366,98 @@ def test_sim_backs_up_existing_state_before_seeding():
         assert _C.load_state(tmp, "2026-08").current_phase == "build_verify"
 
 
+def test_schedule_today_uses_owner_timezone():
+    """schedule.today() is the date in the owner's zone (PT), not the host's."""
+    from datetime import datetime
+    from orchestrator import schedule
+    assert schedule.today() == datetime.now(schedule.get_tz()).date()
+
+
+def test_due_ness_uses_owner_timezone_not_host():
+    """The bug: a UTC host rolled the date at UTC-midnight, opening phases the evening
+    before (PT). An instant that is Aug 20 in UTC but still Aug 19 in PT must resolve to
+    as_of=Aug 19, so a CCD=Aug 20 phase is NOT yet due."""
+    from datetime import datetime, timezone as _utc
+    from orchestrator import schedule
+    utc_instant = datetime(2026, 8, 20, 3, 0, tzinfo=_utc.utc)   # = 2026-08-19 20:00 PDT
+    now_pt = utc_instant.astimezone(schedule.get_tz())
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-20", ccd_source="manual")
+    orch = Orchestrator(CONFIG, st, now=now_pt, mocks={})
+    assert orch.as_of.isoformat() == "2026-08-19"               # PT date, not UTC Aug 20
+    ccd_phase = next(p for p in orch.config["phases"] if p["id"] == "ccd")
+    assert orch._phase_due(ccd_phase) is False                  # not due on PT Aug 19
+
+
+def test_timed_step_gated_until_fire_time():
+    """A step with a fire_at_local (the 09:00 CCD comms) is excluded from scout_pending
+    until 09:00 owner-local on its fire day — so the every-hour worker can't drain it
+    early — then becomes pending at/after 09:00."""
+    import yaml as _yaml
+    from datetime import datetime
+    from orchestrator.state import StepState
+    from orchestrator import schedule
+    tz = schedule.get_tz()
+    cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
+    pf_steps = [s["id"] for p in cfg["phases"] if p["id"] == "preflight" for s in p["steps"]]
+
+    def _ccd_active(now_dt):
+        st = ReleaseState(release_id="2026-08", ccd="2026-08-26",
+                          ccd_source="confirmed", readiness_signed=True)
+        for sid in pf_steps:                       # Phase 0 done ⇒ ccd is the active phase
+            st.set_step("preflight", sid, StepState(status="done"))
+        return Orchestrator(CONFIG, st, now=now_dt, mocks={})
+
+    # 08:00 on CCD day — phase is due, but the 09:00 comms are NOT yet runnable.
+    r = _ccd_active(datetime(2026, 8, 26, 8, 0, tzinfo=tz)).status_report()
+    assert r["active_phase"]["id"] == "ccd" and r["active_phase"]["due"]
+    assert "final_reminder" not in r["scout_pending"]
+    assert "pr_reminder" not in r["scout_pending"]
+
+    # 09:00 — the 9am comms are now runnable; the noon localization still isn't.
+    r2 = _ccd_active(datetime(2026, 8, 26, 9, 0, tzinfo=tz)).status_report()
+    assert "final_reminder" in r2["scout_pending"]
+    assert "localization" not in r2["scout_pending"]           # fires at noon
+
+    # a day LATER (missed) — a timed step runs ASAP (catch-up), no longer gated.
+    r3 = _ccd_active(datetime(2026, 8, 27, 1, 0, tzinfo=tz)).status_report()
+    assert "final_reminder" in r3["scout_pending"]
+
+
+def test_state_timezone_overrides_config_in_engine():
+    """The engine prefers the timezone captured on the release (state.timezone) over the
+    config default — so a headless run in a UTC process still uses the owner's zone."""
+    from datetime import datetime, timezone as _utc
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-20", timezone="America/New_York")
+    # 2026-08-20T02:00Z = 2026-08-19 22:00 EDT (still Aug 19 in New York too)
+    now_pt = datetime(2026, 8, 20, 2, 0, tzinfo=_utc.utc)
+    orch = Orchestrator(CONFIG, st, now=now_pt, mocks={})
+    # tz resolved from state → New York; as_of derived from the passed now stays Aug 20 UTC.date? 
+    # (now is explicit here; the point is self.tz came from state.timezone)
+    assert str(orch.tz) == "America/New_York"
+
+
+def test_init_captures_owner_timezone():
+    """`init` auto-detects and persists the owner's IANA timezone (and --timezone overrides)."""
+    import tempfile, argparse
+    from orchestrator.commands import release as R
+    from orchestrator import cli_common as _C
+    _stub_build_defs("pass")
+    with tempfile.TemporaryDirectory() as tmp:
+        ns = argparse.Namespace(runs_root=tmp, release="2026-09", force=False,
+                                owner_email="dev@x.com", owner_name=None,
+                                timezone="America/Chicago", config=CONFIG)
+        R.cmd_init(ns)
+        st = _C.load_state(tmp, "2026-09")
+        assert st.timezone == "America/Chicago"
+        # auto-detect path (no --timezone): stores whatever the machine reports (non-None here)
+        ns2 = argparse.Namespace(runs_root=tmp, release="2026-10", force=False,
+                                 owner_email="dev@x.com", owner_name=None,
+                                 timezone=None, config=CONFIG)
+        R.cmd_init(ns2)
+        st2 = _C.load_state(tmp, "2026-10")
+        assert st2.timezone is not None                # detected from this machine
+
+
 def test_lockdown_overlap_only_production():
     """Overlap rule: only Production-env periods that intersect the window count;
     Banner-only advisories are ignored even if they overlap."""

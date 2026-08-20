@@ -55,6 +55,10 @@ class ReleaseState:
     # push reminders email this address; resolved from the signed-in user at init.
     owner_email: Optional[str] = None
     owner_name: Optional[str] = None
+    # The owner's IANA timezone (e.g. 'America/Los_Angeles'), captured at init from the
+    # owner's machine. Phase due-ness + every fire_at_local are evaluated on THIS zone,
+    # so a headless automation running in a UTC process still uses the owner's clock.
+    timezone: Optional[str] = None
     # Code Complete Date — the anchor the phases hang off of (orchestrator's truth,
     # seeded from / written back to pipeline 3038). ccd is 'YYYY-MM-DD'.
     ccd: Optional[str] = None
