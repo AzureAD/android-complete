@@ -120,7 +120,13 @@ def _ccd_cron(ccd_date, hhmm: str):
     a CCD more than a week out (these are provisioned at release start) is the wrong
     date — it fired the CCD-day comms a week early. Cron `M H D Mo *` targets the CCD's
     day-of-month + month exactly, so a one-shot fires ON the CCD. Returns the NL Scout
-    accepts (e.g. 'cron: 0 9 26 8 *') or None if inputs are missing/invalid."""
+    accepts (e.g. 'cron: 0 9 26 8 *') or None if inputs are missing/invalid.
+
+    TIMEZONE: emit the LOCAL wall-clock time directly — do NOT convert to UTC.
+    Scout's scheduler interprets cron in host-local time (empirically verified
+    2026-08-20: a cron '37 9' fired at 09:37 PDT / 16:37 UTC, not 09:37 UTC). So a
+    `hhmm` of '09:00' correctly fires at 09:00 local on the CCD. Adding a UTC
+    conversion here would shift every CCD-day comm by the host's UTC offset."""
     if not ccd_date or not hhmm:
         return None
     try:
