@@ -336,6 +336,56 @@ build_verify.rc_report:
     - q: "Does the sim send this email?"
       a: "No. In a sim the step is marked done without sending; only the real skill flow composes + sends it via WorkIQ."
 
+# =============================== Phase 3 · bug_bash ===============================
+
+bug_bash.clone_plans_broker:
+  summary: "Copy the Broker master test plan to a new plan for this release."
+  what: >
+    Each release COPIES the Broker master template (ADO test plan #2007357, area
+    'Engineering\\Auth Client\\Broker\\Android') to a new plan named
+    'Android Monthly Release - <Mon YYYY>' (e.g. 'Android Monthly Release - Aug 2026'),
+    REFERENCING the existing test cases (the ADO clone default — it shares test cases,
+    it does not duplicate them). This is the Broker half of the old clone_plans step.
+  who: "Scout runs it automatically during `next` (an agent step, via the ADO test-plan clone API)."
+  how: >
+    Idempotent — the new plan id is stashed on the step; a re-run re-confirms that plan
+    exists and reports done without cloning again. If the clone fails (auth/API), the
+    step blocks with the ADO error; fix and `next`, or `skip --reason` to override.
+  links:
+    - name: "Broker master test plan (#2007357)"
+      url: "https://identitydivision.visualstudio.com/Engineering/_testPlans/define?planId=2007357&suiteId=2008656"
+    - name: "Broker test-plans doc"
+      url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/test-plans"
+  faqs:
+    - q: "Does it duplicate the test cases?"
+      a: "No — it references the existing test cases (the 'Reference existing test cases' clone option). Edit test cases only in the master template."
+
+bug_bash.clone_plans_auth:
+  summary: "Create the Authenticator bug-bash query-based test suite for this release."
+  what: >
+    Creates a NEW query-based (dynamic) test suite under the standing 'MSAuthenticator
+    Test Passes' plan (#714514, root suite 714515), named 'Android/release/MM/YYYY'
+    (e.g. 'Android/release/08/2026'). Its WIQL selects the Android bug-bash test cases
+    (tag 'Android', area 'Engineering\\ISP\\Identity Apps', not Closed, not 'IgnoreOnPrem'
+    — mirrors the live suite 'Android/release/08/2024'). This is the Authenticator half
+    of the old clone_plans step. It STOPS after creating the suite — assigning testers is
+    a later, manual step.
+  who: "Scout runs it automatically during `next` (an agent step, via the ADO test-suite create API)."
+  how: >
+    Idempotent — the created suite id is stashed on the step, and it also reuses an
+    existing same-named suite rather than making a duplicate. If the create fails
+    (auth/API), the step blocks with the ADO error; fix and `next`, or `skip --reason`.
+  links:
+    - name: "MSAuthenticator Test Passes plan (#714514)"
+      url: "https://identitydivision.visualstudio.com/Engineering/_testManagement?_a=tests&planId=714514&suiteId=714515"
+    - name: "How to make a test suite for bug bash (IDWiki 33580)"
+      url: "https://identitydivision.visualstudio.com/IdentityWiki/_wiki/wikis/IdentityWiki.wiki/33580/How-to-make-test-suite-for-bug-bash-"
+  faqs:
+    - q: "Does it assign testers?"
+      a: "No — it stops after creating the query-based suite. Assigning testers is done later (a separate, manual step)."
+    - q: "What names the suite?"
+      a: "The release: 'Android/release/MM/YYYY' — mirroring the live convention (newest was 'Android/release/08/2024')."
+
 # ========================== Entry gate · readiness ==========================
 # Keyed "readiness.<item>". Queried via `gate-info --item <id>`. Same fields as the
 # step entries (summary/what/who/where/how/links/faqs).

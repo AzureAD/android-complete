@@ -72,6 +72,9 @@ _SAFE_AGENTS = {
                    {"name": "UI Automation", "state": "completed", "result": "failed"}],
         "tests": {"total": 100, "passed": 98, "failed": 2}},
     "build_verify.rc_report": {"outcome": "done", "note": "RC report emailed (test)"},  # skip live az + send
+    # Phase-3 bug_bash clone steps — real agents; keep flow tests offline.
+    "bug_bash.clone_plans_broker": {"outcome": "done", "note": "broker plan cloned (test)"},
+    "bug_bash.clone_plans_auth": {"outcome": "done", "note": "auth suite created (test)"},
 }
 
 
@@ -635,9 +638,9 @@ def test_holds_at_first_hold():
     assert actions[-1].step == "ui_failures"   # Phases 0-2 gateless (rc_report auto); first hold is Phase-3 ui_failures
     # auto steps that RUN before the first hold: Phase-0 breaking/cg/cron/wiki (4) +
     # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local (4) + rc_report (scout
-    # email, mocked done here) (1) + Phase-3 clone_plans/coordinate stubs (2). The Phase-1
-    # scout steps are pre-recorded by _orch's _clear_ccd_scout (not "ran").
-    assert sum(1 for a in actions if a.kind == "ran") == 11
+    # email, mocked done here) (1) + Phase-3 clone_plans_broker/clone_plans_auth/coordinate
+    # stubs (3). The Phase-1 scout steps are pre-recorded by _orch's _clear_ccd_scout (not "ran").
+    assert sum(1 for a in actions if a.kind == "ran") == 12
 
 
 def test_gate_blocks_until_approved():
@@ -1015,7 +1018,7 @@ def test_only_frontier_phase_shows_current_despite_stale_downstream_progress():
     for pid in ("preflight", "ccd"):
         for s in next(p for p in orch.config["phases"] if p["id"] == pid)["steps"]:
             orch.state.set_step(pid, s["id"], StepState(status="done", by="test"))
-    for sid in ("clone_plans", "coordinate"):
+    for sid in ("clone_plans_broker", "coordinate"):
         orch.state.set_step("bug_bash", sid, StepState(status="done", by="test"))
     phases = {p["id"]: p for p in orch.status_report()["phases"]}
     assert phases["build_verify"]["state"] == "current" and phases["build_verify"]["current"]
@@ -2706,6 +2709,72 @@ def test_stash_mrwp_appends_new_rc_on_id_change():
     rcs = st.pipeline_runs["rcs"]
     assert [r["rc"] for r in rcs] == [1, 2]
     assert K.latest_rc(st)["ecs"]["run_id"] == "910001"          # latest = last
+
+
+# ---- Phase 3: clone_plans_broker / clone_plans_auth ----
+
+def _bb_build(sid, mocks, release="2026-08"):
+    """Build a bug_bash step outcome offline with the given mock inputs active."""
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    st = ReleaseState(release_id=release)
+    with mockctx.active(mocks):
+        return st, as_dict(_steps.get_step("bug_bash", sid).build(st))
+
+
+def test_testplans_names_and_query():
+    from tools import testplans as T
+    assert T.broker_plan_name("2026-08") == "Android Monthly Release - Aug 2026"
+    assert T.auth_suite_name("2026-08") == "Android/release/08/2026"
+    q = T.auth_bugbash_query()
+    assert "contains 'Android'" in q and "IgnoreOnPrem" in q and "Identity Apps" in q
+
+
+def test_clone_plans_broker_clones_then_idempotent():
+    """First run copies the master plan and stashes the new plan id; a re-run with that id
+    stored reports done WITHOUT cloning again."""
+    st, out = _bb_build("clone_plans_broker", {"clone_id": "5551212"})
+    assert out["kind"] == "done"
+    assert "Copied the Broker master test plan" in out["note"] and "5551212" in out["note"]
+    assert st.get_step("bug_bash", "clone_plans_broker").data["plan_id"] == "5551212"
+    assert out["links"][0]["url"].endswith("planId=5551212")
+    # idempotent: an injected existing plan id → already-cloned, no re-clone
+    _, out2 = _bb_build("clone_plans_broker", {"plan_id": "5551212"})
+    assert out2["kind"] == "done" and "already cloned" in out2["note"]
+
+
+def test_clone_plans_broker_blocks_on_api_failure():
+    _, out = _bb_build("clone_plans_broker", {"fail": "HTTP 403: forbidden"})
+    assert out["kind"] == "blocked" and "403" in out["reason"]
+
+
+def test_clone_plans_auth_creates_query_suite_then_idempotent():
+    """First run creates the query-based suite (name + stash); a re-run with the suite id
+    stored reports done without re-creating."""
+    st, out = _bb_build("clone_plans_auth", {"existing": None, "create_id": "778899"})
+    assert out["kind"] == "done"
+    assert "Created the Authenticator bug-bash query-suite 'Android/release/08/2026'" in out["note"]
+    assert "assign testers" in out["note"].lower()          # stops before assigning testers
+    assert st.get_step("bug_bash", "clone_plans_auth").data["suite_id"] == "778899"
+    # idempotent via injected existing suite id
+    _, out2 = _bb_build("clone_plans_auth", {"suite_id": "778899"})
+    assert out2["kind"] == "done" and "already exists" in out2["note"]
+
+
+def test_clone_plans_auth_reuses_existing_same_named_suite():
+    """If a same-named suite already exists under the root, reuse it (no duplicate create)."""
+    st, out = _bb_build("clone_plans_auth", {"existing": "424242"})
+    assert out["kind"] == "done" and "already exists" in out["note"]
+    assert st.get_step("bug_bash", "clone_plans_auth").data["suite_id"] == "424242"
+
+
+def test_bug_bash_clone_steps_are_real_agents():
+    """Both clone steps resolve to real agent modules (KIND=agent) — no longer stubs."""
+    import steps as _steps
+    for sid in ("clone_plans_broker", "clone_plans_auth"):
+        mod = _steps.get_step("bug_bash", sid)
+        assert mod is not None and getattr(mod, "KIND", None) == "agent" and hasattr(mod, "run")
 
 
 def test_digest_shows_rc_line_when_build_verify_active():

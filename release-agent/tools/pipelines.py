@@ -121,6 +121,49 @@ def _ado_rest_get_text(url, timeout):
         return (False, None, f"REST GET failed: {e}")
 
 
+def _ado_rest_send(url, method, body, timeout):
+    """Send a JSON REST request (POST/PATCH/PUT) to ADO with an az-minted bearer token.
+    Returns (ok, json, detail). The ONE write primitive — used for test-plan creates
+    where `az devops invoke` has no clean surface."""
+    az = shutil.which("az")
+    if az is None:
+        return (False, None, "az CLI not found")
+    try:
+        tok = subprocess.run(
+            [az, "account", "get-access-token", "--resource", _ADO_RESOURCE,
+             "--query", "accessToken", "-o", "tsv"],
+            capture_output=True, text=True, timeout=timeout, encoding="utf-8")
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return (False, None, f"failed to get token: {e}")
+    if tok.returncode != 0 or not (tok.stdout or "").strip():
+        return (False, None, "AUTH: could not get an ADO token (run `az login`)")
+    token = tok.stdout.strip()
+    import urllib.request
+    import urllib.error
+    data = _json.dumps(body or {}).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=data, method=method,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+            return (True, (_json.loads(raw) if raw.strip() else {}), "")
+    except urllib.error.HTTPError as e:
+        detail = f"HTTP {e.code}"
+        if e.code in (401, 403):
+            detail = f"AUTH: HTTP {e.code} (run `az login` / check access)"
+        else:
+            try:
+                msg = _json.loads(e.read().decode("utf-8")).get("message")
+                if msg:
+                    detail = f"HTTP {e.code}: {str(msg)[:200]}"
+            except Exception:
+                pass
+        return (False, None, detail)
+    except (urllib.error.URLError, ValueError, TimeoutError) as e:
+        return (False, None, f"REST {method} failed: {e}")
+
+
 def _tag_value(tags, key):
     """Return the value of a `key=value` build tag (e.g. RC-ECS=1678863 → '1678863'),
     or None. Case-sensitive key match; first match wins."""

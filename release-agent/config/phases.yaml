@@ -63,7 +63,8 @@ phases:
     name: "Test / Bug Bash"
     checklist_phase: 3
     steps:
-      - { id: clone_plans,     name: "Clone/rename test plans",                 owner: agent, maps_to: [T3] }
+      - { id: clone_plans_broker, name: "Clone Broker test plan (copy master template)", owner: agent, maps_to: [T3] }
+      - { id: clone_plans_auth,   name: "Create Authenticator bug-bash test suite",     owner: agent, maps_to: [T3] }
       - { id: coordinate,      name: "Bug Bash coordinator (invite/monitor/aggregate)", owner: agent, maps_to: [T2] }
       - { id: ui_failures,     name: "Surface Phase 2 UI failure list",         owner: human, maps_to: [T4] }
       - { id: signoffs,        name: "Chase DID/Dublin sign-offs + telemetry",  owner: agent, maps_to: [T5] }

@@ -84,7 +84,8 @@ preflight.cg:
 # build_verify.rc_report:  { outcome: done }   # scout (emails RC report + applies the 90% UI gate)
 
 # ---- Phase 3 · bug_bash ----
-# bug_bash.clone_plans:  { outcome: done }   # agent
+# bug_bash.clone_plans_broker: { outcome: done }   # agent (copy Broker master plan)
+# bug_bash.clone_plans_auth:   { outcome: done }   # agent (create Authenticator query-suite)
 # bug_bash.coordinate:   { outcome: done }   # agent
 # bug_bash.ui_failures:  { outcome: done }   # reminder (human)
 # bug_bash.signoffs:     { outcome: done }   # agent
