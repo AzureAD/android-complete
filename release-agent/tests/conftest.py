@@ -33,6 +33,8 @@ def _no_real_network(monkeypatch):
             "or inject the step's input mocks).")
 
     monkeypatch.setattr(P, "_ado_rest_get", _blocked)
+    monkeypatch.setattr(P, "_ado_rest_get_h", _blocked)
     monkeypatch.setattr(P, "_ado_rest_get_text", _blocked)
+    monkeypatch.setattr(P, "_ado_rest_send", _blocked)
     monkeypatch.setattr(P, "_az_json", _blocked)
     yield

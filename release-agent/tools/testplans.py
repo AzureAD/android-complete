@@ -106,24 +106,18 @@ def get_suite(plan_id, suite_id, timeout=60):
 
 def find_child_suite_by_name(plan_id, parent_suite_id, name, timeout=90):
     """Find a DIRECT child suite of `parent_suite_id` named `name` (case-insensitive).
-    Returns (ok, suite_id_or_None, detail). Pages through the plan's suites. A best-effort
-    duplicate guard for the Authenticator create."""
+    Returns (ok, suite_id_or_None, detail). Pages through ALL of the plan's suites
+    (following the ADO continuation-token header). A duplicate guard for the create."""
     want = (name or "").strip().lower()
-    url = (f"{ORG}/{PROJECT}/_apis/testplan/Plans/{plan_id}/suites?{_API}"
-           f"&continuationToken=")
-    token = ""
-    for _ in range(50):  # hard page cap
-        ok, j, d = P._ado_rest_get(url + token, timeout)
-        if not ok:
-            return (False, None, d)
-        for s in (j or {}).get("value") or []:
-            if (s.get("name") or "").strip().lower() == want:
-                parent = s.get("parentSuite") or {}
-                if str(parent.get("id")) == str(parent_suite_id):
-                    return (True, s.get("id"), "")
-        token = (j or {}).get("continuationToken") or ""
-        if not token:
-            break
+    url = f"{ORG}/{PROJECT}/_apis/testplan/Plans/{plan_id}/suites?{_API}"
+    ok, suites, detail = P._ado_rest_get_all(url, timeout)
+    if not ok:
+        return (False, None, detail)
+    for s in suites:
+        if (s.get("name") or "").strip().lower() == want:
+            parent = s.get("parentSuite") or {}
+            if str(parent.get("id")) == str(parent_suite_id):
+                return (True, s.get("id"), "")
     return (True, None, "")
 
 
@@ -137,9 +131,10 @@ def clone_broker_plan(dest_name, timeout=120):
     """
     url = f"{ORG}/{PROJECT}/_apis/testplan/Plans/CloneOperation?api-version=7.1-preview.2"
     body = {
-        # copy every suite + hierarchy; do NOT clone requirements. Not setting a
+        # copy every suite + the hierarchy; do NOT clone requirements. Not setting a
         # test-case duplication flag => ADO REFERENCES the existing test cases.
-        "cloneOptions": {"copyAllSuites": True, "copyAncestorHierarchy": False,
+        # (copyAncestorHierarchy must be true when source suiteIds are given, else ADO 400.)
+        "cloneOptions": {"copyAllSuites": True, "copyAncestorHierarchy": True,
                          "cloneRequirements": False, "copyComments": False},
         "destinationTestPlan": {"name": dest_name, "project": PROJECT,
                                 "areaPath": BROKER_AREA_PATH, "iteration": BROKER_ITERATION},

@@ -2777,6 +2777,41 @@ def test_bug_bash_clone_steps_are_real_agents():
         assert mod is not None and getattr(mod, "KIND", None) == "agent" and hasattr(mod, "run")
 
 
+def test_clone_plans_name_override_knob():
+    """The `name` mock knob overrides the derived plan/suite name (safe 'TEST ...' runs)."""
+    st, out = _bb_build("clone_plans_broker",
+                        {"name": "TEST Android Monthly Release - Aug 2026", "clone_id": "1"})
+    assert "TEST Android Monthly Release - Aug 2026" in out["note"]
+    st2, out2 = _bb_build("clone_plans_auth",
+                          {"name": "TEST Android/release/08/2026", "existing": None, "create_id": "2"})
+    assert "TEST Android/release/08/2026" in out2["note"]
+
+
+def test_ado_rest_get_all_follows_header_continuation_token():
+    """The pager concatenates every page, following the ADO `x-ms-continuationtoken`
+    RESPONSE HEADER (not a body field) — the bug the live clone_plans_auth test caught,
+    where only the first page was scanned so a same-named suite was missed → duplicate."""
+    from tools import pipelines as P
+    pages = [
+        (True, {"value": [{"id": 1}, {"id": 2}]}, {"x-ms-continuationtoken": "p2"}, ""),
+        (True, {"value": [{"id": 3}]}, {}, ""),   # no token → last page
+    ]
+    calls = []
+
+    def fake_get_h(url, timeout):
+        calls.append(url)
+        return pages[len(calls) - 1]
+
+    orig = P._ado_rest_get_h
+    P._ado_rest_get_h = fake_get_h
+    try:
+        ok, items, _ = P._ado_rest_get_all("https://x/_apis/y?api-version=7.1", 30)
+    finally:
+        P._ado_rest_get_h = orig
+    assert ok and [i["id"] for i in items] == [1, 2, 3]
+    assert "continuationToken=p2" in calls[1]     # 2nd request carried the header token
+
+
 def test_digest_shows_rc_line_when_build_verify_active():
     """When a phase that opts in (show_pipeline_runs) is active and run ids are on state,
     the daily digest carries a one-line RC summary; phases that don't opt in omit it."""

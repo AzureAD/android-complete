@@ -93,6 +93,54 @@ def _ado_rest_get(url, timeout):
         return (False, None, f"REST GET failed: {e}")
 
 
+def _ado_rest_get_h(url, timeout):
+    """Like _ado_rest_get but also returns the response headers:
+    (ok, json, headers_lower, detail). ADO returns paging tokens in the
+    `x-ms-continuationtoken` HEADER (not the body), so header access is needed to page."""
+    az = shutil.which("az")
+    if az is None:
+        return (False, None, {}, "az CLI not found")
+    try:
+        tok = subprocess.run(
+            [az, "account", "get-access-token", "--resource", _ADO_RESOURCE,
+             "--query", "accessToken", "-o", "tsv"],
+            capture_output=True, text=True, timeout=timeout, encoding="utf-8")
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return (False, None, {}, f"failed to get token: {e}")
+    if tok.returncode != 0 or not (tok.stdout or "").strip():
+        return (False, None, {}, "AUTH: could not get an ADO token (run `az login`)")
+    token = tok.stdout.strip()
+    import urllib.request
+    import urllib.error
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            hdrs = {k.lower(): v for k, v in resp.headers.items()}
+            return (True, _json.loads(resp.read().decode("utf-8")), hdrs, "")
+    except urllib.error.HTTPError as e:
+        detail = f"AUTH: HTTP {e.code}" if e.code in (401, 403) else f"HTTP {e.code}"
+        return (False, None, {}, detail)
+    except (urllib.error.URLError, ValueError, TimeoutError) as e:
+        return (False, None, {}, f"REST GET failed: {e}")
+
+
+def _ado_rest_get_all(url, timeout, cap_pages=60):
+    """GET every page of a paged ADO collection, following the `x-ms-continuationtoken`
+    response header. `url` must already carry its api-version (no continuationToken).
+    Returns (ok, all_items, detail) where all_items is the concatenated `.value` lists."""
+    items, token = [], None
+    for _ in range(cap_pages):
+        u = url + (f"&continuationToken={token}" if token else "")
+        ok, j, hdrs, detail = _ado_rest_get_h(u, timeout)
+        if not ok:
+            return (False, None, detail)
+        items += (j or {}).get("value") or []
+        token = hdrs.get("x-ms-continuationtoken")
+        if not token:
+            break
+    return (True, items, "")
+
+
 def _ado_rest_get_text(url, timeout):
     """GET an ADO REST url returning PLAIN TEXT (e.g. a build log). (ok, text, detail)."""
     az = shutil.which("az")

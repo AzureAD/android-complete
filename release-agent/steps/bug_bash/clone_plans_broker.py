@@ -26,6 +26,7 @@ ID = "clone_plans_broker"
 KIND = "agent"
 
 MOCKABLE = {
+    "name": {"kind": "input", "desc": "Override the destination plan name (e.g. a 'TEST ...' name for a safe live run)."},
     "plan_id": {"kind": "input", "desc": "Pretend the clone already produced this plan id (idempotency test)."},
     "clone_id": {"kind": "input", "desc": "Id the clone should return (skip the live CloneOperation)."},
     "fail": {"kind": "input", "desc": "Force a Blocked with this detail (simulate an API failure)."},
@@ -41,7 +42,9 @@ def build(state):
     if fail is not MISSING:
         return Blocked(f"clone_plans_broker: {fail}")
 
-    dest = T.broker_plan_name(state.release_id)
+    dest = mock_input("name", MISSING)
+    if dest is MISSING:
+        dest = T.broker_plan_name(state.release_id)
     step = state.get_step("bug_bash", ID)
 
     # Already cloned? A test injects `plan_id` to assert idempotency; otherwise the

@@ -31,6 +31,7 @@ ID = "clone_plans_auth"
 KIND = "agent"
 
 MOCKABLE = {
+    "name": {"kind": "input", "desc": "Override the suite name (e.g. a 'TEST ...' name for a safe live run)."},
     "suite_id": {"kind": "input", "desc": "Pretend the query-suite already exists (this id)."},
     "create_id": {"kind": "input", "desc": "Id the create should return (skip the live create)."},
     "existing": {"kind": "input", "desc": "Id an existing same-named suite the name-scan finds."},
@@ -48,7 +49,9 @@ def build(state):
     if fail is not MISSING:
         return Blocked(f"clone_plans_auth: {fail}")
 
-    name = T.auth_suite_name(state.release_id)
+    name = mock_input("name", MISSING)
+    if name is MISSING:
+        name = T.auth_suite_name(state.release_id)
     step = state.get_step("bug_bash", ID)
 
     # Already created? (test-injected id, or a stored id from a prior run) → done.
