@@ -39,6 +39,31 @@ Every tier assignment requires **cited code evidence** (`file:line`). This cuts 
 - **Evidence required:** citation proving non-reachability — flight defaulting off, non-exported
   component, sibling handler enforcing an allow-list the finding assumed was missing, dead code, etc.
 
+## Applying the SDL/MSRC bug bar — show the factors, don't assert the tier
+
+**Required in every finding report.** Reviewers have specifically called this out as the most useful part
+of the analysis: it converts the severity call from an assertion into something **auditable**, and it
+surfaces exactly which factor is doing the work — which is almost always the thing under debate when the
+security team pushes back on our rebuttal.
+
+| Factor | Reads as | Points to |
+|--------|----------|-----------|
+| **Vulnerability class** | The STRIDE class — tampering, info disclosure, EoP, spoofing, DoS. Say *what integrity/confidentiality property is missing*, not just the CWE number. | The **canonical tier** for that class |
+| **Attack vector** | Network (`AV:N`) · adjacent · local · physical | ↑ severity as it gets more remote |
+| **Privileges / UI** | `PR:N`/`PR:L` · `UI:N`/`UI:R` — does the attacker need an account, an installed app, or a user tap? | ↑ severity when none required |
+| **Prerequisites** | What must the attacker **already** have defeated (TLS, an installed malicious app, an OS-version-specific behavior, a rooted device)? Note OS-version defaults that narrow it. | ↓ severity — **usually what blocks Critical** |
+| **Blast radius** | What is compromised, **for whom**, and does it **persist** beyond the attack window? Cross-app? A 1P root-of-trust? | ↑ severity — **usually what blocks Moderate** |
+| **CIA** | `VC:` / `VI:` / `VA:` | Consistency check against the tier |
+
+Then land it explicitly:
+
+> **→ &lt;tier&gt;, IcM Sev&lt;n&gt;** — not Sev&lt;n±0.5&gt;, because &lt;the single factor that caps it&gt;.
+
+**Name the blocking factor in *both* directions** — what stops it going higher **and** what stops it going
+lower. A rebuttal that only argues one direction reads as motivated, and it is the first thing challenged
+in review. Persistence deserves its own sentence: a compromise that **survives** the interception window
+is materially worse than one confined to it, and it is the factor most often left implicit.
+
 ## Out-of-scope threat boundary (root / physical / debug-build) — **Won't-Fix**
 
 Some findings are only exploitable once the **OS security boundary is already defeated**. These are
@@ -180,6 +205,31 @@ should pin something to Sev3/Sev4), **record it here** so future runs are consis
   redundant "belt-and-suspenders" fix in a >1B-user shared library is regression risk for zero security gain.
   Conservatism cuts both ways: the category requires a **cited** covering control (not a hunch), because
   **not** everything is covered — when you can't prove a control, the finding is live and we solution it.
+- _⚠️ SCOPE LEAK + CLAIM DRIFT — a severity argument was retired on evidence from an unrelated subsystem_ —
+  a finding lived entirely within **one** cross-app channel of an app. Pass 2's challenge was framed around
+  a **co-resident but unrelated channel** in the same app (separate allow-list, separate consumer set, no
+  data path to the sink). The challenger correctly found no cross-validation between them — the two
+  subsystems have nothing to do with each other — and that non-result was used to **kill the
+  higher-severity argument**. Every citation resolved; only the **relevance** was wrong. Two distinct
+  defects, both invisible to a citation check: **(1) scope leak** — an off-path component treated as
+  relevant to the sink's trust decision; **(2) claim drift** — the claim was silently reworded between
+  passes ("cross-app credential theft" → "…over the other channel"), so the refutation answered a question
+  nobody had asked. Pattern: **write a Scope Contract before investigating; evidence is admissible only
+  with a named hop-by-hop call path from the entry point; carry claims VERBATIM across passes with a
+  channel tag; and strawman-check every refutation (verbatim · same channel · same asset/consumers · no
+  new out-of-scope nouns) before letting it move a verdict.** The cheapest catch is the **new-noun test**:
+  any component in the challenge prompt that appears neither in the claim nor IN SCOPE is a scope leak.
+  Corollary: **"same app" is not a trust domain** — an app can host multiple independent cross-app channels
+  whose prose descriptions are nearly identical, so always qualify the channel in every sentence. See
+  [research-discipline.md](research-discipline.md).
+- _Fix verification must prove BOTH flag states, and cell A is the one that matters_ — for any flighted
+  security fix, evidence is required for all four cells: flight **OFF** + exploit = **still vulnerable**,
+  OFF + legit = works, **ON** + exploit = blocked, ON + legit = works. If the exploit input fails with the
+  flight **OFF**, either the finding was **already covered** (→ back to Gate 0) or the test doesn't
+  reproduce the vulnerability — and then the "blocked" result with the flight ON proves nothing. Pattern:
+  **A and C are the same input differing only by flight state; that pairing is the proof. Cells A + B are
+  also the rollback evidence that makes "flight-off = byte-for-byte legacy" a demonstrated fact.** See
+  [flight-verification.md](flight-verification.md).
 
 ### Reporting / tooling calibration (report-UX learnings)
 

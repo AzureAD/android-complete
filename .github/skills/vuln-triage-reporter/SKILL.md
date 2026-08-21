@@ -228,6 +228,28 @@ ways — never claim "safe" *or* "exploitable" about a boundary you couldn't ver
     `python scripts/verify_outputs.py` and **tell the user the absolute folder path**. A non-zero exit
     means the run is **not** done. (This is a real reported failure: a full session produced a verdict
     and zero files.)
+18. **Write a SCOPE CONTRACT before investigating, and treat off-path evidence as INADMISSIBLE.** Name the
+    subsystem/channel the sink lives in, its entry point, the trust decision under attack, its consumers,
+    and — explicitly — the **co-resident subsystems that are OUT of scope**. A control counts as a
+    mitigation *or* a refutation only if you can name the **hop-by-hop call path** from the entry point to
+    it. "It's in the same app" is not a path. **This is a real reported failure:** an analysis pulled a
+    component from a different IPC subsystem into a finding, and a severity argument was retired on
+    evidence that had no relationship to the sink. See
+    [references/research-discipline.md](references/research-discipline.md).
+19. **Carry claims VERBATIM across passes, and strawman-check every refutation.** Every severity-relevant
+    assertion is a numbered claim in a **Claim Ledger**, tagged with its channel, quoted exactly. The
+    challenger prompt must contain the claim's **exact text** — never a paraphrase, never a "clarified"
+    version. Before accepting any refutation, verify it (a) quotes the claim verbatim, (b) names the same
+    channel, (c) targets the same asset/consumers, and (d) **introduces no component that isn't in the
+    claim or IN SCOPE**. If any check fails the refutation is **VOID** — restore the claim and re-issue.
+    Severity moves only on ledger status transitions, and **untested ≠ refuted**. (Same real failure as
+    #18: the reconciliation "killed" a claim that had been silently reworded between passes.)
+20. **A fix is not done until the flag ON/OFF matrix has evidence.** Prove all four cells: flight **OFF** +
+    exploit input = **still vulnerable** (this is what proves the test reproduces the finding and that the
+    *fix* is what blocks it), OFF + legit = works, **ON** + exploit = **blocked**, ON + legit = works.
+    Paired automated tests are the gate; an on-device toggle pass is the sign-off. Anything unverifiable
+    goes in **Not covered** — never implied as passing. See
+    [references/flight-verification.md](references/flight-verification.md).
 
 ## The two-pass model (verify before you trust)
 
@@ -262,10 +284,19 @@ closed as a non-issue.
 
 **When the two passes disagree** (challenger breaks Pass 1, or reaches a different root cause):
 
-1. **The challenger's finding wins by default** — it had strictly more information (Pass 1's conclusion
-   plus the code). Never average the two or pick the more convenient one.
+0. **Run the strawman check FIRST — before granting the challenger anything.** A refutation only counts
+   if it (a) quotes the claim **verbatim**, (b) names the **same channel/subsystem**, (c) targets the same
+   asset and consumer set, and (d) introduces **no component** that appears neither in the claim nor in the
+   Scope Contract's IN SCOPE list. Any failure ⇒ the refutation is **VOID**: restore the claim's prior
+   status and re-issue the challenge against the exact claim text. **A challenger that wins on a strawman
+   is worse than no challenger** — it converts an open question into false confidence, with citations
+   attached. See [references/research-discipline.md](references/research-discipline.md).
+1. **The challenger's finding wins by default** — *once it survives step 0* — because it had strictly more
+   information (Pass 1's conclusion plus the code). Never average the two or pick the more convenient one.
 2. **Run one short reconciliation pass** scoped to the *specific* point of disagreement only (not a third
-   full investigation) — give it both conclusions and the one question that separates them.
+   full investigation) — give it both conclusions and the one question that separates them. **Check that
+   question against the Scope Contract before sending it**: if it names a subsystem that isn't IN SCOPE,
+   you are about to reconcile a category error, not a disagreement.
 3. **Set Confidence = Low** and **say the passes disagreed, in the report**, with both conclusions
    preserved. A disagreement is signal for the human reviewer, not noise to smooth over.
 4. If reconciliation cannot settle it, **surface it as a Decision Needed** rather than picking a side.
@@ -508,6 +539,35 @@ be retrieved manually:
 > See [references/itd-intake.md](references/itd-intake.md) for the exact user instructions and the saved
 > HTML structure.
 
+### Step 2.5 — Write the SCOPE CONTRACT (before any investigation agent launches)
+
+**Cheapest, highest-leverage step in the workflow.** Before Pass 1, write down the trust boundary the
+finding lives in — sink location, subsystem/**channel**, entry point, the trust decision under attack, the
+consumer set, the asset at risk, and an explicit **OUT OF SCOPE** list naming the co-resident subsystems
+you are deliberately excluding. Template + rules:
+[references/research-discipline.md](references/research-discipline.md).
+
+> **This exists because of a real, reported wrong verdict.** An analysis pulled a component from a
+> *different* IPC subsystem — same app, separate allow-list, separate consumers, **no data path to the
+> sink** — into the reasoning, then used its absence of cross-validation to retire a higher-severity
+> argument. Every citation resolved; only the *relevance* was wrong. A `file:line` citation cannot prove
+> relevance, which is why the boundary has to be written down first.
+
+Two rules follow from the contract, and they bind for the rest of the run:
+
+- **Admissibility.** A control counts as a mitigation **or** as a refutation only if you can name the
+  **hop-by-hop call path** from the entry point to it. "Same app", "same package", "similar name" are not
+  paths. Off-path evidence is **inadmissible** in both directions — it can neither lower nor raise severity.
+- **Always qualify the channel.** Never write "the allow-list" or "cross-app credential theft" bare —
+  always "the *&lt;channel&gt;* allow-list", "cross-app *&lt;account-type&gt;* credential theft via
+  *&lt;channel&gt;*". Unqualified prose is exactly where two disjoint subsystems silently merge into one
+  wrong idea, and no downstream step will catch it.
+
+**Pass the contract into every agent dispatch** (Pass 1, the challenger, and any reconciliation) as
+standing constraints. The contract may be **amended** — it is a hypothesis, not a fact — but only
+explicitly, with the call path that justifies it, and with **every claim that depended on the old boundary
+re-evaluated**. A mid-run amendment caps Confidence at **Medium**.
+
 ### Step 3 — Investigate each finding IN PARALLEL (codebase-researcher)
 For each finding, dispatch a `codebase-researcher` investigation that returns:
 - **The sink** — the vulnerable code, cited `file:line`.
@@ -524,25 +584,63 @@ For each finding, dispatch a `codebase-researcher` investigation that returns:
     app via IPC/Intent/deep-link, network/zero-click, or off-device egress like a diagnostics/log upload).
     See "Out-of-scope threat boundary" in [references/severity-rubric.md](references/severity-rubric.md).
 - **Aggravating factors** — anything that makes it *worse* than filed (unflighted, exported, no allow-list).
+- **A Claim Ledger** — every severity-relevant assertion as a numbered claim, **quoted verbatim** and
+  **tagged with its channel** from the Scope Contract. This is what Pass 2 attacks, so a vague claim is a
+  defect to fix *here*, not to "clarify" later inside the challenge prompt.
+
+**Every Pass 1 dispatch carries the Scope Contract** as a standing constraint, plus this instruction:
+*"Evidence is admissible only if you can name the hop-by-hop call path from the entry point to it. If a
+control looks relevant but sits outside the IN SCOPE list, report it as an out-of-scope observation — do
+not use it to raise or lower severity."*
 
 Use the severity rubric in [references/severity-rubric.md](references/severity-rubric.md).
 
 ### Step 3.5 — Adversarial verification IN PARALLEL (codebase-researcher, second pass)
 For each finding, dispatch a **second, independent** `codebase-researcher` (the **Challenger**) that
-receives Pass 1's conclusion and tries to **break it**:
+receives **the Scope Contract and the Claim Ledger's verbatim claim text**, and tries to **break it**:
+
+> 🛑 **Build the challenge prompt by COPYING claim text — never by restating it.** Paste the claim in
+> quotes with its channel tag, one claim per challenge. If you find yourself typing a component name that
+> is not in the claim and not IN SCOPE, **stop**: you are inventing a strawman. That is exactly how a real
+> run retired a valid severity argument — by "disproving" a claim it had silently reworded into a
+> different subsystem.
+
 - If Pass 1 cited a mitigation, attempt to **bypass** it (find a path that skips the allow-list / flight /
   package check; check whether the control is itself reachable/poisonable).
 - If Pass 1 said "not reachable", hunt for **another entry point** to the sink (other manifests, other
   callers, exported aliases, intent filters).
 - If Pass 1 **down-classified**, build the strongest case that it is **still exploitable**.
-- The Challenger cites `file:line` and appends its own "Searches Run" audit.
+- The Challenger cites `file:line`, states **which claim ID** each result addresses, and appends its own
+  "Searches Run" audit. It must flag any claim it **did not reach** — those stay **OPEN**, not refuted.
 
-Then **reconcile**: keep, raise, or lower the Pass 1 verdict, and set **Confidence** (High/Medium/Low) per
-the table in "The two-pass model". Disagreement or an unverifiable boundary ⇒ at most **Medium**, usually **Low**.
+Then **reconcile**: run the **strawman check** on every refutation first (verbatim · same channel · same
+asset/consumers · no new out-of-scope nouns) and **VOID** any that fail — a voided refutation changes
+nothing and gets noted in the report. Only surviving refutations move a verdict. Update each ledger row's
+status, then keep/raise/lower the Pass 1 verdict and set **Confidence** (High/Medium/Low) per the table in
+"The two-pass model". Disagreement or an unverifiable boundary ⇒ at most **Medium**, usually **Low**.
 
 ### Step 4 — Classify & assign (agree or rebut)
 For each finding, produce our final classification and the agree/rebut delta vs. FireWatch, with evidence,
 plus the **Confidence** from Step 3.5. Then set the **Assignment**.
+
+> **Show the SDL/MSRC bug bar factor-by-factor — reviewers specifically ask for this.** Don't just assert a
+> tier; walk the factors and show which way each one pushes. It is the artifact reviewers have called out
+> as the most useful part of the report, because it makes the call **auditable** rather than asserted — and
+> the factor that *blocks* a higher tier is usually the one under debate.
+
+| Factor | Reads as | Points to |
+|--------|----------|-----------|
+| **Vulnerability class** | <STRIDE class — tampering / info disclosure / EoP / spoofing> | <canonical tier for that class> |
+| **Attack vector** | <network `AV:N` · adjacent · local · physical> | ↑ / ↓ severity |
+| **Privileges / UI** | <`PR:N`/`PR:L` · `UI:N`/`UI:R`> | ↑ / ↓ severity |
+| **Prerequisites** | <what the attacker must already have defeated — TLS, an installed app, OS-version conditions> | ↓ severity (often **blocks Critical**) |
+| **Blast radius** | <what is compromised, for whom, and whether it persists beyond the attack window> | ↑ severity (often **blocks Moderate**) |
+| **CIA** | <`VC:` / `VI:` / `VA:`> | consistent with <tier> |
+
+Then state the landing: *"→ **&lt;tier&gt;**, IcM **Sev&lt;n&gt;** — not Sev&lt;n±0.5&gt;, because
+&lt;the specific factor that caps it&gt;."* Name the **blocking factor in both directions** (what stops it
+going higher *and* what stops it going lower) — that is what makes the rebuttal defensible when the
+security team pushes back. Full rubric: [references/severity-rubric.md](references/severity-rubric.md).
 
 > **🛑 GATE 0 — check defense-in-depth coverage FIRST (before any Engineer/Intern split).** We have been
 > receiving a high volume of MSRC/ITD findings that turn out to be **already covered by existing
@@ -665,6 +763,33 @@ get explicit go/no-go before any push or PR**, and run the public-token sweep fi
 > lives in the private workspace it may hold the real linkage — that is its purpose; the *repo* artifacts stay
 > sanitized, the tracker is the bridge.
 
+### Step 4.7 — Verify the fix with the flag ON **and** OFF (required before any PR)
+
+A fix is not done when it compiles or when the new test passes — it is done when **all four cells** of the
+flag matrix have evidence. Full procedure, test skeletons, on-device recipe, and the report template:
+[references/flight-verification.md](references/flight-verification.md).
+
+|  | **Exploit input** | **Legitimate input** |
+|--|-------------------|----------------------|
+| **Flight OFF** (shipped default) | **A. still succeeds** — the finding reproduces | **B. works** — legacy unchanged |
+| **Flight ON** (fix active) | **C. blocked** — the fix denies it | **D. works** — no regression |
+
+- **Cell A is the one people skip, and it is the most important.** If the exploit input *fails* with the
+  flight OFF, then either something else already blocked it — the finding is **Already-Covered**, so stop
+  and go back to Gate 0 — or your test doesn't reproduce the vulnerability, in which case **cell C proves
+  nothing**. A and C are the *same input* differing only by flight state; that pairing is the entire proof.
+- **Cells A + B are the rollback evidence.** They are what make "flight-off = byte-for-byte legacy" a
+  demonstrated fact rather than a design intention.
+- **Automated paired tests are the gate** (four tests, named for their cells, flight state as the only
+  variable, results confirmed in the JUnit XML — a method missing `@Test` silently never runs).
+  **An on-device toggle pass is the sign-off**: it proves the flight key is actually read at the sink in a
+  real build, which unit tests cannot show. Use a lightweight test host (BrokerHost) + the in-app
+  **Broker Flights** screen, and confirm the flight reads **OFF** on a fresh install before anything else.
+- **Anything you could not verify goes in "Not covered"** — other OEMs/API levels, server state,
+  downstream consumers. Never let an unstated gap read as a pass.
+- The completed matrix is the close-out evidence for the IcM. It stays in the **workspace** and the IcM —
+  the public PR gets a generic description plus a corp-gated work-item link.
+
 ### Step 5 — Report (two coordinated artifacts per finding)
 
 > 🛑 **This step is NOT optional and NOT conditional on the verdict** (Non-Negotiable #17).
@@ -686,8 +811,15 @@ Each finding yields a **human report** and a **machine-readable agent spec** —
 
 - **Per-finding report (human source)** → the finding's folder `README.md` (or
   `msrc-investigations/<n>-<id>-<slug>.md`), including a `**Bottom line:**` TL;DR field, the
+  **`## Scope Contract`** (near the top, before the analysis), the **`## Claim Ledger`** (every claim's
+  final status, channel tag, and any **VOID** refutations), the **SDL/MSRC bug bar factor table**, the
   `## Adversarial Verification` section (Pass 2), `## Verification Gaps & What We Need to Confirm`,
-  `## Decisions Needed`, and ending with the verbatim `## Searches Run (audit trail)` section.
+  `## Decisions Needed`, a **`## Fix Verification`** matrix if a fix was implemented, and ending with the
+  verbatim `## Searches Run (audit trail)` section.
+  > **Lint it before you ship it:** `python scripts/lint_finding.py --dir <run_dir>` checks these sections
+  > exist and flags claims with no channel tag. It only checks *structure* — it cannot tell you the
+  > reasoning is sound — but a missing scope contract or an untagged claim is exactly the shape of the
+  > errors that produced a confident wrong verdict, so a clean lint is required before the report goes out.
 - **Agent dispatch spec (machine-readable)** → run `scripts/build_agent_spec.py` over each README to emit a
   `<slug>.agent.md`: YAML front-matter (`finding_id, our_tier, icm_sev, confidence, assignment,
   target_repos, files_to_change, external_validation_needed, status, blocked_on`) + a Dispatch Block
@@ -812,11 +944,14 @@ items) — never in the repo.
 
 ```
 python .github/skills/vuln-triage-reporter/scripts/verify_outputs.py
+python .github/skills/vuln-triage-reporter/scripts/lint_finding.py --dir <run_dir>
 ```
 
-It checks the shift folder for the required artifacts (manifest · per-finding report(s) · master report)
-and warns on the recommended ones (research subpages · agent specs · roll-up · CSV). **A non-zero exit
-means the run is not finished** — generate what's missing and re-run it. Then **give the engineer the
+`verify_outputs.py` checks the shift folder for the required artifacts (manifest · per-finding report(s) ·
+master report) and warns on the recommended ones (research subpages · agent specs · roll-up · CSV).
+`lint_finding.py` checks each finding report's *structure* — scope contract, claim ledger with channel
+tags, verdict, audit trail, and the flag ON/OFF matrix if a fix was implemented. **A non-zero exit from
+either means the run is not finished** — fix what's flagged and re-run. Then **give the engineer the
 absolute folder path and the `file:///` link it prints.** Do not say "done" without that path: an
 engineer who is told a verdict but can't find a file has, from their side, received nothing.
 
