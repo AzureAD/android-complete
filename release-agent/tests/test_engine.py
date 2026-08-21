@@ -1378,6 +1378,26 @@ def test_registry_register_list_deregister():
         assert len(reg.list()) == 1
 
 
+def test_registry_relocates_release_automations_into_release_folder():
+    """Release-scoped automations live in <runs_root>/<release>/_automations.json (owned
+    by the release); shared ones stay machine-wide."""
+    from orchestrator.registry import AutomationRegistry
+    import os as _os, json as _json
+    with tempfile.TemporaryDirectory() as tmp:
+        reg = AutomationRegistry(tmp, release="2026-08")
+        reg.register("a2", "Phase-3 watcher", release="2026-08", steps=["bug_bash.bash_done"])
+        reg.register("sh", "Release push reminders", shared=True, purpose="push")
+        rel_file = _os.path.join(tmp, "2026-08", "_automations.json")
+        shared_file = _os.path.join(tmp, "_automations.json")
+        # the release automation is co-located with the release; shared stays machine-wide
+        assert [e["id"] for e in _json.load(open(rel_file))] == ["a2"]
+        assert [e["id"] for e in _json.load(open(shared_file))] == ["sh"]
+        # release listing reads the release file + shared; deregister finds it in-folder
+        assert {e["id"] for e in reg.list(release="2026-08")} == {"a2"}
+        assert reg.deregister("a2") is True
+        assert reg.list(release="2026-08") == []
+
+
 def test_registry_records_step_linkage_and_reverse_lookup():
     """An automation entry records the steps it drives + its kind; list(step=...) is
     the reverse lookup (which automation owns a step) — the traceability link."""
@@ -2665,25 +2685,6 @@ def test_build_verify_persists_pipeline_run_ids():
         _C.save_state(st, tmp, "2026-08")
         again = _C.load_state(tmp, "2026-08")
         assert again.pipeline_runs["rcs"][-1]["ecs"]["run_id"] == "900001"
-
-
-def test_migrate_pipeline_runs_flat_to_nested():
-    """A legacy FLAT pipeline_runs shape migrates to the nested RC schema on load
-    (idempotent); an already-nested value passes through unchanged."""
-    from orchestrator.state import migrate_pipeline_runs as M
-    flat = {"checker": "111", "orchestrator": "222",
-            "versions": "Common 24.6.0, Msal 8.4.2, Broker 16.5.0",
-            "mrwp_ecs": "333", "mrwp_local": "444", "mrwp_id_source": "tags",
-            "resolved_at": "2026-08-20T00:00:00Z"}
-    m = M(flat)
-    assert m["checker"]["run_id"] == "111"
-    assert m["orchestrator"]["run_id"] == "222"
-    assert m["orchestrator"]["versions"] == {"Common": "24.6.0", "Msal": "8.4.2", "Broker": "16.5.0"}
-    assert m["rcs"] == [{"rc": 1, "resolved_at": "2026-08-20T00:00:00Z",
-                         "ecs": {"run_id": "333", "id_source": "tags"},
-                         "local": {"run_id": "444", "id_source": "tags"}}]
-    assert M(m) == m            # idempotent
-    assert M({}) == {}
 
 
 def test_stash_mrwp_appends_new_rc_on_id_change():

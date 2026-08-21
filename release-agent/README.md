@@ -74,8 +74,9 @@ release-agent/                     COMMITTED (distributed with android-complete)
 
 .release-runs/<YYYY-MM>/           GENERATED, gitignored (per-release working state)
 ├─ release-state.json              the per-release metadata + run-state (owner, CCD, steps, gates, …)
-└─ events.jsonl                    the per-release event/interaction log
-.release-runs/_automations.json    GENERATED, gitignored — registry of provisioned Scout automations
+├─ events.jsonl                    the per-release event/interaction log
+└─ _automations.json               registry of THIS release's provisioned Scout automations (owned by the release; removed at close)
+.release-runs/_automations.json    GENERATED, gitignored — registry of SHARED (machine-wide) automations only
 ```
 
 ## Adding a step (the modular contract)
@@ -95,7 +96,7 @@ That's it. Mocking works automatically (`outcome`/knobs); `step-info` shows its 
 guardrail fails loudly if a module and `phases.yaml` drift, so nothing silently breaks.
 
 **Two homes for data (by lifetime):**
-- **Release metadata + run-state** → `.release-runs/<id>/release-state.json` (per-release; the `ReleaseState` record). Holds `owner_email`/`owner_name` (the release owner, resolved from the signed-in `az` user at `init`; reminders email this person), `ccd`/`ccd_source`/`ccd_conflict`, step completion, gate decisions, `last_notified`, etc. Add release-scoped fields here.
+- **Release metadata + run-state** → `.release-runs/<id>/release-state.json` (per-release; the `ReleaseState` record). Holds `owner_email`/`owner_name` (the release owner, resolved from the signed-in `az` user at `init`; reminders email this person), `ccd`/`ccd_source`/`ccd_conflict`, step completion, gate decisions, `last_notified_date`, etc. Add release-scoped fields here.
 - **Tool config** → `release-agent/config/*.yaml` (not release-specific; committed): `phases.yaml`, `readiness.yaml`, `schedule.yaml`, `requirements.yaml`.
 
 ## Architecture — three layers (so it adapts to other interfaces)
@@ -206,12 +207,14 @@ was off is picked up by the next one, and a once-per-calendar-day guard
 (`last_notified_date`) keeps it to one advance-effect and one email per day. `notify` is
 the **read-only** variant (report without advancing); `--as-of`/`--force` are debug overrides.
 
-**Automation registry.** Every automation the orchestrator provisions is recorded in
-`.release-runs/_automations.json` (via `cli automation register`) so it can be torn
-down cleanly. Automations are **per-release** by default (`--release <id>`), created
-at start and removed at that release's close (`automation list --release <id>` →
-delete each → `automation deregister`). Push reminders are per-release too. A
-`--shared` scope exists for the rare automation meant to outlive every release.
+**Automation registry.** Every automation the orchestrator provisions is recorded via
+`cli automation register` so it can be torn down cleanly. **Per-release** automations
+(`--release <id>`, the default) live in `.release-runs/<id>/_automations.json` —
+co-located with that release's state so ownership is explicit and they're removed with
+the release folder at close (`automation list --release <id>` → delete each →
+`automation deregister`). Push reminders are per-release too. A `--shared` scope (stored
+machine-wide at `.release-runs/_automations.json`) exists for the rare automation meant
+to outlive every release.
 
 ## Two kinds of human step
 

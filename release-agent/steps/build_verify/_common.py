@@ -19,7 +19,6 @@ from tools.pipelines import (
     CHECKER_DEF, ORCHESTRATOR_DEF, MRWP_DEF,
     ORCH_REQUIRED_STAGES, ORCH_PARK_STAGE, format_versions,
 )
-from orchestrator.state import migrate_pipeline_runs
 from orchestrator.outcomes import Done, Blocked, InProgress
 from steps.lib.mockctx import mock_input, MISSING
 
@@ -51,8 +50,8 @@ def _now_iso():
 
 
 def _pipeline_runs(state) -> dict:
-    """The nested pipeline_runs container on state (migrating a legacy flat shape)."""
-    return migrate_pipeline_runs(getattr(state, "pipeline_runs", None) or {})
+    """The nested pipeline_runs container on state."""
+    return getattr(state, "pipeline_runs", None) or {}
 
 
 def stash_checker(state, run_id, when=None):
@@ -125,7 +124,7 @@ def rc_report_model(state, timeout=120):
     iteration (rcs[-1]) and routes through `tools.pipelines.assemble_rc_model` — the SAME
     assembler the live path uses — so the state-based model can't drift from the live one.
     """
-    pr = migrate_pipeline_runs(getattr(state, "pipeline_runs", None) or {})
+    pr = getattr(state, "pipeline_runs", None) or {}
     ch = pr.get("checker") or {}
     o = pr.get("orchestrator") or {}
     rcs = pr.get("rcs") or []

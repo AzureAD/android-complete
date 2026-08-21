@@ -247,11 +247,9 @@ _STEP_STATE_WORD = {"done": "Done", "gate": "Awaiting your approval",
 def _pipelines_line(r: dict) -> str:
     """Compact one-line summary of the Phase-2 release-pipeline runs recorded on state
     (checker → orchestrator → the LATEST RC's two MRWP runs). Empty string when none
-    resolved yet. Reads the nested pipeline_runs schema (migrating a legacy flat shape);
-    no live az call in the render path."""
-    from orchestrator.state import migrate_pipeline_runs
+    resolved yet. Reads the nested pipeline_runs schema; no live az call in the render path."""
     from tools.pipelines import format_versions
-    pr = migrate_pipeline_runs(r.get("pipeline_runs") or {})
+    pr = r.get("pipeline_runs") or {}
     parts = []
     ch = pr.get("checker") or {}
     if ch.get("run_id"):

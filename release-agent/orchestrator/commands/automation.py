@@ -13,7 +13,7 @@ def cmd_automation(args):
     """Track Scout automations the orchestrator provisions, so they can be torn
     down at release close. This only records ids + step linkage — the skill does the
     actual Scout create/delete via m_create_automation / m_delete_automation."""
-    reg = AutomationRegistry(args.runs_root)
+    reg = AutomationRegistry(args.runs_root, getattr(args, "release", None))
     if args.action == "plan":
         return _cmd_plan(args)
     if args.action == "sync":
@@ -108,23 +108,16 @@ def _cmd_sync(args):
     config_path = getattr(args, "config", None) or C.DEFAULT_CONFIG
     st = C.load_state(args.runs_root, args.release)
     ccd = getattr(st, "ccd", None)
-    reg = AutomationRegistry(args.runs_root)
+    reg = AutomationRegistry(args.runs_root, getattr(args, "release", None))
     registered = reg.list(release=args.release, kind="step-driving")
     plan = auto_plan.plan(config_path, args.release, ccd)
     desired_by_slug = {a["slug"]: a for a in plan["automations"]}
-    desired_by_steps = {tuple(sorted(a["steps"])): a for a in plan["automations"]}
 
     updates = []
     for e in registered:
-        # Match by slug (stable, unambiguous). Fall back to steps for older registry
-        # entries that predate slug — but only when the step set is unique.
-        spec = desired_by_slug.get(e.get("slug"))
-        if spec is None and e.get("slug") is None:
-            key = tuple(sorted(e.get("steps") or []))
-            if sum(1 for a in plan["automations"] if tuple(sorted(a["steps"])) == key) == 1:
-                spec = desired_by_steps.get(key)
+        spec = desired_by_slug.get(e.get("slug"))   # matched by slug (stable, unambiguous)
         if spec is None:
-            continue                       # no unambiguous desired spec — skip
+            continue                       # no matching desired spec — skip
         desired = spec.get("schedule")
         current = e.get("schedule")
         updates.append({
