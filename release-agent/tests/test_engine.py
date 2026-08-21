@@ -2794,6 +2794,54 @@ def test_clone_plans_name_override_knob():
     assert "TEST Android/release/08/2026" in out2["note"]
 
 
+def test_clone_broker_plan_waits_for_async_completion():
+    """clone_broker_plan POSTs the CloneOperation then POLLS the op until 'succeeded'
+    before returning — so the plan is fully populated when the step reports done (the
+    async 'seems empty if read too early' gap). state lives under cloneOperationResponse."""
+    from tools import pipelines as P
+    from tools import testplans as T
+    post = (True, {"destinationTestPlan": {"id": 9001},
+                   "cloneOperationResponse": {"opId": 77, "state": "queued"}}, "")
+    # op poll: inProgress, then inProgress, then succeeded
+    op_pages = [
+        (True, {"cloneOperationResponse": {"state": "inProgress"}}, {}, ""),
+        (True, {"cloneOperationResponse": {"state": "inProgress"}}, {}, ""),
+        (True, {"cloneOperationResponse": {"state": "succeeded"}}, {}, ""),
+    ]
+    calls = {"get": 0}
+
+    def fake_send(url, method, body, timeout):
+        return post
+
+    def fake_get_h(url, timeout):
+        i = calls["get"]; calls["get"] += 1
+        return op_pages[min(i, len(op_pages) - 1)]
+
+    o_send, o_get = P._ado_rest_send, P._ado_rest_get_h
+    P._ado_rest_send, P._ado_rest_get_h = fake_send, fake_get_h
+    try:
+        ok, pid, d = T.clone_broker_plan("TEST plan", poll_secs=0)
+    finally:
+        P._ado_rest_send, P._ado_rest_get_h = o_send, o_get
+    assert ok and pid == 9001 and d == ""
+    assert calls["get"] >= 3                     # polled until 'succeeded'
+
+
+def test_clone_broker_plan_blocks_on_failed_clone_op():
+    """A failed clone operation surfaces as (False, ...) so the step blocks."""
+    from tools import pipelines as P
+    from tools import testplans as T
+    o_send, o_get = P._ado_rest_send, P._ado_rest_get_h
+    P._ado_rest_send = lambda *a, **k: (True, {"destinationTestPlan": {"id": 1},
+                                               "cloneOperationResponse": {"opId": 5, "state": "queued"}}, "")
+    P._ado_rest_get_h = lambda *a, **k: (True, {"cloneOperationResponse": {"state": "failed"}}, {}, "")
+    try:
+        ok, pid, d = T.clone_broker_plan("TEST plan", poll_secs=0)
+    finally:
+        P._ado_rest_send, P._ado_rest_get_h = o_send, o_get
+    assert not ok and "failed" in d
+
+
 def test_ado_rest_get_all_follows_header_continuation_token():
     """The pager concatenates every page, following the ADO `x-ms-continuationtoken`
     RESPONSE HEADER (not a body field) — the bug the live clone_plans_auth test caught,

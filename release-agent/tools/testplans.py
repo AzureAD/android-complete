@@ -130,16 +130,36 @@ def find_child_suite_by_name(plan_id, parent_suite_id, name, timeout=90):
 
 # ---------------------------------------------------------------- writes
 
-def clone_broker_plan(dest_name, timeout=120):
-    """COPY the Broker master plan to a new plan `dest_name`, referencing existing test
-    cases (ADO clone default). Returns (ok, new_plan_id, detail).
+def _clone_op(op_field, *keys):
+    """Read a field from a CloneOperation response, which nests the live status under
+    `cloneOperationResponse` (state/opId/completionDate/cloneStatistics) but the ids at
+    the top level. Tries the nested object first, then the top level."""
+    nested = (op_field or {}).get("cloneOperationResponse") or {}
+    for k in keys:
+        if nested.get(k) is not None:
+            return nested.get(k)
+        if (op_field or {}).get(k) is not None:
+            return op_field.get(k)
+    return None
 
-    Mirrors the doc's "Copy Test Plan → Reference existing test cases → Create".
+
+def clone_broker_plan(dest_name, timeout=120, poll_secs=3, max_polls=40):
+    """COPY the Broker master plan to a new plan `dest_name`, referencing existing test
+    cases (ADO clone default), and WAIT for the async clone to finish. Returns
+    (ok, new_plan_id, detail).
+
+    ADO's CloneOperation is asynchronous: the POST returns a destination plan id while the
+    suite/test-case copy runs in the background. We poll the operation until its state is
+    'succeeded' before returning, so the plan is fully populated when the step reports done
+    (a too-early read would otherwise show an empty/partial plan). Mirrors the doc's
+    "Copy Test Plan → Reference existing test cases → Create".
     """
+    import time
     url = f"{ORG}/{PROJECT}/_apis/testplan/Plans/CloneOperation?api-version=7.1-preview.2"
     body = {
         # copy every suite + the hierarchy; do NOT clone requirements. Not setting a
-        # test-case duplication flag => ADO REFERENCES the existing test cases.
+        # test-case duplication flag => ADO REFERENCES the existing test cases
+        # (cloneStatistics.clonedTestCasesCount stays 0 — shared, not duplicated).
         # (copyAncestorHierarchy must be true when source suiteIds are given, else ADO 400.)
         "cloneOptions": {"copyAllSuites": True, "copyAncestorHierarchy": True,
                          "cloneRequirements": False, "copyComments": False},
@@ -153,7 +173,23 @@ def clone_broker_plan(dest_name, timeout=120):
     dest = (j or {}).get("destinationTestPlan") or {}
     pid = dest.get("id")
     if not pid:
-        return (False, None, f"clone returned no destination plan id (state={j.get('state')})")
+        return (False, None, f"clone returned no destination plan id (state={_clone_op(j, 'state')})")
+    op_id = _clone_op(j, "opId")
+
+    # Poll the operation to completion so the plan is populated before we report done.
+    if op_id:
+        op_url = (f"{ORG}/{PROJECT}/_apis/testplan/Plans/CloneOperation/{op_id}"
+                  f"?api-version=7.1-preview.2")
+        for _ in range(max_polls):
+            ok_o, op, _h, d_o = P._ado_rest_get_h(op_url, 60)
+            if not ok_o:
+                break                                   # can't read op → best-effort, return pid
+            state = str(_clone_op(op, "state") or "").lower()
+            if state in ("succeeded", "completed"):
+                break
+            if state == "failed":
+                return (False, None, f"clone operation failed (op {op_id})")
+            time.sleep(poll_secs)
     return (True, pid, "")
 
 
