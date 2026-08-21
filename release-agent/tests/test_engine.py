@@ -2713,12 +2713,12 @@ def test_stash_mrwp_appends_new_rc_on_id_change():
 
 # ---- Phase 3: clone_plans_broker / clone_plans_auth ----
 
-def _bb_build(sid, mocks, release="2026-08"):
+def _bb_build(sid, mocks, release="2026-08", ccd="2026-08-13"):
     """Build a bug_bash step outcome offline with the given mock inputs active."""
     import steps as _steps
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
-    st = ReleaseState(release_id=release)
+    st = ReleaseState(release_id=release, ccd=ccd)
     with mockctx.active(mocks):
         return st, as_dict(_steps.get_step("bug_bash", sid).build(st))
 
@@ -2726,7 +2726,8 @@ def _bb_build(sid, mocks, release="2026-08"):
 def test_testplans_names_and_query():
     from tools import testplans as T
     assert T.broker_plan_name("2026-08") == "Android Monthly Release - Aug 2026"
-    assert T.auth_suite_name("2026-08") == "Android/release/08/2026"
+    # suite name comes from the CCD date: 'Android release/MM/DD/YYYY' (matches prod)
+    assert T.auth_suite_name("2026-08-13") == "Android release/08/13/2026"
     q = T.auth_bugbash_query()
     assert "contains 'Android'" in q and "contains 'ReleaseBugBash'" in q and "Identity Apps" in q
 
@@ -2754,7 +2755,7 @@ def test_clone_plans_auth_creates_query_suite_then_idempotent():
     stored reports done without re-creating."""
     st, out = _bb_build("clone_plans_auth", {"existing": None, "create_id": "778899"})
     assert out["kind"] == "done"
-    assert "Created the Authenticator bug-bash query-suite 'Android/release/08/2026'" in out["note"]
+    assert "Created the Authenticator bug-bash query-suite 'Android release/08/13/2026'" in out["note"]
     assert "assign testers" in out["note"].lower()          # stops before assigning testers
     assert st.get_step("bug_bash", "clone_plans_auth").data["suite_id"] == "778899"
     # idempotent via injected existing suite id
@@ -2767,6 +2768,12 @@ def test_clone_plans_auth_reuses_existing_same_named_suite():
     st, out = _bb_build("clone_plans_auth", {"existing": "424242"})
     assert out["kind"] == "done" and "already exists" in out["note"]
     assert st.get_step("bug_bash", "clone_plans_auth").data["suite_id"] == "424242"
+
+
+def test_clone_plans_auth_blocks_without_ccd():
+    """The suite name needs the CCD day ('Android release/MM/DD/YYYY') — no CCD → block."""
+    st, out = _bb_build("clone_plans_auth", {"existing": None, "create_id": "1"}, ccd=None)
+    assert out["kind"] == "blocked" and "Code Complete Date" in out["reason"]
 
 
 def test_bug_bash_clone_steps_are_real_agents():

@@ -3,7 +3,7 @@ release (Phase 3, bug_bash).
 
 Per the Authenticator "How to make a test suite for bug bash" doc, each release creates
 a NEW query-based (dynamic) test suite under the standing "MSAuthenticator Test Passes"
-plan (714514 / rootSuite 714515), named after the release ("Android/release/MM/YYYY"),
+plan (714514 / rootSuite 714515), named after the release CCD ("Android release/MM/DD/YYYY"),
 whose WIQL selects the Android bug-bash test cases. This is the Authenticator half of the
 old `clone_plans` stub.
 
@@ -51,7 +51,11 @@ def build(state):
 
     name = mock_input("name", MISSING)
     if name is MISSING:
-        name = T.auth_suite_name(state.release_id)
+        if not state.ccd:
+            return Blocked(
+                "clone_plans_auth: no Code Complete Date on record — can't name the suite "
+                "'Android release/MM/DD/YYYY'. Set the CCD first (`set-ccd`).")
+        name = T.auth_suite_name(state.ccd)
     step = state.get_step("bug_bash", ID)
 
     # Already created? (test-injected id, or a stored id from a prior run) → done.

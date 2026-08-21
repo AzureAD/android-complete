@@ -11,7 +11,7 @@ Two DIFFERENT release procedures, per the team docs:
 
   * AUTHENTICATOR — CREATE a new query-based (dynamic) test suite under the standing
       "MSAuthenticator Test Passes" plan (714514 / rootSuite 714515), named after the
-      release "Android/release/MM/YYYY", whose WIQL selects the Android bug-bash test
+      release "Android release/MM/DD/YYYY", whose WIQL selects the Android bug-bash test
       cases (tag 'Android' + 'ReleaseBugBash', not Closed — matches the current prod suite
       3728419 "Android release/08/13/2026"). We STOP after creating the suite — assigning
       testers is a later, manual step.
@@ -55,11 +55,13 @@ def broker_plan_name(release_id: str) -> str:
     return f"Android Monthly Release - {_MONTHS[m - 1]} {y}"
 
 
-def auth_suite_name(release_id: str) -> str:
-    """The Authenticator query-suite name, e.g. 'Android/release/08/2026' — mirrors the
-    live convention (newest suite 'Android/release/08/2024')."""
-    y, m = _split_release(release_id)
-    return f"Android/release/{m:02d}/{y}"
+def auth_suite_name(ccd: str) -> str:
+    """The Authenticator query-suite name from the release's Code Complete Date, e.g.
+    CCD '2026-08-13' -> 'Android release/08/13/2026' — matches the prod convention
+    (suite 3728419 'Android release/08/13/2026') and the IDWiki doc's
+    'Android release/MM/DD/YYYY'. `ccd` is 'YYYY-MM-DD'."""
+    y, m, d = str(ccd).split("-")[:3]
+    return f"Android release/{int(m):02d}/{int(d):02d}/{int(y)}"
 
 
 def auth_bugbash_query() -> str:
