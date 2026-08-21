@@ -366,10 +366,10 @@ bug_bash.clone_plans_auth:
     Creates a NEW query-based (dynamic) test suite under the standing 'MSAuthenticator
     Test Passes' plan (#714514, root suite 714515), named 'Android/release/MM/YYYY'
     (e.g. 'Android/release/08/2026'). Its WIQL selects the Android bug-bash test cases
-    (tag 'Android', area 'Engineering\\ISP\\Identity Apps', not Closed, not 'IgnoreOnPrem'
-    — mirrors the live suite 'Android/release/08/2024'). This is the Authenticator half
-    of the old clone_plans step. It STOPS after creating the suite — assigning testers is
-    a later, manual step.
+    (tag 'Android' + 'ReleaseBugBash', area 'Engineering\\ISP\\Identity Apps', not Closed
+    — matches the current prod suite 3728419 'Android release/08/13/2026'). This is the
+    Authenticator half of the old clone_plans step. It STOPS after creating the suite —
+    assigning testers is a later, manual step.
   who: "Scout runs it automatically during `next` (an agent step, via the ADO test-suite create API)."
   how: >
     Idempotent — the created suite id is stashed on the step, and it also reuses an
@@ -384,7 +384,9 @@ bug_bash.clone_plans_auth:
     - q: "Does it assign testers?"
       a: "No — it stops after creating the query-based suite. Assigning testers is done later (a separate, manual step)."
     - q: "What names the suite?"
-      a: "The release: 'Android/release/MM/YYYY' — mirroring the live convention (newest was 'Android/release/08/2024')."
+      a: "The release: 'Android/release/MM/YYYY'."
+    - q: "Which test cases does it include?"
+      a: "The curated bug-bash set — Android test cases tagged 'ReleaseBugBash' (the tag also matches month-specific 'ReleaseBugBash<Month>' tags), not Closed. This matches prod; a broad 'all Android' filter would over-include (e.g. ComposeTesting/DarkMode cases)."
 
 # ========================== Entry gate · readiness ==========================
 # Keyed "readiness.<item>". Queried via `gate-info --item <id>`. Same fields as the

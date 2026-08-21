@@ -2728,7 +2728,7 @@ def test_testplans_names_and_query():
     assert T.broker_plan_name("2026-08") == "Android Monthly Release - Aug 2026"
     assert T.auth_suite_name("2026-08") == "Android/release/08/2026"
     q = T.auth_bugbash_query()
-    assert "contains 'Android'" in q and "IgnoreOnPrem" in q and "Identity Apps" in q
+    assert "contains 'Android'" in q and "contains 'ReleaseBugBash'" in q and "Identity Apps" in q
 
 
 def test_clone_plans_broker_clones_then_idempotent():

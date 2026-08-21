@@ -12,8 +12,8 @@ Two DIFFERENT release procedures, per the team docs:
   * AUTHENTICATOR — CREATE a new query-based (dynamic) test suite under the standing
       "MSAuthenticator Test Passes" plan (714514 / rootSuite 714515), named after the
       release "Android/release/MM/YYYY", whose WIQL selects the Android bug-bash test
-      cases (tag 'Android', not Closed, not 'IgnoreOnPrem' — mirrors the live suite
-      3016608 "Android/release/08/2024"). We STOP after creating the suite — assigning
+      cases (tag 'Android' + 'ReleaseBugBash', not Closed — matches the current prod suite
+      3728419 "Android release/08/13/2026"). We STOP after creating the suite — assigning
       testers is a later, manual step.
       Doc: IdentityWiki page 33580 (How to make test suite for bug bash).
 
@@ -63,9 +63,14 @@ def auth_suite_name(release_id: str) -> str:
 
 
 def auth_bugbash_query() -> str:
-    """The WIQL for the Authenticator bug-bash query-suite — the Android test cases,
-    excluding Closed and on-prem-only. Verbatim shape of the live suite 3016608
-    ('Android/release/08/2024')."""
+    """The WIQL for the Authenticator bug-bash query-suite — the Android test cases
+    curated for the release bug bash (tag 'ReleaseBugBash'), excluding Closed. Matches
+    the current prod suite (e.g. 'Android release/08/13/2026', suite 3728419).
+
+    Per the IDWiki doc, the always-included cases carry tag 'ReleaseBugBash'; month-
+    specific cases carry 'ReleaseBugBash<Month>' (e.g. 'ReleaseBugBashAug'). Because ADO's
+    `[System.Tags] contains 'X'` is a substring match, the single 'ReleaseBugBash' clause
+    captures BOTH — no separate month clause needed."""
     return (
         "select [System.Id], [System.WorkItemType], [System.Title], "
         "[Microsoft.VSTS.Common.Priority], [System.AssignedTo], [System.AreaPath] "
@@ -73,7 +78,7 @@ def auth_bugbash_query() -> str:
         "[System.WorkItemType] in group 'Microsoft.TestCaseCategory' and "
         f"[System.AreaPath] under '{AUTH_AREA_PATH}' and "
         "[System.Tags] contains 'Android' and [System.State] <> 'Closed' and "
-        "not [System.Tags] contains 'IgnoreOnPrem'")
+        "[System.Tags] contains 'ReleaseBugBash'")
 
 
 def _plan_url(plan_id, extra=""):
