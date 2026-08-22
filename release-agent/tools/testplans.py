@@ -2,13 +2,14 @@
 
 Two DIFFERENT release procedures, per the team docs:
 
-  * BROKER  — build a FLAT monthly plan. Instead of ADO's "Copy Test Plan" (which
+  * BROKER  — build a two-folder monthly plan. Instead of ADO's "Copy Test Plan" (which
       reproduces the master's whole 45-suite tree), create a fresh plan "Android Monthly
-      Release - <Mon YYYY>" with ONE static suite "Manual Tests (Android Broker)" holding
-      just the manual-broker cases resolved from the master's subtree (2007357 / suite
-      2008656), each pinned to the two flight configs (293 ECS + 330 LocalFlights). Cases are
-      REFERENCED (shared, not duplicated). Flat = trackable; downstream steps find the suite
-      by name so it's a drop-in.
+      Release - <Mon YYYY>" with exactly two top-level folders: (1) "Manual Tests (Android
+      Broker)" — one FLAT static suite of the manual-broker cases (master 2007357 / subtree
+      2008656 resolved), pinned to the two flight configs (293 ECS + 330 LocalFlights); and
+      (2) "Manual Tests (Native Auth)" — the master's 2864589 subtree copied AS A FOLDER (its
+      dynamic query suite preserved, kept current), pinned to ECS only (293). Cases are
+      REFERENCED (shared, not duplicated). Downstream steps find the Broker suite by name.
       Doc: eng.ms/.../internal-release-checklist/test-plans
 
   * AUTHENTICATOR — CREATE a new query-based (dynamic) test suite under the standing
@@ -43,6 +44,12 @@ BROKER_MANUAL_SUITE_NAME = "Manual Tests (Android Broker)"
 # Assigned explicitly so the flat plan gets exactly 2 points/case (matches the master's
 # matrix) instead of inheriting the project's ~190 default configurations.
 BROKER_CONFIGS = [293, 330]
+# The "Manual Tests (Native Auth)" subtree of the master (static folder + a dynamic query
+# suite). Unlike Broker, this is copied AS A FOLDER (structure preserved, not flattened) so
+# the monthly plan has exactly two top-level folders. Native Auth runs ECS only (config 293).
+BROKER_NATIVE_AUTH_ROOT_SUITE = 2864589
+BROKER_NATIVE_AUTH_SUITE_NAME = "Manual Tests (Native Auth)"
+NATIVE_AUTH_CONFIGS = [293]
 BROKER_AREA_PATH = "Engineering\\Auth Client\\Broker\\Android"
 BROKER_ITERATION = "Engineering"
 
@@ -142,26 +149,93 @@ def find_child_suite_by_name(plan_id, parent_suite_id, name, timeout=90):
 
 # ---------------------------------------------------------------- writes
 
-def create_broker_flat_plan(dest_name, timeout=120):
-    """Build the release's FLAT Broker test plan and return (ok, new_plan_id, detail).
+def _create_suite(pid, parent_id, name, configs, suite_type="staticTestSuite",
+                  query=None, timeout=120):
+    """Create one suite under `parent_id`, pinned to `configs` (no inherited defaults).
+    Returns (ok, suite_id, detail)."""
+    body = {"suiteType": suite_type, "name": name, "parentSuite": {"id": parent_id},
+            "inheritDefaultConfigurations": False,
+            "defaultConfigurations": [{"id": c} for c in configs]}
+    if query is not None:
+        body["queryString"] = query
+    ok, sj, d = P._ado_rest_send(
+        f"{ORG}/{PROJECT}/_apis/testplan/Plans/{pid}/suites?api-version=7.1-preview.1",
+        "POST", body, timeout)
+    if not ok:
+        return (False, None, d)
+    sid = (sj or {}).get("id")
+    return (True, sid, "") if sid else (False, None, f"suite '{name}' create returned no id")
+
+
+def _add_cases(pid, suite_id, case_ids, configs, timeout=120):
+    """Add `case_ids` to `suite_id`, each with a point assignment per config. (ok, detail)."""
+    if not case_ids:
+        return (True, "")
+    body = [{"workItem": {"id": int(cid)},
+             "pointAssignments": [{"configurationId": c} for c in configs]}
+            for cid in case_ids]
+    ok, _j, d = P._ado_rest_send(
+        f"{ORG}/{PROJECT}/_apis/testplan/Plans/{pid}/Suites/{suite_id}/TestCase"
+        f"?api-version=7.1-preview.3", "POST", body, max(timeout, 120))
+    return (ok, d)
+
+
+def _replicate_subtree(pid, dest_parent, src_children, src_suite_id, configs, timeout=120):
+    """Recursively copy the master suite `src_suite_id` (and its children) under
+    `dest_parent` in the new plan, pinned to `configs` — preserving the FOLDER structure
+    (static folders + dynamic query suites) rather than flattening. `src_children` maps a
+    master suite id → its child suite dicts. Static suites also get their direct test cases
+    copied. Returns (ok, detail)."""
+    for child in src_children.get(src_suite_id, []):
+        cid, name = child["id"], child.get("name") or f"Suite {child['id']}"
+        stype = child.get("suiteType") or "staticTestSuite"
+        query = None
+        if stype == "dynamicTestSuite":
+            ok, det, _h, d = P._ado_rest_get_h(
+                f"{ORG}/{PROJECT}/_apis/testplan/Plans/{BROKER_MASTER_PLAN}/suites/{cid}"
+                f"?api-version=7.1-preview.1", 60)
+            if not ok:
+                return (False, f"could not read master suite {cid}: {d}")
+            query = (det or {}).get("queryString")
+        okc, new_sid, dc = _create_suite(pid, dest_parent, name, configs, stype, query, timeout)
+        if not okc:
+            return (False, dc)
+        # static suites carry their own directly-added cases → copy them
+        if stype == "staticTestSuite":
+            okl, cases, dl = P._ado_rest_get_all(
+                f"{ORG}/{PROJECT}/_apis/testplan/Plans/{BROKER_MASTER_PLAN}/Suites/{cid}"
+                f"/TestCase?api-version=7.1", timeout)
+            if not okl:
+                return (False, dl)
+            direct = [str(((c.get("workItem") or {}).get("id")
+                           or (c.get("testCase") or {}).get("id")))
+                      for c in cases if (c.get("workItem") or c.get("testCase"))]
+            oka, da = _add_cases(pid, new_sid, [i for i in direct if i and i != "None"],
+                                 configs, timeout)
+            if not oka:
+                return (False, da)
+        oksub, dsub = _replicate_subtree(pid, new_sid, src_children, cid, configs, timeout)
+        if not oksub:
+            return (False, dsub)
+    return (True, "")
+
+
+def build_broker_plan(dest_name, timeout=120):
+    """Build the release's Broker test plan and return (ok, new_plan_id, detail).
 
     Instead of ADO's "Copy Test Plan" (which reproduces the master's whole 45-suite
-    hierarchy), this creates a fresh plan with a SINGLE static suite
-    "Manual Tests (Android Broker)" holding just the relevant manual-broker cases — the
-    only tests the bug bash runs. Steps:
+    hierarchy), this creates a fresh plan with exactly TWO top-level folders:
 
-      1. create an empty plan `dest_name` (Broker area/iteration);
-      2. create one static child suite named "Manual Tests (Android Broker)" pinned to the
-         two flight configurations (293 ECS + 330 LocalFlights) — inheritDefaultConfigurations
-         is False so the plan's ~190 project-default configs are NOT applied;
-      3. resolve the master's "Manual Tests (Android Broker)" subtree (flattening its dynamic
-         sub-suites) to the current set of cases, and add them all to the flat suite,
-         referencing the existing work items (shared, not duplicated), each assigned to both
-         configs → 2 points/case (matches the master's matrix).
+      • "Manual Tests (Android Broker)" — a single FLAT static suite of the manual-broker
+        cases (the master's 2008656 subtree resolved/flattened), pinned to the two flight
+        configs (293 ECS + 330 LocalFlights) → 2 points/case.
+      • "Manual Tests (Native Auth)" — copied AS A FOLDER (the master's 2864589 subtree:
+        a static folder + its dynamic query suite), pinned to ECS only (293). Kept dynamic
+        so it stays current; not flattened.
 
-    Downstream (distribute_tests, gather_progress) find the suite by name, so a flat plan is
-    a drop-in. On a partial failure the half-built plan is best-effort deleted so a re-run
-    starts clean.
+    All cases are REFERENCED (shared, not duplicated). Downstream (distribute_tests,
+    gather_progress) find the Broker suite by name, so this is a drop-in. On any partial
+    failure the half-built plan is best-effort deleted so a re-run starts clean.
     """
     from tools import distribution as D          # local import avoids a circular import
 
@@ -181,33 +255,42 @@ def create_broker_flat_plan(dest_name, timeout=120):
         P._ado_rest_send(f"{ORG}/{PROJECT}/_apis/testplan/plans/{pid}?{_API}", "DELETE", None, 60)
         return (False, None, reason)
 
-    # 2) single flat static suite, pinned to the two flight configs
-    ok2, sj, d2 = P._ado_rest_send(
-        f"{ORG}/{PROJECT}/_apis/testplan/Plans/{pid}/suites?api-version=7.1-preview.1", "POST",
-        {"suiteType": "staticTestSuite", "name": BROKER_MANUAL_SUITE_NAME,
-         "parentSuite": {"id": root}, "inheritDefaultConfigurations": False,
-         "defaultConfigurations": [{"id": c} for c in BROKER_CONFIGS]},
-        timeout)
-    if not ok2:
-        return _cleanup(f"suite create failed: {d2}")
-    suite_id = (sj or {}).get("id")
-    if not suite_id:
-        return _cleanup("suite create returned no id")
-
-    # 3) resolve the master's manual-broker cases and add them to the flat suite
+    # 2) FLAT Broker suite (all manual-broker cases resolved from the master subtree)
+    okb, broker_suite, db = _create_suite(pid, root, BROKER_MANUAL_SUITE_NAME,
+                                          BROKER_CONFIGS, timeout=timeout)
+    if not okb:
+        return _cleanup(f"Broker suite create failed: {db}")
     okc, cases, dc = D.broker_manual_cases(BROKER_MASTER_PLAN, BROKER_MANUAL_ROOT_SUITE, timeout)
     if not okc:
-        return _cleanup(f"could not resolve master manual cases: {dc}")
+        return _cleanup(f"could not resolve master manual-broker cases: {dc}")
     if not cases:
         return _cleanup("master 'Manual Tests (Android Broker)' subtree resolved to 0 cases")
-    body = [{"workItem": {"id": int(c["id"])},
-             "pointAssignments": [{"configurationId": cid} for cid in BROKER_CONFIGS]}
-            for c in cases]
-    oka, _aj, da = P._ado_rest_send(
-        f"{ORG}/{PROJECT}/_apis/testplan/Plans/{pid}/Suites/{suite_id}/TestCase"
-        f"?api-version=7.1-preview.3", "POST", body, max(timeout, 120))
+    oka, da = _add_cases(pid, broker_suite, [c["id"] for c in cases], BROKER_CONFIGS, timeout)
     if not oka:
-        return _cleanup(f"adding {len(cases)} cases failed: {da}")
+        return _cleanup(f"adding {len(cases)} Broker cases failed: {da}")
+
+    # 3) Native Auth FOLDER (structure preserved) — replicate the master's subtree
+    okm, masters, dm = P._ado_rest_get_all(
+        f"{ORG}/{PROJECT}/_apis/testplan/Plans/{BROKER_MASTER_PLAN}/suites?{_API}", timeout)
+    if not okm:
+        return _cleanup(f"could not read master suites: {dm}")
+    src_children = {}
+    na_src = None
+    for s in masters:
+        src_children.setdefault((s.get("parentSuite") or {}).get("id"), []).append(s)
+        if s.get("id") == BROKER_NATIVE_AUTH_ROOT_SUITE:
+            na_src = s
+    if na_src is None:
+        return _cleanup(f"master Native Auth suite #{BROKER_NATIVE_AUTH_ROOT_SUITE} not found")
+    okna, na_folder, dna = _create_suite(pid, root, BROKER_NATIVE_AUTH_SUITE_NAME,
+                                         NATIVE_AUTH_CONFIGS, timeout=timeout)
+    if not okna:
+        return _cleanup(f"Native Auth folder create failed: {dna}")
+    okr, dr = _replicate_subtree(pid, na_folder, src_children, BROKER_NATIVE_AUTH_ROOT_SUITE,
+                                 NATIVE_AUTH_CONFIGS, timeout)
+    if not okr:
+        return _cleanup(f"replicating Native Auth folder failed: {dr}")
+
     return (True, pid, "")
 
 

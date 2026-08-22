@@ -1,11 +1,14 @@
-"""Step: `clone_plans_broker` — build this release's FLAT Broker test plan (Phase 3, bug_bash).
+"""Step: `clone_plans_broker` — build this release's Broker test plan (Phase 3, bug_bash).
 
 Instead of ADO's "Copy Test Plan" (which reproduces the master's whole 45-suite tree), this
-creates a fresh plan "Android Monthly Release - <Mon YYYY>" with ONE static suite
-"Manual Tests (Android Broker)" holding just the relevant manual-broker cases (the only tests
-the bug bash runs), each pinned to the two flight configs (ECS + LocalFlights). Cases are
-referenced (shared, not duplicated). Flat = easy to track; downstream steps find the suite by
-name so it's a drop-in.
+creates a fresh plan "Android Monthly Release - <Mon YYYY>" with exactly TWO top-level
+folders:
+  • "Manual Tests (Android Broker)" — one FLAT static suite of the manual-broker cases (the
+    only broker tests the bug bash runs), pinned to the two flight configs (ECS + LocalFlights);
+  • "Manual Tests (Native Auth)" — copied AS A FOLDER (its dynamic query suite preserved),
+    pinned to ECS only.
+Cases are referenced (shared, not duplicated). Flat Broker = easy to track; Native Auth stays
+a dynamic folder so it's current. Downstream steps find the Broker suite by name → drop-in.
 
 Idempotent: the created plan id is stashed on the step (data.plan_id). On a re-run the step
 re-confirms that plan still exists and reports done WITHOUT rebuilding — so a `next` that
@@ -62,14 +65,14 @@ def build(state):
                         f"'{info.get('name') or dest}' (plan {stored}).", links=_links(stored))
         # recorded id no longer resolves — fall through and rebuild
 
-    # Build the flat plan (or take the injected clone_id offline).
+    # Build the plan (or take the injected clone_id offline).
     clone_id = mock_input("clone_id", MISSING)
     if clone_id is MISSING:
-        ok, clone_id, detail = T.create_broker_flat_plan(dest)
+        ok, clone_id, detail = T.build_broker_plan(dest)
         if not ok:
             hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
             return Blocked(
-                f"clone_plans_broker: could not build the flat Broker test plan '{dest}' "
+                f"clone_plans_broker: could not build the Broker test plan '{dest}' "
                 f"from the master (#{T.BROKER_MASTER_PLAN}) ({detail}){hint}.")
 
     step.data = dict(step.data or {})
@@ -77,9 +80,9 @@ def build(state):
     step.data["plan_name"] = dest
     state.set_step("bug_bash", ID, step)
     return Done(
-        f"Built the flat Broker test plan '{dest}' (plan {clone_id}) — one "
-        f"'{T.BROKER_MANUAL_SUITE_NAME}' suite of the manual-broker cases, referencing "
-        f"existing test cases.", links=_links(clone_id))
+        f"Built the Broker test plan '{dest}' (plan {clone_id}) — a flat "
+        f"'{T.BROKER_MANUAL_SUITE_NAME}' suite plus the '{T.BROKER_NATIVE_AUTH_SUITE_NAME}' "
+        f"folder, referencing existing test cases.", links=_links(clone_id))
 
 
 run = legacy_run(build)

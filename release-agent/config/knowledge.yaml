@@ -339,18 +339,19 @@ build_verify.rc_report:
 # =============================== Phase 3 · bug_bash ===============================
 
 bug_bash.clone_plans_broker:
-  summary: "Build this release's FLAT Broker test plan (one suite of the manual-broker cases)."
+  summary: "Build this release's Broker test plan — a flat Broker suite + the Native Auth folder."
   what: >
-    Each release gets a FLAT Broker test plan named 'Android Monthly Release - <Mon YYYY>'
-    (e.g. 'Android Monthly Release - Aug 2026', area 'Engineering\\Auth Client\\Broker\\
-    Android'). Instead of ADO's "Copy Test Plan" (which reproduces the master's whole
-    45-suite tree), Scout creates a fresh plan with ONE static suite
-    'Manual Tests (Android Broker)' holding just the manual-broker cases resolved from the
-    master template (#2007357, subtree suite 2008656) — the only tests the bug bash runs.
-    Each case is pinned to the two flight configurations (293 'RC MSAL - RC Broker' / ECS +
-    330 '… (LocalFlights)'), giving 2 points/case, and REFERENCES the existing test cases
-    (shared, not duplicated). Flat = easy to track; distribute_tests + the progress updates
-    find the suite by name, so it's a drop-in.
+    Each release gets a Broker test plan named 'Android Monthly Release - <Mon YYYY>' (e.g.
+    'Android Monthly Release - Aug 2026', area 'Engineering\\Auth Client\\Broker\\Android').
+    Instead of ADO's "Copy Test Plan" (which reproduces the master's whole 45-suite tree),
+    Scout creates a fresh plan with exactly TWO top-level folders: (1) 'Manual Tests (Android
+    Broker)' — one FLAT static suite of the manual-broker cases resolved from the master
+    template (#2007357, subtree suite 2008656), each pinned to the two flight configurations
+    (293 'RC MSAL - RC Broker' / ECS + 330 '… (LocalFlights)') → 2 points/case; and (2)
+    'Manual Tests (Native Auth)' — the master's Native Auth subtree (#2864589) copied AS A
+    FOLDER (its dynamic query suite preserved, so it stays current), pinned to ECS only (293).
+    All cases are REFERENCED (shared, not duplicated). distribute_tests + the progress updates
+    find the Broker suite by name, so it's a drop-in.
   who: "Scout runs it automatically during `next` (an agent step, via the ADO test-plan API)."
   how: >
     Idempotent — the new plan id is stashed on the step; a re-run re-confirms that plan
@@ -363,12 +364,12 @@ bug_bash.clone_plans_broker:
     - name: "Broker test-plans doc"
       url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/test-plans"
   faqs:
-    - q: "Why flat instead of copying the whole master plan?"
-      a: "The bug bash only runs the 'Manual Tests (Android Broker)' subtree, and the master's nested + dynamic suites are hard to track. Flattening to one static suite gives a single, trackable list of exactly the relevant cases."
+    - q: "Why flat Broker but a folder for Native Auth?"
+      a: "The Broker bug bash runs one manual-tests set that's easiest to track as a single flat list. Native Auth is a self-contained query suite, so it's kept as its own folder (still current, not flattened) — giving exactly two folders in the plan."
     - q: "Does it duplicate the test cases?"
       a: "No — it references the existing test cases (shared). Edit test cases only in the master template."
-    - q: "Does it auto-update if the master's queries change later?"
-      a: "No — flattening resolves the master's dynamic suites to a frozen snapshot at build time, which is what you want for a stable monthly bug-bash cut. Rebuild (delete the plan id + re-run) to re-snapshot."
+    - q: "Does it auto-update if the master changes later?"
+      a: "The Broker suite is a frozen snapshot at build time (stable monthly cut). The Native Auth folder stays dynamic (its query re-resolves), so it reflects the current Native Auth cases. Rebuild (delete the plan id + re-run) to re-snapshot Broker."
 
 bug_bash.clone_plans_auth:
   summary: "Create the Authenticator bug-bash query-based test suite for this release."

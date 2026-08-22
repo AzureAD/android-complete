@@ -63,7 +63,7 @@ phases:
     name: "Test / Bug Bash"
     checklist_phase: 3
     steps:
-      - { id: clone_plans_broker, name: "Clone Broker test plan (copy master template)", owner: agent, maps_to: [T3] }
+      - { id: clone_plans_broker, name: "Build Broker test plan (flat Broker suite + Native Auth folder)", owner: agent, maps_to: [T3] }
       - { id: clone_plans_auth,   name: "Create Authenticator bug-bash test suite",     owner: agent, maps_to: [T3] }
       - { id: distribute_tests,   name: "Distribute bug-bash tests across the team",     owner: agent, maps_to: [T2] }
       - { id: send_invite,        name: "Schedule Bug Bash + send Teams invite",         owner: agent, source: scout, maps_to: [T2] }

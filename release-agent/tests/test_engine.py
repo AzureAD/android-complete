@@ -2737,12 +2737,13 @@ def test_testplans_names_and_query():
     assert "contains 'Android'" in q and "contains 'ReleaseBugBash'" in q and "Identity Apps" in q
 
 
-def test_clone_plans_broker_builds_flat_then_idempotent():
-    """First run builds the flat plan and stashes the new plan id; a re-run with that id
-    stored reports done WITHOUT rebuilding."""
+def test_clone_plans_broker_builds_then_idempotent():
+    """First run builds the plan (Broker flat suite + Native Auth folder) and stashes the new
+    plan id; a re-run with that id stored reports done WITHOUT rebuilding."""
     st, out = _bb_build("clone_plans_broker", {"clone_id": "5551212"})
     assert out["kind"] == "done"
-    assert "flat Broker test plan" in out["note"] and "5551212" in out["note"]
+    assert "Broker test plan" in out["note"] and "5551212" in out["note"]
+    assert "Native Auth" in out["note"]
     assert st.get_step("bug_bash", "clone_plans_broker").data["plan_id"] == "5551212"
     assert out["links"][0]["url"].endswith("planId=5551212")
     # idempotent: an injected existing plan id → already-built, no rebuild
@@ -3147,48 +3148,72 @@ def test_clone_plans_name_override_knob():
     assert "TEST Android/release/08/2026" in out2["note"]
 
 
-def test_create_broker_flat_plan_builds_single_suite_with_configs():
-    """create_broker_flat_plan: POST plan → POST one static suite (pinned to the 2 flight
-    configs, no inherited defaults) → add the resolved manual cases with both config point
-    assignments. Returns the new plan id."""
+def test_build_broker_plan_makes_flat_broker_and_native_auth_folder():
+    """build_broker_plan: create plan → flat Broker suite (2 flight configs) + its cases →
+    Native Auth FOLDER (static parent + the master's dynamic child recreated with its query),
+    pinned to ECS-only. Returns the new plan id."""
     from tools import pipelines as P
     from tools import testplans as T
     from tools import distribution as D
+    NA = T.BROKER_NATIVE_AUTH_ROOT_SUITE
+    masters = [
+        {"id": NA, "name": "Manual Tests (Native Auth)", "suiteType": "staticTestSuite",
+         "parentSuite": {"id": 2007358}},
+        {"id": 5001, "name": "Native Auth Test Manual", "suiteType": "dynamicTestSuite",
+         "parentSuite": {"id": NA}},
+    ]
     sends = []
+    new_suite_id = {"n": 9100}
 
     def fake_send(url, method, body, timeout):
         sends.append((url, method, body))
-        if url.endswith(f"plans?{T._API}"):                 # create plan
-            return (True, {"id": 9100, "rootSuite": {"id": 9101}}, "")
-        if "/suites?" in url:                                # create suite
-            return (True, {"id": 9102}, "")
-        if "/TestCase?" in url:                              # add cases
+        if url.endswith(f"plans?{T._API}"):
+            return (True, {"id": 9000, "rootSuite": {"id": 9001}}, "")
+        if "/suites?" in url:
+            new_suite_id["n"] += 1
+            return (True, {"id": new_suite_id["n"]}, "")
+        if "/TestCase?" in url:
             return (True, {"value": body}, "")
         return (True, {}, "")
 
-    o_send, o_cases = P._ado_rest_send, D.broker_manual_cases
-    P._ado_rest_send = fake_send
-    D.broker_manual_cases = lambda *a, **k: (True, [{"id": "111", "assignee": "a@x"},
-                                                    {"id": "222", "assignee": "b@x"}], "")
+    def fake_get_all(url, timeout, **k):
+        if f"/Plans/{T.BROKER_MASTER_PLAN}/suites?" in url:      # master suites list
+            return (True, masters, "")
+        if "/TestCase?" in url:                                 # static suite's direct cases
+            return (True, [], "")
+        return (True, [], "")
+
+    def fake_get_h(url, timeout):
+        return (True, {"queryString": "SELECT [System.Id] WHERE tag='CIAM'"}, {}, "")
+
+    o = (P._ado_rest_send, P._ado_rest_get_all, P._ado_rest_get_h, D.broker_manual_cases)
+    P._ado_rest_send, P._ado_rest_get_all, P._ado_rest_get_h = fake_send, fake_get_all, fake_get_h
+    D.broker_manual_cases = lambda *a, **k: (True, [{"id": "111", "assignee": "a@x"}], "")
     try:
-        ok, pid, d = T.create_broker_flat_plan("TEST FLAT plan")
+        ok, pid, d = T.build_broker_plan("TEST plan")
     finally:
-        P._ado_rest_send, D.broker_manual_cases = o_send, o_cases
-    assert ok and pid == 9100 and d == ""
-    # suite create pinned to the 2 configs, no inherited defaults
-    suite_body = next(b for (u, m, b) in sends if "/suites?" in u)
-    assert suite_body["name"] == T.BROKER_MANUAL_SUITE_NAME
-    assert suite_body["inheritDefaultConfigurations"] is False
-    assert [c["id"] for c in suite_body["defaultConfigurations"]] == T.BROKER_CONFIGS
-    # each case added with a point assignment per config
+        (P._ado_rest_send, P._ado_rest_get_all, P._ado_rest_get_h, D.broker_manual_cases) = o
+    assert ok and pid == 9000 and d == ""
+    suite_bodies = [b for (u, m, b) in sends if "/suites?" in u]
+    # Broker flat suite pinned to both flight configs
+    broker = next(b for b in suite_bodies if b["name"] == T.BROKER_MANUAL_SUITE_NAME)
+    assert broker["suiteType"] == "staticTestSuite" and broker["inheritDefaultConfigurations"] is False
+    assert [c["id"] for c in broker["defaultConfigurations"]] == T.BROKER_CONFIGS
+    # Native Auth folder pinned ECS-only
+    na = next(b for b in suite_bodies if b["name"] == T.BROKER_NATIVE_AUTH_SUITE_NAME)
+    assert [c["id"] for c in na["defaultConfigurations"]] == T.NATIVE_AUTH_CONFIGS
+    # the master's dynamic child recreated WITH its query, ECS-only
+    dyn = next(b for b in suite_bodies if b["name"] == "Native Auth Test Manual")
+    assert dyn["suiteType"] == "dynamicTestSuite" and dyn["queryString"].startswith("SELECT")
+    assert [c["id"] for c in dyn["defaultConfigurations"]] == T.NATIVE_AUTH_CONFIGS
+    # Broker cases added with both configs
     add_body = next(b for (u, m, b) in sends if "/TestCase?" in u)
-    assert len(add_body) == 2
     assert [pa["configurationId"] for pa in add_body[0]["pointAssignments"]] == T.BROKER_CONFIGS
 
 
-def test_create_broker_flat_plan_cleans_up_on_case_failure():
-    """If adding cases fails after the plan is created, the half-built plan is DELETEd so a
-    re-run starts clean, and the function returns (False, ...)."""
+def test_build_broker_plan_cleans_up_on_case_failure():
+    """If adding the Broker cases fails after the plan is created, the half-built plan is
+    DELETEd so a re-run starts clean, and the function returns (False, ...)."""
     from tools import pipelines as P
     from tools import testplans as T
     from tools import distribution as D
@@ -3204,13 +3229,13 @@ def test_create_broker_flat_plan_cleans_up_on_case_failure():
             return (False, None, "HTTP 400: bad point assignment")
         return (True, {}, "")
 
-    o_send, o_cases = P._ado_rest_send, D.broker_manual_cases
+    o = (P._ado_rest_send, D.broker_manual_cases)
     P._ado_rest_send = fake_send
     D.broker_manual_cases = lambda *a, **k: (True, [{"id": "111", "assignee": "a@x"}], "")
     try:
-        ok, pid, d = T.create_broker_flat_plan("TEST FLAT plan")
+        ok, pid, d = T.build_broker_plan("TEST plan")
     finally:
-        P._ado_rest_send, D.broker_manual_cases = o_send, o_cases
+        P._ado_rest_send, D.broker_manual_cases = o
     assert not ok and "400" in d
     assert any(m == "DELETE" and "/plans/9200" in u for (m, u) in calls)   # cleaned up
 
