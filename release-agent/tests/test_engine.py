@@ -75,6 +75,7 @@ _SAFE_AGENTS = {
     # Phase-3 bug_bash clone steps — real agents; keep flow tests offline.
     "bug_bash.clone_plans_broker": {"outcome": "done", "note": "broker plan cloned (test)"},
     "bug_bash.clone_plans_auth": {"outcome": "done", "note": "auth suite created (test)"},
+    "bug_bash.distribute_tests": {"outcome": "done", "note": "tests distributed (test)"},
 }
 
 
@@ -638,9 +639,9 @@ def test_holds_at_first_hold():
     assert actions[-1].step == "ui_failures"   # Phases 0-2 gateless (rc_report auto); first hold is Phase-3 ui_failures
     # auto steps that RUN before the first hold: Phase-0 breaking/cg/cron/wiki (4) +
     # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local (4) + rc_report (scout
-    # email, mocked done here) (1) + Phase-3 clone_plans_broker/clone_plans_auth/coordinate
-    # stubs (3). The Phase-1 scout steps are pre-recorded by _orch's _clear_ccd_scout (not "ran").
-    assert sum(1 for a in actions if a.kind == "ran") == 12
+    # email, mocked done here) (1) + Phase-3 clone_plans_broker/clone_plans_auth/
+    # distribute_tests/coordinate stubs (4). The Phase-1 scout steps are pre-recorded.
+    assert sum(1 for a in actions if a.kind == "ran") == 13
 
 
 def test_gate_blocks_until_approved():
@@ -2782,6 +2783,86 @@ def test_bug_bash_clone_steps_are_real_agents():
     for sid in ("clone_plans_broker", "clone_plans_auth"):
         mod = _steps.get_step("bug_bash", sid)
         assert mod is not None and getattr(mod, "KIND", None) == "agent" and hasattr(mod, "run")
+
+
+# ---- Phase 3: distribute_tests ----
+
+def test_distribution_even_and_preserves_preference():
+    """distribute() lands everyone within ±1 of the target, keeps default assignees where
+    possible, and gives the +1 slots to the people with the most eligible defaults."""
+    from tools import distribution as D
+    elig = ["alice", "bob", "carmine", "dave"]
+    # 14 tests: alice-heavy defaults + some on an INELIGIBLE 'owner' (pooled)
+    tests = ([{"id": f"a{i}", "assignee": "alice"} for i in range(8)] +
+             [{"id": f"b{i}", "assignee": "bob"} for i in range(2)] +
+             [{"id": f"o{i}", "assignee": "owner"} for i in range(4)])   # owner not eligible
+    r = D.distribute(tests, elig)
+    assert sum(r["counts"].values()) == 14
+    assert max(r["counts"].values()) - min(r["counts"].values()) <= 1   # even (±1)
+    assert r["counts"]["alice"] == 4                                    # 14/4 -> 3 or 4
+    # alice keeps 4 of her 8 defaults; bob keeps his 2
+    assert r["assignments"]["b0"] == "bob" and r["assignments"]["b1"] == "bob"
+    assert r["kept"] >= 6
+    # every assignment is an eligible tester (owner's 4 got reassigned)
+    assert set(r["assignments"].values()) <= set(elig)
+
+
+def test_eligible_testers_removes_owner_oce_and_excluded():
+    from tools import distribution as D
+    roster = ["a@x", "jialh@microsoft.com", "b@x", "owner@x", "oce@x", "c@x"]
+    elig = D.eligible_testers(roster, ["jialh@microsoft.com"], owner="OWNER@x", oce="oce@X")
+    assert elig == ["a@x", "b@x", "c@x"]        # case-insensitive owner/oce/excluded removal
+
+
+def test_oncall_team_is_single_source_from_readiness():
+    """The distribution step reads the on-call team from readiness.yaml's oncall_now item —
+    the SAME source the entry gate uses (no second copy to drift)."""
+    from tools import distribution as D
+    tid, tname = D.oncall_team()
+    assert tid == 78848 and "Android Shield" in (tname or "")
+
+
+def _dist_build(mocks, owner="owner@microsoft.com", broker_plan="900"):
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    from orchestrator.state import StepState
+    st = ReleaseState(release_id="2026-08", owner_email=owner)
+    st.set_step("bug_bash", "clone_plans_broker", StepState(status="done", data={"plan_id": broker_plan}))
+    with mockctx.active(mocks):
+        return st, as_dict(_steps.get_step("bug_bash", "distribute_tests").build(st))
+
+
+def test_distribute_tests_step_previews_and_stores_plan():
+    """The step computes the combined distribution offline and STASHES the plan on the step
+    (read-only preview) — it does NOT write assignments."""
+    mocks = {
+        "roster": [{"name": "A", "upn": "a@microsoft.com"}, {"name": "B", "upn": "b@microsoft.com"},
+                   {"name": "Owner", "upn": "owner@microsoft.com"}, {"name": "Oce", "upn": "oce@microsoft.com"}],
+        "oce": "oce@microsoft.com",
+        "broker_cases": [{"id": "1", "assignee": "a@microsoft.com"}, {"id": "2", "assignee": None},
+                         {"id": "3", "assignee": "owner@microsoft.com"}, {"id": "4", "assignee": None}],
+        "auth_cases": [{"id": "5", "assignee": "b@microsoft.com"}, {"id": "6", "assignee": None}],
+    }
+    st, out = _dist_build(mocks)
+    assert out["kind"] == "done" and "PREVIEW" in out["note"]
+    plan = st.get_step("bug_bash", "distribute_tests").data["plan"]
+    assert plan["applied"] is False
+    assert plan["owner_excluded"] == "owner@microsoft.com" and plan["oce_excluded"] == "oce@microsoft.com"
+    # 6 tests / 2 eligible (a,b; owner+oce excluded) -> 3 each
+    assert sorted(plan["counts"].values()) == [3, 3]
+    assert set(plan["assignments"].values()) == {"a@microsoft.com", "b@microsoft.com"}
+
+
+def test_distribute_tests_blocks_without_broker_clone():
+    """No cloned Broker plan → the step blocks (can't locate the manual tests)."""
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    st = ReleaseState(release_id="2026-08", owner_email="o@x")
+    with mockctx.active({"auth_cases": [], "roster": [{"name": "A", "upn": "a@x"}]}):
+        out = as_dict(_steps.get_step("bug_bash", "distribute_tests").build(st))
+    assert out["kind"] == "blocked" and "hasn't been cloned" in out["reason"]
 
 
 def test_clone_plans_name_override_knob():

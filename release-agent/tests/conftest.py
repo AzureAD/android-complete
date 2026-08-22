@@ -37,4 +37,11 @@ def _no_real_network(monkeypatch):
     monkeypatch.setattr(P, "_ado_rest_get_text", _blocked)
     monkeypatch.setattr(P, "_ado_rest_send", _blocked)
     monkeypatch.setattr(P, "_az_json", _blocked)
+    # tools.distribution has its own Graph + WIQL + write primitives — block those too.
+    try:
+        from tools import distribution as Dm
+        for fn in ("_graph_get", "_graph_token", "_ado_wiql", "set_assigned_to"):
+            monkeypatch.setattr(Dm, fn, _blocked)
+    except Exception:
+        pass
     yield

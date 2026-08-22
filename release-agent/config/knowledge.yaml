@@ -388,6 +388,39 @@ bug_bash.clone_plans_auth:
     - q: "Which test cases does it include?"
       a: "The curated bug-bash set — Android test cases tagged 'ReleaseBugBash' (the tag also matches month-specific 'ReleaseBugBash<Month>' tags), not Closed. This matches prod; a broad 'all Android' filter would over-include (e.g. ComposeTesting/DarkMode cases)."
 
+bug_bash.distribute_tests:
+  summary: "Evenly distribute the manual bug-bash tests across the eligible team."
+  what: >
+    Combines the two manual test sets — Broker ('Manual Tests (Android Broker)' subtree,
+    ~48 cases) + Authenticator (the ReleaseBugBash query set minus tags Automated/Blocked,
+    ~26 cases) — and splits them EVENLY across the eligible team, keeping each test on its
+    current assignee where possible (preference), only reassigning to hit an even count.
+    Eligible = the roster DL 'androididentity@microsoft.com' MINUS the always-excluded
+    people (jialh, moghosh, veenasoman), the release owner, and the current on-call
+    engineer (OCE). Default assignee + the written field are both System.AssignedTo.
+  who: >
+    Scout computes the PREVIEW automatically during `next` (an agent step). Applying it is
+    a separate, explicit action you trigger — it writes System.AssignedTo, which mutates
+    the shared test-case work items (so this release's assignment becomes next release's
+    default preference).
+  how: >
+    Preview: `distribute-tests --release <id> [--oce <upn>]` prints the per-tester table and
+    stores the plan. Apply: `distribute-tests --release <id> --apply` writes the
+    assignments. The OCE team id (ICM 78848) is the SAME source the entry gate's oncall_now
+    check uses (read from readiness.yaml — no second copy).
+  links:
+    - name: "Broker test-plans doc"
+      url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/test-plans"
+    - name: "How to make a test suite for bug bash (IDWiki 33580)"
+      url: "https://identitydivision.visualstudio.com/IdentityWiki/_wiki/wikis/IdentityWiki.wiki/33580/How-to-make-test-suite-for-bug-bash-"
+  faqs:
+    - q: "How is 'even' decided when counts don't divide evenly?"
+      a: "target = total ÷ eligible; the remainder people (those with the most default tests) get one extra, so heavy-default folks keep their preference."
+    - q: "Does applying it change the master plan?"
+      a: "Yes — System.AssignedTo lives on the shared test-case work items, so the new assignee shows in the master and every plan referencing them. That's intentional: it carries the preference into the next release's clone."
+    - q: "Who is excluded?"
+      a: "Always: jialh, moghosh, veenasoman. Per-release: the release owner and the current on-call engineer (OCE, resolved via ICM team 78848 — the same team the entry gate checks)."
+
 # ========================== Entry gate · readiness ==========================
 # Keyed "readiness.<item>". Queried via `gate-info --item <id>`. Same fields as the
 # step entries (summary/what/who/where/how/links/faqs).
