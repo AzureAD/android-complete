@@ -63,4 +63,18 @@ automations:
       - build_verify.rc_report  # poll the in-flight RC (poll-rc): re-gate on completion, nudge at 6h
     purpose: "Poll a re-triggered RC every 30 min; hold while in-flight, re-apply the gate on completion, courtesy-nudge the owner at 6h"
 
+  # ON-DEMAND (not provisioned at release start). Created when `bugbash_updates` fires the
+  # first progress post; drives `post-bugbash-update` every 2h during working hours
+  # (09:00–18:00 LA, weekdays, skipping US holidays). Torn down when the tick reports
+  # `complete` (all tests done) or the owner attests `bugbash_complete`. Interval
+  # automation, so its step needs no fire_at_local.
+  - slug: bug-bash-update-poller
+    name: "Release {release} — bug-bash update poller"
+    phase: bug_bash
+    every: "2 hours"
+    on_demand: true
+    steps:
+      - bug_bash.bugbash_updates  # post a progress update every 2h (post-bugbash-update)
+    purpose: "Post a Bug Bash progress update to the meeting chat every 2h (working hours); @mention owners with remaining tests; stop when all complete or the owner signs off"
+
 

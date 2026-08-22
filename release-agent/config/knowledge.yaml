@@ -471,6 +471,62 @@ bug_bash.activate_chat:
     - q: "What if Playwright can't open the chat?"
       a: "It falls back to the owner: open the meeting in Teams and click Chat (or send one message) to activate the thread, then re-run the step."
 
+bug_bash.bugbash_updates:
+  summary: "Post the first bug-bash progress update to the meeting chat and start the 2h update poller."
+  what: >
+    Reaching this step posts an initial progress update to the Bug Bash meeting chat and
+    provisions the on-demand `bug-bash-update-poller` automation. Each update is grouped by
+    each test's owner (System.AssignedTo, set by distribute_tests, read live from BOTH the
+    Broker 'Manual Tests (Android Broker)' subtree and the Authenticator bug-bash suite).
+    A test counts as done only when it PASSED (or is N/A); not-run, failed, and blocked all
+    count as remaining and are LISTED (failed first, then blocked, then not-run) with links +
+    state so failures are surfaced, not buried. Owners with any remaining test are
+    @mentioned; owners who passed everything appear by name with an 'all completed' line (no
+    mention). It is fire-and-continue — the step completes after the first post so the phase
+    proceeds; the poller runs in the background.
+  who: >
+    Scout resolves it during `next` (a scout step). It gathers progress, posts the first
+    update via `workiq_send_chat_message` (contentType html; the payload carries `_mentions`
+    = [{id,upn,name}] — the skill builds the mentions array + matching <at id="i"> tags so
+    owners with remaining tests are pinged), then provisions the poller.
+  how: >
+    After the first post, provision the poller (it's on-demand, so it is NOT in
+    `automation plan` — create it directly like the RC poller): `m_create_automation`
+    with name "Release <id> — bug-bash update poller", schedule "every 2 hours", and the
+    prompt from this step's `automation_prompt(release, {interval: true})`; then
+    `automation register --id <scout-id> --name "..." --release <id> --slug
+    bug-bash-update-poller --step bug_bash.bugbash_updates`. Each tick runs
+    `post-bugbash-update --release <id>` and acts on the decision (off_hours → nothing;
+    post → send content+mentions to chatId; complete → send the completion summary, then
+    DEREGISTER the poller). Blocks if the meeting chat isn't activated (run activate_chat).
+  faqs:
+    - q: "When do the updates run?"
+      a: "Every 2 hours during working hours — 09:00–18:00 America/Los_Angeles, weekdays only, skipping hardcoded US federal holidays. Outside that window a tick returns off_hours and sends nothing; it resumes at 09:00 the next working day."
+    - q: "When do the updates stop?"
+      a: "Either automatically when every test is complete (a tick returns `complete`, posts a wrap-up, and deregisters the poller) OR when the owner attests the bugbash_complete gate (the skill deregisters the poller then)."
+    - q: "Why group by AssignedTo instead of the test point's tester?"
+      a: "The ADO test-point `tester` field is NOT synced with the case's System.AssignedTo. distribute_tests sets AssignedTo, so progress is grouped by AssignedTo to reflect who actually owns each test."
+
+bug_bash.bugbash_complete:
+  summary: "The release owner attests the Bug Bash is finished — the gate that closes the bash."
+  what: >
+    A human sign-off gate: the owner confirms the assigned tests have been run (or explicitly
+    triaged/blocked) and the team agrees the bash is done. Approving it advances the release
+    out of Phase 3. It also STOPS the periodic updates.
+  who: >
+    The owner approves it (`approve` / `done --step bugbash_complete`). Until then — or until
+    every test auto-completes — the `bug-bash-update-poller` keeps posting every 2h.
+  how: >
+    When the owner signs off, DEREGISTER the bug-bash update poller so it stops posting:
+    `automation list --release <id> --step-filter bug_bash.bugbash_updates --json` to find its
+    id, then `automation deregister --id <id>`. (If all tests had already completed, the poller
+    deregistered itself on its last `complete` tick — deregister is idempotent/safe to skip.)
+  faqs:
+    - q: "Can I sign off before every single test passes?"
+      a: "Yes — this is a judgement gate. If the remaining tests are triaged/blocked and the team agrees the bash is done, approve it. It doesn't require 100% pass; that's what the sign-off is for."
+    - q: "What stops the 2-hour chat updates?"
+      a: "Two things: the poller stops itself when every test is complete, and approving this gate deregisters the poller. Either way the updates end when the bash is done."
+
 # ========================== Entry gate · readiness ==========================
 # Keyed "readiness.<item>". Queried via `gate-info --item <id>`. Same fields as the
 # step entries (summary/what/who/where/how/links/faqs).

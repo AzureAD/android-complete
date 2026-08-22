@@ -78,6 +78,7 @@ _SAFE_AGENTS = {
     "bug_bash.distribute_tests": {"outcome": "done", "note": "tests distributed (test)"},
     "bug_bash.send_invite": {"outcome": "done", "note": "bug bash invite sent (test)"},
     "bug_bash.activate_chat": {"outcome": "done", "note": "meeting chat activated (test)"},
+    "bug_bash.bugbash_updates": {"outcome": "done", "note": "first bug-bash update posted (test)"},
 }
 
 
@@ -170,12 +171,12 @@ def _orch(signed=True):
 
 
 def _advance_to_first_gate(orch):
-    """Now that go_test is gone, the first real GATE is Phase-3 `bug_bash.bash_done`,
+    """Now that go_test is gone, the first real GATE is Phase-3 `bug_bash.bugbash_complete`,
     reached after the Phase-3 `ui_failures` human reminder. Drive to that reminder, clear
-    it, then drive to the bash_done gate."""
+    it, then drive to the bugbash_complete gate."""
     orch.run_until_gate()                                     # holds at ui_failures (reminder)
     orch.complete_step("bug_bash", "ui_failures", "test: UI failures reviewed")
-    orch.run_until_gate()                                     # holds at bash_done (gate)
+    orch.run_until_gate()                                     # holds at bugbash_complete (gate)
 
 
 # ---- readiness entry gate ----
@@ -643,7 +644,7 @@ def test_holds_at_first_hold():
     # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local (4) + rc_report (scout
     # email, mocked done here) (1) + Phase-3 clone_plans_broker/clone_plans_auth/
     # distribute_tests (3) + send_invite + activate_chat (scout, mocked done) (2) +
-    # coordinate stub (1).
+    # bugbash_updates (scout, mocked done) (1).
     assert sum(1 for a in actions if a.kind == "ran") == 15
 
 
@@ -653,16 +654,16 @@ def test_gate_blocks_until_approved():
     assert st.status == "holding_gate"
     orch.run_until_gate()
     assert st.status == "holding_gate"
-    assert not st.is_done("bug_bash", "bash_done")
+    assert not st.is_done("bug_bash", "bugbash_complete")
 
 
 def test_approve_advances():
     st, orch = _orch()
     _advance_to_first_gate(orch)
     orch.approve_gate("ok")
-    assert st.is_done("bug_bash", "bash_done")
+    assert st.is_done("bug_bash", "bugbash_complete")
     orch.run_until_gate()
-    assert st.current_step == "gate_watch"       # next stop after bash_done: the Phase-4 finalize gate
+    assert st.current_step == "gate_watch"       # next stop after bugbash_complete: the Phase-4 finalize gate
     assert st.status == "holding_gate"
 
 
@@ -705,11 +706,11 @@ def test_persistence_roundtrip():
         # reload — simulates resuming next day
         st2 = ReleaseState.load(path)
         assert st2.status == "holding_gate"
-        assert st2.current_step == "bash_done"
+        assert st2.current_step == "bugbash_complete"
         assert st2.readiness_signed  # readiness survives the roundtrip
         orch2 = Orchestrator(CONFIG, st2)
         orch2.approve_gate("resumed")
-        assert st2.is_done("bug_bash", "bash_done")
+        assert st2.is_done("bug_bash", "bugbash_complete")
 
 
 def test_conditional_hotfix_excluded_by_default():
@@ -729,18 +730,18 @@ def test_conditional_hotfix_excluded_by_default():
 
 def test_skip_requires_reason():
     st, orch = _orch()
-    _advance_to_first_gate(orch)   # holds at bash_done
-    act = orch.skip_step("bug_bash", "bash_done", "")   # no reason
+    _advance_to_first_gate(orch)   # holds at bugbash_complete
+    act = orch.skip_step("bug_bash", "bugbash_complete", "")   # no reason
     assert act.kind == "idle"
-    assert not st.is_done("bug_bash", "bash_done")       # unchanged
+    assert not st.is_done("bug_bash", "bugbash_complete")       # unchanged
 
 
 def test_skip_advances_past_gate():
     st, orch = _orch()
     _advance_to_first_gate(orch)
-    orch.skip_step("bug_bash", "bash_done", "n/a this release")
-    assert st.is_done("bug_bash", "bash_done")            # skipped counts as done
-    rec = st.steps[st.key("bug_bash", "bash_done")]
+    orch.skip_step("bug_bash", "bugbash_complete", "n/a this release")
+    assert st.is_done("bug_bash", "bugbash_complete")            # skipped counts as done
+    rec = st.steps[st.key("bug_bash", "bugbash_complete")]
     assert rec["status"] == "skipped"
     orch.run_until_gate()
     assert st.current_step == "gate_watch"                # advanced past the gate to the Phase-4 gate
@@ -749,11 +750,11 @@ def test_skip_advances_past_gate():
 def test_reopen_step():
     st, orch = _orch()
     _advance_to_first_gate(orch); orch.approve_gate("ok")
-    assert st.is_done("bug_bash", "bash_done")
-    orch.reopen_step("bug_bash", "bash_done")
-    assert not st.is_done("bug_bash", "bash_done")        # back to pending
+    assert st.is_done("bug_bash", "bugbash_complete")
+    orch.reopen_step("bug_bash", "bugbash_complete")
+    assert not st.is_done("bug_bash", "bugbash_complete")        # back to pending
     orch.run_until_gate()
-    assert st.current_step == "bash_done"                 # gate re-holds
+    assert st.current_step == "bugbash_complete"                 # gate re-holds
 
 
 def test_rc_retriggered_reopens_phase2_rc_steps():
@@ -1022,7 +1023,7 @@ def test_only_frontier_phase_shows_current_despite_stale_downstream_progress():
     for pid in ("preflight", "ccd"):
         for s in next(p for p in orch.config["phases"] if p["id"] == pid)["steps"]:
             orch.state.set_step(pid, s["id"], StepState(status="done", by="test"))
-    for sid in ("clone_plans_broker", "coordinate"):
+    for sid in ("clone_plans_broker", "bugbash_updates"):
         orch.state.set_step("bug_bash", sid, StepState(status="done", by="test"))
     phases = {p["id"]: p for p in orch.status_report()["phases"]}
     assert phases["build_verify"]["state"] == "current" and phases["build_verify"]["current"]
@@ -1151,7 +1152,7 @@ def test_notify_digest_reports_gate_and_progress():
     msg = render.notification(orch.status_report())
     assert "Progress:" in msg
     assert "Action needed now" in msg    # ui_failures is the live hold
-    assert "your approval" in msg        # the bash_done gate is listed among the human touchpoints
+    assert "your approval" in msg        # the bugbash_complete gate is listed among the human touchpoints
 
 
 def test_notify_json_carries_owner_and_subject():
@@ -1392,7 +1393,7 @@ def test_registry_relocates_release_automations_into_release_folder():
     import os as _os, json as _json
     with tempfile.TemporaryDirectory() as tmp:
         reg = AutomationRegistry(tmp, release="2026-08")
-        reg.register("a2", "Phase-3 watcher", release="2026-08", steps=["bug_bash.bash_done"])
+        reg.register("a2", "Phase-3 watcher", release="2026-08", steps=["bug_bash.bugbash_complete"])
         reg.register("sh", "Release push reminders", shared=True, purpose="push")
         rel_file = _os.path.join(tmp, "2026-08", "_automations.json")
         shared_file = _os.path.join(tmp, "_automations.json")
@@ -2993,6 +2994,149 @@ def test_record_bugbash_chat_stores_id_and_marks_done():
         assert after.get_step("bug_bash", "activate_chat").status == "blocked"
 
 
+# ---- Phase 3: bugbash_updates (periodic poster) ----
+
+def test_bugbash_holidays_and_working_window():
+    """US federal holidays are hardcoded (with observed shifts); is_working_time is a
+    weekday, not-a-holiday, 09:00–18:00 gate."""
+    from datetime import datetime
+    from tools import bugbash as BB
+    h = BB.us_holidays(2026)
+    assert BB.date(2026, 7, 3) in h          # July 4 (Sat) observed Fri Jul 3
+    assert BB.date(2026, 11, 26) in h        # Thanksgiving (4th Thu)
+    assert BB.date(2026, 12, 25) in h        # Christmas
+    assert BB.is_working_time(datetime(2026, 8, 21, 10))     # Fri 10am
+    assert not BB.is_working_time(datetime(2026, 8, 21, 8))  # before 9
+    assert not BB.is_working_time(datetime(2026, 8, 21, 18)) # 18:00 = closed
+    assert not BB.is_working_time(datetime(2026, 8, 22, 10)) # Saturday
+    assert not BB.is_working_time(datetime(2026, 7, 3, 10))  # observed holiday
+
+
+def test_bugbash_render_mentions_finished_and_complete():
+    """render_update @mentions (with <at id>) only owners with remaining tests; lists
+    not-run + failed + blocked (failed first) each with a link; finished owners appear by
+    name with an 'all completed' line; all_complete flips when 0 remain."""
+    from tools import bugbash as BB
+    prog = {"total": 4, "done": 2, "remaining": 2, "unassigned": 0, "owners": {
+        "a@x": {"name": "Alice", "total": 2, "done": 0, "remaining": 2, "tests": [
+            {"id": "101", "name": "Login", "url": "u101", "state": "notrun"},
+            {"id": "102", "name": "MFA", "url": "u102", "state": "failed"}]},
+        "b@x": {"name": "Bob", "total": 2, "done": 2, "remaining": 0, "tests": [
+            {"id": "201", "name": "X", "url": "u", "state": "passed"}]}}}
+    html, mentions = BB.render_update(prog, "August 2026",
+                                      [{"name": "Broker plan", "url": "bp"}])
+    assert mentions == [{"id": 0, "upn": "a@x", "name": "Alice"}]   # only Alice (remaining)
+    assert '<at id="0">Alice</at>' in html                          # id matches mentions[0]
+    # the FAILED test is surfaced (Option A) with a link, and ordered before the not-run one
+    assert '<a href="u102">102</a>' in html and "(Failed)" in html
+    assert html.index("102") < html.index("101")                   # failed listed first
+    assert "all 2 tests completed" in html and "<at" not in html.split("Bob")[0][-40:]
+    assert not BB.all_complete(prog)
+    prog["done"], prog["remaining"] = 4, 0
+    prog["owners"]["a@x"].update(done=2, remaining=0)
+    assert BB.all_complete(prog)
+
+
+def _bb_updates_state(chat_id="19:meeting_X@thread.v2"):
+    from orchestrator.state import StepState
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
+    st.set_step("bug_bash", "clone_plans_broker", StepState(status="done", data={"plan_id": 3730001}))
+    st.set_step("bug_bash", "clone_plans_auth", StepState(status="done", data={"suite_id": 3730002}))
+    if chat_id:
+        st.set_step("bug_bash", "activate_chat", StepState(status="done", data={"chat_id": chat_id}))
+    return st
+
+
+def test_bugbash_updates_blocks_without_chat():
+    """bugbash_updates blocks until the meeting chat is activated (no chat_id)."""
+    import steps as _steps
+    from orchestrator.outcomes import as_dict
+    st = _bb_updates_state(chat_id=None)
+    out = as_dict(_steps.get_step("bug_bash", "bugbash_updates").build(st))
+    assert out["kind"] == "blocked" and "chat" in out["reason"].lower()
+
+
+def test_bugbash_updates_composes_needs_skill():
+    """With the chat activated + progress injected, the first update is a NeedsSkill send to
+    the stored chat carrying content + the _mentions list, recorded as bugbash_updates."""
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    st = _bb_updates_state()
+    prog = {"total": 2, "done": 0, "remaining": 2, "unassigned": 0, "owners": {
+        "a@x": {"name": "Alice", "total": 2, "done": 0, "remaining": 2, "tests": [
+            {"id": "1", "name": "T1", "url": "u1", "state": "notrun"},
+            {"id": "2", "name": "T2", "url": "u2", "state": "notrun"}]}}}
+    with mockctx.active({"progress": prog}):
+        out = as_dict(_steps.get_step("bug_bash", "bugbash_updates").build(st))
+    assert out["kind"] == "needs_skill" and out["tool"] == "workiq_send_chat_message"
+    assert out["payload"]["chatId"] == "19:meeting_X@thread.v2"
+    assert out["payload"]["_mentions"] == [{"id": 0, "upn": "a@x", "name": "Alice"}]
+    assert "August 2026 Bug Bash" in out["payload"]["content"]
+    assert out["record_as"] == "bugbash_updates" and out["outbound"] is True
+    assert _steps.get_step("bug_bash", "bugbash_updates").KIND == "scout"
+
+
+def test_bugbash_updates_done_when_all_complete():
+    """If every test is already complete when the step is reached, it just completes (no
+    poller needed) rather than posting an empty update."""
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    st = _bb_updates_state()
+    prog = {"total": 2, "done": 2, "remaining": 0, "unassigned": 0, "owners": {
+        "a@x": {"name": "Alice", "total": 2, "done": 2, "remaining": 0, "tests": []}}}
+    with mockctx.active({"progress": prog}):
+        out = as_dict(_steps.get_step("bug_bash", "bugbash_updates").build(st))
+    assert out["kind"] == "done" and "complete" in out["note"].lower()
+
+
+def test_post_bugbash_update_decisions():
+    """post-bugbash-update: off_hours (weekend) sends nothing; a working-hour tick with
+    progress posts content+mentions; all-complete yields a `complete` wrap-up decision."""
+    import tempfile, argparse, json as _json, io
+    from contextlib import redirect_stdout
+    from orchestrator import cli_common as _C
+    from orchestrator.commands import bugbash_update as BU
+    from steps.lib import mockctx
+
+    def run(now, mocks, force=False):
+        buf = io.StringIO()
+        ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None,
+                                now=now, force=force)
+        with mockctx.active(mocks), redirect_stdout(buf):
+            rc = BU.cmd_post_bugbash_update(ns)
+        return rc, _json.loads(buf.getvalue().strip())
+
+    with tempfile.TemporaryDirectory() as d:
+        rid = "2026-08"
+        _stub_build_defs("pass")
+        st = _bb_updates_state()
+        _C.save_state(st, d, rid)
+
+        # weekend → off_hours, nothing gathered
+        _, dec = run("2026-08-22T10:00:00", {})
+        assert dec["decision"] == "off_hours"
+
+        remaining = {"total": 2, "done": 1, "remaining": 1, "unassigned": 0, "owners": {
+            "a@x": {"name": "Alice", "total": 2, "done": 1, "remaining": 1, "tests": [
+                {"id": "1", "name": "T1", "url": "u1", "state": "notrun"}]}}}
+        _, dec = run("2026-08-21T10:00:00", {"progress": remaining})   # Fri 10am
+        assert dec["decision"] == "post" and dec["remaining"] == 1
+        assert dec["chatId"] == "19:meeting_X@thread.v2" and dec["mentions"]
+
+        allc = {"total": 2, "done": 2, "remaining": 0, "unassigned": 0, "owners": {
+            "a@x": {"name": "Alice", "total": 2, "done": 2, "remaining": 0, "tests": []}}}
+        _, dec = run("2026-08-21T10:00:00", {"progress": allc})
+        assert dec["decision"] == "complete" and dec["total"] == 2
+
+        # no chat activated → no_chat
+        st2 = _bb_updates_state(chat_id=None)
+        _C.save_state(st2, d, rid)
+        _, dec = run("2026-08-21T10:00:00", {"progress": remaining})
+        assert dec["decision"] == "no_chat"
+
+
 def test_clone_plans_name_override_knob():
     """The `name` mock knob overrides the derived plan/suite name (safe 'TEST ...' runs)."""
     st, out = _bb_build("clone_plans_broker",
@@ -4045,11 +4189,11 @@ def test_local_mock_completes_scout_step():
 def test_local_mock_never_mocks_a_gate():
     """Gate steps are not mockable — a gate still holds for a real decision even if
     someone lists it in the mock file."""
-    st, orch = _mock_orch({"bug_bash.bash_done": {"outcome": "done"}}, as_of="2026-07-09")
+    st, orch = _mock_orch({"bug_bash.bugbash_complete": {"outcome": "done"}}, as_of="2026-07-09")
     _clear_phase0_scout(orch)          # clear Phase-0 holds
     _clear_ccd_scout(orch)             # clear Phase-1 scout comms (Phase 1 is gateless)
-    _advance_to_first_gate(orch)       # Phases 0-2 gateless; clear ui_failures → hold at bash_done
-    assert not st.is_done("bug_bash", "bash_done")
+    _advance_to_first_gate(orch)       # Phases 0-2 gateless; clear ui_failures → hold at bugbash_complete
+    assert not st.is_done("bug_bash", "bugbash_complete")
     assert st.status == "holding_gate"
 
 
