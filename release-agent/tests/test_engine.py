@@ -77,6 +77,7 @@ _SAFE_AGENTS = {
     "bug_bash.clone_plans_auth": {"outcome": "done", "note": "auth suite created (test)"},
     "bug_bash.distribute_tests": {"outcome": "done", "note": "tests distributed (test)"},
     "bug_bash.send_invite": {"outcome": "done", "note": "bug bash invite sent (test)"},
+    "bug_bash.activate_chat": {"outcome": "done", "note": "meeting chat activated (test)"},
 }
 
 
@@ -641,8 +642,9 @@ def test_holds_at_first_hold():
     # auto steps that RUN before the first hold: Phase-0 breaking/cg/cron/wiki (4) +
     # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local (4) + rc_report (scout
     # email, mocked done here) (1) + Phase-3 clone_plans_broker/clone_plans_auth/
-    # distribute_tests (3) + send_invite (scout, mocked done) (1) + coordinate stub (1).
-    assert sum(1 for a in actions if a.kind == "ran") == 14
+    # distribute_tests (3) + send_invite + activate_chat (scout, mocked done) (2) +
+    # coordinate stub (1).
+    assert sum(1 for a in actions if a.kind == "ran") == 15
 
 
 def test_gate_blocks_until_approved():
@@ -2935,6 +2937,60 @@ def test_send_invite_is_scout_step():
     import steps as _steps
     mod = _steps.get_step("bug_bash", "send_invite")
     assert mod is not None and getattr(mod, "KIND", None) == "scout"
+
+
+# ---- Phase 3: activate_chat + record-bugbash-chat ----
+
+def test_activate_chat_composes_needs_skill():
+    """activate_chat is a scout step whose NeedsSkill describes the search → Playwright
+    activate → human fallback resolution, keyed to the meeting topic, with the recorder
+    follow-up command."""
+    import steps as _steps
+    from orchestrator.outcomes import as_dict
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
+    out = as_dict(_steps.get_step("bug_bash", "activate_chat").build(st))
+    assert out["kind"] == "needs_skill" and out["tool"] == "record-bugbash-chat"
+    g = out["payload"]["_gather"]
+    assert g["meeting_topic"] == "August 2026 Release Bug Bash"
+    assert "Playwright" in g["instructions"] and "m_ask_user" in g["instructions"]
+    assert "record-bugbash-chat --release 2026-08" in out["payload"]["followup_command"]
+    assert _steps.get_step("bug_bash", "activate_chat").KIND == "scout"
+
+
+def test_activate_chat_blocks_without_ccd():
+    import steps as _steps
+    from orchestrator.outcomes import as_dict
+    out = as_dict(_steps.get_step("bug_bash", "activate_chat").build(ReleaseState(release_id="2026-08")))
+    assert out["kind"] == "blocked" and "CCD" in out["reason"]
+
+
+def test_record_bugbash_chat_stores_id_and_marks_done():
+    """record-bugbash-chat with --chat-id stores it on the step (readable by the poller)
+    and marks the step done; without --chat-id it holds the step for the owner."""
+    import tempfile, argparse
+    from orchestrator import cli_common as _C
+    from orchestrator.commands import bugbash_chat as BC
+    from steps.bug_bash.activate_chat import stored_chat_id
+    with tempfile.TemporaryDirectory() as d:
+        rid = "2026-08"
+        _stub_build_defs("pass")
+        st = ReleaseState(release_id=rid, ccd="2026-08-13", ccd_source="confirmed")
+        _C.save_state(st, d, rid)
+        cid = "19:meeting_ABC123@thread.v2"
+        ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, chat_id=cid)
+        assert BC.cmd_record_bugbash_chat(ns) == 0
+        again = _C.load_state(d, rid)
+        assert again.is_done("bug_bash", "activate_chat")
+        assert stored_chat_id(again) == cid
+
+        # no chat id -> attention hold (human fallback), step not done
+        st2 = ReleaseState(release_id=rid, ccd="2026-08-13", ccd_source="confirmed")
+        _C.save_state(st2, d, rid)
+        ns2 = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, chat_id=None)
+        assert BC.cmd_record_bugbash_chat(ns2) == 2
+        after = _C.load_state(d, rid)
+        assert not after.is_done("bug_bash", "activate_chat")
+        assert after.get_step("bug_bash", "activate_chat").status == "blocked"
 
 
 def test_clone_plans_name_override_knob():

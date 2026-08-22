@@ -449,6 +449,28 @@ bug_bash.send_invite:
     - q: "Where does the template live?"
       a: "templates/bug-bash-invite.html — edit it to restyle; the step always renders from that file."
 
+bug_bash.activate_chat:
+  summary: "Activate the Bug Bash meeting chat and store its id for the periodic updates."
+  what: >
+    A Teams meeting chat is DORMANT until it's activated once (first join, first message,
+    or opening its Chat pane) — only then does it get a stable 19:meeting_…@thread.v2 id
+    that automation can post to. This step resolves + activates that chat and stores the id
+    on the step (data.chat_id) so the periodic-update step can post to it.
+  who: >
+    Scout resolves it during `next` (a scout step). Three tiers: (1) SEARCH the meeting
+    chat by topic; (2) if dormant, ACTIVATE via Playwright (open the meeting in Teams web,
+    click Chat); (3) HUMAN FALLBACK — if activation fails, the owner opens the meeting and
+    clicks Chat / sends one message, then it's re-resolved.
+  how: >
+    The skill runs `record-bugbash-chat --release <id> --chat-id <resolved>` to store it
+    and mark the step done. If it truly can't be resolved, the same command WITHOUT
+    --chat-id holds the step for the owner (who activates the chat, then re-runs).
+  faqs:
+    - q: "Why can't it just post to the meeting chat directly?"
+      a: "A freshly-scheduled meeting's chat has no thread yet — it must be activated once (join / message / open Chat). This step does that activation and captures the id so the recurring poster can reach it."
+    - q: "What if Playwright can't open the chat?"
+      a: "It falls back to the owner: open the meeting in Teams and click Chat (or send one message) to activate the thread, then re-run the step."
+
 # ========================== Entry gate · readiness ==========================
 # Keyed "readiness.<item>". Queried via `gate-info --item <id>`. Same fields as the
 # step entries (summary/what/who/where/how/links/faqs).

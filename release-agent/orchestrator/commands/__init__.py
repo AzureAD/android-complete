@@ -7,7 +7,7 @@ one, so adding a command is a localized change (new/edited module only).
 """
 from . import (release, readiness, pipeline, notify, infra_cmd, automation,
                logs, lockdown, notice, step_action, localization, rc_report, rc_poll,
-               distribute, sim)
+               distribute, bugbash_chat, sim)
 
 # Order controls how subcommands appear in --help.
 REGISTRARS = [
@@ -22,6 +22,7 @@ REGISTRARS = [
     rc_report.register,
     rc_poll.register,
     distribute.register,
+    bugbash_chat.register,
     sim.register,
     logs.register,
     automation.register,
