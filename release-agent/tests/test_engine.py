@@ -2737,17 +2737,17 @@ def test_testplans_names_and_query():
     assert "contains 'Android'" in q and "contains 'ReleaseBugBash'" in q and "Identity Apps" in q
 
 
-def test_clone_plans_broker_clones_then_idempotent():
-    """First run copies the master plan and stashes the new plan id; a re-run with that id
-    stored reports done WITHOUT cloning again."""
+def test_clone_plans_broker_builds_flat_then_idempotent():
+    """First run builds the flat plan and stashes the new plan id; a re-run with that id
+    stored reports done WITHOUT rebuilding."""
     st, out = _bb_build("clone_plans_broker", {"clone_id": "5551212"})
     assert out["kind"] == "done"
-    assert "Copied the Broker master test plan" in out["note"] and "5551212" in out["note"]
+    assert "flat Broker test plan" in out["note"] and "5551212" in out["note"]
     assert st.get_step("bug_bash", "clone_plans_broker").data["plan_id"] == "5551212"
     assert out["links"][0]["url"].endswith("planId=5551212")
-    # idempotent: an injected existing plan id → already-cloned, no re-clone
+    # idempotent: an injected existing plan id → already-built, no rebuild
     _, out2 = _bb_build("clone_plans_broker", {"plan_id": "5551212"})
-    assert out2["kind"] == "done" and "already cloned" in out2["note"]
+    assert out2["kind"] == "done" and "already built" in out2["note"]
 
 
 def test_clone_plans_broker_blocks_on_api_failure():
@@ -3147,52 +3147,72 @@ def test_clone_plans_name_override_knob():
     assert "TEST Android/release/08/2026" in out2["note"]
 
 
-def test_clone_broker_plan_waits_for_async_completion():
-    """clone_broker_plan POSTs the CloneOperation then POLLS the op until 'succeeded'
-    before returning — so the plan is fully populated when the step reports done (the
-    async 'seems empty if read too early' gap). state lives under cloneOperationResponse."""
+def test_create_broker_flat_plan_builds_single_suite_with_configs():
+    """create_broker_flat_plan: POST plan → POST one static suite (pinned to the 2 flight
+    configs, no inherited defaults) → add the resolved manual cases with both config point
+    assignments. Returns the new plan id."""
     from tools import pipelines as P
     from tools import testplans as T
-    post = (True, {"destinationTestPlan": {"id": 9001},
-                   "cloneOperationResponse": {"opId": 77, "state": "queued"}}, "")
-    # op poll: inProgress, then inProgress, then succeeded
-    op_pages = [
-        (True, {"cloneOperationResponse": {"state": "inProgress"}}, {}, ""),
-        (True, {"cloneOperationResponse": {"state": "inProgress"}}, {}, ""),
-        (True, {"cloneOperationResponse": {"state": "succeeded"}}, {}, ""),
-    ]
-    calls = {"get": 0}
+    from tools import distribution as D
+    sends = []
 
     def fake_send(url, method, body, timeout):
-        return post
+        sends.append((url, method, body))
+        if url.endswith(f"plans?{T._API}"):                 # create plan
+            return (True, {"id": 9100, "rootSuite": {"id": 9101}}, "")
+        if "/suites?" in url:                                # create suite
+            return (True, {"id": 9102}, "")
+        if "/TestCase?" in url:                              # add cases
+            return (True, {"value": body}, "")
+        return (True, {}, "")
 
-    def fake_get_h(url, timeout):
-        i = calls["get"]; calls["get"] += 1
-        return op_pages[min(i, len(op_pages) - 1)]
-
-    o_send, o_get = P._ado_rest_send, P._ado_rest_get_h
-    P._ado_rest_send, P._ado_rest_get_h = fake_send, fake_get_h
+    o_send, o_cases = P._ado_rest_send, D.broker_manual_cases
+    P._ado_rest_send = fake_send
+    D.broker_manual_cases = lambda *a, **k: (True, [{"id": "111", "assignee": "a@x"},
+                                                    {"id": "222", "assignee": "b@x"}], "")
     try:
-        ok, pid, d = T.clone_broker_plan("TEST plan", poll_secs=0)
+        ok, pid, d = T.create_broker_flat_plan("TEST FLAT plan")
     finally:
-        P._ado_rest_send, P._ado_rest_get_h = o_send, o_get
-    assert ok and pid == 9001 and d == ""
-    assert calls["get"] >= 3                     # polled until 'succeeded'
+        P._ado_rest_send, D.broker_manual_cases = o_send, o_cases
+    assert ok and pid == 9100 and d == ""
+    # suite create pinned to the 2 configs, no inherited defaults
+    suite_body = next(b for (u, m, b) in sends if "/suites?" in u)
+    assert suite_body["name"] == T.BROKER_MANUAL_SUITE_NAME
+    assert suite_body["inheritDefaultConfigurations"] is False
+    assert [c["id"] for c in suite_body["defaultConfigurations"]] == T.BROKER_CONFIGS
+    # each case added with a point assignment per config
+    add_body = next(b for (u, m, b) in sends if "/TestCase?" in u)
+    assert len(add_body) == 2
+    assert [pa["configurationId"] for pa in add_body[0]["pointAssignments"]] == T.BROKER_CONFIGS
 
 
-def test_clone_broker_plan_blocks_on_failed_clone_op():
-    """A failed clone operation surfaces as (False, ...) so the step blocks."""
+def test_create_broker_flat_plan_cleans_up_on_case_failure():
+    """If adding cases fails after the plan is created, the half-built plan is DELETEd so a
+    re-run starts clean, and the function returns (False, ...)."""
     from tools import pipelines as P
     from tools import testplans as T
-    o_send, o_get = P._ado_rest_send, P._ado_rest_get_h
-    P._ado_rest_send = lambda *a, **k: (True, {"destinationTestPlan": {"id": 1},
-                                               "cloneOperationResponse": {"opId": 5, "state": "queued"}}, "")
-    P._ado_rest_get_h = lambda *a, **k: (True, {"cloneOperationResponse": {"state": "failed"}}, {}, "")
+    from tools import distribution as D
+    calls = []
+
+    def fake_send(url, method, body, timeout):
+        calls.append((method, url))
+        if url.endswith(f"plans?{T._API}"):
+            return (True, {"id": 9200, "rootSuite": {"id": 9201}}, "")
+        if "/suites?" in url:
+            return (True, {"id": 9202}, "")
+        if "/TestCase?" in url:
+            return (False, None, "HTTP 400: bad point assignment")
+        return (True, {}, "")
+
+    o_send, o_cases = P._ado_rest_send, D.broker_manual_cases
+    P._ado_rest_send = fake_send
+    D.broker_manual_cases = lambda *a, **k: (True, [{"id": "111", "assignee": "a@x"}], "")
     try:
-        ok, pid, d = T.clone_broker_plan("TEST plan", poll_secs=0)
+        ok, pid, d = T.create_broker_flat_plan("TEST FLAT plan")
     finally:
-        P._ado_rest_send, P._ado_rest_get_h = o_send, o_get
-    assert not ok and "failed" in d
+        P._ado_rest_send, D.broker_manual_cases = o_send, o_cases
+    assert not ok and "400" in d
+    assert any(m == "DELETE" and "/plans/9200" in u for (m, u) in calls)   # cleaned up
 
 
 def test_ado_rest_get_all_follows_header_continuation_token():

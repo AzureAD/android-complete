@@ -339,26 +339,36 @@ build_verify.rc_report:
 # =============================== Phase 3 · bug_bash ===============================
 
 bug_bash.clone_plans_broker:
-  summary: "Copy the Broker master test plan to a new plan for this release."
+  summary: "Build this release's FLAT Broker test plan (one suite of the manual-broker cases)."
   what: >
-    Each release COPIES the Broker master template (ADO test plan #2007357, area
-    'Engineering\\Auth Client\\Broker\\Android') to a new plan named
-    'Android Monthly Release - <Mon YYYY>' (e.g. 'Android Monthly Release - Aug 2026'),
-    REFERENCING the existing test cases (the ADO clone default — it shares test cases,
-    it does not duplicate them). This is the Broker half of the old clone_plans step.
-  who: "Scout runs it automatically during `next` (an agent step, via the ADO test-plan clone API)."
+    Each release gets a FLAT Broker test plan named 'Android Monthly Release - <Mon YYYY>'
+    (e.g. 'Android Monthly Release - Aug 2026', area 'Engineering\\Auth Client\\Broker\\
+    Android'). Instead of ADO's "Copy Test Plan" (which reproduces the master's whole
+    45-suite tree), Scout creates a fresh plan with ONE static suite
+    'Manual Tests (Android Broker)' holding just the manual-broker cases resolved from the
+    master template (#2007357, subtree suite 2008656) — the only tests the bug bash runs.
+    Each case is pinned to the two flight configurations (293 'RC MSAL - RC Broker' / ECS +
+    330 '… (LocalFlights)'), giving 2 points/case, and REFERENCES the existing test cases
+    (shared, not duplicated). Flat = easy to track; distribute_tests + the progress updates
+    find the suite by name, so it's a drop-in.
+  who: "Scout runs it automatically during `next` (an agent step, via the ADO test-plan API)."
   how: >
     Idempotent — the new plan id is stashed on the step; a re-run re-confirms that plan
-    exists and reports done without cloning again. If the clone fails (auth/API), the
-    step blocks with the ADO error; fix and `next`, or `skip --reason` to override.
+    exists and reports done without rebuilding. If the build fails (auth/API) the half-built
+    plan is deleted and the step blocks with the ADO error; fix and `next`, or `skip
+    --reason` to override.
   links:
-    - name: "Broker master test plan (#2007357)"
+    - name: "Broker master test plan (#2007357, Manual Tests subtree)"
       url: "https://identitydivision.visualstudio.com/Engineering/_testPlans/define?planId=2007357&suiteId=2008656"
     - name: "Broker test-plans doc"
       url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/test-plans"
   faqs:
+    - q: "Why flat instead of copying the whole master plan?"
+      a: "The bug bash only runs the 'Manual Tests (Android Broker)' subtree, and the master's nested + dynamic suites are hard to track. Flattening to one static suite gives a single, trackable list of exactly the relevant cases."
     - q: "Does it duplicate the test cases?"
-      a: "No — it references the existing test cases (the 'Reference existing test cases' clone option). Edit test cases only in the master template."
+      a: "No — it references the existing test cases (shared). Edit test cases only in the master template."
+    - q: "Does it auto-update if the master's queries change later?"
+      a: "No — flattening resolves the master's dynamic suites to a frozen snapshot at build time, which is what you want for a stable monthly bug-bash cut. Rebuild (delete the plan id + re-run) to re-snapshot."
 
 bug_bash.clone_plans_auth:
   summary: "Create the Authenticator bug-bash query-based test suite for this release."

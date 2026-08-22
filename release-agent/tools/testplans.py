@@ -2,11 +2,13 @@
 
 Two DIFFERENT release procedures, per the team docs:
 
-  * BROKER  — COPY the master test plan (a real ADO "Copy Test Plan" / CloneOperation).
-      Master: plan 2007357 / rootSuite 2007358 ("Android Monthly Release Master Test
-      Plan", area 'Engineering\\Auth Client\\Broker\\Android'). Each release clones it to
-      a new plan "Android Monthly Release - <Mon YYYY>", REFERENCING the existing test
-      cases (the ADO clone default — it shares test cases, doesn't duplicate them).
+  * BROKER  — build a FLAT monthly plan. Instead of ADO's "Copy Test Plan" (which
+      reproduces the master's whole 45-suite tree), create a fresh plan "Android Monthly
+      Release - <Mon YYYY>" with ONE static suite "Manual Tests (Android Broker)" holding
+      just the manual-broker cases resolved from the master's subtree (2007357 / suite
+      2008656), each pinned to the two flight configs (293 ECS + 330 LocalFlights). Cases are
+      REFERENCED (shared, not duplicated). Flat = trackable; downstream steps find the suite
+      by name so it's a drop-in.
       Doc: eng.ms/.../internal-release-checklist/test-plans
 
   * AUTHENTICATOR — CREATE a new query-based (dynamic) test suite under the standing
@@ -28,9 +30,19 @@ ORG = P.ENGINEERING_ORG          # https://identitydivision.visualstudio.com
 PROJECT = P.ENGINEERING_PROJECT  # Engineering
 _API = "api-version=7.1"
 
-# ---- Broker: master template to clone ----
+# ---- Broker: master template + the flat monthly copy ----
 BROKER_MASTER_PLAN = 2007357
 BROKER_MASTER_ROOT_SUITE = 2007358
+# The "Manual Tests (Android Broker)" subtree of the master — the ONLY tests the release
+# bug bash runs. The monthly copy flattens this subtree into a single static suite.
+BROKER_MANUAL_ROOT_SUITE = 2008656
+BROKER_MANUAL_SUITE_NAME = "Manual Tests (Android Broker)"
+# Test configurations the bug bash runs each case under (the two flight pipelines):
+#   293 = "RC MSAL - RC Broker"              (ECS flights)
+#   330 = "RC MSAL - RC Broker (LocalFlights)" (Local flights)
+# Assigned explicitly so the flat plan gets exactly 2 points/case (matches the master's
+# matrix) instead of inheriting the project's ~190 default configurations.
+BROKER_CONFIGS = [293, 330]
 BROKER_AREA_PATH = "Engineering\\Auth Client\\Broker\\Android"
 BROKER_ITERATION = "Engineering"
 
@@ -130,66 +142,72 @@ def find_child_suite_by_name(plan_id, parent_suite_id, name, timeout=90):
 
 # ---------------------------------------------------------------- writes
 
-def _clone_op(op_field, *keys):
-    """Read a field from a CloneOperation response, which nests the live status under
-    `cloneOperationResponse` (state/opId/completionDate/cloneStatistics) but the ids at
-    the top level. Tries the nested object first, then the top level."""
-    nested = (op_field or {}).get("cloneOperationResponse") or {}
-    for k in keys:
-        if nested.get(k) is not None:
-            return nested.get(k)
-        if (op_field or {}).get(k) is not None:
-            return op_field.get(k)
-    return None
+def create_broker_flat_plan(dest_name, timeout=120):
+    """Build the release's FLAT Broker test plan and return (ok, new_plan_id, detail).
 
+    Instead of ADO's "Copy Test Plan" (which reproduces the master's whole 45-suite
+    hierarchy), this creates a fresh plan with a SINGLE static suite
+    "Manual Tests (Android Broker)" holding just the relevant manual-broker cases — the
+    only tests the bug bash runs. Steps:
 
-def clone_broker_plan(dest_name, timeout=120, poll_secs=3, max_polls=40):
-    """COPY the Broker master plan to a new plan `dest_name`, referencing existing test
-    cases (ADO clone default), and WAIT for the async clone to finish. Returns
-    (ok, new_plan_id, detail).
+      1. create an empty plan `dest_name` (Broker area/iteration);
+      2. create one static child suite named "Manual Tests (Android Broker)" pinned to the
+         two flight configurations (293 ECS + 330 LocalFlights) — inheritDefaultConfigurations
+         is False so the plan's ~190 project-default configs are NOT applied;
+      3. resolve the master's "Manual Tests (Android Broker)" subtree (flattening its dynamic
+         sub-suites) to the current set of cases, and add them all to the flat suite,
+         referencing the existing work items (shared, not duplicated), each assigned to both
+         configs → 2 points/case (matches the master's matrix).
 
-    ADO's CloneOperation is asynchronous: the POST returns a destination plan id while the
-    suite/test-case copy runs in the background. We poll the operation until its state is
-    'succeeded' before returning, so the plan is fully populated when the step reports done
-    (a too-early read would otherwise show an empty/partial plan). Mirrors the doc's
-    "Copy Test Plan → Reference existing test cases → Create".
+    Downstream (distribute_tests, gather_progress) find the suite by name, so a flat plan is
+    a drop-in. On a partial failure the half-built plan is best-effort deleted so a re-run
+    starts clean.
     """
-    import time
-    url = f"{ORG}/{PROJECT}/_apis/testplan/Plans/CloneOperation?api-version=7.1-preview.2"
-    body = {
-        # copy every suite + the hierarchy; do NOT clone requirements. Not setting a
-        # test-case duplication flag => ADO REFERENCES the existing test cases
-        # (cloneStatistics.clonedTestCasesCount stays 0 — shared, not duplicated).
-        # (copyAncestorHierarchy must be true when source suiteIds are given, else ADO 400.)
-        "cloneOptions": {"copyAllSuites": True, "copyAncestorHierarchy": True,
-                         "cloneRequirements": False, "copyComments": False},
-        "destinationTestPlan": {"name": dest_name, "project": PROJECT,
-                                "areaPath": BROKER_AREA_PATH, "iteration": BROKER_ITERATION},
-        "sourceTestPlan": {"id": BROKER_MASTER_PLAN, "suiteIds": [BROKER_MASTER_ROOT_SUITE]},
-    }
-    ok, j, d = P._ado_rest_send(url, "POST", body, timeout)
+    from tools import distribution as D          # local import avoids a circular import
+
+    # 1) empty plan
+    ok, j, d = P._ado_rest_send(
+        f"{ORG}/{PROJECT}/_apis/testplan/plans?{_API}", "POST",
+        {"name": dest_name, "area": {"name": BROKER_AREA_PATH}, "iteration": BROKER_ITERATION},
+        timeout)
     if not ok:
         return (False, None, d)
-    dest = (j or {}).get("destinationTestPlan") or {}
-    pid = dest.get("id")
-    if not pid:
-        return (False, None, f"clone returned no destination plan id (state={_clone_op(j, 'state')})")
-    op_id = _clone_op(j, "opId")
+    pid = (j or {}).get("id")
+    root = ((j or {}).get("rootSuite") or {}).get("id")
+    if not pid or not root:
+        return (False, None, "plan create returned no id/rootSuite")
 
-    # Poll the operation to completion so the plan is populated before we report done.
-    if op_id:
-        op_url = (f"{ORG}/{PROJECT}/_apis/testplan/Plans/CloneOperation/{op_id}"
-                  f"?api-version=7.1-preview.2")
-        for _ in range(max_polls):
-            ok_o, op, _h, d_o = P._ado_rest_get_h(op_url, 60)
-            if not ok_o:
-                break                                   # can't read op → best-effort, return pid
-            state = str(_clone_op(op, "state") or "").lower()
-            if state in ("succeeded", "completed"):
-                break
-            if state == "failed":
-                return (False, None, f"clone operation failed (op {op_id})")
-            time.sleep(poll_secs)
+    def _cleanup(reason):
+        P._ado_rest_send(f"{ORG}/{PROJECT}/_apis/testplan/plans/{pid}?{_API}", "DELETE", None, 60)
+        return (False, None, reason)
+
+    # 2) single flat static suite, pinned to the two flight configs
+    ok2, sj, d2 = P._ado_rest_send(
+        f"{ORG}/{PROJECT}/_apis/testplan/Plans/{pid}/suites?api-version=7.1-preview.1", "POST",
+        {"suiteType": "staticTestSuite", "name": BROKER_MANUAL_SUITE_NAME,
+         "parentSuite": {"id": root}, "inheritDefaultConfigurations": False,
+         "defaultConfigurations": [{"id": c} for c in BROKER_CONFIGS]},
+        timeout)
+    if not ok2:
+        return _cleanup(f"suite create failed: {d2}")
+    suite_id = (sj or {}).get("id")
+    if not suite_id:
+        return _cleanup("suite create returned no id")
+
+    # 3) resolve the master's manual-broker cases and add them to the flat suite
+    okc, cases, dc = D.broker_manual_cases(BROKER_MASTER_PLAN, BROKER_MANUAL_ROOT_SUITE, timeout)
+    if not okc:
+        return _cleanup(f"could not resolve master manual cases: {dc}")
+    if not cases:
+        return _cleanup("master 'Manual Tests (Android Broker)' subtree resolved to 0 cases")
+    body = [{"workItem": {"id": int(c["id"])},
+             "pointAssignments": [{"configurationId": cid} for cid in BROKER_CONFIGS]}
+            for c in cases]
+    oka, _aj, da = P._ado_rest_send(
+        f"{ORG}/{PROJECT}/_apis/testplan/Plans/{pid}/Suites/{suite_id}/TestCase"
+        f"?api-version=7.1-preview.3", "POST", body, max(timeout, 120))
+    if not oka:
+        return _cleanup(f"adding {len(cases)} cases failed: {da}")
     return (True, pid, "")
 
 
