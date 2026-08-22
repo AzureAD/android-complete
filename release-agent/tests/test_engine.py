@@ -76,6 +76,7 @@ _SAFE_AGENTS = {
     "bug_bash.clone_plans_broker": {"outcome": "done", "note": "broker plan cloned (test)"},
     "bug_bash.clone_plans_auth": {"outcome": "done", "note": "auth suite created (test)"},
     "bug_bash.distribute_tests": {"outcome": "done", "note": "tests distributed (test)"},
+    "bug_bash.send_invite": {"outcome": "done", "note": "bug bash invite sent (test)"},
 }
 
 
@@ -640,8 +641,8 @@ def test_holds_at_first_hold():
     # auto steps that RUN before the first hold: Phase-0 breaking/cg/cron/wiki (4) +
     # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local (4) + rc_report (scout
     # email, mocked done here) (1) + Phase-3 clone_plans_broker/clone_plans_auth/
-    # distribute_tests/coordinate stubs (4). The Phase-1 scout steps are pre-recorded.
-    assert sum(1 for a in actions if a.kind == "ran") == 13
+    # distribute_tests (3) + send_invite (scout, mocked done) (1) + coordinate stub (1).
+    assert sum(1 for a in actions if a.kind == "ran") == 14
 
 
 def test_gate_blocks_until_approved():
@@ -2863,6 +2864,77 @@ def test_distribute_tests_blocks_without_broker_clone():
     with mockctx.active({"auth_cases": [], "roster": [{"name": "A", "upn": "a@x"}]}):
         out = as_dict(_steps.get_step("bug_bash", "distribute_tests").build(st))
     assert out["kind"] == "blocked" and "hasn't been cloned" in out["reason"]
+
+
+# ---- Phase 3: send_invite ----
+
+def test_bugbash_schedule_rule():
+    """schedule_bugbash: after-3pm/weekend -> next business 9am; before-3pm weekday -> same
+    day later; weekends roll to Monday."""
+    from datetime import datetime
+    from tools import invite as I
+    # Fri 6pm -> Mon 9am (after 3pm + weekend skip)
+    s, e, _ = I.schedule_bugbash(datetime(2026, 8, 21, 18, 0))
+    assert (s.year, s.month, s.day, s.hour) == (2026, 8, 24, 9) and e.hour == 11
+    # Fri 10am -> same day noon
+    s2, _, _ = I.schedule_bugbash(datetime(2026, 8, 21, 10, 0))
+    assert s2.day == 21 and s2.hour == 12
+    # Sat -> Mon 9am
+    s3, _, _ = I.schedule_bugbash(datetime(2026, 8, 22, 11, 0))
+    assert s3.day == 24 and s3.hour == 9
+    # Tue 3:30pm -> Wed 9am
+    s4, _, _ = I.schedule_bugbash(datetime(2026, 8, 25, 15, 30))
+    assert (s4.day, s4.hour) == (26, 9)
+
+
+def _invite_state():
+    from orchestrator.state import StepState
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-13",
+                      owner_email="owner@microsoft.com", timezone="America/Los_Angeles")
+    st.set_step("bug_bash", "clone_plans_broker", StepState(status="done", data={"plan_id": 3730001}))
+    st.set_step("bug_bash", "clone_plans_auth", StepState(status="done", data={"suite_id": 3730002}))
+    st.pipeline_runs = {"rcs": [{"rc": 1, "ecs": {"run_id": "1678863"}, "local": {"run_id": "1678864"}}]}
+    return st
+
+
+def test_send_invite_composes_create_event():
+    """send_invite returns a NeedsSkill(workiq_create_event) with the meeting, real
+    recipients, and a body carrying every release link + the injected flags."""
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    st = _invite_state()
+    with mockctx.active({"now": "2026-08-21T18:00:00",
+                         "flags": "{EnableBrowserSso:true,UseKdfVersion2:true}"}):
+        out = as_dict(_steps.get_step("bug_bash", "send_invite").build(st))
+    assert out["kind"] == "needs_skill" and out["tool"] == "workiq_create_event"
+    p = out["payload"]
+    assert p["subject"] == "August 2026 Release Bug Bash"
+    assert p["attendees"] == ["androididentity@microsoft.com", "idnadevexciamdublin@microsoft.com"]
+    assert p["start"] == "2026-08-24T09:00:00" and p["end"] == "2026-08-24T11:00:00"
+    assert p["isOnlineMeeting"] is True and p["bodyContentType"] == "html"
+    b = p["body"]
+    for frag in ("planId=3730001", "buildId=1678863", "buildId=1678864",
+                 "planId=714514&suiteId=3730002", "EnableBrowserSso",
+                 "variableGroupId=40", "August 2026"):
+        assert frag in b, frag
+    assert "release-engineer-schedule" not in b     # Native Auth row removed
+    assert out["outbound"] is True
+
+
+def test_send_invite_blocks_without_plans():
+    """No cloned plans → the invite step blocks."""
+    import steps as _steps
+    from orchestrator.outcomes import as_dict
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-13", owner_email="o@x")
+    out = as_dict(_steps.get_step("bug_bash", "send_invite").build(st))
+    assert out["kind"] == "blocked" and "cloned" in out["reason"]
+
+
+def test_send_invite_is_scout_step():
+    import steps as _steps
+    mod = _steps.get_step("bug_bash", "send_invite")
+    assert mod is not None and getattr(mod, "KIND", None) == "scout"
 
 
 def test_clone_plans_name_override_knob():

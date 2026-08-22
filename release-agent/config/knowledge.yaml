@@ -421,6 +421,34 @@ bug_bash.distribute_tests:
     - q: "Who is excluded?"
       a: "Always: jialh, moghosh, veenasoman. Per-release: the release owner and the current on-call engineer (OCE, resolved via ICM team 78848 — the same team the entry gate checks)."
 
+bug_bash.send_invite:
+  summary: "Schedule the combined Bug Bash and send the Teams meeting invite."
+  what: >
+    Composes the Bug Bash Teams meeting from the release's real artifacts and sends the
+    invite. Subject '<Month Year> Release Bug Bash'; ~2h; body has the Broker section
+    (test plan + ECS/Local MRWP runs + the local-flights JSON from variable group 40) and
+    the Auth App section (test suite + auth pipeline). Rendered from
+    templates/bug-bash-invite.html (edit the file to restyle).
+  who: >
+    Scout composes it automatically during `next` (a scout step → workiq_create_event).
+    Recipients are the Android Identity DL + the Dublin CIAM alias; redirect for a test
+    with the send_to knob (keeps the send real, points it at you).
+  how: >
+    When: reached after 3pm or on a weekend → next business morning at 09:00; before 3pm on
+    a weekday → later the same day. Weekends roll to Monday. Links come from the clone steps
+    (Broker plan, Auth suite) and Phase 2 (ECS/Local MRWP runs); flags are fetched live from
+    variable group 40. Blocks if the plans haven't been cloned yet.
+  links:
+    - name: "Local flags — variable group 40"
+      url: "https://identitydivision.visualstudio.com/Engineering/_library?view=VariableGroupView&variableGroupId=40&path=release"
+  faqs:
+    - q: "When is it scheduled?"
+      a: "After 3pm or on a weekend → next business morning (9am); before 3pm on a weekday → later the same day. Weekends always roll to Monday."
+    - q: "Who gets invited?"
+      a: "The Azure Identity Android SDK / Android Identity team (androididentity@microsoft.com) and idnadevexciamdublin@microsoft.com. For a test, the send_to knob redirects it to you."
+    - q: "Where does the template live?"
+      a: "templates/bug-bash-invite.html — edit it to restyle; the step always renders from that file."
+
 # ========================== Entry gate · readiness ==========================
 # Keyed "readiness.<item>". Queried via `gate-info --item <id>`. Same fields as the
 # step entries (summary/what/who/where/how/links/faqs).
