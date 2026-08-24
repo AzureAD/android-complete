@@ -81,40 +81,40 @@ def cmd_record_nativeauth_notify(args):
     return 0
 
 
-def cmd_record_signoffs(args):
-    """Record the two bug-bash sign-offs (Native Auth attest + DID from Sowmya).
-      * both --native-auth-by and --did-by given -> store + mark signoffs done.
-      * either missing -> hold the step for the owner (attention): sign-offs still pending.
-    """
+def cmd_record_native_auth_signoff(args):
+    """Record the Native Auth sign-off (release engineer attests the Native Auth team signed
+    off). --by given → store + mark done; omitted → hold the step for the owner."""
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    na = (args.native_auth_by or "").strip()
-    did = (args.did_by or "").strip()
+    return _record_signoff(orch, args, "native_auth_signoff", "Native Auth")
 
-    if not (na and did):
-        pending = ", ".join(p for p, v in
-                            [("Native Auth", na), ("DID", did)] if not v)
-        detail = (f"Sign-offs still pending: {pending}. Native Auth = the release engineer "
-                  f"attests the Native Auth team finished + signed off; DID = sign-off from "
-                  f"the DID contact (Sowmya Malayanur). Re-run with both --native-auth-by and "
-                  f"--did-by once received.")
-        orch.record_scout_step("bug_bash", "signoffs", "attention", detail)
+
+def cmd_record_did_signoff(args):
+    """Record the DID sign-off (from the DID contact, Sowmya Malayanur). --by given → store +
+    mark done; omitted → hold the step for the owner."""
+    _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    return _record_signoff(orch, args, "did_signoff", "DID")
+
+
+def _record_signoff(orch, args, step_id, label):
+    by = (args.by or "").strip()
+    if not by:
+        detail = (f"{label} sign-off still pending. Re-run with --by '<who>' once it's "
+                  f"received.")
+        orch.record_scout_step("bug_bash", step_id, "attention", detail)
         C.save_state(orch.state, args.runs_root, args.release)
-        C.emit(args.runs_root, args.release, f"[attention] signoffs: {detail}", kind="step")
+        C.emit(args.runs_root, args.release, f"[attention] {step_id}: {detail}", kind="step")
         print(detail)
         return 2
 
-    orch.record_scout_step("bug_bash", "signoffs", "pass",
-                           f"Sign-offs complete: Native Auth ({na}) + DID ({did})")
-    step = orch.state.get_step("bug_bash", "signoffs")
+    orch.record_scout_step("bug_bash", step_id, "pass", f"{label} sign-off: {by}")
+    step = orch.state.get_step("bug_bash", step_id)
     step.data = dict(step.data or {})
-    step.data["native_auth_by"] = na
-    step.data["did_by"] = did
+    step.data["by"] = by
     step.by = "scout"
-    orch.state.set_step("bug_bash", "signoffs", step)
+    orch.state.set_step("bug_bash", step_id, step)
     C.save_state(orch.state, args.runs_root, args.release)
-    C.emit(args.runs_root, args.release,
-           f"[ok] signoffs: Native Auth ({na}) + DID ({did}) signed off", kind="step")
-    print(f"Recorded sign-offs: Native Auth={na}, DID={did}")
+    C.emit(args.runs_root, args.release, f"[ok] {step_id}: {label} sign-off ({by})", kind="step")
+    print(f"Recorded {label} sign-off: {by}")
     return 0
 
 
@@ -135,12 +135,16 @@ def register(sub):
     n.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     n.set_defaults(func=cmd_record_nativeauth_notify)
 
-    s = sub.add_parser("record-signoffs",
-                       help="Record the bug-bash sign-offs (Native Auth attest + DID from Sowmya)")
+    s = sub.add_parser("record-native-auth-signoff",
+                       help="Record the Native Auth sign-off (release engineer attests)")
     s.add_argument("--release", required=True)
-    s.add_argument("--native-auth-by", default=None, dest="native_auth_by",
-                   help="Who signed off Native Auth. Omit (with --did-by) to hold the step.")
-    s.add_argument("--did-by", default=None, dest="did_by",
-                   help="Who gave the DID sign-off. Omit to hold the step.")
+    s.add_argument("--by", default=None, help="Who signed off Native Auth. Omit to hold the step.")
     s.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
-    s.set_defaults(func=cmd_record_signoffs)
+    s.set_defaults(func=cmd_record_native_auth_signoff)
+
+    dd = sub.add_parser("record-did-signoff",
+                        help="Record the DID sign-off (from the DID contact, Sowmya Malayanur)")
+    dd.add_argument("--release", required=True)
+    dd.add_argument("--by", default=None, help="Who gave the DID sign-off. Omit to hold the step.")
+    dd.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
+    dd.set_defaults(func=cmd_record_did_signoff)

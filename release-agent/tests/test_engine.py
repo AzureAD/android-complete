@@ -80,7 +80,8 @@ _SAFE_AGENTS = {
     "bug_bash.notify_native_auth": {"outcome": "done", "note": "native auth RE notified (test)"},
     "bug_bash.activate_chat": {"outcome": "done", "note": "meeting chat activated (test)"},
     "bug_bash.bugbash_updates": {"outcome": "done", "note": "first bug-bash update posted (test)"},
-    "bug_bash.signoffs": {"outcome": "done", "note": "sign-offs recorded (test)"},
+    "bug_bash.native_auth_signoff": {"outcome": "done", "note": "native auth sign-off recorded (test)"},
+    "bug_bash.did_signoff": {"outcome": "done", "note": "DID sign-off recorded (test)"},
 }
 
 
@@ -646,8 +647,8 @@ def test_holds_at_first_hold():
     # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local (4) + rc_report (scout
     # email, mocked done here) (1) + Phase-3 clone_plans_broker/clone_plans_auth/
     # distribute_tests (3) + send_invite + activate_chat (scout, mocked done) (2) +
-    # notify_native_auth (1) + bugbash_updates (1) + signoffs (scout, mocked done) (1).
-    assert sum(1 for a in actions if a.kind == "ran") == 17
+    # notify_native_auth (1) + bugbash_updates (1) + native_auth_signoff + did_signoff (2).
+    assert sum(1 for a in actions if a.kind == "ran") == 18
 
 
 def test_gate_blocks_until_approved():
@@ -3070,62 +3071,70 @@ def test_record_nativeauth_notify_stores_or_holds():
         assert after.get_step("bug_bash", "notify_native_auth").status == "blocked"
 
 
-# ---- Phase 3: signoffs (Native Auth attest + DID) ----
+# ---- Phase 3: native_auth_signoff + did_signoff ----
 
-def test_signoffs_composes_needs_skill_with_did_request():
-    """signoffs is a scout step: NeedsSkill composing the DID sign-off request to Sowmya +
-    instructions to gather the Native Auth attest, with the recorder follow-up."""
-    import steps as _steps
-    from orchestrator.outcomes import as_dict
-    from steps.bug_bash.signoffs import DID_CONTACT
-    st = _na_state()
-    out = as_dict(_steps.get_step("bug_bash", "signoffs").build(st))
-    assert out["kind"] == "needs_skill" and out["tool"] == "record-signoffs"
-    assert out["payload"]["did_contact"]["email"] == "Sowmya.Malayanur@microsoft.com"
-    assert DID_CONTACT["name"].split()[0] in out["payload"]["content"]   # greets Sowmya
-    assert "DID sign-off" in out["payload"]["content"]
-    assert "planId=3730001" in out["payload"]["content"]                 # links the plan
-    assert "record-signoffs --release 2026-08" in out["payload"]["followup_command"]
-    assert out["outbound"] is True
-    assert _steps.get_step("bug_bash", "signoffs").KIND == "scout"
-
-
-def test_signoffs_idempotent_when_both_recorded():
+def test_native_auth_signoff_composes_and_idempotent():
+    """native_auth_signoff is a scout step that attests the Native Auth sign-off (no outbound
+    message); once recorded it's idempotent-done."""
     import steps as _steps
     from orchestrator.outcomes import as_dict
     from orchestrator.state import StepState
     st = _na_state()
-    st.set_step("bug_bash", "signoffs",
-                StepState(status="done", data={"native_auth_by": "silviu", "did_by": "sowmya"}))
-    out = as_dict(_steps.get_step("bug_bash", "signoffs").build(st))
-    assert out["kind"] == "done" and "Sign-offs complete" in out["note"]
+    out = as_dict(_steps.get_step("bug_bash", "native_auth_signoff").build(st))
+    assert out["kind"] == "needs_skill" and out["tool"] == "record-native-auth-signoff"
+    assert "record-native-auth-signoff --release 2026-08" in out["payload"]["followup_command"]
+    assert not out.get("outbound")                       # attestation, nothing sent
+    assert _steps.get_step("bug_bash", "native_auth_signoff").KIND == "scout"
+    st.set_step("bug_bash", "native_auth_signoff", StepState(status="done", data={"by": "silviu"}))
+    out2 = as_dict(_steps.get_step("bug_bash", "native_auth_signoff").build(st))
+    assert out2["kind"] == "done" and "silviu" in out2["note"]
 
 
-def test_record_signoffs_requires_both():
-    """record-signoffs marks done only when BOTH sign-offs are given; missing either holds."""
+def test_did_signoff_composes_did_request_and_idempotent():
+    """did_signoff is a scout step: NeedsSkill composing the DID request to Sowmya (outbound),
+    linking the plan; once recorded it's idempotent-done."""
+    import steps as _steps
+    from orchestrator.outcomes import as_dict
+    from orchestrator.state import StepState
+    from steps.bug_bash.did_signoff import DID_CONTACT
+    st = _na_state()
+    out = as_dict(_steps.get_step("bug_bash", "did_signoff").build(st))
+    assert out["kind"] == "needs_skill" and out["tool"] == "record-did-signoff"
+    assert out["payload"]["did_contact"]["email"] == "Sowmya.Malayanur@microsoft.com"
+    assert DID_CONTACT["name"].split()[0] in out["payload"]["content"]   # greets Sowmya
+    assert "DID sign-off" in out["payload"]["content"] and "planId=3730001" in out["payload"]["content"]
+    assert out["outbound"] is True
+    st.set_step("bug_bash", "did_signoff", StepState(status="done", data={"by": "sowmya"}))
+    out2 = as_dict(_steps.get_step("bug_bash", "did_signoff").build(st))
+    assert out2["kind"] == "done" and "sowmya" in out2["note"]
+
+
+def test_record_signoff_commands_store_or_hold():
+    """record-native-auth-signoff / record-did-signoff store --by + mark done; omitting --by
+    holds the step for the owner."""
     import tempfile, argparse
     from orchestrator import cli_common as _C
     from orchestrator.commands import bugbash_chat as BC
-    from steps.bug_bash.signoffs import recorded_signoffs
+    from steps.bug_bash.native_auth_signoff import native_auth_signed_by
+    from steps.bug_bash.did_signoff import did_signed_by
     with tempfile.TemporaryDirectory() as d:
         rid = "2026-08"
         _stub_build_defs("pass")
-        # only one → hold
         _C.save_state(_na_state(), d, rid)
-        ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None,
-                                native_auth_by="silviu", did_by=None)
-        assert BC.cmd_record_signoffs(ns) == 2
+        # native auth: with --by → done
+        ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, by="silviu")
+        assert BC.cmd_record_native_auth_signoff(ns) == 0
+        assert native_auth_signed_by(_C.load_state(d, rid)) == "silviu"
+        # DID: without --by → hold
+        ns2 = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, by=None)
+        assert BC.cmd_record_did_signoff(ns2) == 2
         held = _C.load_state(d, rid)
-        assert not held.is_done("bug_bash", "signoffs")
-        assert held.get_step("bug_bash", "signoffs").status == "blocked"
-
-        # both → done
-        ns2 = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None,
-                                 native_auth_by="silviu", did_by="sowmya")
-        assert BC.cmd_record_signoffs(ns2) == 0
-        done = _C.load_state(d, rid)
-        assert done.is_done("bug_bash", "signoffs")
-        assert recorded_signoffs(done) == ("silviu", "sowmya")
+        assert not held.is_done("bug_bash", "did_signoff")
+        assert held.get_step("bug_bash", "did_signoff").status == "blocked"
+        # DID: with --by → done
+        ns3 = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, by="sowmya")
+        assert BC.cmd_record_did_signoff(ns3) == 0
+        assert did_signed_by(_C.load_state(d, rid)) == "sowmya"
 
 
 # ---- Phase 3: bugbash_updates (periodic poster) ----
