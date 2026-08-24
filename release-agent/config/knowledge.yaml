@@ -460,6 +460,34 @@ bug_bash.send_invite:
     - q: "Where does the template live?"
       a: "templates/bug-bash-invite.html — edit it to restyle; the step always renders from that file."
 
+bug_bash.notify_native_auth:
+  summary: "One-shot Teams ping to the Native Auth release engineer that the bug bash is ready."
+  what: >
+    Sends ONE Teams message to the month's Native Auth Release Engineer (from the
+    release-engineer schedule doc) telling them the bug bash is ready, that the Broker test
+    plan now has a 'Manual Tests (Native Auth)' folder with their cases (linked), asking them
+    to run their Native Auth tests at their earliest convenience, and to send the release
+    owner a confirmation when done. Fired once and done — no poller/automation.
+  who: >
+    Scout runs it during `next` (a scout step). It resolves the Native Auth RE for the release
+    month from the schedule doc (an inline hint seeds the likely alias; the skill confirms
+    against the live doc), resolves their UPN (workiq_search_people), and sends a 1:1 Teams
+    message (workiq_send_chat_message). Human fallback: if it can't resolve them it asks the
+    owner for the alias, or holds the step.
+  how: >
+    The skill runs `record-nativeauth-notify --release <id> --engineer <alias-or-upn>` to mark
+    it done (stores who was notified); without --engineer it holds the step for the owner.
+    Idempotent — once an engineer is recorded it reports done without re-sending. Blocks if the
+    Broker plan isn't built yet (needs the Native Auth suite link).
+  links:
+    - name: "Release engineer schedule (Native Auth RE column)"
+      url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/release-engineer-schedule"
+  faqs:
+    - q: "Who receives the message?"
+      a: "The Native Auth Release Engineer for the release month, from the schedule doc (e.g. Aug 2026 → silviu.petrescu). The inline hint in the step is confirmed against the live doc; update the hint when the schedule changes."
+    - q: "Does it track their confirmation?"
+      a: "No — it just asks them to reply to the release owner when they finish. It's a one-shot notification, not a poller."
+
 bug_bash.activate_chat:
   summary: "Activate the Bug Bash meeting chat and store its id for the periodic updates."
   what: >
@@ -517,6 +545,31 @@ bug_bash.bugbash_updates:
       a: "Either automatically when every test is complete (a tick returns `complete`, posts a wrap-up, and deregisters the poller) OR when the owner attests the bugbash_complete gate (the skill deregisters the poller then)."
     - q: "Why group by AssignedTo instead of the test point's tester?"
       a: "The ADO test-point `tester` field is NOT synced with the case's System.AssignedTo. distribute_tests sets AssignedTo, so progress is grouped by AssignedTo to reflect who actually owns each test."
+
+bug_bash.signoffs:
+  summary: "Gather the two release sign-offs — Native Auth (attest) + DID (from Sowmya)."
+  what: >
+    Two sign-offs close the bug bash before the owner's final attestation: (1) NATIVE AUTH —
+    the release engineer attests the Native Auth team finished their tests and signed off (the
+    RE received their confirmation, per notify_native_auth); (2) DID — reach out to the DID
+    point of contact (Sowmya Malayanur, Sowmya.Malayanur@microsoft.com) for the DID sign-off.
+    The step completes only when BOTH are in.
+  who: >
+    Scout runs it during `next` (a scout step). It composes the DID sign-off request and sends
+    it to the DID contact (workiq_create_chat_by_email → workiq_send_chat_message); the release
+    engineer confirms the Native Auth sign-off. Until both are recorded the step holds.
+  how: >
+    Record with `record-signoffs --release <id> --native-auth-by '<who>' --did-by '<who>'`
+    (both → done; either missing → holds for the owner). Idempotent — once both are recorded it
+    reports done without re-sending the DID request.
+  links:
+    - name: "DID point of contact — Sowmya Malayanur"
+      url: "mailto:Sowmya.Malayanur@microsoft.com"
+  faqs:
+    - q: "Who is the DID contact?"
+      a: "Sowmya Malayanur (Sowmya.Malayanur@microsoft.com) — Scout sends her the DID sign-off request when this step runs."
+    - q: "What does the release engineer attest?"
+      a: "That the Native Auth team finished their tests and signed off — the confirmation they were asked to send back in notify_native_auth."
 
 bug_bash.bugbash_complete:
   summary: "The release owner attests the Bug Bash is finished — the gate that closes the bash."

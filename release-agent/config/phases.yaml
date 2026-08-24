@@ -67,10 +67,11 @@ phases:
       - { id: clone_plans_auth,   name: "Create Authenticator bug-bash test suite",     owner: agent, maps_to: [T3] }
       - { id: distribute_tests,   name: "Distribute bug-bash tests across the team",     owner: agent, maps_to: [T2] }
       - { id: send_invite,        name: "Schedule Bug Bash + send Teams invite",         owner: agent, source: scout, maps_to: [T2] }
+      - { id: notify_native_auth, name: "Notify the Native Auth release engineer",        owner: agent, source: scout, maps_to: [T2] }
       - { id: activate_chat,      name: "Activate the Bug Bash meeting chat + store its id", owner: agent, source: scout, maps_to: [T2] }
       - { id: bugbash_updates, name: "Post bug-bash progress updates (first post + 2h poller)", owner: agent, source: scout, maps_to: [T2] }
+      - { id: signoffs,        name: "Native Auth sign-off + DID sign-off",     owner: agent, source: scout, maps_to: [T5] }
       - { id: ui_failures,     name: "Surface Phase 2 UI failure list",         owner: human, maps_to: [T4] }
-      - { id: signoffs,        name: "Chase DID/Dublin sign-offs + telemetry",  owner: agent, maps_to: [T5] }
       - { id: bugbash_complete, name: "Bug bash complete + signed off",         owner: human, source: scout, gate: true }
 
   - id: finalize

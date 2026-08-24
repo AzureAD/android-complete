@@ -48,6 +48,76 @@ def cmd_record_bugbash_chat(args):
     return 0
 
 
+def cmd_record_nativeauth_notify(args):
+    """Record that the Native Auth release engineer was notified the bug bash is ready.
+      * --engineer given  -> store it (data.engineer) + mark notify_native_auth done.
+      * --engineer omitted -> hold the step for the owner (attention): couldn't resolve/send.
+    """
+    _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    eng = (args.engineer or "").strip()
+
+    if not eng:
+        detail = ("Could not resolve/notify the Native Auth release engineer. Check the "
+                  "release-engineer schedule and send them the bug-bash-ready message, then "
+                  "re-run this step with --engineer.")
+        orch.record_scout_step("bug_bash", "notify_native_auth", "attention", detail)
+        C.save_state(orch.state, args.runs_root, args.release)
+        C.emit(args.runs_root, args.release,
+               f"[attention] notify_native_auth: {detail}", kind="step")
+        print(detail)
+        return 2
+
+    orch.record_scout_step("bug_bash", "notify_native_auth", "pass",
+                           f"Native Auth RE notified: {eng}")
+    step = orch.state.get_step("bug_bash", "notify_native_auth")
+    step.data = dict(step.data or {})
+    step.data["engineer"] = eng
+    step.by = "scout"
+    orch.state.set_step("bug_bash", "notify_native_auth", step)
+    C.save_state(orch.state, args.runs_root, args.release)
+    C.emit(args.runs_root, args.release,
+           f"[ok] notify_native_auth: Native Auth RE notified ({eng})", kind="step")
+    print(f"Recorded Native Auth RE notification: {eng}")
+    return 0
+
+
+def cmd_record_signoffs(args):
+    """Record the two bug-bash sign-offs (Native Auth attest + DID from Sowmya).
+      * both --native-auth-by and --did-by given -> store + mark signoffs done.
+      * either missing -> hold the step for the owner (attention): sign-offs still pending.
+    """
+    _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    na = (args.native_auth_by or "").strip()
+    did = (args.did_by or "").strip()
+
+    if not (na and did):
+        pending = ", ".join(p for p, v in
+                            [("Native Auth", na), ("DID", did)] if not v)
+        detail = (f"Sign-offs still pending: {pending}. Native Auth = the release engineer "
+                  f"attests the Native Auth team finished + signed off; DID = sign-off from "
+                  f"the DID contact (Sowmya Malayanur). Re-run with both --native-auth-by and "
+                  f"--did-by once received.")
+        orch.record_scout_step("bug_bash", "signoffs", "attention", detail)
+        C.save_state(orch.state, args.runs_root, args.release)
+        C.emit(args.runs_root, args.release, f"[attention] signoffs: {detail}", kind="step")
+        print(detail)
+        return 2
+
+    orch.record_scout_step("bug_bash", "signoffs", "pass",
+                           f"Sign-offs complete: Native Auth ({na}) + DID ({did})")
+    step = orch.state.get_step("bug_bash", "signoffs")
+    step.data = dict(step.data or {})
+    step.data["native_auth_by"] = na
+    step.data["did_by"] = did
+    step.by = "scout"
+    orch.state.set_step("bug_bash", "signoffs", step)
+    C.save_state(orch.state, args.runs_root, args.release)
+    C.emit(args.runs_root, args.release,
+           f"[ok] signoffs: Native Auth ({na}) + DID ({did}) signed off", kind="step")
+    print(f"Recorded sign-offs: Native Auth={na}, DID={did}")
+    return 0
+
+
 def register(sub):
     p = sub.add_parser("record-bugbash-chat",
                        help="Store the resolved Bug Bash meeting chat id (Phase-3 activate_chat)")
@@ -56,3 +126,21 @@ def register(sub):
                    help="The meeting chat id (19:meeting_…@thread.v2). Omit to hold for the owner.")
     p.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     p.set_defaults(func=cmd_record_bugbash_chat)
+
+    n = sub.add_parser("record-nativeauth-notify",
+                       help="Record that the Native Auth release engineer was notified the bug bash is ready")
+    n.add_argument("--release", required=True)
+    n.add_argument("--engineer", default=None,
+                   help="Alias or UPN of the notified Native Auth RE. Omit to hold for the owner.")
+    n.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
+    n.set_defaults(func=cmd_record_nativeauth_notify)
+
+    s = sub.add_parser("record-signoffs",
+                       help="Record the bug-bash sign-offs (Native Auth attest + DID from Sowmya)")
+    s.add_argument("--release", required=True)
+    s.add_argument("--native-auth-by", default=None, dest="native_auth_by",
+                   help="Who signed off Native Auth. Omit (with --did-by) to hold the step.")
+    s.add_argument("--did-by", default=None, dest="did_by",
+                   help="Who gave the DID sign-off. Omit to hold the step.")
+    s.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
+    s.set_defaults(func=cmd_record_signoffs)

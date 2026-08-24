@@ -77,8 +77,10 @@ _SAFE_AGENTS = {
     "bug_bash.clone_plans_auth": {"outcome": "done", "note": "auth suite created (test)"},
     "bug_bash.distribute_tests": {"outcome": "done", "note": "tests distributed (test)"},
     "bug_bash.send_invite": {"outcome": "done", "note": "bug bash invite sent (test)"},
+    "bug_bash.notify_native_auth": {"outcome": "done", "note": "native auth RE notified (test)"},
     "bug_bash.activate_chat": {"outcome": "done", "note": "meeting chat activated (test)"},
     "bug_bash.bugbash_updates": {"outcome": "done", "note": "first bug-bash update posted (test)"},
+    "bug_bash.signoffs": {"outcome": "done", "note": "sign-offs recorded (test)"},
 }
 
 
@@ -644,8 +646,8 @@ def test_holds_at_first_hold():
     # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local (4) + rc_report (scout
     # email, mocked done here) (1) + Phase-3 clone_plans_broker/clone_plans_auth/
     # distribute_tests (3) + send_invite + activate_chat (scout, mocked done) (2) +
-    # bugbash_updates (scout, mocked done) (1).
-    assert sum(1 for a in actions if a.kind == "ran") == 15
+    # notify_native_auth (1) + bugbash_updates (1) + signoffs (scout, mocked done) (1).
+    assert sum(1 for a in actions if a.kind == "ran") == 17
 
 
 def test_gate_blocks_until_approved():
@@ -2993,6 +2995,137 @@ def test_record_bugbash_chat_stores_id_and_marks_done():
         after = _C.load_state(d, rid)
         assert not after.is_done("bug_bash", "activate_chat")
         assert after.get_step("bug_bash", "activate_chat").status == "blocked"
+
+
+# ---- Phase 3: notify_native_auth ----
+
+def _na_state(release="2026-08", ccd="2026-08-13", broker_plan=3730001, owner="Pedro"):
+    from orchestrator.state import StepState
+    st = ReleaseState(release_id=release, ccd=ccd, owner_name=owner)
+    st.set_step("bug_bash", "clone_plans_broker", StepState(status="done",
+                                                            data={"plan_id": broker_plan}))
+    return st
+
+
+def test_notify_native_auth_composes_needs_skill():
+    """notify_native_auth is a scout step: NeedsSkill with the RE-resolution instructions,
+    the composed message (linking the Native Auth suite + asking for a confirmation), and the
+    recorder follow-up. Seeds the Aug 2026 RE hint from the schedule."""
+    import steps as _steps
+    from orchestrator.outcomes import as_dict
+    st = _na_state()
+    out = as_dict(_steps.get_step("bug_bash", "notify_native_auth").build(st))
+    assert out["kind"] == "needs_skill" and out["tool"] == "record-nativeauth-notify"
+    assert out["payload"]["engineer_hint"] == "silviu.petrescu"      # Aug 2026 from schedule
+    assert "planId=3730001" in out["payload"]["content"]            # links the Broker plan
+    assert "confirmation" in out["payload"]["content"].lower()
+    assert "record-nativeauth-notify --release 2026-08" in out["payload"]["followup_command"]
+    assert "release-engineer-schedule" in out["payload"]["_gather"]["schedule_doc"]
+    assert _steps.get_step("bug_bash", "notify_native_auth").KIND == "scout"
+
+
+def test_notify_native_auth_blocks_without_broker_plan():
+    import steps as _steps
+    from orchestrator.outcomes import as_dict
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
+    out = as_dict(_steps.get_step("bug_bash", "notify_native_auth").build(st))
+    assert out["kind"] == "blocked" and "Broker test plan" in out["reason"]
+
+
+def test_notify_native_auth_idempotent_after_recorded():
+    import steps as _steps
+    from orchestrator.outcomes import as_dict
+    from orchestrator.state import StepState
+    st = _na_state()
+    st.set_step("bug_bash", "notify_native_auth",
+                StepState(status="done", data={"engineer": "silviu.petrescu"}))
+    out = as_dict(_steps.get_step("bug_bash", "notify_native_auth").build(st))
+    assert out["kind"] == "done" and "already notified" in out["note"]
+
+
+def test_record_nativeauth_notify_stores_or_holds():
+    """record-nativeauth-notify with --engineer stores it + marks done; without --engineer it
+    holds the step for the owner."""
+    import tempfile, argparse
+    from orchestrator import cli_common as _C
+    from orchestrator.commands import bugbash_chat as BC
+    from steps.bug_bash.notify_native_auth import notified_engineer
+    with tempfile.TemporaryDirectory() as d:
+        rid = "2026-08"
+        _stub_build_defs("pass")
+        _C.save_state(_na_state(), d, rid)
+        ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None,
+                                engineer="silviu.petrescu")
+        assert BC.cmd_record_nativeauth_notify(ns) == 0
+        again = _C.load_state(d, rid)
+        assert again.is_done("bug_bash", "notify_native_auth")
+        assert notified_engineer(again) == "silviu.petrescu"
+
+        # no engineer -> attention hold
+        _C.save_state(_na_state(), d, rid)
+        ns2 = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, engineer=None)
+        assert BC.cmd_record_nativeauth_notify(ns2) == 2
+        after = _C.load_state(d, rid)
+        assert not after.is_done("bug_bash", "notify_native_auth")
+        assert after.get_step("bug_bash", "notify_native_auth").status == "blocked"
+
+
+# ---- Phase 3: signoffs (Native Auth attest + DID) ----
+
+def test_signoffs_composes_needs_skill_with_did_request():
+    """signoffs is a scout step: NeedsSkill composing the DID sign-off request to Sowmya +
+    instructions to gather the Native Auth attest, with the recorder follow-up."""
+    import steps as _steps
+    from orchestrator.outcomes import as_dict
+    from steps.bug_bash.signoffs import DID_CONTACT
+    st = _na_state()
+    out = as_dict(_steps.get_step("bug_bash", "signoffs").build(st))
+    assert out["kind"] == "needs_skill" and out["tool"] == "record-signoffs"
+    assert out["payload"]["did_contact"]["email"] == "Sowmya.Malayanur@microsoft.com"
+    assert DID_CONTACT["name"].split()[0] in out["payload"]["content"]   # greets Sowmya
+    assert "DID sign-off" in out["payload"]["content"]
+    assert "planId=3730001" in out["payload"]["content"]                 # links the plan
+    assert "record-signoffs --release 2026-08" in out["payload"]["followup_command"]
+    assert out["outbound"] is True
+    assert _steps.get_step("bug_bash", "signoffs").KIND == "scout"
+
+
+def test_signoffs_idempotent_when_both_recorded():
+    import steps as _steps
+    from orchestrator.outcomes import as_dict
+    from orchestrator.state import StepState
+    st = _na_state()
+    st.set_step("bug_bash", "signoffs",
+                StepState(status="done", data={"native_auth_by": "silviu", "did_by": "sowmya"}))
+    out = as_dict(_steps.get_step("bug_bash", "signoffs").build(st))
+    assert out["kind"] == "done" and "Sign-offs complete" in out["note"]
+
+
+def test_record_signoffs_requires_both():
+    """record-signoffs marks done only when BOTH sign-offs are given; missing either holds."""
+    import tempfile, argparse
+    from orchestrator import cli_common as _C
+    from orchestrator.commands import bugbash_chat as BC
+    from steps.bug_bash.signoffs import recorded_signoffs
+    with tempfile.TemporaryDirectory() as d:
+        rid = "2026-08"
+        _stub_build_defs("pass")
+        # only one → hold
+        _C.save_state(_na_state(), d, rid)
+        ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None,
+                                native_auth_by="silviu", did_by=None)
+        assert BC.cmd_record_signoffs(ns) == 2
+        held = _C.load_state(d, rid)
+        assert not held.is_done("bug_bash", "signoffs")
+        assert held.get_step("bug_bash", "signoffs").status == "blocked"
+
+        # both → done
+        ns2 = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None,
+                                 native_auth_by="silviu", did_by="sowmya")
+        assert BC.cmd_record_signoffs(ns2) == 0
+        done = _C.load_state(d, rid)
+        assert done.is_done("bug_bash", "signoffs")
+        assert recorded_signoffs(done) == ("silviu", "sowmya")
 
 
 # ---- Phase 3: bugbash_updates (periodic poster) ----
