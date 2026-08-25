@@ -376,9 +376,10 @@ def _find_suite_by_name(plan_id, name, timeout=90):
 
 
 def _set_points_outcome(plan_id, suite_id, point_ids, outcome, timeout=90, chunk=40):
-    """Set the manual outcome ('Passed' | 'Failed') on many test points at once. The classic
-    points PATCH accepts a comma-separated id list (one shared outcome), so we chunk to keep the
-    URL length safe — turning hundreds of single PATCHes into a handful. (ok, detail)."""
+    """Set the manual outcome ('Passed' | 'Failed' | 'NotApplicable') on many test points at
+    once. The classic points PATCH accepts a comma-separated id list (one shared outcome), so we
+    chunk to keep the URL length safe — turning hundreds of single PATCHes into a handful.
+    (ok, detail)."""
     ids = [str(i) for i in point_ids]
     for i in range(0, len(ids), chunk):
         batch = ",".join(ids[i:i + chunk])
@@ -390,14 +391,27 @@ def _set_points_outcome(plan_id, suite_id, point_ids, outcome, timeout=90, chunk
     return (True, "")
 
 
-def fill_ui_automation_results(plan_id, verdicts, timeout=120):
-    """Fill the plan's flat "UI Automation (Android Broker)" suite from per-case verdicts
-    ({case_id: 'Passed'|'Failed'} — e.g. from pipelines.ui_automation_verdicts).
+# How each of the flat UI suite's flight-configs is fed from the pipelines: (flightProvider,
+# MSAL-variant). An MRWP build is one flight (ECS/Local); its runs split into PROD-MSAL / RC-MSAL.
+UI_CONFIG_FLIGHT_VARIANT = {
+    292: ("ECS", "prod"),      # PROD MSAL - RC Broker (ECS)
+    294: ("ECS", "rc"),        # RC MSAL - PROD Broker (ECS)
+    328: ("Local", "prod"),    # PROD MSAL - RC Broker (LocalFlights)
+    344: ("Local", "rc"),      # RC MSAL - PROD Broker (LocalFlight)
+}
 
-    A verdict is per test CASE (the rule: passed if it succeeded in >=1 RC run). It is applied
-    to ALL of that case's config test-points (batched by outcome). Cases with no verdict (never
-    ran) are left unset. Returns (ok, summary, detail) where summary =
-      {points_total, set_passed, set_failed, skipped_no_verdict, cases_passed, cases_failed}."""
+
+def fill_ui_automation_results(plan_id, verdicts, timeout=120):
+    """Fill the plan's flat "UI Automation (Android Broker)" suite from per-config verdicts
+    ({case_id: {(flight, variant): 'Passed'|'Failed'|'NotApplicable'}} — from
+    pipelines.ui_automation_verdicts).
+
+    Each of the suite's four flight-configs maps to a (flight, variant) via
+    UI_CONFIG_FLIGHT_VARIANT, so every (case, config) test point gets the outcome of the matching
+    pipeline run(s): passed if it passed there in >=1 run, failed if it really ran but never
+    passed, else NotApplicable (skipped / never run for that flight+variant). Outcomes are written
+    batched by value. Returns (ok, summary, detail) where summary =
+      {points_total, set_passed, set_failed, set_not_applicable, cases_touched}."""
     verdicts = {int(k): v for k, v in (verdicts or {}).items()}
     oks, sid, d = _find_suite_by_name(plan_id, BROKER_UI_SUITE_NAME, timeout)
     if not oks:
@@ -409,34 +423,33 @@ def fill_ui_automation_results(plan_id, verdicts, timeout=120):
     if not okp:
         return (False, None, dp)
 
-    pass_pts, fail_pts = [], []
-    pass_cases, fail_cases = set(), set()
-    skipped = 0
+    buckets = {"Passed": [], "Failed": [], "NotApplicable": []}
+    cases_touched = set()
     for p in pts:
         try:
             cid = int((p.get("testCase") or {}).get("id"))
+            cfg = int((p.get("configuration") or {}).get("id"))
         except (TypeError, ValueError):
-            skipped += 1
+            buckets["NotApplicable"].append(p.get("id"))
             continue
-        v = verdicts.get(cid)
-        if v == "Passed":
-            pass_pts.append(p.get("id"))
-            pass_cases.add(cid)
-        elif v == "Failed":
-            fail_pts.append(p.get("id"))
-            fail_cases.add(cid)
+        fv = UI_CONFIG_FLIGHT_VARIANT.get(cfg)
+        outcome = (verdicts.get(cid) or {}).get(fv) if fv else None
+        if outcome not in ("Passed", "Failed"):
+            outcome = "NotApplicable"          # skipped / no data for this flight+variant
         else:
-            skipped += 1
+            cases_touched.add(cid)
+        buckets[outcome].append(p.get("id"))
 
-    for point_ids, outcome in ((pass_pts, "Passed"), (fail_pts, "Failed")):
+    for outcome, point_ids in buckets.items():
         if point_ids:
             oko, do = _set_points_outcome(plan_id, sid, point_ids, outcome, timeout)
             if not oko:
                 return (False, None, f"setting {len(point_ids)} points -> {outcome} failed: {do}")
 
-    return (True, {"points_total": len(pts), "set_passed": len(pass_pts),
-                   "set_failed": len(fail_pts), "skipped_no_verdict": skipped,
-                   "cases_passed": len(pass_cases), "cases_failed": len(fail_cases)}, "")
+    return (True, {"points_total": len(pts), "set_passed": len(buckets["Passed"]),
+                   "set_failed": len(buckets["Failed"]),
+                   "set_not_applicable": len(buckets["NotApplicable"]),
+                   "cases_touched": len(cases_touched)}, "")
 
 
 def create_auth_query_suite(name, query, timeout=90):

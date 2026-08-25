@@ -559,20 +559,52 @@ def _ui_case_id_from_result(res):
     return None
 
 
+def _flight_provider(org, project, build_id, timeout=60):
+    """The MRWP build's flight provider — 'ECS' or 'Local' — read from its templateParameters.
+    This is what splits the ECS vs LocalFlight test configurations. Returns the string or None."""
+    ok, b, _d = _ado_rest_get(
+        f"{org.rstrip('/')}/{project}/_apis/build/builds/{build_id}?api-version=7.1", timeout)
+    if not ok:
+        return None
+    fp = ((b or {}).get("templateParameters") or {}).get("flightProvider")
+    return fp or None
+
+
+def _msal_variant(run_name):
+    """The MSAL variant of a UI run — 'prod' (a 'PROD MSAL …' run) or 'rc' (an 'RC MSAL …' run),
+    which selects the PROD-MSAL vs RC-MSAL test configuration. None when the run carries neither
+    marker (e.g. 'Lab Api Tests') and so can't be placed on a specific config."""
+    low = (run_name or "").lower()
+    if "prod msal" in low:
+        return "prod"
+    if "rc msal" in low:
+        return "rc"
+    return None
+
+
 def ui_automation_verdicts(org, project, build_ids, timeout=90):
-    """Aggregate UI-automation outcomes across the given RC builds, PER test-case work item.
+    """Aggregate UI-automation outcomes across the given RC/flight builds, PER (test case,
+    flight, MSAL-variant) — which maps 1:1 to the plan's four flight configurations.
 
-    A UI test can run many times — across RC iterations (multiple builds), providers, config
-    flavors, and retries — with different outcomes each time. The rule: a case is 'Passed' if it
-    passed in AT LEAST ONE run anywhere; 'Failed' if it has a real (non-NA) result but NEVER
-    passed; omitted entirely if it never really ran (only NotExecuted / NotApplicable / etc.).
+    Each MRWP build is one flight (ECS or Local, from templateParameters.flightProvider), and its
+    UI runs split into a PROD-MSAL and an RC-MSAL variant (from the run name). A test can run many
+    times for a given (flight, variant) — across RC iterations and retries — with different
+    outcomes. The rule per (case, flight, variant):
+      * 'Passed'        — passed in AT LEAST ONE run;
+      * 'Failed'        — has a real (non-NA) result but NEVER passed;
+      * 'NotApplicable' — only skipped / not-executed results (no real run).
+    Runs that can't be placed (no flight, or a run without a PROD/RC-MSAL marker) are ignored.
+    The join from a result to a case is the id in the automated test name.
 
-    Only 'ui'-classified runs (the device UI-automation suites) are considered. Returns
-    (ok, {case_id: 'Passed'|'Failed'}, detail)."""
+    Returns (ok, {case_id: {(flight, variant): 'Passed'|'Failed'|'NotApplicable'}}, detail),
+    where flight is 'ECS'|'Local' and variant is 'prod'|'rc'."""
     import collections
-    outs = collections.defaultdict(set)
+    outs = collections.defaultdict(lambda: collections.defaultdict(set))
     base = org.rstrip("/")
     for bid in build_ids:
+        flight = _flight_provider(org, project, bid, timeout)
+        if not flight:
+            continue                       # unknown flight -> can't place its results
         url = (f"{base}/{project}/_apis/test/runs"
                f"?buildUri=vstfs:///Build/Build/{bid}&api-version=7.1")
         ok, data, detail = _ado_rest_get(url, timeout)
@@ -581,19 +613,23 @@ def ui_automation_verdicts(org, project, build_ids, timeout=90):
         for r in (data or {}).get("value", []) or []:
             if classify_test_run(r.get("name")) != "ui":
                 continue
+            variant = _msal_variant(r.get("name"))
+            if not variant:
+                continue                   # e.g. 'Lab Api Tests' -> no config to place on
             ok2, results, d2 = _run_results(org, project, r.get("id"), timeout)
             if not ok2:
                 return (False, None, d2)
             for res in results or []:
                 cid = _ui_case_id_from_result(res)
                 if cid is not None:
-                    outs[cid].add(res.get("outcome"))
+                    outs[cid][(flight, variant)].add(res.get("outcome"))
     verdicts = {}
-    for cid, o in outs.items():
-        eff = {x for x in o if x not in _NA_OUTCOMES}
-        if not eff:
-            continue                       # never really ran -> leave unset
-        verdicts[cid] = "Passed" if "Passed" in eff else "Failed"
+    for cid, fv in outs.items():
+        verdicts[cid] = {}
+        for key, o in fv.items():
+            eff = {x for x in o if x not in _NA_OUTCOMES}
+            verdicts[cid][key] = ("Passed" if "Passed" in eff
+                                  else ("Failed" if eff else "NotApplicable"))
     return (True, verdicts, "")
 
 

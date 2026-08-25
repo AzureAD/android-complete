@@ -2782,21 +2782,21 @@ def test_ui_test_status_fills_from_verdicts():
 
     def fake_fill(plan_id, verdicts, timeout=120):
         captured["plan_id"] = plan_id
-        return (True, {"points_total": 308, "set_passed": 300, "set_failed": 4,
-                       "skipped_no_verdict": 4, "cases_passed": 75, "cases_failed": 1}, "")
+        return (True, {"points_total": 308, "set_passed": 250, "set_failed": 6,
+                       "set_not_applicable": 52, "cases_touched": 76}, "")
 
     o = T.fill_ui_automation_results
     T.fill_ui_automation_results = fake_fill
     try:
-        with mockctx.active({"verdicts": {"3522687": "Failed", "833561": "Passed"}}):
+        with mockctx.active({"verdicts": {"3321136": {("ECS", "prod"): "Passed"}}}):
             out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
     finally:
         T.fill_ui_automation_results = o
     assert out["kind"] == "done"
-    assert "75 Passed" in out["note"] and "1 Failed" in out["note"]
+    assert "250 Passed" in out["note"] and "6 Failed" in out["note"] and "52 N/A" in out["note"]
     assert captured["plan_id"] == "3737697"
     data = st.get_step("bug_bash", "ui_test_status").data
-    assert data["plan_id"] == "3737697" and data["summary"]["cases_passed"] == 75
+    assert data["plan_id"] == "3737697" and data["summary"]["cases_touched"] == 76
     assert out["links"][0]["url"].endswith("planId=3737697")
 
 
@@ -2836,11 +2836,11 @@ def test_ui_test_status_reads_build_ids_from_pipeline_runs():
 
     def fake_verdicts(org, project, build_ids, timeout=90):
         seen["build_ids"] = list(build_ids)
-        return (True, {111: "Passed"}, "")
+        return (True, {111: {("ECS", "prod"): "Passed"}}, "")
 
     def fake_fill(plan_id, verdicts, timeout=120):
-        return (True, {"points_total": 4, "set_passed": 4, "set_failed": 0,
-                       "skipped_no_verdict": 0, "cases_passed": 1, "cases_failed": 0}, "")
+        return (True, {"points_total": 4, "set_passed": 1, "set_failed": 0,
+                       "set_not_applicable": 3, "cases_touched": 1}, "")
 
     ov, of = P.ui_automation_verdicts, T.fill_ui_automation_results
     P.ui_automation_verdicts, T.fill_ui_automation_results = fake_verdicts, fake_fill
@@ -2853,20 +2853,24 @@ def test_ui_test_status_reads_build_ids_from_pipeline_runs():
     assert seen["build_ids"] == ["1681650", "1681651", "1690000"]
 
 
-def test_ui_automation_verdicts_at_least_one_pass():
-    """Aggregation rule: pass if ANY run passed; fail if a real result but never passed; omit if
-    it never really ran. Join is by the case id embedded in the automated test name."""
+def test_ui_automation_verdicts_per_config():
+    """Per (case, flight, variant): pass if any run passed; fail if a real result but never
+    passed; NotApplicable if only skipped. Flight comes from the build; variant from the run
+    name. Runs with no PROD/RC-MSAL marker (e.g. 'Lab Api Tests') are ignored."""
     from tools import pipelines as P
+    flight = {"b1": "ECS", "b2": "Local"}
     runs_by_build = {
-        "b1": {"value": [{"id": "r1", "name": "PROD MSAL - RC Broker (API 32)"}]},
-        "b2": {"value": [{"id": "r2", "name": "RC MSAL - PROD Broker (API 32)"}]},
+        "b1": {"value": [{"id": "r1", "name": "PROD MSAL - RC Broker (API 32)"},
+                         {"id": "r2", "name": "RC MSAL - PROD Broker (API 32)"}]},
+        "b2": {"value": [{"id": "r3", "name": "PROD MSAL - RC Broker (API 32)"},
+                         {"id": "r4", "name": "Lab Api Tests"}]},
     }
     results_by_run = {
-        "r1": [{"automatedTestName": "test_100_Flaky", "outcome": "Failed"},
-               {"automatedTestName": "test_200_AlwaysFail", "outcome": "Failed"},
-               {"automatedTestName": "test_300_NeverRan", "outcome": "NotExecuted"}],
-        "r2": [{"automatedTestName": "test_100_Flaky", "outcome": "Passed"},
-               {"automatedTestName": "test_200_AlwaysFail", "outcome": "Failed"}],
+        "r1": [{"automatedTestName": "test_100_X", "outcome": "Failed"},
+               {"automatedTestName": "test_100_X", "outcome": "Passed"}],       # retry -> Passed
+        "r2": [{"automatedTestName": "test_100_X", "outcome": "Failed"}],        # ECS/rc -> Failed
+        "r3": [{"automatedTestName": "test_100_X", "outcome": "NotExecuted"}],   # Local/prod -> N/A
+        "r4": [{"automatedTestName": "test_999_Unplaceable", "outcome": "Passed"}],  # no variant -> ignored
     }
 
     def fake_get(url, timeout):
@@ -2875,17 +2879,76 @@ def test_ui_automation_verdicts_at_least_one_pass():
                 return (True, data, "")
         return (True, {"value": []}, "")
 
+    def fake_flight(org, project, bid, timeout=60):
+        return flight.get(bid)
+
     def fake_run_results(org, project, run_id, timeout=90, **k):
         return (True, results_by_run.get(run_id, []), "")
 
-    og, orr = P._ado_rest_get, P._run_results
-    P._ado_rest_get, P._run_results = fake_get, fake_run_results
+    o = (P._ado_rest_get, P._flight_provider, P._run_results)
+    P._ado_rest_get, P._flight_provider, P._run_results = fake_get, fake_flight, fake_run_results
     try:
         ok, v, d = P.ui_automation_verdicts("ORG", "PROJ", ["b1", "b2"])
     finally:
-        P._ado_rest_get, P._run_results = og, orr
+        P._ado_rest_get, P._flight_provider, P._run_results = o
     assert ok, d
-    assert v == {100: "Passed", 200: "Failed"}     # 300 omitted (never ran)
+    assert v == {100: {("ECS", "prod"): "Passed", ("ECS", "rc"): "Failed",
+                       ("Local", "prod"): "NotApplicable"}}
+    assert 999 not in v                          # unplaceable run never recorded
+
+
+def test_fill_ui_automation_results_maps_configs():
+    """Each plan point (case, config) takes the outcome of its matching (flight, variant); a
+    config with no verdict is NotApplicable. Mirrors the user's test_3321136 example."""
+    from tools import pipelines as P
+    from tools import testplans as T
+    verdicts = {3321136: {("ECS", "prod"): "Passed", ("ECS", "rc"): "Failed",
+                          ("Local", "prod"): "NotApplicable"}}   # Local/rc omitted -> N/A
+    points = [
+        {"id": 1, "testCase": {"id": "3321136"}, "configuration": {"id": "292"}},  # ECS prod -> Passed
+        {"id": 2, "testCase": {"id": "3321136"}, "configuration": {"id": "294"}},  # ECS rc  -> Failed
+        {"id": 3, "testCase": {"id": "3321136"}, "configuration": {"id": "328"}},  # Local prod -> N/A
+        {"id": 4, "testCase": {"id": "3321136"}, "configuration": {"id": "344"}},  # Local rc (no verdict) -> N/A
+    ]
+    sent = []
+
+    def fake_get_all(url, timeout, **k):
+        if "/suites?" in url:
+            return (True, [{"id": 555, "name": T.BROKER_UI_SUITE_NAME}], "")
+        if "/points?" in url:
+            return (True, points, "")
+        return (True, [], "")
+
+    def fake_send(url, method, body, timeout):
+        sent.append((url, body))
+        return (True, {}, "")
+
+    og, os_ = P._ado_rest_get_all, P._ado_rest_send
+    P._ado_rest_get_all, P._ado_rest_send = fake_get_all, fake_send
+    try:
+        ok, summ, d = T.fill_ui_automation_results(900, verdicts)
+    finally:
+        P._ado_rest_get_all, P._ado_rest_send = og, os_
+    assert ok, d
+    assert summ["set_passed"] == 1 and summ["set_failed"] == 1 and summ["set_not_applicable"] == 2
+    assert summ["cases_touched"] == 1
+    by_outcome = {}
+    for u, b in sent:
+        ids = set(u.split("/points/")[1].split("?")[0].split(","))
+        by_outcome.setdefault(b["outcome"], set()).update(ids)
+    assert by_outcome["Passed"] == {"1"}
+    assert by_outcome["Failed"] == {"2"}
+    assert by_outcome["NotApplicable"] == {"3", "4"}
+
+
+def test_msal_variant_and_flight_markers():
+    from tools import pipelines as P
+    assert P._msal_variant("PROD MSAL - RC Broker (API 32)") == "prod"
+    assert P._msal_variant("PROD MSAL - RC BrokerHost (API 32)") == "prod"
+    assert P._msal_variant("RC MSAL - PROD Broker (API 32)") == "rc"
+    assert P._msal_variant("LTW, RC MSAL - RC Broker (API 32)") == "rc"
+    assert P._msal_variant("Stress Tests - RC MSAL with RC Broker") == "rc"
+    assert P._msal_variant("Lab Api Tests") is None
 
 
 def test_ui_case_id_from_result_extraction():
