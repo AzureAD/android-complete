@@ -284,9 +284,15 @@ const counts = ORDER.map(l => `${l}=${all.filter(r => r.label === l).length}`).j
 console.log(`\nNovelty classification (floor=${floor.toLocaleString()}, complete weeks=${completeLen}):  ${counts}`);
 if (belowFloor) console.log(`(${belowFloor} key(s) skipped below floor)`);
 
+// Order by novelty FIRST, volume only as a tiebreak within a label. Sorting this list by
+// device count alone is a known, reported defect: it lets a high-volume ACCELERATING code
+// outrank a genuine NEW step change, and because the report drops the tail when the list
+// exceeds the 8-row cap, the dropped rows are the lowest-volume ones -- which is exactly
+// where NEW codes land. A NEW code is by definition low-volume relative to something that
+// has been climbing for weeks.
 const attention = all
   .filter(r => ATTENTION.includes(r.label))
-  .sort((a, b) => b.current - a.current);
+  .sort((a, b) => ORDER.indexOf(a.label) - ORDER.indexOf(b.label) || b.current - a.current);
 console.log(`ATTENTION set (NEW + ACCELERATING) = ${attention.length} of ${all.length} series.` +
   (attention.length === 0 ? '  -> QUIET WEEK: report should be short.' : ''));
 
