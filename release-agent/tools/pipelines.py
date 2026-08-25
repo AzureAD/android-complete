@@ -542,6 +542,61 @@ def get_test_summary(org, project, build_id, timeout=60):
                    "runs": out_runs, "categories": cats}, "")
 
 
+def _ui_case_id_from_result(res):
+    """Extract the ADO test-CASE work-item id embedded in a UI-automation result's name.
+    The automated tests are named `test_<caseId>_...` (with storage `...TestCase<caseId>`),
+    e.g. 'test_3522687_WpjWithHardwareKeyByDefault' -> 3522687. Returns int or None."""
+    for f in (res.get("automatedTestName"), res.get("testCaseTitle")):
+        if f:
+            m = _re_mod.search(r"test_(\d+)", f, _re_mod.I)
+            if m:
+                return int(m.group(1))
+    st = res.get("automatedTestStorage")
+    if st:
+        m = _re_mod.search(r"TestCase(\d+)", st)
+        if m:
+            return int(m.group(1))
+    return None
+
+
+def ui_automation_verdicts(org, project, build_ids, timeout=90):
+    """Aggregate UI-automation outcomes across the given RC builds, PER test-case work item.
+
+    A UI test can run many times — across RC iterations (multiple builds), providers, config
+    flavors, and retries — with different outcomes each time. The rule: a case is 'Passed' if it
+    passed in AT LEAST ONE run anywhere; 'Failed' if it has a real (non-NA) result but NEVER
+    passed; omitted entirely if it never really ran (only NotExecuted / NotApplicable / etc.).
+
+    Only 'ui'-classified runs (the device UI-automation suites) are considered. Returns
+    (ok, {case_id: 'Passed'|'Failed'}, detail)."""
+    import collections
+    outs = collections.defaultdict(set)
+    base = org.rstrip("/")
+    for bid in build_ids:
+        url = (f"{base}/{project}/_apis/test/runs"
+               f"?buildUri=vstfs:///Build/Build/{bid}&api-version=7.1")
+        ok, data, detail = _ado_rest_get(url, timeout)
+        if not ok:
+            return (False, None, detail)
+        for r in (data or {}).get("value", []) or []:
+            if classify_test_run(r.get("name")) != "ui":
+                continue
+            ok2, results, d2 = _run_results(org, project, r.get("id"), timeout)
+            if not ok2:
+                return (False, None, d2)
+            for res in results or []:
+                cid = _ui_case_id_from_result(res)
+                if cid is not None:
+                    outs[cid].add(res.get("outcome"))
+    verdicts = {}
+    for cid, o in outs.items():
+        eff = {x for x in o if x not in _NA_OUTCOMES}
+        if not eff:
+            continue                       # never really ran -> leave unset
+        verdicts[cid] = "Passed" if "Passed" in eff else "Failed"
+    return (True, verdicts, "")
+
+
 def _suite_base_name(name):
     """The test API returns the same suite as several runs, each named
     '<suite> # <buildlabel>' — strip the ' # …' run suffix so same-suite runs merge."""

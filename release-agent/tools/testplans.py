@@ -362,6 +362,83 @@ def build_broker_plan(dest_name, timeout=120):
     return (True, pid, "")
 
 
+def _find_suite_by_name(plan_id, name, timeout=90):
+    """The id of the suite named `name` in `plan_id` (case-insensitive), or None. (ok, sid, detail)."""
+    ok, suites, d = P._ado_rest_get_all(
+        f"{ORG}/{PROJECT}/_apis/testplan/Plans/{plan_id}/suites?{_API}", timeout)
+    if not ok:
+        return (False, None, d)
+    want = (name or "").strip().lower()
+    for s in suites:
+        if (s.get("name") or "").strip().lower() == want:
+            return (True, s.get("id"), "")
+    return (True, None, "")
+
+
+def _set_points_outcome(plan_id, suite_id, point_ids, outcome, timeout=90, chunk=40):
+    """Set the manual outcome ('Passed' | 'Failed') on many test points at once. The classic
+    points PATCH accepts a comma-separated id list (one shared outcome), so we chunk to keep the
+    URL length safe — turning hundreds of single PATCHes into a handful. (ok, detail)."""
+    ids = [str(i) for i in point_ids]
+    for i in range(0, len(ids), chunk):
+        batch = ",".join(ids[i:i + chunk])
+        url = (f"{ORG}/{PROJECT}/_apis/test/Plans/{plan_id}/Suites/{suite_id}"
+               f"/points/{batch}?api-version=5.0")
+        ok, _j, d = P._ado_rest_send(url, "PATCH", {"outcome": outcome}, timeout)
+        if not ok:
+            return (False, d)
+    return (True, "")
+
+
+def fill_ui_automation_results(plan_id, verdicts, timeout=120):
+    """Fill the plan's flat "UI Automation (Android Broker)" suite from per-case verdicts
+    ({case_id: 'Passed'|'Failed'} — e.g. from pipelines.ui_automation_verdicts).
+
+    A verdict is per test CASE (the rule: passed if it succeeded in >=1 RC run). It is applied
+    to ALL of that case's config test-points (batched by outcome). Cases with no verdict (never
+    ran) are left unset. Returns (ok, summary, detail) where summary =
+      {points_total, set_passed, set_failed, skipped_no_verdict, cases_passed, cases_failed}."""
+    verdicts = {int(k): v for k, v in (verdicts or {}).items()}
+    oks, sid, d = _find_suite_by_name(plan_id, BROKER_UI_SUITE_NAME, timeout)
+    if not oks:
+        return (False, None, d)
+    if not sid:
+        return (False, None, f"'{BROKER_UI_SUITE_NAME}' suite not found in plan {plan_id}")
+    okp, pts, dp = P._ado_rest_get_all(
+        f"{ORG}/{PROJECT}/_apis/test/Plans/{plan_id}/Suites/{sid}/points?api-version=5.0", timeout)
+    if not okp:
+        return (False, None, dp)
+
+    pass_pts, fail_pts = [], []
+    pass_cases, fail_cases = set(), set()
+    skipped = 0
+    for p in pts:
+        try:
+            cid = int((p.get("testCase") or {}).get("id"))
+        except (TypeError, ValueError):
+            skipped += 1
+            continue
+        v = verdicts.get(cid)
+        if v == "Passed":
+            pass_pts.append(p.get("id"))
+            pass_cases.add(cid)
+        elif v == "Failed":
+            fail_pts.append(p.get("id"))
+            fail_cases.add(cid)
+        else:
+            skipped += 1
+
+    for point_ids, outcome in ((pass_pts, "Passed"), (fail_pts, "Failed")):
+        if point_ids:
+            oko, do = _set_points_outcome(plan_id, sid, point_ids, outcome, timeout)
+            if not oko:
+                return (False, None, f"setting {len(point_ids)} points -> {outcome} failed: {do}")
+
+    return (True, {"points_total": len(pts), "set_passed": len(pass_pts),
+                   "set_failed": len(fail_pts), "skipped_no_verdict": skipped,
+                   "cases_passed": len(pass_cases), "cases_failed": len(fail_cases)}, "")
+
+
 def create_auth_query_suite(name, query, timeout=90):
     """CREATE a query-based (dynamic) test suite `name` under the Authenticator plan's
     root suite, selecting the given WIQL. Returns (ok, new_suite_id, detail)."""

@@ -66,6 +66,7 @@ phases:
       - { id: clone_plans_broker, name: "Build Broker test plan (3 flat suites: Broker + Native Auth + UI Automation)", owner: agent, maps_to: [T3] }
       - { id: clone_plans_auth,   name: "Create Authenticator bug-bash test suite",     owner: agent, maps_to: [T3] }
       - { id: distribute_tests,   name: "Distribute bug-bash tests across the team",     owner: agent, maps_to: [T2] }
+      - { id: ui_test_status,     name: "Fill UI automation results from the RC pipelines", owner: agent, maps_to: [T4] }
       - { id: send_invite,        name: "Schedule Bug Bash + send Teams invite",         owner: agent, source: scout, maps_to: [T2] }
       - { id: notify_native_auth, name: "Notify the Native Auth release engineer",        owner: agent, source: scout, maps_to: [T2] }
       - { id: activate_chat,      name: "Activate the Bug Bash meeting chat + store its id", owner: agent, source: scout, maps_to: [T2] }

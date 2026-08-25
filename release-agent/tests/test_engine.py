@@ -76,6 +76,7 @@ _SAFE_AGENTS = {
     "bug_bash.clone_plans_broker": {"outcome": "done", "note": "broker plan cloned (test)"},
     "bug_bash.clone_plans_auth": {"outcome": "done", "note": "auth suite created (test)"},
     "bug_bash.distribute_tests": {"outcome": "done", "note": "tests distributed (test)"},
+    "bug_bash.ui_test_status": {"outcome": "done", "note": "UI automation results filled (test)"},
     "bug_bash.send_invite": {"outcome": "done", "note": "bug bash invite sent (test)"},
     "bug_bash.notify_native_auth": {"outcome": "done", "note": "native auth RE notified (test)"},
     "bug_bash.activate_chat": {"outcome": "done", "note": "meeting chat activated (test)"},
@@ -646,9 +647,9 @@ def test_holds_at_first_hold():
     # auto steps that RUN before the first hold: Phase-0 breaking/cg/cron/wiki (4) +
     # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local (4) + rc_report (scout
     # email, mocked done here) (1) + Phase-3 clone_plans_broker/clone_plans_auth/
-    # distribute_tests (3) + send_invite + activate_chat (scout, mocked done) (2) +
+    # distribute_tests/ui_test_status (4) + send_invite + activate_chat (scout, mocked done) (2) +
     # notify_native_auth (1) + bugbash_updates (1) + native_auth_signoff + did_signoff (2).
-    assert sum(1 for a in actions if a.kind == "ran") == 18
+    assert sum(1 for a in actions if a.kind == "ran") == 19
 
 
 def test_gate_blocks_until_approved():
@@ -2757,6 +2758,142 @@ def test_clone_plans_broker_builds_then_idempotent():
 def test_clone_plans_broker_blocks_on_api_failure():
     _, out = _bb_build("clone_plans_broker", {"fail": "HTTP 403: forbidden"})
     assert out["kind"] == "blocked" and "403" in out["reason"]
+
+
+# ---- Phase 3: ui_test_status ----
+
+def _uts_state(plan_id="900", release="2026-08"):
+    from orchestrator.state import StepState
+    st = ReleaseState(release_id=release)
+    if plan_id is not None:
+        st.set_step("bug_bash", "clone_plans_broker",
+                    StepState(status="done", data={"plan_id": plan_id}))
+    return st
+
+
+def test_ui_test_status_fills_from_verdicts():
+    """With a cloned plan + injected verdicts, the step fills the UI suite and reports/stores a summary."""
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    from tools import testplans as T
+    st = _uts_state(plan_id="3737697")
+    captured = {}
+
+    def fake_fill(plan_id, verdicts, timeout=120):
+        captured["plan_id"] = plan_id
+        return (True, {"points_total": 308, "set_passed": 300, "set_failed": 4,
+                       "skipped_no_verdict": 4, "cases_passed": 75, "cases_failed": 1}, "")
+
+    o = T.fill_ui_automation_results
+    T.fill_ui_automation_results = fake_fill
+    try:
+        with mockctx.active({"verdicts": {"3522687": "Failed", "833561": "Passed"}}):
+            out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
+    finally:
+        T.fill_ui_automation_results = o
+    assert out["kind"] == "done"
+    assert "75 Passed" in out["note"] and "1 Failed" in out["note"]
+    assert captured["plan_id"] == "3737697"
+    data = st.get_step("bug_bash", "ui_test_status").data
+    assert data["plan_id"] == "3737697" and data["summary"]["cases_passed"] == 75
+    assert out["links"][0]["url"].endswith("planId=3737697")
+
+
+def test_ui_test_status_blocks_without_broker_plan():
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    st = _uts_state(plan_id=None)
+    with mockctx.active({"verdicts": {"1": "Passed"}}):
+        out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
+    assert out["kind"] == "blocked" and "cloned" in out["reason"]
+
+
+def test_ui_test_status_blocks_without_rc_runs():
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    st = _uts_state(plan_id="900")     # plan present, but no build_ids + no pipeline_runs
+    with mockctx.active({}):
+        out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
+    assert out["kind"] == "blocked" and "RC pipeline runs" in out["reason"]
+
+
+def test_ui_test_status_reads_build_ids_from_pipeline_runs():
+    """Absent injected build_ids/verdicts, the step derives builds from state.pipeline_runs.rcs[]
+    (ecs + local of every RC iteration, de-duped, order preserved)."""
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    from tools import pipelines as P, testplans as T
+    st = _uts_state(plan_id="900")
+    st.pipeline_runs = {"rcs": [
+        {"rc": 1, "ecs": {"run_id": "1681650"}, "local": {"run_id": "1681651"}},
+        {"rc": 2, "ecs": {"run_id": "1681650"}, "local": {"run_id": "1690000"}},
+    ]}
+    seen = {}
+
+    def fake_verdicts(org, project, build_ids, timeout=90):
+        seen["build_ids"] = list(build_ids)
+        return (True, {111: "Passed"}, "")
+
+    def fake_fill(plan_id, verdicts, timeout=120):
+        return (True, {"points_total": 4, "set_passed": 4, "set_failed": 0,
+                       "skipped_no_verdict": 0, "cases_passed": 1, "cases_failed": 0}, "")
+
+    ov, of = P.ui_automation_verdicts, T.fill_ui_automation_results
+    P.ui_automation_verdicts, T.fill_ui_automation_results = fake_verdicts, fake_fill
+    try:
+        with mockctx.active({}):
+            out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
+    finally:
+        P.ui_automation_verdicts, T.fill_ui_automation_results = ov, of
+    assert out["kind"] == "done"
+    assert seen["build_ids"] == ["1681650", "1681651", "1690000"]
+
+
+def test_ui_automation_verdicts_at_least_one_pass():
+    """Aggregation rule: pass if ANY run passed; fail if a real result but never passed; omit if
+    it never really ran. Join is by the case id embedded in the automated test name."""
+    from tools import pipelines as P
+    runs_by_build = {
+        "b1": {"value": [{"id": "r1", "name": "PROD MSAL - RC Broker (API 32)"}]},
+        "b2": {"value": [{"id": "r2", "name": "RC MSAL - PROD Broker (API 32)"}]},
+    }
+    results_by_run = {
+        "r1": [{"automatedTestName": "test_100_Flaky", "outcome": "Failed"},
+               {"automatedTestName": "test_200_AlwaysFail", "outcome": "Failed"},
+               {"automatedTestName": "test_300_NeverRan", "outcome": "NotExecuted"}],
+        "r2": [{"automatedTestName": "test_100_Flaky", "outcome": "Passed"},
+               {"automatedTestName": "test_200_AlwaysFail", "outcome": "Failed"}],
+    }
+
+    def fake_get(url, timeout):
+        for b, data in runs_by_build.items():
+            if f"Build/Build/{b}" in url:
+                return (True, data, "")
+        return (True, {"value": []}, "")
+
+    def fake_run_results(org, project, run_id, timeout=90, **k):
+        return (True, results_by_run.get(run_id, []), "")
+
+    og, orr = P._ado_rest_get, P._run_results
+    P._ado_rest_get, P._run_results = fake_get, fake_run_results
+    try:
+        ok, v, d = P.ui_automation_verdicts("ORG", "PROJ", ["b1", "b2"])
+    finally:
+        P._ado_rest_get, P._run_results = og, orr
+    assert ok, d
+    assert v == {100: "Passed", 200: "Failed"}     # 300 omitted (never ran)
+
+
+def test_ui_case_id_from_result_extraction():
+    from tools import pipelines as P
+    assert P._ui_case_id_from_result({"automatedTestName": "test_3522687_WpjWithHardwareKey"}) == 3522687
+    assert P._ui_case_id_from_result({"testCaseTitle": "test_833561_WPJ_Install"}) == 833561
+    assert P._ui_case_id_from_result({"automatedTestStorage": "com.x.TestCase1592465"}) == 1592465
+    assert P._ui_case_id_from_result({"automatedTestName": "no_case_here"}) is None
 
 
 def test_clone_plans_auth_creates_query_suite_then_idempotent():

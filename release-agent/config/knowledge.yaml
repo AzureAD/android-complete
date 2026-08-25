@@ -436,6 +436,31 @@ bug_bash.distribute_tests:
     - q: "Who is excluded?"
       a: "Always: jialh, moghosh, veenasoman. Per-release: the release owner and the current on-call engineer (OCE, resolved via ICM team 78848 — the same team the entry gate checks)."
 
+bug_bash.ui_test_status:
+  summary: "Fill the release plan's UI Automation suite from the Phase-2 RC pipeline results."
+  what: >
+    Phase-2 verification records one or more RC iterations (state.pipeline_runs.rcs[]), each with
+    an ECS and a Local MRWP build. This step reads the UI-automation test results across ALL those
+    RC builds and fills the flat 'UI Automation (Android Broker)' suite (built in step 1,
+    clone_plans_broker) with pass/fail outcomes. A UI test can run many times — across RC
+    iterations, providers, config flavors, and retries — with different outcomes. The RULE: a
+    test is a SUCCESS if it PASSED in AT LEAST ONE run anywhere; otherwise FAIL. Cases that never
+    really ran are left unset. The single per-case verdict is applied to all of that case's config
+    test-points.
+  who: "Scout runs it automatically during `next` (an agent step) — right after distribute_tests."
+  how: >
+    The join from a pipeline result to a plan test case is the case id embedded in the automated
+    test name ('test_<caseId>_...' / storage '...TestCase<caseId>'). Only 'ui'-classified runs are
+    considered. Idempotent — a re-run re-fills (overwrites) the outcomes from the current RC runs.
+    Blocks if the plan hasn't been cloned or no RC runs are recorded yet.
+  faqs:
+    - q: "A test failed in one RC but passed in another — pass or fail?"
+      a: "Pass. The rule is at-least-one-success across every RC run, provider, and retry."
+    - q: "What outcome do cases with no automated result get?"
+      a: "None — their test points are left unset (Unspecified). Only cases with a real pass or fail are written."
+    - q: "Does it write per config?"
+      a: "The verdict is per test case (one pass anywhere = pass) and is applied to all of that case's config points; it does not compute a separate per-config outcome."
+
 bug_bash.send_invite:
   summary: "Schedule the combined Bug Bash and send the Teams meeting invite."
   what: >
