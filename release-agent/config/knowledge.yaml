@@ -139,6 +139,36 @@ preflight.cg:
     - name: "Component Governance alerts"
       url: "https://msazure.visualstudio.com/One/_componentGovernance/AD-MFA-phonefactor-phoneApp-android"
 
+preflight.oneauth_access:
+  summary: "Verify you can create a branch in the OneAuth repo (needed for the later OneAuth PR)."
+  what: >
+    A later phase pushes a PR to the OneAuth repo (office.visualstudio.com/OneAuth/_git/OneAuth),
+    whose branch policy requires branches named 'user/<alias>/<branch-name>'. This step proves you
+    can do that NOW by actually creating a throwaway 'user/<alias>/scout-oneauth-access-check'
+    branch off master and immediately deleting it. If the create succeeds you have write access and
+    the step passes; if it's rejected (no permission) the step BLOCKS so the missing access is
+    caught at pre-flight rather than when the release needs to open its PR.
+  who: >
+    The RELEASE ENGINEER (release owner) needs OneAuth R/W. If you don't have it, request the
+    access package yourself and rerun once it's granted — don't hand the release forward with this
+    unresolved.
+  how: >
+    Scout runs it automatically during `next` (an agent step) — it creates and deletes the probe
+    branch via the Git refs API. If BLOCKED: request 'R/W (repo) external contributors' via the
+    myaccess package (link below), wait for approval, then RERUN this step to re-check. Access
+    grants can take time to propagate; re-evaluate once you can see the repo in the browser.
+    Self-cleaning and idempotent — the probe branch never lingers.
+  faqs:
+    - q: "Why create a branch instead of just checking a permission?"
+      a: "Creating the exact 'user/<alias>/…' branch the policy requires is the only reliable proof — a permissions read can lie about effective access. The probe branch is deleted immediately."
+    - q: "It blocked — what do I do?"
+      a: "Request OneAuth R/W via the access package, then rerun this step once the grant lands. The release cannot push its OneAuth PR without it, so this must be resolved before proceeding."
+  links:
+    - name: "OneAuth repo"
+      url: "https://office.visualstudio.com/OneAuth/_git/OneAuth"
+    - name: "Request OneAuth R/W (access package)"
+      url: "https://myaccess.microsoft.com/@microsoft.onmicrosoft.com#/access-packages/09fdec6b-eafa-4905-a7c0-b5e514bba368"
+
 preflight.vitals:
   summary: "Attest that Google Play Console app health (Android vitals + Policy status) is acceptable."
   what: >

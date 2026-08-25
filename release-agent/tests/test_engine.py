@@ -44,6 +44,7 @@ def _recent_iso():
 
 _SAFE_AGENTS = {
     "preflight.cg": {"alerts": []},                                     # → 0 active → pass
+    "preflight.oneauth_access": {"alias": "tester", "access": "granted"},  # → write access → pass (no az)
     "preflight.cron": {"run": {"queueTime": _recent_iso(), "result": "succeeded"}},  # fresh → pass
     "preflight.breaking": {"changelog": "vNext\n----\n- [MINOR] x (#1)\nVersion 1.0.0\n"},  # no [MAJOR] → pass
     "preflight.wiki": {"outcome": "done", "note": "wiki payload page ready (test)"},  # skip ADO write
@@ -644,12 +645,12 @@ def test_holds_at_first_hold():
     actions = orch.run_until_gate()
     assert actions[-1].kind == "reminder"
     assert actions[-1].step == "ui_failures"   # Phases 0-2 gateless (rc_report auto); first hold is Phase-3 ui_failures
-    # auto steps that RUN before the first hold: Phase-0 breaking/cg/cron/wiki (4) +
+    # auto steps that RUN before the first hold: Phase-0 breaking/cg/oneauth_access/cron/wiki (5) +
     # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local (4) + rc_report (scout
     # email, mocked done here) (1) + Phase-3 clone_plans_broker/clone_plans_auth/
     # distribute_tests/ui_test_status (4) + send_invite + activate_chat (scout, mocked done) (2) +
     # notify_native_auth (1) + bugbash_updates (1) + native_auth_signoff + did_signoff (2).
-    assert sum(1 for a in actions if a.kind == "ran") == 19
+    assert sum(1 for a in actions if a.kind == "ran") == 20
 
 
 def test_gate_blocks_until_approved():
@@ -4477,6 +4478,93 @@ def test_cg_agent_passes_when_no_high():
         assert r.ok and "1 active" in r.action
     finally:
         checks.fetch_cg_alerts = orig
+
+
+def test_oneauth_access_granted():
+    """Injected access='granted' → the step passes and links the repo + access package."""
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    from orchestrator.state import ReleaseState
+    st = ReleaseState(release_id="2026-08")
+    with mockctx.active({"alias": "pedroro", "access": "granted"}):
+        out = as_dict(_steps.get_step("preflight", "oneauth_access").build(st))
+    assert out["kind"] == "done"
+    assert "pedroro" in out["note"] and "write access confirmed" in out["note"]
+    assert any("access-packages" in l["url"] for l in out["links"])
+
+
+def test_oneauth_access_denied_blocks():
+    """Injected access='denied' → BLOCKED, pointing at the access package + a rerun instruction."""
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    from orchestrator.state import ReleaseState
+    st = ReleaseState(release_id="2026-08")
+    with mockctx.active({"alias": "pedroro", "access": "denied"}):
+        out = as_dict(_steps.get_step("preflight", "oneauth_access").build(st))
+    assert out["kind"] == "blocked"
+    assert "no write access" in out["reason"] and "RERUN" in out["reason"]
+    assert any("access-packages" in l["url"] for l in out["links"])
+
+
+def test_oneauth_access_blocks_without_alias():
+    """No resolvable alias → BLOCKED (can't form the user/<alias>/… probe branch)."""
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    from orchestrator.state import ReleaseState
+    from tools import checks
+    st = ReleaseState(release_id="2026-08")
+    o = checks.current_az_user
+    checks.current_az_user = lambda *a, **k: None
+    try:
+        with mockctx.active({}):
+            out = as_dict(_steps.get_step("preflight", "oneauth_access").build(st))
+    finally:
+        checks.current_az_user = o
+    assert out["kind"] == "blocked" and "alias" in out["reason"]
+
+
+def test_oneauth_write_access_probe():
+    """checks.oneauth_write_access: a successful branch create (then cleanup delete) => granted;
+    a rejected create (e.g. 403) => denied. Exercises the Git refs update API via pipelines."""
+    from tools import checks
+    from tools import pipelines as P
+    tip = "abc123"
+
+    def fake_get(url, timeout):
+        if "filter=heads/master" in url:
+            return (True, {"value": [{"objectId": tip}]}, "")
+        return (True, {"value": []}, "")           # no stale probe branch
+
+    og, os_ = P._ado_rest_get, P._ado_rest_send
+
+    calls = []
+
+    def fake_send_ok(url, method, body, timeout):
+        calls.append(body[0])
+        return (True, {"value": [{"success": True, "updateStatus": "succeeded"}]}, "")
+
+    P._ado_rest_get, P._ado_rest_send = fake_get, fake_send_ok
+    try:
+        granted, d = checks.oneauth_write_access("pedroro")
+    finally:
+        P._ado_rest_get, P._ado_rest_send = og, os_
+    assert granted, d
+    assert "user/pedroro/scout-oneauth-access-check" in calls[0]["name"]
+    assert calls[0]["newObjectId"] == tip                 # create -> tip
+    assert calls[-1]["newObjectId"] == "0" * 40           # cleanup -> delete
+
+    def fake_send_denied(url, method, body, timeout):
+        return (False, None, "AUTH: HTTP 403 (run `az login` / check access)")
+
+    P._ado_rest_get, P._ado_rest_send = fake_get, fake_send_denied
+    try:
+        granted2, d2 = checks.oneauth_write_access("pedroro")
+    finally:
+        P._ado_rest_get, P._ado_rest_send = og, os_
+    assert not granted2 and "403" in d2
 
 
 def test_cg_blocked_step_reruns_and_clears_when_fixed():

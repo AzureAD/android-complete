@@ -31,6 +31,7 @@ phases:
       - { id: lockdown,        name: "Detect lockdown/holiday overlap",         owner: agent, source: scout, maps_to: [S1] }
       - { id: breaking,        name: "Detect BREAKING-OneAuth + draft comms",   owner: agent, maps_to: [S2] }
       - { id: cg,              name: "Report critical CG alerts",               owner: agent, maps_to: [S8] }
+      - { id: oneauth_access,  name: "Verify OneAuth write access (create a probe branch)", owner: agent, maps_to: [S8] }
       - { id: vitals,          name: "Confirm Play Console vitals & policy status reviewed", owner: human, attest: true, maps_to: [S9] }
       - { id: cron,            name: "Verify Calendar Checker scheduled",       owner: agent, maps_to: [S10] }
       - { id: wiki,            name: "Create release payload wiki subpage",     owner: agent, maps_to: [S0] }

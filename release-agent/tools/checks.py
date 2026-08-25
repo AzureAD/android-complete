@@ -75,6 +75,59 @@ def current_az_user(timeout: int = 20):
     return None
 
 
+# ---- OneAuth write-access probe (Phase-0 oneauth_access step) ----
+#
+# Later phases push a PR to the OneAuth repo, whose branch policy requires
+# 'user/<alias>/<branch-name>'. The only reliable proof of write access is to actually
+# CREATE such a branch — so this creates a throwaway 'user/<alias>/scout-oneauth-access-check'
+# ref and immediately deletes it. Success => write access; a create rejection / 403 => none.
+ONEAUTH_ORG = "https://office.visualstudio.com"
+ONEAUTH_PROJECT = "OneAuth"
+ONEAUTH_REPO = "OneAuth"
+ONEAUTH_REPO_URL = "https://office.visualstudio.com/OneAuth/_git/OneAuth"
+# The myaccess package that grants OneAuth R/W (repo) for external contributors.
+ONEAUTH_ACCESS_PACKAGE = ("https://myaccess.microsoft.com/@microsoft.onmicrosoft.com#/"
+                          "access-packages/09fdec6b-eafa-4905-a7c0-b5e514bba368")
+_ZERO_SHA = "0" * 40
+
+
+def oneauth_write_access(alias, timeout: int = 60):
+    """Probe write access to the OneAuth repo by CREATING (then deleting) a
+    'user/<alias>/scout-oneauth-access-check' branch off master. Returns (granted, detail):
+    granted is True only when the branch create succeeds (it is then cleaned up); on any
+    create rejection / permission error it is False. Self-cleaning and idempotent — a stale
+    probe branch from a crashed run is removed before the create."""
+    from tools import pipelines as P
+    base = f"{ONEAUTH_ORG}/{ONEAUTH_PROJECT}/_apis/git/repositories/{ONEAUTH_REPO}"
+    ref = f"refs/heads/user/{alias}/scout-oneauth-access-check"
+    ref_filter = f"heads/user/{alias}/scout-oneauth-access-check"
+
+    ok, refs, d = P._ado_rest_get(f"{base}/refs?filter=heads/master&api-version=7.1", timeout)
+    if not ok:
+        return (False, f"could not reach the OneAuth repo ({d})")
+    vals = (refs or {}).get("value") or []
+    tip = vals[0].get("objectId") if vals else None
+    if not tip:
+        return (False, "could not resolve the OneAuth master branch tip")
+
+    def _update(old, new):
+        return P._ado_rest_send(f"{base}/refs?api-version=7.1", "POST",
+                                [{"name": ref, "oldObjectId": old, "newObjectId": new}], timeout)
+
+    # remove a stale probe branch left by a crashed prior run (best-effort)
+    okx, ex, _dx = P._ado_rest_get(f"{base}/refs?filter={ref_filter}&api-version=7.1", timeout)
+    if okx and (ex or {}).get("value"):
+        _update((ex["value"][0] or {}).get("objectId"), _ZERO_SHA)
+
+    okc, res, dc = _update(_ZERO_SHA, tip)
+    entry = ((res or {}).get("value") or [{}])[0] if isinstance(res, dict) else {}
+    if okc and entry.get("success"):
+        _update(tip, _ZERO_SHA)                # cleanup
+        return (True, f"created and deleted '{ref}'")
+    why = entry.get("customMessage") or dc or "branch create rejected"
+    return (False, f"cannot create a branch in OneAuth ({why})")
+
+
 def check_http(url: str, timeout: int = 15) -> CheckResult:
     """Reachability check. verified_access is False by design — a 200 from an
     auth-gated web app does not prove the user has access."""
