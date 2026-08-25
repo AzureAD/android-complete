@@ -22,6 +22,7 @@ Reusable helpers in [`assets/`](assets/):
 | [`queries/`](assets/queries/) | Canonical KQL templates, one file per query — see [`queries/README.md`](assets/queries/README.md). Highlights: [`attr-union-by-dim.kql`](assets/queries/attr-union-by-dim.kql) (NEW — all 7 dims in one round-trip), [`error-message-and-location.kql`](assets/queries/error-message-and-location.kql) (now accepts BOTH `<CODES_LIST>` and `<TYPES_LIST>` in one call) |
 | [`templates/`](assets/templates/) | Copy-paste HTML snippets (`spike-card.html`, `traffic-attr-card.html`, `sparkline-footer.html`) |
 | [`bucket-trends.js`](assets/scripts/bucket-trends.js) | Bucket all error codes into 60-day regression / spike / improvement / flat. Run with `--metric=devs` AND `--metric=reqs`. Pass `--end=YYYY-MM-DD` (the Sunday that OPENS the current in-progress week, exclusive — i.e. `startofweek(today)`, printed by bootstrap as "Trend delta cutoff") to exclude the partial week from the delta math, plus **`--include-partial-end`** to still chart it as the final bar. **`--summary` suppresses the verbose header; `--json=<path>` emits a structured sidecar for programmatic consumption.** |
+| [`classify-novelty.js`](assets/scripts/classify-novelty.js) | Reads a `bucket-trends.js --json=` sidecar and labels each key **NEW / ACCELERATING / ONGOING / VOLATILE / RECOVERY / IMPROVING / STABLE** against its own 7-week baseline, plus family clustering. **Mandatory** — it is what stops the attention section from being a volume-ranked list where a flat-but-huge code outranks a real step change, and it is also the **noise gate**: its `attention` set (`NEW` + `ACCELERATING`), plus at most 2 wins, is all that renders visibly with charts — everything else collapses into a fold. |
 | [`agg.js`](assets/scripts/agg.js) | Per-error per-dim top-N rollup with WoW deltas. Workhorse for filling spike-attribution dim blocks. |
 | [`summarize-attribution.js`](assets/scripts/summarize-attribution.js) | Roll up 7-dim attribution slices for spike-attribution cards. Supports BOTH `--union <file.json>` (preferred for 2-week WoW; pairs with `attr-union-by-dim.kql`) AND legacy `--label=<dim> file.json` per-dim mode. **Auto-detects the array-form schema produced by `assets/scripts/run-kql.ps1` — no schema-transformer step needed.** |
 | [`find-suspect-prs.ps1`](assets/scripts/find-suspect-prs.ps1) | Parallel `git log -S` + `--grep` across broker/ + common/ for a class/method symbol, with PR numbers + URLs. Run *only after* the Originator pre-check has identified a specific throw-site class — the unscoped 4-week PR window is small enough (<30 PRs) to scan with plain `git log` first. |
@@ -69,22 +70,127 @@ Reusable helpers in [`assets/`](assets/):
 1. **Top-line health KPIs** — total requests, total devices, silent-auth reliability %, interactive reliability %, p95 latency on the hot spans. WoW delta on each. Inline SVG sparklines.
 2. **Things that need attention this week** — callouts:
    - **Denominator caveat** — explain any large total-spans device-count shift caused by span-emission changes (e.g. `goAsync()` refactors). Always state which denominator the report uses (auth-only: `SilentAuthStats` ∪ `InteractiveAuthStats`).
-   - **🔴 WoW regressions (last 7 days)** — *one* callout listing every code/type that moved sharply WoW, **sorted by current-week device count descending**. Built from the union of (a) the standard WoW table and (b) [`assets/queries/wow-movers.kql`](assets/queries/wow-movers.kql) so small-but-recent spikes appear in the same list as the high-volume ones. Each row uses the `.item` flat-row pattern (see `assets/templates/template-readme.md` § "Section 2 callouts"): name + inline metric chips + tags pushed right + one-line body + optional foot with `Attribution card →` link. **Section 2 rows are at-a-glance only** — do not duplicate the dim slicing / PR analysis / detailed verdict here; that belongs in the Section 4 spike-attribution card. Each row carries tags: `NEW` (first appeared this week or last), `60d↑` (also rising on 60d), and an originator chip (`broker` / `eSTS` / `Android` / `env`). Reader's eye prioritizes naturally by row order and tag combination — broker-tagged rows at the top demand the most attention.
-   - **Slow-burn 60-day regressions** — codes/types climbing on the 60d window that are flat WoW. Anything that *also* moved WoW belongs in the red callout above (with `60d↑`), not here. Link to the 60-Day Trend section.
-   - **Real wins this week**, with PR links.
+   - **🔴 Regressions — grouped by NOVELTY, never by volume.** Built from [`classify-novelty.js`](assets/scripts/classify-novelty.js) (Step 3e), unioned with [`assets/queries/wow-movers.kql`](assets/queries/wow-movers.kql) so small-but-recent spikes land in the same grouping.
+
+     > **The section has a hard budget: ≤ 8 visible rows, counting the wins.** The classifier's
+     > `attention` set (`NEW` + `ACCELERATING`) is typically 3–6 series out of 40–50 — that is the
+     > whole point — and you may add **at most 2** "Real wins" rows on top. Everything else goes into
+     > a collapsed fold. A previous report shipped **13 visible rows and zero charts** while the
+     > 60-day section below it carried **38 charts**; a reader could not tell which of the 13 was this
+     > week's story. `validate-report.ps1` check 17 warns above 8 rows and it counts **every** visible
+     > `.item` row in Section 2, wins included — so budget accordingly.
+     >
+     > **This budget caps VISIBILITY, never COVERAGE.** Step 5's rule that every regressed code/type
+     > must get an attribution card still holds in full — the surplus cards go into a collapsed fold,
+     > they are never dropped. See the boxed note under Step 5 for the exact resolution. If you ever
+     > find yourself deleting a mandated card to hit 8 rows, you have misread both rules.
+
+     Emit these sub-groups **in this order**, omitting any that are empty:
+
+     1. **🆕 New this week** — label `NEW`: a genuinely boring baseline (cv < 0.25) that took a clean
+        step up. **These lead the section.** Typically 0–3 items. If there are none, say *"nothing new
+        this week"* explicitly — do **not** promote an `ACCELERATING` or `ONGOING` item to fill the slot.
+     2. **🟠 Getting worse** — label `ACCELERATING`: already elevated, but **still climbing** (rising
+        over the window, ≥ 10% above its own median, and not falling WoW). This is the "known issue is
+        deteriorating" bucket and it is the *only* multi-week category that stays visible.
+
+        > **When the classifier and the headline WoW disagree, keep the row here and show both numbers.**
+        > The classifier's "not falling" gate runs on **complete Sun–Sat calendar weeks**; the report's
+        > headline `Δ WoW` runs on the **rolling 7-day** window. These are different bases and they
+        > legitimately disagree — a code can be `ACCELERATING` on calendar weeks while showing a small
+        > rolling-window decline. That is *not* a reason to demote it, rename the group, or hedge the
+        > heading. Keep the group heading exactly **"Getting worse"**, and resolve it *in the row body*:
+        > *"Up 18% over the last three complete weeks; the rolling 7-day window shows −4% as the ramp
+        > flattens. Still ~30% above its own 60-day median — watch, don't close."* The sparkline settles
+        > it visually, which is why the row has one. Do **not** invent a "needs verification" group.
+     3. **🔵 Ongoing / known** — label `ONGOING`: elevated but flat. **These go inside a collapsed
+        `<details class="fold">`**, summarised by one line ("N codes remain elevated, none accelerating").
+        They are still in the report — a reader can open the fold — but they no longer compete with the
+        finding. Give each the number of weeks it has been elevated (`weeksElevated` from the classifier)
+        so a reader can see it is old news at a glance.
+     4. **🔁 Volatile** — label `VOLATILE` (`suppressRatio: true`): high-variance series where a WoW
+        percentage is an artifact of a depressed baseline. **Delete the `Δ WoW` chip from the row head
+        and put a `vs 60d median` chip in its place** — a caveat in the body does not undo a `+401.8%`
+        sitting in the chip row, because the chip is what the eye reads first:
+        ```html
+        <!-- WRONG: the caveat below is invisible next to this -->
+        <span class="metric up"><span class="m-label">Delta WoW</span><span class="m-value">+401.8%</span></span>
+        <!-- RIGHT: absolute level + position in the 60-day band -->
+        <span class="metric"><span class="m-label">vs 60d median</span><span class="m-value">-94.5%</span></span>
+        ```
+        `validate-report.ps1` check 15 **hard-fails** any `VOLATILE`/`RECOVERY` row that still carries a WoW chip ≥ 25%.
+     5. **↩️ Recovery** — label `RECOVERY`: returning to its normal band after a suppressed week. Explicitly *not* a regression.
+
+     **⚠️ Every visible row carries its own 9-week sparkline.** The shape is what separates a step
+     change from ordinary variance, and it must sit *next to the claim* — not in a separate browsable
+     section further down. Use the `.item-spark` pattern from the template:
+     ```html
+     <span class="item-name">ipc_return_null_cursor</span>
+     <span class="item-spark trend" data-trend="[41200,40800,41500,41100,40900,41500,52100]"
+           data-w="120" data-h="22" data-color="#cf222e"></span>
+     <span class="spark-cap">9 wk</span>
+     ```
+     Colour by direction: `#cf222e` worsening, `#1a7f37` improving, `#9a6700` volatile. The series is
+     the same `comparable` array `classify-novelty.js` already read from the trend sidecar — you do not
+     run another query for it. `validate-report.ps1` check 16 **hard-fails** any visible attention row
+     without one. Rows inside the collapsed fold are exempt.
+
+     **Novelty chips.** Tag each row with its label so the grouping survives skimming:
+     `<span class="tag tag-new">NEW</span>`, `tag-accel` for `ACCELERATING`, `tag-ongoing` for
+     `ONGOING`, plus `elevated Nw` where the classifier reports `weeksElevated > 1`.
+
+     **Families outrank individuals.** If the classifier emits a `families` entry, render it as ONE row
+     naming the family and its members — related codes moving together are one root cause, not N
+     findings. Within each sub-group, order by the classifier's `ORDER`/novelty ranking, **not** by
+     current-week device volume.
+
+     **Quiet weeks are a valid, good outcome.** If the classifier reports `quietWeek: true` (empty
+     attention set), lead the section with the quiet-week banner from the template and keep the fold
+     closed. Do **not** manufacture a headline finding — resist the pull to promote the largest flat
+     code. A short report that says "nothing new" is more trustworthy than a long one that pads.
+
+     Each row uses the `.item` flat-row pattern (see `assets/templates/template-readme.md` § "Section 2 callouts"): name + sparkline + inline metric chips + tags pushed right + one-line body + optional foot with `Attribution card →` link. **Section 2 rows are at-a-glance only** — no dim slicing or PR analysis here; that belongs in the Section 4 card. Tags: `60d↑` (also rising on 60d) plus an originator chip (`broker` / `eSTS` / `Android` / `env`).
+
+     > **Every row's one-line body must say something specific to that row** — what changed, from what to what, and why it is or isn't alarming. A sentence that would read identically on any other row (*"movement needs owner triage; deep dive below"*) is worthless and the validator will fail the report for it. If you have nothing specific to say, the row does not belong in Section 2.
+   - **Real wins this week**, with PR links. These carry sparklines too — a recovery is a shape claim.
+     **Cap at 2 rows, and they count against Section 2's ≤ 8 visible-row budget.** A win is worth
+     showing; a list of wins is padding.
    - **Traffic shape** — flat / surge / collapse summary.
-3. **📈 60-Day Trend Analysis** — built from the `ErrorStatsMetrics` materialized view over the **literal last 60 days ending today** (final bar = current in-progress week). **Run the bucketing pipeline FOUR times — the cross-product of `{error_code, error_type} × {devices, requests}`** — and union the regression sets. An entry (code OR type) is flagged if it regresses on either metric. Deltas are computed on complete weeks only; the partial current week is charted but excluded from classification.
+3. **📈 60-day cross-check** — a **slow-burn detector, not a browsing list**. Built from the `ErrorStatsMetrics` materialized view over the **literal last 60 days ending today** (final bar = current in-progress week). **Run the bucketing pipeline FOUR times — the cross-product of `{error_code, error_type} × {devices, requests}`** — and union the regression sets. An entry (code OR type) is flagged if it regresses on either metric. Deltas are computed on complete weeks only; the partial current week is charted but excluded from classification.
 
    - **% of devices** affected (`devicesHit / authActiveDevices`) — catches errors hitting more users.
    - **% of requests** affected (`errRequests / authTotalRequests`) — catches per-device retry storms (fewer users, more traffic per user). The previous report would have missed `kdfv2_key_derivation_error` (262 → 5,374 requests on ~57 devices) without this dim.
 
-   Categories: True 60d regression / Ephemeral 60d spike (peak-then-recover) / True 60d improvement / Flat. Every rising entry — whether `error_code` or `error_type` — gets the same Spike Attribution + Code Attribution treatment (Step 4 / Step 5).
+   > **⚠️ This section exists to catch what a 7-day window structurally cannot see: something that has
+   > crept up ~5%/week for eight weeks and never triggers a WoW alarm.** That is its *only* job.
+   >
+   > **Chart only the codes it promotes** — series flagged as rising on 60d that are **not already in
+   > Section 2**. In a typical week that is **0–3 rows**, and an empty result is the normal, healthy
+   > outcome; say "no slow burns this week" and move on. Everything else — the full classification of
+   > all 40–50 series — goes into a collapsed `<details class="fold">` **with no chart column at all**.
+   >
+   > Rationale: a previous report rendered 38 charts here, ~93% of which duplicated rows already in the
+   > error tables below, while the attention section above had none. Reviewing 38 long-elevated series
+   > every week is exactly the noise that trains an on-call engineer to skim. `validate-report.ps1`
+   > check 18 **hard-fails** if this section renders more than 6 charts outside a fold.
+
+   Categories: True 60d regression / Ephemeral 60d spike (peak-then-recover) / True 60d improvement / Flat. Every **promoted** rising entry — whether `error_code` or `error_type` — gets the same Spike Attribution + Code Attribution treatment (Step 4 / Step 5); entries already covered in Section 2 are not re-analysed here, just cross-referenced.
 
    Always apply `MergeUiRequiredExceptions(error_type)` before bucketing on type; otherwise the 6+ string variants of `UiRequiredException` will each be tracked separately and skew the buckets.
 4. **🔎 Spike Attribution** — one card per WoW regression AND per 60-day regression, **for both `error_code` and `error_type` regressions**. Each card slices on **all 7 dimensions** (broker version, span, active broker pkg, calling app, account type AAD/MSA, shared-device mode, client SKU). Each card ends with a **deep Code Attribution block** (see Step 4 for the required fields) and a Traffic Attribution verdict.
 5. **🚚 Traffic Attribution** — top-level section listing every error whose spike is fully or partly explained by traffic volume from a specific calling app, rather than a code regression. If none qualify this week, render the section with an explicit "None this week" note.
 6. **Error codes — WoW with stable denominator** — full table with `Δ requests %` and `Δ devices %` columns and the 60d sparkline.
 7. **Error types — WoW with stable denominator** — full table, **same columns and rigor as the error-codes table** (`Δ requests %`, `Δ devices %`, 60d sparkline, status pill). Any regressing type also gets a spike-attribution card in Section 4. For composite types (e.g. `ClientException` is the umbrella for many sub-codes), include a **decomposition card** that breaks the WoW Δ down into the top 3 contributing sub-codes — so a `ClientException` −5 pp drop is explicitly attributed to e.g. `−8.5 pp timed_out_execution` + `−3.4 pp unknown_authority` + `−0.15 pp illegal_argument_exception`.
+
+> **📌 Sections 6 and 7 keep a sparkline on EVERY row — this is a deliberate exemption from the
+> "charts follow findings" rule, decided explicitly. Do not strip them as part of noise reduction.**
+> These are **lookup tables**, not a browsing section: the reader arrives with a code in mind, scans
+> the `Error code` column for it, and the 60-day sparkline is glanceable context in a cell their eye
+> is already on. It costs no extra attention. The noise problem the redesign fixed was the *60-day
+> trend catalog* — a section you had to read top-to-bottom, ~93% of whose rows duplicated these very
+> tables. Checks 16/17/18 deliberately scope to Section 2 and the 60-day section only; the
+> `$totalCharts` count that these ~62 charts dominate is now a floor-only guard ("the charts didn't
+> vanish"), never a ceiling.
 8. **📊 Traffic analysis** — total requests/devices (WoW + 60d), top calling apps, top spans, **requests-per-device ratio** per error and overall (a rising ratio = retry storm; a falling ratio = caching gain), sampling-rate change indicator.
 9. **Latency** — p50/p95/p99 by hot span.
 10. **Broker version adoption** — week-over-week version share.
@@ -248,9 +354,106 @@ To catch these, **always** run [`assets/queries/wow-movers.kql`](assets/queries/
 // floor: cDev>=500 OR cReq>=5000   move: |Δd|>=25% OR |Δr|>=50% OR new-this-window
 ```
 
-Run it **twice — once for `error_code`, once for `error_type`**. **Merge its output rows into the same 🔴 WoW regressions callout as the standard WoW table** (sorted by current-week device count descending). Tag rows that came in via this pass with `NEW` if they were absent or near-zero in the prior week. Do *not* render this as a separate "emerging" callout — the size split is implementation detail; readers prioritize naturally by absolute device count + originator chip.
+Run it **twice — once for `error_code`, once for `error_type`**. **Merge its output rows into the same regression callout as the standard WoW table**, then let Step 3e's novelty classification decide their grouping and order. The size split is implementation detail; what a reader needs first is *"is this new?"*, not *"is this big?"*. Do **not** sort the merged list by device count — that is exactly how a flat-but-huge code ends up above a real step change.
 
 For each WoW mover (regardless of size), you still owe the full Code Attribution treatment (Step 4). The dim-slicing pass (Step 5) is allowed to be deferred for sub-1K-device spikes if the throw-site + dominant message already pin the originator unambiguously — but say so explicitly in the card ("dims not yet sliced — file the bug first; pull dims if it persists").
+
+### Step 3e — Classify novelty (what is actually NEW vs already-known)
+
+**This step is mandatory and it is what makes Section 2 readable.** `bucket-trends.js` tells you *what moved*; it cannot tell you *whether the movement is news*. Without this pass the attention section degenerates into a volume-ranked list where a flat-but-huge code leads and the real step change sits at position #9.
+
+Run it over each sidecar `bucket-trends.js` wrote (`--json=<path>`):
+
+```powershell
+node .github\skills\oncall-weekly-telemetry-report\assets\scripts\classify-novelty.js <codes-devs-buckets.json> --summary --json=<codes-devs-novelty.json>
+node .github\skills\oncall-weekly-telemetry-report\assets\scripts\classify-novelty.js <types-devs-buckets.json> --summary --json=<types-devs-novelty.json>
+```
+
+Each key is classified against **its own history**, using complete weeks only (first match wins):
+
+| Label | Rule | What it means for the report |
+|---|---|---|
+| `VOLATILE` | `cv > 0.60` | Series swings wildly. **Suppress the ratio** — a WoW % here is meaningless. |
+| `RECOVERY` | prior week `< median × 0.5` **and** now back near median | Bounce-back off a suppressed week, not a regression. **Suppress the ratio.** |
+| `NEW` | `ratio > 1.15` **and** `cv < 0.25` | Boring baseline, clean step up. **This is the news.** Visible + charted. |
+| `ACCELERATING` | rising over the window (`climb > 1.15`) **and** `ratio > 1.10` **and** `recentRatio > 1.10` **and** not falling WoW | Known issue that is **still deteriorating**. Visible + charted. |
+| `ONGOING` | rising over the window, but level or easing now | Elevated and flat. **Collapse into the fold** with its `weeksElevated` count. |
+| `IMPROVING` | `ratio < 0.8` | |
+| `STABLE` | otherwise | |
+
+**⚠️ The `ACCELERATING` / `ONGOING` split is the whole noise fix.** Both are multi-week elevated
+series, and lumping them together is what produced a 13-row attention list. `ACCELERATING` answers
+"is this getting *worse*?" — the only reason a known issue deserves the on-call engineer's eye a
+second time. Everything else that is merely still-elevated goes in the fold.
+
+**The classifier decides what gets a chart.** `attention = NEW ∪ ACCELERATING` — that set, and only
+that set, is rendered visibly with sparklines. The sidecar exposes it directly:
+
+```jsonc
+{ "attention": ["ipc_return_null_cursor", "access_denied"],   // render these, with charts
+  "attentionLabels": { "ipc_return_null_cursor": "NEW", "access_denied": "ACCELERATING" },
+  "quietWeek": false,                                          // true => nothing to headline
+  "counts": { "NEW": 3, "ACCELERATING": 1, "ONGOING": 9, "STABLE": 35, "VOLATILE": 3, "IMPROVING": 2 } }
+```
+
+On the 2026-07-30 fixture that is **5 attention rows out of 53 series**. If your attention section is
+much longer than the `attention` array, you promoted rows the classifier did not.
+
+**`weeksElevated` is derived, never persisted.** It counts consecutive recent weeks above the
+*early-window baseline* (`median` of the first third), so it is identical on any machine and needs no
+state file. Its known limit: with 7–9 weeks of history you cannot distinguish "elevated for 7 weeks"
+from "normal at a high level" — the classifier sets `sustainedFullWindow: true` for those, and the
+correct phrasing is *"elevated for the entire visible window"*, not a hard week count.
+
+**Two guards that exist because they were violated in real runs:**
+- **`ratio > 1.10` on `ACCELERATING`** — `IntuneAppProtectionPolicyRequiredException` (cv 0.08, flat,
+  **down 3.7% WoW**, only 4.9% above its own median) was labelled `ACCELERATING` by a slow drift in
+  block means and led the whole types list. A code within 10% of its own median is not this week's
+  story regardless of slope.
+- **`cur >= prev * 0.95`** — a series that is *falling* this week cannot be "getting worse", even if
+  the multi-week trend is up.
+
+**Why `cv < 0.25` gates `NEW`:** a series must have been genuinely boring before a jump counts as news. Without that guard a jittery code that happens to be up this week gets promoted over a real step change.
+
+**⚠️ The trap this exists to kill — a big WoW % off an anomalous baseline is not a regression.** Real 2026-07-30 data:
+
+```
+429                      300,664 299,965 892,839 974,980  11,512  32,530   2,724 → 16,531   cv=1.07
+temporarily_unavailable   30,257  29,962  37,263   6,168  41,971     141      71 → 36,153   cv=0.80
+```
+
+`429` was reported as **+397.8% WoW** — but it is **94.5% *below* its own 60-day median**; the ratio is measured off a 2,724 floor after a collapse from ~975K. `temporarily_unavailable` was reported as **+400.7%** — it merely returned to its normal ~36K band after two suppressed weeks. Both were headlined. Neither is a regression. **A WoW percentage is meaningless whenever the *prior* week was itself anomalous.**
+
+Meanwhile the week's actual story classified as `NEW` and was buried at report positions #6/#9/#10:
+
+```
+ipc_return_null_cursor                43,093 43,950 43,552 44,571 43,759 42,117 41,473 → 52,129  cv=0.02
+ipc_operation_not_supported_on_server 19,503 19,957 20,074 21,457 21,466 20,849 20,575 → 24,050  cv=0.03
+ipc_connection_error                   8,317  8,685  8,517  8,634  8,104  8,410  8,593 → 10,133  cv=0.02
+IPC FAMILY TOTAL                                                          70,641 → 86,312  (+22.2%)
+```
+
+Three codes, each flat for seven straight weeks, all stepping up in the *same* week — one root cause in the IPC layer, reported as **one** finding. (`BrokerCommunicationException`, `NEW` on the type axis at +21.8%, is the same incident seen through the type dimension — say so rather than filing it twice.)
+
+**Families.** The classifier clusters keys sharing a prefix before `_` when ≥2 members share the same label. Report a family as ONE row. Error *types* are CamelCase and produce no families under `_` — that is correct, not a bug.
+
+**⚠️ Two different WoW bases exist — do not conflate them.** The report headline ΔWoW is a **rolling 7-day** window (`[CUR_START, CUR_END)` vs the 7 days before). The classifier's `WoW` is **calendar Sun–Sat weeks**. They legitimately disagree — `authorization_pending` read **+3.5%** rolling and **−37.1%** weekly on the same data. Use novelty as *history and context* ("flat for seven weeks, first step this week"), **never** as a competing delta number, or the report will appear to contradict its own tables.
+
+> **The division of labour, stated plainly so you do not have to derive it:**
+>
+> | Use the **rolling 7-day** numbers for… | Use the **calendar-week** classifier for… |
+> |---|---|
+> | Every KPI tile, table cell, and Δ% chip | Which rows are promoted (`attention` set) |
+> | Any number a reader can see | Which label a row carries (NEW / ACCELERATING / …) |
+> | The sentence "X rose N% this week" | The sentence "…and it has been climbing for six weeks" |
+>
+> **Rule: every *number* in the report comes from the rolling window; the classifier contributes
+> *selection and narrative*, never a figure.** The one place the two meet is a row that is
+> `ACCELERATING` on calendar weeks while the rolling delta is flat or negative — keep it in
+> "Getting worse", keep the heading verbatim, and resolve it in the row body by stating both
+> numbers and letting the sparkline settle it. Do not invent a hedged sub-group for these.
+
+---
 
 ### Step 4 — Code attribution (deep PR correlation)
 
@@ -317,6 +520,23 @@ For errors with no broker code in the stack (Android system errors like `Code:-1
 ### Step 5 — Spike attribution dimensions
 
 **Coverage rule: every `error_code` AND every `error_type` that lands in either the WoW regression list OR the 60-day regression list MUST get a spike-attribution card.** No silent skips.
+
+> **⚠️ Coverage and the ≤ 8 visible-row budget are NOT in conflict — they govern different things.**
+> This is the most-reported ambiguity in the playbook, so read it carefully:
+> - The **≤ 8 budget (§2) limits what is VISIBLE at the top level.** It is about what the on-call
+>   engineer is asked to read first.
+> - The **coverage rule here limits what may be OMITTED.** It is about what must exist somewhere in
+>   the document, so a regression can never silently vanish.
+>
+> **Resolution: cards beyond the budget go into a collapsed fold, they do not get dropped.** Render
+> the `attention` set (plus ≤ 2 wins) as visible cards, and put every remaining mandated card in a
+> `<details>` fold titled *"Full attribution coverage (N more codes/types)"*. Coverage is satisfied
+> by the card **existing and being reachable**, not by it being expanded on load. A run with 12
+> mandated cards and 7 visible rows is correct and expected — that is the design working, not a
+> budget violation.
+>
+> Never resolve this the other way: do **not** expand Section 2 past 8 rows to fit the cards, and do
+> **not** skip a mandated card to protect the budget.
 
 **`ErrorStatsMetrics` already carries `account_type` and `is_shared_device`** (use the `MergeAccountType` / `MergeIsSharedDevice` helpers to normalize) — so you do **not** need a fallback to raw `android_spans` for these dims. Earlier versions of this skill claimed otherwise; that was wrong. The only dim that requires `android_spans` is `DeviceInfo_OsVersion` (OEM/version slicing).
 
@@ -487,6 +707,15 @@ The validator hard-fails on:
 7. **Code-attribution depth** — each `.attr-card`'s "Code attribution" block must contain an `Originator` row (proxy for the full 8-field structure: Originator / Top throw site / Wrapper / Caller hot-spots / Underlying cause / Top error_messages / Likely PRs / Next step). Catches the v7-third-pass regression where cards shipped with a `pr-list`-only stub.
 8. **Attribution-card layout guards (v8)** — the CSS must define `.attr-card { margin-bottom: 16px }` AND `.dim-row` overflow rules (`text-overflow: ellipsis` + `min-width: 0`). Catches the "cards touching" and "text bleeding out of dim boxes" regressions from a stale `<head>` block.
 9. **Fabricated-sparkline heuristic (v8)** — warns when a `data-trend` array's peak value is < 100 (almost certainly hand-rolled rather than sourced from real data). See [`assets/queries/wow-table-sparkline-series.kql`](assets/queries/wow-table-sparkline-series.kql) for the canonical KQL that pulls real 8-week series for every code in the WoW tables. Its `<SPARK_START>` / `<SPARK_END>` tokens are the last **8 complete** Sun-Sat weeks (`<SPARK_END>` = `startofweek(today)`, exclusive) — deliberately distinct from the trend-chart's `<TREND_START>` / `<TREND_END>` (literal last 60 days ending today). Per-row sparklines stay on complete weeks so a partial final point doesn't create a misleading dip in every WoW row.
+10. **Rolling-window header integrity (check 11)** — the meta-line "Last 7 days" dates must agree with the filename's end-date, so a stale stub can never be published as fresh.
+11. **Noise-gate checks 13–18** — these enforce Step 3e's classification end-to-end and are the reason
+    Section 2 stays readable:
+    - **13** — Section 2 boilerplate uniformity: each attention row needs its own specific one-line body.
+    - **14** — the top attention row must not be flat; Section 2 leads with what is `NEW`, never with the highest-volume row.
+    - **15** — `VOLATILE` / `RECOVERY` rows must not headline a `Δ WoW` percentage (`suppressRatio`).
+    - **16** — every visible attention row carries an inline 9-week `.item-spark`.
+    - **17** — Section 2 visible-row budget: ≤ 8 rows including wins.
+    - **18** — the 60-day section is a detector, not a catalog: at most 6 charts outside a collapsed fold.
 
 Then:
 - **Run the visual smoke test (recommended)** — catches rendered-layout bugs that pure HTML/CSS validation can't see:
@@ -517,7 +746,29 @@ Then:
 - **Never carry a numeric telemetry value forward between runs.** Every KPI, table cell, delta %, device/request count, sparkline point, and verdict number must be re-pulled from Kusto for *this* run — never copied from a previous report, from a checkpoint/summary, from notes, or from memory. Telemetry shifts between runs and stale numbers read as fabricated. Near-miss precedent: a `no_tokens_found` count was about to be carried as ~23.7M when the actual current-window value was ~4.86M — a ~5× error that only the re-pull caught. If a number isn't backed by a query result file in this run's `_data/<end-date>/`, it does not go in the report.
 - **Never hardcode the "Generated" date.** It is the *run* date in **UTC**, auto-stamped by `bootstrap-report.ps1` (which uses `(Get-Date).ToUniversalTime()`). If you rebuild the body programmatically, derive it live with a **UTC-date** formatter (`new Date().toISOString().slice(0,10)` in Node, `[datetime]::UtcNow.ToString('yyyy-MM-dd')` in PowerShell) — never paste a literal, and stay on UTC so the assembler can never stamp a different day than `bootstrap-report.ps1`. The v8 "Generated 2026-06-15 on a 2026-06-18 file" bug came from a hardcoded string in the assembler. (Reporting-week / baseline / 60d window dates are author-set and verified against the user's intended Sunday bucket — see template-readme "Date fields".)
 - **Originator pre-check is mandatory.** A card cannot claim `Originator: Broker` without first running [`assets/queries/error-message-and-location.kql`](assets/queries/error-message-and-location.kql) and reading the throw site + top 3 `error_message` strings. If the throw site is in `common/ExceptionAdapter.{getExceptionFromTokenErrorResponse, exceptionFromAuthorizationResult}` AND the message starts with `AADSTS`, the originator is **eSTS, not broker** — see the AADSTS reference in [`assets/docs/kusto-cheatsheet.md`](assets/docs/kusto-cheatsheet.md).
-- **WoW-movers pass is mandatory.** The 60d bucketer's `--peak-floor` silently drops sub-10K-device codes, so [`assets/queries/wow-movers.kql`](assets/queries/wow-movers.kql) MUST be run as a separate pass for both `error_code` and `error_type` (per Step 3d). Its output is **merged into the single 🔴 WoW regressions callout**, sorted by current-week device count descending, with rows tagged `NEW` / `60d↑` / originator chip. Do not render a separate "emerging" callout. Skipping the pass is how the Apr 26 `Failed to parse JWT` spike (7 → 3,461 devs over 7 weeks) hid for two reports running.
+- **WoW-movers pass is mandatory.** The 60d bucketer's `--peak-floor` silently drops sub-10K-device codes, so [`assets/queries/wow-movers.kql`](assets/queries/wow-movers.kql) MUST be run as a separate pass for both `error_code` and `error_type` (per Step 3d). Its output is **merged into the single regression callout** and then grouped by Step 3e's novelty labels. Do not render a separate "emerging" callout. Skipping the pass is how the Apr 26 `Failed to parse JWT` spike (7 → 3,461 devs over 7 weeks) hid for two reports running.
+- **Novelty classification is mandatory, and Section 2 is ordered by it — never by volume.** Run [`classify-novelty.js`](assets/scripts/classify-novelty.js) (Step 3e) and lead with `NEW`. Ranking the attention list by device count is a known, reported defect: it put `IntuneAppProtectionPolicyRequiredException` (ΔWoW **+0.1%**, classifier says `ONGOING` and *falling*) at #1 while the genuinely new `ipc_*` family sat at #6/#9/#10. If the `NEW` bucket is empty, write "nothing new this week" — do not backfill it with `ONGOING` items.
+- **Section 2's visible rows are the classifier's `attention` set plus at most 2 wins — nothing else.**
+  `NEW` + `ACCELERATING` visible with sparklines; `ONGOING` inside a collapsed `<details class="fold">`.
+  Budget: **≤ 8 visible rows total, wins included** (validator check 17 warns above it and counts wins).
+  The failure mode this replaces is measured, not hypothetical: 13 visible rows, 0 charts, and the
+  60-day section below carrying 38.
+- **Every visible attention row carries a 9-week `.item-spark`.** Validator check 16 hard-fails
+  otherwise. The series comes from the trend sidecar you already loaded — no extra query. Charts belong
+  beside the claim they support; a separate browsable chart section is the noise, not the signal.
+- **The 60-day section is a detector, not a catalog.** Chart only the slow burns it *promotes* (rising
+  on 60d and absent from Section 2) — typically 0–3, often zero. The full classification goes in a fold
+  with no charts. Validator check 18 hard-fails above 6 visible charts there.
+- **A quiet week is a valid outcome — publish it as one.** If `quietWeek: true`, say so plainly and
+  keep the report short. Padding the attention list with the biggest flat code to look thorough is the
+  exact behaviour that trains readers to skim.
+- **A `VOLATILE`/`RECOVERY` row must not carry a `Δ WoW` chip at all — swap it for `vs 60d median`.** These carry `suppressRatio: true` because their WoW % is an artifact of a depressed prior week, not a regression. Tagging the row `VOLATILE` and caveating in the body is **not sufficient**: a naive run shipped `429` tagged `VOLATILE` with the body reading *"large percentage move but classified volatile"* — and still rendered `+401.8%` in `metric up` styling, which is the first thing a reader sees. `429` at "+401.8%" while sitting 94.5% *below* its own 60-day median is the canonical failure. `validate-report.ps1` check 15 hard-fails this.
+- **A family is one finding, not N — and that includes the type axis.** When related codes move together (classifier `families`), emit **one** row whose `item-name` is the family and whose body names the members. Reconcile across axes too: if a `NEW` type is the umbrella for a `NEW` code family, that is still **one** row. A naive run emitted four rows — `BrokerCommunicationException`, `ipc_return_null_cursor`, `ipc_operation_not_supported_on_server_side`, `ipc_connection_error` — for a single IPC incident, which re-creates the wall-of-codes problem this section exists to fix. Correct shape:
+  ```html
+  <span class="item-name">ipc_* / BrokerCommunicationException<span class="kind">family</span></span>
+  ```
+  with the body reading *"Three IPC codes stepped up together off a flat 7-week baseline (…null_cursor 41.5K→52.1K, …not_supported 20.6K→24.1K, …connection_error 8.6K→10.1K; family +22.2%). `BrokerCommunicationException` is the same incident seen on the type axis."* One row, one owner, one attribution card.
+- **No boilerplate in Section 2.** Every row's one-line body must be specific to that row — what changed, from what to what, why it is or isn't alarming. Reusing one generic sentence across rows (*"Current-window movement needs owner triage; deep dive below has originator and dimensions."*) makes the section unreadable and `validate-report.ps1` fails the report for it.
 - **Section 2 callouts are at-a-glance, Section 4 is the deep dive.** WoW / Slow-burn / Wins items in Section 2 use the `.item` flat-row pattern (no nested cards, no per-item left bars — the parent `.callout` border is the only severity affordance). Each row is a single line of metric chips + a one-line body + an `Attribution card →` link to the corresponding `.attr-card` in Section 4. Do NOT duplicate the dim slicing, PR analysis, or detailed verdict between the two sections — Section 4 is where that lives. See [`assets/templates/template-readme.md`](assets/templates/template-readme.md) for the CSS class reference and the example `.item` markup.
 - **Never use bash/PowerShell regex to bulk-edit balanced HTML.** This skill has burned twice on regex strip scripts that ate matched-pair `</div>` closes, producing inception-style nested-callout bugs that take a depth-tracking script to find. If you need a structural change to the HTML, make a targeted, single-occurrence string replacement (with explicit before/after context) or rewrite the affected block end-to-end. Never run a `-replace` across the whole file expecting it to leave balance intact.
 - **Denominator caveat must cite evidence, not hand-wave.** If you flag a large all-spans device-count shift, run [`assets/queries/broker-version-share-wow.kql`](assets/queries/broker-version-share-wow.kql) (single WoW snapshot) or [`assets/queries/broker-version-share.kql`](assets/queries/broker-version-share.kql) (time-series) and name the version cohort the shift moved with. Do not write "recurring telemetry-shape artifact" without backing data; if you don't have it, drop the callout.
