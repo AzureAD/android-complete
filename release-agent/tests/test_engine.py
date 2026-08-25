@@ -2746,7 +2746,7 @@ def test_clone_plans_broker_builds_then_idempotent():
     st, out = _bb_build("clone_plans_broker", {"clone_id": "5551212"})
     assert out["kind"] == "done"
     assert "Broker test plan" in out["note"] and "5551212" in out["note"]
-    assert "Native Auth" in out["note"]
+    assert "Native Auth" in out["note"] and "UI Automation" in out["note"]
     assert st.get_step("bug_bash", "clone_plans_broker").data["plan_id"] == "5551212"
     assert out["links"][0]["url"].endswith("planId=5551212")
     # idempotent: an injected existing plan id → already-built, no rebuild
@@ -3290,67 +3290,96 @@ def test_clone_plans_name_override_knob():
     assert "TEST Android/release/08/2026" in out2["note"]
 
 
-def test_build_broker_plan_makes_flat_broker_and_native_auth_folder():
-    """build_broker_plan: create plan → flat Broker suite (2 flight configs) + its cases →
-    Native Auth FOLDER (static parent + the master's dynamic child recreated with its query),
-    pinned to ECS-only. Returns the new plan id."""
+def test_build_broker_plan_makes_three_flat_suites_by_reference():
+    """build_broker_plan: create plan → pin root configs → THREE FLAT suites, all referenced:
+    Manual Broker (static + cases), Native Auth (single dynamic tag-query suite), UI Automation
+    (static + all distinct cases). CRITICAL: the classic duplicating Test Suite Clone
+    (`/cloneoperation`) is NEVER called; configs are pinned via the classic /test/ PATCH."""
     from tools import pipelines as P
     from tools import testplans as T
     from tools import distribution as D
-    NA = T.BROKER_NATIVE_AUTH_ROOT_SUITE
-    masters = [
-        {"id": NA, "name": "Manual Tests (Native Auth)", "suiteType": "staticTestSuite",
-         "parentSuite": {"id": 2007358}},
-        {"id": 5001, "name": "Native Auth Test Manual", "suiteType": "dynamicTestSuite",
-         "parentSuite": {"id": NA}},
+
+    NA_ROOT = T.BROKER_NATIVE_AUTH_ROOT_SUITE
+    NA_DYN = 30351340                                  # dynamic descendant (tag query)
+    UI_ROOT = T.BROKER_UI_ROOT_SUITE                   # static, explicit [292,294]
+    MROOT = T.BROKER_MASTER_ROOT_SUITE
+
+    SRC = {
+        MROOT: {"id": MROOT, "name": "master", "suiteType": "staticTestSuite",
+                "inheritDefaultConfigurations": False, "defaultConfigurations": [{"id": 293}]},
+        NA_ROOT: {"id": NA_ROOT, "name": T.BROKER_NATIVE_AUTH_SUITE_NAME,
+                  "suiteType": "staticTestSuite", "inheritDefaultConfigurations": True,
+                  "defaultConfigurations": []},
+        NA_DYN: {"id": NA_DYN, "name": "Native Auth Test Manual", "suiteType": "dynamicTestSuite",
+                 "inheritDefaultConfigurations": True, "defaultConfigurations": [],
+                 "queryString": "SELECT x WHERE tag='native'"},
+        UI_ROOT: {"id": UI_ROOT, "name": T.BROKER_UI_SUITE_NAME, "suiteType": "staticTestSuite",
+                  "inheritDefaultConfigurations": False,
+                  "defaultConfigurations": [{"id": 292}, {"id": 294}]},
+    }
+    FLAT = [
+        {"id": NA_ROOT, "name": SRC[NA_ROOT]["name"], "parentSuite": {"id": MROOT}},
+        {"id": NA_DYN, "name": SRC[NA_DYN]["name"], "parentSuite": {"id": NA_ROOT}},
+        {"id": UI_ROOT, "name": SRC[UI_ROOT]["name"], "parentSuite": {"id": MROOT}},
     ]
-    sends = []
-    new_suite_id = {"n": 9100}
+    sends, new_id = [], {"n": 9100}
 
     def fake_send(url, method, body, timeout):
         sends.append((url, method, body))
         if url.endswith(f"plans?{T._API}"):
             return (True, {"id": 9000, "rootSuite": {"id": 9001}}, "")
-        if "/suites?" in url:
-            new_suite_id["n"] += 1
-            return (True, {"id": new_suite_id["n"]}, "")
-        if "/TestCase?" in url:
+        if "/suites?" in url and method == "POST":                # any suite create
+            new_id["n"] += 1
+            return (True, {"id": new_id["n"]}, "")
+        if "/TestCase?" in url and method == "POST":
             return (True, {"value": body}, "")
+        if "/test/Plans/" in url and method == "PATCH":           # classic config pin
+            return (True, {}, "")
+        return (True, {}, "")
+
+    def fake_get(url, timeout):                                   # _suite_full
+        import re
+        m = re.search(r"/suites/(\d+)\?", url)
+        if m:
+            return (True, SRC.get(int(m.group(1)), {}), "")
         return (True, {}, "")
 
     def fake_get_all(url, timeout, **k):
-        if f"/Plans/{T.BROKER_MASTER_PLAN}/suites?" in url:      # master suites list
-            return (True, masters, "")
-        if "/TestCase?" in url:                                 # static suite's direct cases
-            return (True, [], "")
+        if f"/Plans/{T.BROKER_MASTER_PLAN}/suites?" in url:       # _fetch_source_suites
+            return (True, list(FLAT), "")
         return (True, [], "")
 
-    def fake_get_h(url, timeout):
-        return (True, {"queryString": "SELECT [System.Id] WHERE tag='CIAM'"}, {}, "")
-
-    o = (P._ado_rest_send, P._ado_rest_get_all, P._ado_rest_get_h, D.broker_manual_cases)
-    P._ado_rest_send, P._ado_rest_get_all, P._ado_rest_get_h = fake_send, fake_get_all, fake_get_h
+    o = (P._ado_rest_send, P._ado_rest_get, P._ado_rest_get_all, D.broker_manual_cases)
+    P._ado_rest_send, P._ado_rest_get, P._ado_rest_get_all = fake_send, fake_get, fake_get_all
     D.broker_manual_cases = lambda *a, **k: (True, [{"id": "111", "assignee": "a@x"}], "")
     try:
         ok, pid, d = T.build_broker_plan("TEST plan")
     finally:
-        (P._ado_rest_send, P._ado_rest_get_all, P._ado_rest_get_h, D.broker_manual_cases) = o
-    assert ok and pid == 9000 and d == ""
-    suite_bodies = [b for (u, m, b) in sends if "/suites?" in u]
-    # Broker flat suite pinned to both flight configs
-    broker = next(b for b in suite_bodies if b["name"] == T.BROKER_MANUAL_SUITE_NAME)
-    assert broker["suiteType"] == "staticTestSuite" and broker["inheritDefaultConfigurations"] is False
-    assert [c["id"] for c in broker["defaultConfigurations"]] == T.BROKER_CONFIGS
-    # Native Auth folder pinned ECS-only
-    na = next(b for b in suite_bodies if b["name"] == T.BROKER_NATIVE_AUTH_SUITE_NAME)
-    assert [c["id"] for c in na["defaultConfigurations"]] == T.NATIVE_AUTH_CONFIGS
-    # the master's dynamic child recreated WITH its query, ECS-only
-    dyn = next(b for b in suite_bodies if b["name"] == "Native Auth Test Manual")
-    assert dyn["suiteType"] == "dynamicTestSuite" and dyn["queryString"].startswith("SELECT")
-    assert [c["id"] for c in dyn["defaultConfigurations"]] == T.NATIVE_AUTH_CONFIGS
-    # Broker cases added with both configs
-    add_body = next(b for (u, m, b) in sends if "/TestCase?" in u)
-    assert [pa["configurationId"] for pa in add_body[0]["pointAssignments"]] == T.BROKER_CONFIGS
+        (P._ado_rest_send, P._ado_rest_get, P._ado_rest_get_all, D.broker_manual_cases) = o
+    assert ok and pid == 9000 and d == "", d
+
+    # SAFETY: the duplicating classic Test Suite Clone is NEVER used
+    assert not any("/cloneoperation" in u for (u, m, b) in sends)
+    # root configs pinned to master root's [293] via the classic /test/ PATCH
+    assert any("/test/Plans/9000/suites/9001?" in u and m == "PATCH"
+               and [c["id"] for c in b["defaultConfigurations"]] == [293]
+               for (u, m, b) in sends)
+    created = [b for (u, m, b) in sends if "/suites?" in u and m == "POST"]
+    names = [b.get("name") for b in created]
+    # flat Manual Broker suite (configs pinned separately, not in the create body)
+    broker = next(b for b in created if b.get("name") == T.BROKER_MANUAL_SUITE_NAME)
+    assert "defaultConfigurations" not in broker
+    assert any("/test/Plans/9000/suites/" in u and m == "PATCH"
+               and [c["id"] for c in b["defaultConfigurations"]] == T.BROKER_CONFIGS
+               for (u, m, b) in sends)
+    # Native Auth = a single FLAT dynamic (tag-query) suite; UI Automation = a FLAT static suite.
+    na = next(b for b in created if b.get("name") == T.BROKER_NATIVE_AUTH_SUITE_NAME)
+    assert na.get("suiteType") == "dynamicTestSuite" and na.get("queryString")
+    ui = next(b for b in created if b.get("name") == T.BROKER_UI_SUITE_NAME)
+    assert ui.get("suiteType", "staticTestSuite") == "staticTestSuite"
+    # exactly one dynamic suite (Native Auth) — no nested UI subtree replication
+    assert [b.get("name") for b in created if b.get("suiteType") == "dynamicTestSuite"] \
+           == [T.BROKER_NATIVE_AUTH_SUITE_NAME]
 
 
 def test_build_broker_plan_cleans_up_on_case_failure():
@@ -3371,13 +3400,17 @@ def test_build_broker_plan_cleans_up_on_case_failure():
             return (False, None, "HTTP 400: bad point assignment")
         return (True, {}, "")
 
-    o = (P._ado_rest_send, D.broker_manual_cases)
-    P._ado_rest_send = fake_send
+    # root-config lookup: return an inheriting master root so no config-pin is attempted
+    def fake_get(url, timeout):
+        return (True, {"inheritDefaultConfigurations": True}, "")
+
+    o = (P._ado_rest_send, P._ado_rest_get, D.broker_manual_cases)
+    P._ado_rest_send, P._ado_rest_get = fake_send, fake_get
     D.broker_manual_cases = lambda *a, **k: (True, [{"id": "111", "assignee": "a@x"}], "")
     try:
         ok, pid, d = T.build_broker_plan("TEST plan")
     finally:
-        P._ado_rest_send, D.broker_manual_cases = o
+        P._ado_rest_send, P._ado_rest_get, D.broker_manual_cases = o
     assert not ok and "400" in d
     assert any(m == "DELETE" and "/plans/9200" in u for (m, u) in calls)   # cleaned up
 

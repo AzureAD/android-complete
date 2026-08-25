@@ -1,14 +1,16 @@
 """Step: `clone_plans_broker` — build this release's Broker test plan (Phase 3, bug_bash).
 
 Instead of ADO's "Copy Test Plan" (which reproduces the master's whole 45-suite tree), this
-creates a fresh plan "Android Monthly Release - <Mon YYYY>" with exactly TWO top-level
-folders:
-  • "Manual Tests (Android Broker)" — one FLAT static suite of the manual-broker cases (the
-    only broker tests the bug bash runs), pinned to the two flight configs (ECS + LocalFlights);
-  • "Manual Tests (Native Auth)" — copied AS A FOLDER (its dynamic query suite preserved),
-    pinned to ECS only.
-Cases are referenced (shared, not duplicated). Flat Broker = easy to track; Native Auth stays
-a dynamic folder so it's current. Downstream steps find the Broker suite by name → drop-in.
+creates a fresh plan "Android Monthly Release - <Mon YYYY>" with exactly THREE FLAT top-level
+suites:
+  • "Manual Tests (Android Broker)" — a static suite of the manual-broker cases (the manual
+    bug-bash set), pinned to the two flight configs (ECS + LocalFlights);
+  • "Manual Tests (Native Auth)" — a single dynamic (tag-query) suite, so its cases show
+    directly (no extra folder level);
+  • "UI Automation (Android Broker)" — a static suite of all distinct UI-automation cases.
+All cases are REFERENCED (shared, not duplicated) — the classic Test Suite Clone is
+deliberately avoided because it COPIES the case work items. Flat = easy to track; downstream
+steps find the Broker suite by name → drop-in.
 
 Idempotent: the created plan id is stashed on the step (data.plan_id). On a re-run the step
 re-confirms that plan still exists and reports done WITHOUT rebuilding — so a `next` that
@@ -80,9 +82,10 @@ def build(state):
     step.data["plan_name"] = dest
     state.set_step("bug_bash", ID, step)
     return Done(
-        f"Built the Broker test plan '{dest}' (plan {clone_id}) — a flat "
-        f"'{T.BROKER_MANUAL_SUITE_NAME}' suite plus the '{T.BROKER_NATIVE_AUTH_SUITE_NAME}' "
-        f"folder, referencing existing test cases.", links=_links(clone_id))
+        f"Built the Broker test plan '{dest}' (plan {clone_id}) — three flat suites "
+        f"('{T.BROKER_MANUAL_SUITE_NAME}', '{T.BROKER_NATIVE_AUTH_SUITE_NAME}', "
+        f"'{T.BROKER_UI_SUITE_NAME}'), referencing existing test cases.",
+        links=_links(clone_id))
 
 
 run = legacy_run(build)

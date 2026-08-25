@@ -339,37 +339,41 @@ build_verify.rc_report:
 # =============================== Phase 3 · bug_bash ===============================
 
 bug_bash.clone_plans_broker:
-  summary: "Build this release's Broker test plan — a flat Broker suite + the Native Auth folder."
+  summary: "Build this release's Broker test plan — three flat suites: Broker + Native Auth + UI Automation."
   what: >
     Each release gets a Broker test plan named 'Android Monthly Release - <Mon YYYY>' (e.g.
     'Android Monthly Release - Aug 2026', area 'Engineering\\Auth Client\\Broker\\Android').
     Instead of ADO's "Copy Test Plan" (which reproduces the master's whole 45-suite tree),
-    Scout creates a fresh plan with exactly TWO top-level folders: (1) 'Manual Tests (Android
-    Broker)' — one FLAT static suite of the manual-broker cases resolved from the master
+    Scout creates a fresh plan with exactly THREE FLAT top-level suites: (1) 'Manual Tests
+    (Android Broker)' — a static suite of the manual-broker cases resolved from the master
     template (#2007357, subtree suite 2008656), each pinned to the two flight configurations
-    (293 'RC MSAL - RC Broker' / ECS + 330 '… (LocalFlights)') → 2 points/case; and (2)
-    'Manual Tests (Native Auth)' — the master's Native Auth subtree (#2864589) copied AS A
-    FOLDER (its dynamic query suite preserved, so it stays current), pinned to ECS only (293).
-    All cases are REFERENCED (shared, not duplicated). distribute_tests + the progress updates
-    find the Broker suite by name, so it's a drop-in.
+    (293 'RC MSAL - RC Broker' / ECS + 330 '… (LocalFlights)') → 2 points/case; (2)
+    'Manual Tests (Native Auth)' — a single dynamic (tag-query) suite carrying the master's
+    Native-Auth query (#2864589 flattened), so it stays current; and (3) 'UI Automation
+    (Android Broker)' — a static suite of all distinct UI-automation cases (the master's
+    #2007399 subtree resolved/flattened), pinned to the UI folder's flight configs. All three
+    are FLAT (no nested folders) and all cases are REFERENCED (shared, not duplicated) — the
+    classic Test Suite Clone is avoided because it COPIES the case work items. distribute_tests
+    + the progress updates find the flat Broker suite by name, so it's a drop-in.
   who: "Scout runs it automatically during `next` (an agent step, via the ADO test-plan API)."
   how: >
     Idempotent — the new plan id is stashed on the step; a re-run re-confirms that plan
     exists and reports done without rebuilding. If the build fails (auth/API) the half-built
     plan is deleted and the step blocks with the ADO error; fix and `next`, or `skip
-    --reason` to override.
+    --reason` to override. Suites are built by recreating them and referencing the master's
+    cases (static suites) / re-using its query (the Native-Auth dynamic suite).
   links:
     - name: "Broker master test plan (#2007357, Manual Tests subtree)"
       url: "https://identitydivision.visualstudio.com/Engineering/_testPlans/define?planId=2007357&suiteId=2008656"
     - name: "Broker test-plans doc"
       url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/test-plans"
   faqs:
-    - q: "Why flat Broker but a folder for Native Auth?"
-      a: "The Broker bug bash runs one manual-tests set that's easiest to track as a single flat list. Native Auth is a self-contained query suite, so it's kept as its own folder (still current, not flattened) — giving exactly two folders in the plan."
+    - q: "Why is the plan three flat suites instead of the master's folder tree?"
+      a: "The bug bash is easiest to run and track as flat lists. Manual Broker is a flattened snapshot; Native Auth is a single dynamic (tag-query) suite so it stays current; UI Automation is all its distinct cases in one flat suite. No nested folders."
     - q: "Does it duplicate the test cases?"
-      a: "No — it references the existing test cases (shared). Edit test cases only in the master template."
+      a: "No — it references the existing test cases (shared). Edit test cases only in the master template. (The classic Test Suite Clone is deliberately avoided because it COPIES cases, which previously exploded the Native-Auth tag count.)"
     - q: "Does it auto-update if the master changes later?"
-      a: "The Broker suite is a frozen snapshot at build time (stable monthly cut). The Native Auth folder stays dynamic (its query re-resolves), so it reflects the current Native Auth cases. Rebuild (delete the plan id + re-run) to re-snapshot Broker."
+      a: "The two static suites (Manual Broker, UI Automation) are frozen snapshots at build time (stable monthly cut). The Native Auth dynamic suite re-resolves its query, so it reflects current Native Auth cases. Rebuild (delete the plan id + re-run) to re-snapshot the static suites."
 
 bug_bash.clone_plans_auth:
   summary: "Create the Authenticator bug-bash query-based test suite for this release."
