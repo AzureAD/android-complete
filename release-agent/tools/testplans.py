@@ -56,6 +56,12 @@ BROKER_NATIVE_AUTH_ROOT_SUITE = 2864589
 BROKER_NATIVE_AUTH_SUITE_NAME = "Manual Tests (Native Auth)"
 BROKER_UI_ROOT_SUITE = 2007399
 BROKER_UI_SUITE_NAME = "UI Automation (Android Broker)"
+# Test configurations the flat UI-automation suite runs each case under — the ECS + LocalFlight
+# matrix (the UI root itself only carries the two ECS configs, so we pin explicitly to also cover
+# LocalFlight). 4 points/case:
+#   292 = "PROD MSAL - RC Broker (ECS)"          294 = "RC MSAL - PROD Broker (ECS)"
+#   328 = "PROD MSAL - RC Broker (LocalFlights)" 344 = "RC MSAL - PROD Broker (LocalFlight)"
+BROKER_UI_CONFIGS = [292, 294, 328, 344]
 BROKER_AREA_PATH = "Engineering\\Auth Client\\Broker\\Android"
 BROKER_ITERATION = "Engineering"
 
@@ -276,7 +282,8 @@ def build_broker_plan(dest_name, timeout=120):
       • "Manual Tests (Native Auth)" — a single dynamic (query) suite carrying the master's
         Native-Auth tag query, so its cases show directly (no extra folder level). Referenced.
       • "UI Automation (Android Broker)" — a static suite of all distinct UI-automation cases
-        (the master's 2007399 subtree resolved/flattened), pinned to the UI folder's configs.
+        (the master's 2007399 subtree resolved/flattened), pinned to the ECS + LocalFlight
+        matrix (BROKER_UI_CONFIGS) → 4 points/case.
 
     All three are FLAT (no nested folders) and all cases are REFERENCED (shared, not duplicated)
     — see `_native_auth_query` for why the classic Test Suite Clone is deliberately avoided.
@@ -339,11 +346,9 @@ def build_broker_plan(dest_name, timeout=120):
         return _cleanup(f"Native Auth flat suite create failed: {dna}")
 
     # 4) UI Automation — FLAT: one static suite of all distinct UI-automation cases (referenced),
-    # pinned to the UI folder's own flight configs. Flat like the other two — no nested subtree.
-    okuf, ui_src, duf = _suite_full(BROKER_UI_ROOT_SUITE, timeout)
-    ui_cfgs = [c.get("id") for c in ((ui_src or {}).get("defaultConfigurations") or [])] if okuf else []
-    okui, ui_suite, dui = _create_suite(pid, root, BROKER_UI_SUITE_NAME, ui_cfgs,
-                                        inherit=(not ui_cfgs), timeout=timeout)
+    # pinned to the full ECS + LocalFlight matrix (BROKER_UI_CONFIGS). Flat like the other two.
+    okui, ui_suite, dui = _create_suite(pid, root, BROKER_UI_SUITE_NAME, BROKER_UI_CONFIGS,
+                                        timeout=timeout)
     if not okui:
         return _cleanup(f"UI Automation flat suite create failed: {dui}")
     okuc, ui_cases, duc = D.broker_manual_cases(BROKER_MASTER_PLAN, BROKER_UI_ROOT_SUITE, timeout)

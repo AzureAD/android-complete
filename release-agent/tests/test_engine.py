@@ -3377,6 +3377,10 @@ def test_build_broker_plan_makes_three_flat_suites_by_reference():
     assert na.get("suiteType") == "dynamicTestSuite" and na.get("queryString")
     ui = next(b for b in created if b.get("name") == T.BROKER_UI_SUITE_NAME)
     assert ui.get("suiteType", "staticTestSuite") == "staticTestSuite"
+    # UI Automation pinned to the full ECS + LocalFlight matrix (must include LocalFlight configs)
+    assert any("/test/Plans/9000/suites/" in u and m == "PATCH"
+               and [c["id"] for c in b["defaultConfigurations"]] == T.BROKER_UI_CONFIGS
+               for (u, m, b) in sends)
     # exactly one dynamic suite (Native Auth) — no nested UI subtree replication
     assert [b.get("name") for b in created if b.get("suiteType") == "dynamicTestSuite"] \
            == [T.BROKER_NATIVE_AUTH_SUITE_NAME]
