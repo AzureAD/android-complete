@@ -17,6 +17,275 @@
 
 version: 1
 
+# ========================== Entry gate · readiness ==========================
+# Keyed "readiness.<item>". Queried via `gate-info --item <id>`. Same fields as the
+# step entries (summary/what/who/where/how/links/faqs).
+
+readiness.build_access:
+  summary: "You have permission to both ADO orgs the release builds from."
+  what: >
+    Confirms you can reach the two build definitions this release drives — the
+    BROKER pipelines in Engineering (Auth Client Android #2828, org
+    identitydivision) and the AUTHENTICATOR pipelines in One (Android Build Release
+    #397224, org msazure). Auto-verified via `az pipelines build definition show`;
+    passes only if BOTH are accessible.
+  who: >
+    Scout verifies it automatically (a Python verifier — no user action) as long as
+    you're signed into az with access to both orgs.
+  where:
+    - "Broker (Engineering #2828): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=2828"
+    - "Authenticator (One #397224): https://msazure.visualstudio.com/One/_build?definitionId=397224"
+  how: >
+    If it fails: run `az login`, then confirm you have access to BOTH orgs/projects
+    — Engineering (identitydivision) for the Broker pipelines and One (msazure) for
+    the Authenticator pipelines. The two orgs authenticate separately, so a token
+    good for one may not cover the other; request access to whichever org is
+    failing. Re-run the gate once fixed.
+  faqs:
+    - q: "Why check two organizations?"
+      a: "The Android release spans both: the Broker libraries build in Engineering (identitydivision) and the Authenticator app builds in One (msazure). You need permission to both."
+    - q: "It failed with a 401 — what now?"
+      a: "Usually you're not signed into az, or you lack access to one of the two orgs (they're separate). Sign in / request access to the failing org, then re-run the gate."
+
+readiness.ccd_confirmed:
+  summary: "The Code Complete Date is a valid future date, reconciled with the pipeline."
+  what: >
+    Validates the CCD end-to-end, because every phase is CCD-relative and a wrong
+    CCD misaligns the whole run. Two hard checks (either BLOCKS): the CCD must be
+    FUTURE-DATED — a past CCD (e.g. a current-month release whose 2nd-Wednesday
+    default already passed) can't be code-completed — and it must AGREE with
+    pipeline 3038's override. Plus one advisory: if the CCD leaves Phase 0
+    (CCD-7→CCD) with less than its normal 7-day window, Scout WARNS about the
+    compressed prep window but lets you proceed.
+  who: >
+    Scout runs the check (`check-ccd`, reads the pipeline via az). On a past CCD or a
+    differing pipeline override, Scout shows you the options and YOU decide the real
+    date; Scout writes it with `set-ccd`. On a compressed Phase 0 window Scout warns
+    and you choose to proceed or move the CCD out. If the pipeline can't be read, you
+    confirm the CCD manually (attest fallback).
+  where:
+    - "CCD override variable — Broker pipeline (Engineering #3038): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=3038"
+  how: >
+    Scout runs `check-ccd --json` and acts on the status: `past` → the CCD is before
+    today; reschedule to a future date with `set-ccd --date <future> --confirm`
+    (adopt a future pipeline override if one exists), re-check. `conflict` → pipeline
+    override differs; pick which is right, `set-ccd`, re-check. `unreadable` → confirm
+    the CCD by hand (attest). `match` → record the item pass. On `compressed: true`
+    (any non-past status) Scout warns that Phase 0 has only `runway_days` of the
+    normal 7 and lets you proceed or move the CCD.
+  faqs:
+    - q: "I started a release this month and the CCD is in the past — why?"
+      a: "The default CCD is the 2nd Wednesday of the release month. If that day has already passed, the default is in the past and invalid. The gate blocks until you set a future Code Complete Date (or target a later release month)."
+    - q: "Why does a CCD mismatch block the release?"
+      a: "The phase schedule is computed from the CCD. If the pipeline is building to a different date than the orchestrator thinks, every reminder, gate, and deadline is off. Reconciling once up front keeps them in lockstep."
+    - q: "My CCD is only a couple of days out and Scout warned about Phase 0 — is that a blocker?"
+      a: "No. Phase 0 normally runs CCD-7→CCD (7 days). A nearer CCD squeezes that window, so Scout flags how many prep days remain, but you can still proceed (e.g. for a hotfix) or move the CCD out with set-ccd."
+    - q: "The pipeline has no override — is that a problem?"
+      a: "No. No override means the pipeline uses the same 2nd-Wednesday default the orchestrator does, so they already agree — that's a `match` (as long as the date is still in the future)."
+    - q: "Scout couldn't read the pipeline — can I still proceed?"
+      a: "Yes. On an unreadable pipeline the item falls back to attestation: you confirm the CCD manually and Scout records it with a note. It never silently passes."
+
+readiness.mcp_servers:
+  summary: "The MCP servers the release needs are registered in Scout."
+  what: >
+    Confirms the command-based MCP servers this release depends on are registered in
+    your Scout config — ICM (on-call / incident lookups), Kusto/ADX (telemetry + the
+    adx_access check), and Teams (comms gaps WorkIQ can't fill: group chats, channel
+    posts). Auto-verified read-only against config/requirements.yaml; passes only if
+    ALL are present.
+  who: >
+    Scout verifies it automatically (a Python verifier). Fixing a missing server is a
+    one-time bootstrap step (register + restart Scout), not something the release does.
+  where:
+    - "Scout's registered servers: ~/.scout/m-mcp-servers.json"
+    - "The required-servers manifest: config/requirements.yaml"
+  how: >
+    If it fails: run `python -m orchestrator.cli infra` (or setup/bootstrap.ps1) to
+    auto-register the missing server(s), then RESTART Scout so it loads them, and
+    re-run the gate. These are provided by the Agency CLI (agency mcp icm|kusto|teams);
+    if Agency isn't installed, install it first. infra won't register a server whose
+    launcher is missing.
+  faqs:
+    - q: "What happens if a server is missing?"
+      a: "infra registers it (backing up your config first) and tells you to restart Scout. It refuses to register a server whose launcher isn't installed."
+    - q: "Why is the Teams MCP required now?"
+      a: "To cover Teams gaps WorkIQ can't (group-chat creation, adding members, rich channel messaging) — WorkIQ is 1:1-only."
+    - q: "What's the empty-tools gotcha?"
+      a: "Command servers must ship a populated `tools` allowlist; an empty one makes Scout silently drop the server. Our requirements.yaml ships icm/kusto/teams with populated lists."
+
+readiness.silent_perms:
+  summary: "Scout's permissions allow fully unattended (silent) runs."
+  what: >
+    Confirms shell, WorkIQ (email + Teams), the browser (Playwright), and the ICM +
+    Kusto MCP servers are all auto-approved in Scout settings — so scheduled /
+    background work (the daily digest, Teams reminders, CCOA-lockdown browser checks,
+    the on-call & telemetry checks) runs WITHOUT stalling on a permission prompt when
+    Scout isn't focused.
+  who: >
+    The skill checks it (reads m_get_settings — the engine can't see Scout's own
+    settings). Enabling requires the user to flip one master toggle (only the user
+    can). OPT-OUT: you may proceed without.
+  where:
+    - "Scout → Settings → Permissions — the per-server auto-approve flags."
+    - "The master toggle: 'When blocked, let Scout ask instead of stopping' (allowModelPermissionsChange)."
+  how: >
+    If not all auto-approved, the skill offers 'Enable silent runs' — it requests
+    auto-approval for WorkIQ/browser/ICM/Kusto (you click Allow once); if the master
+    toggle is off you turn it on first. Or choose 'Proceed without' → recorded as
+    `degraded`, which STILL clears the gate (⚠️ 'Proceeding (not silent)') but
+    background checks will prompt and can stall until you open Scout.
+  faqs:
+    - q: "Does this block the release?"
+      a: "No — it's soft/opt-out. `degraded` satisfies the gate; you just risk occasional prompts on unattended runs."
+    - q: "Exactly what gets auto-approved?"
+      a: "shell, workiq, playwright, kusto, icm."
+
+readiness.teams_notify:
+  summary: "The daily digest can also reach you over the Scout Teams bot."
+  what: >
+    Confirms the Teams relay is connected and the Scout bot is reachable, so the
+    hourly `tick` digest can be delivered to you in Teams IN ADDITION to email. Email
+    is the guaranteed channel; Teams is a bonus.
+  who: >
+    The skill checks it (m_relay_status / m_relay_connect + a silent
+    m_send_teams_message handshake — the engine can't reach the relay). OPT-OUT.
+  where:
+    - "Channels are configured in config/notifications.yaml (channels.teams, teams.target: scout)."
+    - "The Scout bot: open the Microsoft Scout chat in Teams."
+  how: >
+    If Teams is enabled in notifications.yaml, the skill connects the relay and sends
+    a handshake. If the relay won't connect or the bot has no conversation yet (you've
+    never messaged it), it records `degraded` (email-only) — which STILL clears the
+    gate. To enable Teams later: open the Microsoft Scout chat in Teams and send it
+    any message once, then re-run.
+  faqs:
+    - q: "Does this block the release?"
+      a: "No — opt-out. If Teams is unreachable it records `degraded` and you get the digest by email only."
+    - q: "How do I turn Teams delivery off?"
+      a: "Set channels.teams: false in config/notifications.yaml — then this item passes as 'not requested'."
+
+readiness.adx_access:
+  summary: "You can query the ADX release-telemetry cluster."
+  what: >
+    Confirms you can query the ADX release dashboard's backing Kusto cluster (used for
+    monitoring / Play vitals / crash metrics later in the release). Scout runs a
+    `print 1` probe against the cluster.
+  who: >
+    The skill runs it (Kusto MCP — the engine can't reach the MCP) and records
+    pass/fail. Fully verified (not attested).
+  where:
+    - "ADX release dashboard: https://dataexplorer.azure.com/dashboards/ab7abd7e-c36f-4ff0-88a7-aaa3ec014bd7"
+    - "Backing cluster: https://idsharedeus2.eastus2.kusto.windows.net (db d496be22d62a46b0a3cf67ea2e736fd8)"
+  how: >
+    If it fails, you lack access to the cluster (or the Kusto MCP isn't reachable).
+    Request access to the ADX cluster / dashboard, confirm the Kusto MCP is registered
+    (see mcp_servers), then re-run the gate.
+  faqs:
+    - q: "What is the probe?"
+      a: "A trivial `print 1` query against the cluster — it only proves you can connect and run a query, nothing about the data."
+
+readiness.oncall_now:
+  summary: "You are not the current Android primary on-call."
+  what: >
+    Confirms you are NOT the current primary on-call (OCE) for 'Auth Client Android
+    Shield' (ICM team 78848) — a primary on-call shouldn't also be driving a release.
+    A backup/secondary is fine; only the current PRIMARY blocks.
+  who: >
+    The skill checks it via ICM (get_on_call_schedule_by_team_id, team 78848 — the
+    engine can't reach the MCP) and records pass/fail.
+  where:
+    - "On-call schedule: https://aka.ms/androidoncall (team: Auth Client Android Shield, ICM 78848)."
+  how: >
+    If you ARE the current primary, hand the release to someone who isn't (or wait
+    until your shift ends), then re-run. Being a backup/secondary does NOT block — the
+    skill records those as pass.
+  faqs:
+    - q: "I'm the backup on-call — does that block me?"
+      a: "No. Only the current PRIMARY (first-listed current OCE) blocks. Backups are free to run the release."
+    - q: "Why can't the primary on-call run the release?"
+      a: "Primary on-call is expected to be responsive to incidents; combining it with release duty risks both. It's a required (non-opt-out) check."
+
+readiness.play_console_access:
+  summary: "You can open the Google Play Console app dashboard."
+  what: >
+    You ATTEST (Scout can't verify — Google auth wall) that you can sign into the
+    Play Console and load the Authenticator app dashboard. Needed later for the Play
+    vitals / policy-status review (Phase 0 `vitals`) and rollout management.
+  who: "You confirm it — Scout cannot prove Google sign-in."
+  where:
+    - "Play Console app dashboard: https://play.google.com/console/u/0/developers/6720847872553662727/app/4972501392087484764/app-dashboard"
+  how: >
+    Open the dashboard and confirm it loads (you're signed into the right Google
+    account with access to this app), then attest. If you can't load it, request Play
+    Console access following the how-to doc below.
+  links:
+    - name: "How to access Google Play Console"
+      url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/combined-release-checklist/how-to-access-google-play-console"
+  faqs:
+    - q: "Why can't Scout verify this?"
+      a: "Play Console is behind Google auth, which Scout can't automate — so you attest."
+    - q: "How do I get access?"
+      a: "Follow the 'How to access Google Play Console' doc (linked). Then open the dashboard to confirm."
+
+readiness.oncall_window:
+  summary: "You're not scheduled on-call during the release window."
+  what: >
+    You ATTEST you are NOT scheduled Android on-call at any point across the release
+    window — CCD-7 through CCD+14 (the full stabilization period). This is the future
+    counterpart to oncall_now (which only checks today); Scout can only see the
+    current rotation, so you confirm the upcoming window.
+  who: "You confirm it — Scout can't reliably read the future rotation."
+  where:
+    - "On-call schedule: https://aka.ms/androidoncall (team: Auth Client Android Shield). Check your shifts across the window."
+  how: >
+    Open the schedule, verify none of your on-call shifts fall in CCD-7 … CCD+14, then
+    attest. If you ARE scheduled in that window, arrange coverage / a swap, or hand off
+    the release.
+  faqs:
+    - q: "Why is this separate from 'Not on-call now'?"
+      a: "oncall_now is auto (Scout reads today's roster); this is attest because Scout can't see the future schedule reliably."
+    - q: "What's the window?"
+      a: "CCD-7 to CCD+14 — pre-flight through the rollout / monitoring tail."
+
+readiness.saw_ame:
+  summary: "Your SAW machine and AME account are accessible."
+  what: >
+    You ATTEST you can log into your SAW (Secure Admin Workstation), the desktop
+    loads, and you can sign in with your AME (Azure Managed Environment) credentials —
+    the secure environment required for privileged release actions.
+  who: "You confirm it — Scout can't verify SAW/AME sign-in."
+  where:
+    - "SAW: https://aka.ms/saw"
+  how: >
+    Log into SAW (link below), confirm the desktop loads, and sign in with your AME
+    credentials, then attest. If SAW or AME isn't working, resolve access via the SAW
+    portal before starting the release.
+  links:
+    - name: "SAW"
+      url: "https://aka.ms/saw"
+  faqs:
+    - q: "Why is SAW/AME needed?"
+      a: "Privileged release steps must run from the secure admin workstation with AME credentials — Scout can't prove that, so you attest."
+
+readiness.yubikey:
+  summary: "You have a YubiKey in hand."
+  what: >
+    You ATTEST you physically have your YubiKey — the hardware security key required
+    for the release's privileged sign-ins. Scout can't verify a physical device, so
+    you confirm.
+  who: "You confirm it — it's a physical device."
+  where:
+    - "No YubiKey? Pick one up at Studio A 1909, the Bldg 34/35 cafe, or order a DSR USB-C thumbdrive (link below)."
+  how: >
+    Have your YubiKey with you, then attest. If you don't have one, get one first
+    (Studio A 1909 / Bldg 34-35 cafe) or order a DSR USB-C security key via the link.
+  links:
+    - name: "Order a DSR USB-C security key"
+      url: "https://cloudmfa-support.azurewebsites.net/SecurityKeyServices/SecurityKey"
+  faqs:
+    - q: "I don't have a YubiKey — where do I get one?"
+      a: "Studio A 1909, the Bldg 34/35 cafe, or order a DSR USB-C thumbdrive (linked)."
+
 # ============================== Phase 0 · preflight ==============================
 
 preflight.notice:
@@ -199,6 +468,14 @@ preflight.cron:
     build history. Blocks if there's no recent scheduled run or it's stale.
   how: "If blocked, investigate the pipeline's schedule (it may be disabled/broken), fix it, and rerun the step — or skip to override."
 
+preflight.wiki:
+  summary: "Create the per-release payload wiki subpage under the history parent page."
+  what: >
+    Creates '<Month> <Year> Release' under the standing Monthly Releases Payloads
+    History page; Phase 2 later fills in the built versions. Duplicate-safe: if the
+    month's page already exists it's left untouched and a numbered page is created.
+  how: "Runs automatically; the created page link is stored on the step and shown in the status Details column."
+
 # =============================== Phase 1 · ccd ===============================
 
 ccd.final_reminder:
@@ -244,14 +521,6 @@ ccd.localization:
   # Knowledge for this step is co-located in the step module (steps/ccd/localization.py
   # KNOWLEDGE) — the trigger→poll→timeout/complete→post-PR flow. Kept there so it
   # can't drift from the logic. No yaml override needed.
-
-preflight.wiki:
-  summary: "Create the per-release payload wiki subpage under the history parent page."
-  what: >
-    Creates '<Month> <Year> Release' under the standing Monthly Releases Payloads
-    History page; Phase 2 later fills in the built versions. Duplicate-safe: if the
-    month's page already exists it's left untouched and a numbered page is created.
-  how: "Runs automatically; the created page link is stored on the step and shown in the status Details column."
 
 # ======================= Phase 2 · build_verify (RC verification) =======================
 # Read-only checks over the Engineering release pipelines: the checker (3038) fired the
@@ -703,272 +972,3 @@ finalize.gate_watch:
       a: "No — it publishes to Maven Central and GitHub. Treat approval as the point of no return; deny to hold if the RC verification or bug bash left anything unresolved."
     - q: "Nothing is parked — is that an error?"
       a: "No. If the orchestrator already passed the gate (or isn't waiting), the step reports there's nothing to approve and moves on."
-
-# ========================== Entry gate · readiness ==========================
-# Keyed "readiness.<item>". Queried via `gate-info --item <id>`. Same fields as the
-# step entries (summary/what/who/where/how/links/faqs).
-
-readiness.build_access:
-  summary: "You have permission to both ADO orgs the release builds from."
-  what: >
-    Confirms you can reach the two build definitions this release drives — the
-    BROKER pipelines in Engineering (Auth Client Android #2828, org
-    identitydivision) and the AUTHENTICATOR pipelines in One (Android Build Release
-    #397224, org msazure). Auto-verified via `az pipelines build definition show`;
-    passes only if BOTH are accessible.
-  who: >
-    Scout verifies it automatically (a Python verifier — no user action) as long as
-    you're signed into az with access to both orgs.
-  where:
-    - "Broker (Engineering #2828): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=2828"
-    - "Authenticator (One #397224): https://msazure.visualstudio.com/One/_build?definitionId=397224"
-  how: >
-    If it fails: run `az login`, then confirm you have access to BOTH orgs/projects
-    — Engineering (identitydivision) for the Broker pipelines and One (msazure) for
-    the Authenticator pipelines. The two orgs authenticate separately, so a token
-    good for one may not cover the other; request access to whichever org is
-    failing. Re-run the gate once fixed.
-  faqs:
-    - q: "Why check two organizations?"
-      a: "The Android release spans both: the Broker libraries build in Engineering (identitydivision) and the Authenticator app builds in One (msazure). You need permission to both."
-    - q: "It failed with a 401 — what now?"
-      a: "Usually you're not signed into az, or you lack access to one of the two orgs (they're separate). Sign in / request access to the failing org, then re-run the gate."
-
-readiness.ccd_confirmed:
-  summary: "The Code Complete Date is a valid future date, reconciled with the pipeline."
-  what: >
-    Validates the CCD end-to-end, because every phase is CCD-relative and a wrong
-    CCD misaligns the whole run. Two hard checks (either BLOCKS): the CCD must be
-    FUTURE-DATED — a past CCD (e.g. a current-month release whose 2nd-Wednesday
-    default already passed) can't be code-completed — and it must AGREE with
-    pipeline 3038's override. Plus one advisory: if the CCD leaves Phase 0
-    (CCD-7→CCD) with less than its normal 7-day window, Scout WARNS about the
-    compressed prep window but lets you proceed.
-  who: >
-    Scout runs the check (`check-ccd`, reads the pipeline via az). On a past CCD or a
-    differing pipeline override, Scout shows you the options and YOU decide the real
-    date; Scout writes it with `set-ccd`. On a compressed Phase 0 window Scout warns
-    and you choose to proceed or move the CCD out. If the pipeline can't be read, you
-    confirm the CCD manually (attest fallback).
-  where:
-    - "CCD override variable — Broker pipeline (Engineering #3038): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=3038"
-  how: >
-    Scout runs `check-ccd --json` and acts on the status: `past` → the CCD is before
-    today; reschedule to a future date with `set-ccd --date <future> --confirm`
-    (adopt a future pipeline override if one exists), re-check. `conflict` → pipeline
-    override differs; pick which is right, `set-ccd`, re-check. `unreadable` → confirm
-    the CCD by hand (attest). `match` → record the item pass. On `compressed: true`
-    (any non-past status) Scout warns that Phase 0 has only `runway_days` of the
-    normal 7 and lets you proceed or move the CCD.
-  faqs:
-    - q: "I started a release this month and the CCD is in the past — why?"
-      a: "The default CCD is the 2nd Wednesday of the release month. If that day has already passed, the default is in the past and invalid. The gate blocks until you set a future Code Complete Date (or target a later release month)."
-    - q: "Why does a CCD mismatch block the release?"
-      a: "The phase schedule is computed from the CCD. If the pipeline is building to a different date than the orchestrator thinks, every reminder, gate, and deadline is off. Reconciling once up front keeps them in lockstep."
-    - q: "My CCD is only a couple of days out and Scout warned about Phase 0 — is that a blocker?"
-      a: "No. Phase 0 normally runs CCD-7→CCD (7 days). A nearer CCD squeezes that window, so Scout flags how many prep days remain, but you can still proceed (e.g. for a hotfix) or move the CCD out with set-ccd."
-    - q: "The pipeline has no override — is that a problem?"
-      a: "No. No override means the pipeline uses the same 2nd-Wednesday default the orchestrator does, so they already agree — that's a `match` (as long as the date is still in the future)."
-    - q: "Scout couldn't read the pipeline — can I still proceed?"
-      a: "Yes. On an unreadable pipeline the item falls back to attestation: you confirm the CCD manually and Scout records it with a note. It never silently passes."
-
-readiness.mcp_servers:
-  summary: "The MCP servers the release needs are registered in Scout."
-  what: >
-    Confirms the command-based MCP servers this release depends on are registered in
-    your Scout config — ICM (on-call / incident lookups), Kusto/ADX (telemetry + the
-    adx_access check), and Teams (comms gaps WorkIQ can't fill: group chats, channel
-    posts). Auto-verified read-only against config/requirements.yaml; passes only if
-    ALL are present.
-  who: >
-    Scout verifies it automatically (a Python verifier). Fixing a missing server is a
-    one-time bootstrap step (register + restart Scout), not something the release does.
-  where:
-    - "Scout's registered servers: ~/.scout/m-mcp-servers.json"
-    - "The required-servers manifest: config/requirements.yaml"
-  how: >
-    If it fails: run `python -m orchestrator.cli infra` (or setup/bootstrap.ps1) to
-    auto-register the missing server(s), then RESTART Scout so it loads them, and
-    re-run the gate. These are provided by the Agency CLI (agency mcp icm|kusto|teams);
-    if Agency isn't installed, install it first. infra won't register a server whose
-    launcher is missing.
-  faqs:
-    - q: "What happens if a server is missing?"
-      a: "infra registers it (backing up your config first) and tells you to restart Scout. It refuses to register a server whose launcher isn't installed."
-    - q: "Why is the Teams MCP required now?"
-      a: "To cover Teams gaps WorkIQ can't (group-chat creation, adding members, rich channel messaging) — WorkIQ is 1:1-only."
-    - q: "What's the empty-tools gotcha?"
-      a: "Command servers must ship a populated `tools` allowlist; an empty one makes Scout silently drop the server. Our requirements.yaml ships icm/kusto/teams with populated lists."
-
-readiness.silent_perms:
-  summary: "Scout's permissions allow fully unattended (silent) runs."
-  what: >
-    Confirms shell, WorkIQ (email + Teams), the browser (Playwright), and the ICM +
-    Kusto MCP servers are all auto-approved in Scout settings — so scheduled /
-    background work (the daily digest, Teams reminders, CCOA-lockdown browser checks,
-    the on-call & telemetry checks) runs WITHOUT stalling on a permission prompt when
-    Scout isn't focused.
-  who: >
-    The skill checks it (reads m_get_settings — the engine can't see Scout's own
-    settings). Enabling requires the user to flip one master toggle (only the user
-    can). OPT-OUT: you may proceed without.
-  where:
-    - "Scout → Settings → Permissions — the per-server auto-approve flags."
-    - "The master toggle: 'When blocked, let Scout ask instead of stopping' (allowModelPermissionsChange)."
-  how: >
-    If not all auto-approved, the skill offers 'Enable silent runs' — it requests
-    auto-approval for WorkIQ/browser/ICM/Kusto (you click Allow once); if the master
-    toggle is off you turn it on first. Or choose 'Proceed without' → recorded as
-    `degraded`, which STILL clears the gate (⚠️ 'Proceeding (not silent)') but
-    background checks will prompt and can stall until you open Scout.
-  faqs:
-    - q: "Does this block the release?"
-      a: "No — it's soft/opt-out. `degraded` satisfies the gate; you just risk occasional prompts on unattended runs."
-    - q: "Exactly what gets auto-approved?"
-      a: "shell, workiq, playwright, kusto, icm."
-
-readiness.teams_notify:
-  summary: "The daily digest can also reach you over the Scout Teams bot."
-  what: >
-    Confirms the Teams relay is connected and the Scout bot is reachable, so the
-    hourly `tick` digest can be delivered to you in Teams IN ADDITION to email. Email
-    is the guaranteed channel; Teams is a bonus.
-  who: >
-    The skill checks it (m_relay_status / m_relay_connect + a silent
-    m_send_teams_message handshake — the engine can't reach the relay). OPT-OUT.
-  where:
-    - "Channels are configured in config/notifications.yaml (channels.teams, teams.target: scout)."
-    - "The Scout bot: open the Microsoft Scout chat in Teams."
-  how: >
-    If Teams is enabled in notifications.yaml, the skill connects the relay and sends
-    a handshake. If the relay won't connect or the bot has no conversation yet (you've
-    never messaged it), it records `degraded` (email-only) — which STILL clears the
-    gate. To enable Teams later: open the Microsoft Scout chat in Teams and send it
-    any message once, then re-run.
-  faqs:
-    - q: "Does this block the release?"
-      a: "No — opt-out. If Teams is unreachable it records `degraded` and you get the digest by email only."
-    - q: "How do I turn Teams delivery off?"
-      a: "Set channels.teams: false in config/notifications.yaml — then this item passes as 'not requested'."
-
-readiness.adx_access:
-  summary: "You can query the ADX release-telemetry cluster."
-  what: >
-    Confirms you can query the ADX release dashboard's backing Kusto cluster (used for
-    monitoring / Play vitals / crash metrics later in the release). Scout runs a
-    `print 1` probe against the cluster.
-  who: >
-    The skill runs it (Kusto MCP — the engine can't reach the MCP) and records
-    pass/fail. Fully verified (not attested).
-  where:
-    - "ADX release dashboard: https://dataexplorer.azure.com/dashboards/ab7abd7e-c36f-4ff0-88a7-aaa3ec014bd7"
-    - "Backing cluster: https://idsharedeus2.eastus2.kusto.windows.net (db d496be22d62a46b0a3cf67ea2e736fd8)"
-  how: >
-    If it fails, you lack access to the cluster (or the Kusto MCP isn't reachable).
-    Request access to the ADX cluster / dashboard, confirm the Kusto MCP is registered
-    (see mcp_servers), then re-run the gate.
-  faqs:
-    - q: "What is the probe?"
-      a: "A trivial `print 1` query against the cluster — it only proves you can connect and run a query, nothing about the data."
-
-readiness.oncall_now:
-  summary: "You are not the current Android primary on-call."
-  what: >
-    Confirms you are NOT the current primary on-call (OCE) for 'Auth Client Android
-    Shield' (ICM team 78848) — a primary on-call shouldn't also be driving a release.
-    A backup/secondary is fine; only the current PRIMARY blocks.
-  who: >
-    The skill checks it via ICM (get_on_call_schedule_by_team_id, team 78848 — the
-    engine can't reach the MCP) and records pass/fail.
-  where:
-    - "On-call schedule: https://aka.ms/androidoncall (team: Auth Client Android Shield, ICM 78848)."
-  how: >
-    If you ARE the current primary, hand the release to someone who isn't (or wait
-    until your shift ends), then re-run. Being a backup/secondary does NOT block — the
-    skill records those as pass.
-  faqs:
-    - q: "I'm the backup on-call — does that block me?"
-      a: "No. Only the current PRIMARY (first-listed current OCE) blocks. Backups are free to run the release."
-    - q: "Why can't the primary on-call run the release?"
-      a: "Primary on-call is expected to be responsive to incidents; combining it with release duty risks both. It's a required (non-opt-out) check."
-
-readiness.play_console_access:
-  summary: "You can open the Google Play Console app dashboard."
-  what: >
-    You ATTEST (Scout can't verify — Google auth wall) that you can sign into the
-    Play Console and load the Authenticator app dashboard. Needed later for the Play
-    vitals / policy-status review (Phase 0 `vitals`) and rollout management.
-  who: "You confirm it — Scout cannot prove Google sign-in."
-  where:
-    - "Play Console app dashboard: https://play.google.com/console/u/0/developers/6720847872553662727/app/4972501392087484764/app-dashboard"
-  how: >
-    Open the dashboard and confirm it loads (you're signed into the right Google
-    account with access to this app), then attest. If you can't load it, request Play
-    Console access following the how-to doc below.
-  links:
-    - name: "How to access Google Play Console"
-      url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/combined-release-checklist/how-to-access-google-play-console"
-  faqs:
-    - q: "Why can't Scout verify this?"
-      a: "Play Console is behind Google auth, which Scout can't automate — so you attest."
-    - q: "How do I get access?"
-      a: "Follow the 'How to access Google Play Console' doc (linked). Then open the dashboard to confirm."
-
-readiness.oncall_window:
-  summary: "You're not scheduled on-call during the release window."
-  what: >
-    You ATTEST you are NOT scheduled Android on-call at any point across the release
-    window — CCD-7 through CCD+14 (the full stabilization period). This is the future
-    counterpart to oncall_now (which only checks today); Scout can only see the
-    current rotation, so you confirm the upcoming window.
-  who: "You confirm it — Scout can't reliably read the future rotation."
-  where:
-    - "On-call schedule: https://aka.ms/androidoncall (team: Auth Client Android Shield). Check your shifts across the window."
-  how: >
-    Open the schedule, verify none of your on-call shifts fall in CCD-7 … CCD+14, then
-    attest. If you ARE scheduled in that window, arrange coverage / a swap, or hand off
-    the release.
-  faqs:
-    - q: "Why is this separate from 'Not on-call now'?"
-      a: "oncall_now is auto (Scout reads today's roster); this is attest because Scout can't see the future schedule reliably."
-    - q: "What's the window?"
-      a: "CCD-7 to CCD+14 — pre-flight through the rollout / monitoring tail."
-
-readiness.saw_ame:
-  summary: "Your SAW machine and AME account are accessible."
-  what: >
-    You ATTEST you can log into your SAW (Secure Admin Workstation), the desktop
-    loads, and you can sign in with your AME (Azure Managed Environment) credentials —
-    the secure environment required for privileged release actions.
-  who: "You confirm it — Scout can't verify SAW/AME sign-in."
-  where:
-    - "SAW: https://aka.ms/saw"
-  how: >
-    Log into SAW (link below), confirm the desktop loads, and sign in with your AME
-    credentials, then attest. If SAW or AME isn't working, resolve access via the SAW
-    portal before starting the release.
-  links:
-    - name: "SAW"
-      url: "https://aka.ms/saw"
-  faqs:
-    - q: "Why is SAW/AME needed?"
-      a: "Privileged release steps must run from the secure admin workstation with AME credentials — Scout can't prove that, so you attest."
-
-readiness.yubikey:
-  summary: "You have a YubiKey in hand."
-  what: >
-    You ATTEST you physically have your YubiKey — the hardware security key required
-    for the release's privileged sign-ins. Scout can't verify a physical device, so
-    you confirm.
-  who: "You confirm it — it's a physical device."
-  where:
-    - "No YubiKey? Pick one up at Studio A 1909, the Bldg 34/35 cafe, or order a DSR USB-C thumbdrive (link below)."
-  how: >
-    Have your YubiKey with you, then attest. If you don't have one, get one first
-    (Studio A 1909 / Bldg 34-35 cafe) or order a DSR USB-C security key via the link.
-  links:
-    - name: "Order a DSR USB-C security key"
-      url: "https://cloudmfa-support.azurewebsites.net/SecurityKeyServices/SecurityKey"
-  faqs:
-    - q: "I don't have a YubiKey — where do I get one?"
-      a: "Studio A 1909, the Bldg 34/35 cafe, or order a DSR USB-C thumbdrive (linked)."
