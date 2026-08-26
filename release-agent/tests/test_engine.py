@@ -5347,6 +5347,37 @@ def test_create_integration_prs_execute_opens_and_records():
     assert after.is_done("finalize", "integ_prs")                       # step recorded
 
 
+def test_orchestrator_health_populates_state_versions():
+    """Phase 2 orchestrator_health fills state.versions from the run tags — common/msal/broker
+    from Next*Version and authenticator as the release branch from AuthenticatorBranch."""
+    from steps.lib import mockctx
+    from steps.build_verify import orchestrator_health as OH
+    st = ReleaseState(release_id="2026-08")
+    run = {"id": 777, "tags": ["AuthenticatorBranch=release-2026-08-22",
+                               "NextCommonVersion=24.6.0", "NextMsalVersion=8.4.2",
+                               "NextBrokerVersion=16.5.0"]}
+    stages = [{"name": n, "state": "completed", "result": "succeeded"}
+              for n in OH.CONFIG["required_stages"]]
+    stages.append({"name": OH.CONFIG["park_stage"], "state": "pending", "result": None})
+    with mockctx.active({"run": run, "stages": stages}):
+        OH.build(st)
+    assert st.versions == {"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0",
+                           "authenticator": "release/2026/08/22"}
+
+
+def test_release_state_records_versions_roundtrip():
+    """record_versions merges non-blank versions and survives save/load."""
+    import tempfile
+    from orchestrator import cli_common as _C
+    st = ReleaseState(release_id="2026-08")
+    st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0", "authenticator": ""})
+    assert st.versions == {"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"}  # blank dropped
+    with tempfile.TemporaryDirectory() as d:
+        _C.save_state(st, d, "2026-08")
+        again = _C.load_state(d, "2026-08")
+    assert again.versions["msal"] == "8.4.2" and "authenticator" not in again.versions
+
+
 def test_create_integration_prs_holds_pr_on_human_conflict():
     """When the RI edit reports a human conflict, that PR is NOT opened (held)."""
     import tempfile

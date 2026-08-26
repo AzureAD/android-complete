@@ -58,6 +58,11 @@ def build(state):
     versions = {k: P._tag_value(tags, f"Next{k}Version")
                 for k in ("Common", "Msal", "Broker")}
     vstr = P.format_versions(versions, fallback="versions n/a")
+    # Authenticator has no Next*Version tag — its release BRANCH is carried on the
+    # AuthenticatorBranch tag as 'release-YYYY-MM-DD'; store it as 'release/YYYY/MM/DD'
+    # (the actual app version is resolved later and isn't needed here).
+    auth_tag = P._tag_value(tags, "AuthenticatorBranch")
+    auth_branch = auth_tag.replace("-", "/") if auth_tag else None
 
     stages = mock_input("stages", MISSING)
     if stages is MISSING:
@@ -86,6 +91,10 @@ def build(state):
     park_done = bool(park is not None and park.get("state") == "completed")
     K.stash_orchestrator(state, bid, versions={k: v for k, v in versions.items() if v},
                          parked=not park_done)
+    # Canonical release payload versions (lowercase keys) — the earliest authoritative point.
+    # Later steps (e.g. release_announcement) read state.versions instead of re-discovering.
+    state.record_versions({"common": versions.get("Common"), "msal": versions.get("Msal"),
+                           "broker": versions.get("Broker"), "authenticator": auth_branch})
     if park_done:
         return Done(
             f"Release Orchestrator run {bid} healthy ({vstr}); NOTE '{cfg['park_stage']}' "

@@ -96,6 +96,12 @@ class ReleaseState:
     # re-trigger of RC Testing spawns a new ecs/local pair). The LATEST RC is rcs[-1] — the
     # report + gate always use it. A per-provider id change appends a new rc entry.
     pipeline_runs: dict = field(default_factory=dict)
+    # Release payload versions, populated at Phase 2 (orchestrator_health) from the orchestrator
+    # run tags — stored so later steps (e.g. the release announcement) reuse them instead of
+    # re-discovering. Keys: common/msal/broker (version strings from Next*Version) and
+    # authenticator (the release BRANCH, e.g. 'release/2026/08/22', from the AuthenticatorBranch
+    # tag; the actual app version is resolved later and isn't needed here).
+    versions: dict = field(default_factory=dict)
     notes: list = field(default_factory=list)
 
     # ---- persistence ----
@@ -129,6 +135,11 @@ class ReleaseState:
 
     def set_step(self, phase: str, step: str, state: StepState) -> None:
         self.steps[self.key(phase, step)] = asdict(state)
+
+    def record_versions(self, versions: dict) -> None:
+        """Merge resolved payload versions (common/msal/broker/authenticator) into the record,
+        ignoring blank values. Idempotent — safe to call on every discovery."""
+        self.versions.update({k: v for k, v in (versions or {}).items() if v})
 
     def is_done(self, phase: str, step: str) -> bool:
         return self.get_step(phase, step).status in ("done", "skipped")
