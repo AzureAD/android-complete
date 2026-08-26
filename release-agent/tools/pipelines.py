@@ -262,6 +262,26 @@ def find_orchestrator_run(org, project, def_id, release_month, timeout=60):
     return (True, latest, "")
 
 
+def discover_versions(org, project, release_month, orch_def=None, timeout=60):
+    """(ok, versions, detail) — resolve per-repo release versions from the orchestrator
+    run's build tags (Next{Common,Msal,Broker}Version=<v>). `versions` is keyed by the
+    integ_prs repo keys: {'common','msal','broker'} (values may be None if a tag is
+    missing). Authenticator is not tagged here and is resolved separately."""
+    orch_def = orch_def or ORCHESTRATOR_DEF
+    ok, run, detail = find_orchestrator_run(org, project, orch_def, release_month, timeout)
+    if not ok:
+        return (False, {}, detail)
+    if not run:
+        return (True, {}, f"no orchestrator run found for {release_month}")
+    tags = run.get("tags") or []
+    versions = {
+        "common": _tag_value(tags, "NextCommonVersion"),
+        "msal": _tag_value(tags, "NextMsalVersion"),
+        "broker": _tag_value(tags, "NextBrokerVersion"),
+    }
+    return (True, versions, "")
+
+
 def find_checker_runs(org, project, def_id, release_month, timeout=60):
     """Return (ok, runs, detail) — the checker's builds queued in the release month,
     newest first. The checker runs DAILY (a cron); only the run on the actual Code

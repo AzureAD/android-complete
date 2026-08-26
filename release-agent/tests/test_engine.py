@@ -84,6 +84,9 @@ _SAFE_AGENTS = {
     "bug_bash.bugbash_updates": {"outcome": "done", "note": "first bug-bash update posted (test)"},
     "bug_bash.native_auth_signoff": {"outcome": "done", "note": "native auth sign-off recorded (test)"},
     "bug_bash.did_signoff": {"outcome": "done", "note": "DID sign-off recorded (test)"},
+    # Phase-4 finalize integ_prs — real agent (gh/az/git). Short-circuit so flow tests
+    # never hit the network; dedicated integ_prs tests exercise its real logic offline.
+    "finalize.integ_prs": {"outcome": "done", "note": "integration PRs opened (test)"},
 }
 
 
@@ -5147,6 +5150,212 @@ def test_find_orchestrator_pending_approval_and_submit():
         assert sent["body"][0]["approvalId"] == "APPR-555" and sent["body"][0]["status"] == "approved"
     finally:
         (P.find_orchestrator_run, P.get_timeline, P._ado_rest_get, P._ado_rest_send) = o
+
+
+def _patch_pr_reads(P, exists=True, existing_pr=None, behind=0, gradle=None, conflicts=None):
+    """Replace integ_prs' read helpers with offline stubs; returns a restore() callable."""
+    orig = {k: getattr(P, k) for k in
+            ("remote_branch_exists", "gh_find_open_pr", "az_find_open_pr",
+             "behind_count", "gradle_diff_files", "merge_conflict_preview")}
+    P.remote_branch_exists = lambda d, b, timeout=60: (True, exists, "")
+    P.gh_find_open_pr = lambda r, h, b, timeout=60: (True, existing_pr, "")
+    P.az_find_open_pr = lambda org, proj, repo, h, b, timeout=60: (True, existing_pr, "")
+    P.behind_count = lambda d, h, b, timeout=60: (True, behind, "")
+    P.gradle_diff_files = lambda d, h, b, timeout=60: (True, list(gradle or []), "")
+    P.merge_conflict_preview = lambda d, h, b, timeout=90: (True, list(conflicts or []), "")
+
+    def restore():
+        for k, v in orig.items():
+            setattr(P, k, v)
+    return restore
+
+
+def test_integ_prs_plan_computes_8_prs_offline():
+    """plan() computes 2 PRs for each of the 4 repos with the right head/base/labels and
+    an RI-edit analysis for the integration PRs — all offline."""
+    from steps.lib import mockctx
+    from steps.finalize import integ_prs as S
+    from tools import prs as P
+    restore = _patch_pr_reads(P, exists=True, existing_pr=None, behind=3,
+                              gradle=["msal/build.gradle"], conflicts=["msal/build.gradle", "changelog"])
+    st = ReleaseState(release_id="2026-08")
+    knobs = {"versions": {"common": "24.6.0", "msal": "8.4.2", "broker": "20.1.0",
+                          "authenticator": "9.9.9"}, "pbi": "skip"}
+    try:
+        with mockctx.active(knobs):
+            p = S.plan(st)
+    finally:
+        restore()
+    assert p["ready"] and len(p["repos"]) == 4
+    by = {r["key"]: r for r in p["repos"]}
+    # msal freeze + integration branches/targets
+    msal = by["msal"]["prs"]
+    assert msal[0]["kind"] == "freeze" and msal[0]["head"] == "working/release/8.4.2" and msal[0]["base"] == "release/8.4.2"
+    assert msal[1]["kind"] == "integration" and msal[1]["head"] == "release-integration/8.4.2" and msal[1]["base"] == "dev"
+    # authenticator integration targets 'working', not 'dev', with hyphenated WR prefix
+    auth = by["authenticator"]["prs"]
+    assert auth[1]["base"] == "working" and auth[0]["head"] == "working-release/9.9.9"
+    # labels: common gets both; msal/broker just skip-coverage-check
+    assert set(by["common"]["labels"]) == {"skip-coverage-check", "Skip-Consumers-Check"}
+    assert by["msal"]["labels"] == ["skip-coverage-check"]
+    # RI analysis separates the human conflict (changelog) from the build.gradle revert
+    ri = msal[1]["ri_analysis"]
+    assert ri["behind_target"] == 3 and ri["gradle_to_revert"] == ["msal/build.gradle"]
+    assert ri["human_conflicts"] == ["changelog"]
+
+
+def test_integ_prs_in_progress_when_branch_missing():
+    """A missing required branch → InProgress (waiting on the orchestrator), not a crash."""
+    from steps.lib import mockctx
+    from steps.finalize import integ_prs as S
+    from tools import prs as P
+    restore = _patch_pr_reads(P, exists=False)
+    st = ReleaseState(release_id="2026-08")
+    try:
+        with mockctx.active({"versions": {"msal": "8.4.2"}, "repos": ["msal"], "pbi": "skip"}):
+            out = S.build(st)
+    finally:
+        restore()
+    assert out.kind == "in_progress"
+
+
+def test_integ_prs_blocked_without_versions():
+    """No versions resolved (and az blocked) → Blocked, no network crash."""
+    from steps.lib import mockctx
+    from steps.finalize import integ_prs as S
+    st = ReleaseState(release_id="2026-08")
+    with mockctx.active({"repos": ["msal"]}):
+        out = S.build(st)
+    assert out.kind == "blocked"
+
+
+def test_discover_versions_from_orchestrator_tags():
+    """pipelines.discover_versions maps the orchestrator run's Next*Version tags."""
+    from tools import pipelines as P
+    o = P.find_orchestrator_run
+    P.find_orchestrator_run = lambda *a, **k: (True, {"id": 9, "tags": [
+        "AuthenticatorBranch=release-2026-08-13", "NextCommonVersion=24.6.0",
+        "NextMsalVersion=8.4.2", "NextBrokerVersion=20.1.0"]}, "")
+    try:
+        ok, v, _d = P.discover_versions("ORG", "PROJ", "2026-08")
+    finally:
+        P.find_orchestrator_run = o
+    assert ok and v == {"common": "24.6.0", "msal": "8.4.2", "broker": "20.1.0"}
+
+
+def _integ_release(d, mocks):
+    """Save a finalize/integ_prs release and point load_mocks at `mocks`; return (ns, restore)."""
+    import argparse
+    from orchestrator import cli_common as _C
+    st = ReleaseState(release_id="2026-08")
+    st.current_phase, st.current_step, st.status = "finalize", "integ_prs", "awaiting_action"
+    _C.save_state(st, d, "2026-08")
+    o = _mocks_mod.load_mocks
+    _mocks_mod.load_mocks = lambda *a, **k: {"finalize.integ_prs": dict(mocks)}
+    ns = argparse.Namespace(runs_root=d, release="2026-08", config=CONFIG, as_of=None,
+                            execute=False, repos=None, pbi=None, pbi_title=None)
+
+    def restore():
+        _mocks_mod.load_mocks = o
+    return ns, restore
+
+
+def test_create_integration_prs_dry_run_writes_nothing():
+    """The command's default (no --execute) prints the plan and performs NO writes."""
+    import tempfile
+    from orchestrator.commands import integ_prs_cmd as CMD
+    from tools import prs as P
+    restore_reads = _patch_pr_reads(P, exists=True, existing_pr=None)
+    wrote = {"n": 0}
+    o_create = P.gh_create_pr
+    P.gh_create_pr = lambda *a, **k: wrote.__setitem__("n", wrote["n"] + 1) or (True, "url", "")
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            ns, restore_mocks = _integ_release(d, {"versions": {"msal": "8.4.2"},
+                                                    "repos": ["msal"], "pbi": "skip"})
+            try:
+                rc = CMD.cmd_create_integration_prs(ns)
+            finally:
+                restore_mocks()
+    finally:
+        P.gh_create_pr = o_create
+        restore_reads()
+    assert rc == 0 and wrote["n"] == 0            # dry-run: nothing created
+
+
+def test_create_integration_prs_execute_opens_and_records():
+    """--execute opens the msal PRs (freeze + integration), does the RI edit, and records the step."""
+    import tempfile
+    from orchestrator.commands import integ_prs_cmd as CMD
+    from orchestrator import cli_common as _C
+    from tools import prs as P
+    restore_reads = _patch_pr_reads(P, exists=True, existing_pr=None,
+                                    behind=2, gradle=["msal/build.gradle"],
+                                    conflicts=["msal/build.gradle"])
+    created = []
+    saved = {"gh_create_pr": P.gh_create_pr, "prepare_ri_branch": P.prepare_ri_branch,
+             "create_pbi": P.create_pbi, "gh_ensure_labels": P.gh_ensure_labels}
+    P.gh_create_pr = lambda repo, h, b, t, body, labels=None, draft=False, timeout=120: (
+        created.append((h, b)) or (True, f"https://pr/{h}", ""))
+    P.prepare_ri_branch = lambda d, ri, tg, dry_run=True, timeout=240: (
+        True, {"behind": 2, "gradle_reverted": ["msal/build.gradle"], "human_conflicts": [],
+               "pushed": True, "action": "pushed"}, "")
+    P.create_pbi = lambda org, proj, title, area=None, iteration=None, timeout=90: (
+        True, 4242, "https://wi/4242", "")
+    P.gh_ensure_labels = lambda *a, **k: (True, "ok")
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            ns, restore_mocks = _integ_release(d, {"versions": {"msal": "8.4.2"},
+                                                   "repos": ["msal"]})  # pbi -> create
+            ns.execute = True
+            try:
+                rc = CMD.cmd_create_integration_prs(ns)
+                after = _C.load_state(d, "2026-08")
+            finally:
+                restore_mocks()
+    finally:
+        for k, v in saved.items():
+            setattr(P, k, v)
+        restore_reads()
+    assert rc == 0
+    assert ("working/release/8.4.2", "release/8.4.2") in created        # freeze opened
+    assert ("release-integration/8.4.2", "dev") in created              # integration opened
+    assert after.is_done("finalize", "integ_prs")                       # step recorded
+
+
+def test_create_integration_prs_holds_pr_on_human_conflict():
+    """When the RI edit reports a human conflict, that PR is NOT opened (held)."""
+    import tempfile
+    from orchestrator.commands import integ_prs_cmd as CMD
+    from tools import prs as P
+    restore_reads = _patch_pr_reads(P, exists=True, existing_pr=None,
+                                    behind=1, gradle=[], conflicts=["changelog"])
+    created = []
+    saved = {"gh_create_pr": P.gh_create_pr, "prepare_ri_branch": P.prepare_ri_branch,
+             "create_pbi": P.create_pbi}
+    P.gh_create_pr = lambda repo, h, b, t, body, labels=None, draft=False, timeout=120: (
+        created.append((h, b)) or (True, "url", ""))
+    P.prepare_ri_branch = lambda d, ri, tg, dry_run=True, timeout=240: (
+        True, {"behind": 1, "gradle_reverted": [], "human_conflicts": ["changelog"],
+               "pushed": False, "action": "held"}, "")
+    P.create_pbi = lambda *a, **k: (True, 1, "url", "")
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            ns, restore_mocks = _integ_release(d, {"versions": {"msal": "8.4.2"},
+                                                   "repos": ["msal"], "pbi": "skip"})
+            ns.execute = True
+            try:
+                rc = CMD.cmd_create_integration_prs(ns)
+            finally:
+                restore_mocks()
+    finally:
+        for k, v in saved.items():
+            setattr(P, k, v)
+        restore_reads()
+    # freeze PR opened, but the integration PR is HELD (not created) -> attention (rc 2)
+    assert ("working/release/8.4.2", "release/8.4.2") in created
+    assert ("release-integration/8.4.2", "dev") not in created
+    assert rc == 2
 
 
 if __name__ == "__main__":
