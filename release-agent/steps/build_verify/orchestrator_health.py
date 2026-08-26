@@ -89,8 +89,7 @@ def build(state):
     # gate was approved — surface it (out of the expected Phase-2 state), don't hard-fail.
     park = by_name.get(cfg["park_stage"])
     park_done = bool(park is not None and park.get("state") == "completed")
-    K.stash_orchestrator(state, bid, versions={k: v for k, v in versions.items() if v},
-                         parked=not park_done)
+    K.stash_orchestrator(state, bid, parked=not park_done)
     # Canonical release payload versions (lowercase keys) — the earliest authoritative point.
     # Later steps (e.g. release_announcement) read state.versions instead of re-discovering.
     state.record_versions({"common": versions.get("Common"), "msal": versions.get("Msal"),

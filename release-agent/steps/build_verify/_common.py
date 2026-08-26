@@ -61,14 +61,24 @@ def stash_checker(state, run_id, when=None):
     state.pipeline_runs = pr
 
 
-def stash_orchestrator(state, run_id, versions=None, parked=None):
-    """Record the (single) Release Orchestrator run + its RC versions and parked flag."""
+def stash_orchestrator(state, run_id, parked=None):
+    """Record the (single) Release Orchestrator run + its parked flag. Versions are NOT stored
+    here — state.versions is the single source of truth (populated by orchestrator_health)."""
     pr = _pipeline_runs(state)
     pr["orchestrator"] = {"run_id": str(run_id),
-                          "versions": versions or {},
                           "parked": parked,
                           "resolved_at": _now_iso()}
     state.pipeline_runs = pr
+
+
+# Map canonical state.versions (lowercase) to the RC report's {Common,Msal,Broker} display
+# shape. Authenticator is intentionally omitted — the RC report is SDK-only.
+_VMAP = {"common": "Common", "msal": "Msal", "broker": "Broker"}
+
+
+def _caps_versions(state) -> dict:
+    sv = getattr(state, "versions", None) or {}
+    return {cap: sv[low] for low, cap in _VMAP.items() if sv.get(low)}
 
 
 def latest_rc(state) -> dict:
@@ -135,7 +145,7 @@ def rc_report_model(state, timeout=120):
     # passed (a failed pre-gate stage blocks that step, so we never reach this with an
     # unhealthy orchestrator). The live path (release_report) derives it from stages.
     orchestrator = {"found": bool(o.get("run_id")), "healthy": True,
-                    "run_id": o.get("run_id"), "versions": o.get("versions") or {},
+                    "run_id": o.get("run_id"), "versions": _caps_versions(state),
                     "parked": o.get("parked")}
     mrwp = {}
     for slot, prov in (("ecs", "ECS"), ("local", "Local")):

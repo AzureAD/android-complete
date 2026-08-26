@@ -535,6 +535,15 @@ def format_versions(versions, fallback: str = "") -> str:
     return ", ".join(f"{k} {v[k]}" for k in _VERSION_KEYS if v.get(k)) or fallback
 
 
+def format_release_versions(versions, fallback: str = "") -> str:
+    """Format the canonical state.versions (LOWERCASE keys) as 'Common X, Msal Y, Broker Z'
+    (SDK-only — authenticator omitted). Mirror of format_versions for the source-of-truth store."""
+    v = versions or {}
+    return ", ".join(f"{lbl} {v[k]}"
+                     for k, lbl in (("common", "Common"), ("msal", "Msal"), ("broker", "Broker"))
+                     if v.get(k)) or fallback
+
+
 def classify_test_run(name):
     """Bucket a test-run/suite name into one of THREE categories:
       * '*_UnitTests'          → unit

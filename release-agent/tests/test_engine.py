@@ -2047,9 +2047,8 @@ def _seed_rc_pipeline(st, ecs_ui, local_ui, *, ecs_suites=None,
     consumes ({total,passed,failed})."""
     from steps.build_verify import _common as K
     K.stash_checker(st, "1678599", "2026-08-13T06:00")
-    K.stash_orchestrator(st, "1678611",
-                         versions={"Common": "24.6.0", "Msal": "8.4.2", "Broker": "16.5.0"},
-                         parked=True)
+    K.stash_orchestrator(st, "1678611", parked=True)
+    st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"})
 
     def snap(run_id, ui, suites):
         return {"run_id": run_id, "complete": True, "ran": 23, "total": 23,
@@ -2167,9 +2166,8 @@ def test_build_verify_rc_report_emails_owner():
                       owner_email="dev@microsoft.com", owner_name="Dev")
     # Seed the RC snapshot the verify steps would have stored (full categories + a suite).
     K.stash_checker(st, "1678599", "2026-08-13T06:00")
-    K.stash_orchestrator(st, "1678611",
-                         versions={"Common": "24.6.0", "Msal": "8.4.2", "Broker": "16.5.0"},
-                         parked=True)
+    K.stash_orchestrator(st, "1678611", parked=True)
+    st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"})
     K.stash_mrwp(st, "ECS", {
         "run_id": "1678863", "complete": True, "ran": 23, "total": 23,
         "failed_stages": ["UI Automation"], "yellow_stages": [], "never_ran": [],
@@ -2692,7 +2690,7 @@ def test_build_verify_persists_pipeline_run_ids():
     pr = st.pipeline_runs
     assert pr["checker"]["run_id"] == "1678599"
     assert pr["orchestrator"]["run_id"] == "1678611"
-    assert pr["orchestrator"]["versions"].get("Broker") == "1.0.0"
+    assert st.versions.get("broker") == "1.0.0"          # versions now live in state.versions
     rc = pr["rcs"][-1]
     assert rc["rc"] == 1 and rc.get("resolved_at")
     assert rc["ecs"]["run_id"] == "900001" and rc["local"]["run_id"] == "900002"
@@ -5170,6 +5168,29 @@ def _patch_pr_reads(P, exists=True, existing_pr=None, behind=0, gradle=None, con
     return restore
 
 
+def test_integ_prs_reads_versions_from_state():
+    """integ_prs uses state.versions as the source of truth (no versions mock, no re-discovery),
+    and derives authenticator branches from its stored release branch."""
+    from steps.lib import mockctx
+    from steps.finalize import integ_prs as S
+    from tools import prs as P
+    restore = _patch_pr_reads(P, exists=True, existing_pr=None, behind=0, gradle=[], conflicts=[])
+    st = ReleaseState(release_id="2026-08")
+    st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0",
+                        "authenticator": "release/2026/08/22"})
+    try:
+        with mockctx.active({"pbi": "skip"}):        # NO versions mock -> must come from state
+            p = S.plan(st)
+    finally:
+        restore()
+    by = {r["key"]: r for r in p["repos"]}
+    assert by["msal"]["prs"][1]["head"] == "release-integration/8.4.2"
+    auth = by["authenticator"]["prs"]
+    assert auth[0]["head"] == "working-release/2026/08/22"        # WR token from the release branch
+    assert auth[0]["base"] == "release/2026/08/22"                # R is the stored branch
+    assert auth[1]["head"] == "release-integration/2026/08/22" and auth[1]["base"] == "working"
+
+
 def test_integ_prs_plan_computes_8_prs_offline():
     """plan() computes 2 PRs for each of the 4 repos with the right head/base/labels and
     an RI-edit analysis for the integration PRs — all offline."""
@@ -5363,6 +5384,22 @@ def test_orchestrator_health_populates_state_versions():
         OH.build(st)
     assert st.versions == {"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0",
                            "authenticator": "release/2026/08/22"}
+
+
+def test_status_render_shows_versions_from_state():
+    """The pipeline-runs status line reads SDK versions from state.versions (not the removed
+    pipeline_runs.orchestrator.versions), and omits the authenticator branch."""
+    from dataclasses import asdict
+    from orchestrator import render
+    from steps.build_verify import _common as K
+    st = ReleaseState(release_id="2026-08")
+    K.stash_orchestrator(st, "1678611", parked=True)
+    st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0",
+                        "authenticator": "release/2026/08/22"})
+    line = render._pipelines_line(asdict(st))
+    assert "orchestrator 1678611" in line
+    assert "Common 24.6.0" in line and "Msal 8.4.2" in line and "Broker 16.5.0" in line
+    assert "2026/08/22" not in line          # SDK-only display
 
 
 def test_release_state_records_versions_roundtrip():

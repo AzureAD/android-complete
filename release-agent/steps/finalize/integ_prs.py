@@ -23,7 +23,7 @@ Gating: if the branches aren't all present yet (orchestrator still finishing the
 Remove-RC-Tags stage), the step reports in-progress and is re-checked later.
 
 Mock knobs (mocks.local.yaml / tests):
-  versions : dict repo->version, e.g. {msal: "8.4.2"} — skip reading orchestrator vars.
+  versions : dict repo->version, e.g. {msal: "8.4.2"} — override state.versions for testing.
   branches : dict repo->{wr,r,ri,target} — override computed branch names (test on fakes).
   repos    : list of repo keys to include (default all) — e.g. ["msal"].
   pbi      : PBI work-item id to reference (skip creating one); "skip" = omit AB# line.
@@ -79,7 +79,7 @@ CONFIG = {
 REPO_ORDER = ["common", "msal", "broker", "authenticator"]
 
 MOCKABLE = {
-    "versions": {"kind": "input", "desc": "dict repo->version (skip reading orchestrator vars)."},
+    "versions": {"kind": "input", "desc": "dict repo->version (override state.versions for testing)."},
     "branches": {"kind": "input", "desc": "dict repo->{wr,r,ri,target} to override branch names."},
     "repos": {"kind": "input", "desc": "list of repo keys to include (default all)."},
     "pbi": {"kind": "input", "desc": "PBI id to reference (skip create); 'skip' = no AB# line."},
@@ -96,12 +96,15 @@ def _selected_repos():
 
 
 def _versions(state):
-    """repo_key -> version string. Mock-first; otherwise read the orchestrator run's
-    Next{Common,Msal,Broker}Version tags for this release month. Authenticator is not
-    tagged there, so it stays unresolved unless supplied via the `versions` mock."""
+    """repo_key -> version. SOURCE OF TRUTH is state.versions (populated at Phase 2 by
+    build_verify.orchestrator_health). The `versions` mock overrides for testing;
+    discover_versions is only a last-resort fallback if state has none yet (it shouldn't,
+    since integ_prs runs in Phase 4, well after Phase 2)."""
     v = mock_input("versions", MISSING)
     if v is not MISSING and v:
         return dict(v)
+    if getattr(state, "versions", None):
+        return {k: val for k, val in state.versions.items() if val}
     try:
         ok, versions, _detail = PL.discover_versions(
             PL.ENGINEERING_ORG, PL.ENGINEERING_PROJECT, getattr(state, "release_id", ""))
@@ -111,15 +114,19 @@ def _versions(state):
 
 
 def _branches(repo_key, cfg, version):
-    """Resolve the {wr, r, ri, target} branch names for a repo, honoring the
-    `branches` mock override (so a tester can point at fake branches)."""
+    """Resolve the {wr, r, ri, target} branch names for a repo, honoring the `branches` mock
+    override. For authenticator, state stores its release BRANCH (release/YYYY/MM/DD) rather
+    than a semver, so strip the 'release/' prefix to get the branch token."""
     ov = (mock_input("branches", MISSING) or {})
     ov = ov.get(repo_key, {}) if isinstance(ov, dict) else {}
     wr_prefix = cfg.get("wr_prefix", WORKING_PREFIX)
+    token = version
+    if repo_key == "authenticator" and version and str(version).startswith(RELEASE_PREFIX):
+        token = str(version)[len(RELEASE_PREFIX):]     # release/2026/08/22 -> 2026/08/22
     return {
-        "wr": ov.get("wr", f"{wr_prefix}{version}"),
-        "r": ov.get("r", f"{RELEASE_PREFIX}{version}"),
-        "ri": ov.get("ri", f"{INTEG_PREFIX}{version}"),
+        "wr": ov.get("wr", f"{wr_prefix}{token}"),
+        "r": ov.get("r", f"{RELEASE_PREFIX}{token}"),
+        "ri": ov.get("ri", f"{INTEG_PREFIX}{token}"),
         "target": ov.get("target", cfg["target"]),
     }
 

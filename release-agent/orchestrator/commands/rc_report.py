@@ -39,9 +39,12 @@ def _persist(st, model, args):
             K.stash_checker(st, ch["run_id"], ch.get("when"))
         o = model.get("orchestrator") or {}
         if o.get("run_id"):
-            K.stash_orchestrator(st, o["run_id"],
-                                 versions={k: v for k, v in (o.get("versions") or {}).items() if v},
-                                 parked=o.get("parked"))
+            K.stash_orchestrator(st, o["run_id"], parked=o.get("parked"))
+            # Model versions are capitalized {Common,Msal,Broker}; persist to the canonical
+            # (lowercase) state.versions source of truth.
+            mv = o.get("versions") or {}
+            st.record_versions({"common": mv.get("Common"), "msal": mv.get("Msal"),
+                                "broker": mv.get("Broker")})
         mr = model.get("mrwp") or {}
         for slot in ("ECS", "Local"):
             m = mr.get(slot) or {}

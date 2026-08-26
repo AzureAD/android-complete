@@ -248,7 +248,7 @@ def _pipelines_line(r: dict) -> str:
     """Compact one-line summary of the Phase-2 release-pipeline runs recorded on state
     (checker → orchestrator → the LATEST RC's two MRWP runs). Empty string when none
     resolved yet. Reads the nested pipeline_runs schema; no live az call in the render path."""
-    from tools.pipelines import format_versions
+    from tools.pipelines import format_release_versions
     pr = r.get("pipeline_runs") or {}
     parts = []
     ch = pr.get("checker") or {}
@@ -256,7 +256,7 @@ def _pipelines_line(r: dict) -> str:
         parts.append(f"checker {ch['run_id']}")
     o = pr.get("orchestrator") or {}
     if o.get("run_id"):
-        vstr = format_versions(o.get("versions"))
+        vstr = format_release_versions(r.get("versions"))
         parts.append(f"orchestrator {o['run_id']}" + (f" ({vstr})" if vstr else ""))
     rcs = pr.get("rcs") or []
     rc = rcs[-1] if rcs else {}
