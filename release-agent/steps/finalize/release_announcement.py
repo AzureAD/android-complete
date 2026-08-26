@@ -63,8 +63,8 @@ MOCKABLE = {
                   "desc": "list of {group, members:[{name,email}]} to override the registry (tests)."},
     "cc_mode": {"kind": "input",
                 "desc": "'mention' | 'self' (ping only self_email) | 'off' (plain text). "
-                        "Defaults to 'mention', but a post_to redirect forces self/off (never "
-                        "pings real members on a test)."},
+                        "Defaults to 'mention'; a post_to redirect defaults to 'off' so a test "
+                        "shows the full real cc as plain text (no pings)."},
     "self_email": {"kind": "input",
                    "desc": "the email/UPN to use as the single self-mention when cc_mode='self'."},
 }
@@ -137,14 +137,14 @@ def _load_members():
 
 
 def _effective_cc_mode(state):
-    """Resolve the cc mode. Explicit `cc_mode` wins. Otherwise, a TEST redirect (`post_to`)
-    forces a non-pinging mode so a test post NEVER @-mentions the real members: 'self' when a
-    self_email is given, else 'off'. With no redirect, default 'mention'."""
+    """Resolve the cc mode. Explicit `cc_mode` wins. Otherwise a TEST redirect (`post_to`)
+    defaults to 'off' — the FULL real cc (all teams + members) rendered as PLAIN TEXT, so a
+    test post mirrors reality without @-mentioning anyone. With no redirect, default 'mention'."""
     m = mock_input("cc_mode", MISSING)
     if m is not MISSING and m:
         return str(m).lower()
-    if mock_input("post_to", MISSING) is not MISSING:       # test/redirect -> don't ping people
-        return "self" if mock_input("self_email", MISSING) not in (MISSING, None, "") else "off"
+    if mock_input("post_to", MISSING) is not MISSING:       # test/redirect -> plain text, no pings
+        return "off"
     return "mention"
 
 

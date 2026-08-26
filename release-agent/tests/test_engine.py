@@ -5508,25 +5508,28 @@ def test_release_announcement_cc_mode_self_pings_only_you():
     assert mentions == [{"displayName": "pedroro", "id": "pedroro@microsoft.com", "type": "user"}]
 
 
-def test_release_announcement_post_to_suppresses_real_mentions():
-    """A test redirect (post_to) must NEVER @-mention the real registry members. With a
-    self_email it collapses to a single self-ping; without, it goes plain-text (off)."""
-    import json as _json
+def test_release_announcement_post_to_renders_plain_text_real_cc():
+    """A test redirect (post_to) shows the FULL real cc grouped as PLAIN TEXT — real member
+    names present, but NO mentions (nobody pinged), mirroring reality closely."""
     from steps.lib import mockctx
     from steps.finalize import release_announcement as RA
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
     st.record_versions({"common": "24.6.0"})
-    # redirect + self_email -> only you
-    with mockctx.active({"post_to": {"teamId": "T", "channelId": "19:test@thread.tacv2"},
-                         "self_email": "pedroro@microsoft.com"}):
-        out = RA.build(st)
-    mentions = _json.loads(out.payload["mentions"])
-    assert mentions == [{"displayName": "pedroro", "id": "pedroro@microsoft.com", "type": "user"}]
-    # redirect WITHOUT self_email -> plain text, no mentions of anyone
     with mockctx.active({"post_to": {"teamId": "T", "channelId": "19:test@thread.tacv2"}}):
+        out = RA.build(st)
+    content = out.payload["content"]
+    assert "mentions" not in out.payload                 # nobody @-pinged
+    # full real cc present, grouped, as plain text (no @)
+    assert "<b>CP/Intune</b>: Bing Xia" in content
+    assert "<b>Native Auth</b>: Yu Xin" in content
+    assert "@Bing Xia" not in content
+    # explicit cc_mode:self still overrides a redirect
+    with mockctx.active({"post_to": {"teamId": "T", "channelId": "19:test@thread.tacv2"},
+                         "cc_mode": "self", "self_email": "pedroro@microsoft.com"}):
         out2 = RA.build(st)
-    assert "mentions" not in out2.payload
-    assert "bingxi" not in out2.payload["content"]      # no real member @-pinged
+    import json as _json
+    assert _json.loads(out2.payload["mentions"]) == \
+        [{"displayName": "pedroro", "id": "pedroro@microsoft.com", "type": "user"}]
 
 
 def test_release_announcement_cc_mode_off_is_plain_text():
