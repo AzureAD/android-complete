@@ -95,10 +95,8 @@ preflight.cg:
 # finalize.gate_watch:  🚦 gate — NOT mockable
 # finalize.integ_prs:   { outcome: done }   # agent
 # finalize.verify_pub:  { outcome: done }   # agent
-# finalize.final_comms: { outcome: done }   # agent
-# finalize.nonrc_pin:   { outcome: done }   # agent
-# finalize.tag:         { outcome: done }   # agent
-# finalize.backmerge:   { outcome: done }   # agent
+# finalize.release_announcement: { outcome: done }   # agent
+# finalize.tag_authenticator: { outcome: done }   # agent
 
 # ---- Phase 5 · rollout_start ----
 # rollout_start.notice:        { outcome: done }   # agent
