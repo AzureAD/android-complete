@@ -84,6 +84,8 @@ _SAFE_AGENTS = {
     "bug_bash.bugbash_updates": {"outcome": "done", "note": "first bug-bash update posted (test)"},
     "bug_bash.native_auth_signoff": {"outcome": "done", "note": "native auth sign-off recorded (test)"},
     "bug_bash.did_signoff": {"outcome": "done", "note": "DID sign-off recorded (test)"},
+    # Phase-4 finalize scout post — short-circuit so flow tests never hit Teams.
+    "finalize.release_announcement": {"outcome": "done", "note": "release announced (test)"},
     # Phase-4 finalize integ_prs — real agent (gh/az/git). Short-circuit so flow tests
     # never hit the network; dedicated integ_prs tests exercise its real logic offline.
     "finalize.integ_prs": {"outcome": "done", "note": "integration PRs opened (test)"},
@@ -5448,6 +5450,95 @@ def test_create_integration_prs_holds_pr_on_human_conflict():
     assert ("working/release/8.4.2", "release/8.4.2") in created
     assert ("release-integration/8.4.2", "dev") not in created
     assert rc == 2
+
+
+def test_release_announcement_builds_channel_post_from_state_versions():
+    """build() returns a needs_skill microsoft_teams channel post with the SDK table from
+    state.versions and the correct title/target."""
+    from steps.lib import mockctx
+    from steps.finalize import release_announcement as RA
+    from orchestrator.outcomes import as_dict
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
+    st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0",
+                        "authenticator": "release/2026/08/22"})
+    with mockctx.active({}):
+        out = as_dict(RA.build(st))
+    assert out["kind"] == "needs_skill"
+    assert out["tool"] == "microsoft_teams-SendMessageToChannel"
+    p = out["payload"]
+    assert p["teamId"] == RA.CONFIG["team_id"] and p["channelId"] == RA.CONFIG["channel_id"]
+    assert p["subject"] == "Auth Client Android SDKs August 2026 Release"
+    assert p["contentType"] == "html"
+    # table shows the 3 SDKs with their versions; authenticator branch is NOT in the table
+    for v in ("24.6.0", "8.4.2", "16.5.0"):
+        assert v in p["content"]
+    assert "2026/08/22" not in p["content"]
+    assert out["outbound"] is True
+
+
+def test_release_announcement_cc_mentions_real_vs_plain():
+    """cc entries WITH an id become real @mentions (mentions array + @Name in content);
+    entries without an id stay plain text (never mis-tagged)."""
+    import json as _json
+    from steps.lib import mockctx
+    from steps.finalize import release_announcement as RA
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
+    st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"})
+    cc = [{"displayName": "OneAuth", "id": "team-guid-1", "type": "team"},
+          {"displayName": "Native Auth", "id": None, "type": "team"}]
+    with mockctx.active({"cc_mentions": cc}):
+        out = RA.build(st)
+    content = out.payload["content"]
+    assert "@OneAuth" in content            # tagged
+    assert "@Native Auth" not in content    # plain text (no id)
+    assert "Native Auth" in content
+    mentions = _json.loads(out.payload["mentions"])
+    assert mentions == [{"displayName": "OneAuth", "id": "team-guid-1", "type": "team"}]
+
+
+def test_release_announcement_no_mentions_when_all_plain():
+    """With no ids configured, the payload carries NO mentions key (plain-text cc only)."""
+    from steps.lib import mockctx
+    from steps.finalize import release_announcement as RA
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
+    st.record_versions({"common": "24.6.0"})
+    with mockctx.active({}):                 # CONFIG default cc has id=None for all four
+        out = RA.build(st)
+    assert "mentions" not in out.payload
+    assert "cc: CP/Intune, LTW, OneAuth, Native Auth" in out.payload["content"]
+
+
+def test_release_announcement_post_to_redirects_target():
+    """The `post_to` mock redirects to a test channel while keeping the post real."""
+    from steps.lib import mockctx
+    from steps.finalize import release_announcement as RA
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
+    st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"})
+    with mockctx.active({"post_to": {"teamId": "T-test", "channelId": "19:test@thread.tacv2"}}):
+        out = RA.build(st)
+    assert out.payload["teamId"] == "T-test"
+    assert out.payload["channelId"] == "19:test@thread.tacv2"
+
+
+def test_release_announcement_blocks_without_versions():
+    """No SDK versions anywhere -> Blocked (never posts an empty table)."""
+    from steps.lib import mockctx
+    from steps.finalize import release_announcement as RA
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-26")   # no versions recorded
+    with mockctx.active({}):
+        out = RA.build(st)
+    assert out.kind == "blocked"
+
+
+def test_release_announcement_month_year_from_release_id_without_ccd():
+    """Title month/year falls back to release_id when no CCD is set."""
+    from steps.lib import mockctx
+    from steps.finalize import release_announcement as RA
+    st = ReleaseState(release_id="2026-08")                     # no ccd
+    st.record_versions({"common": "1.0.0"})
+    with mockctx.active({}):
+        out = RA.build(st)
+    assert out.payload["subject"] == "Auth Client Android SDKs August 2026 Release"
 
 
 if __name__ == "__main__":

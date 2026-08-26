@@ -1017,3 +1017,29 @@ finalize.integ_prs:
     - q: "Will it duplicate a PR I already opened?"
       a: "No. It looks for an open PR with the same head->base first and reuses it (just ensuring labels)."
 
+finalize.release_announcement:
+  summary: "Post the release-complete announcement to the 'General' Teams channel."
+  what: >
+    Once the release has published, announce it in the Android DevX <-> partner release-sync
+    'General' channel: a titled post ('Auth Client Android SDKs <Month Year> Release') with a
+    small SDK version table (Common / MSAL / Broker) and a cc line. A root channel POST (not a
+    reply), so partner teams see the completed build numbers in one place.
+  who: >
+    Scout composes and posts it (a scout step); the release owner owns the content/recipients.
+    Versions come from state.versions (the single source of truth populated at Phase 2) — the
+    step never re-discovers them.
+  where:
+    - "Team be33b3e7-c501-4225-9413-3b88046f3eb3, channel 'General' 19:715820c336d3454bbd75ef0bad68e460@thread.tacv2"
+  how: >
+    Runs via step-action -> microsoft_teams-SendMessageToChannel (a ROOT channel post needs the
+    microsoft_teams MCP; WorkIQ only does channel replies). To test, redirect with the `post_to`
+    mock knob ({teamId, channelId}) to a test channel — keeps the post real, points it elsewhere.
+    The `versions` mock overrides the shown SDK versions.
+  faqs:
+    - q: "Where do the versions come from?"
+      a: "state.versions — populated at Phase 2 by build_verify.orchestrator_health from the orchestrator run tags. The announcement shows Common/MSAL/Broker (the authenticator branch is stored too but not shown in this SDK table)."
+    - q: "Why not WorkIQ like the other Teams messages?"
+      a: "WorkIQ can only REPLY to an existing channel message; a brand-new channel post requires the microsoft_teams MCP (SendMessageToChannel). The 1:1/group chat reminders use WorkIQ; this channel announcement uses microsoft_teams."
+    - q: "Does the cc line @-tag CP/Intune, LTW, OneAuth, Native Auth?"
+      a: "Not yet. Those are Teams TAGS. The step carries a per-entry cc_mentions list ({displayName,id,type:tag}); an entry renders as a real @mention only once its tag id is filled in, otherwise it's plain text (so it never mis-tags). Blocked on two things: resolving the tag ids (Graph GET /teams/{id}/tags needs TeamworkTag.Read — the current token is 403) and confirming the microsoft_teams tool passes type:'tag' through to Graph (its documented mention types are user|team|channel|app)."
+

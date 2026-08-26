@@ -95,7 +95,7 @@ preflight.cg:
 # finalize.gate_watch:  🚦 gate — NOT mockable
 # finalize.integ_prs:   { outcome: done }   # agent
 # finalize.verify_pub:  { outcome: done }   # agent
-# finalize.release_announcement: { outcome: done }   # agent
+# finalize.release_announcement: 🛰️ scout — { send_to: me }  (post_to override for a test channel)
 # finalize.tag_authenticator: { outcome: done }   # agent
 
 # ---- Phase 5 · rollout_start ----
