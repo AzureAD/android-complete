@@ -86,6 +86,8 @@ _SAFE_AGENTS = {
     "bug_bash.did_signoff": {"outcome": "done", "note": "DID sign-off recorded (test)"},
     # Phase-4 finalize scout post — short-circuit so flow tests never hit Teams.
     "finalize.release_announcement": {"outcome": "done", "note": "release announced (test)"},
+    # Phase-4 verify_pub — real agent (Maven Central HEADs). Short-circuit for flow tests.
+    "finalize.verify_pub": {"outcome": "done", "note": "maven central verified (test)"},
     # Phase-4 finalize integ_prs — real agent (gh/az/git). Short-circuit so flow tests
     # never hit the network; dedicated integ_prs tests exercise its real logic offline.
     "finalize.integ_prs": {"outcome": "done", "note": "integration PRs opened (test)"},
@@ -5588,6 +5590,86 @@ def test_release_announcement_month_year_from_release_id_without_ccd():
     with mockctx.active({}):
         out = RA.build(st)
     assert out.payload["subject"] == "Auth Client Android SDKs August 2026 Release"
+
+
+def test_verify_pub_all_published_done():
+    """All three artifacts present on Maven Central -> Done, with links."""
+    from steps.lib import mockctx
+    from steps.finalize import verify_pub as VP
+    st = ReleaseState(release_id="2026-08")
+    st.record_versions({"common": "24.6.0", "msal": "8.4.2"})
+    with mockctx.active({"results": {"common4j": "published", "common": "published", "msal": "published"}}):
+        out = VP.build(st)
+    assert out.kind == "done"
+    assert "24.6.0" in out.note and "8.4.2" in out.note
+    assert any("24.6.0" in (l.get("url") or "") for l in out.links)
+
+
+def test_verify_pub_missing_is_in_progress():
+    """A not-yet-published artifact -> InProgress (poll), never Blocked/failed."""
+    from steps.lib import mockctx
+    from steps.finalize import verify_pub as VP
+    st = ReleaseState(release_id="2026-08")
+    st.record_versions({"common": "24.6.0", "msal": "8.4.2"})
+    with mockctx.active({"results": {"common4j": "published", "common": "published", "msal": "missing"}}):
+        out = VP.build(st)
+    assert out.kind == "in_progress"
+    assert "MSAL 8.4.2" in out.note                # names the pending artifact
+    assert "Common 24.6.0" in out.note             # notes what's already published
+
+
+def test_verify_pub_network_error_blocks():
+    """A check that errors out -> Blocked (surface it; don't assume 'not published')."""
+    from steps.lib import mockctx
+    from steps.finalize import verify_pub as VP
+    st = ReleaseState(release_id="2026-08")
+    st.record_versions({"common": "24.6.0", "msal": "8.4.2"})
+    with mockctx.active({"results": {"common4j": "published", "common": "error", "msal": "published"}}):
+        out = VP.build(st)
+    assert out.kind == "blocked" and "Common 24.6.0" in out.reason
+
+
+def test_verify_pub_blocks_without_versions():
+    """No versions in state -> Blocked (nothing to verify)."""
+    from steps.lib import mockctx
+    from steps.finalize import verify_pub as VP
+    st = ReleaseState(release_id="2026-08")
+    with mockctx.active({}):
+        out = VP.build(st)
+    assert out.kind == "blocked"
+
+
+def test_verify_pub_common4j_uses_common_version():
+    """Common4j is checked at the COMMON version (not a separate one)."""
+    from steps.lib import mockctx
+    from steps.finalize import verify_pub as VP
+    from tools import maven as M
+    st = ReleaseState(release_id="2026-08")
+    st.record_versions({"common": "24.6.0", "msal": "8.4.2"})
+    seen = {}
+
+    def fake(key, version, timeout=25):
+        seen[key] = version
+        return (True, True, "ok")
+
+    o = M.is_published
+    M.is_published = fake
+    try:
+        with mockctx.active({}):
+            VP.build(st)
+    finally:
+        M.is_published = o
+    assert seen == {"common4j": "24.6.0", "common": "24.6.0", "msal": "8.4.2"}
+
+
+def test_maven_pom_url_shape():
+    """The .pom URL matches Maven Central's layout for each artifact."""
+    from tools import maven as M
+    assert M.pom_url("common", "24.6.0") == \
+        "https://repo1.maven.org/maven2/com/microsoft/identity/common/24.6.0/common-24.6.0.pom"
+    assert M.pom_url("msal", "8.4.2") == \
+        "https://repo1.maven.org/maven2/com/microsoft/identity/client/msal/8.4.2/msal-8.4.2.pom"
+    assert M.pom_url("common4j", "24.6.0").endswith("/common4j/24.6.0/common4j-24.6.0.pom")
 
 
 if __name__ == "__main__":

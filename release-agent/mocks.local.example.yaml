@@ -95,6 +95,7 @@ preflight.cg:
 # finalize.gate_watch:  🚦 gate — NOT mockable
 # finalize.integ_prs:   { outcome: done }   # agent
 # finalize.verify_pub:  { outcome: done }   # agent
+# finalize.verify_pub:  { results: {common4j: published, common: published, msal: published} }  # agent
 # finalize.release_announcement: 🛰️ scout — { post_to: {...}, cc_mode: self, self_email: <you> }
 # finalize.tag_authenticator: { outcome: done }   # agent
 
