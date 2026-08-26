@@ -983,6 +983,11 @@ finalize.integ_prs:
     dev (or 'working' for authenticator). For the integration PRs it also brings the RI branch up
     to date with the target and REVERTS build.gradle so the target stays dynamic (only version +
     changelog transfer); if a non-build.gradle conflict remains it HOLDS that PR for a human.
+  trigger: >
+    NOT merely 'gate_watch passed'. The step MONITORS the Release Orchestrator and only fires once
+    the 'Create PRs to Integrate Release Branches' stage has COMPLETED — the release-integration
+    branches don't exist until then. While that stage is still running it reports in-progress and
+    re-checks; if that stage FAILS it blocks (the RI branches were never created).
   who: >
     Scout does the work (an agent step). The release owner reviews the preview and triggers the
     write. One shared PBI is created and referenced (AB#<id>) in every PR body.

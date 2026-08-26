@@ -5212,11 +5212,35 @@ def test_integ_prs_in_progress_when_branch_missing():
     restore = _patch_pr_reads(P, exists=False)
     st = ReleaseState(release_id="2026-08")
     try:
-        with mockctx.active({"versions": {"msal": "8.4.2"}, "repos": ["msal"], "pbi": "skip"}):
+        with mockctx.active({"versions": {"msal": "8.4.2"}, "repos": ["msal"], "pbi": "skip",
+                             "stage": "ready"}):
             out = S.build(st)
     finally:
         restore()
     assert out.kind == "in_progress"
+
+
+def test_integ_prs_monitors_ir_stage():
+    """integ_prs gates on the orchestrator IR stage: not-done -> InProgress, failed -> Blocked,
+    done + branches present -> the NeedsSkill action."""
+    from steps.lib import mockctx
+    from steps.finalize import integ_prs as S
+    from tools import prs as P
+    st = ReleaseState(release_id="2026-08")
+    base = {"versions": {"msal": "8.4.2"}, "repos": ["msal"], "pbi": "skip"}
+    # stage still running -> wait
+    with mockctx.active({**base, "stage": "wait"}):
+        assert S.build(st).kind == "in_progress"
+    # stage failed -> blocked (RI branches never created)
+    with mockctx.active({**base, "stage": "failed"}):
+        assert S.build(st).kind == "blocked"
+    # stage ready + branches exist -> needs_skill (the action)
+    restore = _patch_pr_reads(P, exists=True, existing_pr=None, behind=0, gradle=[], conflicts=[])
+    try:
+        with mockctx.active({**base, "stage": "ready"}):
+            assert S.build(st).kind == "needs_skill"
+    finally:
+        restore()
 
 
 def test_integ_prs_blocked_without_versions():

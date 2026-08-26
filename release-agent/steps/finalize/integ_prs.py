@@ -44,6 +44,11 @@ RELEASE_PREFIX = "release/"
 WORKING_PREFIX = "working/release/"
 INTEG_PREFIX = "release-integration/"
 
+# The orchestrator stage that CREATES the release-integration branches. integ_prs must not
+# run before this stage completes — the RI branches (and thus the integration PRs) don't
+# exist until it does. This is the authoritative trigger, NOT merely gate_watch passing.
+IR_STAGE = "Create PRs to Integrate Release Branches"
+
 # The 4 release repos. `tool` selects the PR backend: 'gh' (github.com / GHE) or 'ado'.
 # `gh_repo` is what we pass to `gh --repo` (bare owner/repo = github.com; host/owner/repo = GHE).
 CONFIG = {
@@ -78,6 +83,8 @@ MOCKABLE = {
     "branches": {"kind": "input", "desc": "dict repo->{wr,r,ri,target} to override branch names."},
     "repos": {"kind": "input", "desc": "list of repo keys to include (default all)."},
     "pbi": {"kind": "input", "desc": "PBI id to reference (skip create); 'skip' = no AB# line."},
+    "stage": {"kind": "input", "desc": "inject the IR stage state: 'ready'|'wait'|'failed' "
+                                       "(skip the live orchestrator monitor)."},
 }
 
 
@@ -239,18 +246,60 @@ def plan(state):
 
 
 # --------------------------------------------------------------------------- outcome
+def _ir_stage_status(state):
+    """('ready'|'wait'|'failed'|'unknown', detail) — has the orchestrator's IR_STAGE completed?
+    The release-integration branches don't exist until it does, so integ_prs must monitor it
+    and only proceed on 'ready'. Mock-first via the `stage` knob; never raises."""
+    inj = mock_input("stage", MISSING)
+    if inj is not MISSING:
+        s = str(inj).lower()
+        if s in ("ready", "completed", "succeeded", "true"):
+            return ("ready", f"injected stage={inj}")
+        if s in ("failed", "canceled", "cancelled"):
+            return ("failed", f"injected stage={inj}")
+        return ("wait", f"injected stage={inj}")
+    try:
+        ok, st, detail = PL.orchestrator_stage_state(
+            PL.ENGINEERING_ORG, PL.ENGINEERING_PROJECT, getattr(state, "release_id", ""), IR_STAGE)
+    except Exception:  # noqa: BLE001 — never crash the engine on a network hiccup
+        return ("unknown", "could not read the orchestrator stage")
+    if not ok:
+        return ("unknown", detail)
+    if not st:
+        return ("wait", detail)                       # stage not present on the run yet
+    stt, res = st.get("state"), st.get("result")
+    if stt != "completed":
+        return ("wait", f"'{IR_STAGE}' is {stt or 'not started'}")
+    if res in ("succeeded", "succeededWithIssues"):
+        return ("ready", f"'{IR_STAGE}' completed ({res})")
+    return ("failed", f"'{IR_STAGE}' completed with result={res}")
+
+
 def build(state):
-    p = plan(state)
-    if not p["versions"]:
+    if not _versions(state):
         return Blocked(
             "integ_prs: no release versions resolved. Provide them via the `versions` mock "
             "(e.g. {msal: '8.4.2'}) for testing, or wait for orchestrator version discovery.")
+
+    # Gate on the orchestrator stage that creates the release-integration branches — NOT merely
+    # on gate_watch passing. Monitor it and only proceed once it has completed successfully.
+    status, detail = _ir_stage_status(state)
+    if status == "failed":
+        return Blocked(
+            f"integ_prs: the Release Orchestrator '{IR_STAGE}' stage FAILED ({detail}) — the "
+            "release-integration branches were not created. Investigate the orchestrator run "
+            "before opening integration PRs.")
+    if status != "ready":
+        return InProgress(
+            f"integ_prs: monitoring the Release Orchestrator — waiting for the '{IR_STAGE}' stage "
+            f"to complete before the release-integration branches exist ({detail}).",
+            poll_in_min=15)
+
+    p = plan(state)
     if not p["ready"]:
         return InProgress(
-            "integ_prs: waiting for the release branches to exist before opening PRs — "
-            f"missing: {', '.join(p['missing'])}. The orchestrator creates these during the "
-            "Remove-RC-Tags stage; re-checking on the next poll.",
-            poll_in_min=15)
+            "integ_prs: the orchestrator IR stage is done but not all branches are visible yet — "
+            f"missing: {', '.join(p['missing'])}. Re-checking on the next poll.", poll_in_min=15)
 
     n_new = sum(1 for r in p["repos"] for pr in r["prs"] if not pr.get("existing"))
     n_reuse = sum(1 for r in p["repos"] for pr in r["prs"] if pr.get("existing"))
