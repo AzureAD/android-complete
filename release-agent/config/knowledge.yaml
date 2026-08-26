@@ -1041,5 +1041,5 @@ finalize.release_announcement:
     - q: "Why not WorkIQ like the other Teams messages?"
       a: "WorkIQ can only REPLY to an existing channel message; a brand-new channel post requires the microsoft_teams MCP (SendMessageToChannel). The 1:1/group chat reminders use WorkIQ; this channel announcement uses microsoft_teams."
     - q: "Does the cc line @-tag CP/Intune, LTW, OneAuth, Native Auth?"
-      a: "Not yet. Those are Teams TAGS. The step carries a per-entry cc_mentions list ({displayName,id,type:tag}); an entry renders as a real @mention only once its tag id is filled in, otherwise it's plain text (so it never mis-tags). Blocked on two things: resolving the tag ids (Graph GET /teams/{id}/tags needs TeamworkTag.Read — the current token is 403) and confirming the microsoft_teams tool passes type:'tag' through to Graph (its documented mention types are user|team|channel|app)."
+      a: "Those are Teams TAGS, and the microsoft_teams tool can't @-mention a tag (it maps the id to an unknown user). So instead the step @-mentions the tags' MEMBERS as individual users — maintained by hand in config/announcement_cc.yaml ({name,email} per group). Mock knobs: cc_mode 'mention' (default), 'self' (ping only you via self_email — safe test), or 'off' (plain text); cc_members overrides the registry."
 

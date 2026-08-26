@@ -5476,36 +5476,82 @@ def test_release_announcement_builds_channel_post_from_state_versions():
     assert out["outbound"] is True
 
 
-def test_release_announcement_cc_mentions_real_vs_plain():
-    """cc entries WITH an id become real @mentions (mentions array + @Name in content);
-    entries without an id stay plain text (never mis-tagged)."""
+def test_release_announcement_cc_grouped_by_team():
+    """cc renders one line PER TEAM (bold group label + member @mentions), and the mentions
+    array covers every member across groups."""
     import json as _json
     from steps.lib import mockctx
     from steps.finalize import release_announcement as RA
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
     st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"})
-    cc = [{"displayName": "OneAuth", "id": "team-guid-1", "type": "team"},
-          {"displayName": "Native Auth", "id": None, "type": "team"}]
-    with mockctx.active({"cc_mentions": cc}):
+    groups = [{"group": "OneAuth", "members": [{"name": "Nick Bopp", "email": "nichbop@microsoft.com"}]},
+              {"group": "Native Auth", "members": [{"name": "Yu Xin", "email": "yuxin@microsoft.com"}]}]
+    with mockctx.active({"cc_groups": groups}):
         out = RA.build(st)
     content = out.payload["content"]
-    assert "@OneAuth" in content            # tagged
-    assert "@Native Auth" not in content    # plain text (no id)
-    assert "Native Auth" in content
+    assert "<b>OneAuth</b>: @Nick Bopp" in content
+    assert "<b>Native Auth</b>: @Yu Xin" in content
     mentions = _json.loads(out.payload["mentions"])
-    assert mentions == [{"displayName": "OneAuth", "id": "team-guid-1", "type": "team"}]
+    assert {m["id"] for m in mentions} == {"nichbop@microsoft.com", "yuxin@microsoft.com"}
 
 
-def test_release_announcement_no_mentions_when_all_plain():
-    """With no ids configured, the payload carries NO mentions key (plain-text cc only)."""
+def test_release_announcement_cc_mode_self_pings_only_you():
+    """cc_mode='self' mentions ONLY self_email (safe test — never pings the real members)."""
+    import json as _json
     from steps.lib import mockctx
     from steps.finalize import release_announcement as RA
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
     st.record_versions({"common": "24.6.0"})
-    with mockctx.active({}):                 # CONFIG default cc has id=None for all four
+    with mockctx.active({"cc_mode": "self", "self_email": "pedroro@microsoft.com"}):
+        out = RA.build(st)
+    mentions = _json.loads(out.payload["mentions"])
+    assert mentions == [{"displayName": "pedroro", "id": "pedroro@microsoft.com", "type": "user"}]
+
+
+def test_release_announcement_post_to_suppresses_real_mentions():
+    """A test redirect (post_to) must NEVER @-mention the real registry members. With a
+    self_email it collapses to a single self-ping; without, it goes plain-text (off)."""
+    import json as _json
+    from steps.lib import mockctx
+    from steps.finalize import release_announcement as RA
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
+    st.record_versions({"common": "24.6.0"})
+    # redirect + self_email -> only you
+    with mockctx.active({"post_to": {"teamId": "T", "channelId": "19:test@thread.tacv2"},
+                         "self_email": "pedroro@microsoft.com"}):
+        out = RA.build(st)
+    mentions = _json.loads(out.payload["mentions"])
+    assert mentions == [{"displayName": "pedroro", "id": "pedroro@microsoft.com", "type": "user"}]
+    # redirect WITHOUT self_email -> plain text, no mentions of anyone
+    with mockctx.active({"post_to": {"teamId": "T", "channelId": "19:test@thread.tacv2"}}):
+        out2 = RA.build(st)
+    assert "mentions" not in out2.payload
+    assert "bingxi" not in out2.payload["content"]      # no real member @-pinged
+
+
+def test_release_announcement_cc_mode_off_is_plain_text():
+    """cc_mode='off' lists member names grouped as plain text with NO mentions key."""
+    from steps.lib import mockctx
+    from steps.finalize import release_announcement as RA
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
+    st.record_versions({"common": "24.6.0"})
+    groups = [{"group": "OneAuth", "members": [{"name": "Nick Bopp", "email": "nichbop@microsoft.com"}]}]
+    with mockctx.active({"cc_mode": "off", "cc_groups": groups}):
         out = RA.build(st)
     assert "mentions" not in out.payload
-    assert "cc: CP/Intune, LTW, OneAuth, Native Auth" in out.payload["content"]
+    assert "<b>OneAuth</b>: Nick Bopp" in out.payload["content"]
+    assert "@Nick Bopp" not in out.payload["content"]
+
+
+def test_release_announcement_cc_registry_loads_4_groups_20_members():
+    """The real config/announcement_cc.yaml resolves to 4 groups / 20 maintained members."""
+    from steps.finalize import release_announcement as RA
+    groups = RA._load_groups()
+    assert [g for g, _ in groups] == ["CP/Intune", "LTW", "OneAuth", "Native Auth"]
+    assert sum(len(m) for _g, m in groups) == 20
+    assert len(RA._load_members()) == 20
+    emails = {m["email"] for _g, ms in groups for m in ms}
+    assert "bingxi@microsoft.com" in emails and "yuxin@microsoft.com" in emails
 
 
 def test_release_announcement_post_to_redirects_target():

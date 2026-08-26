@@ -14,10 +14,16 @@ which the skill executes, then records the step.
 
 Mock knobs (mocks.local.yaml / tests):
   post_to  : {teamId, channelId} override — post to a TEST channel instead of General
-             (keeps the post real, points it elsewhere). Alias "self" is not valid for a
-             channel (channels have no self); provide explicit ids.
-  versions : dict override for the SDK versions shown (e.g. {common:'24.6.0', msal:'8.4.2',
-             broker:'16.5.0'}) — otherwise read from state.versions.
+             (keeps the post real, points it elsewhere).
+  versions : dict override for the SDK versions shown (else read from state.versions).
+  cc_members : list of {name,email} to cc instead of the registry (for tests).
+  cc_mode  : 'mention' (default, @-mention every registry member) | 'self' (mention only
+             self_email once — pings just you, for a safe test) | 'off' (plain-text names).
+  self_email : the email/UPN to self-mention when cc_mode='self'.
+
+The cc groups (CP/Intune, LTW, OneAuth, Native Auth) are Teams TAGS the microsoft_teams tool
+cannot @-mention, so their MEMBERS are maintained in config/announcement_cc.yaml and mentioned
+as individual users instead.
 """
 from __future__ import annotations
 
@@ -35,26 +41,32 @@ CONFIG = {
     "channel_name": "General",
     # SDKs shown in the announcement table, in order: (state.versions key, display label).
     "sdks": [("common", "Common"), ("msal", "MSAL"), ("broker", "Broker")],
-    # cc @-mentions. Each: {displayName, id, type}. These four are Teams TAGS (a tag pings a
-    # curated subset of the team). Real tag mentions need the tag's id (Graph
-    # GET /teams/{team-id}/tags) AND the microsoft_teams tool passing type:"tag" through to
-    # Graph — NOT yet confirmed (the tool documents user|team|channel|app). Until an id is
-    # filled, each entry renders as PLAIN TEXT (safe, never mis-tags). Fill id to activate.
-    "cc_mentions": [
-        {"displayName": "CP/Intune", "id": None, "type": "tag"},
-        {"displayName": "LTW", "id": None, "type": "tag"},
-        {"displayName": "OneAuth", "id": None, "type": "tag"},
-        {"displayName": "Native Auth", "id": None, "type": "tag"},
-    ],
+    # cc: the four groups (CP/Intune, LTW, OneAuth, Native Auth) are Teams TAGS the tool can't
+    # @-mention, so we @-mention their MEMBERS (maintained in config/announcement_cc.yaml) as
+    # individual users. The registry path is resolved relative to this repo's config/ dir.
+    "cc_registry": "announcement_cc.yaml",
 }
+
+# config/announcement_cc.yaml lives next to config/phases.yaml.
+import os as _os
+_CC_PATH = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+                         "config", "announcement_cc.yaml")
 
 MOCKABLE = {
     "post_to": {"kind": "input",
                 "desc": "{teamId, channelId} override — post to a TEST channel instead of General."},
     "versions": {"kind": "input",
                  "desc": "dict override for the SDK versions shown (else read from state.versions)."},
-    "cc_mentions": {"kind": "input",
-                    "desc": "list of {displayName,id,type} cc @-mentions (id=None -> plain text)."},
+    "cc_members": {"kind": "input",
+                   "desc": "flat [{name,email}] to cc as one unlabeled group (tests)."},
+    "cc_groups": {"kind": "input",
+                  "desc": "list of {group, members:[{name,email}]} to override the registry (tests)."},
+    "cc_mode": {"kind": "input",
+                "desc": "'mention' | 'self' (ping only self_email) | 'off' (plain text). "
+                        "Defaults to 'mention', but a post_to redirect forces self/off (never "
+                        "pings real members on a test)."},
+    "self_email": {"kind": "input",
+                   "desc": "the email/UPN to use as the single self-mention when cc_mode='self'."},
 }
 
 
@@ -94,24 +106,95 @@ def _rows_html(versions: dict) -> str:
     return "".join(rows)
 
 
+def _load_groups():
+    """Ordered [(group_name, [{name,email}])] from config/announcement_cc.yaml — empty groups
+    skipped, per-group member order preserved. Never raises (missing/broken file -> [])."""
+    try:
+        import yaml
+        with open(_CC_PATH, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for group, members in (data.get("groups") or {}).items():
+        cleaned = [{"name": (m or {}).get("name") or (m or {}).get("email", "").split("@")[0],
+                    "email": (m or {}).get("email")}
+                   for m in (members or []) if (m or {}).get("email")]
+        if cleaned:
+            out.append((group, cleaned))
+    return out
+
+
+def _load_members():
+    """Flattened, de-duplicated [{name,email}] across all groups (registry order)."""
+    seen, out = set(), []
+    for _group, members in _load_groups():
+        for m in members:
+            if m["email"].lower() not in seen:
+                seen.add(m["email"].lower())
+                out.append(m)
+    return out
+
+
+def _effective_cc_mode(state):
+    """Resolve the cc mode. Explicit `cc_mode` wins. Otherwise, a TEST redirect (`post_to`)
+    forces a non-pinging mode so a test post NEVER @-mentions the real members: 'self' when a
+    self_email is given, else 'off'. With no redirect, default 'mention'."""
+    m = mock_input("cc_mode", MISSING)
+    if m is not MISSING and m:
+        return str(m).lower()
+    if mock_input("post_to", MISSING) is not MISSING:       # test/redirect -> don't ping people
+        return "self" if mock_input("self_email", MISSING) not in (MISSING, None, "") else "off"
+    return "mention"
+
+
+def _groups_for_cc(state):
+    """The groups to render — a `cc_groups`/`cc_members` mock overrides the registry (for tests)."""
+    g = mock_input("cc_groups", MISSING)
+    if g is not MISSING and g:
+        return [(x.get("group"), list(x.get("members") or [])) for x in g]
+    fm = mock_input("cc_members", MISSING)
+    if fm is not MISSING and fm:
+        return [(None, list(fm))]                            # single unlabeled group
+    return _load_groups()
+
+
 def _cc(state):
-    """(html_line, mentions) — the cc line and the microsoft_teams `mentions` array.
-    Entries WITH an id become real @mentions (content carries '@DisplayName' + a mentions
-    entry); entries without an id fall back to plain text so we never mis-tag."""
-    ov = mock_input("cc_mentions", MISSING)
-    entries = list(ov) if ov is not MISSING and ov else CONFIG.get("cc_mentions", [])
-    if not entries:
+    """(html_block, mentions) — the cc block (one line PER TEAM) + the microsoft_teams
+    `mentions` array.
+
+    Modes (see _effective_cc_mode): 'mention' @-mentions each member; 'self' mentions ONLY
+    self_email once (safe test — pings just you); 'off' lists names as plain text. Any test
+    redirect (post_to) auto-selects self/off so a test post never pings the real members.
+    """
+    mode = _effective_cc_mode(state)
+
+    if mode == "self":
+        se = mock_input("self_email", MISSING)
+        if se is MISSING or not se:
+            return ("", [])
+        name = str(se).split("@")[0]
+        return (f"<p>cc: @{T.esc(name)}</p>",
+                [{"displayName": name, "id": se, "type": "user"}])
+
+    groups = _groups_for_cc(state)
+    if not groups:
         return ("", [])
-    parts, mentions = [], []
-    for e in entries:
-        name = e.get("displayName", "")
-        if e.get("id"):
-            parts.append(f"@{name}")          # server swaps @Name -> Teams mention markup
-            mentions.append({"displayName": name, "id": e["id"],
-                             "type": e.get("type", "tag")})
-        else:
-            parts.append(T.esc(name))          # no id -> plain text, not a tag
-    return (f"<p>cc: {', '.join(parts)}</p>", mentions)
+
+    lines, mentions = ["<p>cc:<br>"], []
+    for group, members in groups:
+        label = f"<b>{T.esc(group)}</b>: " if group else ""
+        if mode == "off":
+            names = ", ".join(T.esc(m["name"]) for m in members)
+            lines.append(f"{label}{names}<br>")
+        else:  # 'mention'
+            parts = []
+            for m in members:
+                parts.append(f"@{m['name']}")               # server swaps @Name -> mention markup
+                mentions.append({"displayName": m["name"], "id": m["email"], "type": "user"})
+            lines.append(f"{label}{', '.join(parts)}<br>")
+    lines.append("</p>")
+    return ("".join(lines), mentions)
 
 
 def _html(state, versions: dict, cc_line: str) -> str:
@@ -153,7 +236,7 @@ def build(state):
         tool="microsoft_teams-SendMessageToChannel",
         payload=payload,
         record_as=ID,
-        summary=f"Post '{subject}' to {note}",
+        summary=f"Post '{subject}' to {note} (cc {len(mentions)} member(s))",
         note=f"posted the release announcement to {note}",
         outbound=True,
     )
