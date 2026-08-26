@@ -4961,6 +4961,194 @@ def test_pending_scout_step_is_not_a_user_action():
     assert ld2["status"] == "blocked" and ld2["needs_owner"]
 
 
+def test_gate_watch_build_shows_pending_brief():
+    """build() with an injected pending approval → a needs_human brief naming the build, the
+    stage, and the publish consequences."""
+    from steps.finalize import gate_watch as gw
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    st = ReleaseState(release_id="2026-08")
+    info = {"approval_id": "A1", "build_id": 1681228, "stage": "Remove RC Tags", "build_url": "u"}
+    with mockctx.active({"approval": info}):
+        out = as_dict(gw.build(st))
+    assert out["kind"] == "needs_human"
+    assert "1681228" in out["prompt"] and "Remove RC Tags" in out["prompt"]
+    assert "Maven Central" in out["prompt"]
+
+
+def test_gate_watch_build_done_when_not_parked():
+    """build() when nothing is parked (injected approval=None) → Done, nothing to approve."""
+    from steps.finalize import gate_watch as gw
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    st = ReleaseState(release_id="2026-08")
+    with mockctx.active({"approval": None}):
+        out = as_dict(gw.build(st))
+    assert out["kind"] == "done" and "nothing to" in out["note"].lower()
+
+
+def test_gate_watch_submit_approval_submits():
+    """submit_approval submits the real ADO approval for the discovered pending approval."""
+    from steps.finalize import gate_watch as gw
+    from steps.lib import mockctx
+    from tools import pipelines as P
+    st = ReleaseState(release_id="2026-08")
+    sent = {}
+
+    def fake_submit(org, project, approval_id, comment="", status="approved", timeout=60):
+        sent.update(id=approval_id, comment=comment)
+        return (True, f"approval {approval_id} -> approved")
+
+    o = P.submit_pipeline_approval
+    P.submit_pipeline_approval = fake_submit
+    try:
+        info = {"approval_id": "A1", "build_id": 123, "stage": "Remove RC Tags", "build_url": "u"}
+        with mockctx.active({"approval": info}):
+            ok, detail = gw.submit_approval(st, "go")
+    finally:
+        P.submit_pipeline_approval = o
+    assert ok and "Remove RC Tags" in detail and "123" in detail
+    assert sent["id"] == "A1" and sent["comment"] == "go"
+
+
+def test_gate_watch_submit_approval_skip_knob():
+    """The `submit: skip` knob makes submit_approval a no-op (offline/tests)."""
+    from steps.finalize import gate_watch as gw
+    from steps.lib import mockctx
+    st = ReleaseState(release_id="2026-08")
+    with mockctx.active({"approval": {"approval_id": "A1", "build_id": 1, "stage": "x", "build_url": "u"},
+                         "submit": "skip"}):
+        ok, detail = gw.submit_approval(st, "go")
+    assert ok and "skipped" in detail.lower()
+
+
+def test_approve_orchestrator_gate_command_submits_then_advances():
+    """The `approve-orchestrator-gate` command submits the ADO approval (via
+    gate_watch.submit_approval) and, on success, records the finalize.gate_watch gate + advances.
+    No engine hook is involved — the command composes submit + the normal approve."""
+    import tempfile, argparse
+    from orchestrator.commands import gate_approve as GA
+    from orchestrator import cli_common as _C
+    from steps.finalize import gate_watch as gw
+    st, orch = _orch()
+    _advance_to_first_gate(orch); orch.approve_gate("ok"); orch.run_until_gate()
+    assert st.current_step == "gate_watch" and st.status == "holding_gate"
+
+    calls = {}
+
+    def fake_submit(state, comment=""):
+        calls["comment"] = comment
+        return (True, "submitted the 'Remove RC Tags' approval on build 555")
+
+    o = gw.submit_approval
+    gw.submit_approval = fake_submit
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            _C.save_state(st, d, "t")
+            ns = argparse.Namespace(runs_root=d, release="t", config=CONFIG,
+                                    as_of=None, comment="ship it")
+            rc = GA.cmd_approve_orchestrator_gate(ns)
+            after = _C.load_state(d, "t")
+    finally:
+        gw.submit_approval = o
+    assert rc == 0
+    assert calls["comment"] == "ship it"                 # human's comment reaches the ADO submit
+    assert after.is_done("finalize", "gate_watch")       # gate recorded only after submit succeeded
+    assert "Remove RC Tags" in (after.get_step("finalize", "gate_watch").note or "")
+
+
+def test_approve_orchestrator_gate_command_holds_when_submit_fails():
+    """Safety property: if the ADO submit FAILS, the command returns non-zero and does NOT record
+    the gate — the release-agent stays holding at gate_watch so it can be retried."""
+    import tempfile, argparse
+    from orchestrator.commands import gate_approve as GA
+    from orchestrator import cli_common as _C
+    from steps.finalize import gate_watch as gw
+    st, orch = _orch()
+    _advance_to_first_gate(orch); orch.approve_gate("ok"); orch.run_until_gate()
+    assert st.current_step == "gate_watch" and st.status == "holding_gate"
+
+    o = gw.submit_approval
+    gw.submit_approval = lambda state, comment="": (False, "ADO approval submit FAILED (boom).")
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            _C.save_state(st, d, "t")
+            ns = argparse.Namespace(runs_root=d, release="t", config=CONFIG,
+                                    as_of=None, comment="ship it")
+            rc = GA.cmd_approve_orchestrator_gate(ns)
+            after = _C.load_state(d, "t")
+    finally:
+        gw.submit_approval = o
+    assert rc == 1
+    assert not after.is_done("finalize", "gate_watch")   # gate NOT recorded
+    assert after.status == "holding_gate" and after.current_step == "gate_watch"
+
+
+def test_approve_orchestrator_gate_command_rejects_wrong_gate():
+    """The command refuses to act unless the release is actually holding at finalize.gate_watch."""
+    import tempfile, argparse
+    from orchestrator.commands import gate_approve as GA
+    from orchestrator import cli_common as _C
+    from steps.finalize import gate_watch as gw
+    st, orch = _orch()
+    _advance_to_first_gate(orch)   # holding at bug_bash.bugbash_complete, NOT gate_watch
+    assert st.current_step == "bugbash_complete"
+
+    o = gw.submit_approval
+    called = {"n": 0}
+    def guard(*a, **k):
+        called["n"] += 1
+        return (True, "should not be called")
+    gw.submit_approval = guard
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            _C.save_state(st, d, "t")
+            ns = argparse.Namespace(runs_root=d, release="t", config=CONFIG,
+                                    as_of=None, comment="")
+            rc = GA.cmd_approve_orchestrator_gate(ns)
+    finally:
+        gw.submit_approval = o
+    assert rc == 1 and called["n"] == 0                  # no ADO submit attempted on the wrong gate
+
+
+def test_find_orchestrator_pending_approval_and_submit():
+    """pipelines: discover the parked stage's pending approval (timeline + approvals API) and
+    submit it."""
+    from tools import pipelines as P
+    run = {"id": 555, "tags": ["AuthenticatorBranch=release-2026-08-13"]}
+    timeline = [
+        {"id": "s1", "type": "Stage", "name": "Remove RC Tags", "state": "pending"},
+        {"id": "cp", "type": "Checkpoint.Approval", "state": "inProgress", "parentId": "ph"},
+        {"id": "ph", "type": "Phase", "name": "Wait for approval", "parentId": "s1"},
+    ]
+    approvals = {"value": [
+        {"id": "OTHER", "status": "approved",
+         "pipeline": {"owner": {"_links": {"web": {"href": ".../_build/results?buildId=999"}}}}},
+        {"id": "APPR-555", "status": "pending",
+         "pipeline": {"owner": {"_links": {"web": {"href": ".../_build/results?buildId=555"}}}}},
+    ]}
+    o = (P.find_orchestrator_run, P.get_timeline, P._ado_rest_get, P._ado_rest_send)
+    P.find_orchestrator_run = lambda *a, **k: (True, run, "")
+    P.get_timeline = lambda *a, **k: (True, timeline, "")
+    P._ado_rest_get = lambda url, timeout: (True, approvals, "")
+    sent = {}
+
+    def fake_send(url, method, body, timeout):
+        sent["body"] = body
+        return (True, {"value": [{"status": "approved"}]}, "")
+
+    P._ado_rest_send = fake_send
+    try:
+        ok, info, d = P.find_orchestrator_pending_approval("ORG", "PROJ", "2026-08")
+        assert ok and info and info["approval_id"] == "APPR-555" and info["stage"] == "Remove RC Tags"
+        assert info["build_id"] == 555
+        oks, ds = P.submit_pipeline_approval("ORG", "PROJ", "APPR-555", "go")
+        assert oks and "approved" in ds
+        assert sent["body"][0]["approvalId"] == "APPR-555" and sent["body"][0]["status"] == "approved"
+    finally:
+        (P.find_orchestrator_run, P.get_timeline, P._ado_rest_get, P._ado_rest_send) = o
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for fn in fns:

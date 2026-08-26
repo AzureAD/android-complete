@@ -351,6 +351,79 @@ def named_record(records, name, types=("Job", "Phase", "Stage")):
     return None
 
 
+def _pending_approval_for_build(org, project, build_id, timeout=90):
+    """(ok, approval_id|None, detail) — the PENDING pipeline approval whose owner build is
+    `build_id`, from the approvals the signed-in user can act on."""
+    ok, data, d = _ado_rest_get(
+        f"{org.rstrip('/')}/{project}/_apis/pipelines/approvals?api-version=7.2-preview.1", timeout)
+    if not ok:
+        return (False, None, d)
+    for ap in (data or {}).get("value", []) or []:
+        if ap.get("status") in ("approved", "completed", "rejected", "canceled"):
+            continue
+        owner = (ap.get("pipeline") or {}).get("owner") or {}
+        href = ((owner.get("_links") or {}).get("web") or {}).get("href", "")
+        if f"buildId={build_id}" in href:
+            return (True, ap.get("id"), "")
+    return (True, None, "")
+
+
+def find_orchestrator_pending_approval(org, project, release_month, timeout=90):
+    """Find the Release Orchestrator run for `release_month` and, if it's parked at a manual
+    approval, return that approval. Returns (ok, info, detail) where info is
+    {approval_id, build_id, stage, build_url} — or None when nothing is parked.
+
+    Discovery: the orchestrator run (by AuthenticatorBranch tag) → its timeline for a Stage whose
+    Checkpoint.Approval record is still inProgress → the matching PENDING approval (owned by this
+    build) from the pipelines approvals API."""
+    ok, run, detail = find_orchestrator_run(org, project, ORCHESTRATOR_DEF, release_month, timeout)
+    if not ok:
+        return (False, None, detail)
+    if not run:
+        return (True, None, f"no orchestrator run found for {release_month}")
+    bid = run.get("id")
+    okt, recs, dt = get_timeline(org, project, bid, timeout)
+    if not okt:
+        return (False, None, dt)
+    byid = {r.get("id"): r for r in recs}
+
+    def _stage_of(rec):
+        cur = rec
+        while cur and cur.get("type") != "Stage":
+            cur = byid.get(cur.get("parentId"))
+        return (cur or {}).get("name")
+
+    pending_stage = None
+    for r in recs:
+        if r.get("type") == "Checkpoint.Approval" and r.get("state") == "inProgress":
+            pending_stage = _stage_of(r)
+            break
+    if not pending_stage:
+        return (True, None, f"orchestrator build {bid} is not parked at a manual approval")
+    oka, approval_id, da = _pending_approval_for_build(org, project, bid, timeout)
+    if not oka:
+        return (False, None, da)
+    if not approval_id:
+        return (True, None, f"no pending approval visible to you on build {bid}")
+    build_url = f"{org.rstrip('/')}/{project}/_build/results?buildId={bid}&view=results"
+    return (True, {"approval_id": approval_id, "build_id": bid, "stage": pending_stage,
+                   "build_url": build_url}, "")
+
+
+def submit_pipeline_approval(org, project, approval_id, comment="", status="approved", timeout=60):
+    """Submit a decision on a pipeline approval — status 'approved' | 'rejected'. (ok, detail)."""
+    url = f"{org.rstrip('/')}/{project}/_apis/pipelines/approvals?api-version=7.2-preview.1"
+    body = [{"approvalId": approval_id, "status": status, "comment": comment}]
+    ok, res, d = _ado_rest_send(url, "PATCH", body, timeout)
+    if not ok:
+        return (False, d)
+    entry = ((res or {}).get("value") or [{}])[0] if isinstance(res, dict) else {}
+    got = entry.get("status")
+    if got != status:
+        return (False, f"approval status is '{got}' after submit (expected '{status}')")
+    return (True, f"approval {approval_id} -> {got}")
+
+
 def get_build_status(org, project, build_id, timeout=60):
     """Return (ok, status, result, detail) for a build's OVERALL run.
 

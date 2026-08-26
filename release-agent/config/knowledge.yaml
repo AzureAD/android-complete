@@ -666,6 +666,44 @@ bug_bash.bugbash_complete:
     - q: "What stops the 2-hour chat updates?"
       a: "Two things: the poller stops itself when every test is complete, and approving this gate deregisters the poller. Either way the updates end when the bash is done."
 
+# ============================= Phase 4 · finalize =============================
+
+finalize.gate_watch:
+  summary: "1-click approve the Release Orchestrator's parked 'Remove RC Tags' gate — triggers publish."
+  what: >
+    After Phase 3, the Release Orchestrator (def 2828) runs and PARKS at a manual approval on its
+    'Remove RC Tags' stage. This step is the human's 1-click approval of that gate: Scout finds the
+    orchestrator run for the release, detects the parked stage + its pending approval, and shows a
+    brief. When the release owner APPROVES, Scout submits the real ADO pipeline approval, which
+    un-parks the orchestrator into the publish stages.
+  who: >
+    The release owner decides (approve / deny). Scout runs the discovery and, on approval, submits
+    the ADO approval automatically via the pipeline approvals API — no manual portal click needed.
+  how: >
+    Approve with `approve-orchestrator-gate --release <id>` — it submits the ADO 'Remove RC Tags'
+    approval AND records the release-agent gate in one step (a dedicated command that composes the
+    submit with the normal approve; the engine is untouched). Deny with `deny` to HOLD. If the ADO
+    submit fails, the command does NOT record the gate — it stays holding so you can retry. Best-
+    effort and idempotent: if the orchestrator isn't parked (already approved) the command reports
+    there's nothing to approve.
+  consequences: >
+    Approving the 'Remove RC Tags' gate makes the Release Orchestrator automatically: remove the RC
+    tags; publish internal artifacts to the ADO Maven feed; publish MSAL/Common to Maven Central;
+    create release-integration/<version> branches; update the orchestrator pipeline variables
+    (MSAL-PROD-Version, MSAL-PROD-BRANCH, Broker-PROD-Version); and print GitHub PR compare links in
+    the next stage. This is a REAL, externally-visible publish (Maven Central + GitHub) — not easily
+    undone. Deny and investigate if anything looks off.
+  links:
+    - name: "Release Orchestrator pipeline YAML"
+      url: "https://identitydivision.visualstudio.com/Engineering/_git/AuthClientAndroidPipelines?path=/production/monthly-release/release-orchestrator.yml"
+  faqs:
+    - q: "What exactly happens when I approve?"
+      a: "Scout submits the ADO approval on the orchestrator's 'Remove RC Tags' stage. The orchestrator then removes RC tags and publishes: internal artifacts to the ADO Maven feed, MSAL/Common to Maven Central, creates release-integration/<version> branches, updates the pipeline variables (MSAL-PROD-Version, MSAL-PROD-BRANCH, Broker-PROD-Version), and prints GitHub PR compare links."
+    - q: "Is it reversible?"
+      a: "No — it publishes to Maven Central and GitHub. Treat approval as the point of no return; deny to hold if the RC verification or bug bash left anything unresolved."
+    - q: "Nothing is parked — is that an error?"
+      a: "No. If the orchestrator already passed the gate (or isn't waiting), the step reports there's nothing to approve and moves on."
+
 # ========================== Entry gate · readiness ==========================
 # Keyed "readiness.<item>". Queried via `gate-info --item <id>`. Same fields as the
 # step entries (summary/what/who/where/how/links/faqs).
