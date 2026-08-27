@@ -15,9 +15,15 @@ Required (a run is NOT complete without these):
     manifest.json                      the shift's dedup/append record
     <finding markdown>                 >=1 per-finding report (findings/*.md or *.md in the run dir)
     wbr-security-report.html           the master report
+    parseable stat-tile fields         every finding must yield Component / Confidence / Verdict /
+                                       IcM Severity / Bottom line / Ours-tier, and no rendered tile may
+                                       be blank. A free-handed report that skips the `**Label:**` parser
+                                       contract still reads fine as prose but publishes empty tiles and a
+                                       mislabelled master row — this check makes that impossible to ship.
 
 Recommended (warn only — some are opt-in or depend on the mode):
-    research/index.html   agent-specs/*.agent.md   _ROLLUP.md   classifications.csv
+    (warn) research/index.html   agent-specs/*.agent.md   _ROLLUP.md   classifications.csv
+    (fail) no leftover "TODO" placeholders — a scaffolded-but-unfilled report must never publish
 
 Usage:
     python verify_outputs.py                      # verify the current Wed->Wed shift
@@ -29,6 +35,7 @@ Usage:
 import argparse
 import glob
 import os
+import re
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8")
@@ -131,6 +138,92 @@ def verify(run_dir, expect=0):
         _row(NO, f"expected at least {expect} finding report(s)",
              f"only {len(findings)} present — some findings were investigated but never written up")
         failures += 1
+
+    # --- Structure gate: the parser contract that drives the tiles -----------
+    # A report can exist, look fine as prose, and still render every stat tile as "—" because a
+    # `**Label:**` line was missing or misspelled. That shipped once. Check it mechanically.
+    if findings:
+        f2, w2 = _verify_parseable(findings, run_dir)
+        failures += f2
+        warnings += w2
+
+    return failures, warnings
+
+
+# Fields that MUST parse out of every finding, because each one drives a stat tile and/or the
+# master-report row. Keys are as normalised by build_research_pages.parse_meta().
+REQUIRED_META = [
+    ("component", "Component / Repo tile + intern-eligibility cutoff"),
+    ("confidence", "Confidence tile"),
+    ("verdict", "Verdict-vs-filed tile"),
+    ("icm severity", "IcM Severity tile"),
+    ("bottom line", "the one-sentence TL;DR at the top of the HTML"),
+]
+
+
+def _verify_parseable(findings, run_dir):
+    """Fail when a finding's parser contract is broken — i.e. the HTML would render blank tiles.
+
+    This is the mechanical guard for a real shipped failure: a free-handed report whose Severity /
+    Confidence / Verdict tiles were all empty, and whose master row mislabelled an MSRC as an ITD.
+    """
+    failures = warnings = 0
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import build_research_pages as brp
+    except ImportError:
+        _row(WARN, "stat-tile parser check", "build_research_pages.py not importable — skipped")
+        return 0, 1
+
+    for path in findings:
+        name = os.path.basename(path)
+        try:
+            md = open(path, encoding="utf-8").read()
+        except OSError as exc:
+            _row(NO, f"read {name}", str(exc))
+            failures += 1
+            continue
+
+        meta = brp.parse_meta(md)
+        missing = [f"{k} ({why})" for k, why in REQUIRED_META if not brp._clean(meta.get(k, ""))]
+        if not brp._clean(meta.get("our_tier", "")):
+            missing.append("Ours row in the Classification table (Our Severity tile)")
+
+        if missing:
+            _row(NO, f"stat-tile fields parse — {name}",
+                 ["these would render as an empty '—' tile:"] + missing
+                 + ["fix: follow references/report-template.md; then python scripts/lint_finding.py"])
+            failures += 1
+        else:
+            _row(OK, f"stat-tile fields parse — {name}",
+                 f"tier={brp._clean(meta.get('our_tier'))} · "
+                 f"{brp._clean(meta.get('icm severity'))} · "
+                 f"conf={brp._clean(meta.get('confidence'))} · "
+                 f"verdict={brp._clean(meta.get('verdict'))}")
+
+        # Leftover scaffold placeholders mean the report was generated but never filled in. This is a
+        # REQUIRED failure, not a warning: publishing a shift report full of "TODO" is worse than
+        # publishing nothing, because the master table renders it as a real, actioned finding.
+        n_todo = len(re.findall(r"\bTODO\b", md))
+        if n_todo:
+            _row(NO, f"unfilled placeholders — {name}",
+                 [f"{n_todo} 'TODO' left — this report was scaffolded but never completed",
+                  "fill it in, or delete it and remove the IcM from manifest.json"])
+            failures += 1
+
+    # Rendered HTML must not contain a blank tile either (catches generator drift).
+    for html in _find(run_dir, "research/*.html"):
+        if os.path.basename(html) == "index.html":
+            continue
+        try:
+            body = open(html, encoding="utf-8").read()
+        except OSError:
+            continue
+        blanks = re.findall(r'<div class="lbl">([^<]+)</div><div class="val">\s*—\s*</div>', body)
+        if blanks:
+            _row(NO, f"rendered tiles — {os.path.basename(html)}",
+                 [f"blank tile(s): {', '.join(blanks)}", "regenerate after fixing the markdown fields"])
+            failures += 1
 
     return failures, warnings
 

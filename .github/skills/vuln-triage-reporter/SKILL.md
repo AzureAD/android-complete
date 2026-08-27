@@ -251,6 +251,18 @@ ways — never claim "safe" *or* "exploitable" about a boundary you couldn't ver
     goes in **Not covered** — never implied as passing. See
     [references/flight-verification.md](references/flight-verification.md).
 
+21. **SCAFFOLD every report — never hand-write one, and never hand-build the artifacts.** Create each
+    finding with `scripts/new_finding.py` (which also does the shift dedup + manifest entry), fill in the
+    TODOs, then run `scripts/rebuild_shift.py` — which lint-gates, regenerates **all** artifacts for the
+    shift, and closes with `verify_outputs.py`. The `**Label:**` fields and the `**Filed**`/`**Ours**`
+    rows are a **parser contract** driving the HTML stat tiles and the master row, not prose.
+    **Real failure:** a free-handed report read perfectly and shipped with Severity/Confidence/Verdict
+    tiles blank and an MSRC mislabelled "ITD" in the master table. A leftover `TODO` now **fails** the
+    closing gate — a scaffolded-but-unfilled report must never publish.
+22. **A second finding mid-shift APPENDS — same folder, full regeneration.** Never open a new folder for
+    the week's second IcM and never hand-edit the generated HTML. `new_finding.py` + `rebuild_shift.py`
+    handle dedup, appending, and rebuilding the master report across all findings.
+
 ## The two-pass model (verify before you trust)
 
 A single investigation — however well-cited — is **not** sufficient, because the failure mode is *not knowing
@@ -455,6 +467,40 @@ window** and findings accumulate into it as IcMs arrive. The window + folder + d
 
 > ⚠️ **Owner label is workspace-only.** You may put a human name/alias in `--owner` because the report
 > lives in the **private** `$VULN_TRIAGE_WORKSPACE` — **never** commit an alias into the skill repo.
+
+#### A second finding lands mid-shift — the append loop (the normal case)
+
+On-call receives findings **one at a time** across the week. Each new one is **appended to the same shift
+folder**; the master report and roll-up are **regenerated from all findings**, never edited in place.
+
+```
+python scripts/shift.py check <new-icm>        # exit 0 = NEW, exit 3 = SEEN (already triaged this shift)
+python scripts/new_finding.py --icm <new-icm> --tag MSRC --component <repo> --title "<short title>"
+#   -> creates findings/<slug>.md AND records it in manifest.json (refuses a duplicate without --force)
+# ...investigate (Steps 3 / 3.5), fill in every TODO...
+python scripts/rebuild_shift.py                # rebuilds EVERY artifact for the shift, lint-gated
+```
+
+`rebuild_shift.py` is the only command needed after each finding: it lints (and **stops** on failure),
+regenerates research pages + agent specs + master report + roll-up across **all** findings in the shift,
+then runs the closing `verify_outputs.py`. The master table simply grows a row.
+
+> **Do not** start a new folder for the second finding, and do not hand-edit
+> `wbr-security-report.html` — it is generated. If a finding is abandoned, delete its markdown **and**
+> remove its IcM from `manifest.json`, then re-run `rebuild_shift.py`.
+
+#### Getting the content of a restricted `[MSRC]` IcM
+
+MSRC-tagged incidents are **access-restricted**: the IcM MCP may not be present, the IcM portal can be
+blocked by Conditional Access in an embedded browser, and the `android-dri-search` MCP `get_incident`
+returns `Access denied: incident is restricted`. **Do not burn the run trying to route around this.**
+The reliable path is the engineer-supplied case file:
+
+> **IcM → the MSRC tab → download the case** → hand the agent the `.zip` path. It contains the
+> researcher's write-up (e.g. `CAND-00N.md` + `README.txt`) with the sink citations and attacker model.
+
+Extract it into `<shift dir>/_intake/icm-<id>/` (private workspace, never the repo) and triage from there.
+Note the researcher's citations are **decompiled** line numbers — always relocate them in real source.
 
 ### Step 0 — Scope the shift & resolve IDs
 **Resolve the shift folder first** (deterministic — don't hand-name it):
@@ -792,6 +838,25 @@ flag matrix have evidence. Full procedure, test skeletons, on-device recipe, and
 
 ### Step 5 — Report (two coordinated artifacts per finding)
 
+> 🛑 **NEVER hand-write a finding report from memory. ALWAYS scaffold it.**
+>
+> ```
+> python scripts/new_finding.py --icm <id> --tag MSRC --component <Broker|Authenticator|Common|MSAL|ADAL> \
+>        --title "<short title>"          # -> findings/<slug>.md in the CURRENT shift, + manifest entry
+> # ...fill in every TODO...
+> python scripts/rebuild_shift.py         # lint-gated: lint -> research -> agent-specs -> master -> rollup -> verify
+> ```
+>
+> **This is not a style preference — it is a parser contract.** The `**Label:**` lines and the
+> `| **Filed** |` / `| **Ours** |` rows populate the HTML stat tiles and the master-report row.
+> **Real failure this prevents:** an agent free-handed a report that read perfectly as prose; it published
+> with Severity, Confidence and Verdict tiles all blank and the master table calling an MSRC an "ITD".
+> Scaffolding makes that impossible — you fill blanks instead of inventing structure.
+>
+> `rebuild_shift.py` runs `lint_finding.py` **first and refuses to build on failure**, then regenerates
+> **every** artifact for the whole shift and finishes with `verify_outputs.py`. Use it after *every*
+> finding — never call the individual builders by hand unless you are debugging one.
+
 > 🛑 **This step is NOT optional and NOT conditional on the verdict** (Non-Negotiable #17).
 >
 > **Every finding gets written to disk — including the ones that end in `Won't-Fix`,
@@ -943,12 +1008,22 @@ items) — never in the repo.
 **First, prove the run actually produced something:**
 
 ```
+python .github/skills/vuln-triage-reporter/scripts/rebuild_shift.py     # does all of the below, in order
+```
+
+`rebuild_shift.py` is the single command: it runs `lint_finding.py` first (and **refuses to build** on a
+structural failure), regenerates research pages · agent specs · master report · roll-up across **every**
+finding in the shift, then runs `verify_outputs.py`. Run the pieces individually only when debugging:
+
+```
 python .github/skills/vuln-triage-reporter/scripts/verify_outputs.py
 python .github/skills/vuln-triage-reporter/scripts/lint_finding.py --dir <run_dir>
 ```
 
 `verify_outputs.py` checks the shift folder for the required artifacts (manifest · per-finding report(s) ·
-master report) and warns on the recommended ones (research subpages · agent specs · roll-up · CSV).
+master report) and warns on the recommended ones (research subpages · agent specs · roll-up · CSV). It also
+**fails** when a finding's `**Label:**` fields don't parse (which would publish blank stat tiles), when a
+rendered tile is blank, or when a scaffolded report still contains `TODO`.
 `lint_finding.py` checks each finding report's *structure* — scope contract, claim ledger with channel
 tags, verdict, audit trail, and the flag ON/OFF matrix if a fix was implemented. **A non-zero exit from
 either means the run is not finished** — fix what's flagged and re-run. Then **give the engineer the

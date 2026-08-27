@@ -56,6 +56,7 @@ code{background:#f0f2f4;padding:.05rem .3rem;border-radius:4px;font-family:'Casc
 .s-critical{background:#fde8e8;color:#b91c1c}.s-important{background:#fdebd9;color:#c2410c}.s-moderate{background:#fdf3d3;color:#a16207}.s-low{background:#dcfce7;color:#15803d}
 .sev-Sev2{background:#fde8e8;color:#b91c1c}.sev-Sev25{background:#fdebd9;color:#c2410c}.sev-Sev3{background:#fdf3d3;color:#a16207}.sev-Sev4{background:#dcfce7;color:#15803d}
 .v-agree{background:#e5e7eb;color:#374151}.v-down{background:#dcfce7;color:#15803d}.v-up{background:#fde8e8;color:#b91c1c}
+.v-reroot{background:#e0e7ff;color:#3730a3}
 .a-eng{background:#ede9fe;color:#5b21b6;font-weight:800;min-width:20px;text-align:center}.a-intern{background:#cffafe;color:#0e7490;font-weight:800;min-width:20px;text-align:center}
 .conf-High{background:#dcfce7;color:#15803d}.conf-Medium{background:#fdebd9;color:#b45309}.conf-Low{background:#fde8e8;color:#b91c1c}
 .tag-msrc{background:#fae8ff;color:#86198f}.tag-itd{background:#e0f2fe;color:#075985}
@@ -109,12 +110,13 @@ def extract(md, path):
     mfid = re.search(r'Linked IcM:\*\*\s*([0-9]+)', head)
     if mfid:
         fid = mfid.group(1)
-    short = re.sub(r'^\s*(MSRC|ITD)\s*\[[^\]]*\]\s*[—-]\s*', '', title)
+    # Strip the "[MSRC] [<id>] — " / "MSRC [<id>] — " prefix; the template prescribes the bracketed form.
+    short = re.sub(r'^\s*\[?\s*(MSRC|ITD)\s*\]?\s*\[?[^\]]*\]?\s*[—-]\s*', '', title)
     sev_icm = brp._clean(meta.get('icm severity', meta.get('icm sev', '')))
     component = meta.get('component', '')
     our_tier = brp._clean(meta.get('our_tier', ''))
-    # Tag: MSRC vs ITD — from the title prefix, or a FireWatch GUID implies ITD
-    tag = "MSRC" if re.match(r'^\s*MSRC\b', title) and not re.search(r'\bITD\b', title) else "ITD"
+    # Tag: MSRC vs ITD — from the title prefix (bracketed per the template) or a FireWatch GUID implies ITD
+    tag = "MSRC" if re.match(r'^\s*\[?\s*MSRC\b', title) and not re.search(r'\bITD\b', title) else "ITD"
     assignment = brp.compute_assignment(our_tier, component)
     ext_needed = ext_validation_needed(md, meta)
     return {
@@ -228,6 +230,11 @@ def main():
             return "v-down", "DOWN"
         if "up" in vl:
             return "v-up", "UP"
+        # The filed tier stands, but the ROOT CAUSE is different from the one filed: the headline claim
+        # was refuted and a distinct real weakness was kept from the same report. Rendering this as AGREE
+        # silently hides the most important nuance in the finding.
+        if "re-root" in vl or "reroot" in vl or "re-scope" in vl:
+            return "v-reroot", "RE-ROOTED"
         return "v-agree", "AGREE"
 
     def split_tier(t):
@@ -281,7 +288,9 @@ def main():
         '<span><strong>Verdict</strong> (vs. filed): '
         '<span class="chip v-agree">AGREE</span> we concur · '
         '<span class="chip v-down">DOWN</span> down-classified (filed too high) · '
-        '<span class="chip v-up">UP</span> up-classified (filed too low)</span>'
+        '<span class="chip v-up">UP</span> up-classified (filed too low) · '
+        '<span class="chip v-reroot">RE-ROOTED</span> tier stands but the filed root cause was refuted '
+        'and a different real weakness kept</span>'
         '<span><strong>Owner</strong>: '
         '<span class="chip a-eng">E</span> Engineer-owned — keep &amp; fix (Important+ or any Broker/Common/MSAL) · '
         '<span class="chip a-intern">I</span> Intern-eligible — delegate (Moderate↓ AND Authenticator app)</span>'

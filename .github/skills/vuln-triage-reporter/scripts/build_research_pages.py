@@ -90,6 +90,7 @@ a.tile.tlink:hover{text-decoration:none;transform:translateY(-2px);box-shadow:0 
 .t-pass{background:linear-gradient(135deg,#0f6cbd,#084e8a)}.t-eng{background:linear-gradient(135deg,#6d28d9,#4c1d95)}.t-intern{background:linear-gradient(135deg,#0e7490,#0a586e)}
 .t-ext-yes{background:linear-gradient(135deg,#b45309,#8a3f07)}.t-ext-no{background:linear-gradient(135deg,#15803d,#0f5f2d)}
 .t-agree{background:linear-gradient(135deg,#475569,#334155)}.t-down{background:linear-gradient(135deg,#15803d,#0f5f2d)}.t-up{background:linear-gradient(135deg,#b91c1c,#7f1212)}
+.t-reroot{background:linear-gradient(135deg,#4338ca,#312e81)}
 .t-sev2{background:linear-gradient(135deg,#b91c1c,#7f1212)}.t-sev25{background:linear-gradient(135deg,#c2410c,#9a3209)}.t-sev3{background:linear-gradient(135deg,#a16207,#7c4a05)}.t-sev4{background:linear-gradient(135deg,#15803d,#0f5f2d)}
 .t-repo-auth{background:linear-gradient(135deg,#0e7490,#0a586e)}.t-repo-broker{background:linear-gradient(135deg,#7c3aed,#5b21b6)}.t-repo-msal{background:linear-gradient(135deg,#0369a1,#075985)}.t-repo-common{background:linear-gradient(135deg,#475569,#334155)}.t-repo-adal{background:linear-gradient(135deg,#57534e,#44403c)}
 .muted{color:var(--ink2)}.idx a{display:block;padding:6px 0;border-bottom:1px solid var(--line)}
@@ -434,20 +435,30 @@ def tiles_html(md):
 
     verdict = _clean(m.get('verdict', ''))
     vlow = verdict.lower()
-    v_cls = "t-down" if "down" in vlow else "t-up" if "up" in vlow else "t-agree"
+    if "down" in vlow:
+        v_cls = "t-down"
+    elif "up" in vlow:
+        v_cls = "t-up"
+    elif "re-root" in vlow or "reroot" in vlow or "re-scope" in vlow:
+        v_cls = "t-reroot"
+    else:
+        v_cls = "t-agree"
     tiles.append((v_cls, "Verdict vs. filed", verdict or "—", "", a_adv))
 
     passes = m.get('passes', 1)
     tiles.append(("t-pass", "Investigation Passes", f"{passes}-pass",
                   "investigate + adversarial" if passes == 2 else "single pass", a_adv))
 
-    # Prior incidents — CONDITIONAL tile: only when a prior/duplicate match was found (high-signal,
-    # could short-circuit the triage). Omitted when "None found" / absent to keep the band concise.
+    # Prior incidents — CONDITIONAL tile: only when a prior/related match was found (high-signal, could
+    # short-circuit the triage OR reveal a campaign). Omitted when "None found" / absent to stay concise.
     prior = _clean(m.get('prior incidents', ''))
     if prior and prior.lower() not in ("none", "none found", "n/a", "—", ""):
         n_ids = len(re.findall(r'\b\d{6,}\b', prior))
         prior_val = f"{n_ids} prior" if n_ids else "Prior match"
-        tiles.append(("t-ext-yes", "Prior incidents", prior_val, "may be a dup / known fix", a_classify))
+        # Neutral wording: several priors on the SAME theme but different code paths is a campaign, not a
+        # duplicate. Asserting "dup" on the tile has misled readers into closing a distinct finding.
+        prior_sub = "dup, known fix, or campaign?" if n_ids > 1 else "may be a dup / known fix"
+        tiles.append(("t-ext-yes", "Prior incidents", prior_val, prior_sub, a_classify))
 
     ext = m.get('external validation', m.get('external dependency', ''))
     ext_l = ext.lower()

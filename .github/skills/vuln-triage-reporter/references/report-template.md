@@ -16,7 +16,7 @@ payloads, no PII**.
 | **Filed** | <MSRC / Glasswing / Codealorian> | <IMPORTANT / Tier 1 / …> | <CWE-xxx> |
 | **Ours** | this investigation | <CRITICAL / Important / Moderate / Low> | <CWE-xxx> |
 
-**Verdict:** AGREE | DOWN-CLASSIFY | UP-CLASSIFY
+**Verdict:** AGREE | DOWN-CLASSIFY | UP-CLASSIFY | RE-ROOTED  _(RE-ROOTED = the filed tier stands but the filed **root cause** was refuted and a different real weakness was kept from the same report — common when a report bundles a wrong headline with a correct aside. Do not render this as AGREE; it hides the point.)_
 **Confidence:** High | Medium | Low  _(set by the adversarial pass — see below)_
 **IcM Severity:** Sev2 | Sev2.5 | Sev3 | Sev4  _(team response-urgency mapping — see severity-rubric.md; Sev2.5+ is a rare, high bar)_
 **Assignment:** Won't-Fix (Already-Covered) | Intern-eligible | Engineer-owned  _(GATE 0 first: **Won't-Fix (Already-Covered)** when the cited sink is already neutralized by an existing control — cite it `file:line` on current HEAD; no fix ships. Else Intern-eligible when tier ≤ Moderate AND component = Authenticator app; everything else → Engineer-owned)_
@@ -28,6 +28,17 @@ payloads, no PII**.
 > These `**Label:**` fields drive the colorful **stat tiles** at the top of the generated HTML page
 > (Severity, Confidence, Verdict, Passes, External-Validation, Assignment). Keep each on its own line so
 > the generator can parse them.
+
+## Scope Contract
+**Required** (enforced by `lint_finding.py`). Write this BEFORE analysis — it is what makes off-path
+evidence inadmissible. Must literally contain the words **IN SCOPE** and **OUT OF SCOPE**.
+- **IN SCOPE:** <the subsystem/channel the sink lives in>
+- **Entry point:** <how an attacker reaches it>
+- **Asset at risk:** <what is actually protected — credential, PII, device registration, …>
+- **Trust decision under attack:** <the question the code is answering about the caller>
+- **Consumers:** <who legitimately calls this>
+- **OUT OF SCOPE (inadmissible either way):** <co-resident subsystems you excluded>. A control there
+  counts only with a named hop-by-hop path from this entry point — "same app" is not a path.
 
 ## Description
 Plain-English: what the component is and what the weakness is. 2–4 sentences. Name the acronyms/concepts
@@ -84,6 +95,15 @@ The second, independent `codebase-researcher` (Challenger) pass that tried to **
 
 > Append the Challenger's own "Searches Run" lines into the audit-trail section below (label them `[challenger]`).
 
+## Claim Ledger
+**Required** (enforced by `lint_finding.py`). Every severity-relevant assertion from the filed report,
+quoted **verbatim**, tagged with its channel, carried across both passes. Severity moves only on status
+transitions here — and **untested ≠ refuted**.
+
+| # | Claim (verbatim from the filed report) | Channel | Status | Evidence |
+|---|---|---|---|---|
+| 1 | "<exact text>" | <subsystem> | TRUE / REFUTED / NOT ASSESSED / VOID | `<file>#Lxx` |
+
 ## Verification Gaps & What We Need to Confirm
 **Required whenever any part of the verdict could not be settled by static code analysis.** Some conditions
 an AI agent *cannot* test — they need a runtime repro, a specific device/tenant state, server-side
@@ -132,3 +152,19 @@ Label challenger (Pass 2) searches so the adversarial coverage is visible.
 > A **Glossary** section is appended automatically by `build_research_pages.py` — it lists only the
 > acronyms/concepts that actually appear on the page, sourced from `references/glossary.md`. Add new
 > terms there (format `- **TERM** — definition`) rather than writing per-finding glossaries.
+
+## Before you generate the HTML — validate the structure
+
+The `**Label:**` fields and the `| **Filed** |` / `| **Ours** |` table rows are a **parser contract**, not
+decoration: they populate the stat tiles and the master-report row. A typo silently yields an empty tile
+(`—`) or a wrong value, and nobody notices until a reviewer asks why the severity is blank.
+
+```
+python scripts/lint_finding.py <finding.md>      # structure gate — must PASS
+python scripts/build_research_pages.py ... --index
+python scripts/build_master_report.py ...
+```
+
+Then **spot-check the rendered tiles** (Our Severity, Confidence, Verdict, IcM Sev, Assignment). If any
+shows `—`, the corresponding `**Label:**` line is missing or misspelled — fix the markdown, don't hand-edit
+the HTML. Use file citations in the form `` `<ClassName>.kt#L<start>-<end>` `` so they render as evidence chips.
