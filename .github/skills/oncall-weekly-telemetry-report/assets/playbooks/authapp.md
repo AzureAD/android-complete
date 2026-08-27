@@ -7,14 +7,24 @@
 
 **Cluster:** `https://idsharedeus2.eastus2.kusto.windows.net` ·
 **Database:** `d496be22d62a46b0a3cf67ea2e736fd8` ·
-**Time column:** `EventDate` (MVs) · **Distinct devices:** pre-computed `sum(XxxDCount)`
+**Time column:** `EventDate` (MVs) · **Device columns:** `sum(XxxDCount)` — matches the dashboard, but over-counts; see AB#3739409
 
 > ### ⚠️ Do not carry Broker conventions into this report
 > The Broker playbook's first four hard rules are **actively wrong** here. There are no HLL
-> columns (`sum(SucceededDCount)` is correct), no TDigest sketches, no `Merge*` helper functions,
+> columns (use `sum(SucceededDCount)` — but read the device-count caveat below), no TDigest
+> sketches, no `Merge*` helper functions,
 > and views are referenced by bare name, not `materialized_view('…')`. The slicing space is 3
 > dimensions, not 7. If a query you are about to run looks like a Broker query, stop.
 > **Before writing any KQL, read [`../docs/authapp-kusto-cheatsheet.md`](../docs/authapp-kusto-cheatsheet.md).**
+
+> ### ⚠️ Device counts are relative, not absolute — AB#3739409
+> `sum(…DCount)` sums a per-(hour × dimension) distinct count, so it re-counts any device seen in
+> more than one cell — measured **+22.6%** on Passkey Registration and **3.93×** on Entra MFA
+> PN+CFA. The skill keeps this idiom deliberately, to stay numerically consistent with the Livesite
+> Dashboard (which uses it in 78 places); the fix belongs upstream in the MVs. Use device columns
+> for **ranking, direction and week-over-week movement** — never quote one as an absolute
+> population ("N devices affected") or as a per-device rate denominator without flagging it.
+> Rates, event counts and deltas come from `countif` columns and are unaffected.
 
 ## What this report is about
 
@@ -526,8 +536,9 @@ Then verify by hand:
   to what, and whether it's news. One generic sentence repeated across rows makes the section unreadable and
   `validate-report.ps1` fails the report for it.
 - **Never `dcount_hll` / `hll_merge` / `percentile_tdigest` / `materialized_view('…')` /
-  `MergeAccountType` here.** None of them exist in this database. Distinct devices are the
-  pre-computed `…DCount` columns: `sum(SucceededDCount)`.
+  `MergeAccountType` here.** None of them exist in this database. Device columns are the per-cell
+  `…DCount` integers: `sum(SucceededDCount)` — which matches the dashboard but over-counts, so
+  treat the result as a relative indicator only. See AB#3739409.
 - **The MV time column is `EventDate`.** Raw tables use `EventInfo_Time`, except
   `brokeroperations`, which the dashboard filters on `PipelineInfo_IngestionTime`. Using the wrong
   one returns an empty or skewed window with **no error** — this is a silent failure, always

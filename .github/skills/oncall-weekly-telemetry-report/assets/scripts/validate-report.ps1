@@ -490,7 +490,7 @@ if ($App -eq 'authapp') {
     $brokerisms = @('dcount_hll', 'hll_merge', 'percentile_tdigest', 'tdigest_merge', "materialized_view\(")
     $found = @($brokerisms | Where-Object { $content -match $_ })
     if ($found.Count -gt 0) {
-        Add-Fail "Broker-only Kusto constructs present in the report: $($found -join ', '). These do not exist in the Authenticator database (d496be22d62a46b0a3cf67ea2e736fd8) -- a Broker query was copied in. Use sum(<Scenario>DCount) and bare view names. See assets/docs/authapp-kusto-cheatsheet.md."
+        Add-Fail "Broker-only Kusto constructs present in the report: $($found -join ', '). These do not exist in the Authenticator database (d496be22d62a46b0a3cf67ea2e736fd8) -- a Broker query was copied in. Use the per-cell sum(<Scenario>DCount) columns and bare view names. NOTE: sum(<Scenario>DCount) matches the dashboard but over-counts devices (AB#3739409) -- treat device numbers as relative indicators, not absolute populations. See assets/docs/authapp-kusto-cheatsheet.md."
     } else {
         Pass "No Broker-only Kusto constructs leaked into the report"
     }

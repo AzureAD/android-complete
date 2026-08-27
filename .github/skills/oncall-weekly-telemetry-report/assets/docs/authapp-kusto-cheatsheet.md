@@ -10,7 +10,7 @@ Companion to [`kusto-cheatsheet.md`](kusto-cheatsheet.md), which covers the **Br
 >
 > | Broker rule | Authenticator reality |
 > |---|---|
-> | Never `sum(countDevices)` — always `dcount_hll(hll_merge(countDevicesHll))` | There are no HLL columns. Distinct devices are **pre-computed**: `sum(SucceededDCount)` is correct and is what the dashboard does. |
+> | Never `sum(countDevices)` — always `dcount_hll(hll_merge(countDevicesHll))` | There are no HLL columns. Device columns are per-cell `dcountif(...)` integers; the skill uses `sum(SucceededDCount)` **to match the dashboard**, but see the accuracy caveat below — it is not a true distinct count. |
 > | Never sum percentiles — use `percentile_tdigest(tdigest_merge(...))` | There are no TDigest sketches. The only latency source is the raw `brokeroperations` table, where plain `percentile()` is correct. |
 > | Always apply `MergeAccountType` / `MergeIsSharedDevice` / `MergeUiRequiredExceptions` | These helper functions do not exist in this database. |
 > | Time column is `EventInfo_Time` | Materialized views use **`EventDate`**. Raw tables use `EventInfo_Time` — except `brokeroperations`, which the dashboard filters on **`PipelineInfo_IngestionTime`**. |
@@ -19,6 +19,53 @@ Companion to [`kusto-cheatsheet.md`](kusto-cheatsheet.md), which covers the **Br
 > | 7 slicing dimensions | **3** dimensions: `AppVersion`, `OsLevel`, `DeviceInfoMake`. |
 >
 > If you find yourself pattern-matching a Broker query into this database, stop and re-read.
+
+---
+
+## ⚠️ Device counts over-count — known issue, tracked in AB#3739409
+
+**Read this before quoting any "Devices" number.**
+
+Authenticator MVs store device counts as a plain integer per **(hourly bin × dimension)** cell:
+
+```kql
+SucceededDCount = dcountif(DeviceInfo_Id, OperationName == "…Succeeded")
+by EventDate = bin(EventInfo_Time, 1h), OsLevel, AppVersion, DeviceInfoMake
+```
+
+A distinct count collapsed to an integer **cannot be merged, only added** — and adding re-counts
+every device that appears in more than one hour or more than one dimension cell. This is the same
+error class as the Broker's `sum(countDevices)`; the difference is that Broker stores an HLL
+*sketch*, which retains device identity and therefore merges correctly. Authenticator has no such
+column, so **these views cannot answer "how many distinct devices" at all**.
+
+Measured on `2026-08-18 → 2026-08-25`:
+
+| Scenario | `sum(…DCount)` | true `dcount(DeviceInfo_Id)` | Inflation |
+|---|---|---|---|
+| Passkey WebAuthN Registration (4 group-by columns) | 4,494 | 3,665 | +22.6% |
+| Entra MFA PN+CFA (6 group-by columns) | 88,372,219 | 22,510,358 | **3.93×** |
+
+`TotalUniqueDevices` is **not** an escape hatch — it is also a per-cell `dcount` and does not merge.
+
+**The skill deliberately keeps `sum(…DCount)` anyway.** The Livesite Dashboard uses this idiom in 78
+places and plain `dcount(` in none, so it is the team's de-facto convention and every historical
+figure is calibrated to it. A report that printed 22.5 M while the dashboard printed 86.4 M would
+leave an on-call engineer with two numbers and no way to choose. The fix belongs upstream in the MVs
+and the dashboard (**AB#3739409**); this skill re-aligns once that lands.
+
+**What this means in practice:**
+
+- Device columns are **relative** indicators — good for "which scenario moved", "is this rising",
+  ranking and week-over-week deltas, all of which survive a consistent multiplier.
+- They are **not** absolute device populations. Never quote one as "N customers are affected", and
+  never use one as the denominator of a per-device rate without saying it is inflated.
+- Rates, event counts, success/failure percentages, deltas and sparklines are **unaffected** — they
+  come from `countif` columns, which sum correctly.
+- `UnknownDevices = InitiatedDevices − (SucceededDevices + FailedDevices)` is unsound even with
+  correct counts: a device can both succeed and fail in-window (239 devices, 6.6% of succeeded, on
+  the window above), so the sets overlap and the subtraction underflows into a `case(…, 0)` clamp.
+  The **event-count** `Unknown` directly above it is fine.
 
 ---
 
