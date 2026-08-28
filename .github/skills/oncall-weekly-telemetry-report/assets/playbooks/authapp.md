@@ -150,14 +150,14 @@ both sides of the init↔results join or the two funnels quietly contaminate eac
    - `VOLATILE` / `RECOVERY` ride as clearly-labelled trailing rows in the 🔴 callout, never
      headlining a percentage (check 15).
 
-   **⚠️ Every visible row carries its own 9-week `.item-spark`** holding the scenario's success-rate
+   **⚠️ Every visible row carries its own 8-week `.item-spark`** holding the scenario's success-rate
    series — including the wins, because a recovery is a shape claim too. Check 16 hard-fails a
    visible row without one. Rows inside the fold are exempt.
    ```html
    <span class="item-name">Passkey WebAuthN Authentication</span>
    <span class="item-spark trend" data-trend="[96.4,96.2,96.3,96.4,96.1,96.3,96.2,94.1]"
          data-w="120" data-h="22" data-color="#cf222e"></span>
-   <span class="spark-cap">9 wk</span>
+   <span class="spark-cap">8 wk</span>
    ```
    Colour: `#cf222e` worsening, `#bc4c00` accelerating, `#1a7f37` improving. Tag each row with its
    label (`tag-new` / `tag-accel` / `tag-ongoing`) plus `elevated Nw` where `weeksElevated > 1`.
@@ -393,7 +393,7 @@ classifier did not — that is the defect this step exists to prevent.
 > enough to be this week's story, say so in Section 7 and, if it warrants top-level visibility,
 > reference it from the Section 1 executive summary — not by inserting it into Section 2.
 
-`weeksElevated` is **derived from the 9-week series, never persisted** — it counts consecutive recent
+`weeksElevated` is **derived from the 8-week series, never persisted** — it counts consecutive recent
 weeks above the early-window baseline, so it is identical on any machine and needs no state file.
 Where the whole visible window is elevated the classifier sets `sustainedFullWindow: true`; phrase
 that as *"below baseline for the entire visible window"* rather than inventing a week count.
@@ -559,7 +559,7 @@ Then verify by hand:
   Budget **≤ 8 visible rows total, wins included** (check 17 counts wins). The Broker report this
   replaces shipped 13 visible rows with zero charts while the section below it carried 38 — the reader
   could not tell which row was that week's story.
-- **Every visible attention row carries a 9-week `.item-spark`**, wins included. Check 16 hard-fails
+- **Every visible attention row carries a 8-week `.item-spark`**, wins included. Check 16 hard-fails
   otherwise. The series is already in the trend sidecar — no extra query. Charts belong beside the
   claim they support.
 - **A quiet week is a valid outcome — publish it as one.** If `quietWeek: true`, show the quiet-week
@@ -643,7 +643,7 @@ Then verify by hand:
       callout, `ONGOING` is inside a collapsed fold, and no `VOLATILE`/`RECOVERY` row headlines a
       percentage. Every row body is specific — no sentence repeats across rows.
 - [ ] **Attention section is short and charted.** Visible rows == the classifier's `attention` set
-      (`NEW` + `ACCELERATING`), ≤ 8 of them, each with an `.item-spark` 9-week sparkline (wins too).
+      (`NEW` + `ACCELERATING`), ≤ 8 of them, each with an `.item-spark` 8-week sparkline (wins too).
       If `quietWeek: true`, the quiet-week banner is shown and nothing was promoted to fill the gap.
 - [ ] Every regressed scenario that cleared the volume floor has an attribution card with **all
       three** dimension bars and a fully populated 4-field block (Likely cause / Concentration /

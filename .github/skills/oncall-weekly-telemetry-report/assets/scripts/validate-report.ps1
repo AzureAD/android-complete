@@ -601,7 +601,7 @@ if ($attStart -ge 0 -and $attEnd -gt $attStart) {
     #
     # This is not decoration. "+25.7% WoW" is unreadable on its own -- the reader cannot
     # tell a flat-for-seven-weeks series that just stepped up (a real regression) from one
-    # that has been bouncing all along (noise wearing a big percentage). The 9-week shape
+    # that has been bouncing all along (noise wearing a big percentage). The 8-week shape
     # IS the novelty argument, so it has to sit in the row that makes the claim.
     #
     # Rows inside a collapsed <details> fold are reference material and are exempt.
@@ -618,7 +618,7 @@ if ($attStart -ge 0 -and $attEnd -gt $attStart) {
             $noSpark += $(if ($n.Success) { $n.Groups[1].Value.Trim() } else { '(unnamed)' })
         }
         if ($noSpark.Count -gt 0) {
-            Add-Fail "$($noSpark.Count) of $($visHeads.Count) visible attention row(s) have no inline sparkline: $($noSpark -join ', '). Every attention row must carry a .item-spark with data-trend holding its 9-week series -- the shape is what distinguishes a step change from ordinary variance. Charts belong WITH the finding, not in a separate browsable section."
+            Add-Fail "$($noSpark.Count) of $($visHeads.Count) visible attention row(s) have no inline sparkline: $($noSpark -join ', '). Every attention row must carry a .item-spark with data-trend holding its 8-week series -- the shape is what distinguishes a step change from ordinary variance. Charts belong WITH the finding, not in a separate browsable section."
         } else {
             Pass "All $($visHeads.Count) visible attention row(s) carry an inline sparkline"
         }
@@ -689,12 +689,24 @@ if ($t60Start -ge 0) {
 #
 # Rule: a key carrying tag-bad/tag-warn must appear EITHER in the attention section OR in a
 # .reconcile-note that names it and gives the reason it is not being escalated.
-$scoreStart = $content.IndexOf('id="scoreboard"')
-if ($scoreStart -lt 0) { $scoreStart = $content.IndexOf('id="error-codes"') }
-if ($scoreStart -ge 0 -and $attStart -ge 0 -and $attEnd -gt $attStart) {
-    $scoreEnd = $content.IndexOf('<h2', $scoreStart + 10)
-    if ($scoreEnd -lt 0) { $scoreEnd = $content.Length }
-    $scoreSec = $content.Substring($scoreStart, $scoreEnd - $scoreStart)
+#
+# Scan EVERY pill-bearing table, not just the first. Broker renders two (error-codes and
+# error-types); Authenticator renders one (scoreboard). Stopping at the first <h2> after the
+# first anchor silently exempted every error-type pill -- on the 2026-08-22 Broker report that
+# was 8,066 of 124,728 characters scanned, with a tag-bad BrokerCommunicationException row
+# sitting in the unscanned remainder.
+$pillSectionIds = @('scoreboard', 'error-codes', 'error-types')
+$scoreSec = ''
+$foundSection = $false
+foreach ($sid in $pillSectionIds) {
+    $sStart = $content.IndexOf("id=""$sid""")
+    if ($sStart -lt 0) { continue }
+    $foundSection = $true
+    $sEnd = $content.IndexOf('<h2', $sStart + 10)
+    if ($sEnd -lt 0) { $sEnd = $content.Length }
+    $scoreSec += $content.Substring($sStart, $sEnd - $sStart) + "`n"
+}
+if ($foundSection -and $attStart -ge 0 -and $attEnd -gt $attStart) {
 
     # A flagged row = a <tr> whose markup contains tag-bad or tag-warn. The key is the first
     # .code-cell in that row (both templates put the code/scenario name there).
@@ -711,13 +723,20 @@ if ($scoreStart -ge 0 -and $attStart -ge 0 -and $attEnd -gt $attStart) {
     $flagged = $flagged | Select-Object -Unique
 
     if ($flagged.Count -eq 0) {
-        Pass "No red/amber pills in the scoreboard/WoW table -- nothing to reconcile"
+        Pass "No red/amber pills in the scoreboard/WoW table(s) -- nothing to reconcile"
     } else {
         # Accounted for = named anywhere in the attention section (promoted as an item) or in
         # any .reconcile-note anywhere in the report (explicitly dismissed).
-        $attSecFull   = $content.Substring($attStart, $attEnd - $attStart)
-        $reconcileTxt = ([regex]::Matches($content, '<div class="reconcile-note".*?</div>', 'Singleline') |
-                         ForEach-Object { $_.Value }) -join ' '
+        #
+        # HTML comments are stripped first. Both templates carry an instructional comment INSIDE
+        # the attention section that names `Passkey WebAuthN Registration` as the worked example
+        # of an unreconciled pill. Left in, that comment satisfies this check for the exact
+        # scenario the check exists to catch -- a self-defeating check.
+        $stripComments = { param($t) [regex]::Replace($t, '(?s)<!--.*?-->', ' ') }
+        $attSecFull   = & $stripComments $content.Substring($attStart, $attEnd - $attStart)
+        $reconcileTxt = & $stripComments ((
+                            [regex]::Matches($content, '<div class="reconcile-note".*?</div>', 'Singleline') |
+                            ForEach-Object { $_.Value }) -join ' ')
         $accountedIn  = $attSecFull + ' ' + $reconcileTxt
 
         $unreconciled = $flagged | Where-Object { $accountedIn -notmatch [regex]::Escape($_) }

@@ -90,14 +90,14 @@
         `validate-report.ps1` check 15 **hard-fails** any `VOLATILE`/`RECOVERY` row that still carries a WoW chip ≥ 25%.
      5. **↩️ Recovery** — label `RECOVERY`: returning to its normal band after a suppressed week. Explicitly *not* a regression.
 
-     **⚠️ Every visible row carries its own 9-week sparkline.** The shape is what separates a step
+     **⚠️ Every visible row carries its own 8-week sparkline.** The shape is what separates a step
      change from ordinary variance, and it must sit *next to the claim* — not in a separate browsable
      section further down. Use the `.item-spark` pattern from the template:
      ```html
      <span class="item-name">ipc_return_null_cursor</span>
      <span class="item-spark trend" data-trend="[41200,40800,41500,41100,40900,41500,52100]"
            data-w="120" data-h="22" data-color="#cf222e"></span>
-     <span class="spark-cap">9 wk</span>
+     <span class="spark-cap">8 wk</span>
      ```
      Colour by direction: `#cf222e` worsening, `#1a7f37` improving, `#9a6700` volatile. The series is
      the same `comparable` array `classify-novelty.js` already read from the trend sidecar — you do not
@@ -391,7 +391,7 @@ much longer than the `attention` array, you promoted rows the classifier did not
 
 **`weeksElevated` is derived, never persisted.** It counts consecutive recent weeks above the
 *early-window baseline* (`median` of the first third), so it is identical on any machine and needs no
-state file. Its known limit: with 7–9 weeks of history you cannot distinguish "elevated for 7 weeks"
+state file. Its known limit: with only 8 weeks of history you cannot distinguish "elevated for 7 weeks"
 from "normal at a high level" — the classifier sets `sustainedFullWindow: true` for those, and the
 correct phrasing is *"elevated for the entire visible window"*, not a hard week count.
 
@@ -770,7 +770,7 @@ Then:
   Budget: **≤ 8 visible rows total, wins included** (validator check 17 warns above it and counts wins).
   The failure mode this replaces is measured, not hypothetical: 13 visible rows, 0 charts, and the
   60-day section below carrying 38.
-- **Every visible attention row carries a 9-week `.item-spark`.** Validator check 16 hard-fails
+- **Every visible attention row carries a 8-week `.item-spark`.** Validator check 16 hard-fails
   otherwise. The series comes from the trend sidecar you already loaded — no extra query. Charts belong
   beside the claim they support; a separate browsable chart section is the noise, not the signal.
 - **The 60-day section is a detector, not a catalog.** Chart only the slow burns it *promotes* (rising
@@ -802,7 +802,7 @@ Then:
 - [ ] **60-day trend bucketing run on the full cross-product** — `{error_code, error_type} × {devices, requests}` = 4 runs — union of regressions reported. Per-request retry storms (e.g. small device pool, exploding request count) are flagged on both axes. Source KQL spans the literal last 60 days ending today and buckets with `bin_at(…, 7d, <TREND_END>)`, so the newest bucket **is** the report's WoW window; every `bucket-trends.js` invocation passed **both** `--start` and `--end`.
 - [ ] **WoW-movers pass run** ([`wow-movers.kql`](../queries/wow-movers.kql)) for BOTH `error_code` and `error_type`. Its output rows are **merged into the single regression callout in Section 2**. Every row carries throw-site, dominant message, originator, and a next step. If the callout is empty (rare), render "None this week" rather than omit.
 - [ ] **Novelty classification run** ([`classify-novelty.js`](../scripts/classify-novelty.js)) on every `bucket-trends.js` sidecar. Section 2 is grouped 🆕 New → 🟠 Getting worse → 🔵 Ongoing (collapsed fold) → 🔁 Volatile → ↩️ Recovery, **not** sorted by device count. No `VOLATILE`/`RECOVERY` row headlines a percentage. Families are reported as one row. Every row body is specific — no sentence repeats across rows.
-- [ ] **Attention section is short and charted.** Visible rows == the classifier's `attention` set (`NEW` + `ACCELERATING`), ≤ 8 of them, each with an `.item-spark` 9-week sparkline. `ONGOING` rows live inside a collapsed fold. If `quietWeek: true`, the quiet-week banner is shown and nothing was promoted to fill the gap.
+- [ ] **Attention section is short and charted.** Visible rows == the classifier's `attention` set (`NEW` + `ACCELERATING`), ≤ 8 of them, each with an `.item-spark` 8-week sparkline. `ONGOING` rows live inside a collapsed fold. If `quietWeek: true`, the quiet-week banner is shown and nothing was promoted to fill the gap.
 - [ ] **60-day section charts only promoted slow burns** (rising on 60d, not already in Section 2 — often zero). Full classification is inside a `<details>` fold with no chart column. ≤ 6 visible charts.
 - [ ] **Both error-codes AND error-types WoW tables have `Δ requests %` and `Δ devices %` columns**, the 60d sparkline, and a status pill. Any row crossing threshold on either metric is in the regression list.
 - [ ] Every WoW regression AND every 60d regression — **for both `error_code` and `error_type`** — has its own spike-attribution card with all 7 dimensions sliced. Cards are built from [`assets/templates/spike-card.html`](../templates/spike-card.html).

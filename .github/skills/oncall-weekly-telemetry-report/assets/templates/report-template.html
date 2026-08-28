@@ -393,7 +393,7 @@
   /* ---- Novelty presentation --------------------------------------------------
      The sparkline IS the argument. A reader cannot judge "+25% WoW" without
      seeing whether the series was flat for seven weeks or bouncing all along,
-     so every attention row carries its own 9-week shape inline. Charts live
+     so every attention row carries its own 8-week shape inline. Charts live
      WITH the finding, not in a separate browsable catalog. */
   .item-spark {
     display: inline-flex; align-items: center; line-height: 0;
@@ -588,14 +588,14 @@
   <div class="item-list">
 
     <!-- EXAMPLE ITEM ROW — one per NEW key, ordered by classifier rank (NOT by volume).
-         MANDATORY: every attention row carries an inline .item-spark with its 9-week series.
+         MANDATORY: every attention row carries an inline .item-spark with its 8-week series.
          data-trend is the weekly series from the bucket-trends sidecar, oldest -> newest.
          Colors: #cf222e NEW/regression, #bc4c00 accelerating, #1a7f37 recovery. -->
     <div class="item">
         <div class="item-head">
           <span class="item-name">EXAMPLE_error_code</span>
           <span class="item-spark trend" data-trend="[41000,41200,40800,41500,41100,41400,52129]" data-w="120" data-h="22" data-color="#cf222e"></span>
-          <span class="spark-cap">9 wk</span>
+          <span class="spark-cap">8 wk</span>
           <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 52.1 K</span></span>
           <span class="metric up"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE +25.7%</span></span>
           <span class="metric up"><span class="m-label">vs own median</span><span class="m-value">EXAMPLE +19.4%</span></span>
@@ -622,7 +622,7 @@
         <div class="item-head">
           <span class="item-name">EXAMPLE_accelerating_code</span>
           <span class="item-spark trend" data-trend="[38000,41000,39000,52000,63000,67500,86798]" data-w="120" data-h="22" data-color="#bc4c00"></span>
-          <span class="spark-cap">9 wk</span>
+          <span class="spark-cap">8 wk</span>
           <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 86.8 K</span></span>
           <span class="metric up"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE +28.5%</span></span>
           <span class="metric up"><span class="m-label">vs own median</span><span class="m-value">EXAMPLE +108.7%</span></span>
@@ -667,7 +667,7 @@
         <div class="item-head">
           <span class="item-name">EXAMPLE_recovered_code</span>
           <span class="item-spark trend" data-trend="[834000,820000,790000,610000,340000,180000,117000]" data-w="120" data-h="22" data-color="#1a7f37"></span>
-          <span class="spark-cap">9 wk</span>
+          <span class="spark-cap">8 wk</span>
           <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 834 K</span></span>
           <span class="metric down"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE −86%</span></span>
           <span class="metric down"><span class="m-label">Δ requests</span><span class="m-value">EXAMPLE −78%</span></span>
@@ -698,7 +698,9 @@
   series that actually changed. So: anything the 60-day pass flags that is <em>also</em> in the
   attention section above is <strong>not repeated here</strong>, and anything flat is collapsed.
   <br><br>
-  <strong>Method:</strong> weekly device counts over the last 9 weeks; drop the partial start week;
+  <strong>Method:</strong> device counts bucketed into rolling 7-day windows anchored at the report's
+  window end, over the last 60 days; the oldest bucket spans only 4 days and is dropped, leaving 8
+  complete weeks;
   keep codes with peak weekly devices ≥ 10&nbsp;K; classify by <code>delta = (last − first) / first</code>
   — <strong>regression</strong> &gt; +15&nbsp;% and monotonic-ish, <strong>ephemeral spike</strong> if peak ≥ 3× surrounding
   mean, <strong>improvement</strong> &lt; −15&nbsp;%, else <strong>flat</strong>. Delta math uses complete weeks only.
@@ -716,7 +718,7 @@
       <div class="item-head">
         <span class="item-name">EXAMPLE_slow_burn_code</span>
         <span class="item-spark trend" data-trend="[7,40,180,520,1100,2050,3461]" data-w="120" data-h="22" data-color="#cf222e"></span>
-        <span class="spark-cap">9 wk</span>
+        <span class="spark-cap">8 wk</span>
         <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 3,461</span></span>
         <span class="metric"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE +8.4%</span></span>
         <span class="metric up"><span class="m-label">Δ 60d</span><span class="m-value">EXAMPLE +49,000%</span></span>

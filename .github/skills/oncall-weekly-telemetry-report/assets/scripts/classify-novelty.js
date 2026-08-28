@@ -57,7 +57,7 @@
  * requires magnitude (ratio > 1.10), slope (recentRatio > 1.10) AND not-currently-falling.
  *
  * `weeksElevated` answers "how long has this been like this?" WITHOUT any persisted state --
- * it is derived from the same 9-week series, so two engineers on two machines get identical
+ * it is derived from the same 8-week series, so two engineers on two machines get identical
  * answers and there is nothing to commit, sync, or go stale. It counts consecutive recent
  * weeks above the EARLY-window baseline (median of the first third). A series that never
  * left that baseline band reports the full window with `sustainedFullWindow: true`, i.e.
