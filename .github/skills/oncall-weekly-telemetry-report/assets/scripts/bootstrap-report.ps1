@@ -201,7 +201,12 @@ Write-Host "Resolved reporting window (UTC) for -App $App :"
 Write-Host "  Last 7 days:   $curStartStr -> $curEndStr  (exclusive upper bound)"
 Write-Host "  Baseline:      $prevStartStr -> $prevEndStr"
 Write-Host "  60-day trend:  $($sixtyDayStart.ToString('yyyy-MM-dd')) -> $($sixtyDayEnd.ToString('yyyy-MM-dd'))  (literal 60d ending today; rolling 7d buckets anchored at curEnd)"
-Write-Host "  Trend buckets: 8 complete rolling weeks; final bucket == the Last-7-days window above (classifier WoW == displayed WoW)"
+$wowNote = if ($App -eq 'authapp') {
+    'final bucket == the Last-7-days window above (SAME window as the scoreboard; note the classifier grades bad-outcome volumes while the scoreboard shows success-RATE deltas, so the two numbers need not match)'
+} else {
+    'final bucket == the Last-7-days window above (classifier WoW == displayed WoW)'
+}
+Write-Host "  Trend buckets: 8 complete rolling weeks; $wowNote"
 Write-Host "  bucket-trends.js: --start=$($sixtyDayStart.ToString('yyyy-MM-dd')) --end=$curEndStr   (pass BOTH; --end disables the partial-end auto-drop heuristic)"
 Write-Host "  Sparkline (8 rolling weeks): $($sparkStart.ToString('yyyy-MM-dd')) -> $($sparkEnd.ToString('yyyy-MM-dd'))  (SPARK_START -> SPARK_END, exclusive; no Sunday alignment needed)"
 # NOTE: Console output uses ASCII '->'; the HTML stamp below uses U+2192 arrows

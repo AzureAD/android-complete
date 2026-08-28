@@ -770,7 +770,7 @@ Then:
   Budget: **≤ 8 visible rows total, wins included** (validator check 17 warns above it and counts wins).
   The failure mode this replaces is measured, not hypothetical: 13 visible rows, 0 charts, and the
   60-day section below carrying 38.
-- **Every visible attention row carries a 8-week `.item-spark`.** Validator check 16 hard-fails
+- **Every visible attention row carries an 8-week `.item-spark`.** Validator check 16 hard-fails
   otherwise. The series comes from the trend sidecar you already loaded — no extra query. Charts belong
   beside the claim they support; a separate browsable chart section is the noise, not the signal.
 - **The 60-day section is a detector, not a catalog.** Chart only the slow burns it *promotes* (rising
@@ -815,7 +815,7 @@ Then:
 - [ ] Denominator caveat (if used) is backed by [`broker-version-share-wow.kql`](../queries/broker-version-share-wow.kql) or [`broker-version-share.kql`](../queries/broker-version-share.kql) evidence naming the responsible version cohort. No hand-waving.
 - [ ] Auth-only denominator used for all reliability %s, denominator caveat called out at top.
 - [ ] No `\bdevs\b` or `\breqs\b` in user-facing text. (`Select-String -Pattern '\bdevs\b|\breqs\b' -CaseSensitive:$false` returns 0.)
-- [ ] **Sparklines rendered.** Every `.kpi` tile in the Top-line health section has a `data-spark` array with 8–9 weekly values. Every **visible** Section 2 attention row has an `.item-spark` (validator check 16). Every row in the WoW tables (codes + types) has a `data-trend` mini-spark. Note the 60-day trend `data-trend` arrays now end on the current partial week (≈9 points incl. the in-progress bar), while the WoW-table sparklines keep 8 complete weeks. Past failure mode: the v7 body rebuild dropped all sparklines silently — see `template-readme.md` § "Sparklines are MANDATORY".
+- [ ] **Sparklines rendered.** Every `.kpi` tile in the Top-line health section has a `data-spark` array with 8 weekly values. Every **visible** Section 2 attention row has an `.item-spark` (validator check 16). Every row in the WoW tables (codes + types) has a `data-trend` mini-spark. Under rolling alignment every bucket is a complete 7 days, so **all** sparkline and 60-day `data-trend` arrays carry 8 points — there is no in-progress bar and no 9-point variant. Past failure mode: the v7 body rebuild dropped all sparklines silently — see `template-readme.md` § "Sparklines are MANDATORY".
 - [ ] **Code-attribution depth.** Every `.attr-card`'s Code attribution block uses the full 8-field `<div class="origin-row">` structure (Originator / Top throw site / Wrapper / Caller hot-spots / Underlying cause / Top error_messages / Likely PRs / Next step) per [`assets/docs/code-attribution-template.md`](../docs/code-attribution-template.md). A `pr-list`-only stub is **not acceptable** — the validator hard-fails this. Past failure mode (v7 third pass): all 10 cards shipped with PR-only stubs and lost the throw-site / wrapper / underlying-cause analysis.
 - [ ] No stale text from previous weeks. (`Select-String -Pattern 'EXAMPLE CONTENT BELOW'` returns 0 — that's the unfinished-section sentinel. The template no longer ships `{{TOKEN}}` placeholders since v2; if the file still contains any `{{`, that's also a leftover.)
 - [ ] `get_errors` clean on the HTML file.

@@ -57,6 +57,15 @@ crash layer, which needs a secret), `--end YYYY-MM-DD` (see § Reporting window)
      bucket-trends.js: --start=2026-05-16 --end=2026-07-15   (pass BOTH; --end disables the partial-end auto-drop heuristic)
      Sparkline (8 rolling weeks): 2026-05-20 -> 2026-07-15  (SPARK_START -> SPARK_END, exclusive; no Sunday alignment needed)
    ```
+   > **The "classifier WoW == displayed WoW" clause is Broker-specific.** Broker's classifier and its
+   > WoW tables count the same thing (error-code devices/requests), so aligning the buckets genuinely
+   > makes the two numbers equal. **Authenticator aligns the *window*, not the *measure*:** its
+   > classifier grades bad-outcome volumes (`Failed + Unknown`) while the scoreboard headline is a
+   > success-**rate** delta in percentage points. Those can differ in magnitude, and can move the same
+   > direction while telling opposite stories, purely from traffic shifts. In `authapp` mode
+   > `bootstrap-report.ps1` prints the qualified wording. Do **not** diagnose an Authenticator sign
+   > mismatch as a bucketing bug — check the printed bucket dates against the report window first; if
+   > they agree, the difference is rate-vs-volume and belongs in the prose.
    These dates are stamped into each report's `<title>`, `<div class="meta">`, and Generated banner
    during bootstrap — you do not hand-edit them.
 

@@ -131,11 +131,19 @@ both sides of the init↔results join or the two funnels quietly contaminate eac
      the only multi-week bucket that stays visible, because "is it getting worse?" is the one
      question a known issue can still answer usefully. Delete the callout if the set is empty.
 
-     > **The classifier's WoW and the headline delta are the SAME basis** — both the rolling 7-day
-     > window, since the 60-day trend's final `bin_at` bucket *is* that window. They should agree in
-     > sign. If they don't, `--start`/`--end` were passed wrong; fix the invocation instead of
-     > hedging the report. (They used to run on different bases — calendar weeks vs rolling — and
-     > could disagree by 100 points. That was the bug this section used to describe as a feature.)
+     > **The classifier's WoW and the headline delta share the SAME window** — both the rolling
+     > 7-day window, since the 60-day trend's final `bin_at` bucket *is* that window. (They used
+     > to run on different bases — calendar weeks vs rolling — and could disagree by 100 points.
+     > That was the bug this section used to describe as a feature.)
+     >
+     > **But they are not the same measure, so do not expect them to agree numerically.** The
+     > classifier grades bad-outcome volumes (`Failed + Unknown` devices and events); the
+     > scoreboard headline is a success-**rate** delta in percentage points. When traffic moves,
+     > the two can diverge in magnitude and can even move the same direction while telling
+     > opposite stories — e.g. bad-outcome devices rising simply because the scenario got busier,
+     > with the success rate flat or improving. A sign mismatch is a **rate-vs-volume** signal to
+     > explain in prose, **not** evidence that `--start`/`--end` were passed wrong. Only suspect
+     > the invocation if the printed bucket dates disagree with the report's window.
      >
      > A row can still be `ACCELERATING` while its **multi-week** slide outpaces this week's step.
      > Keep the heading exactly **"Getting worse"** and resolve it *in the row body*: *"Down 2.1 pp
@@ -319,7 +327,7 @@ Run [`scenario-60d-trend.kql`](../queries/authapp/scenario-60d-trend.kql), then:
 ```pwsh
 node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js $data\scenario-60d.json `
      --key=scenario --metric=devs --start=<TREND_START> --end=<TREND_END> `
-     --family-sep=none --peak-floor=1000 --summary
+     --peak-floor=1000 --summary
 ```
 
 The query maps `errs` / `devs` to **bad outcomes** (`Failed + Unknown`), so the bucketer's
@@ -405,8 +413,11 @@ chip row (`validate-report.ps1` check 15 hard-fails it). Give the absolute level
 AuthApp scenarios are mostly low-variance (cv 0.02–0.2), so a `VOLATILE` scenario is itself worth a sentence —
 it usually means instrumentation is flapping, not that users are failing.
 
-**Two different WoW bases exist — do not conflate them.** The report's headline Δ is the rolling 7-day window;
-the classifier's `WoW` is calendar Sun–Sat weeks. They legitimately disagree. Use novelty as *context*
+**The two WoW figures share a window but not a measure — do not conflate them.** Since the rolling
+alignment, the classifier and the headline both cover the same 7-day window. What still differs is
+*what is counted*: the headline Δ is a success-**rate** delta in percentage points, while the
+classifier grades bad-outcome **volumes** (`Failed + Unknown`). They can legitimately disagree in
+magnitude and even in direction when traffic shifts. Use novelty as *context*
 ("flat for seven weeks, first slip this week"), never as a competing delta number.
 
 ### Step 5 — Sparklines
@@ -559,7 +570,7 @@ Then verify by hand:
   Budget **≤ 8 visible rows total, wins included** (check 17 counts wins). The Broker report this
   replaces shipped 13 visible rows with zero charts while the section below it carried 38 — the reader
   could not tell which row was that week's story.
-- **Every visible attention row carries a 8-week `.item-spark`**, wins included. Check 16 hard-fails
+- **Every visible attention row carries an 8-week `.item-spark`**, wins included. Check 16 hard-fails
   otherwise. The series is already in the trend sidecar — no extra query. Charts belong beside the
   claim they support.
 - **A quiet week is a valid outcome — publish it as one.** If `quietWeek: true`, show the quiet-week

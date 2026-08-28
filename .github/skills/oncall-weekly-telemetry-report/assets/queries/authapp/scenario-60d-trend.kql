@@ -14,8 +14,15 @@
 // This is load-bearing. Under the old startofweek() bucketing the novelty classifier ran on a
 // window that lagged the scoreboard by up to a full week, which is how a scenario could carry a
 // RED scoreboard pill (rolling-derived) while "Needs attention" simultaneously reported a quiet
-// week (calendar-derived). Aligning the bases makes classifier WoW == scoreboard WoW and removes
-// that contradiction. Do not "restore" startofweek() here.
+// week (calendar-derived). Aligning the bases puts the classifier and the scoreboard on the SAME
+// 7-day window and removes that contradiction. Do not "restore" startofweek() here.
+//
+// ⚠️ Alignment is TEMPORAL, not numerical. Unlike the Broker queries, this one emits
+// bad-outcome volumes (`errs = Failed + Unknown`, `devs = FailedD + UnknownD`) while the
+// scoreboard headline is a success-RATE delta in percentage points. Same window, different
+// measures: when traffic moves, the two can differ in magnitude and can even move in the same
+// numeric direction while telling opposite stories. A sign mismatch here is NOT evidence that
+// --start/--end were passed wrong -- read it as rate-vs-volume and reconcile it in prose.
 //
 //   node bucket-trends.js <file.json> --key=scenario --metric=devs \
 //        --start=<TREND_START> --end=<TREND_END> --peak-floor=1000

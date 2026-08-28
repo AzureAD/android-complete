@@ -728,12 +728,22 @@ if ($foundSection -and $attStart -ge 0 -and $attEnd -gt $attStart) {
         # Accounted for = named anywhere in the attention section (promoted as an item) or in
         # any .reconcile-note anywhere in the report (explicitly dismissed).
         #
-        # HTML comments are stripped first. Both templates carry an instructional comment INSIDE
+        # The promotion span is bounded at the next <h2>, NOT at #trend60d. The Authenticator
+        # template orders sections #attention -> #scoreboard -> #trend60d, so an #attention..
+        # #trend60d substring swallows the scoreboard itself and every flagged scenario then
+        # matches its own table row -- the check passes unconditionally. Verified: stripping
+        # every attention item from a real Authenticator report still reported "All 6 red/amber
+        # pill(s) are reconciled". Broker is unaffected (its next <h2> IS #trend60d), so this
+        # bound is correct for both.
+        #
+        # HTML comments are stripped too. Both templates carry an instructional comment INSIDE
         # the attention section that names `Passkey WebAuthN Registration` as the worked example
         # of an unreconciled pill. Left in, that comment satisfies this check for the exact
         # scenario the check exists to catch -- a self-defeating check.
+        $promoEnd = $content.IndexOf('<h2', $attStart + 10)
+        if ($promoEnd -lt 0 -or $promoEnd -gt $attEnd) { $promoEnd = $attEnd }
         $stripComments = { param($t) [regex]::Replace($t, '(?s)<!--.*?-->', ' ') }
-        $attSecFull   = & $stripComments $content.Substring($attStart, $attEnd - $attStart)
+        $attSecFull   = & $stripComments $content.Substring($attStart, $promoEnd - $attStart)
         $reconcileTxt = & $stripComments ((
                             [regex]::Matches($content, '<div class="reconcile-note".*?</div>', 'Singleline') |
                             ForEach-Object { $_.Value }) -join ' ')
