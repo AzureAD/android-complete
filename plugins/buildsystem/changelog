@@ -1,5 +1,10 @@
 Plugin Overview: https://github.com/AzureAD/android-complete/blob/master/plugins/buildsystem/docs/Overview.md
 
+Version 0.2.6
+----------------------------
+[MINOR] Remove use of deleted gradle APIs
+[MINOR] Bump SpotBugs Gradle plugin 4.7.1 -> 6.5.8 (4.x used the removed JavaPluginConvention); groupId changed to com.github.spotbugs.snom
+
 Version 0.2.3
 ----------------------------
 [PATCH] Allow ability to enable/disable code coverage - disabled by default

@@ -10,7 +10,7 @@ plugins {
 }
 
 group 'com.microsoft.identity'
-version '0.2.5'
+version '0.2.6'
 
 tasks.withType(JavaCompile) {
     sourceCompatibility = '11'
@@ -51,11 +51,29 @@ repositories {
     }
 }
 
+// Publish target for the internal NewAndroid Azure Artifacts feed.
+// The java-gradle-plugin + maven-publish plugins auto-create the plugin's
+// publications (the plugin jar/pom and the plugin-marker artifact); this block
+// only tells Gradle WHERE to push them. Consuming repos resolve the plugin from
+// this same feed via their settings.gradle pluginManagement block.
+publishing {
+    repositories {
+        maven {
+            name "NewAndroid"
+            url "https://pkgs.dev.azure.com/IdentityDivision/_packaging/NewAndroid/maven/v1"
+            credentials {
+                username System.getenv("ENV_VSTS_MVN_CRED_USERNAME") != null ? System.getenv("ENV_VSTS_MVN_CRED_USERNAME") : project.findProperty("vstsUsername")
+                password System.getenv("ENV_VSTS_MVN_CRED_ACCESSTOKEN") != null ? System.getenv("ENV_VSTS_MVN_CRED_ACCESSTOKEN") : project.findProperty("vstsMavenAccessToken")
+            }
+        }
+    }
+}
+
 dependencies {
     testImplementation "org.junit.jupiter:junit-jupiter-api:${rootProject.ext.jupiterApiVersion}"
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine'
     implementation "com.android.tools.build:gradle:${rootProject.ext.gradleVersion}"
-    implementation "gradle.plugin.com.github.spotbugs.snom:spotbugs-gradle-plugin:${rootProject.ext.spotBugsGradlePluginVersion}"
+    implementation "com.github.spotbugs.snom:spotbugs-gradle-plugin:${rootProject.ext.spotBugsGradlePluginVersion}"
 
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:${rootProject.ext.kotlinVersion}"
     testImplementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:${rootProject.ext.kotlinVersion}"
