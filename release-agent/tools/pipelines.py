@@ -991,4 +991,5 @@ def release_report(org, project, release_month, checker_def=CHECKER_DEF,
             okf, suites, _ = get_failed_tests(org, project, bid, timeout=timeout)
             entry["failed_suites"] = suites if okf else None
         mrwp[provider] = entry
-    return assemble_rc_model(release_month, checker, o, mrwp, id_source=source)
+    return assemble_rc_model(release_month, checker, o, mrwp, rc=ids.get("rc"),
+                             id_source=source)

@@ -51,7 +51,8 @@ def _persist(st, model, args):
             if m.get("run_id"):
                 K.stash_mrwp(st, slot, {k: m.get(k) for k in
                                         ("run_id", "complete", "ran", "total", "failed_stages",
-                                         "yellow_stages", "never_ran", "tests", "failed_suites")})
+                                         "yellow_stages", "never_ran", "tests", "failed_suites")},
+                             rc=model.get("rc"))
         C.save_state(st, args.runs_root, args.release)
     except Exception:
         pass

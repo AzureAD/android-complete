@@ -2537,7 +2537,7 @@ def test_rc_report_aggregates_and_formats():
             return (True, [{"name": "Build", "state": "completed", "result": "succeeded"},
                            {"name": "UI Automation", "state": "completed", "result": "failed"}], "")
         P.get_stages = _stages
-        P.mrwp_run_ids = lambda *a, **k: (True, {"ECS": 111, "Local": 222}, "", "tags")
+        P.mrwp_run_ids = lambda *a, **k: (True, {"ECS": 111, "Local": 222, "rc": 2}, "", "tags")
         P.get_test_summary = lambda org, project, bid, timeout=90: (
             True, {"total": 100, "passed": 96, "failed": 4,
                    "runs": [{"name": "UI", "total": 20, "passed": 16, "failed": 4}]}, "")
@@ -2549,6 +2549,7 @@ def test_rc_report_aggregates_and_formats():
         assert m["mrwp"]["ECS"]["complete"] and m["mrwp"]["Local"]["complete"]
         assert m["mrwp"]["ECS"]["failed_stages"] == ["UI Automation"]
         assert m["mrwp"]["ECS"]["failed_suites"][0]["tests"] == ["test_1_Foo", "test_2_Bar"]
+        assert m["rc"] == 2                             # authoritative RC iteration flows into the model
         assert m["problems"] == []                      # red stages/tests don't add problems
         text = RR._format(m)
         assert "RC Pipeline Status" in text and "parked at 'Remove RC Tags'" in text
