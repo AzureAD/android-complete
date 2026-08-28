@@ -1,32 +1,38 @@
 // 60-day per-error-code trend (LITERAL last 60 days ending today).
 //
-// The 60-day trend spans the literal last 60 days ending at
-// curEnd (today), so BOTH bounds move with the report date. The trend CHART
-// includes the current in-progress week as its final (partial) bar. Per-week
-// bucketing is still Sun-Sat aligned (Kusto startofweek() is Sunday-based), so the
-// first and last buckets are partial by construction.
+// ⚠️ BUCKETS ARE ROLLING 7-DAY WINDOWS ANCHORED AT <TREND_END>, **NOT** Sun-Sat
+// calendar weeks. `bin_at(t, 7d, datetime(<TREND_END>))` walks backwards from
+// curEnd in exact 7-day steps, so the FINAL bucket is [curEnd-7d, curEnd) --
+// byte-for-byte the same window the report's headline WoW numbers are computed
+// over. Every bucket is a COMPLETE 7 days; there is no partial end bar.
 //
-// IMPORTANT: do NOT drop the current in-progress week here -- the chart wants it.
-// bucket-trends.js excludes the partial week from the regression/improvement DELTA
-// math via `--end=<TREND_CLASS_END> --include-partial-end` (TREND_CLASS_END =
-// startofweek(today)) while still charting it. A partial week driving the delta
-// would read as a fake -99% improvement -- that's why classification and display
-// are split in the JS, not filtered out here.
+// This alignment is load-bearing, not cosmetic. When this query used
+// startofweek() the trend/classifier basis lagged the report's rolling window by
+// up to a full week (for a 2026-08-01 run the classifier's "current" week was
+// 07/19-07/26 against a report window of 07/25-08/01 -- ONE day of overlap).
+// Codes that turned in the final ~6 days were structurally invisible to the noise
+// gate: authorization_pending read +63.2% in the report and -37.1% to the
+// classifier, which duly filed it "ONGOING -- plateaued, do not re-triage".
+// Aligning the bases makes classifier WoW == displayed WoW and removes that entire
+// false-negative class. Do not "restore" startofweek() here.
+//
+// Because 60 is not a multiple of 7, the OLDEST bucket (curEnd-63d) covers only 4
+// days and IS partial. That is the safe end to be partial on, and it is dropped by
+// `--start=<TREND_START>` (its label sorts before TREND_START). Net: 8 complete
+// rolling weeks. There is no TREND_CLASS_END any more, and --include-partial-end
+// is obsolete -- classification and display now see the identical bucket list.
 //
 // Inputs (replace before pasting; bootstrap-report.ps1 prints all values):
 //   <TREND_START>  = curEnd - 60d  (first calendar day of the 60-day window)
-//   <TREND_END>    = curEnd (today), EXCLUSIVE. Data is pulled up to but not
-//                    including 00:00 UTC today, so the final Sun-Sat bucket holds
-//                    Sunday..yesterday of the current week (the partial bar).
+//   <TREND_END>    = curEnd (today), EXCLUSIVE, and the bin_at anchor. Data is
+//                    pulled up to but not including 00:00 UTC today.
 //
 // Output: feed to assets/scripts/bucket-trends.js with
-//   --start=<TREND_START> --end=<TREND_CLASS_END> --include-partial-end
-// where TREND_CLASS_END = startofweek(today) (bootstrap prints it as the
-// "Trend delta cutoff" value).
+//   --start=<TREND_START> --end=<TREND_END>
 materialized_view('ErrorStatsMetrics')
 | where EventInfo_Time >= datetime(<TREND_START>) and EventInfo_Time < datetime(<TREND_END>)
 | where isnotempty(error_code) and error_code != 'success'
 | summarize errs = sum(countOverall),
             devs = dcount_hll(hll_merge(countDevicesHll))
-     by week = startofweek(EventInfo_Time), error_code
+     by week = bin_at(EventInfo_Time, 7d, datetime(<TREND_END>)), error_code
 | order by error_code asc, week asc

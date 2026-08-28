@@ -601,7 +601,7 @@ if ($attStart -ge 0 -and $attEnd -gt $attStart) {
     #
     # This is not decoration. "+25.7% WoW" is unreadable on its own -- the reader cannot
     # tell a flat-for-seven-weeks series that just stepped up (a real regression) from one
-    # that has been bouncing all along (noise wearing a big percentage). The 9-week shape
+    # that has been bouncing all along (noise wearing a big percentage). The 8-week shape
     # IS the novelty argument, so it has to sit in the row that makes the claim.
     #
     # Rows inside a collapsed <details> fold are reference material and are exempt.
@@ -618,7 +618,7 @@ if ($attStart -ge 0 -and $attEnd -gt $attStart) {
             $noSpark += $(if ($n.Success) { $n.Groups[1].Value.Trim() } else { '(unnamed)' })
         }
         if ($noSpark.Count -gt 0) {
-            Add-Fail "$($noSpark.Count) of $($visHeads.Count) visible attention row(s) have no inline sparkline: $($noSpark -join ', '). Every attention row must carry a .item-spark with data-trend holding its 9-week series -- the shape is what distinguishes a step change from ordinary variance. Charts belong WITH the finding, not in a separate browsable section."
+            Add-Fail "$($noSpark.Count) of $($visHeads.Count) visible attention row(s) have no inline sparkline: $($noSpark -join ', '). Every attention row must carry a .item-spark with data-trend holding its 8-week series -- the shape is what distinguishes a step change from ordinary variance. Charts belong WITH the finding, not in a separate browsable section."
         } else {
             Pass "All $($visHeads.Count) visible attention row(s) carry an inline sparkline"
         }
@@ -672,6 +672,93 @@ if ($t60Start -ge 0) {
     }
 } else {
     Add-Warn "Could not locate the 60-day section -- skipping the chart-catalog check."
+}
+
+# ---- 19. Every red/amber table pill must be reconciled (HARD FAIL) ----
+# The scoreboard / WoW tables colour a row from its own rolling delta. The attention
+# section is populated from classify-novelty.js's NOVELTY verdict. Those answer different
+# questions, so a row can be legitimately red up there and legitimately absent from here.
+# The reader cannot know that, and an unexplained red pill sitting above the words
+# "Quiet week" reads as a broken report.
+#
+# Real case (2026-08-01 Authenticator run): `Passkey WebAuthN Registration` carried tag-bad
+# (-1.27 pts, worst delta in the table) while the attention section said "Quiet week -- 0 NEW
+# or ACCELERATING". Both statements were true. The scenario peaks at ~732 bad-outcome devices,
+# UNDER the 1,000-device peak-floor, so it is structurally excluded from classification and
+# can never appear in attention however sharply it moves.
+#
+# Rule: a key carrying tag-bad/tag-warn must appear EITHER in the attention section OR in a
+# .reconcile-note that names it and gives the reason it is not being escalated.
+#
+# Scan EVERY pill-bearing table, not just the first. Broker renders two (error-codes and
+# error-types); Authenticator renders one (scoreboard). Stopping at the first <h2> after the
+# first anchor silently exempted every error-type pill -- on the 2026-08-22 Broker report that
+# was 8,066 of 124,728 characters scanned, with a tag-bad BrokerCommunicationException row
+# sitting in the unscanned remainder.
+$pillSectionIds = @('scoreboard', 'error-codes', 'error-types')
+$scoreSec = ''
+$foundSection = $false
+foreach ($sid in $pillSectionIds) {
+    $sStart = $content.IndexOf("id=""$sid""")
+    if ($sStart -lt 0) { continue }
+    $foundSection = $true
+    $sEnd = $content.IndexOf('<h2', $sStart + 10)
+    if ($sEnd -lt 0) { $sEnd = $content.Length }
+    $scoreSec += $content.Substring($sStart, $sEnd - $sStart) + "`n"
+}
+if ($foundSection -and $attStart -ge 0 -and $attEnd -gt $attStart) {
+
+    # A flagged row = a <tr> whose markup contains tag-bad or tag-warn. The key is the first
+    # .code-cell in that row (both templates put the code/scenario name there).
+    $flagged = @()
+    foreach ($m in [regex]::Matches($scoreSec, '<tr\b.*?</tr>', 'Singleline')) {
+        $row = $m.Value
+        if ($row -notmatch 'tag-bad|tag-warn') { continue }
+        $k = [regex]::Match($row, '<td class="code-cell"[^>]*>(?:<[^>]+>)*([^<]+)')
+        if ($k.Success) {
+            $name = $k.Groups[1].Value.Trim()
+            if ($name -and $name -notmatch '^(EXAMPLE|CODE_|SCENARIO_)') { $flagged += $name }
+        }
+    }
+    $flagged = $flagged | Select-Object -Unique
+
+    if ($flagged.Count -eq 0) {
+        Pass "No red/amber pills in the scoreboard/WoW table(s) -- nothing to reconcile"
+    } else {
+        # Accounted for = named anywhere in the attention section (promoted as an item) or in
+        # any .reconcile-note anywhere in the report (explicitly dismissed).
+        #
+        # The promotion span is bounded at the next <h2>, NOT at #trend60d. The Authenticator
+        # template orders sections #attention -> #scoreboard -> #trend60d, so an #attention..
+        # #trend60d substring swallows the scoreboard itself and every flagged scenario then
+        # matches its own table row -- the check passes unconditionally. Verified: stripping
+        # every attention item from a real Authenticator report still reported "All 6 red/amber
+        # pill(s) are reconciled". Broker is unaffected (its next <h2> IS #trend60d), so this
+        # bound is correct for both.
+        #
+        # HTML comments are stripped too. Both templates carry an instructional comment INSIDE
+        # the attention section that names `Passkey WebAuthN Registration` as the worked example
+        # of an unreconciled pill. Left in, that comment satisfies this check for the exact
+        # scenario the check exists to catch -- a self-defeating check.
+        $promoEnd = $content.IndexOf('<h2', $attStart + 10)
+        if ($promoEnd -lt 0 -or $promoEnd -gt $attEnd) { $promoEnd = $attEnd }
+        $stripComments = { param($t) [regex]::Replace($t, '(?s)<!--.*?-->', ' ') }
+        $attSecFull   = & $stripComments $content.Substring($attStart, $promoEnd - $attStart)
+        $reconcileTxt = & $stripComments ((
+                            [regex]::Matches($content, '<div class="reconcile-note".*?</div>', 'Singleline') |
+                            ForEach-Object { $_.Value }) -join ' ')
+        $accountedIn  = $attSecFull + ' ' + $reconcileTxt
+
+        $unreconciled = $flagged | Where-Object { $accountedIn -notmatch [regex]::Escape($_) }
+
+        if ($unreconciled.Count -gt 0) {
+            Add-Fail "$($unreconciled.Count) row(s) carry a red/amber status pill but are neither promoted into the attention section nor named in a .reconcile-note: $($unreconciled -join ', '). A reader who sees a red pill and an empty/quiet attention section concludes the report is broken. Either promote them, or add a muted <div class=""reconcile-note""> naming each one and why it is not escalated (below the classification floor / within its own normal band / ONGOING and flat)."
+        } else {
+            Pass "All $($flagged.Count) red/amber pill(s) are reconciled (promoted or explicitly dismissed)"
+        }
+    }
+} else {
+    Add-Warn "Could not locate the scoreboard/WoW table or the attention section -- skipping the pill-reconciliation check."
 }
 
 Write-Host ""
