@@ -2588,19 +2588,23 @@ def test_rc_report_flags_never_ran_stage_as_problem():
             setattr(P, n, f)
 
 
-def test_mrwp_run_ids_picks_newest_on_retrigger():
-    """A re-triggered 'Trigger RC Testing' stage leaves MULTIPLE RC-<provider> tags on
-    the orchestrator run (old + new). mrwp_run_ids must pick the NEWEST (max build id) so
-    the fresh MRWP run wins over the stale failed one."""
+def test_mrwp_run_ids_picks_newest_rc_iteration():
+    """The orchestrator tags each RC iteration's MRWP runs as RC<N>-ECS / RC<N>-Local. A
+    re-trigger adds a higher-numbered set; mrwp_run_ids must return the CURRENT (highest N)
+    RC's ids + that rc number — regardless of build-id ordering."""
     from tools import pipelines as P
-    run = {"id": 20, "tags": ["RC-ECS=1678863", "RC-ECS=1679999",
-                              "RC-Local=1678864", "RC-Local=1679000"]}
+    run = {"id": 20, "tags": ["RC1-ECS=1678863", "RC1-Local=1678864",
+                              "RC2-ECS=1679999", "RC2-Local=1679000"]}
     ok, ids, _, source = P.mrwp_run_ids("O", "P", run)
     assert ok and source == "tags"
-    assert ids["ECS"] == "1679999" and ids["Local"] == "1679000"
-    # single tag per provider still works (no re-trigger)
-    ok2, ids2, _, _ = P.mrwp_run_ids("O", "P", {"id": 1, "tags": ["RC-ECS=5", "RC-Local=6"]})
-    assert ok2 and ids2 == {"ECS": "5", "Local": "6"}
+    assert ids["ECS"] == "1679999" and ids["Local"] == "1679000" and ids["rc"] == 2
+    # single RC iteration works
+    ok2, ids2, _, _ = P.mrwp_run_ids("O", "P", {"id": 1, "tags": ["RC1-ECS=5", "RC1-Local=6"]})
+    assert ok2 and ids2 == {"ECS": "5", "Local": "6", "rc": 1}
+    # an incomplete RC (only one provider tagged yet) is ignored in favor of a complete lower RC
+    run3 = {"id": 3, "tags": ["RC1-ECS=100", "RC1-Local=101", "RC2-ECS=200"]}
+    ok3, ids3, _, _ = P.mrwp_run_ids("O", "P", run3)
+    assert ok3 and ids3["rc"] == 1 and ids3["ECS"] == "100"
 
 
 def _run_poll_rc(runs_root, rid, now_iso):

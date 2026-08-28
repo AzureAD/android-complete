@@ -22,7 +22,7 @@ mocks:
       id: 1678611
       tags: [ "AuthenticatorBranch=release-2026-08-13", "NextCommonVersion=24.6.0",
               "NextMsalVersion=8.4.2", "NextBrokerVersion=16.5.0",
-              "RC-ECS=1678863", "RC-Local=1678864" ]
+              "RC1-ECS=1678863", "RC1-Local=1678864" ]
     stages:
       - { name: "Validate Branch and Versions availability", state: completed, result: succeeded }
       - { name: "Create Release Branches", state: completed, result: succeeded }

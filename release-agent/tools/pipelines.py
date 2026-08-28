@@ -6,7 +6,8 @@ release chain these read (all in identitydivision/Engineering):
 
     3038 Code Complete Calendar Checker  → on the CCD, triggers →
     2828 Release Orchestrator            → self-tags AuthenticatorBranch=release-YYYY-MM-DD
-                                           + RC-ECS=<id> / RC-Local=<id> (the two MRWP runs)
+                                           + RC<N>-ECS=<id> / RC<N>-Local=<id> (the two MRWP
+                                             runs for RC iteration N; a re-trigger adds RC<N+1>-*)
     2519 Monthly Release Work Pipeline   → runs twice (ECS + Local), ~23 stages each
 
 The orchestrator's self-tags are the traceability anchor: find the 2828 run for a
@@ -213,21 +214,13 @@ def _ado_rest_send(url, method, body, timeout):
 
 
 def _tag_value(tags, key):
-    """Return the value of a `key=value` build tag (e.g. RC-ECS=1678863 → '1678863'),
+    """Return the value of a `key=value` build tag (e.g. NextMsalVersion=8.4.2 → '8.4.2'),
     or None. Case-sensitive key match; first match wins."""
     pfx = f"{key}="
     for t in tags or []:
         if t.startswith(pfx):
             return t[len(pfx):]
     return None
-
-
-def _tag_values(tags, key):
-    """All values for a `key=value` build tag. A re-triggered 'Trigger RC Testing'
-    stage adds NEW RC-<provider>=<id> tags alongside the old, so a provider can have
-    several — use `_newest_id` to pick the current run."""
-    pfx = f"{key}="
-    return [t[len(pfx):] for t in (tags or []) if t.startswith(pfx)]
 
 
 def _newest_id(ids):
@@ -320,21 +313,29 @@ def find_checker_runs(org, project, def_id, release_month, timeout=60):
 
 
 def mrwp_run_ids(org, project, orch_run, timeout=90):
-    """Resolve the two MRWP (def 2519) build ids the orchestrator triggered, keyed by
-    flight provider. Returns (ok, {"ECS": <id>, "Local": <id>}, detail, source).
+    """Resolve the two MRWP (def 2519) build ids for the CURRENT RC iteration, keyed by
+    flight provider. Returns (ok, {"ECS": <id>, "Local": <id>, "rc": <N>}, detail, source).
 
-    PRIMARY — the orchestrator run's self-tags `RC-ECS=<id>` / `RC-Local=<id>` (added
-    by PR: tag orchestrator run with triggered MRWP ids). One field, no log reads.
+    PRIMARY — the orchestrator run's self-tags `RC<N>-ECS=<id>` / `RC<N>-Local=<id>`, where
+    <N> is the RC iteration (RC1, RC2, ...). A re-triggered RC adds a HIGHER-numbered set
+    (e.g. RC2-ECS / RC2-Local alongside RC1-*), so the CURRENT RC is the highest N that has
+    BOTH an ECS and a Local id — its two ids win. `rc` is that N.
 
-    FALLBACK — for runs predating that tag, parse the 'Trigger RC Testing' stage's two
-    'Trigger ADO Pipeline' task logs for `Run ID: <id>` + `Flight Provider: <p>`.
-    `source` is 'tags' or 'logs' so callers can note which path was used.
+    FALLBACK — if no RC<N>-* id tags are present, parse the 'Trigger RC Testing' stage's two
+    'Trigger ADO Pipeline' task logs for `Run ID: <id>` + `Flight Provider: <p>` (newest per
+    provider by build id; rc unknown -> None). `source` is 'tags' or 'logs'.
     """
+    import re as _re
     tags = (orch_run or {}).get("tags") or []
-    ecs = _newest_id(_tag_values(tags, "RC-ECS"))
-    local = _newest_id(_tag_values(tags, "RC-Local"))
-    if ecs and local:
-        return (True, {"ECS": ecs, "Local": local}, "", "tags")
+    by_rc = {}                                   # N -> {"ECS": id, "Local": id}
+    for t in tags:
+        m = _re.match(r"RC(\d+)-(ECS|Local)=(\d+)$", str(t).strip())
+        if m:
+            by_rc.setdefault(int(m.group(1)), {})[m.group(2)] = m.group(3)
+    complete = [n for n, d in by_rc.items() if d.get("ECS") and d.get("Local")]
+    if complete:
+        n = max(complete)                        # highest RC iteration with both providers
+        return (True, {"ECS": by_rc[n]["ECS"], "Local": by_rc[n]["Local"], "rc": n}, "", "tags")
 
     # Fallback: parse the trigger-task logs from the orchestrator's timeline. On a
     # re-trigger there are extra 'Trigger ADO Pipeline' tasks — collect ALL ids per
@@ -352,7 +353,6 @@ def mrwp_run_ids(org, project, orch_run, timeout=90):
     trigger_tasks = [r for r in recs
                      if r.get("type") == "Task" and r.get("name") == "Trigger ADO Pipeline"
                      and (r.get("log") or {}).get("id")]
-    import re as _re
     found = {"ECS": [], "Local": []}
     base = org.rstrip("/")
     for t in trigger_tasks:
@@ -368,7 +368,7 @@ def mrwp_run_ids(org, project, orch_run, timeout=90):
             found[prov].append(m_id.group(1))
     ecs, local = _newest_id(found["ECS"]), _newest_id(found["Local"])
     if ecs and local:
-        return (True, {"ECS": ecs, "Local": local}, "", "logs")
+        return (True, {"ECS": ecs, "Local": local, "rc": None}, "", "logs")
     return (False, None, f"could not resolve both MRWP ids (got {found or 'none'})", "logs")
 
 

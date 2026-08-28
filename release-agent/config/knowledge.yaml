@@ -589,7 +589,7 @@ build_verify.mrwp_ecs:
     - q: "The run has red stages / failing tests — why did it still pass?"
       a: "By design. A run is valid as long as every stage EXECUTED. Red/yellow stages and failed tests are expected at this checkpoint and triaged later. Only a stage that never ran (aborted pipeline) blocks."
     - q: "How is the ECS run identified?"
-      a: "From the orchestrator run's RC-ECS=<build id> tag (or, for runs predating that tag, the orchestrator's trigger-task log). The run is then read directly by build id."
+      a: "From the orchestrator run's RC<N>-ECS=<build id> tag for the current RC iteration N (the highest N that has both an ECS and a Local id; a re-trigger adds a higher-numbered RC<N+1>-* set). If those tags are missing it falls back to the orchestrator's trigger-task log. The run is then read directly by build id."
 
 build_verify.mrwp_local:
   summary: "Confirm the Local-flighting MRWP run ran to completion + report its tests."
