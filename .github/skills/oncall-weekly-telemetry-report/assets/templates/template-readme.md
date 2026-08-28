@@ -130,7 +130,8 @@ Required spark/trend coverage in every report:
 |---|---|---|---|
 | Every KPI tile in `.kpi-grid` (Top-line health) | `<div class="spark" data-spark='[...]' data-color="..."></div>` inside the tile | 8–9 weekly values | blue/green/dark-blue per metric semantic |
 | **Every visible row in the Section 2 attention list** — including the wins | `<span class="item-spark trend" data-trend='[...]' data-color="..." data-w="120" data-h="22"></span>` right after `.item-name` | 9 weekly values | red worsening / orange accelerating / green improving / amber volatile |
-| 60-day section: **only the promoted slow burns** (rising on 60d, not already in Section 2 — often zero) | `<span class="trend" data-trend='[...]' data-color="..." data-w="160"></span>` in the trajectory cell | ~9 weekly values (incl. the current partial week as the final point) | red regression / amber spike / green improvement |
+| Broker 60-day section: **only the promoted slow burns** (rising on 60d, not already in Section 2 — often zero) | `<span class="trend" data-trend='[...]' data-color="..." data-w="160"></span>` in the trajectory cell | ~9 weekly values (incl. the current partial week as the final point) | red regression / amber spike / green improvement |
+| Authenticator 60-day per-scenario table — **all ~13 scenarios** (it is the scoreboard, not an overflow list) | `<div class="trend" data-trend='[...]' data-color="..." data-w="220" data-h="32"></div>` in the sparkline cell | 8–9 weekly values | red regression / amber spike / green improvement / grey flat |
 | Every row in the error-codes WoW table and error-types WoW table | `<span class="trend" data-trend='[...]' data-color="..."></span>` in the 60d-trend column | 8 complete weekly values (no partial week — see `wow-table-sparkline-series.kql`) | same palette |
 
 > **📌 The two WoW reference tables keep a sparkline on every row — deliberate exemption, decided
@@ -139,12 +140,12 @@ Required spark/trend coverage in every report:
 > already on. The noise failure was the *60-day trend catalog* — a section read top-to-bottom whose
 > rows ~93% duplicated these tables — not the tables themselves.
 
-> **⚠️ Charts go WITH the finding, not in a browsable section.** The 60-day section used to chart
-> every classified code — 38 charts, ~93% duplicating rows in the error tables below, while the
+> **⚠️ Charts go WITH the finding, not in a browsable section.** The Broker 60-day section used to
+> chart every classified code — 38 charts, ~93% duplicating rows in the error tables below, while the
 > attention section above had **zero**. The full 60-day classification now lives in a `<details>` fold
 > **without** a chart column; only promoted slow burns are charted in the main flow.
 > `validate-report.ps1` check 16 hard-fails a visible attention row missing its sparkline, and check 18
-> hard-fails a 60-day section that renders more than 6 charts outside a fold.
+> hard-fails a 60-day section that renders more than 6 (broker) / 16 (authapp) charts outside a fold.
 > Charts *inside* a `<details>` fold are exempt from both — the reader opted in. **Checks 16/17/18 are
 > scoped to Section 2 and the 60-day section only** — they intentionally say nothing about the WoW
 > reference tables above.

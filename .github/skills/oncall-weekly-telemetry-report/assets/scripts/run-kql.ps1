@@ -25,11 +25,21 @@
 .PARAMETER Out
     Output JSON file path.
 
+.PARAMETER App
+    Convenience selector for the cluster/database pair: 'broker' (default) or
+    'authapp'. The two reports read completely different clusters AND different
+    databases; getting one right and the other wrong returns an empty result set
+    rather than an error, so prefer -App over passing -Cluster/-Database by hand.
+    Explicit -Cluster / -Database always win if supplied.
+
+      broker  -> https://idsharedeus2.kusto.windows.net / ad-accounts-android-otel
+      authapp -> https://idsharedeus2.eastus2.kusto.windows.net / d496be22d62a46b0a3cf67ea2e736fd8
+
 .PARAMETER Cluster
-    Kusto cluster URI (default: idsharedeus2 — the production Android Broker cluster).
+    Kusto cluster URI. Overrides the -App default.
 
 .PARAMETER Database
-    Database name (default: ad-accounts-android-otel).
+    Database name. Overrides the -App default.
 
 .PARAMETER TimeoutSec
     HTTP timeout (default 300 s — Kusto itself has a 5-minute server-side query budget).
@@ -52,6 +62,10 @@ materialized_view('ErrorStatsMetrics')
 "@
     .\run-kql.ps1 -Query $q -Out 60d-codes.json
 
+.EXAMPLE
+    # Authenticator: scenario outcomes WoW
+    .\run-kql.ps1 -App authapp -Query (Get-Content ..\queries\authapp\scenario-outcomes-wow.kql -Raw) -Out outcomes.json
+
 .NOTES
     * Requires `az login` to have been run beforehand and the caller to have read
       access to the cluster (Android Auth Client SDK security group).
@@ -65,11 +79,22 @@ materialized_view('ErrorStatsMetrics')
 param(
   [Parameter(Mandatory=$true)][string]$Query,
   [Parameter(Mandatory=$true)][string]$Out,
-  [string]$Cluster = 'https://idsharedeus2.kusto.windows.net',
-  [string]$Database = 'ad-accounts-android-otel',
+  [ValidateSet('broker','authapp')]
+  [string]$App = 'broker',
+  [string]$Cluster,
+  [string]$Database,
   [int]$TimeoutSec = 300
 )
 $ErrorActionPreference = 'Stop'
+
+# Per-app cluster/database defaults. Explicit -Cluster/-Database win.
+$endpoints = @{
+  broker  = @{ Cluster = 'https://idsharedeus2.kusto.windows.net';         Database = 'ad-accounts-android-otel' }
+  authapp = @{ Cluster = 'https://idsharedeus2.eastus2.kusto.windows.net'; Database = 'd496be22d62a46b0a3cf67ea2e736fd8' }
+}
+if (-not $Cluster)  { $Cluster  = $endpoints[$App].Cluster }
+if (-not $Database) { $Database = $endpoints[$App].Database }
+Write-Verbose "Querying $Cluster / $Database (-App $App)"
 
 # Acquire token via az CLI (works for users + managed identity)
 $tok = az account get-access-token --resource $Cluster --query accessToken -o tsv 2>$null
@@ -101,3 +126,8 @@ $obj = @{ results = @{ items = $items } }
 # UTF-8 without BOM — keeps emoji/diacritic data clean for downstream consumption
 [IO.File]::WriteAllText($Out, ($obj | ConvertTo-Json -Depth 12 -Compress), [System.Text.UTF8Encoding]::new($false))
 Write-Host ("Saved {0} rows -> {1}" -f ($primary.Rows.Count), $Out)
+if ($primary.Rows.Count -eq 0) {
+  # Zero rows is the signature of a wrong time column, wrong database, or a
+  # window that lands outside retention -- Kusto returns success either way.
+  Write-Warning "Query returned 0 rows from $Cluster / $Database. Verify the time column (broker: EventInfo_Time; authapp MVs: EventDate; brokeroperations: PipelineInfo_IngestionTime) and that -App matches the views you referenced."
+}

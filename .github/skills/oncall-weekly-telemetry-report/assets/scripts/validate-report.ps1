@@ -31,41 +31,42 @@
           (curEnd = end-date, curStart = end-date - 7d). Prevents a stale
           template stub from being published as if it were fresh, and catches
           any hand-edit that broke the auto-stamp.
-      (12 is reserved.)
-      13. Section 2 boilerplate uniformity — every attention row needs its own
-          one-line body, not one sentence copy-pasted across rows.
-      14. The top attention row must not be flat — Section 2 leads with what is
-          NEW (classify-novelty.js), never with the highest-volume row.
-      15. VOLATILE / RECOVERY rows must not headline a WoW percentage — their
-          ratio is measured off an anomalous prior week and is meaningless.
-      16. Every visible attention row carries an inline .item-spark sparkline.
-      17. Section 2 visible-row budget (<= 8 rows including wins).
-      18. The 60-day section is a slow-burn DETECTOR, not a browsable chart
-          catalog — at most 6 charts outside a collapsed fold.
 
     Exits with non-zero status if any HARD check fails (stale tokens, devs/reqs leak,
     U+FFFD, unbalanced div depth, missing layout-guard CSS).
 
+.PARAMETER App
+    Which report profile to validate: 'broker' (default) or 'authapp'. Checks
+    7, 8, and 9 assert Broker-specific card structures and are skipped for
+    authapp; authapp instead gets its own checks (13-scenario scoreboard
+    coverage, PN section presence, ADO-not-GitHub PR links). Shared checks
+    (1-6, 10, 11) run for both.
+
 .PARAMETER Path
-    Absolute path to the report file. Defaults to the current week's report under
-    $env:USERPROFILE\android-oce-reports\.
+    Absolute path to the report file. Defaults to the most recent report matching
+    the -App file prefix under $env:USERPROFILE\android-oce-reports\.
 
 .EXAMPLE
     .\validate-report.ps1
+    .\validate-report.ps1 -App authapp
     .\validate-report.ps1 -Path C:\path\to\oncall-wow-report-2026-07-09.html
 #>
 [CmdletBinding()]
 param(
-    [string]$Path
+    [string]$Path,
+    [ValidateSet('broker','authapp')]
+    [string]$App = 'broker'
 )
 
-# Default: pick the most-recent oncall-wow-report-*.html in the user's reports folder
+$filePrefix = if ($App -eq 'authapp') { 'authapp' } else { 'oncall' }
+
+# Default: pick the most-recent <prefix>-wow-report-*.html in the user's reports folder
 if (-not $Path) {
     $reportDir = Join-Path $env:USERPROFILE 'android-oce-reports'
-    $latest = Get-ChildItem $reportDir -Filter 'oncall-wow-report-*.html' -ErrorAction SilentlyContinue |
+    $latest = Get-ChildItem $reportDir -Filter "$filePrefix-wow-report-*.html" -ErrorAction SilentlyContinue |
               Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if (-not $latest) {
-        Write-Error "No oncall-wow-report-*.html found in $reportDir. Pass -Path explicitly."
+        Write-Error "No $filePrefix-wow-report-*.html found in $reportDir. Pass -Path explicitly, or check -App (currently '$App')."
         exit 2
     }
     $Path = $latest.FullName
@@ -85,6 +86,7 @@ function Pass($msg)     { Write-Host "  [OK]   $msg" -ForegroundColor Green }
 
 Write-Host ""
 Write-Host "Validating: $Path"
+Write-Host ("App profile: {0}" -f $App)
 Write-Host ("Size: {0:N0} bytes" -f (Get-Item $Path).Length)
 Write-Host ""
 
@@ -190,6 +192,14 @@ if ($totalCharts -lt 15) {
 } else {
     Pass "Overall chart coverage looks reasonable ($totalCharts elements)"
 }
+
+# ---- 7-9. Broker-only card-structure checks ----
+# These assert the Broker report's .attr-card anatomy (tri-state traffic sub-block,
+# 8-field code-attribution block, dim-row layout guards). The Authenticator report
+# uses a 4-field attribution block and a different card shape, so running them
+# against an authapp report produces pure noise. AuthApp-specific structural checks
+# live in section 12 below.
+if ($App -eq 'broker') {
 
 # ---- 7. Traffic-attribution sub-block color diversity (tri-state convention) ----
 # Per assets/templates/template-readme.md: each .attr-card's traffic sub-block should be green
@@ -307,6 +317,11 @@ if ($hasAttrCard) {
     }
 }
 
+} # end broker-only checks 7-9
+else {
+    Write-Host "  [SKIP] Checks 7-9 (Broker attribution-card anatomy) - not applicable to -App authapp"
+}
+
 # ---- 10. Fabricated-sparkline heuristic (v8 regression — hand-rolled data-trend arrays) ----
 # Past failure mode: when 60d bucketer dropped a sub-floor code, the report author
 # fabricated a "roughly monotonic" 8-week series inline in the WoW table HTML.
@@ -336,11 +351,26 @@ foreach ($m in $trendMatches) {
         continue
     }
 
-    # Filter 1: trend with all values < 100 is suspicious (real codes don't sit at 30-50 devices/week for 8 weeks)
-    if ($maxVal -lt 100) {
-        $suspectCount++
-        if (-not $suspectFirst) { $suspectFirst = $arrStr }
-        continue
+    # The low-peak heuristic is COUNT-shaped and only valid for Broker, whose
+    # data-trend arrays carry devices/week. The Authenticator template plots
+    # success-RATE series (values legitimately sit in the 85-100 band), so
+    # applying it there fires on every healthy funnel. Rate series get a
+    # range check instead: a percentage outside 0-100 is the real defect.
+    if ($App -eq 'broker') {
+        # Filter 1: trend with all values < 100 is suspicious (real codes don't sit at 30-50 devices/week for 8 weeks)
+        if ($maxVal -lt 100) {
+            $suspectCount++
+            if (-not $suspectFirst) { $suspectFirst = $arrStr }
+            continue
+        }
+    } else {
+        if ($maxVal -le 100 -and $minVal -ge 0) { continue }   # plausible rate series
+        if ($maxVal -lt 100) {
+            # not a rate series and too small to be a count series
+            $suspectCount++
+            if (-not $suspectFirst) { $suspectFirst = $arrStr }
+            continue
+        }
     }
     # Filter 2: zero-padded series like [0,0,0,0,0,0,0,N] is fine (legitimate NEW); skip
     # Filter 3: implausibly regular - if every consecutive delta has the same sign AND is < 5% of the value, that's a fake.
@@ -350,7 +380,8 @@ if ($flatCount -gt 0) {
     Add-Warn "$flatCount data-trend array(s) are perfectly flat (every value identical). Real telemetry never does this. First: [$flatFirst]."
 }
 if ($suspectCount -gt 0) {
-    Add-Warn "$suspectCount data-trend array(s) have an implausible magnitude (peak < 100). Likely fabricated. First: [$suspectFirst]. Source from assets/queries/wow-table-sparkline-series.kql instead."
+    $src = if ($App -eq 'authapp') { 'assets/queries/authapp/scenario-sparkline-series.kql' } else { 'assets/queries/wow-table-sparkline-series.kql' }
+    Add-Warn "$suspectCount data-trend array(s) have an implausible magnitude (peak < 100 and not a 0-100 rate series). Likely fabricated. First: [$suspectFirst]. Source from $src instead."
 } elseif ($flatCount -eq 0) {
     Pass "No suspicious data-trend arrays detected"
 }
@@ -360,7 +391,7 @@ if ($suspectCount -gt 0) {
 # <Mon> <D>, YYYY", and those dates must be self-consistent with the filename's
 # end-date (curEnd = filename date, curStart = curEnd - 7d).
 $filename = Split-Path $Path -Leaf
-if ($filename -match '^oncall-wow-report-(\d{4}-\d{2}-\d{2})\.html$') {
+if ($filename -match "^$filePrefix-wow-report-(\d{4}-\d{2}-\d{2})\.html`$") {
     $fnEnd = [datetime]::ParseExact($Matches[1], 'yyyy-MM-dd',
                                     [System.Globalization.CultureInfo]::InvariantCulture)
     $fnStart = $fnEnd.AddDays(-7)
@@ -392,7 +423,77 @@ if ($filename -match '^oncall-wow-report-(\d{4}-\d{2}-\d{2})\.html$') {
         Add-Warn "Meta-line 'Last 7 days: ... -> ...' pattern not found. Either the report predates the rolling-window rewrite or the header was hand-edited. Re-run bootstrap-report.ps1 to restore the auto-stamped meta line."
     }
 } else {
-    Add-Warn "Filename '$filename' does not match 'oncall-wow-report-YYYY-MM-DD.html'; skipping meta-line date consistency check."
+    Add-Warn "Filename '$filename' does not match '$filePrefix-wow-report-YYYY-MM-DD.html'; skipping meta-line date consistency check. (Check -App: currently '$App'.)"
+}
+
+# ---- 12. Authenticator-only structural checks ----
+if ($App -eq 'authapp') {
+    # 12a. All 13 scenario funnels must appear in the scoreboard. A scenario that
+    # silently vanishes from the table is indistinguishable from one that was
+    # never queried -- which is exactly the failure this check exists to catch.
+    $scenarios = @(
+        'Passkey WebAuthN Registration',
+        'Passkey InApp Registration',
+        'Passkey WebAuthN Authentication',
+        'Entra MFA Registration (QR)',
+        'Entra MFA Registration (No-QR)',
+        'Entra MFA PN+CFA',
+        'Entra PSI Registration',
+        'Entra PSI PN Registration',
+        'Entra PSI PN+CFA',
+        'MSA NGC Registration',
+        'MSA SA Registration',
+        'MSA NGC PN+CFA',
+        'MSA SA PN+CFA'
+    )
+    # Compare on a whitespace/markup-stripped, case-folded projection so a scenario
+    # split across tags or renamed in case still counts as present.
+    $flat = ([regex]::Replace($content, '<[^>]+>', ' ')) -replace '\s+', ' '
+    $missing = @($scenarios | Where-Object {
+        $needle = ($_ -replace '\s+', ' ')
+        $flat.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -lt 0
+    })
+    if ($missing.Count -gt 0) {
+        Add-Fail "Scenario scoreboard is missing $($missing.Count) of 13 scenario(s): $($missing -join ', '). Every scenario gets a row every week -- including flat and low-volume ones. If a name differs from the canonical label, align the report to it rather than dropping the row."
+    } else {
+        Pass "All 13 scenario funnels present in the report"
+    }
+
+    # 12b. Push-notification section must exist (its own required section).
+    if ($flat -match '(?i)push[- ]notification' -or $flat -match '(?i)\breacted\b') {
+        Pass "Push-notification section present"
+    } else {
+        Add-Fail "No push-notification / 'reacted' content found. The PN completion + Approved/Denied/Error split is a required section."
+    }
+
+    # 12c. Unknown/abandonment section must exist -- it has no Broker analogue and
+    # is the single most commonly dropped section when cloning the Broker layout.
+    if ($flat -match '(?i)\bunknown\b') {
+        Pass "Unknown/abandonment content present"
+    } else {
+        Add-Fail "No 'Unknown' content found. Unknown = max(0, Initiated - (Succeeded + Failed)) is a first-class metric for this report and requires its own section."
+    }
+
+    # 12d. PR links must be Azure DevOps, never GitHub. A github.com PR link here
+    # is the fingerprint of attribution pattern-matched from the Broker playbook.
+    $ghPr = [regex]::Matches($content, 'https?://github\.com/[^"''<\s]*/pull/\d+')
+    if ($ghPr.Count -gt 0) {
+        $sample = (($ghPr | ForEach-Object { $_.Value } | Select-Object -Unique -First 3) -join '  |  ')
+        Add-Fail "$($ghPr.Count) GitHub PR link(s) found. Authenticator lives in Azure DevOps -- PR links must be https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/<id>. Found: $sample"
+    } else {
+        Pass "No GitHub PR links (Authenticator PRs are ADO-hosted)"
+    }
+
+    # 12e. Broker-convention leakage: HLL/TDigest/materialized_view() do not exist
+    # in the Authenticator database, so their presence means a Broker query was
+    # copied in and the numbers below it cannot be trusted.
+    $brokerisms = @('dcount_hll', 'hll_merge', 'percentile_tdigest', 'tdigest_merge', "materialized_view\(")
+    $found = @($brokerisms | Where-Object { $content -match $_ })
+    if ($found.Count -gt 0) {
+        Add-Fail "Broker-only Kusto constructs present in the report: $($found -join ', '). These do not exist in the Authenticator database (d496be22d62a46b0a3cf67ea2e736fd8) -- a Broker query was copied in. Use the per-cell sum(<Scenario>DCount) columns and bare view names. NOTE: sum(<Scenario>DCount) matches the dashboard but over-counts devices (AB#3739409) -- treat device numbers as relative indicators, not absolute populations. See assets/docs/authapp-kusto-cheatsheet.md."
+    } else {
+        Pass "No Broker-only Kusto constructs leaked into the report"
+    }
 }
 
 # ---- 13. Section 2 boilerplate uniformity (HARD FAIL) ----
@@ -453,13 +554,20 @@ if ($attStart -ge 0 -and $attEnd -gt $attStart) {
         $firstHead = $heads[0].Groups[1].Value
         $nameM = [regex]::Match($firstHead, '<span class="item-name">\s*([^<]+)')
         $nm = if ($nameM.Success) { $nameM.Groups[1].Value.Trim() } else { '(unnamed)' }
-        $dw = [regex]::Match($firstHead, "$dLabel</span><span class=`"m-value`">([+\-]?[\d.]+)%")
-        if (-not $dw.Success) {
-            Add-Warn "Could not parse a WoW delta chip on the top attention row '$nm' -- lead-row flatness check did not run. Expected an m-label matching 'Delta WoW'."
-        } elseif ([Math]::Abs([double]$dw.Groups[1].Value) -lt 5) {
-            Add-Warn "Top attention row '$nm' has a WoW delta of $($dw.Groups[1].Value)% -- essentially flat. Section 2 must lead with what is NEW (classify-novelty.js label NEW), not with the highest-volume row. If genuinely nothing is new this week, say so explicitly instead of promoting a flat mover."
+        if ($App -eq 'authapp') {
+            # Authenticator Section 3 rows are success/abandonment RATES, so their movement
+            # is expressed in percentage POINTS, not a WoW ratio. There is no Δ WoW chip to
+            # read and a 5% flatness threshold has no meaning against pp deltas.
+            Write-Host "  [SKIP] Check 14 (lead-row flatness) - Section 3 uses percentage-point deltas, not Delta WoW"
         } else {
-            Pass "Top attention row '$nm' has a material WoW delta ($($dw.Groups[1].Value)%)"
+            $dw = [regex]::Match($firstHead, "$dLabel</span><span class=`"m-value`">([+\-]?[\d.]+)%")
+            if (-not $dw.Success) {
+                Add-Warn "Could not parse a WoW delta chip on the top attention row '$nm' -- lead-row flatness check did not run. Expected an m-label matching 'Delta WoW'."
+            } elseif ([Math]::Abs([double]$dw.Groups[1].Value) -lt 5) {
+                Add-Warn "Top attention row '$nm' has a WoW delta of $($dw.Groups[1].Value)% -- essentially flat. Section 2 must lead with what is NEW (classify-novelty.js label NEW), not with the highest-volume row. If genuinely nothing is new this week, say so explicitly instead of promoting a flat mover."
+            } else {
+                Pass "Top attention row '$nm' has a material WoW delta ($($dw.Groups[1].Value)%)"
+            }
         }
 
         # ---- 15. VOLATILE / RECOVERY rows must not headline a WoW percentage ----
@@ -544,9 +652,12 @@ if ($attStart -ge 0 -and $attEnd -gt $attStart) {
 # (already charted in Section 2) or a promoted slow burn. Everything else goes in a
 # collapsed fold WITHOUT charts. Charts inside <details> are exempt -- the reader opted in.
 #
-# Broker's universe is 40-50 error codes, so charting "everything" is exactly the catalog
-# failure this check exists to stop.
-$t60Cap = 6
+# APP-AWARE CAP. Broker's universe is 40-50 error codes, so charting "everything" is the
+# catalog failure this check exists to stop -> cap 6. Authenticator's universe is a FIXED
+# ~13 scenarios and that table IS the scoreboard, not a browsable overflow -- charting all
+# of them is correct there. Its cap is set just above the scenario count so the check still
+# fires if someone starts fanning per-error-reason charts into the section.
+$t60Cap = if ($App -eq 'authapp') { 16 } else { 6 }
 $t60Start = $content.IndexOf('id="trend60d"')
 if ($t60Start -ge 0) {
     $t60End = $content.IndexOf('<h2', $t60Start + 10)
@@ -555,7 +666,7 @@ if ($t60Start -ge 0) {
     $t60Visible = [regex]::Replace($t60, '<details\b.*?</details>', '', 'Singleline')
     $t60Charts = [regex]::Matches($t60Visible, 'data-trend=|<svg\b').Count
     if ($t60Charts -gt $t60Cap) {
-        Add-Fail "The 60-day section renders $t60Charts chart(s) outside any collapsed fold (cap $t60Cap). It is a slow-burn DETECTOR, not a catalog -- chart only the entries it flags that are NOT already in Section 2, and move the full classification into a <details> fold with no charts. A previous run shipped 38 charts here against 0 in the attention section, which is precisely backwards."
+        Add-Fail "The 60-day section renders $t60Charts chart(s) outside any collapsed fold (cap $t60Cap for -App $App). It is a slow-burn DETECTOR, not a catalog -- chart only the entries it flags that are NOT already in Section 2, and move the full classification into a <details> fold with no charts. A previous run shipped 38 charts here against 0 in the attention section, which is precisely backwards."
     } else {
         Pass "60-day section is a detector, not a catalog ($t60Charts visible chart(s), cap $t60Cap)"
     }

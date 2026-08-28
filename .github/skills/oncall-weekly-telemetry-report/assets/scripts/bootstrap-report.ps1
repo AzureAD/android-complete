@@ -1,10 +1,15 @@
 <#
 .SYNOPSIS
-    Bootstrap a new OCE weekly report file from the canonical template.
+    Bootstrap a new OCE weekly report file from an app's canonical template.
 
 .DESCRIPTION
-    Implements SKILL.md Step 1 as a script so the workflow doesn't drift across
-    runs. The reporting window is a ROLLING 7-DAY window ending at start-of-day
+    Implements the SKILL.md router's bootstrap step as a script so the workflow
+    doesn't drift across runs. Serves BOTH apps -- pass -App broker (default) or
+    -App authapp; everything below is app-parameterised except the window math,
+    which is deliberately identical so a `both`-mode run can hand the same
+    -EndDate to two bootstraps and get two reports covering the same interval.
+
+    The reporting window is a ROLLING 7-DAY window ending at start-of-day
     (UTC) on -EndDate (defaults to today):
 
         curStart  = EndDate - 7d      (inclusive)
@@ -21,9 +26,10 @@
     before the invocation with no user prompting.
 
     The script also:
-      1. Creates ~/android-oce-reports/_data/<end-date>/ for raw query payloads.
-      2. Copies the canonical template into
-         ~/android-oce-reports/oncall-wow-report-<end-date>.html.
+      1. Creates ~/android-oce-reports/_data/<app>-<end-date>/ for raw payloads.
+      2. Copies the app's canonical template into
+         ~/android-oce-reports/<prefix>-wow-report-<end-date>.html, where
+         <prefix> is 'oncall' for broker and 'authapp' for authapp.
       3. Stamps the resolved window into the <title>, the <div class="meta">
          block, and the "Generated <strong>...</strong>" banner so the header
          can never drift from what was actually queried (the resolved window
@@ -33,8 +39,14 @@
            fingerprint markers still match the canonical template), silently
            re-bootstrap -- nothing to preserve.
          - Otherwise HALT and require -Force.
-      5. Prunes _data/<old-end-date>/ folders older than -DataRetentionDays
+      5. Prunes _data/<app>-<old-end-date>/ folders older than -DataRetentionDays
          (default 60).
+
+.PARAMETER App
+    Which report to bootstrap: 'broker' (default) or 'authapp'. Selects the
+    template, output filename, data folder, title, and telemetry-source label.
+    The two apps read DIFFERENT clusters and databases and their instructions do
+    not transfer -- see the playbook for the app you are bootstrapping.
 
 .PARAMETER EndDate
     End of the reporting window (yyyy-MM-dd, UTC). Exclusive upper bound: data
@@ -46,14 +58,20 @@
     Skip the collision check and overwrite any existing file.
 
 .PARAMETER DataRetentionDays
-    How many days of _data/<end-date>/ folders to keep before pruning. Default 60.
+    How many days of _data/<app>-<end-date>/ folders to keep before pruning.
+    Default 60. Pruning is scoped to the -App being bootstrapped, so a broker
+    run never deletes authapp payloads (or vice versa).
 
 .PARAMETER SkillRoot
     Path to the skill folder. Defaults to the location of this script's parent.
 
 .EXAMPLE
     .\bootstrap-report.ps1
-    # Default: rolling 7 days ending today (UTC), halt on collision.
+    # Default: broker, rolling 7 days ending today (UTC), halt on collision.
+
+.EXAMPLE
+    .\bootstrap-report.ps1 -App authapp
+    # Authenticator report for the same rolling window.
 
 .EXAMPLE
     .\bootstrap-report.ps1 -EndDate 2026-07-09 -Force
@@ -70,12 +88,38 @@
 #>
 [CmdletBinding()]
 param(
+  [ValidateSet('broker','authapp')]
+  [string]$App = 'broker',
   [string]$EndDate,
   [switch]$Force,
   [int]$DataRetentionDays = 60,
   [string]$SkillRoot
 )
 $ErrorActionPreference = 'Stop'
+
+# ---------------------------------------------------------------------------
+# Per-app profile
+#
+# Everything that differs between the two reports is declared here rather than
+# branched inline, so adding a third app is a data change, not a code change.
+# The window math deliberately stays outside this table: `both` mode depends on
+# the two apps resolving identical windows from the same -EndDate.
+# ---------------------------------------------------------------------------
+$appProfiles = @{
+  broker  = @{
+    Template   = 'report-template.html'
+    FilePrefix = 'oncall'
+    TitleName  = 'Android Broker'
+    SourceHtml = 'Source: <code>android_spans</code> materialized views'
+  }
+  authapp = @{
+    Template   = 'authapp-report-template.html'
+    FilePrefix = 'authapp'
+    TitleName  = 'Authenticator Android'
+    SourceHtml = 'Source: Authenticator scenario materialized views'
+  }
+}
+$appProfile = $appProfiles[$App]
 
 # ---------------------------------------------------------------------------
 # Locate the skill folder + canonical template
@@ -85,9 +129,9 @@ if (-not $SkillRoot) {
   # 2 levels to reach <skill>/assets/. Templates live at <skill>/assets/templates/.
   $SkillRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 }
-$template = Join-Path $SkillRoot 'templates\report-template.html'
+$template = Join-Path $SkillRoot "templates\$($appProfile.Template)"
 if (-not (Test-Path $template)) {
-  throw "Canonical template not found at $template. Pass -SkillRoot if running outside the skill folder."
+  throw "Canonical template for -App $App not found at $template. Pass -SkillRoot if running outside the skill folder."
 }
 
 # ---------------------------------------------------------------------------
@@ -129,6 +173,12 @@ $curEndDow      = [int]$curEnd.DayOfWeek  # Sun=0 .. Sat=6
 $sixtyDayStart  = $curEnd.AddDays(-60)             # literal 60 days ending today
 $sixtyDayEnd    = $curEnd                          # exclusive upper bound == today; chart includes the partial current week
 $trendClassEnd  = $curEnd.AddDays(-$curEndDow)     # startofweek(curEnd): weeks >= this are the in-progress (partial) week, excluded from delta classification
+# Sparkline window: last 8 COMPLETE Sun-Sat weeks. sparkEnd is exclusive and is by construction a
+# Sunday, so sparkEnd-56d is also exactly a Sunday. These are emitted below so the author never
+# hand-computes them: an off-by-one sparkStart does NOT error in Kusto, it silently makes the first
+# sparkline bucket partial and skews its rate (verified live against Entra MFA Registration No-QR).
+$sparkEnd       = $trendClassEnd
+$sparkStart     = $sparkEnd.AddDays(-56)
 
 # Sanity check: curEnd is an exclusive 00:00-UTC date boundary and must be today
 # (UTC) or earlier. Compare date-to-date -- a sub-day clock slack here would let
@@ -144,11 +194,12 @@ $curStartStr  = $curStart.ToString('yyyy-MM-dd')
 $prevStartStr = $prevStart.ToString('yyyy-MM-dd')
 $prevEndStr   = $prevEnd.ToString('yyyy-MM-dd')
 
-Write-Host "Resolved reporting window (UTC):"
+Write-Host "Resolved reporting window (UTC) for -App $App :"
 Write-Host "  Last 7 days:   $curStartStr -> $curEndStr  (exclusive upper bound)"
 Write-Host "  Baseline:      $prevStartStr -> $prevEndStr"
 Write-Host "  60-day trend:  $($sixtyDayStart.ToString('yyyy-MM-dd')) -> $($sixtyDayEnd.ToString('yyyy-MM-dd'))  (literal 60d ending today; chart includes current partial week)"
 Write-Host "  Trend delta cutoff: weeks < $($trendClassEnd.ToString('yyyy-MM-dd'))  (startofweek(curEnd); pass as bucket-trends.js --end)"
+Write-Host "  Sparkline (8 complete weeks): $($sparkStart.ToString('yyyy-MM-dd')) -> $($sparkEnd.ToString('yyyy-MM-dd'))  (SPARK_START -> SPARK_END, exclusive; both land on Sunday -- do not adjust by hand)"
 # NOTE: Console output uses ASCII '->'; the HTML stamp below uses U+2192 arrows
 # and U+00B7 middle-dots to match the template's canonical visual style. This
 # is safe because $outText is written via [System.Text.UTF8Encoding]::new($false)
@@ -159,8 +210,8 @@ Write-Host "  Trend delta cutoff: weeks < $($trendClassEnd.ToString('yyyy-MM-dd'
 # Paths
 # ---------------------------------------------------------------------------
 $reportDir = Join-Path $env:USERPROFILE 'android-oce-reports'
-$dataDir   = Join-Path $reportDir "_data\$curEndStr"
-$out       = Join-Path $reportDir "oncall-wow-report-$curEndStr.html"
+$dataDir   = Join-Path $reportDir "_data\$App-$curEndStr"
+$out       = Join-Path $reportDir "$($appProfile.FilePrefix)-wow-report-$curEndStr.html"
 New-Item -ItemType Directory -Force $reportDir | Out-Null
 New-Item -ItemType Directory -Force $dataDir   | Out-Null
 
@@ -260,7 +311,7 @@ $todayStr         = (Get-Date).ToUniversalTime().ToString('yyyy-MM-dd')
 $outText = [IO.File]::ReadAllText($out)
 
 # 1) <title>...</title>
-$newTitle = "Android Broker $dot On-Call Report $([char]0x2014) Last 7 days ending $curEndStr"
+$newTitle = "$($appProfile.TitleName) $dot On-Call Report $([char]0x2014) Last 7 days ending $curEndStr"
 $outText  = [regex]::Replace($outText, '<title>[^<]*</title>', "<title>$newTitle</title>")
 
 # 2) The <div class="meta"> block up through the closing </div> immediately
@@ -269,7 +320,7 @@ $newMeta = @"
 <div class="meta">
       <strong>Last 7 days: $curLabel</strong> &nbsp;vs&nbsp; <strong>$prevLabel</strong> &nbsp;$dot&nbsp;
       60-day trend: <strong>$sixtyDayLabel</strong> (last 60 days; final bar in progress) &nbsp;$dot&nbsp;
-      Source: <code>android_spans</code> materialized views &nbsp;$dot&nbsp;
+      $($appProfile.SourceHtml) &nbsp;$dot&nbsp;
       Generated <strong>$todayStr</strong>
     </div>
 "@
@@ -301,12 +352,15 @@ Write-Host "Stamped resolved window into <title> and meta block. Generated=$toda
 $dataRoot = Join-Path $reportDir '_data'
 if (Test-Path $dataRoot) {
   $cutoff = (Get-Date).AddDays(-$DataRetentionDays)
-  $oldFolders = Get-ChildItem $dataRoot -Directory | Where-Object {
+  # Scope pruning to THIS app's folders. In `both` mode the two bootstraps run
+  # concurrently against the same _data root; an unscoped prune would let one
+  # app delete the other's freshly written payloads mid-run.
+  $oldFolders = Get-ChildItem $dataRoot -Directory -Filter "$App-*" | Where-Object {
     $_.FullName -ne $dataDir -and
     $_.LastWriteTime -lt $cutoff
   }
   if ($oldFolders) {
-    Write-Host "Pruning $($oldFolders.Count) _data folder(s) older than $DataRetentionDays days:"
+    Write-Host "Pruning $($oldFolders.Count) $App _data folder(s) older than $DataRetentionDays days:"
     $oldFolders | ForEach-Object {
       Write-Host "  removing $($_.FullName) (last write $($_.LastWriteTime.ToString('yyyy-MM-dd')))"
       Remove-Item -Recurse -Force $_.FullName
