@@ -34,12 +34,12 @@ const fs = require('fs');
 const path = require('path');
 
 // ── Known per-finding KPIs ────────────────────────────────────────────────────
-// These KPIs publish one ADO Bug per finding. If any item under one of these
-// KPIs is missing a per-item ADO URL, we DO NOT umbrella-merge it — we give it
-// its own row keyed by KpiActionItemId so a temporary URL outage cannot
-// silently collapse rows like the original Nightwatch bug.
+// Each KpiActionItemId under these KPIs represents distinct work. If an item is
+// missing a per-item ADO URL, we DO NOT umbrella-merge it — we give it its own
+// row keyed by KpiActionItemId so missing links cannot silently collapse rows.
 const PER_FINDING_KPIS = new Set([
-  'a0f0ce42-3063-5d3b-3b47-1ff3143abdc9'  // [SFI-PS3.1] Security Code Bugs (Nightwatch)
+  'a0f0ce42-3063-5d3b-3b47-1ff3143abdc9', // [SFI-PS3.1] Security Code Bugs (Nightwatch)
+  '2d6597da-8e08-4495-a4e1-954f7697a4a8'  // SDL Annual Assessment
   // Add more KPIs here as they are discovered. Examples likely to belong:
   //   - Accessibility per-issue bugs
   //   - BinSkim per-rule findings
@@ -126,6 +126,41 @@ function baseTitle(t) {
   s = s.replace(/\s*-\s*\[ServiceName:.*$/i, '');
   s = s.replace(/\s+/g, ' ').trim().toLowerCase();
   return s;
+}
+
+function sourceValue(item, names) {
+  const sources = [item, item.CustomDimensions, item.S360Dimensions].filter(Boolean);
+  for (const source of sources) {
+    for (const name of names) {
+      const value = source[name];
+      if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+    }
+  }
+  return null;
+}
+
+function decodeHtmlEntities(value) {
+  const named = { amp: '&', apos: "'", gt: '>', lt: '<', quot: '"' };
+  return value.replace(/&(#(?:x[0-9a-f]+|\d+)|amp|apos|gt|lt|quot);/gi, (match, entity) => {
+    if (!entity.startsWith('#')) return named[entity.toLowerCase()];
+    const hex = entity[1].toLowerCase() === 'x';
+    const codePoint = Number.parseInt(entity.slice(hex ? 2 : 1), hex ? 16 : 10);
+    if (!Number.isInteger(codePoint) || codePoint > 0x10ffff) return match;
+    return String.fromCodePoint(codePoint);
+  });
+}
+
+function sourceUrl(item, names) {
+  const value = sourceValue(item, names);
+  if (!value) return null;
+  const href = value.match(/href\s*=\s*["']([^"']+)["']/i);
+  const candidate = decodeHtmlEntities(href ? href[1] : value);
+  try {
+    const url = new URL(candidate);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Pass 1: enrich each item with ADO work-item ID + ETA + source ─────────────
@@ -272,13 +307,17 @@ for (const [groupKey, group] of groups) {
     Wave: (r.CustomDimensions && r.CustomDimensions.S360_WavesMetadata && r.CustomDimensions.S360_WavesMetadata[0] && r.CustomDimensions.S360_WavesMetadata[0].WaveDisplayName) || null,
     CurrentStatus: r.CurrentStatus || null,
     CurrentStatusAuthor: r.CurrentStatusAuthor || null,
+    ActionItem: sourceValue(r, ['ActionItem', 'Action Item']),
+    ActionItemSubtype: sourceValue(r, ['ActionItemSubtype', 'Action Item Subtype']),
+    ActionUrl: sourceUrl(r, ['LiquidCopilot', 'Liquid Copilot', 'LiquidCopilotUrl', 'LiquidCopilotURL']),
+    ReferenceUrl: sourceUrl(r, ['ReferenceLink', 'Reference Link', 'ReferenceUrl', 'ReferenceURL']),
     // Set to true by Pass 7 if every row sharing this row's KpiId also shares
     // its exact Title AND each such row has a distinct ADOWorkItemId — meaning
     // the S360 publisher reused one generic umbrella title across many distinct
-    // ADO work items. Step 3e of the workflow substitutes ADO System.Title for
-    // flagged rows so each row reads as its actual finding instead of the
-    // umbrella label (e.g. SDL Annual Assessment → "Use only approved hash...").
+    // ADO work items. Pass 7 records whether ActionItem or ADO System.Title is
+    // the authoritative per-row label.
     usesGenericS360Title: false,
+    genericTitleSource: null,
     // Original IDs that fed into this row (for traceability + debugging)
     underlyingActionItemIds: group.map(e => e.raw.KpiActionItemId).sort()
   });
@@ -316,13 +355,13 @@ if (collapsed.length) {
 // Some S360 publishers (e.g. SDL Annual Assessment) write one identical Title
 // across every sub-item of a KPI but link each item to a distinct ADO work
 // item with its own descriptive System.Title. Rendering "SDL Annual Assessment"
-// on 22 separate rows is unhelpful — Step 3e of the workflow should substitute
-// the ADO System.Title for each flagged row. We just identify the rows here;
-// the actual ADO lookup happens downstream where the batch fetch already runs.
+// on 22 separate rows is unhelpful — Step 3e needs an explicit title source.
+// We record that decision here; the ADO lookup happens downstream.
 //
-// Heuristic: within a KpiId, if N ≥ 2 rows share the EXACT same Title AND each
-// of those rows has a distinct ADOWorkItemId, flag every row in that group with
-// `usesGenericS360Title: true`.
+// Heuristic: within a KpiId, if N ≥ 2 rows share the EXACT same Title, flag the
+// group when each row has either a distinct ADOWorkItemId or, for a known
+// per-finding KPI, a distinct ActionItem. The latter covers manual activities
+// that S360 publishes without pre-created ADO work items.
 const rowsByKpi = new Map();
 for (const r of reduced) {
   if (!rowsByKpi.has(r.KpiId)) rowsByKpi.set(r.KpiId, []);
@@ -341,13 +380,20 @@ for (const [kpiId, kpiRows] of rowsByKpi) {
   for (const [title, group] of byTitle) {
     if (group.length < 2) continue;
     const distinctAdoIds = new Set(group.map(r => r.ADOWorkItemId).filter(Boolean));
-    if (distinctAdoIds.size !== group.length) continue; // need 1:1 row→ADO ID
-    for (const r of group) { r.usesGenericS360Title = true; genericFlaggedCount++; }
-    console.error(`WARN: KPI ${kpiId} uses generic umbrella title "${title.slice(0, 60)}" across ${group.length} distinct ADO work items — flagged for Title substitution from ADO (Step 3e).`);
+    const distinctActions = new Set(group.map(r => r.ActionItem).filter(Boolean));
+    const hasDistinctAdoIds = distinctAdoIds.size === group.length;
+    const hasDistinctActions = PER_FINDING_KPIS.has(kpiId) && distinctActions.size === group.length;
+    if (!hasDistinctAdoIds && !hasDistinctActions) continue;
+    for (const r of group) {
+      r.usesGenericS360Title = true;
+      r.genericTitleSource = hasDistinctActions ? 'ActionItem' : 'AdoTitle';
+      genericFlaggedCount++;
+    }
+    console.error(`WARN: KPI ${kpiId} uses generic umbrella title "${title.slice(0, 60)}" across ${group.length} distinct ADO work items — flagged for distinct Title substitution (Step 3e).`);
   }
 }
 if (genericFlaggedCount) {
-  console.error(`Flagged ${genericFlaggedCount} rows with usesGenericS360Title=true (will pull descriptive ADO titles in Step 3e)`);
+  console.error(`Flagged ${genericFlaggedCount} rows with usesGenericS360Title=true (will use ActionItem or a descriptive ADO title in Step 3e)`);
 }
 
 // ── Write output ──────────────────────────────────────────────────────────────
