@@ -87,25 +87,34 @@ def latest_rc(state) -> dict:
     return rcs[-1] if rcs else {}
 
 
-def stash_mrwp(state, provider, snapshot):
-    """Record an MRWP provider run's FULL verification snapshot into the current RC
-    iteration. `provider` is 'ECS' or 'Local'; `snapshot` carries run_id + stage/test
-    results (run_id, id_source, complete, ran, total, failed_stages, yellow_stages,
-    never_ran, tests, failed_suites).
+def stash_mrwp(state, provider, snapshot, rc=None):
+    """Record an MRWP provider run's FULL verification snapshot into an RC iteration.
+    `provider` is 'ECS' or 'Local'; `snapshot` carries run_id + stage/test results (run_id,
+    id_source, complete, ran, total, failed_stages, yellow_stages, never_ran, tests,
+    failed_suites).
 
-    RC iterations are a list; the LATEST is rcs[-1]. When this provider's slot in the
-    current RC already holds a DIFFERENT run_id, RC Testing was re-triggered → a NEW rc
-    entry is appended (rc = last+1) and the snapshot lands there. Same id → idempotent
-    update. So ecs/local resolving in separate steps (any order) merge into one rc, and a
-    re-trigger rolls forward to the next rc."""
+    `rc` (optional) is the AUTHORITATIVE RC iteration number from the orchestrator tag
+    (RC<N>-ECS / RC<N>-Local, surfaced by pipelines.mrwp_run_ids). When given, the snapshot
+    merges into the rcs entry with THAT number (created if absent), so the stored rc mirrors
+    the pipeline exactly — and ECS/Local resolving in separate steps land in the same entry.
+
+    When `rc` is None (mock-injected id, or the log fallback where the tag isn't available),
+    it falls back to run_id-change detection: a changed run_id for this provider means RC
+    Testing was re-triggered → append the next local rc (last+1)."""
     key = provider.lower()                       # 'ecs' | 'local'
     pr = _pipeline_runs(state)
     rcs = pr.setdefault("rcs", [])
-    cur = rcs[-1] if rcs else None
-    existing = (cur or {}).get(key) or {}
-    if cur is None or (existing.get("run_id") and existing["run_id"] != str(snapshot.get("run_id"))):
-        cur = {"rc": (rcs[-1]["rc"] + 1) if rcs else 1}
-        rcs.append(cur)
+    if rc is not None:
+        cur = next((e for e in rcs if e.get("rc") == rc), None)
+        if cur is None:
+            cur = {"rc": rc}
+            rcs.append(cur)
+    else:
+        cur = rcs[-1] if rcs else None
+        existing = (cur or {}).get(key) or {}
+        if cur is None or (existing.get("run_id") and existing["run_id"] != str(snapshot.get("run_id"))):
+            cur = {"rc": (rcs[-1]["rc"] + 1) if rcs else 1}
+            rcs.append(cur)
     snap = dict(snapshot)
     snap["run_id"] = str(snapshot.get("run_id"))
     snap["resolved_at"] = _now_iso()
@@ -582,6 +591,8 @@ def verify_mrwp(state, provider):
     """
     label = f"MRWP {provider}"
     # 1) resolve the MRWP build id for this provider
+    rc_num = mock_input("rc", MISSING)
+    rc_num = rc_num if rc_num is not MISSING else None
     mid = mock_input("mrwp_id", MISSING)
     if mid is MISSING:
         ok, run, detail = P.find_orchestrator_run(ORG, PROJECT, ORCHESTRATOR_DEF, state.release_id)
@@ -599,6 +610,7 @@ def verify_mrwp(state, provider):
                 f"{label}: could not resolve the MRWP run id ({detail2}){hint}.",
                 links=links_for(run.get("id"), "Release Orchestrator run"))
         mid = ids.get(provider)
+        rc_num = ids.get("rc")                    # authoritative RC iteration from the tag
         if not mid:
             return Blocked(f"{label}: orchestrator didn't record a {provider} RC-testing run.")
 
@@ -664,12 +676,12 @@ def verify_mrwp(state, provider):
             if okf:
                 suites = fsuites
 
-    # 5) stash the FULL per-provider snapshot into the current RC iteration.
+    # 5) stash the FULL per-provider snapshot into the RC iteration (authoritative rc from tag).
     stash_mrwp(state, provider, {
         "run_id": mid, "complete": comp["complete"], "ran": comp["ran"],
         "total": comp["total"], "failed_stages": comp["failed"],
         "yellow_stages": comp["yellow"], "never_ran": comp["never_ran"],
         "tests": tests, "failed_suites": suites,
-    })
+    }, rc=rc_num)
     return Done(
         f"{label} run {mid} ran to completion — {stage_note}{extra}.{tnote}", links=links)

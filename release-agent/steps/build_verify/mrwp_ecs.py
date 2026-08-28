@@ -21,6 +21,7 @@ MOCKABLE = {
     "stages": {"kind": "input", "desc": "Inject the ECS run's stage list [{name,state,result}]."},
     "tests": {"kind": "input", "desc": "Inject the ECS test summary {total,passed,failed,categories}."},
     "suites": {"kind": "input", "desc": "Inject the ECS failing suites [{name,failed,total,category,tests}]."},
+    "rc": {"kind": "input", "desc": "Inject the authoritative RC iteration number (else from the tag)."},
 }
 
 

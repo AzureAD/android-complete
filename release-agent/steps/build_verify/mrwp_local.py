@@ -19,6 +19,7 @@ MOCKABLE = {
     "stages": {"kind": "input", "desc": "Inject the Local run's stage list [{name,state,result}]."},
     "tests": {"kind": "input", "desc": "Inject the Local test summary {total,passed,failed,categories}."},
     "suites": {"kind": "input", "desc": "Inject the Local failing suites [{name,failed,total,category,tests}]."},
+    "rc": {"kind": "input", "desc": "Inject the authoritative RC iteration number (else from the tag)."},
 }
 
 

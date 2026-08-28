@@ -2607,6 +2607,40 @@ def test_mrwp_run_ids_picks_newest_rc_iteration():
     assert ok3 and ids3["rc"] == 1 and ids3["ECS"] == "100"
 
 
+def test_stash_mrwp_uses_authoritative_rc_number():
+    """stash_mrwp with an explicit rc merges ECS+Local into the entry with THAT number
+    (mirroring the pipeline), and a higher rc appends a new entry — regardless of order."""
+    from steps.build_verify import _common as K
+    st = ReleaseState(release_id="2026-08")
+    # RC1: ECS then Local -> one entry rc=1 with both providers
+    K.stash_mrwp(st, "ECS", {"run_id": "100"}, rc=1)
+    K.stash_mrwp(st, "Local", {"run_id": "101"}, rc=1)
+    rcs = st.pipeline_runs["rcs"]
+    assert len(rcs) == 1 and rcs[0]["rc"] == 1
+    assert rcs[0]["ecs"]["run_id"] == "100" and rcs[0]["local"]["run_id"] == "101"
+    # RC2 (re-trigger, authoritative) -> a second entry rc=2
+    K.stash_mrwp(st, "ECS", {"run_id": "200"}, rc=2)
+    rcs = st.pipeline_runs["rcs"]
+    assert len(rcs) == 2 and rcs[-1]["rc"] == 2 and rcs[-1]["ecs"]["run_id"] == "200"
+    # authoritative numbering is preserved even if the pipeline SKIPS a number (RC1 -> RC4)
+    st2 = ReleaseState(release_id="2026-09")
+    K.stash_mrwp(st2, "ECS", {"run_id": "1"}, rc=1)
+    K.stash_mrwp(st2, "ECS", {"run_id": "4"}, rc=4)
+    assert [e["rc"] for e in st2.pipeline_runs["rcs"]] == [1, 4]
+
+
+def test_stash_mrwp_falls_back_to_local_counter_without_rc():
+    """With rc=None (mock id / log fallback), a changed run_id rolls forward to the next
+    local rc number (unchanged legacy behavior)."""
+    from steps.build_verify import _common as K
+    st = ReleaseState(release_id="2026-08")
+    K.stash_mrwp(st, "ECS", {"run_id": "100"})
+    K.stash_mrwp(st, "Local", {"run_id": "101"})           # same rc (no run_id change for local)
+    assert [e["rc"] for e in st.pipeline_runs["rcs"]] == [1]
+    K.stash_mrwp(st, "ECS", {"run_id": "200"})             # ECS run_id changed -> new rc
+    assert [e["rc"] for e in st.pipeline_runs["rcs"]] == [1, 2]
+
+
 def _run_poll_rc(runs_root, rid, now_iso):
     """Run `poll-rc` with the drain stubbed (no live az) and return the decision dict."""
     import io, contextlib, json as _json
