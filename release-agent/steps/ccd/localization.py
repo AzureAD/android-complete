@@ -31,15 +31,22 @@ import re
 from datetime import datetime, timezone
 
 from orchestrator.outcomes import NeedsSkill, Blocked
+from tools.coordinates import coords
 
 ID = "localization"
 KIND = "scout"
 
+# Coordinates (org/project/pipeline id, repo urls, the Code-reviews chat) come from
+# config/coordinates.yaml. The OneLoc pipeline + the auth repo it opens PRs against.
+_LOC = coords.pipeline("localization")
+_AUTH_REPO = coords.repo("authenticator")
+_CODE_REVIEWS = coords.team("code_reviews")
+
 # Step config (co-located).
 CONFIG = {
-    "org": "https://msazure.visualstudio.com",
-    "project": "One",
-    "pipeline_id": 405133,
+    "org": _LOC["org"],
+    "project": _LOC["project"],
+    "pipeline_id": _LOC["def"],
     "variables": {"isCreatePrSelected": "true"},
     "fire_at_local": "12:00",                 # noon on CCD (trigger; automation-driven)
     "poll_interval_min": 10,                  # re-check the run every N minutes
@@ -50,7 +57,8 @@ CONFIG = {
     "pr_id_pattern": r"Pull request created with ID '(\d+)'",
     # Capture the id AND (optionally) the full PR URL the log prints after it.
     "pr_line_pattern": r"Pull request created with ID '(\d+)'(?::\s*(https?://\S+))?",
-    "pr_url_template": "https://msazure.visualstudio.com/DefaultCollection/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/{id}",
+    "pr_url_template": (f"{_AUTH_REPO['org']}/DefaultCollection/{_AUTH_REPO['project']}"
+                        f"/_git/{_AUTH_REPO['name']}/pullrequest/{{id}}"),
     # How to READ the run from msazure/One. The ADO MCP is bound to
     # identitydivision/Engineering and canNOT reach msazure/One (TF200016), so the
     # poller uses these az CLI reads (verified working as the signed-in user, no 401).
@@ -67,12 +75,12 @@ CONFIG = {
                 "--api-version 7.1"),
     },
     # Post the resulting PR to the same "Code reviews" chat pr_reminder uses.
-    "code_reviews_chat_id": "19:meeting_Y2Y3OGRjZGMtZGVkYi00MTkzLThhZjktNDAxYWVkMjZlMmE3@thread.v2",
-    "code_reviews_chat_name": "Code reviews",
+    "code_reviews_chat_id": _CODE_REVIEWS["chat"],
+    "code_reviews_chat_name": _CODE_REVIEWS["name"],
     "localization_doc": "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/combined-release-checklist/localization",
     "links": {
-        "pipeline": "https://dev.azure.com/msazure/One/_build?definitionId=405133",
-        "repo_prs": "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequests",
+        "pipeline": f"https://dev.azure.com/msazure/{_LOC['project']}/_build?definitionId={_LOC['def']}",
+        "repo_prs": f"{_AUTH_REPO['org']}/{_AUTH_REPO['project']}/_git/{_AUTH_REPO['name']}/pullrequests",
     },
 }
 

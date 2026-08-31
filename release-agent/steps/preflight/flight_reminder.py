@@ -16,15 +16,17 @@ from orchestrator import schedule
 from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.lib import templating as T
 from steps.lib.context import release_ctx, resolve_chat_target, SELF_CHAT_ID
+from tools.coordinates import coords
 
 ID = "flight_reminder"
 KIND = "scout"
 
 # Step config (co-located). Posts to the real Android Core Team group chat
 # (redirect for tests with the send_to mock knob).
+_CHAT = coords.team("android_core")
 CONFIG = {
-    "live_chat_id": "19:976a859f167f44e59c4ceca8b1d23581@thread.v2",   # "Android Core Team"
-    "live_chat_name": "Android Core Team",
+    "live_chat_id": _CHAT["chat"],
+    "live_chat_name": _CHAT["name"],
     "links": {
         "variable_group": "https://identitydivision.visualstudio.com/Engineering/_library?itemType=VariableGroups&view=VariableGroupView&variableGroupId=40&path=release",
         "premortem_example": "https://microsoft-my.sharepoint-df.com/:w:/p/rapong/cQpEZp0cXp1sQYo4A4M3PQWCEgUCDj364FJa-rq-msg59WlBsw",

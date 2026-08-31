@@ -10,6 +10,7 @@ from __future__ import annotations
 from orchestrator.outcomes import Done, Blocked
 from steps.lib.agent import legacy_run
 from steps.lib.mockctx import mock_input
+from tools.coordinates import coords
 
 ID = "cg"
 KIND = "agent"
@@ -17,16 +18,19 @@ KIND = "agent"
 # Step config (co-located — this module is the single home for the step).
 # Component Governance alerts for the governed repo, read (read-only) from the CG
 # governance host via `az rest`; reports ACTIVE alerts and blocks on High/Critical.
+# Coordinates (resource id, host, repo ids, org/project) come from config/coordinates.yaml.
+_AUTH_REPO = coords.repo("authenticator")
 CONFIG = {
-    "resource": "499b84ac-1321-427f-aa17-267ca6975798",   # Azure DevOps resource id (for `az rest`)
-    "governance_host": "https://msazure.governance.visualstudio.com",
-    "project_id": "b32aa71e-8ed2-41b2-9d77-5bc261222004",  # msazure/One
-    "governed_repo_id": 104410,                            # AD-MFA-phonefactor-phoneApp-android
+    "resource": coords.resource_id(),                      # Azure DevOps resource id (for `az rest`)
+    "governance_host": coords.host("cg_governance"),
+    "project_id": _AUTH_REPO["project_id"],                # msazure/One
+    "governed_repo_id": _AUTH_REPO["cg_repo_id"],          # AD-MFA-phonefactor-phoneApp-android
     "branch": "working",
     "high_severities": ["critical", "high"],               # surfaced/flagged as high-priority
     # Portal link to the repo's CG alerts page — stored as a link so the owner can
     # jump straight to the alerts.
-    "alerts_url": "https://msazure.visualstudio.com/One/_componentGovernance/AD-MFA-phonefactor-phoneApp-android",
+    "alerts_url": (f"{_AUTH_REPO['org']}/{_AUTH_REPO['project']}"
+                   f"/_componentGovernance/{_AUTH_REPO['name']}"),
 }
 
 # Properties this step exposes to mocks.local.yaml (see `mock-spec`).

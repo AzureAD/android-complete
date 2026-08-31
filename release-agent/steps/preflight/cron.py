@@ -11,6 +11,7 @@ from orchestrator.outcomes import Done, Blocked
 from steps.lib.agent import legacy_run
 from steps.lib.mockctx import mock_input, MISSING
 from tools.pipelines import ENGINEERING_ORG, ENGINEERING_PROJECT
+from tools.coordinates import coords
 
 ID = "cron"
 KIND = "agent"
@@ -18,7 +19,7 @@ KIND = "agent"
 # Step config (co-located). Pipeline 3038's cron proves it's FIRING via a recent
 # schedule-reason run in its build history. It's the Engineering Calendar Checker.
 CONFIG = {
-    "pipeline_id": 3038,
+    "pipeline_id": coords.pipeline_def("checker"),
     "org": ENGINEERING_ORG,
     "project": ENGINEERING_PROJECT,
     "name": "Code Complete Calendar Checker",

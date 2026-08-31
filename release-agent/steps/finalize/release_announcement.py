@@ -30,15 +30,17 @@ from __future__ import annotations
 from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.lib import templating as T
 from steps.lib.mockctx import mock_input, MISSING
+from tools.coordinates import coords
 
 ID = "release_announcement"
 KIND = "scout"
 
 # The "General" channel used to sync release plans between Android DevX and partner teams.
+_ANNOUNCE = coords.team("general_announce")
 CONFIG = {
-    "team_id": "be33b3e7-c501-4225-9413-3b88046f3eb3",
-    "channel_id": "19:715820c336d3454bbd75ef0bad68e460@thread.tacv2",
-    "channel_name": "General",
+    "team_id": _ANNOUNCE["team"],
+    "channel_id": _ANNOUNCE["channel"],
+    "channel_name": _ANNOUNCE["name"],
     # SDKs shown in the announcement table, in order: (state.versions key, display label).
     "sdks": [("common", "Common"), ("msal", "MSAL"), ("broker", "Broker")],
     # cc: the four groups (CP/Intune, LTW, OneAuth, Native Auth) are Teams TAGS the tool can't

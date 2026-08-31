@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from urllib import request as _request
 from urllib.error import URLError, HTTPError
 
+from tools.coordinates import coords
+
 
 @dataclass
 class CheckResult:
@@ -81,10 +83,10 @@ def current_az_user(timeout: int = 20):
 # 'user/<alias>/<branch-name>'. The only reliable proof of write access is to actually
 # CREATE such a branch — so this creates a throwaway 'user/<alias>/scout-oneauth-access-check'
 # ref and immediately deletes it. Success => write access; a create rejection / 403 => none.
-ONEAUTH_ORG = "https://office.visualstudio.com"
-ONEAUTH_PROJECT = "OneAuth"
-ONEAUTH_REPO = "OneAuth"
-ONEAUTH_REPO_URL = "https://office.visualstudio.com/OneAuth/_git/OneAuth"
+ONEAUTH_ORG = coords.org_url("oneauth")
+ONEAUTH_PROJECT = coords.project("oneauth")
+ONEAUTH_REPO = coords.repo("oneauth")["name"]
+ONEAUTH_REPO_URL = f"{ONEAUTH_ORG}/{ONEAUTH_PROJECT}/_git/{ONEAUTH_REPO}"
 # The myaccess package that grants OneAuth R/W (repo) for external contributors.
 ONEAUTH_ACCESS_PACKAGE = ("https://myaccess.microsoft.com/@microsoft.onmicrosoft.com#/"
                           "access-packages/09fdec6b-eafa-4905-a7c0-b5e514bba368")

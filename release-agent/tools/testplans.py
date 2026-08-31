@@ -29,46 +29,51 @@ Everything shells out to `az` (bearer token) via tools.pipelines helpers and ret
 from __future__ import annotations
 
 from tools import pipelines as P
+from tools.coordinates import coords
 
 ORG = P.ENGINEERING_ORG          # https://identitydivision.visualstudio.com
 PROJECT = P.ENGINEERING_PROJECT  # Engineering
 _API = "api-version=7.1"
 
+# Test-plan coordinates come from config/coordinates.yaml (constant NAMES unchanged).
+_BROKER = coords.testplan("broker")
+_AUTH = coords.testplan("authenticator")
+
 # ---- Broker: master template + the monthly copy ----
-BROKER_MASTER_PLAN = 2007357
-BROKER_MASTER_ROOT_SUITE = 2007358
+BROKER_MASTER_PLAN = _BROKER["plan"]
+BROKER_MASTER_ROOT_SUITE = _BROKER["root_suite"]
 # The "Manual Tests (Android Broker)" subtree of the master — the manual bug-bash tests.
 # The monthly copy FLATTENS this subtree into a single static suite.
-BROKER_MANUAL_ROOT_SUITE = 2008656
+BROKER_MANUAL_ROOT_SUITE = _BROKER["manual_root_suite"]
 BROKER_MANUAL_SUITE_NAME = "Manual Tests (Android Broker)"
 # Test configurations the manual bug bash runs each case under (the two flight pipelines):
 #   293 = "RC MSAL - RC Broker"              (ECS flights)
 #   330 = "RC MSAL - RC Broker (LocalFlights)" (Local flights)
 # Assigned explicitly so the flat suite gets exactly 2 points/case (matches the master's
 # matrix) instead of inheriting the project's ~190 default configurations.
-BROKER_CONFIGS = [293, 330]
+BROKER_CONFIGS = list(_BROKER["configs"])
 # The "Manual Tests (Native Auth)" and "UI Automation (Android Broker)" subtrees of the master
 # are FLATTENED into single suites: Native Auth -> one dynamic (tag-query) suite; UI Automation
 # -> one static suite of all its distinct cases. So the monthly plan has THREE FLAT top-level
 # suites: Manual Broker (static), Native Auth (dynamic), UI Automation (static). Cases are
 # referenced, never copied.
-BROKER_NATIVE_AUTH_ROOT_SUITE = 2864589
+BROKER_NATIVE_AUTH_ROOT_SUITE = _BROKER["native_auth_root_suite"]
 BROKER_NATIVE_AUTH_SUITE_NAME = "Manual Tests (Native Auth)"
-BROKER_UI_ROOT_SUITE = 2007399
+BROKER_UI_ROOT_SUITE = _BROKER["ui_root_suite"]
 BROKER_UI_SUITE_NAME = "UI Automation (Android Broker)"
 # Test configurations the flat UI-automation suite runs each case under — the ECS + LocalFlight
 # matrix (the UI root itself only carries the two ECS configs, so we pin explicitly to also cover
 # LocalFlight). 4 points/case:
 #   292 = "PROD MSAL - RC Broker (ECS)"          294 = "RC MSAL - PROD Broker (ECS)"
 #   328 = "PROD MSAL - RC Broker (LocalFlights)" 344 = "RC MSAL - PROD Broker (LocalFlight)"
-BROKER_UI_CONFIGS = [292, 294, 328, 344]
-BROKER_AREA_PATH = "Engineering\\Auth Client\\Broker\\Android"
-BROKER_ITERATION = "Engineering"
+BROKER_UI_CONFIGS = list(_BROKER["ui_configs"])
+BROKER_AREA_PATH = _BROKER["area"]
+BROKER_ITERATION = _BROKER["iteration"]
 
 # ---- Authenticator: standing plan the query-suite hangs under ----
-AUTH_PLAN = 714514
-AUTH_ROOT_SUITE = 714515
-AUTH_AREA_PATH = "Engineering\\ISP\\Identity Apps"
+AUTH_PLAN = _AUTH["plan"]
+AUTH_ROOT_SUITE = _AUTH["root_suite"]
+AUTH_AREA_PATH = _AUTH["area"]
 
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")

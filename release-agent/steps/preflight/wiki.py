@@ -10,7 +10,7 @@ from __future__ import annotations
 from orchestrator.outcomes import Done, Blocked
 from steps.lib.agent import legacy_run
 from steps.lib.mockctx import mock_input
-from tools.pipelines import IDENTITYDIVISION
+from tools.coordinates import coords
 
 ID = "wiki"
 KIND = "agent"
@@ -19,8 +19,8 @@ KIND = "agent"
 # history parent page (Phase 2 later writes the built versions into it). NOTE: this is a
 # DIFFERENT project (IdentityWiki) from the release chain — only the org host is shared.
 CONFIG = {
-    "org": IDENTITYDIVISION,     # same collection host as Engineering, different project
-    "project": "IdentityWiki",
+    "org": coords.org_url("identity_wiki"),     # same collection host as Engineering, different project
+    "project": coords.project("identity_wiki"),
     "wiki": "IdentityWiki.wiki",
     "parent_path": "/IdentityWiki/Services/Microsoft Authenticator/Release/Android/Monthly Releases Payloads History",
 }

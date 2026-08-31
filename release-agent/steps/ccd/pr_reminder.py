@@ -17,6 +17,7 @@ from __future__ import annotations
 from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.lib import templating as T
 from steps.lib.context import release_ctx, resolve_chat_target, SELF_CHAT_ID
+from tools.coordinates import coords
 
 ID = "pr_reminder"
 KIND = "scout"
@@ -24,9 +25,10 @@ KIND = "scout"
 # Step config (co-located). Posts to the real "Code reviews" chat (redirect for
 # tests via send_to). The two deadlines below are single-sourced here and echoed by
 # the `localization` step. fire_at_local is read by the CCD-morning automation.
+_CHAT = coords.team("code_reviews")
 CONFIG = {
-    "live_chat_id": "19:meeting_Y2Y3OGRjZGMtZGVkYi00MTkzLThhZjktNDAxYWVkMjZlMmE3@thread.v2",  # "Code reviews"
-    "live_chat_name": "Code reviews",
+    "live_chat_id": _CHAT["chat"],
+    "live_chat_name": _CHAT["name"],
     "fire_at_local": "09:00",                # morning of CCD (automation-driven)
     "branch_cut_local": "11:00 PM",          # release branch auto-cuts at this time
     "localization_local": "noon",            # localization pipeline triggers at this time

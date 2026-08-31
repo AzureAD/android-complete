@@ -35,9 +35,13 @@ from steps.lib.agent import legacy_run
 from steps.lib.mockctx import mock_input, MISSING
 from tools import prs as PR
 from tools import pipelines as PL
+from tools.coordinates import coords
 
 ID = "integ_prs"
 KIND = "agent"
+
+# The authenticator repo lives in msazure/One; its coordinates come from coordinates.yaml.
+_AUTH_REPO = coords.repo("authenticator")
 
 # Shared branch prefixes (authenticator overrides wr_prefix + target below).
 RELEASE_PREFIX = "release/"
@@ -69,8 +73,8 @@ CONFIG = {
     },
     "authenticator": {
         "name": "authenticator", "dir": "authenticator", "tool": "ado",
-        "ado": {"org": "https://msazure.visualstudio.com/", "project": "One",
-                "repository": "AD-MFA-phonefactor-phoneApp-android"},
+        "ado": {"org": _AUTH_REPO["org"].rstrip("/") + "/", "project": _AUTH_REPO["project"],
+                "repository": _AUTH_REPO["name"]},
         # authenticator's mainline is `working` (not dev) and its WR prefix is hyphenated.
         "target": "working", "wr_prefix": "working-release/", "labels": [],
     },
