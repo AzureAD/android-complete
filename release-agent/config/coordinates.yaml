@@ -1,0 +1,90 @@
+# Single source of truth for the release toolchain's DEPLOYMENT IDENTITY — the fixed
+# Azure DevOps / Teams coordinates that change only if the underlying infrastructure is
+# renamed or recreated. This is pure DATA: pipeline definition ids, org/project names,
+# repo identifiers, test-plan ids, Teams channel ids, and the quality-gate thresholds.
+#
+# It deliberately does NOT hold pipeline-CONTRACT strings (stage names, build-tag keys like
+# AuthenticatorBranch / RC<N>-ECS, branch prefixes, the RC-tag regex). Those are coupled 1:1
+# to parsing logic in code — externalizing them would give false flexibility (you can't change
+# the string without also changing the code that depends on it), so they stay next to that logic.
+#
+# Loaded once by tools/coordinates.py; consumers read named constants whose VALUES originate
+# here (e.g. tools.pipelines.CHECKER_DEF = coords.pipeline_def("checker")). To retarget a
+# pipeline / repo / channel, edit one line here — no Python changes.
+#
+# NOTE: Kusto cluster + ICM team id are intentionally NOT duplicated here — they already live
+# in config/readiness.yaml and config/requirements.yaml (the readiness gate consumes them
+# there), so they are already externalized. Keeping them in one place avoids two sources of truth.
+
+# Azure DevOps resource id used to mint bearer tokens for the few REST endpoints az mis-routes.
+ado_resource_id: "499b84ac-1321-427f-aa17-267ca6975798"
+
+# ADO collections (org url + the project inside it) the toolchain spans. There is NO single
+# global org/project — each target is named so a caller can't point a call at the wrong one.
+orgs:
+  engineering:   { url: "https://identitydivision.visualstudio.com", project: "Engineering" }   # release-verification chain
+  one:           { url: "https://msazure.visualstudio.com",          project: "One" }            # Authenticator app, localization, CG
+  oneauth:       { url: "https://office.visualstudio.com",           project: "OneAuth" }        # OneAuth repo (access probe)
+  identity_wiki: { url: "https://identitydivision.visualstudio.com", project: "IdentityWiki" }   # payload wiki (same host as Engineering)
+
+# Non-ADO hosts.
+hosts:
+  cg_governance: "https://msazure.governance.visualstudio.com"   # Component Governance API host
+
+# Pipeline definition ids, each tagged with the org it lives in.
+pipelines:
+  checker:      { org: engineering, def: 3038 }     # Code Complete Calendar Checker (fires the release on the CCD)
+  orchestrator: { org: engineering, def: 2828 }     # Release Orchestrator (the spine)
+  mrwp:         { org: engineering, def: 2519 }      # Monthly Release Work Pipeline (RC testing; ECS + Local)
+  auth_build:   { org: one,         def: 475778 }    # AndroidBuildBroker1ES — RC auth-app build (ECS + Local flavors)
+  auth_test:    { org: one,         def: 444678 }    # Authenticator Post-Build UI Tests (completion-triggered by the build)
+  localization: { org: one,         def: 405133 }    # OneLocBuild localization pipeline
+
+# Git repositories referenced by name/id/GUID.
+repos:
+  authenticator:
+    org: one
+    name: "AD-MFA-phonefactor-phoneApp-android"
+    project_id: "b32aa71e-8ed2-41b2-9d77-5bc261222004"   # msazure/One project GUID
+    cg_repo_id: 104410                                    # Component Governance governed-repo id
+  oneauth:
+    org: oneauth
+    name: "OneAuth"
+
+# ADO Test Plans + the suites/configs/paths the bug-bash cloning uses.
+testplans:
+  broker:
+    plan: 2007357                       # master Broker plan
+    root_suite: 2007358
+    manual_root_suite: 2008656          # "Manual Tests (Android Broker)" subtree
+    native_auth_root_suite: 2864589     # "Manual Tests (Native Auth)" subtree
+    ui_root_suite: 2007399              # "UI Automation (Android Broker)" subtree
+    configs: [293, 330]                 # manual flight configs (ECS + LocalFlights)
+    ui_configs: [292, 294, 328, 344]    # UI-automation flight matrix
+    area: "Engineering\\Auth Client\\Broker\\Android"
+    iteration: "Engineering"
+  authenticator:
+    plan: 714514                        # standing "MSAuthenticator Test Passes" plan
+    root_suite: 714515
+    area: "Engineering\\ISP\\Identity Apps"
+
+# Teams targets (team+channel for channel posts; chat for group-chat posts).
+teams:
+  general_announce:
+    team: "be33b3e7-c501-4225-9413-3b88046f3eb3"
+    channel: "19:715820c336d3454bbd75ef0bad68e460@thread.tacv2"
+    name: "General"
+  android_core:
+    chat: "19:976a859f167f44e59c4ceca8b1d23581@thread.v2"
+    name: "Android Core Team"
+  code_reviews:
+    chat: "19:meeting_Y2Y3OGRjZGMtZGVkYi00MTkzLThhZjktNDAxYWVkMjZlMmE3@thread.v2"
+    name: "Code reviews"
+
+# Tunable quality-gate thresholds (percent pass rates + the auth Firebase suite names).
+quality_gates:
+  rc_ui_pass_pct: 90.0                  # MRWP combined UI-automation gate (build_verify.rc_report)
+  auth_ui_pass_pct: 90.0                # Authenticator ECS gate (build_verify.auth_ecs) — both suites must clear it
+  auth_ui_suites:
+    - "Firebase Test Lab - UIAutomator E2E Tests"
+    - "Firebase Test Lab - Monthly UI Tests"

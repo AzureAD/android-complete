@@ -607,6 +607,35 @@ build_verify.mrwp_local:
     - q: "What's the difference between the ECS and Local runs?"
       a: "The orchestrator triggers MRWP twice with different flight providers — ECS (server-driven flights) and Local (local flight overrides). Both must run to completion; they're verified separately."
 
+build_verify.auth_ecs:
+  summary: "Track the Authenticator ECS app build + its post-build UI tests, on their own 90% gate."
+  what: >
+    The Authenticator RC app build and its device UI tests live in a DIFFERENT org — msazure/One
+    — and are NOT part of the Engineering release-verification chain. The orchestrator only cuts the
+    auth working-branch; the RC app build (def 475778, AndroidBuildBroker1ES) self-triggers off that
+    branch cut, and its post-build UI tests (def 444678) self-trigger off the build's completion.
+    This step discovers the current-RC ECS build on 'working-<release-branch>' (the build whose
+    adAccountsVersion is '...-rc-RC<N>-ecs', highest N), confirms it built green, follows the
+    deterministic build->test resource link to its UI-test run, and applies the auth gate: BOTH
+    Firebase device suites — 'Firebase Test Lab - UIAutomator E2E Tests' and 'Firebase Test Lab -
+    Monthly UI Tests' — must pass at >= 90%. It is a SEPARATE report section with its OWN pass/block
+    and does NOT feed the MRWP 90% UI gate.
+  where:
+    - "Authenticator RC build (def 475778): https://msazure.visualstudio.com/One/_build?definitionId=475778"
+    - "Authenticator Post-Build UI Tests (def 444678): https://msazure.visualstudio.com/One/_build?definitionId=444678"
+  how: >
+    An in-flight build or a not-yet-run UI test HOLDS (Scout polls every 30 min and re-evaluates).
+    A failed auth build, or either Firebase suite below 90%, BLOCKS: investigate the failing suite,
+    re-run the post-build UI test, then rerun this step. The build is read cross-org via az/REST
+    (no ADO MCP); the build->test link is the test run's resources.pipeline.authenticatorBuild id.
+  faqs:
+    - q: "Why is this separate from the MRWP UI gate?"
+      a: "It's a different app (the Authenticator shell, not the broker SDK), built in a different org (msazure/One), on its own quality bar (both Firebase suites >= 90%). It reports in its own section and blocks on its own — it does not roll into the combined MRWP UI-automation rate."
+    - q: "How is the ECS build identified without the orchestrator tagging it?"
+      a: "The build already carries adAccountsVersion '0.0.…-rc-RC<N>-ecs' (RC iteration + ECS flavor) and runs on 'working-<release-branch>', so Scout finds it by branch + that version (highest RC N, newest id) — no orchestrator involvement. The UI-test run is then matched deterministically by its authenticatorBuild pipeline-resource id."
+    - q: "The auth build passed but there's no UI-test result — is that a block?"
+      a: "No. The UI test auto-triggers off build completion, so a missing result just means it hasn't run yet — Scout holds and polls, then applies the gate once it completes."
+
 build_verify.rc_report:
   summary: "Email the RC verification report + apply the three-tier 90% UI gate (the Phase-2 go/no-go)."
   what: >

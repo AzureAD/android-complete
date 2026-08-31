@@ -20,6 +20,8 @@ import json as _json
 import shutil
 import subprocess
 
+from tools.coordinates import coords
+
 # ADO stage `result` values that mean the stage actually EXECUTED (vs never-ran).
 # succeeded/succeededWithIssues (green/yellow) and failed (red) all count as "ran"
 # — matches the release rule: only a stage that never ran (skipped/canceled/pending)
@@ -57,7 +59,7 @@ def _az_json(args, timeout):
 
 # ADO resource id for Azure DevOps — used to mint an access token for the few REST
 # endpoints `az devops invoke` mis-routes (e.g. the Test Runs API).
-_ADO_RESOURCE = "499b84ac-1321-427f-aa17-267ca6975798"
+_ADO_RESOURCE = coords.resource_id()
 
 
 def _ado_rest_get(url, timeout):
@@ -842,16 +844,17 @@ def get_failed_tests(org, project, build_id, max_result_calls=20, per_suite_cap=
 # which lives in identitydivision/Engineering. Other areas own their own coordinates:
 # localization → steps/ccd/localization.py (msazure/One); wiki → steps/preflight/wiki.py
 # (identitydivision/IdentityWiki); CG → steps/preflight/cg.py (msazure/One).
-IDENTITYDIVISION = "https://identitydivision.visualstudio.com"
-MSAZURE = "https://msazure.visualstudio.com"
+IDENTITYDIVISION = coords.org_url("engineering")
+MSAZURE = coords.org_url("one")
 
 # The release-verification pipelines: identitydivision / Engineering — SINGLE SOURCE.
-# `steps/build_verify/_common.py` imports these (it does not redefine them).
+# `steps/build_verify/_common.py` imports these (it does not redefine them). Values come
+# from config/coordinates.yaml; the constant NAMES stay so every consumer is unchanged.
 ENGINEERING_ORG = IDENTITYDIVISION
-ENGINEERING_PROJECT = "Engineering"
-CHECKER_DEF = 3038          # Code Complete Calendar Checker (fires the release on the CCD)
-ORCHESTRATOR_DEF = 2828     # Release Orchestrator (the spine)
-MRWP_DEF = 2519             # Monthly Release Work Pipeline (RC testing; runs ECS + Local)
+ENGINEERING_PROJECT = coords.project("engineering")
+CHECKER_DEF = coords.pipeline_def("checker")          # Code Complete Calendar Checker
+ORCHESTRATOR_DEF = coords.pipeline_def("orchestrator")  # Release Orchestrator (the spine)
+MRWP_DEF = coords.pipeline_def("mrwp")                 # Monthly Release Work Pipeline (ECS + Local)
 TRIGGER_JOB = "Trigger Monthly Release"
 ORCH_REQUIRED_STAGES = [
     "Validate Branch and Versions availability",
@@ -862,7 +865,7 @@ ORCH_PARK_STAGE = "Remove RC Tags"
 
 
 def assemble_rc_model(release, checker, orchestrator, mrwp, *, rc=None,
-                      id_source=None, io_problems=None):
+                      id_source=None, io_problems=None, auth=None):
     """The ONE canonical Phase-2 RC report model — built from already-resolved pieces,
     whether they came from LIVE reads (release_report) or the state snapshot
     (steps.build_verify._common.rc_report_model). Both paths call this so they can never
@@ -915,6 +918,8 @@ def assemble_rc_model(release, checker, orchestrator, mrwp, *, rc=None,
              "mrwp": mrwp, "problems": problems, "rc": rc}
     if id_source is not None:
         model["mrwp_id_source"] = id_source
+    if auth is not None:
+        model["auth"] = auth
     return model
 
 
@@ -993,3 +998,130 @@ def release_report(org, project, release_month, checker_def=CHECKER_DEF,
         mrwp[provider] = entry
     return assemble_rc_model(release_month, checker, o, mrwp, rc=ids.get("rc"),
                              id_source=source)
+
+
+# ============================================================ Authenticator ECS RC
+# The Authenticator RC app build + its post-build UI tests live in a DIFFERENT org —
+# msazure/One — and are NOT part of the Engineering release-verification chain above
+# (the orchestrator cuts the auth working-branch; the build self-triggers off that cut,
+# the test self-triggers off the build). So this leg is discovered independently and
+# read cross-org via the same az/REST helpers, then evaluated on its OWN quality bar
+# (both Firebase suites >= AUTH_UI_PASS_THRESHOLD) — it does NOT feed the MRWP UI gate.
+AUTH_ORG = coords.org_url("one")
+AUTH_PROJECT = coords.project("one")
+AUTH_BUILD_DEF = coords.pipeline_def("auth_build")   # AndroidBuildBroker1ES — RC auth-app build
+AUTH_TEST_DEF = coords.pipeline_def("auth_test")     # Authenticator Post-Build UI Tests
+# The two Firebase device suites the auth leg is gated on (both must clear the threshold).
+AUTH_UI_SUITES = tuple(coords.gate("auth_ui_suites"))
+AUTH_UI_PASS_THRESHOLD = coords.gate("auth_ui_pass_pct")
+
+# adAccountsVersion encodes the RC iteration + flight flavor, e.g. '0.0.02468-rc-RC1-ecs'
+# (ECS) or '0.0.02468-rc-RC1-local-flights' (Local). This is the deterministic key that
+# says which RC/flavor an auth build is — no branch/date parsing needed.
+_AUTH_RC_VERSION = _re_mod.compile(r"-rc-RC(\d+)-(ecs|local-flights)$", _re_mod.I)
+
+
+def _auth_build_ref(auth_branch):
+    """The auth build's git ref from the canonical state.versions.authenticator value.
+
+    orchestrator_health stores it as 'release/YYYY/MM/DD' (from the AuthenticatorBranch
+    tag); the RC build runs on the WORKING branch 'working-release/YYYY/MM/DD'. Returns the
+    full ref 'refs/heads/working-release/YYYY/MM/DD', or None when no branch is known."""
+    if not auth_branch:
+        return None
+    b = str(auth_branch).strip()
+    if b.startswith("refs/heads/"):
+        b = b[len("refs/heads/"):]
+    if not b.startswith("working-"):
+        b = "working-" + b
+    return f"refs/heads/{b}"
+
+
+def find_auth_ecs_build(auth_branch, timeout=90):
+    """Discover the CURRENT-RC Authenticator ECS build (def 475778) on the release's auth
+    working-branch. Returns (ok, info, detail) where info is
+      {build_id, rc, version, status, result}  (or None when no ECS build exists yet).
+
+    Deterministic selection: among builds on `refs/heads/working-<auth_branch>` whose
+    adAccountsVersion matches '-rc-RC<N>-ecs', take the HIGHEST N (the current RC iteration,
+    mirroring mrwp_run_ids), newest build id within it. `status`/`result` are returned raw
+    so the caller can distinguish in-flight (status != 'completed') from a bad result."""
+    ref = _auth_build_ref(auth_branch)
+    if not ref:
+        return (False, None, "no authenticator branch known (run orchestrator_health first)")
+    ok, builds, detail = _az_json(
+        ["pipelines", "build", "list", "--definition-ids", str(AUTH_BUILD_DEF),
+         "--org", AUTH_ORG, "--project", AUTH_PROJECT, "--branch", ref, "--top", "60"], timeout)
+    if not ok:
+        return (False, None, detail)
+    by_rc = {}                                   # N -> list of {id, version, status, result}
+    for b in builds or []:
+        ver = ((b.get("templateParameters") or {}).get("adAccountsVersion")) or ""
+        m = _AUTH_RC_VERSION.search(ver)
+        if not m or m.group(2).lower() != "ecs":
+            continue
+        by_rc.setdefault(int(m.group(1)), []).append(
+            {"id": b.get("id"), "version": ver, "status": b.get("status"), "result": b.get("result")})
+    if not by_rc:
+        return (True, None, f"no ECS release-candidate auth build found on {ref}")
+    n = max(by_rc)                               # highest RC iteration = current
+    newest = max(by_rc[n], key=lambda x: x.get("id") or 0)
+    return (True, {"build_id": newest["id"], "rc": n, "version": newest["version"],
+                   "status": newest["status"], "result": newest["result"]}, "")
+
+
+def _auth_test_source_build_id(build_id, timeout=60):
+    """The auth BUILD id a given post-build-UI-test run consumed — read from its pipeline
+    resource `resources.pipelines.authenticatorBuild.pipeline.id` (the completion-trigger
+    link PR 16976328 wires up). Returns the int id or None."""
+    ok, run, _d = _ado_rest_get(
+        f"{AUTH_ORG.rstrip('/')}/{AUTH_PROJECT}/_apis/pipelines/{AUTH_TEST_DEF}/runs/{build_id}"
+        f"?api-version=7.1", timeout)
+    if not ok:
+        return None
+    res = (((run or {}).get("resources") or {}).get("pipelines") or {}).get("authenticatorBuild") or {}
+    return ((res.get("pipeline") or {}).get("id"))
+
+
+def find_auth_ui_test_build(auth_build_id, timeout=90, scan=25):
+    """Find the post-build UI-test run (def 444678) that tested `auth_build_id`, via the
+    deterministic build->test resource link. Returns (ok, test_build_id|None, detail).
+
+    Scans the most-recent `scan` runs of def 444678 (newest first) and returns the first
+    whose consumed authenticatorBuild == auth_build_id. None = the test hasn't run yet
+    (e.g. still in-flight, or the completion trigger hasn't fired)."""
+    if not auth_build_id:
+        return (False, None, "no auth build id to match a test against")
+    ok, builds, detail = _az_json(
+        ["pipelines", "build", "list", "--definition-ids", str(AUTH_TEST_DEF),
+         "--org", AUTH_ORG, "--project", AUTH_PROJECT, "--top", str(scan)], timeout)
+    if not ok:
+        return (False, None, detail)
+    ordered = sorted(builds or [], key=lambda b: b.get("id") or 0, reverse=True)
+    for b in ordered:
+        if _auth_test_source_build_id(b.get("id"), timeout) == int(auth_build_id):
+            return (True, b.get("id"), "")
+    return (True, None, f"no post-build UI-test run found for auth build {auth_build_id} yet")
+
+
+def auth_ui_suite_rates(test_build_id, timeout=90):
+    """Per-suite pass rates for the auth UI gate. Returns (ok, suites, detail) where
+    `suites` maps each AUTH_UI_SUITES name -> {present, passed, failed, total, pct}
+    (pct = passed/(passed+failed)*100, excluding not-applicable; None when the suite has no
+    executed result). Reuses get_test_summary's per-run breakdown (single Test-Runs read)."""
+    ok, summ, detail = get_test_summary(AUTH_ORG, AUTH_PROJECT, test_build_id, timeout)
+    if not ok:
+        return (False, None, detail)
+    by_name = {r.get("name"): r for r in (summ or {}).get("runs", [])}
+    out = {}
+    for name in AUTH_UI_SUITES:
+        r = by_name.get(name)
+        if not r:
+            out[name] = {"present": False, "passed": 0, "failed": 0, "total": 0, "pct": None}
+            continue
+        passed, failed = r.get("passed") or 0, r.get("failed") or 0
+        denom = passed + failed
+        out[name] = {"present": True, "passed": passed, "failed": failed,
+                     "total": r.get("total") or 0,
+                     "pct": (round(passed * 100.0 / denom, 1) if denom else None)}
+    return (True, out, "")

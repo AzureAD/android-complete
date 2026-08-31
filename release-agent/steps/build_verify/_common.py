@@ -14,10 +14,12 @@ from datetime import datetime, timezone
 # This package is Engineering-only; alias the explicitly-named source constants to the
 # short local names the step CONFIGs use. (Do NOT use these for msazure/One calls.)
 from tools import pipelines as P
+from tools.coordinates import coords
 from tools.pipelines import (
     ENGINEERING_ORG as ORG, ENGINEERING_PROJECT as PROJECT,
     CHECKER_DEF, ORCHESTRATOR_DEF, MRWP_DEF,
     ORCH_REQUIRED_STAGES, ORCH_PARK_STAGE, format_versions,
+    AUTH_ORG, AUTH_PROJECT, AUTH_UI_SUITES, AUTH_UI_PASS_THRESHOLD,
 )
 from orchestrator.outcomes import Done, Blocked, InProgress
 from steps.lib.mockctx import mock_input, MISSING
@@ -28,7 +30,7 @@ RECOVERY_TSG = ("https://eng.ms/docs/microsoft-security/identity/"
                 "authn-sdk-msal-android/android-auth-libraries/releases/"
                 "internal-release-checklist/release-orchestrator-recovery")
 ESCALATION_CHAT = ("https://teams.microsoft.com/l/chat/"
-                   "19:976a859f167f44e59c4ceca8b1d23581@thread.v2/conversations")
+                   f"{coords.team('android_core')['chat']}/conversations")
 
 # Standard help tail appended to orchestrator/MRWP block reasons.
 UNBLOCK_HELP = (
@@ -123,10 +125,30 @@ def stash_mrwp(state, provider, snapshot, rc=None):
     state.pipeline_runs = pr
 
 
+def stash_auth(state, rc, snapshot):
+    """Record the Authenticator ECS build + UI-test snapshot into the RC iteration `rc`.
+
+    The auth leg is a SEPARATE report section keyed off the SAME RC iteration as MRWP — it
+    merges into the rcs entry with that number (created if the auth step resolves it before
+    the MRWP steps do), so a release's ECS build, both MRWP runs, and the auth build/test
+    all land in one rcs[<n>] record. `snapshot` = {build:{...}, test:{...}, verdict, ...}."""
+    pr = _pipeline_runs(state)
+    rcs = pr.setdefault("rcs", [])
+    cur = next((e for e in rcs if e.get("rc") == rc), None)
+    if cur is None:
+        cur = {"rc": rc}
+        rcs.append(cur)
+    snap = dict(snapshot)
+    snap["resolved_at"] = _now_iso()
+    cur["auth"] = snap
+    cur["resolved_at"] = _now_iso()
+    state.pipeline_runs = pr
+
+
 # The Phase-2 quality bar: at least this % of UI-automation tests must pass for RC to
 # clear to bug bash. Below it, the rc_report step blocks for owner investigation
 # (a large UI failure usually means a real regression → fix + re-run MRWP).
-RC_UI_PASS_THRESHOLD = 90.0
+RC_UI_PASS_THRESHOLD = coords.gate("rc_ui_pass_pct")
 
 # The broker-libraries cherry-pick process — the exit for a REAL product bug behind the
 # UI failures (patch → orchestrator triggers a fresh RC). Surfaced in the block detail.
@@ -169,7 +191,8 @@ def rc_report_model(state, timeout=120):
             "never_ran": s.get("never_ran") or [],
             "tests": s.get("tests"), "failed_suites": s.get("failed_suites"),
         }
-    return P.assemble_rc_model(state.release_id, checker, orchestrator, mrwp, rc=rc.get("rc"))
+    return P.assemble_rc_model(state.release_id, checker, orchestrator, mrwp, rc=rc.get("rc"),
+                               auth=rc.get("auth"))
 
 
 def rc_run_links(model) -> list:
@@ -362,6 +385,25 @@ def _rc_email_plain(model, ctx) -> str:
                 L.append(f"          … and {s['failed'] - len(names)} more (see the run)")
         L.append(f"      {build_url(r.get('run_id'))}")
         L.append("")
+    a = model.get("auth") or {}
+    if a:
+        b, t = a.get("build") or {}, a.get("test") or {}
+        suites = t.get("suites") or {}
+        verdict = ("PASS (both suites >= %.0f%%)" % AUTH_UI_PASS_THRESHOLD
+                   if a.get("verdict") == "clean" else "BELOW GATE (a suite < 90%%)")
+        L.append(f"AUTHENTICATOR ECS — separate gate, does NOT affect the UI rate above: {verdict}")
+        L.append(f"  build {b.get('run_id')} ({b.get('version')}), UI tests {t.get('run_id')}")
+        for name in AUTH_UI_SUITES:
+            s = suites.get(name) or {}
+            if not s.get("present"):
+                L.append(f"      {name}: no result")
+                continue
+            passed, failed = s.get("passed", 0) or 0, s.get("failed", 0) or 0
+            pct = s.get("pct")
+            L.append(f"      {name}: {passed}/{passed + failed} passed "
+                     f"({'n/a' if pct is None else str(pct) + '%'})")
+        L.append(f"      {auth_build_url(b.get('run_id'))}")
+        L.append("")
     probs = model.get("problems") or []
     if probs:
         L.append("BLOCKING ISSUES (a stage that never ran = the pipeline aborted):")
@@ -489,6 +531,58 @@ def _rc_email_html(model, ctx) -> str:
             f"style='color:#0b5cad;font-size:13px;'>Open run {r.get('run_id')} &rsaquo;</a></div>"
             f"</td></tr></table>")
 
+    def _auth_card():
+        """Separate 'Authenticator ECS' section — its OWN gate (both Firebase suites >=90%),
+        rendered only when the auth leg resolved. Does NOT feed the MRWP UI headline above."""
+        a = model.get("auth") or {}
+        if not a:
+            return ""
+        b = a.get("build") or {}
+        t = a.get("test") or {}
+        suites = t.get("suites") or {}
+        clean = a.get("verdict") == "clean"
+        chip = (_chip("PASS &ge;90%", "#ecfdf3", "#067647") if clean
+                else _chip("BELOW 90%", "#fef3f2", "#b42318"))
+        rows = ""
+        for name in AUTH_UI_SUITES:
+            s = suites.get(name) or {}
+            present = s.get("present")
+            pct = s.get("pct")
+            ok = present and pct is not None and pct >= AUTH_UI_PASS_THRESHOLD
+            pcol = "#067647" if ok else "#b42318"
+            passed, failed = s.get("passed", 0) or 0, s.get("failed", 0) or 0
+            denom = passed + failed
+            disp = "no result" if not present else (f"{pct}%" if pct is not None else "n/a")
+            rows += (
+                f"<tr><td style='padding:5px 0;font-size:13px;color:#1d2939;'>{T.esc(name)}</td>"
+                f"<td style='padding:5px 10px;font-size:12px;color:#98a2b3;white-space:nowrap;'>"
+                f"{passed}/{denom}</td>"
+                f"<td width='130' style='padding:5px 0;'>"
+                f"{_split_bar((pct if pct is not None else 0), h=6)}</td>"
+                f"<td align='right' style='padding:5px 0 5px 10px;font-size:13px;font-weight:700;"
+                f"color:{pcol};white-space:nowrap;'>{disp}</td></tr>")
+        bid, tid = b.get("run_id"), t.get("run_id")
+        ver_span = (f"<span style='color:#98a2b3;font-weight:400;font-size:13px;'> &middot; "
+                    f"build {bid} &middot; {T.esc(b.get('version') or '')}</span>")
+        link = (f"<div style='margin-top:10px;'><a href='{auth_build_url(bid)}' "
+                f"style='color:#0b5cad;font-size:13px;'>Open auth build {bid} &rsaquo;</a>"
+                + (f" &nbsp; <a href='{auth_build_url(tid)}' style='color:#0b5cad;font-size:13px;'>"
+                   f"UI tests {tid} &rsaquo;</a>" if tid else "") + "</div>")
+        return (
+            f"<p style='margin:16px 0 2px;font-size:15px;font-weight:700;'>Authenticator ECS "
+            f"<span style='color:#98a2b3;font-weight:400;font-size:13px;'>&middot; separate gate "
+            f"(does not affect the UI-automation rate above)</span></p>"
+            f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
+            f"style='border:1px solid #e4e7ec;border-radius:10px;margin:6px 0;'>"
+            f"<tr><td style='padding:14px 16px;'>"
+            f"<table role='presentation' width='100%'><tr>"
+            f"<td style='font-size:14px;font-weight:700;color:#101828;'>Firebase device suites"
+            f"{ver_span}</td>"
+            f"<td align='right'>{chip}</td></tr></table>"
+            f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
+            f"style='margin:8px 0 0;border-top:1px solid #eef0f3;'>{rows}</table>"
+            f"{link}</td></tr></table>")
+
     # Overall headline — UI-automation failures ONLY (the RC-critical bucket), across both providers.
     def _ui_sum(field):
         return sum((((model.get("mrwp") or {}).get(p) or {}).get("tests", {})
@@ -553,6 +647,7 @@ def _rc_email_html(model, ctx) -> str:
   <p style="margin:16px 0 2px;font-size:15px;font-weight:700;">UI-automation results</p>
   {mrwp_card('ECS')}
   {mrwp_card('Local')}
+  {_auth_card()}
   {issues}
   {retry_warn}
 
@@ -685,3 +780,131 @@ def verify_mrwp(state, provider):
     }, rc=rc_num)
     return Done(
         f"{label} run {mid} ran to completion — {stage_note}{extra}.{tnote}", links=links)
+
+
+# ---------------------------------------------------------------- Authenticator ECS leg
+def auth_build_url(build_id):
+    return f"{AUTH_ORG}/{AUTH_PROJECT}/_build/results?buildId={build_id}"
+
+
+def auth_gate(suites) -> dict:
+    """The Authenticator ECS quality bar — SEPARATE from the MRWP 90% UI gate. Both Firebase
+    device suites (AUTH_UI_SUITES) must clear AUTH_UI_PASS_THRESHOLD (>=90% pass rate).
+
+    `suites` is the map from `pipelines.auth_ui_suite_rates`
+    ({name: {present, passed, failed, total, pct}}). Returns
+      {verdict, blocking, threshold, suites, detail}
+    where verdict is:
+      * 'clean'     — every gated suite present AND pct >= threshold: pass.
+      * 'attention' — a suite is missing, has no executed result, or is below threshold: BLOCK.
+    `blocking` is True only for 'attention' (its own block — it does NOT feed rc_ui_gate)."""
+    thr = AUTH_UI_PASS_THRESHOLD
+    suites = suites or {}
+    lines, failing = [], []
+    for name in AUTH_UI_SUITES:
+        s = suites.get(name) or {"present": False, "pct": None}
+        if not s.get("present"):
+            failing.append(name)
+            lines.append(f"  \u2022 {name}: no result")
+            continue
+        pct = s.get("pct")
+        mark = "OK" if (pct is not None and pct >= thr) else "BELOW"
+        if pct is None or pct < thr:
+            failing.append(name)
+        lines.append(f"  \u2022 {name}: {s.get('passed', 0)}/"
+                     f"{(s.get('passed', 0) + s.get('failed', 0))} passed"
+                     f" ({'n/a' if pct is None else str(pct) + '%'}) [{mark}]")
+    body = "\n".join(lines)
+    if not failing:
+        return {"verdict": "clean", "blocking": False, "threshold": thr, "suites": suites,
+                "detail": (f"Authenticator ECS UI tests clear the {thr:.0f}% bar in both "
+                           f"suites:\n{body}")}
+    return {"verdict": "attention", "blocking": True, "threshold": thr, "suites": suites,
+            "detail": (f"Authenticator ECS UI gate NOT met (both suites must be >= {thr:.0f}%). "
+                       f"Below/missing: {', '.join(failing)}.\n{body}\n"
+                       f"\u2192 Investigate the failing Firebase suite(s), then re-run the "
+                       f"post-build UI test. Scout re-evaluates when it completes.")}
+
+
+def verify_auth_ecs(state):
+    """Body for the `auth_ecs` step — track the Authenticator ECS RC build + its post-build
+    UI test (msazure/One, cross-org) and apply the auth-leg gate. SEPARATE report section;
+    its own pass/block; does NOT feed the MRWP 90% UI gate.
+
+    Flow: resolve the auth working-branch from state.versions.authenticator ->
+    find the current-RC ECS build (def 475778) -> in-flight build holds as InProgress,
+    a bad result blocks -> find the post-build UI-test run via the build->test resource link
+    (missing/in-flight test holds as InProgress) -> read the two Firebase suites and apply
+    `auth_gate`. Snapshots everything into rcs[rc].auth.
+
+    Mock knobs: auth_build ({build_id,rc,version,status,result}), test_build (id),
+    suites (the auth_ui_suite_rates map), rc (override the RC number)."""
+    from tools import pipelines as P
+    label = "Authenticator ECS"
+
+    # 1) resolve the current-RC ECS build (or take the injected one)
+    ab = mock_input("auth_build", MISSING)
+    if ab is MISSING:
+        auth_branch = (getattr(state, "versions", None) or {}).get("authenticator")
+        if not auth_branch:
+            return Blocked(f"{label}: no authenticator branch on state.versions yet — run "
+                           f"orchestrator_health first.")
+        ok, ab, detail = P.find_auth_ecs_build(auth_branch)
+        if not ok:
+            hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
+            return Blocked(f"{label}: could not query the auth build ({detail}){hint}.")
+        if not ab:
+            return Blocked(f"{label}: no ECS release-candidate auth build found for this "
+                           f"release ({detail}). Verify the auth working-branch was cut.")
+    build_id = ab.get("build_id")
+    rc_num = mock_input("rc", MISSING)
+    rc_num = rc_num if rc_num is not MISSING else ab.get("rc")
+    links = [{"name": f"{label} build", "url": auth_build_url(build_id)}]
+
+    # 1.5) build must have COMPLETED with a usable result. In-flight -> poll; bad -> block.
+    status, result = ab.get("status"), ab.get("result")
+    if status not in (None, "completed"):
+        return InProgress(
+            f"{label} build {build_id} is still running (status: {status}) — Scout is polling "
+            f"every 30 min and will evaluate the UI tests when it completes.", links=links)
+    if result not in (None, "succeeded", "partiallySucceeded"):
+        return Blocked(
+            f"{label} build {build_id} did not succeed (result: {result}). The RC auth app "
+            f"build must be green before its UI tests can gate the release.", links=links)
+
+    # 2) find the post-build UI-test run via the deterministic build->test resource link
+    tb = mock_input("test_build", MISSING)
+    if tb is MISSING:
+        ok, tb, detail = P.find_auth_ui_test_build(build_id)
+        if not ok:
+            hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
+            return Blocked(f"{label}: could not query the post-build UI tests ({detail}){hint}.",
+                           links=links)
+    if not tb:
+        # The test auto-triggers off build completion (PR 16976328); it just hasn't run yet.
+        return InProgress(
+            f"{label} build {build_id} is green, but its post-build UI-test run hasn't "
+            f"appeared yet — Scout is polling every 30 min and will gate it once it runs.",
+            links=links)
+    links.append({"name": f"{label} UI tests", "url": auth_build_url(tb)})
+
+    # 3) per-suite pass rates + the auth gate
+    suites = mock_input("suites", MISSING)
+    if suites is MISSING:
+        ok, suites, detail = P.auth_ui_suite_rates(tb)
+        if not ok:
+            return Blocked(f"{label}: could not read UI test results for run {tb} ({detail}).",
+                           links=links)
+    gate = auth_gate(suites)
+
+    # 4) snapshot the whole leg into the RC iteration (its own section)
+    stash_auth(state, rc_num, {
+        "build": {"run_id": str(build_id), "rc": rc_num, "version": ab.get("version"),
+                  "result": result},
+        "test": {"run_id": str(tb), "suites": suites},
+        "verdict": gate["verdict"],
+    })
+
+    if gate["blocking"]:
+        return Blocked(gate["detail"], links=links)
+    return Done(gate["detail"], links=links)

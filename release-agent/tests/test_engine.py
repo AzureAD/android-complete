@@ -72,6 +72,15 @@ _SAFE_AGENTS = {
         "stages": [{"name": "Build", "state": "completed", "result": "succeeded"},
                    {"name": "UI Automation", "state": "completed", "result": "failed"}],
         "tests": {"total": 100, "passed": 98, "failed": 2}},
+    "build_verify.auth_ecs": {
+        "auth_build": {"build_id": 900010, "rc": 1, "version": "0.0.02468-rc-RC1-ecs",
+                       "status": "completed", "result": "succeeded"},
+        "test_build": 900011,
+        "suites": {
+            "Firebase Test Lab - UIAutomator E2E Tests":
+                {"present": True, "passed": 96, "failed": 4, "total": 100, "pct": 96.0},
+            "Firebase Test Lab - Monthly UI Tests":
+                {"present": True, "passed": 306, "failed": 0, "total": 306, "pct": 100.0}}},
     "build_verify.rc_report": {"outcome": "done", "note": "RC report emailed (test)"},  # skip live az + send
     # Phase-3 bug_bash clone steps — real agents; keep flow tests offline.
     "bug_bash.clone_plans_broker": {"outcome": "done", "note": "broker plan cloned (test)"},
@@ -653,11 +662,11 @@ def test_holds_at_first_hold():
     assert actions[-1].kind == "reminder"
     assert actions[-1].step == "ui_failures"   # Phases 0-2 gateless (rc_report auto); first hold is Phase-3 ui_failures
     # auto steps that RUN before the first hold: Phase-0 breaking/cg/oneauth_access/cron/wiki (5) +
-    # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local (4) + rc_report (scout
+    # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local/auth_ecs (5) + rc_report (scout
     # email, mocked done here) (1) + Phase-3 clone_plans_broker/clone_plans_auth/
     # distribute_tests/ui_test_status (4) + send_invite + activate_chat (scout, mocked done) (2) +
     # notify_native_auth (1) + bugbash_updates (1) + native_auth_signoff + did_signoff (2).
-    assert sum(1 for a in actions if a.kind == "ran") == 20
+    assert sum(1 for a in actions if a.kind == "ran") == 21
 
 
 def test_gate_blocks_until_approved():
@@ -2141,6 +2150,145 @@ def test_build_verify_checker_blocks_when_not_triggered():
     assert out["kind"] == "blocked" and "triggered the release" in out["reason"]
 
 
+def _auth_suites(e2e_pct, monthly_pct=100.0, e2e_present=True, monthly_present=True):
+    """Build the auth_ui_suite_rates map for the two Firebase suites at given pass rates."""
+    def suite(pct, present):
+        if not present:
+            return {"present": False, "passed": 0, "failed": 0, "total": 0, "pct": None}
+        passed = int(round(pct))
+        return {"present": True, "passed": passed, "failed": 100 - passed,
+                "total": 100, "pct": float(pct)}
+    from tools.pipelines import AUTH_UI_SUITES
+    return {AUTH_UI_SUITES[0]: suite(e2e_pct, e2e_present),
+            AUTH_UI_SUITES[1]: suite(monthly_pct, monthly_present)}
+
+
+def test_auth_gate_clean_when_both_suites_pass():
+    from steps.build_verify import _common as K
+    g = K.auth_gate(_auth_suites(96.0, 100.0))
+    assert g["verdict"] == "clean" and g["blocking"] is False
+    assert "clear the 90% bar" in g["detail"]
+
+
+def test_auth_gate_blocks_when_a_suite_below_threshold():
+    from steps.build_verify import _common as K
+    g = K.auth_gate(_auth_suites(82.76, 100.0))    # the live example: E2E 24/29
+    assert g["verdict"] == "attention" and g["blocking"] is True
+    assert "NOT met" in g["detail"] and "UIAutomator" in g["detail"]
+
+
+def test_auth_gate_blocks_when_a_suite_missing():
+    from steps.build_verify import _common as K
+    g = K.auth_gate(_auth_suites(100.0, 100.0, monthly_present=False))
+    assert g["blocking"] is True and "no result" in g["detail"]
+
+
+def test_find_auth_ecs_build_picks_highest_rc_ecs(monkeypatch):
+    """Discovery keys off adAccountsVersion: newest ECS build of the HIGHEST RC iteration on
+    the release working-branch; Local-flavor builds are ignored."""
+    from tools import pipelines as P
+    builds = [
+        {"id": 10, "status": "completed", "result": "succeeded",
+         "templateParameters": {"adAccountsVersion": "0.0.02468-rc-RC1-ecs"}},
+        {"id": 11, "status": "completed", "result": "succeeded",
+         "templateParameters": {"adAccountsVersion": "0.0.02468-rc-RC1-local-flights"}},
+        {"id": 20, "status": "completed", "result": "partiallySucceeded",
+         "templateParameters": {"adAccountsVersion": "0.0.02468-rc-RC2-ecs"}},
+        {"id": 19, "status": "completed", "result": "succeeded",
+         "templateParameters": {"adAccountsVersion": "0.0.02468-rc-RC2-ecs"}},
+    ]
+    seen = {}
+    def fake_az(args, timeout):
+        seen["args"] = args
+        return (True, builds, "")
+    monkeypatch.setattr(P, "_az_json", fake_az)
+    ok, info, _ = P.find_auth_ecs_build("release/2026/08/28")
+    assert ok and info["build_id"] == 20 and info["rc"] == 2       # highest RC, newest id
+    assert info["result"] == "partiallySucceeded"
+    # queried the WORKING branch ref for def 475778 in msazure/One
+    assert "refs/heads/working-release/2026/08/28" in seen["args"]
+    assert str(P.AUTH_BUILD_DEF) in seen["args"] and P.AUTH_PROJECT in seen["args"]
+
+
+def test_find_auth_ui_test_build_matches_resource_link(monkeypatch):
+    """The build->test join is the test run's authenticatorBuild pipeline-resource id."""
+    from tools import pipelines as P
+    monkeypatch.setattr(P, "_az_json",
+                        lambda a, t: (True, [{"id": 700}, {"id": 701}], ""))
+    # 701 tested a different build; 700 tested our build 500
+    monkeypatch.setattr(P, "_auth_test_source_build_id",
+                        lambda bid, timeout=60: {700: 500, 701: 499}.get(bid))
+    ok, tid, _ = P.find_auth_ui_test_build(500)
+    assert ok and tid == 700
+
+
+def test_verify_auth_ecs_done_when_both_suites_pass():
+    st, orch = _bv_state({})                                        # uses the SAFE auth_ecs mock
+    out = _bv_build(orch, st, "auth_ecs")
+    assert out["kind"] == "done" and "clear the 90% bar" in out["note"]
+    # snapshot landed in the RC iteration under its own 'auth' section
+    rc = st.pipeline_runs["rcs"][-1]
+    assert rc["auth"]["verdict"] == "clean"
+    assert rc["auth"]["build"]["run_id"] == "900010" and rc["auth"]["test"]["run_id"] == "900011"
+
+
+def test_verify_auth_ecs_blocks_when_suite_below_threshold():
+    st, orch = _bv_state({"build_verify.auth_ecs": {
+        "auth_build": {"build_id": 900010, "rc": 1, "version": "0.0.02468-rc-RC1-ecs",
+                       "status": "completed", "result": "succeeded"},
+        "test_build": 900011, "suites": _auth_suites(82.76, 100.0)}})
+    out = _bv_build(orch, st, "auth_ecs")
+    assert out["kind"] == "blocked" and "NOT met" in out["reason"]
+
+
+def test_verify_auth_ecs_in_flight_build_holds():
+    st, orch = _bv_state({"build_verify.auth_ecs": {
+        "auth_build": {"build_id": 900010, "rc": 1, "version": "0.0.02468-rc-RC1-ecs",
+                       "status": "inProgress", "result": None}}})
+    out = _bv_build(orch, st, "auth_ecs")
+    assert out["kind"] == "in_progress" and "still running" in out["note"]
+
+
+def test_verify_auth_ecs_blocks_on_failed_build():
+    st, orch = _bv_state({"build_verify.auth_ecs": {
+        "auth_build": {"build_id": 900010, "rc": 1, "version": "0.0.02468-rc-RC1-ecs",
+                       "status": "completed", "result": "failed"}}})
+    out = _bv_build(orch, st, "auth_ecs")
+    assert out["kind"] == "blocked" and "did not succeed" in out["reason"]
+
+
+def test_verify_auth_ecs_holds_when_test_not_run_yet(monkeypatch):
+    from tools import pipelines as P
+    monkeypatch.setattr(P, "find_auth_ui_test_build",
+                        lambda bid, **k: (True, None, "no test yet"))
+    st, orch = _bv_state({"build_verify.auth_ecs": {
+        "auth_build": {"build_id": 900010, "rc": 1, "version": "0.0.02468-rc-RC1-ecs",
+                       "status": "completed", "result": "succeeded"}}})
+    out = _bv_build(orch, st, "auth_ecs")
+    assert out["kind"] == "in_progress" and "hasn't appeared yet" in out["note"]
+
+
+def test_rc_email_includes_separate_auth_section():
+    """The RC report renders an 'Authenticator ECS' section (its own gate), independent of
+    the MRWP UI headline."""
+    from steps.build_verify import _common as K
+    st, _ = _bv_state({})
+    _seed_rc_pipeline(st, {"total": 100, "passed": 100, "failed": 0},
+                      {"total": 100, "passed": 100, "failed": 0})
+    rc = st.pipeline_runs["rcs"][-1]
+    K.stash_auth(st, rc["rc"], {
+        "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
+                  "result": "succeeded"},
+        "test": {"run_id": "900011", "suites": _auth_suites(82.76, 100.0)},
+        "verdict": "attention"})
+    model = K.rc_report_model(st)
+    assert (model.get("auth") or {}).get("verdict") == "attention"
+    html = K._rc_email_html(model, {"owner": "pedro"})
+    assert "Authenticator ECS" in html and "UIAutomator E2E" in html
+    plain = K._rc_email_plain(model, {"owner": "pedro"})
+    assert "AUTHENTICATOR ECS" in plain and "does NOT affect" in plain
+
+
 def test_build_verify_phase_shape():
     """Phase 2 has the 4 verification agent steps + the rc_report scout step (which emails
     the RC report AND applies the 90% UI gate). rc_report is the terminal step — there is
@@ -2150,7 +2298,7 @@ def test_build_verify_phase_shape():
     bv = next(p for p in cfg["phases"] if p["id"] == "build_verify")
     ids = [s["id"] for s in bv["steps"]]
     assert ids == ["checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",
-                   "rc_report"]
+                   "auth_ecs", "rc_report"]
     assert bv.get("anchor") == "CCD+1"
     rc = next(s for s in bv["steps"] if s["id"] == "rc_report")
     assert rc.get("source") == "scout" and rc.get("owner") == "agent"
