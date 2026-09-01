@@ -1179,8 +1179,34 @@ finalize.publish_notes_gate:
     - q: "What version is Common4j checked at?"
       a: "The Common version. The orchestrator publishes Common4j with Common4jVersion = NextCommonVersion, so there's no separate Common4j version to track."
 
-finalize.oneauth_common_pr:
-  summary: "Ingest the published Common version into OneAuth and raise a PR into dev."
+finalize.verify_release_notes:
+  summary: "Verify the GitHub release notes are published for Broker, MSAL, and Common."
+  what: >
+    After the 'Publish GitHub Release Notes' gate (publish_notes_gate), the orchestrator publishes
+    a GitHub release for each library. This step confirms all three exist at the release versions —
+    it's the GitHub complement to verify_pub (which checks Maven Central). Each release is tagged
+    'v<version>': Broker @ state.versions.broker, MSAL @ state.versions.msal, Common @
+    state.versions.common.
+  who: "Scout (an agent step) — read-only `gh release view` (uses the machine's gh auth)."
+  where:
+    - "Broker: msft.ghe.com/security/ad-accounts-for-android (GitHub Enterprise) — v<broker>"
+    - "MSAL:   github.com/AzureAD/microsoft-authentication-library-for-android — v<msal>"
+    - "Common: github.com/AzureAD/microsoft-authentication-library-common-for-android — v<common>"
+  how: >
+    Runs automatically and re-checks on a poll. For each repo it runs `gh release view v<version>`;
+    a published (non-draft) release counts, a missing tag is 'not yet' (keep polling), and a draft
+    or an auth/network error is surfaced (Blocked) rather than assumed. The repo slugs are REUSED
+    from integ_prs.CONFIG (the single source for the release repos). Test with the `results` mock
+    (repoKey -> published|missing|error) and `versions`.
+  faqs:
+    - q: "How is this different from verify_pub?"
+      a: "verify_pub checks the Maven Central ARTIFACTS (MSAL/Common/Common4j .pom); verify_release_notes checks the GitHub RELEASES (Broker/MSAL/Common, tagged v<version>). Both must be true for the release to be fully published."
+    - q: "Why does it include Broker but verify_pub doesn't?"
+      a: "Broker isn't published to Maven Central (it's a private GHE repo), but it DOES get a GitHub Enterprise release. So the GitHub-notes check covers all three libraries; the Maven check covers only the two public artifacts (plus Common4j)."
+    - q: "What if a release isn't there yet?"
+      a: "It stays in-progress and re-checks — publishing the notes happens right after the publish_notes_gate is approved. A draft release or a gh auth error is surfaced instead of silently passing."
+
+
   what: >
     After the release publishes and verify_pub confirms Common is live on Maven Central, update
     OneAuth to consume that final (non-RC) Common version. On the standing

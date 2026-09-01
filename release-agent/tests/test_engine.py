@@ -108,6 +108,9 @@ _SAFE_AGENTS = {
     # Phase-4 publish_notes_gate — a GATE (not an agent): keep it offline + holding in flow tests by
     # injecting no parked approval + no stage state (build() -> 'not parked yet' NeedsHuman).
     "finalize.publish_notes_gate": {"approval": None, "stage_state": None},
+    # Phase-4 verify_release_notes — real agent (gh release view). Short-circuit for flow tests;
+    # dedicated tests exercise its logic offline.
+    "finalize.verify_release_notes": {"outcome": "done", "note": "github release notes verified (test)"},
 }
 
 
@@ -6245,6 +6248,105 @@ def test_maven_pom_url_shape():
     assert M.pom_url("msal", "8.4.2") == \
         "https://repo1.maven.org/maven2/com/microsoft/identity/client/msal/8.4.2/msal-8.4.2.pom"
     assert M.pom_url("common4j", "24.6.0").endswith("/common4j/24.6.0/common4j-24.6.0.pom")
+
+
+# ---- Phase 4: verify_release_notes (GitHub releases for Broker + MSAL + Common) ----
+
+def _vrn_state():
+    st = ReleaseState(release_id="2026-08")
+    st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"})
+    return st
+
+
+def test_verify_release_notes_all_published_done():
+    """All three GitHub releases present → Done, with per-repo links (broker via GHE)."""
+    from steps.lib import mockctx
+    from steps.finalize import verify_release_notes as VR
+    from orchestrator.outcomes import as_dict
+    with mockctx.active({"results": {"broker": "published", "msal": "published", "common": "published"}}):
+        out = as_dict(VR.build(_vrn_state()))
+    assert out["kind"] == "done"
+    assert "Broker 16.5.0" in out["note"] and "MSAL 8.4.2" in out["note"] and "Common 24.6.0" in out["note"]
+    urls = [l["url"] for l in out["links"]]
+    assert any("msft.ghe.com/security/ad-accounts-for-android/releases/tag/v16.5.0" in u for u in urls)
+    assert any("AzureAD/microsoft-authentication-library-for-android/releases/tag/v8.4.2" in u for u in urls)
+
+
+def test_verify_release_notes_missing_is_in_progress():
+    """A not-yet-published release → InProgress (poll), never failed."""
+    from steps.lib import mockctx
+    from steps.finalize import verify_release_notes as VR
+    with mockctx.active({"results": {"broker": "published", "msal": "published", "common": "missing"}}):
+        out = VR.build(_vrn_state())
+    assert out.kind == "in_progress"
+    assert "Common 24.6.0" in out.note                       # names the pending release
+    assert "Broker 16.5.0" in out.note                       # notes what's already published
+
+
+def test_verify_release_notes_error_blocks():
+    """A gh error (auth/network/draft) → Blocked (surface it; don't assume 'not published')."""
+    from steps.lib import mockctx
+    from steps.finalize import verify_release_notes as VR
+    with mockctx.active({"results": {"broker": "error", "msal": "published", "common": "published"}}):
+        out = VR.build(_vrn_state())
+    assert out.kind == "blocked" and "Broker 16.5.0" in out.reason
+
+
+def test_verify_release_notes_blocks_without_versions():
+    """Missing a version in state → Blocked (nothing to verify)."""
+    from steps.lib import mockctx
+    from steps.finalize import verify_release_notes as VR
+    st = ReleaseState(release_id="2026-08")
+    st.record_versions({"common": "24.6.0", "msal": "8.4.2"})     # no broker
+    with mockctx.active({}):
+        out = VR.build(st)
+    assert out.kind == "blocked" and "broker" in out.reason.lower()
+
+
+def test_verify_release_notes_tags_v_prefixed_from_integ_config():
+    """The checked tag is v<version> and the repo slugs come from integ_prs.CONFIG."""
+    from steps.finalize import verify_release_notes as VR
+    from steps.finalize import integ_prs as IP
+    assert VR._tag("16.5.0") == "v16.5.0"
+    assert VR._gh_repo("broker") == IP.CONFIG["broker"]["gh_repo"]
+    assert VR._gh_repo("common") == IP.CONFIG["common"]["gh_repo"]
+
+
+def test_verify_release_notes_config_is_agent_after_verify_pub():
+    """phases.yaml: verify_release_notes is an agent step placed after verify_pub."""
+    import yaml as _yaml
+    cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
+    fin = next(p for p in cfg["phases"] if p["id"] == "finalize")
+    s = next(x for x in fin["steps"] if x["id"] == "verify_release_notes")
+    assert s.get("owner") == "agent" and s.get("source") != "scout"
+    ids = [x["id"] for x in fin["steps"]]
+    assert ids.index("verify_release_notes") > ids.index("verify_pub")
+
+
+def test_gh_release_exists_parses_present_absent_error(monkeypatch):
+    """gh_release_exists: present (json) -> published; 'release not found' -> missing; other -> error."""
+    from tools import prs as PR
+    calls = {}
+
+    def fake_run(args, cwd=None, timeout=120):
+        calls["args"] = args
+        tag = args[3]
+        if tag == "v1.0.0":
+            return (0, '{"tagName":"v1.0.0","name":"Version 1.0.0","isDraft":false,"url":"U"}', "")
+        if tag == "v9.9.9":
+            return (1, "", "release not found")
+        if tag == "vDRAFT":
+            return (0, '{"tagName":"vDRAFT","name":"d","isDraft":true,"url":"U"}', "")
+        return (1, "", "HTTP 500 gateway error")
+    monkeypatch.setattr(PR, "_run", fake_run)
+    ok, pub, info, d = PR.gh_release_exists("owner/repo", "v1.0.0")
+    assert ok and pub and info["url"] == "U" and calls["args"][:4] == ["gh", "release", "view", "v1.0.0"]
+    ok2, pub2, _i2, d2 = PR.gh_release_exists("owner/repo", "v9.9.9")
+    assert ok2 and pub2 is False and d2 == "release not found"
+    ok3, pub3, _i3, d3 = PR.gh_release_exists("owner/repo", "vDRAFT")
+    assert ok3 and pub3 is False and "draft" in d3                 # a draft is NOT published
+    ok4, pub4, _i4, d4 = PR.gh_release_exists("owner/repo", "vERR")
+    assert ok4 is False and "500" in d4
 
 
 # ---- Phase 4: tag_authenticator ----

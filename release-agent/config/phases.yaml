@@ -88,6 +88,7 @@ phases:
       - { id: integ_prs,       name: "Auto-create integration PRs",             owner: agent, maps_to: [F2] }
       - { id: publish_notes_gate, name: "Approve 'Publish GitHub Release Notes' gate", owner: human, gate: true, maps_to: [F4] }
       - { id: verify_pub,      name: "Verify Maven Central + GitHub publication", owner: agent, maps_to: [F3] }
+      - { id: verify_release_notes, name: "Verify GitHub release notes (Broker + MSAL + Common)", owner: agent, maps_to: [F5] }
       - { id: oneauth_common_pr, name: "Ingest published Common into OneAuth (PR to dev)", owner: agent, maps_to: [F5] }
       - { id: release_announcement, name: "Announce the release in the 'General' Teams channel", owner: agent, source: scout, maps_to: [F4] }
       - { id: tag_authenticator, name: "Tag the Authenticator release commit",  owner: agent, maps_to: [F6] }

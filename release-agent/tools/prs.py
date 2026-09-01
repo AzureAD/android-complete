@@ -164,6 +164,30 @@ def gh_ensure_labels(gh_repo: str, number, labels, timeout=60):
     return (rc == 0, e.strip() or "labels added")
 
 
+def gh_release_exists(gh_repo: str, tag: str, timeout=60):
+    """(ok, published, info, detail) — is a GitHub release published at `tag` in `gh_repo`?
+
+    READ-ONLY (`gh release view`). `gh_repo` is the value passed to gh --repo ('owner/repo' for
+    github.com or 'host/owner/repo' for GitHub Enterprise). `published` is True only for a real,
+    non-draft release; a missing tag → (True, False, ...) so the caller can poll; a genuine error
+    (auth/network) → (False, ...). `info` is {tag, name, url, draft} when found."""
+    rc, out, e = _run(
+        ["gh", "release", "view", tag, "--repo", gh_repo,
+         "--json", "tagName,name,isDraft,url"], timeout=timeout)
+    if rc != 0:
+        msg = (e or out or "").strip()
+        if "release not found" in msg.lower() or "not found" in msg.lower():
+            return (True, False, None, "release not found")
+        return (False, False, None, msg or "gh release view failed")
+    try:
+        d = json.loads(out or "{}")
+    except json.JSONDecodeError:
+        return (False, False, None, f"unparseable gh output: {out!r}")
+    info = {"tag": d.get("tagName"), "name": d.get("name"), "url": d.get("url"),
+            "draft": bool(d.get("isDraft"))}
+    return (True, not info["draft"], info, "draft release" if info["draft"] else "")
+
+
 # ------------------------------------------------------------------- Azure DevOps (az)
 def az_find_open_pr(org, project, repo, head, base, timeout=60):
     """(ok, pr|None, detail) — an ACTIVE ADO PR head->base, or None. `pr` is
