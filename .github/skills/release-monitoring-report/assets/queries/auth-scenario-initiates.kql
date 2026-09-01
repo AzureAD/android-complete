@@ -1,0 +1,21 @@
+// Authenticator — per-version INITIATES (volume) for a single-MV scenario.
+// Generalizes the dashboard's "<Scenario> Initiates" tiles. Use alongside the
+// success-rate query so the report can show whether a success-rate move is real or a
+// volume artifact (a regression on 5 initiates is noise; on 50k it is real).
+//
+// Cluster:  https://idsharedeus2.eastus2.kusto.windows.net
+// Database: d496be22d62a46b0a3cf67ea2e736fd8
+//
+// Placeholders: <SCENARIO_MV> <FIRST> <SECOND> <START> <END> <DCOUNT>  (see README catalog).
+// The initiate column differs per scenario family:
+//   most Registration/Auth MVs:  Initiated / InitiatedDCount
+//   PSI PN-Registration MV:      RegistrationStarted / RegistrationStartedDCount
+//   *_Push_Notification_And_CheckForAuth_MV_V1 (MFA/PSI): NotificationInitiated / NotificationInitiatedDCount
+//   MSA *_Push_Notification_And_CheckForAuth_MV_V1:        NotificationReceivedInitiated / NotificationReceivedInitiatedDCount
+// Swap <INIT_COL>/<INIT_DCOUNT_COL> accordingly.
+let dc = <DCOUNT>;
+<SCENARIO_MV>
+| where EventDate >= startofday(datetime(<START>)) and EventDate <= endofday(datetime(<END>))
+| where AppVersion in ("<FIRST>", "<SECOND>")
+| summarize Initiates = iff(dc, sum(<INIT_DCOUNT_COL>), sum(<INIT_COL>)) by AppVersion
+| order by AppVersion desc

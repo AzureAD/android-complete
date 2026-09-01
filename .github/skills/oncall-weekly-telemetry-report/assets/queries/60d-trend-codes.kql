@@ -1,0 +1,32 @@
+// 60-day per-error-code trend (LITERAL last 60 days ending today).
+//
+// The 60-day trend spans the literal last 60 days ending at
+// curEnd (today), so BOTH bounds move with the report date. The trend CHART
+// includes the current in-progress week as its final (partial) bar. Per-week
+// bucketing is still Sun-Sat aligned (Kusto startofweek() is Sunday-based), so the
+// first and last buckets are partial by construction.
+//
+// IMPORTANT: do NOT drop the current in-progress week here -- the chart wants it.
+// bucket-trends.js excludes the partial week from the regression/improvement DELTA
+// math via `--end=<TREND_CLASS_END> --include-partial-end` (TREND_CLASS_END =
+// startofweek(today)) while still charting it. A partial week driving the delta
+// would read as a fake -99% improvement -- that's why classification and display
+// are split in the JS, not filtered out here.
+//
+// Inputs (replace before pasting; bootstrap-report.ps1 prints all values):
+//   <TREND_START>  = curEnd - 60d  (first calendar day of the 60-day window)
+//   <TREND_END>    = curEnd (today), EXCLUSIVE. Data is pulled up to but not
+//                    including 00:00 UTC today, so the final Sun-Sat bucket holds
+//                    Sunday..yesterday of the current week (the partial bar).
+//
+// Output: feed to assets/scripts/bucket-trends.js with
+//   --start=<TREND_START> --end=<TREND_CLASS_END> --include-partial-end
+// where TREND_CLASS_END = startofweek(today) (bootstrap prints it as the
+// "Trend delta cutoff" value).
+materialized_view('ErrorStatsMetrics')
+| where EventInfo_Time >= datetime(<TREND_START>) and EventInfo_Time < datetime(<TREND_END>)
+| where isnotempty(error_code) and error_code != 'success'
+| summarize errs = sum(countOverall),
+            devs = dcount_hll(hll_merge(countDevicesHll))
+     by week = startofweek(EventInfo_Time), error_code
+| order by error_code asc, week asc

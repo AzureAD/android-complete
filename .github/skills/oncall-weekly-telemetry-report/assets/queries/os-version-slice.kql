@@ -1,0 +1,20 @@
+// OS version slice (8th attribution dim). Requires raw android_spans because
+// ErrorStatsMetrics doesn't carry DeviceInfo_OsVersion. Keep the time window
+// tight (<= 7 days) to stay under the MCP 240s timeout.
+//
+// Rolling 7-day window. See SKILL.md and bootstrap-report.ps1.
+//
+// Inputs:
+//   <CUR_START>   e.g. 2026-07-02
+//   <CUR_END>     exclusive upper bound, e.g. 2026-07-09
+//   <CODES_LIST>  e.g. 'invalid_resource', 'null_pointer_error'
+let curStart = datetime(<CUR_START>);
+let curEnd   = datetime(<CUR_END>);
+android_spans
+| where PipelineInfo_IngestionTime >= curStart and PipelineInfo_IngestionTime < curEnd
+| where error_code in (<CODES_LIST>)
+| summarize devs = dcount(DeviceInfo_Id),
+            cnt  = count()
+     by error_code, DeviceInfo_OsVersion
+| where devs >= 100
+| top 30 by devs desc

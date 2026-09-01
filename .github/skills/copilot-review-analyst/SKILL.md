@@ -1,6 +1,6 @@
 ---
 name: copilot-review-analyst
-description: Analyze GitHub Copilot code review effectiveness across Android Auth repositories. Collects all Copilot inline review comments via GitHub API, classifies them as helpful/not-helpful/unresolved through reply analysis, diff verification, and AI-assisted classification, then generates a report with per-repo and per-engineer statistics. Use this skill when asked to "analyze Copilot reviews", "measure Copilot review effectiveness", "generate Copilot review report", "how helpful are Copilot reviews", "run review analysis", or any request to measure/report on GitHub Copilot code review quality and adoption.
+description: Analyze GitHub Copilot code review effectiveness across Android Auth repositories. Collects all Copilot inline review comments via GitHub API, classifies them as helpful/declined/incorrect/unresolved through reply analysis, diff verification, and AI-assisted classification, then generates a report with Copilot precision plus per-repo and per-engineer statistics. Use this skill when asked to "analyze Copilot reviews", "measure Copilot review effectiveness", "generate Copilot review report", "how helpful are Copilot reviews", "run review analysis", or any request to measure/report on GitHub Copilot code review quality and adoption.
 ---
 
 # Copilot Review Analyst
@@ -21,7 +21,7 @@ Default repos (update in scripts if changed):
 |-------|------|------|
 | common | `AzureAD/microsoft-authentication-library-common-for-android` | EMU (also accessible via personal) |
 | msal | `AzureAD/microsoft-authentication-library-for-android` | EMU (also accessible via personal) |
-| broker | `identity-authnz-teams/ad-accounts-for-android` | EMU only |
+| broker | `security/ad-accounts-for-android` | EMU only |
 
 ## Analysis Pipeline
 
@@ -57,7 +57,7 @@ What it does:
 6. Record whether each comment has a reply and capture the reply text (no classification at this stage)
 
 **Outputs:**
-- `$env:TEMP\copilot-review-analysis\raw_results.json` — all comments with `HasReply` flag and raw reply text
+- `$env:TEMP\copilot-review-analysis\raw_results.json` — all comments with `HasReply` flag and raw reply text. Also records the **force-push fingerprint** per comment: `OriginalCommitId` (the immutable commit Copilot reviewed), `DiffHunk` (frozen copy of the lines Copilot saw), and `ReviewedCommitRewritten` (`true` when the reviewed commit is no longer in the PR's commit list — see [The Force-Push Confound](references/classification-rules.md#the-force-push-confound-mandatory-validation-before-scoring)).
 - `$env:TEMP\copilot-review-analysis\review_summaries.json` — PR-level summary comments (for reference)
 
 ### Phase 2: Diff-Level Verification
@@ -87,22 +87,28 @@ What it does:
 - `file-not-changed` — file untouched after the comment
 - `no-subsequent-commits` — PR merged without any commits after the review
 
+> **Force-push guard:** `precise.ps1` carries `ReviewedCommitRewritten` forward and flags any `not-applied`/`file-not-changed` verdict that sits on a rewritten reviewed snapshot. These are **unsafe to score as Not Helpful** until validated against the immutable `DiffHunk` — the "fix" may live in the orphaned commit. The script prints a `FORCE-PUSH CONFOUND` warning listing them. Resolve each in Phase 3 before finalizing.
+
 **Output:** `$env:TEMP\copilot-review-analysis\precise.json`
 
 ### Phase 3: AI Reply Classification
 
 This phase is performed by the agent (you) in conversation. Classify **every replied comment** by reading the full Copilot comment and engineer reply in context.
 
-See [references/classification-rules.md](references/classification-rules.md) for detailed guidance on what counts as helpful vs not-helpful.
+See [references/classification-rules.md](references/classification-rules.md) for detailed guidance on the three-way replied-comment verdict.
 
 **Process:**
 1. Load `raw_results.json` and filter to `HasReply -eq true`
 2. For each comment, read the `CommentBody` (Copilot's feedback) and `HumanReplyText` (engineer's reply)
-3. Classify as `helpful` or `not-helpful` based on the engineer's intent (read the full reply, don't keyword-match)
-4. Also review `file-changed-elsewhere` and `file-changed-no-line-info` verdicts from Phase 2 to identify re-audit flips
+3. Classify each reply as `helpful`, `declined`, or `not-helpful` (incorrect). Read the full exchange; do not keyword-match.
+   - `helpful`: feedback was accepted, fixed, or acknowledged as actionable
+   - `declined`: feedback was correct/reasonable, but the engineer intentionally chose not to act (by-design, subjective, contextual, moot, or out-of-scope). This is neutral and does not count against Copilot.
+   - `not-helpful`: the reply demonstrates Copilot was factually or technically wrong. This is the only replied verdict that counts against Copilot quality.
+4. **Force-push validation pass (do this before finalizing any `declined`/`not-helpful`/`unresolved`):** for every such comment with `ReviewedCommitRewritten = true`, the engineer rewrote the commit Copilot reviewed — an "outdated / already there / not relevant" dismissal may be hiding a comment that was *correct* at the reviewed snapshot. Re-derive Copilot's claim from the immutable `DiffHunk` (and, if needed, `contents?ref=<OriginalCommitId>`) and compare to the merged state. Flip to `helpful` if the merged code already satisfies the claim; keep `declined` only if declined on the merits; assign `not-helpful` **only** if Copilot was wrong *at `OriginalCommitId`*. Never score a rewritten-snapshot comment as `not-helpful` without that confirmation. Full rule + reproducible `gh` commands in [The Force-Push Confound](references/classification-rules.md#the-force-push-confound-mandatory-validation-before-scoring).
+5. Also review `file-changed-elsewhere` and `file-changed-no-line-info` verdicts from Phase 2 to identify re-audit flips
 
 **Outputs** (write to `$env:TEMP\copilot-review-analysis\`):
-- `reply-verdicts.json` — `{ "commentId": "helpful"|"not-helpful", ... }` for every replied comment
+- `reply-verdicts.json` — `{ "commentId": "helpful"|"declined"|"not-helpful", ... }` for every replied comment
 - `reaudit-flips.json` — `{ "reauditFlipKeys": ["repo/prNum/filePattern", ...] }` for no-reply comments with strong evidence
 
 See `references/manual-audit-template.json` for the schema.
@@ -157,7 +163,7 @@ Append a snapshot of the current run to the persistent history file for trend tr
 
 What it does:
 1. Load `final_classification.json` and `precise.json`
-2. Compute aggregate stats: response rate, three-way breakdown, per-repo, per-engineer
+2. Compute aggregate stats: response rate, four-way report breakdown, Copilot precision, per-repo, per-engineer
 3. Compute normalized volume: `comments/week` for fair comparison across different period lengths
 4. Load existing `history.json` (or create empty if first run)
 5. Append current snapshot; replace if same period already exists
@@ -178,7 +184,7 @@ Generate both Markdown and Outlook-compatible HTML reports.
 
 **Style/structure references** (in `assets/` — these contain data from the Jan-Mar 2026 analysis and serve as structural templates, NOT to be copied verbatim):
 - `assets/Copilot-Code-Review-Effectiveness-Report.md` — Markdown reference (~270 lines, ~3300 words)
-- `assets/Copilot-Code-Review-Effectiveness-Report-Outlook.html` — Outlook HTML reference (~430 lines, ~42KB)
+- `assets/Copilot-Code-Review-Effectiveness-Report-Outlook.html` — Outlook HTML reference (~345 lines, ~86KB). This is the current **v3 newsletter** design: 1200px hybrid-fluid shell, edge-to-edge newsletter masthead, big-number KPI hero grid, single-row meta-chips, and a Methodology section. It is the **anonymized** sample (uses "Engineer A") and is written single-quoted (escaping-free) for a trivial Graph push.
 - `assets/Copilot-Code-Review-Effectiveness-Report.html` — Standard HTML reference
 
 **Important:** The asset templates contain hardcoded numbers (557 comments, specific percentages, engineer names, etc.) from the first analysis. For each new run, generate fresh reports using the same section structure and formatting patterns but with statistics computed from `final_classification.json`.
@@ -201,9 +207,15 @@ Generate both Markdown and Outlook-compatible HTML reports.
 
 After generating each report, compare its dimensions against the template:
 - **Markdown:** Must be ≥250 lines and ≥3000 words. If significantly smaller, the report is missing narrative depth.
-- **Outlook HTML:** Must be ≥400 lines and ≥35KB. If significantly smaller, the report is missing visual elements or prose.
+- **Outlook HTML:** Must be ≥300 lines and ≥70KB. If significantly smaller, the report is missing visual elements or prose. (The v3 newsletter design is single-quoted and layout-dense, so it runs fewer lines but far more KB than the old `<font>`-based template.)
 
 If a report doesn't meet these thresholds, re-read the template and identify what's missing before saving.
+
+#### v3 Newsletter Design & Delivery (Outlook)
+
+- **Headline leads with adoption.** The hero band and the first Key Takeaway lead with **Helpful & adopted %** (e.g. "78.3% of comments adopted"), with precision as the supporting second number — never lead with precision (it is near-100% by construction and overstates the story).
+- **Load-bearing render techniques** live in [references/report-formatting.md](references/report-formatting.md) § *v3 Newsletter Rendering*: single-row meta-chip table (not `inline-block` tables — Outlook stacks them), `mso-line-height-rule:exactly` on body prose, edge-to-edge frame (whiten `bgcolor` **and** inline CSS), and the inset masthead + `1120px` VML width. Apply the edge-to-edge/masthead transforms report-scoped — never edit the shared shell.
+- **Deliver as a color-preserving draft**, not paste. Preferred: Graph draft (`workiq-create_entity` on `/me/messages`). Fallback when WorkIQ/Graph is unavailable: Outlook COM (`Outlook.Application` → set `.HTMLBody` → `.Save()`/`.Display()`) with an ASCII-safe subject.
 
 **Generate two versions of each report:**
 1. **Team-internal** — uses real engineer names (from account map). For the team.
@@ -212,8 +224,8 @@ If a report doesn't meet these thresholds, re-read the template and identify wha
 **Process:**
 1. Load `final_classification.json`
 2. **Read full template files** (`assets/Copilot-Code-Review-Effectiveness-Report.md` and `assets/Copilot-Code-Review-Effectiveness-Report-Outlook.html`) — do NOT skip this step
-3. Compute aggregate statistics (total, per-repo, per-engineer, three-way breakdown)
-4. Load `raw_results.json` to collect full comment text for 4-5 helpful and 4-5 unhelpful examples
+3. Compute aggregate statistics (total, per-repo, per-engineer, four-way breakdown, precision)
+4. Load `raw_results.json` to collect full comment text for helpful, declined, and genuinely incorrect examples
 5. Load `~/.copilot-review-analysis/history.json` for trend data. If ≥2 entries exist, generate a **Trend** section comparing the current run with the previous run(s). See [references/report-formatting.md](references/report-formatting.md) for trend section formatting rules.
 6. Generate reports matching the template's section structure, narrative depth, and visual formatting
 7. **Verify dimensions** (word count, line count) against the quality gate thresholds
@@ -227,12 +239,17 @@ See [references/report-formatting.md](references/report-formatting.md) for the r
 
 ## Key Principle: "Unresolved" ≠ "Not Helpful"
 
-Comments with no reply and no diff evidence are **Unresolved**, not assumed unhelpful. This is a critical distinction:
+The report must present four distinct outcome buckets:
 - **Confirmed Helpful** = positive evidence (explicit acknowledgment OR verified fix in diff)
-- **Confirmed Not Helpful** = positive evidence (explicit dismissal with stated reason OR comment on stale code)
+- **Declined** = Copilot was correct/reasonable, but the engineer intentionally chose not to act. This is neutral.
+- **Incorrect** = a replied comment where the engineer demonstrated that Copilot was factually or technically wrong
 - **Unresolved** = insufficient evidence either way (engineer never engaged)
 
-The `final-classification.ps1` script classifies no-response/no-diff-evidence comments as "not-helpful" for conservative stats, but the report should present the three-way breakdown to be honest about uncertainty.
+Comments with no reply and no diff evidence are **Unresolved**, not assumed incorrect. Internally, `final-classification.ps1` retains the `not-helpful` verdict for these conservative no-reply cases; the report must split that value by `Replied`: replied `not-helpful` is Incorrect, while unreplied `not-helpful` is Unresolved.
+
+Report **Copilot precision** as `Helpful / (Helpful + Incorrect)`. Exclude Declined and Unresolved from both numerator and denominator.
+
+**Compute precision only after the force-push validation pass.** A comment on a rewritten snapshot can be a correct comment masquerading as a false positive, and it lands directly in the precision denominator. Before finalizing precision, resolve every `ReviewedCommitRewritten = true` comment per [The Force-Push Confound](references/classification-rules.md#the-force-push-confound-mandatory-validation-before-scoring), and report the count of rewritten-snapshot comments as a measurement-integrity note so readers know the denominator was validated.
 
 ## Copilot Comment Identification
 

@@ -1,0 +1,43 @@
+// Authenticator — release adoption + fleet stats.
+// Mirrors the dashboard "Stats (Non MV Based)" page. All run over raw `union *` events
+// (columns: EventInfo_Time, DeviceInfo_Id, AppInfo_Version, DeviceInfo_Make,
+// DeviceInfo_OsVersion, PipelineInfo_ClientCountry). Use to gauge how far the
+// rolling-out release has been picked up and on which devices/OS/geo.
+//
+// Cluster:  https://idsharedeus2.eastus2.kusto.windows.net
+// Database: d496be22d62a46b0a3cf67ea2e736fd8
+//
+// Placeholders: <FIRST> (rolling-out version), <START>, <END>.
+
+// --- (a) Total devices on the rolling-out release over the window ------------------
+union *
+| where EventInfo_Time >= startofday(datetime(<START>)) and EventInfo_Time <= endofday(datetime(<END>))
+| where AppInfo_Version == "<FIRST>"
+| summarize TotalDevices = dcount(DeviceInfo_Id)
+
+// --- (b) Rolling-out release adoption over time (daily device dcount) --------------
+// union *
+// | where EventInfo_Time >= startofday(datetime(<START>)) and EventInfo_Time <= endofday(datetime(<END>))
+// | where AppInfo_Version == "<FIRST>"
+// | summarize Devices = dcount(DeviceInfo_Id) by bin(EventInfo_Time, 1d)
+// | order by EventInfo_Time asc
+
+// --- (c) Daily active users, all versions (context denominator) --------------------
+// union *
+// | where EventInfo_Time >= startofday(datetime(<START>)) and EventInfo_Time <= endofday(datetime(<END>))
+// | summarize DAU = dcount(DeviceInfo_Id) by bin(EventInfo_Time, 1d)
+// | order by EventInfo_Time asc
+
+// --- (d) Top app-version share (which versions hold the fleet right now) ------------
+// union *
+// | where EventInfo_Time >= startofday(datetime(<START>)) and EventInfo_Time <= endofday(datetime(<END>))
+// | summarize Devices = dcount(DeviceInfo_Id) by AppVersion = AppInfo_Version
+// | top 15 by Devices
+
+// --- (e) OEM / OS / Country slices for the rolling-out release (skew detection) -----
+// union *
+// | where EventInfo_Time >= startofday(datetime(<START>)) and EventInfo_Time <= endofday(datetime(<END>))
+// | where AppInfo_Version == "<FIRST>"
+// | extend OsLevel = tostring(split(DeviceInfo_OsVersion, " ")[0])
+// | summarize Devices = dcount(DeviceInfo_Id) by OsLevel
+// | top 10 by Devices

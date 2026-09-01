@@ -1,0 +1,685 @@
+<#
+.SYNOPSIS
+    Validate a generated OCE weekly report HTML before publishing.
+
+.DESCRIPTION
+    Runs all required pre-publish checks per SKILL.md "Output checklist":
+      1. No stale-template tokens ({{...}} placeholders, "EXAMPLE CONTENT BELOW" sentinel, or the OCE-UNPOPULATED-STUB bootstrap sentinel).
+      2. No `devs` / `reqs` in user-facing text (only allowed inside <pre><code> KQL blocks).
+      3. No U+FFFD (Unicode replacement character) — catches mojibake from emoji edits.
+      4. Section 2 callouts are siblings, NOT nested. Tracks <div> open/close depth
+         from #attention to #trend60d; the depth must return to 0 between callouts.
+      5. (Informational) Reports HTML size and number of <div class="callout"> openings.
+      6. KPI tiles have data-spark coverage (>= half) + overall chart coverage (>=15).
+      7. Traffic-attribution sub-block color diversity (tri-state convention).
+      8. Code-attribution depth — each .attr-card has the full 8-field Originator block.
+      9. Attribution-card layout sanity (v8 regression):
+           9a. .attr-card cards-touching guard — CSS must define explicit margin
+               on .attr-card so successive cards don't visually run together when
+               the body emits them without an .attr-grid wrapper.
+           9b. .dim-row name-overflow guard — CSS must define text-overflow:ellipsis
+               on .dim-name / .dim-row > span:first-of-type AND min-width:0 on
+               .dim / .dim-row so long calling-app / version names truncate inside
+               their dim card rather than bleeding out.
+           9c. .dim-pct content guard — every dim-pct cell must be a short bare
+               percentage (no "(...)" annotations, <= 9 chars). A long pct value
+               starves the flex name column and collapses real labels to "1...".
+      10. Fabricated-sparkline heuristic: data-trend arrays whose peak sits far
+          below the bucketer's peak-floor are flagged as likely hand-rolled.
+      11. Rolling-window header integrity: the meta-line "Last 7
+          days: <curStart> → <curEnd>" dates must match the filename's end-date
+          (curEnd = end-date, curStart = end-date - 7d). Prevents a stale
+          template stub from being published as if it were fresh, and catches
+          any hand-edit that broke the auto-stamp.
+
+    Exits with non-zero status if any HARD check fails (stale tokens, devs/reqs leak,
+    U+FFFD, unbalanced div depth, missing layout-guard CSS).
+
+.PARAMETER App
+    Which report profile to validate: 'broker' (default) or 'authapp'. Checks
+    7, 8, and 9 assert Broker-specific card structures and are skipped for
+    authapp; authapp instead gets its own checks (13-scenario scoreboard
+    coverage, PN section presence, ADO-not-GitHub PR links). Shared checks
+    (1-6, 10, 11) run for both.
+
+.PARAMETER Path
+    Absolute path to the report file. Defaults to the most recent report matching
+    the -App file prefix under $env:USERPROFILE\android-oce-reports\.
+
+.EXAMPLE
+    .\validate-report.ps1
+    .\validate-report.ps1 -App authapp
+    .\validate-report.ps1 -Path C:\path\to\oncall-wow-report-2026-07-09.html
+#>
+[CmdletBinding()]
+param(
+    [string]$Path,
+    [ValidateSet('broker','authapp')]
+    [string]$App = 'broker'
+)
+
+$filePrefix = if ($App -eq 'authapp') { 'authapp' } else { 'oncall' }
+
+# Default: pick the most-recent <prefix>-wow-report-*.html in the user's reports folder
+if (-not $Path) {
+    $reportDir = Join-Path $env:USERPROFILE 'android-oce-reports'
+    $latest = Get-ChildItem $reportDir -Filter "$filePrefix-wow-report-*.html" -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $latest) {
+        Write-Error "No $filePrefix-wow-report-*.html found in $reportDir. Pass -Path explicitly, or check -App (currently '$App')."
+        exit 2
+    }
+    $Path = $latest.FullName
+}
+
+if (-not (Test-Path $Path)) {
+    Write-Error "Report file not found: $Path"
+    exit 2
+}
+
+$failures = @()
+$warnings = @()
+
+function Add-Fail($msg) { $script:failures += $msg; Write-Host "  [FAIL] $msg" -ForegroundColor Red }
+function Add-Warn($msg) { $script:warnings += $msg; Write-Host "  [WARN] $msg" -ForegroundColor Yellow }
+function Pass($msg)     { Write-Host "  [OK]   $msg" -ForegroundColor Green }
+
+Write-Host ""
+Write-Host "Validating: $Path"
+Write-Host ("App profile: {0}" -f $App)
+Write-Host ("Size: {0:N0} bytes" -f (Get-Item $Path).Length)
+Write-Host ""
+
+# ---- 1. Stale tokens / EXAMPLE sentinel / unpopulated-stub sentinel ----
+$stale = Select-String -Path $Path -Pattern '\{\{|EXAMPLE CONTENT BELOW|EXAMPLE_|OCE-UNPOPULATED-STUB'
+if ($stale.Count -gt 0) {
+    Add-Fail "Stale template tokens found ($($stale.Count)). First few:"
+    $stale | Select-Object -First 5 | ForEach-Object { Write-Host "         L$($_.LineNumber): $($_.Line.Trim().Substring(0, [Math]::Min(110, $_.Line.Trim().Length)))" }
+} else {
+    Pass "No stale {{...}} tokens, EXAMPLE sentinel, or unpopulated-stub sentinel"
+}
+
+# ---- 2. devs / reqs in user-facing text ----
+# Allowed: occurrences inside <pre><code>...</code></pre> KQL blocks.
+$content = [System.IO.File]::ReadAllText($Path)
+$contentNoCode = [regex]::Replace($content, '(?s)<pre[^>]*>.*?</pre>', '')
+$contentNoCode = [regex]::Replace($contentNoCode, '(?s)<code[^>]*>.*?</code>', '')
+$drMatches = [regex]::Matches($contentNoCode, '\b(devs|reqs)\b', 'IgnoreCase')
+if ($drMatches.Count -gt 0) {
+    Add-Fail "Found $($drMatches.Count) devs/reqs occurrence(s) in user-facing text (use 'devices' / 'requests'). First few contexts:"
+    $drMatches | Select-Object -First 5 | ForEach-Object {
+        $ctxStart = [Math]::Max(0, $_.Index - 40)
+        $ctxLen = [Math]::Min(100, $contentNoCode.Length - $ctxStart)
+        $ctx = $contentNoCode.Substring($ctxStart, $ctxLen) -replace '\s+', ' '
+        Write-Host "         ...$ctx..."
+    }
+} else {
+    Pass "No devs/reqs in user-facing text"
+}
+
+# ---- 3. U+FFFD (mojibake from emoji edits) ----
+$bytes = [System.IO.File]::ReadAllBytes($Path)
+$text = [System.Text.Encoding]::UTF8.GetString($bytes)
+$ufffd = ($text.ToCharArray() | Where-Object { $_ -eq [char]0xFFFD }).Count
+if ($ufffd -gt 0) {
+    Add-Fail "$ufffd U+FFFD replacement character(s) found (mojibake). First context:"
+    $i = $text.IndexOf([char]0xFFFD)
+    $start = [Math]::Max(0, $i - 30); $end = [Math]::Min($text.Length, $i + 30)
+    Write-Host "         ...$($text.Substring($start, $end - $start) -replace "`r?`n", ' ')..."
+} else {
+    Pass "No U+FFFD (no mojibake)"
+}
+
+# ---- 4. Section 2 div balance ----
+$lines = Get-Content $Path
+$startIdx = -1; $endIdx = -1
+for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i] -match 'id="attention"') { $startIdx = $i }
+    if ($lines[$i] -match 'id="trend60d"')  { $endIdx = $i; break }
+}
+if ($startIdx -ge 0 -and $endIdx -gt $startIdx) {
+    $depth = 0
+    for ($i = $startIdx; $i -le $endIdx; $i++) {
+        if ($null -eq $lines[$i]) { continue }
+        $depth += ([regex]::Matches($lines[$i], '<div\b')).Count
+        $depth -= ([regex]::Matches($lines[$i], '</div>')).Count
+    }
+    if ($depth -ne 0) {
+        Add-Fail "Section 2 (attention block) has unbalanced <div>s; net depth at end = $depth (expected 0). Likely cause: a callout is missing its closing </div>, which makes the next callout nest inside it."
+    } else {
+        Pass "Section 2 div balance OK (depth returns to 0)"
+    }
+} else {
+    Add-Warn "Could not locate the attention block (#attention / #trend60d anchors). Skipping div-balance check."
+}
+
+# ---- 5. Informational: callout count + nested-callout sanity ----
+$calloutOpens = ([regex]::Matches($content, '<div class="callout(?:\s|")')).Count
+Write-Host ""
+Write-Host "Info: $calloutOpens callout container(s) in the document."
+
+# ---- 6. Sparkline / trend chart coverage ----
+# The footer JS auto-renders any element with data-spark or data-trend. If the
+# count is near-zero, the body was likely rebuilt without sparklines (v7
+# regression — chartless report).
+#
+# Two checks:
+#   6a. STRUCTURAL (HARD FAIL): if the report has KPI tiles but >half lack
+#       data-spark, the rebuild dropped them — fail the build.
+#   6b. OVERALL (WARN): total chart elements should be ~30+ (8 KPI sparks +
+#       ~10 trend rows + ~12 WoW-table rows). Warn if under 15.
+$sparkCount = ([regex]::Matches($content, 'data-spark=')).Count
+$trendCount = ([regex]::Matches($content, 'data-trend=')).Count
+$inlineSvg  = ([regex]::Matches($content, '<svg[^>]*class="?sparkline')).Count
+$kpiTiles   = ([regex]::Matches($content, '<div class="kpi"')).Count
+$totalCharts = $sparkCount + $trendCount + $inlineSvg
+Write-Host ""
+Write-Host "Info: $sparkCount data-spark, $trendCount data-trend, $inlineSvg inline sparkline svg(s), $kpiTiles KPI tile(s)."
+
+if ($kpiTiles -ge 4 -and $sparkCount -lt [Math]::Ceiling($kpiTiles / 2)) {
+    Add-Fail "Only $sparkCount data-spark element(s) for $kpiTiles KPI tile(s) — over half the KPI tiles are chartless. The body was likely rebuilt without sparklines. See assets/templates/template-readme.md \"Sparklines are MANDATORY\"."
+} else {
+    Pass "KPI tiles have data-spark coverage ($sparkCount/$kpiTiles)"
+}
+if ($totalCharts -lt 15) {
+    # Threshold deliberately LOW. This check guards against a body rebuilt with the
+    # data-trend attributes dropped entirely -- it is not a "more charts is better"
+    # signal. The redesign that moved sparklines into the attention rows and collapsed
+    # the 60-day catalog cut a real report from ~226 chart elements to a few dozen, and
+    # that is the intended direction: charts belong next to findings. Check 18 enforces
+    # the upper bound; this one only catches "the charts vanished".
+    Add-Warn "Only $totalCharts chart elements found. Expect at least one per KPI tile plus one per visible attention row. Did the body get rebuilt without data-trend attributes?"
+} else {
+    Pass "Overall chart coverage looks reasonable ($totalCharts elements)"
+}
+
+# ---- 7-9. Broker-only card-structure checks ----
+# These assert the Broker report's .attr-card anatomy (tri-state traffic sub-block,
+# 8-field code-attribution block, dim-row layout guards). The Authenticator report
+# uses a 4-field attribution block and a different card shape, so running them
+# against an authapp report produces pure noise. AuthApp-specific structural checks
+# live in section 12 below.
+if ($App -eq 'broker') {
+
+# ---- 7. Traffic-attribution sub-block color diversity (tri-state convention) ----
+# Per assets/templates/template-readme.md: each .attr-card's traffic sub-block should be green
+# (ruled out), yellow (partly contributing), or red (primary driver). If every
+# sub-block is the same color, the author defaulted to one and didn't actually
+# classify per card (v7 second-pass regression: 10/10 yellow).
+$taGreen  = ([regex]::Matches($content, '\u2713 Traffic attribution \u2014 ruled out')).Count
+$taYellow = ([regex]::Matches($content, '\u26a0 Traffic attribution \u2014 partly contributing')).Count
+$taRed    = ([regex]::Matches($content, '\ud83d\ude9a Traffic attribution \u2014 primary driver')).Count
+$taTotal  = $taGreen + $taYellow + $taRed
+if ($taTotal -ge 4) {
+    $distinctColors = @($taGreen, $taYellow, $taRed | Where-Object { $_ -gt 0 }).Count
+    if ($distinctColors -le 1) {
+        Add-Warn "All $taTotal traffic-attribution sub-blocks share one color (g=$taGreen y=$taYellow r=$taRed). The tri-state convention exists so color carries meaning \u2014 verify each card's verdict and recolor accordingly. See assets/templates/template-readme.md \"Traffic-attribution sub-block on each attribution card (tri-state)\"."
+    } else {
+        Pass "Traffic-attribution color mix: $taGreen green / $taYellow yellow / $taRed red"
+    }
+}
+
+# ---- 8. Code-attribution depth (8-field structure) ----
+# SKILL.md \u00a74 mandates that each .attr-card's "Code attribution" block populates
+# Originator + Top throw site + Wrapper + Caller hot-spots + Underlying cause +
+# Top error_messages + Likely PRs + Next step. A pr-list-only block is the v7-third-
+# pass regression. Heuristic: each `<div class="code-attr-title">Code attribution</div>`
+# must be followed (within the same card) by an `origin-label` row.
+$codeAttrBlocks = ([regex]::Matches($content, '<div class="code-attr-title">Code attribution</div>')).Count
+$originLabels   = ([regex]::Matches($content, 'class="origin-label">Originator')).Count
+if ($codeAttrBlocks -ge 1) {
+    if ($originLabels -lt $codeAttrBlocks) {
+        Add-Fail "$codeAttrBlocks Code-attribution block(s) but only $originLabels have an Originator row. Each card needs the full 8-field structure (Originator / Top throw site / Wrapper / Caller hot-spots / Underlying cause / Top error_messages / Likely PRs / Next step). See assets/docs/code-attribution-template.md."
+    } else {
+        Pass "All $codeAttrBlocks code-attribution block(s) have full 8-field structure"
+    }
+}
+
+# Cheap nested-callout heuristic: scan the attention block for any callout that
+# opens before the previous callout closes. We approximate by tracking depth.
+if ($startIdx -ge 0 -and $endIdx -gt $startIdx) {
+    $depthOuter = 0; $nestedAt = @()
+    for ($i = $startIdx; $i -le $endIdx; $i++) {
+        if ($null -eq $lines[$i]) { continue }
+        # Match the callout container itself, not callout-title. The class can be
+        # `callout`, `callout urgent`, `callout watch`, `callout win`, etc. — but
+        # never `callout-title`. Require a space or end-of-class-attr after.
+        if ($lines[$i] -match '<div class="callout(?:\s|")' -and $depthOuter -gt 0) {
+            $nestedAt += $i + 1
+        }
+        $depthOuter += ([regex]::Matches($lines[$i], '<div\b')).Count
+        $depthOuter -= ([regex]::Matches($lines[$i], '</div>')).Count
+    }
+    if ($nestedAt.Count -gt 0) {
+        Add-Fail "Nested callout detected at line(s): $($nestedAt -join ', '). Each callout in Section 2 must be a SIBLING, not nested inside another callout."
+    } else {
+        Pass "No nested callouts in Section 2"
+    }
+}
+
+# ---- 9. Attribution-card layout sanity (v8 regression — cards touching + dim-row bleed) ----
+# Two layout bugs hit the v8 rebuild and forced manual CSS patches mid-publish.
+# Both have CSS fixes baked into assets/templates/report-template.html now, but the validator
+# catches the markup-side preconditions so a future hand-rolled body that
+# diverges from the template is flagged before publish.
+#
+# 9a. Cards-touching guard: if the report has .attr-card outside any .attr-grid
+#     wrapper AND the CSS in <style> is missing the explicit margin rule, warn.
+#     (Belt + suspenders — the canonical CSS now ships the margin, but a stale
+#     copy/paste of an older head could regress.)
+$hasAttrCard = ([regex]::Matches($content, '<div class="attr-card')).Count -gt 0
+if ($hasAttrCard) {
+    # Use single-line regex (?s) flag so [^}]* can span newlines — .attr-card { ... } is multi-line.
+    $cssHasCardMargin = $content -match '(?s)\.attr-card\s*\{[^}]*margin-bottom\s*:\s*16px' `
+                     -or $content -match '(?s)\.attr-card\s*\+\s*\.attr-card\s*\{[^}]*margin-top'
+    if (-not $cssHasCardMargin) {
+        Add-Fail "Report has .attr-card elements but the CSS is missing the cards-touching guard (.attr-card { margin-bottom:16px } and/or .attr-card + .attr-card { margin-top:16px }). The v8 head rebuild dropped this — re-extract <head> from the current assets/templates/report-template.html."
+    } else {
+        Pass "Attribution cards have spacing CSS"
+    }
+}
+
+# 9b. Dim-row overflow guard: every .dim-row that wraps a name + percent must
+#     have the CSS rules that make text-overflow:ellipsis engage. The trap:
+#     text-overflow:ellipsis is silently ignored on inline <span> elements;
+#     the spans must be display:block (or inline-block) AND flex children
+#     with min-width:0. We can't measure actual rendering, but we CAN assert
+#     the CSS rules exist verbatim.
+if ($hasAttrCard) {
+    $cssHasEllipsis = $content -match '(?s)\.dim-row\s*>\s*span:first-of-type[^}]*text-overflow\s*:\s*ellipsis' `
+                   -or $content -match '(?s)\.dim-row\s+\.dim-name[^}]*text-overflow\s*:\s*ellipsis'
+    $cssHasMinWidth = $content -match '(?s)\.dim\s*\{[^}]*min-width\s*:\s*0' `
+                   -or $content -match '(?s)\.dim-row\s*\{[^}]*min-width\s*:\s*0'
+    if (-not $cssHasEllipsis) {
+        Add-Fail "CSS is missing the .dim-row name-overflow guard (text-overflow:ellipsis on .dim-name and/or .dim-row > span:first-of-type). Long calling-app / version names will bleed out of the dim cards. Re-extract <head> from the current assets/templates/report-template.html."
+    } elseif (-not $cssHasMinWidth) {
+        Add-Warn "CSS has text-overflow rules but is missing min-width:0 on .dim / .dim-row. Without it, flex children won't shrink below content size and ellipsis won't trigger inside narrow dim cards."
+    } else {
+        Pass "Dim-row name-overflow guard CSS present (ellipsis + min-width:0)"
+    }
+}
+
+# 9c. Dim-pct content guard (CONTENT, not CSS): the percent cell must be a short
+#     bare percentage (e.g. "50.7%", "100%", "+759%"). A long value such as
+#     "75% (+111%)" sits in the narrow, fixed pct column and starves the flex
+#     name column, collapsing real labels to a couple of chars ("16.1.0" -> "1...").
+#     9b only proves the CSS guard exists; this catches the authoring mistake that
+#     slips past it. WoW deltas belong in card prose / tags, never in dim-pct.
+if ($hasAttrCard) {
+    $badPct = [regex]::Matches($content, '<span class="dim-pct">([^<]*)</span>') |
+        ForEach-Object { $_.Groups[1].Value.Trim() } |
+        Where-Object { $_ -match '\(' -or $_.Length -gt 9 }
+    if ($badPct.Count -gt 0) {
+        $sample = (($badPct | Select-Object -Unique -First 5) -join '  |  ')
+        Add-Fail "dim-pct cells must be a short bare percentage (e.g. '50.7%'). Found $($badPct.Count) overlong/annotated value(s) that starve the name column and truncate labels: $sample . Move WoW deltas into the card prose / tags, not the pct cell."
+    } else {
+        Pass "dim-pct cells are short bare percentages (name column protected)"
+    }
+}
+
+} # end broker-only checks 7-9
+else {
+    Write-Host "  [SKIP] Checks 7-9 (Broker attribution-card anatomy) - not applicable to -App authapp"
+}
+
+# ---- 10. Fabricated-sparkline heuristic (v8 regression — hand-rolled data-trend arrays) ----
+# Past failure mode: when 60d bucketer dropped a sub-floor code, the report author
+# fabricated a "roughly monotonic" 8-week series inline in the WoW table HTML.
+# Cannot 100% detect fabricated data, but we can flag the telltale fingerprints:
+#   - All values < 1000 (the bucketer's peak-floor is 10000; real data above floor)
+#   - Suspiciously round / arithmetic-progression numbers (e.g. [388,401,394,425,415,432,414,455]
+#     where consecutive deltas are all ~10-30)
+# Authors should source these from assets/queries/wow-table-sparkline-series.kql
+# instead and validate against the pulled JSON.
+$trendMatches = [regex]::Matches($content, "data-trend=['""]?\[([0-9.,e\s+\-]+)\]")
+$suspectCount = 0
+$suspectFirst = $null
+$flatCount    = 0
+$flatFirst    = $null
+foreach ($m in $trendMatches) {
+    $arrStr = $m.Groups[1].Value
+    $vals = $arrStr.Split(',') | ForEach-Object { try { [double]$_.Trim() } catch { 0 } }
+    if ($vals.Count -lt 6) { continue }
+    $maxVal = ($vals | Measure-Object -Maximum).Maximum
+    $minVal = ($vals | Measure-Object -Minimum).Minimum
+
+    # A perfectly flat series is fabricated in ANY app profile -- real telemetry
+    # never repeats a value 8 weeks running.
+    if ($maxVal -eq $minVal) {
+        $flatCount++
+        if (-not $flatFirst) { $flatFirst = $arrStr }
+        continue
+    }
+
+    # The low-peak heuristic is COUNT-shaped and only valid for Broker, whose
+    # data-trend arrays carry devices/week. The Authenticator template plots
+    # success-RATE series (values legitimately sit in the 85-100 band), so
+    # applying it there fires on every healthy funnel. Rate series get a
+    # range check instead: a percentage outside 0-100 is the real defect.
+    if ($App -eq 'broker') {
+        # Filter 1: trend with all values < 100 is suspicious (real codes don't sit at 30-50 devices/week for 8 weeks)
+        if ($maxVal -lt 100) {
+            $suspectCount++
+            if (-not $suspectFirst) { $suspectFirst = $arrStr }
+            continue
+        }
+    } else {
+        if ($maxVal -le 100 -and $minVal -ge 0) { continue }   # plausible rate series
+        if ($maxVal -lt 100) {
+            # not a rate series and too small to be a count series
+            $suspectCount++
+            if (-not $suspectFirst) { $suspectFirst = $arrStr }
+            continue
+        }
+    }
+    # Filter 2: zero-padded series like [0,0,0,0,0,0,0,N] is fine (legitimate NEW); skip
+    # Filter 3: implausibly regular - if every consecutive delta has the same sign AND is < 5% of the value, that's a fake.
+    # Skip this; too easy to false-positive on genuinely monotonic real series like no_tokens_found.
+}
+if ($flatCount -gt 0) {
+    Add-Warn "$flatCount data-trend array(s) are perfectly flat (every value identical). Real telemetry never does this. First: [$flatFirst]."
+}
+if ($suspectCount -gt 0) {
+    $src = if ($App -eq 'authapp') { 'assets/queries/authapp/scenario-sparkline-series.kql' } else { 'assets/queries/wow-table-sparkline-series.kql' }
+    Add-Warn "$suspectCount data-trend array(s) have an implausible magnitude (peak < 100 and not a 0-100 rate series). Likely fabricated. First: [$suspectFirst]. Source from $src instead."
+} elseif ($flatCount -eq 0) {
+    Pass "No suspicious data-trend arrays detected"
+}
+
+# ---- 11. Rolling-window header integrity ----
+# The meta line must read "Last 7 days: <weekday> <Mon> <D>[, YYYY] -> <weekday>
+# <Mon> <D>, YYYY", and those dates must be self-consistent with the filename's
+# end-date (curEnd = filename date, curStart = curEnd - 7d).
+$filename = Split-Path $Path -Leaf
+if ($filename -match "^$filePrefix-wow-report-(\d{4}-\d{2}-\d{2})\.html`$") {
+    $fnEnd = [datetime]::ParseExact($Matches[1], 'yyyy-MM-dd',
+                                    [System.Globalization.CultureInfo]::InvariantCulture)
+    $fnStart = $fnEnd.AddDays(-7)
+
+    # Match: "Last 7 days: <weekday> <Mon> <D>[, YYYY]? -> <weekday> <Mon> <D>, YYYY"
+    # -> may be U+2192 arrow or ASCII "->".
+    $metaRe = 'Last\s+7\s+days:\s*(?:<[^>]+>)?\s*(\w{3})\s+(\w{3})\s+(\d{1,2})(?:,\s*(\d{4}))?\s*(?:[\u2192]|-&gt;|->)\s*(\w{3})\s+(\w{3})\s+(\d{1,2}),\s*(\d{4})'
+    if ($content -match $metaRe) {
+        $s = "$($Matches[2]) $($Matches[3]), $($Matches[8])"  # e.g. "Jul 2, 2026" (year from end side)
+        $e = "$($Matches[6]) $($Matches[7]), $($Matches[8])"
+        try {
+            $mStart = [datetime]::ParseExact($s, 'MMM d, yyyy',
+                                             [System.Globalization.CultureInfo]::InvariantCulture)
+            $mEnd   = [datetime]::ParseExact($e, 'MMM d, yyyy',
+                                             [System.Globalization.CultureInfo]::InvariantCulture)
+            # If the start ended up after the end (year boundary), roll the start back a year.
+            if ($mStart -gt $mEnd) { $mStart = $mStart.AddYears(-1) }
+            if ($mStart -ne $fnStart) {
+                Add-Fail "Meta-line 'Last 7 days' start = $($mStart.ToString('yyyy-MM-dd')) but filename implies $($fnStart.ToString('yyyy-MM-dd')) (filename end $($fnEnd.ToString('yyyy-MM-dd')) - 7d). Header is out of sync with filename -- did you edit dates by hand? Re-run bootstrap-report.ps1."
+            } elseif ($mEnd -ne $fnEnd) {
+                Add-Fail "Meta-line 'Last 7 days' end = $($mEnd.ToString('yyyy-MM-dd')) but filename says $($fnEnd.ToString('yyyy-MM-dd'))."
+            } else {
+                Pass "Meta-line rolling-window dates match filename ($($mStart.ToString('yyyy-MM-dd')) -> $($mEnd.ToString('yyyy-MM-dd')))"
+            }
+        } catch {
+            Add-Warn "Meta-line dates matched pattern but failed to parse: '$s' / '$e'. Skipping integrity check."
+        }
+    } else {
+        Add-Warn "Meta-line 'Last 7 days: ... -> ...' pattern not found. Either the report predates the rolling-window rewrite or the header was hand-edited. Re-run bootstrap-report.ps1 to restore the auto-stamped meta line."
+    }
+} else {
+    Add-Warn "Filename '$filename' does not match '$filePrefix-wow-report-YYYY-MM-DD.html'; skipping meta-line date consistency check. (Check -App: currently '$App'.)"
+}
+
+# ---- 12. Authenticator-only structural checks ----
+if ($App -eq 'authapp') {
+    # 12a. All 13 scenario funnels must appear in the scoreboard. A scenario that
+    # silently vanishes from the table is indistinguishable from one that was
+    # never queried -- which is exactly the failure this check exists to catch.
+    $scenarios = @(
+        'Passkey WebAuthN Registration',
+        'Passkey InApp Registration',
+        'Passkey WebAuthN Authentication',
+        'Entra MFA Registration (QR)',
+        'Entra MFA Registration (No-QR)',
+        'Entra MFA PN+CFA',
+        'Entra PSI Registration',
+        'Entra PSI PN Registration',
+        'Entra PSI PN+CFA',
+        'MSA NGC Registration',
+        'MSA SA Registration',
+        'MSA NGC PN+CFA',
+        'MSA SA PN+CFA'
+    )
+    # Compare on a whitespace/markup-stripped, case-folded projection so a scenario
+    # split across tags or renamed in case still counts as present.
+    $flat = ([regex]::Replace($content, '<[^>]+>', ' ')) -replace '\s+', ' '
+    $missing = @($scenarios | Where-Object {
+        $needle = ($_ -replace '\s+', ' ')
+        $flat.IndexOf($needle, [StringComparison]::OrdinalIgnoreCase) -lt 0
+    })
+    if ($missing.Count -gt 0) {
+        Add-Fail "Scenario scoreboard is missing $($missing.Count) of 13 scenario(s): $($missing -join ', '). Every scenario gets a row every week -- including flat and low-volume ones. If a name differs from the canonical label, align the report to it rather than dropping the row."
+    } else {
+        Pass "All 13 scenario funnels present in the report"
+    }
+
+    # 12b. Push-notification section must exist (its own required section).
+    if ($flat -match '(?i)push[- ]notification' -or $flat -match '(?i)\breacted\b') {
+        Pass "Push-notification section present"
+    } else {
+        Add-Fail "No push-notification / 'reacted' content found. The PN completion + Approved/Denied/Error split is a required section."
+    }
+
+    # 12c. Unknown/abandonment section must exist -- it has no Broker analogue and
+    # is the single most commonly dropped section when cloning the Broker layout.
+    if ($flat -match '(?i)\bunknown\b') {
+        Pass "Unknown/abandonment content present"
+    } else {
+        Add-Fail "No 'Unknown' content found. Unknown = max(0, Initiated - (Succeeded + Failed)) is a first-class metric for this report and requires its own section."
+    }
+
+    # 12d. PR links must be Azure DevOps, never GitHub. A github.com PR link here
+    # is the fingerprint of attribution pattern-matched from the Broker playbook.
+    $ghPr = [regex]::Matches($content, 'https?://github\.com/[^"''<\s]*/pull/\d+')
+    if ($ghPr.Count -gt 0) {
+        $sample = (($ghPr | ForEach-Object { $_.Value } | Select-Object -Unique -First 3) -join '  |  ')
+        Add-Fail "$($ghPr.Count) GitHub PR link(s) found. Authenticator lives in Azure DevOps -- PR links must be https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/<id>. Found: $sample"
+    } else {
+        Pass "No GitHub PR links (Authenticator PRs are ADO-hosted)"
+    }
+
+    # 12e. Broker-convention leakage: HLL/TDigest/materialized_view() do not exist
+    # in the Authenticator database, so their presence means a Broker query was
+    # copied in and the numbers below it cannot be trusted.
+    $brokerisms = @('dcount_hll', 'hll_merge', 'percentile_tdigest', 'tdigest_merge', "materialized_view\(")
+    $found = @($brokerisms | Where-Object { $content -match $_ })
+    if ($found.Count -gt 0) {
+        Add-Fail "Broker-only Kusto constructs present in the report: $($found -join ', '). These do not exist in the Authenticator database (d496be22d62a46b0a3cf67ea2e736fd8) -- a Broker query was copied in. Use the per-cell sum(<Scenario>DCount) columns and bare view names. NOTE: sum(<Scenario>DCount) matches the dashboard but over-counts devices (AB#3739409) -- treat device numbers as relative indicators, not absolute populations. See assets/docs/authapp-kusto-cheatsheet.md."
+    } else {
+        Pass "No Broker-only Kusto constructs leaked into the report"
+    }
+}
+
+# ---- 13. Section 2 boilerplate uniformity (HARD FAIL) ----
+# The v9 report shipped with the SAME sentence on all 10 red-callout rows
+# ("Current-window movement needs owner triage; deep dive below has originator and
+# dimensions."), plus 10 identical slow-burn bodies and 8 identical win bodies.
+# The reader complaint that produced this check was, verbatim: "it's actually hard
+# to understand what's actually changed from last week ... no idea what's existing
+# regression vs new this week". A body that would read identically on any other row
+# carries zero information -- it is worse than no body, because it occupies the slot
+# where the specific finding should have been.
+$attStart = $content.IndexOf('id="attention"')
+$attEnd   = $content.IndexOf('id="trend60d"')
+if ($attEnd -lt 0) { $attEnd = $content.IndexOf('id="trend"') }
+if ($attStart -ge 0 -and $attEnd -gt $attStart) {
+    $attSec = $content.Substring($attStart, $attEnd - $attStart)
+
+    # NOTE: 'Singleline' is load-bearing. Without it `.` does not cross newlines, so this
+    # only matched when the generating agent happened to emit .item-body on ONE line. The
+    # template pretty-prints these blocks across several lines, so a copied-from-template
+    # row would silently skip the check -- a check that no-ops while printing nothing is
+    # worse than no check. Same applies to the .item-head regex below.
+    $bodies = [regex]::Matches($attSec, '<div class="item-body">(.*?)</div>', 'Singleline') |
+              ForEach-Object {
+                  # Strip inline markup + collapse whitespace so two bodies that differ
+                  # only by a <code> wrapper still count as duplicates.
+                  (([regex]::Replace($_.Groups[1].Value, '<[^>]+>', ' ')) -replace '\s+', ' ').Trim()
+              } | Where-Object { $_.Length -gt 0 }
+
+    if ($bodies.Count -eq 0) {
+        Add-Warn "No .item-body rows found in Section 2 -- cannot check for boilerplate. If the attention section uses different markup, this check needs updating."
+    } else {
+        $dupes = $bodies | Group-Object | Where-Object { $_.Count -ge 3 } | Sort-Object Count -Descending
+        if ($dupes) {
+            foreach ($d in $dupes) {
+                $snip = $d.Name.Substring(0, [Math]::Min(80, $d.Name.Length))
+                Add-Fail "Section 2 boilerplate: $($d.Count) attention rows share the identical body `"$snip...`". Every row must say what changed, from what to what, and why it is or isn't alarming. If there is nothing row-specific to say, the row does not belong in Section 2."
+            }
+        } else {
+            Pass "Section 2 row bodies are row-specific (no sentence repeated 3+ times)"
+        }
+    }
+
+    # ---- 14. Top attention row should not be a flat mover (WARN) ----
+    # Ranking the attention list by device count is how a code with a +0.1% WoW delta
+    # ended up at position #1 while the genuinely new ipc_* family sat at #6/#9/#10.
+    # Section 2 is ordered by NOVELTY (classify-novelty.js), not volume -- so a
+    # near-zero delta in the lead slot means the ordering was never applied.
+    #
+    # The delta label has been observed spelled "Δ WoW", "&Delta; WoW" and "Delta WoW"
+    # across runs. Match all of them: a check that silently no-ops on a spelling
+    # variant is worse than no check, because it reports nothing and looks healthy.
+    $dLabel = '(?:&Delta;|&#916;|\u0394|Delta)\s*WoW'
+    $heads  = [regex]::Matches($attSec, '<div class="item-head">(.*?)</div>', 'Singleline')
+    if ($heads.Count -eq 0) {
+        Add-Warn "No .item-head rows found in Section 2 -- lead-row and volatile-chip checks skipped. If the attention markup changed, these checks need updating."
+    } else {
+        $firstHead = $heads[0].Groups[1].Value
+        $nameM = [regex]::Match($firstHead, '<span class="item-name">\s*([^<]+)')
+        $nm = if ($nameM.Success) { $nameM.Groups[1].Value.Trim() } else { '(unnamed)' }
+        if ($App -eq 'authapp') {
+            # Authenticator Section 3 rows are success/abandonment RATES, so their movement
+            # is expressed in percentage POINTS, not a WoW ratio. There is no Δ WoW chip to
+            # read and a 5% flatness threshold has no meaning against pp deltas.
+            Write-Host "  [SKIP] Check 14 (lead-row flatness) - Section 3 uses percentage-point deltas, not Delta WoW"
+        } else {
+            $dw = [regex]::Match($firstHead, "$dLabel</span><span class=`"m-value`">([+\-]?[\d.]+)%")
+            if (-not $dw.Success) {
+                Add-Warn "Could not parse a WoW delta chip on the top attention row '$nm' -- lead-row flatness check did not run. Expected an m-label matching 'Delta WoW'."
+            } elseif ([Math]::Abs([double]$dw.Groups[1].Value) -lt 5) {
+                Add-Warn "Top attention row '$nm' has a WoW delta of $($dw.Groups[1].Value)% -- essentially flat. Section 2 must lead with what is NEW (classify-novelty.js label NEW), not with the highest-volume row. If genuinely nothing is new this week, say so explicitly instead of promoting a flat mover."
+            } else {
+                Pass "Top attention row '$nm' has a material WoW delta ($($dw.Groups[1].Value)%)"
+            }
+        }
+
+        # ---- 15. VOLATILE / RECOVERY rows must not headline a WoW percentage ----
+        # These carry suppressRatio:true because their ratio is measured off an
+        # anomalous prior week. 429 shipped as "+401.8%" while sitting 94.5% BELOW
+        # its own 60-day median -- tagging the row VOLATILE and caveating in the body
+        # is NOT sufficient, because the chip row is the loudest element and the eye
+        # reads it first. Replace the Δ WoW chip with a "vs 60d median" chip.
+        $offenders = @()
+        foreach ($h in $heads) {
+            $hv = $h.Groups[1].Value
+            if ($hv -notmatch '>(VOLATILE|RECOVERY)<') { continue }
+            $m = [regex]::Match($hv, "$dLabel</span><span class=`"m-value`">([+\-]?[\d.]+)%")
+            if ($m.Success -and [Math]::Abs([double]$m.Groups[1].Value) -ge 25) {
+                $n2 = [regex]::Match($hv, '<span class="item-name">\s*([^<]+)')
+                $who = if ($n2.Success) { $n2.Groups[1].Value.Trim() } else { '(unnamed)' }
+                $offenders += "$who ($($m.Groups[1].Value)%)"
+            }
+        }
+        if ($offenders.Count -gt 0) {
+            Add-Fail "VOLATILE/RECOVERY rows still headline a WoW percentage: $($offenders -join ', '). Their ratio is an artifact of a depressed prior week and the chip is the first thing a reader sees -- a caveat in the body does not undo it. Replace the 'Δ WoW' chip with a 'vs 60d median' chip showing the absolute level's position in the band."
+        } else {
+            Pass "No VOLATILE/RECOVERY row headlines a WoW percentage"
+        }
+    }
+
+    # ---- 16. Every VISIBLE attention row must carry its own sparkline (HARD FAIL) ----
+    # The 2026-07-31 report shipped 13 attention rows with ZERO charts, while the 60-day
+    # catalog below it carried 38. The reader's complaint was exactly that inversion:
+    # "I don't see any graphs for the things that need attention this week".
+    #
+    # This is not decoration. "+25.7% WoW" is unreadable on its own -- the reader cannot
+    # tell a flat-for-seven-weeks series that just stepped up (a real regression) from one
+    # that has been bouncing all along (noise wearing a big percentage). The 9-week shape
+    # IS the novelty argument, so it has to sit in the row that makes the claim.
+    #
+    # Rows inside a collapsed <details> fold are reference material and are exempt.
+    $attVisible = [regex]::Replace($attSec, '<details\b.*?</details>', '', 'Singleline')
+    $visHeads   = [regex]::Matches($attVisible, '<div class="item-head">(.*?)</div>', 'Singleline')
+    if ($visHeads.Count -eq 0) {
+        Add-Warn "No visible .item-head rows in Section 2 -- sparkline-coverage check skipped."
+    } else {
+        $noSpark = @()
+        foreach ($h in $visHeads) {
+            $hv = $h.Groups[1].Value
+            if ($hv -match 'item-spark' -or $hv -match 'data-trend') { continue }
+            $n = [regex]::Match($hv, '<span class="item-name">\s*([^<]+)')
+            $noSpark += $(if ($n.Success) { $n.Groups[1].Value.Trim() } else { '(unnamed)' })
+        }
+        if ($noSpark.Count -gt 0) {
+            Add-Fail "$($noSpark.Count) of $($visHeads.Count) visible attention row(s) have no inline sparkline: $($noSpark -join ', '). Every attention row must carry a .item-spark with data-trend holding its 9-week series -- the shape is what distinguishes a step change from ordinary variance. Charts belong WITH the finding, not in a separate browsable section."
+        } else {
+            Pass "All $($visHeads.Count) visible attention row(s) carry an inline sparkline"
+        }
+
+        # ---- 17. Attention section must stay short (WARN) ----
+        # classify-novelty.js emits an ATTENTION set (NEW + ACCELERATING). On real broker
+        # data that is 5 series out of 53. If the rendered section is much larger than
+        # that, the classifier's set was ignored and volume ranking crept back in --
+        # which is what produced 13 rows for what turned out to be one incident.
+        if ($visHeads.Count -gt 8) {
+            Add-Warn "Section 2 has $($visHeads.Count) visible attention rows. classify-novelty.js's ATTENTION set (NEW + ACCELERATING) is typically 3-6 series; anything much larger means plateaued or flat codes were promoted. Move ONGOING/STABLE rows into the collapsed fold -- a long attention list trains the reader to skim the one section that must not be skimmed."
+        } else {
+            Pass "Section 2 attention list is short ($($visHeads.Count) visible row(s))"
+        }
+    }
+} else {
+    Add-Warn "Could not locate the attention section -- skipping boilerplate + lead-row checks."
+}
+
+# ---- 18. The 60-day section must not be a browsable chart catalog (HARD FAIL) ----
+# The 60-day pass exists to catch slow burns that week-over-week structurally cannot see
+# (it found `Failed to parse JWT` going 7 -> 3,461 devices). That is its whole job.
+#
+# What it must NOT be is a scrollable list of every classified code with a chart each.
+# Measured on the 2026-07-31 report: 29 rows / 38 charts in this section, of which 27 were
+# duplicated verbatim into the error-code and error-type tables further down -- ~93%
+# redundant. Combined with the error tables the report rendered 100 sparklines for a single
+# incident, and the four series that actually changed were indistinguishable from the rest.
+#
+# Rule: only findings get charts in the main flow, and a finding is either NEW/ACCELERATING
+# (already charted in Section 2) or a promoted slow burn. Everything else goes in a
+# collapsed fold WITHOUT charts. Charts inside <details> are exempt -- the reader opted in.
+#
+# APP-AWARE CAP. Broker's universe is 40-50 error codes, so charting "everything" is the
+# catalog failure this check exists to stop -> cap 6. Authenticator's universe is a FIXED
+# ~13 scenarios and that table IS the scoreboard, not a browsable overflow -- charting all
+# of them is correct there. Its cap is set just above the scenario count so the check still
+# fires if someone starts fanning per-error-reason charts into the section.
+$t60Cap = if ($App -eq 'authapp') { 16 } else { 6 }
+$t60Start = $content.IndexOf('id="trend60d"')
+if ($t60Start -ge 0) {
+    $t60End = $content.IndexOf('<h2', $t60Start + 10)
+    if ($t60End -lt 0) { $t60End = $content.Length }
+    $t60 = $content.Substring($t60Start, $t60End - $t60Start)
+    $t60Visible = [regex]::Replace($t60, '<details\b.*?</details>', '', 'Singleline')
+    $t60Charts = [regex]::Matches($t60Visible, 'data-trend=|<svg\b').Count
+    if ($t60Charts -gt $t60Cap) {
+        Add-Fail "The 60-day section renders $t60Charts chart(s) outside any collapsed fold (cap $t60Cap for -App $App). It is a slow-burn DETECTOR, not a catalog -- chart only the entries it flags that are NOT already in Section 2, and move the full classification into a <details> fold with no charts. A previous run shipped 38 charts here against 0 in the attention section, which is precisely backwards."
+    } else {
+        Pass "60-day section is a detector, not a catalog ($t60Charts visible chart(s), cap $t60Cap)"
+    }
+} else {
+    Add-Warn "Could not locate the 60-day section -- skipping the chart-catalog check."
+}
+
+Write-Host ""
+if ($failures.Count -eq 0) {
+    Write-Host "All hard checks passed." -ForegroundColor Green
+    if ($warnings.Count -gt 0) { Write-Host "$($warnings.Count) warning(s) — review above." -ForegroundColor Yellow }
+    exit 0
+} else {
+    Write-Host "$($failures.Count) hard check(s) failed. Fix before publishing." -ForegroundColor Red
+    exit 1
+}

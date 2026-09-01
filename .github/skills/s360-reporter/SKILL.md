@@ -42,9 +42,24 @@ Skip PBI creation, report generation, and email drafting in quick mode.
 
 | Service | Service Tree ID |
 |---------|----------------|
-| AuthN SDK - ADAL Android | `937cdc57-1253-4b55-878e-5854368926a2` |
 | AuthN SDK - MSAL Android | `8d0d308e-cd5c-44a3-9518-43eeeb424b57` |
 | Microsoft Authenticator - Android | `0b97f26e-fcfc-4ed1-95e9-1dca3a2fde3b` |
+
+## Decommissioned Scope
+
+These service trees were **removed** and are **no longer monitored**. They must never be
+re-added to the fetch scope — even if they still appear in a pasted "last week's report"
+and even if their items are still active in S360:
+
+| Service (removed) | Service Tree ID |
+|-------------------|----------------|
+| AuthN SDK - ADAL Android | `937cdc57-1253-4b55-878e-5854368926a2` |
+
+`merge-items.js` enforces this as a **hard denylist**: items targeting these GUIDs are
+always dropped (from both the service and person queries), and the GUID is stripped even
+if passed via a `team.json` `serviceIds` override. Do **not** attempt to work around it by
+adding the owning manager's alias or the GUID to "recover" such items — see Step 1e's
+decommissioned-scope guard.
 
 ## KPIs Where ETA Is Not Applicable
 
@@ -113,7 +128,11 @@ choices: ["I'll paste it now", "Skip — find it automatically"]
    - **AB# references** — extract numeric ADO work item IDs (e.g., `AB#12345`, `Product Backlog Item 12345`, or `Bug 12345`)
    - **ADO work item URLs** — links like `dev.azure.com/.../workitems/12345`
    - **SLA states** — Missed SLA, Near SLA, In SLA
-2. Build a **previous report map**: title → { pbi, owner, slaState }
+2. Build a **previous report map**: title → { pbi, owner, slaState }.
+   **Exclude any items belonging to a decommissioned service** (see "Decommissioned
+   Scope", e.g. ADAL Android). They are out of scope this week and must not enter the
+   week-over-week diff — do not list them as resolved and do not use them to expand the
+   fetch scope.
 3. Store this map for use in:
    - **Step 1e** (resolved items = items in last week's map but NOT in current active set)
    - **Step 3** (existing PBIs = AB# numbers from the map)
@@ -128,13 +147,12 @@ Fetch items from **two sources** and merge them:
 
 #### 1a: Service-targeted items
 
-Call `mcp_s360-breeze-m_search_active_s360_kpi_action_items` with all three service tree IDs:
+Call `mcp_s360-breeze-m_search_active_s360_kpi_action_items` with both service tree IDs:
 
 ```
 request: {
   "pageSize": 50,
   "targetIds": [
-    "937cdc57-1253-4b55-878e-5854368926a2",
     "8d0d308e-cd5c-44a3-9518-43eeeb424b57",
     "0b97f26e-fcfc-4ed1-95e9-1dca3a2fde3b"
   ]
@@ -162,8 +180,8 @@ that are tied to individuals rather than service tree IDs.
 including items from other team memberships. After fetching, filter results to only include
 items where one of these conditions is met:
 - `TargetType` is `"Person"` AND `TargetId` exactly matches one of the team aliases
-- `TargetId` matches one of our three service tree IDs
-- `CustomDimensions.TenantName` contains "Auth Client", "MSAL", "ADAL", or "Authenticator"
+- `TargetId` matches one of our two service tree IDs
+- `CustomDimensions.TenantName` contains "Auth Client", "MSAL", or "Authenticator"
 
 **Critical — do NOT expand group items**: Each S360 item has exactly one `AssignedTo`
 and one `TargetId`. Treat each item as-is — one row per `KpiActionItemId`. Never split
@@ -200,7 +218,7 @@ inputs.
 
 **Filter logic** (enforced by the script — do not duplicate ad-hoc):
 - `TargetType == "Person"` AND `TargetId` is a team alias  → keep
-- `TargetId` is one of the three service tree GUIDs        → keep
+- `TargetId` is one of the two service tree GUIDs         → keep
 - `CustomDimensions.TenantName` matches an Auth-team pattern → keep
 - **`AssignedTo` alone is NOT sufficient** — the person query already filters by
   `assignedTo`, so every returned item has a team-alias `AssignedTo` but many are
@@ -253,6 +271,15 @@ against last week's report:
 
 2. **Identify resolved items**: Items that appeared in last week's report but are NOT
    in the current active set (from 1c) are considered resolved.
+
+   **Decommissioned-scope guard (critical)**: If an item from last week's report belongs
+   to a decommissioned service (e.g. ADAL Android — see "Decommissioned Scope"), it is
+   **out of scope, not resolved**. Exclude it from the diff entirely: do **not** report it
+   as resolved, and do **not** "recover" it by re-adding the service tree GUID or the
+   owning manager's alias to the fetch (in Step 1a/1b or via `team.json`). These items are
+   intentionally no longer monitored even though they may still be active in S360;
+   `merge-items.js` will drop them regardless. A missing decommissioned item is expected —
+   it is not a false-resolved to be corrected.
 
 3. **For each resolved item**, look up its ADO PBI state:
    - If the PBI is `Done` or `Removed`, mark as resolved with its AB# and assignee.

@@ -170,9 +170,9 @@ The setup script handles all of these, but for reference:
 
 ### GitHub Authentication
 
-You need two GitHub accounts authenticated via `gh`:
-- **Public** (e.g., `johndoe`) — for AzureAD/* repos (common, msal, adal)
-- **EMU** (e.g., `johndoe_microsoft`) — for identity-authnz-teams/* repos (broker)
+You need two GitHub hosts authenticated via `gh`:
+- **github.com** (e.g., `johndoe`) — for AzureAD/* repos (common, msal, adal)
+- **msft.ghe.com** (e.g., `johndoe_microsoft`) — for `security/ad-accounts-for-android` (broker). Sign in with `gh auth login --hostname msft.ghe.com`.
 
 The setup script discovers logged-in accounts and saves them to `.github/developer-local.json`.
 

@@ -17,9 +17,9 @@ $OutputDir = "$env:TEMP\copilot-review-analysis"
 $COPILOT_USERS = @("Copilot", "copilot-pull-request-reviewer[bot]")
 
 $repoSlugs = @{
-    "common" = "AzureAD/microsoft-authentication-library-common-for-android"
-    "msal"   = "AzureAD/microsoft-authentication-library-for-android"
-    "broker" = "identity-authnz-teams/ad-accounts-for-android"
+    "common" = "https://api.github.com/repos/AzureAD/microsoft-authentication-library-common-for-android"
+    "msal"   = "https://api.github.com/repos/AzureAD/microsoft-authentication-library-for-android"
+    "broker" = "https://msft.ghe.com/api/v3/repos/security/ad-accounts-for-android"
 }
 
 # Load raw data
@@ -37,7 +37,7 @@ function Get-PRComments($repo, $prNum) {
     if (-not $prCommentApiCache.ContainsKey($key)) {
         $slug = $script:repoSlugs[$repo]
         try {
-            $raw = gh api "repos/$slug/pulls/$prNum/comments" --paginate 2>&1
+            $raw = gh api "$slug/pulls/$prNum/comments" --paginate 2>&1
             $prCommentApiCache[$key] = $raw | ConvertFrom-Json
         } catch {
             $prCommentApiCache[$key] = @()
@@ -51,7 +51,7 @@ function Get-PRHead($repo, $prNum) {
     if (-not $prHeadCache.ContainsKey($key)) {
         $slug = $script:repoSlugs[$repo]
         try {
-            $data = gh api "repos/$slug/pulls/$prNum" --jq '.head.sha' 2>&1
+            $data = gh api "$slug/pulls/$prNum" --jq '.head.sha' 2>&1
             $prHeadCache[$key] = $data.Trim()
         } catch {
             $prHeadCache[$key] = ""
@@ -67,7 +67,7 @@ function Get-FileDiff($repo, $prNum, $commitA, $commitB, $filePath) {
     if (-not $diffCache.ContainsKey($cacheKey)) {
         try {
             # Get the entire compare result (all files)
-            $rawJson = gh api "repos/$slug/compare/${commitA}...${commitB}" 2>&1
+            $rawJson = gh api "$slug/compare/${commitA}...${commitB}" 2>&1
             $compareData = $rawJson | ConvertFrom-Json
             
             # Build a hash of file -> patch data
@@ -184,6 +184,14 @@ foreach ($item in $noResponse) {
     $filePath = $item.FilePath
     $body = $item.CommentBody
     $hasSuggestion = $body -match '```suggestion'
+
+    # Force-push / stale-snapshot fingerprint carried from Phase 1 (analyze.ps1).
+    # When the reviewed commit was rewritten, a "file-not-changed / not-applied"
+    # verdict is UNSAFE to score against Copilot: the fix may live in the orphaned
+    # rewrite. Validate against the immutable diff_hunk before crediting. See
+    # references/classification-rules.md ("The Force-Push Confound").
+    $fp = [bool]$item.ReviewedCommitRewritten
+    $fpNote = if ($fp) { "  [FORCE-PUSH: reviewed commit rewritten -- validate Copilot's claim against the immutable diff_hunk vs merged code before scoring]" } else { "" }
     
     # Get full API data for this comment
     $allComments = Get-PRComments $repo $prNum
@@ -195,6 +203,7 @@ foreach ($item in $noResponse) {
             FilePath = $filePath; PRAuthor = $item.PRAuthor
             HasSuggestion = $hasSuggestion; Verdict = "unknown"
             Evidence = "Comment not found in API"; CommentExcerpt = ""
+            ReviewedCommitRewritten = $fp
         }
         continue
     }
@@ -213,6 +222,7 @@ foreach ($item in $noResponse) {
             HasSuggestion = $hasSuggestion; Verdict = "no-subsequent-commits"
             Evidence = "Copilot commented on final commit (no commits after review)"
             CommentExcerpt = ""
+            ReviewedCommitRewritten = $fp
         }
         continue
     }
@@ -226,8 +236,9 @@ foreach ($item in $noResponse) {
             Repo = $repo; PRNumber = $prNum; CommentId = $commentId
             FilePath = $filePath; PRAuthor = $item.PRAuthor
             HasSuggestion = $hasSuggestion; Verdict = "file-not-changed"
-            Evidence = "File was not modified in any commit after Copilot's review"
+            Evidence = "File was not modified in any commit after Copilot's review" + $fpNote
             CommentExcerpt = ""
+            ReviewedCommitRewritten = $fp
         }
         continue
     }
@@ -288,7 +299,8 @@ foreach ($item in $noResponse) {
         Repo = $repo; PRNumber = $prNum; CommentId = $commentId
         FilePath = $filePath; PRAuthor = $item.PRAuthor
         HasSuggestion = $hasSuggestion; Verdict = $verdict
-        Evidence = $evidence; CommentExcerpt = $excerpt
+        Evidence = $evidence + $fpNote; CommentExcerpt = $excerpt
+        ReviewedCommitRewritten = $fp
     }
     
     if ($count % 25 -eq 0) {
@@ -354,6 +366,15 @@ Write-Host "  STRONG: Suggestion applied OR exact lines modified:            $st
 Write-Host "  MODERATE: Lines near comment modified (different fix):          $weakCount ($([math]::Round($weakCount/$results.Count*100,1))%)" -ForegroundColor DarkGreen
 Write-Host "  NOT APPLIED: File not changed OR changes elsewhere in file:   $notCount ($([math]::Round($notCount/$results.Count*100,1))%)" -ForegroundColor Red
 Write-Host "  NO DATA: No commits after review / unknown:                   $noDataCount ($([math]::Round($noDataCount/$results.Count*100,1))%)" -ForegroundColor DarkGray
+
+# Force-push confound: not-applied verdicts sitting on a rewritten snapshot are UNSAFE
+$fpNotApplied = ($results | Where-Object { $_.Verdict -in $notApplied -and $_.ReviewedCommitRewritten -eq $true })
+if ($fpNotApplied.Count -gt 0) {
+    Write-Host ""
+    Write-Host "  !! FORCE-PUSH CONFOUND: $($fpNotApplied.Count) 'not-applied' verdict(s) sit on a REWRITTEN reviewed commit." -ForegroundColor Yellow
+    Write-Host "     Do NOT score these against Copilot until validated against the immutable diff_hunk:" -ForegroundColor Yellow
+    $fpNotApplied | ForEach-Object { Write-Host "       - $($_.Repo) #$($_.PRNumber) comment $($_.CommentId) ($($_.FilePath))" -ForegroundColor DarkYellow }
+}
 
 # =======================================
 # OVERALL SUMMARY

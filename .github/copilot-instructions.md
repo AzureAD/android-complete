@@ -144,6 +144,7 @@ For complex investigation tasks, use these skills (read the skill file for detai
 | **threat-modeler** | `.github/skills/threat-modeler/SKILL.md` | "create a threat model", "threat model for", "threat model diagram", "STRIDE analysis for", "security diagram for" |
 | **s360-reporter** | `.github/skills/s360-reporter/SKILL.md` | "S360 report", "generate S360 report", "weekly S360", "S360 status", "what are our S360 items" |
 | **copilot-review-analyst** | `.github/skills/copilot-review-analyst/SKILL.md` | "analyze Copilot reviews", "Copilot review effectiveness", "review analysis report", "how helpful are Copilot reviews" |
+| **oncall-weekly-telemetry-report** | `.github/skills/oncall-weekly-telemetry-report/SKILL.md` | "produce the OCE report", "weekly on-call report", "WoW telemetry report", "weekly broker health report", "generate this week's on-call summary" |
 
 ## 13. Azure DevOps Integration
 
@@ -166,7 +167,7 @@ The `design-docs/` folder contains the `AuthLibrariesApiReview` ADO repo (cloned
 |--------|-------------|
 | common / common4j | `AzureAD/microsoft-authentication-library-common-for-android` |
 | msal | `AzureAD/microsoft-authentication-library-for-android` |
-| broker / broker4j | `identity-authnz-teams/ad-accounts-for-android` (GHE) |
+| broker / broker4j | `security/ad-accounts-for-android` (GHE) |
 | adal | `AzureAD/azure-activedirectory-library-for-android` |
 | 1ES-Pipelines | `IdentityDivision/Engineering/_git/AuthClientAndroidPipelines` (ADO) |
 
