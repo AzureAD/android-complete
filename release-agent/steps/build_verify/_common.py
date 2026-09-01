@@ -413,7 +413,7 @@ def _rc_email_plain(model, ctx) -> str:
             if o.get("parked") else "gate already cleared")
     L.append(f"  - Release Orchestrator: healthy — pre-gate stages green, {park}.")
     L.append(f"      Versions: {vstr}")
-    L.append(f"      {build_url(o.get('run_id'))}")
+    L.append(f"      Run: {build_url(o.get('run_id'))}")
     L.append("")
     L.append("RC TESTING — results by category (both provider runs ran to completion):")
     for prov in ("ECS", "Local"):
@@ -441,14 +441,15 @@ def _rc_email_plain(model, ctx) -> str:
                 L.append(f"          - {tname}")
             if len(names) < s["failed"]:
                 L.append(f"          … and {s['failed'] - len(names)} more (see the run)")
-        L.append(f"      {build_url(r.get('run_id'))}")
+        L.append(f"      Run: {build_url(r.get('run_id'))}")
         L.append("")
     a = model.get("auth") or {}
     if a:
         b, t = a.get("build") or {}, a.get("test") or {}
         suites = t.get("suites") or {}
         verdict = ("PASS (both suites >= %.0f%%)" % AUTH_UI_PASS_THRESHOLD
-                   if a.get("verdict") == "clean" else "BELOW GATE (a suite < 90%%)")
+                   if a.get("verdict") == "clean"
+                   else "BELOW GATE (a suite < %.0f%%)" % AUTH_UI_PASS_THRESHOLD)
         L.append(f"AUTHENTICATOR ECS — separate gate, does NOT affect the UI rate above: {verdict}")
         L.append(f"  build {b.get('run_id')} ({b.get('version')}), UI tests {t.get('run_id')}")
         for name in AUTH_UI_SUITES:
@@ -460,7 +461,7 @@ def _rc_email_plain(model, ctx) -> str:
             pct = s.get("pct")
             L.append(f"      {name}: {passed}/{passed + failed} passed "
                      f"({'n/a' if pct is None else str(pct) + '%'})")
-        L.append(f"      {auth_build_url(b.get('run_id'))}")
+        L.append(f"      Run: {auth_build_url(b.get('run_id'))}")
         L.append("")
     probs = model.get("problems") or []
     if probs:
