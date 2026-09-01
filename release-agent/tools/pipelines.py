@@ -1244,7 +1244,78 @@ def find_auth_release_build(release_branch, timeout=90):
     if not version:
         return (False, None, f"release-app build {b.get('id')} has no version tag "
                              f"(expected \\d+.\\d+.\\d+); tags: {', '.join(map(str, tags)) or 'none'}")
-    return (True, {"build_id": b.get("id"), "version": str(version).strip(), "commit": commit}, "")
+    return (True, {"build_id": b.get("id"), "version": str(version).strip(),
+                   "commit": commit, "build_number": b.get("buildNumber")}, "")
+
+
+def auth_build_url(build_id) -> str:
+    """Browser URL for an Authenticator (msazure/One) build results page."""
+    return f"{AUTH_ORG}/{AUTH_PROJECT}/_build/results?buildId={build_id}&view=results" if build_id else ""
+
+
+def merged_release_prs(release_branch, timeout=90):
+    """Derive the release PAYLOAD PR list for the Authenticator app — the merged PRs that make
+    up this month's release. Returns (ok, prs, detail) where `prs` is an ordered, de-duplicated
+    list of {id, title} newest-first.
+
+    The auth branch model: feature work lands on the `working` mainline during the cycle, and the
+    release branch (`release/YYYY/MM/DD`) additionally carries the RC/final version-bump + cherry-
+    pick PRs. So the payload = completed PRs into `working` within the cycle window (bounded by the
+    PREVIOUS dated release branch and this one), PLUS completed PRs into the release branch itself.
+    Deterministic, read-only; the skill previews the list before it writes the wiki page."""
+    import re as _re2
+    from urllib.parse import quote
+    from tools.coordinates import coords
+    rel = str(release_branch or "").strip()
+    if rel.startswith("refs/heads/"):
+        rel = rel[len("refs/heads/"):]
+    m = _re2.match(r"release/(\d{4})/(\d{2})/(\d{2})$", rel)
+    if not m:
+        return (False, None, f"not a dated auth release branch: {release_branch!r}")
+    cur_date = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    r = coords.repo("authenticator")
+    base = f"{r['org']}/{r['project']}/_apis/git/repositories/{r['name']}"
+
+    # Lower bound = the PREVIOUS dated release branch (release/YYYY/MM/DD). Fall back to
+    # ~35 days before this release when no earlier branch is found.
+    ok, data, det = _ado_rest_get(f"{base}/refs?filter=heads/release/20&api-version=7.1", timeout)
+    dated = []
+    for ref in ((data or {}).get("value") or []):
+        rm = _re2.match(r"refs/heads/release/(\d{4})/(\d{2})/(\d{2})$", ref.get("name") or "")
+        if rm:
+            dated.append(f"{rm.group(1)}-{rm.group(2)}-{rm.group(3)}")
+    earlier = sorted(d for d in dated if d < cur_date)
+    if earlier:
+        min_time = earlier[-1] + "T00:00:00Z"
+    else:
+        from datetime import datetime, timedelta
+        min_time = (datetime.strptime(cur_date, "%Y-%m-%d") - timedelta(days=35)).strftime("%Y-%m-%dT00:00:00Z")
+    # Upper bound = a week past the release-branch date (captures late RC/final bumps).
+    from datetime import datetime as _dt, timedelta as _td
+    max_time = (_dt.strptime(cur_date, "%Y-%m-%d") + _td(days=7)).strftime("%Y-%m-%dT00:00:00Z")
+
+    def _completed(target_ref, windowed):
+        u = (f"{base}/pullrequests?searchCriteria.status=completed"
+             f"&searchCriteria.targetRefName={quote('refs/heads/' + target_ref, safe='')}"
+             f"&$top=200&api-version=7.1")
+        if windowed:
+            u += (f"&searchCriteria.queryTimeRangeType=closed"
+                  f"&searchCriteria.minTime={min_time}&searchCriteria.maxTime={max_time}")
+        ok2, d2, det2 = _ado_rest_get(u, timeout)
+        return ((d2 or {}).get("value") or []) if ok2 else []
+
+    rows = _completed("working", windowed=True) + _completed(rel, windowed=False)
+    if not rows:
+        return (False, None, f"no completed PRs found for the {rel} cycle (det: {det})")
+    seen, out = set(), []
+    # Order newest-first by closedDate (release-branch bumps interleave naturally).
+    for p in sorted(rows, key=lambda p: (p.get("closedDate") or ""), reverse=True):
+        pid = p.get("pullRequestId")
+        if pid in seen:
+            continue
+        seen.add(pid)
+        out.append({"id": pid, "title": (p.get("title") or "").strip()})
+    return (True, out, "")
 
 
 def create_lightweight_tag(org, project, repo, tag_name, commit, timeout=60):

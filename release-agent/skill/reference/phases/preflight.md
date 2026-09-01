@@ -4,7 +4,7 @@ _Loaded on demand when advancing Phase 0. Phase 0 is `execution: parallel`._
 
 ## Parallel phases — process ALL the holds, not one at a time
 
-A single `next` runs **every independent automated step at once** (breaking, CG, cron, wiki — all in one call) then surfaces **all the human/scout holds together** (e.g. *"4 item(s) need you: …"*). After `next`, read `status --json` → **`pending_human`** (and `active_phase.steps` with `status`/`needs_owner`) — the full outstanding set. Work through **all** of them this pass:
+A single `next` runs **every independent automated step at once** (breaking, CG, cron — all in one call) then surfaces **all the human/scout holds together** (e.g. *"4 item(s) need you: …"*). After `next`, read `status --json` → **`pending_human`** (and `active_phase.steps` with `status`/`needs_owner`) — the full outstanding set. Work through **all** of them this pass:
 - **`source: scout`** steps (notice, flight_reminder, lockdown) → run each via MCP/browser + `record-step` (below). Independent — do them all.
 - **`attest`** steps (confirm_reminders, vitals) → ask the owner to confirm, then `done --step <id>`.
 - **`blocked`** steps (cg/cron on a real problem) → show the note; fix + rerun, or skip.
@@ -50,4 +50,4 @@ Can't reach browser/SSO? Leave the step held — don't mark it done without runn
 Play Console has no API for Policy issues/warnings (Reporting API covers only technical vitals; the Console UI is behind a Google login Scout can't automate). When current step `vitals`, run `step-action --release <id> --step vitals` → `needs_human` with the `prompt` (review **Android vitals** crash/ANR + **Policy status** issues/warnings). Put that `prompt` in front of the owner via `m_ask_user`. On confirmation: `done --release <id> --step vitals --note "<what they saw>"`. Unresolved policy issue / vitals regression → leave holding.
 
 ## Automated Phase-0 steps (real agents, no scout action)
-`breaking` (BREAKING-OneAuth scan + draft comms), `cg` (Component Governance alerts — blocks on High/Critical), `cron` (Calendar Checker pipeline scheduled), `wiki` (create payload wiki subpage). These run inside `next`; you just relay their results from the `status` table. `cg`/`cron` may **block** — see the core "blocked step" handling.
+`breaking` (BREAKING-OneAuth scan + draft comms), `cg` (Component Governance alerts — blocks on High/Critical), `cron` (Calendar Checker pipeline scheduled). These run inside `next`; you just relay their results from the `status` table. `cg`/`cron` may **block** — see the core "blocked step" handling.

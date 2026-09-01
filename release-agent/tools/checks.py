@@ -280,6 +280,74 @@ def create_wiki_page(org: str, project: str, wiki: str, path: str,
             pass
 
 
+def get_wiki_page(org: str, project: str, wiki: str, path: str, timeout: int = 60):
+    """Read a wiki page's content + ETag. Returns (ok, content, etag, detail). ok is False
+    (with content=None) when the page can't be read; a MISSING page returns ok=False and a
+    detail that contains 'not found' so callers can distinguish absent from error."""
+    az = shutil.which("az")
+    if az is None:
+        return (False, None, None, "az CLI not found")
+    try:
+        out = subprocess.run(
+            [az, "devops", "wiki", "page", "show", "--path", path, "--wiki", wiki,
+             "--org", org, "--project", project, "--include-content", "-o", "json"],
+            capture_output=True, text=True, timeout=timeout, encoding="utf-8", errors="replace",
+        )
+    except subprocess.TimeoutExpired:
+        return (False, None, None, f"timeout reading wiki page '{path}'")
+    except OSError as e:
+        return (False, None, None, f"failed to run az: {e}")
+    if out.returncode != 0:
+        err = (out.stderr or "").strip()
+        low = err.lower()
+        if "could not be found" in low or "notfound" in low or "does not exist" in low:
+            return (False, None, None, f"not found: '{path}'")
+        return (False, None, None, (err.splitlines()[-1] if err else "az returned non-zero")[:200])
+    import json as _json
+    try:
+        d = _json.loads(out.stdout or "{}")
+    except ValueError:
+        return (False, None, None, "could not parse az wiki page show output")
+    etag = (d.get("eTag") or d.get("etag") or "").strip().strip('"')
+    content = ((d.get("page") or {}).get("content")) if isinstance(d.get("page"), dict) else d.get("content")
+    return (True, content or "", etag, "")
+
+
+def update_wiki_page(org: str, project: str, wiki: str, path: str, content: str,
+                     etag: str, timeout: int = 60) -> CheckResult:
+    """Overwrite an existing wiki page's content (ETag-guarded). `etag` is the version from
+    get_wiki_page. Returns a CheckResult (ok, ran, detail)."""
+    az = shutil.which("az")
+    if az is None:
+        return CheckResult(False, False, "az CLI not found")
+    import tempfile
+    import os as _os
+    fd, tmp = tempfile.mkstemp(suffix=".md")
+    _os.close(fd)
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        cmd = [az, "devops", "wiki", "page", "update", "--path", path, "--wiki", wiki,
+               "--org", org, "--project", project, "--version", (etag or "").strip().strip('"'),
+               "--file-path", tmp, "--encoding", "utf-8", "--output", "json"]
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return CheckResult(False, True, f"timeout updating wiki page '{path}'")
+        except OSError as e:
+            return CheckResult(False, False, f"failed to run az: {e}")
+        if out.returncode == 0:
+            return CheckResult(True, True, f"updated '{path}'")
+        stderr = (out.stderr or "").strip()
+        msg = stderr.splitlines()[-1] if stderr else f"could not update '{path}'"
+        return CheckResult(False, True, msg[:200])
+    finally:
+        try:
+            _os.remove(tmp)
+        except OSError:
+            pass
+
+
 # ---- Component Governance alerts (read-only) -------------------------------
 #
 # CG alerts live on a separate governance host and are read via `az rest`

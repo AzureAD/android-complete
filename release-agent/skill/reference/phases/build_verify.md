@@ -1,9 +1,9 @@
 # Reference — Phase `build_verify` (Phase 2 · Build & Lib Verification)
 
 Opens **CCD+1** — the engineer wakes to a resume. The engine runs the four verification
-**agent** steps in-process during `next`; you relay their results and drive the one
-**scout** step (`rc_report`), which is the terminal Phase-2 step **and** the go/no-go —
-there is no separate human gate.
+**agent** steps in-process during `next`; you relay their results and drive the **scout**
+steps (`telemetry_verify`, then `rc_report`) — `rc_report` is the terminal Phase-2 step **and**
+the go/no-go — there is no separate human gate.
 
 ## Execution model
 Sequential. A single `next` runs the agent chain (checker → orchestrator → ECS/Local
@@ -22,6 +22,19 @@ phase and the 30-min poller re-checks until the run completes, then the normal s
 `checker_fired`, `orchestrator_health`, `mrwp_ecs`, `mrwp_local` — read-only `az` agent
 steps run inside `next`. Each records the ADO run it evaluated as a Details 🔗 link.
 `step-action` refuses them (exit 1); never dispatch them yourself.
+
+## `telemetry_verify` — confirm bug-bash telemetry reaches Kusto (`scout`)
+- **Trigger:** `status --json` shows current step `telemetry_verify` (state `scout`), right after
+  `auth_ecs` and before `rc_report`. It's checklist Phase 3.3 Step 9, run here so the built APK
+  version's telemetry is smoke-checked early.
+- **Resolve:** `step-action --release <id> --phase build_verify --step telemetry_verify` →
+  `needs_skill` with `tool: kusto_query` and `payload` = `{cluster_uri, database, query, version,
+  followup_command}`. Run the query with the given `cluster_uri`+`database` (the ADX MCP), read
+  the returned **Count**, then run **`record-telemetry --release <id> --rows <N> --version <ver>`**
+  (do NOT blind-`record-step`):
+  - **rows > 0 → pass** — telemetry is flowing; the step is done and the flow continues to `rc_report`.
+  - **rows == 0 → `attention`** — the step BLOCKS. Post a heads-up in the **Android Core Team**
+    channel that telemetry isn't reaching Kusto yet, then re-run once it is.
 
 ## `rc_report` — email the RC report + apply the 90% UI gate (`scout`, terminal)
 This is the Phase-2 go/no-go — there is **no separate approval gate**.

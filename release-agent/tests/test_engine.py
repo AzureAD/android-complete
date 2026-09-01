@@ -47,7 +47,6 @@ _SAFE_AGENTS = {
     "preflight.oneauth_access": {"alias": "tester", "access": "granted"},  # → write access → pass (no az)
     "preflight.cron": {"run": {"queueTime": _recent_iso(), "result": "succeeded"}},  # fresh → pass
     "preflight.breaking": {"changelog": "vNext\n----\n- [MINOR] x (#1)\nVersion 1.0.0\n"},  # no [MAJOR] → pass
-    "preflight.wiki": {"outcome": "done", "note": "wiki payload page ready (test)"},  # skip ADO write
     # Phase-2 build_verify agent steps — injected offline inputs so they pass without az.
     "build_verify.checker_fired": {
         "triggering": {"run": {"id": 1678599, "queueTime": "2026-07-08T06:00:00Z"},
@@ -82,6 +81,8 @@ _SAFE_AGENTS = {
             "Firebase Test Lab - Monthly UI Tests":
                 {"present": True, "passed": 306, "failed": 0, "total": 306, "pct": 100.0}}},
     "build_verify.rc_report": {"outcome": "done", "note": "RC report emailed (test)"},  # skip live az + send
+    # Phase-2 telemetry_verify — scout Kusto check; short-circuit so flow tests never hit the MCP.
+    "build_verify.telemetry_verify": {"outcome": "done", "note": "bug-bash telemetry verified (test)"},
     # Phase-3 bug_bash clone steps — real agents; keep flow tests offline.
     "bug_bash.clone_plans_broker": {"outcome": "done", "note": "broker plan cloned (test)"},
     "bug_bash.clone_plans_auth": {"outcome": "done", "note": "auth suite created (test)"},
@@ -111,6 +112,9 @@ _SAFE_AGENTS = {
     # Phase-4 verify_release_notes — real agent (gh release view). Short-circuit for flow tests;
     # dedicated tests exercise its logic offline.
     "finalize.verify_release_notes": {"outcome": "done", "note": "github release notes verified (test)"},
+    # Phase-4 wiki_payload — real agent (ADO wiki create/update). Short-circuit so flow tests never
+    # hit the network; dedicated wiki_payload tests exercise its compose logic offline.
+    "finalize.wiki_payload": {"outcome": "done", "note": "payload wiki page updated (test)"},
 }
 
 
@@ -672,9 +676,9 @@ def test_holds_at_first_hold():
     actions = orch.run_until_gate()
     assert actions[-1].kind == "reminder"
     assert actions[-1].step == "ui_failures"   # Phases 0-2 gateless (rc_report auto); first hold is Phase-3 ui_failures
-    # auto steps that RUN before the first hold: Phase-0 breaking/cg/oneauth_access/cron/wiki (5) +
-    # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local/auth_ecs (5) + rc_report (scout
-    # email, mocked done here) (1) + Phase-3 clone_plans_broker/clone_plans_auth/
+    # auto steps that RUN before the first hold: Phase-0 breaking/cg/oneauth_access/cron (4) +
+    # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local/auth_ecs/telemetry_verify (6) +
+    # rc_report (scout email, mocked done here) (1) + Phase-3 clone_plans_broker/clone_plans_auth/
     # ui_test_status/distribute_tests (4) + send_invite + activate_chat (scout, mocked done) (2) +
     # notify_native_auth (1) + bugbash_updates (1). native_auth_signoff now follows ui_failures, so
     # it does NOT run before the first hold.
@@ -875,7 +879,7 @@ def test_log_actions_records_step_outcome_and_blocks():
     _stub_build_defs("pass")
     with tempfile.TemporaryDirectory() as tmp:
         st = ReleaseState(release_id="2026-08", ccd="2026-08-26", ccd_source="confirmed")
-        # cg blocks with a real-shaped reason; breaking/cron/wiki run clean
+        # cg blocks with a real-shaped reason; breaking/cron run clean
         mocks = _safe({"preflight.cg": {"outcome": "blocked",
                                         "reason": "High CG alert: CVE-2026-54399 httpcore5 5.3"}})
         orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 19), mocks=mocks)
@@ -1653,16 +1657,16 @@ def test_status_surfaces_agent_result_notes_and_wiki_link():
     Details column shows each step's outcome; multi-line reports expand below."""
     from orchestrator import render
     st, orch = _ccd_orch("2026-07-02")          # Phase 0 open
-    orch.run_until_gate()                        # runs breaking/cg/cron/wiki (set notes)
+    orch.run_until_gate()                        # runs breaking/cg/cron (set notes)
     r = orch.status_report()
     steps = {s["id"]: s for s in r["current_steps"]}
-    assert steps["cg"].get("note") and steps["wiki"].get("note")
+    assert steps["cg"].get("note")
     view = render.status_view(r)
     assert "| Details |" in view                 # the third column exists
     assert "Component Governance" in view        # cg's real report note surfaces
 
 
-# ---- Phase-0 real pre-flight agents (breaking detect, wiki payload) ----
+# ---- Phase-0 real pre-flight agents (breaking detect) ----
 _SAMPLE_CHANGELOG = """vNext
 ----------
 - [MINOR] add a thing (#1)
@@ -1689,7 +1693,7 @@ def test_parse_breaking_none_when_no_major():
 
 
 def test_breaking_agent_detects_and_drafts():
-    from steps.preflight import breaking, wiki, cg, cron
+    from steps.preflight import breaking, cg, cron
     from steps.preflight import breaking as _bk
     orig = _bk._fetch_text
     _bk._fetch_text = lambda *a, **k: _SAMPLE_CHANGELOG
@@ -1704,7 +1708,7 @@ def test_breaking_agent_detects_and_drafts():
 
 
 def test_breaking_agent_none_found_passes():
-    from steps.preflight import breaking, wiki, cg, cron
+    from steps.preflight import breaking, cg, cron
     from steps.preflight import breaking as _bk
     orig = _bk._fetch_text
     _bk._fetch_text = lambda *a, **k: "vNext\n----------\n- [MINOR] x (#1)\nVersion 1.0.0\n"
@@ -1717,7 +1721,7 @@ def test_breaking_agent_none_found_passes():
 
 
 def test_breaking_agent_fetch_error_holds():
-    from steps.preflight import breaking, wiki, cg, cron
+    from steps.preflight import breaking, cg, cron
     from steps.preflight import breaking as _bk
     orig = _bk._fetch_text
 
@@ -1730,59 +1734,6 @@ def test_breaking_agent_fetch_error_holds():
         assert not r.ok and "could not fetch" in r.action
     finally:
         _bk._fetch_text = orig
-
-
-def test_wiki_page_name_convention():
-    from steps.preflight.wiki import _page_name
-    st = ReleaseState(release_id="2026-08")
-    assert _page_name(st) == "August 2026 Release"
-    assert _page_name(st, 2) == "August 2026 2 Release"
-
-
-def test_wiki_agent_real_create(monkeypatch=None):
-    from steps.preflight import breaking, wiki, cg, cron
-    from tools import checks
-    orig_create, orig_exists = checks.create_wiki_page, checks.wiki_page_exists
-    seen = {}
-
-    def _fake(org, project, wiki, path, content, timeout=60):
-        seen.update(path=path, project=project)
-        return checks.CheckResult(True, True, f"created '{path}'")
-    checks.create_wiki_page = _fake
-    checks.wiki_page_exists = lambda *a, **k: False    # month page absent
-    try:
-        st = ReleaseState(release_id="2026-08")
-        r = wiki.run("preflight", {"id": "wiki"}, st)
-        assert r.ok and seen["path"].endswith("August 2026 Release")
-        assert seen["project"] == "IdentityWiki"
-    finally:
-        checks.create_wiki_page, checks.wiki_page_exists = orig_create, orig_exists
-
-
-def test_wiki_agent_duplicate_creates_numbered_and_notifies():
-    """If the month's page exists, the agent leaves it alone, NOTIFIES, and
-    creates the next free numbered page."""
-    from steps.preflight import breaking, wiki, cg, cron
-    from tools import checks
-    orig_create, orig_exists = checks.create_wiki_page, checks.wiki_page_exists
-    created = {}
-
-    # "August 2026 Release" exists, "August 2026 2 Release" is free.
-    def _exists(org, project, wiki, path, timeout=30):
-        return path.endswith("August 2026 Release")
-    def _create(org, project, wiki, path, content, timeout=60):
-        created["path"] = path
-        return checks.CheckResult(True, True, f"created '{path}'")
-    checks.wiki_page_exists = _exists
-    checks.create_wiki_page = _create
-    try:
-        st = ReleaseState(release_id="2026-08")
-        r = wiki.run("preflight", {"id": "wiki"}, st)
-        assert r.ok
-        assert created["path"].endswith("August 2026 2 Release")
-        assert "already exist" in r.action.lower() and "SECOND" in r.action
-    finally:
-        checks.create_wiki_page, checks.wiki_page_exists = orig_create, orig_exists
 
 
 def test_failing_agent_holds_as_action_needed():
@@ -2002,7 +1953,7 @@ def test_notification_html_lists_all_tasks_and_flags_attention():
     assert html.startswith("<div") and "Release 2026-08" in html
     # every Phase-0 step name appears in the table
     for name in ("Send early release notice", "Detect lockdown/holiday overlap",
-                 "Confirm Play Console vitals", "Create release payload wiki subpage"):
+                 "Confirm Play Console vitals"):
         assert name in html
     # the hold is flagged for attention + a done pill exists
     assert "Needs your attention" in html and "Needs you now" in html
@@ -2348,8 +2299,10 @@ def test_build_verify_phase_shape():
     bv = next(p for p in cfg["phases"] if p["id"] == "build_verify")
     ids = [s["id"] for s in bv["steps"]]
     assert ids == ["checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",
-                   "auth_ecs", "rc_report"]
+                   "auth_ecs", "telemetry_verify", "rc_report"]
     assert bv.get("anchor") == "CCD+1"
+    tv = next(s for s in bv["steps"] if s["id"] == "telemetry_verify")
+    assert tv.get("source") == "scout" and tv.get("owner") == "agent"
     rc = next(s for s in bv["steps"] if s["id"] == "rc_report")
     assert rc.get("source") == "scout" and rc.get("owner") == "agent"
     assert bv["steps"][-1]["id"] == "rc_report"          # terminal Phase-2 step
@@ -4155,7 +4108,7 @@ def test_sim_fast_forwards_to_rc_gate_offline():
     st = res.state
     # earlier phases complete
     assert all(st.is_done("preflight", s) for s in
-               ("notice", "confirm_reminders", "vitals", "wiki"))
+               ("notice", "confirm_reminders", "vitals", "cron"))
     assert all(st.is_done("ccd", s) for s in ("final_reminder", "localization"))
     # the 4 verification steps ran (real build() on mocks) and rc_report auto-advanced
     for s in ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local", "rc_report"):
@@ -4180,7 +4133,7 @@ def test_sim_open_positions_at_target_entry():
         res = SIM.run_scenario(scenario, runs_root=tmp)
     assert res.reached and res.stop_kind == "open"
     st = res.state
-    assert st.is_done("preflight", "wiki") and st.is_done("ccd", "localization")
+    assert st.is_done("preflight", "cron") and st.is_done("ccd", "localization")
     # nothing in the target phase has run
     assert not any(st.is_done("build_verify", s) for s in
                    ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local", "rc_report"))
@@ -4889,7 +4842,7 @@ def test_confirm_reminders_gated_by_flight_send():
 
 
 def test_parallel_autos_run_despite_pending_holds():
-    """Independent auto steps (breaking/cg/cron/wiki) complete even while scout/attest
+    """Independent auto steps (breaking/cg/cron) complete even while scout/attest
     steps are still holding — a hold no longer blocks its siblings."""
     st, orch = _orch(signed=False)
     _pass_scout_checks(orch)
@@ -4897,7 +4850,7 @@ def test_parallel_autos_run_despite_pending_holds():
     # nothing cleared: notice/flight/lockdown (scout) + vitals (attest) all hold
     orch.run_until_gate()
     # yet the independent auto agents ran to completion
-    for sid in ("breaking", "cg", "cron", "wiki"):
+    for sid in ("breaking", "cg", "cron"):
         assert st.is_done("preflight", sid), sid
     # and the holds are all surfaced together
     for sid in ("notice", "flight_reminder", "lockdown", "vitals"):
@@ -4925,7 +4878,7 @@ def test_cg_report_summarizes_and_flags_high():
 
 def test_cg_agent_blocks_on_high():
     """High/Critical active alerts BLOCK the step (ok=False) with a fix-and-rerun message."""
-    from steps.preflight import breaking, wiki, cg, cron
+    from steps.preflight import breaking, cg, cron
     from tools import checks
     orig = checks.fetch_cg_alerts
     checks.fetch_cg_alerts = lambda *a, **k: (True, [
@@ -4942,7 +4895,7 @@ def test_cg_agent_blocks_on_high():
 
 def test_cg_agent_passes_when_no_high():
     """Only Medium/Low active alerts → the step passes (report captured)."""
-    from steps.preflight import breaking, wiki, cg, cron
+    from steps.preflight import breaking, cg, cron
     from tools import checks
     orig = checks.fetch_cg_alerts
     checks.fetch_cg_alerts = lambda *a, **k: (True, [
@@ -5072,7 +5025,7 @@ def test_cg_blocked_step_skip_override():
 
 
 def test_cg_agent_fetch_error_holds():
-    from steps.preflight import breaking, wiki, cg, cron
+    from steps.preflight import breaking, cg, cron
     from tools import checks
     orig = checks.fetch_cg_alerts
     checks.fetch_cg_alerts = lambda *a, **k: (False, [], "403 forbidden")
@@ -5084,7 +5037,7 @@ def test_cg_agent_fetch_error_holds():
 
 
 def test_cron_check_passes_on_recent_scheduled_run():
-    from steps.preflight import breaking, wiki, cg, cron
+    from steps.preflight import breaking, cg, cron
     from tools import checks
     from datetime import datetime, timezone
     orig = checks.latest_scheduled_build
@@ -5099,7 +5052,7 @@ def test_cron_check_passes_on_recent_scheduled_run():
 
 
 def test_cron_check_blocks_when_stale():
-    from steps.preflight import breaking, wiki, cg, cron
+    from steps.preflight import breaking, cg, cron
     from tools import checks
     orig = checks.latest_scheduled_build
     checks.latest_scheduled_build = lambda *a, **k: (True, {
@@ -5112,7 +5065,7 @@ def test_cron_check_blocks_when_stale():
 
 
 def test_cron_check_blocks_when_no_scheduled_run():
-    from steps.preflight import breaking, wiki, cg, cron
+    from steps.preflight import breaking, cg, cron
     from tools import checks
     orig = checks.latest_scheduled_build
     checks.latest_scheduled_build = lambda *a, **k: (True, None, "no scheduled runs in recent history")
@@ -5159,7 +5112,7 @@ def test_local_mock_blocks_agent_step():
     assert st.get_step("preflight", "cg").status == "blocked"
     assert "preflight.cg" in st.pending_human
     assert st.get_step("preflight", "cg").note == "mocked: boom"
-    assert st.is_done("preflight", "wiki")            # unmocked agent ran for real
+    assert st.is_done("preflight", "cron")            # another agent ran for real
 
 
 def test_local_mock_completes_scout_step():
@@ -5277,20 +5230,15 @@ def test_step_detail_summarizes_note_for_column():
 
 
 def test_step_links_stored_on_state_and_rendered():
-    """Durable links (wiki page, CG alerts) are stored as structured StepState.links
+    """Durable links (e.g. CG alerts) are stored as structured StepState.links
     — not just embedded in note text — and surface in the Details column."""
     from datetime import date
     from orchestrator import render
-    from tools import checks
     st = ReleaseState(release_id="2026-09", ccd="2026-09-09", ccd_source="default",
                       owner_email="pedroro@microsoft.com")
     mocks = _safe({"preflight.cg": {"alerts": [
         {"alertState": "active", "severity": "high", "title": "CVE-X",
          "url": "https://ado/alert/1"}]}})
-    # let wiki.build run its real link logic offline
-    checks.wiki_page_exists = lambda *a, **k: False
-    checks.create_wiki_page = lambda *a, **k: checks.CheckResult(True, True, "created")
-    mocks.pop("preflight.wiki", None)               # unmock wiki → real build (link)
     orch = Orchestrator(CONFIG, st, as_of=date(2026, 9, 2), mocks=mocks)
     _pass_scout_checks(orch); orch.gate.sign()
     orch.run_until_gate()
@@ -5298,8 +5246,6 @@ def test_step_links_stored_on_state_and_rendered():
     # CG: config alerts page + the per-alert deep link, both stored
     cg_urls = [l["url"] for l in steps["cg"]["links"]]
     assert "https://ado/alert/1" in cg_urls and any("_componentGovernance" in u for u in cg_urls)
-    # wiki: its page url stored as a structured link
-    assert steps["wiki"]["links"] and "pagePath=" in steps["wiki"]["links"][0]["url"]
     # rendered column carries the link markdown
     view = render.status_view(orch.status_report())
     assert "[CVE-X](https://ado/alert/1)" in view
@@ -5317,7 +5263,7 @@ def test_step_knowledge_base_answers_step_questions():
     assert "Where is policy status?" in md
     # every Phase-0 step has an entry
     for sid in ("notice", "flight_reminder", "confirm_reminders", "lockdown",
-                "breaking", "cg", "vitals", "cron", "wiki"):
+                "breaking", "cg", "vitals", "cron"):
         assert kb.get_knowledge("preflight", sid), sid
     # a step with no entry → None (skill says "no knowledge yet", doesn't invent)
     assert kb.get_knowledge("monitor", "adoption") is None
@@ -6533,7 +6479,8 @@ def test_find_auth_release_build_extracts_version_and_commit(monkeypatch):
         return (False, None, "unexpected url")
     monkeypatch.setattr(P, "_ado_rest_get", fake_get)
     ok, info, _ = P.find_auth_release_build("release/2026/08/13")
-    assert ok and info == {"build_id": 177976153, "version": "6.2608.5658", "commit": _TA_COMMIT}
+    assert ok and info == {"build_id": 177976153, "version": "6.2608.5658",
+                           "commit": _TA_COMMIT, "build_number": None}
 
 
 def test_find_auth_release_build_none_when_no_build(monkeypatch):
@@ -6706,6 +6653,204 @@ def test_oneauth_merge_conflict_surfaces_not_forced(monkeypatch):
     monkeypatch.setattr(OA, "abandon_pr", lambda pid, timeout=60: (abandoned.__setitem__("n", abandoned["n"] + 1), (True, ""))[1])
     ok, info, detail = OA.merge_dev_into_ingestion(dry_run=False)
     assert ok is False and info["conflict"] is True and abandoned["n"] == 1 and "CONFLICT" in detail
+
+
+# ======================= telemetry_verify + wiki_payload (new steps) =======================
+
+def test_telemetry_verify_composes_kusto_needsskill():
+    """build() resolves the bug-bash version and returns a NeedsSkill(kusto_query) with the
+    checklist query + the record-telemetry follow-up."""
+    from steps.lib import mockctx
+    from steps.build_verify import telemetry_verify as TV
+    st = ReleaseState(release_id="2026-08")
+    with mockctx.active({"version": "6.2608.5658"}):
+        out = TV.build(st)
+    assert out.kind == "needs_skill" and out.tool == "kusto_query"
+    p = out.payload
+    assert p["cluster_uri"].startswith("https://") and p["database"]
+    assert 'AppInfo_Version == "6.2608.5658"' in p["query"] and "loadaccountsoperations" in p["query"]
+    assert p["query"].rstrip().endswith("| count")
+    assert p["followup_command"] == "record-telemetry" and out.record_as == "telemetry_verify"
+
+
+def test_telemetry_verify_blocks_without_version():
+    """No Authenticator release branch on state → Blocked (nothing to query)."""
+    from steps.build_verify import telemetry_verify as TV
+    st = ReleaseState(release_id="2026-08")               # no versions.authenticator
+    out = TV.build(st)
+    assert out.kind == "blocked" and "release branch" in out.reason
+
+
+def test_record_telemetry_pass_and_attention():
+    """record-telemetry: rows>0 → step done; rows==0 → attention (blocked) with the
+    Android Core Team heads-up in the detail."""
+    import tempfile as _tf
+    from orchestrator.commands import telemetry_cmd as TC
+    with _tf.TemporaryDirectory() as d:
+        rid = "2026-08"
+        _stub_build_defs("pass")
+        st = ReleaseState(release_id=rid, ccd="2026-08-26", owner_email="dev@microsoft.com")
+        orch = Orchestrator(CONFIG, st)
+        _pass_scout_checks(orch); orch.gate.sign()
+        C = __import__("orchestrator.cli_common", fromlist=["x"])
+        C.save_state(st, d, rid)
+
+        class A:
+            runs_root = d; release = rid; config = CONFIG; as_of = None; version = "6.2608.5658"
+            rows = "5"
+        assert TC.cmd_record_telemetry(A) == 0
+        assert C.load_state(d, rid).is_done("build_verify", "telemetry_verify")
+
+        # zero rows → attention
+        A.rows = "0"
+        assert TC.cmd_record_telemetry(A) == 2
+        s2 = C.load_state(d, rid)
+        step = s2.get_step("build_verify", "telemetry_verify")
+        assert step.status == "blocked" and "Android Core Team" in step.note
+
+
+def test_merged_release_prs_merges_working_and_release_dedupes():
+    """merged_release_prs windows completed `working` PRs by the previous/current release
+    branch dates, adds the release-branch bump PRs, and de-dupes newest-first."""
+    from tools import pipelines as P
+    calls = {}
+
+    def fake_get(url, timeout=90):
+        if "filter=heads/release/20" in url:
+            return (True, {"value": [{"name": "refs/heads/release/2026/07/10"},
+                                     {"name": "refs/heads/release/2026/08/13"}]}, "")
+        if "pullrequests" in url and "working" in url:
+            calls["working"] = url
+            return (True, {"value": [
+                {"pullRequestId": 100, "title": "Feature A", "closedDate": "2026-08-01T00:00:00Z"},
+                {"pullRequestId": 101, "title": "Feature B", "closedDate": "2026-08-05T00:00:00Z"}]}, "")
+        if "pullrequests" in url:
+            calls["release"] = url
+            return (True, {"value": [
+                {"pullRequestId": 101, "title": "Feature B (dup)", "closedDate": "2026-08-05T00:00:00Z"},
+                {"pullRequestId": 200, "title": "RC bump", "closedDate": "2026-08-12T00:00:00Z"}]}, "")
+        return (False, None, "unexpected")
+
+    of = P._ado_rest_get
+    P._ado_rest_get = fake_get
+    try:
+        ok, prs, det = P.merged_release_prs("release/2026/08/13")
+    finally:
+        P._ado_rest_get = of
+    assert ok, det
+    ids = [p["id"] for p in prs]
+    assert ids == [200, 101, 100]                      # newest-first, 101 de-duped
+    # the working window used the previous release branch date as the lower bound
+    assert "2026-07-10T00:00:00Z" in calls["working"]
+
+
+def test_wiki_payload_composes_page_and_filters_noise():
+    """compose_payload renders the App Version line, the merged-PR list (LEGO noise dropped),
+    the SDK versions, and the hand-curated placeholders."""
+    from steps.lib import mockctx
+    from steps.finalize import wiki_payload as W
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
+    st.versions = {"authenticator": "release/2026/08/13", "broker": "16.5.0",
+                   "common": "24.6.0", "msal": "8.4.2"}
+    knobs = {"version": {"version": "6.2608.5658", "build_number": "20260824.9",
+                         "build_url": "https://msazure.visualstudio.com/One/_build/results?buildId=177976153&view=results"},
+             "prs": [{"id": 1, "title": "Real feature"},
+                     {"id": 2, "title": "LEGO: check in to working."}]}
+    with mockctx.active(knobs):
+        ok, plan, det = W.compose_payload(st)
+    assert ok, det
+    c = plan["content"]
+    assert "#App Version\n6.2608.5658 [Pipelines - Run 20260824.9]" in c
+    assert "PR 1: Real feature" in c and "LEGO: check in to working" not in c   # noise filtered
+    assert "*   Broker: 16.5.0" in c and "*   Common: 24.6.0" in c and "*   Msal: 8.4.2" in c
+    assert "### Release: August 2026" in c
+    assert "_Add the Broker release-announcement email title._" in c
+    assert "Expected Feature flags rollouts" in c
+    assert plan["page_name"] == "August 2026 Release" and plan["pr_count"] == 1
+
+
+def test_wiki_payload_build_reports_create_or_update():
+    """build() is preview-first: it checks whether the page exists and names create vs update
+    in a NeedsSkill(create-payload-wiki) with the composed content in the payload."""
+    from steps.lib import mockctx
+    from steps.finalize import wiki_payload as W
+    from tools import checks
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
+    st.versions = {"authenticator": "release/2026/08/13", "broker": "16.5.0",
+                   "common": "24.6.0", "msal": "8.4.2"}
+    knobs = {"version": {"version": "6.2608.5658", "build_url": "https://x/y"},
+             "prs": [{"id": 1, "title": "Feature"}]}
+    oe = checks.wiki_page_exists
+    checks.wiki_page_exists = lambda *a, **k: True         # page exists → update
+    try:
+        with mockctx.active(knobs):
+            out = W.build(st)
+    finally:
+        checks.wiki_page_exists = oe
+    assert out.kind == "needs_skill" and out.tool == "create-payload-wiki"
+    assert out.payload["plan"]["action"] == "update"
+    assert "#App Version" in out.payload["plan"]["content"]
+    assert out.payload["followup_command"].startswith("create-payload-wiki --release 2026-08 --dry-run")
+
+
+def test_create_payload_wiki_dry_run_and_execute(capsys):
+    """create-payload-wiki --dry-run previews (no write); --execute creates the page and
+    records the step done with the page link."""
+    import tempfile as _tf
+    from orchestrator.commands import payload_wiki_cmd as PW
+    from tools import checks
+    with _tf.TemporaryDirectory() as d:
+        rid = "2026-08"
+        _stub_build_defs("pass")
+        st = ReleaseState(release_id=rid, ccd="2026-08-13", owner_email="dev@microsoft.com")
+        st.versions = {"authenticator": "release/2026/08/13", "broker": "16.5.0",
+                       "common": "24.6.0", "msal": "8.4.2"}
+        orch = Orchestrator(CONFIG, st)
+        _pass_scout_checks(orch); orch.gate.sign()
+        C = __import__("orchestrator.cli_common", fromlist=["x"])
+        C.save_state(st, d, rid)
+        # the step's version/prs mocks so compose_payload runs offline (no ADO)
+        orch_mocks = {"finalize.wiki_payload": {
+            "version": {"version": "6.2608.5658", "build_url": "https://x/y"},
+            "prs": [{"id": 1, "title": "Feature"}]}}
+
+        # patch the checks helpers so no network/az
+        oe, oc = checks.wiki_page_exists, checks.create_wiki_page
+        created = {}
+        checks.wiki_page_exists = lambda *a, **k: False        # absent → create
+        def _create(org, project, wiki, path, content, timeout=60):
+            created["path"] = path
+            return checks.CheckResult(True, True, "created")
+        checks.create_wiki_page = _create
+
+        class A:
+            runs_root = d; release = rid; config = CONFIG; as_of = None
+            execute = False; dry_run = True
+
+        # surface the step mocks on the orch the command loads (so compose runs offline)
+        import orchestrator.cli_common as _CC
+        real_load = _CC.load_orch
+        def fake_load(runs_root, release, config, as_of=None):
+            s, o = real_load(runs_root, release, config, as_of)
+            o.mocks = orch_mocks
+            return s, o
+        _CC.load_orch = fake_load
+        try:
+            assert PW.cmd_create_payload_wiki(A) == 0        # dry-run
+            out = capsys.readouterr().out
+            assert "PAGE CONTENT (preview)" in out and "#App Version" in out
+            assert not created                                # nothing written on dry-run
+
+            A.execute = True; A.dry_run = False
+            assert PW.cmd_create_payload_wiki(A) == 0
+            assert created["path"].endswith("August 2026 Release")
+            s2 = C.load_state(d, rid)
+            assert s2.is_done("finalize", "wiki_payload")
+            step = s2.get_step("finalize", "wiki_payload")
+            assert step.links and "pagePath=" in step.links[0]["url"]
+        finally:
+            _CC.load_orch = real_load
+            checks.wiki_page_exists, checks.create_wiki_page = oe, oc
 
 
 if __name__ == "__main__":

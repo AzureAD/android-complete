@@ -468,14 +468,6 @@ preflight.cron:
     build history. Blocks if there's no recent scheduled run or it's stale.
   how: "If blocked, investigate the pipeline's schedule (it may be disabled/broken), fix it, and rerun the step — or skip to override."
 
-preflight.wiki:
-  summary: "Create the per-release payload wiki subpage under the history parent page."
-  what: >
-    Creates '<Month> <Year> Release' under the standing Monthly Releases Payloads
-    History page; Phase 2 later fills in the built versions. Duplicate-safe: if the
-    month's page already exists it's left untouched and a numbered page is created.
-  how: "Runs automatically; the created page link is stored on the step and shown in the status Details column."
-
 # =============================== Phase 1 · ccd ===============================
 
 ccd.final_reminder:
@@ -639,6 +631,34 @@ build_verify.auth_ecs:
       a: "The build already carries adAccountsVersion '0.0.…-rc-RC<N>-ecs' (RC iteration + ECS flavor) and runs on 'working-<release-branch>', so Scout finds it by branch + that version (highest RC N, newest id) — no orchestrator involvement. The UI-test run is then matched deterministically by its authenticatorBuild pipeline-resource id."
     - q: "The auth build passed but there's no UI-test result — is that a block?"
       a: "No. The UI test auto-triggers off build completion, so a missing result just means it hasn't run yet — Scout holds and polls, then applies the gate once it completes."
+
+build_verify.telemetry_verify:
+  summary: "Confirm the bug-bash APK version's telemetry is reaching the ADX/Kusto cluster."
+  what: >
+    Once the Authenticator release-app build (AndroidBuild-1ES) exists, its version IS the
+    bug-bash APK version. This step runs the checklist's telemetry query —
+    `loadaccountsoperations | where AppInfo_Version == "<version>" | count` — against the ADX
+    release cluster and passes only when the count is > 0 (proof the build's instrumentation is
+    reaching Kusto from at least one device). This is checklist Phase 3.3 Step 9, relocated to
+    run right after the Authenticator ECS build is verified.
+  who: >
+    Scout runs it automatically (a scout-assisted check) — the deterministic engine can't reach
+    the Kusto MCP. The version is discovered from the release-app build; no user action unless it
+    comes back empty.
+  where:
+    - "ADX release-telemetry cluster + database (same as the adx_access readiness item)."
+    - "Table: loadaccountsoperations · version column: AppInfo_Version."
+  how: >
+    Runs via step-action → the kusto_query MCP with the step's cluster_uri/database/query. Read
+    the returned Count, then run the follow-up `record-telemetry --release <id> --rows <N>
+    --version <ver>`: rows > 0 records pass; rows == 0 records `attention` — post a heads-up in
+    the Android Core Team channel before declaring the bug bash complete, then re-run the check.
+    For a dry test, set the `version` mock to query a version you know has telemetry.
+  faqs:
+    - q: "Why is a Phase-3 checklist step (3.3 S9) run in Phase 2?"
+      a: "Because the check only needs the built APK version to exist, and running it right after auth_ecs gives an early smoke-signal that the build's telemetry pipeline works — before the go/hold at rc_report. Placement was the release owner's call."
+    - q: "What if telemetry is sparse right after the build?"
+      a: "The bar is just non-zero. As soon as the owner or any tester installs the build, rows appear. Zero rows means telemetry isn't flowing at all — worth surfacing before the bash closes."
 
 build_verify.rc_report:
   summary: "Consolidate the RC data, email the report, and decide: auto-advance vs hold for attestation."
@@ -1277,4 +1297,40 @@ finalize.tag_authenticator:
       a: "The exact commit the release-app build was built from (build.sourceVersion). Usually that equals the release-branch head, but tagging the built commit is deterministic even if commits land afterward."
     - q: "Where does the version come from?"
       a: "The release-app build (AndroidBuild-1ES) carries the final version as a numeric ADO build-tag; Scout reads it — it doesn't compute or guess the version."
+
+finalize.wiki_payload:
+  summary: "Create/update the monthly release payload wiki page (preview-first)."
+  what: >
+    Fills the release PAYLOAD wiki subpage under IdentityWiki / 'Monthly Releases Payloads
+    History'. Auto-fills the deterministic parts — the '#App Version' line (the Authenticator
+    version + its AndroidBuild-1ES run link, the NEW release pipeline), the merged-PR list for
+    this release (derived from the auth working branch + release-branch bumps), and the SDK
+    versions (Broker/Common/MSAL) — and leaves the hand-curated sections (release-notes email
+    title, sign-offs, expected feature-flag rollouts) as clearly-marked placeholders. This is
+    checklist Phase 2.2 Step 6, relocated to the END of the release (after tag_authenticator) so
+    every version/commit/tag is final. It REPLACES the old Phase-0 'wiki' step (no more empty
+    placeholder page created early).
+  who: >
+    Scout composes it (an agent step) and PREVIEWS the page before writing — the release owner
+    reviews the derived App Version + PR list, then approves the write.
+  where:
+    - "wiki: IdentityWiki / IdentityWiki.wiki, parent 'Monthly Releases Payloads History'"
+    - "page: '<Month> <Year> Release' (e.g. 'August 2026 Release')"
+    - "version + PR list: the Authenticator release-app build + tools.merged_release_prs"
+  how: >
+    Runs via step-action → returns a preview; run `create-payload-wiki --release <id> --dry-run`
+    to show the full composed markdown + target page (create vs update), then `--execute` to
+    write. Create-or-update: an existing page is updated ETag-guarded; otherwise it's created.
+    Test with the `version` / `prs` / `page_name` inject mocks or `fail`.
+  consequences: >
+    A real WRITE to the IdentityWiki payload page (create or content overwrite). The email
+    title, sign-offs and feature-flag sections are placeholders the owner completes by hand.
+  faqs:
+    - q: "Why did this move from Phase 0 to Phase 4?"
+      a: "The old Phase-0 step only created an empty placeholder page and relied on a later manual fill. Doing it once at the end — when the version, commit, tag and SDK versions are all final — is simpler and avoids the empty-note step."
+    - q: "Is the whole page auto-filled?"
+      a: "No. App Version + build link, the merged-PR list, and the SDK versions are derived; the release-notes email title, sign-offs, and expected feature-flag rollouts are hand-curated placeholders. You review everything in the preview before it writes."
+    - q: "Why does the App Version link a different pipeline than older payload pages?"
+      a: "The auth build pipeline changed — the version now comes from the AndroidBuild-1ES release-app build (def 355246). Older payload pages link the previous pipeline; this step links the new one via find_auth_release_build."
+
 

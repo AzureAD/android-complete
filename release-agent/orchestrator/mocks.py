@@ -12,9 +12,9 @@ File format (top-level map of "<phase>.<step>" → behavior):
     preflight.cg:
       outcome: done               # done | blocked
       note: "mocked: CG clean"
-    preflight.wiki:
+    finalize.wiki_payload:
       outcome: blocked
-      reason: "mocked: pretend the wiki create failed"
+      reason: "mocked: pretend the payload-wiki write failed"
 
 A `mocks:` wrapper key is also accepted. `outcome: done` marks the step complete;
 `outcome: blocked` holds it for the owner (with `reason`/`note`). Gate steps are

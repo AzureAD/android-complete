@@ -34,7 +34,6 @@ phases:
       - { id: oneauth_access,  name: "Verify OneAuth write access (create a probe branch)", owner: agent, maps_to: [S8] }
       - { id: vitals,          name: "Confirm Play Console vitals & policy status reviewed", owner: human, attest: true, maps_to: [S9] }
       - { id: cron,            name: "Verify Calendar Checker scheduled",       owner: agent, maps_to: [S10] }
-      - { id: wiki,            name: "Create release payload wiki subpage",     owner: agent, maps_to: [S0] }
 
   - id: ccd
     name: "Code Complete Day"
@@ -55,13 +54,8 @@ phases:
       - { id: orchestrator_health, name: "Verify Release Orchestrator health (parked at Remove RC Tags)", owner: agent, maps_to: [B1] }
       - { id: mrwp_ecs,            name: "Verify MRWP (ECS) ran to completion + tests",  owner: agent, maps_to: [B2] }
       - { id: mrwp_local,          name: "Verify MRWP (Local) ran to completion + tests", owner: agent, maps_to: [B3] }
-      # auth_ecs tracks the Authenticator ECS app build + its post-build UI tests (msazure/One,
-      # cross-org). SEPARATE section with its OWN gate (both Firebase suites >=90%); it blocks
-      # on its own but does NOT feed the MRWP 90% UI gate below.
       - { id: auth_ecs,            name: "Verify Authenticator ECS build + UI tests", owner: agent, maps_to: [B3] }
-      # rc_report is the Phase-2 go/no-go: it emails the RC report AND applies the 90% UI
-      # gate — clean/warn (>=90%) proceed to bug bash; <90% BLOCKS for owner investigation.
-      # No separate human approval step: the gate IS the decision.
+      - { id: telemetry_verify,    name: "Verify bug-bash telemetry in Kusto", owner: agent, source: scout, maps_to: [B3] }
       - { id: rc_report,           name: "Email RC verification report + apply the 90% UI gate", owner: agent, source: scout, maps_to: [B4] }
 
   - id: bug_bash
@@ -92,6 +86,7 @@ phases:
       - { id: oneauth_common_pr, name: "Ingest published Common into OneAuth (PR to dev)", owner: agent, maps_to: [F5] }
       - { id: release_announcement, name: "Announce the release in the 'General' Teams channel", owner: agent, source: scout, maps_to: [F4] }
       - { id: tag_authenticator, name: "Tag the Authenticator release commit",  owner: agent, maps_to: [F6] }
+      - { id: wiki_payload,      name: "Create/update the release payload wiki page", owner: agent, maps_to: [S0, F6] }
 
   - id: rollout_start
     name: "Rollout Start"

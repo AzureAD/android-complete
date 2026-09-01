@@ -50,7 +50,6 @@ preflight.cg:
 # preflight.breaking:        { changelog: "vNext\n----\n- [MINOR] x (#1)\nVersion 1.0.0\n" }
 # preflight.cg:              { alerts: [] }
 # preflight.cron:            { run: { queueTime: "2026-08-14T12:00:00Z", result: succeeded } }
-# preflight.wiki:            { outcome: done }
 
 
 # ============================================================================
@@ -67,7 +66,6 @@ preflight.cg:
 # preflight.cg:                { outcome: done }                  # agent  (active above)
 # preflight.vitals:            { outcome: done }                  # attest
 # preflight.cron:              { outcome: done }                  # agent
-# preflight.wiki:              { outcome: done }                  # agent
 
 # ---- Phase 1 · ccd ----
 # ccd.final_reminder:  { outcome: done }  ·  send_to: <email>   # scout (email)
@@ -82,6 +80,7 @@ preflight.cg:
 # build_verify.payload:    { outcome: done }   # agent
 # build_verify.mrwp_rc:    { outcome: done }   # agent
 # build_verify.rc_report:  { outcome: done }   # scout (emails RC report + applies the 90% UI gate)
+# build_verify.telemetry_verify: { outcome: done }   # scout — or { version: "6.2608.5658" } to query a real version
 
 # ---- Phase 3 · bug_bash ----
 # bug_bash.clone_plans_broker: { outcome: done }   # agent (copy Broker master plan)
@@ -98,6 +97,7 @@ preflight.cg:
 # finalize.verify_pub:  { results: {common4j: published, common: published, msal: published} }  # agent
 # finalize.release_announcement: 🛰️ scout — { post_to: {...}, cc_mode: self, self_email: <you> }
 # finalize.tag_authenticator: { outcome: done }   # agent
+# finalize.wiki_payload:      { outcome: done }   # agent (preview-first) — or { version: {...}, prs: [...] }
 
 # ---- Phase 5 · rollout_start ----
 # rollout_start.notice:        { outcome: done }   # agent
