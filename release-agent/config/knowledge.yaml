@@ -944,28 +944,6 @@ bug_bash.native_auth_signoff:
     - q: "What is this confirming?"
       a: "That the Native Auth team ran their tests and signed off — the confirmation they were asked to send back in notify_native_auth."
 
-bug_bash.did_signoff:
-  summary: "Request the DID sign-off from the DID point of contact (Sowmya Malayanur)."
-  what: >
-    The second of the two bug-bash sign-offs. Scout sends a 1:1 Teams message to the DID point
-    of contact (Sowmya Malayanur, Sowmya.Malayanur@microsoft.com) asking for the DID sign-off
-    (the message links the Broker test plan), then records it when it comes back. Completes
-    once the DID sign-off is captured.
-  who: >
-    Scout runs it during `next` (a scout step). It composes the DID request and sends it to
-    the DID contact (workiq_create_chat_by_email → workiq_send_chat_message); until the
-    sign-off is recorded the step holds.
-  how: >
-    Record with `record-did-signoff --release <id> --by '<who>'` (marks done); without --by it
-    holds for the owner (the request having been sent). Idempotent — once recorded it reports
-    done without re-sending.
-  links:
-    - name: "DID point of contact — Sowmya Malayanur"
-      url: "mailto:Sowmya.Malayanur@microsoft.com"
-  faqs:
-    - q: "Who is the DID contact?"
-      a: "Sowmya Malayanur (Sowmya.Malayanur@microsoft.com) — Scout sends her the DID sign-off request when this step runs."
-
 bug_bash.bugbash_complete:
   summary: "The release owner attests the Bug Bash is finished — the gate that closes the bash."
   what: >

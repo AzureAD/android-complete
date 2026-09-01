@@ -92,7 +92,6 @@ _SAFE_AGENTS = {
     "bug_bash.activate_chat": {"outcome": "done", "note": "meeting chat activated (test)"},
     "bug_bash.bugbash_updates": {"outcome": "done", "note": "first bug-bash update posted (test)"},
     "bug_bash.native_auth_signoff": {"outcome": "done", "note": "native auth sign-off recorded (test)"},
-    "bug_bash.did_signoff": {"outcome": "done", "note": "DID sign-off recorded (test)"},
     # Phase-4 finalize scout post — short-circuit so flow tests never hit Teams.
     "finalize.release_announcement": {"outcome": "done", "note": "release announced (test)"},
     # Phase-4 verify_pub — real agent (Maven Central HEADs). Short-circuit for flow tests.
@@ -665,8 +664,8 @@ def test_holds_at_first_hold():
     # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local/auth_ecs (5) + rc_report (scout
     # email, mocked done here) (1) + Phase-3 clone_plans_broker/clone_plans_auth/
     # distribute_tests/ui_test_status (4) + send_invite + activate_chat (scout, mocked done) (2) +
-    # notify_native_auth (1) + bugbash_updates (1) + native_auth_signoff + did_signoff (2).
-    assert sum(1 for a in actions if a.kind == "ran") == 21
+    # notify_native_auth (1) + bugbash_updates (1) + native_auth_signoff (1).
+    assert sum(1 for a in actions if a.kind == "ran") == 20
 
 
 def test_gate_blocks_until_approved():
@@ -3646,7 +3645,7 @@ def test_record_nativeauth_notify_stores_or_holds():
         assert after.get_step("bug_bash", "notify_native_auth").status == "blocked"
 
 
-# ---- Phase 3: native_auth_signoff + did_signoff ----
+# ---- Phase 3: native_auth_signoff ----
 
 def test_native_auth_signoff_composes_and_idempotent():
     """native_auth_signoff is a scout step that attests the Native Auth sign-off (no outbound
@@ -3665,51 +3664,27 @@ def test_native_auth_signoff_composes_and_idempotent():
     assert out2["kind"] == "done" and "silviu" in out2["note"]
 
 
-def test_did_signoff_composes_did_request_and_idempotent():
-    """did_signoff is a scout step: NeedsSkill composing the DID request to Sowmya (outbound),
-    linking the plan; once recorded it's idempotent-done."""
-    import steps as _steps
-    from orchestrator.outcomes import as_dict
-    from orchestrator.state import StepState
-    from steps.bug_bash.did_signoff import DID_CONTACT
-    st = _na_state()
-    out = as_dict(_steps.get_step("bug_bash", "did_signoff").build(st))
-    assert out["kind"] == "needs_skill" and out["tool"] == "record-did-signoff"
-    assert out["payload"]["did_contact"]["email"] == "Sowmya.Malayanur@microsoft.com"
-    assert DID_CONTACT["name"].split()[0] in out["payload"]["content"]   # greets Sowmya
-    assert "DID sign-off" in out["payload"]["content"] and "planId=3730001" in out["payload"]["content"]
-    assert out["outbound"] is True
-    st.set_step("bug_bash", "did_signoff", StepState(status="done", data={"by": "sowmya"}))
-    out2 = as_dict(_steps.get_step("bug_bash", "did_signoff").build(st))
-    assert out2["kind"] == "done" and "sowmya" in out2["note"]
-
-
 def test_record_signoff_commands_store_or_hold():
-    """record-native-auth-signoff / record-did-signoff store --by + mark done; omitting --by
-    holds the step for the owner."""
+    """record-native-auth-signoff stores --by + marks done; omitting --by holds the step for
+    the owner."""
     import tempfile, argparse
     from orchestrator import cli_common as _C
     from orchestrator.commands import bugbash_chat as BC
     from steps.bug_bash.native_auth_signoff import native_auth_signed_by
-    from steps.bug_bash.did_signoff import did_signed_by
     with tempfile.TemporaryDirectory() as d:
         rid = "2026-08"
         _stub_build_defs("pass")
         _C.save_state(_na_state(), d, rid)
-        # native auth: with --by → done
+        # without --by → hold
+        ns_hold = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, by=None)
+        assert BC.cmd_record_native_auth_signoff(ns_hold) == 2
+        held = _C.load_state(d, rid)
+        assert not held.is_done("bug_bash", "native_auth_signoff")
+        assert held.get_step("bug_bash", "native_auth_signoff").status == "blocked"
+        # with --by → done
         ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, by="silviu")
         assert BC.cmd_record_native_auth_signoff(ns) == 0
         assert native_auth_signed_by(_C.load_state(d, rid)) == "silviu"
-        # DID: without --by → hold
-        ns2 = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, by=None)
-        assert BC.cmd_record_did_signoff(ns2) == 2
-        held = _C.load_state(d, rid)
-        assert not held.is_done("bug_bash", "did_signoff")
-        assert held.get_step("bug_bash", "did_signoff").status == "blocked"
-        # DID: with --by → done
-        ns3 = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, by="sowmya")
-        assert BC.cmd_record_did_signoff(ns3) == 0
-        assert did_signed_by(_C.load_state(d, rid)) == "sowmya"
 
 
 # ---- Phase 3: bugbash_updates (periodic poster) ----

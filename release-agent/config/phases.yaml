@@ -77,7 +77,6 @@ phases:
       - { id: activate_chat,      name: "Activate the Bug Bash meeting chat + store its id", owner: agent, source: scout, maps_to: [T2] }
       - { id: bugbash_updates, name: "Post bug-bash progress updates (first post + 2h poller)", owner: agent, source: scout, maps_to: [T2] }
       - { id: native_auth_signoff, name: "Native Auth team sign-off (attest)",    owner: agent, source: scout, maps_to: [T5] }
-      - { id: did_signoff,      name: "DID sign-off (request from DID contact)", owner: agent, source: scout, maps_to: [T5] }
       - { id: ui_failures,     name: "Surface Phase 2 UI failure list",         owner: human, maps_to: [T4] }
       - { id: bugbash_complete, name: "Bug bash complete + signed off",         owner: human, source: scout, gate: true }
 

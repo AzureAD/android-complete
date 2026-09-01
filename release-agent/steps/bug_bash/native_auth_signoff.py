@@ -1,7 +1,7 @@
 """Step: `native_auth_signoff` — the release engineer attests the Native Auth team finished
 their tests and signed off (Phase 3, bug_bash).
 
-This is the first of the two bug-bash sign-offs (the other is `did_signoff`). No message is
+This is the bug-bash sign-off. No message is
 sent — the release engineer simply confirms the Native Auth team completed their tests and
 signed off (the confirmation they were asked to send back in `notify_native_auth`). The skill
 captures who signed off.

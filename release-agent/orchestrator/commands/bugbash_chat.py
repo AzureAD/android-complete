@@ -88,13 +88,6 @@ def cmd_record_native_auth_signoff(args):
     return _record_signoff(orch, args, "native_auth_signoff", "Native Auth")
 
 
-def cmd_record_did_signoff(args):
-    """Record the DID sign-off (from the DID contact, Sowmya Malayanur). --by given → store +
-    mark done; omitted → hold the step for the owner."""
-    _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    return _record_signoff(orch, args, "did_signoff", "DID")
-
-
 def _record_signoff(orch, args, step_id, label):
     by = (args.by or "").strip()
     if not by:
@@ -141,10 +134,3 @@ def register(sub):
     s.add_argument("--by", default=None, help="Who signed off Native Auth. Omit to hold the step.")
     s.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     s.set_defaults(func=cmd_record_native_auth_signoff)
-
-    dd = sub.add_parser("record-did-signoff",
-                        help="Record the DID sign-off (from the DID contact, Sowmya Malayanur)")
-    dd.add_argument("--release", required=True)
-    dd.add_argument("--by", default=None, help="Who gave the DID sign-off. Omit to hold the step.")
-    dd.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
-    dd.set_defaults(func=cmd_record_did_signoff)
