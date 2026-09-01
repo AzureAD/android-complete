@@ -1145,6 +1145,44 @@ finalize.verify_pub:
     - q: "What version is Common4j checked at?"
       a: "The Common version. The orchestrator publishes Common4j with Common4jVersion = NextCommonVersion, so there's no separate Common4j version to track."
 
+finalize.oneauth_common_pr:
+  summary: "Ingest the published Common version into OneAuth and raise a PR into dev."
+  what: >
+    After the release publishes and verify_pub confirms Common is live on Maven Central, update
+    OneAuth to consume that final (non-RC) Common version. On the standing
+    `android/common-ingestion` branch it bumps the AndroidCommon version in FOUR files — the gradle
+    version catalog (msIdentityCommon in libs.versions.toml), the CG manifest
+    (com.microsoft.identity:common maven version in deps/cgmanifest.json), the deps/README.md
+    'MSAL Android Common' table row, and a new '(Android) Ingest AndroidCommon <ver>' CHANGELOG.md
+    bullet — then opens a PR into `dev`.
+  who: >
+    Scout does the work (an agent step, PREVIEW-FIRST like integ_prs). The release owner reviews
+    the preview and triggers the write.
+  where:
+    - "repo: OneAuth — office.visualstudio.com/OneAuth/_git/OneAuth (config/coordinates.yaml repos.oneauth)"
+    - "branch: android/common-ingestion -> dev"
+    - "version: state.versions.common (final non-RC Common) + state.versions.msal (for the changelog line)"
+  how: >
+    Preview: `create-oneauth-common-pr --release <id>` prints the plan (merge-needed?, the 4 file
+    edits, existing-vs-new PR) and writes NOTHING. Execute: `create-oneauth-common-pr --release
+    <id> --execute` performs, in order — (1) a SERVER-SIDE merge of dev into android/common-ingestion
+    (a transient dev->ingestion PR that ADO completes; the ingestion branch is diverged from dev, so
+    a merge — not a fast-forward — is required; a merge CONFLICT holds the step for a human, never
+    forced), (2) a single commit bumping the 4 files, (3) open/reuse the android/common-ingestion->dev
+    PR. Idempotent: an existing open PR is reused. OneAuth is a huge monorepo, so ALL git ops go
+    through the ADO REST API (no local clone). Test with the `common`/`msal` mocks.
+  consequences: >
+    A real WRITE to OneAuth: a server-side merge commit on android/common-ingestion, a version-bump
+    commit, and a PR into dev. The merge is non-destructive (preserves the ingestion branch's
+    history); on conflict nothing is forced — the step holds for manual resolution.
+  faqs:
+    - q: "Why merge dev into the ingestion branch instead of fast-forwarding?"
+      a: "android/common-ingestion is a long-lived staging branch that's diverged from dev (its ingestion PRs squash-merge, so its own commits never land in dev). A fast-forward would discard its unique history — a real merge is required, done server-side by ADO."
+    - q: "What version does it write?"
+      a: "state.versions.common — the final non-RC Common version published to Maven Central (verify_pub confirms it first). The changelog line also references state.versions.msal."
+    - q: "What if the merge conflicts?"
+      a: "The step holds (attention) and surfaces it — a human resolves the dev->ingestion merge, then re-runs. Scout never force-merges."
+
 finalize.tag_authenticator:
   summary: "Tag the Auth App's released commit with its version (no 'v' prefix) in the auth repo."
   what: >

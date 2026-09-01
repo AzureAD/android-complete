@@ -102,6 +102,9 @@ _SAFE_AGENTS = {
     # Phase-4 tag_authenticator — real agent (msazure/One git write). Short-circuit for flow
     # tests; dedicated tag_authenticator tests exercise its logic offline.
     "finalize.tag_authenticator": {"outcome": "done", "note": "auth release tagged (test)"},
+    # Phase-4 oneauth_common_pr — real agent (OneAuth REST reads/merge/PR). Short-circuit so flow
+    # tests never hit the network; dedicated tests exercise its logic offline.
+    "finalize.oneauth_common_pr": {"outcome": "done", "note": "OneAuth common ingested (test)"},
 }
 
 
@@ -6326,6 +6329,170 @@ def test_find_auth_release_build_none_when_no_build(monkeypatch):
     monkeypatch.setattr(P, "_ado_rest_get", lambda url, t: (True, {"value": []}, ""))
     ok, info, detail = P.find_auth_release_build("release/2026/08/13")
     assert ok and info is None and "no succeeded release-app build" in detail
+
+
+# ---- Phase 4: oneauth_common_pr (OneAuth Common ingestion) ----
+
+_OA_FILES = {
+    "toml": ('[versions]\n'
+             'msIdentityCommon = "24.6.0"\n'
+             'msIdentityCommonTest = "0.0.20260506.3"\n'),
+    "cgmanifest": ('{\n  "Registrations": [\n    {\n      "component": {\n'
+                   '        "type": "maven",\n        "maven": {\n'
+                   '          "groupId": "com.microsoft.identity",\n'
+                   '          "artifactId": "common",\n'
+                   '          "version": "24.6.0"\n        }\n      }\n    }\n  ]\n}\n'),
+    "readme": ('| Name | Version | License |\n'
+               '| MSAL Android Common              | 24.6.0   | [MIT] | Prod | https://x |\n'),
+    "changelog": ('# Changelog\n\n## [Unreleased]\n### Breaking Changes\n\n'
+                  '### Other Changes\n- (iOS) something.\n\n## [11.2.0] (2026-08-26)\n- old.\n'),
+}
+
+
+def test_oneauth_edit_functions_are_minimal_and_correct():
+    """Each of the 4 edit functions makes exactly the intended change; toml does NOT touch the
+    separate msIdentityCommonTest version."""
+    from tools import oneauth as OA
+    t = OA.edit_toml(_OA_FILES["toml"], "24.7.0")
+    assert 'msIdentityCommon = "24.7.0"' in t
+    assert 'msIdentityCommonTest = "0.0.20260506.3"' in t          # untouched
+    cg = OA.edit_cgmanifest(_OA_FILES["cgmanifest"], "24.7.0")
+    assert '"version": "24.7.0"' in cg and '"artifactId": "common"' in cg
+    rd = OA.edit_readme(_OA_FILES["readme"], "24.7.0")
+    assert "| MSAL Android Common              | 24.7.0" in rd
+    cl = OA.edit_changelog(_OA_FILES["changelog"], "24.7.0", "8.5.0")
+    line = "- (Android) Ingest AndroidCommon 24.7.0. Any apps that still use MSAL.Android *MUST* update to 8.5.0."
+    # inserted as the FIRST bullet under Unreleased -> Other Changes (before the iOS line)
+    assert line in cl and cl.index(line) < cl.index("- (iOS) something.")
+
+
+def test_oneauth_edit_functions_raise_on_missing_anchor():
+    """A missing anchor raises ValueError (never a silent no-op bump)."""
+    from tools import oneauth as OA
+    import pytest as _pytest
+    for fn, args in [(OA.edit_toml, ("nope\n", "1.0")),
+                     (OA.edit_cgmanifest, ("{}", "1.0")),
+                     (OA.edit_readme, ("| other |\n", "1.0")),
+                     (OA.edit_changelog, ("# Changelog\n", "1.0", "2.0"))]:
+        with _pytest.raises(ValueError):
+            fn(*args)
+
+
+def test_oneauth_edit_changelog_idempotent():
+    """Re-running with the same version doesn't add a duplicate bullet."""
+    from tools import oneauth as OA
+    once = OA.edit_changelog(_OA_FILES["changelog"], "24.7.0", "8.5.0")
+    twice = OA.edit_changelog(once, "24.7.0", "8.5.0")
+    assert once == twice
+
+
+def test_oneauth_apply_edits_returns_only_changed_paths():
+    """apply_edits maps changed files to their new content, keyed by repo path."""
+    from tools import oneauth as OA
+    changed = OA.apply_edits(dict(_OA_FILES), "24.7.0", "8.5.0")
+    assert set(changed.keys()) == {OA.FILES["toml"], OA.FILES["cgmanifest"],
+                                   OA.FILES["readme"], OA.FILES["changelog"]}
+
+
+def _oa_state():
+    st = ReleaseState(release_id="2026-08")
+    st.record_versions({"common": "24.7.0", "msal": "8.5.0"})
+    return st
+
+
+def test_oneauth_common_pr_preview_computes_plan():
+    """build() is preview-first: reads versions, merge-needed, edits, existing PR → NeedsSkill."""
+    from steps.lib import mockctx
+    from steps.finalize import oneauth_common_pr as S
+    from orchestrator.outcomes import as_dict
+    from tools import oneauth as OA
+    o_ab, o_rt, o_fp = OA.ahead_behind, OA.read_text, OA.find_open_pr
+    OA.ahead_behind = lambda base, target, timeout=60: (True, {"ahead": 29, "behind": 35}, "")
+    key_by_path = {OA.FILES[k]: k for k in OA.FILES}
+    OA.read_text = lambda path, ref, ref_type="branch", timeout=60: (True, _OA_FILES[key_by_path[path]], "")
+    OA.find_open_pr = lambda source, target, timeout=60: (True, None, "")
+    try:
+        with mockctx.active({}):
+            out = as_dict(S.build(_oa_state()))
+    finally:
+        OA.ahead_behind, OA.read_text, OA.find_open_pr = o_ab, o_rt, o_fp
+    assert out["kind"] == "needs_skill" and out["tool"] == "create-oneauth-common-pr"
+    p = out["payload"]["plan"]
+    assert p["common"] == "24.7.0" and p["msal"] == "8.5.0"
+    assert p["merge_needed"] is True and p["behind"] == 35
+    assert len(p["changed_files"]) == 4 and p["existing_pr"] is None
+    assert "create-oneauth-common-pr --release 2026-08 --dry-run" in out["payload"]["followup_command"]
+
+
+def test_oneauth_common_pr_reuses_existing_pr_in_plan():
+    """An existing open ingestion->dev PR is surfaced in the plan (idempotency)."""
+    from steps.lib import mockctx
+    from steps.finalize import oneauth_common_pr as S
+    from orchestrator.outcomes import as_dict
+    from tools import oneauth as OA
+    o_ab, o_rt, o_fp = OA.ahead_behind, OA.read_text, OA.find_open_pr
+    OA.ahead_behind = lambda base, target, timeout=60: (True, {"ahead": 0, "behind": 0}, "")
+    key_by_path = {OA.FILES[k]: k for k in OA.FILES}
+    OA.read_text = lambda path, ref, ref_type="branch", timeout=60: (True, _OA_FILES[key_by_path[path]], "")
+    OA.find_open_pr = lambda source, target, timeout=60: (True, {"id": 99, "url": "u", "title": "t"}, "")
+    try:
+        with mockctx.active({}):
+            out = as_dict(S.build(_oa_state()))
+    finally:
+        OA.ahead_behind, OA.read_text, OA.find_open_pr = o_ab, o_rt, o_fp
+    p = out["payload"]["plan"]
+    assert p["merge_needed"] is False and p["existing_pr"] == {"id": 99, "url": "u", "title": "t"}
+
+
+def test_oneauth_common_pr_blocks_without_versions():
+    """Missing Common/MSAL versions → Blocked."""
+    from steps.lib import mockctx
+    from steps.finalize import oneauth_common_pr as S
+    with mockctx.active({}):
+        out = S.build(ReleaseState(release_id="2026-08"))
+    assert out.kind == "blocked" and "Common and MSAL" in out.reason
+
+
+def test_oneauth_common_pr_blocks_on_missing_anchor():
+    """If a file's bump anchor can't be found, build() blocks (no silent no-op)."""
+    from steps.lib import mockctx
+    from steps.finalize import oneauth_common_pr as S
+    from tools import oneauth as OA
+    o_ab, o_rt, o_fp = OA.ahead_behind, OA.read_text, OA.find_open_pr
+    OA.ahead_behind = lambda base, target, timeout=60: (True, {"ahead": 0, "behind": 1}, "")
+    OA.read_text = lambda path, ref, ref_type="branch", timeout=60: (True, "garbage with no anchors", "")
+    OA.find_open_pr = lambda source, target, timeout=60: (True, None, "")
+    try:
+        with mockctx.active({}):
+            out = S.build(_oa_state())
+    finally:
+        OA.ahead_behind, OA.read_text, OA.find_open_pr = o_ab, o_rt, o_fp
+    assert out.kind == "blocked" and "anchors" in out.reason
+
+
+def test_oneauth_common_pr_config_is_agent():
+    """phases.yaml classifies oneauth_common_pr as an agent step in finalize."""
+    import yaml as _yaml
+    cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
+    fin = next(p for p in cfg["phases"] if p["id"] == "finalize")
+    s = next(x for x in fin["steps"] if x["id"] == "oneauth_common_pr")
+    assert s.get("owner") == "agent" and s.get("source") != "scout"
+    # runs AFTER verify_pub (Common must be published first)
+    ids = [x["id"] for x in fin["steps"]]
+    assert ids.index("oneauth_common_pr") > ids.index("verify_pub")
+
+
+def test_oneauth_merge_conflict_surfaces_not_forced(monkeypatch):
+    """merge_dev_into_ingestion returns conflict (ok=False) and abandons the transient PR —
+    never forces the merge."""
+    from tools import oneauth as OA
+    monkeypatch.setattr(OA, "ahead_behind", lambda b, t, timeout=120: (True, {"ahead": 5, "behind": 3}, ""))
+    monkeypatch.setattr(OA, "create_pr", lambda s, t, ti, d, timeout=90: (True, {"id": 7, "mergeStatus": "queued", "url": "u"}, ""))
+    monkeypatch.setattr(OA, "get_pr", lambda pid, timeout=60: (True, {"mergeStatus": "conflicts", "lastMergeSourceCommit": {"commitId": "x"}}, ""))
+    abandoned = {"n": 0}
+    monkeypatch.setattr(OA, "abandon_pr", lambda pid, timeout=60: (abandoned.__setitem__("n", abandoned["n"] + 1), (True, ""))[1])
+    ok, info, detail = OA.merge_dev_into_ingestion(dry_run=False)
+    assert ok is False and info["conflict"] is True and abandoned["n"] == 1 and "CONFLICT" in detail
 
 
 if __name__ == "__main__":
