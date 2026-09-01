@@ -944,12 +944,39 @@ bug_bash.native_auth_signoff:
     - q: "What is this confirming?"
       a: "That the Native Auth team ran their tests and signed off — the confirmation they were asked to send back in notify_native_auth."
 
+bug_bash.ui_failures:
+  summary: "Human review of the combined Phase-2 UI failure list — Broker MRWP + Authenticator ECS."
+  what: >
+    A human-review checkpoint (owner: human, non-gate): before the bug bash proceeds, the
+    engineer reviews the Phase-2 UI-automation failures. The list covers BOTH apps — the Broker
+    MRWP UI suites (from the ECS + Local RC runs) AND the Authenticator ECS Firebase failures.
+    The step has no logic of its own; the preceding `ui_test_status` step forward-populates its
+    Details with the combined summary + run links (it just filled both suites and knows the
+    failures), so the reviewer sees everything in one place. When nothing failed, the step shows
+    its generic prompt and is a quick acknowledge.
+  who: >
+    The engineer/owner reviews the failures and marks the step done (`done --step ui_failures`)
+    once reviewed. It is a reminder, not a gate — it holds until acknowledged but doesn't require
+    a formal approval.
+  how: >
+    Read the Details: BROKER lists the top failing UI suites (per flight, e.g. 'PROD MSAL - RC
+    Broker (API 32): 18/44 failed'); AUTHENTICATOR lists the failed automated case ids, which
+    `ui_test_status` has already ASSIGNED TO THE RELEASE OWNER for triage. Follow the run links to
+    the pipelines, decide flake vs real bug, then mark the step done to continue.
+  faqs:
+    - q: "Does this include the Authenticator app failures?"
+      a: "Yes. The list is combined: Broker MRWP UI suites AND the Authenticator ECS Firebase failures. The auth failures are also pre-assigned to the release owner (by ui_test_status) so they're already in the owner's triage queue."
+    - q: "Where does the failure list come from if this step has no code?"
+      a: "From ui_test_status, which runs right before it — it filled both the Broker and Authenticator suites and writes the combined failure summary + links onto this step for the reviewer."
+
 bug_bash.bugbash_complete:
   summary: "The release owner attests the Bug Bash is finished — the gate that closes the bash."
   what: >
     A human sign-off gate: the owner confirms the assigned tests have been run (or explicitly
-    triaged/blocked) and the team agrees the bash is done. Approving it advances the release
-    out of Phase 3. It also STOPS the periodic updates.
+    triaged/blocked) and the team agrees the bash is done. This includes the Authenticator ECS
+    automation failures that `ui_test_status` pre-assigned to the owner for triage — the owner
+    reviews those (already in their queue) alongside the manual results. Approving it advances the
+    release out of Phase 3. It also STOPS the periodic updates.
   who: >
     The owner approves it (`approve` / `done --step bugbash_complete`). Until then — or until
     every test auto-completes — the `bug-bash-update-poller` keeps posting every 2h.
@@ -961,6 +988,8 @@ bug_bash.bugbash_complete:
   faqs:
     - q: "Can I sign off before every single test passes?"
       a: "Yes — this is a judgement gate. If the remaining tests are triaged/blocked and the team agrees the bash is done, approve it. It doesn't require 100% pass; that's what the sign-off is for."
+    - q: "What about the failed Authenticator automation cases?"
+      a: "Those were pre-assigned to you (the owner) by ui_test_status and surfaced in ui_failures. Review/triage them as part of your sign-off — they don't block the gate, but you should have ruled on them before approving."
     - q: "What stops the 2-hour chat updates?"
       a: "Two things: the poller stops itself when every test is complete, and approving this gate deregisters the poller. Either way the updates end when the bash is done."
 

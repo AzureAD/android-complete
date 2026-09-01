@@ -3120,6 +3120,49 @@ def test_ui_test_status_fills_auth_and_assigns_failures_to_owner():
     assert any("suite 714999" in l["name"] for l in out["links"])
 
 
+def test_ui_test_status_surfaces_combined_failures_to_ui_failures():
+    """ui_test_status forward-populates the `ui_failures` human-review reminder with BOTH the
+    Broker MRWP UI failures AND the Authenticator ECS failed cases (+ run links)."""
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    from orchestrator.state import StepState
+    from tools import testplans as T
+    from tools import distribution as D
+    st = _uts_state(plan_id="3737697")
+    st.owner_email = "owner@microsoft.com"
+    st.set_step("bug_bash", "clone_plans_auth", StepState(status="done", data={"suite_id": 714999}))
+    # seed a broker RC snapshot with a failing UI suite + an auth run
+    st.pipeline_runs = {"rcs": [{"rc": 1,
+        "ecs": {"run_id": "1678863", "failed_suites": [
+            {"name": "PROD MSAL - RC Broker (API 32)", "failed": 18, "total": 44, "category": "ui"}]},
+        "local": {"run_id": "1678864", "failed_suites": []},
+        "auth": {"build": {"run_id": "178685087"}, "test": {"run_id": "178777988"}}}]}
+    o_b, o_a, o_as = T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_assigned_to
+    T.fill_ui_automation_results = lambda p, v, timeout=120: (
+        True, {"points_total": 10, "set_passed": 8, "set_failed": 2,
+               "set_not_applicable": 0, "cases_touched": 5}, "")
+    T.fill_auth_ui_results = lambda plan, suite, outcomes, timeout=120: (
+        True, {"points_total": 26, "set_passed": 21, "set_failed": 5,
+               "failed_case_ids": [2916347, 2916524, 3094649, 3261599, 3741283]}, "")
+    D.set_assigned_to = lambda cid, upn, timeout=60: (True, "")
+    try:
+        with mockctx.active({"verdicts": {"1": {("ECS", "prod"): "Passed"}},
+                             "auth_outcomes": {2916347: "Failed"}}):
+            as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
+    finally:
+        T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_assigned_to = o_b, o_a, o_as
+    uf = st.get_step("bug_bash", "ui_failures")
+    assert "BROKER (MRWP)" in uf.note and "PROD MSAL - RC Broker (API 32): 18/44" in uf.note
+    assert "AUTHENTICATOR (ECS)" in uf.note and "2916347" in uf.note
+    assert "assigned to owner@microsoft.com" in uf.note
+    assert uf.data["broker_failed_suites"] == 1 and len(uf.data["auth_failed_cases"]) == 5
+    names = [l["name"] for l in uf.links]
+    assert "MRWP ECS run" in names and "Authenticator ECS UI tests" in names
+    # the reminder is NOT marked done — it stays a pending human review
+    assert not st.is_done("bug_bash", "ui_failures")
+
+
 def test_ui_test_status_auth_skipped_when_no_auth_suite():
     """No clone_plans_auth suite → the auth fill is skipped (best-effort) but the Broker fill
     still completes and the step is done."""

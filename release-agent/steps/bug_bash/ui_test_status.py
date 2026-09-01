@@ -136,6 +136,67 @@ def _fill_auth(state, notes):
             f"filled in suite {suite_id}{owner_note}")
 
 
+def _surface_ui_failures(state):
+    """Forward-populate the downstream `ui_failures` HUMAN-review reminder with the combined
+    Phase-2 UI failure list — BOTH the Broker MRWP UI suites AND the Authenticator ECS failed
+    cases — so the engineer sees everything in one place when the engine holds at that step.
+
+    `ui_failures` is a bare human reminder (no module), so it can't compute anything itself;
+    this producer step (which just filled both suites and knows the auth failures) writes the
+    reminder's note + links. Only sets note/links/data — never status — so the step stays a
+    pending human hold. No failures anywhere -> leaves the reminder with its generic prompt."""
+    rcs = (getattr(state, "pipeline_runs", None) or {}).get("rcs") or []
+    lines, links = [], []
+
+    # Broker MRWP UI failures — the failing 'ui' suites recorded per provider by Phase 2.
+    def _eng_run_url(rid):
+        return f"https://identitydivision.visualstudio.com/Engineering/_build/results?buildId={rid}"
+
+    broker = []
+    for rc in rcs:
+        for prov, label in (("ecs", "ECS"), ("local", "Local")):
+            snap = rc.get(prov) or {}
+            for s in (snap.get("failed_suites") or []):
+                if s.get("category", "ui") == "ui" and s.get("failed"):
+                    broker.append((label, s))
+            if snap.get("run_id"):
+                links.append({"name": f"MRWP {label} run", "url": _eng_run_url(snap["run_id"])})
+    broker.sort(key=lambda ls: -ls[1]["failed"])
+    if broker:
+        lines.append(f"BROKER (MRWP) — {len(broker)} failing UI suite(s):")
+        for label, s in broker[:8]:
+            lines.append(f"  \u2022 [{label}] {s['name']}: {s['failed']}/{s['total']} failed")
+        if len(broker) > 8:
+            lines.append(f"  \u2026 and {len(broker) - 8} more")
+
+    # Authenticator ECS failures — from the auth section + the fill's failed case ids.
+    astep = (state.get_step("bug_bash", ID).data or {}).get("auth") or {}
+    failed_ids = astep.get("failed_case_ids") or []
+    auth = (rcs[-1].get("auth") if rcs else None) or {}
+    if failed_ids:
+        owner = state.owner_email or "the release owner"
+        lines.append(f"AUTHENTICATOR (ECS) — {len(failed_ids)} failed automated case(s), "
+                     f"assigned to {owner} for triage:")
+        lines.append("  \u2022 " + ", ".join(str(i) for i in failed_ids))
+        for key, name in (("build", "Authenticator ECS build"), ("test", "Authenticator ECS UI tests")):
+            rid = (auth.get(key) or {}).get("run_id")
+            if rid:
+                links.append({"name": name,
+                              "url": f"https://msazure.visualstudio.com/One/_build/results?buildId={rid}"})
+
+    if not lines:
+        return                                            # nothing failed — leave the generic reminder
+    note = ("Phase-2 UI failures to review before the bug bash "
+            "(Broker MRWP + Authenticator ECS):\n" + "\n".join(lines))
+    ustep = state.get_step("bug_bash", "ui_failures")
+    ustep.note = note
+    ustep.links = links
+    ustep.data = dict(ustep.data or {})
+    ustep.data["broker_failed_suites"] = len(broker)
+    ustep.data["auth_failed_cases"] = failed_ids
+    state.set_step("bug_bash", "ui_failures", ustep)
+
+
 def build(state):
     fail = mock_input("fail", MISSING)
     if fail is not MISSING:
@@ -174,6 +235,10 @@ def build(state):
     # every FAILED automated auth case is reassigned to the release owner for triage.
     notes = []
     auth_note = _fill_auth(state, notes)
+
+    # Forward-populate the downstream `ui_failures` human-review reminder with the combined
+    # Broker + Authenticator Phase-2 UI failure list (it has no module of its own).
+    _surface_ui_failures(state)
 
     p, f, na = summ.get("set_passed", 0), summ.get("set_failed", 0), summ.get("set_not_applicable", 0)
     tail = (f" {auth_note}." if auth_note else "")
