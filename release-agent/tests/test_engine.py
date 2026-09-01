@@ -105,6 +105,9 @@ _SAFE_AGENTS = {
     # Phase-4 oneauth_common_pr — real agent (OneAuth REST reads/merge/PR). Short-circuit so flow
     # tests never hit the network; dedicated tests exercise its logic offline.
     "finalize.oneauth_common_pr": {"outcome": "done", "note": "OneAuth common ingested (test)"},
+    # Phase-4 publish_notes_gate — a GATE (not an agent): keep it offline + holding in flow tests by
+    # injecting no parked approval + no stage state (build() -> 'not parked yet' NeedsHuman).
+    "finalize.publish_notes_gate": {"approval": None, "stage_state": None},
 }
 
 
@@ -5616,6 +5619,114 @@ def test_find_orchestrator_pending_approval_and_submit():
         assert sent["body"][0]["approvalId"] == "APPR-555" and sent["body"][0]["status"] == "approved"
     finally:
         (P.find_orchestrator_run, P.get_timeline, P._ado_rest_get, P._ado_rest_send) = o
+
+
+# ---- Phase 4: publish_notes_gate (2nd orchestrator gate — 'Publish GitHub Release Notes') ----
+
+def test_publish_notes_gate_brief_when_parked_at_notes():
+    """build() with the notes stage parked → a needs_human brief naming the stage + consequence."""
+    from steps.finalize import publish_notes_gate as PG
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    st = ReleaseState(release_id="2026-08")
+    info = {"approval_id": "A2", "build_id": 1678611, "stage": "Publish GitHub Release Notes", "build_url": "u"}
+    with mockctx.active({"approval": info, "stage_state": {"state": "inProgress", "result": None}}):
+        out = as_dict(PG.build(st))
+    assert out["kind"] == "needs_human"
+    assert "Publish GitHub Release Notes" in out["prompt"] and "1678611" in out["prompt"]
+    assert "GitHub release notes" in out["prompt"]
+
+
+def test_publish_notes_gate_done_when_stage_completed():
+    """If the notes stage already completed → Done (nothing to approve)."""
+    from steps.finalize import publish_notes_gate as PG
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    st = ReleaseState(release_id="2026-08")
+    with mockctx.active({"stage_state": {"state": "completed", "result": "succeeded"}}):
+        out = as_dict(PG.build(st))
+    assert out["kind"] == "done" and "already completed" in out["note"]
+
+
+def test_publish_notes_gate_warns_when_parked_elsewhere():
+    """Parked at a DIFFERENT stage (e.g. Remove RC Tags) → holds with a warning, not the gate."""
+    from steps.finalize import publish_notes_gate as PG
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    st = ReleaseState(release_id="2026-08")
+    info = {"approval_id": "A1", "build_id": 1, "stage": "Remove RC Tags", "build_url": "u"}
+    with mockctx.active({"approval": info, "stage_state": {"state": "notStarted", "result": None}}):
+        out = as_dict(PG.build(st))
+    assert out["kind"] == "needs_human"
+    assert "Remove RC Tags" in out["prompt"] and "only approves" in out["prompt"]
+
+
+def test_publish_notes_gate_waits_when_not_parked():
+    """Nothing parked + notes not completed → holds ('isn't parked yet')."""
+    from steps.finalize import publish_notes_gate as PG
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    st = ReleaseState(release_id="2026-08")
+    with mockctx.active({"approval": None, "stage_state": None}):
+        out = as_dict(PG.build(st))
+    assert out["kind"] == "needs_human" and "isn't parked yet" in out["prompt"]
+
+
+def test_publish_notes_gate_submit_verifies_stage():
+    """submit_approval submits ONLY when the parked stage is the notes stage; refuses otherwise."""
+    from steps.finalize import publish_notes_gate as PG
+    from steps.lib import mockctx
+    from tools import pipelines as P
+    st = ReleaseState(release_id="2026-08")
+    sent = {}
+
+    def fake_submit(org, project, approval_id, comment="", status="approved", timeout=60):
+        sent["id"] = approval_id
+        return (True, f"approval {approval_id} -> approved")
+
+    o = P.submit_pipeline_approval
+    P.submit_pipeline_approval = fake_submit
+    try:
+        # right stage → submits
+        good = {"approval_id": "A2", "build_id": 5, "stage": "Publish GitHub Release Notes", "build_url": "u"}
+        with mockctx.active({"approval": good}):
+            ok, detail = PG.submit_approval(st, "go")
+        assert ok and "Publish GitHub Release Notes" in detail and sent.get("id") == "A2"
+        # wrong stage → refuses (no submit)
+        sent.clear()
+        bad = {"approval_id": "A1", "build_id": 5, "stage": "Remove RC Tags", "build_url": "u"}
+        with mockctx.active({"approval": bad}):
+            ok2, detail2 = PG.submit_approval(st, "go")
+        assert ok2 is False and "not 'Publish GitHub Release Notes'" in detail2 and "id" not in sent
+        # not parked → refuses
+        with mockctx.active({"approval": None}):
+            ok3, detail3 = PG.submit_approval(st, "go")
+        assert ok3 is False and "isn't parked yet" in detail3
+    finally:
+        P.submit_pipeline_approval = o
+
+
+def test_publish_notes_gate_config_is_gate_after_integ_prs():
+    """phases.yaml: publish_notes_gate is a human gate placed after integ_prs and before verify_pub."""
+    import yaml as _yaml
+    cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
+    fin = next(p for p in cfg["phases"] if p["id"] == "finalize")
+    s = next(x for x in fin["steps"] if x["id"] == "publish_notes_gate")
+    assert s.get("owner") == "human" and s.get("gate") is True
+    ids = [x["id"] for x in fin["steps"]]
+    assert ids.index("integ_prs") < ids.index("publish_notes_gate") < ids.index("verify_pub")
+
+
+def test_orchestrator_stage_state_reads_named_stage(monkeypatch):
+    """orchestrator_stage_state returns the named Stage's timeline state/result."""
+    from tools import pipelines as P
+    monkeypatch.setattr(P, "find_orchestrator_run", lambda *a, **k: (True, {"id": 777}, ""))
+    monkeypatch.setattr(P, "get_timeline", lambda *a, **k: (True, [
+        {"type": "Stage", "name": "Remove RC Tags", "state": "completed", "result": "succeeded"},
+        {"type": "Stage", "name": "Publish GitHub Release Notes", "state": "inProgress", "result": None},
+    ], ""))
+    ok, info, _ = P.orchestrator_stage_state("O", "P", "2026-08", "Publish GitHub Release Notes")
+    assert ok and info == {"state": "inProgress", "result": None, "build_id": 777}
 
 
 def _patch_pr_reads(P, exists=True, existing_pr=None, behind=0, gradle=None, conflicts=None):

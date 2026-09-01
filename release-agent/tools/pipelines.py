@@ -453,6 +453,25 @@ def find_orchestrator_pending_approval(org, project, release_month, timeout=90):
                    "build_url": build_url}, "")
 
 
+def orchestrator_stage_state(org, project, release_month, stage_name, timeout=90):
+    """(ok, info|None, detail) — the timeline state of a named Release Orchestrator Stage for the
+    release. info is {state, result, build_id}; None when the stage isn't in the timeline yet.
+    Used by publish_notes_gate to tell 'notes already published' from 'not reached yet'."""
+    ok, run, detail = find_orchestrator_run(org, project, ORCHESTRATOR_DEF, release_month, timeout)
+    if not ok:
+        return (False, None, detail)
+    if not run:
+        return (True, None, f"no orchestrator run found for {release_month}")
+    okt, recs, dt = get_timeline(org, project, run.get("id"), timeout)
+    if not okt:
+        return (False, None, dt)
+    for r in recs:
+        if r.get("type") == "Stage" and r.get("name") == stage_name:
+            return (True, {"state": r.get("state"), "result": r.get("result"),
+                           "build_id": run.get("id")}, "")
+    return (True, None, f"stage '{stage_name}' not in the orchestrator timeline")
+
+
 def submit_pipeline_approval(org, project, approval_id, comment="", status="approved", timeout=60):
     """Submit a decision on a pipeline approval — status 'approved' | 'rejected'. (ok, detail)."""
     url = f"{org.rstrip('/')}/{project}/_apis/pipelines/approvals?api-version=7.2-preview.1"

@@ -1,13 +1,14 @@
-"""`approve-orchestrator-gate` — approve the Phase-4 `gate_watch` gate in one step.
+"""`approve-orchestrator-gate` — approve a Phase-4 Release Orchestrator gate in one step.
 
-`gate_watch` is a normal engine gate (human approve/deny), but approving it must ALSO submit the
-real Release Orchestrator "Remove RC Tags" approval in ADO. Rather than teach the engine about
-that action, this dedicated command composes it: it submits the ADO approval (via the step
-module's `submit_approval`) and then records the release-agent gate the usual way (the same
-`approve_gate` + advance the plain `approve` command uses). The engine and the shared `approve`
-command are untouched.
+The finalize phase has TWO orchestrator gates, each a normal engine gate whose approval must ALSO
+submit the real ADO pipeline approval:
+  * `gate_watch`         → the 'Remove RC Tags' stage (publishes the release),
+  * `publish_notes_gate` → the 'Publish GitHub Release Notes' stage (after the integration PRs merge).
 
-The skill runs this for the `finalize.gate_watch` gate; plain `deny` still denies.
+Rather than teach the engine about that ADO action, this command composes it: it looks up whichever
+gate step is currently holding, calls its `submit_approval` (which submits the ADO approval), then
+records the release-agent gate the usual way (the same `approve_gate` + advance the plain `approve`
+command uses). The engine and the shared `approve` command are untouched. Plain `deny` still denies.
 """
 from __future__ import annotations
 import json as _json
@@ -17,15 +18,20 @@ from orchestrator import cli_common as C
 
 def cmd_approve_orchestrator_gate(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    if st.status != "holding_gate" or st.current_step != "gate_watch":
+    # Works for ANY finalize gate whose step module exposes submit_approval (gate_watch =
+    # 'Remove RC Tags', publish_notes_gate = 'Publish GitHub Release Notes').
+    import steps as _steps
+    mod = (_steps.get_step(st.current_phase, st.current_step)
+           if st.status == "holding_gate" else None)
+    if not mod or not hasattr(mod, "submit_approval"):
         print(_json.dumps({
-            "error": "not holding at the finalize.gate_watch gate — nothing to approve here.",
+            "error": "not holding at a Release Orchestrator gate (gate_watch / publish_notes_gate) "
+                     "— nothing to approve here.",
             "status": st.status, "phase": st.current_phase, "step": st.current_step}))
         return 1
 
     # 1) submit the REAL ADO approval first — don't record the gate if this fails.
-    from steps.finalize import gate_watch as gw
-    ok, detail = gw.submit_approval(st, args.comment or "")
+    ok, detail = mod.submit_approval(st, args.comment or "")
     if not ok:
         print(_json.dumps({"error": f"orchestrator approval NOT submitted: {detail}"}))
         return 1
@@ -48,8 +54,8 @@ def cmd_approve_orchestrator_gate(args):
 def register(sub):
     sp = sub.add_parser(
         "approve-orchestrator-gate",
-        help="Approve the Phase-4 gate_watch gate AND submit the real Release Orchestrator "
-             "'Remove RC Tags' approval (publishes the release).")
+        help="Approve a Phase-4 orchestrator gate (gate_watch 'Remove RC Tags' or "
+             "publish_notes_gate 'Publish GitHub Release Notes') AND submit the real ADO approval.")
     sp.add_argument("--release", required=True)
     sp.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     sp.add_argument("--comment", default="")

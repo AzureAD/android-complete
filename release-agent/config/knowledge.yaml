@@ -1116,7 +1116,41 @@ finalize.release_announcement:
     - q: "Does the cc line @-tag CP/Intune, LTW, OneAuth, Native Auth?"
       a: "Those are Teams TAGS, and the microsoft_teams tool can't @-mention a tag (it maps the id to an unknown user). So instead the step @-mentions the tags' MEMBERS as individual users — maintained by hand in config/announcement_cc.yaml ({name,email} per group). Mock knobs: cc_mode 'mention' (default), 'self' (ping only you via self_email — safe test), or 'off' (plain text); cc_members overrides the registry."
 
-finalize.verify_pub:
+finalize.publish_notes_gate:
+  summary: "1-click approve the orchestrator's SECOND gate — 'Publish GitHub Release Notes'."
+  what: >
+    After the integration PRs merge, the Release Orchestrator (def 2828) parks at a SECOND manual
+    approval — the 'Publish GitHub Release Notes' stage. This step is the human's 1-click approval
+    of that gate: on approval Scout submits the real ADO pipeline approval, which publishes the
+    GitHub release notes for MSAL and Common. It is the sibling of gate_watch (the first gate,
+    'Remove RC Tags') and runs later in the phase.
+  who: >
+    The release owner decides (approve / deny). Scout runs the discovery and, on approval, submits
+    the ADO approval automatically. STAGE-SPECIFIC: it only ever approves the 'Publish GitHub
+    Release Notes' stage — if the orchestrator is parked at any other stage the submit is refused,
+    so it can't approve the wrong gate.
+  how: >
+    Approve with `approve-orchestrator-gate --release <id>` — the same command as gate_watch; it
+    detects which gate is holding, submits the correct ADO approval, and records the release-agent
+    gate in one step. Deny with `deny` to HOLD. Approving early is safe: the gate verifies the
+    'Publish GitHub Release Notes' stage is the parked one before submitting, so it won't approve
+    prematurely. If the notes stage has already completed, the step reports there's nothing to
+    approve.
+  consequences: >
+    Approving publishes the GitHub release notes for MSAL and Common (the orchestrator's final
+    publish stage). Make sure the integration PRs are merged first.
+  links:
+    - name: "Release Orchestrator pipeline YAML"
+      url: "https://identitydivision.visualstudio.com/Engineering/_git/AuthClientAndroidPipelines?path=/production/monthly-release/release-orchestrator.yml"
+  faqs:
+    - q: "How is this different from gate_watch?"
+      a: "gate_watch approves the FIRST gate ('Remove RC Tags', which publishes to Maven Central + creates the integration branches). publish_notes_gate approves the SECOND gate ('Publish GitHub Release Notes'), which parks only after the integration PRs merge."
+    - q: "What if I approve before the orchestrator reaches the notes gate?"
+      a: "Safe — the gate verifies the 'Publish GitHub Release Notes' stage is the parked one before submitting the ADO approval. If a different stage is parked (or none), it refuses to submit and stays holding."
+    - q: "Nothing is parked — is that an error?"
+      a: "No. If the notes stage already completed, the step reports there's nothing to approve. If it hasn't parked yet, approve once it's waiting."
+
+
   summary: "Verify MSAL / Common / Common4j are live on Maven Central at the release versions."
   what: >
     After the orchestrator's publish stages, confirm the three externally-published artifacts
