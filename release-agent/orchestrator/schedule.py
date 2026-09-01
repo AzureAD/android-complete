@@ -88,6 +88,40 @@ def default_ccd(release_id: str) -> date:
     return second_wednesday(year, month)
 
 
+def default_target_month(release_id: str) -> Optional[str]:
+    """The default display month a release is NAMED for: the CCD/work month + 1 (the ship
+    month). 'YYYY-MM' -> 'YYYY-MM' rolling the year at Dec->Jan. e.g. '2026-08' -> '2026-09'.
+    Returns None when the release id isn't YYYY-MM. Defaulted at init and confirmed by the owner."""
+    try:
+        year, month = parse_release_month(release_id)
+    except (ValueError, IndexError):
+        return None
+    month += 1
+    if month == 13:
+        month, year = 1, year + 1
+    return f"{year:04d}-{month:02d}"
+
+
+def target_month_id(state) -> Optional[str]:
+    """The stored ship-month ('YYYY-MM') the release is named for, or the CCD-month+1 default
+    when it hasn't been set yet (so naming works even before the owner confirms it at init)."""
+    tm = getattr(state, "target_month", None)
+    return tm or default_target_month(getattr(state, "release_id", "") or "")
+
+
+def target_month_label(state, with_year: bool = True) -> str:
+    """The release's display month — 'September 2026' (or just 'September' when with_year=False).
+    Reads the stored target_month, else the CCD-month+1 default. '' when unresolvable."""
+    tm = target_month_id(state)
+    if not tm:
+        return ""
+    try:
+        y, m = (int(x) for x in str(tm).split("-")[:2])
+        return f"{calendar.month_name[m]} {y}" if with_year else calendar.month_name[m]
+    except (ValueError, IndexError):
+        return ""
+
+
 def pipeline_conflict(release_id: str, override: Optional[str], stored_ccd: Optional[str] = None):
     """Return the pipeline override date IF it is a valid in-month date that
     DIFFERS from our reference CCD — i.e. a divergence the user must resolve.

@@ -90,7 +90,7 @@ def build(state):
     if not ok:
         return Blocked(f"bugbash_updates: couldn't read test progress ({detail}).")
 
-    month_year = schedule.parse_date(state.ccd).strftime("%B %Y")
+    month_year = schedule.target_month_label(state)
     if BB.all_complete(progress):
         return Done(f"All {progress['total']} bug-bash tests are already complete — "
                     f"nothing to poll; ready for {month_year} bug bash sign-off.")

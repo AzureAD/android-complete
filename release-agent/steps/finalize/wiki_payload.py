@@ -61,27 +61,18 @@ MOCKABLE = {
 
 def _month_year(state) -> str:
     from orchestrator import schedule
-    if getattr(state, "ccd", None):
-        return schedule.parse_date(state.ccd).strftime("%B %Y")
-    try:
-        y, m = str(state.release_id).split("-")[:2]
-        import datetime
-        return datetime.date(int(y), int(m), 1).strftime("%B %Y")
-    except Exception:  # noqa: BLE001
-        return str(state.release_id)
+    return schedule.target_month_label(state) or str(state.release_id)
 
 
 def page_name(state) -> str:
-    """Payload page name: '<Month> <Year> Release' (e.g. 'August 2026 Release')."""
+    """Payload page name: '<Ship Month> <Year> Release' (the release's display month, e.g.
+    'September 2026 Release')."""
     ov = mock_input("page_name", MISSING)
     if ov is not MISSING and ov:
         return str(ov)
-    import calendar
-    try:
-        year, month = str(state.release_id).split("-")[:2]
-        return f"{calendar.month_name[int(month)]} {int(year)} Release"
-    except Exception:  # noqa: BLE001
-        return f"{state.release_id} Release"
+    from orchestrator import schedule
+    label = schedule.target_month_label(state)
+    return f"{label} Release" if label else f"{state.release_id} Release"
 
 
 def page_path(state) -> str:

@@ -71,8 +71,7 @@ def build(state):
         return Blocked("send_invite: the Authenticator bug-bash suite hasn't been created yet "
                        "(clone_plans_auth) — run that first.")
 
-    ccd = schedule.parse_date(state.ccd)
-    month_year = ccd.strftime("%B %Y")
+    month_year = schedule.target_month_label(state)
 
     # when
     now_raw = mock_input("now", MISSING)

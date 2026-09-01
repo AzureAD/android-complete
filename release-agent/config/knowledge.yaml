@@ -1315,7 +1315,7 @@ finalize.wiki_payload:
     reviews the derived App Version + PR list, then approves the write.
   where:
     - "wiki: IdentityWiki / IdentityWiki.wiki, parent 'Monthly Releases Payloads History'"
-    - "page: '<Month> <Year> Release' (e.g. 'August 2026 Release')"
+    - "page: '<Ship Month> <Year> Release' (the release's display name, e.g. 'September 2026 Release')"
     - "version + PR list: the Authenticator release-app build + tools.merged_release_prs"
   how: >
     Runs via step-action → returns a preview; run `create-payload-wiki --release <id> --dry-run`

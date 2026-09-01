@@ -3535,14 +3535,14 @@ def test_send_invite_composes_create_event():
         out = as_dict(_steps.get_step("bug_bash", "send_invite").build(st))
     assert out["kind"] == "needs_skill" and out["tool"] == "workiq_create_event"
     p = out["payload"]
-    assert p["subject"] == "August 2026 Release Bug Bash"
+    assert p["subject"] == "September 2026 Release Bug Bash"
     assert p["attendees"] == ["androididentity@microsoft.com", "idnadevexciamdublin@microsoft.com"]
     assert p["start"] == "2026-08-24T09:00:00" and p["end"] == "2026-08-24T11:00:00"
     assert p["isOnlineMeeting"] is True and p["bodyContentType"] == "html"
     b = p["body"]
     for frag in ("planId=3730001", "buildId=1678863", "buildId=1678864",
                  "planId=714514&suiteId=3730002", "EnableBrowserSso",
-                 "variableGroupId=40", "August 2026"):
+                 "variableGroupId=40", "September 2026"):
         assert frag in b, frag
     assert "release-engineer-schedule" not in b     # Native Auth row removed
     assert out["outbound"] is True
@@ -3575,7 +3575,7 @@ def test_activate_chat_composes_needs_skill():
     out = as_dict(_steps.get_step("bug_bash", "activate_chat").build(st))
     assert out["kind"] == "needs_skill" and out["tool"] == "record-bugbash-chat"
     g = out["payload"]["_gather"]
-    assert g["meeting_topic"] == "August 2026 Release Bug Bash"
+    assert g["meeting_topic"] == "September 2026 Release Bug Bash"
     assert "Playwright" in g["instructions"] and "m_ask_user" in g["instructions"]
     assert "record-bugbash-chat --release 2026-08" in out["payload"]["followup_command"]
     assert _steps.get_step("bug_bash", "activate_chat").KIND == "scout"
@@ -3804,7 +3804,7 @@ def test_bugbash_updates_composes_needs_skill():
     assert out["kind"] == "needs_skill" and out["tool"] == "workiq_send_chat_message"
     assert out["payload"]["chatId"] == "19:meeting_X@thread.v2"
     assert out["payload"]["_mentions"] == [{"id": 0, "upn": "a@x", "name": "Alice"}]
-    assert "August 2026 Bug Bash" in out["payload"]["content"]
+    assert "September 2026 Bug Bash" in out["payload"]["content"]
     assert out["record_as"] == "bugbash_updates" and out["outbound"] is True
     assert _steps.get_step("bug_bash", "bugbash_updates").KIND == "scout"
 
@@ -4570,7 +4570,7 @@ def test_ccd_final_reminder_build_is_ccd_day_email():
     assert "(Today)" in out.payload["subject"]                        # update variant
     assert not out.payload["subject"].startswith("[TEST")
     html = out.payload["body"]
-    assert "<table" in html and "September" in html and "@pedroro" in html
+    assert "<table" in html and "October" in html and "@pedroro" in html
 
 
 def test_ccd_pr_reminder_build_targets_code_reviews_with_deadlines():
@@ -5993,7 +5993,7 @@ def test_release_announcement_builds_channel_post_from_state_versions():
     assert out["tool"] == "microsoft_teams-SendMessageToChannel"
     p = out["payload"]
     assert p["teamId"] == RA.CONFIG["team_id"] and p["channelId"] == RA.CONFIG["channel_id"]
-    assert p["subject"] == "Auth Client Android SDKs August 2026 Release"
+    assert p["subject"] == "Auth Client Android SDKs September 2026 Release"
     assert p["contentType"] == "html"
     # table shows the 3 SDKs with their versions; authenticator branch is NOT in the table
     for v in ("24.6.0", "8.4.2", "16.5.0"):
@@ -6106,14 +6106,14 @@ def test_release_announcement_blocks_without_versions():
 
 
 def test_release_announcement_month_year_from_release_id_without_ccd():
-    """Title month/year falls back to release_id when no CCD is set."""
+    """Title month/year is the ship month (release_id month + 1) even when no CCD is set."""
     from steps.lib import mockctx
     from steps.finalize import release_announcement as RA
     st = ReleaseState(release_id="2026-08")                     # no ccd
     st.record_versions({"common": "1.0.0"})
     with mockctx.active({}):
         out = RA.build(st)
-    assert out.payload["subject"] == "Auth Client Android SDKs August 2026 Release"
+    assert out.payload["subject"] == "Auth Client Android SDKs September 2026 Release"
 
 
 def test_verify_pub_all_published_done():
@@ -6763,10 +6763,10 @@ def test_wiki_payload_composes_page_and_filters_noise():
     assert "#App Version\n6.2608.5658 [Pipelines - Run 20260824.9]" in c
     assert "PR 1: Real feature" in c and "LEGO: check in to working" not in c   # noise filtered
     assert "*   Broker: 16.5.0" in c and "*   Common: 24.6.0" in c and "*   Msal: 8.4.2" in c
-    assert "### Release: August 2026" in c
+    assert "### Release: September 2026" in c
     assert "_Add the Broker release-announcement email title._" in c
     assert "Expected Feature flags rollouts" in c
-    assert plan["page_name"] == "August 2026 Release" and plan["pr_count"] == 1
+    assert plan["page_name"] == "September 2026 Release" and plan["pr_count"] == 1
 
 
 def test_wiki_payload_build_reports_create_or_update():
@@ -6843,7 +6843,7 @@ def test_create_payload_wiki_dry_run_and_execute(capsys):
 
             A.execute = True; A.dry_run = False
             assert PW.cmd_create_payload_wiki(A) == 0
-            assert created["path"].endswith("August 2026 Release")
+            assert created["path"].endswith("September 2026 Release")
             s2 = C.load_state(d, rid)
             assert s2.is_done("finalize", "wiki_payload")
             step = s2.get_step("finalize", "wiki_payload")
@@ -6851,6 +6851,62 @@ def test_create_payload_wiki_dry_run_and_execute(capsys):
         finally:
             _CC.load_orch = real_load
             checks.wiki_page_exists, checks.create_wiki_page = oe, oc
+
+
+# ======================= target month (release ship-month naming) =======================
+
+def test_default_target_month_rolls_year():
+    """default_target_month = CCD/work month + 1, rolling the year at Dec->Jan."""
+    from orchestrator import schedule as S
+    assert S.default_target_month("2026-08") == "2026-09"
+    assert S.default_target_month("2026-12") == "2027-01"
+    assert S.default_target_month("2026-01") == "2026-02"
+    assert S.default_target_month("not-a-month") is None
+
+
+def test_target_month_label_uses_stored_then_default():
+    """target_month_label reads the stored target_month, else falls back to CCD-month+1."""
+    from orchestrator import schedule as S
+    st = ReleaseState(release_id="2026-08")                 # unset -> default +1
+    assert S.target_month_id(st) == "2026-09"
+    assert S.target_month_label(st) == "September 2026"
+    assert S.target_month_label(st, with_year=False) == "September"
+    st.target_month = "2026-10"                             # explicit override wins
+    assert S.target_month_label(st) == "October 2026" and S.target_month_id(st) == "2026-10"
+
+
+def test_init_stores_default_target_month():
+    """`init` persists the ship month (CCD month + 1) so docs/comms don't misname the release."""
+    import tempfile, argparse
+    from orchestrator.commands import release as R
+    from orchestrator import cli_common as _C
+    _stub_build_defs("pass")
+    with tempfile.TemporaryDirectory() as tmp:
+        ns = argparse.Namespace(runs_root=tmp, release="2026-08", force=False,
+                                owner_email="dev@x.com", owner_name=None,
+                                timezone="America/Chicago", config=CONFIG)
+        R.cmd_init(ns)
+        st = _C.load_state(tmp, "2026-08")
+        assert st.target_month == "2026-09"                 # August work month -> September release
+
+
+def test_set_target_month_command_overrides_and_resets():
+    """set-target-month sets an explicit ship month (display-only) and resets to the default."""
+    import tempfile, argparse
+    from orchestrator.commands import release as R
+    from orchestrator import cli_common as _C
+    with tempfile.TemporaryDirectory() as tmp:
+        st0 = ReleaseState(release_id="2026-08", target_month="2026-09")
+        _C.save_state(st0, tmp, "2026-08")
+        # explicit override
+        R.cmd_set_target_month(argparse.Namespace(runs_root=tmp, release="2026-08", month="2026-11"))
+        assert _C.load_state(tmp, "2026-08").target_month == "2026-11"
+        # reset to default (no --month)
+        R.cmd_set_target_month(argparse.Namespace(runs_root=tmp, release="2026-08", month=None))
+        assert _C.load_state(tmp, "2026-08").target_month == "2026-09"
+        # bad input is rejected, state unchanged
+        rc = R.cmd_set_target_month(argparse.Namespace(runs_root=tmp, release="2026-08", month="2026/13"))
+        assert rc == 1 and _C.load_state(tmp, "2026-08").target_month == "2026-09"
 
 
 if __name__ == "__main__":

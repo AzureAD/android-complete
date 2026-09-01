@@ -64,6 +64,12 @@ class ReleaseState:
     ccd: Optional[str] = None
     ccd_source: Optional[str] = None      # 'default' (2nd Wed) | 'override' | 'manual'
     ccd_conflict: Optional[str] = None    # a pipeline override date that DIFFERS from ccd (unresolved)
+    # The month the release is NAMED for (the ship/rollout month) — the display name of the
+    # release, e.g. 'the September 2026 release'. By convention this is the CCD month + 1
+    # (a release that code-completes in August ships in September). Stored as 'YYYY-MM',
+    # defaulted at init to CCD-month+1 and CONFIRMED by the owner. release_id stays the
+    # work/CCD month; this is display-only so the docs/comms never misname the release.
+    target_month: Optional[str] = None
     skip_release: bool = False            # mirrors the pipeline 'skipRelease' switch (display)
     # readiness entry gate (must be signed before Phase 0)
     readiness_signed: bool = False

@@ -58,7 +58,7 @@ def cmd_post_bugbash_update(args):
         print(_json.dumps({"decision": "error", "detail": detail}))
         return 0
 
-    month_year = schedule.parse_date(st.ccd).strftime("%B %Y") if st.ccd else "Bug Bash"
+    month_year = schedule.target_month_label(st) or "Bug Bash"
 
     if BB.all_complete(progress):
         summary = (f'<div style="font-family:\'Segoe UI\',Arial,sans-serif;font-size:14px;">'

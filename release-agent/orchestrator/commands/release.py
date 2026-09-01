@@ -54,6 +54,9 @@ def cmd_init(args):
     except (ValueError, IndexError):
         default, conflict = None, None
         note = "  (release id isn't YYYY-MM — CCD not set; use set-ccd)"
+    # The month the release is NAMED for (ship month) = CCD month + 1 by default. Stored so the
+    # docs/comms never misname the release; the owner confirms/adjusts it at init (set-target-month).
+    st.target_month = schedule.default_target_month(args.release)
     st.save(sp)
 
     C.elog(args.runs_root, args.release).log(
@@ -64,8 +67,11 @@ def cmd_init(args):
     tz_line = f"  Timezone: {st.timezone or schedule.DEFAULT_TZ}{tz_note}"
     if st.ccd:
         opens = schedule.anchor_date(default, "CCD-7").isoformat()
+        tm_label = schedule.target_month_label(st)
         lines = [f"Initialized release {args.release}.", f"  state: {sp}", owner_line, tz_line,
                  f"  Code Complete Date: {st.ccd} (2nd Wednesday){note}",
+                 f"  Release name: {tm_label or '(unresolved)'} release "
+                 f"(ships the month after code-complete — confirm/adjust with set-target-month)",
                  f"  Phase 0 (Pre-flight) opens {opens} (CCD-7). Until then nothing fires."]
         if conflict:
             lines.append(f"  ⚠ Pipeline override is {conflict.isoformat()}, which differs from the "
@@ -271,6 +277,29 @@ def cmd_activate(args):
     return 0
 
 
+def cmd_set_target_month(args):
+    """Set the ship/display month the release is NAMED for ('YYYY-MM'). Display-only — it does
+    NOT touch release_id, the CCD, branches, or scheduling. With no --month, resets to the
+    CCD-month+1 default."""
+    st = C.load_state(args.runs_root, args.release)
+    if args.month:
+        import re as _re
+        if not _re.match(r"^\d{4}-\d{2}$", str(args.month).strip()):
+            print(f"Bad --month '{args.month}' (expected YYYY-MM).")
+            return 1
+        mm = int(str(args.month).split("-")[1])
+        if not (1 <= mm <= 12):
+            print(f"Bad --month '{args.month}' (month must be 01-12).")
+            return 1
+        st.target_month = str(args.month).strip()
+    else:
+        st.target_month = schedule.default_target_month(args.release)
+    C.save_state(st, args.runs_root, args.release)
+    print(f"Release {args.release} is the {schedule.target_month_label(st)} release "
+          f"(target_month={st.target_month}).")
+    return 0
+
+
 def register(sub):
     i = sub.add_parser("init", help="Start a new release run")
     i.add_argument("--release", required=True)
@@ -359,3 +388,10 @@ def register(sub):
     ac.add_argument("--release", required=True)
     ac.add_argument("--phase", required=True)
     ac.set_defaults(func=cmd_activate)
+
+    tm = sub.add_parser("set-target-month",
+                        help="Set the ship/display month the release is named for (YYYY-MM; "
+                             "display-only). Omit --month to reset to the CCD-month+1 default.")
+    tm.add_argument("--release", required=True)
+    tm.add_argument("--month", default=None, help="Ship month as YYYY-MM (e.g. 2026-09)")
+    tm.set_defaults(func=cmd_set_target_month)

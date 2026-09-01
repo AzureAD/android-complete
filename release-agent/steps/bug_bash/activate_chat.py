@@ -35,7 +35,7 @@ def stored_chat_id(state):
 def build(state):
     if not state.ccd:
         return Blocked("activate_chat: no CCD set — can't identify the Bug Bash meeting.")
-    month_year = schedule.parse_date(state.ccd).strftime("%B %Y")
+    month_year = schedule.target_month_label(state)
     topic = f"{month_year} Release Bug Bash"
 
     instructions = (

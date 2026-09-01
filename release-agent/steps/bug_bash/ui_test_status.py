@@ -260,7 +260,7 @@ def _surface_ui_failures(state):
     # ---- build the step-8-style markdown note ----
     try:
         from orchestrator import schedule
-        month_year = schedule.parse_date(state.ccd).strftime("%B %Y") if state.ccd else ""
+        month_year = schedule.target_month_label(state)
     except Exception:
         month_year = ""
     owner = state.owner_email or "the release owner"

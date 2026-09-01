@@ -35,14 +35,15 @@ SCHEDULE_DOC = ("https://eng.ms/docs/microsoft-security/identity/entra-developer
                 "platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/"
                 "internal-release-checklist/release-engineer-schedule")
 
-# Native Auth Release Engineer per release month, seeded from the schedule doc. A HINT only —
-# the skill confirms against the live doc and may override. Keyed 'Month YYYY'.
+# Native Auth Release Engineer per release, seeded from the schedule doc. A HINT only — the
+# skill confirms against the live doc and may override. Keyed by the release NAME ('Month YYYY',
+# the ship/target month).
 NATIVE_AUTH_RE = {
-    "March 2026": "mmizrak", "April 2026": "mmizrak", "May 2026": "mmizrak",
-    "June 2026": "mmizrak", "July 2026": "mmizrak",
-    "August 2026": "silviu.petrescu", "September 2026": "mmizrak",
-    "October 2026": "silviu.petrescu", "November 2026": "mmizrak",
-    "January 2027": "silviu.petrescu", "February 2027": "mmizrak", "March 2027": "silviu.petrescu",
+    "April 2026": "mmizrak", "May 2026": "mmizrak", "June 2026": "mmizrak",
+    "July 2026": "mmizrak", "August 2026": "mmizrak",
+    "September 2026": "silviu.petrescu", "October 2026": "mmizrak",
+    "November 2026": "silviu.petrescu", "December 2026": "mmizrak",
+    "February 2027": "silviu.petrescu", "March 2027": "mmizrak", "April 2027": "silviu.petrescu",
 }
 
 
@@ -79,7 +80,7 @@ def build(state):
         return Done(f"Native Auth RE ({already}) already notified the {ID} for "
                     f"{state.release_id}.")
 
-    month_year = schedule.parse_date(state.ccd).strftime("%B %Y")
+    month_year = schedule.target_month_label(state)
     re_hint = NATIVE_AUTH_RE.get(month_year, "")
     plan_url = T.plan_web_url(broker_plan)
     html = _message_html(month_year, state.owner_name, plan_url)

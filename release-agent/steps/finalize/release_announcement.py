@@ -73,16 +73,9 @@ MOCKABLE = {
 
 
 def _month_year(state) -> str:
-    """'August 2026' — from the CCD if set, else the release_id (YYYY-MM)."""
+    """The release's display month — the ship/target month (CCD month + 1), e.g. 'August 2026'."""
     from orchestrator import schedule
-    if state.ccd:
-        return schedule.parse_date(state.ccd).strftime("%B %Y")
-    try:
-        y, m = str(state.release_id).split("-")[:2]
-        import datetime
-        return datetime.date(int(y), int(m), 1).strftime("%B %Y")
-    except Exception:  # noqa: BLE001
-        return str(state.release_id)
+    return schedule.target_month_label(state) or str(state.release_id)
 
 
 def _sdk_versions(state) -> dict:

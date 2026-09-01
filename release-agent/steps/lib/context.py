@@ -18,7 +18,7 @@ def release_ctx(state) -> dict:
     ccd = schedule.parse_date(state.ccd)
     owner_email = state.owner_email or ""
     return {
-        "month": ccd.strftime("%B"),
+        "month": schedule.target_month_label(state, with_year=False),
         "ccd_long": f"{ccd.strftime('%A, %B')} {ordinal(ccd.day)}, {ccd.year}",
         "ccd_date": ccd.strftime("%m/%d/%Y"),
         "owner": state.owner_name or owner_email or "the release owner",
