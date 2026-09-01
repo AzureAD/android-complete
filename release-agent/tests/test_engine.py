@@ -3690,44 +3690,37 @@ def test_record_nativeauth_notify_stores_or_holds():
 
 # ---- Phase 3: native_auth_signoff ----
 
-def test_native_auth_signoff_composes_and_idempotent():
-    """native_auth_signoff is a scout step that attests the Native Auth sign-off (no outbound
-    message); once recorded it's idempotent-done."""
+def test_native_auth_signoff_is_owner_attestation():
+    """native_auth_signoff is a pure human ATTEST step (owner: human): build() returns a
+    NeedsHuman confirmation prompt with no outbound action and no record command — the owner
+    clears it with `done --step native_auth_signoff`. The prompt names the engineer captured
+    in notify_native_auth when present (falls back to a generic reference otherwise)."""
     import steps as _steps
     from orchestrator.outcomes import as_dict
     from orchestrator.state import StepState
+    mod = _steps.get_step("bug_bash", "native_auth_signoff")
+    assert mod.KIND == "attest"
+    # no notify yet → generic reference, still a valid attest
     st = _na_state()
-    out = as_dict(_steps.get_step("bug_bash", "native_auth_signoff").build(st))
-    assert out["kind"] == "needs_skill" and out["tool"] == "record-native-auth-signoff"
-    assert "record-native-auth-signoff --release 2026-08" in out["payload"]["followup_command"]
-    assert not out.get("outbound")                       # attestation, nothing sent
-    assert _steps.get_step("bug_bash", "native_auth_signoff").KIND == "scout"
-    st.set_step("bug_bash", "native_auth_signoff", StepState(status="done", data={"by": "silviu"}))
-    out2 = as_dict(_steps.get_step("bug_bash", "native_auth_signoff").build(st))
-    assert out2["kind"] == "done" and "silviu" in out2["note"]
+    out = as_dict(mod.build(st))
+    assert out["kind"] == "needs_human" and out.get("attest") is True
+    assert "sign-off" in out["prompt"] and "done --step native_auth_signoff" in out["prompt"]
+    assert not out.get("outbound") and "tool" not in out       # nothing sent, no skill command
+    assert "notify_native_auth" in out["prompt"]
+    # engineer captured upstream → named in the prompt (reused, not re-collected)
+    st.set_step("bug_bash", "notify_native_auth",
+                StepState(status="done", data={"engineer": "silviu.petrescu"}))
+    out2 = as_dict(mod.build(st))
+    assert "silviu.petrescu" in out2["prompt"]
 
 
-def test_record_signoff_commands_store_or_hold():
-    """record-native-auth-signoff stores --by + marks done; omitting --by holds the step for
-    the owner."""
-    import tempfile, argparse
-    from orchestrator import cli_common as _C
-    from orchestrator.commands import bugbash_chat as BC
-    from steps.bug_bash.native_auth_signoff import native_auth_signed_by
-    with tempfile.TemporaryDirectory() as d:
-        rid = "2026-08"
-        _stub_build_defs("pass")
-        _C.save_state(_na_state(), d, rid)
-        # without --by → hold
-        ns_hold = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, by=None)
-        assert BC.cmd_record_native_auth_signoff(ns_hold) == 2
-        held = _C.load_state(d, rid)
-        assert not held.is_done("bug_bash", "native_auth_signoff")
-        assert held.get_step("bug_bash", "native_auth_signoff").status == "blocked"
-        # with --by → done
-        ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, by="silviu")
-        assert BC.cmd_record_native_auth_signoff(ns) == 0
-        assert native_auth_signed_by(_C.load_state(d, rid)) == "silviu"
+def test_native_auth_signoff_config_is_attest():
+    """phases.yaml classifies it as a human attest step (not scout)."""
+    import yaml as _yaml
+    cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
+    bb = next(p for p in cfg["phases"] if p["id"] == "bug_bash")
+    s = next(x for x in bb["steps"] if x["id"] == "native_auth_signoff")
+    assert s.get("owner") == "human" and s.get("attest") is True and s.get("source") != "scout"
 
 
 # ---- Phase 3: bugbash_updates (periodic poster) ----

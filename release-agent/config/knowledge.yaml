@@ -935,19 +935,22 @@ bug_bash.bugbash_updates:
       a: "Those are Authenticator cases that FAILED in automation (the auth ECS Firebase run) and were pre-assigned to the release owner by ui_test_status. They're distinct from manual tests: the owner investigates them (flake vs real bug), they don't need a manual re-run. They still count as remaining until resolved."
 
 bug_bash.native_auth_signoff:
-  summary: "The release engineer attests the Native Auth team finished + signed off."
+  summary: "The release owner attests they received the Native Auth team's sign-off."
   what: >
-    The bug-bash sign-off. No message is sent — the release engineer
-    confirms the Native Auth team completed their tests and signed off (the confirmation they
-    were asked to send back in notify_native_auth). The step completes once who signed off is
-    recorded.
-  who: "Scout runs it during `next` (a scout step); the release engineer confirms the sign-off."
+    A pure human attestation (owner: human, attest). No message is sent and no new data is
+    captured — the release owner confirms they received the bug-bash sign-off from the Native
+    Auth team. The engineer's name is reused from notify_native_auth (where they were notified),
+    so the prompt names who to expect the sign-off from; nothing is re-collected here.
+  who: "The release owner attests. Scout takes no action — there is nothing to run."
   how: >
-    Record with `record-native-auth-signoff --release <id> --by '<who>'` (marks done); without
-    --by it holds for the owner until the sign-off arrives. Idempotent.
+    The step holds with a confirmation prompt naming the Native Auth RE from notify_native_auth.
+    Once their sign-off has come in, the owner clears it with `done --step native_auth_signoff`.
+    If it hasn't arrived yet, leave it holding.
   faqs:
     - q: "What is this confirming?"
-      a: "That the Native Auth team ran their tests and signed off — the confirmation they were asked to send back in notify_native_auth."
+      a: "That the release owner received the Native Auth team's sign-off — the confirmation the RE (named in notify_native_auth) was asked to send back."
+    - q: "Why isn't Scout doing this one?"
+      a: "There's no outbound action or new data to capture — it's an attestation the release owner makes, like the preflight vitals check. Scout can't receive the sign-off on the owner's behalf."
 
 bug_bash.ui_failures:
   summary: "Human review of the combined Phase-2 UI failure list — Broker MRWP + Authenticator ECS."

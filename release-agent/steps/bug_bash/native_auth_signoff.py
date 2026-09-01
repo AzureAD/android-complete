@@ -1,56 +1,39 @@
-"""Step: `native_auth_signoff` — the release engineer attests the Native Auth team finished
-their tests and signed off (Phase 3, bug_bash).
+"""Step: `native_auth_signoff` — the release owner attests they received the Native Auth
+team's sign-off (Phase 3, bug_bash).
 
-This is the bug-bash sign-off. No message is
-sent — the release engineer simply confirms the Native Auth team completed their tests and
-signed off (the confirmation they were asked to send back in `notify_native_auth`). The skill
-captures who signed off.
-
-Scout-assisted: build() returns a NeedsSkill telling the skill to confirm the sign-off with
-the release engineer and record it via `record-native-auth-signoff --release <id> --by
-'<who>'` (or without --by to hold the step until the sign-off arrives). Idempotent — once
-recorded it reports done.
+Pure human attestation — there is NO outbound action for Scout to take. The Native Auth
+release engineer was notified in `notify_native_auth` (and their name captured there); they
+run their own tests and report sign-off back to the owner. Here the release owner simply
+CONFIRMS that sign-off was received. No message is sent and no new data is captured — the
+prompt names the engineer from `notify_native_auth` so the owner knows who to expect it from,
+and the owner clears it with `done --step native_auth_signoff` (leave it holding if the
+sign-off hasn't arrived).
 """
 from __future__ import annotations
 
-from orchestrator import schedule
-from orchestrator.outcomes import NeedsSkill, Blocked, Done
+from orchestrator.outcomes import NeedsHuman
+
 
 ID = "native_auth_signoff"
-KIND = "scout"
+KIND = "attest"
 
 
-def native_auth_signed_by(state):
-    """Who signed off Native Auth, or None."""
-    return (state.get_step("bug_bash", ID).data or {}).get("by")
+def _notified_engineer(state):
+    """The Native Auth RE captured in notify_native_auth, or None."""
+    return (state.get_step("bug_bash", "notify_native_auth").data or {}).get("engineer")
 
 
 def build(state):
-    if not state.ccd:
-        return Blocked("native_auth_signoff: no CCD set — can't identify the release month.")
-
-    who = native_auth_signed_by(state)
-    if who:
-        return Done(f"Native Auth sign-off recorded for {state.release_id} ({who}).")
-
-    month_year = schedule.parse_date(state.ccd).strftime("%B %Y")
-    instructions = (
-        f"Confirm the Native Auth sign-off for the {month_year} bug bash.\n"
-        f"1. Check with the release engineer that the Native Auth team finished their tests "
-        f"and signed off (this is the confirmation the Native Auth RE was asked to send back "
-        f"in notify_native_auth). Capture who signed off.\n"
-        f"2. Record it: `record-native-auth-signoff --release {state.release_id} --by "
-        f"'<who>'`. If it hasn't come in yet, run WITHOUT --by to hold the step.")
-
-    return NeedsSkill(
-        tool="record-native-auth-signoff",
-        payload={
-            "release": state.release_id,
-            "followup_command": (f"record-native-auth-signoff --release {state.release_id} "
-                                 f"--by '<who>'"),
-            "_gather": {"month_year": month_year, "instructions": instructions},
-        },
-        record_as=ID,
-        summary=f"Attest the Native Auth team signed off for the {month_year} bug bash",
-        note="awaiting Native Auth sign-off (release engineer attests)",
+    eng = _notified_engineer(state)
+    who = (f"the Native Auth RE ({eng}, notified in notify_native_auth)" if eng
+           else "the Native Auth team (see notify_native_auth for who was notified)")
+    return NeedsHuman(
+        prompt=(
+            f"Confirm you've received the bug-bash sign-off from {who}.\n"
+            "They were asked to run their tests and report back. Once their sign-off has come "
+            "in, mark it done (`done --step native_auth_signoff`). If it hasn't arrived yet, "
+            "leave it holding."),
+        attest=True,
     )
+
+

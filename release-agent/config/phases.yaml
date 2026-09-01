@@ -76,7 +76,7 @@ phases:
       - { id: notify_native_auth, name: "Notify the Native Auth release engineer",        owner: agent, source: scout, maps_to: [T2] }
       - { id: activate_chat,      name: "Activate the Bug Bash meeting chat + store its id", owner: agent, source: scout, maps_to: [T2] }
       - { id: bugbash_updates, name: "Post bug-bash progress updates (first post + 2h poller)", owner: agent, source: scout, maps_to: [T2] }
-      - { id: native_auth_signoff, name: "Native Auth team sign-off (attest)",    owner: agent, source: scout, maps_to: [T5] }
+      - { id: native_auth_signoff, name: "Native Auth team sign-off (attest)",    owner: human, attest: true, maps_to: [T5] }
       - { id: ui_failures,     name: "Review Phase 2 UI failures (Broker + Authenticator)",  owner: human, maps_to: [T4] }
       - { id: bugbash_complete, name: "Bug bash complete + signed off",         owner: human, source: scout, gate: true }
 

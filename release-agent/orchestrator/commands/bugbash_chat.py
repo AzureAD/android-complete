@@ -81,36 +81,6 @@ def cmd_record_nativeauth_notify(args):
     return 0
 
 
-def cmd_record_native_auth_signoff(args):
-    """Record the Native Auth sign-off (release engineer attests the Native Auth team signed
-    off). --by given → store + mark done; omitted → hold the step for the owner."""
-    _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    return _record_signoff(orch, args, "native_auth_signoff", "Native Auth")
-
-
-def _record_signoff(orch, args, step_id, label):
-    by = (args.by or "").strip()
-    if not by:
-        detail = (f"{label} sign-off still pending. Re-run with --by '<who>' once it's "
-                  f"received.")
-        orch.record_scout_step("bug_bash", step_id, "attention", detail)
-        C.save_state(orch.state, args.runs_root, args.release)
-        C.emit(args.runs_root, args.release, f"[attention] {step_id}: {detail}", kind="step")
-        print(detail)
-        return 2
-
-    orch.record_scout_step("bug_bash", step_id, "pass", f"{label} sign-off: {by}")
-    step = orch.state.get_step("bug_bash", step_id)
-    step.data = dict(step.data or {})
-    step.data["by"] = by
-    step.by = "scout"
-    orch.state.set_step("bug_bash", step_id, step)
-    C.save_state(orch.state, args.runs_root, args.release)
-    C.emit(args.runs_root, args.release, f"[ok] {step_id}: {label} sign-off ({by})", kind="step")
-    print(f"Recorded {label} sign-off: {by}")
-    return 0
-
-
 def register(sub):
     p = sub.add_parser("record-bugbash-chat",
                        help="Store the resolved Bug Bash meeting chat id (Phase-3 activate_chat)")
@@ -128,9 +98,3 @@ def register(sub):
     n.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     n.set_defaults(func=cmd_record_nativeauth_notify)
 
-    s = sub.add_parser("record-native-auth-signoff",
-                       help="Record the Native Auth sign-off (release engineer attests)")
-    s.add_argument("--release", required=True)
-    s.add_argument("--by", default=None, help="Who signed off Native Auth. Omit to hold the step.")
-    s.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
-    s.set_defaults(func=cmd_record_native_auth_signoff)
