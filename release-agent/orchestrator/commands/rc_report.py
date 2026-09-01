@@ -81,9 +81,17 @@ def cmd_record_rc_report(args):
         return 1
 
     gate = K.rc_ui_gate(model)
+    auth = K.auth_report_gate(model)
     links = K.rc_run_links(model)
-    status = "attention" if gate["blocking"] else "pass"
-    orch.record_scout_step("build_verify", "rc_report", status, gate["detail"])
+    # The consolidation decision: the release auto-advances only when BOTH the MRWP UI gate
+    # AND the Authenticator-ECS gate clear. Either one holding -> the step blocks (the
+    # release WAITS for human attestation). The two remain SEPARATE evaluations.
+    blocking = gate["blocking"] or auth["blocking"]
+    status = "attention" if blocking else "pass"
+    detail = gate["detail"]
+    if auth["present"]:
+        detail = f"{detail}\n\n{auth['detail']}"
+    orch.record_scout_step("build_verify", "rc_report", status, detail)
 
     # record_scout_step doesn't carry links — attach the evaluated-run refs (and stamp
     # the recorder as scout) on the resulting step, preserving its status/note.
@@ -95,11 +103,12 @@ def cmd_record_rc_report(args):
 
     C.emit(args.runs_root, args.release,
            f"[{'ok' if status == 'pass' else 'attention'}] rc_report: "
-           f"{gate['detail'].splitlines()[0]}", kind="step")
-    print(_json.dumps({"verdict": gate["verdict"], "status": status,
+           f"{detail.splitlines()[0]}", kind="step")
+    print(_json.dumps({"verdict": gate["verdict"], "auth_verdict": auth["verdict"],
+                       "status": status, "blocking": blocking,
                        "pass_pct": gate["pass_pct"], "ui_total": gate["ui_total"],
                        "ui_failed": gate["ui_failed"], "threshold": gate["threshold"],
-                       "detail": gate["detail"], "links": links}))
+                       "detail": detail, "links": links}))
     return 0 if status == "pass" else 2
 
 

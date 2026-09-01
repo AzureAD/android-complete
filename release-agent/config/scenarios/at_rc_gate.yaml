@@ -40,3 +40,12 @@ mocks:
       - { name: "Build", state: completed, result: succeeded }
       - { name: "UI Automation", state: completed, result: failed }
     tests: { total: 5856, passed: 5756, failed: 100 }
+  build_verify.auth_ecs:
+    auth_build: { build_id: 1678900, rc: 1, version: "0.0.02468-rc-RC1-ecs",
+                  status: completed, result: succeeded }
+    test_build: 1678901
+    suites:
+      "Firebase Test Lab - UIAutomator E2E Tests":
+        { present: true, passed: 96, failed: 4, total: 100, pct: 96.0 }
+      "Firebase Test Lab - Monthly UI Tests":
+        { present: true, passed: 306, failed: 0, total: 306, pct: 100.0 }

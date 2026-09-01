@@ -1,23 +1,24 @@
-"""Step: `rc_report` — email the RC verification report to the release owner AND apply
-the Phase-2 UI-automation quality gate (Phase 2, build_verify). This is the terminal
-Phase-2 step and the go/no-go — there is no separate human approval gate.
+"""Step: `rc_report` — consolidate the RC data, email the report, and make the Phase-2
+go/hold decision (Phase 2, build_verify). This is the terminal Phase-2 step and the single
+decision point — the verification steps only CAPTURE data; this step decides. No separate
+human approval gate.
 
 When the four verification steps have resolved the chain, this step composes the
 Phase-2 RC report (checker → orchestrator → ECS/Local MRWP + per-run test failures)
 from LIVE pipeline data and emails it to the release owner, so the engineer wakes to
 the report on CCD+1. The report is ALWAYS sent (the owner gets the dashboard of
-failures + links either way). The step's OUTCOME is then decided by the three-tier UI
-gate on the combined UI-automation pass rate across both MRWP runs: 100% is a clean
-pass; >= RC_UI_PASS_THRESHOLD (90%) but < 100% passes with a warning (investigate the
-failing tests in parallel — bug bash is NOT blocked); below 90% records `attention`
-(the step BLOCKS) so the owner investigates the large failure and rules on it (patch +
-re-trigger RC, or proceed as an automation flake). On a clean/warn pass the release
-auto-advances into Phase 3 (bug bash).
+failures + links either way). The step's OUTCOME is then decided by TWO independent gates:
+(1) the three-tier MRWP UI gate on the combined UI-automation pass rate across both MRWP
+runs (100% clean; >= RC_UI_PASS_THRESHOLD (90%) but < 100% warn — proceed + investigate in
+parallel; < 90% hold); and (2) the Authenticator ECS gate (both Firebase suites >= 90% and
+the auth build succeeded). The release AUTO-ADVANCES into Phase 3 only when BOTH gates clear;
+if EITHER holds, the step records `attention` and BLOCKS (the release WAITS for human
+attestation).
 
 Sending email needs the WorkIQ MCP the engine can't reach, so this is a `scout`
 step: `build()` composes the email deterministically and returns a
 NeedsSkill(workiq_send_email); the payload names the `record-rc-report` follow-up
-command, which re-reads the model, applies the gate, records pass|attention, and
+command, which re-reads the model, applies BOTH gates, records pass|attention, and
 stashes the evaluated run links on the step. Redirect for tests with the `send_to`
 payload knob (keeps the send real, points it at you).
 """
@@ -53,18 +54,22 @@ def build(state):
         return Blocked(f"rc_report: could not build the RC report ({e}).")
 
     gate = K.rc_ui_gate(model)
+    auth = K.auth_report_gate(model)
     v = gate["verdict"]
     if v == "clean":
         summary = (f"Email the RC verification report to the release owner ({to}) — "
-                   f"UI gate CLEAN (100%)")
+                   f"MRWP UI gate CLEAN (100%)")
     elif v == "warn":
         summary = (f"Email the RC verification report to the release owner ({to}) — "
-                   f"UI gate PASS with warning ({gate['pass_pct']}%); proceed + investigate "
+                   f"MRWP UI gate PASS with warning ({gate['pass_pct']}%); proceed + investigate "
                    f"failing UI tests in parallel")
     else:
         summary = (f"Email the RC verification report to the release owner ({to}) — "
-                   f"UI gate FAIL ({gate['pass_pct']}% < {int(K.RC_UI_PASS_THRESHOLD)}%); "
-                   f"will block for investigation")
+                   f"MRWP UI gate FAIL ({gate['pass_pct']}% < {int(K.RC_UI_PASS_THRESHOLD)}%); "
+                   f"will hold for investigation")
+    if auth["present"]:
+        summary += (f" · Auth ECS {'PASS' if auth['verdict'] == 'clean' else 'HOLD'}")
+    note = gate["detail"] + (f"\n\n{auth['detail']}" if auth["present"] else "")
     return NeedsSkill(
         tool="workiq_send_email",
         payload={
@@ -73,13 +78,14 @@ def build(state):
             "body": html,
             "isHtml": True,
             "_plain_body": plain,
-            # After sending, DON'T blind-record pass: run this engine command instead —
-            # it applies the 90% UI gate (pass|attention) and stashes the run links.
+            # After sending, DON'T blind-record pass: run this engine command instead — it
+            # consolidates the MRWP UI gate AND the Authenticator-ECS gate (pass|attention)
+            # and stashes the run links.
             "followup_command": "record-rc-report",
         },
         record_as=ID,
         summary=summary,
-        note=gate["detail"],
+        note=note,
         outbound=True,
     )
 

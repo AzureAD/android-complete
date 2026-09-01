@@ -211,6 +211,15 @@ def rc_run_links(model) -> list:
         rid = ((model.get("mrwp") or {}).get(prov) or {}).get("run_id")
         if rid:
             out.append({"name": f"MRWP {prov} run", "url": build_url(rid)})
+    # Authenticator ECS build + its post-build UI-test run (msazure/One), when captured.
+    a = model.get("auth") or {}
+    if a:
+        ab = (a.get("build") or {}).get("run_id")
+        if ab:
+            out.append({"name": "Authenticator ECS build", "url": auth_build_url(ab)})
+        at = (a.get("test") or {}).get("run_id")
+        if at:
+            out.append({"name": "Authenticator ECS UI tests", "url": auth_build_url(at)})
     return out
 
 
@@ -303,13 +312,51 @@ def recovered_unit_tests(model) -> list:
     return sorted(out)
 
 
+def auth_leg_summary(model) -> dict:
+    """Compact Authenticator-ECS verdict for the RC report's at-a-glance surfaces (email
+    subject + the gates banner). Reads the stored auth section (model['auth']). The auth leg
+    is a SEPARATE gate from the MRWP UI gate — this never merges the two. Returns
+      {present, verdict, blocking, headline, worst}
+    verdict is 'clean' | 'attention' (or 'absent' when the leg didn't resolve this run)."""
+    a = model.get("auth") or {}
+    if not a:
+        return {"present": False, "verdict": "absent", "blocking": False,
+                "headline": "not evaluated", "worst": None}
+    suites = (a.get("test") or {}).get("suites") or {}
+    verdict = a.get("verdict") or "attention"
+    worst = None                                  # (short_name, pct|None) — missing or lowest
+    for name in AUTH_UI_SUITES:
+        s = suites.get(name) or {}
+        short = name.split(" - ")[-1]
+        if not s.get("present"):
+            worst = (short, None)
+            break
+        pct = s.get("pct")
+        if worst is None or (pct is not None and (worst[1] is None or pct < worst[1])):
+            worst = (short, pct)
+    if verdict == "clean":
+        headline = f"both suites >= {AUTH_UI_PASS_THRESHOLD:.0f}%"
+    elif worst and worst[1] is None:
+        headline = f"{worst[0]}: no result"
+    elif worst:
+        headline = f"{worst[0]} {worst[1]}%"
+    else:
+        headline = f"< {AUTH_UI_PASS_THRESHOLD:.0f}%"
+    return {"present": True, "verdict": verdict, "blocking": verdict != "clean",
+            "headline": headline, "worst": worst}
+
+
 def rc_email_subject(model) -> str:
     rid = model.get("release", "?")
     v = rc_ui_gate(model)["verdict"]
     action = {"clean": "approve to proceed to bug bash",
               "warn": "proceeding to bug bash — investigate failing UI tests in parallel",
               "attention": "investigate UI failures before proceeding"}[v]
-    return f"Release {rid} — RC verification report (Phase 2) · action: {action}"
+    subject = f"Release {rid} — RC verification report (Phase 2) · MRWP UI: {action}"
+    auth = auth_leg_summary(model)
+    if auth["present"]:
+        subject += f" · Auth ECS: {'pass' if auth['verdict'] == 'clean' else 'BELOW 90% gate'}"
+    return subject
 
 
 def _fail_rate(failed, total) -> float:
@@ -347,6 +394,17 @@ def _rc_email_plain(model, ctx) -> str:
     L.append(f"The Release Candidate for {rid} has been built and RC testing has "
              f"completed. Review the results below and approve 'RC verified — proceed "
              f"to bug bash' when ready.")
+    L.append("")
+    _g = rc_ui_gate(model)
+    _mpct = _g.get("pass_pct")
+    L.append("GATES (evaluated independently)")
+    L.append(f"  - MRWP UI: {_g['verdict']}"
+             + (f" ({_mpct}% pass across ECS + Local)" if _mpct is not None else ""))
+    _auth = auth_leg_summary(model)
+    if _auth["present"]:
+        L.append(f"  - Authenticator ECS: "
+                 f"{'pass' if _auth['verdict'] == 'clean' else 'BELOW gate'} "
+                 f"({_auth['headline']})")
     L.append("")
     ch = model.get("checker") or {}
     L.append("PIPELINE HEALTH")
@@ -591,6 +649,23 @@ def _rc_email_html(model, ctx) -> str:
     tot_f, tot_t = _ui_sum("failed"), _ui_sum("total")
     overall_rate = _fail_rate(tot_f, tot_t)
 
+    def _gates_banner():
+        """Two chips at the top so the report contemplates BOTH gates at a glance — the MRWP
+        combined UI gate and the SEPARATE Authenticator-ECS gate (they stay independent)."""
+        g = rc_ui_gate(model)
+        mcol = {"clean": ("#ecfdf3", "#067647"), "warn": ("#fffaeb", "#b54708"),
+                "attention": ("#fef3f2", "#b42318")}.get(g["verdict"], ("#eef0f3", "#475467"))
+        mpct = g.get("pass_pct")
+        mtxt = f"MRWP UI: {g['verdict']}" + (f" &middot; {mpct}%" if mpct is not None else "")
+        cells = f"<td style='padding:0 8px 0 0;'>{_chip(mtxt, *mcol)}</td>"
+        a = auth_leg_summary(model)
+        if a["present"]:
+            acol = ("#ecfdf3", "#067647") if a["verdict"] == "clean" else ("#fef3f2", "#b42318")
+            atxt = "Auth ECS: " + ("pass" if a["verdict"] == "clean" else "below 90%")
+            cells += f"<td style='padding:0 8px;'>{_chip(atxt, *acol)}</td>"
+        return ("<table role='presentation' cellpadding='0' cellspacing='0' style='margin:12px 0 0;'>"
+                f"<tr>{cells}</tr></table>")
+
     probs = model.get("problems") or []
     issues = (("<div style='margin:12px 0;padding:10px 12px;background:#fef3f2;border:1px solid #fda29b;"
                "border-radius:8px;color:#b42318;'><strong>Blocking issues</strong> (a stage that never "
@@ -620,6 +695,7 @@ def _rc_email_html(model, ctx) -> str:
       <div style="font-size:13px;opacity:.92;margin-top:2px;">Release {T.esc(rid)} &middot; Phase 2 &mdash; Build &amp; RC testing</div>
     </td></tr>
   </table>
+  {_gates_banner()}
 
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:12px 0;border:1px solid #e4e7ec;border-radius:10px;">
     <tr>
@@ -827,15 +903,17 @@ def auth_gate(suites) -> dict:
 
 
 def verify_auth_ecs(state):
-    """Body for the `auth_ecs` step — track the Authenticator ECS RC build + its post-build
-    UI test (msazure/One, cross-org) and apply the auth-leg gate. SEPARATE report section;
-    its own pass/block; does NOT feed the MRWP 90% UI gate.
+    """Body for the `auth_ecs` step — a DATA-AVAILABILITY check for the Authenticator ECS RC
+    build + its post-build UI test (msazure/One, cross-org). Like the MRWP steps, it only
+    confirms the build RAN and the test data exists, then CAPTURES it into rcs[rc].auth for
+    the RC report. It does NOT apply the 90% gate — a sub-90% result is DATA, not a block.
+    The `rc_report` step consolidates MRWP + auth and makes the go/hold decision.
 
-    Flow: resolve the auth working-branch from state.versions.authenticator ->
-    find the current-RC ECS build (def 475778) -> in-flight build holds as InProgress,
-    a bad result blocks -> find the post-build UI-test run via the build->test resource link
-    (missing/in-flight test holds as InProgress) -> read the two Firebase suites and apply
-    `auth_gate`. Snapshots everything into rcs[rc].auth.
+    Flow: resolve the auth working-branch from state.versions.authenticator -> find the
+    current-RC ECS build (def 475778). In-flight build -> hold (poll); no build at all ->
+    block (nothing to report on); a completed-but-failed build -> record it (no test data) +
+    Done; a green build -> find its post-build UI-test run (not run yet -> hold), read the two
+    Firebase suites, snapshot everything + the informational verdict, and Done.
 
     Mock knobs: auth_build ({build_id,rc,version,status,result}), test_build (id),
     suites (the auth_ui_suite_rates map), rc (override the RC number)."""
@@ -861,18 +939,29 @@ def verify_auth_ecs(state):
     rc_num = rc_num if rc_num is not MISSING else ab.get("rc")
     links = [{"name": f"{label} build", "url": auth_build_url(build_id)}]
 
-    # 1.5) build must have COMPLETED with a usable result. In-flight -> poll; bad -> block.
+    # 1.5) the build must have run to completion (data availability). In-flight -> hold.
     status, result = ab.get("status"), ab.get("result")
     if status not in (None, "completed"):
         return InProgress(
             f"{label} build {build_id} is still running (status: {status}) — Scout is polling "
-            f"every 30 min and will evaluate the UI tests when it completes.", links=links)
-    if result not in (None, "succeeded", "partiallySucceeded"):
-        return Blocked(
-            f"{label} build {build_id} did not succeed (result: {result}). The RC auth app "
-            f"build must be green before its UI tests can gate the release.", links=links)
+            f"every 30 min and will capture its UI tests when it completes.", links=links)
 
-    # 2) find the post-build UI-test run via the deterministic build->test resource link
+    # A build that ran but did NOT succeed has no usable UI-test data. Record the fact (the
+    # RC report consolidates it and decides) and finish — this step never gates, it only
+    # confirms the build ran + captures the data it produced.
+    if result not in (None, "succeeded", "partiallySucceeded"):
+        stash_auth(state, rc_num, {
+            "build": {"run_id": str(build_id), "rc": rc_num, "version": ab.get("version"),
+                      "result": result, "complete": True},
+            "test": None,
+            "verdict": "attention",
+        })
+        return Done(
+            f"{label} build {build_id} completed but did not succeed (result: {result}) — "
+            f"recorded for the RC report (no UI-test data). The report decides go/hold.",
+            links=links)
+
+    # 2) find the post-build UI-test run (data availability). Not run yet -> hold.
     tb = mock_input("test_build", MISSING)
     if tb is MISSING:
         ok, tb, detail = P.find_auth_ui_test_build(build_id)
@@ -884,11 +973,13 @@ def verify_auth_ecs(state):
         # The test auto-triggers off build completion (PR 16976328); it just hasn't run yet.
         return InProgress(
             f"{label} build {build_id} is green, but its post-build UI-test run hasn't "
-            f"appeared yet — Scout is polling every 30 min and will gate it once it runs.",
+            f"appeared yet — Scout is polling every 30 min and will capture it once it runs.",
             links=links)
     links.append({"name": f"{label} UI tests", "url": auth_build_url(tb)})
 
-    # 3) per-suite pass rates + the auth gate
+    # 3) read the per-suite pass rates (the DATA the RC report gates on) + compute the
+    # informational verdict. This step does NOT enforce it — rc_report consolidates MRWP +
+    # auth and makes the go/hold decision.
     suites = mock_input("suites", MISSING)
     if suites is MISSING:
         ok, suites, detail = P.auth_ui_suite_rates(tb)
@@ -897,14 +988,39 @@ def verify_auth_ecs(state):
                            links=links)
     gate = auth_gate(suites)
 
-    # 4) snapshot the whole leg into the RC iteration (its own section)
+    # 4) snapshot the whole leg into the RC iteration (its own report section).
     stash_auth(state, rc_num, {
         "build": {"run_id": str(build_id), "rc": rc_num, "version": ab.get("version"),
-                  "result": result},
+                  "result": result, "complete": True},
         "test": {"run_id": str(tb), "suites": suites},
         "verdict": gate["verdict"],
     })
+    # Always Done: the build ran and the data is captured. A sub-90% result is DATA for the
+    # RC report, not a block here (mirrors MRWP, where failing tests don't block verify).
+    bar = "clears the 90% bar" if gate["verdict"] == "clean" else "is BELOW the 90% bar"
+    return Done(
+        f"{label} build {build_id} + UI tests captured — {bar}; the RC report consolidates "
+        f"this with MRWP and decides go/hold.", links=links)
 
-    if gate["blocking"]:
-        return Blocked(gate["detail"], links=links)
-    return Done(gate["detail"], links=links)
+
+def auth_report_gate(model) -> dict:
+    """The Authenticator-ECS decision input for the RC report CONSOLIDATION. Reads the
+    captured auth section (model['auth']) and returns {present, verdict, blocking, detail}.
+    verdict 'clean' -> non-blocking; 'attention' -> blocking (the release WAITS for human
+    attestation, same effect as the MRWP UI gate blocking). 'absent' -> the auth leg didn't
+    resolve this run (non-blocking, but surfaced)."""
+    a = model.get("auth") or {}
+    if not a:
+        return {"present": False, "verdict": "absent", "blocking": False,
+                "detail": "Authenticator ECS: not evaluated this run."}
+    v = a.get("verdict") or "attention"
+    build = a.get("build") or {}
+    if v == "clean":
+        detail = (f"Authenticator ECS gate: PASS — build {build.get('run_id')} + both "
+                  f"Firebase suites >= {AUTH_UI_PASS_THRESHOLD:.0f}%.")
+    else:
+        detail = (f"Authenticator ECS gate: HOLD — build {build.get('run_id')}: a Firebase "
+                  f"suite is < {AUTH_UI_PASS_THRESHOLD:.0f}% (or the build did not succeed). "
+                  f"Investigate + re-run the post-build UI test, then re-evaluate.")
+    return {"present": True, "verdict": v, "blocking": v == "attention", "detail": detail}
+

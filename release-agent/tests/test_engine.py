@@ -2225,20 +2225,23 @@ def test_find_auth_ui_test_build_matches_resource_link(monkeypatch):
 def test_verify_auth_ecs_done_when_both_suites_pass():
     st, orch = _bv_state({})                                        # uses the SAFE auth_ecs mock
     out = _bv_build(orch, st, "auth_ecs")
-    assert out["kind"] == "done" and "clear the 90% bar" in out["note"]
+    assert out["kind"] == "done" and "captured" in out["note"] and "clears the 90% bar" in out["note"]
     # snapshot landed in the RC iteration under its own 'auth' section
     rc = st.pipeline_runs["rcs"][-1]
     assert rc["auth"]["verdict"] == "clean"
     assert rc["auth"]["build"]["run_id"] == "900010" and rc["auth"]["test"]["run_id"] == "900011"
 
 
-def test_verify_auth_ecs_blocks_when_suite_below_threshold():
+def test_verify_auth_ecs_captures_and_does_NOT_block_when_below_threshold():
+    """auth_ecs is a DATA-AVAILABILITY check: a sub-90% Firebase result is captured (verdict
+    'attention' stashed) and the step is DONE — it never gates. rc_report makes the decision."""
     st, orch = _bv_state({"build_verify.auth_ecs": {
         "auth_build": {"build_id": 900010, "rc": 1, "version": "0.0.02468-rc-RC1-ecs",
                        "status": "completed", "result": "succeeded"},
         "test_build": 900011, "suites": _auth_suites(82.76, 100.0)}})
     out = _bv_build(orch, st, "auth_ecs")
-    assert out["kind"] == "blocked" and "NOT met" in out["reason"]
+    assert out["kind"] == "done" and "BELOW the 90% bar" in out["note"]
+    assert st.pipeline_runs["rcs"][-1]["auth"]["verdict"] == "attention"
 
 
 def test_verify_auth_ecs_in_flight_build_holds():
@@ -2249,12 +2252,16 @@ def test_verify_auth_ecs_in_flight_build_holds():
     assert out["kind"] == "in_progress" and "still running" in out["note"]
 
 
-def test_verify_auth_ecs_blocks_on_failed_build():
+def test_verify_auth_ecs_records_failed_build_without_blocking():
+    """A completed-but-failed auth build is DATA (recorded, verdict 'attention', no test) and
+    the step is DONE — the RC report consolidates it and decides go/hold."""
     st, orch = _bv_state({"build_verify.auth_ecs": {
         "auth_build": {"build_id": 900010, "rc": 1, "version": "0.0.02468-rc-RC1-ecs",
                        "status": "completed", "result": "failed"}}})
     out = _bv_build(orch, st, "auth_ecs")
-    assert out["kind"] == "blocked" and "did not succeed" in out["reason"]
+    assert out["kind"] == "done" and "did not succeed" in out["note"]
+    auth = st.pipeline_runs["rcs"][-1]["auth"]
+    assert auth["verdict"] == "attention" and auth["test"] is None
 
 
 def test_verify_auth_ecs_holds_when_test_not_run_yet(monkeypatch):
@@ -2287,6 +2294,37 @@ def test_rc_email_includes_separate_auth_section():
     assert "Authenticator ECS" in html and "UIAutomator E2E" in html
     plain = K._rc_email_plain(model, {"owner": "pedro"})
     assert "AUTHENTICATOR ECS" in plain and "does NOT affect" in plain
+
+
+def test_rc_report_contemplates_both_gates_at_a_glance():
+    """The subject, HTML gates banner, and plain-text GATES block all reflect BOTH the MRWP
+    UI gate and the SEPARATE Authenticator-ECS gate — without merging them."""
+    from steps.build_verify import _common as K
+    st, _ = _bv_state({})
+    # MRWP warn (94%), auth ECS below (E2E 82.76%) — two independent verdicts.
+    _seed_rc_pipeline(st, {"total": 100, "passed": 94, "failed": 6},
+                      {"total": 100, "passed": 100, "failed": 0})
+    rc = st.pipeline_runs["rcs"][-1]
+    K.stash_auth(st, rc["rc"], {
+        "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
+                  "result": "succeeded"},
+        "test": {"run_id": "900011", "suites": _auth_suites(82.76, 100.0)},
+        "verdict": "attention"})
+    model = K.rc_report_model(st)
+    subj = K.rc_email_subject(model)
+    assert "MRWP UI:" in subj and "Auth ECS: BELOW 90% gate" in subj
+    html = K._rc_email_html(model, {"owner": "pedro"})
+    assert "MRWP UI:" in html and "Auth ECS:" in html          # gates banner has both
+    plain = K._rc_email_plain(model, {"owner": "pedro"})
+    assert "GATES (evaluated independently)" in plain
+    assert "MRWP UI:" in plain and "Authenticator ECS: BELOW gate" in plain
+    # a clean auth leg flips only the auth surfaces, not the MRWP verdict
+    K.stash_auth(st, rc["rc"], {
+        "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
+                  "result": "succeeded"},
+        "test": {"run_id": "900011", "suites": _auth_suites(97.0, 100.0)},
+        "verdict": "clean"})
+    assert "Auth ECS: pass" in K.rc_email_subject(K.rc_report_model(st))
 
 
 def test_build_verify_phase_shape():
@@ -2454,6 +2492,55 @@ def test_record_rc_report_applies_ui_gate_and_stashes_links():
         assert "BELOW" in step2.note and len(step2.links) == 4
         # the same rc was updated in place (not a spurious new RC iteration)
         assert len(s2.pipeline_runs["rcs"]) == 1
+
+
+def test_record_rc_report_holds_when_auth_gate_fails_though_mrwp_clean():
+    """The rc_report consolidation blocks (holds for attestation) when the Authenticator-ECS
+    gate fails, EVEN IF the MRWP UI gate is clean — the two are separate evaluations but
+    either one holding stops auto-advance. A clean auth leg lets it pass."""
+    import tempfile as _tf
+    from orchestrator.commands import rc_report as RR
+    from orchestrator.state import StepState
+    from steps.build_verify import _common as K
+
+    with _tf.TemporaryDirectory() as d:
+        rid = "2026-08"
+        _stub_build_defs("pass")
+        st = ReleaseState(release_id=rid, ccd="2026-08-26", owner_email="dev@microsoft.com")
+        orch = Orchestrator(CONFIG, st)
+        _pass_scout_checks(orch); orch.gate.sign()
+
+        class A:
+            runs_root = d; release = rid; config = CONFIG; as_of = None
+
+        # MRWP clean (100% UI), but auth ECS BELOW (E2E 82.76%) -> hold for attestation.
+        _seed_rc_pipeline(st, {"total": 100, "passed": 100, "failed": 0},
+                          {"total": 100, "passed": 100, "failed": 0})
+        rc = st.pipeline_runs["rcs"][-1]
+        K.stash_auth(st, rc["rc"], {
+            "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
+                      "result": "succeeded"},
+            "test": {"run_id": "900011", "suites": _auth_suites(82.76, 100.0)},
+            "verdict": "attention"})
+        C.save_state(st, d, rid)
+        assert RR.cmd_record_rc_report(A) == 2                     # blocked by AUTH, not MRWP
+        s1 = C.load_state(d, rid)
+        assert s1.get_step("build_verify", "rc_report").status == "blocked"
+        # links now include the auth build + test
+        names = [l["name"] for l in s1.get_step("build_verify", "rc_report").links]
+        assert "Authenticator ECS build" in names and "Authenticator ECS UI tests" in names
+
+        # flip auth to clean -> now both gates clear -> pass (auto-advance)
+        s1.set_step("build_verify", "rc_report", StepState())
+        rc = s1.pipeline_runs["rcs"][-1]
+        K.stash_auth(s1, rc["rc"], {
+            "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
+                      "result": "succeeded"},
+            "test": {"run_id": "900011", "suites": _auth_suites(97.0, 100.0)},
+            "verdict": "clean"})
+        C.save_state(s1, d, rid)
+        assert RR.cmd_record_rc_report(A) == 0
+        assert C.load_state(d, rid).is_done("build_verify", "rc_report")
 
 
 def test_active_phase_report_steps_carry_links():

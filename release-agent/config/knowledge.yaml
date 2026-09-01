@@ -608,61 +608,71 @@ build_verify.mrwp_local:
       a: "The orchestrator triggers MRWP twice with different flight providers — ECS (server-driven flights) and Local (local flight overrides). Both must run to completion; they're verified separately."
 
 build_verify.auth_ecs:
-  summary: "Track the Authenticator ECS app build + its post-build UI tests, on their own 90% gate."
+  summary: "Capture the Authenticator ECS app build + its post-build UI-test data for the RC report."
   what: >
     The Authenticator RC app build and its device UI tests live in a DIFFERENT org — msazure/One
     — and are NOT part of the Engineering release-verification chain. The orchestrator only cuts the
     auth working-branch; the RC app build (def 475778, AndroidBuildBroker1ES) self-triggers off that
     branch cut, and its post-build UI tests (def 444678) self-trigger off the build's completion.
-    This step discovers the current-RC ECS build on 'working-<release-branch>' (the build whose
-    adAccountsVersion is '...-rc-RC<N>-ecs', highest N), confirms it built green, follows the
-    deterministic build->test resource link to its UI-test run, and applies the auth gate: BOTH
-    Firebase device suites — 'Firebase Test Lab - UIAutomator E2E Tests' and 'Firebase Test Lab -
-    Monthly UI Tests' — must pass at >= 90%. It is a SEPARATE report section with its OWN pass/block
-    and does NOT feed the MRWP 90% UI gate.
+    This step is a DATA-AVAILABILITY check (exactly like the mrwp_ecs/mrwp_local steps): it discovers
+    the current-RC ECS build on 'working-<release-branch>' (the build whose adAccountsVersion is
+    '...-rc-RC<N>-ecs', highest N), follows the deterministic build->test resource link to its UI-test
+    run, reads the two Firebase device suites, and CAPTURES it all into rcs[rc].auth. It does NOT
+    apply the 90% gate — a sub-90% result is DATA, not a block here. The rc_report step consolidates
+    MRWP + auth and makes the go/hold decision.
   where:
     - "Authenticator RC build (def 475778): https://msazure.visualstudio.com/One/_build?definitionId=475778"
     - "Authenticator Post-Build UI Tests (def 444678): https://msazure.visualstudio.com/One/_build?definitionId=444678"
   how: >
-    An in-flight build or a not-yet-run UI test HOLDS (Scout polls every 30 min and re-evaluates).
-    A failed auth build, or either Firebase suite below 90%, BLOCKS: investigate the failing suite,
-    re-run the post-build UI test, then rerun this step. The build is read cross-org via az/REST
-    (no ADO MCP); the build->test link is the test run's resources.pipeline.authenticatorBuild id.
+    It HOLDS (Scout polls every 30 min) while the build is in-flight or its UI-test run hasn't
+    appeared yet (data not ready). It BLOCKS only when there is NO ECS build at all (the branch
+    wasn't cut / nothing to report on). A completed build — even a failed one, or one whose Firebase
+    suites are below 90% — is captured and the step is DONE; the RC report then decides. The build is
+    read cross-org via az/REST (no ADO MCP); the build->test link is the test run's
+    resources.pipeline.authenticatorBuild id.
   faqs:
-    - q: "Why is this separate from the MRWP UI gate?"
-      a: "It's a different app (the Authenticator shell, not the broker SDK), built in a different org (msazure/One), on its own quality bar (both Firebase suites >= 90%). It reports in its own section and blocks on its own — it does not roll into the combined MRWP UI-automation rate."
+    - q: "Why doesn't this step block when a Firebase suite is below 90%?"
+      a: "Because it is a data-availability check, not a gate — same as the MRWP verify steps, where failing tests don't block (they're data). It captures the suite results + an informational verdict into state; the rc_report step consolidates MRWP + auth and makes the single go/hold decision. This keeps one decision point."
+    - q: "Is the Authenticator gate merged into the MRWP UI gate?"
+      a: "No. They stay SEPARATE evaluations (different app, different org, its own >=90%-both-suites bar) and render in their own report section. rc_report applies both independently; either one holding makes the release wait for human attestation."
     - q: "How is the ECS build identified without the orchestrator tagging it?"
       a: "The build already carries adAccountsVersion '0.0.…-rc-RC<N>-ecs' (RC iteration + ECS flavor) and runs on 'working-<release-branch>', so Scout finds it by branch + that version (highest RC N, newest id) — no orchestrator involvement. The UI-test run is then matched deterministically by its authenticatorBuild pipeline-resource id."
     - q: "The auth build passed but there's no UI-test result — is that a block?"
       a: "No. The UI test auto-triggers off build completion, so a missing result just means it hasn't run yet — Scout holds and polls, then applies the gate once it completes."
 
 build_verify.rc_report:
-  summary: "Email the RC verification report + apply the three-tier 90% UI gate (the Phase-2 go/no-go)."
+  summary: "Consolidate the RC data, email the report, and decide: auto-advance vs hold for attestation."
   what: >
-    Once the four verification steps have resolved the chain, this composes the Phase-2 RC report —
-    checker fired, orchestrator healthy/parked, both MRWP runs' stage completion, and each run's
-    failing test suites — from LIVE pipeline data and emails it to the release owner (on CCD+1). It
-    is the terminal Phase-2 step and the go/no-go: after sending, `record-rc-report` applies a
-    three-tier gate on the combined UI-automation pass rate across both MRWP runs — 100% is a clean
-    pass, >=90% passes with a warning (investigate the failing tests in parallel, bug bash not
-    blocked), and <90% BLOCKS for owner investigation. There is no separate approval gate.
-    Scout-assisted (source: scout): the engine composes it; the skill sends via WorkIQ.
+    Once the verification steps have CAPTURED the chain data (checker fired, orchestrator
+    healthy/parked, both MRWP runs' stage completion + tests, and the Authenticator ECS build +
+    Firebase suites), this step CONSOLIDATES it into the Phase-2 RC report and emails it to the
+    release owner (on CCD+1). It is the terminal Phase-2 step and the single decision point — the
+    verification steps only gather data; this step decides. After sending, `record-rc-report` applies
+    TWO independent gates: (1) the three-tier MRWP UI gate on the combined UI-automation pass rate
+    across both MRWP runs (100% clean, >=90% warn/proceed, <90% hold); and (2) the Authenticator ECS
+    gate (both Firebase suites >= 90%, and the auth build succeeded). The release AUTO-ADVANCES only
+    when BOTH gates clear; if EITHER holds, the step blocks and WAITS for human attestation. There is
+    no separate approval gate. Scout-assisted (source: scout): the engine composes it; the skill sends
+    via WorkIQ.
   who: >
     Scout composes the email; the skill sends it via workiq_send_email to the release owner
     (state.owner_email). Redirect for testing with the step's `send_to` payload knob.
   where:
     - "Release Orchestrator run (versions + parked gate): via the run link in the email + the step's Details"
     - "MRWP ECS / Local runs (Test tab): via the run links in the email + the step's Details"
+    - "Authenticator ECS build + UI-test run: via the run links in the email's 'Authenticator ECS' section"
   how: >
     If it blocks with 'no release owner email', set it with `set-owner --email <you@microsoft.com>`
-    and rerun. On a clean/warn pass (>=90% UI) the release auto-advances into bug bash. On a <90%
-    block, the owner investigates and rules on it (patch a real bug + re-trigger RC, or proceed as an
-    automation flake): fix + re-run then `next`, or `skip --reason` to override.
+    and rerun. When BOTH gates clear (MRWP UI >=90% AND auth ECS >=90%) the release auto-advances into
+    bug bash. If either holds, the owner investigates and rules on it (patch a real bug + re-trigger
+    RC, or proceed as an automation flake): fix + re-run then `next`, or `skip --reason` to override.
   faqs:
     - q: "Who gets the email?"
       a: "The release owner on record (owner_email). It's a personal review copy, not the broad DL — the owner reviews the RC failures; the 90% UI gate then decides go/no-go automatically."
     - q: "Does the sim send this email?"
       a: "No. In a sim the step is marked done without sending; only the real skill flow composes + sends it via WorkIQ."
+    - q: "Does the report cover the Authenticator ECS leg too?"
+      a: "Yes. The report contemplates BOTH gates: it shows a gates banner (subject + top of the email + a plain-text GATES block) with the MRWP UI verdict AND the Authenticator-ECS verdict, plus a dedicated 'Authenticator ECS' section with the two Firebase suites. The two gates are evaluated INDEPENDENTLY — the auth leg is decided by the auth_ecs step (its own >=90% bar on both suites) and does NOT feed the MRWP UI gate that rc_report applies."
 
 # =============================== Phase 3 · bug_bash ===============================
 
