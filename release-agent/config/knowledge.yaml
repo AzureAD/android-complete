@@ -958,7 +958,7 @@ bug_bash.ui_failures:
     A human-review checkpoint (owner: human, non-gate): before the bug bash proceeds, the
     engineer reviews the Phase-2 UI-automation failures. The list covers BOTH apps — the Broker
     MRWP UI suites (from the ECS + Local RC runs) AND the Authenticator ECS Firebase failures.
-    The step has no logic of its own; the preceding `ui_test_status` step forward-populates its
+    The step has no logic of its own; the earlier `ui_test_status` step forward-populates its
     Details with the combined summary + run links (it just filled both suites and knows the
     failures), so the reviewer sees everything in one place. When nothing failed, the step shows
     its generic prompt and is a quick acknowledge.
@@ -975,7 +975,7 @@ bug_bash.ui_failures:
     - q: "Does this include the Authenticator app failures?"
       a: "Yes. The list is combined: Broker MRWP UI suites AND the Authenticator ECS Firebase failures. The auth failures are also pre-assigned to the release owner (by ui_test_status) so they're already in the owner's triage queue."
     - q: "Where does the failure list come from if this step has no code?"
-      a: "From ui_test_status, which runs right before it — it filled both the Broker and Authenticator suites and writes the combined failure summary + links onto this step for the reviewer."
+      a: "From ui_test_status, which runs earlier in the phase — it filled both the Broker and Authenticator suites and writes the combined failure summary + links onto this step for the reviewer."
 
 bug_bash.bugbash_complete:
   summary: "The release owner attests the Bug Bash is finished — the gate that closes the bash."

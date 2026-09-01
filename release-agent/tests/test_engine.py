@@ -663,9 +663,10 @@ def test_holds_at_first_hold():
     # auto steps that RUN before the first hold: Phase-0 breaking/cg/oneauth_access/cron/wiki (5) +
     # Phase-2 checker_fired/orchestrator_health/mrwp_ecs/mrwp_local/auth_ecs (5) + rc_report (scout
     # email, mocked done here) (1) + Phase-3 clone_plans_broker/clone_plans_auth/
-    # distribute_tests/ui_test_status (4) + send_invite + activate_chat (scout, mocked done) (2) +
-    # notify_native_auth (1) + bugbash_updates (1) + native_auth_signoff (1).
-    assert sum(1 for a in actions if a.kind == "ran") == 20
+    # ui_test_status/distribute_tests (4) + send_invite + activate_chat (scout, mocked done) (2) +
+    # notify_native_auth (1) + bugbash_updates (1). native_auth_signoff now follows ui_failures, so
+    # it does NOT run before the first hold.
+    assert sum(1 for a in actions if a.kind == "ran") == 19
 
 
 def test_gate_blocks_until_approved():
