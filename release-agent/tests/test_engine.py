@@ -3080,6 +3080,67 @@ def test_ui_test_status_fills_from_verdicts():
     assert out["links"][0]["url"].endswith("planId=3737697")
 
 
+def test_ui_test_status_fills_auth_and_assigns_failures_to_owner():
+    """The expanded step also fills the Authenticator suite and reassigns every FAILED
+    automated auth case to the release owner for triage."""
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    from orchestrator.state import StepState
+    from tools import testplans as T
+    from tools import distribution as D
+    st = _uts_state(plan_id="3737697")
+    st.owner_email = "owner@microsoft.com"
+    st.set_step("bug_bash", "clone_plans_auth", StepState(status="done", data={"suite_id": 714999}))
+
+    assigned = []
+    o_bfill, o_afill, o_assign = (T.fill_ui_automation_results, T.fill_auth_ui_results,
+                                  D.set_assigned_to)
+    T.fill_ui_automation_results = lambda p, v, timeout=120: (
+        True, {"points_total": 10, "set_passed": 8, "set_failed": 2,
+               "set_not_applicable": 0, "cases_touched": 5}, "")
+    T.fill_auth_ui_results = lambda plan, suite, outcomes, timeout=120: (
+        True, {"points_total": 26, "set_passed": 21, "set_failed": 5,
+               "failed_case_ids": [2916347, 2916524, 3094649, 3261599, 3741283]}, "")
+    D.set_assigned_to = lambda cid, upn, timeout=60: (assigned.append((cid, upn)), (True, ""))[1]
+    try:
+        with mockctx.active({"verdicts": {"1": {("ECS", "prod"): "Passed"}},
+                             "auth_outcomes": {2916347: "Failed", 100: "Passed"}}):
+            out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
+    finally:
+        T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_assigned_to = (
+            o_bfill, o_afill, o_assign)
+    assert out["kind"] == "done"
+    assert "Auth: 21 Passed, 5 Failed" in out["note"]
+    assert "5 failed case(s) assigned to owner owner@microsoft.com" in out["note"]
+    # every failed auth case was reassigned to the owner
+    assert {c for c, _ in assigned} == {2916347, 2916524, 3094649, 3261599, 3741283}
+    assert all(u == "owner@microsoft.com" for _, u in assigned)
+    adata = st.get_step("bug_bash", "ui_test_status").data["auth"]
+    assert adata["failed"] == 5 and adata["failed_assigned_to_owner"] == 5
+    assert any("suite 714999" in l["name"] for l in out["links"])
+
+
+def test_ui_test_status_auth_skipped_when_no_auth_suite():
+    """No clone_plans_auth suite → the auth fill is skipped (best-effort) but the Broker fill
+    still completes and the step is done."""
+    import steps as _steps
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+    from tools import testplans as T
+    st = _uts_state(plan_id="900")
+    o = T.fill_ui_automation_results
+    T.fill_ui_automation_results = lambda p, v, timeout=120: (
+        True, {"points_total": 5, "set_passed": 5, "set_failed": 0,
+               "set_not_applicable": 0, "cases_touched": 3}, "")
+    try:
+        with mockctx.active({"verdicts": {"1": {("ECS", "prod"): "Passed"}}}):
+            out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
+    finally:
+        T.fill_ui_automation_results = o
+    assert out["kind"] == "done" and "Authenticator suite not created yet" in out["note"]
+
+
 def test_ui_test_status_blocks_without_broker_plan():
     import steps as _steps
     from steps.lib import mockctx
@@ -3340,6 +3401,40 @@ def test_distribute_tests_step_previews_and_stores_plan():
     # 6 tests / 2 eligible (a,b; owner+oce excluded) -> 3 each
     assert sorted(plan["counts"].values()) == [3, 3]
     assert set(plan["assignments"].values()) == {"a@microsoft.com", "b@microsoft.com"}
+
+
+def test_auth_ui_case_outcomes_aggregates(monkeypatch):
+    """Per-case outcomes: Passed if the case passed in >=1 run (retry recovery), Failed if it
+    only ever failed, and NotApplicable-only cases are omitted (no case-id name -> ignored)."""
+    from tools import pipelines as P
+    monkeypatch.setattr(P, "_ado_rest_get", lambda url, t: (True, {"value": [{"id": 1}, {"id": 2}]}, ""))
+    runs = {1: [{"automatedTestName": "test_100_x", "outcome": "Failed"},
+                {"automatedTestName": "test_200_y", "outcome": "Failed"}],
+            2: [{"automatedTestName": "test_100_x", "outcome": "Passed"},   # retry recovery
+                {"automatedTestName": "test_300_z", "outcome": "NotApplicable"},
+                {"automatedTestName": "no_case_id_here", "outcome": "Failed"}]}
+    monkeypatch.setattr(P, "_run_results", lambda o, pj, rid, t=90: (True, runs[rid], ""))
+    ok, out, _ = P.auth_ui_case_outcomes(999)
+    assert ok and out == {100: "Passed", 200: "Failed"}    # 300 NA-only + unnamed -> omitted
+
+
+def test_distribute_excludes_automated_auth_cases():
+    """distribute_tests drops auth cases already automated by this release's auth ECS run
+    (empirical, via the `auth_automated` set) so they don't go to manual testers."""
+    mocks = {
+        "roster": [{"name": "A", "upn": "a@microsoft.com"}, {"name": "B", "upn": "b@microsoft.com"}],
+        "broker_cases": [],
+        "auth_cases": [{"id": "5", "assignee": None}, {"id": "6", "assignee": None},
+                       {"id": "7", "assignee": None}, {"id": "8", "assignee": None}],
+        "auth_automated": [6, 8],                       # 6 + 8 already automated -> excluded
+    }
+    st, out = _dist_build(mocks)
+    assert out["kind"] == "done"
+    plan = st.get_step("bug_bash", "distribute_tests").data["plan"]
+    assert plan["auth_total"] == 2 and plan["auth_excluded_automated"] == 2   # 4 -> 2
+    assert "Excluded 2 already-automated auth case(s)" in out["note"]
+    assigned_ids = {k.split(":")[1] for k in plan["assignments"]}
+    assert assigned_ids == {"5", "7"}                   # only the non-automated cases distributed
 
 
 def test_distribute_tests_blocks_without_broker_clone():

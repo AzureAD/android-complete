@@ -745,12 +745,17 @@ bug_bash.distribute_tests:
   summary: "Evenly distribute the manual bug-bash tests across the eligible team."
   what: >
     Combines the two manual test sets — Broker ('Manual Tests (Android Broker)' subtree,
-    ~48 cases) + Authenticator (the ReleaseBugBash query set minus tags Automated/Blocked,
-    ~26 cases) — and splits them EVENLY across the eligible team, keeping each test on its
-    current assignee where possible (preference), only reassigning to hit an even count.
-    Eligible = the roster DL 'androididentity@microsoft.com' MINUS the always-excluded
-    people (jialh, moghosh, veenasoman), the release owner, and the current on-call
-    engineer (OCE). Default assignee + the written field are both System.AssignedTo.
+    ~48 cases) + Authenticator (the ReleaseBugBash query set) — and splits them EVENLY across
+    the eligible team, keeping each test on its current assignee where possible (preference),
+    only reassigning to hit an even count. The Authenticator set EXCLUDES cases already
+    automated by this release's auth ECS UI-test run — read EMPIRICALLY from the run (by
+    test-case id), NOT from the cross-platform 'Automated' tag (iOS owns that tag), plus the
+    'Blocked' tag. So of the ~49 ReleaseBugBash cases, the ~26 automated ones are dropped and
+    the ~23 genuinely-manual cases are distributed. (Failed automated cases are triaged by the
+    owner via ui_test_status, not by a manual tester.) Eligible = the roster DL
+    'androididentity@microsoft.com' MINUS the always-excluded people (jialh, moghosh,
+    veenasoman), the release owner, and the current on-call engineer (OCE). Default assignee +
+    the written field are both System.AssignedTo.
   who: >
     Scout computes the PREVIEW automatically during `next` (an agent step). Applying it is
     a separate, explicit action you trigger — it writes System.AssignedTo, which mutates
@@ -773,31 +778,38 @@ bug_bash.distribute_tests:
       a: "Yes — System.AssignedTo lives on the shared test-case work items, so the new assignee shows in the master and every plan referencing them. That's intentional: it carries the preference into the next release's clone."
     - q: "Who is excluded?"
       a: "Always: jialh, moghosh, veenasoman. Per-release: the release owner and the current on-call engineer (OCE, resolved via ICM team 78848 — the same team the entry gate checks)."
+    - q: "How do we know which Authenticator cases are automated vs manual?"
+      a: "Empirically, from this release's auth ECS post-build UI-test run (the one auth_ecs captured): a case whose test-case id appears in that run is automated and is excluded from the manual split. We deliberately do NOT rely on the 'Automated' tag — it is shared with iOS, so a case automated on Android but not iOS must not be tagged. Reading the run keeps the split correct for Android and leaves the shared tag alone."
 
 bug_bash.ui_test_status:
-  summary: "Fill the release plan's UI Automation suite from the Phase-2 RC pipeline results."
+  summary: "Fill BOTH the Broker + Authenticator UI suites from the RC pipelines; assign auth failures to the owner."
   what: >
-    Phase-2 verification records one or more RC iterations (state.pipeline_runs.rcs[]), each with
-    an ECS and a Local MRWP build. This step reads the UI-automation test results across ALL those
-    RC builds and fills the flat 'UI Automation (Android Broker)' suite (built in step 1,
-    clone_plans_broker) with per-config outcomes. Each build is one flight (ECS or Local, from its
-    templateParameters.flightProvider); its runs split into a PROD-MSAL and an RC-MSAL variant
-    (from the run name). Those (flight, variant) pairs map 1:1 to the suite's four flight-configs
-    (ECS/PROD=292, ECS/RC=294, Local/PROD=328, Local/RC=344), so every (case, config) test point
-    takes the outcome of its MATCHING run(s). A test can run many times for a given config — across
-    RC iterations and retries — with different outcomes. The RULE per point: PASSED if it passed
-    there in at least one run; FAILED if it really ran but never passed; NotApplicable if it was
-    only skipped / never ran for that flight+variant.
+    Fills the release's UI-automation results from Phase-2's captured runs — for BOTH apps.
+    (1) BROKER: reads the UI-automation results across all RC MRWP builds
+    (state.pipeline_runs.rcs[].ecs/local) and fills the flat 'UI Automation (Android Broker)'
+    suite (from clone_plans_broker) with per-config outcomes; each build is one flight
+    (ECS/Local), its runs split into PROD-MSAL / RC-MSAL variants that map 1:1 to the suite's
+    four flight-configs (292/294/328/344); a point is PASSED if it passed in >=1 matching run,
+    FAILED if it ran but never passed, else NotApplicable. (2) AUTHENTICATOR: reads this
+    release's auth ECS post-build UI-test run (state.rcs[-1].auth.test, captured by auth_ecs)
+    and fills the Authenticator bug-bash suite (from clone_plans_auth) for the automated cases
+    only — Passed->Passed, Failed->Failed — leaving the manual cases untouched for testers.
+    Every FAILED automated auth case is REASSIGNED to the release owner (System.AssignedTo) for
+    triage. The auth fill is best-effort: if the auth suite or run isn't available yet it is
+    skipped with a note, and the Broker fill still completes.
   who: "Scout runs it automatically during `next` (an agent step) — right after distribute_tests."
   how: >
     The join from a pipeline result to a plan test case is the case id embedded in the automated
-    test name ('test_<caseId>_...' / storage '...TestCase<caseId>'). Only 'ui'-classified runs are
-    considered, and only runs carrying a PROD/RC-MSAL marker (others, e.g. 'Lab Api Tests', can't
-    be placed on a config). Idempotent — a re-run re-fills (overwrites) the outcomes from the
-    current RC runs. Blocks if the plan hasn't been cloned or no RC runs are recorded yet.
+    test name ('test_<caseId>_...' / storage '...TestCase<caseId>'). For Broker, only
+    'ui'-classified runs carrying a PROD/RC-MSAL marker are placed on a config. For Authenticator,
+    the auth run's UIAutomator E2E suite carries the case ids (the Monthly suite does not, so it
+    contributes nothing). Idempotent — a re-run re-fills from the current runs. Blocks only if the
+    Broker plan hasn't been cloned or no RC runs are recorded yet.
   faqs:
     - q: "A test failed for one config but passed for another — what gets written?"
       a: "Per config. Each of the four flight-configs (ECS/PROD, ECS/RC, Local/PROD, Local/RC) takes its own matching run's verdict — so a case can be Passed on one config and Failed on another."
+    - q: "What happens to a Firebase E2E test that FAILED?"
+      a: "It's written FAILED in the Authenticator suite (a visible failure, never dropped), and that case is reassigned to the release owner so the owner triages it (real bug vs automation flake). Passed automated cases are marked Passed; both are excluded from the manual tester split by distribute_tests."
     - q: "What does a case that failed then passed (retries / multiple RCs) get?"
       a: "Passed — for a given config the rule is at-least-one-success across all its runs and retries."
     - q: "What outcome do skipped / not-run tests get?"

@@ -12,16 +12,24 @@ on-call engineer (OCE). The OCE's team id comes from readiness.yaml (single sour
 entry gate); the OCE identity is resolved via ICM by the skill and passed in as the `oce`
 input. Owner = state.owner_email.
 
+The Authenticator set EXCLUDES cases already automated by this release's auth ECS UI-test run
+— resolved EMPIRICALLY from the run (by test-case id, via `pipelines.auth_ui_case_outcomes`
+off `state.rcs[-1].auth.test`), NOT from the cross-platform 'Automated' tag (iOS owns that
+tag, so a case automated only on Android must not carry it). Both passed and failed automated
+cases are dropped from the manual split — failures are triaged by the owner via
+`ui_test_status`, not by a manual tester.
+
 Depends on the two clone steps: the Broker plan id is read from clone_plans_broker's
 stashed data (falls back to the master plan). If the Broker plan hasn't been cloned yet,
 the step blocks.
 
 Mock knobs (mocks.local.yaml / tests):
-  oce          : the on-call engineer's identifier to exclude (skill resolves via ICM).
-  roster       : inject the team roster [{name, upn}] (skip Graph).
-  broker_cases : inject the Broker cases [{id, assignee}] (skip ADO).
-  auth_cases   : inject the Authenticator cases [{id, assignee}] (skip ADO).
-  fail         : force a Blocked with this detail.
+  oce            : the on-call engineer's identifier to exclude (skill resolves via ICM).
+  roster         : inject the team roster [{name, upn}] (skip Graph).
+  broker_cases   : inject the Broker cases [{id, assignee}] (skip ADO).
+  auth_cases     : inject the Authenticator cases [{id, assignee}] (skip ADO).
+  auth_automated : inject the automated auth case ids to exclude [..] (skip the auth run read).
+  fail           : force a Blocked with this detail.
 """
 from __future__ import annotations
 
@@ -29,6 +37,7 @@ from orchestrator.outcomes import Done, Blocked
 from steps.lib.agent import legacy_run
 from steps.lib.mockctx import mock_input, MISSING
 from tools import distribution as D
+from tools import pipelines as P
 
 ID = "distribute_tests"
 KIND = "agent"
@@ -38,6 +47,7 @@ MOCKABLE = {
     "roster": {"kind": "input", "desc": "Inject the team roster [{name, upn}] (skip Graph)."},
     "broker_cases": {"kind": "input", "desc": "Inject Broker cases [{id, assignee}] (skip ADO)."},
     "auth_cases": {"kind": "input", "desc": "Inject Authenticator cases [{id, assignee}] (skip ADO)."},
+    "auth_automated": {"kind": "input", "desc": "Inject the automated auth case ids to exclude [..] (skip the auth ECS run read)."},
     "fail": {"kind": "input", "desc": "Force a Blocked with this detail."},
 }
 
@@ -45,6 +55,32 @@ MOCKABLE = {
 def _broker_plan_id(state):
     """The release's cloned Broker plan id (from clone_plans_broker), or None."""
     return (state.get_step("bug_bash", "clone_plans_broker").data or {}).get("plan_id")
+
+
+def _auth_test_build_id(state):
+    """The auth ECS post-build UI-test build id captured by Phase-2 auth_ecs
+    (state.pipeline_runs.rcs[-1].auth.test.run_id), or None."""
+    rcs = (getattr(state, "pipeline_runs", None) or {}).get("rcs") or []
+    if not rcs:
+        return None
+    return (((rcs[-1].get("auth") or {}).get("test") or {}) or {}).get("run_id")
+
+
+def _auth_automated_ids(state):
+    """Case ids already automated by this release's auth ECS UI-test run — excluded from the
+    MANUAL distribution. Read EMPIRICALLY from the run (via pipelines.auth_ui_case_outcomes),
+    NOT from the shared 'Automated' tag (that tag is cross-platform; iOS owns it). Passed and
+    Failed automated cases are both excluded — failures are triaged by the owner via
+    ui_test_status, not by a manual tester. Offline: inject via the `auth_automated` knob.
+    Returns a set (empty when no auth run has been captured yet)."""
+    injected = mock_input("auth_automated", MISSING)
+    if injected is not MISSING:
+        return {int(i) for i in (injected or [])}
+    bid = _auth_test_build_id(state)
+    if not bid:
+        return set()
+    ok, outcomes, _ = P.auth_ui_case_outcomes(bid)
+    return {int(k) for k in outcomes} if ok else set()
 
 
 def build(state):
@@ -76,6 +112,16 @@ def build(state):
         if not ok:
             hint = " — run `az login`" if str(d).startswith("AUTH") else ""
             return Blocked(f"distribute_tests: couldn't read Authenticator bug-bash tests ({d}){hint}.")
+
+    # Exclude auth cases already automated by this release's auth ECS UI-test run — they don't
+    # need a manual tester (passes are done; failures are triaged by the owner via
+    # ui_test_status). Empirical (from the run), so no reliance on the cross-platform
+    # 'Automated' tag that iOS also uses.
+    auto_ids = _auth_automated_ids(state)
+    auth_before = len(acases)
+    if auto_ids:
+        acases = [c for c in acases if int(c.get("id")) not in auto_ids]
+    auth_excluded = auth_before - len(acases)
 
     tests = [{"id": f"B:{c['id']}", "assignee": c.get("assignee")} for c in bcases] + \
             [{"id": f"A:{c['id']}", "assignee": c.get("assignee")} for c in acases]
@@ -113,6 +159,7 @@ def build(state):
         "oce_excluded": oce,
         "broker_total": len(bcases),
         "auth_total": len(acases),
+        "auth_excluded_automated": auth_excluded,
         "applied": False,
     }
     state.set_step("bug_bash", ID, step)
@@ -121,10 +168,12 @@ def build(state):
     top = ", ".join(f"{name_by_upn.get(u, u)} {counts[u]}"
                     for u in sorted(eligible, key=lambda e: -counts[e])[:3])
     oce_note = f", OCE {oce}" if oce else " (OCE not resolved — pass --oce to exclude)"
+    auto_note = (f" Excluded {auth_excluded} already-automated auth case(s)."
+                 if auth_excluded else "")
     return Done(
         f"Distribution PREVIEW ready: {len(tests)} tests (Broker {len(bcases)} + Auth "
         f"{len(acases)}) across {len(eligible)} testers — {lo}–{hi} each "
-        f"({result['kept']} kept, {result['reassigned']} reassigned). Excluded owner "
+        f"({result['kept']} kept, {result['reassigned']} reassigned).{auto_note} Excluded owner "
         f"{owner}{oce_note}. e.g. {top}. Review, then apply with "
         f"`distribute-tests --release {state.release_id} --apply`.")
 

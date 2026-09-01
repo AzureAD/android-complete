@@ -1125,3 +1125,40 @@ def auth_ui_suite_rates(test_build_id, timeout=90):
                      "total": r.get("total") or 0,
                      "pct": (round(passed * 100.0 / denom, 1) if denom else None)}
     return (True, out, "")
+
+
+def auth_ui_case_outcomes(build_id, timeout=120):
+    """Per-CASE automated outcomes from the auth ECS post-build UI-test BUILD — the join
+    key Phase 3 needs. Returns (ok, {case_id: 'Passed'|'Failed'}, detail).
+
+    Scans every test run on the build (the Firebase suites), pulls each result's test-CASE
+    id from its automated name (`test_<caseId>_...`, via `_ui_case_id_from_result`), and
+    aggregates per case: 'Passed' if it passed in >=1 run, else 'Failed' if it has a real
+    (non-NotApplicable) result but never passed. Cases that only ever skipped are omitted.
+    The 'Monthly UI Tests' suite carries no case-id name, so it naturally contributes
+    nothing — only the UIAutomator E2E suite maps to bug-bash cases. The KEYS are exactly
+    the release's automated auth case ids (what distribute_tests excludes + ui_test_status
+    fills)."""
+    base = AUTH_ORG.rstrip("/")
+    url = (f"{base}/{AUTH_PROJECT}/_apis/test/runs"
+           f"?buildUri=vstfs:///Build/Build/{build_id}&api-version=7.1")
+    ok, data, detail = _ado_rest_get(url, timeout)
+    if not ok:
+        return (False, None, detail)
+    runs = (data or {}).get("value", []) or []
+    passed_any, ran_any = set(), set()
+    for run in runs:
+        okr, results, dr = _run_results(AUTH_ORG, AUTH_PROJECT, run.get("id"), timeout)
+        if not okr:
+            return (False, None, dr)
+        for res in results:
+            cid = _ui_case_id_from_result(res)
+            if cid is None:
+                continue
+            if (res.get("outcome") or "") == "NotApplicable":
+                continue
+            ran_any.add(cid)
+            if res.get("outcome") == "Passed":
+                passed_any.add(cid)
+    out = {cid: ("Passed" if cid in passed_any else "Failed") for cid in ran_any}
+    return (True, out, "")

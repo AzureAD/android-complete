@@ -457,6 +457,44 @@ def fill_ui_automation_results(plan_id, verdicts, timeout=120):
                    "cases_touched": len(cases_touched)}, "")
 
 
+def fill_auth_ui_results(plan_id, suite_id, case_outcomes, timeout=120):
+    """Fill the Authenticator bug-bash suite's points from per-case AUTOMATED outcomes
+    ({case_id: 'Passed'|'Failed'} — from pipelines.auth_ui_case_outcomes).
+
+    Unlike the Broker fill, the auth suite has ONE default config (a point per case), and we
+    only write the AUTOMATED cases — a point whose case isn't in `case_outcomes` is LEFT
+    UNTOUCHED (it stays pending for a manual tester). Passed -> 'Passed'; Failed -> 'Failed'.
+    Returns (ok, summary, detail) where summary = {points_total, set_passed, set_failed,
+    failed_case_ids} — `failed_case_ids` is what the step reassigns to the release owner."""
+    outcomes = {int(k): v for k, v in (case_outcomes or {}).items()}
+    okp, pts, dp = P._ado_rest_get_all(
+        f"{ORG}/{PROJECT}/_apis/test/Plans/{plan_id}/Suites/{suite_id}/points?api-version=5.0",
+        timeout)
+    if not okp:
+        return (False, None, dp)
+    buckets = {"Passed": [], "Failed": []}
+    failed_cases = set()
+    for p in pts:
+        try:
+            cid = int((p.get("testCase") or {}).get("id"))
+        except (TypeError, ValueError):
+            continue
+        oc = outcomes.get(cid)
+        if oc not in ("Passed", "Failed"):
+            continue                                   # manual case — leave untouched
+        buckets[oc].append(p.get("id"))
+        if oc == "Failed":
+            failed_cases.add(cid)
+    for outcome, point_ids in buckets.items():
+        if point_ids:
+            oko, do = _set_points_outcome(plan_id, suite_id, point_ids, outcome, timeout)
+            if not oko:
+                return (False, None, f"setting {len(point_ids)} auth points -> {outcome} failed: {do}")
+    return (True, {"points_total": len(pts), "set_passed": len(buckets["Passed"]),
+                   "set_failed": len(buckets["Failed"]),
+                   "failed_case_ids": sorted(failed_cases)}, "")
+
+
 def create_auth_query_suite(name, query, timeout=90):
     """CREATE a query-based (dynamic) test suite `name` under the Authenticator plan's
     root suite, selecting the given WIQL. Returns (ok, new_suite_id, detail)."""

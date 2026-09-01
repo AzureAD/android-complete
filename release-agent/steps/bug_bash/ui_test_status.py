@@ -1,30 +1,33 @@
-"""Step: `ui_test_status` — fill the release plan's UI Automation results from the RC pipelines
-(Phase 3, bug_bash; runs right after `distribute_tests`).
+"""Step: `ui_test_status` — fill BOTH the Broker + Authenticator UI suites from the RC
+pipelines, and reassign failed auth automation to the release owner (Phase 3, bug_bash;
+runs right after `distribute_tests`).
 
-Phase 2 verification records one or more RC iterations (`state.pipeline_runs.rcs[]`), each with
-an ECS and a Local MRWP build. Phase-3 step 1 (`clone_plans_broker`) built the release plan with
-a flat "UI Automation (Android Broker)" suite. This step reads the UI-automation test results
-across ALL those RC builds and fills that suite's outcomes.
+BROKER: Phase-2 records one or more RC iterations (`state.pipeline_runs.rcs[]`), each with an
+ECS and a Local MRWP build. This step reads the UI-automation results across ALL those RC
+builds and fills the flat "UI Automation (Android Broker)" suite (from `clone_plans_broker`).
+Each (case, flight-config) point takes its matching run's outcome (PASSED if it passed in >=1
+run; FAILED if it ran but never passed; NotApplicable if only skipped) — see
+`pipelines.ui_automation_verdicts`.
 
-A UI test can run many times — across RC iterations, retries, flight providers (ECS / Local),
-and MSAL variants (PROD-MSAL / RC-MSAL) — with different outcomes each time. Each MRWP build is
-one flight (ECS or Local, from templateParameters.flightProvider); its runs split into a
-PROD-MSAL and an RC-MSAL variant (from the run name). Those (flight, variant) pairs map 1:1 to
-the suite's four flight-configs, so every (case, config) test point takes the outcome of its
-MATCHING run(s): PASSED if it passed there in >=1 run; FAILED if it really ran but never passed;
-NotApplicable if it was only skipped / never ran for that flight+variant.
+AUTHENTICATOR: this step ALSO fills the Authenticator bug-bash suite (from `clone_plans_auth`)
+from this release's auth ECS post-build UI-test run (`state.rcs[-1].auth.test`, captured by
+the Phase-2 `auth_ecs` step). For the automated cases only (join on `test_<caseId>_`), it
+writes Passed->Passed / Failed->Failed and LEAVES manual cases untouched; every FAILED
+automated case is reassigned to the release owner (`state.owner_email`) for triage. Best-effort
+— if the auth suite / run isn't available yet, the auth fill is skipped with a note and the
+Broker fill still completes.
 
-The join from a pipeline result to a plan test case is the case id embedded in the automated
-test name (`test_<caseId>_...`) — see `pipelines.ui_automation_verdicts`.
-
-Depends on `clone_plans_broker` (the plan / UI suite) and the Phase-2 RC runs. Blocks if the
-plan hasn't been cloned or no RC runs are recorded. Idempotent — a re-run re-fills (overwrites)
-the outcomes from the current RC runs.
+Depends on `clone_plans_broker` (and, for the auth fill, `clone_plans_auth` + the Phase-2 RC
+runs). Blocks only if the Broker plan hasn't been cloned or no RC runs are recorded.
+Idempotent — a re-run re-fills from the current runs.
 
 Mock knobs (mocks.local.yaml / tests):
-  build_ids : inject the RC MRWP build ids [..] (skip reading state.pipeline_runs).
-  verdicts  : inject the per-case verdicts {case_id: 'Passed'|'Failed'} (skip ADO pipelines).
-  fail      : force a Blocked with this detail.
+  build_ids     : inject the RC MRWP build ids [..] (skip state.pipeline_runs).
+  verdicts      : inject the per-config Broker verdicts (skip ADO pipelines).
+  auth_build_id : inject the auth ECS UI-test build id (skip state.rcs[].auth).
+  auth_suite_id : inject the Authenticator bug-bash suite id (skip clone_plans_auth).
+  auth_outcomes : inject the auth per-case outcomes {case_id: 'Passed'|'Failed'} (skip ADO).
+  fail          : force a Blocked with this detail.
 """
 from __future__ import annotations
 
@@ -33,6 +36,7 @@ from steps.lib.agent import legacy_run
 from steps.lib.mockctx import mock_input, MISSING
 from tools import testplans as T
 from tools import pipelines as P
+from tools import distribution as D
 
 ID = "ui_test_status"
 KIND = "agent"
@@ -40,6 +44,9 @@ KIND = "agent"
 MOCKABLE = {
     "build_ids": {"kind": "input", "desc": "Inject the RC MRWP build ids [..] (skip state.pipeline_runs)."},
     "verdicts": {"kind": "input", "desc": "Inject per-config verdicts {case_id: {(flight,variant): outcome}} (skip ADO)."},
+    "auth_build_id": {"kind": "input", "desc": "Inject the auth ECS UI-test build id (skip state.rcs[].auth)."},
+    "auth_suite_id": {"kind": "input", "desc": "Inject the Authenticator bug-bash suite id (skip clone_plans_auth)."},
+    "auth_outcomes": {"kind": "input", "desc": "Inject auth per-case outcomes {case_id: 'Passed'|'Failed'} (skip ADO)."},
     "fail": {"kind": "input", "desc": "Force a Blocked with this detail."},
 }
 
@@ -47,6 +54,20 @@ MOCKABLE = {
 def _broker_plan_id(state):
     """The release's cloned Broker plan id (from clone_plans_broker), or None."""
     return (state.get_step("bug_bash", "clone_plans_broker").data or {}).get("plan_id")
+
+
+def _auth_suite_id(state):
+    """The release's Authenticator bug-bash suite id (from clone_plans_auth), or None."""
+    return (state.get_step("bug_bash", "clone_plans_auth").data or {}).get("suite_id")
+
+
+def _auth_test_build_id(state):
+    """The auth ECS post-build UI-test build id captured by the Phase-2 auth_ecs step
+    (state.pipeline_runs.rcs[-1].auth.test.run_id), or None."""
+    rcs = (getattr(state, "pipeline_runs", None) or {}).get("rcs") or []
+    if not rcs:
+        return None
+    return (((rcs[-1].get("auth") or {}).get("test") or {}) or {}).get("run_id")
 
 
 def _rc_build_ids(state):
@@ -61,6 +82,58 @@ def _rc_build_ids(state):
                 seen.add(rid)
                 out.append(rid)
     return out
+
+
+def _fill_auth(state, notes):
+    """Fill the Authenticator bug-bash suite from this release's auth ECS UI-test run, and
+    reassign the FAILED automated cases to the release owner for triage. Best-effort: appends
+    a note and returns None if the auth suite / run data isn't available yet (the Broker fill
+    must not be blocked by a missing auth leg). Returns a short summary string on success."""
+    suite_id = mock_input("auth_suite_id", MISSING)
+    suite_id = suite_id if suite_id is not MISSING else _auth_suite_id(state)
+    if not suite_id:
+        notes.append("Authenticator suite not created yet (clone_plans_auth) — auth results skipped.")
+        return None
+
+    outcomes = mock_input("auth_outcomes", MISSING)
+    if outcomes is MISSING:
+        build_id = mock_input("auth_build_id", MISSING)
+        build_id = build_id if build_id is not MISSING else _auth_test_build_id(state)
+        if not build_id:
+            notes.append("No auth ECS UI-test run captured yet (Phase-2 auth_ecs) — auth results skipped.")
+            return None
+        ok, outcomes, d = P.auth_ui_case_outcomes(build_id)
+        if not ok:
+            notes.append(f"Could not read auth UI results ({d}) — auth results skipped.")
+            return None
+
+    ok, summ, d = T.fill_auth_ui_results(T.AUTH_PLAN, suite_id, outcomes)
+    if not ok:
+        notes.append(f"Could not fill auth UI results ({d}) — auth results skipped.")
+        return None
+
+    # Reassign every FAILED automated case to the release owner for triage.
+    failed_ids = summ.get("failed_case_ids") or []
+    owner = state.owner_email
+    assigned = 0
+    if owner:
+        for cid in failed_ids:
+            oka, _ = D.set_assigned_to(cid, owner)
+            if oka:
+                assigned += 1
+    elif failed_ids:
+        notes.append("No release owner on record — failed auth cases not reassigned (set-owner).")
+
+    step = state.get_step("bug_bash", ID)
+    step.data = dict(step.data or {})
+    step.data["auth"] = {"suite_id": suite_id, "passed": summ.get("set_passed", 0),
+                         "failed": summ.get("set_failed", 0), "failed_case_ids": failed_ids,
+                         "failed_assigned_to_owner": assigned}
+    state.set_step("bug_bash", ID, step)
+    owner_note = (f"; {assigned} failed case(s) assigned to owner {owner}"
+                  if failed_ids and owner else "")
+    return (f"Auth: {summ.get('set_passed', 0)} Passed, {summ.get('set_failed', 0)} Failed "
+            f"filled in suite {suite_id}{owner_note}")
 
 
 def build(state):
@@ -97,13 +170,25 @@ def build(state):
     step.data["summary"] = summ
     state.set_step("bug_bash", ID, step)
 
+    # Also fill the Authenticator bug-bash suite from the auth ECS UI-test run (best-effort);
+    # every FAILED automated auth case is reassigned to the release owner for triage.
+    notes = []
+    auth_note = _fill_auth(state, notes)
+
     p, f, na = summ.get("set_passed", 0), summ.get("set_failed", 0), summ.get("set_not_applicable", 0)
+    tail = (f" {auth_note}." if auth_note else "")
+    if notes:
+        tail += " " + " ".join(notes)
+    links = [{"name": f"Broker UI Automation (plan {plan_id})", "url": T.plan_web_url(plan_id)}]
+    astep = (state.get_step("bug_bash", ID).data or {}).get("auth") or {}
+    if astep.get("suite_id"):
+        links.append({"name": f"Authenticator results (suite {astep['suite_id']})",
+                      "url": T.plan_web_url(T.AUTH_PLAN, astep["suite_id"])})
     return Done(
-        f"Filled UI Automation results in plan {plan_id}: {p + f + na} test points "
-        f"({p} Passed, {f} Failed, {na} N/A) across {summ.get('cases_touched', 0)} cases. "
-        f"Each config-point takes its matching flight+variant run's result (pass if it "
-        f"succeeded in \u22651 run; skipped \u2192 N/A).",
-        links=[{"name": f"UI Automation results (plan {plan_id})", "url": T.plan_web_url(plan_id)}])
+        f"Filled UI Automation results in Broker plan {plan_id}: {p + f + na} test points "
+        f"({p} Passed, {f} Failed, {na} N/A) across {summ.get('cases_touched', 0)} cases."
+        f"{tail}",
+        links=links)
 
 
 run = legacy_run(build)
