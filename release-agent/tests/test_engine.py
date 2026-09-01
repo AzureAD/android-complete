@@ -3158,7 +3158,8 @@ def test_ui_test_status_surfaces_combined_failures_to_ui_failures():
         3261599: {"outcome": "Failed", "title": "test_3261599_psiPushNotification_registerAfterEnablingNotifications"},
         3741283: {"outcome": "Failed", "title": "test_3741283_mfaDialogSurvivesProcessDeathRestore"},
     }, "")
-    D.set_assigned_to = lambda cid, upn, timeout=60: (True, "")
+    assigned_calls = []
+    D.set_assigned_to = lambda cid, upn, timeout=60: (assigned_calls.append((str(cid), upn)), (True, ""))[1]
     try:
         with mockctx.active({"verdicts": {"1": {("ECS", "prod"): "Passed"}}}):
             as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
@@ -3188,6 +3189,15 @@ def test_ui_test_status_surfaces_combined_failures_to_ui_failures():
     assert "MRWP ECS run" in names and "Authenticator ECS UI tests" in names
     # the reminder is NOT marked done — it stays a pending human review
     assert not st.is_done("bug_bash", "ui_failures")
+    # BOTH apps' failures are physically reassigned to the release owner in ADO:
+    #  - Broker: the 2 failing UI cases parsed from the ECS suite titles (831126, 3321136)
+    #  - Auth: the 5 failed automated cases
+    assigned_ids = {cid for cid, _ in assigned_calls}
+    assert {"831126", "3321136"}.issubset(assigned_ids)      # broker cases reassigned
+    assert {"2916347", "2916524", "3094649", "3261599", "3741283"}.issubset(assigned_ids)
+    assert all(upn == "owner@microsoft.com" for _, upn in assigned_calls)
+    bstep = st.get_step("bug_bash", "ui_test_status").data["broker"]
+    assert bstep["failed_case_ids"] == [831126, 3321136] and bstep["failed_assigned_to_owner"] == 2
 
 
 def test_ui_test_status_auth_skipped_when_no_auth_suite():

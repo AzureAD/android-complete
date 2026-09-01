@@ -978,11 +978,11 @@ bug_bash.ui_failures:
     investigated and executed, Scout closes the step with `done --step ui_failures`.
   faqs:
     - q: "Does this include the Authenticator app failures?"
-      a: "Yes. The list is combined: every failing Broker MRWP UI test AND every failing Authenticator ECS automated test. The auth failures are also pre-assigned to the release owner in ADO (by ui_test_status)."
+      a: "Yes. The list is combined: every failing Broker MRWP UI test AND every failing Authenticator ECS automated test. BOTH sets are also physically reassigned to the release owner in ADO (by ui_test_status)."
     - q: "Why are Broker failures shown the same way as Authenticator ones?"
-      a: "Because all UI failures are the release owner's to investigate. Both are listed per-test with a 🔬 investigate marker and an ADO test-case link — no failure is collapsed into a bare pass/fail stat."
+      a: "Because all UI failures are the release owner's to investigate. Both are listed per-test with a 🔬 investigate marker and an ADO test-case link (no failure is collapsed into a bare pass/fail stat), and both are reassigned to the owner in ADO."
     - q: "Where does the failure list come from if this step has no code?"
-      a: "From ui_test_status, which runs earlier in the phase — it filled both the Broker and Authenticator suites and writes the full per-test failure list + links onto this step for the owner."
+      a: "From ui_test_status, which runs earlier in the phase — it filled both the Broker and Authenticator suites, reassigned every failing case (Broker + Auth) to the owner, and writes the full per-test failure list + links onto this step for the owner."
 
 bug_bash.bugbash_complete:
   summary: "The release owner attests the Bug Bash is finished — the gate that closes the bash."

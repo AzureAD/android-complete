@@ -21,6 +21,11 @@ Depends on `clone_plans_broker` (and, for the auth fill, `clone_plans_auth` + th
 runs). Blocks only if the Broker plan hasn't been cloned or no RC runs are recorded.
 Idempotent — a re-run re-fills from the current runs.
 
+REASSIGNMENT: every FAILED UI case — Broker (parsed from the failing suite titles) AND
+Authenticator (the failed automated cases) — is reassigned to the release owner
+(`state.owner_email`) in ADO, so all UI failures land in one queue for investigation. Then the
+downstream `ui_failures` human reminder is forward-populated with the full per-test list.
+
 Mock knobs (mocks.local.yaml / tests):
   build_ids     : inject the RC MRWP build ids [..] (skip state.pipeline_runs).
   verdicts      : inject the per-config Broker verdicts (skip ADO pipelines).
@@ -158,6 +163,48 @@ def _case_id_from_title(title):
     import re
     m = re.search(r"test_(\d+)", str(title or ""), re.I)
     return int(m.group(1)) if m else None
+
+
+def _broker_failed_case_ids(state):
+    """Unique ADO test-case ids of every failing Broker UI test — parsed from the failed_suites
+    test titles across all RC iterations (both providers), order preserved. A case that fails in
+    several suites/variants (e.g. 831126) appears once."""
+    rcs = (getattr(state, "pipeline_runs", None) or {}).get("rcs") or []
+    out, seen = [], set()
+    for rc in rcs:
+        for prov in ("ecs", "local"):
+            snap = rc.get(prov) or {}
+            for s in (snap.get("failed_suites") or []):
+                if s.get("category", "ui") != "ui" or not s.get("failed"):
+                    continue
+                for title in (s.get("tests") or []):
+                    cid = _case_id_from_title(title)
+                    if cid and cid not in seen:
+                        seen.add(cid)
+                        out.append(cid)
+    return out
+
+
+def _reassign_broker_failures(state, notes):
+    """Reassign every failing Broker UI case to the release owner for investigation — mirrors the
+    auth reassignment in _fill_auth so BOTH apps' failures land in the owner's queue. Stores the
+    ids + assigned count on the step. Best-effort: a case with no parseable id is skipped, and a
+    missing owner is noted rather than fatal."""
+    ids = _broker_failed_case_ids(state)
+    owner = state.owner_email
+    assigned = 0
+    if ids and owner:
+        for cid in ids:
+            oka, _ = D.set_assigned_to(cid, owner)
+            if oka:
+                assigned += 1
+    elif ids and not owner:
+        notes.append("No release owner on record — failed Broker UI cases not reassigned (set-owner).")
+    step = state.get_step("bug_bash", ID)
+    step.data = dict(step.data or {})
+    step.data["broker"] = {"failed_case_ids": ids, "failed_assigned_to_owner": assigned}
+    state.set_step("bug_bash", ID, step)
+    return assigned
 
 
 def _surface_ui_failures(state):
@@ -304,12 +351,18 @@ def build(state):
     notes = []
     auth_note = _fill_auth(state, notes)
 
+    # Reassign every FAILED Broker UI case to the release owner too — all UI failures (Broker +
+    # Auth) are the owner's to investigate.
+    broker_assigned = _reassign_broker_failures(state, notes)
+
     # Forward-populate the downstream `ui_failures` human-review reminder with the combined
     # Broker + Authenticator Phase-2 UI failure list (it has no module of its own).
     _surface_ui_failures(state)
 
     p, f, na = summ.get("set_passed", 0), summ.get("set_failed", 0), summ.get("set_not_applicable", 0)
     tail = (f" {auth_note}." if auth_note else "")
+    if broker_assigned:
+        tail += f" {broker_assigned} failed Broker UI case(s) assigned to owner {state.owner_email}."
     if notes:
         tail += " " + " ".join(notes)
     links = [{"name": f"Broker UI Automation (plan {plan_id})", "url": T.plan_web_url(plan_id)}]
