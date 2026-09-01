@@ -1127,18 +1127,15 @@ def auth_ui_suite_rates(test_build_id, timeout=90):
     return (True, out, "")
 
 
-def auth_ui_case_outcomes(build_id, timeout=120):
-    """Per-CASE automated outcomes from the auth ECS post-build UI-test BUILD — the join
-    key Phase 3 needs. Returns (ok, {case_id: 'Passed'|'Failed'}, detail).
+def auth_ui_case_results(build_id, timeout=120):
+    """Per-CASE automated outcome AND a representative test title from the auth ECS post-build
+    UI-test build. Returns (ok, {case_id: {"outcome": 'Passed'|'Failed', "title": str|None}},
+    detail).
 
-    Scans every test run on the build (the Firebase suites), pulls each result's test-CASE
-    id from its automated name (`test_<caseId>_...`, via `_ui_case_id_from_result`), and
-    aggregates per case: 'Passed' if it passed in >=1 run, else 'Failed' if it has a real
-    (non-NotApplicable) result but never passed. Cases that only ever skipped are omitted.
-    The 'Monthly UI Tests' suite carries no case-id name, so it naturally contributes
-    nothing — only the UIAutomator E2E suite maps to bug-bash cases. The KEYS are exactly
-    the release's automated auth case ids (what distribute_tests excludes + ui_test_status
-    fills)."""
+    Same scan/aggregation as `auth_ui_case_outcomes` (this is its superset): pulls each
+    result's test-CASE id from its automated name (`test_<caseId>_...`), aggregates per case
+    ('Passed' if it passed in >=1 run, else 'Failed' if it ran but never passed; skip-only
+    cases omitted), and additionally keeps the automation test title per case for display."""
     base = AUTH_ORG.rstrip("/")
     url = (f"{base}/{AUTH_PROJECT}/_apis/test/runs"
            f"?buildUri=vstfs:///Build/Build/{build_id}&api-version=7.1")
@@ -1146,7 +1143,7 @@ def auth_ui_case_outcomes(build_id, timeout=120):
     if not ok:
         return (False, None, detail)
     runs = (data or {}).get("value", []) or []
-    passed_any, ran_any = set(), set()
+    passed_any, ran_any, titles = set(), set(), {}
     for run in runs:
         okr, results, dr = _run_results(AUTH_ORG, AUTH_PROJECT, run.get("id"), timeout)
         if not okr:
@@ -1158,7 +1155,22 @@ def auth_ui_case_outcomes(build_id, timeout=120):
             if (res.get("outcome") or "") == "NotApplicable":
                 continue
             ran_any.add(cid)
+            t = (res.get("testCaseTitle") or res.get("automatedTestName") or "").strip()
+            if t and cid not in titles:
+                titles[cid] = t
             if res.get("outcome") == "Passed":
                 passed_any.add(cid)
-    out = {cid: ("Passed" if cid in passed_any else "Failed") for cid in ran_any}
+    out = {cid: {"outcome": ("Passed" if cid in passed_any else "Failed"),
+                 "title": titles.get(cid)} for cid in ran_any}
     return (True, out, "")
+
+
+def auth_ui_case_outcomes(build_id, timeout=120):
+    """Per-CASE automated outcomes from the auth ECS post-build UI-test BUILD — the join
+    key Phase 3 needs. Returns (ok, {case_id: 'Passed'|'Failed'}, detail). Thin projection of
+    `auth_ui_case_results` (see it for the scan/aggregation rules). The KEYS are exactly the
+    release's automated auth case ids (what distribute_tests excludes + ui_test_status fills)."""
+    ok, res, detail = auth_ui_case_results(build_id, timeout)
+    if not ok:
+        return (False, None, detail)
+    return (True, {cid: v["outcome"] for cid, v in res.items()}, "")

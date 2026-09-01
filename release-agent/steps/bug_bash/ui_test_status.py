@@ -1,6 +1,6 @@
 """Step: `ui_test_status` — fill BOTH the Broker + Authenticator UI suites from the RC
 pipelines, and reassign failed auth automation to the release owner (Phase 3, bug_bash;
-runs right after `distribute_tests`).
+runs right before `distribute_tests`).
 
 BROKER: Phase-2 records one or more RC iterations (`state.pipeline_runs.rcs[]`), each with an
 ECS and a Local MRWP build. This step reads the UI-automation results across ALL those RC
@@ -40,6 +40,9 @@ from tools import distribution as D
 
 ID = "ui_test_status"
 KIND = "agent"
+
+ORG = T.ORG
+PROJECT = T.PROJECT
 
 MOCKABLE = {
     "build_ids": {"kind": "input", "desc": "Inject the RC MRWP build ids [..] (skip state.pipeline_runs)."},
@@ -96,16 +99,19 @@ def _fill_auth(state, notes):
         return None
 
     outcomes = mock_input("auth_outcomes", MISSING)
+    case_titles = {}                                       # {case_id(int): automation test title}
     if outcomes is MISSING:
         build_id = mock_input("auth_build_id", MISSING)
         build_id = build_id if build_id is not MISSING else _auth_test_build_id(state)
         if not build_id:
             notes.append("No auth ECS UI-test run captured yet (Phase-2 auth_ecs) — auth results skipped.")
             return None
-        ok, outcomes, d = P.auth_ui_case_outcomes(build_id)
+        ok, results, d = P.auth_ui_case_results(build_id)
         if not ok:
             notes.append(f"Could not read auth UI results ({d}) — auth results skipped.")
             return None
+        outcomes = {cid: v["outcome"] for cid, v in results.items()}
+        case_titles = {cid: v["title"] for cid, v in results.items() if v.get("title")}
 
     ok, summ, d = T.fill_auth_ui_results(T.AUTH_PLAN, suite_id, outcomes)
     if not ok:
@@ -124,16 +130,34 @@ def _fill_auth(state, notes):
     elif failed_ids:
         notes.append("No release owner on record — failed auth cases not reassigned (set-owner).")
 
+    # Titles for the failed cases (for the ui_failures render), keyed by str(case_id).
+    failed_titles = {}
+    for cid in failed_ids:
+        try:
+            t = case_titles.get(int(cid))
+        except (TypeError, ValueError):
+            t = None
+        if t:
+            failed_titles[str(cid)] = t
+
     step = state.get_step("bug_bash", ID)
     step.data = dict(step.data or {})
     step.data["auth"] = {"suite_id": suite_id, "passed": summ.get("set_passed", 0),
                          "failed": summ.get("set_failed", 0), "failed_case_ids": failed_ids,
+                         "failed_case_titles": failed_titles,
                          "failed_assigned_to_owner": assigned}
     state.set_step("bug_bash", ID, step)
     owner_note = (f"; {assigned} failed case(s) assigned to owner {owner}"
                   if failed_ids and owner else "")
     return (f"Auth: {summ.get('set_passed', 0)} Passed, {summ.get('set_failed', 0)} Failed "
             f"filled in suite {suite_id}{owner_note}")
+
+
+def _case_id_from_title(title):
+    """The ADO test-case id embedded in a UI-automation test title (`test_<caseId>_...`)."""
+    import re
+    m = re.search(r"test_(\d+)", str(title or ""), re.I)
+    return int(m.group(1)) if m else None
 
 
 def _surface_ui_failures(state):
@@ -143,56 +167,100 @@ def _surface_ui_failures(state):
 
     `ui_failures` is a bare human reminder (no module), so it can't compute anything itself;
     this producer step (which just filled both suites and knows the auth failures) writes the
-    reminder's note + links. Only sets note/links/data — never status — so the step stays a
-    pending human hold. No failures anywhere -> leaves the reminder with its generic prompt."""
+    reminder's note + links. The note is a rich, step-8-style markdown block: an emoji header, a
+    bold summary line, then EVERY failing UI test listed individually (never collapsed to a
+    per-suite stat) — Broker MRWP and Authenticator ECS alike — each flagged 🔬 as an
+    investigation the RELEASE OWNER owns, with an inline link to its ADO test case. Only sets
+    note/links/data — never status — so the step stays a pending human hold. No failures
+    anywhere -> leaves the generic prompt."""
     rcs = (getattr(state, "pipeline_runs", None) or {}).get("rcs") or []
-    lines, links = [], []
+    links = []
 
-    # Broker MRWP UI failures — the failing 'ui' suites recorded per provider by Phase 2.
     def _eng_run_url(rid):
-        return f"https://identitydivision.visualstudio.com/Engineering/_build/results?buildId={rid}"
+        return f"{ORG}/{PROJECT}/_build/results?buildId={rid}"
 
-    broker = []
+    def _case_url(cid):
+        return f"{ORG}/{PROJECT}/_workitems/edit/{cid}"
+
+    # Broker MRWP UI failures — every failing test, GROUPED by provider (ECS/Local) then by
+    # bucket (suite name, e.g. 'PROD MSAL - RC Broker (API 32)'). Preserves discovery order.
+    #   broker = { "ECS": {suite_name: [{title, case_id}, …]}, "Local": {…} }
+    from collections import OrderedDict
+    broker = OrderedDict()
+    broker_count = 0
     for rc in rcs:
         for prov, label in (("ecs", "ECS"), ("local", "Local")):
             snap = rc.get(prov) or {}
             for s in (snap.get("failed_suites") or []):
-                if s.get("category", "ui") == "ui" and s.get("failed"):
-                    broker.append((label, s))
+                if s.get("category", "ui") != "ui" or not s.get("failed"):
+                    continue
+                buckets = broker.setdefault(label, OrderedDict())
+                lst = buckets.setdefault(s["name"], [])
+                for title in (s.get("tests") or []):
+                    lst.append({"title": title, "case_id": _case_id_from_title(title)})
+                    broker_count += 1
             if snap.get("run_id"):
                 links.append({"name": f"MRWP {label} run", "url": _eng_run_url(snap["run_id"])})
-    broker.sort(key=lambda ls: -ls[1]["failed"])
-    if broker:
-        lines.append(f"BROKER (MRWP) — {len(broker)} failing UI suite(s):")
-        for label, s in broker[:8]:
-            lines.append(f"  \u2022 [{label}] {s['name']}: {s['failed']}/{s['total']} failed")
-        if len(broker) > 8:
-            lines.append(f"  \u2026 and {len(broker) - 8} more")
 
-    # Authenticator ECS failures — from the auth section + the fill's failed case ids.
+    # Authenticator ECS failures — the failed automated case ids from the fill.
     astep = (state.get_step("bug_bash", ID).data or {}).get("auth") or {}
     failed_ids = astep.get("failed_case_ids") or []
     auth = (rcs[-1].get("auth") if rcs else None) or {}
+
+    if not broker_count and not failed_ids:
+        return                                            # nothing failed — leave the generic reminder
+
+    # ---- build the step-8-style markdown note ----
+    try:
+        from orchestrator import schedule
+        month_year = schedule.parse_date(state.ccd).strftime("%B %Y") if state.ccd else ""
+    except Exception:
+        month_year = ""
+    owner = state.owner_email or "the release owner"
+    title = f"\U0001f9ea {month_year + ' ' if month_year else ''}Bug Bash \u2014 UI failures to investigate"
+
+    total = broker_count + len(failed_ids)
+    summary = (f"**{total} failing UI test(s)** across Broker MRWP + Authenticator ECS \u2014 "
+               f"all assigned to {owner} to investigate (flake vs real bug).")
+    lines = [title, summary]
+
+    def _mark(cid, text):
+        """A 🔬 investigate line — links the case when we could parse its id."""
+        if cid:
+            return f"- \U0001f52c [{cid}]({_case_url(cid)}) \u2014 {text}"
+        return f"- \U0001f52c {text}"
+
+    if broker_count:
+        lines.append(f"**Broker (MRWP)** \u2014 {broker_count} failing test(s):")
+        # separate by provider (ECS / Local), then by bucket (suite name)
+        for label, buckets in broker.items():
+            prov_n = sum(len(v) for v in buckets.values())
+            lines.append(f"**{label}** \u2014 {prov_n} failing:")
+            for suite, tests in buckets.items():
+                lines.append(f"_{suite}_ ({len(tests)}):")
+                for t in tests:
+                    lines.append(_mark(t["case_id"], t["title"]))
+
     if failed_ids:
-        owner = state.owner_email or "the release owner"
-        lines.append(f"AUTHENTICATOR (ECS) — {len(failed_ids)} failed automated case(s), "
-                     f"assigned to {owner} for triage:")
-        lines.append("  \u2022 " + ", ".join(str(i) for i in failed_ids))
+        titles = astep.get("failed_case_titles") or {}
+        lines.append(f"**Authenticator (ECS)** \u2014 {len(failed_ids)} failing automated test(s):")
+        for cid in failed_ids:
+            lines.append(_mark(cid, titles.get(str(cid)) or "Automated failure"))
         for key, name in (("build", "Authenticator ECS build"), ("test", "Authenticator ECS UI tests")):
             rid = (auth.get(key) or {}).get("run_id")
             if rid:
                 links.append({"name": name,
                               "url": f"https://msazure.visualstudio.com/One/_build/results?buildId={rid}"})
 
-    if not lines:
-        return                                            # nothing failed — leave the generic reminder
-    note = ("Phase-2 UI failures to review before the bug bash "
-            "(Broker MRWP + Authenticator ECS):\n" + "\n".join(lines))
+    lines.append("\u25b6 Once you've investigated and re-run all of these, just let me know and "
+                 "I'll mark this step complete for you.")
+
+    note = "\n".join(lines)
     ustep = state.get_step("bug_bash", "ui_failures")
     ustep.note = note
     ustep.links = links
     ustep.data = dict(ustep.data or {})
-    ustep.data["broker_failed_suites"] = len(broker)
+    ustep.data["broker_failed_tests"] = broker_count
     ustep.data["auth_failed_cases"] = failed_ids
     state.set_step("bug_bash", "ui_failures", ustep)
 

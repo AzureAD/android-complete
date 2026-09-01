@@ -3133,31 +3133,57 @@ def test_ui_test_status_surfaces_combined_failures_to_ui_failures():
     st = _uts_state(plan_id="3737697")
     st.owner_email = "owner@microsoft.com"
     st.set_step("bug_bash", "clone_plans_auth", StepState(status="done", data={"suite_id": 714999}))
-    # seed a broker RC snapshot with a failing UI suite + an auth run
+    # seed a broker RC snapshot with a failing UI suite (individual tests) + an auth run
     st.pipeline_runs = {"rcs": [{"rc": 1,
         "ecs": {"run_id": "1678863", "failed_suites": [
-            {"name": "PROD MSAL - RC Broker (API 32)", "failed": 18, "total": 44, "category": "ui"}]},
+            {"name": "PROD MSAL - RC Broker (API 32)", "failed": 2, "total": 44, "category": "ui",
+             "tests": ["test_831126_MDM_FirstPartyAppSignIn",
+                       "test_3321136_UpgradeFromRegularWpjToStrongKeyWpj"]}]},
         "local": {"run_id": "1678864", "failed_suites": []},
         "auth": {"build": {"run_id": "178685087"}, "test": {"run_id": "178777988"}}}]}
     o_b, o_a, o_as = T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_assigned_to
+    from tools import pipelines as P
+    o_ar = P.auth_ui_case_results
     T.fill_ui_automation_results = lambda p, v, timeout=120: (
         True, {"points_total": 10, "set_passed": 8, "set_failed": 2,
                "set_not_applicable": 0, "cases_touched": 5}, "")
     T.fill_auth_ui_results = lambda plan, suite, outcomes, timeout=120: (
         True, {"points_total": 26, "set_passed": 21, "set_failed": 5,
                "failed_case_ids": [2916347, 2916524, 3094649, 3261599, 3741283]}, "")
+    # auth results carry the automation test TITLE per case (shown in the ui_failures render)
+    P.auth_ui_case_results = lambda bid, timeout=120: (True, {
+        2916347: {"outcome": "Failed", "title": "test_2916347_passkeyInAppRegistration_fullWizard"},
+        2916524: {"outcome": "Failed", "title": "test_2916524_passkeyDeregister_deleteFromAppAndVerifyMySecurityInfo"},
+        3094649: {"outcome": "Failed", "title": "test_3094649_passkeyFromL2_createPasskeyFromAccountFullscreen"},
+        3261599: {"outcome": "Failed", "title": "test_3261599_psiPushNotification_registerAfterEnablingNotifications"},
+        3741283: {"outcome": "Failed", "title": "test_3741283_mfaDialogSurvivesProcessDeathRestore"},
+    }, "")
     D.set_assigned_to = lambda cid, upn, timeout=60: (True, "")
     try:
-        with mockctx.active({"verdicts": {"1": {("ECS", "prod"): "Passed"}},
-                             "auth_outcomes": {2916347: "Failed"}}):
+        with mockctx.active({"verdicts": {"1": {("ECS", "prod"): "Passed"}}}):
             as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
     finally:
         T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_assigned_to = o_b, o_a, o_as
+        P.auth_ui_case_results = o_ar
     uf = st.get_step("bug_bash", "ui_failures")
-    assert "BROKER (MRWP)" in uf.note and "PROD MSAL - RC Broker (API 32): 18/44" in uf.note
-    assert "AUTHENTICATOR (ECS)" in uf.note and "2916347" in uf.note
-    assert "assigned to owner@microsoft.com" in uf.note
-    assert uf.data["broker_failed_suites"] == 1 and len(uf.data["auth_failed_cases"]) == 5
+    # step-8-style rich note: EVERY failing test listed individually, all 🔬 investigate for owner,
+    # Broker grouped by provider (ECS/Local) then by bucket (suite name).
+    assert uf.note.startswith("\U0001f9ea") and "UI failures to investigate" in uf.note
+    assert "all assigned to owner@microsoft.com to investigate" in uf.note
+    assert "**Broker (MRWP)** \u2014 2 failing test(s):" in uf.note
+    assert "**ECS** \u2014 2 failing:" in uf.note                     # provider separation
+    assert "_PROD MSAL - RC Broker (API 32)_ (2):" in uf.note         # bucket separation
+    # each broker test is its own 🔬 line, linked by the case id parsed from the title
+    assert "[831126](https://identitydivision.visualstudio.com/Engineering/_workitems/edit/831126)" in uf.note
+    assert "test_3321136_UpgradeFromRegularWpjToStrongKeyWpj" in uf.note
+    assert "**Authenticator (ECS)** \u2014 5 failing automated test(s):" in uf.note
+    assert "[2916347](https://identitydivision.visualstudio.com/Engineering/_workitems/edit/2916347)" in uf.note
+    # auth lines show the automation test NAME, not a generic "Automated failure"
+    assert "test_2916347_passkeyInAppRegistration_fullWizard" in uf.note
+    assert "Automated failure" not in uf.note
+    # user-facing action line — Scout speaking to the owner in first person, no raw engine command
+    assert "let me know" in uf.note and "`done --step" not in uf.note
+    assert uf.data["broker_failed_tests"] == 2 and len(uf.data["auth_failed_cases"]) == 5
     names = [l["name"] for l in uf.links]
     assert "MRWP ECS run" in names and "Authenticator ECS UI tests" in names
     # the reminder is NOT marked done — it stays a pending human review
@@ -3694,8 +3720,8 @@ def test_record_nativeauth_notify_stores_or_holds():
 def test_native_auth_signoff_is_owner_attestation():
     """native_auth_signoff is a pure human ATTEST step (owner: human): build() returns a
     NeedsHuman confirmation prompt with no outbound action and no record command — the owner
-    clears it with `done --step native_auth_signoff`. The prompt names the engineer captured
-    in notify_native_auth when present (falls back to a generic reference otherwise)."""
+    tells Scout once sign-off is received and Scout clears it. The prompt names the engineer
+    captured in notify_native_auth when present (falls back to a generic reference otherwise)."""
     import steps as _steps
     from orchestrator.outcomes import as_dict
     from orchestrator.state import StepState
@@ -3705,7 +3731,8 @@ def test_native_auth_signoff_is_owner_attestation():
     st = _na_state()
     out = as_dict(mod.build(st))
     assert out["kind"] == "needs_human" and out.get("attest") is True
-    assert "sign-off" in out["prompt"] and "done --step native_auth_signoff" in out["prompt"]
+    assert "sign-off" in out["prompt"] and "let me know" in out["prompt"]
+    assert "`done --step" not in out["prompt"]              # user-facing — not a raw engine command
     assert not out.get("outbound") and "tool" not in out       # nothing sent, no skill command
     assert "notify_native_auth" in out["prompt"]
     # engineer captured upstream → named in the prompt (reused, not re-collected)

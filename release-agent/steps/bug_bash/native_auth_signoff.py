@@ -30,8 +30,8 @@ def build(state):
     return NeedsHuman(
         prompt=(
             f"Confirm you've received the bug-bash sign-off from {who}.\n"
-            "They were asked to run their tests and report back. Once their sign-off has come "
-            "in, mark it done (`done --step native_auth_signoff`). If it hasn't arrived yet, "
+            "They were asked to run their tests and report back. Once their sign-off comes in, "
+            "just let me know and I'll mark this complete for you. If it hasn't arrived yet, "
             "leave it holding."),
         attest=True,
     )

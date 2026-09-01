@@ -944,8 +944,8 @@ bug_bash.native_auth_signoff:
   who: "The release owner attests. Scout takes no action — there is nothing to run."
   how: >
     The step holds with a confirmation prompt naming the Native Auth RE from notify_native_auth.
-    Once their sign-off has come in, the owner clears it with `done --step native_auth_signoff`.
-    If it hasn't arrived yet, leave it holding.
+    The owner does NOT touch the engine — once the sign-off has come in, they tell Scout and Scout
+    clears the step (`done --step native_auth_signoff`). If it hasn't arrived yet, leave it holding.
   faqs:
     - q: "What is this confirming?"
       a: "That the release owner received the Native Auth team's sign-off — the confirmation the RE (named in notify_native_auth) was asked to send back."
@@ -953,29 +953,36 @@ bug_bash.native_auth_signoff:
       a: "There's no outbound action or new data to capture — it's an attestation the release owner makes, like the preflight vitals check. Scout can't receive the sign-off on the owner's behalf."
 
 bug_bash.ui_failures:
-  summary: "Human review of the combined Phase-2 UI failure list — Broker MRWP + Authenticator ECS."
+  summary: "Release-owner investigation of EVERY Phase-2 UI failure — Broker MRWP + Authenticator ECS."
   what: >
-    A human-review checkpoint (owner: human, non-gate): before the bug bash proceeds, the
-    engineer reviews the Phase-2 UI-automation failures. The list covers BOTH apps — the Broker
-    MRWP UI suites (from the ECS + Local RC runs) AND the Authenticator ECS Firebase failures.
-    The step has no logic of its own; the earlier `ui_test_status` step forward-populates its
-    Details with the combined summary + run links (it just filled both suites and knows the
-    failures), so the reviewer sees everything in one place. When nothing failed, the step shows
-    its generic prompt and is a quick acknowledge.
+    A human-review checkpoint (owner: human, non-gate): before the bug bash proceeds, the release
+    owner investigates the Phase-2 UI-automation failures. The list covers BOTH apps — the Broker
+    MRWP UI suites (from the ECS + Local RC runs) AND the Authenticator ECS Firebase failures — and
+    lists EVERY failing test individually (never collapsed to a per-suite stat). The step has no
+    logic of its own; the earlier `ui_test_status` step forward-populates its Details with the full
+    per-test list + run links (it just filled both suites and knows the failures), so the owner
+    sees everything in one place. When nothing failed, the step shows its generic prompt and is a
+    quick acknowledge.
   who: >
-    The engineer/owner reviews the failures and marks the step done (`done --step ui_failures`)
-    once reviewed. It is a reminder, not a gate — it holds until acknowledged but doesn't require
-    a formal approval.
+    The release owner investigates every failure and manually runs the tests. The owner does NOT
+    touch the engine — they tell Scout when everything is investigated and executed, and Scout
+    marks the step done (`done --step ui_failures`). It is a reminder, not a gate — it holds until
+    the owner confirms completion but doesn't require a formal approval.
   how: >
-    Read the Details: BROKER lists the top failing UI suites (per flight, e.g. 'PROD MSAL - RC
-    Broker (API 32): 18/44 failed'); AUTHENTICATOR lists the failed automated case ids, which
-    `ui_test_status` has already ASSIGNED TO THE RELEASE OWNER for triage. Follow the run links to
-    the pipelines, decide flake vs real bug, then mark the step done to continue.
+    Read the Details — a structured summary (like the bug-bash progress update): a header + a bold
+    total-count line, then a **Broker (MRWP)** section and an **Authenticator (ECS)** section. EACH
+    failing test is its own 🔬 line with a link to its ADO test case — Broker and Authenticator
+    alike — and all are framed as investigations the RELEASE OWNER owns (flake vs real bug). Broker
+    lines also carry their flight + suite context. The owner follows the run links, rules on each
+    failure, and manually runs the affected tests. Once the owner tells Scout every failure has been
+    investigated and executed, Scout closes the step with `done --step ui_failures`.
   faqs:
     - q: "Does this include the Authenticator app failures?"
-      a: "Yes. The list is combined: Broker MRWP UI suites AND the Authenticator ECS Firebase failures. The auth failures are also pre-assigned to the release owner (by ui_test_status) so they're already in the owner's triage queue."
+      a: "Yes. The list is combined: every failing Broker MRWP UI test AND every failing Authenticator ECS automated test. The auth failures are also pre-assigned to the release owner in ADO (by ui_test_status)."
+    - q: "Why are Broker failures shown the same way as Authenticator ones?"
+      a: "Because all UI failures are the release owner's to investigate. Both are listed per-test with a 🔬 investigate marker and an ADO test-case link — no failure is collapsed into a bare pass/fail stat."
     - q: "Where does the failure list come from if this step has no code?"
-      a: "From ui_test_status, which runs earlier in the phase — it filled both the Broker and Authenticator suites and writes the combined failure summary + links onto this step for the reviewer."
+      a: "From ui_test_status, which runs earlier in the phase — it filled both the Broker and Authenticator suites and writes the full per-test failure list + links onto this step for the owner."
 
 bug_bash.bugbash_complete:
   summary: "The release owner attests the Bug Bash is finished — the gate that closes the bash."
