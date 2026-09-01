@@ -1145,3 +1145,38 @@ finalize.verify_pub:
     - q: "What version is Common4j checked at?"
       a: "The Common version. The orchestrator publishes Common4j with Common4jVersion = NextCommonVersion, so there's no separate Common4j version to track."
 
+finalize.tag_authenticator:
+  summary: "Tag the Auth App's released commit with its version (no 'v' prefix) in the auth repo."
+  what: >
+    Once the release has published, mark the Authenticator app's released build by creating a
+    lightweight git tag on its release commit. The tag NAME is the Auth App version (e.g.
+    '6.2608.5658' — the auth app does NOT use a 'v' prefix). It tags the EXACT commit the
+    release-app build (AndroidBuild-1ES, def 355246) was built from — build.sourceVersion — on
+    the release branch, not merely the branch head.
+  who: >
+    Scout does it (an agent step). There is NO preview/execute — the tag is created when the
+    step is reached. It writes to the Authenticator repo (msazure/One,
+    AD-MFA-phonefactor-phoneApp-android).
+  where:
+    - "repo: msazure/One AD-MFA-phonefactor-phoneApp-android (config/coordinates.yaml repos.authenticator)"
+    - "release branch: state.versions.authenticator ('release/YYYY/MM/DD', set at Phase 2 by orchestrator_health)"
+    - "version source: the numeric (\\d+.\\d+.\\d+) ADO build-tag on the release-app build (AndroidBuild-1ES, def 355246)"
+  how: >
+    Runs automatically. It reads the release branch from state.versions.authenticator, finds the
+    newest succeeded release-app build on that branch, reads its version build-tag + the commit it
+    was built from, and creates a lightweight git tag <version> at that commit. Idempotent: if the
+    tag already exists AT that commit it passes (no-op); if it exists at a DIFFERENT commit it
+    BLOCKS for a human to reconcile. If the release-app build hasn't run yet, it blocks. Test with
+    the `version`/`commit` inject mocks, `dry_run` (compose without writing), or `fail`.
+  consequences: >
+    A real WRITE to the Authenticator repo: it creates the git tag ref. It never force-updates an
+    existing tag (an existing tag at a different commit blocks instead), and it makes no other
+    change.
+  faqs:
+    - q: "Does the tag use a 'v' prefix?"
+      a: "No. The auth app tags with the bare version (e.g. '6.2608.5658'). Older 'v6.YYMM.xxxx' tags in the repo are a different/legacy scheme and don't map to the release-branch heads."
+    - q: "Which commit gets tagged — the branch head or the built commit?"
+      a: "The exact commit the release-app build was built from (build.sourceVersion). Usually that equals the release-branch head, but tagging the built commit is deterministic even if commits land afterward."
+    - q: "Where does the version come from?"
+      a: "The release-app build (AndroidBuild-1ES) carries the final version as a numeric ADO build-tag; Scout reads it — it doesn't compute or guess the version."
+

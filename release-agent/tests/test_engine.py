@@ -99,6 +99,9 @@ _SAFE_AGENTS = {
     # Phase-4 finalize integ_prs — real agent (gh/az/git). Short-circuit so flow tests
     # never hit the network; dedicated integ_prs tests exercise its real logic offline.
     "finalize.integ_prs": {"outcome": "done", "note": "integration PRs opened (test)"},
+    # Phase-4 tag_authenticator — real agent (msazure/One git write). Short-circuit for flow
+    # tests; dedicated tag_authenticator tests exercise its logic offline.
+    "finalize.tag_authenticator": {"outcome": "done", "note": "auth release tagged (test)"},
 }
 
 
@@ -6128,6 +6131,201 @@ def test_maven_pom_url_shape():
     assert M.pom_url("msal", "8.4.2") == \
         "https://repo1.maven.org/maven2/com/microsoft/identity/client/msal/8.4.2/msal-8.4.2.pom"
     assert M.pom_url("common4j", "24.6.0").endswith("/common4j/24.6.0/common4j-24.6.0.pom")
+
+
+# ---- Phase 4: tag_authenticator ----
+
+_TA_COMMIT = "87b921ccf73c322a1907936e74c8d1a984e27102"
+
+
+def _ta_state():
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
+    st.record_versions({"authenticator": "release/2026/08/13"})
+    return st
+
+
+def test_tag_authenticator_creates_tag():
+    """Discovers the version+commit from the release-app build and creates a lightweight tag
+    (no 'v' prefix) at the built commit."""
+    from steps.lib import mockctx
+    from steps.finalize import tag_authenticator as TA
+    from tools import pipelines as P
+    seen = {}
+
+    def fake_find(branch, timeout=90):
+        seen["branch"] = branch
+        return (True, {"build_id": 177976153, "version": "6.2608.5658", "commit": _TA_COMMIT}, "")
+
+    def fake_create(org, project, repo, tag, commit, timeout=60):
+        seen["create"] = (repo, tag, commit)
+        return (True, {"created": True, "objectId": commit}, "")
+
+    of, oc = P.find_auth_release_build, P.create_lightweight_tag
+    P.find_auth_release_build, P.create_lightweight_tag = fake_find, fake_create
+    try:
+        with mockctx.active({}):
+            out = TA.build(_ta_state())
+    finally:
+        P.find_auth_release_build, P.create_lightweight_tag = of, oc
+    assert out.kind == "done" and "6.2608.5658" in out.note and _TA_COMMIT[:8] in out.note
+    assert seen["branch"] == "release/2026/08/13"
+    # tags the built commit with the bare version (NO 'v' prefix) in the auth repo
+    assert seen["create"] == ("AD-MFA-phonefactor-phoneApp-android", "6.2608.5658", _TA_COMMIT)
+    assert TA.KIND == "agent"
+
+
+def test_tag_authenticator_idempotent_same_commit():
+    """An existing tag AT the same commit → Done (idempotent), no error."""
+    from steps.lib import mockctx
+    from steps.finalize import tag_authenticator as TA
+    from tools import pipelines as P
+    of, oc = P.find_auth_release_build, P.create_lightweight_tag
+    P.find_auth_release_build = lambda b, timeout=90: (True, {"version": "6.2608.5658", "commit": _TA_COMMIT}, "")
+    P.create_lightweight_tag = lambda o, pj, r, t, c, timeout=60: (True, {"created": False, "objectId": _TA_COMMIT}, "")
+    try:
+        with mockctx.active({}):
+            out = TA.build(_ta_state())
+    finally:
+        P.find_auth_release_build, P.create_lightweight_tag = of, oc
+    assert out.kind == "done" and "idempotent" in out.note.lower()
+
+
+def test_tag_authenticator_conflict_different_commit_blocks():
+    """An existing tag pointing at a DIFFERENT commit → Blocked (human must reconcile)."""
+    from steps.lib import mockctx
+    from steps.finalize import tag_authenticator as TA
+    from tools import pipelines as P
+    of, oc = P.find_auth_release_build, P.create_lightweight_tag
+    P.find_auth_release_build = lambda b, timeout=90: (True, {"version": "6.2608.5658", "commit": _TA_COMMIT}, "")
+    P.create_lightweight_tag = lambda o, pj, r, t, c, timeout=60: (True, {"created": False, "objectId": "dead" * 10}, "")
+    try:
+        with mockctx.active({}):
+            out = TA.build(_ta_state())
+    finally:
+        P.find_auth_release_build, P.create_lightweight_tag = of, oc
+    assert out.kind == "blocked" and "already exists" in out.reason and "reconcile" in out.reason
+
+
+def test_tag_authenticator_dry_run_does_not_write():
+    """dry_run composes the tag but never calls create."""
+    from steps.lib import mockctx
+    from steps.finalize import tag_authenticator as TA
+    from tools import pipelines as P
+    called = {"create": False}
+    of, oc = P.find_auth_release_build, P.create_lightweight_tag
+    P.find_auth_release_build = lambda b, timeout=90: (True, {"version": "6.2608.5658", "commit": _TA_COMMIT}, "")
+
+    def _boom(*a, **k):
+        called["create"] = True
+        return (True, {"created": True, "objectId": _TA_COMMIT}, "")
+    P.create_lightweight_tag = _boom
+    try:
+        with mockctx.active({"dry_run": "true"}):
+            out = TA.build(_ta_state())
+    finally:
+        P.find_auth_release_build, P.create_lightweight_tag = of, oc
+    assert out.kind == "done" and "dry-run" in out.note.lower() and called["create"] is False
+
+
+def test_tag_authenticator_injected_version_commit_skips_lookup():
+    """version+commit mocks bypass the build lookup entirely (offline)."""
+    from steps.lib import mockctx
+    from steps.finalize import tag_authenticator as TA
+    from tools import pipelines as P
+    of, oc = P.find_auth_release_build, P.create_lightweight_tag
+
+    def _nolookup(*a, **k):
+        raise AssertionError("find_auth_release_build must not be called when both are injected")
+    P.find_auth_release_build = _nolookup
+    P.create_lightweight_tag = lambda o, pj, r, t, c, timeout=60: (True, {"created": True, "objectId": c}, "")
+    try:
+        with mockctx.active({"version": "6.2608.9999", "commit": "abc123"}):
+            out = TA.build(_ta_state())
+    finally:
+        P.find_auth_release_build, P.create_lightweight_tag = of, oc
+    assert out.kind == "done" and "6.2608.9999" in out.note
+
+
+def test_tag_authenticator_blocks_without_branch():
+    """No authenticator release branch on state.versions → Blocked."""
+    from steps.lib import mockctx
+    from steps.finalize import tag_authenticator as TA
+    with mockctx.active({}):
+        out = TA.build(ReleaseState(release_id="2026-08"))
+    assert out.kind == "blocked" and "release branch" in out.reason
+
+
+def test_tag_authenticator_blocks_when_build_not_run():
+    """Release-app build hasn't run on the branch yet (info=None) → Blocked."""
+    from steps.lib import mockctx
+    from steps.finalize import tag_authenticator as TA
+    from tools import pipelines as P
+    of = P.find_auth_release_build
+    P.find_auth_release_build = lambda b, timeout=90: (True, None, "no succeeded release-app build on refs/heads/release/2026/08/13")
+    try:
+        with mockctx.active({}):
+            out = TA.build(_ta_state())
+    finally:
+        P.find_auth_release_build = of
+    assert out.kind == "blocked" and "hasn't run yet" in out.reason
+
+
+def test_tag_authenticator_config_is_agent():
+    """phases.yaml classifies tag_authenticator as an agent step in finalize (F6)."""
+    import yaml as _yaml
+    cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
+    fin = next(p for p in cfg["phases"] if p["id"] == "finalize")
+    s = next(x for x in fin["steps"] if x["id"] == "tag_authenticator")
+    assert s.get("owner") == "agent" and s.get("source") != "scout" and s.get("maps_to") == ["F6"]
+
+
+def test_create_lightweight_tag_creates_and_is_idempotent(monkeypatch):
+    """create_lightweight_tag: POSTs a new ref when absent; returns the existing target when the
+    tag already exists (never recreated)."""
+    from tools import pipelines as P
+    # absent → create
+    monkeypatch.setattr(P, "_ado_rest_get", lambda url, t: (True, {"value": []}, ""))
+    sent = {}
+
+    def fake_send(url, method, body, t):
+        sent["body"] = body
+        return (True, {"value": [{"success": True}]}, "")
+    monkeypatch.setattr(P, "_ado_rest_send", fake_send)
+    ok, info, _ = P.create_lightweight_tag(P.AUTH_ORG, P.AUTH_PROJECT, "repoX", "6.2608.5658", _TA_COMMIT)
+    assert ok and info == {"created": True, "objectId": _TA_COMMIT}
+    assert sent["body"][0]["name"] == "refs/tags/6.2608.5658"
+    assert sent["body"][0]["oldObjectId"] == "0" * 40 and sent["body"][0]["newObjectId"] == _TA_COMMIT
+
+    # present → idempotent (returns existing objectId, no send)
+    monkeypatch.setattr(P, "_ado_rest_get",
+                        lambda url, t: (True, {"value": [{"name": "refs/tags/6.2608.5658", "objectId": _TA_COMMIT}]}, ""))
+    monkeypatch.setattr(P, "_ado_rest_send", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not POST")))
+    ok2, info2, _ = P.create_lightweight_tag(P.AUTH_ORG, P.AUTH_PROJECT, "repoX", "6.2608.5658", _TA_COMMIT)
+    assert ok2 and info2 == {"created": False, "objectId": _TA_COMMIT}
+
+
+def test_find_auth_release_build_extracts_version_and_commit(monkeypatch):
+    """find_auth_release_build takes the newest succeeded release-app build, reads its
+    sourceVersion (commit) and its numeric build-tag (version)."""
+    from tools import pipelines as P
+
+    def fake_get(url, t):
+        if "/builds/177976153/tags" in url:
+            return (True, {"value": ["1ES.PT.Official", "6.2608.5658", "1ES.PT.Build"]}, "")
+        if "_apis/build/builds?" in url:
+            return (True, {"value": [{"id": 177976153, "sourceVersion": _TA_COMMIT}]}, "")
+        return (False, None, "unexpected url")
+    monkeypatch.setattr(P, "_ado_rest_get", fake_get)
+    ok, info, _ = P.find_auth_release_build("release/2026/08/13")
+    assert ok and info == {"build_id": 177976153, "version": "6.2608.5658", "commit": _TA_COMMIT}
+
+
+def test_find_auth_release_build_none_when_no_build(monkeypatch):
+    """No succeeded release-app build on the branch → (True, None, detail) so the step can block gently."""
+    from tools import pipelines as P
+    monkeypatch.setattr(P, "_ado_rest_get", lambda url, t: (True, {"value": []}, ""))
+    ok, info, detail = P.find_auth_release_build("release/2026/08/13")
+    assert ok and info is None and "no succeeded release-app build" in detail
 
 
 if __name__ == "__main__":

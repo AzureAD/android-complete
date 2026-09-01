@@ -1011,6 +1011,10 @@ AUTH_ORG = coords.org_url("one")
 AUTH_PROJECT = coords.project("one")
 AUTH_BUILD_DEF = coords.pipeline_def("auth_build")   # AndroidBuildBroker1ES — RC auth-app build
 AUTH_TEST_DEF = coords.pipeline_def("auth_test")     # Authenticator Post-Build UI Tests
+AUTH_RELEASE_APP_DEF = coords.pipeline_def("auth_release_app")  # AndroidBuild-1ES — release-branch app build
+# The final Auth App version tag format on the release-app build, e.g. '6.2608.5658'.
+_AUTH_RELEASE_VERSION = _re_mod.compile(r"^\d+\.\d+\.\d+$")
+_ZERO_SHA = "0" * 40                                 # ADO "create ref" sentinel (no old object)
 # The two Firebase device suites the auth leg is gated on (both must clear the threshold).
 AUTH_UI_SUITES = tuple(coords.gate("auth_ui_suites"))
 AUTH_UI_PASS_THRESHOLD = coords.gate("auth_ui_pass_pct")
@@ -1174,3 +1178,76 @@ def auth_ui_case_outcomes(build_id, timeout=120):
     if not ok:
         return (False, None, detail)
     return (True, {cid: v["outcome"] for cid, v in res.items()}, "")
+
+
+# ---------------------------------------------------------------- Auth release tag (Phase 4)
+def _release_ref(release_branch):
+    """Full ref for the Auth App RELEASE branch. state.versions.authenticator is stored as
+    'release/YYYY/MM/DD' (the release branch — the working branch is 'working-release/…')."""
+    if not release_branch:
+        return None
+    b = str(release_branch).strip()
+    return b if b.startswith("refs/heads/") else f"refs/heads/{b}"
+
+
+def find_auth_release_build(release_branch, timeout=90):
+    """Discover the Auth App release build (def AUTH_RELEASE_APP_DEF = AndroidBuild-1ES) on the
+    release branch and read the version it produced. Returns (ok, info, detail) where info is
+      {build_id, version, commit}   (or None when no succeeded build exists on the branch yet).
+
+    The release-app build carries the final Auth App version as an ADO build TAG matching
+    _AUTH_RELEASE_VERSION (e.g. '6.2608.5658'); `commit` is the exact commit it was built from
+    (build.sourceVersion) — the commit Phase-4 `tag_authenticator` tags with that version."""
+    from urllib.parse import quote
+    ref = _release_ref(release_branch)
+    if not ref:
+        return (False, None, "no authenticator release branch known (run orchestrator_health first)")
+    url = (f"{AUTH_ORG}/{AUTH_PROJECT}/_apis/build/builds"
+           f"?definitions={AUTH_RELEASE_APP_DEF}&branchName={quote(ref, safe='')}"
+           f"&resultFilter=succeeded&queryOrder=finishTimeDescending&$top=20&api-version=7.1")
+    ok, data, detail = _ado_rest_get(url, timeout)
+    if not ok:
+        hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
+        return (False, None, f"{detail}{hint}")
+    builds = (data or {}).get("value") or []
+    if not builds:
+        return (True, None, f"no succeeded release-app build (def {AUTH_RELEASE_APP_DEF}) on {ref}")
+    b = builds[0]                                    # newest succeeded
+    commit = b.get("sourceVersion")
+    if not commit:
+        return (False, None, f"release-app build {b.get('id')} has no sourceVersion (built commit)")
+    okt, tags_data, dt = _ado_rest_get(
+        f"{AUTH_ORG}/{AUTH_PROJECT}/_apis/build/builds/{b.get('id')}/tags?api-version=7.1", timeout)
+    if not okt:
+        return (False, None, f"could not read tags for build {b.get('id')} ({dt})")
+    tags = (tags_data or {}).get("value") or []
+    version = next((t for t in tags if _AUTH_RELEASE_VERSION.match(str(t).strip())), None)
+    if not version:
+        return (False, None, f"release-app build {b.get('id')} has no version tag "
+                             f"(expected \\d+.\\d+.\\d+); tags: {', '.join(map(str, tags)) or 'none'}")
+    return (True, {"build_id": b.get("id"), "version": str(version).strip(), "commit": commit}, "")
+
+
+def create_lightweight_tag(org, project, repo, tag_name, commit, timeout=60):
+    """Create a LIGHTWEIGHT git tag `tag_name` pointing at `commit` in an ADO git repo.
+    Returns (ok, info, detail) where info is {created: bool, objectId: <commit the tag points at>}.
+
+    Idempotent: if the tag already exists it is NOT recreated — `created` is False and objectId
+    is the existing target (the caller decides whether that matches the intended commit). `repo`
+    may be the repository name or id."""
+    base = f"{org}/{project}/_apis/git/repositories/{repo}"
+    ref = f"refs/tags/{tag_name}"
+    okx, ex, _dx = _ado_rest_get(f"{base}/refs?filter=tags/{tag_name}&api-version=7.1", timeout)
+    if okx:
+        for r in ((ex or {}).get("value") or []):
+            if r.get("name") == ref:                 # exact match (filter is a prefix)
+                return (True, {"created": False, "objectId": r.get("objectId")}, "")
+    ok, res, d = _ado_rest_send(f"{base}/refs?api-version=7.1", "POST",
+                                [{"name": ref, "oldObjectId": _ZERO_SHA, "newObjectId": commit}],
+                                timeout)
+    entry = ((res or {}).get("value") or [{}])[0] if isinstance(res, dict) else {}
+    if ok and entry.get("success"):
+        return (True, {"created": True, "objectId": commit}, "")
+    why = entry.get("customMessage") or d or "tag ref create rejected"
+    return (False, None, why)
+

@@ -38,6 +38,7 @@ pipelines:
   mrwp:         { org: engineering, def: 2519 }      # Monthly Release Work Pipeline (RC testing; ECS + Local)
   auth_build:   { org: one,         def: 475778 }    # AndroidBuildBroker1ES — RC auth-app build (ECS + Local flavors)
   auth_test:    { org: one,         def: 444678 }    # Authenticator Post-Build UI Tests (completion-triggered by the build)
+  auth_release_app: { org: one,     def: 355246 }    # AndroidBuild-1ES — release-branch app build; carries the version build-tag (Phase-4 tag_authenticator)
   localization: { org: one,         def: 405133 }    # OneLocBuild localization pipeline
 
 # Git repositories referenced by name/id/GUID.
