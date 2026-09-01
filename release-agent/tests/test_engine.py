@@ -3873,6 +3873,46 @@ def test_post_bugbash_update_decisions():
         assert dec["decision"] == "no_chat"
 
 
+def test_bugbash_render_marks_auto_failed_auth_as_triage():
+    """render_update shows a pre-triaged automated-auth failure distinctly (🔬 'Automated
+    failure — triage'), separate from manual not-run tests, and adds a header note. A plain
+    failed/not-run test keeps its normal label."""
+    from tools import bugbash as BB
+    prog = {"total": 3, "done": 0, "remaining": 3, "auto_failed_remaining": 1,
+            "unassigned": 0, "owners": {
+        "o@x": {"name": "Owner", "total": 3, "done": 0, "remaining": 3, "tests": [
+            {"id": "2916347", "name": "Passkey reg", "url": "uA", "state": "failed", "auto_failed": True},
+            {"id": "50", "name": "Manual T", "url": "uM", "state": "notrun", "auto_failed": False},
+            {"id": "51", "name": "Manual F", "url": "uF", "state": "failed", "auto_failed": False}]}}}
+    html, mentions = BB.render_update(prog, "August 2026", [{"name": "Broker", "url": "b"}])
+    assert "\U0001f52c 1 failed automated Authenticator case(s) are pre-assigned" in html  # header note
+    assert "Automated failure — triage" in html                        # the auto-failed row
+    assert "2916347" in html and "50" in html and "51" in html         # all three listed
+    assert "Not run" in html and "Failed" in html                      # manual labels intact
+    # the auto-failed case is listed FIRST within the owner's pending block
+    assert html.index("2916347") < html.index("Manual T")
+    assert mentions == [{"id": 0, "upn": "o@x", "name": "Owner"}]
+
+
+def test_bugbash_updates_passes_auto_failed_ids_to_gather(monkeypatch):
+    """bugbash_updates.gather threads the ui_test_status failed-auth case ids into
+    gather_progress so they can be flagged in the update."""
+    from steps.bug_bash import bugbash_updates as BU
+    from orchestrator.state import StepState
+    st = _bb_updates_state()
+    st.set_step("bug_bash", "clone_plans_broker", StepState(status="done", data={"plan_id": "900"}))
+    st.set_step("bug_bash", "clone_plans_auth", StepState(status="done", data={"suite_id": 714999}))
+    st.set_step("bug_bash", "ui_test_status",
+                StepState(status="done", data={"auth": {"failed_case_ids": [2916347, 2916524]}}))
+    captured = {}
+    from tools import bugbash as BB
+    monkeypatch.setattr(BB, "gather_progress",
+                        lambda bp, sn, ap, asid, timeout=90, auto_failed_ids=None:
+                        (True, captured.setdefault("ids", auto_failed_ids) or {"ok": 1}, ""))
+    ok, _prog, _ = BU.gather(st)
+    assert ok and captured["ids"] == [2916347, 2916524]
+
+
 def test_clone_plans_name_override_knob():
     """The `name` mock knob overrides the derived plan/suite name (safe 'TEST ...' runs)."""
     st, out = _bb_build("clone_plans_broker",

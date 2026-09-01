@@ -150,17 +150,23 @@ def _broker_points(broker_plan_id, suite_name, timeout=90):
 
 
 def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_id,
-                    timeout=90):
+                    timeout=90, auto_failed_ids=None):
     """(ok, progress, detail). Reads live test points from the Broker manual subtree +
     the Auth bug-bash suite, groups the CASES by their System.AssignedTo, and computes a
     per-owner + overall breakdown.
 
+    `auto_failed_ids` are the Authenticator cases that FAILED in automation and were
+    pre-assigned to the release owner by `ui_test_status` — they're flagged per-test as
+    `auto_failed` so the update can show them as 'triage', distinct from manual tests the
+    owner still needs to RUN. They still count as remaining (a failure needs resolution).
+
     progress = {
-      total, done, remaining,
+      total, done, remaining, auto_failed_remaining,
       owners: { upn: {name, total, done, remaining,
-                      tests: [{id, name, url, state}]} },
+                      tests: [{id, name, url, state, auto_failed}]} },
       unassigned: <count of cases with no AssignedTo> }
     """
+    auto_failed = {str(i) for i in (auto_failed_ids or [])}
     okb, bpts, db = _broker_points(broker_plan_id, broker_suite_name, timeout)
     if not okb:
         return (False, None, f"broker: {db}")
@@ -181,13 +187,16 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
         return (False, None, f"assignedTo: {da2}")
 
     owners, unassigned = {}, 0
-    total = done = 0
+    total = done = auto_failed_remaining = 0
     for cid, c in cases.items():
         total += 1
         state = _case_state(c["outcomes"])
         is_done = state in ("passed", "na")     # only clean-pass / N-A count as done;
         if is_done:                              # failed + blocked + notrun are "remaining"
             done += 1
+        af = cid in auto_failed
+        if af and not is_done:
+            auto_failed_remaining += 1
         upn = amap.get(cid)
         if not upn:
             unassigned += 1
@@ -198,9 +207,11 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
         o["done"] += 1 if is_done else 0
         o["remaining"] += 0 if is_done else 1
         o["tests"].append({"id": cid, "name": c.get("name") or f"Test {cid}",
-                           "url": f"{ORG}/{PROJECT}/_workitems/edit/{cid}", "state": state})
+                           "url": f"{ORG}/{PROJECT}/_workitems/edit/{cid}", "state": state,
+                           "auto_failed": af})
 
     return (True, {"total": total, "done": done, "remaining": total - done,
+                   "auto_failed_remaining": auto_failed_remaining,
                    "owners": owners, "unassigned": unassigned}, "")
 
 
@@ -238,27 +249,40 @@ def render_update(progress, month_year, plan_links, name_by_upn=None):
             continue
         mi = len(mentions)
         mentions.append({"id": mi, "upn": upn, "name": who})
-        # list every not-done test (failed → blocked → not-run), each with its state icon
+        # list every not-done test (failed → blocked → not-run), each with its state icon.
+        # A pre-triaged automated auth failure (auto_failed) is shown distinctly — it's an
+        # investigation the owner already owns, NOT a manual test to run.
         _ORDER = {"failed": 0, "blocked": 1, "notrun": 2}
         pending = sorted((t for t in o["tests"] if t["state"] in _ORDER),
-                         key=lambda t: (_ORDER[t["state"]], t["id"]))
-        items = "".join(
-            f'<li style="margin:2px 0;">{_STATE_ICON.get(t["state"], "⬜")} '
-            f'<a href="{t["url"]}">{t["id"]}</a> — {t["name"]} '
-            f'<span style="color:#605e5c;">({_STATE_WORD.get(t["state"], t["state"])})</span></li>'
-            for t in pending)
+                         key=lambda t: (0 if t.get("auto_failed") else 1,
+                                        _ORDER[t["state"]], t["id"]))
+
+        def _row(t):
+            if t.get("auto_failed"):
+                return (f'<li style="margin:2px 0;">\U0001f52c '
+                        f'<a href="{t["url"]}">{t["id"]}</a> — {t["name"]} '
+                        f'<span style="color:#a4262c;">(Automated failure — triage)</span></li>')
+            return (f'<li style="margin:2px 0;">{_STATE_ICON.get(t["state"], "⬜")} '
+                    f'<a href="{t["url"]}">{t["id"]}</a> — {t["name"]} '
+                    f'<span style="color:#605e5c;">({_STATE_WORD.get(t["state"], t["state"])})</span></li>')
+        items = "".join(_row(t) for t in pending)
         rows.append(
             f'<div style="margin:10px 0;"><b><at id="{mi}">{who}</at></b> — '
             f'{o["done"]}/{o["total"]} done, <b>{o["remaining"]} remaining</b>:'
             f'<ul style="margin:4px 0 0;padding-left:20px;">{items}</ul></div>')
 
     links = " &nbsp;·&nbsp; ".join(f'<a href="{l["url"]}">{l["name"]}</a>' for l in (plan_links or []))
+    auto_n = progress.get("auto_failed_remaining", 0)
+    auto_note = (f'<p style="font-size:13px;color:#a4262c;">\U0001f52c {auto_n} failed '
+                 f'automated Authenticator case(s) are pre-assigned for owner triage '
+                 f'(investigate — not manual re-runs).</p>' if auto_n else "")
     html = (
         f'<div style="font-family:\'Segoe UI\',Arial,sans-serif;font-size:14px;">'
         f'<p><b>🐞 {month_year} Bug Bash — progress update</b><br>'
         f'<b>{done}/{total} tests done ({pct}%)</b> · {progress.get("remaining",0)} remaining. '
         f'Mark pass/fail in the ADO test plan; report bugs/logs here.</p>'
         f'<p style="font-size:13px;color:#605e5c;">{links}</p>'
+        f'{auto_note}'
         f'{"".join(rows)}'
         f'</div>')
     return html, mentions

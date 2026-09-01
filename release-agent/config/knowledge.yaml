@@ -902,10 +902,13 @@ bug_bash.bugbash_updates:
     Broker 'Manual Tests (Android Broker)' subtree and the Authenticator bug-bash suite).
     A test counts as done only when it PASSED (or is N/A); not-run, failed, and blocked all
     count as remaining and are LISTED (failed first, then blocked, then not-run) with links +
-    state so failures are surfaced, not buried. Owners with any remaining test are
-    @mentioned; owners who passed everything appear by name with an 'all completed' line (no
-    mention). It is fire-and-continue — the step completes after the first post so the phase
-    proceeds; the poller runs in the background.
+    state so failures are surfaced, not buried. Failed AUTOMATED Authenticator cases (the ones
+    ui_test_status pre-assigned to the release owner) are shown DISTINCTLY — 🔬 'Automated
+    failure — triage', listed first in the owner's block, plus a header note — so they read as
+    an investigation the owner already owns, not a manual test to run. Owners with any remaining
+    test are @mentioned; owners who passed everything appear by name with an 'all completed'
+    line (no mention). It is fire-and-continue — the step completes after the first post so the
+    phase proceeds; the poller runs in the background.
   who: >
     Scout resolves it during `next` (a scout step). It gathers progress, posts the first
     update via `workiq_send_chat_message` (contentType html; the payload carries `_mentions`
@@ -928,11 +931,13 @@ bug_bash.bugbash_updates:
       a: "Either automatically when every test is complete (a tick returns `complete`, posts a wrap-up, and deregisters the poller) OR when the owner attests the bugbash_complete gate (the skill deregisters the poller then)."
     - q: "Why group by AssignedTo instead of the test point's tester?"
       a: "The ADO test-point `tester` field is NOT synced with the case's System.AssignedTo. distribute_tests sets AssignedTo, so progress is grouped by AssignedTo to reflect who actually owns each test."
+    - q: "Why are some of the owner's failures marked 'Automated failure — triage'?"
+      a: "Those are Authenticator cases that FAILED in automation (the auth ECS Firebase run) and were pre-assigned to the release owner by ui_test_status. They're distinct from manual tests: the owner investigates them (flake vs real bug), they don't need a manual re-run. They still count as remaining until resolved."
 
 bug_bash.native_auth_signoff:
   summary: "The release engineer attests the Native Auth team finished + signed off."
   what: >
-    The first of the two bug-bash sign-offs. No message is sent — the release engineer
+    The bug-bash sign-off. No message is sent — the release engineer
     confirms the Native Auth team completed their tests and signed off (the confirmation they
     were asked to send back in notify_native_auth). The step completes once who signed off is
     recorded.

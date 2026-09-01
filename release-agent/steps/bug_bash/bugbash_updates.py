@@ -12,7 +12,9 @@ Each update is grouped by the test's owner (System.AssignedTo, set by distribute
 owners with remaining tests (not-run, failed, or blocked — failed/blocked surfaced, not
 hidden) are @mentioned with those tests (links + state); owners who passed everything appear
 by name with an "all completed" line (no mention). A test counts as done only when it passed
-(or is N/A).
+(or is N/A). Failed AUTOMATED Authenticator cases (pre-assigned to the release owner by
+`ui_test_status`) are shown distinctly as 'triage' — an investigation the owner already owns,
+not a manual test to run.
 
 Depends on: clone_plans_broker (Broker plan id), clone_plans_auth (Auth suite id),
 activate_chat (meeting chat id). Blocks if the chat hasn't been activated.
@@ -50,6 +52,13 @@ def _auth_suite(state):
     return (state.get_step("bug_bash", "clone_plans_auth").data or {}).get("suite_id")
 
 
+def _auto_failed_ids(state):
+    """The Authenticator cases that FAILED in automation and were pre-assigned to the release
+    owner by `ui_test_status` — flagged distinctly in the update (triage, not a manual run)."""
+    return ((state.get_step("bug_bash", "ui_test_status").data or {})
+            .get("auth") or {}).get("failed_case_ids") or []
+
+
 def gather(state):
     """(ok, progress, detail) — live progress, or the injected `progress` mock."""
     inj = mock_input("progress", MISSING)
@@ -58,7 +67,8 @@ def gather(state):
     bp, asuite = _broker_plan(state), _auth_suite(state)
     if not bp or not asuite:
         return (False, None, "the Broker plan / Auth suite aren't ready (run the clone steps).")
-    return BB.gather_progress(bp, BROKER_SUITE_NAME, T.AUTH_PLAN, asuite)
+    return BB.gather_progress(bp, BROKER_SUITE_NAME, T.AUTH_PLAN, asuite,
+                              auto_failed_ids=_auto_failed_ids(state))
 
 
 def plan_links(state):
