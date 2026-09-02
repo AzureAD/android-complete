@@ -82,13 +82,18 @@ Before I start — 4 quick questions (reply with the letters/numbers, or "defaul
 
 ---
 
-## Rule 4 — Echo the plan before launching
+## Rule 4 — Run the environment preflight, THEN echo the plan
 
-Never launch agents straight off the menu. Restate it in **five lines** and wait for a "go":
+**Run `python scripts/preflight.py` right after the questions and before the plan echo.** It is fast and
+it is the difference between a trustworthy verdict and a confident wrong one.
+
+Never launch agents straight off the menu. Restate the plan and wait for a "go":
 
 ```markdown
 **Plan:** triage 2 finding(s) — IcM NNNNNN, NNNNNN
 **Depth:** Standard (2 passes each, run in parallel)
+**Env:** preflight PASS  (or: the specific FAILs + exactly what you need to do)
+**Code:** android-complete @ <sha> · broker @ <sha> · common @ <sha> · ESTS @ <sha>
 **ETA:** ~20-30 min before I have verdicts. I'll post progress at each pass boundary.
 **Output:** <absolute path to the shift folder>   <- your report lands here, on disk
 **Then:** I'll show you the verdicts and ask what to do next. Nothing auto-runs.
@@ -99,17 +104,31 @@ Go?
 The **Output** line is mandatory. Stating the absolute path up front is what makes a missing report
 obvious at the end instead of a week later.
 
+The **Code** line is mandatory too, and it is not decoration: printing each repo's HEAD proves you
+verified *freshness*, not merely *presence*. A stale checkout and a current one look identical until you
+print the shas.
+
 ---
 
 ## Rule 5 — Handle the common cold-start problems proactively
+
+Two of these **block the engineer, not you** — surface them in the plan echo so they can start unblocking
+while you work, instead of discovering it 20 minutes in.
 
 | Symptom | What to say |
 |---------|-------------|
 | Submodules missing / empty | "Your checkout is missing `<x>` — every search would return a false 'no sink'. Run the repo submodule sync first." Do **not** proceed. |
 | Running from a git worktree | "Worktrees don't carry the submodules — switch to the main `android-complete` checkout." |
+| **ESTS source not checked out** ⛔ *engineer-blocking* | "I don't have the identity-service source. Any finding that depends on what the token service validates will stall at 'unverifiable server-side boundary' — and that question has changed the severity before. Clone it and point me at it (`--ests <path>` or `$env:ESTS_ROOT`)." Say this **at intake**; cloning is slow. |
+| **A module is on the wrong remote** ⛔ | "The `<module>` remote still points at the retired host. That location can still fetch successfully while serving a frozen snapshot, so every 'is this already fixed?' answer would be unreliable." Give the one-line `git remote set-url` repair. Do **not** proceed. |
+| A module is behind origin | "`<module>` is N commits behind — I'd be triaging against stale code. Pulling first." Fix it yourself if fast-forward is clean. |
+| **Auth needed for a repo on another host** ⛔ | `gh auth login --hostname <host> --web` is **interactive**. Surface the device code immediately and say you're blocked until it's done — don't burn the run waiting silently. |
 | No IcM MCP | "I can't query IcM, so I can't sweep a window. You can still paste finding id(s) + detail and I'll triage those (option **a**)." |
 | Workspace not writable | Say where it is trying to write and how to override with `VULN_TRIAGE_WORKSPACE`. |
 | Engineer seems to be on an old copy of the skill | State the branch/commit the skill is being read from, so a stale copy is visible immediately. |
+
+> **The rule behind this table:** a fetch that exits 0 is not proof the environment is sound. Presence,
+> currency, and *correct origin* are three separate checks, and only the third catches a retired remote.
 
 ---
 

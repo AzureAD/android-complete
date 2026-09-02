@@ -47,9 +47,9 @@ This skill is for **on-call engineers during their on-call week**. Default scope
 ## Requirements — verify BEFORE any work (HARD GATE)
 
 > 🛑 **Do NOT begin discovery, investigation, or reporting until every requirement below is satisfied.**
-> If any is missing, **stop and tell the user exactly what to fix** — partial environments produce wrong
-> verdicts (e.g. a missing submodule makes a real sink look absent → a finding gets wrongly down-classified).
-> Run the verification block, report PASS/FAIL per item, and only proceed on an all-PASS.
+> If any is missing, **stop and tell the user exactly what to fix** — partial or *stale* environments
+> produce **confidently wrong verdicts**, which are worse than no verdict. Run
+> `python scripts/preflight.py`, report PASS/FAIL per item, and only proceed on an all-PASS.
 >
 > **Order of operations:** run the **intake interview** (Step -1) *first* — it takes ~60 seconds and
 > tells you what the engineer actually wants — then run this environment gate **before launching any
@@ -57,47 +57,80 @@ This skill is for **on-call engineers during their on-call week**. Default scope
 > told their checkout is unusable, and don't burn 30 minutes investigating the wrong thing in a
 > perfectly-configured environment.
 
+### One command runs the whole gate
+
+```powershell
+python .github/skills/vuln-triage-reporter/scripts/preflight.py
+#   --skip-fetch   offline / no network checks
+#   --ests <path>  identity-service checkout (default %ESTS_ROOT% or C:\src\ESTS-Main)
+#   --json         machine-readable
+```
+Exit **0** = safe to begin · Exit **1** = **stop and report**. Everything below is what it checks and why.
+
 ### 1. Full `android-complete` checkout WITH submodules
 The investigation greps **real source**. The app/broker code lives in **git-ignored submodules** that are
 **not** present in a bare clone or in a git **worktree**:
 - `authenticator/PhoneFactor/` — Microsoft Authenticator app + MSA SDK
-- `broker/AADAuthenticator/` — broker app code
-- the `common`, `msal`, `adal`, `broker` library modules must also be populated.
+- `broker/AADAuthenticator/`, `broker/broker4j/` — broker app + library
+- `common`, `msal`, `adal` must also be populated.
 
 **Work from the main `android-complete` checkout (e.g. `C:\src\android-complete`), NOT a worktree** —
 worktrees created for skill edits typically lack the submodules. If those folders are missing/empty, the
-user must run the repo's submodule sync (e.g. `git droidSetup` / `git submodule update --init --recursive`)
-**before** any triage.
+user must run `git droidSetup` / `git submodule update --init --recursive` **before** any triage.
 
-### 2. MCP servers / tooling
+> **Why it's a hard gate:** a grep against a missing module returns nothing, and "no results" reads as
+> "the sink isn't there" — silently down-classifying a real finding.
+
+### 2. Identity-service (**ESTS**) source — REQUIRED, not optional
+Many broker/MSAL findings turn on **what the token service does with the request**: how a grant is
+validated, whether the caller/application identity is checked, what is required versus optional on a
+given endpoint. Without ESTS source those questions cannot be answered, and the finding either stalls at
+*"unverifiable server-side boundary"* or — far worse — gets **guessed**.
+
+**This is a real, repeated cost:** two findings in one shift sat at Medium confidence with an open
+server-side question purely because the repo wasn't checked out. With it, both resolved to High in under
+20 minutes, and the answer **changed the severity**.
+
+- Default location `C:\src\ESTS-Main`, or set `$env:ESTS_ROOT`, or pass `--ests <path>`.
+- Must be a **git checkout** (the skill runs history queries against it), and **current**.
+- If the engineer doesn't have it, **say so during intake** — cloning is slow, so surface it before they
+  start waiting on an investigation that cannot finish.
+
+### 3. Every repo CURRENT, and pointing at the RIGHT REMOTE
+Two separate checks, and the second one is the one that bites.
+
+**(a) Up to date.** Fetch and confirm 0 behind. A finding investigated against a stale checkout can
+report "no fix exists" for something that shipped weeks ago.
+
+**(b) Correct remote — a successful `git fetch` does NOT mean you are looking at the live repo.**
+When a repo migrates hosts, the retired location can keep resolving and keep serving a **frozen
+snapshot**. `git fetch` exits 0. `git pull` says *"Already up to date."* Nothing warns you. Meanwhile
+every `git log --all`, `git branch -a --contains` and Gate-0 "is this already covered?" query silently
+covers only history **up to the migration date**.
+
+> **Real failure this caused:** a broker checkout still pointed at the retired host, frozen ~3 weeks
+> earlier. Gate 0 reported *"fix exists but was never merged"* for a fix that had in fact landed **and
+> shipped**. Two findings were over-rated, and an escalation went out to leadership with the wrong
+> premise — twice, because the first correction was made from the same stale mirror.
+>
+> **The broker module has migrated** — see `docs/broker-remote-migration.md` in this repo for the
+> current host/slug and the one-line `git remote set-url` repair. `preflight.py` asserts the expected
+> remote per module and fails loudly on drift.
+
+### 4. MCP servers / tooling
 | Capability | Used for | Required? | If missing |
 |------------|----------|-----------|------------|
 | **IcM MCP** (`search_incidents`, `get_incident*`, `get_teams_by_name`) | Discover `[MSRC]`/`[ITD]` findings + pull incident detail | **Required** for discovery (Steps 0–1) | Stop — cannot scope the week. (User can still paste IcM IDs to triage a specific finding.) |
 | **`codebase-researcher` subagent** | The mandatory two-pass code investigation | **Required** | Stop — the skill's core (Non-Negotiable #2/#3) cannot run. |
 | **ADO MCP** (`mcp_ado_wit_*`) | Create PBIs (Step 6) | Optional | Fall back to the ADO **REST API** + `az` token (see Step 6). |
 | **`az` CLI, logged in** | Live status report (Step 7) + REST PBI fallback | Optional (only for Steps 6–7) | Status report still renders without live state; PBI creation needs it if no ADO MCP. |
+| **`gh` authenticated per host** | Reading private-repo history/PRs | **Required** when a module lives on a different host | `gh auth status --hostname <host>`; `gh` routes by host, so stay logged into both. Auth is **interactive** — surface it at intake, not mid-run. |
 | **FireWatch / Security MCP** | — | **N/A — not reachable** | ITD findings are intake **manually** (Step 2); do not wait on a Security MCP. |
 
-### 3. Private workspace
+### 5. Private workspace
 `$VULN_TRIAGE_WORKSPACE` (default `~/vuln-triage-workspace`) must be writable — **all investigation
 outputs live there, OUTSIDE the repo** (they are sensitive). Never write findings under the repo tree.
 
-### Quick verification (run first, report PASS/FAIL)
-```powershell
-# 1. submodules present (non-empty)
-foreach ($p in 'authenticator\PhoneFactor','broker\AADAuthenticator','common','msal') {
-  $full = Join-Path 'C:\src\android-complete' $p
-  $ok = (Test-Path $full) -and (Get-ChildItem $full -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
-  Write-Host ("[{0}] {1}" -f $(if($ok){'PASS'}else{'FAIL'}), $p)
-}
-# 2. on the main checkout, not a worktree
-Write-Host ("git dir: " + (git -C 'C:\src\android-complete' rev-parse --git-dir))
-# 3. az logged in (only needed for Steps 6–7)
-az account show --query user.name -o tsv --only-show-errors 2>$null
-# 4. workspace writable
-$ws = if ($env:VULN_TRIAGE_WORKSPACE) { $env:VULN_TRIAGE_WORKSPACE } else { "$HOME\vuln-triage-workspace" }
-New-Item -ItemType Directory -Force -Path $ws | Out-Null; Write-Host "workspace: $ws"
-```
 > IcM MCP / `codebase-researcher` availability is confirmed by the agent's own tool list — verify they are
 > present before Step 0. If the IcM MCP is down, the discovery step cannot run.
 
@@ -138,22 +171,38 @@ number-match, the non-default path, the signature allow-list, etc.). This is wha
 **Broker/Common libraries** — we can prove things about *that* code. We do **not** own:
 - **Downstream consuming apps** (Outlook, Teams, OneAuth, other MSAL callers) — a caller may add its own
   validation, pick the browser path, pass a nonce, etc. We cannot observe this.
-- **Server-side** (eSTS / MFA backend / issuance) — we can often only *infer* enforcement from the protocol.
+- **Server-side** (eSTS / MFA backend / issuance) — **but see below: this boundary is often crossable.**
 
-For anything outside our boundary, **do not assert it as fact**. Add a **"Scope & Verification Boundary"**
-disclaimer stating: it is possible downstream services or the server apply additional checks, but we cannot
-conclude definitively, and it would be worth investigating. **Only confirm what you can.** This cuts both
-ways — never claim "safe" *or* "exploitable" about a boundary you couldn't verify.
+> **⚠️ Do not retreat to "server-side, cannot verify" before you have tried.** With the **ESTS source
+> checkout** required by the Requirements gate, questions about what the token service validates are
+> frequently **answerable in first-party source**. Two findings in one shift sat at Medium confidence on an
+> assumed server-side backstop; reading ESTS resolved both to High in under 20 minutes — and **changed the
+> severity**. Treat "unverifiable boundary" as a conclusion you must *earn*, not a default.
+>
+> When you do cross into ESTS, keep the same discipline as anywhere else: cite `file:line`, quote the code,
+> and separate **verified in source** from **inferred from protocol convention**. And note what remains
+> genuinely outside *any* repo — operational controls such as Conditional Access evaluation, risk/fraud
+> scoring, or per-tenant policy are not in the token-pipeline source, and should not be assumed in either
+> direction.
+
+For anything still outside our boundary after that effort, **do not assert it as fact**. Add a **"Scope &
+Verification Boundary"** disclaimer stating: it is possible downstream services apply additional checks,
+but we cannot conclude definitively, and it would be worth investigating. **Only confirm what you can.**
+This cuts both ways — never claim "safe" *or* "exploitable" about a boundary you couldn't verify.
 
 ---
 
 ## Non-Negotiables
 
-0. **Satisfy the Requirements hard gate FIRST.** Before any discovery/investigation/reporting, verify the
-   environment per the **"Requirements — verify BEFORE any work"** section (full `android-complete` checkout
-   **with submodules**, on the **main checkout not a worktree**; IcM MCP + `codebase-researcher` available;
-   writable private workspace). If any item FAILs, **stop and tell the user what to fix** — do not begin
-   work in a partial environment (a missing submodule silently turns a real sink into a false "no sink").
+0. **Satisfy the Requirements hard gate FIRST.** Before any discovery/investigation/reporting, run
+   `python scripts/preflight.py` and verify the environment per the **"Requirements — verify BEFORE any
+   work"** section: full `android-complete` checkout **with submodules**, on the **main checkout not a
+   worktree**; **ESTS source present and current**; **every repo current AND on the correct remote**;
+   IcM MCP + `codebase-researcher` available; writable private workspace. If any item FAILs, **stop and
+   tell the user what to fix** — do not begin work in a partial or stale environment. A missing submodule
+   silently turns a real sink into a false "no sink"; a **stale or retired remote** silently turns a
+   shipped fix into "no fix exists," and a `git fetch` that exits 0 is **not** proof you are looking at
+   the live repository.
 1. **Run investigations in PARALLEL.** Each finding is independent. Dispatch one investigation per finding
    concurrently (use the `codebase-researcher` subagent / `runSubagent`, or parallel `Explore` agents).
    Do **not** process findings sequentially when more than one is in scope.
@@ -377,7 +426,7 @@ Background agents can occasionally stall or be cleared (e.g. a long idle gap bet
 - Do **not** silently wait indefinitely — surface the stall to the user and restart the affected pass.
 - Each pass is independent and idempotent, so relaunching one finding's pass does not disturb the others.
 
-## Searching the Authenticator app code (critical gotcha)
+## Searching the codebase (critical gotchas)
 
 The Authenticator app + MSA SDK live in **git-ignored submodules** (`authenticator/PhoneFactor/`, and
 broker app code under `broker/AADAuthenticator/`). Standard workspace search returns **zero** results for
@@ -385,11 +434,36 @@ these unless you pass `includeIgnoredFiles: true`. Rules the subagents MUST foll
 - Always set `includeIgnoredFiles: true` AND scope with `includePattern: authenticator/PhoneFactor/**`
   (or narrower) — an unscoped ignored-file regex grep times out.
 - `file_search` does **not** see ignored files at all — use `grep_search` with an `includePattern` that
-  names the file to locate it, then `read_file`.
+  names the file to locate it, then `read_file`. In PowerShell, `Get-ChildItem -Recurse -Include` works
+  and is the reliable fallback; `grep` with an explicit `paths` argument also works.
+- **A `glob`/`file_search` miss is NOT an absence proof.** Re-verify with `Get-ChildItem` before writing
+  any "not found" claim. This is the single most common source of false "the control doesn't exist."
+- **Never search only `*.java`.** Much of broker/common is **Kotlin**. A `-Include '*.java'` sweep that
+  returns nothing for `CallingAppValidator`, `AppRegistry`, or an operation class means *you searched the
+  wrong extension*, not that the class is absent. Search both, or search by name without an extension
+  filter. A real run nearly recorded four absence proofs this way.
+- **Scope the grep to the whole tree, not one directory, when proving absence.** A negative result from
+  `app/src/main/java` says nothing about other modules, flavors, or source sets. A capping "this control
+  doesn't exist anywhere" claim must be tree-wide, both languages, all source sets.
 - For **binary Maven dependencies** (e.g. `com.microsoft:tokenshare`), the in-tree source doesn't exist —
   verify the **actual shipped artifact** via `javap` on the cached `.aar` from the Gradle cache.
+- **Platform behavior can be verified too.** When a finding turns on what Android itself does (binder
+  permission enforcement, a framework contract), don't reason from memory: read **real AOSP source** — the
+  local SDK's `sources/android-NN/` component, or `android.googlesource.com/platform/frameworks/base/+/refs/tags/android-<ver>_r1/...?format=TEXT`
+  (base64). **Check the app's actual `minSdkVersion` and verify at that level**, not just the newest — a
+  guard introduced recently proves nothing about the oldest supported release, and vice versa (the
+  mechanism can change name across versions while the enforcement remains).
 - See repo memory `/memories/repo/security-triage-metadata.md` and `/memories/repo/authenticator-search.md`
   for the verified path conventions and team/service-tree IDs.
+
+### Dispatching agents: keep prompts framed as defensive review
+
+Adversarial/challenger prompts that read like offensive-security requests can be **blocked by content
+filtering**, returning an empty result and silently costing you a pass. If that happens, **reframe rather
+than retry**: describe the task as *"an independent second-opinion code review of our own codebase"*, ask
+for *"which validations are or are not present"*, and explicitly instruct **not** to produce payloads or
+exploit steps. The analytical rigor is unchanged — only the framing. Keep the Scope Contract and the
+verbatim Claim Ledger; those are what make the challenge sharp, not aggressive phrasing.
 
 ---
 
@@ -402,6 +476,12 @@ these unless you pass `includeIgnoredFiles: true`. Rules the subagents MUST foll
 resolved plan and wait for a "go."** Full menu, answer→mode mapping, and cold-start troubleshooting:
 [references/intake-interview.md](references/intake-interview.md).
 
+> **Run `scripts/preflight.py` immediately after the questions and BEFORE the plan echo**, then fold any
+> FAILs into the echo. Environment problems are cheap to fix *now* and expensive to discover mid-run —
+> and two of them (**a missing ESTS checkout**, **an interactive `gh` login for a repo on another host**)
+> block the engineer, not you. Surface those in the plan echo so they can start unblocking while you work
+> rather than discovering it 20 minutes in. **Never begin the investigation on a FAIL.**
+
 Skip any question already answered by the engineer's opening message (if they said *"triage IcM NNNNNN"*,
 Q1 is done). If they say *"defaults"* or *"just go"*, take **current shift → Standard → verdict + report**.
 
@@ -410,6 +490,8 @@ The plan echo is short and **must** include the absolute output folder:
 ```
 Plan:   <scope — which findings / which window>
 Depth:  <Fast | Standard | Deep>  (passes + what that means for the verdict)
+Env:    <preflight PASS | the specific FAILs + what the engineer must do>
+Code:   <each repo @ HEAD sha — proves you checked freshness, not just presence>
 ETA:    <range — quote the upper end for anything touching common/broker>
 Output: <absolute path to the shift folder>     <- your report lands here, on disk
 Then:   verdicts + a menu of next actions. Nothing auto-runs.
@@ -701,9 +783,55 @@ security team pushes back. Full rubric: [references/severity-rubric.md](referenc
 > The bar to use this category is the **same as any down-classification**: cite the covering control with
 > `file:line` (or the searches proving the sink is unreachable). "I didn't find an exploit" is not coverage —
 > show the control. And stay conservative the *other* way too: **not everything is covered.** If you cannot
-> prove a control exists, treat the finding as live and solution it. Be especially careful that the control
-> is on the **current base-branch HEAD**, not a stale snapshot (findings are investigated against a snapshot;
-> see Step 4.6 Pre-flight).
+> prove a control exists, treat the finding as live and solution it.
+
+#### Gate 0 has FOUR outcomes, not two — and they need different actions
+
+Collapsing these is how a run produces the wrong recommendation. Each demands something different:
+
+| Outcome | What it means | Action |
+|---|---|---|
+| **Covered** | A control neutralizes the sink on the **shipping** branch | Close out, ship nothing |
+| **Not covered** | No control anywhere, on any ref | Solution it (Step 4.5) |
+| **Fix exists, not shipped** | Written on a branch, not on the release | Don't re-write it — **land it** |
+| **Landed then reverted** | Merged, then backed out | **Find out WHY before re-landing.** Never blind-revert a revert |
+
+> **Real failure:** a run reported *"no fix exists"*, recommended writing one, and was wrong on both
+> counts — the fix had been written, merged, reverted for a release blocker, and then restored. Each of
+> those states needed a different answer, and "not covered" was none of them.
+
+#### Ask the question against the RIGHT REF, and against ALL refs
+
+Three rules, each from a real wrong answer:
+
+1. **Verify the remote before you trust the history** (see the Requirements gate). A retired remote can
+   keep serving a frozen snapshot while `git fetch` exits 0 — every history query then silently stops at
+   the migration date. **Check this first; nothing downstream is trustworthy without it.**
+2. **Search all refs, not just the base branch.** `git log --all -S'<symbol>'`, `git branch -a --contains
+   <sha>`, `git log --all --grep='<work-item>'`. A fix on an unmerged branch is a materially different
+   verdict from no fix.
+3. **Judge coverage on the SHIPPING branch, not `dev`.** What protects users is what ships. Resolve the
+   release/integration branch and check *that*. Beware the **revert-then-merge** pattern: a change
+   reverted from a release branch can be silently **restored** by a later merge from `dev` — so commit
+   ancestry alone will mislead you. **Read the file content at the release ref** and confirm the control
+   is actually present and wired.
+
+#### Confirm the control is *effective*, not merely present
+
+Finding the code is not the same as proving it protects users:
+
+- **Resolve submodule pins properly.** `git show <ref>:<submodule>/<path>` returns a **gitlink**, not file
+  content. Get the pin with `git ls-tree <ref> <submodule>`, then read that commit **in the submodule's own
+  repo**. A control can be present in a library's `dev` and absent from the pin the shipping app builds.
+- **Check the flight/feature-gate default, and its polarity.** Do not assume `true` means "enforcing" —
+  some gates are permissive-when-true by design. Read the declaration and any comment explaining intent.
+  A control behind a default-off gate protects nobody.
+- **Check the control's scope against the finding's branch.** A gate can cover one code path and not the
+  neighbouring one. Confirm the *specific* sink you cited is the one gated — enumerate which methods the
+  guard actually wraps rather than inferring it from the field name.
+
+> Record the outcome in the finding's `**Prior incidents:**` field and the Gate-0 section, naming the ref
+> you checked. "Not covered on `dev`" and "not covered in the shipping release" are different claims.
 
 Then set the **Assignment** using the cutoff (only for findings that survive Gate 0):
 - **`Won't-Fix (Already-Covered)`** — Gate 0 hit: an existing, cited control already neutralizes the sink.
