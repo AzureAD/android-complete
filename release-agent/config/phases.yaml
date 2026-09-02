@@ -87,6 +87,7 @@ phases:
       - { id: release_announcement, name: "Announce the release in the 'General' Teams channel", owner: agent, source: scout, maps_to: [F4] }
       - { id: tag_authenticator, name: "Tag the Authenticator release commit",  owner: agent, maps_to: [F6] }
       - { id: wiki_payload,      name: "Create/update the release payload wiki page", owner: agent, maps_to: [S0, F6] }
+      - { id: final_status_email, name: "Send the closing partner status email + close the daily automation", owner: agent, source: scout, maps_to: [F4] }
 
   - id: rollout_start
     name: "Rollout Start"

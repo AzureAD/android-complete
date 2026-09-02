@@ -80,6 +80,11 @@ def is_holiday(d):
     return d in us_holidays(d.year)
 
 
+def is_business_day(d) -> bool:
+    """True if `d` is a weekday (Mon-Fri) and not an observed US federal holiday."""
+    return d.weekday() < 5 and not is_holiday(d)
+
+
 def is_working_time(now: datetime) -> bool:
     """True if `now` (local) is a weekday, not a US holiday, and within 09:00–18:00."""
     d = now.date()

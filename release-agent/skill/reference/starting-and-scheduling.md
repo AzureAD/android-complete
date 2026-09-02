@@ -38,6 +38,23 @@ Right after `init`, make sure the **push-reminder automation** exists for THIS r
 
 Do it silently as part of start (the user already opted into push). **Why hourly, not once at 9am:** `tick` is idempotent (advancing no-ops once holding; digest de-dupes to one email/day), so a tick missed while the machine was off is picked up by the next. A single daily trigger would be skipped that day.
 
+## Ensure the daily partner status email exists (per release — provisioned at start, closed at end of Phase 4)
+
+Alongside the push reminders, provision the **partner status email** — an **end-of-day** business-day email to the release DLs (`authsdkrelease@`, `androididentity@`) with the milestone dashboard, sent while the release is in flight (**Phase 2 build_verify through Phase 4 finalize**). EOD so it reports the day's SETTLED progress (matches the checklist's "📧 End-of-day: send status email").
+1. `m_list_automations`. If **"Release status email"** is already scoped to this release, leave it.
+2. If missing, `m_create_automation`:
+   - **name:** `Release status email`
+   - **schedule:** `every weekday at 5pm`  (end of day; weekends are skipped natively; the command also skips US holidays and the window)
+   - **teamsNotify:** `never`
+   - **prompt:** From `C:\repos\android-complete\release-agent`, send the daily partner status email if one is due:
+     1. Run `python -m orchestrator.cli status-email --release <YYYY-MM> --json`. **For a TEST release, add `--send-to <you@microsoft.com>`** so the real DLs are never emailed.
+     2. If `skip` is `true` (reasons: out of the Phase 2-4 window, weekend/holiday, or already sent today), **STOP silently**.
+     3. Otherwise `workiq_send_email` with `to:` the payload `to`, `subject:` the `subject`, `body:` the `html` (`isHtml:true`). Then run `python -m orchestrator.cli record-status-email --release <YYYY-MM>` to stamp the day. **Headless safety copy:** `m_send_teams_message` a one-line courtesy — `🤖 [release <id>] Sent daily status email.` (never paste the body).
+3. **Register it** for teardown: `automation register --id <id> --name "Release status email" --release <YYYY-MM> --purpose "business-day partner status email (Phase 2-4)"`.
+
+**Closing it (end of Phase 4).** The terminal `finalize.final_status_email` step sends the guaranteed CLOSING status email (it names `record-status-email --final` as its follow-up). **After that step completes, deregister the "Release status email" automation** (`automation deregister --id <id>`) so no status emails run into Phase 5+. This handles the case where Phase 4 and Phase 5 complete the same day — the terminal step guarantees the last email even if the daily 5pm run wouldn't fire again. (Release close removes it as a backstop.)
+
+
 ## Provision the timed phase automations (config-driven, per release)
 
 Some steps must fire at a specific time of day (not just "on their date") — e.g. the CCD-day comms at 09:00 and the localization trigger at noon. These are declared as DATA in `config/automations.yaml`, which maps each automation to the exact steps it drives; the fire time is derived from each step module's `fire_at_local`. **Provision them only once the CCD is CONFIRMED** — the schedules are cron-pinned to the CCD date, so a wrong/unsettled CCD pins them to the wrong day. Concretely: wait until the CCD is settled (`status --json` shows no `ccd_conflict`, and — for a normal start — the entry gate's `ccd_confirmed` item has passed). Then:

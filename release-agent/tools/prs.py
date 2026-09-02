@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import re
 from pathlib import Path
 
 # android-complete root = <root>/release-agent/tools/prs.py -> parents[2]
@@ -186,6 +187,42 @@ def gh_release_exists(gh_repo: str, tag: str, timeout=60):
     info = {"tag": d.get("tagName"), "name": d.get("name"), "url": d.get("url"),
             "draft": bool(d.get("isDraft"))}
     return (True, not info["draft"], info, "draft release" if info["draft"] else "")
+
+
+_CHANGE_LEVEL_RE = re.compile(r"^\s*\[(PATCH|MINOR|MAJOR)\]\s*(.*?)\s*$", re.IGNORECASE)
+_PR_SUFFIX_RE = re.compile(r"\s*\(#(\d+)\)\s*$")
+
+
+def broker_change_list(gh_repo: str, version: str, base_prefix="working/test-release/",
+                       timeout=90):
+    """(ok, changes, detail) — the broker release change list, derived from PRs merged into the
+    broker release branch ('working/test-release/<version>'). Each change is
+    {level, text, pr} where level is PATCH|MINOR|MAJOR (from the '[LEVEL]' title convention,
+    defaulting to PATCH when a title has none) and pr is the PR number. Read-only (`gh pr list`)."""
+    if not (gh_repo and version):
+        return (False, [], "missing broker gh_repo/version")
+    base = f"{base_prefix}{version}"
+    rc, out, e = _run(
+        ["gh", "pr", "list", "--repo", gh_repo, "--base", base, "--state", "merged",
+         "--json", "number,title", "--limit", "200"], timeout=timeout)
+    if rc != 0:
+        return (False, [], (e or out or "").strip() or "gh pr list failed")
+    try:
+        arr = json.loads(out or "[]")
+    except json.JSONDecodeError:
+        return (False, [], f"unparseable gh output: {out!r}")
+    changes = []
+    for pr in arr:
+        title = (pr.get("title") or "").strip()
+        num = pr.get("number")
+        title = _PR_SUFFIX_RE.sub("", title)              # drop a trailing "(#123)" if present
+        m = _CHANGE_LEVEL_RE.match(title)
+        if m:
+            level, text = m.group(1).upper(), m.group(2).strip()
+        else:
+            level, text = "PATCH", title
+        changes.append({"level": level, "text": text, "pr": num})
+    return (True, changes, "")
 
 
 # ------------------------------------------------------------------- Azure DevOps (az)

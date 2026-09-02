@@ -115,6 +115,8 @@ _SAFE_AGENTS = {
     # Phase-4 wiki_payload — real agent (ADO wiki create/update). Short-circuit so flow tests never
     # hit the network; dedicated wiki_payload tests exercise its compose logic offline.
     "finalize.wiki_payload": {"outcome": "done", "note": "payload wiki page updated (test)"},
+    # Phase-4 final_status_email — scout send (workiq). Short-circuit so flow tests never hit email.
+    "finalize.final_status_email": {"outcome": "done", "note": "closing status email sent (test)"},
 }
 
 
@@ -6907,6 +6909,125 @@ def test_set_target_month_command_overrides_and_resets():
         # bad input is rejected, state unchanged
         rc = R.cmd_set_target_month(argparse.Namespace(runs_root=tmp, release="2026-08", month="2026/13"))
         assert rc == 1 and _C.load_state(tmp, "2026-08").target_month == "2026-09"
+
+
+# ======================= partner status email =======================
+
+def _status_state(phase="build_verify"):
+    from orchestrator.state import ReleaseState, StepState
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-11", target_month="2026-09",
+                      owner_name="Praveen", owner_email="praveen@microsoft.com")
+    st.current_phase = phase
+    st.record_versions({"msal": "8.4.2", "common": "24.6.0", "broker": "16.5.0",
+                        "authenticator": "release/2026/08/13"})
+    st.set_step("ccd", "final_reminder", StepState(status="done"))
+    st.set_step("build_verify", "orchestrator_health", StepState(status="done"))
+    st.set_step("bug_bash", "send_invite", StepState(status="done", completed_at="2026-08-13T10:00:00"))
+    st.pipeline_runs = {"rcs": [{"rc": 1, "ecs": {"run_id": 1678863,
+        "tests": {"categories": {"ui": {"passed": 96, "failed": 4, "total": 100}}}},
+        "local": {"run_id": 1678864,
+        "tests": {"categories": {"ui": {"passed": 98, "failed": 2, "total": 100}}}}}]}
+    return st
+
+_PHASE_ORDER = ["preflight", "ccd", "build_verify", "bug_bash", "finalize", "rollout_start", "monitor"]
+
+
+def test_status_email_composes_milestone_dashboard():
+    from orchestrator import status_email as SE
+    st = _status_state("build_verify")
+    res = SE.compose(st, _PHASE_ORDER, ["authsdkrelease@microsoft.com"], changes=[
+        {"level": "PATCH", "text": "Update common", "pr": 260}])
+    assert res["skip"] is False
+    assert res["subject"] == "Auth Client Android SDKs September 2026 Release — Daily Status"
+    labels = [m["label"] for m in res["model"]["milestones"]]
+    assert "Authenticator app built & tagged" in labels        # A
+    assert "Bug Bash Test Plan" in labels                      # D (renamed)
+    html = res["html"]
+    assert "September 2026 Release" in html and "8.4.2" in html
+    assert "UI automation 97.0%" in html                       # B (combined 194/200)
+    assert "branches/all?query=24.6.0" in html                 # C (branch search link)
+    assert "PATCH" in html and "Update common" in html         # change list
+
+
+def test_status_email_window_boundaries():
+    from orchestrator import status_email as SE
+    # before Phase 2 → skip
+    r0 = SE.compose(_status_state("preflight"), _PHASE_ORDER, [])
+    assert r0["skip"] and "before Phase 2" in r0["reason"]
+    # Phase 4 → in window
+    r4 = SE.compose(_status_state("finalize"), _PHASE_ORDER, [])
+    assert r4["skip"] is False
+    # Phase 5 → skip (done)
+    r5 = SE.compose(_status_state("rollout_start"), _PHASE_ORDER, [])
+    assert r5["skip"] and "after Phase 5" in r5["reason"]
+
+
+def test_is_business_day_skips_weekends_and_holidays():
+    from datetime import date
+    from tools import bugbash as BB
+    assert BB.is_business_day(date(2026, 8, 12)) is True        # Wed
+    assert BB.is_business_day(date(2026, 8, 15)) is False       # Sat
+    assert BB.is_business_day(date(2026, 12, 25)) is False      # Christmas (Fri)
+
+
+def test_broker_change_list_parses_levels():
+    from tools import prs
+    fake = ('[{"number":261,"title":"[MINOR] Add GetDeviceTokenV1Executor (#261)"},'
+            '{"number":273,"title":"Revert Phase 2 FOCI gate"}]')
+    orig = prs._run
+    prs._run = lambda args, cwd=None, timeout=120: (0, fake, "")
+    try:
+        ok, ch, _d = prs.broker_change_list("host/owner/repo", "16.5.0")
+    finally:
+        prs._run = orig
+    assert ok and ch == [
+        {"level": "MINOR", "text": "Add GetDeviceTokenV1Executor", "pr": 261},
+        {"level": "PATCH", "text": "Revert Phase 2 FOCI gate", "pr": 273}]   # default PATCH
+
+
+def test_status_email_command_gates_and_stamp():
+    import tempfile, argparse, json, io, contextlib
+    from orchestrator import cli_common as _C
+    from orchestrator.commands import status_email_cmd as SEC
+    from tools import prs
+    orig = prs.broker_change_list
+    prs.broker_change_list = lambda *a, **k: (True, [], "")     # no network
+    with tempfile.TemporaryDirectory() as d:
+        st = _status_state("build_verify")
+        _C.save_state(st, d, "2026-08")
+
+        def run(as_of, force=False, send_to=None):
+            A = argparse.Namespace(runs_root=d, release="2026-08", config=CONFIG,
+                                   as_of=as_of, force=force, send_to=send_to)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                SEC.cmd_status_email(A)
+            return json.loads(buf.getvalue())
+        try:
+            assert run("2026-08-15")["skip"] is True                    # Sat → skip
+            sent = run("2026-08-12", send_to="me@x.com")                # Wed → send
+            assert sent["skip"] is False and sent["to"] == ["me@x.com"]
+            assert sent["followup_command"] == "record-status-email"
+            # stamp, then idempotent skip
+            rA = argparse.Namespace(runs_root=d, release="2026-08", config=CONFIG,
+                                    as_of="2026-08-12", final=False)
+            SEC.cmd_record_status_email(rA)
+            assert _C.load_state(d, "2026-08").last_status_email_date == "2026-08-12"
+            assert run("2026-08-12")["reason"] == "already sent today"  # idempotent
+        finally:
+            prs.broker_change_list = orig
+
+
+def test_final_status_email_step_sends_and_closes():
+    from steps.lib import mockctx
+    from steps.finalize import final_status_email as FSE
+    st = _status_state("finalize")
+    with mockctx.active({"send_to": "me@microsoft.com"}):
+        out = FSE.build(st)
+    assert out.kind == "needs_skill" and out.tool == "workiq_send_email"
+    assert out.payload["to"] == ["me@microsoft.com"]
+    assert "Final Status" in out.payload["subject"]
+    assert out.payload["followup_command"] == "record-status-email --release 2026-08 --final"
 
 
 if __name__ == "__main__":

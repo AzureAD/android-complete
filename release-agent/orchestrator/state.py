@@ -89,6 +89,7 @@ class ReleaseState:
     gate_decisions: list = field(default_factory=list)
     pending_human: list = field(default_factory=list) # outstanding human actions
     last_notified_date: Optional[str] = None          # YYYY-MM-DD of the last daily digest sent
+    last_status_email_date: Optional[str] = None       # YYYY-MM-DD of the last partner status email sent
     # Phase-2 release-pipeline runs — the RECORD of what verification resolved, reused by
     # the RC report + gate (no re-discovery). Because a re-triggered 'Trigger RC Testing'
     # stage spawns NEW MRWP runs, these are re-resolved (newest wins) — not a fixed cache.

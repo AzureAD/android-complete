@@ -8,7 +8,7 @@ one, so adding a command is a localized change (new/edited module only).
 from . import (release, readiness, pipeline, notify, infra_cmd, automation,
                logs, lockdown, notice, step_action, localization, rc_report, rc_poll,
                distribute, bugbash_chat, bugbash_update, sim, gate_approve, integ_prs_cmd,
-               oneauth_pr_cmd, telemetry_cmd, payload_wiki_cmd)
+               oneauth_pr_cmd, telemetry_cmd, payload_wiki_cmd, status_email_cmd)
 
 # Order controls how subcommands appear in --help.
 REGISTRARS = [
@@ -30,6 +30,7 @@ REGISTRARS = [
     integ_prs_cmd.register,
     oneauth_pr_cmd.register,
     payload_wiki_cmd.register,
+    status_email_cmd.register,
     sim.register,
     logs.register,
     automation.register,

@@ -29,3 +29,12 @@ channels:
 
 teams:
   target: scout
+
+# Partner-facing DAILY release STATUS email (distinct from the owner digest above). Sent on
+# business days while the release is in flight (Phase 2 build_verify through Phase 4 finalize)
+# to the release distribution lists. For a TEST run, the skill redirects these to the owner via
+# the `send_to` mock so the real DLs are never emailed.
+status_email:
+  recipients:
+    - authsdkrelease@microsoft.com
+    - androididentity@microsoft.com
