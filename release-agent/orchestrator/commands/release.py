@@ -124,6 +124,11 @@ def cmd_next(args):
     actions = orch.run_until_gate()
     C.save_state(st, args.runs_root, args.release)   # persist BEFORE any display
     C.log_actions(C.elog(args.runs_root, args.release), actions, state=st)
+    if getattr(args, "json", False):
+        # Advance, then emit the same report as `status --json` (carries scout_pending) so a
+        # caller can advance + read the pending scout steps in ONE call.
+        print(_json.dumps(orch.status_report(), indent=2))
+        return 0
     C.emit(args.runs_root, args.release, C.advance_block(actions, orch), kind="advance",
            log_text=C.advance_log_summary(actions))
     return 0
@@ -326,6 +331,8 @@ def register(sub):
     n = sub.add_parser("next", help="Advance until the next gate / completion")
     n.add_argument("--release", required=True)
     n.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
+    n.add_argument("--json", action="store_true",
+                   help="After advancing, print the status report as JSON (carries scout_pending).")
     n.set_defaults(func=cmd_next)
 
     a = sub.add_parser("approve", help="Approve the current holding gate, continue")

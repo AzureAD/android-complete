@@ -4,6 +4,33 @@ from tests._harness import *  # noqa: F401,F403
 
 
 
+def test_next_json_emits_status_report_with_scout_pending(capsys):
+    """`next --json` advances THEN prints the status report as JSON (same shape as
+    `status --json`, carrying `scout_pending`) — so a caller advances + reads the pending
+    scout steps in ONE call. Plain `next` still prints the human advance block, not JSON."""
+    import json as _json, tempfile
+    from orchestrator import cli as _cli
+    with tempfile.TemporaryDirectory() as rr:
+        R = "2099-05"
+        _cli.main(["--runs-root", rr, "init", "--release", R,
+                   "--owner-email", "t@example.com", "--owner-name", "T"])
+        capsys.readouterr()                                   # drop init output
+        rc = _cli.main(["--runs-root", rr, "next", "--release", R, "--json"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        rep = _json.loads(out)                                # must be valid JSON
+        assert rep["release_id"] == R
+        assert "scout_pending" in rep                         # the field the push-loop reads
+        # plain `next` (no --json) prints the advance block, NOT json
+        _cli.main(["--runs-root", rr, "next", "--release", R])
+        plain = capsys.readouterr().out
+        try:
+            _json.loads(plain)
+            assert False, "plain `next` should not emit JSON"
+        except _json.JSONDecodeError:
+            pass
+
+
 def test_unopened_phase_shows_all_steps_scheduled_uniformly():
     """REGRESSION: before a phase opens, its scout steps must NOT render 'Scout runs this —
     automatic' while its agent/human steps render 'Not open yet' — that mix confused the
