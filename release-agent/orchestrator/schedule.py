@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import calendar
 import re
-from datetime import date, datetime, time, timedelta
-from typing import Optional
+from datetime import date, datetime, timedelta
+from typing import Optional, Tuple
 
 # The release runs on the OWNER's wall clock, not the host's. On a UTC host, a bare
 # date.today() rolls to the next day at UTC-midnight (evening the day before, Pacific),

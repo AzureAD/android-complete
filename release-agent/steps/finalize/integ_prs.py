@@ -30,7 +30,7 @@ Mock knobs (mocks.local.yaml / tests):
 """
 from __future__ import annotations
 
-from orchestrator.outcomes import InProgress, NeedsSkill, Blocked, Done
+from orchestrator.outcomes import InProgress, NeedsSkill, Blocked
 from steps.lib.agent import legacy_run
 from steps.lib.mockctx import mock_input, MISSING
 from tools import prs as PR

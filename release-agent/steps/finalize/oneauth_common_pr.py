@@ -49,11 +49,6 @@ def _versions(state):
     return common, msal
 
 
-def _pr_url(pr_num=None):
-    tail = f"/pullrequest/{pr_num}" if pr_num else ""
-    return f"{OA.ORG}/{OA.PROJECT}/_git/{OA.REPO}{tail}"
-
-
 def build(state):
     fail = mock_input("fail", MISSING)
     if fail is not MISSING:

@@ -10,8 +10,6 @@ from __future__ import annotations
 import subprocess
 import shutil
 from dataclasses import dataclass
-from urllib import request as _request
-from urllib.error import URLError, HTTPError
 
 from tools.coordinates import coords
 
@@ -128,23 +126,6 @@ def oneauth_write_access(alias, timeout: int = 60):
         return (True, f"created and deleted '{ref}'")
     why = entry.get("customMessage") or dc or "branch create rejected"
     return (False, f"cannot create a branch in OneAuth ({why})")
-
-
-def check_http(url: str, timeout: int = 15) -> CheckResult:
-    """Reachability check. verified_access is False by design — a 200 from an
-    auth-gated web app does not prove the user has access."""
-    req = _request.Request(url, method="HEAD", headers={"User-Agent": "release-agent-readiness/1.0"})
-    try:
-        with _request.urlopen(req, timeout=timeout) as resp:
-            code = resp.status
-        return CheckResult(200 <= code < 400, False, f"reachable (HTTP {code})")
-    except HTTPError as e:
-        # Some servers reject HEAD; treat <500 as reachable
-        return CheckResult(e.code < 500, False, f"reachable (HTTP {e.code})")
-    except (URLError, TimeoutError) as e:
-        return CheckResult(False, False, f"unreachable: {e}")
-    except Exception as e:  # noqa
-        return CheckResult(False, False, f"error: {e}")
 
 
 # ---- CCD pipeline variables (the source of record for Code Complete Date) ----

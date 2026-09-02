@@ -141,15 +141,6 @@ class Orchestrator(StatusViewMixin):
         return step.get("owner") == "human" and not step.get("gate")
 
     # ---- state-machine traversal ----
-    def _iter_steps(self):
-        """Yield (phase_dict, step_dict) in definition order, skipping conditional
-        phases unless explicitly activated on the state."""
-        for phase in self.config["phases"]:
-            if phase.get("conditional") and phase["id"] not in self._activated_conditionals():
-                continue
-            for step in phase["steps"]:
-                yield phase, step
-
     def _activated_conditionals(self) -> set:
         # A conditional phase (e.g. hotfix) is activated by an explicit note flag.
         return {n.split("activate:")[1].strip()
@@ -157,12 +148,6 @@ class Orchestrator(StatusViewMixin):
 
     def activate_conditional(self, phase_id: str) -> None:
         self.state.notes.append(f"activate:{phase_id}")
-
-    def _first_incomplete(self):
-        for phase, step in self._iter_steps():
-            if not self.state.is_done(phase["id"], step["id"]):
-                return phase, step
-        return None, None
 
     # ---- dispatch ----
     def _current_phase(self):

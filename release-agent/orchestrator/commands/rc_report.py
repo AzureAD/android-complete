@@ -180,7 +180,7 @@ def _format(m) -> str:
                 if shown < s["failed"]:
                     L.append(f"       … and {s['failed'] - shown} more (see the run)")
         elif t and t.get("failed"):
-            L.append(f"   (failing test names unavailable — open the run)")
+            L.append("   (failing test names unavailable — open the run)")
         L.append(f"   {_u(r.get('run_id'))}")
 
     probs = m.get("problems") or []

@@ -9,7 +9,7 @@ instructions required.
 """
 from __future__ import annotations
 
-from orchestrator.outcomes import NeedsSkill, Done, Blocked
+from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.lib import templating as T
 from steps.lib.context import release_ctx, resolve_recipients
 from steps.lib.mockctx import mock_input

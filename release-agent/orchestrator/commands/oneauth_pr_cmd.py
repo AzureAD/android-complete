@@ -49,7 +49,7 @@ def cmd_create_oneauth_common_pr(args):
     print(f"  repo:   {OA.REPO}  ({OA.ORG}/{OA.PROJECT})")
     print(f"  branch: {OA.INGEST_BRANCH} -> {OA.TARGET_BRANCH}")
     print(f"  merge:  {'dev is ' + str(behind) + ' commit(s) ahead → merge needed' if behind else ('up to date' if behind == 0 else 'ahead/behind unknown (' + str(dab) + ')')}")
-    print(f"  files:  libs.versions.toml, cgmanifest.json, deps/README.md, CHANGELOG.md")
+    print("  files:  libs.versions.toml, cgmanifest.json, deps/README.md, CHANGELOG.md")
     print(f"  PR:     {'REUSE ' + (existing.get('url') or '') if existing else 'open new'}")
 
     if not args.execute:

@@ -17,7 +17,6 @@ Honors the release's `finalize.integ_prs` mocks (versions / branches / repos / p
 can be exercised against fake branches without touching production.
 """
 from __future__ import annotations
-import json as _json
 
 from orchestrator import cli_common as C
 from steps.lib import mockctx

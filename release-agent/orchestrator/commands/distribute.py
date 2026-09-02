@@ -20,10 +20,6 @@ from tools import distribution as D
 import steps
 
 
-def _name_map(plan):
-    return {}   # names aren't stored on the plan; the table shows upns
-
-
 def _print_table(plan):
     counts = plan.get("counts") or {}
     print(f"Eligible testers: {len(plan.get('eligible') or [])} | "
@@ -95,7 +91,6 @@ def _apply(args, st):
             print(f"  case {cid} -> {upn}: {d}")
         return 2
     # mark the step done on a clean apply
-    from orchestrator.engine import Orchestrator
     st2, orch = C.load_orch(args.runs_root, args.release, args.config)
     orch.record_scout_step("bug_bash", "distribute_tests", "pass",
                            f"Assigned {ok_n} bug-bash tests across {len(plan.get('eligible') or [])} testers.")

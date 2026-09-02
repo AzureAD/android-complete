@@ -1,11 +1,6 @@
 """Test-run classification, retry reconciliation, summaries, UI verdicts, failed tests."""
 from __future__ import annotations
 
-import json as _json
-import shutil
-import subprocess
-
-from tools.coordinates import coords
 from tools import pipelines as _pp
 import re as _re_mod
 

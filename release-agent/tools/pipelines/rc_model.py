@@ -1,11 +1,6 @@
 """RC report model assembly (release_report / assemble_rc_model) + version formatting + the Engineering release-chain coordinates."""
 from __future__ import annotations
 
-import json as _json
-import shutil
-import subprocess
-
-from tools.coordinates import coords
 from tools import pipelines as _pp
 # The Engineering release-chain coordinates are owned by the orchestrator (run-discovery) module.
 from tools.pipelines.orchestrator import (

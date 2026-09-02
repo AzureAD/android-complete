@@ -23,7 +23,6 @@ import os as _os
 
 from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.lib.mockctx import mock_input, MISSING
-from tools.coordinates import coords
 
 ID = "telemetry_verify"
 KIND = "scout"

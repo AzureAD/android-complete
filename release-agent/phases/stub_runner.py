@@ -39,11 +39,3 @@ def run_stub(phase_id: str, step: dict, state=None) -> StepResult:
         action=f"[STUB] Would run agent for: {name} (mock success)",
         by="agent",
     )
-
-
-# Registry: maps an agent id -> runner. For now everything is the stub.
-REGISTRY = {"stub": run_stub}
-
-
-def get_runner(agent_id: str):
-    return REGISTRY.get(agent_id, run_stub)

@@ -26,7 +26,6 @@ from orchestrator import cli_common as C
 from orchestrator import mocks as mocks_mod
 from orchestrator import knowledge as kb
 from orchestrator.outcomes import as_dict
-from steps.lib.context import SELF_CHAT_ID
 from steps.lib import mockctx
 import steps
 

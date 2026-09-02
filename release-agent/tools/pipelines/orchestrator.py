@@ -1,10 +1,6 @@
 """Release Orchestrator / Checker / MRWP run discovery, stages, timeline, approvals."""
 from __future__ import annotations
 
-import json as _json
-import shutil
-import subprocess
-
 from tools.coordinates import coords
 from tools import pipelines as _pp
 from tools.pipelines._rest import RAN_RESULTS
@@ -70,27 +66,6 @@ def discover_versions(org, project, release_month, orch_def=None, timeout=60):
         "broker": _pp._tag_value(tags, "NextBrokerVersion"),
     }
     return (True, versions, "")
-
-
-def orchestrator_stage_state(org, project, release_month, stage_name, orch_def=None, timeout=60):
-    """(ok, stage|None, detail) — the state of a named stage in THE orchestrator run for a
-    release month. `stage` is {state, result, run_id} or None if the stage isn't present yet.
-    Used to gate integ_prs on the 'Create PRs to Integrate Release Branches' stage, which is
-    what actually creates the release-integration branches."""
-    orch_def = orch_def or ORCHESTRATOR_DEF
-    ok, run, detail = _pp.find_orchestrator_run(org, project, orch_def, release_month, timeout)
-    if not ok:
-        return (False, None, detail)
-    if not run:
-        return (True, None, f"no orchestrator run found for {release_month}")
-    ok2, stages, d2 = _pp.get_stages(org, project, run.get("id"), timeout)
-    if not ok2:
-        return (False, None, d2)
-    for s in stages or []:
-        if (s.get("name") or "").strip() == stage_name:
-            return (True, {"state": s.get("state"), "result": s.get("result"),
-                           "run_id": run.get("id")}, "")
-    return (True, None, f"stage '{stage_name}' not present yet on orchestrator run {run.get('id')}")
 
 
 def find_checker_runs(org, project, def_id, release_month, timeout=60):

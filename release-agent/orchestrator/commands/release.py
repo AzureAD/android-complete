@@ -5,7 +5,6 @@ import json as _json
 import os
 
 from orchestrator.state import ReleaseState
-from orchestrator.engine import Orchestrator
 from orchestrator import discovery, render, schedule
 from orchestrator import cli_common as C
 from tools import checks
