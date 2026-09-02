@@ -122,6 +122,61 @@ def target_month_label(state, with_year: bool = True) -> str:
         return ""
 
 
+def month_add(release_id: str, n: int) -> Optional[str]:
+    """Shift a 'YYYY-MM' month by n months (n may be negative), rolling the year.
+    '2026-09' + 1 -> '2026-10'; '2026-12' + 1 -> '2027-01'. None on a bad id."""
+    try:
+        year, month = parse_release_month(release_id)
+    except (ValueError, IndexError):
+        return None
+    total = year * 12 + (month - 1) + n
+    return f"{total // 12:04d}-{total % 12 + 1:02d}"
+
+
+def _ccd_pretty(d: date) -> str:
+    """'Wednesday, Sep 9, 2026' — built without %-d/%#d so it's platform-safe."""
+    return f"{d.strftime('%A, %b')} {d.day}, {d.year}"
+
+
+def preview_release(release_id: str) -> Optional[dict]:
+    """The full identity of a release for a PRE-init prompt, so the skill can show one
+    coherent, unambiguous confirmation instead of 'pick a month' then 'confirm a different
+    month'. All derived (no state, no IO): the release id (the CCD/work month), the ship-month
+    it's NAMED for (CCD month + 1), and the default CCD (2nd Wednesday). None on a bad id."""
+    ship = default_target_month(release_id)
+    if not ship:
+        return None
+    try:
+        ccd = default_ccd(release_id)
+        sy, sm = parse_release_month(ship)
+    except (ValueError, IndexError):
+        return None
+    return {
+        "release_id": release_id,                       # internal id = the CCD/work month
+        "ship_month": ship,                             # 'YYYY-MM' the release is named for
+        "ship_label": f"{calendar.month_name[sm]} {sy}",  # 'October 2026' — the display name
+        "ccd": ccd.isoformat(),
+        "ccd_pretty": _ccd_pretty(ccd),                 # 'Wednesday, Sep 9, 2026'
+        "ccd_weekday": ccd.strftime("%A"),
+    }
+
+
+def preview_releases(start_release_id: Optional[str] = None, count: int = 4) -> list:
+    """`count` consecutive release candidates starting at `start_release_id` (default: the
+    current calendar month). Each is a preview_release() dict; the FIRST is the default the
+    skill leads with, the rest are the 'a different month' alternatives — all shown by
+    name + CCD so the user never picks a bare, ambiguous month."""
+    start = start_release_id or now_local().strftime("%Y-%m")
+    out = []
+    for i in range(max(1, count)):
+        mid = month_add(start, i)
+        p = preview_release(mid) if mid else None
+        if p:
+            p["is_default"] = (i == 0)
+            out.append(p)
+    return out
+
+
 def pipeline_conflict(release_id: str, override: Optional[str], stored_ccd: Optional[str] = None):
     """Return the pipeline override date IF it is a valid in-month date that
     DIFFERS from our reference CCD — i.e. a divergence the user must resolve.

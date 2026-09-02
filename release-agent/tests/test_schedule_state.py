@@ -135,6 +135,55 @@ def test_status_render_shows_versions_from_state():
 
 # ======================= target month (release ship-month naming) =======================
 
+def test_month_add_rolls_year():
+    """month_add shifts a YYYY-MM by n months, rolling the year both directions."""
+    from orchestrator import schedule as S
+    assert S.month_add("2026-09", 1) == "2026-10"
+    assert S.month_add("2026-12", 1) == "2027-01"
+    assert S.month_add("2026-01", -1) == "2025-12"
+    assert S.month_add("2026-09", 4) == "2027-01"
+    assert S.month_add("bad", 1) is None
+
+
+def test_preview_release_derives_name_and_ccd():
+    """preview_release derives the full pre-init identity: id = CCD/work month, ship_label =
+    CCD-month+1 (the display name), ccd = 2nd Wednesday. This is what the single start prompt
+    shows so the user never picks a bare month then gets told it's a different one."""
+    from orchestrator import schedule as S
+    p = S.preview_release("2026-09")                     # CCD Sep -> ships October
+    assert p["release_id"] == "2026-09"
+    assert p["ship_month"] == "2026-10"
+    assert p["ship_label"] == "October 2026"
+    assert p["ccd"] == "2026-09-09"                      # 2nd Wednesday of Sep 2026
+    assert p["ccd_weekday"] == "Wednesday"
+    assert "Sep 9, 2026" in p["ccd_pretty"] and p["ccd_pretty"].startswith("Wednesday")
+    assert S.preview_release("nope") is None
+
+
+def test_preview_releases_lists_consecutive_candidates():
+    """preview_releases returns `count` consecutive months; the first is flagged default.
+    With no start month it begins at the current calendar month."""
+    from orchestrator import schedule as S
+    cands = S.preview_releases("2026-09", 3)
+    assert [c["release_id"] for c in cands] == ["2026-09", "2026-10", "2026-11"]
+    assert [c["ship_label"] for c in cands] == ["October 2026", "November 2026", "December 2026"]
+    assert cands[0]["is_default"] is True and cands[1]["is_default"] is False
+    # default start = current month (whatever "now" is, it yields a valid first candidate)
+    auto = S.preview_releases(None, 1)
+    assert len(auto) == 1 and auto[0]["is_default"] is True
+
+
+def test_preview_release_command_json(capsys):
+    """`preview-release --json` emits the candidate list the start prompt consumes."""
+    import json as _json
+    from orchestrator import cli as _cli
+    rc = _cli.main(["preview-release", "--month", "2026-09", "--count", "2", "--json"])
+    assert rc == 0
+    rows = _json.loads(capsys.readouterr().out)
+    assert [r["ship_label"] for r in rows] == ["October 2026", "November 2026"]
+    assert rows[0]["ccd"] == "2026-09-09"
+
+
 def test_default_target_month_rolls_year():
     """default_target_month = CCD/work month + 1, rolling the year at Dec->Jan."""
     from orchestrator import schedule as S
