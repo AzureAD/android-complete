@@ -303,7 +303,7 @@ preflight.notice:
       url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/microsoft-authenticator/microsoft-authenticator/release/cherry-pick-to-hotfix-guidelines"
   faqs:
     - q: "Who receives it?"
-      a: "The configured distribution list (androididentity@microsoft.com, jialh@microsoft.com). Redirect for a test with preflight.notice.send_to."
+      a: "The configured distribution list (androididentity@microsoft.com). Redirect for a test with preflight.notice.send_to."
     - q: "What's the difference between the 'initial' and 'update' variant?"
       a: "'initial' is the CCD-7 heads-up; 'update' is the CCD-day reminder ('code complete is Today'). Set via --param variant=update."
 
@@ -773,7 +773,7 @@ bug_bash.distribute_tests:
     'Blocked' tag. So of the ~49 ReleaseBugBash cases, the ~26 automated ones are dropped and
     the ~23 genuinely-manual cases are distributed. (Failed automated cases are triaged by the
     owner via ui_test_status, not by a manual tester.) Eligible = the roster DL
-    'androididentity@microsoft.com' MINUS the always-excluded people (jialh, moghosh,
+    'androididentity@microsoft.com' MINUS the always-excluded people (moghosh,
     veenasoman), the release owner, and the current on-call engineer (OCE). Default assignee +
     the written field are both System.AssignedTo.
   who: >
@@ -797,7 +797,7 @@ bug_bash.distribute_tests:
     - q: "Does applying it change the master plan?"
       a: "Yes — System.AssignedTo lives on the shared test-case work items, so the new assignee shows in the master and every plan referencing them. That's intentional: it carries the preference into the next release's clone."
     - q: "Who is excluded?"
-      a: "Always: jialh, moghosh, veenasoman. Per-release: the release owner and the current on-call engineer (OCE, resolved via ICM team 78848 — the same team the entry gate checks)."
+      a: "Always: moghosh, veenasoman. Per-release: the release owner and the current on-call engineer (OCE, resolved via ICM team 78848 — the same team the entry gate checks)."
     - q: "How do we know which Authenticator cases are automated vs manual?"
       a: "Empirically, from this release's auth ECS post-build UI-test run (the one auth_ecs captured): a case whose test-case id appears in that run is automated and is excluded from the manual split. We deliberately do NOT rely on the 'Automated' tag — it is shared with iOS, so a case automated on Android but not iOS must not be tagged. Reading the run keeps the split correct for Android and leaves the shared tag alone."
 

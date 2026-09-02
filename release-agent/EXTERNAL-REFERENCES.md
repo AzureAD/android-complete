@@ -55,8 +55,8 @@ Legend for **Access**: `anon` = no auth · `az` = Azure CLI signed-in user ·
 
 | Step | To | Notes |
 |---|---|---|
-| Phase-0 `notice` (early code-complete) | androididentity@microsoft.com ("Azure Identity Android SDK"), jialh@microsoft.com | provided by release owner 2026-07-29 |
-| Phase-1 `final_reminder` (CCD-day code-complete) | androididentity@microsoft.com ("Azure Identity Android SDK"), jialh@microsoft.com | same DL as `notice`; CCD-day "update" variant |
+| Phase-0 `notice` (early code-complete) | androididentity@microsoft.com ("Azure Identity Android SDK") | provided by release owner 2026-07-29 |
+| Phase-1 `final_reminder` (CCD-day code-complete) | androididentity@microsoft.com ("Azure Identity Android SDK") | same DL as `notice`; CCD-day "update" variant |
 
 ## Tooling / infra (provisioned by bootstrap)
 

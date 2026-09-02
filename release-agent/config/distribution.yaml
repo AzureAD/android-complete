@@ -12,7 +12,6 @@ roster_group: "androididentity@microsoft.com"
 # People ALWAYS removed from distribution (in addition to the release owner + the current
 # on-call engineer, which are resolved per-release).
 always_excluded:
-  - "jialh@microsoft.com"       # Jia Le He
   - "moghosh@microsoft.com"     # Moumita Ghosh
   - "veenasoman@microsoft.com"  # Veena Soman
 

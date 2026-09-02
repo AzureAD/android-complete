@@ -1010,8 +1010,8 @@ def test_ui_case_id_from_result_extraction():
 
 def test_eligible_testers_removes_owner_oce_and_excluded():
     from tools import distribution as D
-    roster = ["a@x", "jialh@microsoft.com", "b@x", "owner@x", "oce@x", "c@x"]
-    elig = D.eligible_testers(roster, ["jialh@microsoft.com"], owner="OWNER@x", oce="oce@X")
+    roster = ["a@x", "excluded@x", "b@x", "owner@x", "oce@x", "c@x"]
+    elig = D.eligible_testers(roster, ["excluded@x"], owner="OWNER@x", oce="oce@X")
     assert elig == ["a@x", "b@x", "c@x"]        # case-insensitive owner/oce/excluded removal
 
 

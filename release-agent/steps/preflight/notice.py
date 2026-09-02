@@ -24,7 +24,6 @@ CONFIG = {
     "variant": "initial",                    # initial (CCD-7) | update (CCD-day)
     "recipients": [                          # the real DL (redirect for tests via send_to)
         "androididentity@microsoft.com",     # "Azure Identity Android SDK"
-        "jialh@microsoft.com",
     ],
 }
 

@@ -30,7 +30,6 @@ CONFIG = {
     "fire_at_local": "09:00",                # morning of CCD (automation-driven)
     "recipients": [                          # the real DL (redirect for tests via send_to)
         "androididentity@microsoft.com",     # "Azure Identity Android SDK"
-        "jialh@microsoft.com",
     ],
 }
 
