@@ -39,10 +39,10 @@ In this pipeline, we can find a _Generate Lockfile_ task for each stage, this ta
 
 Android Identity governed repositories are found in the [Engineering project](https://identitydivision.visualstudio.com/Engineering/) in Azure DevOps, and the repositories are the following:
 
-- azuread/ad-accounts-for-android
+- security/ad-accounts-for-android
 - azuread/android-complete
 - azuread/azure-activedirectory-library-for-android
 - azuread/microsoft-authentication-library-common-for-android
 - azuread/microsoft-authentication-library-for-android
 
-The [azuread/android-complete repository](https://identitydivision.visualstudio.com/Engineering/_componentGovernance/181889?_a=alerts&typeId=9846578&alerts-view-option=active) is the only repository we maintain that keeps track of the approval status of OSS components and has an up-to-date list of the consumed components for all our projects (msal, adal, common, common4j, broker, broker4j, and Linux broker).
+The [azuread/android-complete repository](https://identitydivision.visualstudio.com/Engineering/_componentGovernance/181889?_a=alerts&typeId=9846578&alerts-view-option=active) is the only repository we maintain that keeps track of the approval status of OSS components and has an up-to-date list of the consumed components for all our projects (msal, adal, common, common4j, broker, and broker4j).

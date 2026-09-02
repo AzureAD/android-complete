@@ -115,7 +115,7 @@ if (-not $RepoRoot) {
 if (-not $GrepRegex) { $GrepRegex = [regex]::Escape($Symbol) }
 
 $repoDefs = @(
-    @{ Name='broker';        Path=(Join-Path $RepoRoot 'broker');        UrlBase='https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/' }
+    @{ Name='broker';        Path=(Join-Path $RepoRoot 'broker');        UrlBase='https://msft.ghe.com/security/ad-accounts-for-android/pull/' }
     @{ Name='common';        Path=(Join-Path $RepoRoot 'common');        UrlBase='https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/' }
     @{ Name='authenticator'; Path=(Join-Path $RepoRoot 'authenticator'); UrlBase='https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/'; Ado=$true }
 )
@@ -141,7 +141,7 @@ if ($availableRepos.Count -eq 0) {
 None of the requested repos ($($repoDefs.Name -join ', ')) found under -RepoRoot $RepoRoot.
 
 Expected layout:
-  $RepoRoot\broker\          (clone of identity-authnz-teams/ad-accounts-for-android)
+  $RepoRoot\broker\          (clone of security/ad-accounts-for-android)
   $RepoRoot\common\          (clone of AzureAD/microsoft-authentication-library-common-for-android)
   $RepoRoot\authenticator\   (clone of msazure One/AD-MFA-phonefactor-phoneApp-android)
 

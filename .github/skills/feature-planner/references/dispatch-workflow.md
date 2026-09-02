@@ -36,7 +36,7 @@ Extract the target repository from the PBI description. The PBI template include
 "Target Repository" section with the format:
 - `AzureAD/microsoft-authentication-library-common-for-android` → common
 - `AzureAD/microsoft-authentication-library-for-android` → msal
-- `identity-authnz-teams/ad-accounts-for-android` → broker
+- `security/ad-accounts-for-android` → broker
 - `AzureAD/azure-activedirectory-library-for-android` → adal
 
 ### Step 3: Check Dependencies

@@ -17,9 +17,9 @@ $OutputDir = "$env:TEMP\copilot-review-analysis"
 $COPILOT_USERS = @("Copilot", "copilot-pull-request-reviewer[bot]")
 
 $repoSlugs = @{
-    "common" = "AzureAD/microsoft-authentication-library-common-for-android"
-    "msal"   = "AzureAD/microsoft-authentication-library-for-android"
-    "broker" = "identity-authnz-teams/ad-accounts-for-android"
+    "common" = "https://api.github.com/repos/AzureAD/microsoft-authentication-library-common-for-android"
+    "msal"   = "https://api.github.com/repos/AzureAD/microsoft-authentication-library-for-android"
+    "broker" = "https://msft.ghe.com/api/v3/repos/security/ad-accounts-for-android"
 }
 
 # Load raw data
@@ -37,7 +37,7 @@ function Get-PRComments($repo, $prNum) {
     if (-not $prCommentApiCache.ContainsKey($key)) {
         $slug = $script:repoSlugs[$repo]
         try {
-            $raw = gh api "repos/$slug/pulls/$prNum/comments" --paginate 2>&1
+            $raw = gh api "$slug/pulls/$prNum/comments" --paginate 2>&1
             $prCommentApiCache[$key] = $raw | ConvertFrom-Json
         } catch {
             $prCommentApiCache[$key] = @()
@@ -51,7 +51,7 @@ function Get-PRHead($repo, $prNum) {
     if (-not $prHeadCache.ContainsKey($key)) {
         $slug = $script:repoSlugs[$repo]
         try {
-            $data = gh api "repos/$slug/pulls/$prNum" --jq '.head.sha' 2>&1
+            $data = gh api "$slug/pulls/$prNum" --jq '.head.sha' 2>&1
             $prHeadCache[$key] = $data.Trim()
         } catch {
             $prHeadCache[$key] = ""
@@ -67,7 +67,7 @@ function Get-FileDiff($repo, $prNum, $commitA, $commitB, $filePath) {
     if (-not $diffCache.ContainsKey($cacheKey)) {
         try {
             # Get the entire compare result (all files)
-            $rawJson = gh api "repos/$slug/compare/${commitA}...${commitB}" 2>&1
+            $rawJson = gh api "$slug/compare/${commitA}...${commitB}" 2>&1
             $compareData = $rawJson | ConvertFrom-Json
             
             # Build a hash of file -> patch data

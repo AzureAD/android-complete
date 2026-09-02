@@ -26,15 +26,25 @@
     Inclusive end date. Defaults to today.
 
 .PARAMETER RepoRoot
-    Root folder containing `broker/` and `common/` subfolders. Defaults to the
+    Root folder containing the repo subfolders. Defaults to the
     git top-level of the current working directory (so running from any clone
     of android-complete just works). If you keep your repos elsewhere, pass
-    -RepoRoot explicitly. The script will FAIL loudly if neither broker/ nor
-    common/ exists under the resolved root — silent no-match would hide
+    -RepoRoot explicitly. The script will FAIL loudly if none of the requested
+    repos exist under the resolved root — silent no-match would hide
     attribution candidates.
+
+.PARAMETER Repos
+    Which repos to scan. Valid values: broker, common, authenticator.
+    Defaults to broker,common (the Broker report's attribution set).
+    Pass -Repos authenticator for the Authenticator report — its PRs are
+    ADO-hosted, so the emitted links use the ADO /pullrequest/ form, not
+    github.com/pull/.
 
 .EXAMPLE
     .\find-suspect-prs.ps1 -Symbol ExceptionAdapter -Since 2026-04-01
+
+.EXAMPLE
+    .\find-suspect-prs.ps1 -Symbol getAllEntries -Repos authenticator -Since 2026-07-01
 
 .EXAMPLE
     .\find-suspect-prs.ps1 -Symbol clientExceptionFromException -Since 2026-04-01 -Until 2026-05-09
@@ -49,7 +59,8 @@ param(
     [string]$GrepRegex,
     [string]$Since = (Get-Date).AddDays(-28).ToString('yyyy-MM-dd'),
     [string]$Until = (Get-Date).ToString('yyyy-MM-dd'),
-    [string]$RepoRoot
+    [string]$RepoRoot,
+    [string[]]$Repos = @('broker','common')
 )
 
 # Resolve repo root: explicit -RepoRoot wins; otherwise discover via `git rev-parse --show-toplevel`
@@ -66,30 +77,47 @@ if (-not $RepoRoot) {
 
 if (-not $GrepRegex) { $GrepRegex = [regex]::Escape($Symbol) }
 
-$repos = @(
-    @{ Name='broker'; Path=(Join-Path $RepoRoot 'broker'); UrlBase='https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/' }
-    @{ Name='common'; Path=(Join-Path $RepoRoot 'common'); UrlBase='https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/' }
-)
+# Known repos this script can scan. Authenticator is ADO-hosted, so its PR URLs use the
+# ADO /pullrequest/ form -- NOT a github.com /pull/ URL. validate-report.ps1 fails an
+# Authenticator report that contains github.com PR links, so getting this wrong is caught
+# downstream, but emit it correctly here in the first place.
+$repoCatalog = [ordered]@{
+    broker        = @{ Dir='broker';        UrlBase='https://msft.ghe.com/security/ad-accounts-for-android/pull/' }
+    common        = @{ Dir='common';        UrlBase='https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/' }
+    authenticator = @{ Dir='authenticator'; UrlBase='https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/' }
+}
+
+# Accept both -Repos broker,common and -Repos 'broker,common'
+$selected = @($Repos | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ })
+$unknown  = @($selected | Where-Object { -not $repoCatalog.Contains($_) })
+if ($unknown.Count -gt 0) {
+    Write-Error "Unknown -Repos value(s): $($unknown -join ', '). Valid: $($repoCatalog.Keys -join ', ')."
+    exit 2
+}
+
+$repoTargets = @($selected | ForEach-Object {
+    @{ Name=$_; Path=(Join-Path $RepoRoot $repoCatalog[$_].Dir); UrlBase=$repoCatalog[$_].UrlBase }
+})
 
 # FAIL LOUDLY if neither subrepo exists under the resolved root. A silent
 # "No PRs match..." after a path miss is indistinguishable from a real no-match
 # result and can silently hide attribution candidates.
-$availableRepos = @($repos | Where-Object { Test-Path $_.Path })
+$availableRepos = @($repoTargets | Where-Object { Test-Path $_.Path })
 if ($availableRepos.Count -eq 0) {
+    $expected = ($repoTargets | ForEach-Object { "  $RepoRoot\$($_.Name)\" }) -join "`n"
     Write-Error @"
-Neither broker/ nor common/ found under -RepoRoot $RepoRoot.
+None of the requested repo(s) [$($selected -join ', ')] were found under -RepoRoot $RepoRoot.
 
 Expected layout:
-  $RepoRoot\broker\   (clone of identity-authnz-teams/ad-accounts-for-android)
-  $RepoRoot\common\   (clone of AzureAD/microsoft-authentication-library-common-for-android)
+$expected
 
-Pass -RepoRoot pointing at the parent of those two clones. The android-complete
-mono-repo at the repo root works because broker/ and common/ are submodules there.
+Pass -RepoRoot pointing at the parent of those clones. The android-complete
+mono-repo at the repo root works because they are submodules there.
 "@
     exit 2
 }
-if ($availableRepos.Count -lt $repos.Count) {
-    $missing = $repos | Where-Object { -not (Test-Path $_.Path) } | ForEach-Object { $_.Name }
+if ($availableRepos.Count -lt $repoTargets.Count) {
+    $missing = $repoTargets | Where-Object { -not (Test-Path $_.Path) } | ForEach-Object { $_.Name }
     Write-Warning "Skipping $($missing -join ', ') — not found under $RepoRoot. Results will be incomplete."
 }
 
@@ -111,9 +139,22 @@ foreach ($r in $availableRepos) {
                 $sha = $parts[0]
                 if ($seen.ContainsKey($sha)) { continue }
                 $seen[$sha] = $true
-                # Try to pull the PR number out of the subject (#NNN at end of MS PR convention)
+                # Pull the PR id out of the subject. Three conventions must all work, and
+                # ORDER MATTERS -- these subjects routinely carry an Azure Boards work-item
+                # id that looks just like a PR id:
+                #   broker/common: "Add telemetry, Fixes AB#3604499 (#3141)"  -> want 3141, NOT 3604499
+                #   authenticator: "Merged PR 16115696: SyncCoordinator ..."  -> 8 digits, no '#'
+                #   github merge:  "Merge pull request #179 from AzureAD/..."
+                # A naive '#(\d{2,9})' matches AB#3604499 first and cites the wrong link;
+                # the original '#(\d{2,5})' only avoided that by accident (AB ids are 7 digits).
                 $prNum = $null
-                if ($parts[3] -match '#(\d{2,5})\b') { $prNum = $Matches[1] }
+                if ($parts[3] -match '\(#(\d{2,6})\)') {
+                    $prNum = $Matches[1]                      # GitHub squash-merge "(#3141)"
+                } elseif ($parts[3] -match '(?:Merged PR|Merge pull request)\s+#?(\d{2,9})\b') {
+                    $prNum = $Matches[1]                      # ADO "Merged PR N", GitHub merge commit
+                } elseif ($parts[3] -match '(?<!AB)#(\d{2,5})\b') {
+                    $prNum = $Matches[1]                      # legacy fallback, AB#-guarded
+                }
                 $results += [pscustomobject]@{
                     Repo    = $r.Name
                     Date    = $parts[1].Substring(0, 10)

@@ -1,0 +1,53 @@
+// Authenticator — error reasons sliced across ALL THREE dimensions in ONE round-trip.
+//
+// The Errors MVs carry exactly three usable dimensions: AppVersion, OsLevel, DeviceInfoMake.
+// (There is no calling-app / account-type / shared-device dimension on the Authenticator side —
+// do not go looking for the Broker's 7-dim slice here; it does not exist.)
+//
+// Use this once per REGRESSED scenario, after scenario-errors-wow.kql has identified which
+// reasons moved. Read the output as concentration: if one AppVersion or one OEM holds a
+// disproportionate share of the delta, that is the lead. If the delta is spread evenly across
+// all three dims, it is a service-side or population change, not a client regression.
+//
+// Cluster:  https://idsharedeus2.eastus2.kusto.windows.net
+// Database: d496be22d62a46b0a3cf67ea2e736fd8
+//
+// ⚠️ The Errors MVs come in three column shapes — see the mapping table at the top of
+//    scenario-errors-wow.kql and fill the same three column tokens here.
+// ⚠️ KQL: tabular lambda params must be declared BEFORE scalar ones, hence `slice(T, dimName)`.
+//    See the gotcha header in scenario-outcomes-wow.kql.
+//
+// Tokens: <ERRORS_MV> <REASON_COL> <ERROR_COUNT_COL> <ERROR_DCOUNT_COL> <CUR_START> <CUR_END> <PREV_START>
+//         <REASON_FILTER>  e.g.  | where Reason in ("SomeReason", "OtherReason")
+//                          must come AFTER normalisation, so it filters on `Reason`
+//                          leave blank to slice every reason (heavier payload)
+let curStart  = datetime(<CUR_START>);
+let curEnd    = datetime(<CUR_END>);
+let prevStart = datetime(<PREV_START>);
+let src =
+    <ERRORS_MV>
+    | where EventDate >= prevStart and EventDate < curEnd
+    | project AppVersion, OsLevel, DeviceInfoMake,
+              Reason = tostring(<REASON_COL>),
+              ErrCnt = tolong(<ERROR_COUNT_COL>),
+              ErrDev = tolong(<ERROR_DCOUNT_COL>),
+              Window = iff(EventDate >= curStart, "current", "previous")
+    <REASON_FILTER>;
+let slice = (T:(Reason:string, Window:string, DimValue:string, ErrCnt:long, ErrDev:long), dimName:string) {
+    T
+    | summarize Errors = sum(ErrCnt), Devices = sum(ErrDev) by Reason, DimValue, Window
+    | summarize CurErrors  = sumif(Errors,  Window == "current"),
+                PrevErrors = sumif(Errors,  Window == "previous"),
+                CurDevices = sumif(Devices, Window == "current"),
+                PrevDevices= sumif(Devices, Window == "previous")
+        by Reason, DimValue
+    | extend Dim = dimName
+};
+union
+  slice((src | project Reason, Window, DimValue = tostring(AppVersion),     ErrCnt, ErrDev), "AppVersion"),
+  slice((src | project Reason, Window, DimValue = tostring(OsLevel),        ErrCnt, ErrDev), "OsLevel"),
+  slice((src | project Reason, Window, DimValue = tostring(DeviceInfoMake), ErrCnt, ErrDev), "DeviceInfoMake")
+| extend DeltaDevices = CurDevices - PrevDevices
+| project Reason, Dim, DimValue, CurErrors, PrevErrors, CurDevices, PrevDevices, DeltaDevices
+| where CurDevices > 0 or PrevDevices > 0
+| order by Reason asc, Dim asc, CurDevices desc

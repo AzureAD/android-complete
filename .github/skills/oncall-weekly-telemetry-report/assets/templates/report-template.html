@@ -389,6 +389,52 @@
     margin-left: auto; color: #0550ae; text-decoration: none; font-weight: 600;
   }
   .item-foot .arrow-link:hover { text-decoration: underline; }
+
+  /* ---- Novelty presentation --------------------------------------------------
+     The sparkline IS the argument. A reader cannot judge "+25% WoW" without
+     seeing whether the series was flat for seven weeks or bouncing all along,
+     so every attention row carries its own 9-week shape inline. Charts live
+     WITH the finding, not in a separate browsable catalog. */
+  .item-spark {
+    display: inline-flex; align-items: center; line-height: 0;
+    padding: 2px 6px; border-radius: 6px;
+    background: #fff; border: 1px solid #eaeef2;
+  }
+  .item-spark svg { display: block; }
+  .spark-cap {
+    font-size: 10px; color: #8c959f; font-weight: 500;
+    letter-spacing: 0.2px; white-space: nowrap;
+  }
+  .tag-new     { background: #ffeef0; color: #cf222e; border: 1px solid #ffc1c0; }
+  .tag-accel   { background: #fff1e5; color: #bc4c00; border: 1px solid #ffd8b5; }
+  .tag-ongoing { background: #f0f3f6; color: #656d76; }
+
+  /* ---- Collapsed reference material ------------------------------------------
+     Anything that is elevated-but-plateaued, flat, or already-known is reference,
+     not this week's news. It stays reachable (an OCE may need to confirm a level)
+     but must not occupy vertical space or imply "triage me". */
+  details.fold {
+    margin-top: 10px; border: 1px solid #eaeef2;
+    border-radius: 6px; background: #fbfcfd;
+  }
+  details.fold > summary {
+    cursor: pointer; padding: 8px 12px; font-size: 12.5px;
+    font-weight: 600; color: #1f2328; list-style: none; user-select: none;
+  }
+  details.fold > summary::-webkit-details-marker { display: none; }
+  details.fold > summary::before { content: "\25B8  "; color: #656d76; }
+  details.fold[open] > summary::before { content: "\25BE  "; }
+  details.fold > summary .count { font-weight: 400; color: #656d76; }
+  details.fold > .fold-body { padding: 0 12px 12px; }
+  details.fold > .fold-body > .item-list { margin-top: 0; }
+
+  /* ---- Quiet week -------------------------------------------------------------
+     A week with nothing new must LOOK like a week with nothing new. */
+  .quiet-banner {
+    border: 1px solid #1a7f37; background: #dafbe1; color: #116329;
+    border-radius: 6px; padding: 12px 14px; margin: 12px 0; font-size: 13px;
+  }
+  .quiet-banner strong { color: #1a7f37; }
 </style>
 </head>
 <body>
@@ -475,6 +521,19 @@
 <!-- ================ NEEDS ATTENTION ================ -->
 <h2 id="attention">🚨 Things that need attention this week</h2>
 
+<!-- QUIET WEEK — if classify-novelty.js reports `quietWeek: true` (attention set is empty on
+     BOTH the codes and types axes), emit ONLY this banner in place of the callouts below,
+     then jump straight to the wins + traffic-shape blocks and keep the whole report short.
+     A week with nothing new must LOOK like a week with nothing new; padding it with the
+     plateaued list is exactly how a reader learns to skim the section that matters.
+
+<div class="quiet-banner">
+  <strong>Quiet week — nothing new.</strong> No error code or type crossed the novelty threshold
+  against its own 7-week baseline. The elevated codes below are all previously known and flat.
+  Recommended action: confirm the ongoing list is unchanged, then spend the rotation on backlog.
+</div>
+-->
+
 <div class="callout watch">
   <div class="callout-title"><span class="icon">ℹ️</span> Denominator caveat — read this first</div>
   <p>The headline <code>BrokerAdoptionStats</code> device count dropped <strong>−18.6% WoW</strong> (1.52 B → 1.24 B), but this <strong>is not a real fleet shrink</strong>. The drop is fully explained by three low-value spans deflating as the 16.0.1 rollout completes:</p>
@@ -487,53 +546,81 @@
 </div>
 
 <div class="callout urgent">
-  <div class="callout-title"><span class="icon">🔴</span> WoW regressions (last 7 days vs prior 7) <span style="font-weight:400;color:#656d76;font-size:12px;">— sorted by current-week devices, descending</span></div>
-  <p style="margin-top:0;font-size:12.5px;color:#656d76;">Tags: <span class="tag tag-bad">NEW</span> first appeared this week or last; <span class="tag tag-warn">60d↑</span> also rising on the 60-day window; <span class="origin-tag origin-broker">broker</span> / <span class="origin-tag origin-thirdparty">eSTS</span> / <span class="origin-tag origin-android">Android</span> / <span class="origin-tag origin-env">env</span> = originator. Built from the standard WoW table union with <code>wow-movers.kql</code> so small-but-recent spikes appear alongside the high-volume movers.</p>
+  <div class="callout-title"><span class="icon">🔴</span> NEW this week <span style="font-weight:400;color:#656d76;font-size:12px;">— flat baseline, then a clean step change. Triage these first.</span></div>
+  <p style="margin-top:0;font-size:12.5px;color:#656d76;">Ordered by <strong>novelty, not volume</strong> — a flat-but-huge code is not news. Labels come from <code>classify-novelty.js</code>, which scores every series against its own 7-week baseline. The sparkline is the argument: a flat line that steps up at the right edge is a real regression; a line that was already bouncing is noise wearing a big percentage. <span class="origin-tag origin-broker">broker</span> / <span class="origin-tag origin-thirdparty">eSTS</span> / <span class="origin-tag origin-android">Android</span> / <span class="origin-tag origin-env">env</span> = originator.</p>
   <div class="item-list">
 
-    <!-- EXAMPLE ITEM ROW (replace per week, repeat per regression, sorted by curr-week devices desc).
-         Pattern: monospace name + inline metric chips + tags-pushed-right; one-line body; optional foot.
-         Use .metric.up for red (regression), .metric.down for green (improvement).
-         Originator chip goes in .item-tags. Add `<span class="tag tag-bad">NEW</span>` if first appeared this week. -->
+    <!-- EXAMPLE ITEM ROW — one per NEW key, ordered by classifier rank (NOT by volume).
+         MANDATORY: every attention row carries an inline .item-spark with its 9-week series.
+         data-trend is the weekly series from the bucket-trends sidecar, oldest -> newest.
+         Colors: #cf222e NEW/regression, #bc4c00 accelerating, #1a7f37 recovery. -->
     <div class="item">
         <div class="item-head">
           <span class="item-name">EXAMPLE_error_code</span>
-          <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 65 K</span></span>
-          <span class="metric up"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE +6.1%</span></span>
-          <span class="metric"><span class="m-label">on 16.0.1</span><span class="m-value">EXAMPLE 73%</span></span>
+          <span class="item-spark trend" data-trend="[41000,41200,40800,41500,41100,41400,52129]" data-w="120" data-h="22" data-color="#cf222e"></span>
+          <span class="spark-cap">9 wk</span>
+          <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 52.1 K</span></span>
+          <span class="metric up"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE +25.7%</span></span>
+          <span class="metric up"><span class="m-label">vs own median</span><span class="m-value">EXAMPLE +19.4%</span></span>
           <span class="item-tags">
+            <span class="tag tag-new">NEW</span>
             <span class="origin-tag origin-broker">broker</span>
-            <span class="tag tag-warn">60d↑ +52%</span>
           </span>
         </div>
-        <div class="item-body">EXAMPLE one-line narrative: throw site <code>common/SomeClass.someMethod:NN</code>, dominant message, and the verdict. Keep this short — the deep dive is in the attribution card below.</div>
+        <div class="item-body">EXAMPLE one-line narrative: flat at ~41 K for seven weeks (cv 0.03), stepped to 52 K this week. Throw site <code>common/SomeClass.someMethod:NN</code>. Keep this short — the deep dive is in the attribution card below.</div>
         <div class="item-foot"><span><strong>Owner:</strong> EXAMPLE team</span><a class="arrow-link" href="#card-EXAMPLE">Attribution card →</a></div>
     </div>
 
   </div>
+  <!-- FAMILY ROLL-UP: when classify-novelty.js emits a `families` entry, report the family as
+       ONE row with the summed series, then list members in the body. Three codes from one
+       incident are one finding, not three. -->
 </div>
 
 <div class="callout watch">
-  <div class="callout-title"><span class="icon">🟡</span> Slow-burn 60-day regressions <span style="font-weight:400;color:#656d76;font-size:12px;">— rising on 60d window but flat WoW; codes that also moved WoW are in the red callout above with a <span class="tag tag-warn">60d↑</span> tag</span></div>
+  <div class="callout-title"><span class="icon">🟠</span> Getting worse <span style="font-weight:400;color:#656d76;font-size:12px;">— already elevated and <em>still climbing</em>. Not new, but the trend has not turned.</span></div>
   <div class="item-list">
 
     <div class="item">
         <div class="item-head">
-          <span class="item-name">EXAMPLE_slow_burn_code</span>
-          <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 4.5 M</span></span>
-          <span class="metric up"><span class="m-label">Δ 60d</span><span class="m-value">EXAMPLE +56%</span></span>
-          <span class="metric up"><span class="m-label">Δ requests 60d</span><span class="m-value">EXAMPLE +40%</span></span>
-          <span class="metric"><span class="m-label">on 16.0.1</span><span class="m-value">EXAMPLE 78%</span></span>
+          <span class="item-name">EXAMPLE_accelerating_code</span>
+          <span class="item-spark trend" data-trend="[38000,41000,39000,52000,63000,67500,86798]" data-w="120" data-h="22" data-color="#bc4c00"></span>
+          <span class="spark-cap">9 wk</span>
+          <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 86.8 K</span></span>
+          <span class="metric up"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE +28.5%</span></span>
+          <span class="metric up"><span class="m-label">vs own median</span><span class="m-value">EXAMPLE +108.7%</span></span>
           <span class="item-tags">
-            <span class="origin-tag origin-broker">broker</span>
+            <span class="tag tag-accel">ACCELERATING</span>
+            <span class="tag tag-muted">3 wk elevated</span>
           </span>
         </div>
-        <div class="item-body">EXAMPLE: WoW only +X%. Tracks 16.0.1 rollout share; one-line hypothesis or owner pointer.</div>
+        <div class="item-body">EXAMPLE: climbing for three consecutive weeks and up again this week. State what changed since it was last looked at — if nothing has, say so and name the owner.</div>
     </div>
 
   </div>
-  <p style="margin-top:10px;font-size:12px;color:#656d76;">See the <a href="#trend60d">60-day trend section</a> for the full ranked list.</p>
 </div>
+
+<!-- KNOWN / PLATEAUED — collapsed by design.
+     These are elevated but FLAT. Re-triaging them every week is the single largest source of
+     noise in this report, and it trains readers to skim. Emit ONE counted summary line; put
+     the rows inside the fold below. Do NOT give these attribution cards or charts in the main
+     flow. Promote a row out of here only if the classifier moves it to ACCELERATING. -->
+<details class="fold">
+  <summary>Ongoing / known — elevated but plateaued <span class="count">(EXAMPLE 4 codes, EXAMPLE 2.1 M devices — no change in status this week)</span></summary>
+  <div class="fold-body">
+    <div class="item-list">
+      <div class="item">
+        <div class="item-head">
+          <span class="item-name">EXAMPLE_ongoing_code</span>
+          <span class="item-spark trend" data-trend="[1700000,1750000,1780000,1760000,1790000,1770000,1786017]" data-w="100" data-h="20" data-color="#656d76"></span>
+          <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 1.79 M</span></span>
+          <span class="metric"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE −3.2%</span></span>
+          <span class="item-tags"><span class="tag tag-ongoing">ONGOING · 3 wk</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</details>
 
 <div class="callout win">
   <div class="callout-title"><span class="icon">🟢</span> Real wins this week</div>
@@ -542,6 +629,8 @@
     <div class="item">
         <div class="item-head">
           <span class="item-name">EXAMPLE_recovered_code</span>
+          <span class="item-spark trend" data-trend="[834000,820000,790000,610000,340000,180000,117000]" data-w="120" data-h="22" data-color="#1a7f37"></span>
+          <span class="spark-cap">9 wk</span>
           <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 834 K</span></span>
           <span class="metric down"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE −86%</span></span>
           <span class="metric down"><span class="m-label">Δ requests</span><span class="m-value">EXAMPLE −78%</span></span>
@@ -559,59 +648,89 @@
 </div>
 
 <!-- ================ 60-DAY TREND ================ -->
-<h2 id="trend60d">📈 60-Day Trend Analysis <span class="count">— literal last 60 days ending today; final bar = current partial week</span></h2>
+<h2 id="trend60d">📈 60-day cross-check <span class="count">— slow-burn detector, not a browsing list</span></h2>
 
 <div class="glossary">
-  <strong>Methodology:</strong> Pulled all error codes from the <code>ErrorStats</code> view over the last 9 weeks. Dropped the partial start week (Mar 1). Kept all codes whose <strong>peak weekly device count ≥ 10 K</strong>. Bucketed each 8-week series by <code>delta = (last − first) / first</code>:
-  <strong>regression</strong> if delta &gt; +15% and trajectory is monotonic-ish; <strong>ephemeral spike</strong> if peak ≥ 3× mean of surrounding weeks; <strong>improvement</strong> if delta &lt; −15%; <strong>flat</strong> otherwise. Every code in the regression list gets a spike-attribution card below.
+  <strong>Why this section is short.</strong> The 60-day pass exists to catch what a week-over-week
+  comparison structurally cannot: a code that climbs 10&nbsp;% every week for two months and never
+  once trips a WoW threshold. It found <code>Failed to parse JWT</code> going 7&nbsp;→&nbsp;3,461 devices
+  that way. That is its <em>entire</em> job.
+  <br><br>
+  It is <strong>not</strong> a catalog to browse. Rendering all ~30 classified codes with a chart each
+  produced ~100 sparklines for what was, on inspection, a single incident — and it buried the four
+  series that actually changed. So: anything the 60-day pass flags that is <em>also</em> in the
+  attention section above is <strong>not repeated here</strong>, and anything flat is collapsed.
+  <br><br>
+  <strong>Method:</strong> weekly device counts over the last 9 weeks; drop the partial start week;
+  keep codes with peak weekly devices ≥ 10&nbsp;K; classify by <code>delta = (last − first) / first</code>
+  — <strong>regression</strong> &gt; +15&nbsp;% and monotonic-ish, <strong>ephemeral spike</strong> if peak ≥ 3× surrounding
+  mean, <strong>improvement</strong> &lt; −15&nbsp;%, else <strong>flat</strong>. Delta math uses complete weeks only.
 </div>
 
+<!-- PROMOTED SLOW-BURNS — the only thing that belongs in the main flow here.
+     Emit this callout ONLY for codes that (a) the 60-day pass flags as a regression AND
+     (b) do NOT already appear in the attention section. If every 60-day regression is
+     already above, DELETE this callout entirely and say so in the summary line below.
+     These rows carry a sparkline because they are findings; the collapsed table does not. -->
 <div class="callout urgent">
-  <div class="callout-title"><span class="icon">⚠️</span> True 60-day regressions — 5 codes</div>
-  <table style="width:100%;font-size:12.5px;margin-top:6px;">
-    <thead><tr><th>Error code</th><th class="num">Wk 1 devices</th><th class="num">Wk 8 devices</th><th class="num">Δ over 8w</th><th>60d sparkline</th><th>Trajectory</th></tr></thead>
-    <tbody>
-      <tr><td><code>no_tokens_found</code></td><td class="num">13.9 M</td><td class="num">23.7 M</td><td class="num bad">+70.6%</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L24.285714285714285,20.383668820602942 L46.57142857142857,17.044905304296815 L68.85714285714286,15.18400665024738 L91.14285714285714,12.689055778726654 L113.42857142857142,6.831869070007514 L135.71428571428572,3.989606756024628 L158,2 L158,28 L2,28 Z" fill="#cf222e" opacity="0.12"/><path d="M2,26 L24.285714285714285,20.383668820602942 L46.57142857142857,17.044905304296815 L68.85714285714286,15.18400665024738 L91.14285714285714,12.689055778726654 L113.42857142857142,6.831869070007514 L135.71428571428572,3.989606756024628 L158,2" fill="none" stroke="#cf222e" stroke-width="1.4"/><circle cx="158" cy="2" r="2" fill="#cf222e"/></svg></td><td>monotonic up</td></tr>
-      <tr><td><code>unauthorized_client</code></td><td class="num">2.72 M</td><td class="num">3.37 M</td><td class="num bad">+23.6%</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L24.285714285714285,21.189291211268483 L46.57142857142857,23.68350616439421 L68.85714285714286,19.3902520172261 L91.14285714285714,17.614458730430187 L113.42857142857142,8.793961536667652 L135.71428571428572,9.488838792929215 L158,2 L158,28 L2,28 Z" fill="#cf222e" opacity="0.12"/><path d="M2,26 L24.285714285714285,21.189291211268483 L46.57142857142857,23.68350616439421 L68.85714285714286,19.3902520172261 L91.14285714285714,17.614458730430187 L113.42857142857142,8.793961536667652 L135.71428571428572,9.488838792929215 L158,2" fill="none" stroke="#cf222e" stroke-width="1.4"/><circle cx="158" cy="2" r="2" fill="#cf222e"/></svg></td><td>monotonic up</td></tr>
-      <tr><td><code>Code:-6</code></td><td class="num">31.8 K</td><td class="num">86.4 K</td><td class="num bad">+171.5%</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L24.285714285714285,24.449077654725272 L46.57142857142857,25.830176570290774 L68.85714285714286,25.017788675146868 L91.14285714285714,25.0122595402261 L113.42857142857142,3.0351330448090295 L135.71428571428572,2 L158,4.430449735885073 L158,28 L2,28 Z" fill="#cf222e" opacity="0.12"/><path d="M2,26 L24.285714285714285,24.449077654725272 L46.57142857142857,25.830176570290774 L68.85714285714286,25.017788675146868 L91.14285714285714,25.0122595402261 L113.42857142857142,3.0351330448090295 L135.71428571428572,2 L158,4.430449735885073" fill="none" stroke="#cf222e" stroke-width="1.4"/><circle cx="158" cy="4.430449735885073" r="2" fill="#cf222e"/></svg></td><td>step-up at week 6</td></tr>
-      <tr><td><code>unknown_crypto_error</code></td><td class="num">59.3 K</td><td class="num">78.4 K</td><td class="num bad">+32.4%</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,12.844218264065592 L24.285714285714285,20.60277070964094 L46.57142857142857,26 L68.85714285714286,25.522193949674865 L91.14285714285714,19.8676844783715 L113.42857142857142,11.079445858071812 L135.71428571428572,3.202714164546226 L158,2 L158,28 L2,28 Z" fill="#cf222e" opacity="0.12"/><path d="M2,12.844218264065592 L24.285714285714285,20.60277070964094 L46.57142857142857,26 L68.85714285714286,25.522193949674865 L91.14285714285714,19.8676844783715 L113.42857142857142,11.079445858071812 L135.71428571428572,3.202714164546226 L158,2" fill="none" stroke="#cf222e" stroke-width="1.4"/><circle cx="158" cy="2" r="2" fill="#cf222e"/></svg></td><td>U-shaped, climbing</td></tr>
-      <tr><td><code>null_pointer_error</code></td><td class="num">48.5 K</td><td class="num">70.7 K</td><td class="num bad">+45.9%</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L24.285714285714285,21.782943057115702 L46.57142857142857,19.458221722975892 L68.85714285714286,17.252743454592586 L91.14285714285714,14.458308130994556 L113.42857142857142,2 L135.71428571428572,6.484576168668454 L158,2.9218007431089603 L158,28 L2,28 Z" fill="#cf222e" opacity="0.12"/><path d="M2,26 L24.285714285714285,21.782943057115702 L46.57142857142857,19.458221722975892 L68.85714285714286,17.252743454592586 L91.14285714285714,14.458308130994556 L113.42857142857142,2 L135.71428571428572,6.484576168668454 L158,2.9218007431089603" fill="none" stroke="#cf222e" stroke-width="1.4"/><circle cx="158" cy="2.9218007431089603" r="2" fill="#cf222e"/></svg></td><td>monotonic up</td></tr>
-    </tbody>
-  </table>
+  <div class="callout-title"><span class="icon">🐌</span> Slow burns — rising over 60 days, invisible week-over-week</div>
+  <div class="item-list">
+    <div class="item">
+      <div class="item-head">
+        <span class="item-name">EXAMPLE_slow_burn_code</span>
+        <span class="item-spark trend" data-trend="[7,40,180,520,1100,2050,3461]" data-w="120" data-h="22" data-color="#cf222e"></span>
+        <span class="spark-cap">9 wk</span>
+        <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 3,461</span></span>
+        <span class="metric"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE +8.4%</span></span>
+        <span class="metric up"><span class="m-label">Δ 60d</span><span class="m-value">EXAMPLE +49,000%</span></span>
+        <span class="item-tags"><span class="tag tag-warn">SLOW BURN</span></span>
+      </div>
+      <div class="item-body">EXAMPLE: never tripped a WoW threshold — grew ~8-12&nbsp;% every week for eight weeks. This is the case the 60-day pass exists for. Name the owner and the suspected change.</div>
+    </div>
+  </div>
 </div>
 
-<div class="callout watch">
-  <div class="callout-title"><span class="icon">⚡</span> Ephemeral 60-day spikes (peaked then recovered)</div>
-  <table style="width:100%;font-size:12.5px;margin-top:6px;">
-    <thead><tr><th>Error code</th><th class="num">Baseline</th><th class="num">Peak</th><th class="num">Now</th><th>60d sparkline</th></tr></thead>
-    <tbody>
-      <tr><td><code>timed_out_execution</code></td><td class="num">17.9 M</td><td class="num warn">142.9 M (week Apr 12)</td><td class="num">53.4 M</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L24.285714285714285,25.528917259912554 L46.57142857142857,22.86811849024978 L68.85714285714286,20.067936711023833 L91.14285714285714,13.167810711621335 L113.42857142857142,2 L135.71428571428572,13.962359714679643 L158,19.186934955198492 L158,28 L2,28 Z" fill="#bf8700" opacity="0.12"/><path d="M2,26 L24.285714285714285,25.528917259912554 L46.57142857142857,22.86811849024978 L68.85714285714286,20.067936711023833 L91.14285714285714,13.167810711621335 L113.42857142857142,2 L135.71428571428572,13.962359714679643 L158,19.186934955198492" fill="none" stroke="#bf8700" stroke-width="1.4"/><circle cx="158" cy="19.186934955198492" r="2" fill="#bf8700"/></svg></td></tr>
-      <tr><td><code>unknown_authority</code></td><td class="num">~1 K</td><td class="num warn">34.1 M (week Apr 12)</td><td class="num good">1.45 M</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L24.285714285714285,25.9999479454561 L46.57142857142857,25.99996764177001 L68.85714285714286,25.33638194365043 L91.14285714285714,11.586519561385366 L113.42857142857142,2 L135.71428571428572,19.66698228641905 L158,24.983948061054704 L158,28 L2,28 Z" fill="#bf8700" opacity="0.12"/><path d="M2,26 L24.285714285714285,25.9999479454561 L46.57142857142857,25.99996764177001 L68.85714285714286,25.33638194365043 L91.14285714285714,11.586519561385366 L113.42857142857142,2 L135.71428571428572,19.66698228641905 L158,24.983948061054704" fill="none" stroke="#bf8700" stroke-width="1.4"/><circle cx="158" cy="24.983948061054704" r="2" fill="#bf8700"/></svg></td></tr>
-      <tr><td><code>429</code> (eSTS rate-limit)</td><td class="num">~10</td><td class="num warn">218 K (week Mar 22)</td><td class="num good">2.5 K</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,26 L24.285714285714285,25.543803291327453 L46.57142857142857,23.002120180261215 L68.85714285714286,2 L91.14285714285714,23.690049838003542 L113.42857142857142,24.35132580103347 L135.71428571428572,10.1533872403697 L158,25.724211357190715 L158,28 L2,28 Z" fill="#bf8700" opacity="0.12"/><path d="M2,26 L24.285714285714285,25.543803291327453 L46.57142857142857,23.002120180261215 L68.85714285714286,2 L91.14285714285714,23.690049838003542 L113.42857142857142,24.35132580103347 L135.71428571428572,10.1533872403697 L158,25.724211357190715" fill="none" stroke="#bf8700" stroke-width="1.4"/><circle cx="158" cy="25.724211357190715" r="2" fill="#bf8700"/></svg></td></tr>
-    </tbody>
-  </table>
-  <p style="margin-top:6px;font-size:12.5px;">Both <code>unknown_authority</code> (common <a href="https://github.com/AzureAD/microsoft-authentication-library-common-for-android/pull/3082" target="_blank">#3082</a> ABBA deadlock fix) and <code>timed_out_execution</code> (broker <a href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank">#141</a> flight gating) are recovering. <strong>Recommendation:</strong> add Aria guardrail at &gt;1M devices/week for <code>unknown_authority</code> to detect any future excursion early.</p>
-</div>
+<!-- FULL CLASSIFICATION — collapsed. Reference only: an OCE opens this to confirm a level or
+     check that a known code is still where they left it. No charts: charts belong next to
+     findings, and every finding is already above. Keep the counts in the <summary> accurate —
+     the counted line is what makes it safe to leave closed. -->
+<details class="fold">
+  <summary>Full 60-day classification <span class="count">(EXAMPLE 29 codes — 5 regression, 3 ephemeral spike, 8 improvement, 13 flat)</span></summary>
+  <div class="fold-body">
 
-<div class="callout win">
-  <div class="callout-title"><span class="icon">✅</span> True 60-day improvements</div>
-  <table style="width:100%;font-size:12.5px;margin-top:6px;">
-    <thead><tr><th>Error code</th><th class="num">Wk 1</th><th class="num">Wk 8</th><th class="num">Δ</th><th>Sparkline</th></tr></thead>
-    <tbody>
-      <tr><td><code>timed_out</code></td><td class="num">36.1 M</td><td class="num">5.1 M</td><td class="num good">−85.9%</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,2 L24.285714285714285,2.1966100510730797 L46.57142857142857,14.840149790989093 L68.85714285714286,23.851737187854066 L91.14285714285714,24.847759480546166 L113.42857142857142,25.33007842170968 L135.71428571428572,25.72486240767855 L158,26 L158,28 L2,28 Z" fill="#1a7f37" opacity="0.12"/><path d="M2,2 L24.285714285714285,2.1966100510730797 L46.57142857142857,14.840149790989093 L68.85714285714286,23.851737187854066 L91.14285714285714,24.847759480546166 L113.42857142857142,25.33007842170968 L135.71428571428572,25.72486240767855 L158,26" fill="none" stroke="#1a7f37" stroke-width="1.4"/><circle cx="158" cy="26" r="2" fill="#1a7f37"/></svg></td></tr>
-      <tr><td><code>invalid_scope</code></td><td class="num">1.92 M</td><td class="num">0.36 M</td><td class="num good">−81.3%</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,2.9089631735852812 L24.285714285714285,2 L46.57142857142857,4.319034301681064 L68.85714285714286,7.231735360666569 L91.14285714285714,23.028816660289213 L113.42857142857142,25.050257210316957 L135.71428571428572,25.733456042935238 L158,26 L158,28 L2,28 Z" fill="#1a7f37" opacity="0.12"/><path d="M2,2.9089631735852812 L24.285714285714285,2 L46.57142857142857,4.319034301681064 L68.85714285714286,7.231735360666569 L91.14285714285714,23.028816660289213 L113.42857142857142,25.050257210316957 L135.71428571428572,25.733456042935238 L158,26" fill="none" stroke="#1a7f37" stroke-width="1.4"/><circle cx="158" cy="26" r="2" fill="#1a7f37"/></svg></td></tr>
-      <tr><td><code>timed_out_thread_pool_saturated</code></td><td class="num">1.64 M</td><td class="num">0.62 M</td><td class="num good">−62.1%</td><td><svg width="160" height="28" viewBox="0 0 160 28" xmlns="http://www.w3.org/2000/svg"><path d="M2,6.328263905610402 L24.285714285714285,16.098049602696847 L46.57142857142857,11.362947267035878 L68.85714285714286,2 L91.14285714285714,4.101555502046715 L113.42857142857142,16.951466409824224 L135.71428571428572,24.913537202022635 L158,26 L158,28 L2,28 Z" fill="#1a7f37" opacity="0.12"/><path d="M2,6.328263905610402 L24.285714285714285,16.098049602696847 L46.57142857142857,11.362947267035878 L68.85714285714286,2 L91.14285714285714,4.101555502046715 L113.42857142857142,16.951466409824224 L135.71428571428572,24.913537202022635 L158,26" fill="none" stroke="#1a7f37" stroke-width="1.4"/><circle cx="158" cy="26" r="2" fill="#1a7f37"/></svg></td></tr>
-      <tr><td><code>illegal_argument_exception</code></td><td class="num">0.21 M</td><td class="num">0.19 M</td><td class="num good">−7.5% (peak −62%)</td><td></td></tr>
-      <tr><td><code>null_object</code>, <code>device_network_not_available</code>, <code>access_denied</code>, <code>ONLY_SUPPORTS_ACCOUNT_MANAGER_ERROR_CODE</code>, <code>invalid_key</code></td><td colspan="3" class="muted">all −17% to −78% over 8 wks (see appendix)</td><td></td></tr>
-    </tbody>
-  </table>
-  <p style="margin-top:6px;font-size:12.5px;"><strong>Note:</strong> the <code>timed_out</code> drop and <code>timed_out_execution</code> climb are partly the same event — broker <a href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank">#141</a> reclassifies legacy <code>timed_out</code> into the more specific <code>timed_out_execution</code>. The reclassification is net-neutral but the new code is louder; treat the <code>timed_out</code> "win" with caution.</p>
-</div>
+    <p style="font-size:12.5px;margin:10px 0 4px;"><strong>Regressions</strong> — codes already covered above are marked <em>(in attention)</em>.</p>
+    <table style="width:100%;font-size:12.5px;">
+      <thead><tr><th>Error code</th><th class="num">Wk 1 devices</th><th class="num">Wk 8 devices</th><th class="num">Δ over 8w</th><th>Trajectory</th></tr></thead>
+      <tbody>
+        <tr><td><code>EXAMPLE_no_tokens_found</code> <em>(in attention)</em></td><td class="num">13.9 M</td><td class="num">23.7 M</td><td class="num bad">+70.6%</td><td>monotonic up</td></tr>
+        <tr><td><code>EXAMPLE_unknown_crypto_error</code></td><td class="num">59.3 K</td><td class="num">78.4 K</td><td class="num bad">+32.4%</td><td>U-shaped, climbing</td></tr>
+      </tbody>
+    </table>
 
-<div class="callout">
-  <div class="callout-title">Flat on 60d (within ±10%)</div>
-  <p style="font-size:12.5px;"><code>io_error</code>, <code>no_account_found</code>, <code>invalid_grant</code>, <code>interaction_required</code>, <code>device_network_not_available_doze_mode</code>, <code>authorization_pending</code>, <code>expired_token</code>, <code>User cancelled</code>, <code>auth_cancelled_by_sdk</code>, <code>invalid_resource</code>, <code>invalid_request</code>, <code>device_registration_needed</code>, <code>Code:-1</code>, <code>Code:-2</code>, <code>Code:-8</code>, <code>operation_interrupted</code>, <code>ipc_return_null_cursor</code>, <code>device_needs_to_be_managed</code>, <code>Redirect url scheme not SSL protected</code>, <code>ipc_operation_not_supported_on_server_side</code>, <code>invalid_client</code>, <code>ipc_connection_error</code>, <code>unknown_error</code>.</p>
-</div>
+    <p style="font-size:12.5px;margin:14px 0 4px;"><strong>Ephemeral spikes</strong> — peaked then recovered. Not actionable unless the tail is still elevated.</p>
+    <table style="width:100%;font-size:12.5px;">
+      <thead><tr><th>Error code</th><th class="num">Baseline</th><th class="num">Peak</th><th class="num">Now</th></tr></thead>
+      <tbody>
+        <tr><td><code>EXAMPLE_timed_out_execution</code></td><td class="num">17.9 M</td><td class="num warn">142.9 M (wk Apr 12)</td><td class="num">53.4 M</td></tr>
+        <tr><td><code>EXAMPLE_429</code> (eSTS rate-limit)</td><td class="num">~10</td><td class="num warn">218 K (wk Mar 22)</td><td class="num good">2.5 K</td></tr>
+      </tbody>
+    </table>
+
+    <p style="font-size:12.5px;margin:14px 0 4px;"><strong>Improvements</strong></p>
+    <table style="width:100%;font-size:12.5px;">
+      <thead><tr><th>Error code</th><th class="num">Wk 1</th><th class="num">Wk 8</th><th class="num">Δ</th></tr></thead>
+      <tbody>
+        <tr><td><code>EXAMPLE_timed_out</code></td><td class="num">36.1 M</td><td class="num">5.1 M</td><td class="num good">−85.9%</td></tr>
+        <tr><td><code>EXAMPLE_invalid_scope</code></td><td class="num">1.92 M</td><td class="num">0.36 M</td><td class="num good">−81.3%</td></tr>
+      </tbody>
+    </table>
+    <p style="margin-top:6px;font-size:12px;color:#656d76;"><strong>Caveat to carry:</strong> a code that drops because a change <em>reclassified</em> it into a new code is not a win. State the pairing when you see one (e.g. legacy <code>timed_out</code> falling as <code>timed_out_execution</code> rises).</p>
+
+    <p style="font-size:12.5px;margin:14px 0 4px;"><strong>Flat on 60d</strong> (within ±10%)</p>
+    <p style="font-size:12px;color:#656d76;"><code>EXAMPLE_io_error</code>, <code>EXAMPLE_no_account_found</code>, <code>EXAMPLE_invalid_grant</code>, <code>EXAMPLE_interaction_required</code> — list the rest inline, no table.</p>
+
+  </div>
+</details>
 
 <!-- ================ SPIKE ATTRIBUTION ================ -->
 <h2 id="attribution">🔎 Spike Attribution <span class="count">— one card per regression</span></h2>
@@ -687,7 +806,7 @@
     <div class="attr-tags"><span class="tag tag-bad">60d regression</span><span class="tag tag-warn">peak-then-recover</span><span class="tag tag-info">AppManager-heavy</span></div>
   </div>
   <div class="attr-body">
-    <div class="attr-verdict bad"><strong>Verdict — 60d regression with WoW recovery underway.</strong> Almost entirely on <code>AcquireTokenSilent</code> (99.9%). The peak at 143 M devices (week of Apr 12) and subsequent drop to 53.4 M is consistent with broker <a href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank">#141</a> (HTTP cancellation on ATS command-level timeout) being flight-rolled out and then partially gated back. AppManager (Link to Windows) is the dominant active broker (53% this week, was 69% prior), and most-affected calling app: Outlook 32% / AppManager 25% / Teams 24%. <strong>Action:</strong> confirm the flight rollout schedule for #141 and check whether the timeout threshold needs tuning before re-enabling broadly. Watch for downstream client retry storms (it converts silent thread-leak into an explicit error → callers must retry cleanly).</div>
+    <div class="attr-verdict bad"><strong>Verdict — 60d regression with WoW recovery underway.</strong> Almost entirely on <code>AcquireTokenSilent</code> (99.9%). The peak at 143 M devices (week of Apr 12) and subsequent drop to 53.4 M is consistent with broker <a href="https://msft.ghe.com/security/ad-accounts-for-android/pull/141" target="_blank">#141</a> (HTTP cancellation on ATS command-level timeout) being flight-rolled out and then partially gated back. AppManager (Link to Windows) is the dominant active broker (53% this week, was 69% prior), and most-affected calling app: Outlook 32% / AppManager 25% / Teams 24%. <strong>Action:</strong> confirm the flight rollout schedule for #141 and check whether the timeout threshold needs tuning before re-enabling broadly. Watch for downstream client retry storms (it converts silent thread-leak into an explicit error → callers must retry cleanly).</div>
     <div class="attr-dims"><div class="dim"><div class="dim-label">Span</div><div class="dim-row dominant"><span class="dim-name">AcquireTokenSilent</span><span class="dim-pct">99.9%</span></div>
         <div class="dim-bar-track"><div class="dim-bar-fill dominant" style="width:99.9%"></div></div>
 <div class="dim-row "><span class="dim-name">ATISilently</span><span class="dim-pct">0.1%</span></div>
@@ -717,7 +836,7 @@
       <div class="code-attr-title">Code attribution</div>
       <div class="pr-list"><div class="pr-card">
       <div class="pr-conf pr-conf-high">high</div>
-      <div class="pr-body"><a class="pr-id" href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank" rel="noopener">broker#141</a> <span class="pr-title">Add flight-gated HTTP cancellation on ATS command-level timeout to eliminate zombie worker threads (AB#3542516)</span>
+      <div class="pr-body"><a class="pr-id" href="https://msft.ghe.com/security/ad-accounts-for-android/pull/141" target="_blank" rel="noopener">broker#141</a> <span class="pr-title">Add flight-gated HTTP cancellation on ATS command-level timeout to eliminate zombie worker threads (AB#3542516)</span>
         <div class="pr-why">This PR explicitly converts long-running ATS calls into timed_out_execution. The 60d trajectory matches the flight rollout perfectly. The reciprocal drop in legacy timed_out (-86%) confirms the reclassification.</div>
       </div>
     </div></div>
@@ -837,7 +956,7 @@
     <div class="attr-tags"><span class="tag tag-warn">60d regression</span><span class="tag tag-info">silent path</span><span class="tag tag-info">LTW + Authenticator</span></div>
   </div>
   <div class="attr-body">
-    <div class="attr-verdict bad"><strong>Verdict — Steady 60d climb in NPE crashes; small absolute volume but trajectory worth flagging.</strong> Span: <code>AcquireTokenSilent</code> 98%. Active broker: AppManager (LTW) 53% / Authenticator 26% / Intune CP 20%. Calling app: AppManager 35% / Teams 28% / Outlook 21%. The over-representation of LTW (53% vs ~5-10% fleet share for that active broker) is a strong signal — there's likely a null path specific to the LTW broker process. <strong>Action:</strong> bucket by error_location / stack-trace prefix and route to LTW team. Cite <a href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank">broker #141</a> as a possible secondary contributor (timeout cancellation can interact with deferred work that holds a null reference).</div>
+    <div class="attr-verdict bad"><strong>Verdict — Steady 60d climb in NPE crashes; small absolute volume but trajectory worth flagging.</strong> Span: <code>AcquireTokenSilent</code> 98%. Active broker: AppManager (LTW) 53% / Authenticator 26% / Intune CP 20%. Calling app: AppManager 35% / Teams 28% / Outlook 21%. The over-representation of LTW (53% vs ~5-10% fleet share for that active broker) is a strong signal — there's likely a null path specific to the LTW broker process. <strong>Action:</strong> bucket by error_location / stack-trace prefix and route to LTW team. Cite <a href="https://msft.ghe.com/security/ad-accounts-for-android/pull/141" target="_blank">broker #141</a> as a possible secondary contributor (timeout cancellation can interact with deferred work that holds a null reference).</div>
     <div class="attr-dims"><div class="dim"><div class="dim-label">Span</div><div class="dim-row dominant"><span class="dim-name">AcquireTokenSilent</span><span class="dim-pct">98.5%</span></div>
         <div class="dim-bar-track"><div class="dim-bar-fill dominant" style="width:98.5%"></div></div>
 <div class="dim-row "><span class="dim-name">DeviceRegistrationApi</span><span class="dim-pct">1.0%</span></div>
@@ -867,7 +986,7 @@
       <div class="code-attr-title">Code attribution</div>
       <div class="pr-list"><div class="pr-card">
       <div class="pr-conf pr-conf-low">low</div>
-      <div class="pr-body"><a class="pr-id" href="https://github.com/identity-authnz-teams/ad-accounts-for-android/pull/141" target="_blank" rel="noopener">broker#141</a> <span class="pr-title">HTTP cancellation on ATS timeout (LTW broker process)</span>
+      <div class="pr-body"><a class="pr-id" href="https://msft.ghe.com/security/ad-accounts-for-android/pull/141" target="_blank" rel="noopener">broker#141</a> <span class="pr-title">HTTP cancellation on ATS timeout (LTW broker process)</span>
         <div class="pr-why">Active broker is heavily LTW (53% vs ~7% fleet share). The same ATS timeout cancellation path may be racing with a null-checked reference in a deferred callback. Needs stack-trace bucketing to confirm.</div>
       </div>
     </div><div class="pr-card">
