@@ -1,6 +1,6 @@
 # Reference — Commands & manual overrides
 
-_Loaded on demand. Run all from `C:\repos\android-complete\release-agent`._
+_Loaded on demand. Run all from `<AGENT_ROOT>` — the confirmed `release-agent` folder (see SKILL.md → FIRST RUN; `python -m orchestrator.cli paths --json` prints it)._
 
 | Intent | Command |
 | --- | --- |

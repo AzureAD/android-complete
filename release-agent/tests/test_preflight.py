@@ -4,6 +4,30 @@ from tests._harness import *  # noqa: F401,F403
 
 
 
+def test_paths_command_reports_self_located_roots(capsys):
+    """`paths --json` reports the engine's self-located roots (agent_root/repo_root/runs_root),
+    all derived from the engine's own file location — NO hardcoded C:\\repos. This is what the
+    skill's FIRST-RUN onboarding uses to confirm the clone + cd correctly on any machine."""
+    import json as _json, os
+    from orchestrator import cli as _cli
+    from orchestrator.commands import paths_cmd
+    # helper: agent_root is release-agent/, repo_root its parent, runs_root default = repo/.release-runs
+    p = paths_cmd.resolve_paths()
+    assert os.path.basename(p["agent_root"]) == "release-agent"
+    assert p["repo_root"] == os.path.dirname(p["agent_root"])
+    assert p["runs_root"] == os.path.join(p["repo_root"], ".release-runs")
+    assert p["repo_name"] == os.path.basename(p["repo_root"])
+    # --runs-root override is honored
+    over = paths_cmd.resolve_paths("D:\\somewhere\\.runs")
+    assert over["runs_root"] == os.path.abspath("D:\\somewhere\\.runs")
+    assert over["agent_root"] == p["agent_root"]         # agent/repo still self-located
+    # CLI emits valid JSON with all keys
+    rc = _cli.main(["paths", "--json"])
+    assert rc == 0
+    rep = _json.loads(capsys.readouterr().out)
+    assert set(rep) >= {"agent_root", "repo_root", "runs_root", "repo_name"}
+
+
 def test_next_json_emits_status_report_with_scout_pending(capsys):
     """`next --json` advances THEN prints the status report as JSON (same shape as
     `status --json`, carrying `scout_pending`) — so a caller advances + reads the pending

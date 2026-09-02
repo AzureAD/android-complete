@@ -9,10 +9,24 @@ description: Drive an Android release end-to-end using the Release Orchestrator 
 
 You are the conversation layer over the **Release Orchestrator engine** (deterministic Python). The engine decides what happens next; you discover releases, present status/gates, and relay decisions. **Never decide the release flow yourself, and never invent a release — always call the engine.**
 
+## FIRST RUN — resolve the android-complete clone (ONCE per machine, before anything else)
+**This is the very first thing you do on any release request — before Discover, before any `python -m orchestrator.cli` command.** The engine is portable (it self-locates from its own file), but YOU must know which folder to `cd` into to run it. **Do NOT assume `C:\repos\android-complete` — that is only this author's layout; other users clone elsewhere.**
+
+1. **Recall.** `m_recall` for the clone path (e.g. "android-complete release-agent path"). If a confirmed path comes back **and still exists** (quick `Test-Path <path>\orchestrator\cli.py`), use it as `<AGENT_ROOT>` and skip straight to the normal flow. Only do the steps below when nothing is remembered or the remembered path is gone.
+2. **Auto-detect a candidate** — the `release-agent` folder of an `android-complete` clone (a folder qualifies only if `<X>\release-agent\orchestrator\cli.py` exists). First hit wins as the *candidate*:
+   - the Scout execution working directory and its ancestors (you may already be inside the clone);
+   - common roots: `C:\repos\android-complete`, `~\repos\android-complete`, `~\source\repos\android-complete`, `~\git\android-complete`, `~\src\android-complete`;
+   - a bounded fallback search for `…\android-complete\release-agent\orchestrator\cli.py` under the user's home / source dirs (`Get-ChildItem -Recurse -Filter cli.py -ErrorAction SilentlyContinue`, don't scan the whole disk).
+3. **Canonicalize.** From the candidate's `release-agent` folder, run `python -m orchestrator.cli paths --json` → `{agent_root, repo_root, runs_root}`. Take `agent_root` as the authoritative `<AGENT_ROOT>` (absolute, normalized).
+4. **ALWAYS confirm with the user — even on a single unambiguous hit.** `m_ask_user` (free-text, pre-fill the detected `agent_root`): ask whether that is their `android-complete\release-agent` folder. If they correct it, re-run `paths --json` from their path to canonicalize; if auto-detect found nothing, ask them to paste the path.
+5. **Persist.** Once confirmed, `m_remember` it (e.g. "release-agent clone path on this machine: `<AGENT_ROOT>`") so every later session skips this. Then continue to the normal flow.
+
+Throughout this skill, **`<AGENT_ROOT>`** = that confirmed `release-agent` folder and **`<REPO_ROOT>`** = its parent (the android-complete clone). Run every `python -m orchestrator.cli …` from `<AGENT_ROOT>`; `paths --json` prints all three roots any time. Never hardcode `C:\repos`.
+
 ## Where things live
-- Engine + config: `C:\repos\android-complete\release-agent\` — **run all `python -m orchestrator.cli …` commands from here.**
-- Run-state: `C:\repos\android-complete\.release-runs\<release>\release-state.json` (gitignored; one per month, e.g. `2026-08`).
-- **Reference docs (this skill's detail):** `C:\repos\android-complete\release-agent\skill\reference\` — read the relevant one on demand (routing table below). The core stays lean; the details live there.
+- Engine + config: **`<AGENT_ROOT>`** (the confirmed `release-agent` folder — see FIRST RUN) — **run all `python -m orchestrator.cli …` commands from here.**
+- Run-state: **`<REPO_ROOT>\.release-runs\<release>\release-state.json`** (gitignored; one per month, e.g. `2026-08`). `python -m orchestrator.cli paths --json` prints `agent_root` / `repo_root` / `runs_root`.
+- **Reference docs (this skill's detail):** **`<AGENT_ROOT>\skill\reference\`** — read the relevant one on demand (routing table below). The core stays lean; the details live there.
 - `setup/bootstrap.ps1` only prepares the machine (infra preflight + installs this skill). If an infra check fails (an MCP server isn't registered, or Scout wasn't restarted), run `python -m orchestrator.cli infra` and tell the user to restart Scout; manifest is `config/requirements.yaml`.
 
 ## GOLDEN RULES (always apply — the deduped essentials)
@@ -32,7 +46,7 @@ Discover → (if no gate cleared, run the entry gate) → `next` to advance → 
 
 ## Behaviour dispatch
 - **"status" / "where are we":** discover. If the entry gate isn't cleared (`readiness_gate`/not signed, or `blocked`) → the useful answer IS the checklist: run `checklist --release <id> --verify` and show that table (don't ask permission). Otherwise show `status`. No release → say so, offer to start.
-- **"start a release":** `m_ask_user` current-month vs other (you compute `YYYY-MM`) → `init` → ensure push-reminder automation exists → run the **entry gate** (this settles + confirms the CCD via `ccd_confirmed`) → **now that the CCD is confirmed**, provision the timed phase automations (`automation plan`, cron-pinned to the CCD) → `next` → present status. *(Provision the CCD-day automations only AFTER the gate confirms the CCD — their cron pins to that date. → starting-and-scheduling.md, readiness-gate.md)*
+- **"start a release":** *(FIRST: if the clone path isn't resolved yet on this machine, do the **FIRST RUN** resolution above — confirm `<AGENT_ROOT>` — before `init`.)* `m_ask_user` current-month vs other (you compute `YYYY-MM`) → `init` → ensure push-reminder automation exists → run the **entry gate** (this settles + confirms the CCD via `ccd_confirmed`) → **now that the CCD is confirmed**, provision the timed phase automations (`automation plan`, cron-pinned to the CCD) → `next` → present status. *(Provision the CCD-day automations only AFTER the gate confirms the CCD — their cron pins to that date. → starting-and-scheduling.md, readiness-gate.md)*
 - **Engine HOLDS at a gate:** present it; `m_ask_user` Approve/Deny; run `approve`/`deny --comment` with their reason; present new status.
 - **Scout steps pending** (`scout_pending` non-empty in `status`): these are **Scout's automated work, NOT a user to-do** — run them yourself, don't wait for the user and don't present them as "you need to". For EACH id in `scout_pending`: `step-action --release <id> --phase <p> --step <id>` → it returns `needs_skill` (an email/Teams/browser action) → perform the returned `tool`+`payload` (respect any `test_redirect`) → `record-step --step <record_as> --status pass` (or the step's follow-up, e.g. `check-lockdown`). Do this **silently** for each, then re-run `next`. Only once `scout_pending` is empty do you surface the remaining user holds below. (A scout step that records `attention` becomes a `blocked` user task — handle it like any block.)
 - **Engine HOLDS for a reminder** (`awaiting_action` with `action`/`needs_owner` — an attest or blocked USER task): present as "you need to do X"; when done, `done --release <id> --note "<what they did>"`. Not a decision — no Approve/Deny.
