@@ -6945,8 +6945,8 @@ def test_status_email_composes_milestone_dashboard():
     html = res["html"]
     assert "September 2026 Release" in html and "8.4.2" in html
     assert "UI automation 97.0%" in html                       # B (combined 194/200)
-    assert "branches/all?query=24.6.0" in html                 # C (branch search link)
-    assert "PATCH" in html and "Update common" in html         # change list
+    assert "tree/release/24.6.0" in html                       # C (real release/<version> link)
+    assert "Update common" in html                             # change list
 
 
 def test_status_email_window_boundaries():
@@ -6970,19 +6970,49 @@ def test_is_business_day_skips_weekends_and_holidays():
     assert BB.is_business_day(date(2026, 12, 25)) is False      # Christmas (Fri)
 
 
-def test_broker_change_list_parses_levels():
+def test_broker_change_list_reads_changes_txt():
+    """broker_change_list reads changes.txt from the broker release branch (trying candidate
+    refs), returns THIS version's 'Version <v>' section, joins wrapped bullets, parses the
+    optional [LEVEL] + trailing (#PR), and never fabricates a level."""
+    import base64
     from tools import prs
-    fake = ('[{"number":261,"title":"[MINOR] Add GetDeviceTokenV1Executor (#261)"},'
-            '{"number":273,"title":"Revert Phase 2 FOCI gate"}]')
+    changes_txt = (
+        "vNext\n----------\n\n"
+        "Version 16.5.0\n----------\n"
+        "- [PATCH] Update common @24.6.0\n"
+        "- [MINOR] Add GetDeviceTokenV1Executor to handle\n"
+        "  GET_DEVICE_TOKEN_V1 protocol (#261)\n"          # wrapped bullet → joined
+        "- Plain entry with no level (#238)\n"
+        "\nVersion 16.4.1\n----------\n"
+        "- [PATCH] Older release entry (#100)\n")           # must NOT bleed into 16.5.0
+    b64 = base64.b64encode(changes_txt.encode()).decode()
+    calls = {"refs": []}
+
+    def fake_run(args, cwd=None, timeout=120):
+        a = " ".join(args)
+        import re as _re
+        m = _re.search(r"contents/changes\.txt\?ref=(\S+)", a)
+        if m:
+            calls["refs"].append(m.group(1))
+            # working/release/<v> 404s (e.g. not yet promoted) → falls back to release/<v>
+            if m.group(1).startswith("working/release/"):
+                return (1, "", "No commit found")
+            return (0, b64, "")
+        return (1, "", "unexpected")
+
     orig = prs._run
-    prs._run = lambda args, cwd=None, timeout=120: (0, fake, "")
+    prs._run = fake_run
     try:
-        ok, ch, _d = prs.broker_change_list("host/owner/repo", "16.5.0")
+        ok, ch, _d = prs.broker_change_list("msft.ghe.com/security/ad-accounts-for-android", "16.5.0")
     finally:
         prs._run = orig
-    assert ok and ch == [
-        {"level": "MINOR", "text": "Add GetDeviceTokenV1Executor", "pr": 261},
-        {"level": "PATCH", "text": "Revert Phase 2 FOCI gate", "pr": 273}]   # default PATCH
+    assert ok
+    assert ch == [
+        {"level": "PATCH", "text": "Update common @24.6.0", "pr": None},
+        {"level": "MINOR", "text": "Add GetDeviceTokenV1Executor to handle GET_DEVICE_TOKEN_V1 protocol", "pr": 261},
+        {"level": None, "text": "Plain entry with no level", "pr": 238}]
+    # tried the finalized ref first, then fell back to release/<v>
+    assert calls["refs"][0] == "working/release/16.5.0" and "release/16.5.0" in calls["refs"]
 
 
 def test_status_email_command_gates_and_stamp():

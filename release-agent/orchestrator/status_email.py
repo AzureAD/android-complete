@@ -93,9 +93,9 @@ def _fmt_date(s):
 
 
 def _release_branch_links(state):
-    """[{text,url}] to each repo's release branch(es) for this version + the auth app branch.
-    Branch NAMING differs per repo (MSAL 'release/…', Common/Broker 'working/test-release/…'),
-    so we link to the repo's branch search for the version — always resolves, never 404s."""
+    """[{text,url}] to each lib's release branch (release/<version>, per integ_prs.RELEASE_PREFIX)
+    + the auth app release branch. All libs use release/<version> (verified live); the auth app
+    uses release/YYYY/MM/DD."""
     from steps.finalize import integ_prs as IP
     v = getattr(state, "versions", None) or {}
     out = []
@@ -105,7 +105,7 @@ def _release_branch_links(state):
         if not (ver and gh):
             continue
         host = ("https://" + gh) if ("." in gh.split("/")[0]) else ("https://github.com/" + gh)
-        out.append({"text": label, "url": f"{host}/branches/all?query={ver}"})
+        out.append({"text": label, "url": f"{host}/tree/{IP.RELEASE_PREFIX}{ver}"})
     ab = v.get("authenticator")                       # release/YYYY/MM/DD
     ado = (IP.CONFIG.get("authenticator") or {}).get("ado") or {}
     if ab and ado.get("org") and ado.get("project") and ado.get("repository"):
@@ -137,14 +137,15 @@ def _rc_ui_summary(state):
 
 def _auth_build_link(state):
     """A '{text,url}' link to the Authenticator app build (msazure/One), when known in state."""
+    from tools.coordinates import coords
     rcs = (getattr(state, "pipeline_runs", None) or {}).get("rcs") or []
     bid = None
     if rcs:
         bid = (((rcs[-1].get("auth") or {}).get("build") or {}).get("build_id"))
     if not bid:
         return None
-    return {"text": "Authenticator build",
-            "url": f"https://msazure.visualstudio.com/One/_build/results?buildId={bid}&view=results"}
+    org = f"{coords.org_url('one')}/{coords.project('one')}"
+    return {"text": "Authenticator build", "url": f"{org}/_build/results?buildId={bid}&view=results"}
 
 
 def milestones(state, phase_order):
@@ -364,19 +365,23 @@ def _milestones_table(ms) -> str:
 
 
 def _changelist_html(changes) -> str:
-    """changes: [{level, text, pr?}] grouped visually by PATCH/MINOR/MAJOR."""
+    """changes: [{level, text, pr?}] — level (PATCH/MINOR/MAJOR) shown as a badge only when
+    present (we never fabricate one)."""
     if not changes:
         return ""
     lvl_bg = {"MAJOR": ("#fee4e2", "#b42318"), "MINOR": ("#fef0c7", "#b54708"),
               "PATCH": ("#eaecf0", "#475467")}
     items = ""
     for c in changes:
-        lvl = (c.get("level") or "PATCH").upper()
-        bg, fg = lvl_bg.get(lvl, lvl_bg["PATCH"])
+        lvl = (c.get("level") or "").upper()
+        badge = ""
+        if lvl in lvl_bg:
+            bg, fg = lvl_bg[lvl]
+            badge = (f"<span style=\"display:inline-block;padding:1px 7px;border-radius:9px;"
+                     f"background:{bg};color:{fg};font-size:11px;font-weight:700;"
+                     f"letter-spacing:.03em;\">{lvl}</span> ")
         pr = f" <span style=\"color:#98a2b3;\">#{T.esc(str(c['pr']))}</span>" if c.get("pr") else ""
-        items += (f"<li style=\"margin:6px 0;line-height:1.4;\">"
-                  f"<span style=\"display:inline-block;padding:1px 7px;border-radius:9px;background:{bg};"
-                  f"color:{fg};font-size:11px;font-weight:700;letter-spacing:.03em;\">{lvl}</span> "
+        items += (f"<li style=\"margin:6px 0;line-height:1.4;\">{badge}"
                   f"{T.esc(c.get('text', ''))}{pr}</li>")
     return (f"<h3 style=\"margin:26px 0 8px;font-size:15px;color:#101828;\">Broker change list</h3>"
             f"<ul style=\"margin:0;padding-left:18px;color:#344054;font-size:13px;\">{items}</ul>")

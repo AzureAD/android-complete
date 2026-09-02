@@ -193,35 +193,94 @@ _CHANGE_LEVEL_RE = re.compile(r"^\s*\[(PATCH|MINOR|MAJOR)\]\s*(.*?)\s*$", re.IGN
 _PR_SUFFIX_RE = re.compile(r"\s*\(#(\d+)\)\s*$")
 
 
-def broker_change_list(gh_repo: str, version: str, base_prefix="working/test-release/",
-                       timeout=90):
-    """(ok, changes, detail) — the broker release change list, derived from PRs merged into the
-    broker release branch ('working/test-release/<version>'). Each change is
-    {level, text, pr} where level is PATCH|MINOR|MAJOR (from the '[LEVEL]' title convention,
-    defaulting to PATCH when a title has none) and pr is the PR number. Read-only (`gh pr list`)."""
+def _gh_repo_parts(gh_repo: str):
+    """(hostname|None, 'owner/repo') from a gh_repo that is either 'owner/repo' (github.com)
+    or 'host/owner/repo' (GitHub Enterprise, e.g. 'msft.ghe.com/security/ad-accounts-for-android')."""
+    parts = [p for p in str(gh_repo or "").split("/") if p]
+    if len(parts) >= 3 and "." in parts[0]:
+        return (parts[0], "/".join(parts[1:3]))
+    return (None, "/".join(parts[:2]))
+
+
+def _current_version_block(text: str, version: str) -> str:
+    """The lines under this release's 'Version <version>' header in changes.txt, up to the next
+    'Version <…>' header or 'vNext'. '' when the section isn't found."""
+    out, capture = [], False
+    ver_re = re.compile(rf"^Version\s+{re.escape(str(version))}\b")
+    next_re = re.compile(r"^Version\s+\S")
+    for ln in (text or "").splitlines():
+        s = ln.strip()
+        if not capture and ver_re.match(s):
+            capture = True
+            continue
+        if capture and (next_re.match(s) or s == "vNext"):
+            break
+        if capture:
+            out.append(ln)
+    return "\n".join(out)
+
+
+def broker_change_list(gh_repo: str, version: str, ref_candidates=None, timeout=60):
+    """(ok, changes, detail) — the broker release change list, read from the AUTHORITATIVE
+    `changes.txt` on the broker's release branch for `version`.
+
+    The release branch is `working/release/<version>` (integ_prs.WORKING_PREFIX). `release/<version>`
+    carries the same changes.txt and is used as an equivalent fallback (override both with
+    `ref_candidates`). changes.txt has one section per version ('Version <X.Y.Z>' + dashes, then
+    '- [LEVEL] text (#PR)' bullets); we return THIS release's section only. Each change is
+    {level, text, pr}: `level` is PATCH|MINOR|MAJOR from the '[LEVEL]' prefix (None when a bullet
+    has none — never fabricated), `pr` is the trailing '(#N)'. Read-only (`gh api contents`)."""
     if not (gh_repo and version):
         return (False, [], "missing broker gh_repo/version")
-    base = f"{base_prefix}{version}"
-    rc, out, e = _run(
-        ["gh", "pr", "list", "--repo", gh_repo, "--base", base, "--state", "merged",
-         "--json", "number,title", "--limit", "200"], timeout=timeout)
-    if rc != 0:
-        return (False, [], (e or out or "").strip() or "gh pr list failed")
-    try:
-        arr = json.loads(out or "[]")
-    except json.JSONDecodeError:
-        return (False, [], f"unparseable gh output: {out!r}")
+    host, ownerrepo = _gh_repo_parts(gh_repo)
+    refs = ref_candidates or [f"working/release/{version}", f"release/{version}"]
+    text, last_err = None, ""
+    for ref in refs:
+        args = ["gh", "api", f"repos/{ownerrepo}/contents/changes.txt?ref={ref}", "--jq", ".content"]
+        if host:
+            args += ["--hostname", host]
+        rc, out, e = _run(args, timeout=timeout)
+        if rc == 0 and (out or "").strip():
+            import base64
+            try:
+                text = base64.b64decode(out).decode("utf-8", "replace")
+                break
+            except (ValueError, TypeError):
+                last_err = "could not decode changes.txt content"
+                continue
+        last_err = (e or "changes.txt not found").strip()
+    if text is None:
+        return (False, [], f"changes.txt not found on any of {refs} ({last_err})")
+
+    block = _current_version_block(text, version)
+    if not block.strip():
+        return (True, [], f"no 'Version {version}' section in changes.txt")
+    # Split into bullets on lines beginning with '- '. A bullet may wrap across lines, so join
+    # each entry's continuation lines back into one logical entry (collapse whitespace).
+    entries, cur = [], None
+    for ln in block.splitlines():
+        if re.match(r"^\s*-\s+", ln):
+            if cur is not None:
+                entries.append(cur)
+            cur = re.sub(r"^\s*-\s+", "", ln)
+        elif cur is not None and ln.strip() and not re.match(r"^-{3,}$", ln.strip()):
+            cur += " " + ln.strip()
+    if cur is not None:
+        entries.append(cur)
+
     changes = []
-    for pr in arr:
-        title = (pr.get("title") or "").strip()
-        num = pr.get("number")
-        title = _PR_SUFFIX_RE.sub("", title)              # drop a trailing "(#123)" if present
-        m = _CHANGE_LEVEL_RE.match(title)
-        if m:
-            level, text = m.group(1).upper(), m.group(2).strip()
-        else:
-            level, text = "PATCH", title
-        changes.append({"level": level, "text": text, "pr": num})
+    for raw in entries:
+        text_e = " ".join(raw.split())                     # collapse wrapped whitespace
+        if not text_e:
+            continue
+        m = _PR_SUFFIX_RE.search(text_e)
+        pr = int(m.group(1)) if m else None
+        text_e = _PR_SUFFIX_RE.sub("", text_e).strip()
+        lm = _CHANGE_LEVEL_RE.match(text_e)
+        level = lm.group(1).upper() if lm else None
+        if lm:
+            text_e = lm.group(2).strip()
+        changes.append({"level": level, "text": text_e, "pr": pr})
     return (True, changes, "")
 
 
