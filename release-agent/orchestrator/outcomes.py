@@ -95,3 +95,29 @@ def as_dict(outcome: Any) -> dict:
     """Serialize any outcome to a plain dict (for `--json` CLI output / the skill)."""
     d = {k: v for k, v in vars(outcome).items()}
     return d
+
+
+import re as _re
+
+# An ENGINE follow-up command verb is all-lowercase, hyphen-separated (e.g. 'record-rc-report',
+# 'create-payload-wiki'). An MCP/skill tool has a different shape — a service prefix and/or
+# underscores/uppercase (e.g. 'workiq_send_email', 'microsoft_teams-SendMessageToChannel',
+# 'kusto_query'). This distinction is the engine↔skill contract seam: a NeedsSkill.tool that is
+# an engine command, and every NeedsSkill payload `followup_command`, must name a registered CLI
+# command. See tests/test_contract.py for the guardrail that enforces it.
+_ENGINE_CMD_RE = _re.compile(r"^[a-z][a-z0-9-]*$")
+
+
+def command_verb(s):
+    """The leading engine-CLI verb of a `followup_command` or an engine-command `tool` string,
+    or None when `s` is an MCP/skill tool (not an engine command).
+
+    'create-payload-wiki --release 2026-08 --dry-run' -> 'create-payload-wiki'
+    'record-rc-report'                                 -> 'record-rc-report'
+    'workiq_send_email' / 'microsoft_teams-SendMessageToChannel' / 'kusto_query' -> None
+    """
+    if not s:
+        return None
+    head = str(s).strip().split()[0]
+    return head if _ENGINE_CMD_RE.match(head) else None
+
