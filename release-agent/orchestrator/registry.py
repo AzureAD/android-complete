@@ -9,7 +9,7 @@ automation<->step linkage is queryable both ways (`list(release=…)` shows an
 automation's steps; `list(step=…)` shows which automation owns a step).
 
 Two scopes:
-  * shared  — machine-wide, reused across releases (e.g. "Release push reminders").
+  * shared  — machine-wide, reused across releases (rare; e.g. a machine-wide health check).
               NOT torn down per release.
   * release — provisioned for one release; removed when that release closes.
 

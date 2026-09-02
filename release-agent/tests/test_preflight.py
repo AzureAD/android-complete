@@ -4,6 +4,36 @@ from tests._harness import *  # noqa: F401,F403
 
 
 
+def test_unopened_phase_shows_all_steps_scheduled_uniformly():
+    """REGRESSION: before a phase opens, its scout steps must NOT render 'Scout runs this —
+    automatic' while its agent/human steps render 'Not open yet' — that mix confused the
+    reader. An unopened phase shows EVERY not-yet-run step uniformly as 'Not open yet'
+    (state 'scheduled'). Preflight opens CCD-7; as-of CCD-14 it's the current phase but not due."""
+    from orchestrator import render
+    st, orch = _ccd_orch("2026-06-24")           # CCD-14 → preflight is current but NOT yet open
+    r = orch.status_report()
+    assert r["active_phase"]["id"] == "preflight"
+    assert r["active_phase"]["due"] is False
+    states = {s["state"] for s in r["current_steps"]}
+    # uniform — no 'scout'/'auto'/'pending' mix, everything is 'scheduled'
+    assert states == {"scheduled"}, states
+    view = render.status_view(r)
+    assert "Not open yet" in view
+    assert "Scout runs this" not in view          # the confusing early label is gone
+
+
+def test_open_phase_still_differentiates_step_states():
+    """The uniform 'Not open yet' only applies BEFORE a phase opens. Once open, states still
+    differentiate: scout steps → 'scout' (Scout runs this), so the fix didn't flatten a live phase."""
+    st, orch = _ccd_orch("2026-07-02")            # Phase 0 open
+    r = orch.status_report()
+    assert r["active_phase"]["id"] == "preflight"
+    assert r["active_phase"]["due"] is True
+    states = {s["state"] for s in r["current_steps"]}
+    assert states != {"scheduled"}                # no longer uniform once open
+    assert "scout" in states                      # scout steps now labelled as scout
+
+
 def test_ccd_cron_pins_to_exact_date():
     """_ccd_cron builds a cron 'M H D Mo *' targeting the CCD's day+month+time, so a
     one-shot fires ON the CCD — never the next matching weekday (the early-fire bug)."""

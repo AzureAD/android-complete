@@ -1351,12 +1351,13 @@ finalize.final_status_email:
   how: >
     Runs via step-action → workiq_send_email with the composed closing email; the payload names
     `record-status-email --final` as the follow-up (stamps the day + closes). After sending +
-    recording, DEREGISTER the 'Release status email' automation (`automation deregister`). To test,
+    recording, DEREGISTER the daily partner status-email automation (`<release> · Phases 2–4 — daily
+    status email`) via `automation deregister`. To test,
     set the `send_to` mock to your own address.
   faqs:
     - q: "Won't this double-send with the daily automation?"
       a: "The daily automation is idempotent per day (last_status_email_date), and its window ends at Phase 5. The terminal step is the guaranteed CLOSING send; at worst you get a morning daily + the closing email on the last day, which is intended."
     - q: "Who tears down the daily automation?"
-      a: "The skill, after this step completes — it deregisters the 'Release status email' automation (also removed at release close as a backstop)."
+      a: "The skill, after this step completes — it deregisters the daily partner status-email automation (`<release> · Phases 2–4 — daily status email`; also removed at release close as a backstop)."
 
 

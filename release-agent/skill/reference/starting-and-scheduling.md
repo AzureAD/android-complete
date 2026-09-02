@@ -19,9 +19,9 @@ Pick current → `init --release <id>` immediately. Pick different → follow-up
 ## Ensure push reminders exist (per release — provisioned at start, torn down at close)
 
 Right after `init`, make sure the **push-reminder automation** exists for THIS release so reminders reach the user even with Scout closed. Per-release: created at start, removed at close.
-1. `m_list_automations`. If **"Release push reminders"** exists AND `automation list --release <YYYY-MM> --json` has it scoped to this release, **leave it** — don't duplicate.
+1. `m_list_automations`. If **"`<YYYY-MM> · Release-wide — push reminders`"** exists AND `automation list --release <YYYY-MM> --json` has it scoped to this release, **leave it** — don't duplicate.
 2. If missing, `m_create_automation`:
-   - **name:** `Release push reminders`
+   - **name:** `<YYYY-MM> · Release-wide — push reminders`  (fill `<YYYY-MM>` with the release id — the standard `<release-id> · <scope> — <purpose>` title)
    - **schedule:** `every hour`
    - **teamsNotify:** `never`
    - **prompt:** From `C:\repos\android-complete\release-agent`, advance the active release **AUTONOMOUSLY** (no user is watching) and send the daily digest:
@@ -34,25 +34,25 @@ Right after `init`, make sure the **push-reminder automation** exists for THIS r
           - `"chat"`: `workiq_send_chat_message` with **exactly** the `teams` block fields (`chatId`, `content`, `contentType`) — only used when a specific shared chat is configured.
 
      The `teams` descriptor is only present when a digest is actually due (it respects the same once-per-day de-dup), so delivering it never double-notifies. The digest is identical across channels — send it verbatim, don't embellish. Channels are configured in `config/notifications.yaml`.
-3. **Register it** so it's torn down at close: `automation register --id <id> --name "Release push reminders" --release <YYYY-MM> --purpose "hourly autonomous advance (runs scout steps) + phase digest to owner (email + Teams)"` — no `--step`, so it's recorded as a **release-level** automation (it advances the whole release, owns no step).
+3. **Register it** so it's torn down at close: `automation register --id <id> --name "<YYYY-MM> · Release-wide — push reminders" --release <YYYY-MM> --purpose "hourly autonomous advance (runs scout steps) + phase digest to owner (email + Teams)"` — no `--step`, so it's recorded as a **release-level** automation (it advances the whole release, owns no step).
 
 Do it silently as part of start (the user already opted into push). **Why hourly, not once at 9am:** `tick` is idempotent (advancing no-ops once holding; digest de-dupes to one email/day), so a tick missed while the machine was off is picked up by the next. A single daily trigger would be skipped that day.
 
 ## Ensure the daily partner status email exists (per release — provisioned at start, closed at end of Phase 4)
 
 Alongside the push reminders, provision the **partner status email** — an **end-of-day** business-day email to the release DLs (`authsdkrelease@`, `androididentity@`) with the milestone dashboard, sent while the release is in flight (**Phase 2 build_verify through Phase 4 finalize**). EOD so it reports the day's SETTLED progress (matches the checklist's "📧 End-of-day: send status email").
-1. `m_list_automations`. If **"Release status email"** is already scoped to this release, leave it.
+1. `m_list_automations`. If **"`<YYYY-MM> · Phases 2–4 — daily status email`"** is already scoped to this release, leave it.
 2. If missing, `m_create_automation`:
-   - **name:** `Release status email`
+   - **name:** `<YYYY-MM> · Phases 2–4 — daily status email`  (fill `<YYYY-MM>` with the release id — the standard `<release-id> · <scope> — <purpose>` title)
    - **schedule:** `every weekday at 5pm`  (end of day; weekends are skipped natively; the command also skips US holidays and the window)
    - **teamsNotify:** `never`
    - **prompt:** From `C:\repos\android-complete\release-agent`, send the daily partner status email if one is due:
      1. Run `python -m orchestrator.cli status-email --release <YYYY-MM> --json`. **For a TEST release, add `--send-to <you@microsoft.com>`** so the real DLs are never emailed.
      2. If `skip` is `true` (reasons: out of the Phase 2-4 window, weekend/holiday, or already sent today), **STOP silently**.
      3. Otherwise `workiq_send_email` with `to:` the payload `to`, `subject:` the `subject`, `body:` the `html` (`isHtml:true`). Then run `python -m orchestrator.cli record-status-email --release <YYYY-MM>` to stamp the day. **Headless safety copy:** `m_send_teams_message` a one-line courtesy — `🤖 [release <id>] Sent daily status email.` (never paste the body).
-3. **Register it** for teardown: `automation register --id <id> --name "Release status email" --release <YYYY-MM> --purpose "business-day partner status email (Phase 2-4)"`.
+3. **Register it** for teardown: `automation register --id <id> --name "<YYYY-MM> · Phases 2–4 — daily status email" --release <YYYY-MM> --purpose "business-day partner status email (Phase 2-4)"`.
 
-**Closing it (end of Phase 4).** The terminal `finalize.final_status_email` step sends the guaranteed CLOSING status email (it names `record-status-email --final` as its follow-up). **After that step completes, deregister the "Release status email" automation** (`automation deregister --id <id>`) so no status emails run into Phase 5+. This handles the case where Phase 4 and Phase 5 complete the same day — the terminal step guarantees the last email even if the daily 5pm run wouldn't fire again. (Release close removes it as a backstop.)
+**Closing it (end of Phase 4).** The terminal `finalize.final_status_email` step sends the guaranteed CLOSING status email (it names `record-status-email --final` as its follow-up). **After that step completes, deregister the "`<YYYY-MM> · Phases 2–4 — daily status email`" automation** (`automation deregister --id <id>`) so no status emails run into Phase 5+. This handles the case where Phase 4 and Phase 5 complete the same day — the terminal step guarantees the last email even if the daily 5pm run wouldn't fire again. (Release close removes it as a backstop.)
 
 
 ## Provision the timed phase automations (config-driven, per release)
@@ -110,6 +110,6 @@ Everything else is **pull** (seen when the user opens Scout). The **push** layer
 
 `tick` is the deterministic automation half: `tick --json` first **advances** the release (runs runnable steps, holds at gates/actions — idempotent), then returns `{message, html, subject, owner_email, owner_name, release, channels, teams}` — `message` plain-text digest, `html` rich version, `channels` the enabled map, `teams` a delivery descriptor (`{via:"scout_bot", text}` for the Scout bot, or `{via:"chat", chatId, content, contentType}` for an explicit chat, or null); all empty/null when nothing's due or already sent today. (`notify --json` is the read-only variant — same payload, does NOT advance.) `--as-of <date>` debug clock; `--force` bypasses once‑per‑day.
 
-The **"Release push reminders"** automation is **autonomous** and runs **hourly**: it (1) advances the release, (2) **runs Scout's own steps** for the open phase — `scout_pending` steps that need MCP: it performs each `step-action` (send the early-release notice email, post feature-owner reminders, run the lockdown check, trigger localization…) and records it, exactly as the interactive skill would — then (3) delivers the daily digest via `tick --json` on every enabled channel (`channels`): **email** (`html`/`message` → `owner_email`, subject from JSON — never a hardcoded address) and, when `teams` is non-null, **Scout Teams** (`m_send_teams_message` with the markdown `teams.text` for the `scout_bot` target, or `workiq_send_chat_message` for an explicit chat). Empty `message` → silent. **Headless safety copy:** because these outbound actions happen with no one watching, every `needs_skill` action flagged **`outbound: true`** (email / Teams post / pipeline trigger) also drops a **one-line** courtesy copy in the owner's Scout DM (`🤖 [release <id>] Autonomous: <summary>`) so they see what went out — the local `lockdown` scrape is `outbound: false` and stays quiet. Per‑release: auto‑provisioned at start, torn down at close. Email is the guaranteed floor; Teams is a bonus channel that degrades gracefully (the `teams_notify` readiness item records `degraded` = email-only if the Scout bot isn't reachable).
+The **"`<YYYY-MM> · Release-wide — push reminders`"** automation is **autonomous** and runs **hourly**: it (1) advances the release, (2) **runs Scout's own steps** for the open phase — `scout_pending` steps that need MCP: it performs each `step-action` (send the early-release notice email, post feature-owner reminders, run the lockdown check, trigger localization…) and records it, exactly as the interactive skill would — then (3) delivers the daily digest via `tick --json` on every enabled channel (`channels`): **email** (`html`/`message` → `owner_email`, subject from JSON — never a hardcoded address) and, when `teams` is non-null, **Scout Teams** (`m_send_teams_message` with the markdown `teams.text` for the `scout_bot` target, or `workiq_send_chat_message` for an explicit chat). Empty `message` → silent. **Headless safety copy:** because these outbound actions happen with no one watching, every `needs_skill` action flagged **`outbound: true`** (email / Teams post / pipeline trigger) also drops a **one-line** courtesy copy in the owner's Scout DM (`🤖 [release <id>] Autonomous: <summary>`) so they see what went out — the local `lockdown` scrape is `outbound: false` and stays quiet. Per‑release: auto‑provisioned at start, torn down at close. Email is the guaranteed floor; Teams is a bonus channel that degrades gracefully (the `teams_notify` readiness item records `degraded` = email-only if the Scout bot isn't reachable).
 
 If the user asks "how will I be reminded" / "set up notifications," explain this; create the automation if missing. Keep the email subject/body exactly as `tick` returns — don't embellish.

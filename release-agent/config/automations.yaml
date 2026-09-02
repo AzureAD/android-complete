@@ -14,7 +14,13 @@
 #
 # Fields:
 #   slug     : stable short id for this automation (used in the registry + names)
-#   name     : display name; "{release}" is filled with the release id (YYYY-MM)
+#   label    : the automation's short purpose (e.g. "morning reminders"). The full display
+#              NAME is composed as "<release-id> · <scope> — <label>" where <scope> is the
+#              phase's display name (from phases.yaml) or an explicit `scope:` override — see
+#              orchestrator.automations.automation_name. This keeps every provisioned
+#              automation's title consistent and scannable.
+#   scope    : OPTIONAL override for the scope segment when an automation isn't bound to one
+#              phase (e.g. "Phases 2-4"). Defaults to the `phase` display name.
 #   phase    : the phase these steps belong to (all steps must be in it)
 #   steps    : "<phase>.<step>" ids this automation runs, in order
 #   every    : OPTIONAL. If set (e.g. "10 minutes"), this is an INTERVAL/poller
@@ -28,7 +34,7 @@ version: 1
 
 automations:
   - slug: ccd-morning
-    name: "Release {release} — CCD morning reminders"
+    label: "morning reminders"
     phase: ccd
     steps:
       - ccd.final_reminder      # email: code complete is TODAY
@@ -36,14 +42,14 @@ automations:
     purpose: "Send the CCD-day code-complete email + the Code reviews PR-merge reminder"
 
   - slug: ccd-noon
-    name: "Release {release} — CCD noon localization"
+    label: "noon localization"
     phase: ccd
     steps:
       - ccd.localization        # trigger pipeline 405133 (isCreatePrSelected=true)
     purpose: "Trigger the localization pipeline at noon"
 
   - slug: ccd-localization-poller
-    name: "Release {release} — localization poller"
+    label: "localization poller"
     phase: ccd
     every: "10 minutes"
     steps:
@@ -55,7 +61,7 @@ automations:
   # `rc-retriggered`); torn down when `poll-rc` reports `resolved`. Interval automation,
   # so its step needs no fire_at_local.
   - slug: build-verify-rc-poller
-    name: "Release {release} — RC verification poller"
+    label: "RC verification poller"
     phase: build_verify
     every: "30 minutes"
     on_demand: true
@@ -69,7 +75,7 @@ automations:
   # `complete` (all tests done) or the owner attests `bugbash_complete`. Interval
   # automation, so its step needs no fire_at_local.
   - slug: bug-bash-update-poller
-    name: "Release {release} — bug-bash update poller"
+    label: "bug-bash update poller"
     phase: bug_bash
     every: "2 hours"
     on_demand: true

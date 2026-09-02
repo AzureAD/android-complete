@@ -9,8 +9,8 @@ emails leak into Phase 5+.
 
 Scout-assisted: `build()` composes the closing email (the Phase-4-complete snapshot) and returns
 NeedsSkill(workiq_send_email); the payload names `record-status-email --final` as the follow-up.
-After sending + recording, the skill DEREGISTERS the 'Release status email' automation (see the
-finalize phase reference / knowledge).
+After sending + recording, the skill DEREGISTERS the daily partner status-email automation
+(`<release> · Phases 2–4 — daily status email`; see the finalize phase reference / knowledge).
 
 Mock knobs (mocks.local.yaml / tests):
   send_to : redirect recipients to these address(es) (owner → you) for a test send.
@@ -90,6 +90,6 @@ def build(state):
         record_as=ID,
         summary=f"Send the CLOSING {month_year} status email to "
                 f"{len(recipients)} recipient(s) + close the daily status automation",
-        note="final status email (Phase 4 complete); deregister the 'Release status email' automation after",
+        note="final status email (Phase 4 complete); deregister the daily status-email automation (`<release> · Phases 2–4 — daily status email`) after",
         outbound=True,
     )

@@ -162,6 +162,36 @@ def test_automation_plan_derives_specs_from_ccd():
     assert by["ccd-morning"]["registration"]["schedule"] == "cron: 0 9 9 9 *"
 
 
+def test_automation_names_follow_standard_format():
+    """Every provisioned automation title is `<release-id> · <scope> — <label>`, where <scope>
+    is the phase's DISPLAY name (from phases.yaml) and <label> is the yaml `label`. This keeps
+    titles consistent + scannable (release first, then phase, then purpose)."""
+    from orchestrator import automations as A
+    result = A.plan(CONFIG, "2026-09", "2026-09-09")
+    by = {a["slug"]: a for a in result["automations"]}
+    assert by["ccd-morning"]["name"] == "2026-09 · Code Complete Day — morning reminders"
+    assert by["ccd-noon"]["name"] == "2026-09 · Code Complete Day — noon localization"
+    assert by["build-verify-rc-poller"]["name"] == "2026-09 · Build & Lib Verification — RC verification poller"
+    assert by["bug-bash-update-poller"]["name"] == "2026-09 · Test / Bug Bash — bug-bash update poller"
+    # the registration name matches the display name (so the registry row is the standard title)
+    assert by["ccd-morning"]["registration"]["name"] == by["ccd-morning"]["name"]
+    # every name has exactly the three standard segments
+    for a in result["automations"]:
+        assert a["name"].startswith("2026-09 · ")
+        assert " — " in a["name"]
+
+
+def test_automation_name_helper_and_phase_label():
+    """The name-builder + phase-label helpers are the single source of the standard title."""
+    from orchestrator import automations as A
+    assert A.automation_name("2026-08", "Release-wide", "push reminders") == \
+        "2026-08 · Release-wide — push reminders"
+    # scope falls back to 'Release-wide' when empty (non-phase automations)
+    assert A.automation_name("2026-08", "", "x") == "2026-08 · Release-wide — x"
+    assert A.phase_label(CONFIG, "ccd") == "Code Complete Day"
+    assert A.phase_label(CONFIG, None) == "Release-wide"
+
+
 
 
 def test_automation_sync_repins_on_ccd_change():

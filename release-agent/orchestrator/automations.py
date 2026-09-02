@@ -38,6 +38,34 @@ def load_defs(config_path: str) -> list:
     return doc.get("automations", []) or []
 
 
+def phase_label(config_path: str, phase_id: str) -> str:
+    """The display name of a phase (from phases.yaml), e.g. 'ccd' -> 'Code Complete Day'.
+    Falls back to the raw id when unknown. Used to build a human automation scope."""
+    if not phase_id:
+        return "Release-wide"
+    try:
+        with open(config_path, "r", encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh) or {}
+        for p in (doc.get("phases") or []):
+            if p.get("id") == phase_id:
+                return p.get("name") or phase_id
+    except (OSError, yaml.YAMLError):
+        pass
+    return phase_id
+
+
+def automation_name(release: str, scope: str, label: str) -> str:
+    """The STANDARD automation title: '<release-id> · <scope> — <label>', e.g.
+    '2026-08 · Code Complete Day — morning reminders'. `scope` is the phase display name (or a
+    clear label like 'Release-wide' / 'Phases 2-4' for automations that aren't bound to one
+    phase); `label` is the automation's short purpose. Every provisioned automation — the
+    config/automations.yaml ones AND the skill-provisioned push-reminder / status-email ones —
+    uses this format so titles are consistent and scannable."""
+    scope = (scope or "Release-wide").strip()
+    return f"{release} · {scope} — {str(label).strip()}"
+
+
+
 def _step_fire_at(step_key: str):
     """The `fire_at_local` a step module declares (or None). step_key = '<phase>.<step>'."""
     phase, _, sid = step_key.partition(".")
@@ -160,7 +188,7 @@ def _prompt_for(spec: dict, release: str) -> str:
 
     # Default: send/trigger + record-step done (reminders).
     return (
-        f"Release {release} — {spec['name'].format(release=release)}.\n"
+        f"Release {release} — {spec['name']}.\n"
         f"It is Code Complete Day. For EACH of these steps in order: {step_list} —\n"
         f"1. run `step-action --release {release} --phase {spec['phase']} --step <step>`;\n"
         f"2. execute the returned needs_skill action (send the email / post the Teams "
@@ -188,7 +216,11 @@ def plan(config_path: str, release: str, ccd: str) -> dict:
         slug = d.get("slug", "?")
         s_steps = d.get("steps", []) or []
         interval = d.get("every")
-        name = d.get("name", slug).format(release=release)
+        # STANDARD name: '<release> · <scope> — <label>'. `label` is the short purpose; `scope`
+        # is the phase display name (or an explicit `scope:` override for non-phase automations).
+        label = d.get("label", slug)
+        scope = d.get("scope") or phase_label(config_path, d.get("phase"))
+        name = automation_name(release, scope, label)
         if interval:
             fire_at, sched, one_shot = None, f"every {interval}", False
         else:

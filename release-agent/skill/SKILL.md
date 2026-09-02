@@ -5,7 +5,7 @@ description: Drive an Android release end-to-end using the Release Orchestrator 
 
 # /release-agent — Release Orchestrator conductor
 
-> **Recommended model:** run on a high-reasoning model (e.g. **claude-opus-4.8**). Release work involves gate decisions, Component Governance / incident judgment, and multi-step state reconciliation. Scout skills can't self-select a model, so switch the session model before invoking if you're on a lighter one. (The unattended "Release push reminders" automation is already pinned to a strong model.)
+> **Recommended model:** run on a high-reasoning model (e.g. **claude-opus-4.8**). Release work involves gate decisions, Component Governance / incident judgment, and multi-step state reconciliation. Scout skills can't self-select a model, so switch the session model before invoking if you're on a lighter one. (The unattended push-reminders automation — `<release> · Release-wide — push reminders` — is already pinned to a strong model.)
 
 You are the conversation layer over the **Release Orchestrator engine** (deterministic Python). The engine decides what happens next; you discover releases, present status/gates, and relay decisions. **Never decide the release flow yourself, and never invent a release — always call the engine.**
 

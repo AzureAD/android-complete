@@ -152,14 +152,17 @@ class StatusViewMixin:
                 s_state = "blocked"          # a step hit a real problem — needs the owner
             elif rec.get("status") == "in_flight":
                 s_state = "in_flight"        # pipeline run still executing — Scout is polling
+            elif not phase_due:
+                # The phase hasn't opened yet — show EVERY not-yet-run step uniformly as
+                # "Not open yet" (this check precedes gate/scout/auto so scout steps don't
+                # mislabel as "automatic" in an unopened phase — that mix is confusing).
+                s_state = "scheduled"
             elif s["id"] == self.state.current_step and self.state.status == "holding_gate":
                 s_state = "gate"
             elif is_scout:
                 s_state = "scout"            # Scout's automatic work — never a user "do this"
             elif s["id"] == self.state.current_step and self.state.status == "awaiting_action":
                 s_state = "reminder"
-            elif not phase_due:
-                s_state = "scheduled"
             elif s.get("owner") == "human" or s.get("attest") or self._is_reminder(s):
                 s_state = "pending"          # a human step queued behind a dependency
             else:
