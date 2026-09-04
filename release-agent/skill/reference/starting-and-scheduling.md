@@ -1,0 +1,115 @@
+# Reference — Starting a release, CCD scheduling & push reminders
+
+_Loaded on demand. Covers `init`, the push-reminder automation, CCD anchoring/conflicts, and the daily digest._
+
+## Starting a release (don't make the user type a date format)
+
+The release id is just `YYYY-MM`. **You compute it — never ask the user to type the format.** Work out the current month from today (e.g. today 2026-07 → `2026-07`).
+
+When no release is active (or the user says "start a release"), call **`m_ask_user`** with clickable options:
+- **"Current month (`<YYYY-MM>`)"** ← recommended
+- **"A different month"**
+
+Pick current → `init --release <id>` immediately. Pick different → follow-up `m_ask_user` free-text (hint: "e.g. next month, or 2026-08"); accept natural answers ("this month", "August") and do the date math yourself. Runs are real — for test runs the engineer keeps a `mocks.local.yaml` (skip/redirect/inject per step; see `mock-spec`).
+
+`init` records the **release owner** (the engineer running it) from the signed-in `az` user; reminders email that address. Pass `--owner-email`/`--owner-name` for a richer profile (e.g. from `workiq_get_my_profile`), or change later with `set-owner`. Never hardcode a recipient.
+
+**The release NAME (ship month) is confirmed UP FRONT, in the single start prompt — not again after `init`.** A release is named for the month it **ships**, which is the code-complete month **+ 1** — a release whose CCD is in September is the **"October" release**. The start prompt (see SKILL.md → "start a release") already shows the user the ship-month name **and** the CCD date together (from `preview-release`) and gets their confirmation, so by the time you call `init` the name is settled. `init` stores it as `target_month` (e.g. `2026-10`) and prints it ("Release name: October 2026 release") — **do NOT ask a second time.** This name is what every doc/comms step uses (bug-bash invite, announcements, the payload wiki page). If the user later wants a *non-standard* display name (rare — the ship-month default is almost always right), override it with `set-target-month --release <id> --month <YYYY-MM>` (display-only — it does NOT touch `release_id`, the CCD, branches, or scheduling).
+
+## Ensure push reminders exist (per release — provisioned at start, torn down at close)
+
+Right after `init`, make sure the **push-reminder automation** exists for THIS release so reminders reach the user even with Scout closed. Per-release: created at start, removed at close.
+1. `m_list_automations`. If **"`<YYYY-MM> · Release-wide — push reminders`"** exists AND `automation list --release <YYYY-MM> --json` has it scoped to this release, **leave it** — don't duplicate.
+2. If missing, `m_create_automation`:
+   - **name:** `<YYYY-MM> · Release-wide — push reminders`  (fill `<YYYY-MM>` with the release id — the standard `<release-id> · <scope> — <purpose>` title)
+   - **schedule:** `every hour`
+   - **teamsNotify:** `never`
+   - **prompt:** From `<AGENT_ROOT>` (**substitute the absolute confirmed release-agent path** — see SKILL.md → FIRST RUN — since this runs headless with no one to resolve a placeholder; e.g. run `paths --json` and paste the real `agent_root`), advance the active release **AUTONOMOUSLY** (no user is watching) and send the daily digest:
+     1. Run `python -m orchestrator.cli status --json`. If there is **no** release, or it is **unsigned / halted / complete**, STOP silently.
+     2. **Run Scout's own steps until none remain.** Loop: run `next --json`; read `scout_pending`; if empty, go to step 3; else for EACH id: run `step-action --release <id> --phase <phase> --step <stepId>` (Phase 0 = `preflight`), perform the returned `needs_skill` `tool`+`payload` via the matching MCP tool (`workiq_send_email` / `workiq_send_chat_message` / `azure_devops-pipelines_run_pipeline`, honoring `test_redirect`), then finalize with `record-step … --status pass` — **UNLESS** the action names a follow-up engine command (via `payload.followup_command`, or the known two-hop steps: `check-lockdown`, `record-localization-run`/`check-localization`, and **`record-rc-report`** for `rc_report` — send the RC email, then run `record-rc-report`, which applies the 90% UI gate and records pass/block), which you run instead as the action describes. **Headless safety copy:** whenever a `needs_skill` action has **`outbound: true`**, after performing it also `m_send_teams_message` a **ONE-LINE** courtesy copy — `🤖 [release <id>] Autonomous: <summary>.` — so the owner sees what went out (never paste the full email/message body). A scout step that records `attention` is left blocked (it surfaces in the digest). Do it silently.
+     3. Run `python -m orchestrator.cli tick --json` → `{message, html, subject, owner_email, owner_name, release, channels, teams}`. If `message` is empty, STOP (nothing due / already sent today). Otherwise deliver on every enabled channel:
+        - **Email** (when `channels.email`): `workiq_send_email` (`to:[owner_email]`, `subject:` the value, `body:` the `html` with `isHtml:true` — fall back to plain `message`/`isHtml:false` only if `html` empty). Recipient from `owner_email` — never hardcode.
+        - **Teams** (when `channels.teams` and `teams` is non-null): dispatch on `teams.via` —
+          - `"scout_bot"` (default): `m_send_teams_message` with `message:` the `teams.text` value (the **markdown** digest, sent verbatim). This is the **Scout Teams bot** DM — the owner's Scout notification channel. Requires the Teams relay connected (`m_relay_status`); if it's down, email still covers it.
+          - `"chat"`: `workiq_send_chat_message` with **exactly** the `teams` block fields (`chatId`, `content`, `contentType`) — only used when a specific shared chat is configured.
+
+     The `teams` descriptor is only present when a digest is actually due (it respects the same once-per-day de-dup), so delivering it never double-notifies. The digest is identical across channels — send it verbatim, don't embellish. Channels are configured in `config/notifications.yaml`.
+3. **Register it** so it's torn down at close: `automation register --id <id> --name "<YYYY-MM> · Release-wide — push reminders" --release <YYYY-MM> --purpose "hourly autonomous advance (runs scout steps) + phase digest to owner (email + Teams)"` — no `--step`, so it's recorded as a **release-level** automation (it advances the whole release, owns no step).
+
+Do it silently as part of start (the user already opted into push). **Why hourly, not once at 9am:** `tick` is idempotent (advancing no-ops once holding; digest de-dupes to one email/day), so a tick missed while the machine was off is picked up by the next. A single daily trigger would be skipped that day.
+
+## Ensure the daily partner status email exists (per release — provisioned at start, closed at end of Phase 4)
+
+Alongside the push reminders, provision the **partner status email** — an **end-of-day** business-day email to the release DLs (`authsdkrelease@`, `androididentity@`) with the milestone dashboard, sent while the release is in flight (**Phase 2 build_verify through Phase 4 finalize**). EOD so it reports the day's SETTLED progress (matches the checklist's "📧 End-of-day: send status email").
+1. `m_list_automations`. If **"`<YYYY-MM> · Phases 2–4 — daily status email`"** is already scoped to this release, leave it.
+2. If missing, `m_create_automation`:
+   - **name:** `<YYYY-MM> · Phases 2–4 — daily status email`  (fill `<YYYY-MM>` with the release id — the standard `<release-id> · <scope> — <purpose>` title)
+   - **schedule:** `every weekday at 5pm`  (end of day; weekends are skipped natively; the command also skips US holidays and the window)
+   - **teamsNotify:** `never`
+   - **prompt:** From `<AGENT_ROOT>` (**substitute the absolute confirmed release-agent path** — see SKILL.md → FIRST RUN — since this runs headless; `paths --json` prints the real `agent_root`), send the daily partner status email if one is due:
+     1. Run `python -m orchestrator.cli status-email --release <YYYY-MM> --json`. **For a TEST release, add `--send-to <you@microsoft.com>`** so the real DLs are never emailed.
+     2. If `skip` is `true` (reasons: out of the Phase 2-4 window, weekend/holiday, or already sent today), **STOP silently**.
+     3. Otherwise `workiq_send_email` with `to:` the payload `to`, `subject:` the `subject`, `body:` the `html` (`isHtml:true`). Then run `python -m orchestrator.cli record-status-email --release <YYYY-MM>` to stamp the day. **Headless safety copy:** `m_send_teams_message` a one-line courtesy — `🤖 [release <id>] Sent daily status email.` (never paste the body).
+3. **Register it** for teardown: `automation register --id <id> --name "<YYYY-MM> · Phases 2–4 — daily status email" --release <YYYY-MM> --purpose "business-day partner status email (Phase 2-4)"`.
+
+**Closing it (end of Phase 4).** The terminal `finalize.final_status_email` step sends the guaranteed CLOSING status email (it names `record-status-email --final` as its follow-up). **After that step completes, deregister the "`<YYYY-MM> · Phases 2–4 — daily status email`" automation** (`automation deregister --id <id>`) so no status emails run into Phase 5+. This handles the case where Phase 4 and Phase 5 complete the same day — the terminal step guarantees the last email even if the daily 5pm run wouldn't fire again. (Release close removes it as a backstop.)
+
+
+## Provision the timed phase automations (config-driven, per release)
+
+Some steps must fire at a specific time of day (not just "on their date") — e.g. the CCD-day comms at 09:00 and the localization trigger at noon. These are declared as DATA in `config/automations.yaml`, which maps each automation to the exact steps it drives; the fire time is derived from each step module's `fire_at_local`. **Provision them only once the CCD is CONFIRMED** — the schedules are cron-pinned to the CCD date, so a wrong/unsettled CCD pins them to the wrong day. Concretely: wait until the CCD is settled (`status --json` shows no `ccd_conflict`, and — for a normal start — the entry gate's `ccd_confirmed` item has passed). Then:
+
+1. `python -m orchestrator.cli automation plan --release <YYYY-MM> --json` — returns the concrete automations to create (`name`, `schedule`, `steps`, `slug`, `purpose`, `prompt`, `registration`). If `problems` is non-empty, STOP and report — the config/step mapping drifted. If `ccd` is null, STOP — set the CCD first.
+2. For each automation in the result, skip if `automation list --release <YYYY-MM> --json` already has one with the same `slug` (don't duplicate). Otherwise `m_create_automation`:
+   - **name / schedule / prompt:** exactly the values from the plan (the schedule is a **cron pinned to the exact CCD date** — e.g. `cron: 0 9 26 8 *` for 09:00 on Aug 26 — NOT `every wednesday`, which fires the next weekday and would run the CCD-day comms a week early; set **oneShot:true** for the cron ones).
+   - **teamsNotify:** `never` (it emails/posts via the steps themselves).
+3. **Register it WITH its steps, slug, and schedule** so the linkage is recorded (torn down at close) AND the schedule is stored (so `automation sync` can re-pin it if the CCD moves) — copy the plan spec's `registration` fields, filling the real Scout id:
+   `automation register --id <scout-id> --name "<name>" --release <YYYY-MM> --slug <slug> --schedule "<schedule>" --purpose "<purpose>" --step <phase.step> [--step …]`
+
+**Traceability:** every timed step is owned by exactly one automation (a guardrail test enforces this). Each registry entry has a **kind** — `step-driving` (owns steps, e.g. the CCD automations) or `release-level` (whole-release, no steps, e.g. push reminders), auto-derived from whether you pass `--step`. To answer "which automation runs step X?" → `automation list --release <YYYY-MM> --step-filter <phase.step>`. To see "what does this automation drive?" → `automation list --release <YYYY-MM>` (each row shows its `[kind]` and `drives: …`, or `(release-level — no steps)`). At runtime each step-driving automation journals `<slug> ran <step>` into the release event log, so the whole chain (config → registered automation → step execution) is inspectable.
+
+### Any automation you provision MUST be registered (for teardown)
+- **Per-release** (normal, e.g. push reminders, the CCD phase automations) → `--release <YYYY-MM>` (+ `--step` for step-driving ones). **Removed when that release closes.**
+- **Shared/persistent** (rare — genuinely meant to outlive every release) → `--shared`. Not torn down. Default per-release.
+
+At **release close** (status complete / Release Close phase / user asks to "clean up automations"):
+1. `automation list --release <YYYY-MM> --json` — the release's automations.
+2. For each: `m_delete_automation` (id from entry), then `automation deregister --id <id>`.
+3. Shared automations aren't in the release-scoped list — leave them. Confirm before deleting; report what was removed.
+
+## Code Complete Date (CCD) & phase scheduling
+
+Phases are **anchored to the CCD**, not started on demand. **The CCD is the 2nd Wednesday of the release month — the canonical default.** `init` computes it and prints when Phase 0 opens.
+
+`init` also *reads* the pipeline (ADO 3038 `overrideCodeCompleteDate`) but **does not silently adopt it.** A **different in-month date** is a **conflict to resolve**: status shows *"⚠ Confirm the date"* and `status --json` sets `ccd_conflict`. Ask the user which is the real CCD via `m_ask_user`:
+- **"Use the 2nd-Wednesday default (`<default>`)"** — then offer to sync the pipeline: `set-ccd --release <id> --default --reason "<why>"` (preview) → show it → `--confirm` to clear the override.
+- **"Use the pipeline date (`<pipeline>`)"** — `set-ccd --release <id> --date <pipeline> --reason "confirmed CCD is <pipeline>" --confirm`.
+
+Either resolution clears the conflict. Never pick for the user.
+
+- **Phase 0 opens at CCD‑7.** You can `init` anytime, but until CCD‑7 the release sits in **`scheduled`** — the engine runs nothing. Status says *"🗓 Scheduled — Pre‑flight opens `<date>` (in N days)."* Relay plainly; don't force it.
+- At CCD‑7, `next` opens Phase 0 and runs to the first gate.
+- **Testing the clock:** every read/advance command accepts `--as-of YYYY-MM-DD` to simulate the date. Normal runs use today.
+
+**Changing the CCD (real production change).** `set-ccd` **writes the pipeline override** — gated: run without `--confirm` first (preview) → present → explicit yes (a `--reason` is always required) → re-run with `--confirm`. Month-scoped (date must be in the release month). `--default` reverts to 2nd-Wednesday.
+
+**After ANY confirmed CCD change, re-sync the CCD-day automations.** Their cron schedules are pinned to the old CCD, so a moved CCD leaves them firing on the wrong day (`set-ccd` prints a ⚠ reminder when step-driving automations are registered). Run **`automation sync --release <YYYY-MM> --json`** → `{ccd, updates:[{id, name, slug, current_schedule, desired_schedule, changed}]}`. For every entry with **`changed: true`**: call **`m_update_automation`** with `id` and `schedule: desired_schedule`, then **re-register** it so the stored schedule matches: `automation register --id <id> --name "<name>" --release <YYYY-MM> --slug <slug> --schedule "<desired_schedule>" --step <…>`. Entries with `changed:false` are already correct — skip them. (The interval poller never changes.) Do this silently as part of the CCD change.
+
+**Skipping/cancelling the release.** Same gated pattern: `skip-release` sets the pipeline `skipRelease` switch (preview → confirm, reason required); `--clear` re-enables. Suppresses the monthly trigger — confirm before `--confirm`.
+
+**Ongoing conflict detection.** `status`/`resume` re-read the pipeline; a later differing override re-surfaces `ccd_conflict` — ask again. (`--no-pipeline-check` only if offline.)
+
+## Push reminders — the daily phase digest (reaching the user when Scout is closed)
+
+Everything else is **pull** (seen when the user opens Scout). The **push** layer is a **daily phase status digest** delivered to the release owner — by **email and (if enabled) Teams**:
+- **Setup is interactive — no push.** Readiness checklist + establishing CCD happen live in Scout; never pushed. Unsigned / blocked / halted releases stay silent.
+- **The first push is a phase opening.** Phase 0 opens at CCD‑7 — the first digest. Nothing before a phase opens.
+- **Not while Scout still owes steps on the open phase.** A phase's digest reports the *settled* "here's what needs **you**" picture, so it holds while the phase has un‑run Scout steps (`scout_pending` — e.g. Phase 0's notice / feature‑owner reminders / lockdown). The digest fires once Scout has drained its own steps, so the owner never gets a premature email that lists Scout's undone work. (A step that *blocks* becomes a real user task and does push.)
+- **Daily while a phase has outstanding work.** Once open (and Scout's steps drained), the owner gets a **once‑per‑day** digest (progress + what needs them) until the phase's actions are done; the next phase's digest takes over when it opens.
+- **Channels** are set in `config/notifications.yaml` (`channels.email`, `channels.teams`; `teams.target: scout` → the **Scout Teams bot** DM via `m_send_teams_message`, or an explicit chat id for a shared chat). Purpose: keep the **release owner** aware and pull them in when a step needs them. Anyone else is notified only when a specific step requires it (that's the step-driving automations, e.g. the CCD reminders) — not this digest.
+
+`tick` is the deterministic automation half: `tick --json` first **advances** the release (runs runnable steps, holds at gates/actions — idempotent), then returns `{message, html, subject, owner_email, owner_name, release, channels, teams}` — `message` plain-text digest, `html` rich version, `channels` the enabled map, `teams` a delivery descriptor (`{via:"scout_bot", text}` for the Scout bot, or `{via:"chat", chatId, content, contentType}` for an explicit chat, or null); all empty/null when nothing's due or already sent today. (`notify --json` is the read-only variant — same payload, does NOT advance.) `--as-of <date>` debug clock; `--force` bypasses once‑per‑day.
+
+The **"`<YYYY-MM> · Release-wide — push reminders`"** automation is **autonomous** and runs **hourly**: it (1) advances the release, (2) **runs Scout's own steps** for the open phase — `scout_pending` steps that need MCP: it performs each `step-action` (send the early-release notice email, post feature-owner reminders, run the lockdown check, trigger localization…) and records it, exactly as the interactive skill would — then (3) delivers the daily digest via `tick --json` on every enabled channel (`channels`): **email** (`html`/`message` → `owner_email`, subject from JSON — never a hardcoded address) and, when `teams` is non-null, **Scout Teams** (`m_send_teams_message` with the markdown `teams.text` for the `scout_bot` target, or `workiq_send_chat_message` for an explicit chat). Empty `message` → silent. **Headless safety copy:** because these outbound actions happen with no one watching, every `needs_skill` action flagged **`outbound: true`** (email / Teams post / pipeline trigger) also drops a **one-line** courtesy copy in the owner's Scout DM (`🤖 [release <id>] Autonomous: <summary>`) so they see what went out — the local `lockdown` scrape is `outbound: false` and stays quiet. Per‑release: auto‑provisioned at start, torn down at close. Email is the guaranteed floor; Teams is a bonus channel that degrades gracefully (the `teams_notify` readiness item records `degraded` = email-only if the Scout bot isn't reachable).
+
+If the user asks "how will I be reminded" / "set up notifications," explain this; create the automation if missing. Keep the email subject/body exactly as `tick` returns — don't embellish.

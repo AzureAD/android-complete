@@ -1,0 +1,15 @@
+# Test Phase 2 END-TO-END against the REAL pipelines: fast-forwards Phases 0-1,
+# then runs the four verification steps LIVE (real `az` reads of the 2026-08
+# checker → orchestrator → ECS/Local MRWP runs), auto-advances rc_report, and lands
+# positioned at the bug-bash entry (go_test was removed — rc_report's 90% UI gate is the
+# decision). Seeds the real release, so afterwards use the normal skill: status / next.
+#
+#   release-agent sim run --scenario build_verify_live
+#
+name: build_verify_live
+release_id: 2026-08
+ccd: 2026-08-26
+ccd_source: confirmed
+as_of: CCD+2
+target: { phase: build_verify, at: done }
+data: live          # the 4 build_verify steps hit real az; earlier phases are mocked

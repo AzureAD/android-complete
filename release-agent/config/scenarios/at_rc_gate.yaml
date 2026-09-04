@@ -1,0 +1,51 @@
+# Fast-forward THROUGH Phase 2 (Build & RC Verification): the four verification steps
+# resolve from deterministic OFFLINE mocks (no az) and stash the pipeline ids, then the
+# rc_report step auto-advances (go_test was removed — rc_report's 90% UI gate is the
+# decision). Lands positioned at the entry of Phase 3 (bug bash). Use this to exercise
+# the RC verification chain, the pipeline-id stash, and the status render without touching
+# the network.
+#
+#   release-agent sim run --scenario at_rc_gate
+#
+name: at_rc_gate
+release_id: 2026-08
+ccd: 2026-08-26
+ccd_source: confirmed
+as_of: CCD+2
+target: { phase: build_verify, at: done }
+data: mock
+mocks:
+  build_verify.checker_fired:
+    triggering: { run: { id: 1678599, queueTime: "2026-08-13T06:00:00Z" }, result: succeeded }
+  build_verify.orchestrator_health:
+    run:
+      id: 1678611
+      tags: [ "AuthenticatorBranch=release-2026-08-13", "NextCommonVersion=24.6.0",
+              "NextMsalVersion=8.4.2", "NextBrokerVersion=16.5.0",
+              "RC1-ECS=1678863", "RC1-Local=1678864" ]
+    stages:
+      - { name: "Validate Branch and Versions availability", state: completed, result: succeeded }
+      - { name: "Create Release Branches", state: completed, result: succeeded }
+      - { name: "Trigger RC Testing", state: completed, result: succeeded }
+      - { name: "Remove RC Tags", state: pending, result: null }
+  build_verify.mrwp_ecs:
+    mrwp_id: "1678863"
+    stages:
+      - { name: "Build", state: completed, result: succeeded }
+      - { name: "UI Automation", state: completed, result: failed }
+    tests: { total: 5871, passed: 5767, failed: 104 }
+  build_verify.mrwp_local:
+    mrwp_id: "1678864"
+    stages:
+      - { name: "Build", state: completed, result: succeeded }
+      - { name: "UI Automation", state: completed, result: failed }
+    tests: { total: 5856, passed: 5756, failed: 100 }
+  build_verify.auth_ecs:
+    auth_build: { build_id: 1678900, rc: 1, version: "0.0.02468-rc-RC1-ecs",
+                  status: completed, result: succeeded }
+    test_build: 1678901
+    suites:
+      "Firebase Test Lab - UIAutomator E2E Tests":
+        { present: true, passed: 96, failed: 4, total: 100, pct: 96.0 }
+      "Firebase Test Lab - Monthly UI Tests":
+        { present: true, passed: 306, failed: 0, total: 306, pct: 100.0 }

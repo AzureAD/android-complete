@@ -1,0 +1,30 @@
+# Test-distribution config for Phase 3 (bug_bash) — the `distribute_tests` step.
+# This is DATA (not code): who receives tests, who's always excluded, and how the two
+# test sets are defined. The on-call team id is NOT here — it is read from
+# readiness.yaml (oncall_now.team_id) so the entry gate and this step share ONE source.
+
+version: 1
+
+# The team the tests are distributed across — a mail-enabled group (DL). Its members are
+# resolved live via Microsoft Graph.
+roster_group: "androididentity@microsoft.com"
+
+# People ALWAYS removed from distribution (in addition to the release owner + the current
+# on-call engineer, which are resolved per-release).
+always_excluded:
+  - "moghosh@microsoft.com"     # Moumita Ghosh
+  - "veenasoman@microsoft.com"  # Veena Soman
+
+# The two test sets to distribute (combined into one even split across the eligible team).
+broker:
+  # The Broker master plan's static parent suite whose subtree holds the manual tests.
+  # The release's CLONED plan references the same cases; we distribute those.
+  master_plan: 2007357
+  suite_name: "Manual Tests (Android Broker)"
+
+authenticator:
+  # The Authenticator bug-bash query set (tools.testplans.auth_bugbash_query), minus test
+  # cases carrying any of these tags (Automated run in CI; Blocked can't be run manually).
+  exclude_tags:
+    - "Automated"
+    - "Blocked"

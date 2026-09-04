@@ -1,0 +1,151 @@
+# Release readiness checklist — the ENTRY GATE.
+# The engine blocks (status = readiness_gate) until EVERY item is satisfied.
+# All items are equally required — there is no per-item priority.
+#
+# The ONLY distinction is WHO resolves an item (the `verify` field):
+#   auto    -> Scout resolves it (verifies programmatically). Result is pass or fail;
+#              if it can't be fully proven, it is NOT auto. Two execution sources:
+#                * (default) a Python verifier in phases/readiness_verifiers.py (uses az/http)
+#                * source: scout -> the SKILL runs the check via its MCP tools (e.g. ICM)
+#                  and records the result with `record-check`; the Python engine skips it.
+#   attest  -> The engineer resolves it (confirms). Used for anything Scout cannot
+#              fully prove (physical devices, portal sign-in).
+#
+# If any item is unsatisfied the gate stays closed. If the engineer cannot satisfy
+# an attest item, they resolve it or hand the release to someone who can.
+#
+# Edit this file to change the entry checklist — it is data, not code.
+
+title: "Release readiness — entry gate"
+instructions: >
+  Clear every item before Phase 0 can start. Scout verifies the auto items; you
+  attest the rest. Every item is required — the release cannot start until all are
+  satisfied.
+blocked_message: >
+  This item is required and is not satisfied, so the release cannot start. Resolve
+  it — or, if you cannot, hand the release to another engineer who can (notify your
+  manager / the release team). The new owner runs /release-agent and completes the
+  checklist themselves.
+
+items:
+  # ---- AUTO: fully verified by Scout (pass/fail, no half-measures) ----
+  # `label` = short name for the table; `detail` = PLAIN cell text (no inline links —
+  #   markdown links don't render inside Scout table cells). Links go in `links`
+  #   (list of {name,url}) and are rendered as a clickable reference list BELOW the table.
+  #   For build_access the detail + links are generated from the live check results.
+  - id: build_access
+    label: "Build definitions accessible"
+    text: "Release build definitions are accessible"
+    verify: auto
+    verifier: build_defs
+    checks:
+      - type: ado_build_def
+        name: "Auth Client Android (Engineering #2828)"
+        org: "https://identitydivision.visualstudio.com/"
+        project: "Engineering"
+        id: 2828
+        url: "https://identitydivision.visualstudio.com/Engineering/_build?definitionId=2828"
+      - type: ado_build_def
+        name: "Android Build Release (One #397224)"
+        org: "https://msazure.visualstudio.com/"
+        project: "One"
+        id: 397224
+        url: "https://msazure.visualstudio.com/One/_build?definitionId=397224"
+
+  # Everything the tool needs to run UNATTENDED (machine on, Scout not focused):
+  # the MCP servers registered, and the permissions set so scheduled work (the
+  # daily digest, Teams reminders, browser checks) runs without a prompt.
+  - id: ccd_confirmed
+    label: "CCD reconciled with pipeline"
+    text: "The Code Complete Date is a valid future date, reconciled with the pipeline (no unresolved override)"
+    detail: "Scout validates the CCD end-to-end: it must be future-dated (a past CCD — e.g. a current-month release whose 2nd-Wednesday default already passed — is invalid and BLOCKS until rescheduled), and it must agree with pipeline 3038's override (a differing override BLOCKS until reconciled). Because every phase is CCD-relative, a wrong CCD misaligns the whole release. If the CCD leaves Phase 0 (CCD-7→CCD) with less than its normal 7-day window, Scout WARNS about the compressed prep window but still lets you proceed."
+    verify: auto
+    source: scout          # the SKILL runs check-ccd (reads the pipeline via az) + may reconcile interactively
+    verifier: ccd_confirmed
+
+  - id: mcp_servers
+    label: "MCP servers registered"
+    text: "The MCP servers the release needs (ICM on-call, Kusto/ADX telemetry, Teams comms) are registered in Scout"
+    detail: "Scout checks the ICM + Kusto/ADX + Teams MCP servers are registered in your Scout config (needed for the on-call and telemetry checks, and to fill Teams comms gaps WorkIQ lacks)."
+    verify: auto
+    verifier: mcp_servers
+
+  - id: silent_perms
+    label: "Silent-run permissions"
+    text: "Permissions allow fully unattended runs — shell, WorkIQ (email + Teams), the browser, and the ICM + Kusto/ADX MCP servers are auto-approved so scheduled work and the on-call/telemetry checks never stall on a prompt"
+    detail: "Scout checks shell, WorkIQ (email + Teams), the browser, and the ICM + Kusto/ADX MCP servers are all auto-approved so the daily automation and the readiness on-call/telemetry checks run silently when Scout isn't focused."
+    verify: auto
+    source: scout          # only the skill can read Scout's own settings (m_get_settings)
+    verifier: silent_perms
+    # The servers that must be auto-approved for a fully-silent run (kept as data).
+    # Includes the MCP servers the readiness auto-checks call: `kusto` (adx_access) and
+    # `icm` (oncall_now) — otherwise those checks prompt on first run.
+    required_servers: [shell, workiq, playwright, kusto, icm]
+    # OPT-OUT (soft): enabling silent runs needs the user to turn on the Scout master
+    # toggle "Allow AI to request permission changes" (allowModelPermissionsChange) —
+    # which ONLY the user can flip in the UI. The skill offers to enable silent runs;
+    # if the user declines, it records `degraded` (proceed WITHOUT silent runs) and the
+    # gate still clears. Downside recorded: the daily digest / Teams reminders / browser
+    # checks will PROMPT when Scout isn't focused and can stall until the user opens Scout.
+    opt_out: true
+
+  - id: teams_notify
+    label: "Scout Teams notifications"
+    text: "The daily release digest can reach you over the Scout Teams bot (in addition to email)"
+    detail: "Scout checks the Teams relay is connected and the Scout bot is reachable, so the hourly `tick` digest can be delivered to you in Teams as well as email. Falls back to email-only if Teams isn't reachable."
+    verify: auto
+    source: scout          # only the skill can reach the relay (m_relay_status/connect) + bot (m_send_teams_message)
+    verifier: teams_notify
+    # OPT-OUT (soft): email is the guaranteed channel, so Teams is a bonus. If the relay
+    # won't connect or the Scout bot has no conversation yet (never messaged), the skill
+    # records `degraded` (email-only) and the gate still clears — it never blocks a release.
+    opt_out: true
+
+  # ---- ATTEST: the engineer confirms (Scout cannot fully prove these) ----
+  # `detail` is the table-cell text and MAY contain inline markdown links
+  # (they render fine inside Scout table cells).
+  - id: adx_access
+    label: "ADX release dashboard"
+    text: "You can query the ADX release-telemetry cluster (Scout verifies via Kusto)"
+    detail: "Scout verifies you can query the [ADX release dashboard](https://dataexplorer.azure.com/dashboards/ab7abd7e-c36f-4ff0-88a7-aaa3ec014bd7)'s cluster."
+    verify: auto
+    source: scout          # the SKILL queries Kusto (the Python engine can't reach the MCP)
+    verifier: kusto_access
+    cluster_uri: "https://idsharedeus2.eastus2.kusto.windows.net"
+    database: "d496be22d62a46b0a3cf67ea2e736fd8"
+
+  - id: oncall_now
+    label: "Not on-call now"
+    text: "You are NOT currently the Android on-call (Scout verifies via ICM)"
+    detail: "Scout verifies you are not the current Android [on-call](https://aka.ms/androidoncall) for Auth Client Android Shield."
+    verify: auto
+    source: scout          # the SKILL checks ICM (the Python engine can't reach the MCP)
+    verifier: oncall
+    team_id: 78848
+    team_name: "Auth Client Android Shield"
+
+  - id: play_console_access
+    label: "Play Console access"
+    text: "You can open the Play Console app dashboard (sign in and confirm it loads)"
+    detail: "Open the [Play Console dashboard](https://play.google.com/console/u/0/developers/6720847872553662727/app/4972501392087484764/app-dashboard) and confirm it loads."
+    verify: attest
+
+  - id: oncall_window
+    label: "Free during release window"
+    text: "You are NOT scheduled on-call during the release window"
+    detail: "Confirm you are NOT scheduled Android [on-call](https://aka.ms/androidoncall) during the release window."
+    verify: attest
+    window_start_anchor: "CCD-7"   # window opens 7 days before Code Complete
+    window_end_anchor: "CCD+14"    # …through 14 days after
+
+  - id: saw_ame
+    label: "SAW + AME"
+    text: "SAW machine and AME account are accessible — log into SAW, confirm the desktop loads, and sign in with your AME credentials"
+    detail: "Log into [SAW](https://aka.ms/saw), confirm the desktop loads, and sign in with your AME credentials."
+    verify: attest
+
+  - id: yubikey
+    label: "YubiKey in hand"
+    text: "YubiKey in hand (no YubiKey? pick one up at Studio A 1909, Bldg 34/35 cafe, or order a DSR USB-C thumbdrive)"
+    detail: "YubiKey in hand — no YubiKey? Studio A 1909, Bldg 34/35 cafe, or [order a DSR USB-C](https://cloudmfa-support.azurewebsites.net/SecurityKeyServices/SecurityKey)."
+    verify: attest

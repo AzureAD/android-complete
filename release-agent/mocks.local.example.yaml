@@ -1,0 +1,134 @@
+# mocks.local.example.yaml — copy to `mocks.local.yaml` to use it.
+#
+# `mocks.local.yaml` is GITIGNORED: your personal testing file, never pushed.
+# When present, the engine REPLACES the listed steps on every `next` / `step-action`.
+# Everything NOT listed runs for real, so you keep driving the release through Scout
+# normally — the mocked steps just resolve themselves.
+#
+# TWO layers of control (see `python -m orchestrator.cli mock-spec` for the live list):
+#
+#   1) Engine-level — works for EVERY non-gate step in EVERY phase:
+#        outcome: done            # mark complete, skip its real work
+#        outcome: blocked         # hold for the owner (rehearse the block path)
+#        note: "..." / reason: "..."
+#
+#   2) Per-step payload overrides — only where a step DECLARES them (its MOCKABLE
+#      spec). These keep the action REAL but redirect it. Currently:
+#        preflight.notice          send_to: ["me@microsoft.com"]   # real email, only to me
+#        preflight.flight_reminder send_to: me                     # real Teams post, my own chat
+#      Unknown keys are reported back as `unknown_overrides` so typos show.
+#
+# Gate steps (🚦 below) are NOT mockable — a gate needs a real human decision.
+
+# ============================================================================
+# ACTIVE example (delete/edit as you like): real run, skip the CG query.
+# ============================================================================
+preflight.cg:
+  outcome: done
+  note: "mocked: CG clean for local testing"
+
+
+# ============================================================================
+# FULL SAFE-TEST PROFILE — uncomment ALL of this to run the whole flow with ZERO
+# real side-effects (no emails, no Teams posts, no ADO writes, no live az/MCP).
+# Clears the entry gate offline and mocks every Phase-0 side-effect.
+#   Then just drive the release through Scout normally ("start a test release for
+#   <month>", "continue", …) — nothing special to type. Still sign the attest items
+#   (oncall_window, saw_ame, yubikey, play_console_access, confirm_reminders, vitals)
+#   when Scout asks — those are human confirmations with no side-effects.
+# ============================================================================
+# # -- entry gate: force the real ADO/config/MCP checks to pass --
+# readiness.build_access: { outcome: pass }
+# readiness.mcp_servers:  { outcome: pass }
+# readiness.silent_perms: { outcome: pass }
+# readiness.adx_access:   { outcome: pass }
+# readiness.oncall_now:   { outcome: pass }
+# # -- Phase 0: no real sends / writes / network --
+# preflight.notice:          { outcome: done }     # or { send_to: ["you@microsoft.com"] } to really receive it
+# preflight.flight_reminder: { outcome: done }     # or { send_to: me } to really get it in your chat
+# preflight.lockdown:        { outcome: done }
+# preflight.breaking:        { changelog: "vNext\n----\n- [MINOR] x (#1)\nVersion 1.0.0\n" }
+# preflight.cg:              { alerts: [] }
+# preflight.cron:            { run: { queueTime: "2026-08-14T12:00:00Z", result: succeeded } }
+
+
+# ============================================================================
+# FULL CATALOG — uncomment any line and add a behavior. `{ outcome: done }` shown;
+# swap for `{ outcome: blocked, reason: "..." }` to rehearse a hold.
+# ============================================================================
+
+# ---- Phase 0 · preflight ----
+# preflight.notice:            { send_to: ["me@microsoft.com"] }  # scout — or { outcome: done }
+# preflight.flight_reminder:   { send_to: me }                    # scout — or { outcome: done }
+# preflight.confirm_reminders: { outcome: done }                  # attest
+# preflight.lockdown:          { outcome: done }                  # scout
+# preflight.breaking:          { outcome: done }                  # agent
+# preflight.cg:                { outcome: done }                  # agent  (active above)
+# preflight.vitals:            { outcome: done }                  # attest
+# preflight.cron:              { outcome: done }                  # agent
+
+# ---- Phase 1 · ccd ----
+# ccd.final_reminder:  { outcome: done }  ·  send_to: <email>   # scout (email)
+# ccd.pr_reminder:     { outcome: done }  ·  send_to: me         # scout (Teams)
+# ccd.localization:    { outcome: done }                         # scout (pipeline trigger)
+
+# ---- Phase 2 · build_verify ----
+# build_verify.stages_ok:  { outcome: done }   # agent
+# build_verify.retain:     { outcome: done }   # agent
+# build_verify.health:     { outcome: done }   # agent
+# build_verify.ui_auto:    { outcome: done }   # agent
+# build_verify.payload:    { outcome: done }   # agent
+# build_verify.mrwp_rc:    { outcome: done }   # agent
+# build_verify.rc_report:  { outcome: done }   # scout (emails RC report + applies the 90% UI gate)
+# build_verify.telemetry_verify: { outcome: done }   # scout — or { version: "6.2608.5658" } to query a real version
+
+# ---- Phase 3 · bug_bash ----
+# bug_bash.clone_plans_broker: { outcome: done }   # agent (copy Broker master plan)
+# bug_bash.clone_plans_auth:   { outcome: done }   # agent (create Authenticator query-suite)
+# bug_bash.coordinate:   { outcome: done }   # agent
+# bug_bash.ui_failures:  { outcome: done }   # reminder (human)
+# bug_bash.signoffs:     { outcome: done }   # agent
+# bug_bash.bash_done:    🚦 gate — NOT mockable
+
+# ---- Phase 4 · finalize ----
+# finalize.gate_watch:  🚦 gate — NOT mockable
+# finalize.integ_prs:   { outcome: done }   # agent
+# finalize.verify_pub:  { outcome: done }   # agent
+# finalize.verify_pub:  { results: {common4j: published, common: published, msal: published} }  # agent
+# finalize.release_announcement: 🛰️ scout — { post_to: {...}, cc_mode: self, self_email: <you> }
+# finalize.tag_authenticator: { outcome: done }   # agent
+# finalize.wiki_payload:      { outcome: done }   # agent (preview-first) — or { version: {...}, prs: [...] }
+
+# ---- Phase 5 · rollout_start ----
+# rollout_start.notice:        { outcome: done }   # agent
+# rollout_start.artifact:      { outcome: done }   # agent
+# rollout_start.signoff_start: 🚦 gate — NOT mockable
+
+# ---- Phase 6 · monitor ----
+# monitor.health_report:  { outcome: done }   # agent
+# monitor.adoption:       { outcome: done }   # agent
+# monitor.guards:         { outcome: done }   # agent
+# monitor.advance:        🚦 gate — NOT mockable
+# monitor.progress_email: { outcome: done }   # agent
+# monitor.dashboard:      { outcome: done }   # agent
+# monitor.crash_annot:    { outcome: done }   # reminder (human)
+# monitor.hotfix_eval:    { outcome: done }   # reminder (human)
+
+# ---- Phase 7 · partner ----
+# partner.china:        { outcome: done }   # reminder (human)
+# partner.samsung:      { outcome: done }   # reminder (human)
+# partner.ngms:         { outcome: done }   # agent
+# partner.teams_dev:    { outcome: done }   # agent
+# partner.approvals:    { outcome: done }   # agent
+# partner.review_times: { outcome: done }   # agent
+
+# ---- Phase (conditional) · hotfix ----
+# hotfix.cherry:     { outcome: done }   # agent
+# hotfix.rebuild:    { outcome: done }   # agent
+# hotfix.smoke:      🚦 gate — NOT mockable
+# hotfix.expedite:   { outcome: done }   # agent
+# hotfix.alpha_orgs: { outcome: done }   # agent
+
+# ---- Phase 9 · close ----
+# close.closeout: { outcome: done }   # agent
+# close.done:     🚦 gate — NOT mockable

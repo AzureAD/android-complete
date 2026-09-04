@@ -1,0 +1,1363 @@
+# Step knowledge base — reference/help content the skill uses to answer a user's
+# questions about a step ("what does this do?", "where do I find X?", "how do I
+# resolve it?"). This is DATA (not code): edit here to keep answers accurate.
+#
+# Keyed by "<phase>.<step>". Fields (all optional):
+#   summary : one-line description
+#   what    : what the step does / why it matters
+#   who     : who owns / is responsible for the step's action
+#   where   : navigation / where to look (list of precise paths)
+#   how     : how to complete or resolve it
+#   links   : [{name, url}] reference links
+#   faqs    : [{q, a}] common questions with accurate answers
+#
+# A step MODULE may also declare KNOWLEDGE (co-located); the resolver overlays the
+# module on top of this file, so code and this data compose. Steps without an entry
+# report "no knowledge yet" honestly rather than guessing.
+
+version: 1
+
+# ========================== Entry gate · readiness ==========================
+# Keyed "readiness.<item>". Queried via `gate-info --item <id>`. Same fields as the
+# step entries (summary/what/who/where/how/links/faqs).
+
+readiness.build_access:
+  summary: "You have permission to both ADO orgs the release builds from."
+  what: >
+    Confirms you can reach the two build definitions this release drives — the
+    BROKER pipelines in Engineering (Auth Client Android #2828, org
+    identitydivision) and the AUTHENTICATOR pipelines in One (Android Build Release
+    #397224, org msazure). Auto-verified via `az pipelines build definition show`;
+    passes only if BOTH are accessible.
+  who: >
+    Scout verifies it automatically (a Python verifier — no user action) as long as
+    you're signed into az with access to both orgs.
+  where:
+    - "Broker (Engineering #2828): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=2828"
+    - "Authenticator (One #397224): https://msazure.visualstudio.com/One/_build?definitionId=397224"
+  how: >
+    If it fails: run `az login`, then confirm you have access to BOTH orgs/projects
+    — Engineering (identitydivision) for the Broker pipelines and One (msazure) for
+    the Authenticator pipelines. The two orgs authenticate separately, so a token
+    good for one may not cover the other; request access to whichever org is
+    failing. Re-run the gate once fixed.
+  faqs:
+    - q: "Why check two organizations?"
+      a: "The Android release spans both: the Broker libraries build in Engineering (identitydivision) and the Authenticator app builds in One (msazure). You need permission to both."
+    - q: "It failed with a 401 — what now?"
+      a: "Usually you're not signed into az, or you lack access to one of the two orgs (they're separate). Sign in / request access to the failing org, then re-run the gate."
+
+readiness.ccd_confirmed:
+  summary: "The Code Complete Date is a valid future date, reconciled with the pipeline."
+  what: >
+    Validates the CCD end-to-end, because every phase is CCD-relative and a wrong
+    CCD misaligns the whole run. Two hard checks (either BLOCKS): the CCD must be
+    FUTURE-DATED — a past CCD (e.g. a current-month release whose 2nd-Wednesday
+    default already passed) can't be code-completed — and it must AGREE with
+    pipeline 3038's override. Plus one advisory: if the CCD leaves Phase 0
+    (CCD-7→CCD) with less than its normal 7-day window, Scout WARNS about the
+    compressed prep window but lets you proceed.
+  who: >
+    Scout runs the check (`check-ccd`, reads the pipeline via az). On a past CCD or a
+    differing pipeline override, Scout shows you the options and YOU decide the real
+    date; Scout writes it with `set-ccd`. On a compressed Phase 0 window Scout warns
+    and you choose to proceed or move the CCD out. If the pipeline can't be read, you
+    confirm the CCD manually (attest fallback).
+  where:
+    - "CCD override variable — Broker pipeline (Engineering #3038): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=3038"
+  how: >
+    Scout runs `check-ccd --json` and acts on the status: `past` → the CCD is before
+    today; reschedule to a future date with `set-ccd --date <future> --confirm`
+    (adopt a future pipeline override if one exists), re-check. `conflict` → pipeline
+    override differs; pick which is right, `set-ccd`, re-check. `unreadable` → confirm
+    the CCD by hand (attest). `match` → record the item pass. On `compressed: true`
+    (any non-past status) Scout warns that Phase 0 has only `runway_days` of the
+    normal 7 and lets you proceed or move the CCD.
+  faqs:
+    - q: "I started a release this month and the CCD is in the past — why?"
+      a: "The default CCD is the 2nd Wednesday of the release month. If that day has already passed, the default is in the past and invalid. The gate blocks until you set a future Code Complete Date (or target a later release month)."
+    - q: "Why does a CCD mismatch block the release?"
+      a: "The phase schedule is computed from the CCD. If the pipeline is building to a different date than the orchestrator thinks, every reminder, gate, and deadline is off. Reconciling once up front keeps them in lockstep."
+    - q: "My CCD is only a couple of days out and Scout warned about Phase 0 — is that a blocker?"
+      a: "No. Phase 0 normally runs CCD-7→CCD (7 days). A nearer CCD squeezes that window, so Scout flags how many prep days remain, but you can still proceed (e.g. for a hotfix) or move the CCD out with set-ccd."
+    - q: "The pipeline has no override — is that a problem?"
+      a: "No. No override means the pipeline uses the same 2nd-Wednesday default the orchestrator does, so they already agree — that's a `match` (as long as the date is still in the future)."
+    - q: "Scout couldn't read the pipeline — can I still proceed?"
+      a: "Yes. On an unreadable pipeline the item falls back to attestation: you confirm the CCD manually and Scout records it with a note. It never silently passes."
+
+readiness.mcp_servers:
+  summary: "The MCP servers the release needs are registered in Scout."
+  what: >
+    Confirms the command-based MCP servers this release depends on are registered in
+    your Scout config — ICM (on-call / incident lookups), Kusto/ADX (telemetry + the
+    adx_access check), and Teams (comms gaps WorkIQ can't fill: group chats, channel
+    posts). Auto-verified read-only against config/requirements.yaml; passes only if
+    ALL are present.
+  who: >
+    Scout verifies it automatically (a Python verifier). Fixing a missing server is a
+    one-time bootstrap step (register + restart Scout), not something the release does.
+  where:
+    - "Scout's registered servers: ~/.scout/m-mcp-servers.json"
+    - "The required-servers manifest: config/requirements.yaml"
+  how: >
+    If it fails: run `python -m orchestrator.cli infra` (or setup/bootstrap.ps1) to
+    auto-register the missing server(s), then RESTART Scout so it loads them, and
+    re-run the gate. These are provided by the Agency CLI (agency mcp icm|kusto|teams);
+    if Agency isn't installed, install it first. infra won't register a server whose
+    launcher is missing.
+  faqs:
+    - q: "What happens if a server is missing?"
+      a: "infra registers it (backing up your config first) and tells you to restart Scout. It refuses to register a server whose launcher isn't installed."
+    - q: "Why is the Teams MCP required now?"
+      a: "To cover Teams gaps WorkIQ can't (group-chat creation, adding members, rich channel messaging) — WorkIQ is 1:1-only."
+    - q: "What's the empty-tools gotcha?"
+      a: "Command servers must ship a populated `tools` allowlist; an empty one makes Scout silently drop the server. Our requirements.yaml ships icm/kusto/teams with populated lists."
+
+readiness.silent_perms:
+  summary: "Scout's permissions allow fully unattended (silent) runs."
+  what: >
+    Confirms shell, WorkIQ (email + Teams), the browser (Playwright), and the ICM +
+    Kusto MCP servers are all auto-approved in Scout settings — so scheduled /
+    background work (the daily digest, Teams reminders, CCOA-lockdown browser checks,
+    the on-call & telemetry checks) runs WITHOUT stalling on a permission prompt when
+    Scout isn't focused.
+  who: >
+    The skill checks it (reads m_get_settings — the engine can't see Scout's own
+    settings). Enabling requires the user to flip one master toggle (only the user
+    can). OPT-OUT: you may proceed without.
+  where:
+    - "Scout → Settings → Permissions — the per-server auto-approve flags."
+    - "The master toggle: 'When blocked, let Scout ask instead of stopping' (allowModelPermissionsChange)."
+  how: >
+    If not all auto-approved, the skill offers 'Enable silent runs' — it requests
+    auto-approval for WorkIQ/browser/ICM/Kusto (you click Allow once); if the master
+    toggle is off you turn it on first. Or choose 'Proceed without' → recorded as
+    `degraded`, which STILL clears the gate (⚠️ 'Proceeding (not silent)') but
+    background checks will prompt and can stall until you open Scout.
+  faqs:
+    - q: "Does this block the release?"
+      a: "No — it's soft/opt-out. `degraded` satisfies the gate; you just risk occasional prompts on unattended runs."
+    - q: "Exactly what gets auto-approved?"
+      a: "shell, workiq, playwright, kusto, icm."
+
+readiness.teams_notify:
+  summary: "The daily digest can also reach you over the Scout Teams bot."
+  what: >
+    Confirms the Teams relay is connected and the Scout bot is reachable, so the
+    hourly `tick` digest can be delivered to you in Teams IN ADDITION to email. Email
+    is the guaranteed channel; Teams is a bonus.
+  who: >
+    The skill checks it (m_relay_status / m_relay_connect + a silent
+    m_send_teams_message handshake — the engine can't reach the relay). OPT-OUT.
+  where:
+    - "Channels are configured in config/notifications.yaml (channels.teams, teams.target: scout)."
+    - "The Scout bot: open the Microsoft Scout chat in Teams."
+  how: >
+    If Teams is enabled in notifications.yaml, the skill connects the relay and sends
+    a handshake. If the relay won't connect or the bot has no conversation yet (you've
+    never messaged it), it records `degraded` (email-only) — which STILL clears the
+    gate. To enable Teams later: open the Microsoft Scout chat in Teams and send it
+    any message once, then re-run.
+  faqs:
+    - q: "Does this block the release?"
+      a: "No — opt-out. If Teams is unreachable it records `degraded` and you get the digest by email only."
+    - q: "How do I turn Teams delivery off?"
+      a: "Set channels.teams: false in config/notifications.yaml — then this item passes as 'not requested'."
+
+readiness.adx_access:
+  summary: "You can query the ADX release-telemetry cluster."
+  what: >
+    Confirms you can query the ADX release dashboard's backing Kusto cluster (used for
+    monitoring / Play vitals / crash metrics later in the release). Scout runs a
+    `print 1` probe against the cluster.
+  who: >
+    The skill runs it (Kusto MCP — the engine can't reach the MCP) and records
+    pass/fail. Fully verified (not attested).
+  where:
+    - "ADX release dashboard: https://dataexplorer.azure.com/dashboards/ab7abd7e-c36f-4ff0-88a7-aaa3ec014bd7"
+    - "Backing cluster: https://idsharedeus2.eastus2.kusto.windows.net (db d496be22d62a46b0a3cf67ea2e736fd8)"
+  how: >
+    If it fails, you lack access to the cluster (or the Kusto MCP isn't reachable).
+    Request access to the ADX cluster / dashboard, confirm the Kusto MCP is registered
+    (see mcp_servers), then re-run the gate.
+  faqs:
+    - q: "What is the probe?"
+      a: "A trivial `print 1` query against the cluster — it only proves you can connect and run a query, nothing about the data."
+
+readiness.oncall_now:
+  summary: "You are not the current Android primary on-call."
+  what: >
+    Confirms you are NOT the current primary on-call (OCE) for 'Auth Client Android
+    Shield' (ICM team 78848) — a primary on-call shouldn't also be driving a release.
+    A backup/secondary is fine; only the current PRIMARY blocks.
+  who: >
+    The skill checks it via ICM (get_on_call_schedule_by_team_id, team 78848 — the
+    engine can't reach the MCP) and records pass/fail.
+  where:
+    - "On-call schedule: https://aka.ms/androidoncall (team: Auth Client Android Shield, ICM 78848)."
+  how: >
+    If you ARE the current primary, hand the release to someone who isn't (or wait
+    until your shift ends), then re-run. Being a backup/secondary does NOT block — the
+    skill records those as pass.
+  faqs:
+    - q: "I'm the backup on-call — does that block me?"
+      a: "No. Only the current PRIMARY (first-listed current OCE) blocks. Backups are free to run the release."
+    - q: "Why can't the primary on-call run the release?"
+      a: "Primary on-call is expected to be responsive to incidents; combining it with release duty risks both. It's a required (non-opt-out) check."
+
+readiness.play_console_access:
+  summary: "You can open the Google Play Console app dashboard."
+  what: >
+    You ATTEST (Scout can't verify — Google auth wall) that you can sign into the
+    Play Console and load the Authenticator app dashboard. Needed later for the Play
+    vitals / policy-status review (Phase 0 `vitals`) and rollout management.
+  who: "You confirm it — Scout cannot prove Google sign-in."
+  where:
+    - "Play Console app dashboard: https://play.google.com/console/u/0/developers/6720847872553662727/app/4972501392087484764/app-dashboard"
+  how: >
+    Open the dashboard and confirm it loads (you're signed into the right Google
+    account with access to this app), then attest. If you can't load it, request Play
+    Console access following the how-to doc below.
+  links:
+    - name: "How to access Google Play Console"
+      url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/combined-release-checklist/how-to-access-google-play-console"
+  faqs:
+    - q: "Why can't Scout verify this?"
+      a: "Play Console is behind Google auth, which Scout can't automate — so you attest."
+    - q: "How do I get access?"
+      a: "Follow the 'How to access Google Play Console' doc (linked). Then open the dashboard to confirm."
+
+readiness.oncall_window:
+  summary: "You're not scheduled on-call during the release window."
+  what: >
+    You ATTEST you are NOT scheduled Android on-call at any point across the release
+    window — CCD-7 through CCD+14 (the full stabilization period). This is the future
+    counterpart to oncall_now (which only checks today); Scout can only see the
+    current rotation, so you confirm the upcoming window.
+  who: "You confirm it — Scout can't reliably read the future rotation."
+  where:
+    - "On-call schedule: https://aka.ms/androidoncall (team: Auth Client Android Shield). Check your shifts across the window."
+  how: >
+    Open the schedule, verify none of your on-call shifts fall in CCD-7 … CCD+14, then
+    attest. If you ARE scheduled in that window, arrange coverage / a swap, or hand off
+    the release.
+  faqs:
+    - q: "Why is this separate from 'Not on-call now'?"
+      a: "oncall_now is auto (Scout reads today's roster); this is attest because Scout can't see the future schedule reliably."
+    - q: "What's the window?"
+      a: "CCD-7 to CCD+14 — pre-flight through the rollout / monitoring tail."
+
+readiness.saw_ame:
+  summary: "Your SAW machine and AME account are accessible."
+  what: >
+    You ATTEST you can log into your SAW (Secure Admin Workstation), the desktop
+    loads, and you can sign in with your AME (Azure Managed Environment) credentials —
+    the secure environment required for privileged release actions.
+  who: "You confirm it — Scout can't verify SAW/AME sign-in."
+  where:
+    - "SAW: https://aka.ms/saw"
+  how: >
+    Log into SAW (link below), confirm the desktop loads, and sign in with your AME
+    credentials, then attest. If SAW or AME isn't working, resolve access via the SAW
+    portal before starting the release.
+  links:
+    - name: "SAW"
+      url: "https://aka.ms/saw"
+  faqs:
+    - q: "Why is SAW/AME needed?"
+      a: "Privileged release steps must run from the secure admin workstation with AME credentials — Scout can't prove that, so you attest."
+
+readiness.yubikey:
+  summary: "You have a YubiKey in hand."
+  what: >
+    You ATTEST you physically have your YubiKey — the hardware security key required
+    for the release's privileged sign-ins. Scout can't verify a physical device, so
+    you confirm.
+  who: "You confirm it — it's a physical device."
+  where:
+    - "No YubiKey? Pick one up at Studio A 1909, the Bldg 34/35 cafe, or order a DSR USB-C thumbdrive (link below)."
+  how: >
+    Have your YubiKey with you, then attest. If you don't have one, get one first
+    (Studio A 1909 / Bldg 34-35 cafe) or order a DSR USB-C security key via the link.
+  links:
+    - name: "Order a DSR USB-C security key"
+      url: "https://cloudmfa-support.azurewebsites.net/SecurityKeyServices/SecurityKey"
+  faqs:
+    - q: "I don't have a YubiKey — where do I get one?"
+      a: "Studio A 1909, the Bldg 34/35 cafe, or order a DSR USB-C thumbdrive (linked)."
+
+# ============================== Phase 0 · preflight ==============================
+
+preflight.notice:
+  summary: "Email the early code-complete notice to the Android distribution list."
+  what: >
+    Sends a heads-up that code complete for the month's release is approaching, so
+    teams stop landing feature work and switch to the hotfix cherry-pick process
+    after code complete. Filled from a local template with the CCD and release owner.
+  how: >
+    Scout resolves the email (subject, HTML body, recipients) and sends it via
+    WorkIQ, then records the step. Recipients are the configured distribution list;
+    for a test, redirect with the `send_to` mock knob.
+  links:
+    - name: "Hotfix cherry-pick guide (linked in the email)"
+      url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/microsoft-authenticator/microsoft-authenticator/release/cherry-pick-to-hotfix-guidelines"
+  faqs:
+    - q: "Who receives it?"
+      a: "The configured distribution list (androididentity@microsoft.com). Redirect for a test with preflight.notice.send_to."
+    - q: "What's the difference between the 'initial' and 'update' variant?"
+      a: "'initial' is the CCD-7 heads-up; 'update' is the CCD-day reminder ('code complete is Today'). Set via --param variant=update."
+
+preflight.flight_reminder:
+  summary: "Post the combined feature-owner reminders to the Android Core Team Teams chat."
+  what: >
+    One Teams message with four reminders as code complete approaches: update local
+    flights, write flight pre-mortem docs, merge user-facing strings by CCD-7, and
+    complete the feature-flag freeze / default-OFF review.
+  how: >
+    Scout posts the message to the Android Core Team group chat and records the step.
+    For a test, redirect to your own chat with the `send_to: me` mock knob.
+  links:
+    - name: "release variable group (local flights)"
+      url: "https://identitydivision.visualstudio.com/Engineering/_library?itemType=VariableGroups&view=VariableGroupView&variableGroupId=40&path=release"
+    - name: "Localization instructions"
+      url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/combined-release-checklist/localization"
+    - name: "EcsFlight.kt history (flag-freeze review)"
+      url: "https://msazure.visualstudio.com/One/_git/AD-MFA-phonefactor-phoneApp-android?path=/PhoneFactor/ExperimentationLibrary/src/main/java/com/microsoft/authenticator/experimentation/ecs/entities/EcsFlight.kt&version=GBworking"
+  faqs:
+    - q: "Why CCD-7 for strings?"
+      a: "Strings merged inside the 1-week window aren't guaranteed to be localized in time, so user-facing strings must land by CCD-7."
+
+preflight.confirm_reminders:
+  summary: "Attest that feature owners completed the reminded pre-code-complete work."
+  what: >
+    Sending the reminders doesn't prove the work got done. This step holds until the
+    owner confirms feature owners actually: updated local flights, wrote pre-mortem
+    docs, merged user-facing strings by CCD-7, and left features default-OFF (or got
+    default-ON approved in the release wiki).
+  how: "Confirm with the feature owners, then mark the step done. If you can't confirm, leave it holding."
+
+preflight.lockdown:
+  summary: "Detect whether a CCOA lockdown / holiday no-fly zone overlaps the release window."
+  what: >
+    Reads the CCOA 'No-Fly Zones' and checks whether any PRODUCTION-environment
+    lockdown overlaps the release window (CCD-7 through CCD+14). Banner-only
+    advisories don't block; a Production overlap holds the step so the owner can
+    shift the CCD past it.
+  where:
+    - "CCOA periods page: the change-manager site — 'Upcoming CCOA periods' and the current-year 'Past NoFly Zones' table."
+  how: >
+    Scout scrapes the page (AAD SSO), the engine decides overlap deterministically.
+    On an overlap it names the clashing lockdown(s); shift the CCD with set-ccd if
+    you want to proceed. On no overlap it passes.
+  links:
+    - name: "CCOA periods (change-manager)"
+      url: "https://prod.change-manager.msidentity.com/ccoa-periods"
+  faqs:
+    - q: "Which lockdowns actually block?"
+      a: "Only Production-environment CCOA periods that intersect CCD-7..CCD+14. Banner-only advisories are ignored."
+
+preflight.breaking:
+  summary: "Detect BREAKING-OneAuth changes in the common-for-android changelog and draft comms."
+  what: >
+    Scans the unreleased 'vNext' section of the common-for-android changelog for
+    [MAJOR] (breaking) entries — the changes shipping in this release that OneAuth
+    consumers must handle — and drafts the notification comms. Read-only.
+  where:
+    - "Source: the common-for-android changelog.txt (dev branch), 'vNext' section."
+  how: "Review any detected [MAJOR] entries and send the drafted comms to the OneAuth team. No breaking changes → nothing to do."
+  links:
+    - name: "common-for-android changelog"
+      url: "https://raw.githubusercontent.com/AzureAD/microsoft-authentication-library-common-for-android/dev/changelog.txt"
+
+preflight.cg:
+  summary: "Report active Component Governance alerts; block on High/Critical."
+  what: >
+    Reads Component Governance alerts for the governed Android repo and reports
+    active alerts by severity. It BLOCKS (holds) when there are active High/Critical
+    alerts — the release engineer fixes them and reruns the check. Overriding to ship
+    WITHOUT a fix is allowed only with the release engineer's MANAGER's approval
+    (recorded in the skip reason).
+  who: >
+    The RELEASE ENGINEER (release owner) is responsible for remediating Component
+    Governance alerts — this includes creating the fix PR (e.g. bumping the flagged
+    dependency to a patched version) and driving it to merge, not just pinging another
+    team. CG remediation is a release-owner duty, not something delegated to the
+    component owner by default. The ONE exception to fixing is an override to ship as-is,
+    which is not the engineer's call alone — it requires their MANAGER's approval.
+  where:
+    - "Component Governance alerts page for the repo (see link) — review the active High/Critical items."
+    - "The flagged dependency's version is pinned in the repo's version catalog (gradle/libs.versions.toml) or the module build.gradle — that's where the fix PR changes it."
+  how: >
+    Preferred path — FIX: as release engineer, open the alert, identify the flagged
+    dependency and patched version, raise the fix PR (update the pin, e.g.
+    httpcore5 5.3 -> 5.4.3), get it merged, then rerun this step to re-check.
+    Override path — SHIP WITHOUT FIXING: this needs your MANAGER's explicit approval
+    first. Once the manager signs off, skip the step with a reason that NAMES the
+    approving manager and why (audited), e.g.
+    `skip --release <id> --phase preflight --step cg --reason "High CG alert X — ship
+    as-is approved by <manager alias> on <date>; fix tracked in <work item>"`.
+    Never override on your own authority.
+  faqs:
+    - q: "Who fixes the alert / creates the PR?"
+      a: "The release engineer (release owner). Remediating CG alerts — including authoring and landing the fix PR — is a release-owner responsibility, not the component owner's."
+    - q: "Can I ship with an open High/Critical CG alert?"
+      a: "Only as an override, and only with your MANAGER's approval. The release engineer cannot waive a High/Critical CG block on their own — get manager sign-off, then skip the step with a reason that records who approved it and links the follow-up fix. If there's no manager approval, fix the alert first."
+    - q: "Does a Medium/Low alert block?"
+      a: "No — only active High/Critical alerts block. Medium/Low are reported but don't hold the release."
+  links:
+    - name: "Component Governance alerts"
+      url: "https://msazure.visualstudio.com/One/_componentGovernance/AD-MFA-phonefactor-phoneApp-android"
+
+preflight.oneauth_access:
+  summary: "Verify you can create a branch in the OneAuth repo (needed for the later OneAuth PR)."
+  what: >
+    A later phase pushes a PR to the OneAuth repo (office.visualstudio.com/OneAuth/_git/OneAuth),
+    whose branch policy requires branches named 'user/<alias>/<branch-name>'. This step proves you
+    can do that NOW by actually creating a throwaway 'user/<alias>/scout-oneauth-access-check'
+    branch off master and immediately deleting it. If the create succeeds you have write access and
+    the step passes; if it's rejected (no permission) the step BLOCKS so the missing access is
+    caught at pre-flight rather than when the release needs to open its PR.
+  who: >
+    The RELEASE ENGINEER (release owner) needs OneAuth R/W. If you don't have it, request the
+    access package yourself and rerun once it's granted — don't hand the release forward with this
+    unresolved.
+  how: >
+    Scout runs it automatically during `next` (an agent step) — it creates and deletes the probe
+    branch via the Git refs API. If BLOCKED: request 'R/W (repo) external contributors' via the
+    myaccess package (link below), wait for approval, then RERUN this step to re-check. Access
+    grants can take time to propagate; re-evaluate once you can see the repo in the browser.
+    Self-cleaning and idempotent — the probe branch never lingers.
+  faqs:
+    - q: "Why create a branch instead of just checking a permission?"
+      a: "Creating the exact 'user/<alias>/…' branch the policy requires is the only reliable proof — a permissions read can lie about effective access. The probe branch is deleted immediately."
+    - q: "It blocked — what do I do?"
+      a: "Request OneAuth R/W via the access package, then rerun this step once the grant lands. The release cannot push its OneAuth PR without it, so this must be resolved before proceeding."
+  links:
+    - name: "OneAuth repo"
+      url: "https://office.visualstudio.com/OneAuth/_git/OneAuth"
+    - name: "Request OneAuth R/W (access package)"
+      url: "https://myaccess.microsoft.com/@microsoft.onmicrosoft.com#/access-packages/09fdec6b-eafa-4905-a7c0-b5e514bba368"
+
+preflight.vitals:
+  summary: "Attest that Google Play Console app health (Android vitals + Policy status) is acceptable."
+  what: >
+    Play Console has no API for policy status, so this is a manual confirmation:
+    review the app's technical health (crash rate / ANR rate) and its policy standing
+    (open issues or warnings), and confirm both are acceptable before code complete.
+  where:
+    - "Android vitals: Play Console → left panel → 'Monitor and improve' → 'Android vitals' → Overview."
+    - "Policy status: Play Console → left panel → 'Monitor and improve' → 'Policy and programs' → 'Policy status'."
+  how: >
+    Open both pages, confirm crash/ANR are within acceptable bounds (no regression)
+    and there are no open policy issues/warnings, then mark the step done. An
+    unresolved policy issue or a vitals regression → leave it holding.
+  links:
+    - name: "Google Play Console"
+      url: "https://play.google.com/console"
+  faqs:
+    - q: "Where do I find Android vitals?"
+      a: "Play Console → left panel → Monitor and improve → Android vitals → Overview."
+    - q: "Where is policy status?"
+      a: "Play Console → left panel → Monitor and improve → Policy and programs → Policy status."
+
+preflight.cron:
+  summary: "Verify the Code Complete Calendar Checker pipeline is scheduled and firing."
+  what: >
+    Pipeline 3038's cron lives in YAML (not exposed in its triggers), so the check
+    proves it's actually firing by confirming a recent schedule-reason run in its
+    build history. Blocks if there's no recent scheduled run or it's stale.
+  how: "If blocked, investigate the pipeline's schedule (it may be disabled/broken), fix it, and rerun the step — or skip to override."
+
+# =============================== Phase 1 · ccd ===============================
+
+ccd.final_reminder:
+  summary: "Email the Android DL that code complete is TODAY (morning of CCD)."
+  what: >
+    The CCD-day final code-complete reminder email — the 'update' variant of the
+    same notice template Phase 0 sends a week earlier at CCD-7. Tells everyone code
+    complete is today and that any check-ins after it need the hotfix cherry-pick
+    process + EM approval.
+  who: >
+    Scout sends it automatically (a scout step) on the morning of CCD, driven by the
+    per-release CCD-morning automation. The release owner owns the content/recipients.
+  how: >
+    Runs via step-action → workiq_send_email. To test, redirect with the send_to
+    mock knob (keeps the send real, points it at you). Sent ~09:00 local on CCD.
+  faqs:
+    - q: "How is this different from the Phase 0 notice?"
+      a: "Same template, different variant/timing: Phase 0 'notice' sends the 'initial' variant at CCD-7; this sends the 'update' variant ('Today') on CCD morning."
+
+ccd.pr_reminder:
+  summary: "Teams reminder to the 'Code reviews' chat: merge required PRs before the 11 PM branch cut."
+  what: >
+    The morning-of-CCD Teams message telling engineers every required PR must be
+    merged today before the release branch is cut automatically at 11:00 PM; if a
+    required PR won't make it, request a CCD delay or a post-CCD cherry-pick; and
+    merge any PR with user-facing strings before the localization pipeline runs at
+    noon.
+  who: >
+    Scout posts it automatically (a scout step) on CCD morning. CCD-delay and
+    cherry-pick requests must be approved by Moumita Ghosh (moghosh@microsoft.com).
+  where:
+    - "Target: the 'Code reviews' Teams chat (fixed chat id in the step CONFIG / EXTERNAL-REFERENCES.md)."
+  how: >
+    Runs via step-action → workiq_send_chat_message. To test, redirect with the
+    send_to mock knob ('me' = your own chat).
+  faqs:
+    - q: "Who approves a CCD delay or cherry-pick?"
+      a: "Moumita Ghosh (moghosh@microsoft.com) — both a Code Complete delay and a post-CCD cherry-pick require her approval."
+    - q: "Why merge string PRs before noon?"
+      a: "The localization pipeline is triggered at noon; strings merged after it aren't guaranteed to be localized this release."
+
+ccd.localization:
+  # Knowledge for this step is co-located in the step module (steps/ccd/localization.py
+  # KNOWLEDGE) — the trigger→poll→timeout/complete→post-PR flow. Kept there so it
+  # can't drift from the logic. No yaml override needed.
+
+# ======================= Phase 2 · build_verify (RC verification) =======================
+# Read-only checks over the Engineering release pipelines: the checker (3038) fired the
+# orchestrator (2828), the orchestrator is healthy + parked at Remove RC Tags, and both
+# MRWP (2519) RC-testing runs (ECS + Local) ran to completion. Each blocks with the
+# recovery TSG + escalation chat.
+
+build_verify.checker_fired:
+  summary: "Confirm the Code Complete Calendar Checker fired the release on the CCD."
+  what: >
+    The checker (def 3038) runs daily; its 'Trigger Monthly Release' job is SKIPPED on
+    ordinary days and only runs (succeeds) on the actual Code Complete Day, when it
+    launches the Release Orchestrator. This step scans the month's checker runs for the
+    one whose 'Trigger Monthly Release' job succeeded.
+  where:
+    - "Code Complete Calendar Checker (def 3038): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=3038"
+  how: >
+    If it blocks: before Code Complete Day this is EXPECTED (nothing has triggered yet).
+    After the CCD, a missing/failed 'Trigger Monthly Release' means the release wasn't
+    kicked off — check the checker's latest run and its schedule, fix, and rerun the step.
+  faqs:
+    - q: "It's blocked but the CCD hasn't arrived — is that a problem?"
+      a: "No. The trigger job only runs on Code Complete Day; before then there's nothing to confirm. It clears once the checker fires the release."
+
+build_verify.orchestrator_health:
+  summary: "Confirm the Release Orchestrator is healthy and parked at the Remove RC Tags gate."
+  what: >
+    Finds this release's orchestrator run (def 2828) by its AuthenticatorBranch tag and
+    confirms the pre-gate stages — Validate Branch and Versions, Create Release Branches,
+    Trigger RC Testing — all succeeded, and that it is PAUSED at 'Remove RC Tags' (a manual
+    approval the owner clears in a LATER phase). This step never approves that gate. Reports
+    the RC versions (Common/MSAL/Broker).
+  who: >
+    Scout verifies it automatically (read-only). If a pre-gate stage failed, the RELEASE
+    ENGINEER follows the failed stage's guidance + the recovery TSG, retries the stage, then
+    reruns this step. Approving Remove RC Tags is a separate, later step — not here.
+  where:
+    - "Release Orchestrator (def 2828): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=2828"
+    - "Recovery TSG: https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/release-orchestrator-recovery"
+  how: >
+    Each stage is descriptive — the failed stage's output explains the root cause and
+    suggested fix. Follow it, click Retry on the failed stage, then rerun this step. If
+    unresolved within 2h, escalate to the release Teams chat.
+  faqs:
+    - q: "It says 'parked at Remove RC Tags' — is that bad?"
+      a: "No — that's the healthy expected state. The orchestrator pauses at Remove RC Tags for a human approval that happens in a later phase. Phase 2 only confirms it got there cleanly; it never approves it."
+    - q: "A pre-gate stage failed — what do I do?"
+      a: "Open the failed stage; its output describes the root cause + corrective action. Fix it, click Retry on that stage, then rerun this step. Recovery steps: the release-orchestrator-recovery TSG. Escalate to the release chat if stuck > 2h."
+
+build_verify.mrwp_ecs:
+  summary: "Confirm the ECS Monthly Release Work Pipeline run ran to completion + report its tests."
+  what: >
+    The orchestrator triggers MRWP (def 2519) twice — once per flight provider. This checks
+    the ECS run 'ran to completion': EVERY stage executed (state completed, result
+    succeeded/succeededWithIssues/failed). Red (failed) and yellow (warnings) stages are
+    acceptable — they're triaged later. The ONLY blocker is a stage that never ran (pending,
+    skipped, or canceled — i.e. the pipeline aborted partway). Also reports the Test-tab
+    results (unit / instrumented / UI-automation totals).
+  where:
+    - "Monthly Release Work Pipeline (def 2519): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=2519"
+  how: >
+    If it blocks, a stage never ran — the pipeline aborted. Open the run, find the stage that
+    didn't execute, follow its output + the recovery TSG, Retry, then rerun this step. Failing
+    tests do NOT block here; they're triaged in the bug-bash phase.
+  faqs:
+    - q: "The run has red stages / failing tests — why did it still pass?"
+      a: "By design. A run is valid as long as every stage EXECUTED. Red/yellow stages and failed tests are expected at this checkpoint and triaged later. Only a stage that never ran (aborted pipeline) blocks."
+    - q: "How is the ECS run identified?"
+      a: "From the orchestrator run's RC<N>-ECS=<build id> tag for the current RC iteration N (the highest N that has both an ECS and a Local id; a re-trigger adds a higher-numbered RC<N+1>-* set). If those tags are missing it falls back to the orchestrator's trigger-task log. The run is then read directly by build id."
+
+build_verify.mrwp_local:
+  summary: "Confirm the Local-flighting MRWP run ran to completion + report its tests."
+  what: >
+    Local-flighting counterpart to the ECS check: confirms the Local MRWP (def 2519) run 'ran
+    to completion' (every stage executed; skipped/canceled/pending = block) and reports its
+    Test-tab results. Red/yellow stages and failed tests do NOT block — triaged later.
+  where:
+    - "Monthly Release Work Pipeline (def 2519): https://identitydivision.visualstudio.com/Engineering/_build?definitionId=2519"
+  how: >
+    Same as the ECS check: only a stage that never ran (aborted pipeline) blocks. Follow the
+    aborted stage's output + the recovery TSG, Retry, rerun the step. Failing tests are triaged
+    in the bug-bash phase.
+  faqs:
+    - q: "What's the difference between the ECS and Local runs?"
+      a: "The orchestrator triggers MRWP twice with different flight providers — ECS (server-driven flights) and Local (local flight overrides). Both must run to completion; they're verified separately."
+
+build_verify.auth_ecs:
+  summary: "Capture the Authenticator ECS app build + its post-build UI-test data for the RC report."
+  what: >
+    The Authenticator RC app build and its device UI tests live in a DIFFERENT org — msazure/One
+    — and are NOT part of the Engineering release-verification chain. The orchestrator only cuts the
+    auth working-branch; the RC app build (def 475778, AndroidBuildBroker1ES) self-triggers off that
+    branch cut, and its post-build UI tests (def 444678) self-trigger off the build's completion.
+    This step is a DATA-AVAILABILITY check (exactly like the mrwp_ecs/mrwp_local steps): it discovers
+    the current-RC ECS build on 'working-<release-branch>' (the build whose adAccountsVersion is
+    '...-rc-RC<N>-ecs', highest N), follows the deterministic build->test resource link to its UI-test
+    run, reads the two Firebase device suites, and CAPTURES it all into rcs[rc].auth. It does NOT
+    apply the 90% gate — a sub-90% result is DATA, not a block here. The rc_report step consolidates
+    MRWP + auth and makes the go/hold decision.
+  where:
+    - "Authenticator RC build (def 475778): https://msazure.visualstudio.com/One/_build?definitionId=475778"
+    - "Authenticator Post-Build UI Tests (def 444678): https://msazure.visualstudio.com/One/_build?definitionId=444678"
+  how: >
+    It HOLDS (Scout polls every 30 min) while the build is in-flight or its UI-test run hasn't
+    appeared yet (data not ready). It BLOCKS only when there is NO ECS build at all (the branch
+    wasn't cut / nothing to report on). A completed build — even a failed one, or one whose Firebase
+    suites are below 90% — is captured and the step is DONE; the RC report then decides. The build is
+    read cross-org via az/REST (no ADO MCP); the build->test link is the test run's
+    resources.pipeline.authenticatorBuild id.
+  faqs:
+    - q: "Why doesn't this step block when a Firebase suite is below 90%?"
+      a: "Because it is a data-availability check, not a gate — same as the MRWP verify steps, where failing tests don't block (they're data). It captures the suite results + an informational verdict into state; the rc_report step consolidates MRWP + auth and makes the single go/hold decision. This keeps one decision point."
+    - q: "Is the Authenticator gate merged into the MRWP UI gate?"
+      a: "No. They stay SEPARATE evaluations (different app, different org, its own >=90%-both-suites bar) and render in their own report section. rc_report applies both independently; either one holding makes the release wait for human attestation."
+    - q: "How is the ECS build identified without the orchestrator tagging it?"
+      a: "The build already carries adAccountsVersion '0.0.…-rc-RC<N>-ecs' (RC iteration + ECS flavor) and runs on 'working-<release-branch>', so Scout finds it by branch + that version (highest RC N, newest id) — no orchestrator involvement. The UI-test run is then matched deterministically by its authenticatorBuild pipeline-resource id."
+    - q: "The auth build passed but there's no UI-test result — is that a block?"
+      a: "No. The UI test auto-triggers off build completion, so a missing result just means it hasn't run yet — Scout holds and polls, then applies the gate once it completes."
+
+build_verify.telemetry_verify:
+  summary: "Confirm the bug-bash APK version's telemetry is reaching the ADX/Kusto cluster."
+  what: >
+    Once the Authenticator release-app build (AndroidBuild-1ES) exists, its version IS the
+    bug-bash APK version. This step runs the checklist's telemetry query —
+    `loadaccountsoperations | where AppInfo_Version == "<version>" | count` — against the ADX
+    release cluster and passes only when the count is > 0 (proof the build's instrumentation is
+    reaching Kusto from at least one device). This is checklist Phase 3.3 Step 9, relocated to
+    run right after the Authenticator ECS build is verified.
+  who: >
+    Scout runs it automatically (a scout-assisted check) — the deterministic engine can't reach
+    the Kusto MCP. The version is discovered from the release-app build; no user action unless it
+    comes back empty.
+  where:
+    - "ADX release-telemetry cluster + database (same as the adx_access readiness item)."
+    - "Table: loadaccountsoperations · version column: AppInfo_Version."
+  how: >
+    Runs via step-action → the kusto_query MCP with the step's cluster_uri/database/query. Read
+    the returned Count, then run the follow-up `record-telemetry --release <id> --rows <N>
+    --version <ver>`: rows > 0 records pass; rows == 0 records `attention` — post a heads-up in
+    the Android Core Team channel before declaring the bug bash complete, then re-run the check.
+    For a dry test, set the `version` mock to query a version you know has telemetry.
+  faqs:
+    - q: "Why is a Phase-3 checklist step (3.3 S9) run in Phase 2?"
+      a: "Because the check only needs the built APK version to exist, and running it right after auth_ecs gives an early smoke-signal that the build's telemetry pipeline works — before the go/hold at rc_report. Placement was the release owner's call."
+    - q: "What if telemetry is sparse right after the build?"
+      a: "The bar is just non-zero. As soon as the owner or any tester installs the build, rows appear. Zero rows means telemetry isn't flowing at all — worth surfacing before the bash closes."
+
+build_verify.rc_report:
+  summary: "Consolidate the RC data, email the report, and decide: auto-advance vs hold for attestation."
+  what: >
+    Once the verification steps have CAPTURED the chain data (checker fired, orchestrator
+    healthy/parked, both MRWP runs' stage completion + tests, and the Authenticator ECS build +
+    Firebase suites), this step CONSOLIDATES it into the Phase-2 RC report and emails it to the
+    release owner (on CCD+1). It is the terminal Phase-2 step and the single decision point — the
+    verification steps only gather data; this step decides. After sending, `record-rc-report` applies
+    TWO independent gates: (1) the three-tier MRWP UI gate on the combined UI-automation pass rate
+    across both MRWP runs (100% clean, >=90% warn/proceed, <90% hold); and (2) the Authenticator ECS
+    gate (both Firebase suites >= 90%, and the auth build succeeded). The release AUTO-ADVANCES only
+    when BOTH gates clear; if EITHER holds, the step blocks and WAITS for human attestation. There is
+    no separate approval gate. Scout-assisted (source: scout): the engine composes it; the skill sends
+    via WorkIQ.
+  who: >
+    Scout composes the email; the skill sends it via workiq_send_email to the release owner
+    (state.owner_email). Redirect for testing with the step's `send_to` payload knob.
+  where:
+    - "Release Orchestrator run (versions + parked gate): via the run link in the email + the step's Details"
+    - "MRWP ECS / Local runs (Test tab): via the run links in the email + the step's Details"
+    - "Authenticator ECS build + UI-test run: via the run links in the email's 'Authenticator ECS' section"
+  how: >
+    If it blocks with 'no release owner email', set it with `set-owner --email <you@microsoft.com>`
+    and rerun. When BOTH gates clear (MRWP UI >=90% AND auth ECS >=90%) the release auto-advances into
+    bug bash. If either holds, the owner investigates and rules on it (patch a real bug + re-trigger
+    RC, or proceed as an automation flake): fix + re-run then `next`, or `skip --reason` to override.
+  faqs:
+    - q: "Who gets the email?"
+      a: "The release owner on record (owner_email). It's a personal review copy, not the broad DL — the owner reviews the RC failures; the 90% UI gate then decides go/no-go automatically."
+    - q: "Does the sim send this email?"
+      a: "No. In a sim the step is marked done without sending; only the real skill flow composes + sends it via WorkIQ."
+    - q: "Does the report cover the Authenticator ECS leg too?"
+      a: "Yes. The report contemplates BOTH gates: it shows a gates banner (subject + top of the email + a plain-text GATES block) with the MRWP UI verdict AND the Authenticator-ECS verdict, plus a dedicated 'Authenticator ECS' section with the two Firebase suites. The two gates are evaluated INDEPENDENTLY — the auth leg is decided by the auth_ecs step (its own >=90% bar on both suites) and does NOT feed the MRWP UI gate that rc_report applies."
+
+# =============================== Phase 3 · bug_bash ===============================
+
+bug_bash.clone_plans_broker:
+  summary: "Build this release's Broker test plan — three flat suites: Broker + Native Auth + UI Automation."
+  what: >
+    Each release gets a Broker test plan named 'Android Monthly Release - <Mon YYYY>' (e.g.
+    'Android Monthly Release - Aug 2026', area 'Engineering\\Auth Client\\Broker\\Android').
+    Instead of ADO's "Copy Test Plan" (which reproduces the master's whole 45-suite tree),
+    Scout creates a fresh plan with exactly THREE FLAT top-level suites: (1) 'Manual Tests
+    (Android Broker)' — a static suite of the manual-broker cases resolved from the master
+    template (#2007357, subtree suite 2008656), each pinned to the two flight configurations
+    (293 'RC MSAL - RC Broker' / ECS + 330 '… (LocalFlights)') → 2 points/case; (2)
+    'Manual Tests (Native Auth)' — a single dynamic (tag-query) suite carrying the master's
+    Native-Auth query (#2864589 flattened), so it stays current; and (3) 'UI Automation
+    (Android Broker)' — a static suite of all distinct UI-automation cases (the master's
+    #2007399 subtree resolved/flattened), pinned to the UI folder's flight configs. All three
+    are FLAT (no nested folders) and all cases are REFERENCED (shared, not duplicated) — the
+    classic Test Suite Clone is avoided because it COPIES the case work items. distribute_tests
+    + the progress updates find the flat Broker suite by name, so it's a drop-in.
+  who: "Scout runs it automatically during `next` (an agent step, via the ADO test-plan API)."
+  how: >
+    Idempotent — the new plan id is stashed on the step; a re-run re-confirms that plan
+    exists and reports done without rebuilding. If the build fails (auth/API) the half-built
+    plan is deleted and the step blocks with the ADO error; fix and `next`, or `skip
+    --reason` to override. Suites are built by recreating them and referencing the master's
+    cases (static suites) / re-using its query (the Native-Auth dynamic suite).
+  links:
+    - name: "Broker master test plan (#2007357, Manual Tests subtree)"
+      url: "https://identitydivision.visualstudio.com/Engineering/_testPlans/define?planId=2007357&suiteId=2008656"
+    - name: "Broker test-plans doc"
+      url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/test-plans"
+  faqs:
+    - q: "Why is the plan three flat suites instead of the master's folder tree?"
+      a: "The bug bash is easiest to run and track as flat lists. Manual Broker is a flattened snapshot; Native Auth is a single dynamic (tag-query) suite so it stays current; UI Automation is all its distinct cases in one flat suite. No nested folders."
+    - q: "Does it duplicate the test cases?"
+      a: "No — it references the existing test cases (shared). Edit test cases only in the master template. (The classic Test Suite Clone is deliberately avoided because it COPIES cases, which previously exploded the Native-Auth tag count.)"
+    - q: "Does it auto-update if the master changes later?"
+      a: "The two static suites (Manual Broker, UI Automation) are frozen snapshots at build time (stable monthly cut). The Native Auth dynamic suite re-resolves its query, so it reflects current Native Auth cases. Rebuild (delete the plan id + re-run) to re-snapshot the static suites."
+
+bug_bash.clone_plans_auth:
+  summary: "Create the Authenticator bug-bash query-based test suite for this release."
+  what: >
+    Creates a NEW query-based (dynamic) test suite under the standing 'MSAuthenticator
+    Test Passes' plan (#714514, root suite 714515), named 'Android release/MM/DD/YYYY'
+    from the CCD (e.g. CCD 2026-08-13 -> 'Android release/08/13/2026'). Its WIQL selects the Android bug-bash test cases
+    (tag 'Android' + 'ReleaseBugBash', area 'Engineering\\ISP\\Identity Apps', not Closed
+    — matches the current prod suite 3728419 'Android release/08/13/2026'). This is the
+    Authenticator half of the old clone_plans step. It STOPS after creating the suite —
+    assigning testers is a later, manual step.
+  who: "Scout runs it automatically during `next` (an agent step, via the ADO test-suite create API)."
+  how: >
+    Idempotent — the created suite id is stashed on the step, and it also reuses an
+    existing same-named suite rather than making a duplicate. If the create fails
+    (auth/API), the step blocks with the ADO error; fix and `next`, or `skip --reason`.
+  links:
+    - name: "MSAuthenticator Test Passes plan (#714514)"
+      url: "https://identitydivision.visualstudio.com/Engineering/_testManagement?_a=tests&planId=714514&suiteId=714515"
+    - name: "How to make a test suite for bug bash (IDWiki 33580)"
+      url: "https://identitydivision.visualstudio.com/IdentityWiki/_wiki/wikis/IdentityWiki.wiki/33580/How-to-make-test-suite-for-bug-bash-"
+  faqs:
+    - q: "Does it assign testers?"
+      a: "No — it stops after creating the query-based suite. Assigning testers is done later (a separate, manual step)."
+    - q: "What names the suite?"
+      a: "From the CCD: 'Android release/MM/DD/YYYY' (e.g. CCD 2026-08-13 → 'Android release/08/13/2026'), matching prod."
+    - q: "Which test cases does it include?"
+      a: "The curated bug-bash set — Android test cases tagged 'ReleaseBugBash' (the tag also matches month-specific 'ReleaseBugBash<Month>' tags), not Closed. This matches prod; a broad 'all Android' filter would over-include (e.g. ComposeTesting/DarkMode cases)."
+
+bug_bash.distribute_tests:
+  summary: "Evenly distribute the manual bug-bash tests across the eligible team."
+  what: >
+    Combines the two manual test sets — Broker ('Manual Tests (Android Broker)' subtree,
+    ~48 cases) + Authenticator (the ReleaseBugBash query set) — and splits them EVENLY across
+    the eligible team, keeping each test on its current assignee where possible (preference),
+    only reassigning to hit an even count. The Authenticator set EXCLUDES cases already
+    automated by this release's auth ECS UI-test run — read EMPIRICALLY from the run (by
+    test-case id), NOT from the cross-platform 'Automated' tag (iOS owns that tag), plus the
+    'Blocked' tag. So of the ~49 ReleaseBugBash cases, the ~26 automated ones are dropped and
+    the ~23 genuinely-manual cases are distributed. (Failed automated cases are triaged by the
+    owner via ui_test_status, not by a manual tester.) Eligible = the roster DL
+    'androididentity@microsoft.com' MINUS the always-excluded people (moghosh,
+    veenasoman), the release owner, and the current on-call engineer (OCE). Default assignee +
+    the written field are both System.AssignedTo.
+  who: >
+    Scout computes the PREVIEW automatically during `next` (an agent step). Applying it is
+    a separate, explicit action you trigger — it writes System.AssignedTo, which mutates
+    the shared test-case work items (so this release's assignment becomes next release's
+    default preference).
+  how: >
+    Preview: `distribute-tests --release <id> [--oce <upn>]` prints the per-tester table and
+    stores the plan. Apply: `distribute-tests --release <id> --apply` writes the
+    assignments. The OCE team id (ICM 78848) is the SAME source the entry gate's oncall_now
+    check uses (read from readiness.yaml — no second copy).
+  links:
+    - name: "Broker test-plans doc"
+      url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/test-plans"
+    - name: "How to make a test suite for bug bash (IDWiki 33580)"
+      url: "https://identitydivision.visualstudio.com/IdentityWiki/_wiki/wikis/IdentityWiki.wiki/33580/How-to-make-test-suite-for-bug-bash-"
+  faqs:
+    - q: "How is 'even' decided when counts don't divide evenly?"
+      a: "target = total ÷ eligible; the remainder people (those with the most default tests) get one extra, so heavy-default folks keep their preference."
+    - q: "Does applying it change the master plan?"
+      a: "Yes — System.AssignedTo lives on the shared test-case work items, so the new assignee shows in the master and every plan referencing them. That's intentional: it carries the preference into the next release's clone."
+    - q: "Who is excluded?"
+      a: "Always: moghosh, veenasoman. Per-release: the release owner and the current on-call engineer (OCE, resolved via ICM team 78848 — the same team the entry gate checks)."
+    - q: "How do we know which Authenticator cases are automated vs manual?"
+      a: "Empirically, from this release's auth ECS post-build UI-test run (the one auth_ecs captured): a case whose test-case id appears in that run is automated and is excluded from the manual split. We deliberately do NOT rely on the 'Automated' tag — it is shared with iOS, so a case automated on Android but not iOS must not be tagged. Reading the run keeps the split correct for Android and leaves the shared tag alone."
+
+bug_bash.ui_test_status:
+  summary: "Fill BOTH the Broker + Authenticator UI suites from the RC pipelines; assign auth failures to the owner."
+  what: >
+    Fills the release's UI-automation results from Phase-2's captured runs — for BOTH apps.
+    (1) BROKER: reads the UI-automation results across all RC MRWP builds
+    (state.pipeline_runs.rcs[].ecs/local) and fills the flat 'UI Automation (Android Broker)'
+    suite (from clone_plans_broker) with per-config outcomes; each build is one flight
+    (ECS/Local), its runs split into PROD-MSAL / RC-MSAL variants that map 1:1 to the suite's
+    four flight-configs (292/294/328/344); a point is PASSED if it passed in >=1 matching run,
+    FAILED if it ran but never passed, else NotApplicable. (2) AUTHENTICATOR: reads this
+    release's auth ECS post-build UI-test run (state.rcs[-1].auth.test, captured by auth_ecs)
+    and fills the Authenticator bug-bash suite (from clone_plans_auth) for the automated cases
+    only — Passed->Passed, Failed->Failed — leaving the manual cases untouched for testers.
+    Every FAILED automated auth case is REASSIGNED to the release owner (System.AssignedTo) for
+    triage. The auth fill is best-effort: if the auth suite or run isn't available yet it is
+    skipped with a note, and the Broker fill still completes.
+  who: "Scout runs it automatically during `next` (an agent step) — right after distribute_tests."
+  how: >
+    The join from a pipeline result to a plan test case is the case id embedded in the automated
+    test name ('test_<caseId>_...' / storage '...TestCase<caseId>'). For Broker, only
+    'ui'-classified runs carrying a PROD/RC-MSAL marker are placed on a config. For Authenticator,
+    the auth run's UIAutomator E2E suite carries the case ids (the Monthly suite does not, so it
+    contributes nothing). Idempotent — a re-run re-fills from the current runs. Blocks only if the
+    Broker plan hasn't been cloned or no RC runs are recorded yet.
+  faqs:
+    - q: "A test failed for one config but passed for another — what gets written?"
+      a: "Per config. Each of the four flight-configs (ECS/PROD, ECS/RC, Local/PROD, Local/RC) takes its own matching run's verdict — so a case can be Passed on one config and Failed on another."
+    - q: "What happens to a Firebase E2E test that FAILED?"
+      a: "It's written FAILED in the Authenticator suite (a visible failure, never dropped), and that case is reassigned to the release owner so the owner triages it (real bug vs automation flake). Passed automated cases are marked Passed; both are excluded from the manual tester split by distribute_tests."
+    - q: "What does a case that failed then passed (retries / multiple RCs) get?"
+      a: "Passed — for a given config the rule is at-least-one-success across all its runs and retries."
+    - q: "What outcome do skipped / not-run tests get?"
+      a: "NotApplicable. A config-point with only skipped results, or no result at all for that flight+variant, is marked NotApplicable (not left blank)."
+
+bug_bash.send_invite:
+  summary: "Schedule the combined Bug Bash and send the Teams meeting invite."
+  what: >
+    Composes the Bug Bash Teams meeting from the release's real artifacts and sends the
+    invite. Subject '<Month Year> Release Bug Bash'; ~2h; body has the Broker section
+    (test plan + ECS/Local MRWP runs + the local-flights JSON from variable group 40) and
+    the Auth App section (test suite + auth pipeline). Rendered from
+    templates/bug-bash-invite.html (edit the file to restyle).
+  who: >
+    Scout composes it automatically during `next` (a scout step → workiq_create_event).
+    Recipients are the Android Identity DL + the Dublin CIAM alias; redirect for a test
+    with the send_to knob (keeps the send real, points it at you).
+  how: >
+    When: reached after 3pm or on a weekend → next business morning at 09:00; before 3pm on
+    a weekday → later the same day. Weekends roll to Monday. Links come from the clone steps
+    (Broker plan, Auth suite) and Phase 2 (ECS/Local MRWP runs); flags are fetched live from
+    variable group 40. Blocks if the plans haven't been cloned yet.
+  links:
+    - name: "Local flags — variable group 40"
+      url: "https://identitydivision.visualstudio.com/Engineering/_library?view=VariableGroupView&variableGroupId=40&path=release"
+  faqs:
+    - q: "When is it scheduled?"
+      a: "After 3pm or on a weekend → next business morning (9am); before 3pm on a weekday → later the same day. Weekends always roll to Monday."
+    - q: "Who gets invited?"
+      a: "The Azure Identity Android SDK / Android Identity team (androididentity@microsoft.com) and idnadevexciamdublin@microsoft.com. For a test, the send_to knob redirects it to you."
+    - q: "Where does the template live?"
+      a: "templates/bug-bash-invite.html — edit it to restyle; the step always renders from that file."
+
+bug_bash.notify_native_auth:
+  summary: "One-shot Teams ping to the Native Auth release engineer that the bug bash is ready."
+  what: >
+    Sends ONE Teams message to the month's Native Auth Release Engineer (from the
+    release-engineer schedule doc) telling them the bug bash is ready, that the Broker test
+    plan now has a 'Manual Tests (Native Auth)' folder with their cases (linked), asking them
+    to run their Native Auth tests at their earliest convenience, and to send the release
+    owner a confirmation when done. Fired once and done — no poller/automation.
+  who: >
+    Scout runs it during `next` (a scout step). It resolves the Native Auth RE for the release
+    month from the schedule doc (an inline hint seeds the likely alias; the skill confirms
+    against the live doc), resolves their UPN (workiq_search_people), and sends a 1:1 Teams
+    message (workiq_send_chat_message). Human fallback: if it can't resolve them it asks the
+    owner for the alias, or holds the step.
+  how: >
+    The skill runs `record-nativeauth-notify --release <id> --engineer <alias-or-upn>` to mark
+    it done (stores who was notified); without --engineer it holds the step for the owner.
+    Idempotent — once an engineer is recorded it reports done without re-sending. Blocks if the
+    Broker plan isn't built yet (needs the Native Auth suite link).
+  links:
+    - name: "Release engineer schedule (Native Auth RE column)"
+      url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/release-engineer-schedule"
+  faqs:
+    - q: "Who receives the message?"
+      a: "The Native Auth Release Engineer for the release month, from the schedule doc (e.g. Aug 2026 → silviu.petrescu). The inline hint in the step is confirmed against the live doc; update the hint when the schedule changes."
+    - q: "Does it track their confirmation?"
+      a: "No — it just asks them to reply to the release owner when they finish. It's a one-shot notification, not a poller."
+
+bug_bash.activate_chat:
+  summary: "Activate the Bug Bash meeting chat and store its id for the periodic updates."
+  what: >
+    A Teams meeting chat is DORMANT until it's activated once (first join, first message,
+    or opening its Chat pane) — only then does it get a stable 19:meeting_…@thread.v2 id
+    that automation can post to. This step resolves + activates that chat and stores the id
+    on the step (data.chat_id) so the periodic-update step can post to it.
+  who: >
+    Scout resolves it during `next` (a scout step). Three tiers: (1) SEARCH the meeting
+    chat by topic; (2) if dormant, ACTIVATE via Playwright (open the meeting in Teams web,
+    click Chat); (3) HUMAN FALLBACK — if activation fails, the owner opens the meeting and
+    clicks Chat / sends one message, then it's re-resolved.
+  how: >
+    The skill runs `record-bugbash-chat --release <id> --chat-id <resolved>` to store it
+    and mark the step done. If it truly can't be resolved, the same command WITHOUT
+    --chat-id holds the step for the owner (who activates the chat, then re-runs).
+  faqs:
+    - q: "Why can't it just post to the meeting chat directly?"
+      a: "A freshly-scheduled meeting's chat has no thread yet — it must be activated once (join / message / open Chat). This step does that activation and captures the id so the recurring poster can reach it."
+    - q: "What if Playwright can't open the chat?"
+      a: "It falls back to the owner: open the meeting in Teams and click Chat (or send one message) to activate the thread, then re-run the step."
+
+bug_bash.bugbash_updates:
+  summary: "Post the first bug-bash progress update to the meeting chat and start the 2h update poller."
+  what: >
+    Reaching this step posts an initial progress update to the Bug Bash meeting chat and
+    provisions the on-demand `bug-bash-update-poller` automation. Each update is grouped by
+    each test's owner (System.AssignedTo, set by distribute_tests, read live from BOTH the
+    Broker 'Manual Tests (Android Broker)' subtree and the Authenticator bug-bash suite).
+    A test counts as done only when it PASSED (or is N/A); not-run, failed, and blocked all
+    count as remaining and are LISTED (failed first, then blocked, then not-run) with links +
+    state so failures are surfaced, not buried. Failed AUTOMATED Authenticator cases (the ones
+    ui_test_status pre-assigned to the release owner) are shown DISTINCTLY — 🔬 'Automated
+    failure — triage', listed first in the owner's block, plus a header note — so they read as
+    an investigation the owner already owns, not a manual test to run. Owners with any remaining
+    test are @mentioned; owners who passed everything appear by name with an 'all completed'
+    line (no mention). It is fire-and-continue — the step completes after the first post so the
+    phase proceeds; the poller runs in the background.
+  who: >
+    Scout resolves it during `next` (a scout step). It gathers progress, posts the first
+    update via `workiq_send_chat_message` (contentType html; the payload carries `_mentions`
+    = [{id,upn,name}] — the skill builds the mentions array + matching <at id="i"> tags so
+    owners with remaining tests are pinged), then provisions the poller.
+  how: >
+    After the first post, provision the poller (it's on-demand, so it is NOT in
+    `automation plan` — create it directly like the RC poller): `m_create_automation`
+    with name "Release <id> — bug-bash update poller", schedule "every 2 hours", and the
+    prompt from this step's `automation_prompt(release, {interval: true})`; then
+    `automation register --id <scout-id> --name "..." --release <id> --slug
+    bug-bash-update-poller --step bug_bash.bugbash_updates`. Each tick runs
+    `post-bugbash-update --release <id>` and acts on the decision (off_hours → nothing;
+    post → send content+mentions to chatId; complete → send the completion summary, then
+    DEREGISTER the poller). Blocks if the meeting chat isn't activated (run activate_chat).
+  faqs:
+    - q: "When do the updates run?"
+      a: "Every 2 hours during working hours — 09:00–18:00 America/Los_Angeles, weekdays only, skipping hardcoded US federal holidays. Outside that window a tick returns off_hours and sends nothing; it resumes at 09:00 the next working day."
+    - q: "When do the updates stop?"
+      a: "Either automatically when every test is complete (a tick returns `complete`, posts a wrap-up, and deregisters the poller) OR when the owner attests the bugbash_complete gate (the skill deregisters the poller then)."
+    - q: "Why group by AssignedTo instead of the test point's tester?"
+      a: "The ADO test-point `tester` field is NOT synced with the case's System.AssignedTo. distribute_tests sets AssignedTo, so progress is grouped by AssignedTo to reflect who actually owns each test."
+    - q: "Why are some of the owner's failures marked 'Automated failure — triage'?"
+      a: "Those are Authenticator cases that FAILED in automation (the auth ECS Firebase run) and were pre-assigned to the release owner by ui_test_status. They're distinct from manual tests: the owner investigates them (flake vs real bug), they don't need a manual re-run. They still count as remaining until resolved."
+
+bug_bash.native_auth_signoff:
+  summary: "The release owner attests they received the Native Auth team's sign-off."
+  what: >
+    A pure human attestation (owner: human, attest). No message is sent and no new data is
+    captured — the release owner confirms they received the bug-bash sign-off from the Native
+    Auth team. The engineer's name is reused from notify_native_auth (where they were notified),
+    so the prompt names who to expect the sign-off from; nothing is re-collected here.
+  who: "The release owner attests. Scout takes no action — there is nothing to run."
+  how: >
+    The step holds with a confirmation prompt naming the Native Auth RE from notify_native_auth.
+    The owner does NOT touch the engine — once the sign-off has come in, they tell Scout and Scout
+    clears the step (`done --step native_auth_signoff`). If it hasn't arrived yet, leave it holding.
+  faqs:
+    - q: "What is this confirming?"
+      a: "That the release owner received the Native Auth team's sign-off — the confirmation the RE (named in notify_native_auth) was asked to send back."
+    - q: "Why isn't Scout doing this one?"
+      a: "There's no outbound action or new data to capture — it's an attestation the release owner makes, like the preflight vitals check. Scout can't receive the sign-off on the owner's behalf."
+
+bug_bash.ui_failures:
+  summary: "Release-owner investigation of EVERY Phase-2 UI failure — Broker MRWP + Authenticator ECS."
+  what: >
+    A human-review checkpoint (owner: human, non-gate): before the bug bash proceeds, the release
+    owner investigates the Phase-2 UI-automation failures. The list covers BOTH apps — the Broker
+    MRWP UI suites (from the ECS + Local RC runs) AND the Authenticator ECS Firebase failures — and
+    lists EVERY failing test individually (never collapsed to a per-suite stat). The step has no
+    logic of its own; the earlier `ui_test_status` step forward-populates its Details with the full
+    per-test list + run links (it just filled both suites and knows the failures), so the owner
+    sees everything in one place. When nothing failed, the step shows its generic prompt and is a
+    quick acknowledge.
+  who: >
+    The release owner investigates every failure and manually runs the tests. The owner does NOT
+    touch the engine — they tell Scout when everything is investigated and executed, and Scout
+    marks the step done (`done --step ui_failures`). It is a reminder, not a gate — it holds until
+    the owner confirms completion but doesn't require a formal approval.
+  how: >
+    Read the Details — a structured summary (like the bug-bash progress update): a header + a bold
+    total-count line, then a **Broker (MRWP)** section and an **Authenticator (ECS)** section. EACH
+    failing test is its own 🔬 line with a link to its ADO test case — Broker and Authenticator
+    alike — and all are framed as investigations the RELEASE OWNER owns (flake vs real bug). Broker
+    lines also carry their flight + suite context. The owner follows the run links, rules on each
+    failure, and manually runs the affected tests. Once the owner tells Scout every failure has been
+    investigated and executed, Scout closes the step with `done --step ui_failures`.
+  faqs:
+    - q: "Does this include the Authenticator app failures?"
+      a: "Yes. The list is combined: every failing Broker MRWP UI test AND every failing Authenticator ECS automated test. BOTH sets are also physically reassigned to the release owner in ADO (by ui_test_status)."
+    - q: "Why are Broker failures shown the same way as Authenticator ones?"
+      a: "Because all UI failures are the release owner's to investigate. Both are listed per-test with a 🔬 investigate marker and an ADO test-case link (no failure is collapsed into a bare pass/fail stat), and both are reassigned to the owner in ADO."
+    - q: "Where does the failure list come from if this step has no code?"
+      a: "From ui_test_status, which runs earlier in the phase — it filled both the Broker and Authenticator suites, reassigned every failing case (Broker + Auth) to the owner, and writes the full per-test failure list + links onto this step for the owner."
+
+bug_bash.bugbash_complete:
+  summary: "The release owner attests the Bug Bash is finished — the gate that closes the bash."
+  what: >
+    A human sign-off gate: the owner confirms the assigned tests have been run (or explicitly
+    triaged/blocked) and the team agrees the bash is done. This includes the Authenticator ECS
+    automation failures that `ui_test_status` pre-assigned to the owner for triage — the owner
+    reviews those (already in their queue) alongside the manual results. Approving it advances the
+    release out of Phase 3. It also STOPS the periodic updates.
+  who: >
+    The owner approves it (`approve` / `done --step bugbash_complete`). Until then — or until
+    every test auto-completes — the `bug-bash-update-poller` keeps posting every 2h.
+  how: >
+    When the owner signs off, DEREGISTER the bug-bash update poller so it stops posting:
+    `automation list --release <id> --step-filter bug_bash.bugbash_updates --json` to find its
+    id, then `automation deregister --id <id>`. (If all tests had already completed, the poller
+    deregistered itself on its last `complete` tick — deregister is idempotent/safe to skip.)
+  faqs:
+    - q: "Can I sign off before every single test passes?"
+      a: "Yes — this is a judgement gate. If the remaining tests are triaged/blocked and the team agrees the bash is done, approve it. It doesn't require 100% pass; that's what the sign-off is for."
+    - q: "What about the failed Authenticator automation cases?"
+      a: "Those were pre-assigned to you (the owner) by ui_test_status and surfaced in ui_failures. Review/triage them as part of your sign-off — they don't block the gate, but you should have ruled on them before approving."
+    - q: "What stops the 2-hour chat updates?"
+      a: "Two things: the poller stops itself when every test is complete, and approving this gate deregisters the poller. Either way the updates end when the bash is done."
+
+# ============================= Phase 4 · finalize =============================
+
+finalize.gate_watch:
+  summary: "1-click approve the Release Orchestrator's parked 'Remove RC Tags' gate — triggers publish."
+  what: >
+    After Phase 3, the Release Orchestrator (def 2828) runs and PARKS at a manual approval on its
+    'Remove RC Tags' stage. This step is the human's 1-click approval of that gate: Scout finds the
+    orchestrator run for the release, detects the parked stage + its pending approval, and shows a
+    brief. When the release owner APPROVES, Scout submits the real ADO pipeline approval, which
+    un-parks the orchestrator into the publish stages.
+  who: >
+    The release owner decides (approve / deny). Scout runs the discovery and, on approval, submits
+    the ADO approval automatically via the pipeline approvals API — no manual portal click needed.
+  how: >
+    Approve with `approve-orchestrator-gate --release <id>` — it submits the ADO 'Remove RC Tags'
+    approval AND records the release-agent gate in one step (a dedicated command that composes the
+    submit with the normal approve; the engine is untouched). Deny with `deny` to HOLD. If the ADO
+    submit fails, the command does NOT record the gate — it stays holding so you can retry. Best-
+    effort and idempotent: if the orchestrator isn't parked (already approved) the command reports
+    there's nothing to approve.
+  consequences: >
+    Approving the 'Remove RC Tags' gate makes the Release Orchestrator automatically: remove the RC
+    tags; publish internal artifacts to the ADO Maven feed; publish MSAL/Common to Maven Central;
+    create release-integration/<version> branches; update the orchestrator pipeline variables
+    (MSAL-PROD-Version, MSAL-PROD-BRANCH, Broker-PROD-Version); and print GitHub PR compare links in
+    the next stage. This is a REAL, externally-visible publish (Maven Central + GitHub) — not easily
+    undone. Deny and investigate if anything looks off.
+  links:
+    - name: "Release Orchestrator pipeline YAML"
+      url: "https://identitydivision.visualstudio.com/Engineering/_git/AuthClientAndroidPipelines?path=/production/monthly-release/release-orchestrator.yml"
+  faqs:
+    - q: "What exactly happens when I approve?"
+      a: "Scout submits the ADO approval on the orchestrator's 'Remove RC Tags' stage. The orchestrator then removes RC tags and publishes: internal artifacts to the ADO Maven feed, MSAL/Common to Maven Central, creates release-integration/<version> branches, updates the pipeline variables (MSAL-PROD-Version, MSAL-PROD-BRANCH, Broker-PROD-Version), and prints GitHub PR compare links."
+    - q: "Is it reversible?"
+      a: "No — it publishes to Maven Central and GitHub. Treat approval as the point of no return; deny to hold if the RC verification or bug bash left anything unresolved."
+    - q: "Nothing is parked — is that an error?"
+      a: "No. If the orchestrator already passed the gate (or isn't waiting), the step reports there's nothing to approve and moves on."
+
+finalize.integ_prs:
+  summary: "Auto-open the 8 release integration/freeze PRs across the 4 repos (2 per repo)."
+  what: >
+    After 'Remove RC Tags', the orchestrator creates the release-integration/<v> branches and the
+    release/<v> + working/release/<v> branches, then only PRINTS compare links — a human opens the
+    PRs by hand. This step opens them: 2 PRs per repo for common, msal, broker, authenticator —
+    (A) FREEZE working/release/<v> -> release/<v>, and (B) INTEGRATION release-integration/<v> ->
+    dev (or 'working' for authenticator). For the integration PRs it also brings the RI branch up
+    to date with the target and REVERTS build.gradle so the target stays dynamic (only version +
+    changelog transfer); if a non-build.gradle conflict remains it HOLDS that PR for a human.
+  trigger: >
+    NOT merely 'gate_watch passed'. The step MONITORS the Release Orchestrator and only fires once
+    the 'Create PRs to Integrate Release Branches' stage has COMPLETED — the release-integration
+    branches don't exist until then. While that stage is still running it reports in-progress and
+    re-checks; if that stage FAILS it blocks (the RI branches were never created).
+  who: >
+    Scout does the work (an agent step). The release owner reviews the preview and triggers the
+    write. One shared PBI is created and referenced (AB#<id>) in every PR body.
+  where:
+    - "common: github.com/AzureAD/microsoft-authentication-library-common-for-android"
+    - "msal: github.com/AzureAD/microsoft-authentication-library-for-android"
+    - "broker: msft.ghe.com/security/ad-accounts-for-android"
+    - "authenticator: msazure/One AD-MFA-phonefactor-phoneApp-android (target = working)"
+  how: >
+    Preview first: `create-integration-prs --release <id>` prints the full plan (per repo: branch
+    existence, existing-vs-new PR, and the RI edit analysis — commits behind, build.gradle files to
+    revert, remaining human conflicts) and writes NOTHING. When it looks right, run
+    `create-integration-prs --release <id> --execute` to create the PBI, edit the RI branches, and
+    open the PRs. Idempotent: an existing open PR head->base is reused (labels ensured), never
+    duplicated. Labels: skip-coverage-check on all github/GHE PRs; common also gets
+    Skip-Consumers-Check. Test safely with the step's `versions`/`branches`/`repos`/`pbi` mocks.
+  consequences: >
+    --execute is a WRITE: it creates a real PBI, PUSHES commits to the release-integration branches
+    (fast-forward only, never force), and opens real PRs on github.com, GitHub Enterprise, and Azure
+    DevOps. RI editing runs in an isolated git worktree so your local checkouts are untouched, and a
+    PR is never opened when unresolved non-build.gradle conflicts remain.
+  faqs:
+    - q: "Why does it revert build.gradle?"
+      a: "The RI branch is cut from the working-release branch, so it carries the release's PINNED build.gradle. dev/working must stay DYNAMIC, so the step restores the target's build.gradle and transfers only the version bump + changelog."
+    - q: "What if there are real conflicts?"
+      a: "build.gradle conflicts are auto-resolved to the target. Any other conflict HOLDS that one PR (it isn't opened) and is surfaced so a person can resolve it, then rerun."
+    - q: "Will it duplicate a PR I already opened?"
+      a: "No. It looks for an open PR with the same head->base first and reuses it (just ensuring labels)."
+
+finalize.release_announcement:
+  summary: "Post the release-complete announcement to the 'General' Teams channel."
+  what: >
+    Once the release has published, announce it in the Android DevX <-> partner release-sync
+    'General' channel: a titled post ('Auth Client Android SDKs <Month Year> Release') with a
+    small SDK version table (Common / MSAL / Broker) and a cc line. A root channel POST (not a
+    reply), so partner teams see the completed build numbers in one place.
+  who: >
+    Scout composes and posts it (a scout step); the release owner owns the content/recipients.
+    Versions come from state.versions (the single source of truth populated at Phase 2) — the
+    step never re-discovers them.
+  where:
+    - "Team be33b3e7-c501-4225-9413-3b88046f3eb3, channel 'General' 19:715820c336d3454bbd75ef0bad68e460@thread.tacv2"
+  how: >
+    Runs via step-action -> microsoft_teams-SendMessageToChannel (a ROOT channel post needs the
+    microsoft_teams MCP; WorkIQ only does channel replies). To test, redirect with the `post_to`
+    mock knob ({teamId, channelId}) to a test channel — keeps the post real, points it elsewhere.
+    The `versions` mock overrides the shown SDK versions.
+  faqs:
+    - q: "Where do the versions come from?"
+      a: "state.versions — populated at Phase 2 by build_verify.orchestrator_health from the orchestrator run tags. The announcement shows Common/MSAL/Broker (the authenticator branch is stored too but not shown in this SDK table)."
+    - q: "Why not WorkIQ like the other Teams messages?"
+      a: "WorkIQ can only REPLY to an existing channel message; a brand-new channel post requires the microsoft_teams MCP (SendMessageToChannel). The 1:1/group chat reminders use WorkIQ; this channel announcement uses microsoft_teams."
+    - q: "Does the cc line @-tag CP/Intune, LTW, OneAuth, Native Auth?"
+      a: "Those are Teams TAGS, and the microsoft_teams tool can't @-mention a tag (it maps the id to an unknown user). So instead the step @-mentions the tags' MEMBERS as individual users — maintained by hand in config/announcement_cc.yaml ({name,email} per group). Mock knobs: cc_mode 'mention' (default), 'self' (ping only you via self_email — safe test), or 'off' (plain text); cc_members overrides the registry."
+
+finalize.publish_notes_gate:
+  summary: "1-click approve the orchestrator's SECOND gate — 'Publish GitHub Release Notes'."
+  what: >
+    After the integration PRs merge, the Release Orchestrator (def 2828) parks at a SECOND manual
+    approval — the 'Publish GitHub Release Notes' stage. This step is the human's 1-click approval
+    of that gate: on approval Scout submits the real ADO pipeline approval, which publishes the
+    GitHub release notes for MSAL and Common. It is the sibling of gate_watch (the first gate,
+    'Remove RC Tags') and runs later in the phase.
+  who: >
+    The release owner decides (approve / deny). Scout runs the discovery and, on approval, submits
+    the ADO approval automatically. STAGE-SPECIFIC: it only ever approves the 'Publish GitHub
+    Release Notes' stage — if the orchestrator is parked at any other stage the submit is refused,
+    so it can't approve the wrong gate.
+  how: >
+    Approve with `approve-orchestrator-gate --release <id>` — the same command as gate_watch; it
+    detects which gate is holding, submits the correct ADO approval, and records the release-agent
+    gate in one step. Deny with `deny` to HOLD. Approving early is safe: the gate verifies the
+    'Publish GitHub Release Notes' stage is the parked one before submitting, so it won't approve
+    prematurely. If the notes stage has already completed, the step reports there's nothing to
+    approve.
+  consequences: >
+    Approving publishes the GitHub release notes for MSAL and Common (the orchestrator's final
+    publish stage). Make sure the integration PRs are merged first.
+  links:
+    - name: "Release Orchestrator pipeline YAML"
+      url: "https://identitydivision.visualstudio.com/Engineering/_git/AuthClientAndroidPipelines?path=/production/monthly-release/release-orchestrator.yml"
+  faqs:
+    - q: "How is this different from gate_watch?"
+      a: "gate_watch approves the FIRST gate ('Remove RC Tags', which publishes to Maven Central + creates the integration branches). publish_notes_gate approves the SECOND gate ('Publish GitHub Release Notes'), which parks only after the integration PRs merge."
+    - q: "What if I approve before the orchestrator reaches the notes gate?"
+      a: "Safe — the gate verifies the 'Publish GitHub Release Notes' stage is the parked one before submitting the ADO approval. If a different stage is parked (or none), it refuses to submit and stays holding."
+    - q: "Nothing is parked — is that an error?"
+      a: "No. If the notes stage already completed, the step reports there's nothing to approve. If it hasn't parked yet, approve once it's waiting."
+
+
+  summary: "Verify MSAL / Common / Common4j are live on Maven Central at the release versions."
+  what: >
+    After the orchestrator's publish stages, confirm the three externally-published artifacts
+    appear on Maven Central: common4j and common at the Common version, and msal at the MSAL
+    version. Versions come from state.versions (populated at Phase 2). Common4j has no separate
+    version — it publishes at the Common version. All three present -> done; not-yet-present ->
+    in-progress (poll); a network error that blocks the check -> blocked (so it's surfaced, not
+    assumed as 'not published').
+  who: "Scout (an agent step) — read-only anonymous HTTPS to Maven Central; no auth needed."
+  where:
+    - "Common4j: https://repo1.maven.org/maven2/com/microsoft/identity/common4j/"
+    - "Common:   https://repo1.maven.org/maven2/com/microsoft/identity/common/"
+    - "MSAL:     https://repo1.maven.org/maven2/com/microsoft/identity/client/msal/"
+  how: >
+    Runs automatically and re-checks on a poll. It HEADs each artifact's per-version .pom
+    (200 = live, 404 = not yet). New releases can take a few HOURS to propagate to
+    repo1.maven.org, so a 404 is 'not yet' (keep polling), not a failure. The search.maven.org
+    UI can lag ~a day — the repo1 direct links above update within hours and are what this step
+    checks. Test with the `results` mock (artifactKey -> published|missing|error) and `versions`.
+  links:
+    - name: "Publish to Maven Central (internal checklist)"
+      url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/publish-to-maven-central"
+  faqs:
+    - q: "Why does it stay 'in progress' for a while?"
+      a: "Maven Central propagation to repo1.maven.org typically takes a few hours after publish. The step polls the .pom URLs until all three return 200, then completes. It never marks the release failed just because an artifact isn't visible yet."
+    - q: "What version is Common4j checked at?"
+      a: "The Common version. The orchestrator publishes Common4j with Common4jVersion = NextCommonVersion, so there's no separate Common4j version to track."
+
+finalize.verify_release_notes:
+  summary: "Verify the GitHub release notes are published for Broker, MSAL, and Common."
+  what: >
+    After the 'Publish GitHub Release Notes' gate (publish_notes_gate), the orchestrator publishes
+    a GitHub release for each library. This step confirms all three exist at the release versions —
+    it's the GitHub complement to verify_pub (which checks Maven Central). Each release is tagged
+    'v<version>': Broker @ state.versions.broker, MSAL @ state.versions.msal, Common @
+    state.versions.common.
+  who: "Scout (an agent step) — read-only `gh release view` (uses the machine's gh auth)."
+  where:
+    - "Broker: msft.ghe.com/security/ad-accounts-for-android (GitHub Enterprise) — v<broker>"
+    - "MSAL:   github.com/AzureAD/microsoft-authentication-library-for-android — v<msal>"
+    - "Common: github.com/AzureAD/microsoft-authentication-library-common-for-android — v<common>"
+  how: >
+    Runs automatically and re-checks on a poll. For each repo it runs `gh release view v<version>`;
+    a published (non-draft) release counts, a missing tag is 'not yet' (keep polling), and a draft
+    or an auth/network error is surfaced (Blocked) rather than assumed. The repo slugs are REUSED
+    from integ_prs.CONFIG (the single source for the release repos). Test with the `results` mock
+    (repoKey -> published|missing|error) and `versions`.
+  faqs:
+    - q: "How is this different from verify_pub?"
+      a: "verify_pub checks the Maven Central ARTIFACTS (MSAL/Common/Common4j .pom); verify_release_notes checks the GitHub RELEASES (Broker/MSAL/Common, tagged v<version>). Both must be true for the release to be fully published."
+    - q: "Why does it include Broker but verify_pub doesn't?"
+      a: "Broker isn't published to Maven Central (it's a private GHE repo), but it DOES get a GitHub Enterprise release. So the GitHub-notes check covers all three libraries; the Maven check covers only the two public artifacts (plus Common4j)."
+    - q: "What if a release isn't there yet?"
+      a: "It stays in-progress and re-checks — publishing the notes happens right after the publish_notes_gate is approved. A draft release or a gh auth error is surfaced instead of silently passing."
+
+
+  what: >
+    After the release publishes and verify_pub confirms Common is live on Maven Central, update
+    OneAuth to consume that final (non-RC) Common version. On the standing
+    `android/common-ingestion` branch it bumps the AndroidCommon version in FOUR files — the gradle
+    version catalog (msIdentityCommon in libs.versions.toml), the CG manifest
+    (com.microsoft.identity:common maven version in deps/cgmanifest.json), the deps/README.md
+    'MSAL Android Common' table row, and a new '(Android) Ingest AndroidCommon <ver>' CHANGELOG.md
+    bullet — then opens a PR into `dev`.
+  who: >
+    Scout does the work (an agent step, PREVIEW-FIRST like integ_prs). The release owner reviews
+    the preview and triggers the write.
+  where:
+    - "repo: OneAuth — office.visualstudio.com/OneAuth/_git/OneAuth (config/coordinates.yaml repos.oneauth)"
+    - "branch: android/common-ingestion -> dev"
+    - "version: state.versions.common (final non-RC Common) + state.versions.msal (for the changelog line)"
+  how: >
+    Preview: `create-oneauth-common-pr --release <id>` prints the plan (merge-needed?, the 4 file
+    edits, existing-vs-new PR) and writes NOTHING. Execute: `create-oneauth-common-pr --release
+    <id> --execute` performs, in order — (1) a SERVER-SIDE merge of dev into android/common-ingestion
+    (a transient dev->ingestion PR that ADO completes; the ingestion branch is diverged from dev, so
+    a merge — not a fast-forward — is required; a merge CONFLICT holds the step for a human, never
+    forced), (2) a single commit bumping the 4 files, (3) open/reuse the android/common-ingestion->dev
+    PR. Idempotent: an existing open PR is reused. OneAuth is a huge monorepo, so ALL git ops go
+    through the ADO REST API (no local clone). Test with the `common`/`msal` mocks.
+  consequences: >
+    A real WRITE to OneAuth: a server-side merge commit on android/common-ingestion, a version-bump
+    commit, and a PR into dev. The merge is non-destructive (preserves the ingestion branch's
+    history); on conflict nothing is forced — the step holds for manual resolution.
+  faqs:
+    - q: "Why merge dev into the ingestion branch instead of fast-forwarding?"
+      a: "android/common-ingestion is a long-lived staging branch that's diverged from dev (its ingestion PRs squash-merge, so its own commits never land in dev). A fast-forward would discard its unique history — a real merge is required, done server-side by ADO."
+    - q: "What version does it write?"
+      a: "state.versions.common — the final non-RC Common version published to Maven Central (verify_pub confirms it first). The changelog line also references state.versions.msal."
+    - q: "What if the merge conflicts?"
+      a: "The step holds (attention) and surfaces it — a human resolves the dev->ingestion merge, then re-runs. Scout never force-merges."
+
+finalize.tag_authenticator:
+  summary: "Tag the Auth App's released commit with its version (no 'v' prefix) in the auth repo."
+  what: >
+    Once the release has published, mark the Authenticator app's released build by creating a
+    lightweight git tag on its release commit. The tag NAME is the Auth App version (e.g.
+    '6.2608.5658' — the auth app does NOT use a 'v' prefix). It tags the EXACT commit the
+    release-app build (AndroidBuild-1ES, def 355246) was built from — build.sourceVersion — on
+    the release branch, not merely the branch head.
+  who: >
+    Scout does it (an agent step). There is NO preview/execute — the tag is created when the
+    step is reached. It writes to the Authenticator repo (msazure/One,
+    AD-MFA-phonefactor-phoneApp-android).
+  where:
+    - "repo: msazure/One AD-MFA-phonefactor-phoneApp-android (config/coordinates.yaml repos.authenticator)"
+    - "release branch: state.versions.authenticator ('release/YYYY/MM/DD', set at Phase 2 by orchestrator_health)"
+    - "version source: the numeric (\\d+.\\d+.\\d+) ADO build-tag on the release-app build (AndroidBuild-1ES, def 355246)"
+  how: >
+    Runs automatically. It reads the release branch from state.versions.authenticator, finds the
+    newest succeeded release-app build on that branch, reads its version build-tag + the commit it
+    was built from, and creates a lightweight git tag <version> at that commit. Idempotent: if the
+    tag already exists AT that commit it passes (no-op); if it exists at a DIFFERENT commit it
+    BLOCKS for a human to reconcile. If the release-app build hasn't run yet, it blocks. Test with
+    the `version`/`commit` inject mocks, `dry_run` (compose without writing), or `fail`.
+  consequences: >
+    A real WRITE to the Authenticator repo: it creates the git tag ref. It never force-updates an
+    existing tag (an existing tag at a different commit blocks instead), and it makes no other
+    change.
+  faqs:
+    - q: "Does the tag use a 'v' prefix?"
+      a: "No. The auth app tags with the bare version (e.g. '6.2608.5658'). Older 'v6.YYMM.xxxx' tags in the repo are a different/legacy scheme and don't map to the release-branch heads."
+    - q: "Which commit gets tagged — the branch head or the built commit?"
+      a: "The exact commit the release-app build was built from (build.sourceVersion). Usually that equals the release-branch head, but tagging the built commit is deterministic even if commits land afterward."
+    - q: "Where does the version come from?"
+      a: "The release-app build (AndroidBuild-1ES) carries the final version as a numeric ADO build-tag; Scout reads it — it doesn't compute or guess the version."
+
+finalize.wiki_payload:
+  summary: "Create/update the monthly release payload wiki page (preview-first)."
+  what: >
+    Fills the release PAYLOAD wiki subpage under IdentityWiki / 'Monthly Releases Payloads
+    History'. Auto-fills the deterministic parts — the '#App Version' line (the Authenticator
+    version + its AndroidBuild-1ES run link, the NEW release pipeline), the merged-PR list for
+    this release (derived from the auth working branch + release-branch bumps), and the SDK
+    versions (Broker/Common/MSAL) — and leaves the hand-curated sections (release-notes email
+    title, sign-offs, expected feature-flag rollouts) as clearly-marked placeholders. This is
+    checklist Phase 2.2 Step 6, relocated to the END of the release (after tag_authenticator) so
+    every version/commit/tag is final. It REPLACES the old Phase-0 'wiki' step (no more empty
+    placeholder page created early).
+  who: >
+    Scout composes it (an agent step) and PREVIEWS the page before writing — the release owner
+    reviews the derived App Version + PR list, then approves the write.
+  where:
+    - "wiki: IdentityWiki / IdentityWiki.wiki, parent 'Monthly Releases Payloads History'"
+    - "page: '<Ship Month> <Year> Release' (the release's display name, e.g. 'September 2026 Release')"
+    - "version + PR list: the Authenticator release-app build + tools.merged_release_prs"
+  how: >
+    Runs via step-action → returns a preview; run `create-payload-wiki --release <id> --dry-run`
+    to show the full composed markdown + target page (create vs update), then `--execute` to
+    write. Create-or-update: an existing page is updated ETag-guarded; otherwise it's created.
+    Test with the `version` / `prs` / `page_name` inject mocks or `fail`.
+  consequences: >
+    A real WRITE to the IdentityWiki payload page (create or content overwrite). The email
+    title, sign-offs and feature-flag sections are placeholders the owner completes by hand.
+  faqs:
+    - q: "Why did this move from Phase 0 to Phase 4?"
+      a: "The old Phase-0 step only created an empty placeholder page and relied on a later manual fill. Doing it once at the end — when the version, commit, tag and SDK versions are all final — is simpler and avoids the empty-note step."
+    - q: "Is the whole page auto-filled?"
+      a: "No. App Version + build link, the merged-PR list, and the SDK versions are derived; the release-notes email title, sign-offs, and expected feature-flag rollouts are hand-curated placeholders. You review everything in the preview before it writes."
+    - q: "Why does the App Version link a different pipeline than older payload pages?"
+      a: "The auth build pipeline changed — the version now comes from the AndroidBuild-1ES release-app build (def 355246). Older payload pages link the previous pipeline; this step links the new one via find_auth_release_build."
+
+finalize.final_status_email:
+  summary: "Send the closing partner status email and shut down the daily status automation."
+  what: >
+    The partner-facing DAILY status email (a weekday automation running `status-email`) covers
+    Phase 2 through Phase 4. This terminal Phase-4 step guarantees the FINAL status email — the
+    Phase-4-complete snapshot — goes out when finalize completes, even if Phase 4 and Phase 5 land
+    on the same day (when the daily automation might not fire again), and signals that the daily
+    automation should be torn down so no status emails leak into Phase 5+.
+  who: >
+    Scout composes it (a scout step) and sends it via WorkIQ to the release DLs
+    (config/notifications.yaml status_email.recipients). A test run redirects to you via the
+    `send_to` mock.
+  where:
+    - "recipients: config/notifications.yaml status_email.recipients (authsdkrelease@, androididentity@)"
+    - "template: orchestrator/status_email.py (same as the daily email)"
+  how: >
+    Runs via step-action → workiq_send_email with the composed closing email; the payload names
+    `record-status-email --final` as the follow-up (stamps the day + closes). After sending +
+    recording, DEREGISTER the daily partner status-email automation (`<release> · Phases 2–4 — daily
+    status email`) via `automation deregister`. To test,
+    set the `send_to` mock to your own address.
+  faqs:
+    - q: "Won't this double-send with the daily automation?"
+      a: "The daily automation is idempotent per day (last_status_email_date), and its window ends at Phase 5. The terminal step is the guaranteed CLOSING send; at worst you get a morning daily + the closing email on the last day, which is intended."
+    - q: "Who tears down the daily automation?"
+      a: "The skill, after this step completes — it deregisters the daily partner status-email automation (`<release> · Phases 2–4 — daily status email`; also removed at release close as a backstop)."
+
+

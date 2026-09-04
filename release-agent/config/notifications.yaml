@@ -1,0 +1,40 @@
+# Release digest delivery channels — DATA (not code) for how the daily `tick`
+# digest reaches the release owner. The engine builds ONE digest; this file says
+# where it goes. Read by `tick`/`notify`, which add a `channels` map and (when a
+# digest is due) a `teams` delivery descriptor to their payload.
+#
+# Purpose: keep the RELEASE OWNER (the engineer running the release) aware of status
+# and pull them in when a step needs them. Broadcasting to anyone else only happens
+# when a specific step requires it (that's the step-driving automations' job, e.g.
+# the CCD reminders) — NOT this digest.
+#
+# Fields:
+#   channels.email : email the digest to owner_email (existing behavior).
+#   channels.teams : ALSO deliver the digest over Teams.
+#   teams.target   : WHERE the Teams copy goes —
+#                      'scout' (default) → the Scout Teams bot DM, delivered with
+#                                          m_send_teams_message (the plain-text
+#                                          digest). This is the release owner's
+#                                          Scout notification channel.
+#                      <chat id>         → an explicit Teams chat, delivered with
+#                                          workiq_send_chat_message (rich HTML). Use
+#                                          only when you deliberately want a shared
+#                                          chat instead of the Scout bot.
+
+version: 1
+
+channels:
+  email: true
+  teams: true
+
+teams:
+  target: scout
+
+# Partner-facing DAILY release STATUS email (distinct from the owner digest above). Sent on
+# business days while the release is in flight (Phase 2 build_verify through Phase 4 finalize)
+# to the release distribution lists. For a TEST run, the skill redirects these to the owner via
+# the `send_to` mock so the real DLs are never emailed.
+status_email:
+  recipients:
+    - authsdkrelease@microsoft.com
+    - androididentity@microsoft.com
