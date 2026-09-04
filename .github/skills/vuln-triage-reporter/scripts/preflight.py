@@ -61,8 +61,25 @@ EXPECTED_REMOTES = {
     "adal": ("github.com", "azure-activedirectory-library-for-android"),
 }
 
+# Nested submodules: a parent repo can build against its OWN copy of a library rather than the
+# top-level one. `broker/settings.gradle` maps :common/:common4j to broker/common. Analysing the
+# top-level checkout while the build uses a different (stale) commit yields conclusions about code
+# that never ships.
+NESTED_SUBMODULES = [
+    ("broker", "common"),
+]
+
 # How many days of drift before we consider a checkout stale enough to distort a Gate-0 answer.
 STALE_DAYS = 3
+
+# Commits behind the module's DEFAULT branch before a non-default branch is treated as abandoned.
+# Small non-zero tolerance so a legitimate short-lived feature branch does not trip the gate.
+MAX_BRANCH_DRIFT = 50
+
+# ESTS is a hyper-active monorepo: it lands commits continuously, so "behind == 0" is never
+# durably true and a strict check makes the gate unsatisfiable (observed: 323 -> 4 -> 1 across
+# consecutive pulls in one session). What matters is that it is recent enough to answer questions.
+ESTS_MAX_BEHIND = 250
 
 
 def run(args, cwd=None):
@@ -185,6 +202,27 @@ def check_freshness(root: Path, rep: Report):
                 pass
 
         detail = f"branch={branch} behind={behind_n} newest_remote_commit_age={age_days}d"
+        # A module parked on an abandoned branch is the most dangerous state of all: `git pull` says
+        # "Already up to date" forever because the BRANCH is dead, not the remote. A real run had
+        # `common` sitting on master @ a 4-year-old commit, 4200+ commits behind dev — greps against it
+        # returned nothing, and "no results" reads as "the sink isn't there". This must FAIL, not WARN.
+        default_branch = _default_branch(mod)
+        if default_branch and branch != default_branch:
+            rc_d, drift, _ = run(
+                ["git", "-C", str(mod), "rev-list", "--count", f"HEAD..origin/{default_branch}"]
+            )
+            drift_n = int(drift) if drift.isdigit() else -1
+            if drift_n > MAX_BRANCH_DRIFT:
+                rep.add(
+                    "FAIL",
+                    f"{module} is on '{branch}', {drift_n} commit(s) behind origin/{default_branch}",
+                    detail
+                    + f"\nThis branch looks ABANDONED. A grep here returns nothing for code that exists on"
+                    f"\n'{default_branch}', and an empty grep reads as 'the sink is not there'.",
+                    f'git -C "{mod}" checkout {default_branch} && git -C "{mod}" pull --ff-only',
+                )
+                continue
+
         if behind_n > 0:
             rep.add(
                 "FAIL",
@@ -203,6 +241,52 @@ def check_freshness(root: Path, rep: Report):
             )
         else:
             rep.add("PASS", f"{module} current ({detail})")
+
+
+def check_nested_submodules(root: Path, rep: Report):
+    """Verify nested submodules match the gitlink their parent actually builds against.
+
+    `broker/settings.gradle` wires `:common`/`:common4j` to `broker/common` — a SEPARATE checkout from
+    the top-level `common`. In a real run that nested checkout was parked on an unrelated branch and
+    lacked the security controls entirely, which sent an adversarial reviewer down a false path and
+    capped confidence until it was manually resolved. The gitlink is the source of truth.
+    """
+    for parent, nested in NESTED_SUBMODULES:
+        pdir = root / parent
+        ndir = root / parent / nested
+        if not (pdir / ".git").exists() or not ndir.exists():
+            continue
+        rc, out, _ = run(["git", "-C", str(pdir), "ls-tree", "HEAD", nested])
+        if rc != 0 or not out:
+            continue
+        parts = out.split()
+        pinned = parts[2] if len(parts) >= 3 else ""
+        rc, head, _ = run(["git", "-C", str(ndir), "rev-parse", "HEAD"])
+        if not pinned or not head:
+            continue
+        if head.strip() != pinned.strip():
+            rep.add(
+                "FAIL",
+                f"{parent}/{nested} does not match the gitlink {parent} builds against",
+                f"pinned={pinned[:9]} checked_out={head.strip()[:9]}\n"
+                f"'{parent}/settings.gradle' builds against this nested checkout, so analysing it gives\n"
+                f"conclusions about code that never ships.",
+                f'git -C "{pdir}" submodule update --init --recursive {nested}',
+            )
+        else:
+            rep.add("PASS", f"{parent}/{nested} matches its gitlink ({pinned[:9]})")
+
+
+def _default_branch(mod: Path) -> str:
+    """Resolve the module's default branch from origin/HEAD, falling back to dev/main/master."""
+    rc, out, _ = run(["git", "-C", str(mod), "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
+    if rc == 0 and out:
+        return out.rsplit("/", 1)[-1]
+    for cand in ("dev", "main", "master"):
+        rc, _, _ = run(["git", "-C", str(mod), "rev-parse", "--verify", f"origin/{cand}"])
+        if rc == 0:
+            return cand
+    return ""
 
 
 def check_ests(ests: Path | None, rep: Report):
@@ -227,15 +311,56 @@ def check_ests(ests: Path | None, rep: Report):
         ["git", "-C", str(ests), "rev-list", "--count", f"HEAD..origin/{branch}"]
     )
     behind_n = int(behind) if behind.isdigit() else -1
-    if behind_n > 0:
+    if behind_n > ESTS_MAX_BEHIND:
         rep.add(
             "FAIL",
             f"ESTS behind origin/{branch} by {behind_n}",
-            "",
+            f"More than {ESTS_MAX_BEHIND} commits behind — token-service answers may be out of date.",
             f'git -C "{ests}" pull --ff-only',
+        )
+    elif behind_n > 0:
+        # Normal churn on a monorepo. Report it, but do not block the run.
+        rep.add(
+            "PASS",
+            f"ESTS present and current enough ({ests}, branch={branch}, behind={behind_n})",
+            f"Within the {ESTS_MAX_BEHIND}-commit tolerance for this monorepo's normal churn.",
         )
     else:
         rep.add("PASS", f"ESTS present and current ({ests}, branch={branch})")
+
+
+def check_app_freshness(root: Path, rep: Report):
+    """The Authenticator app checkout is only verified as 'populated' elsewhere — but MSRC cases are
+    filed against the APP, and its gradle.properties is what pins the shipping broker/common versions.
+    A stale app checkout silently answers the release-exposure question wrong."""
+    app = root / "authenticator" / "PhoneFactor"
+    if not app.exists():
+        return
+    # The git repo root is the parent (`authenticator/`), not PhoneFactor itself — resolve it rather
+    # than assuming, or this check silently no-ops.
+    rc, top, _ = run(["git", "-C", str(app), "rev-parse", "--show-toplevel"])
+    if rc != 0 or not top:
+        return
+    app = Path(top.strip())
+    run(["git", "-C", str(app), "fetch", "origin", "--prune"])
+    rc, branch, _ = run(["git", "-C", str(app), "rev-parse", "--abbrev-ref", "HEAD"])
+    if rc != 0 or not branch:
+        return
+    rc, behind, _ = run(
+        ["git", "-C", str(app), "rev-list", "--count", f"HEAD..origin/{branch}"]
+    )
+    behind_n = int(behind) if behind.isdigit() else -1
+    if behind_n > 0:
+        rep.add(
+            "FAIL",
+            f"authenticator app is BEHIND origin/{branch} by {behind_n} commit(s)",
+            f"branch={branch} behind={behind_n}\n"
+            "The app pins the shipping broker/common versions - a stale checkout answers the\n"
+            "'was a shipped release vulnerable?' question incorrectly.",
+            f'git -C "{app}" pull --ff-only',
+        )
+    else:
+        rep.add("PASS", f"authenticator app current (branch={branch})")
 
 
 def check_workspace(rep: Report):
@@ -271,8 +396,10 @@ def main():
     check_worktree(root, rep)
     check_submodules(root, rep)
     check_remotes(root, rep, args.fix_remotes)
+    check_nested_submodules(root, rep)
     if not args.skip_fetch:
         check_freshness(root, rep)
+        check_app_freshness(root, rep)
     check_ests(ests, rep)
     check_workspace(rep)
 

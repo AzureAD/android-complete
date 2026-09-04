@@ -108,7 +108,7 @@ def parse_files(md):
             change = light_clean(cells[1])
             if path:
                 files.append((path, change))
-    else:  # Intern-eligible -> Fix Notes bullets that cite a file
+    else:  # closed-out finding -> Fix Notes bullets that cite a file
         fn = find_section(md, "Fix Notes")
         for line in fn.splitlines():
             if re.match(r'\s*[-*]\s', line) and re.search(r'\.(java|kt|kts|xml)', line):
@@ -210,7 +210,7 @@ def main():
         verdict = clean(field(md, "Verdict"))
         confidence = clean(field(md, "Confidence"))
         icm_sev = clean(field(md, "IcM Severity"))
-        assignment = clean(field(md, "Assignment"))
+        assignment = clean(field(md, "Disposition")) or clean(field(md, "Assignment"))
         ext = field(md, "External validation")
         ext_yes = ext.lower().startswith("yes") if ext else bool(
             re.search(r'cannot (verify|conclude)|server-side|inferred', md, re.IGNORECASE))
@@ -224,9 +224,11 @@ def main():
                                 or section(md, "Description"))
         fix_approach = first_para(find_section(md, "Fix Approach") or find_section(md, "Fix Notes"))
 
-        is_eng = "engineer" in assignment.lower()
-        if not is_eng:
-            status = "intern-queue"
+        a_l = assignment.lower()
+        is_closed = ("already-covered" in a_l or "already covered" in a_l or "won't" in a_l
+                     or "wont" in a_l or "not-fixable" in a_l or "not fixable" in a_l)
+        if is_closed:
+            status = "closed-out (no fix)"
         elif ext_yes and gaps:
             status = "ready-to-fix (severity pending external confirmation)"
         else:
@@ -244,7 +246,7 @@ def main():
         fm.append(f"icm_sev: {yaml_val(icm_sev)}")
         fm.append(f"confidence: {yaml_val(confidence)}")
         fm.append(f"verdict: {yaml_val(verdict)}")
-        fm.append(f"assignment: {yaml_val(assignment)}")
+        fm.append(f"disposition: {yaml_val(assignment)}")
         fm.append(f"external_validation_needed: {'true' if ext_yes else 'false'}")
         fm.append(f"status: {yaml_val(status)}")
         fm.append("target_repos: [" + ", ".join(repos) + "]")
@@ -266,7 +268,7 @@ def main():
                  "the exploit.")
         b.append("")
         b.append(f"**Status:** {status}  ·  **Our severity:** {our_tier} ({icm_sev})  ·  "
-                 f"**Confidence:** {confidence}  ·  **Assignment:** {assignment}")
+                 f"**Confidence:** {confidence}  ·  **Disposition:** {assignment}")
         b.append("")
         b.append("## Problem Statement")
         if root_cause:

@@ -57,7 +57,7 @@ code{background:#f0f2f4;padding:.05rem .3rem;border-radius:4px;font-family:'Casc
 .sev-Sev2{background:#fde8e8;color:#b91c1c}.sev-Sev25{background:#fdebd9;color:#c2410c}.sev-Sev3{background:#fdf3d3;color:#a16207}.sev-Sev4{background:#dcfce7;color:#15803d}
 .v-agree{background:#e5e7eb;color:#374151}.v-down{background:#dcfce7;color:#15803d}.v-up{background:#fde8e8;color:#b91c1c}
 .v-reroot{background:#e0e7ff;color:#3730a3}
-.a-eng{background:#ede9fe;color:#5b21b6;font-weight:800;min-width:20px;text-align:center}.a-intern{background:#cffafe;color:#0e7490;font-weight:800;min-width:20px;text-align:center}
+.a-eng{background:#ede9fe;color:#5b21b6;font-weight:800;min-width:20px;text-align:center}.a-intern{background:#cffafe;color:#0e7490;font-weight:700;min-width:20px;text-align:center}
 .conf-High{background:#dcfce7;color:#15803d}.conf-Medium{background:#fdebd9;color:#b45309}.conf-Low{background:#fde8e8;color:#b91c1c}
 .tag-msrc{background:#fae8ff;color:#86198f}.tag-itd{background:#e0f2fe;color:#075985}
 .ext-yes{background:#fef3c7;color:#92400e}.ext-no{background:#dcfce7;color:#15803d}
@@ -117,7 +117,8 @@ def extract(md, path):
     our_tier = brp._clean(meta.get('our_tier', ''))
     # Tag: MSRC vs ITD — from the title prefix (bracketed per the template) or a FireWatch GUID implies ITD
     tag = "MSRC" if re.match(r'^\s*\[?\s*MSRC\b', title) and not re.search(r'\bITD\b', title) else "ITD"
-    assignment = brp.compute_assignment(our_tier, component)
+    assignment = brp.compute_assignment(our_tier, component,
+                                        meta.get('disposition', '') or meta.get('assignment', ''))
     ext_needed = ext_validation_needed(md, meta)
     return {
         "id": fid,
@@ -179,10 +180,14 @@ def main():
     downs = sum(1 for f in findings if "down" in f["verdict"].lower())
     ups = sum(1 for f in findings if "up" in f["verdict"].lower())
     agrees = sum(1 for f in findings if "agree" in f["verdict"].lower())
-    eng = [f for f in findings if f["assignment"] == "Engineer-owned"]
-    intern = [f for f in findings if f["assignment"] == "Intern-eligible"]
-    covered = [f for f in findings if f["assignment"].lower().startswith("won't")
-               or "already-covered" in f["assignment"].lower()]
+    keep = [f for f in findings if f["assignment"] == "Keep"]
+    fixed_since = [f for f in findings if "fixed-since-filed" in f["assignment"].lower()]
+    not_fixable = [f for f in findings if "not-fixable" in f["assignment"].lower()]
+    # Buckets must be mutually exclusive: "Won't-Fix (Fixed-Since-Filed)" also starts with "won't",
+    # so exclude the more specific buckets or a single finding gets counted twice.
+    covered = [f for f in findings
+               if f["assignment"].lower().startswith("won't")
+               and f not in fixed_since and f not in not_fixable]
     ext_needed = [f for f in findings if f["ext_needed"]]
     total_days = sum(f["eng_days"] for f in findings)
     from collections import Counter
@@ -200,9 +205,10 @@ def main():
              "team response urgency"),
         card("c-green", "Already covered / Won't-Fix", str(len(covered)),
              "already neutralized by defense-in-depth — no fix shipped"),
-        card("c-purple", "Engineer-owned", str(len(eng)),
-             f"~{sum(f['eng_days'] for f in eng):g} eng-days · remediation specs"),
-        card("c-teal", "Intern queue", str(len(intern)), "Moderate↓ + Authenticator only"),
+        card("c-purple", "Kept — needs a fix", str(len(keep)),
+             f"~{sum(f['eng_days'] for f in keep):g} eng-days · remediation specs"),
+        card("c-teal", "Fixed since filed / Not-fixable", f"{len(fixed_since)} / {len(not_fixable)}",
+             "shipped after filing · protocol or platform constraint"),
         card("c-rose", "Needs external validation", str(len(ext_needed)),
              "verdict leans on a server/downstream control we can't statically prove"),
         card("c-slate", "Est. eng-days", f"{total_days:g}", "summed across all findings (estimate)"),
@@ -217,7 +223,7 @@ def main():
     <tr><td><span class="chip s-moderate">Moderate</span></td><td><span class="chip sev-Sev3">Sev3</span>/<span class="chip sev-Sev4">Sev4</span></td><td>Soon → hygiene</td><td>Defense-in-depth gap; needs unlikely preconditions</td></tr>
     <tr><td><span class="chip s-low">Low</span></td><td><span class="chip sev-Sev4">Sev4</span></td><td>Low priority / hygiene</td><td>Not reachable in shipping config, or gated off</td></tr>
     </tbody></table>
-    <p class="muted" style="font-size:.8rem;margin-bottom:0">Sev2.5+ is a rare, high bar (High confidence + proven reachable + no safeguard + not boundary-dependent). <strong>Intern-eligible</strong> = our tier is Moderate or lower <em>and</em> the component is the Authenticator app; everything else (Important+, or any Broker/Common/MSAL) is Engineer-owned.</p></section>
+    <p class="muted" style="font-size:.8rem;margin-bottom:0">Sev2.5+ is a rare, high bar (High confidence + proven reachable + no safeguard + not boundary-dependent). <strong>Disposition</strong> comes from Gate 0: <em>Already-Covered</em> (a cited control already neutralizes the sink), <em>Fixed-Since-Filed</em> (accurate when filed; control shipped later), <em>Not-Fixable (By-Design)</em> (no client-side change can close it — cite the standard), or <em>Keep</em> (we own it and solution it).</p></section>
     """
 
     # ---- master table ----
@@ -253,8 +259,16 @@ def main():
         ours_cell = chip(tier_cls, base_tier) + (
             f' <span class="muted" style="font-size:.7rem">↻ {htmllib.escape(tier_note)}</span>' if tier_note else "")
         v_cls, v_txt = verdict_short(f["verdict"])
-        is_eng = f["assignment"] == "Engineer-owned"
-        a_cls, a_txt = ("a-eng", "E") if is_eng else ("a-intern", "I")
+        asn = f["assignment"]
+        asn_l = asn.lower()
+        if asn == "Keep":
+            a_cls, a_txt = "a-eng", "KEEP"
+        elif "fixed-since-filed" in asn_l:
+            a_cls, a_txt = "a-intern", "FIXED"
+        elif "not-fixable" in asn_l:
+            a_cls, a_txt = "a-intern", "BY-DESIGN"
+        else:
+            a_cls, a_txt = "a-intern", "COVERED"
         tag_cls = "tag-msrc" if f["tag"] == "MSRC" else "tag-itd"
         icm = (f'<a href="https://portal.microsofticm.com/imp/v5/incidents/details/{f["id"]}/summary" '
                f'target="_blank">{f["id"]}</a>' if f["id"] else "—")
@@ -280,7 +294,7 @@ def main():
     table = (
         '<section><h2 style="margin-top:0">Findings</h2><table><thead><tr>'
         "<th>IcM</th><th>Tag</th><th>Component</th><th>Filed</th><th>Ours</th><th>Conf</th>"
-        '<th class="ctr">Verdict</th><th class="ctr">Owner</th>'
+        '<th class="ctr">Verdict</th><th class="ctr">Disposition</th>'
         '<th class="ctr">Eng-days</th><th>Vulnerability</th><th>Evidence</th>'
         "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
         # bottom legends (verdict + owner) — keep the table columns compact
@@ -291,9 +305,11 @@ def main():
         '<span class="chip v-up">UP</span> up-classified (filed too low) · '
         '<span class="chip v-reroot">RE-ROOTED</span> tier stands but the filed root cause was refuted '
         'and a different real weakness kept</span>'
-        '<span><strong>Owner</strong>: '
-        '<span class="chip a-eng">E</span> Engineer-owned — keep &amp; fix (Important+ or any Broker/Common/MSAL) · '
-        '<span class="chip a-intern">I</span> Intern-eligible — delegate (Moderate↓ AND Authenticator app)</span>'
+        '<span><strong>Disposition</strong> (Gate 0): '
+        '<span class="chip a-eng">KEEP</span> we own it — solution it · '
+        '<span class="chip a-intern">COVERED</span> already neutralized by a cited control · '
+        '<span class="chip a-intern">FIXED</span> accurate when filed, control shipped later · '
+        '<span class="chip a-intern">BY-DESIGN</span> no client-side change can close it</span>'
         '<span><span class="chip ext-yes">⚗ ext</span> = severity confirmation still needs a server/downstream '
         'check we can\'t statically verify (the fix may still proceed — see the finding\'s '
         '"can proceed now vs. blocked").</span>'
@@ -340,7 +356,33 @@ Each row links to a self-contained research evidence page; each evidence page ha
     outp = os.path.join(args.out, "wbr-security-report.html")
     open(outp, "w", encoding="utf-8").write(html)
     print("  +", outp)
-    print(f"\nDone. {n} findings · {len(eng)} engineer-owned · {len(intern)} intern.")
+
+    # ---- classifications.csv --------------------------------------------------
+    # Emit it here rather than asking the user to hand-build it: every column below is already parsed
+    # for the master table, so requiring a manual CSV only guaranteed the roll-up never got generated
+    # (a real run closed with two WARNs on an otherwise-perfect shift, which trains people to ignore
+    # the closing gate).
+    import csv as _csv
+    csv_name = args.csv or "classifications.csv"
+    csv_path = os.path.join(args.out, csv_name)
+    cols = ["id", "tag", "component", "filed_tier", "our_tier", "icm_sev",
+            "verdict", "confidence", "assignment", "eng_days", "external_validation", "title"]
+    with open(csv_path, "w", encoding="utf-8", newline="") as fh:
+        w = _csv.DictWriter(fh, fieldnames=cols)
+        w.writeheader()
+        for f in findings:
+            w.writerow({
+                "id": f["id"], "tag": f["tag"], "component": f["component"],
+                "filed_tier": f["filed"], "our_tier": f["our_tier"], "icm_sev": f["icm_sev"],
+                "verdict": f["verdict"], "confidence": f["confidence"],
+                "assignment": f["assignment"], "eng_days": f"{f['eng_days']:g}",
+                "external_validation": "Yes" if f["ext_needed"] else "No",
+                "title": f["title_short"],
+            })
+    print("  +", csv_path)
+
+    print(f"\nDone. {n} findings · {len(keep)} kept · {len(covered)} already-covered · "
+          f"{len(fixed_since)} fixed-since-filed · {len(not_fixable)} not-fixable.")
 
 
 if __name__ == "__main__":

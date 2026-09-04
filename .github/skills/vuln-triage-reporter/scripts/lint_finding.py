@@ -130,6 +130,52 @@ def lint(path):
             issues.append((WARN, "ledger notes a VOID refutation — confirm the challenge was re-issued "
                                  "against the verbatim claim"))
 
+    # --- Disposition + release exposure -------------------------------------
+    disp = re.search(r"^\*\*Disposition:\*\*\s*(.+)$", text, re.MULTILINE)
+    if not disp:
+        if re.search(r"^\*\*Assignment:\*\*", text, re.MULTILINE):
+            issues.append((REQ, "uses the retired '**Assignment:**' field — rename it to "
+                                "'**Disposition:**' (Keep | Won't-Fix (Already-Covered) | "
+                                "Won't-Fix (Fixed-Since-Filed) | Not-Fixable (By-Design))"))
+        else:
+            issues.append((REQ, "missing '**Disposition:**' — the Gate 0 outcome drives the master-report "
+                                "row and the HTML tile"))
+    else:
+        dv = disp.group(1).lower()
+        # 'Fixed-Since-Filed' is meaningless without naming the release that first carried the control.
+        if "fixed-since-filed" in dv or "fixed since filed" in dv:
+            exp = re.search(r"^\*\*Shipped-release exposure:\*\*\s*(.+)$", text, re.MULTILINE)
+            if not exp or exp.group(1).strip().upper().startswith("TODO"):
+                issues.append((REQ, "Disposition is Fixed-Since-Filed but '**Shipped-release exposure:**' "
+                                    "is missing/unfilled — name the first release containing the control "
+                                    "and whether any SHIPPED release lacked it (decides customer/SIR response)"))
+        # 'Not-Fixable' is a strong claim: it must cite the standard it rests on.
+        if "not-fixable" in dv or "not fixable" in dv or "by-design" in dv:
+            if not re.search(r"RFC\s*\d{4}", text):
+                issues.append((REQ, "Disposition is Not-Fixable (By-Design) but no RFC/standard is cited — "
+                                    "name the constraint (see references/protocol-constraints.md); an "
+                                    "uncited by-design claim will not survive MSRC review"))
+
+    # --- Existing Work (fix exists but hasn't shipped) ----------------------
+    # "not covered" and "written, merged to dev, waiting for a train" are the same Gate-0 outcome but
+    # completely different asks. A real run lost that distinction and two reports mis-stated coverage.
+    not_shipped = re.search(r"not shipped|unmerged|never merged|reverted|dev[- ]only|not on the shipping",
+                            text, re.IGNORECASE)
+    if not_shipped:
+        if not has_heading(text, "Existing Work"):
+            issues.append((REQ, "the finding mentions a fix that is reverted/unmerged/dev-only but has no "
+                                "'## Existing Work' section — name the branch + commit and why it has not "
+                                "shipped, or an engineer will be sent to rebuild work that already exists"))
+        else:
+            body = section(text, "Existing Work")
+            if not table_rows(body) and not re.search(r"None\b", body):
+                issues.append((REQ, "Existing Work has no rows and does not state 'None' — list the "
+                                    "branch/commit(s) that already cover this, or prove none exist"))
+        if not re.search(r"Coverage judged against ref|judged coverage against", text, re.IGNORECASE):
+            issues.append((WARN, "no 'Coverage judged against ref' line — name the exact ref you judged "
+                                 "coverage on; release/<v>, working/test-release/<v> and "
+                                 "release-integration/<v> diverge and disagree"))
+
     # --- Verdict + audit trail ---------------------------------------------
     if not re.search(r"our (tier|severity)|verdict|classification|won'?t[- ]fix|sev\s*[234]",
                      text, re.IGNORECASE):

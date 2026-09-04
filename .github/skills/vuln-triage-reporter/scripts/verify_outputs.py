@@ -120,7 +120,7 @@ def verify(run_dir, expect=0):
         _row(OK, f"agent dispatch spec(s) — {len(specs)} found", specs)
     else:
         _row(WARN, "agent dispatch spec(s) (agent-specs/*.agent.md)",
-             "not generated — expected for engineer-owned findings (build_agent_spec.py)")
+             "not generated — expected for kept findings (build_agent_spec.py)")
         warnings += 1
 
     for label, pattern, hint in (

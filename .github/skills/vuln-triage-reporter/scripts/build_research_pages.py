@@ -367,17 +367,20 @@ def canonical_repo(component):
     return _clean(component) or "—"
 
 
-def compute_assignment(our_tier, component):
-    """Coverage gate first, then the cutoff. Won't-Fix / already-covered tier -> 'Won't-Fix (Already-Covered)'
-    (no remediation). Else Intern-eligible when tier is Moderate or lower (Moderate/Low) AND the component is
-    the Authenticator app. Important/Critical, or any non-Authenticator component -> Engineer-owned."""
+def compute_assignment(our_tier, component, disposition=""):
+    """Gate 0 disposition. Prefers the report's explicit **Disposition:**/**Assignment:** field when present,
+    falling back to the tier text. Returns one of:
+    'Won't-Fix (Already-Covered)' | "Won't-Fix (Fixed-Since-Filed)" | 'Not-Fixable (By-Design)' | 'Keep'."""
+    d = (disposition or "").strip().lower()
     t = (our_tier or "").strip().lower()
-    if ("won't" in t) or ("wont" in t) or ("already-covered" in t) or ("already covered" in t):
+    hay = d + " " + t
+    if ("fixed-since-filed" in hay) or ("fixed since filed" in hay):
+        return "Won't-Fix (Fixed-Since-Filed)"
+    if ("not-fixable" in hay) or ("not fixable" in hay) or ("by-design" in hay) or ("by design" in hay):
+        return "Not-Fixable (By-Design)"
+    if ("already-covered" in hay) or ("already covered" in hay) or ("won't" in hay) or ("wont" in hay):
         return "Won't-Fix (Already-Covered)"
-    intern_tier = ("moderate" in t) or ("low" in t)
-    if intern_tier and canonical_repo(component) == "Authenticator":
-        return "Intern-eligible"
-    return "Engineer-owned"
+    return "Keep"
 
 
 def tiles_html(md):
@@ -473,12 +476,13 @@ def tiles_html(md):
     ext_sub = "needs a server/downstream check" if is_yes else "fully verified in our code"
     tiles.append((ext_cls, "External Validation", ext_val, ext_sub, a_gaps if is_yes else None))
 
-    asn = compute_assignment(m.get('our_tier', ''), m.get('component', ''))
-    is_eng = asn == "Engineer-owned"
-    asn_cls = "t-eng" if is_eng else "t-intern"
-    # CONCISE: just the owner + a short next-step verb (no cutoff reasoning — that lives in the body).
-    asn_sub = "keep & fix" if is_eng else "delegate"
-    tiles.append((asn_cls, "Assignment", asn, asn_sub, a_fix))
+    asn = compute_assignment(m.get('our_tier', ''), m.get('component', ''),
+                             m.get('disposition', '') or m.get('assignment', ''))
+    is_keep = asn == "Keep"
+    asn_cls = "t-eng" if is_keep else "t-intern"
+    # CONCISE: just the disposition + a short next-step verb (reasoning lives in the body).
+    asn_sub = "keep & fix" if is_keep else "close out"
+    tiles.append((asn_cls, "Disposition", asn, asn_sub, a_fix))
 
     def cell(cls, lbl, val, sub, anchor):
         arrow = ' <span class="tjump">↓</span>' if anchor else ""

@@ -59,7 +59,10 @@ SKELETON = """\
 **Verdict:** TODO — AGREE | DOWN-CLASSIFY | UP-CLASSIFY | RE-ROOTED
 **Confidence:** TODO — High | Medium | Low
 **IcM Severity:** TODO — Sev2 | Sev2.5 | Sev3 | Sev4
-**Assignment:** TODO — Won't-Fix (Already-Covered) | Intern-eligible | Engineer-owned
+**Disposition:** TODO — Keep | Won't-Fix (Already-Covered) | Won't-Fix (Fixed-Since-Filed) | Not-Fixable (By-Design)
+**Shipped-release exposure:** TODO — did any SHIPPED release lack the control? Name the first release
+containing it and the last release without it, or "N/A (not a fixed-since-filed finding)". This is what
+decides whether a customer/SIR response is owed.
 **External validation:** TODO — Yes | No, and one line on why
 **Prior incidents:** TODO — None found, or "IcM NNN — outcome". Run the prior-art sweep before writing this.
 **Bottom line:** TODO — ONE plain-English sentence: what it is, what to do now, what is still open.
@@ -68,6 +71,28 @@ SKELETON = """\
 > The `**Label:**` lines above and the `**Filed**`/`**Ours**` rows are a PARSER CONTRACT — they populate
 > the HTML stat tiles and the master-report row. Keep each on its own line. After generating, confirm no
 > tile renders as "—".
+
+## Per-Part Disposition
+
+> Filed reports routinely bundle two or three SEPARABLE claims that resolve differently. Give each its own
+> row and its own ask. Delete this section only if the report genuinely makes a single claim.
+
+| Part | Sub-claim (short) | Our disposition | What we ask MSRC/FireWatch to do |
+|---|---|---|---|
+| 1 | TODO | TODO | Accept / Re-file separately / Withdraw |
+
+## Existing Work (branches / commits that already cover this)
+
+> Required whenever any part is NOT covered on the shipping ref. A fix already written and merged to `dev`
+> is a **release decision**, not an engineering one — reporting it as "not covered" sends someone to
+> rebuild work that exists. Write "None — no fix exists on any ref" only after the all-refs sweep.
+
+| Part | Branch / ref | Commit(s) | What it covers | Why it hasn't shipped | Ask |
+|---|---|---|---|---|---|
+| 1 | TODO | TODO | TODO | TODO | TODO |
+
+**Coverage judged against ref:** TODO — name it, plus the other candidate refs you checked
+(`release/<v>` vs `working/test-release/<v>` vs `release-integration/<v>` diverge).
 
 ## Scope Contract
 

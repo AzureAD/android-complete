@@ -1,6 +1,6 @@
 # Dispatch-Ready Remediation Spec
 
-For every **Engineer-owned** finding (Important/Critical that we keep), produce this spec. The bar:
+For every **kept** finding (one we own and will fix), produce this spec. The bar:
 **detailed enough to hand to an engineer or the Copilot coding agent / `pbi-creator` without further
 investigation.** It is grounded in the same cited evidence as the triage report — reuse the `file:line`
 citations from the investigation; do not re-derive them loosely.

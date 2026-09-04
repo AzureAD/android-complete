@@ -46,7 +46,7 @@ live ADO state:
 | **Blocked** | `BLOCKED` | tagged `Blocked`, or State=`On Hold` | Waiting on a dependency / external input (e.g. the ⚗ external-validation answer). |
 | **In review** | `PR OPEN` | In Review, Code Review, Resolved (pending verify) | Fix up for review / PR open. |
 | **Complete** | `MERGED` | Done, Closed, Completed | Shipped / verified. |
-| **Out of scope** | `OUT OF SCOPE (intern)` | — | Intern-eligible; assigned to an intern who hasn't started yet. Tracked for completeness, sorted last. The report adds a one-line note explaining it. |
+| **Out of scope** | `OUT OF SCOPE` | — | Closed out with no shipping change — already covered, fixed since filed, or not fixable by a client-side change. Tracked for completeness, sorted last. The report adds a one-line note explaining it. |
 
 > A finding with an open **external-validation** question (⚗ in the research report) should show **Blocked**
 > here if the severity/fix decision is actually waiting on that answer — otherwise In progress. The status
@@ -93,7 +93,7 @@ turn the flag ON after the carrier hits Prod 100%** — so for an Authenticator-
 _Note how the Authenticator-app fix (Prod 08-05) lands later than the equal-effort `common` library fix
 (Prod 07-15) — the app's gradual ramp + flag-on is the longer pole._
 
-_Out of scope (4): intern-eligible items are out of scope for now — assigned to an intern who has not started yet._
+_Out of scope (4): closed out with no shipping change — already covered, fixed since filed, or not fixable by a client-side change._
 
 ## Cadence
 

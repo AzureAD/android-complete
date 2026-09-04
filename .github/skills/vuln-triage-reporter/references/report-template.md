@@ -19,15 +19,40 @@ payloads, no PII**.
 **Verdict:** AGREE | DOWN-CLASSIFY | UP-CLASSIFY | RE-ROOTED  _(RE-ROOTED = the filed tier stands but the filed **root cause** was refuted and a different real weakness was kept from the same report — common when a report bundles a wrong headline with a correct aside. Do not render this as AGREE; it hides the point.)_
 **Confidence:** High | Medium | Low  _(set by the adversarial pass — see below)_
 **IcM Severity:** Sev2 | Sev2.5 | Sev3 | Sev4  _(team response-urgency mapping — see severity-rubric.md; Sev2.5+ is a rare, high bar)_
-**Assignment:** Won't-Fix (Already-Covered) | Intern-eligible | Engineer-owned  _(GATE 0 first: **Won't-Fix (Already-Covered)** when the cited sink is already neutralized by an existing control — cite it `file:line` on current HEAD; no fix ships. Else Intern-eligible when tier ≤ Moderate AND component = Authenticator app; everything else → Engineer-owned)_
+**Disposition:** Keep | Won't-Fix (Already-Covered) | Won't-Fix (Fixed-Since-Filed) | Not-Fixable (By-Design)  _(GATE 0 — see severity-rubric.md. **Already-Covered**: the cited sink is already neutralized by an existing control, cited `file:line` on the **shipping** ref. **Fixed-Since-Filed**: accurate when filed, control shipped later — fill in Shipped-release exposure below. **Not-Fixable (By-Design)**: no client-side change can close it; you MUST cite the standard (see protocol-constraints.md). **Keep**: we own it and solution it.)_
+**Shipped-release exposure:** _Required when Disposition = Fixed-Since-Filed; otherwise "N/A". Name the first release containing the control and the last shipped release without it. This is what decides whether a customer/SIR response is owed — "fixed on dev" is not an answer._
 **External validation:** Yes | No — _one line: do we need facts outside the code we own (downstream consumers / server-side eSTS) to be sure? If the verdict leans on a server/downstream safeguard we can only infer, say "Yes" and name it — the impact is partly theoretical until confirmed._
 **Prior incidents:** None found | _IcM NNN — outcome (e.g. "fixed in <area>, same sink"); IcM NNN — duplicate._ — _from IcM `get_similar_incidents` + the `android-dri-search` MCP (Step 1.5). A prior **resolved** match means the on-call may short-circuit (link the fix / close as duplicate) instead of re-triaging. A similar title is a lead, not proof — still confirm against current code._
 **Bottom line:** _one plain-English sentence (the TL;DR rendered at the top of the HTML): what it is, what to do now, and the one thing still open. A human skimming should get the whole story from this line._
 **Justification:** <1–3 sentences, anchored to the evidence below>
 
 > These `**Label:**` fields drive the colorful **stat tiles** at the top of the generated HTML page
-> (Severity, Confidence, Verdict, Passes, External-Validation, Assignment). Keep each on its own line so
+> (Severity, Confidence, Verdict, Passes, External-Validation, Disposition). Keep each on its own line so
 > the generator can parse them.
+
+## Per-Part Disposition
+_Filed reports routinely bundle two or three **separable** claims that resolve differently — e.g. part 1
+valid-and-fixed, part 2 valid-but-unshipped, part 3 not-fixable-by-design. A single blended verdict either
+overstates our exposure or quietly closes a live issue. Delete this section only if the report genuinely
+makes one claim._
+
+| Part | Sub-claim (short) | Our disposition | What we ask the security team to do |
+|---|---|---|---|
+| 1 | <short restatement> | <disposition> | Accept / Re-file separately / Withdraw |
+
+## Existing Work (branches / commits that already cover this)
+**Required whenever any part of the finding is NOT covered on the shipping ref.** A fix that is already
+written, reviewed and merged to `dev` is a *release decision*, not an engineering one — and reporting it as
+"not covered" sends someone to rebuild work that already exists. Say what exists, where, and why it hasn't
+shipped. Write "None — no fix exists on any ref" only after the all-refs sweep proves it.
+
+| Part | Branch / ref | Commit(s) | What it covers | Why it hasn't shipped | Ask |
+|---|---|---|---|---|---|
+| <n> | `<branch>` | `<sha>` | <the control it adds> | <reverted for X / unmerged / dev-only> | Land on `<train>` / decide / N/A |
+
+> Also record the **ref you judged coverage against** and the other candidate refs you checked
+> (`release/<v>` vs `working/test-release/<v>` vs `release-integration/<v>` — they diverge, and the
+> integration branch often carries later `dev` merges that the shipped artifact does not).
 
 ## Scope Contract
 **Required** (enforced by `lint_finding.py`). Write this BEFORE analysis — it is what makes off-path
@@ -126,16 +151,17 @@ with a recommendation. Omit the section only if there are genuinely none.
 - **<decision>** — <options> · recommend <X> because <reason>.
 
 ## Remediation
-Pick ONE based on Assignment:
+Pick ONE based on Disposition:
 
-### If Engineer-owned (Important+, or any Broker/Common/MSAL) — Dispatch-ready Remediation Spec
+### If Keep — Dispatch-ready Remediation Spec
 Fill out the full spec from [remediation-spec.md](remediation-spec.md): Root Cause · Fix Approach ·
 Files to Change (`file:line`) · Test Plan · Risks & Rollout (flighting). Must be detailed enough to hand to
 an engineer or the Copilot coding agent / `pbi-creator` without further investigation.
 
-### If Intern-eligible (Moderate↓ + Authenticator only) — Fix Notes
-- <the control to add or the close-out action; mirror the sibling hardened handler if one exists>
-- Scope: single repo? bounded? any cross-team coordination needed (if yes, reconsider Engineer-owned).
+### If closed out (Already-Covered / Fixed-Since-Filed / Not-Fixable) — Close-out Notes
+- The covering control (or the constraint), cited `file:line` — or the standard, for Not-Fixable.
+- The **reply to the security team**: what we ask them to do with each part (accept / re-file / withdraw).
+- Any residual hardening worth tracking separately, so it isn't lost in the closure.
 
 ## Estimated Eng-Days
 <n> (ESTIMATE — on-call to adjust). Basis: <tier + fix complexity>.

@@ -93,7 +93,7 @@ def map_tracker_status(text):
     """EXECUTION-TRACKER.md exec-status vocabulary -> the report's small status set, or None if the text
     is not a recognized status (so non-status table cells — e.g. a spec path — are ignored).
     Tracker statuses: NOT STARTED · IN PROGRESS · IMPLEMENTED (local) · PUSHED (no PR) · PR DRAFT ·
-    PR OPEN · MERGED · BLOCKED · DROPPED / ALREADY-COVERED / WON'T-FIX · OUT OF SCOPE (intern)."""
+    PR OPEN · MERGED · BLOCKED · DROPPED / ALREADY-COVERED / WON'T-FIX · OUT OF SCOPE."""
     s = (text or "").strip().lower()
     if "out of scope" in s:
         return "Out of scope"
@@ -532,7 +532,7 @@ def main():
 <th {th}>Status</th><th {th}>PR</th><th {th}>Prod&nbsp;(100%)</th>
 <th {th}>Work Item</th><th {th}>Updated</th>
 </tr></thead><tbody>{''.join(trs)}</tbody></table>
-{f'<div style="font-size:11px;color:#5b6470;margin-top:8px"><strong>Out of scope</strong> ({oos}): intern-eligible items are out of scope for now — assigned to an intern who has not started yet. They are tracked for completeness and will move to In progress once the intern picks them up.</div>' if oos else ''}
+{f'<div style="font-size:11px;color:#5b6470;margin-top:8px"><strong>Out of scope</strong> ({oos}): closed out with no shipping change — already covered by existing defense-in-depth, fixed since filed, or not fixable by a client-side change. Tracked for completeness and sorted last.</div>' if oos else ''}
 <div style="font-size:11px;color:#5b6470;margin-top:8px">{prod_note}</div>
 <div style="font-size:11px;color:#94a3b8;margin-top:8px">Generated {generated} · high-level status only (owner &amp; details live on the work item; evidence in the research report).</div>
 </div>"""

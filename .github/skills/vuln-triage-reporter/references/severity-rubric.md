@@ -295,26 +295,23 @@ The Challenger must cite `file:line` and append its own "Searches Run" audit. Th
 
 A finding that depends on a **Scope & Verification Boundary** disclaimer cannot be **High** confidence.
 
-## Assignment cutoff (intern vs. engineer)
+## Gate 0 disposition
 
-Apply this **two-factor cutoff** (our tier **and** component) so the on-call engineer only delegates
-contained, lower-severity work:
+Set the **Disposition** from the Gate 0 outcome. It replaces the old owner split (the intern/engineer
+distinction no longer applies):
 
-| Condition | Assignment | Rationale |
+| Condition | Disposition | Rationale |
 |-----------|-----------|-----------|
-| **Our tier ≤ Moderate (Moderate / Low / Won't-Fix) AND component = Authenticator app** | `Intern-eligible` | Contained to the app we fully own, lower blast radius — a bounded, well-understood fix (MSRC or ITD). |
-| **Our tier ≥ Important** (regardless of component) | `Engineer-owned` | Real weakness; needs judgment + a coordinated fix. |
-| **Any Broker / Common / MSAL component** (even Moderate/Low) | `Engineer-owned` | Library / cross-module / broker-privileged code — needs engineer ownership and downstream-impact judgment. |
+| The cited sink is already neutralized by an existing control, cited `file:line` on the **shipping** ref | `Won't-Fix (Already-Covered)` | Ship nothing — the change we don't make can't regress a >1B-user library. |
+| Accurate when filed; the control shipped **after** the filing date | `Won't-Fix (Fixed-Since-Filed)` | Close it, but name the first release containing the control **and** whether any shipped release lacked it — that decides whether a customer/SIR response is owed. Never report this as "never a bug". |
+| A real weakness that **no client-side change can close** (protocol/platform constraint) | `Not-Fixable (By-Design)` | Cite the standard (RFC) and the compensating control we implement instead; ask the security team to withdraw. See [protocol-constraints.md](protocol-constraints.md). |
+| Everything else — no control, fix unmerged, or landed-then-reverted | `Keep` | We own it and solution it. |
 
-So **Intern-eligible requires BOTH** a Moderate-or-lower tier **and** the Authenticator app. Important and
-above go to engineers; anything in Broker/Common/MSAL goes to engineers. The component is the canonical repo
-(Authenticator / Broker / Common / MSAL), derived from the finding's `**Component:**` field.
+A single IcM can carry **different dispositions for different sub-claims** — that is the normal case for a
+multi-part filing. Record one per sub-claim in the Claim Ledger and summarize in **Per-Part Disposition**.
 
-Caveat: if an **Intern-eligible** finding is **Low confidence**, flag it for an engineer sanity-check before
-handing it off — we don't delegate something we're unsure about.
-
-For every **Engineer-owned** finding, produce a dispatch-ready Remediation Spec
-(see [remediation-spec.md](remediation-spec.md)). Intern-eligible findings get lighter **Fix Notes**.
+For every **Keep** finding, produce a dispatch-ready Remediation Spec
+(see [remediation-spec.md](remediation-spec.md)).
 
 ## Eng-days heuristic (for roll-up)
 

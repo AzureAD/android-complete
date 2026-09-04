@@ -232,6 +232,7 @@ pending** list (esp. `external_validation_needed` gates), and a one-line **Resum
 - Resume hint: <one line a fresh session can act on>
 ```
 
-Keep intern-eligible findings in an **Out of scope** section so the next session doesn't accidentally pick one
+Keep closed-out findings (already-covered / fixed-since-filed / not-fixable) in an **Out of scope** section
+so the next session doesn't accidentally pick one
 up. On every push/PR action, update the matching row **and** detail block in the same turn — a stale tracker is
 worse than none.

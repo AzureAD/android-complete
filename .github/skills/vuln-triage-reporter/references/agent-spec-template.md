@@ -34,9 +34,9 @@ cwe: "CWE-xxx"
 icm_sev: "Sev2 | Sev2.5 | Sev3 | Sev4"
 confidence: "High | Medium | Low"
 verdict: "<AGREE | DOWN-CLASSIFY | UP-CLASSIFY ...>"
-assignment: "Engineer-owned | Intern-eligible"
+disposition: "Keep | Won't-Fix (Already-Covered) | Won't-Fix (Fixed-Since-Filed) | Not-Fixable (By-Design)"
 external_validation_needed: true | false
-status: "ready-to-fix | ready-to-fix (severity pending external confirmation) | intern-queue"
+status: "ready-to-fix | ready-to-fix (severity pending external confirmation) | closed-out (no fix)"
 target_repos: [common, adal, broker, msal, authenticator]   # inferred from file paths
 firewatch_id: "<guid>"                                       # ITD only
 files_to_change:

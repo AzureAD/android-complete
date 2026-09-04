@@ -67,6 +67,12 @@ python .github/skills/vuln-triage-reporter/scripts/preflight.py
 ```
 Exit **0** = safe to begin · Exit **1** = **stop and report**. Everything below is what it checks and why.
 
+> **If `python` opens the Microsoft Store** (or reports "Python was not found"), you have hit the Windows
+> App-Execution-Alias stub, not a real interpreter — every script in this skill will fail the same way.
+> Use the real install directly, e.g.
+> `& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" <script>`, or prepend that directory to
+> `$env:PATH` for the session.
+
 ### 1. Full `android-complete` checkout WITH submodules
 The investigation greps **real source**. The app/broker code lives in **git-ignored submodules** that are
 **not** present in a bare clone or in a git **worktree**:
@@ -224,18 +230,15 @@ This cuts both ways — never claim "safe" *or* "exploitable" about a boundary y
    `file:line`. No control found? Show the searches that prove the absence.
 6. **Agree-or-rebut explicitly.** State FireWatch's filed classification, then state ours, then the delta
    and the evidence that justifies any change.
-7. **Coverage gate FIRST, then assign, then solution the ones we keep.** Before the Engineer/Intern split,
-   run **Gate 0**: if the cited sink is **already neutralized by an existing control** (an upstream
-   allow-list/validator, flight default, signature/package check, non-exported component, server-side
-   number-match…), cited with `file:line` on the **current base branch**, classify it
-   **`Won't-Fix (Already-Covered)`** and **close it out — ship nothing** (the safest outcome; a redundant fix
-   in a >1B-user library is regression risk for zero security gain). We have been getting a high volume of
-   findings that are already covered — but **not all are**, so the gate requires a cited control, never a
-   hunch. For findings that survive Gate 0, set the **Assignment**: **Intern-eligible when our tier is
-   Moderate or lower (Moderate/Low) AND the component is the Authenticator app; everything else (Important+,
-   or any Broker/Common/MSAL) → Engineer-owned.** For every engineer-owned (kept) finding, produce a
-   **dispatch-ready Remediation Spec** (root cause, fix approach, files to change, test plan, risks/rollout)
-   — see [references/remediation-spec.md](references/remediation-spec.md).
+7. **Coverage gate FIRST, then solution the ones we keep.** Run **Gate 0**: if the cited sink is **already
+   neutralized by an existing control** (an upstream allow-list/validator, flight default, signature/package
+   check, non-exported component, server-side number-match…), cited with `file:line` on the **shipping
+   branch**, classify it **`Won't-Fix (Already-Covered)`** and **close it out — ship nothing** (the safest
+   outcome; a redundant fix in a >1B-user library is regression risk for zero security gain). We have been
+   getting a high volume of findings that are already covered — but **not all are**, so the gate requires a
+   cited control, never a hunch. Gate 0 has **six** outcomes, not two — see the table in Step 4. For every
+   **kept** finding, produce a **dispatch-ready Remediation Spec** (root cause, fix approach, files to
+   change, test plan, risks/rollout) — see [references/remediation-spec.md](references/remediation-spec.md).
 8. **No PoC payloads or PII** in committed artifacts. Keep detail at engineering-triage level.
 9. **Scripts, not one-liners.** Use the committed scripts in `scripts/` for discovery, scaffolding,
    transcription, and roll-up so the weekly run is repeatable.
@@ -311,6 +314,39 @@ This cuts both ways — never claim "safe" *or* "exploitable" about a boundary y
 22. **A second finding mid-shift APPENDS — same folder, full regeneration.** Never open a new folder for
     the week's second IcM and never hand-edit the generated HTML. `new_finding.py` + `rebuild_shift.py`
     handle dedup, appending, and rebuilding the master report across all findings.
+23. **Ask "could a control even exist here?" — not just "is there one?"** Codebase evidence answers whether a
+    control *is present*; it cannot answer whether one is *possible*. Some findings describe a genuine
+    weakness that **no client-side change can close** — most often because OAuth **public clients cannot be
+    authenticated** (RFC 6749 §2.1 / RFC 8252 / RFC 9700), so any local app may *assert* any client id.
+    That verdict is **`Not-Fixable (By-Design)`**, and it is neither "already covered" (nothing covers it)
+    nor "not covered" (which would send an engineer to build something that cannot work).
+    **Read [references/protocol-constraints.md](references/protocol-constraints.md) before finalizing any
+    verdict**, and pass it into every agent dispatch alongside the Scope Contract.
+    ⚠️ **Do not over-use it.** Before writing `Not-Fixable`, check whether a neighbouring mechanism closes
+    it anyway — on Android the `msauth://<pkg>/<sig-hash>` redirect is **recomputed from the caller's real
+    signing certificate**, which converts an unauthenticatable client-id assertion into a
+    signature-verifiable one. The stronger and more common finding is *"client-id assertion is unfixable,
+    therefore the design correctly stops depending on it and re-anchors on uid + signature."*
+24. **One IcM can need SEVERAL verdicts — split multi-part findings.** Filed reports routinely bundle two or
+    three *separable* claims that resolve differently: part 1 valid-and-fixed, part 2 valid-but-unshipped,
+    part 3 not-fixable-by-design. Answering with a single blended verdict either overstates our exposure or
+    quietly closes a live issue. Give **every sub-claim its own row and its own disposition** in the Claim
+    Ledger, then write a **Per-Part Disposition** block stating what we ask MSRC to do with each (accept,
+    re-file separately, withdraw). See [references/report-template.md](references/report-template.md).
+25. **"Fixed since filing" is its own verdict — and it triggers a release-exposure question.** MSRC scans and
+    filings lag our merges, so a finding can be **accurate when filed** and **fixed today**. Do not report
+    that as `Already-Covered`: that phrasing implies it was never a bug, and it skips the question that
+    actually matters — **were previously shipped releases vulnerable?** Determine the first release
+    containing the control and whether any *shipped* release lacks it, because that is what decides whether
+    a customer/SIR response is owed. Use **`Won't-Fix (Fixed-Since-Filed)`** and name both refs.
+26. **Assess the filed report's own evidence — separately from the code.** The submission is an argument, not
+    a finding of fact. Record what the PoC **demonstrated** vs. what is **asserted by analogy**, and check
+    every mechanism/key it names against the codebase (reports cite identifiers that do not exist in our
+    tree). Read the attached PoC source: it is usually the highest-signal artifact in the bundle. See
+    [references/msrc-bundle-intake.md](references/msrc-bundle-intake.md).
+    **But never let weak PoC evidence alone lower a verdict** — a researcher's missing test tenant says
+    nothing about reachability. Only *code* evidence moves the verdict; evidence quality shapes how we
+    describe **impact**.
 
 ## The two-pass model (verify before you trust)
 
@@ -376,10 +412,15 @@ full local checkout):
 |---------------|-------------|
 | Contained Authenticator-app finding | ~4–8 min |
 | Cross-module `common`/`broker` finding with many sinks | **~10–15+ min** |
+| Gate-0 history sweep across all repos (`git log --all -S` × many symbols) | **~20–25 min** |
 
 > ⚠️ **Do not quote the optimistic number.** A real run took **>15 min per pass, ~35 min end-to-end** for
 > one finding. Quote the **range**, quote the **upper end** for anything touching `common`/`broker`, and
 > never promise a number you have not measured for that shape of finding.
+>
+> **Measured on a recent cross-module run** (one finding, 4 agents): Pass 1 ≈ 10 min and ≈ 14 min,
+> Gate 0 ≈ 24 min, Pass 2 ≈ 17 min — plus a **blocked** challenger that burned ~10 min and returned
+> nothing. Gate 0 was the long pole, not the investigation.
 
 Because Pass 1 and Pass 2 both run **in parallel across findings**, wall-clock time is roughly:
 
@@ -390,6 +431,11 @@ Because Pass 1 and Pass 2 both run **in parallel across findings**, wall-clock t
 **Always give the user an ETA before launching** (e.g. *"Investigating N findings in two parallel passes —
 expect ~20–35 min for `common`/`broker`, ~15–20 min for an app-only finding"*), and **post a progress note
 at each pass boundary** ("Pass 1 done for both — challenger launched") so a long run never looks hung.
+
+> **Launch Gate 0 in the same wave as Pass 1, not after it.** Gate 0 is independent of the Pass 1 verdict
+> (it asks "does a control exist on any ref?", not "is the conclusion right?") and it is frequently the
+> longest-running agent. Running it concurrently removes ~20 minutes from the critical path. Do **not**
+> serialize it behind Pass 1.
 
 ### Depth modes — let the engineer buy speed explicitly
 
@@ -667,6 +713,20 @@ be retrieved manually:
 > See [references/itd-intake.md](references/itd-intake.md) for the exact user instructions and the saved
 > HTML structure.
 
+### Step 2.2 — MSRC evidence bundle intake (when a case bundle is supplied)
+
+MSRC cases often arrive as a **password-protected zip** holding the submission text, a compiled PoC APK, and
+the PoC source. **Read the PoC source before writing the Scope Contract** — it names the exact entry point
+and the exact attacker-controlled request keys, which is far more precise than the report's prose, and it
+tells you what was actually *demonstrated* versus asserted. Cross-check every key/mechanism the report names
+against the codebase: filed reports routinely cite identifiers that **do not exist in our tree**, and that
+mismatch is citable evidence.
+
+> 🛑 Never install or run the PoC APK; extract to a scratch dir outside the repo and workspace, and delete
+> it at the end of the run. Never copy bundle contents or payloads into the repo or a report.
+> Full procedure (including the ZipCrypto/`Expand-Archive` failure and the evidence-quality checklist):
+> [references/msrc-bundle-intake.md](references/msrc-bundle-intake.md).
+
 ### Step 2.5 — Write the SCOPE CONTRACT (before any investigation agent launches)
 
 **Cheapest, highest-leverage step in the workflow.** Before Pass 1, write down the trust boundary the
@@ -721,17 +781,26 @@ For each finding, dispatch a `codebase-researcher` investigation that returns:
 control looks relevant but sits outside the IN SCOPE list, report it as an out-of-scope observation — do
 not use it to raise or lower severity."*
 
+**Also pass the protocol constraints.** Add [references/protocol-constraints.md](references/protocol-constraints.md)
+to every dispatch and ask the agent to split its findings into **(a) genuinely fixable by us** — we trust a
+caller-supplied value the OS could tell us truthfully, or we skip a check we already have the means to
+perform — versus **(b) inherent to the protocol/platform**, with the standard named. Without that
+instruction the agent can only report "is there a control?", never "could a control exist?" — and the
+second question is what tells the security team a finding is not worth fixing.
+
 Use the severity rubric in [references/severity-rubric.md](references/severity-rubric.md).
 
 ### Step 3.5 — Adversarial verification IN PARALLEL (codebase-researcher, second pass)
 For each finding, dispatch a **second, independent** `codebase-researcher` (the **Challenger**) that
 receives **the Scope Contract and the Claim Ledger's verbatim claim text**, and tries to **break it**:
 
-> 🛑 **Build the challenge prompt by COPYING claim text — never by restating it.** Paste the claim in
-> quotes with its channel tag, one claim per challenge. If you find yourself typing a component name that
-> is not in the claim and not IN SCOPE, **stop**: you are inventing a strawman. That is exactly how a real
-> run retired a valid severity argument — by "disproving" a claim it had silently reworded into a
-> different subsystem.
+> 🛑 **Use the pre-vetted template — [references/challenger-prompt.md](references/challenger-prompt.md).**
+> An improvised adversarial prompt can be **blocked by content filtering**, which returns no content after
+> ~10 minutes and silently costs you the entire second pass. Frame it as *"an independent second-opinion
+> review of our own source"*, ask which validations *are and are not* present, and explicitly instruct
+> **not** to produce exploit steps. **Verify the challenger actually ran** — a result with no per-claim
+> verdicts and no "Searches Run" audit is a blocked pass, not a HELD one. Never record Confidence = High
+> on a run whose challenger did not execute.
 
 - If Pass 1 cited a mitigation, attempt to **bypass** it (find a path that skips the allow-list / flight /
   package check; check whether the control is itself reachable/poisonable).
@@ -749,7 +818,7 @@ status, then keep/raise/lower the Pass 1 verdict and set **Confidence** (High/Me
 
 ### Step 4 — Classify & assign (agree or rebut)
 For each finding, produce our final classification and the agree/rebut delta vs. FireWatch, with evidence,
-plus the **Confidence** from Step 3.5. Then set the **Assignment**.
+plus the **Confidence** from Step 3.5. Then set the **Disposition**.
 
 > **Show the SDL/MSRC bug bar factor-by-factor — reviewers specifically ask for this.** Don't just assert a
 > tier; walk the factors and show which way each one pushes. It is the artifact reviewers have called out
@@ -770,7 +839,7 @@ Then state the landing: *"→ **&lt;tier&gt;**, IcM **Sev&lt;n&gt;** — not Sev
 going higher *and* what stops it going lower) — that is what makes the rebuttal defensible when the
 security team pushes back. Full rubric: [references/severity-rubric.md](references/severity-rubric.md).
 
-> **🛑 GATE 0 — check defense-in-depth coverage FIRST (before any Engineer/Intern split).** We have been
+> **🛑 GATE 0 — check defense-in-depth coverage FIRST.** We have been
 > receiving a high volume of MSRC/ITD findings that turn out to be **already covered by existing
 > defense-in-depth** (an upstream allow-list/validator, a flight default, a signature/package check, a
 > non-exported component, server-validated number-matching, etc.). So the **first** question for every
@@ -785,7 +854,7 @@ security team pushes back. Full rubric: [references/severity-rubric.md](referenc
 > show the control. And stay conservative the *other* way too: **not everything is covered.** If you cannot
 > prove a control exists, treat the finding as live and solution it.
 
-#### Gate 0 has FOUR outcomes, not two — and they need different actions
+#### Gate 0 has SIX outcomes, not two — and they need different actions
 
 Collapsing these is how a run produces the wrong recommendation. Each demands something different:
 
@@ -793,8 +862,45 @@ Collapsing these is how a run produces the wrong recommendation. Each demands so
 |---|---|---|
 | **Covered** | A control neutralizes the sink on the **shipping** branch | Close out, ship nothing |
 | **Not covered** | No control anywhere, on any ref | Solution it (Step 4.5) |
-| **Fix exists, not shipped** | Written on a branch, not on the release | Don't re-write it — **land it** |
+| **Fix exists, not shipped** | Written on a branch, not on the release | Don't re-write it — **land it**. **Name the branch and commit** in Existing Work |
 | **Landed then reverted** | Merged, then backed out | **Find out WHY before re-landing.** Never blind-revert a revert |
+| **Fixed since filed** | Accurate when filed; the control shipped **after** the filing date | Close as `Won't-Fix (Fixed-Since-Filed)`. **Name the first release containing the control**, and answer the release-exposure question below |
+| **Not fixable by us** | A real weakness that **no client-side change can close** (protocol/platform constraint) | Close as `Not-Fixable (By-Design)`; ask MSRC to withdraw. Cite the standard — see [references/protocol-constraints.md](references/protocol-constraints.md) |
+
+> 🛑 **ALWAYS record the existing work, even when the verdict is "not covered."** "No control on the
+> shipping branch" and "the fix is written, reviewed and sitting on `dev` waiting for a train" are the
+> **same Gate-0 outcome but completely different asks** — one needs an engineer to design a fix, the other
+> needs a release decision. Losing that distinction wastes the most expensive resource in the loop.
+> Every finding whose fix is not shipped MUST fill in the **Existing Work** table (branch · commit · what
+> it covers · why it hasn't shipped). See [references/report-template.md](references/report-template.md).
+
+#### 🛑 Resolve WHICH ref actually ships — several will look plausible
+
+A release train commonly exposes **three** similarly-named refs, and they do **not** agree:
+
+| Ref shape | What it usually is |
+|---|---|
+| `release/<v>` | The branch the shipped artifact is cut from |
+| `working/test-release/<v>` | The RC lineage that feeds `release/<v>` |
+| `release-integration/<v>` | An integration branch that keeps taking **later merges from `dev`** |
+
+**Real failure, found in our own reports:** two findings concluded *"the escalation is gated in the shipping
+release"* by checking `release-integration/<v>` — which carried the control **only because an
+"Update common submodule to latest dev" merge landed roughly half an hour after `release/<v>` was cut**.
+`release/<v>` and its submodule pin both **lacked** the control, and the two branches had **diverged**
+(neither an ancestor of the other). The verdict was reported as covered when it was not.
+
+Do all three, every time:
+1. **Enumerate the candidate refs** (`git for-each-ref 'refs/remotes/origin/*release*'`) and check the
+   control on **each**, by content.
+2. **Compare the submodule pins**, not just the branch content — `git ls-tree <ref> <submodule>`, then read
+   that commit in the submodule's own repo. The pin is what the build actually compiles.
+3. **Test divergence** with `git merge-base --is-ancestor A B` **both ways**. If neither is an ancestor of
+   the other, they are parallel branches and you must say **which one ships** — a control present on only
+   the diverged one protects nobody.
+
+> **Real failure:** a run reported *"no fix exists"*, recommended writing one, and was wrong on both
+> counts — the fix had been written, merged, reverted for a release blocker, and then restored. Each of
 
 > **Real failure:** a run reported *"no fix exists"*, recommended writing one, and was wrong on both
 > counts — the fix had been written, merged, reverted for a release blocker, and then restored. Each of
@@ -815,6 +921,15 @@ Three rules, each from a real wrong answer:
    reverted from a release branch can be silently **restored** by a later merge from `dev` — so commit
    ancestry alone will mislead you. **Read the file content at the release ref** and confirm the control
    is actually present and wired.
+4. **Verify by CONTENT, not ancestry — release branches are often squashed.** `git branch --contains <sha>`
+   and `git merge-base --is-ancestor` both give the wrong answer when the release branch is a squash of an
+   integration branch. Use `git grep -n '<symbol>' <release-ref>` and read what is actually there.
+5. **Then ask the release-exposure question: was any SHIPPED release vulnerable?** Coverage on the *current*
+   shipping ref does not mean customers were never exposed. Walk back the previous release(s) and find the
+   **first release containing the control** and the **last shipped release without it**. Resolve each app
+   release's pinned library versions (`gradle.properties` / `git ls-tree`) rather than assuming.
+   This is what decides whether a customer/SIR response is owed, and it is the field that turns
+   `Fixed-Since-Filed` from a shrug into an answer. Record it in `**Shipped-release exposure:**`.
 
 #### Confirm the control is *effective*, not merely present
 
@@ -833,27 +948,28 @@ Finding the code is not the same as proving it protects users:
 > Record the outcome in the finding's `**Prior incidents:**` field and the Gate-0 section, naming the ref
 > you checked. "Not covered on `dev`" and "not covered in the shipping release" are different claims.
 
-Then set the **Assignment** using the cutoff (only for findings that survive Gate 0):
+Then set the **Disposition** (only for findings that survive Gate 0):
 - **`Won't-Fix (Already-Covered)`** — Gate 0 hit: an existing, cited control already neutralizes the sink.
   No remediation. Surfaced in the report's **Already Covered / Won't-Fix** section and recommended to the IcM
   as Won't-Fix / down-classify (with the covering control cited).
-- **`Intern-eligible`** — when our tier is **Moderate or lower (Moderate/Low) AND the component is
-  the Authenticator app**. Contained to the app we fully own, lower blast radius — safe to delegate (MSRC or ITD).
-- **`Engineer-owned`** — **everything else**: any **Important+** finding, or any **Broker/Common/MSAL**
-  component. We keep these and solution them (Step 4.5). Library and broker-privileged findings always stay here.
+- **`Won't-Fix (Fixed-Since-Filed)`** — accurate when filed; the control shipped after the filing date. Name
+  the first release containing it **and** whether any shipped release lacked it (release-exposure question).
+- **`Not-Fixable (By-Design)`** — a real weakness no client-side change can close. Cite the standard and the
+  compensating control we implement instead; ask MSRC to withdraw the sub-claim.
+  See [references/protocol-constraints.md](references/protocol-constraints.md).
+- **`Keep`** — everything else. We own it and solution it (Step 4.5).
 
-> The cutoff is two-factor: an intern only takes a finding that is both lower-severity (≤ Moderate) **and**
-> contained to the app we fully own (Authenticator). Confidence is advisory: if an intern-eligible finding is
-> **Low confidence**, flag it for a quick engineer sanity-check before handing it off.
+> A single IcM can carry **different dispositions for different sub-claims** — that is the normal case for
+> multi-part MSRCs, not an edge case. Record one disposition **per sub-claim** in the Claim Ledger and
+> summarize them in the **Per-Part Disposition** block (Non-Negotiable #24).
 
 Use [references/report-template.md](references/report-template.md).
 
 ### Step 4.5 — Solution the kept findings (remediation spec)
-For every **Engineer-owned** finding, produce a **dispatch-ready Remediation Spec**:
+For every **kept** finding, produce a **dispatch-ready Remediation Spec**:
 root cause, fix approach, exact files to change (`file:line`), test plan, and risks/rollout (flighting).
 Use [references/remediation-spec.md](references/remediation-spec.md). It must be detailed enough to hand to
-an engineer or the Copilot coding agent / `pbi-creator` without further investigation. For Intern-eligible
-findings, a lighter **Fix Notes** block is sufficient.
+an engineer or the Copilot coding agent / `pbi-creator` without further investigation.
 
 #### 🛑 Gate: present OPTIONS before any code (Non-Negotiable #16)
 
@@ -893,7 +1009,7 @@ Rules for the gate:
   eager fix silently omits.
 - **Wait for a choice.** Do not begin Step 4.6, do not touch a file, do not create a branch. Only after
   the engineer picks (or amends) an option does the spec's **Fix Approach** get filled in with it.
-- **Applies to Intern-eligible findings too** — a lighter, two-row version.
+- **Applies to every kept finding** — a lighter, two-row version is fine for low-severity ones.
 - **If the engineer explicitly says "just fix it"**, still show the options table *as a single message*,
   state your pick, and proceed unless they object. Cost: ~30 seconds. Value: they can catch the wrong
   approach before the diff exists rather than after.
@@ -1023,7 +1139,7 @@ Each finding yields a **human report** and a **machine-readable agent spec** —
   `--agent-dir ../agent-specs` to produce one self-contained, shareable HTML page each (CSS inlined;
   `file:line` citations as visible evidence chips) plus an `index.html`. Each page opens with a band of
   **colorful stat tiles** (Our Severity · **Component / Repo** · IcM Severity · Confidence · Verdict ·
-  Investigation Passes · **External Validation** · Assignment — each kept concise; tiles with a ↓ jump to
+  Investigation Passes · **External Validation** · Disposition — each kept concise; tiles with a ↓ jump to
   the matching detail section), a **Bottom line** TL;DR, then
   **Description** and **How It Can Be Exploited** (high-level, no PoC/PII). The heavy **Searches Run** audit
   is auto-collapsed into a `<details>` for readability, an **On this page** TOC links the major sections,
@@ -1039,18 +1155,17 @@ Each finding yields a **human report** and a **machine-readable agent spec** —
   markdown with `--out <run_dir> --research-dir research --agent-dir agent-specs` to emit
   `wbr-security-report.html` in the run dir. It has summary stat cards (incl. a **Needs external validation**
   count), the severity legend, and a master table: **IcM · Tag (MSRC/ITD) · Component · Filed · Ours · Conf ·
-  Verdict · Owner (E/I) · Eng-days · Vulnerability · Research**. A ⚗ **ext** badge marks rows whose
+  Verdict · Disposition · Eng-days · Vulnerability · Research**. A ⚗ **ext** badge marks rows whose
   severity still hinges on a server/downstream control we can't statically verify, and an **Exports** strip
   links the roll-up + CSV that ship in the same folder. For an on-call **shift report**, add
   `--shift "Wed <start> -> Wed <end>" --owner "<label>"` — this re-frames the header, adds a **Generated
   <timestamp>** stamp (so a hung/stale run is obvious), and a "findings appended" note. The research subpages'
   "Back to WBR overview" link points here, so **the run folder is fully self-contained — never reuse a prior
   run's overview.** Generate it AFTER the subpages + specs exist.
-- **Aggregate roll-up** → counts, severity breakdown (ours vs. filed), confidence + IcM-Sev breakdown, an
-  **Intern Queue** (Moderate↓ + Authenticator, delegatable) vs. **Engineer-owned** (everything else, kept with
-  remediation) split, estimated eng-days, and at-risk commitments — generated with
-  `scripts/rollup.py classifications.csv --out <run_dir>/_ROLLUP.md`. (Owner E/I is the action split — the two
-  sections ARE keep-&-fix vs delegate; no separate Action column.)
+- **Aggregate roll-up** → counts, severity breakdown (ours vs. filed), confidence + IcM-Sev breakdown, a
+  **disposition** split (Kept vs Already-Covered vs Fixed-Since-Filed vs Not-Fixable), estimated eng-days,
+  and at-risk commitments — generated with
+  `scripts/rollup.py classifications.csv --out <run_dir>/_ROLLUP.md`.
   > ⚠️ **Always pass `--out`** so the markdown is written as UTF-8. Do **not** use PowerShell `>` redirection —
   > it re-encodes through the console code page and corrupts the Unicode (`·` → `┬╖`, `—` → `ΓÇö`).
   For on-call handoff and the bi-monthly WBR.
@@ -1065,11 +1180,9 @@ triage run. When asked to create PBIs/bugs from findings (see Non-Negotiable #14
    the assignee; ask.
 2. **Default parent = the team's standing "Keep the Lights On" (KTLO) feature** on the *Auth Client - Android*
    board — that is where ongoing security-triage/bug work belongs. **Look it up at creation time** (IDs and
-   iterations rotate) and confirm the exact ID with the user. The Summer-2026 intern feature (an intern
-   batch under `[Summer 2026] Deliverable Payload`) was a **one-time** exception — do not reuse it as the
-   default.
+   iterations rotate) and confirm the exact ID with the user.
 3. **Inherit area + iteration from the chosen parent** unless the user overrides. Leave **unassigned**
-   unless the user names an assignee (intern aliases are usually not known at creation time).
+   unless the user names an assignee.
 4. **One PBI per fix, not per IcM.** When two findings share a single root cause + fix (e.g. ITD 635330 +
    635488 both being the `activateMfa` deep link), create **one combined PBI** and count the eng-days once.
 5. **Description = the report distilled** (NOT a copy): Summary, Security classification (filed vs. our
@@ -1104,8 +1217,6 @@ research report. It is a single compact table meant to paste into an email. Gene
   app is the longer pole — most fixes flip the feature flag only after Prod 100%. Tune with `--asof`,
   `--test-buffer`, `--rollout-app-days`, `--rollout-lib-days`. See
   [references/status-report-template.md](references/status-report-template.md) "Prod rollout basis".
-- **Intern items show *Out of scope*** for now — they're assigned to an intern who hasn't started yet, so the
-  report renders a one-line note explaining it and sorts them last (tracked for completeness).
 - **No research detail, and no owner column** — owner/assignee already lives on the linked work item.
   Quick-glance only: no evidence, no file:line, no audit trail.
 - Group/sort by status or severity; include a one-line header (window + counts). Plain HTML table that
@@ -1114,7 +1225,7 @@ research report. It is a single compact table meant to paste into an email. Gene
 **Source of truth = the execution tracker.** `build_status_report.py` **auto-discovers** `EXECUTION-TRACKER.md`
 next to the CSV (override with `--tracker`) and uses its per-finding exec status **in preference to** live ADO
 state — the tracker reflects real remediation progress (branch created → implemented → pushed → PR open →
-merged) and marks intern-eligible findings `OUT OF SCOPE (intern)`. Keep the tracker current (it's updated at
+merged). Keep the tracker current (it's updated at
 every execution milestone — see [references/remediation-execution.md](references/remediation-execution.md))
 and the weekly report stays accurate with no extra bookkeeping.
 
@@ -1169,7 +1280,7 @@ the engineer which follow-ups to run** (offer as a short menu — do **not** sil
    items. If yes: **propose the table first** (title, tier, IcM, parent, area/iteration, assignee) and wait
    for explicit approval; default parent = the current **KTLO** feature (look it up + confirm). After
    creation, add each `IcM → AB#` to `work-item-map.json`.
-3. **Dispatch / execute a fix?** *(opt-in)* — each engineer-owned finding already has a machine-actionable
+3. **Dispatch / execute a fix?** *(opt-in)* — each kept finding already has a machine-actionable
    `.agent.md` dispatch spec. Offer to hand it to a coding agent (e.g. the `pbi-dispatcher` skill or the
    Copilot coding agent) to draft a PR. **Execution only happens on the engineer's go-ahead, per finding**,
    and **only after they have picked an approach from the Step 4.5 Fix Options table** — never go from
@@ -1213,25 +1324,27 @@ an exploit path" is not evidence — show the control, or show the searches prov
 > downstream/server boundary (External Validation = Yes ⇒ cap at Sev3). When in doubt, go lower. Full gate +
 > the evolving **calibration log**: [references/severity-rubric.md](references/severity-rubric.md).
 
-### Confidence & Assignment (summary)
+### Confidence & Disposition (summary)
 
 - **Confidence** (High/Medium/Low) comes from the **adversarial pass** (Step 3.5) — see "The two-pass model".
   It measures *how sure we are of the verdict*, independent of severity. Low-confidence findings get a human
   review before action.
-- **Assignment** is decided by a **coverage gate first, then** a cutoff on **IcM Sev + component**:
+- **Disposition** is decided by the **coverage gate (Gate 0)**, which has six outcomes:
 
-| Condition | Assignment | What we do |
+| Condition | Disposition | What we do |
 |-----------|-----------|------------|
-| **🛑 GATE 0: sink already neutralized by an existing control (cited `file:line` on current HEAD)** | `Won't-Fix (Already-Covered)` | **Close it out — no fix.** The safest outcome; a redundant change only adds regression risk. Recommend Won't-Fix/down-classify to the IcM, citing the covering control. |
-| **Tier ≤ Moderate AND component = Authenticator app** | `Intern-eligible` | Contained, lower-severity fix — safe to delegate (Fix Notes). |
-| **Tier ≥ Important, or any Broker/Common/MSAL** | `Engineer-owned` | We keep it and produce a dispatch-ready Remediation Spec (Step 4.5). |
+| **🛑 GATE 0: sink already neutralized by an existing control (cited `file:line` on the shipping ref)** | `Won't-Fix (Already-Covered)` | **Close it out — no fix.** The safest outcome; a redundant change only adds regression risk. Recommend Won't-Fix/down-classify to the IcM, citing the covering control. |
+| **Accurate when filed; control shipped after the filing date** | `Won't-Fix (Fixed-Since-Filed)` | Close, naming the first release containing the control — **and** answer whether any shipped release lacked it. |
+| **No client-side change can close it (protocol/platform constraint)** | `Not-Fixable (By-Design)` | Cite the standard + the compensating control we implement instead; ask MSRC to withdraw. |
+| **Fix exists on a branch but not on the release** | `Keep` | Don't re-write it — **land it**. |
+| **Landed then reverted** | `Keep` | Find out **why** before re-landing. |
+| **No control anywhere** | `Keep` | Produce a dispatch-ready Remediation Spec (Step 4.5). |
 
 > Always run **Gate 0 first.** A large share of filed findings are already covered by defense-in-depth — but
 > **not all**, so the gate requires a cited control, never a hunch. Be conservative both ways: don't ship a
 > redundant fix into a >1B-user library (regression risk for no gain), and don't wave a finding off as
-> "covered" without proving the control exists on the current base branch.
-> Rationale for the rest: an intern only takes a finding that is both **≤ Moderate** and **contained to the
-> app we fully own (Authenticator)**. Library (Common/Broker/MSAL) and any Important+ finding needs engineer judgment.
+> "covered" without proving the control exists on the **shipping** ref.
+> A single IcM may carry **different dispositions for different sub-claims** — split them (Non-Negotiable #24).
 
 ---
 
