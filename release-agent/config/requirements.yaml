@@ -224,6 +224,86 @@ mcp_servers:
       - SearchTeamMessagesQueryParameters
     note: "Provided by the Agency CLI (agency mcp teams). Fills Teams gaps WorkIQ lacks (group-chat creation, add members, channel posts). After registering, RESTART Scout. NOT auto-approved — Teams writes prompt for confirmation; see docs/teams-mcp-setup.md."
 
+  - id: ecs
+    name: "ECS MCP server (Experimentation & Configuration Service)"
+    scout_key: ecs
+    provider: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
+    command: "%APPDATA%\\agency\\CurrentVersion\\agency.exe"
+    args: ["mcp", "ecs"]
+    required_by: [ECS configuration lookups, feature-flag / rollout status, experiment status checks]
+    # CRITICAL: command-based servers read this allowlist STATICALLY — an empty list
+    # makes Scout silently DROP the server. This is the READ-ONLY subset (64 of the 118
+    # ECS tools): get_*/search_*/preview_* + the no-apply validate_* (compute only). ALL 54
+    # mutating tools (create/update/delete/replace/change/set/bypass/execute/convert, plus the
+    # env-gated validators that POST to ECS) are intentionally EXCLUDED so the autonomous
+    # release agent can never change ECS. Add write tools here only with a deliberate decision.
+    tools:
+      - get_server_info
+      - health_check
+      - get_ecs_configurations
+      - get_ecs_config_by_external_id
+      - get_ecs_specific_configuration
+      - get_ecs_configuration_by_name
+      - get_ecs_configuration_state
+      - get_ecs_configuration_ownership
+      - get_ecs_configs_updated_in_range
+      - get_ecs_clients
+      - get_ecs_client_teams
+      - get_ecs_specific_client_team
+      - get_ecs_experiments
+      - get_ecs_specific_experiment
+      - get_ecs_experiment_state
+      - get_ecs_experiment_scorecard
+      - get_ecs_treatment_by_external_id
+      - get_ecs_experiment_treatments
+      - get_ecs_specific_treatment
+      - get_ecs_treatment_config
+      - get_ecs_rollout
+      - get_ecs_rollout_state
+      - get_ecs_rollout_features
+      - get_ecs_rollout_feature
+      - get_ecs_rollout_feature_config
+      - get_ecs_orchestrated_rollout
+      - get_ecs_orchestrated_rollout_history
+      - validate_ecs_orchestration_change
+      - get_ecs_default
+      - get_ecs_default_state
+      - get_ecs_default_features
+      - get_ecs_default_feature
+      - get_ecs_default_feature_config
+      - get_ecs_insights_config_version
+      - get_ecs_insights_change_events
+      - get_ecs_topology_properties
+      - get_ecs_saturation_graph
+      - get_ecs_greenlighting_status
+      - get_ecs_config_params
+      - get_ecs_filters_by_client
+      - get_ecs_ring_definitions
+      - get_ecs_rollout_policies
+      - get_ecs_rollout_policy_templates
+      - get_ecs_config_type
+      - get_ecs_configuration_config_types
+      - search_ecs_configurations
+      - search_ecs_config_keys
+      - search_ecs_filters
+      - search_ecs_user_configurations
+      - get_ecs_config_by_id
+      - get_ecs_cross_links
+      - validate_ecs_cross_link
+      - preview_ecs_cross_link_impact
+      - get_ecs_rollout_plans
+      - get_ecs_effective_rollout_policies
+      - get_ecs_orchestrated_experiment
+      - validate_ecs_experiment_orchestration_change
+      - validate_ecs_rollout_feature_change
+      - validate_ecs_rollout_feature_config_change
+      - validate_ecs_rollout_features_change
+      - validate_ecs_default_feature_change
+      - validate_ecs_default_feature_config_change
+      - validate_ecs_default_features_change
+      - validate_ecs_experiment_treatments_change
+    note: "Provided by the Agency CLI (agency mcp ecs). EntraID auth (automatic). READ-ONLY tool set (64 of 118; all ECS writes excluded). After registering, RESTART Scout so it loads; then Scout auto-discovers the ECS tools."
+
 # Kusto/ADX clusters the tool queries (data — infra wires these into the kusto MCP
 # via --known-services). Add an entry per cluster we use.
 kusto_clusters:
