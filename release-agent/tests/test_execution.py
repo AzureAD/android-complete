@@ -164,6 +164,8 @@ def test_parallel_phase_waits_on_reserved_step_without_running_it(run):
 @pytest.mark.parametrize("sid", ["final_reminder", "pr_reminder"])
 def test_direct_engine_reservation_enforces_ownership(run, sid):
     st = ReleaseState.load(str(run[1]))
+    if sid == "pr_reminder":
+        st.set_step("ccd", "final_reminder", StepState(status="done"))
     orch = Orchestrator(C.DEFAULT_CONFIG, st, mocks={})
     action = NeedsSkill(tool="workiq_send_email", payload={}, outbound=True, record_as=sid)
     assert orch.reserve_step("ccd", sid, action, "A").kind == "needs_skill"

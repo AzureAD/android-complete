@@ -33,13 +33,13 @@ mocks:
     stages:
       - { name: "Build", state: completed, result: succeeded }
       - { name: "UI Automation", state: completed, result: failed }
-    tests: { total: 5871, passed: 5767, failed: 104 }
+    tests: { total: 5871, passed: 5767, failed: 104, categories: { ui: { total: 200, passed: 190, failed: 10 } } }
   build_verify.mrwp_local:
     mrwp_id: "1678864"
     stages:
       - { name: "Build", state: completed, result: succeeded }
       - { name: "UI Automation", state: completed, result: failed }
-    tests: { total: 5856, passed: 5756, failed: 100 }
+    tests: { total: 5856, passed: 5756, failed: 100, categories: { ui: { total: 200, passed: 190, failed: 10 } } }
   build_verify.auth_ecs:
     auth_build: { build_id: 1678900, rc: 1, version: "0.0.02468-rc-RC1-ecs",
                   status: completed, result: succeeded }

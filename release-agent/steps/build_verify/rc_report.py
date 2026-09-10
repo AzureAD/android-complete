@@ -3,10 +3,10 @@ go/hold decision (Phase 2, build_verify). This is the terminal Phase-2 step and 
 decision point — the verification steps only CAPTURE data; this step decides. No separate
 human approval gate.
 
-When the four verification steps have resolved the chain, this step composes the
+When verification and telemetry prerequisites have resolved the chain, this step composes the
 Phase-2 RC report (checker → orchestrator → ECS/Local MRWP + per-run test failures)
-from LIVE pipeline data and emails it to the release owner, so the engineer wakes to
-the report on CCD+1. The report is ALWAYS sent (the owner gets the dashboard of
+from complete current-RC snapshots and emails it to the release owner. Once evidence is
+ready, the report is sent even for failures (the owner gets the dashboard of
 failures + links either way). The step's OUTCOME is then decided by TWO independent gates:
 (1) the three-tier MRWP UI gate on the combined UI-automation pass rate across both MRWP
 runs (100% clean; >= RC_UI_PASS_THRESHOLD (90%) but < 100% warn — proceed + investigate in
@@ -18,7 +18,7 @@ attestation).
 Sending email needs the WorkIQ MCP the engine can't reach, so this is a `scout`
 step: `build()` composes the email deterministically and returns a
 NeedsSkill(workiq_send_email); the payload names the `record-rc-report` follow-up
-command, which re-reads the model, applies BOTH gates, records pass|attention, and
+command, which rechecks readiness, applies BOTH gates, records pass|attention, and
 stashes the evaluated run links on the step. Redirect for tests with the `send_to`
 payload knob (keeps the send real, points it at you).
 """
@@ -41,7 +41,7 @@ MOCKABLE = {
 def build(state):
     """Compose the RC verification email → NeedsSkill(workiq_send_email). Blocks if the
     owner email is unknown (nowhere to send) — set it with `set-owner`. The email is
-    always sent; the UI gate verdict (recorded by the `record-rc-report` follow-up) then
+    sent only with complete evidence; the gate verdict (recorded by the follow-up) then
     decides whether the step passes or blocks."""
     to = state.owner_email
     if not to:
@@ -102,15 +102,20 @@ def automation_prompt(release: str, spec: dict) -> str:
         f"1. run `poll-rc --release {release}`.\n"
         f"2. act on the printed decision:\n"
         f"   • waiting  → still running; send nothing.\n"
+        f"   • ready    → run step-action for each decision.steps entry in decision.phase, "
+        f"execute its tool only for needs_skill, then use its followup_command after "
+        f"success. Re-poll afterward; never blind-record a report pass.\n"
         f"   • nudge    → running past 6h; send the courtesy heads-up in decision.nudge "
         f"(email decision.nudge.email to the owner AND post decision.nudge.teams.text to "
         f"the owner's Scout chat). It is stamped, so it goes out at most once.\n"
-        f"   • resolved → the new RC completed and PASSED the gate; Phase 2 advanced. "
-        f"The common cleanup planner removes this poller; report the pass.\n"
-        f"   • blocked  → the new RC completed but re-blocked the UI gate (still failing). "
+        f"   • resolved → inspect decision.status: 'passed' means the RC passed the gates; "
+        f"'overridden' means Phase 2 completed by an authorized manual override, NOT a "
+        f"quality-gate pass. Report the matching outcome and decision.note; never describe "
+        f"an override as PASSED. The common cleanup planner removes this poller.\n"
+        f"   • blocked  → a Phase-2 prerequisite or quality gate needs attention. "
         f"Surface the block to the owner (the 3-exit choice: re-trigger / cherry-pick / "
-        f"override). The common cleanup planner removes this settled poller; a later "
-        f"re-trigger provisions a fresh one.\n"
+        f"override). Follow the existing cleanup planner's decision; a later "
+        f"re-trigger can provision a fresh poller.\n"
         f"   • idle     → nothing in-flight; stay silent.\n"
         f"Silently journal: `journal --release {release} --source scout --kind automation "
         f"--text \"rc-poller: <decision>\"`. Stay silent when there is nothing to send.")

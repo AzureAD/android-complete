@@ -1279,7 +1279,7 @@ def test_current_steps_label_scout_not_user_action():
         assert s["reminder"] is False
     # and it's never surfaced as a user action
     assert r["action"] is None
-    assert set(r["scout_pending"]) == {"final_reminder", "pr_reminder", "localization"}
+    assert r["scout_pending"] == ["final_reminder"]
     # the rendered current-phase table says 'Scout runs this', never 'Do this'
     view = render.status_view(r)
     assert "Scout runs this" in view
@@ -1379,6 +1379,11 @@ def test_stale_approval_refresh_skips_completed_step_and_preserves_record(tmp_pa
     rid = "2026-09"
     st = ReleaseState(release_id=rid, ccd="2026-09-09",
                       owner_name="Release owner", owner_email="owner@example.com")
+    from orchestrator.state import StepState
+    st.readiness_signed = True
+    orch = Orchestrator(CONFIG, st)
+    for step in orch.config["phases"][0]["steps"]:
+        st.set_step("preflight", step["id"], StepState(status="done"))
     path = tmp_path / rid / "release-state.json"
     st.save(str(path))
     base = ["--runs-root", str(tmp_path)]

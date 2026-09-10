@@ -176,8 +176,8 @@ def test_rc_email_includes_separate_auth_section():
     rc = st.pipeline_runs["rcs"][-1]
     K.stash_auth(st, rc["rc"], {
         "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
-                  "result": "succeeded"},
-        "test": {"run_id": "900011", "suites": _auth_suites(82.76, 100.0)},
+                  "complete": True, "result": "succeeded"},
+        "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(82.76, 100.0)},
         "verdict": "attention"})
     model = K.rc_report_model(st)
     assert (model.get("auth") or {}).get("verdict") == "attention"
@@ -200,22 +200,22 @@ def test_rc_report_contemplates_both_gates_at_a_glance():
     rc = st.pipeline_runs["rcs"][-1]
     K.stash_auth(st, rc["rc"], {
         "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
-                  "result": "succeeded"},
-        "test": {"run_id": "900011", "suites": _auth_suites(82.76, 100.0)},
+                  "complete": True, "result": "succeeded"},
+        "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(82.76, 100.0)},
         "verdict": "attention"})
     model = K.rc_report_model(st)
     subj = K.rc_email_subject(model)
-    assert "MRWP UI:" in subj and "Auth ECS: BELOW 90% gate" in subj
+    assert "MRWP UI:" in subj and "Auth ECS: HOLD" in subj
     html = K._rc_email_html(model, {"owner": "pedro"})
     assert "MRWP UI:" in html and "Auth ECS:" in html          # gates banner has both
     plain = K._rc_email_plain(model, {"owner": "pedro"})
     assert "GATES (evaluated independently)" in plain
-    assert "MRWP UI:" in plain and "Authenticator ECS: BELOW gate" in plain
+    assert "MRWP UI:" in plain and "Authenticator ECS: HOLD" in plain
     # a clean auth leg flips only the auth surfaces, not the MRWP verdict
     K.stash_auth(st, rc["rc"], {
         "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
-                  "result": "succeeded"},
-        "test": {"run_id": "900011", "suites": _auth_suites(97.0, 100.0)},
+                  "complete": True, "result": "succeeded"},
+        "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(97.0, 100.0)},
         "verdict": "clean"})
     assert "Auth ECS: pass" in K.rc_email_subject(K.rc_report_model(st))
 
@@ -248,8 +248,10 @@ def test_build_verify_rc_report_emails_owner():
     K.stash_mrwp(st, "Local", {
         "run_id": "1678864", "complete": True, "ran": 23, "total": 23,
         "failed_stages": [], "yellow_stages": [], "never_ran": [],
-        "tests": {"total": 5856, "passed": 5756, "failed": 100, "categories": {}},
+        "tests": {"total": 5856, "passed": 5756, "failed": 100, "categories": {
+            "ui": {"total": 165, "passed": 63, "failed": 102}}},
         "failed_suites": []})
+    _seed_auth(st)
 
     out = as_dict(_steps.get_step("build_verify", "rc_report").build(st))
     assert out["kind"] == "needs_skill" and out["tool"] == "workiq_send_email"
@@ -274,7 +276,7 @@ def test_rc_ui_gate_and_run_links():
     """The Phase-2 UI gate is three-tier on the combined UI pass rate across BOTH MRWP
     providers: 100% → 'clean'; >=90% & <100% → 'warn' (non-blocking, investigate in
     parallel); <90% → 'attention' (blocking, with a failing-suite summary); no UI tests →
-    'clean' with a warning. rc_run_links surfaces every evaluated run."""
+    'unavailable' and blocking. rc_run_links surfaces every evaluated run."""
     from steps.build_verify import _common as K
 
     def _model(ecs_ui, local_ui, ecs_suites=None):
@@ -313,11 +315,11 @@ def test_rc_ui_gate_and_run_links():
     assert "cherry-pick-process-for-broker-libraries" in g2["detail"]
     assert "LAST RESORT" in g2["detail"] and "skip" in g2["detail"]
 
-    # no UI tests anywhere → clean with a warning (absence of data is not a failure)
+    # No UI tests anywhere is unavailable evidence, never a clean pass.
     g3 = K.rc_ui_gate({"mrwp": {"ECS": {"tests": {"categories": {}}},
                                 "Local": {"tests": {"categories": {}}}}})
-    assert g3["verdict"] == "clean" and g3["blocking"] is False
-    assert g3["ui_total"] == 0 and "No UI-automation" in g3["detail"]
+    assert g3["verdict"] == "unavailable" and g3["blocking"] is True
+    assert g3["ui_total"] == 0 and "UI results" in g3["detail"]
 
     # every evaluated run becomes a durable link
     links = K.rc_run_links(fail_model)
@@ -343,6 +345,7 @@ def test_record_rc_report_applies_ui_gate_and_stashes_links():
         st = ReleaseState(release_id=rid, ccd="2026-08-26", owner_email="dev@microsoft.com")
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch); orch.gate.sign()
+        _ready_for_rc_report(st)
 
         class A:
             runs_root = d; release = rid; config = CONFIG; as_of = None
@@ -357,7 +360,8 @@ def test_record_rc_report_applies_ui_gate_and_stashes_links():
         step1 = s1.get_step("build_verify", "rc_report")
         assert [l["name"] for l in step1.links] == [
             "Code Complete Checker run", "Release Orchestrator run",
-            "MRWP ECS run", "MRWP Local run"]
+            "MRWP ECS run", "MRWP Local run",
+            "Authenticator ECS build", "Authenticator ECS UI tests"]
 
         # reset the step + re-seed the SAME runs with a failing UI slice (60% < 90) →
         # blocked, links still stashed. Same run ids → updates the current rc in place.
@@ -371,7 +375,7 @@ def test_record_rc_report_applies_ui_gate_and_stashes_links():
         assert step2.status == "blocked" and not s2.is_done("build_verify", "rc_report")
         assert s2.status == "awaiting_action"
         assert "build_verify.rc_report" in s2.pending_human
-        assert "BELOW" in step2.note and len(step2.links) == 4
+        assert "BELOW" in step2.note and len(step2.links) == 6
         # the same rc was updated in place (not a spurious new RC iteration)
         assert len(s2.pipeline_runs["rcs"]) == 1
 
@@ -393,6 +397,7 @@ def test_record_rc_report_holds_when_auth_gate_fails_though_mrwp_clean():
         st = ReleaseState(release_id=rid, ccd="2026-08-26", owner_email="dev@microsoft.com")
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch); orch.gate.sign()
+        _ready_for_rc_report(st)
 
         class A:
             runs_root = d; release = rid; config = CONFIG; as_of = None
@@ -403,8 +408,8 @@ def test_record_rc_report_holds_when_auth_gate_fails_though_mrwp_clean():
         rc = st.pipeline_runs["rcs"][-1]
         K.stash_auth(st, rc["rc"], {
             "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
-                      "result": "succeeded"},
-            "test": {"run_id": "900011", "suites": _auth_suites(82.76, 100.0)},
+                      "complete": True, "result": "succeeded"},
+            "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(82.76, 100.0)},
             "verdict": "attention"})
         C.save_state(st, d, rid)
         assert RR.cmd_record_rc_report(A) == 2                     # blocked by AUTH, not MRWP
@@ -419,8 +424,8 @@ def test_record_rc_report_holds_when_auth_gate_fails_though_mrwp_clean():
         rc = s1.pipeline_runs["rcs"][-1]
         K.stash_auth(s1, rc["rc"], {
             "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
-                      "result": "succeeded"},
-            "test": {"run_id": "900011", "suites": _auth_suites(97.0, 100.0)},
+                      "complete": True, "result": "succeeded"},
+            "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(97.0, 100.0)},
             "verdict": "clean"})
         C.save_state(s1, d, rid)
         assert RR.cmd_record_rc_report(A) == 0
@@ -667,6 +672,7 @@ def test_poll_rc_resolved_blocked_idle():
         assert _run_poll_rc(d, rid, "2026-08-20T09:00:00+00:00")["decision"] == "idle"
 
         st.set_step("build_verify", "rc_report", StepState(status="done", note="UI CLEAN"))
+        _ready_for_rc_report(st)
         C.save_state(st, d, rid)
         assert _run_poll_rc(d, rid, "2026-08-20T09:00:00+00:00")["decision"] == "resolved"
 

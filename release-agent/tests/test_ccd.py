@@ -486,4 +486,4 @@ def test_ccd_phase_not_due_before_ccd_and_no_scout_pending():
     orch.run_until_gate()
     r2 = orch.status_report()
     assert r2["current_phase"] == "ccd"
-    assert set(r2["scout_pending"]) == {"final_reminder", "pr_reminder", "localization"}
+    assert r2["scout_pending"] == ["final_reminder"]

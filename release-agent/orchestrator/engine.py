@@ -119,8 +119,8 @@ class Orchestrator(StatusViewMixin):
         runnable by the engine's automatic paths until that wall-clock time arrives, in
         the owner's timezone, on its fire day. This stops the every-hour worker from
         draining a timed step the instant its phase goes due — the step is left for its
-        dedicated cron-pinned automation (which calls step-action directly and so isn't
-        gated). Non-timed steps are always ready."""
+        dedicated cron-pinned automation. Direct step-action enforces the same time
+        boundary. Non-timed steps are always ready."""
         from orchestrator import automations
         fire = automations.fire_at(phase["id"], step["id"])
         if not fire:
@@ -192,12 +192,19 @@ class Orchestrator(StatusViewMixin):
                 and mocks_mod.stepresult_for(self.mocks, pid, step["id"]) is not None)
 
 
-    def _deps_met(self, pid: str, step: dict) -> bool:
-        """True when every step this one depends_on is done (deps are within-phase)."""
-        for dep in step.get("depends_on", []) or []:
-            if not self.state.is_done(pid, dep):
+    def _prerequisites_met(self, phase: dict, step: dict) -> bool:
+        """Parallel phases use explicit dependencies; sequential phases also require predecessors."""
+        pid = phase["id"]
+        if any(not self.state.is_done(pid, dep) for dep in step.get("depends_on", []) or []):
+            return False
+        if phase.get("execution") == "parallel":
+            return True
+        for predecessor in phase["steps"]:
+            if predecessor["id"] == step["id"]:
+                return True
+            if not self.state.is_done(pid, predecessor["id"]):
                 return False
-        return True
+        return False
 
     def step_once(self, attempted=None) -> NextAction:
         """Advance exactly one step (or hold). For a sequential phase this is the
@@ -269,6 +276,10 @@ class Orchestrator(StatusViewMixin):
         step = next(s for s in phase["steps"]
                     if not self.state.is_done(phase["id"], s["id"]))
         self.state.current_step = step["id"]
+        if not self._prerequisites_met(phase, step):
+            self.state.status = "awaiting_action"
+            return NextAction(kind="waiting", phase=phase["id"], step=step["id"],
+                              message="Waiting on prerequisite steps to complete.")
         if self.step_execution(phase["id"], step["id"]):
             self.state.status = "awaiting_action"
             return NextAction(kind="waiting", phase=phase["id"], step=step["id"],
@@ -329,7 +340,7 @@ class Orchestrator(StatusViewMixin):
         pid = phase["id"]
 
         def ready(s):
-            return ((not self.state.is_done(pid, s["id"])) and self._deps_met(pid, s)
+            return ((not self.state.is_done(pid, s["id"])) and self._prerequisites_met(phase, s)
                     and self._step_time_ready(phase, s) and not self.step_execution(pid, s["id"]))
 
         # 1) Run ONE ready, not-yet-attempted runnable step (auto agent, or an
@@ -486,6 +497,16 @@ class Orchestrator(StatusViewMixin):
             return Blocked(f"Reserved by {execution['owner']} (execution {execution['id']}). "
                            "Wait if active; if interrupted, stop the original runner and review "
                            "the outcome with the owner before done or reopen. Do not repeat the action.")
+        phase = self._find_step(phase_id, step_id)
+        if (not phase or self.current_phase_id() != phase_id or self.state.halted
+                or self.state.blocked or not self.state.readiness_signed
+                or self.state.status == "complete" or not self._phase_due(phase)):
+            return Blocked("Step is not currently eligible: release/phase is not ready.")
+        step = next(s for s in phase["steps"] if s["id"] == step_id)
+        if not self._prerequisites_met(phase, step):
+            return Blocked("Waiting on prerequisite steps to complete.")
+        if not self._is_mocked(phase_id, step) and not self._step_time_ready(phase, step):
+            return Blocked("Step is not currently eligible: scheduled time has not arrived.")
         return None
 
     @staticmethod
@@ -525,7 +546,7 @@ class Orchestrator(StatusViewMixin):
                 if self._step_kind(s) == "scout" and not s.get("attest")
                 and self.state.get_step(phase["id"], s["id"]).status == "pending"
                 and not self.step_execution(phase["id"], s["id"])
-                and self._deps_met(phase["id"], s) and self._step_time_ready(phase, s)]
+                and self._prerequisites_met(phase, s) and self._step_time_ready(phase, s)]
 
     # ---- manual overrides (human-driven transitions, §7.1 constraint #5) ----
     def completed_step_outcome(self, phase_id: str, step_id: str) -> Optional[Done]:

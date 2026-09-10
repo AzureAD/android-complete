@@ -683,7 +683,13 @@ build_verify.rc_report:
     - "Authenticator ECS build + UI-test run: via the run links in the email's 'Authenticator ECS' section"
   how: >
     If it blocks with 'no release owner email', set it with `set-owner --email <you@microsoft.com>`
-    and rerun. When BOTH gates clear (MRWP UI >=90% AND auth ECS >=90%) the release auto-advances into
+    and rerun. No email is prepared until current-RC snapshots are complete, both MRWP runs
+    have valid non-zero UI counts, and all preceding steps (including telemetry) are done
+    or explicitly skipped. Missing evidence is not a clean gate, even after a prerequisite
+    skip. Evaluated failures are emailed once prerequisites settle. After successful delivery,
+    use `record-rc-report --release <id>`; it rechecks eligibility and evidence readiness
+    before evaluating either gate. When BOTH gates clear
+    (MRWP UI >=90% AND auth ECS >=90%) the release auto-advances into
     bug bash. If either holds, the owner investigates and rules on it (patch a real bug + re-trigger
     RC, or proceed as an automation flake): fix + re-run then `next`, or `skip --reason` to override.
   faqs:
@@ -692,7 +698,7 @@ build_verify.rc_report:
     - q: "Does the sim send this email?"
       a: "No. In a sim the step is marked done without sending; only the real skill flow composes + sends it via WorkIQ."
     - q: "Does the report cover the Authenticator ECS leg too?"
-      a: "Yes. The report contemplates BOTH gates: it shows a gates banner (subject + top of the email + a plain-text GATES block) with the MRWP UI verdict AND the Authenticator-ECS verdict, plus a dedicated 'Authenticator ECS' section with the two Firebase suites. The two gates are evaluated INDEPENDENTLY — the auth leg is decided by the auth_ecs step (its own >=90% bar on both suites) and does NOT feed the MRWP UI gate that rc_report applies."
+      a: "Yes. The report shows both independent gates and a dedicated Authenticator ECS section with the two Firebase suites. auth_ecs captures completed build/test evidence; rc_report decides both gates. Authenticator results do not feed the MRWP UI percentage."
 
 # =============================== Phase 3 · bug_bash ===============================
 

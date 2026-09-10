@@ -25,6 +25,8 @@ MOCKABLE = {
                    "desc": "Inject the ECS auth build {build_id,rc,version,status,result} (skip the One lookup)."},
     "test_build": {"kind": "input",
                    "desc": "Inject the post-build UI-test run id (skip the resource-link scan)."},
+    "test_status": {"kind": "input",
+                   "desc": "Inject the UI-test build status; in-progress runs are not captured."},
     "suites": {"kind": "input",
                "desc": "Inject the Firebase suite rates {name:{present,passed,failed,total,pct}}."},
     "rc": {"kind": "input", "desc": "Override the RC iteration number (else from the auth build version)."},

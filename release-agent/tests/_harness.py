@@ -84,12 +84,14 @@ _SAFE_AGENTS = {
         "mrwp_id": "900001",
         "stages": [{"name": "Build", "state": "completed", "result": "succeeded"},
                    {"name": "UI Automation", "state": "completed", "result": "failed"}],
-        "tests": {"total": 100, "passed": 96, "failed": 4}},
+        "tests": {"total": 100, "passed": 96, "failed": 4,
+                  "categories": {"ui": {"total": 100, "passed": 96, "failed": 4}}}},
     "build_verify.mrwp_local": {
         "mrwp_id": "900002",
         "stages": [{"name": "Build", "state": "completed", "result": "succeeded"},
                    {"name": "UI Automation", "state": "completed", "result": "failed"}],
-        "tests": {"total": 100, "passed": 98, "failed": 2}},
+        "tests": {"total": 100, "passed": 98, "failed": 2,
+                  "categories": {"ui": {"total": 100, "passed": 98, "failed": 2}}}},
     "build_verify.auth_ecs": {
         "auth_build": {"build_id": 900010, "rc": 1, "version": "0.0.02468-rc-RC1-ecs",
                        "status": "completed", "result": "succeeded"},
@@ -323,6 +325,28 @@ def _seed_rc_pipeline(st, ecs_ui, local_ui, *, ecs_suites=None,
                 "tests": {"categories": {"ui": ui}}, "failed_suites": suites or []}
     K.stash_mrwp(st, "ECS", snap(ecs_id, ecs_ui, ecs_suites))
     K.stash_mrwp(st, "Local", snap(local_id, local_ui, None))
+    _seed_auth(st)
+
+
+def _seed_auth(st):
+    from steps.build_verify import _common as K
+    rc = K.latest_rc(st)["rc"]
+    K.stash_auth(st, rc, {
+        "build": {"run_id": "900010", "rc": rc, "complete": True, "result": "succeeded"},
+        "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(97)},
+        "verdict": "clean"})
+
+
+def _ready_for_rc_report(st):
+    """Position an isolated test at the report without running any external work."""
+    from orchestrator.state import StepState
+    st.readiness_signed = True
+    orch = Orchestrator(CONFIG, st)
+    for phase in orch.config["phases"]:
+        for step in phase["steps"]:
+            if (phase["id"], step["id"]) == ("build_verify", "rc_report"):
+                return
+            st.set_step(phase["id"], step["id"], StepState(status="done"))
 
 
 

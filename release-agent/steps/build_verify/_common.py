@@ -159,6 +159,81 @@ CHERRY_PICK_TSG = ("https://eng.ms/docs/microsoft-security/identity/"
 
 
 # ---------------------------------------------------------------- RC report email
+def valid_id(value):
+    return (not isinstance(value, bool) and isinstance(value, (str, int))
+            and str(value).isascii() and str(value).isdigit() and int(value) > 0)
+
+
+def valid_counts(counts):
+    """Unexecuted/skipped tests may explain total > passed + failed, never the reverse."""
+    if not isinstance(counts, dict):
+        return False
+    values = [counts.get(k) for k in ("total", "passed", "failed")]
+    return (all(type(v) is int and v >= 0 for v in values)
+            and values[0] > 0 and values[1] + values[2] <= values[0])
+
+
+def ui_evidence_issues(model):
+    return [f"MRWP {provider}: missing or invalid non-zero UI results"
+            for provider in ("ECS", "Local")
+            if not valid_counts(((((model.get("mrwp") or {}).get(provider) or {})
+                                  .get("tests") or {}).get("categories") or {}).get("ui"))]
+
+
+def auth_evidence_issues(model):
+    auth = model.get("auth") or {}
+    build = auth.get("build") or {}
+    if (not valid_id(build.get("run_id")) or build.get("complete") is not True
+            or build.get("result") not in ("succeeded", "partiallySucceeded", "failed", "canceled")):
+        return ["Authenticator ECS: missing completed build with a valid id/result"]
+    if not valid_id(build.get("rc")) or build.get("rc") != model.get("rc"):
+        return ["Authenticator ECS: build belongs to a different RC"]
+    # A completed failed build is reportable evidence, not a missing test snapshot.
+    if build["result"] in ("failed", "canceled"):
+        return []
+    test = auth.get("test") or {}
+    if not valid_id(test.get("run_id")) or test.get("complete") is not True:
+        return ["Authenticator ECS: missing completed UI-test run"]
+    suites = test.get("suites")
+    if not isinstance(suites, dict):
+        return ["Authenticator ECS: UI-test results have not been captured"]
+    issues = []
+    for name in AUTH_UI_SUITES:
+        suite = suites.get(name)
+        # Explicitly absent/empty suites on a completed run are quality failures;
+        # an unread suite is missing evidence.
+        if not isinstance(suite, dict) or type(suite.get("present")) is not bool:
+            issues.append(f"Authenticator ECS: missing snapshot for {name}")
+        elif suite["present"] and not valid_counts(suite):
+            if not all(type(suite.get(k)) is int and suite[k] == 0
+                       for k in ("total", "passed", "failed")):
+                issues.append(f"Authenticator ECS: invalid counts for {name}")
+    return issues
+
+
+def report_readiness(model):
+    """Failures are reportable; unresolved, in-flight or invalid evidence is not."""
+    issues = []
+    if not valid_id(model.get("rc")):
+        issues.append("Current RC iteration has not been identified")
+    for name in ("checker", "orchestrator"):
+        section = model.get(name) or {}
+        if not valid_id(section.get("run_id")) or section.get("error"):
+            issues.append(f"{name}: missing verified run id")
+    for provider in ("ECS", "Local"):
+        run = (model.get("mrwp") or {}).get(provider) or {}
+        if (not valid_id(run.get("run_id")) or run.get("complete") is not True
+                or type(run.get("total")) is not int or run["total"] <= 0
+                or type(run.get("ran")) is not int or run["ran"] != run["total"]
+                or run.get("never_ran") or run.get("error")):
+            issues.append(f"MRWP {provider}: missing completed stage snapshot")
+    issues.extend(ui_evidence_issues(model))
+    issues.extend(auth_evidence_issues(model))
+    return {"ready": not issues, "issues": issues,
+            "detail": "RC report evidence not ready: " + "; ".join(issues) if issues else
+                      "Current RC evidence is ready."}
+
+
 def rc_report_model(state, timeout=120):
     """The Phase-2 RC report model — assembled from the RECORD in state.pipeline_runs
     (the verification steps stored it), NOT a live re-discovery. Uses the LATEST RC
@@ -168,8 +243,7 @@ def rc_report_model(state, timeout=120):
     pr = getattr(state, "pipeline_runs", None) or {}
     ch = pr.get("checker") or {}
     o = pr.get("orchestrator") or {}
-    rcs = pr.get("rcs") or []
-    rc = rcs[-1] if rcs else {}
+    rc = latest_rc(state)
 
     checker = {"fired": bool(ch.get("run_id")), "run_id": ch.get("run_id"), "when": ch.get("when")}
     # healthy=True is true by construction here: rc_report only runs AFTER orchestrator_health
@@ -243,36 +317,38 @@ def rc_ui_gate(model) -> dict:
     pass rate across both MRWP providers (ECS + Local). Returns
       {ui_total, ui_passed, ui_failed, pass_pct, threshold, verdict, blocking, detail}
     where `verdict` is:
-      * 'clean'     — 100% UI pass (or no UI tests found): proceed, no action.
+      * 'clean'     — 100% UI pass: proceed, no action.
+      * 'unavailable' — missing/invalid UI evidence in either provider: hold.
       * 'warn'      — >= RC_UI_PASS_THRESHOLD (90%) but < 100%: proceed to bug bash, but
                       the owner should investigate the failing UI tests IN PARALLEL (a
                       later step confirms the retest — bug bash is NOT blocked).
       * 'attention' — < 90%: BLOCK. A large failure the owner must investigate and rule
                       on (patch a real bug + re-trigger RC, or proceed as an automation
                       flake to re-run later).
-    `blocking` is True only for 'attention'. `detail` is the note recorded on the step /
+    `blocking` is True for 'attention' or 'unavailable'. `detail` is the note recorded on the step /
     shown to the owner."""
     ui_total = ui_pass = ui_fail = 0
+    missing = ui_evidence_issues(model)
     for prov in ("ECS", "Local"):
-        ui = (((model.get("mrwp") or {}).get(prov) or {}).get("tests") or {}) \
-            .get("categories", {}).get("ui") or {}
-        ui_total += ui.get("total") or 0
-        ui_pass += ui.get("passed") or 0
-        ui_fail += ui.get("failed") or 0
+        ui = (((((model.get("mrwp") or {}).get(prov) or {}).get("tests") or {})
+               .get("categories") or {}).get("ui") or {})
+        if valid_counts(ui):
+            ui_total += ui["total"]
+            ui_pass += ui["passed"]
+            ui_fail += ui["failed"]
     thr = RC_UI_PASS_THRESHOLD
     base = {"ui_total": ui_total, "ui_passed": ui_pass, "ui_failed": ui_fail, "threshold": thr}
-    if not ui_total:
-        return {**base, "pass_pct": None, "verdict": "clean", "blocking": False,
-                "detail": ("\u26a0 No UI-automation tests were found in either MRWP run — "
-                           "nothing to gate on. Proceeding, but verify RC test coverage.")}
+    if missing:
+        return {**base, "pass_pct": None, "verdict": "unavailable", "blocking": True,
+                "detail": "; ".join(missing) + ". Capture both providers before evaluating."}
     pass_pct = round(ui_pass * 100.0 / ui_total, 1)
     head = (f"UI-automation pass rate {pass_pct}% ({ui_pass}/{ui_total} passed, "
             f"{ui_fail} failed) across ECS + Local")
-    if pass_pct >= 100.0:
+    if ui_pass == ui_total:
         return {**base, "pass_pct": pass_pct, "verdict": "clean", "blocking": False,
                 "detail": (f"UI-automation pass rate 100% ({ui_pass}/{ui_total}) — all UI "
                            f"tests passed. Proceeding to bug bash.")}
-    if pass_pct >= thr:
+    if ui_pass * 100 >= thr * ui_total:
         return {**base, "pass_pct": pass_pct, "verdict": "warn", "blocking": False,
                 "detail": (f"{head} \u2014 at or above the {thr:.0f}% gate but not clean. "
                            f"Proceeding to bug bash; release owner: investigate the {ui_fail} "
@@ -317,13 +393,13 @@ def auth_leg_summary(model) -> dict:
     subject + the gates banner). Reads the stored auth section (model['auth']). The auth leg
     is a SEPARATE gate from the MRWP UI gate — this never merges the two. Returns
       {present, verdict, blocking, headline, worst}
-    verdict is 'clean' | 'attention' (or 'absent' when the leg didn't resolve this run)."""
+    verdict is 'clean' | 'attention' | 'unavailable'."""
     a = model.get("auth") or {}
     if not a:
-        return {"present": False, "verdict": "absent", "blocking": False,
+        return {"present": False, "verdict": "unavailable", "blocking": True,
                 "headline": "not evaluated", "worst": None}
     suites = (a.get("test") or {}).get("suites") or {}
-    verdict = a.get("verdict") or "attention"
+    verdict = auth_report_gate(model)["verdict"]
     worst = None                                  # (short_name, pct|None) — missing or lowest
     for name in AUTH_UI_SUITES:
         s = suites.get(name) or {}
@@ -331,7 +407,7 @@ def auth_leg_summary(model) -> dict:
         if not s.get("present"):
             worst = (short, None)
             break
-        pct = s.get("pct")
+        pct = auth_pass_pct(s)
         if worst is None or (pct is not None and (worst[1] is None or pct < worst[1])):
             worst = (short, pct)
     if verdict == "clean":
@@ -349,14 +425,24 @@ def auth_leg_summary(model) -> dict:
 def rc_email_subject(model) -> str:
     rid = model.get("release", "?")
     v = rc_ui_gate(model)["verdict"]
-    action = {"clean": "approve to proceed to bug bash",
-              "warn": "proceeding to bug bash — investigate failing UI tests in parallel",
-              "attention": "investigate UI failures before proceeding"}[v]
+    action = {"clean": "clean",
+              "warn": "pass with warning — investigate failing UI tests in parallel",
+              "attention": "investigate UI failures before proceeding",
+              "unavailable": "evidence unavailable — hold"}[v]
     subject = f"Release {rid} — RC verification report (Phase 2) · MRWP UI: {action}"
     auth = auth_leg_summary(model)
     if auth["present"]:
-        subject += f" · Auth ECS: {'pass' if auth['verdict'] == 'clean' else 'BELOW 90% gate'}"
+        subject += f" · Auth ECS: {'pass' if auth['verdict'] == 'clean' else 'HOLD'}"
     return subject
+
+
+def rc_next_action(model):
+    if rc_ui_gate(model)["blocking"] or auth_report_gate(model)["blocking"]:
+        return ("HOLD — investigate the evidence and failures below; re-trigger and re-evaluate, "
+                "or use an explicit owner-reviewed skip with a reason. No automatic advance.")
+    return ("Both quality gates clear. After recording this report, Phase 2 can advance "
+            "automatically once all prerequisites are complete; no separate RC approval is needed. "
+            "Investigate any warnings in parallel.")
 
 
 def _fail_rate(failed, total) -> float:
@@ -391,9 +477,7 @@ def _rc_email_plain(model, ctx) -> str:
     vstr = format_versions(o.get("versions"), fallback="n/a")
     L.append(f"Hi {ctx.get('owner', 'there')},")
     L.append("")
-    L.append(f"The Release Candidate for {rid} has been built and RC testing has "
-             f"completed. Review the results below and approve 'RC verified — proceed "
-             f"to bug bash' when ready.")
+    L.append(f"Captured RC verification results for {rid}. {rc_next_action(model)}")
     L.append("")
     _g = rc_ui_gate(model)
     _mpct = _g.get("pass_pct")
@@ -403,7 +487,7 @@ def _rc_email_plain(model, ctx) -> str:
     _auth = auth_leg_summary(model)
     if _auth["present"]:
         L.append(f"  - Authenticator ECS: "
-                 f"{'pass' if _auth['verdict'] == 'clean' else 'BELOW gate'} "
+                 f"{'pass' if _auth['verdict'] == 'clean' else 'HOLD'} "
                  f"({_auth['headline']})")
     L.append("")
     ch = model.get("checker") or {}
@@ -415,7 +499,7 @@ def _rc_email_plain(model, ctx) -> str:
     L.append(f"      Versions: {vstr}")
     L.append(f"      Run: {build_url(o.get('run_id'))}")
     L.append("")
-    L.append("RC TESTING — results by category (both provider runs ran to completion):")
+    L.append("RC TESTING — captured results by category:")
     for prov in ("ECS", "Local"):
         r = (model.get("mrwp") or {}).get(prov) or {}
         t = r.get("tests") or {}
@@ -448,17 +532,17 @@ def _rc_email_plain(model, ctx) -> str:
         b, t = a.get("build") or {}, a.get("test") or {}
         suites = t.get("suites") or {}
         verdict = ("PASS (both suites >= %.0f%%)" % AUTH_UI_PASS_THRESHOLD
-                   if a.get("verdict") == "clean"
-                   else "BELOW GATE (a suite < %.0f%%)" % AUTH_UI_PASS_THRESHOLD)
+                   if auth_report_gate(model)["verdict"] == "clean" else "HOLD")
         L.append(f"AUTHENTICATOR ECS — separate gate, does NOT affect the UI rate above: {verdict}")
-        L.append(f"  build {b.get('run_id')} ({b.get('version')}), UI tests {t.get('run_id')}")
+        L.append(f"  build {b.get('run_id')} ({b.get('version')}), result: {b.get('result')}, "
+                 f"UI tests: {t.get('run_id') or 'not available'}")
         for name in AUTH_UI_SUITES:
             s = suites.get(name) or {}
             if not s.get("present"):
                 L.append(f"      {name}: no result")
                 continue
             passed, failed = s.get("passed", 0) or 0, s.get("failed", 0) or 0
-            pct = s.get("pct")
+            pct = auth_pass_pct(s)
             L.append(f"      {name}: {passed}/{passed + failed} passed "
                      f"({'n/a' if pct is None else str(pct) + '%'})")
         L.append(f"      Run: {auth_build_url(b.get('run_id'))}")
@@ -476,9 +560,7 @@ def _rc_email_plain(model, ctx) -> str:
         if len(recovered) > 20:
             L.append(f"  … and {len(recovered) - 20} more")
         L.append("")
-    L.append("NEXT: review the failing tests above. If they're acceptable to carry into "
-             "bug bash, approve the gate (advances to Phase 3 — Test / Bug Bash). "
-             "Otherwise investigate the red suites first.")
+    L.append("NEXT: " + rc_next_action(model))
     L.append("")
     L.append("— Release Orchestrator (Scout)")
     return "\n".join(L)
@@ -525,12 +607,14 @@ def _rc_email_html(model, ctx) -> str:
         return (f"<tr>"
                 f"<td style='padding:5px 0;font-size:13px;{lbl_style}'>{_CAT_LABEL.get(cat, cat)}{gate}</td>"
                 f"<td style='padding:5px 10px;font-size:12px;color:#98a2b3;white-space:nowrap;'>{passed}/{total}</td>"
-                f"<td width='130' style='padding:5px 0;'>{_split_bar(100 - fr, h=6)}</td>"
+                f"<td width='130' style='padding:5px 0;'>{_split_bar(passed * 100 / total, h=6)}</td>"
                 f"<td align='right' style='padding:5px 0 5px 10px;font-size:13px;font-weight:700;"
                 f"color:{pct_color};white-space:nowrap;'>{fr}%</td></tr>")
 
     def mrwp_card(prov):
         r = (model.get("mrwp") or {}).get(prov) or {}
+        if not valid_id(r.get("run_id")):
+            return f"<p>MRWP {prov}: evidence unavailable — no run captured.</p>"
         t = r.get("tests") or {}
         cats = t.get("categories") or {}
         ui = cats.get("ui") or {}
@@ -574,14 +658,14 @@ def _rc_email_html(model, ctx) -> str:
             f"<td style='font-size:15px;font-weight:700;color:#101828;'>MRWP {prov}"
             f"<span style='color:#98a2b3;font-weight:400;font-size:13px;'> &middot; run {r.get('run_id')} "
             f"&middot; {r.get('ran')}/{r.get('total')} stages</span></td>"
-            f"<td align='right'>{_chip('completed', '#ecfdf3', '#067647')}</td></tr></table>"
+            f"<td align='right'>{_chip('completed' if r.get('complete') is True else 'incomplete', '#eef0f3', '#475467')}</td></tr></table>"
             # headline = UI-automation failure rate (the RC-critical bucket)
             f"<div style='margin:10px 0 2px;'>"
-            f"<span style='font-size:26px;font-weight:800;color:{rate_color};'>{ui_rate}%</span>"
+            f"<span style='font-size:26px;font-weight:800;color:{rate_color};'>{str(ui_rate) + '%' if valid_counts(ui) else 'unavailable'}</span>"
             f"<span style='font-size:13px;color:#667085;'> UI-automation failure rate &nbsp;·&nbsp; "
             f"<strong style='color:#12b76a;'>{ui_pass}</strong> passed / "
             f"<strong style='color:#b42318;'>{ui_fail}</strong> failed of {ui_total} UI tests</span></div>"
-            f"{_split_bar(100 - ui_rate)}"
+            f"{_split_bar(ui_pass * 100 / ui_total) if valid_counts(ui) else ''}"
             # per-category breakdown
             f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
             f"style='margin:10px 0 0;border-top:1px solid #eef0f3;'>{cat_table}</table>"
@@ -599,14 +683,14 @@ def _rc_email_html(model, ctx) -> str:
         b = a.get("build") or {}
         t = a.get("test") or {}
         suites = t.get("suites") or {}
-        clean = a.get("verdict") == "clean"
+        clean = auth_report_gate(model)["verdict"] == "clean"
         chip = (_chip("PASS &ge;90%", "#ecfdf3", "#067647") if clean
-                else _chip("BELOW 90%", "#fef3f2", "#b42318"))
+                else _chip("HOLD", "#fef3f2", "#b42318"))
         rows = ""
         for name in AUTH_UI_SUITES:
             s = suites.get(name) or {}
             present = s.get("present")
-            pct = s.get("pct")
+            pct = auth_pass_pct(s)
             ok = present and pct is not None and pct >= AUTH_UI_PASS_THRESHOLD
             pcol = "#067647" if ok else "#b42318"
             passed, failed = s.get("passed", 0) or 0, s.get("failed", 0) or 0
@@ -622,7 +706,8 @@ def _rc_email_html(model, ctx) -> str:
                 f"color:{pcol};white-space:nowrap;'>{disp}</td></tr>")
         bid, tid = b.get("run_id"), t.get("run_id")
         ver_span = (f"<span style='color:#98a2b3;font-weight:400;font-size:13px;'> &middot; "
-                    f"build {bid} &middot; {T.esc(b.get('version') or '')}</span>")
+                    f"build {bid} &middot; {T.esc(b.get('version') or '')}"
+                    f" &middot; {T.esc(b.get('result') or 'unknown result')}</span>")
         link = (f"<div style='margin-top:10px;'><a href='{auth_build_url(bid)}' "
                 f"style='color:#0b5cad;font-size:13px;'>Open auth build {bid} &rsaquo;</a>"
                 + (f" &nbsp; <a href='{auth_build_url(tid)}' style='color:#0b5cad;font-size:13px;'>"
@@ -644,7 +729,7 @@ def _rc_email_html(model, ctx) -> str:
 
     # Overall headline — UI-automation failures ONLY (the RC-critical bucket), across both providers.
     def _ui_sum(field):
-        return sum((((model.get("mrwp") or {}).get(p) or {}).get("tests", {})
+        return sum(((((model.get("mrwp") or {}).get(p) or {}).get("tests") or {})
                     .get("categories", {}).get("ui", {}).get(field, 0) or 0)
                    for p in ("ECS", "Local"))
     tot_f, tot_t = _ui_sum("failed"), _ui_sum("total")
@@ -662,7 +747,7 @@ def _rc_email_html(model, ctx) -> str:
         a = auth_leg_summary(model)
         if a["present"]:
             acol = ("#ecfdf3", "#067647") if a["verdict"] == "clean" else ("#fef3f2", "#b42318")
-            atxt = "Auth ECS: " + ("pass" if a["verdict"] == "clean" else "below 90%")
+            atxt = "Auth ECS: " + ("pass" if a["verdict"] == "clean" else "HOLD")
             cells += f"<td style='padding:0 8px;'>{_chip(atxt, *acol)}</td>"
         return ("<table role='presentation' cellpadding='0' cellspacing='0' style='margin:12px 0 0;'>"
                 f"<tr>{cells}</tr></table>")
@@ -702,7 +787,7 @@ def _rc_email_html(model, ctx) -> str:
     <tr>
       <td style="padding:12px 16px;border-right:1px solid #eef0f3;" width="33%">
         <div style="font-size:12px;color:#667085;">UI-automation failure rate</div>
-        <div style="font-size:22px;font-weight:800;color:{'#b42318' if overall_rate >= 5 else '#b54708'};">{overall_rate}%</div>
+        <div style="font-size:22px;font-weight:800;color:{'#b42318' if overall_rate >= 5 else '#b54708'};">{str(overall_rate) + '%' if not ui_evidence_issues(model) else 'unavailable'}</div>
         <div style="font-size:12px;color:#98a2b3;">{tot_f} failed / {tot_t} UI tests</div>
       </td>
       <td style="padding:12px 16px;border-right:1px solid #eef0f3;" width="33%">
@@ -730,9 +815,7 @@ def _rc_email_html(model, ctx) -> str:
 
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0;border-radius:8px;background:#f9fafb;border:1px solid #eef0f3;">
     <tr><td style="padding:12px 16px;">
-      <strong>Next:</strong> review the failing suites above. If acceptable to carry into bug bash,
-      approve <strong>&ldquo;RC verified &mdash; proceed to bug bash&rdquo;</strong>
-      (advances to Phase 3). Otherwise investigate the red suites first.
+      <strong>Next:</strong> {T.esc(rc_next_action(model))}
     </td></tr>
   </table>
   <p style="color:#98a2b3;font-size:12px;">&mdash; Release Orchestrator (Scout)</p>
@@ -741,9 +824,12 @@ def _rc_email_html(model, ctx) -> str:
 
 def rc_email(state):
     """Compose the RC verification email (subject, html, plain) for this release from
-    LIVE pipeline data. Returns (subject, html, plain, model)."""
+    verified snapshots. Returns (subject, html, plain, model); refuses incomplete evidence."""
     from steps.lib.context import release_ctx
     model = rc_report_model(state)
+    readiness = report_readiness(model)
+    if not readiness["ready"]:
+        raise ValueError(readiness["detail"])
     ctx = release_ctx(state)
     return (rc_email_subject(model), _rc_email_html(model, ctx),
             _rc_email_plain(model, ctx), model)
@@ -797,7 +883,9 @@ def verify_mrwp(state, provider):
     if bstatus is MISSING and mock_input("stages", MISSING) is MISSING:
         ok_s, bstatus, _bres, _bdetail = P.get_build_status(ORG, PROJECT, mid)
         if not ok_s:
-            bstatus = None   # status unknown → fall through to the stage rule (best-effort)
+            return Blocked(f"{label}: could not read build status ({_bdetail}).", links=links)
+    if bstatus is None:
+        return Blocked(f"{label}: build status is unknown; retry verification.", links=links)
     if bstatus not in (MISSING, None) and bstatus != "completed":
         return InProgress(
             f"{label} run {mid} is still running (status: {bstatus}) — Scout is polling "
@@ -818,7 +906,7 @@ def verify_mrwp(state, provider):
             f"never ran (pending/skipped/canceled): {never}. A stage that never ran means the "
             f"pipeline aborted partway.{UNBLOCK_HELP}", links=links)
 
-    # 3) test summary (best-effort — never blocks; red/yellow tests are triaged later)
+    # 3) test summary (missing coverage holds collection; evaluated failures do not)
     tests = mock_input("tests", MISSING)
     tests_injected = tests is not MISSING
     if not tests_injected:
@@ -855,6 +943,11 @@ def verify_mrwp(state, provider):
         "yellow_stages": comp["yellow"], "never_ran": comp["never_ran"],
         "tests": tests, "failed_suites": suites,
     }, rc=rc_num)
+    ui = ((tests or {}).get("categories") or {}).get("ui")
+    if not valid_counts(ui):
+        return Blocked(f"{label}: missing or invalid non-zero UI results; retry this verification "
+                       "after the Test tab is populated. The report cannot evaluate absent data.",
+                       links=links)
     return Done(
         f"{label} run {mid} ran to completion — {stage_note}{extra}.{tnote}", links=links)
 
@@ -862,6 +955,13 @@ def verify_mrwp(state, provider):
 # ---------------------------------------------------------------- Authenticator ECS leg
 def auth_build_url(build_id):
     return f"{AUTH_ORG}/{AUTH_PROJECT}/_build/results?buildId={build_id}"
+
+
+def auth_pass_pct(suite):
+    if not suite.get("present") or not valid_counts(suite):
+        return None
+    executed = suite["passed"] + suite["failed"]
+    return suite["passed"] * 100.0 / executed if executed else None
 
 
 def auth_gate(suites) -> dict:
@@ -884,7 +984,7 @@ def auth_gate(suites) -> dict:
             failing.append(name)
             lines.append(f"  \u2022 {name}: no result")
             continue
-        pct = s.get("pct")
+        pct = auth_pass_pct(s)
         mark = "OK" if (pct is not None and pct >= thr) else "BELOW"
         if pct is None or pct < thr:
             failing.append(name)
@@ -917,7 +1017,7 @@ def verify_auth_ecs(state):
     Firebase suites, snapshot everything + the informational verdict, and Done.
 
     Mock knobs: auth_build ({build_id,rc,version,status,result}), test_build (id),
-    suites (the auth_ui_suite_rates map), rc (override the RC number)."""
+    test_status, suites (the auth_ui_suite_rates map), rc (override the RC number)."""
     from tools import pipelines as P
     label = "Authenticator ECS"
 
@@ -942,7 +1042,12 @@ def verify_auth_ecs(state):
 
     # 1.5) the build must have run to completion (data availability). In-flight -> hold.
     status, result = ab.get("status"), ab.get("result")
-    if status not in (None, "completed"):
+    if not valid_id(build_id) or not valid_id(rc_num) or status is None:
+        return Blocked(f"{label}: missing build id, RC iteration or build status.", links=links)
+    if int(rc_num) < int(latest_rc(state).get("rc") or 0):
+        return Blocked(f"{label}: build {build_id} belongs to older RC{rc_num}; waiting for "
+                       "the current-RC auth build.", links=links)
+    if status != "completed":
         return InProgress(
             f"{label} build {build_id} is still running (status: {status}) — Scout is polling "
             f"every 30 min and will capture its UI tests when it completes.", links=links)
@@ -950,7 +1055,9 @@ def verify_auth_ecs(state):
     # A build that ran but did NOT succeed has no usable UI-test data. Record the fact (the
     # RC report consolidates it and decides) and finish — this step never gates, it only
     # confirms the build ran + captures the data it produced.
-    if result not in (None, "succeeded", "partiallySucceeded"):
+    if result not in ("succeeded", "partiallySucceeded", "failed", "canceled"):
+        return Blocked(f"{label}: unknown terminal build result: {result!r}.", links=links)
+    if result in ("failed", "canceled"):
         stash_auth(state, rc_num, {
             "build": {"run_id": str(build_id), "rc": rc_num, "version": ab.get("version"),
                       "build_number": ab.get("build_number"),
@@ -983,6 +1090,17 @@ def verify_auth_ecs(state):
     # informational verdict. This step does NOT enforce it — rc_report consolidates MRWP +
     # auth and makes the go/hold decision.
     suites = mock_input("suites", MISSING)
+    test_status = mock_input("test_status", MISSING)
+    if test_status is MISSING:
+        if suites is not MISSING:
+            test_status = "completed"  # Injected suites are a completed offline observation.
+        else:
+            ok, test_status, _, detail = P.get_build_status(AUTH_ORG, AUTH_PROJECT, tb)
+            if not ok or not test_status:
+                return Blocked(f"{label}: could not read UI-test build status ({detail}).", links=links)
+    if test_status != "completed":
+        return InProgress(f"{label} UI-test run {tb} is still running (status: {test_status}).",
+                          links=links)
     if suites is MISSING:
         ok, suites, detail = P.auth_ui_suite_rates(tb)
         if not ok:
@@ -991,13 +1109,18 @@ def verify_auth_ecs(state):
     gate = auth_gate(suites)
 
     # 4) snapshot the whole leg into the RC iteration (its own report section).
-    stash_auth(state, rc_num, {
+    snapshot = {
         "build": {"run_id": str(build_id), "rc": rc_num, "version": ab.get("version"),
                   "build_number": ab.get("build_number"),
                   "result": result, "complete": True},
-        "test": {"run_id": str(tb), "suites": suites},
+        "test": {"run_id": str(tb), "complete": True, "suites": suites},
         "verdict": gate["verdict"],
-    })
+    }
+    issues = auth_evidence_issues({"rc": rc_num, "auth": snapshot})
+    if issues:
+        return Blocked("; ".join(issues) + "; retry verification when results are available.",
+                       links=links)
+    stash_auth(state, rc_num, snapshot)
     # Always Done: the build ran and the data is captured. A sub-90% result is DATA for the
     # RC report, not a block here (mirrors MRWP, where failing tests don't block verify).
     bar = "clears the 90% bar" if gate["verdict"] == "clean" else "is BELOW the 90% bar"
@@ -1009,15 +1132,15 @@ def verify_auth_ecs(state):
 def auth_report_gate(model) -> dict:
     """The Authenticator-ECS decision input for the RC report CONSOLIDATION. Reads the
     captured auth section (model['auth']) and returns {present, verdict, blocking, detail}.
-    verdict 'clean' -> non-blocking; 'attention' -> blocking (the release WAITS for human
-    attestation, same effect as the MRWP UI gate blocking). 'absent' -> the auth leg didn't
-    resolve this run (non-blocking, but surfaced)."""
+    verdict 'clean' -> non-blocking; failures and unavailable evidence both block."""
     a = model.get("auth") or {}
-    if not a:
-        return {"present": False, "verdict": "absent", "blocking": False,
-                "detail": "Authenticator ECS: not evaluated this run."}
-    v = a.get("verdict") or "attention"
+    issues = auth_evidence_issues(model)
+    if issues:
+        return {"present": bool(a), "verdict": "unavailable", "blocking": True,
+                "detail": "; ".join(issues)}
     build = a.get("build") or {}
+    v = ("attention" if build.get("result") in ("failed", "canceled") else
+         auth_gate((a.get("test") or {}).get("suites"))["verdict"])
     if v == "clean":
         detail = (f"Authenticator ECS gate: PASS — build {build.get('run_id')} + both "
                   f"Firebase suites >= {AUTH_UI_PASS_THRESHOLD:.0f}%.")

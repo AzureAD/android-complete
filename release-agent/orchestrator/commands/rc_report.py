@@ -65,7 +65,7 @@ def _u(build_id):
 def cmd_record_rc_report(args):
     """Record the rc_report step's outcome AFTER the skill has emailed the RC report.
 
-    Re-reads the live model, applies the three-tier UI-automation gate (K.rc_ui_gate),
+    Re-reads the captured model, verifies readiness, applies the UI-automation gate,
     records `pass` (>=90% UI pass — clean/warn → step done, release auto-advances into bug
     bash) or `attention` (<90% → step BLOCKS for owner investigation), and stashes the
     evaluated pipeline-run links on the step so its Details point at every artifact behind
@@ -74,8 +74,20 @@ def cmd_record_rc_report(args):
     This is the follow-up the rc_report NeedsSkill names (`payload.followup_command`), so
     the skill runs it instead of a blind `record-step --status pass`."""
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    completed = orch.completed_step_outcome("build_verify", "rc_report")
+    if completed is not None:
+        print(_json.dumps({"status": "unchanged", "note": completed.note}))
+        return 0
+    guard = orch.step_action_guard("build_verify", "rc_report")
+    if guard is not None:
+        print(_json.dumps({"error": guard.reason}))
+        return 1
     try:
         model = K.rc_report_model(orch.state)
+        readiness = K.report_readiness(model)
+        if not readiness["ready"]:
+            print(_json.dumps({"error": readiness["detail"]}))
+            return 1
     except Exception as e:                       # pragma: no cover - defensive
         print(_json.dumps({"error": f"could not build the RC model ({e})."}))
         return 1

@@ -10,9 +10,10 @@ command is the poller seam the `build-verify-rc-poller` automation calls every 3
   2. emit a deterministic decision the skill acts on:
        waiting  — still running; nothing to send.
        nudge    — running past the 6h courtesy threshold; send the owner a heads-up (once).
-       resolved — the new RC completed and PASSED the gate; Phase 2 advanced (deregister
-                  the poller).
+       resolved — Phase 2 complete; status distinguishes passed gates from a manual
+                  override (deregister the poller without calling an override a pass).
        blocked  — the new RC completed but re-blocked the gate (still failing).
+       ready    — eligible Scout work remains (telemetry or report); execute it.
        idle     — nothing in-flight (not in Phase 2, or nothing was re-triggered).
 
 Decisions are pure functions of state; the 6h nudge stamps `nudged_at` on the step so it
@@ -30,7 +31,7 @@ POLL_INTERVAL_MIN = 30
 NUDGE_AFTER_HOURS = 6
 
 # The verify steps whose run can be in-flight (checker/orchestrator resolve instantly).
-_RC_VERIFY_STEPS = ("mrwp_ecs", "mrwp_local")
+_RC_VERIFY_STEPS = ("mrwp_ecs", "mrwp_local", "auth_ecs")
 
 
 def _parse_iso(s):
@@ -106,10 +107,25 @@ def cmd_poll_rc(args):
                    f"to the owner.", kind="build_verify")
     else:
         rc = st.get_step("build_verify", "rc_report")
-        if rc.status == "done":
-            decision = {"decision": "resolved", "status": "passed", "note": rc.note}
-        elif rc.status == "blocked":
-            decision = {"decision": "blocked", "note": rc.note}
+        phase = next(p for p in orch.config["phases"] if p["id"] == "build_verify")
+        outstanding = [s["id"] for s in phase["steps"] if not st.is_done("build_verify", s["id"])]
+        blocked = next((sid for sid in outstanding
+                        if st.get_step("build_verify", sid).status == "blocked"), None)
+        pending = orch.scout_pending_steps() if orch.current_phase_id() == "build_verify" else []
+        if st.halted or st.blocked:
+            decision = {"decision": "blocked", "note": "Release is halted or blocked."}
+        elif blocked:
+            decision = {"decision": "blocked", "step": blocked,
+                        "note": st.get_step("build_verify", blocked).note}
+        elif pending:
+            decision = {"decision": "ready", "phase": "build_verify", "steps": pending}
+        elif not outstanding:
+            decision = {"decision": "resolved",
+                        "status": "overridden" if rc.status == "skipped" or rc.by == "human" else "passed",
+                        "note": rc.note}
+        elif orch.current_phase_id() == "build_verify":
+            decision = {"decision": "waiting", "steps": outstanding,
+                        "note": "Phase 2 prerequisites are not complete.", "poll_in_min": POLL_INTERVAL_MIN}
         else:
             decision = {"decision": "idle",
                         "note": "no in-flight RC in Build & RC Verification"}
@@ -121,7 +137,7 @@ def cmd_poll_rc(args):
 def register(sub):
     p = sub.add_parser("poll-rc",
                        help="One poll of an in-flight Phase-2 RC: advance + emit a "
-                            "waiting/nudge/resolved/blocked/idle decision (30-min poller)")
+                            "waiting/nudge/ready/resolved/blocked/idle decision (30-min poller)")
     p.add_argument("--release", required=True)
     p.add_argument("--now", default=None,
                    help="Override 'now' (ISO-8601) for the elapsed / 6h-nudge math")
