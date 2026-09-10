@@ -123,11 +123,17 @@ def cmd_step_action(args):
 
     st, orch = C.load_orch(args.runs_root, args.release, args.config)
     spec = mocks_mod.load_mocks().get(f"{args.phase}.{getattr(mod, 'ID', args.step)}") or {}
-    outcome = orch.completed_step_outcome(args.phase, args.step)
+    outcome = orch.step_action_guard(args.phase, args.step)
     if outcome is None:
         kwargs = _accepted_kwargs(mod.build, params)
         with mockctx.active(spec):                 # expose `input` knobs to build()
             outcome = mod.build(st, **kwargs)
+    if getattr(args, "reserve", False):
+        try:
+            outcome = orch.reserve_step(args.phase, args.step, outcome, getattr(args, "executor", None))
+        except ValueError as e:
+            print(_json.dumps({"error": str(e)}))
+            return 1
 
     out = as_dict(outcome)
     out["phase"] = args.phase
@@ -139,6 +145,14 @@ def cmd_step_action(args):
     # real but redirects it. See `mock-spec` for what each step exposes.
     if out.get("kind") == "needs_skill" and spec:
         _apply_overrides(out, getattr(mod, "MOCKABLE", {}), spec)
+    if out.get("kind") == "needs_skill":
+        out["reservable"] = orch.supports_step_reservation(outcome)
+        if getattr(args, "reserve", False):
+            execution = orch.step_execution(args.phase, args.step)
+            C.save_state(st, args.runs_root, args.release)
+            C.elog(args.runs_root, args.release).log(
+                "step_reserved", phase=args.phase, step=args.step, execution=execution)
+            out["execution_id"] = execution["id"]
 
     print(_json.dumps(out))
     return 0
@@ -282,6 +296,8 @@ def register(sub):
     sp.add_argument("--param", action="append", default=[],
                     help="Optional KEY=VALUE passed to the step's build() "
                          "(e.g. --param variant=update). Repeatable.")
+    sp.add_argument("--reserve", action="store_true", help="Reserve standard record-step work after approval")
+    sp.add_argument("--executor", help="Automation/session identifier for the reservation")
     sp.set_defaults(func=cmd_step_action)
 
     ms = sub.add_parser(

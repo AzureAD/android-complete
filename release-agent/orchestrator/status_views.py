@@ -46,6 +46,8 @@ class StatusViewMixin:
                     status = "done"
                 elif s_blocked:
                     status = "blocked"
+                elif stp.status == "running":
+                    status = "running"
                 elif s_inflight:
                     status = "in_flight"       # pipeline run still executing — Scout polling
                 elif is_gate:
@@ -67,6 +69,7 @@ class StatusViewMixin:
                     "needs_owner": needs,
                     "time_ready": self._step_time_ready(phase, s),   # False = waits for its fire_at_local
                     "note": stp.note,          # agent result / block reason / detail
+                    "execution": self.step_execution(phase["id"], sid) if not s_done else {},
                     "links": list(getattr(stp, "links", None) or []),  # durable refs to items evaluated
                     "now": bool(sid == cur and not s_done and (is_gate or is_rem or is_attest or s_blocked)),
                 })
@@ -148,6 +151,8 @@ class StatusViewMixin:
                 s_state = "skipped"
             elif self.state.is_done(current_phase_obj["id"], s["id"]):
                 s_state = "done"
+            elif rec.get("status") == "running":
+                s_state = "running"
             elif rec.get("status") == "blocked":
                 s_state = "blocked"          # a step hit a real problem — needs the owner
             elif rec.get("status") == "in_flight":
@@ -174,18 +179,24 @@ class StatusViewMixin:
                 "owner": s.get("owner", "agent"),
                 "state": s_state,
                 "note": rec.get("note"),          # agent result / block reason / detail
+                "execution": self.step_execution(current_phase_obj["id"], s["id"])
+                             if s_state not in ("done", "skipped") else {},
                 "links": rec.get("links") or [],  # durable refs (wiki page, CG alerts)
             })
         return out
 
     def _hold_view(self, phase_name, step_name) -> dict:
         """Detail of the current hold (gate or action-needed) — same shape for both."""
-        return {
+        hold = {
             "phase": self.state.current_phase,
             "phase_name": phase_name,
             "step": self.state.current_step,
             "step_name": step_name,
         }
+        execution = self.step_execution(self.state.current_phase, self.state.current_step)
+        if execution:
+            hold["execution"] = execution
+        return hold
 
     def _scheduled_view(self) -> Optional[dict]:
         """The phase we're waiting on the clock for — derived from the first
@@ -242,9 +253,7 @@ class StatusViewMixin:
         # ALSO GATED ON fire_at_local: a timed step (e.g. the 09:00 CCD comms) is excluded
         # until its wall-clock time arrives, so the every-hour worker doesn't fire it early
         # — its dedicated cron automation runs it at the pinned time.
-        scout_pending = ([s["id"] for s in (active_phase or {}).get("steps", [])
-                          if s.get("status") == "scout" and s.get("time_ready", True)]
-                         if (active_phase and active_phase.get("due")) else [])
+        scout_pending = self.scout_pending_steps()
         return {
             "release_id": self.state.release_id,
             "status": self.state.status,

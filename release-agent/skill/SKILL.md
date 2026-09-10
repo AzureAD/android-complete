@@ -43,10 +43,16 @@ Throughout this skill, **`<AGENT_ROOT>`** = that confirmed `release-agent` folde
 
 ## The universal loop
 **Prevent stale-approval replays:** after user approval, immediately re-run the same
-`step-action` before any send; never send a cached payload. `done` means skip,
-`blocked`/error means stop. Send only the fresh `needs_skill` result. If its tool or
-payload differs from what was approved, show the changed content and obtain approval
-again. Record success only after sending. This rule applies to all step executors.
+`step-action` before any send; never send a cached payload. If the prepared action has
+`reservable:true`, add `--reserve --executor <automation/session-id>` to this fresh call.
+Only the winner receives `needs_skill` plus `execution_id`; other runners must stop
+on `blocked` or skip `done`. Send once and pass that ID to `record-step --execution-id
+<id> --status pass`. A timeout/ambiguous result, or a changed approved payload, means
+**do not retry**: record `attention` with the ID and explanation. Interrupted reservations
+do not expire. After the original runner is stopped and the owner reviews evidence,
+use existing `done --note "<evidence>"` if completed, or `reopen --reason "<evidence>"`
+only if it is safe to retry. Specialized follow-up actions have `reservable:false`
+and retain their existing lifecycle. Their fresh tool/payload must still match approval.
 
 Discover → (if no gate cleared, run the entry gate) → `next` to advance → **render the resulting `status`/`checklist` table** → relay what's outstanding → on a gate, `m_ask_user` Approve/Deny → repeat. Every phase rides this same loop; per-phase specifics are in the reference docs.
 

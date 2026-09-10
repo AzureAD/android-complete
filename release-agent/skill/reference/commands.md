@@ -12,7 +12,7 @@ _Loaded on demand. Run all from `<AGENT_ROOT>` — the confirmed `release-agent`
 | Attest human items (+auto verify) | `python -m orchestrator.cli sign --release <YYYY-MM> --item <id> [--item <id> …] --note "<what they confirmed>"` |
 | Record a scout-assisted check (e.g. ICM on-call) | `python -m orchestrator.cli record-check --release <YYYY-MM> --item <id> --status pass\|fail\|degraded --detail "..."` |
 | Decide CCOA lockdown overlap | `python -m orchestrator.cli check-lockdown --release <YYYY-MM> --periods-json '[{"name","environment","start","end"}]'` |
-| Resolve a migrated step → outcome JSON (done\|blocked\|needs_human\|needs_skill) | `python -m orchestrator.cli step-action --release <YYYY-MM> --step <id> [--phase <p>] [--param k=v …]` |
+| Resolve a migrated step → outcome JSON (done\|blocked\|needs_human\|needs_skill) | `python -m orchestrator.cli step-action --release <YYYY-MM> --step <id> [--phase <p>] [--param k=v …]` — after approval, add `--reserve --executor <automation/session-id>` for `reservable:true` actions |
 | Answer a STEP question (knowledge) | `python -m orchestrator.cli step-info --step <id> [--phase <p>]` |
 | **Phase 2 — RC pipeline + test report** (read-only) | `python -m orchestrator.cli rc-report --release <YYYY-MM> [--json]` → the checker→orchestrator→ECS/Local-MRWP chain + per-run test breakdown |
 | **Phase 2 — record RC verdict** (after emailing the report) | `python -m orchestrator.cli record-rc-report --release <YYYY-MM>` → applies the **three-tier 90% UI-automation gate** across both MRWP runs, records `pass` (100% clean / ≥90% warn → step done, release auto-advances into bug bash) or `attention` (<90% → step **blocks** for investigation), and stashes the checker/orchestrator/ECS/Local run links on the step. This is the follow-up the `rc_report` `needs_skill` names — run it **instead of** `record-step` |
@@ -20,7 +20,7 @@ _Loaded on demand. Run all from `<AGENT_ROOT>` — the confirmed `release-agent`
 | Answer an ENTRY-GATE item question (knowledge) | `python -m orchestrator.cli gate-info --item <id>` (build_access, mcp_servers, ccd_confirmed, silent_perms, teams_notify, adx_access, oncall_now, play_console_access, oncall_window, saw_ame, yubikey) |
 | Prepare early code-complete notice (JSON) — _legacy; prefer `step-action --step notice`_ | `python -m orchestrator.cli prepare-notice --release <YYYY-MM> [--variant initial\|update]` |
 | Prepare flight & string reminders (JSON) | `python -m orchestrator.cli prepare-flight-reminder --release <YYYY-MM>` |
-| Record a scout-assisted phase step | `python -m orchestrator.cli record-step --release <YYYY-MM> --step <id> --status pass\|attention --detail "..."` |
+| Record a scout-assisted phase step | `python -m orchestrator.cli record-step --release <YYYY-MM> --step <id> --status pass\|attention --detail "..." [--execution-id <id>]` — execution ID required for reserved work |
 | Declare you CANNOT satisfy an item | `python -m orchestrator.cli decline --release <YYYY-MM> --item <id>` |
 | Status (structured) | `python -m orchestrator.cli status --release <YYYY-MM> --json` |
 | Advance to next gate | `python -m orchestrator.cli next --release <YYYY-MM>` |
@@ -57,6 +57,11 @@ _Loaded on demand. Run all from `<AGENT_ROOT>` — the confirmed `release-agent`
 Map natural language to these ("skip the CG report, doesn't apply" → `skip … --reason`; "halt, we have an incident" → `halt --reason`; "resume" → `resume`). Never skip or halt without capturing the user's reason.
 
 ## `step-action` — the generic step dispatcher
+Apply the execution-reservation rule in **SKILL.md → The universal loop** before
+acting on `reservable:true` results. The existing `done`/`reopen` commands recover
+interrupted reservations only after owner review and stopping the original runner;
+provide evidence via `--note`/`--reason`. Never automatically repeat an uncertain action.
+
 `step-action` resolves a **migrated** step into one uniform outcome JSON (`kind`). It replaces the per-step `prepare-*` commands — react by `kind`:
 - **`done`** — already complete; nothing to run.
 - **`blocked`** — surface `reason` to the owner; don't proceed.

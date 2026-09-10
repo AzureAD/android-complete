@@ -13,11 +13,20 @@ def cmd_record_step(args):
     """Record a scout-assisted phase step result (skill calls this after doing the
     out-of-engine work, e.g. sending the notice email)."""
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    act = orch.record_scout_step(args.phase, args.step, args.status, args.detail or "")
+    try:
+        act = orch.record_scout_step(args.phase, args.step, args.status, args.detail or "",
+                                     execution_id=getattr(args, "execution_id", None))
+    except ValueError as e:
+        print(str(e))
+        return 1
     if act.kind == "idle":
         C.emit(args.runs_root, args.release, act.message, kind="step")
         return 0
     C.save_state(orch.state, args.runs_root, args.release)
+    if getattr(args, "execution_id", None):
+        C.elog(args.runs_root, args.release).log(
+            "execution_recorded", phase=args.phase, step=args.step,
+            execution_id=args.execution_id, status=args.status, detail=args.detail or "")
     C.emit(args.runs_root, args.release,
            f"[{'ok' if args.status == 'pass' else 'attention'}] {args.step}: {act.message}",
            kind="step")
@@ -33,4 +42,5 @@ def register(sub):
     rs.add_argument("--status", required=True, choices=["pass", "attention"])
     rs.add_argument("--detail", default="")
     rs.add_argument("--as-of", default=None)
+    rs.add_argument("--execution-id", help="Owning execution ID returned by step-action --reserve")
     rs.set_defaults(func=cmd_record_step)

@@ -19,6 +19,12 @@ def _cell(text: str) -> str:
     return re.sub(r"\s+", " ", str(text)).replace("|", "\\|").strip()
 
 
+def _execution_guidance(execution: dict) -> str:
+    return (f"Reserved by {execution['owner']} (execution {execution['id']}). Do not repeat the action. "
+            "Wait if active; if interrupted, stop the original runner and review the outcome "
+            "with the owner before telling Scout to mark done or reopen.")
+
+
 def step_detail(s: dict, limit: int = 160) -> str:
     """One-line 'Details' summary of a step's execution, from its stored note.
 
@@ -29,6 +35,8 @@ def step_detail(s: dict, limit: int = 160) -> str:
     in the note. Empty when nothing ran yet; an em dash for outstanding items.
     """
     note = s.get("note")
+    if s.get("execution"):
+        note = _execution_guidance(s["execution"])
     links = s.get("links") or []
     if not note and not links:
         state = s.get("state")
@@ -230,7 +238,7 @@ _STATE_LABEL = {
 _PHASE_ICON = {"done": "✅", "current": "⏸", "pending": "⬜", "scheduled": "🗓"}
 _STEP_ICON = {"done": "✅", "gate": "⏸", "reminder": "📌", "scheduled": "🗓",
               "pending": "⬜", "skipped": "⏭️", "scout": "🤖", "auto": "🤖", "blocked": "⛔",
-              "in_flight": "⏳"}
+              "in_flight": "⏳", "running": "⏳"}
 _STEP_STATE_WORD = {"done": "Done", "gate": "Awaiting your approval",
                     "reminder": "Do this — then mark done", "scheduled": "Not open yet",
                     "pending": "Pending", "skipped": "Skipped",
@@ -241,7 +249,8 @@ _STEP_STATE_WORD = {"done": "Done", "gate": "Awaiting your approval",
                     "scout": "Scout runs this — automatic", "blocked": "Blocked — needs you",
                     # in_flight = the pipeline run is still executing. No user action — Scout
                     # is polling every 30 min and re-evaluates when the run completes.
-                    "in_flight": "RC running — Scout is polling"}
+                    "in_flight": "RC running — Scout is polling",
+                    "running": "Execution reserved — do not repeat"}
 
 
 def _pipelines_line(r: dict) -> str:
@@ -315,8 +324,11 @@ def status_view(r: dict) -> str:
                      f"({when}). Nothing to do yet.")
     elif r.get("action"):
         a = r["action"]
-        lines.append(f"📌 **Action needed** — you need to: **{a['step_name']}** "
-                     f"(Phase {_phase_num(r, a['phase'])} · {a['phase_name']}). Mark it done when complete.")
+        if a.get("execution"):
+            lines.append(f"**Execution needs review — {a['step_name']}.** {_execution_guidance(a['execution'])}")
+        else:
+            lines.append(f"📌 **Action needed** — you need to: **{a['step_name']}** "
+                         f"(Phase {_phase_num(r, a['phase'])} · {a['phase_name']}). Mark it done when complete.")
     elif r["gate"]:
         g = r["gate"]
         lines.append(f"⏸ **Next: your decision** — approve or deny **{g['step_name']}** "
@@ -456,7 +468,7 @@ def _digest_model(r: dict):
     hold = None
     if r.get("gate"):
         hold = ("gate", r["gate"]["step_name"])
-    elif r.get("action"):
+    elif r.get("action") and not r["action"].get("execution"):
         hold = ("action", r["action"]["step_name"])
     human_all = [o for o in ap.get("outstanding", []) if o["gate"] or o["reminder"]]
     completed_all = ap.get("completed") or []
@@ -471,6 +483,7 @@ def _digest_model(r: dict):
         "completed": completed_all[:8],
         "completed_total": len(completed_all),
         "hold": hold,                          # (kind, step_name) or None
+        "executions": [s for s in ap.get("steps", []) if s.get("execution")],
         "human": human_all[:6],
         "human_total": len(human_all),
         "pipelines": rc_line,                  # RC id one-liner (build_verify only)
@@ -507,6 +520,8 @@ def notification(r: dict) -> str:
         kind, name = m["hold"]
         lines.append(f"Waiting on your decision: {name} (approve or deny)." if kind == "gate"
                      else f"Action needed now: {name} (do it, then mark done).")
+    for s in m["executions"]:
+        lines.append(f"{s['name']}: {_execution_guidance(s['execution'])}")
     if m["human"]:
         lines.append(f"Still needs you ({m['human_total']}):")
         lines += [f"  • {o['name']} — {'your approval' if o['gate'] else 'your action'}"
@@ -534,6 +549,8 @@ def notification_markdown(r: dict) -> str:
         kind, name = m["hold"]
         blocks.append(f"**Waiting on your decision:** {name} (approve or deny)." if kind == "gate"
                       else f"**Action needed now:** {name} (do it, then mark done).")
+    for s in m["executions"]:
+        blocks.append(f"**{s['name']}:** {_execution_guidance(s['execution'])}")
     if m["human"]:
         rows = [f"**Still needs you ({m['human_total']}):**"]
         rows += [f"- {o['name']} — {'your approval' if o['gate'] else 'your action'}"
@@ -562,6 +579,8 @@ _PILL = {
     "scout":     ("Scout runs this",       "#475467", "#f2f4f7"),
     "auto":      ("Automatic — pending",  "#475467", "#f2f4f7"),
     "in_flight": ("⏳ RC running — polling", "#475467", "#f2f4f7"),
+    "running": ("Execution reserved", "#475467", "#f2f4f7"),
+    "execution_review": ("Review interrupted execution", "#b42318", "#fef3f2"),
 }
 
 
@@ -589,12 +608,17 @@ def notification_html(r: dict) -> str:
     hold = r.get("gate") or r.get("action")
     hold_name = _esc(hold["step_name"]) if hold else ""
     hold_kind = "approve or deny" if r.get("gate") else "do it, then mark it done"
+    if hold and hold.get("execution"):
+        hold_kind = _esc(_execution_guidance(hold["execution"]))
 
     # Rows: every step, with the active hold promoted to the "now" pill.
     rows = []
     for s in steps:
         st = "now" if s.get("now") else s.get("status", "auto")
         name = _esc(s.get("name", ""))
+        if s.get("execution"):
+            st = "running" if s.get("status") == "running" else "execution_review"
+            name += f'<br><small>{_esc(_execution_guidance(s["execution"]))}</small>'
         star = (' <span style="color:#b42318;font-weight:700;">&#9873;</span>'
                 if s.get("needs_owner") else "")
         rows.append(
@@ -641,4 +665,3 @@ def notification_html(r: dict) -> str:
   </td></tr>
 </table>
 </div>"""
-

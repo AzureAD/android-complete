@@ -26,12 +26,12 @@ def _now() -> str:
 @dataclass
 class StepState:
     """Persisted state for a single step."""
-    status: str = "pending"          # pending | done | skipped | blocked | in_flight
+    status: str = "pending"          # pending | running (reserved) | done | skipped | blocked | in_flight
     completed_at: Optional[str] = None
     note: Optional[str] = None
     by: Optional[str] = None         # 'agent' (stub) or 'human'
     links: list = field(default_factory=list)   # [{name, url}] — durable refs (wiki page, CG alerts)
-    data: dict = field(default_factory=dict)    # step-private scratch (e.g. localization build id/start)
+    data: dict = field(default_factory=dict)    # step scratch; engine reserves "_execution" for id/owner/start
 
 
 @dataclass

@@ -22,8 +22,13 @@ Every provisioned worker prompt must include the stale-approval replay rule from
 SKILL.md's universal loop: re-run `step-action` after approval, immediately before
 sending, and obey its fresh result. Update the existing hourly/morning prompts and
 installed skill on the release owner's machine before rollout; source edits alone
-do not update stored automations. This prevents completed-step replays, not concurrent
-sends by two workers that both read pending work.
+do not update stored automations. Include the universal loop's reservation rule for
+`reservable:true` actions. Standard MCP actions completed through `record-step` use
+`step-action --reserve`; specialized follow-up/pipeline-trigger flows remain unchanged.
+Stop old runners before deploying the new protocol and lock implementation together.
+The OS-held `.state.lock` file now remains in place; do not delete it to recover a
+live process. Reservations coordinate only workers using one authoritative state
+folder; copied release folders must never run as additional production senders.
 
 Right after `init`, make sure the **push-reminder automation** exists for THIS release so reminders reach the user even with Scout closed. Per-release: created at start, removed at close.
 1. `m_list_automations`. If **"`<YYYY-MM> · Release-wide — push reminders`"** exists AND `automation list --release <YYYY-MM> --json` has it scoped to this release, **leave it** — don't duplicate.

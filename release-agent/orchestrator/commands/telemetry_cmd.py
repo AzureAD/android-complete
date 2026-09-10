@@ -30,7 +30,10 @@ def cmd_record_telemetry(args):
                   f"any tester device. Post a heads-up in the {chan.get('name', 'Android Core Team')} "
                   f"channel before declaring the bug bash complete, then re-run this check.")
 
-    orch.record_scout_step("build_verify", "telemetry_verify", status, detail)
+    act = orch.record_scout_step("build_verify", "telemetry_verify", status, detail, refresh=True)
+    if act.kind == "idle":
+        C.emit(args.runs_root, args.release, act.message, kind="step")
+        return 0
     step = orch.state.get_step("build_verify", "telemetry_verify")
     step.by = "scout"
     orch.state.set_step("build_verify", "telemetry_verify", step)

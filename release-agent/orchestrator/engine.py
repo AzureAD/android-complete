@@ -11,6 +11,8 @@ No LLM logic here — this is fully unit-testable and replayable.
 """
 from __future__ import annotations
 import os
+import uuid
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from typing import Optional
@@ -18,7 +20,7 @@ from typing import Optional
 import yaml
 
 from .state import ReleaseState, StepState, GateDecision, _now
-from .outcomes import Done
+from .outcomes import Done, Blocked, NeedsSkill, command_verb
 from .readiness import ReadinessGate
 from . import schedule
 from . import mocks as mocks_mod
@@ -267,6 +269,10 @@ class Orchestrator(StatusViewMixin):
         step = next(s for s in phase["steps"]
                     if not self.state.is_done(phase["id"], s["id"]))
         self.state.current_step = step["id"]
+        if self.step_execution(phase["id"], step["id"]):
+            self.state.status = "awaiting_action"
+            return NextAction(kind="waiting", phase=phase["id"], step=step["id"],
+                              name=step["name"], message="Step execution is reserved; do not run it again.")
 
         # A locally-mocked step is resolved right here (skips its real scout/attest/
         # agent handling) so the flow advances naturally under Scout.
@@ -324,7 +330,7 @@ class Orchestrator(StatusViewMixin):
 
         def ready(s):
             return ((not self.state.is_done(pid, s["id"])) and self._deps_met(pid, s)
-                    and self._step_time_ready(phase, s))
+                    and self._step_time_ready(phase, s) and not self.step_execution(pid, s["id"]))
 
         # 1) Run ONE ready, not-yet-attempted runnable step (auto agent, or an
         #    already-approved gate). Independent steps progress even if a sibling holds.
@@ -382,6 +388,11 @@ class Orchestrator(StatusViewMixin):
                               name=focus["name"],
                               message=f"{len(non_gate)} item(s) need attention: {names}")
 
+        for s in phase["steps"]:
+            if not self.state.is_done(pid, s["id"]) and self.step_execution(pid, s["id"]):
+                self.state.status, self.state.current_step = "awaiting_action", s["id"]
+                return NextAction(kind="waiting", phase=pid, step=s["id"], name=s["name"],
+                                  message="Step execution is reserved; do not run it again.")
         # Not complete, but nothing is ready — remaining steps wait on unmet deps.
         self.state.status = "awaiting_action"
         return NextAction(kind="reminder", phase=pid,
@@ -462,6 +473,60 @@ class Orchestrator(StatusViewMixin):
                 break
         return actions
 
+    # ---- external step execution (caller holds the release transaction lock) ----
+    def step_execution(self, phase_id: str, step_id: str) -> dict:
+        return dict(self.state.get_step(phase_id, step_id).data.get("_execution") or {})
+
+    def step_action_guard(self, phase_id: str, step_id: str):
+        completed = self.completed_step_outcome(phase_id, step_id)
+        if completed is not None:
+            return completed
+        execution = self.step_execution(phase_id, step_id)
+        if execution:
+            return Blocked(f"Reserved by {execution['owner']} (execution {execution['id']}). "
+                           "Wait if active; if interrupted, stop the original runner and review "
+                           "the outcome with the owner before done or reopen. Do not repeat the action.")
+        return None
+
+    @staticmethod
+    def supports_step_reservation(outcome) -> bool:
+        """Standard MCP action -> record-step. Specialized follow-up flows keep their own lifecycle."""
+        return (isinstance(outcome, NeedsSkill) and outcome.outbound
+                and command_verb(outcome.tool) is None
+                and "followup_command" not in outcome.payload and "_trigger" not in outcome.payload)
+
+    def reserve_step(self, phase_id: str, step_id: str, outcome, executor: str):
+        guard = self.step_action_guard(phase_id, step_id)
+        if guard is not None:
+            return guard
+        if not isinstance(outcome, NeedsSkill):
+            return outcome
+        if not self.supports_step_reservation(outcome) or outcome.record_as != step_id:
+            return Blocked("Reservation requires a standard action completed through record-step.")
+        if not executor or not executor.strip():
+            raise ValueError("The claiming executor/session identifier is required")
+        phase = self._find_step(phase_id, step_id)
+        step = next((s for s in (phase or {}).get("steps", []) if s["id"] == step_id), None)
+        if (not step or step_id not in self.scout_pending_steps()
+                or self.current_phase_id() != phase_id):
+            return Blocked("Step is not currently eligible to execute.")
+        record = self.state.get_step(phase_id, step_id)
+        record.status = "running"
+        record.data["_execution"] = {"id": uuid.uuid4().hex, "owner": executor.strip(), "started_at": _now()}
+        self.state.set_step(phase_id, step_id, record)
+        return outcome
+
+    def scout_pending_steps(self) -> list:
+        phase = self._current_phase()
+        if (not phase or self.state.halted or self.state.blocked or not self.state.readiness_signed
+                or self.state.status == "complete" or not self._phase_due(phase)):
+            return []
+        return [s["id"] for s in phase["steps"]
+                if self._step_kind(s) == "scout" and not s.get("attest")
+                and self.state.get_step(phase["id"], s["id"]).status == "pending"
+                and not self.step_execution(phase["id"], s["id"])
+                and self._deps_met(phase["id"], s) and self._step_time_ready(phase, s)]
+
     # ---- manual overrides (human-driven transitions, §7.1 constraint #5) ----
     def completed_step_outcome(self, phase_id: str, step_id: str) -> Optional[Done]:
         """Terminal steps stay terminal until explicitly reopened."""
@@ -484,6 +549,10 @@ class Orchestrator(StatusViewMixin):
             return NextAction(kind="idle", message="A reason is required to skip a step.")
         if not self._find_step(phase_id, step_id):
             return NextAction(kind="idle", message=f"No such step: {phase_id}/{step_id}")
+        if self.step_execution(phase_id, step_id):
+            completed = self.completed_step_outcome(phase_id, step_id)
+            return NextAction(kind="idle", message=completed.note if completed else
+                              "Review the reserved execution first; use done or reopen with evidence.")
         self.state.set_step(phase_id, step_id,
                             StepState(status="skipped", completed_at=_now(),
                                       note=f"Skipped: {reason.strip()}", by="human"))
@@ -503,9 +572,16 @@ class Orchestrator(StatusViewMixin):
         completed = self.completed_step_outcome(phase_id, step_id)
         if completed is not None:
             return NextAction(kind="idle", phase=phase_id, step=step_id, message=completed.note)
+        if self.step_execution(phase_id, step_id) and not note.strip():
+            return NextAction(kind="idle", message="Reserved execution needs owner-reviewed evidence in --note.")
+        return self._complete_step(phase_id, step_id, note)
+
+    def _complete_step(self, phase_id: str, step_id: str, note: str) -> NextAction:
+        previous = self.state.get_step(phase_id, step_id)
         self.state.set_step(phase_id, step_id,
                             StepState(status="done", completed_at=_now(),
-                                      note=(note.strip() or "Marked done"), by="human"))
+                                      note=(note.strip() or "Marked done"), by="human",
+                                      links=previous.links, data=deepcopy(previous.data)))
         key = f"{phase_id}.{step_id}"
         self.state.pending_human = [p for p in self.state.pending_human
                                     if p != key and not p.startswith(key + " ")]
@@ -516,22 +592,36 @@ class Orchestrator(StatusViewMixin):
                           message=f"Done: {phase_id}/{step_id}{tail}")
 
     def record_scout_step(self, phase_id: str, step_id: str, status: str,
-                          detail: str = "") -> NextAction:
+                          detail: str = "", *, execution_id: str = None,
+                          refresh: bool = False) -> NextAction:
         """Record the outcome of a scout-assisted step (one the skill ran via MCP/
         browser, e.g. the CCOA lockdown check).
           * status == "pass"      -> mark the step done and let the flow continue.
           * status == "attention" -> keep it held (needs the owner) with the detail
-            (e.g. a Production CCOA lockdown overlaps — the owner must shift CCD)."""
+            (e.g. a Production CCOA lockdown overlaps — the owner must shift CCD).
+        Repeatable observation commands may refresh prior results explicitly;
+        this never overrides a reservation or a human skip."""
         if not self._find_step(phase_id, step_id):
             return NextAction(kind="idle", message=f"No such step: {phase_id}/{step_id}")
+        execution = self.step_execution(phase_id, step_id)
+        if refresh and execution:
+            raise ValueError("An observation refresh cannot override a reserved execution")
         completed = self.completed_step_outcome(phase_id, step_id)
-        if completed is not None:
+        if completed is not None and (not refresh or self.state.get_step(phase_id, step_id).status == "skipped"):
             return NextAction(kind="idle", phase=phase_id, step=step_id, message=completed.note)
+        if execution or execution_id:
+            if not execution or execution["id"] != execution_id:
+                raise ValueError("Only the owning execution can record this result")
+            if self.state.get_step(phase_id, step_id).status != "running":
+                raise ValueError("Interrupted execution requires owner review before done or reopen")
+        if status not in ("pass", "attention"):
+            raise ValueError("Scout result must be pass or attention")
         if status == "pass":
-            return self.complete_step(phase_id, step_id, detail)
+            return self._complete_step(phase_id, step_id, detail)
         # attention: leave the step outstanding, flagged for the owner.
-        self.state.set_step(phase_id, step_id,
-                            StepState(status="blocked", note=detail, by="scout"))
+        record = self.state.get_step(phase_id, step_id)
+        record.status, record.note, record.by = "blocked", detail, "scout"
+        self.state.set_step(phase_id, step_id, record)
         self.state.status = "awaiting_action"
         key = f"{phase_id}.{step_id}"
         if key not in self.state.pending_human:
@@ -543,7 +633,11 @@ class Orchestrator(StatusViewMixin):
         """Undo a done/skipped step so the conductor runs it again. Reason optional."""
         if not self._find_step(phase_id, step_id):
             return NextAction(kind="idle", message=f"No such step: {phase_id}/{step_id}")
+        if self.step_execution(phase_id, step_id) and not reason.strip():
+            return NextAction(kind="idle", message="Reopening reserved work requires owner-reviewed evidence in --reason.")
         self.state.steps.pop(self.state.key(phase_id, step_id), None)  # remove -> pending
+        key = self.state.key(phase_id, step_id)
+        self.state.pending_human = [p for p in self.state.pending_human if p != key and not p.startswith(key + " ")]
         # drop any prior gate approval for this step so a gate re-holds
         self.state.gate_decisions = [g for g in self.state.gate_decisions
                                      if g.get("step") != f"{phase_id}.{step_id}"]
