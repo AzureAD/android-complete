@@ -248,9 +248,7 @@ _STEP_STATE_WORD = {"done": "Done", "gate": "Awaiting your approval",
                     # (no action needed), never a confusing "Pending" next to "automatic".
                     "auto": "Scout runs this — automatic",
                     "scout": "Scout runs this — automatic", "blocked": "Blocked — needs you",
-                    # in_flight = the pipeline run is still executing. No user action — Scout
-                    # is polling every 30 min and re-evaluates when the run completes.
-                    "in_flight": "RC running — Scout is polling",
+                    "in_flight": "Work in progress — Scout is polling",
                     "running": "Execution reserved — do not repeat"}
 
 
@@ -632,7 +630,7 @@ _PILL = {
     "action":    ("Your action",          "#b54708", "#fffaeb"),
     "scout":     ("Scout runs this",       "#475467", "#f2f4f7"),
     "auto":      ("Automatic — pending",  "#475467", "#f2f4f7"),
-    "in_flight": ("⏳ RC running — polling", "#475467", "#f2f4f7"),
+    "in_flight": ("⏳ In progress — polling", "#475467", "#f2f4f7"),
     "running": ("Execution reserved", "#475467", "#f2f4f7"),
     "execution_review": ("Review interrupted execution", "#b42318", "#fef3f2"),
 }

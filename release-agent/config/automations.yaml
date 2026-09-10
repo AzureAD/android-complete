@@ -50,18 +50,18 @@ automations:
     phase: ccd
     steps:
       - ccd.localization        # trigger pipeline 405133 (isCreatePrSelected=true)
-    cleanup_when: steps_settled
+    cleanup_when: step_flag:ccd.localization:started_at
     purpose: "Trigger the localization pipeline at noon"
 
   - slug: ccd-localization-poller
     label: "localization poller"
     phase: ccd
-    every: "10 minutes"
+    every: "1 hour"
     on_demand: true
     steps:
       - ccd.localization        # poll the triggered run (check-localization)
     cleanup_when: steps_settled
-    purpose: "Poll the localization run every 10 min; email on 3h timeout, post the PR on completion"
+    purpose: "Poll localization hourly; warn at 4 PM Los Angeles time if unmerged, then omit localization at 6 PM so the release proceeds"
 
   # ON-DEMAND (not provisioned at release start). Created only when Build & RC
   # Verification is holding on an in-flight re-triggered RC (the human ran

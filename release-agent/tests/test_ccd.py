@@ -184,11 +184,13 @@ def test_localization_az_read_recipe_is_wired():
     assert "az pipelines build show" in az["status"]
     assert "resource timeline" in az["log_id"] and "OneLocBuild@3" in az["log_id"]
     assert "resource logs" in az["log"] and "{build_id}" in az["log"] and "{log_id}" in az["log"]
+    assert "az repos pr show" in az["pr_status"] and "{pr_id}" in az["pr_status"]
 
 
 
 
-def test_localization_decide_branches():
+def test_localization_decide_branches(monkeypatch):
+    import pytest
     from steps.ccd import localization as L
     from datetime import datetime, timezone, timedelta
     now = datetime.now(timezone.utc)
@@ -203,13 +205,14 @@ def test_localization_decide_branches():
 
     st3 = _loc_state(started_min_ago=60)
     dpr = L.decide(st3, True, _PR_LOG, now)
-    assert dpr["decision"] == "complete_pr" and dpr["pr_id"] == "16790317"
+    assert dpr["decision"] == "announce_pr" and dpr["pr_id"] == "16790317"
     assert dpr["chat"]["chatId"] == L.CONFIG["code_reviews_chat_id"]
     assert any("16790317" in l["url"] for l in dpr["links"])
     # proof: the PR case ALSO carries the pipeline run link (build id)
     assert any("buildId=177219192" in l["url"] for l in dpr["links"])
-    # the Code reviews post @mentions the release engineer + asks for an EOD merge
-    assert '<at id="0">' in dpr["chat"]["content"] and "merged before EOD" in dpr["chat"]["content"]
+    # the Code reviews post @mentions the release engineer + names the 4 PM LA deadline
+    assert '<at id="0">' in dpr["chat"]["content"]
+    assert "4:00 PM Los Angeles time" in dpr["chat"]["content"]
     m = dpr["chat"]["mentions"][0]
     assert m["mentioned"]["user"]["id"] == "pedroro@microsoft.com"
 
@@ -217,6 +220,36 @@ def test_localization_decide_branches():
     assert dn["decision"] == "complete_none"
     # proof: even with NO PR, the Details box gets the pipeline run link as evidence
     assert dn["links"] and any("buildId=177219192" in l["url"] for l in dn["links"])
+
+    step = st3.get_step("ccd", "localization")
+    step.data.update({
+        "pr_id": "16790317", "pr_url": L.pr_url("16790317"),
+    })
+    st3.set_step("ccd", "localization", step)
+    # A fast merge cannot bypass the required initial delivery acknowledgement.
+    assert L.decide(st3, False, now=now, pr_status="completed")["decision"] == "announce_pr"
+    step.data["pr_announced_at"] = "2026-09-09T20:05:00Z"
+    st3.set_step("ccd", "localization", step)
+    before = datetime.fromisoformat("2026-09-09T22:59:59+00:00")
+    deadline = datetime.fromisoformat("2026-09-09T23:00:00+00:00")
+    assert L.decide(st3, False, now=before, pr_status="active")["decision"] == "wait_for_merge"
+    overdue = L.decide(st3, False, now=deadline, pr_status="active")
+    assert overdue["decision"] == "warn_unmerged"
+    assert "translated strings at risk" in overdue["chat"]["content"]
+    assert "release remains on schedule" in overdue["chat"]["content"]
+    step.data["merge_deadline_alert_at"] = deadline.isoformat()
+    st3.set_step("ccd", "localization", step)
+    assert L.decide(st3, False, now=deadline, pr_status="active")["decision"] == "wait_for_merge"
+    assert L.decide(st3, False, now=deadline, pr_status="completed")["decision"] == "merged"
+    omission = datetime.fromisoformat("2026-09-10T01:00:00+00:00")
+    omitted = L.decide(st3, False, now=omission, pr_status="active")
+    assert omitted["decision"] == "omit_unmerged"
+    assert "release continues without these translated strings" in omitted["note"]
+    assert L.decide(st3, False, now=omission, pr_status="completed")["decision"] == "merged"
+
+    monkeypatch.setattr(L, "get_tz", lambda _name: None)
+    with pytest.raises(ValueError, match="timezone data unavailable"):
+        L.decide(st3, False, now=deadline, pr_status="active")
 
 
 
@@ -229,17 +262,19 @@ def test_localization_review_post_no_owner_has_no_mention():
     st.owner_name = ""
     from datetime import datetime, timezone
     d = L.decide(st, True, _PR_LOG, datetime.now(timezone.utc))
-    assert d["decision"] == "complete_pr"
+    assert d["decision"] == "announce_pr"
     assert "mentions" not in d["chat"]
-    assert "merged before EOD" in d["chat"]["content"]
+    assert "4:00 PM Los Angeles time" in d["chat"]["content"]
 
 
 
 
-def test_localization_command_lifecycle_wait_then_complete():
+def test_localization_command_lifecycle_wait_announce_escalate_then_merge():
     """record-localization-run leaves the step in-flight; a wait poll keeps it
-    pending; a complete poll with a PR log marks it done with the PR link."""
+    in-flight; a completed run stores/announces its PR but remains in-flight; the 4 PM
+    escalation is deduplicated; only a merged PR marks the step done."""
     from orchestrator.commands import localization as lc
+    from steps.ccd import localization as L
     with tempfile.TemporaryDirectory() as d:
         rid = "2026-09"
         st = ReleaseState(release_id=rid, ccd="2026-09-09",
@@ -251,24 +286,60 @@ def test_localization_command_lifecycle_wait_then_complete():
             build_id = "176407869"; run_url = None; started_at = "2026-09-09T19:00:00Z"
         lc.cmd_record_localization_run(RR)
         s1 = C.load_state(d, rid).get_step("ccd", "localization")
-        assert s1.data["build_id"] == "176407869" and s1.status == "pending"
+        assert s1.data["build_id"] == "176407869" and s1.status == "in_flight"
+
+        target = L.poll_target(C.load_state(d, rid))
+        assert target["decision"] == "poll_pipeline" and target["build_id"] == "176407869"
+        assert "--id 176407869" in target["az"]["status"]
 
         class CKwait:
             runs_root = d; release = rid; config = CONFIG
             complete = "false"; logs = None; logs_file = None
-            now = "2026-09-09T19:30:00Z"; as_of = None
+            now = "2026-09-09T19:30:00Z"; as_of = None; pr_status = None
         lc.cmd_check_localization(CKwait)
-        assert C.load_state(d, rid).get_step("ccd", "localization").status == "pending"
+        assert C.load_state(d, rid).get_step("ccd", "localization").status == "in_flight"
 
         class CKdone:
             runs_root = d; release = rid; config = CONFIG
             complete = "true"; logs = _PR_LOG; logs_file = None
-            now = "2026-09-09T20:00:00Z"; as_of = None
+            now = "2026-09-09T20:00:00Z"; as_of = None; pr_status = None
         lc.cmd_check_localization(CKdone)
+        pending = C.load_state(d, rid).get_step("ccd", "localization")
+        assert pending.status == "in_flight" and pending.data["pr_id"] == "16790317"
+        assert any("16790317" in l["url"] for l in pending.links)
+        target = L.poll_target(C.load_state(d, rid))
+        assert target["decision"] == "poll_pr" and target["pr_id"] == "16790317"
+        assert "--id 16790317" in target["az"]["status"]
+
+        class ACKinitial:
+            runs_root = d; release = rid; kind = "initial"; pr_id = "16790317"
+        assert lc.cmd_record_localization_post(ACKinitial) == 0
+        assert lc.cmd_record_localization_post(ACKinitial) == 0
+        announced = C.load_state(d, rid).get_step("ccd", "localization")
+        assert announced.data["pr_announced_at"]
+
+        class CKactive:
+            runs_root = d; release = rid; config = CONFIG
+            complete = "false"; logs = None; logs_file = None
+            now = "2026-09-09T22:59:00Z"; as_of = None; pr_status = "active"
+        lc.cmd_check_localization(CKactive)
+        assert C.load_state(d, rid).get_step("ccd", "localization").status == "in_flight"
+
+        CKactive.now = "2026-09-09T23:00:00Z"
+        lc.cmd_check_localization(CKactive)
+        escalated = C.load_state(d, rid).get_step("ccd", "localization")
+        assert escalated.status == "in_flight" and not escalated.data.get("merge_deadline_alert_at")
+
+        class ACKdeadline:
+            runs_root = d; release = rid; kind = "deadline"; pr_id = "16790317"
+        assert lc.cmd_record_localization_post(ACKdeadline) == 0
+        assert C.load_state(d, rid).get_step("ccd", "localization").data["merge_deadline_alert_at"]
+
+        CKactive.pr_status = "completed"
+        CKactive.now = "2026-09-09T23:30:00Z"
+        lc.cmd_check_localization(CKactive)
         done = C.load_state(d, rid).get_step("ccd", "localization")
-        assert done.status == "done"
-        assert any("16790317" in l["url"] for l in done.links)
-        assert done.data["build_id"] == "176407869"     # data preserved through completion
+        assert done.status == "done" and done.data["build_id"] == "176407869"
 
 
 
@@ -289,26 +360,106 @@ def test_localization_command_timeout_holds():
         class CK:
             runs_root = d; release = rid; config = CONFIG
             complete = "false"; logs = None; logs_file = None
-            now = "2026-09-09T15:30:00Z"; as_of = None      # 3.5h later
+            now = "2026-09-09T15:30:00Z"; as_of = None; pr_status = None
         lc.cmd_check_localization(CK)
         assert C.load_state(d, rid).get_step("ccd", "localization").status == "blocked"
+
+
+def test_localization_command_omits_unmerged_pr_at_6pm():
+    from orchestrator.commands import localization as lc
+    with tempfile.TemporaryDirectory() as d:
+        rid = "2026-09"
+        st = ReleaseState(release_id=rid, ccd="2026-09-09")
+        step = st.get_step("ccd", "localization")
+        step.status = "in_flight"
+        step.data = {
+            "build_id": "176407869",
+            "started_at": "2026-09-09T19:00:00Z",
+            "pr_id": "16790317",
+            "pr_url": "https://example.test/pr/16790317",
+            "pr_announced_at": "2026-09-09T20:00:00Z",
+            "merge_deadline_alert_at": "2026-09-09T23:00:00Z",
+        }
+        st.set_step("ccd", "localization", step)
+        C.save_state(st, d, rid)
+
+        class CK:
+            runs_root = d; release = rid; config = CONFIG
+            complete = None; logs = None; logs_file = None
+            now = "2026-09-10T01:00:00Z"; as_of = None; pr_status = "active"
+
+        assert lc.cmd_check_localization(CK) == 0
+        omitted = C.load_state(d, rid).get_step("ccd", "localization")
+        assert omitted.status == "skipped" and omitted.by == "scout"
+        assert "not merged by 6:00 PM Los Angeles time" in omitted.note
+        assert omitted.links and omitted.data["pr_id"] == "16790317"
+
+
+def test_localization_poll_target_is_available_from_cli(capsys):
+    """The poller reads persisted identifiers through the command, not raw state files."""
+    import json
+    from orchestrator.commands import localization as lc
+    with tempfile.TemporaryDirectory() as d:
+        rid = "2026-09"
+        st = ReleaseState(release_id=rid, ccd="2026-09-09")
+        step = st.get_step("ccd", "localization")
+        step.status = "in_flight"
+        step.data = {
+            "build_id": "176407869",
+            "started_at": "2026-09-09T19:00:00Z",
+        }
+        st.set_step("ccd", "localization", step)
+        C.save_state(st, d, rid)
+
+        class CK:
+            runs_root = d; release = rid; config = CONFIG
+            complete = None; logs = None; logs_file = None
+            now = None; as_of = None; pr_status = None
+
+        assert lc.cmd_check_localization(CK) == 0
+        target = json.loads(capsys.readouterr().out)
+        assert target["decision"] == "poll_pipeline"
+        assert target["build_id"] == "176407869"
+        assert "--id 176407869" in target["az"]["status"]
+
+
+def test_localization_inflight_is_not_retriggered_by_release_worker():
+    """Once the run is recorded, localization drops out of scout_pending."""
+    from datetime import date
+    _stub_build_defs("pass")
+    st = ReleaseState(release_id="2026-09", ccd="2026-09-09", ccd_source="confirmed")
+    orch = Orchestrator(CONFIG, st, as_of=date(2026, 9, 9))
+    _pass_scout_checks(orch)
+    orch.gate.sign()
+    _clear_phase0_scout(orch)
+    orch.run_until_gate()
+    orch.record_scout_step("ccd", "final_reminder", "pass", "sent")
+    orch.record_scout_step("ccd", "pr_reminder", "pass", "sent")
+    step = st.get_step("ccd", "localization")
+    step.status = "in_flight"
+    step.data = {"build_id": "176407869", "started_at": "2026-09-09T19:00:00Z"}
+    st.set_step("ccd", "localization", step)
+
+    assert orch.current_phase_id() == "ccd"
+    assert "localization" not in orch.scout_pending_steps()
 
 
 
 
 def test_automation_localization_poller_is_interval():
-    """The poller is an INTERVAL automation (every 10 min); it shares ccd.localization
+    """The poller is an hourly INTERVAL automation; it shares ccd.localization
     with the noon trigger, which is allowed. validate() stays clean."""
     from orchestrator import automations as A
     assert A.validate(CONFIG) == []
     by = {a["slug"]: a for a in A.plan(CONFIG, "2026-09", "2026-09-09")["automations"]}
     poller = by["ccd-localization-poller"]
-    assert poller["interval"] == "10 minutes"
-    assert (poller["schedule"] == "every 10 minutes" and poller["one_shot"] is False
+    assert poller["interval"] == "1 hour"
+    assert (poller["schedule"] == "every 1 hour" and poller["one_shot"] is False
             and poller["on_demand"] is True)
     assert poller["steps"] == ["ccd.localization"]
     # the noon trigger also drives localization (one-shot) — shared step is fine
     assert by["ccd-noon"]["steps"] == ["ccd.localization"] and by["ccd-noon"]["one_shot"] is True
+    assert by["ccd-noon"]["cleanup_when"] == "step_flag:ccd.localization:started_at"
 
 
 

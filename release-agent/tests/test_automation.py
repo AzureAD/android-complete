@@ -158,7 +158,7 @@ def test_automation_plan_derives_specs_from_ccd():
     assert by["ccd-noon"]["schedule"] == "cron: 0 12 9 9 *"
     assert by["ccd-noon"]["registration"]["steps"] == ["ccd.localization"]
     # the poller stays an interval automation (not date-pinned)
-    assert by["ccd-localization-poller"]["schedule"] == "every 10 minutes"
+    assert by["ccd-localization-poller"]["schedule"] == "every 1 hour"
     # registration carries slug + schedule so sync can re-pin on a CCD move
     assert by["ccd-morning"]["registration"]["slug"] == "ccd-morning"
     assert by["ccd-morning"]["registration"]["schedule"] == "cron: 0 9 9 9 *"
@@ -320,7 +320,7 @@ def test_automation_sync_repins_on_ccd_change():
                      steps=["ccd.localization"], schedule="cron: 0 12 26 8 *",
                      cleanup_when="steps_done")
         reg.register("a-poll", "poller", release=rid, slug="ccd-localization-poller",
-                     steps=["ccd.localization"], schedule="every 10 minutes",
+                     steps=["ccd.localization"], schedule="every 1 hour",
                      cleanup_when="steps_done")
 
         def sync():
@@ -334,7 +334,7 @@ def test_automation_sync_repins_on_ccd_change():
         u0 = {u["slug"]: u for u in sync()["updates"]}
         assert all(not u["changed"] for u in u0.values())
         assert u0["ccd-morning"]["cleanup_when"] == "steps_done"
-        # noon matched to the CRON, not the poller's 'every 10 minutes' (slug disambiguates)
+        # noon matched to the CRON, not the poller's hourly interval (slug disambiguates)
         assert u0["ccd-noon"]["desired_schedule"] == "cron: 0 12 26 8 *"
         # move the CCD within the month → the two cron automations go stale, poller unchanged
         st.ccd = "2026-08-27"; C.save_state(st, d, rid)

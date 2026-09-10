@@ -6,11 +6,11 @@ These commands are the thin CLI seam the skill/poller calls:
 
   * record-localization-run — after the pipeline is triggered, store the queued
     build id + start time on the step (leaves it IN-FLIGHT, not done).
-  * check-localization — one poll: given the run's completion state (and the
-    OneLocBuild@3 log when complete), apply `decide()` and either wait, escalate
-    (email the engineer) + hold, or finish (post the PR to Code reviews + mark done,
-    or mark done with no strings). Prints the decision JSON so the poller can perform
-    the email/chat side-effect described in it.
+  * check-localization — one poll: given the run or PR state, apply `decide()` and
+    either wait, request a notification, or finish. Prints the decision JSON so the
+    poller can perform any email/chat side effect described in it.
+  * record-localization-post — acknowledge a successful initial/deadline Code reviews
+    post so future polls do not repeat it.
 """
 from __future__ import annotations
 import json as _json
@@ -28,11 +28,13 @@ def _now_iso():
 
 def cmd_record_localization_run(args):
     """Store the triggered build id + start time on the localization step. Leaves the
-    step in-flight (pending) so the poller can drive it to completion."""
+    step in-flight so the poller can drive it to completion."""
     st = C.load_state(args.runs_root, args.release)
     step = st.get_step("ccd", "localization")
     step.data["build_id"] = args.build_id
     step.data["started_at"] = args.started_at or _now_iso()
+    step.status = "in_flight"
+    step.note = "localization pipeline running — Scout is polling hourly"
     if args.run_url:
         step.data["run_url"] = args.run_url
     st.set_step("ccd", "localization", step)
@@ -71,6 +73,10 @@ def cmd_check_localization(args):
         print(_json.dumps({"decision": "already_final", "status": step.status}))
         return 0
 
+    if getattr(args, "complete", None) is None and getattr(args, "pr_status", None) is None:
+        print(_json.dumps(L.poll_target(st)))
+        return 0
+
     logs = args.logs
     if logs is None and args.logs_file:
         try:
@@ -80,11 +86,17 @@ def cmd_check_localization(args):
             print(_json.dumps({"error": f"could not read --logs-file: {e}"}))
             return 1
 
-    decision = L.decide(st, is_complete=_truthy(args.complete), logs=logs, now=now)
+    try:
+        decision = L.decide(
+            st, is_complete=_truthy(args.complete), logs=logs, now=now,
+            pr_status=getattr(args, "pr_status", None))
+    except ValueError as e:
+        print(_json.dumps({"error": str(e)}))
+        return 1
     d = decision["decision"]
 
-    # mocks.local.yaml send_to → redirect the completion PR post to your own chat.
-    if d == "complete_pr" and decision.get("chat"):
+    # mocks.local.yaml send_to → redirect localization PR posts to your own chat.
+    if d in ("announce_pr", "warn_unmerged") and decision.get("chat"):
         spec = mocks_mod.load_mocks().get("ccd.localization") or {}
         if "send_to" in spec:
             val = spec["send_to"]
@@ -92,7 +104,7 @@ def cmd_check_localization(args):
             decision["chat"]["chatId"] = val
             decision["test_redirect"] = {"send_to": val}
 
-    if d == "wait":
+    if d in ("wait", "wait_for_merge"):
         # Not terminal — keep in-flight, just record progress on the step.
         step.data["last_checked"] = now.isoformat() if now else _now_iso()
         step.note = decision["note"]
@@ -105,7 +117,34 @@ def cmd_check_localization(args):
         C.save_state(orch.state, args.runs_root, args.release)
         C.emit(args.runs_root, args.release, f"[attention] localization: {decision['note']}",
                kind="localization")
-    else:  # complete_pr | complete_none → done
+    elif d == "announce_pr":
+        step.data["pr_id"] = decision["pr_id"]
+        step.data["pr_url"] = decision["pr_url"]
+        step.data.setdefault("pr_discovered_at", now.isoformat() if now else _now_iso())
+        step.links = decision.get("links", [])
+        step.note = decision["note"]
+        st.set_step("ccd", "localization", step)
+        C.save_state(st, args.runs_root, args.release)
+        C.emit(args.runs_root, args.release, f"[localization] {decision['note']}",
+               kind="localization")
+    elif d == "warn_unmerged":
+        step.data["last_checked"] = now.isoformat() if now else _now_iso()
+        step.note = decision["note"]
+        st.set_step("ccd", "localization", step)
+        C.save_state(st, args.runs_root, args.release)
+        C.emit(args.runs_root, args.release, f"[attention] localization: {decision['note']}",
+               kind="localization")
+    elif d == "omit_unmerged":
+        step.status = "skipped"
+        step.completed_at = now.isoformat() if now else _now_iso()
+        step.by = "scout"
+        step.note = decision["note"]
+        step.links = decision.get("links", step.links)
+        st.set_step("ccd", "localization", step)
+        C.save_state(st, args.runs_root, args.release)
+        C.emit(args.runs_root, args.release, f"[omitted] localization: {decision['note']}",
+               kind="localization")
+    elif d in ("merged", "complete_none"):
         orch.record_scout_step("ccd", "localization", "pass", decision["note"])
         done = orch.state.get_step("ccd", "localization")
         done.by = "scout"
@@ -116,8 +155,41 @@ def cmd_check_localization(args):
         C.save_state(orch.state, args.runs_root, args.release)
         C.emit(args.runs_root, args.release, f"[ok] localization: {decision['note']}",
                kind="localization")
+    else:
+        print(_json.dumps({"error": f"unsupported localization decision: {d}"}))
+        return 1
 
     print(_json.dumps(decision))
+    return 0
+
+
+def cmd_record_localization_post(args):
+    """Record a localization Code reviews post only after delivery succeeds."""
+    st = C.load_state(args.runs_root, args.release)
+    step = st.get_step("ccd", "localization")
+    stored_pr_id = str(step.data.get("pr_id") or "")
+    if not stored_pr_id:
+        print(_json.dumps({"error": "localization PR has not been discovered"}))
+        return 1
+    if stored_pr_id != str(args.pr_id):
+        print(_json.dumps({
+            "error": f"PR mismatch: step has {stored_pr_id}, acknowledgement has {args.pr_id}"
+        }))
+        return 1
+
+    key = "pr_announced_at" if args.kind == "initial" else "merge_deadline_alert_at"
+    already = step.data.get(key)
+    if not already:
+        step.data[key] = _now_iso()
+        st.set_step("ccd", "localization", step)
+        C.save_state(st, args.runs_root, args.release)
+        C.emit(args.runs_root, args.release,
+               f"[localization] recorded {args.kind} Code reviews post for PR #{stored_pr_id}",
+               kind="localization")
+    print(_json.dumps({
+        "recorded": not bool(already), "kind": args.kind, "pr_id": stored_pr_id,
+        "at": already or step.data[key],
+    }))
     return 0
 
 
@@ -132,14 +204,24 @@ def register(sub):
     rr.set_defaults(func=cmd_record_localization_run)
 
     cl = sub.add_parser("check-localization",
-                        help="One poll of the localization run: wait / escalate (email) / finish (post PR)")
+                        help="One localization poll: pipeline status before PR discovery, PR status afterward")
     cl.add_argument("--release", required=True)
-    cl.add_argument("--complete", default="false",
+    cl.add_argument("--complete", default=None,
                     help="Whether the pipeline run has finished (true/false/succeeded)")
     cl.add_argument("--logs", default=None,
                     help="OneLocBuild@3 task log text (when complete) to scan for the PR id")
     cl.add_argument("--logs-file", default=None, dest="logs_file",
                     help="Path to the OneLocBuild@3 log instead of --logs")
+    cl.add_argument("--pr-status", default=None, dest="pr_status",
+                    help="ADO PR status after discovery (active/completed/abandoned)")
     cl.add_argument("--now", default=None, help="Override 'now' (ISO-8601) for elapsed/timeout math")
     cl.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     cl.set_defaults(func=cmd_check_localization)
+
+    rp = sub.add_parser(
+        "record-localization-post",
+        help="Record a successful localization Code reviews post")
+    rp.add_argument("--release", required=True)
+    rp.add_argument("--kind", required=True, choices=("initial", "deadline"))
+    rp.add_argument("--pr-id", required=True, dest="pr_id")
+    rp.set_defaults(func=cmd_record_localization_post)

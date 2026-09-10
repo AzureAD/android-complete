@@ -94,6 +94,16 @@ register all `registration` fields. Current slugs: `build-verify-rc-poller` afte
 and `bug-bash-update-poller` after the first Bug Bash update.
 Never create these during release initialization.
 
+The localization poller runs hourly. After the pipeline creates a PR, it posts the
+initial Code Reviews request once, monitors that PR until ADO reports it completed,
+and keeps Phase 1 open until merge or the omission cutoff. At 4:00 PM
+America/Los_Angeles on CCD, an unmerged
+PR causes one additional Code Reviews warning that the translated strings are at risk.
+If the PR is still unmerged at 6:00 PM America/Los_Angeles, the command marks localization
+skipped/omitted so Phase 2 proceeds without those strings and the poller is cleaned up.
+Record each post with its returned `record-localization-post` follow-up only after delivery
+succeeds.
+
 **Traceability:** every timed step is owned by exactly one automation (a guardrail test enforces this). Each registry entry has a **kind** — `step-driving` (owns steps, e.g. the CCD automations) or `release-level` (whole-release, no steps, e.g. push reminders), auto-derived from whether you pass `--step`. To answer "which automation runs step X?" → `automation list --release <YYYY-MM> --step-filter <phase.step>`. To see "what does this automation drive?" → `automation list --release <YYYY-MM>` (each row shows its `[kind]` and `drives: …`, or `(release-level — no steps)`). At runtime each step-driving automation journals `<slug> ran <step>` into the release event log, so the whole chain (config → registered automation → step execution) is inspectable.
 
 ### Any automation you provision MUST be registered (for teardown)
