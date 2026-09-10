@@ -31,23 +31,30 @@ live process. Reservations coordinate only workers using one authoritative state
 folder; copied release folders must never run as additional production senders.
 
 Right after `init`, make sure the **push-reminder automation** exists for THIS release so reminders reach the user even with Scout closed. Per-release: created at start, removed at close.
-1. `m_list_automations`. If **"`<YYYY-MM> · Release-wide — push reminders`"** exists AND `automation list --release <YYYY-MM> --json` has it scoped to this release, **do not duplicate it**. Inspect it with `m_get_automation`: if its prompt does not handle `core_alert` independently of `message`, update that same automation with `m_update_automation` (preserve its id, schedule, enabled state, model, and notification settings). Otherwise leave it unchanged.
+1. `m_list_automations`. If **"`<YYYY-MM> · Release-wide — push reminders`"** exists AND `automation list --release <YYYY-MM> --json` has it scoped to this release, **do not duplicate it**. Inspect it with `m_get_automation`: if its prompt does not handle `core_alert` independently of `message`, or lacks the current reservation protocol, update that same automation with `m_update_automation` (preserve its id, schedule, enabled state, model, and notification settings). Otherwise leave it unchanged.
 2. If missing, `m_create_automation`:
    - **name:** `<YYYY-MM> · Release-wide — push reminders`  (fill `<YYYY-MM>` with the release id — the standard `<release-id> · <scope> — <purpose>` title)
    - **schedule:** `every hour`
    - **teamsNotify:** `never`
    - **prompt:** From `<AGENT_ROOT>` (**substitute the absolute confirmed release-agent path** — see SKILL.md → FIRST RUN — since this runs headless with no one to resolve a placeholder; e.g. run `paths --json` and paste the real `agent_root`), advance the active release **AUTONOMOUSLY** (no user is watching) and send the daily digest:
-     1. Run `python -m orchestrator.cli status --json`. If there is **no** release, or it is **unsigned / halted / complete**, STOP silently.
+     1. Run `python -m orchestrator.cli status --json`. If there is **no** release, or it is **unsigned / halted**, STOP silently. If it is **complete**, skip directly to cleanup in step 4 (this removes completed release automations, including this hourly worker), then stop.
      2. **Run Scout's own steps until none remain.** Loop: run `next --json`; read `scout_pending`; if empty, go to step 3; else for EACH id: run `step-action --release <id> --phase <phase> --step <stepId>` (Phase 0 = `preflight`), perform the returned `needs_skill` `tool`+`payload` via the matching MCP tool (`workiq_send_email` / `workiq_send_chat_message` / `azure_devops-pipelines_run_pipeline`, honoring `test_redirect`), then finalize with `record-step … --status pass` — **UNLESS** the action names a follow-up engine command (via `payload.followup_command`, or the known two-hop steps: `check-lockdown`, `record-localization-run`/`check-localization`, and **`record-rc-report`** for `rc_report` — send the RC email, then run `record-rc-report`, which applies the 90% UI gate and records pass/block), which you run instead as the action describes. **Headless safety copy:** whenever a `needs_skill` action has **`outbound: true`**, after performing it also `m_send_teams_message` a **ONE-LINE** courtesy copy — `🤖 [release <id>] Autonomous: <summary>.` — so the owner sees what went out (never paste the full email/message body). A scout step that records `attention` is left blocked (it surfaces in the digest). Do it silently.
-     3. Run `python -m orchestrator.cli tick --json` → `{message, html, subject, owner_email, owner_name, release, channels, teams, core_alert}`. Treat `message` and `core_alert` independently: if both are empty/null, STOP. Otherwise deliver each populated block:
+     3. Run `python -m orchestrator.cli tick --json` → `{message, html, subject, owner_email, owner_name, release, channels, teams, core_alert}`. Treat `message` and `core_alert` independently. Deliver each populated block; if both are empty/null, skip delivery but **still continue to cleanup in step 4**:
         - **Email** (when `message` is non-empty and `channels.email`): `workiq_send_email` (`to:[owner_email]`, `subject:` the value, `body:` the `html` with `isHtml:true` — fall back to plain `message`/`isHtml:false` only if `html` empty). Recipient from `owner_email` — never hardcode.
         - **Teams owner digest** (when `message` is non-empty, `channels.teams`, and `teams` is non-null): dispatch on `teams.via` —
           - `"scout_bot"` (default): `m_send_teams_message` with `message:` the `teams.text` value (the **markdown** digest, sent verbatim). This is the **Scout Teams bot** DM — the owner's Scout notification channel. Requires the Teams relay connected (`m_relay_status`); if it's down, email still covers it.
           - `"chat"`: `workiq_send_chat_message` with **exactly** the `teams` block fields (`chatId`, `content`, `contentType`) — only used when a specific shared chat is configured.
-        - **Core Team deadline alert** (when `core_alert` is non-null): send it even when `message` is empty. Call `workiq_send_chat_message` with its `chatId`, `content`, `contentType`, and `mentions`. Only after WorkIQ confirms success, run its `followup_command` (`record-core-alert`). If delivery fails, do not record it; the next hourly tick retries. It is sent once on the last working day before CCD and once on CCD morning while Phase 0 remains incomplete. Do not embellish it.
+        - **Core Team deadline alert** (when `core_alert` is non-null): this is independent
+          of `message` and must still be sent when the normal owner digest is empty. Call
+          `workiq_send_chat_message` with its `chatId`, `content`, `contentType`, and
+          `mentions`. Only after WorkIQ confirms success, run its `followup_command`
+          (`record-core-alert`). If delivery fails, do not record it; the next hourly tick
+          retries. It is sent once on the last working day before CCD and once on CCD
+          morning while Phase 0 remains incomplete. Do not embellish it.
 
      The `teams` descriptor is only present when a digest is actually due (it respects the same once-per-day de-dup), so delivering it never double-notifies. The digest is identical across channels — send it verbatim, don't embellish. Channels are configured in `config/notifications.yaml`.
-3. **Register it** so it's torn down at close: `automation register --id <id> --name "<YYYY-MM> · Release-wide — push reminders" --release <YYYY-MM> --purpose "hourly autonomous advance (runs scout steps) + phase digest to owner (email + Teams)"` — no `--step`, so it's recorded as a **release-level** automation (it advances the whole release, owns no step).
+     4. Run `automation cleanup --release <YYYY-MM> --json`. For each removal in order, call `m_delete_automation`; only after deletion succeeds run `automation deregister --id <id>`. Leave failed deletions registered so the next hourly run can retry.
+3. **Register it** so it's torn down at close: `automation register --id <id> --name "<YYYY-MM> · Release-wide — push reminders" --release <YYYY-MM> --cleanup-when release_done --purpose "hourly autonomous advance (runs scout steps) + phase digest to owner (email + Teams)"` — no `--step`, so it's recorded as a **release-level** automation (it advances the whole release, owns no step).
 
 Do it silently as part of start (the user already opted into push). **Why hourly, not once at 9am:** `tick` is idempotent (advancing no-ops once holding; digest de-dupes to one email/day), so a tick missed while the machine was off is picked up by the next. A single daily trigger would be skipped that day.
 
@@ -63,21 +70,29 @@ Alongside the push reminders, provision the **partner status email** — an **en
      1. Run `python -m orchestrator.cli status-email --release <YYYY-MM> --json`. **For a TEST release, add `--send-to <you@microsoft.com>`** so the real DLs are never emailed.
      2. If `skip` is `true` (reasons: out of the Phase 2-4 window, weekend/holiday, or already sent today), **STOP silently**.
      3. Otherwise `workiq_send_email` with `to:` the payload `to`, `subject:` the `subject`, `body:` the `html` (`isHtml:true`). Then run `python -m orchestrator.cli record-status-email --release <YYYY-MM>` to stamp the day. **Headless safety copy:** `m_send_teams_message` a one-line courtesy — `🤖 [release <id>] Sent daily status email.` (never paste the body).
-3. **Register it** for teardown: `automation register --id <id> --name "<YYYY-MM> · Phases 2–4 — daily status email" --release <YYYY-MM> --purpose "business-day partner status email (Phase 2-4)"`.
+3. **Register it** for teardown: `automation register --id <id> --name "<YYYY-MM> · Phases 2–4 — daily status email" --release <YYYY-MM> --cleanup-when phase_done:finalize --purpose "business-day partner status email (Phase 2-4)"`.
 
-**Closing it (end of Phase 4).** The terminal `finalize.final_status_email` step sends the guaranteed CLOSING status email (it names `record-status-email --final` as its follow-up). **After that step completes, deregister the "`<YYYY-MM> · Phases 2–4 — daily status email`" automation** (`automation deregister --id <id>`) so no status emails run into Phase 5+. This handles the case where Phase 4 and Phase 5 complete the same day — the terminal step guarantees the last email even if the daily 5pm run wouldn't fire again. (Release close removes it as a backstop.)
+**Closing it (end of Phase 4).** The terminal `finalize.final_status_email` step sends the guaranteed CLOSING status email and runs `record-status-email --final`. Then immediately run `automation cleanup --release <YYYY-MM> --json`, delete the returned daily status-email automation with `m_delete_automation`, and deregister only after deletion succeeds. This prevents status emails in Phase 5+. Release-close cleanup is the backstop.
 
 
 ## Provision the timed phase automations (config-driven, per release)
 
 Some steps must fire at a specific time of day (not just "on their date") — e.g. the CCD-day comms at 09:00 and the localization trigger at noon. These are declared as DATA in `config/automations.yaml`, which maps each automation to the exact steps it drives; the fire time is derived from each step module's `fire_at_local`. **Provision them only once the CCD is CONFIRMED** — the schedules are cron-pinned to the CCD date, so a wrong/unsettled CCD pins them to the wrong day. Concretely: wait until the CCD is settled (`status --json` shows no `ccd_conflict`, and — for a normal start — the entry gate's `ccd_confirmed` item has passed). Then:
 
-1. `python -m orchestrator.cli automation plan --release <YYYY-MM> --json` — returns the concrete automations to create (`name`, `schedule`, `steps`, `slug`, `purpose`, `prompt`, `registration`). If `problems` is non-empty, STOP and report — the config/step mapping drifted. If `ccd` is null, STOP — set the CCD first.
+1. `python -m orchestrator.cli automation plan --release <YYYY-MM> --json` — returns **startup automations only**; `on_demand:true` pollers are intentionally excluded. It returns (`name`, `schedule`, `steps`, `slug`, `purpose`, `cleanup_when`, `prompt`, `registration`). If `problems` is non-empty, STOP and report — the config/step mapping drifted. If `ccd` is null, STOP — set the CCD first.
 2. For each automation in the result, skip if `automation list --release <YYYY-MM> --json` already has one with the same `slug` (don't duplicate). Otherwise `m_create_automation`:
    - **name / schedule / prompt:** exactly the values from the plan (the schedule is a **cron pinned to the exact CCD date** — e.g. `cron: 0 9 26 8 *` for 09:00 on Aug 26 — NOT `every wednesday`, which fires the next weekday and would run the CCD-day comms a week early; set **oneShot:true** for the cron ones).
    - **teamsNotify:** `never` (it emails/posts via the steps themselves).
-3. **Register it WITH its steps, slug, and schedule** so the linkage is recorded (torn down at close) AND the schedule is stored (so `automation sync` can re-pin it if the CCD moves) — copy the plan spec's `registration` fields, filling the real Scout id:
-   `automation register --id <scout-id> --name "<name>" --release <YYYY-MM> --slug <slug> --schedule "<schedule>" --purpose "<purpose>" --step <phase.step> [--step …]`
+3. **Register it WITH its steps, slug, schedule, and cleanup rule** — copy the plan spec's `registration` fields, filling the real Scout id:
+   `automation register --id <scout-id> --name "<name>" --release <YYYY-MM> --slug <slug> --schedule "<schedule>" --cleanup-when "<rule>" [--cleanup-when "<OR-rule>"] --purpose "<purpose>" --step <phase.step> [--step …]`
+
+### Provision an on-demand poller
+When a step/command asks for an on-demand poller, run `automation plan --release
+<YYYY-MM> --on-demand <slug> --json`; create exactly that returned automation and
+register all `registration` fields. Current slugs: `build-verify-rc-poller` after
+`rc-retriggered`, `ccd-localization-poller` after the noon localization trigger,
+and `bug-bash-update-poller` after the first Bug Bash update.
+Never create these during release initialization.
 
 **Traceability:** every timed step is owned by exactly one automation (a guardrail test enforces this). Each registry entry has a **kind** — `step-driving` (owns steps, e.g. the CCD automations) or `release-level` (whole-release, no steps, e.g. push reminders), auto-derived from whether you pass `--step`. To answer "which automation runs step X?" → `automation list --release <YYYY-MM> --step-filter <phase.step>`. To see "what does this automation drive?" → `automation list --release <YYYY-MM>` (each row shows its `[kind]` and `drives: …`, or `(release-level — no steps)`). At runtime each step-driving automation journals `<slug> ran <step>` into the release event log, so the whole chain (config → registered automation → step execution) is inspectable.
 
@@ -87,7 +102,9 @@ Some steps must fire at a specific time of day (not just "on their date") — e.
 
 At **release close** (status complete / Release Close phase / user asks to "clean up automations"):
 1. `automation list --release <YYYY-MM> --json` — the release's automations.
-2. For each: `m_delete_automation` (id from entry), then `automation deregister --id <id>`.
+2. Run `automation cleanup --release <YYYY-MM> --json`; for each removal in order,
+   `m_delete_automation` (id from entry), then `automation deregister --id <id>`.
+   Delete any remaining release-scoped entries with the same ordering.
 3. Shared automations aren't in the release-scoped list — leave them. Confirm before deleting; report what was removed.
 
 ## Code Complete Date (CCD) & phase scheduling
@@ -106,7 +123,7 @@ Either resolution clears the conflict. Never pick for the user.
 
 **Changing the CCD (real production change).** `set-ccd` **writes the pipeline override** — gated: run without `--confirm` first (preview) → present → explicit yes (a `--reason` is always required) → re-run with `--confirm`. Month-scoped (date must be in the release month). `--default` reverts to 2nd-Wednesday.
 
-**After ANY confirmed CCD change, re-sync the CCD-day automations.** Their cron schedules are pinned to the old CCD, so a moved CCD leaves them firing on the wrong day (`set-ccd` prints a ⚠ reminder when step-driving automations are registered). Run **`automation sync --release <YYYY-MM> --json`** → `{ccd, updates:[{id, name, slug, current_schedule, desired_schedule, changed}]}`. For every entry with **`changed: true`**: call **`m_update_automation`** with `id` and `schedule: desired_schedule`, then **re-register** it so the stored schedule matches: `automation register --id <id> --name "<name>" --release <YYYY-MM> --slug <slug> --schedule "<desired_schedule>" --step <…>`. Entries with `changed:false` are already correct — skip them. (The interval poller never changes.) Do this silently as part of the CCD change.
+**After ANY confirmed CCD change, re-sync the CCD-day automations.** Their cron schedules are pinned to the old CCD, so a moved CCD leaves them firing on the wrong day (`set-ccd` prints a ⚠ reminder when step-driving automations are registered). Run **`automation sync --release <YYYY-MM> --json`** → `{ccd, updates:[{id, name, slug, cleanup_when, current_schedule, desired_schedule, changed}]}`. For every entry with **`changed: true`**: call **`m_update_automation`** with `id` and `schedule: desired_schedule`, then **re-register** it so the stored schedule and lifecycle match: `automation register --id <id> --name "<name>" --release <YYYY-MM> --slug <slug> --schedule "<desired_schedule>" --cleanup-when "<cleanup_when>" --step <…>`. Entries with `changed:false` are already correct — skip them. (The interval poller never changes.) Do this silently as part of the CCD change.
 
 **Skipping/cancelling the release.** Same gated pattern: `skip-release` sets the pipeline `skipRelease` switch (preview → confirm, reason required); `--clear` re-enables. Suppresses the monthly trigger — confirm before `--confirm`.
 

@@ -9,6 +9,11 @@ from orchestrator import automations as auto_plan
 from orchestrator import cli_common as C
 
 
+def _cleanup_args(value) -> str:
+    rules = value if isinstance(value, list) else [value]
+    return " ".join(f'--cleanup-when "{rule}"' for rule in rules if rule)
+
+
 def cmd_automation(args):
     """Track Scout automations the orchestrator provisions, so they can be torn
     down at release close. This only records ids + step linkage — the skill does the
@@ -18,9 +23,11 @@ def cmd_automation(args):
         return _cmd_plan(args)
     if args.action == "sync":
         return _cmd_sync(args)
+    if args.action == "cleanup":
+        return _cmd_cleanup(args)
     if args.action == "register":
-        if not (args.id and args.name):
-            print("register needs --id and --name.")
+        if not (args.id and args.name and args.cleanup_when):
+            print("register needs --id, --name, and --cleanup-when.")
             return 1
         try:
             e = reg.register(args.id, args.name, release=args.release,
@@ -28,7 +35,8 @@ def cmd_automation(args):
                              steps=getattr(args, "step", None) or [],
                              kind=getattr(args, "kind", None) or None,
                              schedule=getattr(args, "schedule", None) or None,
-                             slug=getattr(args, "slug", None) or None)
+                             slug=getattr(args, "slug", None) or None,
+                             cleanup_when=args.cleanup_when)
         except ValueError as ex:
             print(f"register error: {ex}")
             return 1
@@ -40,7 +48,13 @@ def cmd_automation(args):
         if not args.id:
             print("deregister needs --id.")
             return 1
-        print("Deregistered." if reg.deregister(args.id) else "No such automation id in registry.")
+        entry = next((e for e in reg.list() if e.get("id") == args.id), None)
+        removed = reg.deregister(args.id)
+        if removed and entry and entry.get("release"):
+            C.elog(args.runs_root, entry["release"]).log(
+                "automation_deregistered", automation_id=args.id, name=entry.get("name"),
+                cleanup_when=entry.get("cleanup_when"))
+        print("Deregistered." if removed else "No such automation id in registry.")
         return 0
     # list
     items = reg.list(release=args.release, scope=(args.scope or None),
@@ -70,6 +84,14 @@ def _cmd_plan(args):
     config_path = getattr(args, "config", None) or C.DEFAULT_CONFIG
     st = C.load_state(args.runs_root, args.release)
     result = auto_plan.plan(config_path, args.release, getattr(st, "ccd", None))
+    wanted = getattr(args, "on_demand", None)
+    if wanted:
+        result["automations"] = [
+            a for a in result["automations"] if a["on_demand"] and a["slug"] == wanted]
+        if not result["automations"]:
+            result["problems"].append(f"no on-demand automation named '{wanted}'")
+    else:
+        result["automations"] = [a for a in result["automations"] if not a["on_demand"]]
     if args.json:
         print(_json.dumps(result, indent=2))
         return 0
@@ -90,6 +112,7 @@ def _cmd_plan(args):
         print(f"    register: automation register --id <scout-id> --name \"{a['name']}\" "
               f"--release {args.release} --purpose \"{a['purpose']}\" "
               f"--slug \"{a['slug']}\" --schedule \"{sched}\" "
+              f"{_cleanup_args(a['cleanup_when'])} "
               + " ".join(f"--step {s}" for s in a["steps"]))
     return 0 if not result["problems"] else 1
 
@@ -123,6 +146,7 @@ def _cmd_sync(args):
         updates.append({
             "id": e["id"], "name": e["name"], "slug": e.get("slug") or spec["slug"],
             "steps": e.get("steps") or [],
+            "cleanup_when": spec.get("cleanup_when"),
             "current_schedule": current, "desired_schedule": desired,
             "changed": bool(desired) and desired != current,
         })
@@ -145,13 +169,31 @@ def _cmd_sync(args):
         for u in changed:
             print(f"  • {u['name']} ({u['id']}): {u['current_schedule']} → {u['desired_schedule']}")
             print(f"    m_update_automation(id={u['id']}, schedule=\"{u['desired_schedule']}\"), "
-                  f"then re-register with --schedule \"{u['desired_schedule']}\"")
+                  f"then re-register with --schedule \"{u['desired_schedule']}\" "
+                  f"{_cleanup_args(u['cleanup_when'])}")
     return 0
 
 
+def _cmd_cleanup(args):
+    """Return registered automations whose declared objective is finished."""
+    st = C.load_state(args.runs_root, args.release)
+    entries = AutomationRegistry(args.runs_root, args.release).list(release=args.release)
+    result = auto_plan.cleanup_plan(st, entries, getattr(args, "config", None) or C.DEFAULT_CONFIG)
+    if args.json:
+        print(_json.dumps(result, indent=2))
+    else:
+        for item in result["removals"]:
+            print(f"DELETE {item['id']} — {item['name']} ({item['reason']})")
+        for problem in result["problems"]:
+            print(f"PROBLEM: {problem}")
+        if not result["removals"] and not result["problems"]:
+            print("No automations are ready for cleanup.")
+    return 1 if result["problems"] else 0
+
+
 def register(sub):
-    au = sub.add_parser("automation", help="Track provisioned automations (plan/register/list/deregister/sync) for teardown + CCD re-pin")
-    au.add_argument("action", choices=["plan", "register", "list", "deregister", "sync"])
+    au = sub.add_parser("automation", help="Track provisioned automations and reconcile lifecycle cleanup")
+    au.add_argument("action", choices=["plan", "register", "list", "deregister", "sync", "cleanup"])
     au.add_argument("--id", default=None, help="Scout automation id")
     au.add_argument("--name", default="", help="Automation name (for register)")
     au.add_argument("--release", default=None, help="Release scope (omit + --shared for machine-wide)")
@@ -168,5 +210,10 @@ def register(sub):
                     help="For register: the Scout schedule the automation was created with (stored so `sync` can detect CCD drift)")
     au.add_argument("--slug", default=None,
                     help="For register: the stable slug from automations.yaml (sync's unambiguous match key)")
+    au.add_argument("--cleanup-when", action="append", default=None,
+                    help="Required for register: steps_done|steps_settled|phase_done:<id>|"
+                         "step_flag:<phase.step>:<key>|release_done|manual; repeat for OR")
+    au.add_argument("--on-demand", default=None, metavar="SLUG",
+                    help="For plan: return one on-demand automation instead of startup automations")
     au.add_argument("--json", action="store_true")
     au.set_defaults(func=cmd_automation)

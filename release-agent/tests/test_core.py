@@ -713,8 +713,10 @@ def test_registry_register_list_deregister():
     from orchestrator.registry import AutomationRegistry
     with tempfile.TemporaryDirectory() as tmp:
         reg = AutomationRegistry(tmp)
-        reg.register("a1", "Release push reminders", shared=True, purpose="push")
-        reg.register("a2", "Phase-3 watcher", release="2026-08", purpose="bug bash")
+        reg.register("a1", "Release push reminders", shared=True, purpose="push",
+                     cleanup_when="manual")
+        reg.register("a2", "Phase-3 watcher", release="2026-08", purpose="bug bash",
+                     cleanup_when="manual")
         # shared entry stores release=None
         shared = reg.list(scope="shared")
         assert len(shared) == 1 and shared[0]["release"] is None
@@ -722,7 +724,7 @@ def test_registry_register_list_deregister():
         rel = reg.list(release="2026-08")
         assert [e["id"] for e in rel] == ["a2"]
         # upsert by id (no duplicates)
-        reg.register("a2", "Phase-3 watcher v2", release="2026-08")
+        reg.register("a2", "Phase-3 watcher v2", release="2026-08", cleanup_when="manual")
         rel = reg.list(release="2026-08")
         assert len(rel) == 1 and rel[0]["name"] == "Phase-3 watcher v2"
         # deregister
@@ -742,9 +744,9 @@ def test_registry_records_step_linkage_and_reverse_lookup():
     with tempfile.TemporaryDirectory() as tmp:
         reg = AutomationRegistry(tmp)
         reg.register("m", "CCD morning", release="2026-09", purpose="reminders",
-                     steps=["ccd.final_reminder", "ccd.pr_reminder"])
+                     steps=["ccd.final_reminder", "ccd.pr_reminder"], cleanup_when="steps_done")
         reg.register("n", "CCD noon", release="2026-09", purpose="loc",
-                     steps=["ccd.localization"])
+                     steps=["ccd.localization"], cleanup_when="steps_done")
         # forward: automation -> steps
         m = reg.list(release="2026-09", step="ccd.final_reminder")[0]
         assert m["steps"] == ["ccd.final_reminder", "ccd.pr_reminder"]
@@ -768,21 +770,24 @@ def test_registry_kind_taxonomy_and_guard():
         reg = AutomationRegistry(tmp)
         # no steps → release-level (e.g. the hourly push-reminder / tick automation)
         pr = reg.register("pr", "Release push reminders", release="2026-09",
-                          purpose="hourly advance + digest")
+                          purpose="hourly advance + digest", cleanup_when="release_done")
         assert pr["kind"] == "release-level" and pr["steps"] == []
         assert reg.list(kind="release-level")[0]["id"] == "pr"
         # steps → step-driving
-        m = reg.register("m", "CCD morning", release="2026-09", steps=["ccd.final_reminder"])
+        m = reg.register("m", "CCD morning", release="2026-09",
+                         steps=["ccd.final_reminder"], cleanup_when="steps_done")
         assert m["kind"] == "step-driving"
         assert reg.list(kind="step-driving")[0]["id"] == "m"
         # contradictions are rejected
         try:
-            reg.register("bad", "Bad", release="2026-09", kind="step-driving")
+            reg.register("bad", "Bad", release="2026-09", kind="step-driving",
+                         cleanup_when="steps_done")
             assert False, "expected ValueError for step-driving with no steps"
         except ValueError:
             pass
         try:
-            reg.register("bad2", "Bad2", release="2026-09", steps=["ccd.x"], kind="release-level")
+            reg.register("bad2", "Bad2", release="2026-09", steps=["ccd.x"],
+                         kind="release-level", cleanup_when="steps_done")
             assert False, "expected ValueError for release-level with steps"
         except ValueError:
             pass

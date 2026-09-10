@@ -84,12 +84,12 @@ def build(state):
             "subject": subject,
             "body": res["html"],
             "isHtml": True,
-            # After sending, stamp + close, then the skill deregisters the daily automation.
+            # After sending, stamp + close, then run the central automation cleanup plan.
             "followup_command": f"record-status-email --release {state.release_id} --final",
         },
         record_as=ID,
         summary=f"Send the CLOSING {month_year} status email to "
                 f"{len(recipients)} recipient(s) + close the daily status automation",
-        note="final status email (Phase 4 complete); deregister the daily status-email automation (`<release> · Phases 2–4 — daily status email`) after",
+        note="final status email (Phase 4 complete); run automation cleanup, delete the daily status-email automation, then deregister it",
         outbound=True,
     )

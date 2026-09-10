@@ -80,3 +80,19 @@ def test_status_email_command_gates_and_stamp():
         finally:
             prs.broker_change_list = orig
 
+
+def test_final_status_recorder_completes_terminal_step():
+    import argparse
+    import tempfile
+    from orchestrator import cli_common as _C
+    from orchestrator.commands import status_email_cmd as SEC
+    with tempfile.TemporaryDirectory() as d:
+        rid = "2026-08"
+        st = _status_state("finalize")
+        _C.save_state(st, d, rid)
+        args = argparse.Namespace(runs_root=d, release=rid, config=CONFIG,
+                                  as_of="2026-08-12", final=True)
+        assert SEC.cmd_record_status_email(args) == 0
+        saved = _C.load_state(d, rid)
+        assert saved.last_status_email_date == "2026-08-12"
+        assert saved.is_done("finalize", "final_status_email")

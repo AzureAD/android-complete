@@ -29,6 +29,9 @@
 #              time-of-day one (e.g. noon triggers localization, a poller watches it)
 #              and their steps need not declare fire_at_local.
 #   purpose  : one-line description (stored in the registry)
+#   cleanup_when : REQUIRED lifecycle rule for the central cleanup planner:
+#              steps_done | steps_settled | phase_done:<phase> |
+#              step_flag:<phase.step>:<data-key> | release_done | manual
 
 version: 1
 
@@ -39,6 +42,7 @@ automations:
     steps:
       - ccd.final_reminder      # email: code complete is TODAY
       - ccd.pr_reminder         # Teams: merge required PRs before the 11 PM cut
+    cleanup_when: steps_done
     purpose: "Send the CCD-day code-complete email + the Code reviews PR-merge reminder"
 
   - slug: ccd-noon
@@ -46,14 +50,17 @@ automations:
     phase: ccd
     steps:
       - ccd.localization        # trigger pipeline 405133 (isCreatePrSelected=true)
+    cleanup_when: steps_settled
     purpose: "Trigger the localization pipeline at noon"
 
   - slug: ccd-localization-poller
     label: "localization poller"
     phase: ccd
     every: "10 minutes"
+    on_demand: true
     steps:
       - ccd.localization        # poll the triggered run (check-localization)
+    cleanup_when: steps_settled
     purpose: "Poll the localization run every 10 min; email on 3h timeout, post the PR on completion"
 
   # ON-DEMAND (not provisioned at release start). Created only when Build & RC
@@ -67,6 +74,7 @@ automations:
     on_demand: true
     steps:
       - build_verify.rc_report  # poll the in-flight RC (poll-rc): re-gate on completion, nudge at 6h
+    cleanup_when: steps_settled
     purpose: "Poll a re-triggered RC every 30 min; hold while in-flight, re-apply the gate on completion, courtesy-nudge the owner at 6h"
 
   # ON-DEMAND (not provisioned at release start). Created when `bugbash_updates` fires the
@@ -81,6 +89,7 @@ automations:
     on_demand: true
     steps:
       - bug_bash.bugbash_updates  # post a progress update every 2h (post-bugbash-update)
+    cleanup_when:
+      - step_flag:bug_bash.bugbash_updates:poll_complete
+      - phase_done:bug_bash
     purpose: "Post a Bug Bash progress update to the meeting chat every 2h (working hours); @mention owners with remaining tests; stop when all complete or the owner signs off"
-
-

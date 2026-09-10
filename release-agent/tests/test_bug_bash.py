@@ -649,6 +649,7 @@ def test_bugbash_updates_composes_needs_skill():
     assert out["kind"] == "needs_skill" and out["tool"] == "workiq_send_chat_message"
     assert out["payload"]["chatId"] == "19:meeting_X@thread.v2"
     assert out["payload"]["_mentions"] == [{"id": 0, "upn": "a@x", "name": "Alice"}]
+    assert out["payload"]["_automation"] == {"on_demand": "bug-bash-update-poller"}
     assert "September 2026 Bug Bash" in out["payload"]["content"]
     assert out["record_as"] == "bugbash_updates" and out["outbound"] is True
     assert _steps.get_step("bug_bash", "bugbash_updates").KIND == "scout"
@@ -710,6 +711,8 @@ def test_post_bugbash_update_decisions():
             "a@x": {"name": "Alice", "total": 2, "done": 2, "remaining": 0, "tests": []}}}
         _, dec = run("2026-08-21T10:00:00", {"progress": allc})
         assert dec["decision"] == "complete" and dec["total"] == 2
+        assert _C.load_state(d, rid).get_step(
+            "bug_bash", "bugbash_updates").data["poll_complete"] is True
 
         # no chat activated → no_chat
         st2 = _bb_updates_state(chat_id=None)
@@ -772,4 +775,3 @@ def test_clone_plans_name_override_knob():
     st2, out2 = _bb_build("clone_plans_auth",
                           {"name": "TEST Android/release/08/2026", "existing": None, "create_id": "2"})
     assert "TEST Android/release/08/2026" in out2["note"]
-

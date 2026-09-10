@@ -63,6 +63,9 @@ This is the Phase-2 go/no-go — there is **no separate approval gate**.
        is **`in_flight`** (⏳ "RC running — Scout is polling") — **no owner action**; the
        `build-verify-rc-poller` re-checks every 30 min and re-applies this gate the moment
        the run completes. If it runs past 6h the owner gets one courtesy nudge.
+       After `rc-retriggered`, provision it with `automation plan --release <id>
+       --on-demand build-verify-rc-poller --json`; create exactly the returned
+       automation and register all fields including `cleanup_when`.
     2. **Cherry-pick (real bug)** — if a product bug is driving the failures, the owner
        patches it via the **broker cherry-pick process**
        (`…/internal-release-checklist/cherry-pick-process-for-broker-libraries`); the

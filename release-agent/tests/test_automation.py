@@ -125,8 +125,10 @@ def test_registry_relocates_release_automations_into_release_folder():
     import os as _os, json as _json
     with tempfile.TemporaryDirectory() as tmp:
         reg = AutomationRegistry(tmp, release="2026-08")
-        reg.register("a2", "Phase-3 watcher", release="2026-08", steps=["bug_bash.bugbash_complete"])
-        reg.register("sh", "Release push reminders", shared=True, purpose="push")
+        reg.register("a2", "Phase-3 watcher", release="2026-08",
+                     steps=["bug_bash.bugbash_complete"], cleanup_when="steps_done")
+        reg.register("sh", "Release push reminders", shared=True, purpose="push",
+                     cleanup_when="manual")
         rel_file = _os.path.join(tmp, "2026-08", "_automations.json")
         shared_file = _os.path.join(tmp, "_automations.json")
         # the release automation is co-located with the release; shared stays machine-wide
@@ -160,6 +162,8 @@ def test_automation_plan_derives_specs_from_ccd():
     # registration carries slug + schedule so sync can re-pin on a CCD move
     assert by["ccd-morning"]["registration"]["slug"] == "ccd-morning"
     assert by["ccd-morning"]["registration"]["schedule"] == "cron: 0 9 9 9 *"
+    assert by["ccd-morning"]["registration"]["cleanup_when"] == "steps_done"
+    assert by["build-verify-rc-poller"]["cleanup_when"] == "steps_settled"
 
 
 def test_automation_names_follow_standard_format():
@@ -192,6 +196,108 @@ def test_automation_name_helper_and_phase_label():
     assert A.phase_label(CONFIG, None) == "Release-wide"
 
 
+def test_cli_plan_separates_startup_and_on_demand_automations(capsys):
+    import json
+    import tempfile as _tf
+    from orchestrator import cli
+    with _tf.TemporaryDirectory() as d:
+        rid = "2026-09"
+        C.save_state(ReleaseState(release_id=rid, ccd="2026-09-09"), d, rid)
+        base = ["--runs-root", d, "automation", "plan", "--release", rid, "--json"]
+        assert cli.main(base) == 0
+        startup = json.loads(capsys.readouterr().out)["automations"]
+        assert startup and all(not a["on_demand"] for a in startup)
+        assert {a["slug"] for a in startup} == {"ccd-morning", "ccd-noon"}
+
+        assert cli.main(base[:-1] + ["--on-demand", "build-verify-rc-poller", "--json"]) == 0
+        on_demand = json.loads(capsys.readouterr().out)["automations"]
+        assert [a["slug"] for a in on_demand] == ["build-verify-rc-poller"]
+
+
+def test_cleanup_plan_applies_declared_lifecycle_rules():
+    from orchestrator import automations as A
+    from orchestrator.state import StepState
+    import yaml
+    st = ReleaseState(release_id="2026-09", status="running")
+    for sid in ("final_reminder", "pr_reminder", "localization"):
+        st.set_step("ccd", sid, StepState(status="done"))
+    st.set_step("build_verify", "rc_report", StepState(status="blocked"))
+    st.set_step("bug_bash", "bugbash_updates",
+                StepState(status="done", data={"poll_complete": True}))
+    entries = [
+        {"id": "morning", "name": "Morning", "kind": "step-driving",
+         "steps": ["ccd.final_reminder", "ccd.pr_reminder"], "cleanup_when": "steps_done"},
+        {"id": "rc", "name": "RC poller", "kind": "step-driving",
+         "steps": ["build_verify.rc_report"], "cleanup_when": "steps_settled"},
+        {"id": "bug", "name": "Bug poller", "kind": "step-driving",
+         "steps": ["bug_bash.bugbash_updates"],
+         "cleanup_when": ["step_flag:bug_bash.bugbash_updates:poll_complete",
+                          "phase_done:bug_bash"]},
+        {"id": "loc", "name": "Localization poller", "kind": "step-driving",
+         "steps": ["ccd.localization"], "cleanup_when": "steps_settled"},
+        {"id": "push", "name": "Push", "kind": "release-level",
+         "steps": [], "cleanup_when": "release_done"},
+        {"id": "manual", "name": "Manual", "kind": "release-level",
+         "steps": [], "cleanup_when": "manual"},
+    ]
+    first = A.cleanup_plan(st, entries, CONFIG)
+    assert [r["id"] for r in first["removals"]] == ["bug", "loc", "morning", "rc"]
+    assert first["problems"] == []
+    st.status = "complete"
+    second = A.cleanup_plan(st, entries, CONFIG)
+    assert [r["id"] for r in second["removals"]][-1] == "push"
+    assert "manual" not in [r["id"] for r in second["removals"]]
+
+    # Owner sign-off also ends the Bug Bash poller when tests did not reach 100%.
+    update_step = st.get_step("bug_bash", "bugbash_updates")
+    update_step.data.pop("poll_complete")
+    st.set_step("bug_bash", "bugbash_updates", update_step)
+    phase = yaml.safe_load(open(CONFIG, encoding="utf-8"))
+    for step in next(p for p in phase["phases"] if p["id"] == "bug_bash")["steps"]:
+        st.set_step("bug_bash", step["id"], StepState(status="done"))
+    signed_off = A.cleanup_plan(st, entries, CONFIG)
+    assert "bug" in [r["id"] for r in signed_off["removals"]]
+
+
+def test_registry_requires_cleanup_rule():
+    from orchestrator.registry import AutomationRegistry
+    import tempfile as _tf
+    import pytest
+    with _tf.TemporaryDirectory() as d:
+        with pytest.raises(ValueError, match="cleanup_when"):
+            AutomationRegistry(d).register("x", "No lifecycle", release="2026-09")
+
+
+def test_generated_prompts_run_central_cleanup():
+    from orchestrator import automations as A
+    plan = A.plan(CONFIG, "2026-09", "2026-09-09")
+    for spec in plan["automations"]:
+        assert "automation cleanup --release 2026-09 --json" in spec["prompt"]
+        assert "m_delete_automation" in spec["prompt"]
+        assert "only after" in spec["prompt"]
+
+
+def test_cleanup_command_returns_registered_ids_without_mutating_registry(capsys):
+    import json
+    import tempfile as _tf
+    from orchestrator import cli
+    from orchestrator.registry import AutomationRegistry
+    from orchestrator.state import StepState
+    with _tf.TemporaryDirectory() as d:
+        rid = "2026-09"
+        st = ReleaseState(release_id=rid)
+        st.set_step("ccd", "final_reminder", StepState(status="done"))
+        C.save_state(st, d, rid)
+        reg = AutomationRegistry(d, rid)
+        reg.register("morning", "Morning", release=rid,
+                     steps=["ccd.final_reminder"], cleanup_when="steps_done")
+        assert cli.main(["--runs-root", d, "automation", "cleanup",
+                         "--release", rid, "--json"]) == 0
+        result = json.loads(capsys.readouterr().out)
+        assert [r["id"] for r in result["removals"]] == ["morning"]
+        assert reg.list(release=rid)[0]["id"] == "morning"  # skill deletes, then deregisters
+
+
 
 
 def test_automation_sync_repins_on_ccd_change():
@@ -208,11 +314,14 @@ def test_automation_sync_repins_on_ccd_change():
         C.save_state(st, d, rid)
         reg = AutomationRegistry(d)
         reg.register("a-morn", "CCD morning", release=rid, slug="ccd-morning",
-                     steps=["ccd.final_reminder", "ccd.pr_reminder"], schedule="cron: 0 9 26 8 *")
+                     steps=["ccd.final_reminder", "ccd.pr_reminder"],
+                     schedule="cron: 0 9 26 8 *", cleanup_when="steps_done")
         reg.register("a-noon", "CCD noon", release=rid, slug="ccd-noon",
-                     steps=["ccd.localization"], schedule="cron: 0 12 26 8 *")
+                     steps=["ccd.localization"], schedule="cron: 0 12 26 8 *",
+                     cleanup_when="steps_done")
         reg.register("a-poll", "poller", release=rid, slug="ccd-localization-poller",
-                     steps=["ccd.localization"], schedule="every 10 minutes")
+                     steps=["ccd.localization"], schedule="every 10 minutes",
+                     cleanup_when="steps_done")
 
         def sync():
             ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, json=True)
@@ -224,6 +333,7 @@ def test_automation_sync_repins_on_ccd_change():
         # in sync → nothing changed
         u0 = {u["slug"]: u for u in sync()["updates"]}
         assert all(not u["changed"] for u in u0.values())
+        assert u0["ccd-morning"]["cleanup_when"] == "steps_done"
         # noon matched to the CRON, not the poller's 'every 10 minutes' (slug disambiguates)
         assert u0["ccd-noon"]["desired_schedule"] == "cron: 0 12 26 8 *"
         # move the CCD within the month → the two cron automations go stale, poller unchanged
@@ -578,4 +688,3 @@ def test_record_nativeauth_notify_stores_or_holds():
         after = _C.load_state(d, rid)
         assert not after.is_done("bug_bash", "notify_native_auth")
         assert after.get_step("bug_bash", "notify_native_auth").status == "blocked"
-

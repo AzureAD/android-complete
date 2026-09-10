@@ -935,20 +935,19 @@ bug_bash.bugbash_updates:
     = [{id,upn,name}] — the skill builds the mentions array + matching <at id="i"> tags so
     owners with remaining tests are pinged), then provisions the poller.
   how: >
-    After the first post, provision the poller (it's on-demand, so it is NOT in
-    `automation plan` — create it directly like the RC poller): `m_create_automation`
-    with name "Release <id> — bug-bash update poller", schedule "every 2 hours", and the
-    prompt from this step's `automation_prompt(release, {interval: true})`; then
-    `automation register --id <scout-id> --name "..." --release <id> --slug
-    bug-bash-update-poller --step bug_bash.bugbash_updates`. Each tick runs
+    After the first post, provision the on-demand poller from its single source:
+    `automation plan --release <id> --on-demand bug-bash-update-poller --json`.
+    Create exactly that returned automation, then register every `registration`
+    field including `cleanup_when`. Each tick runs
     `post-bugbash-update --release <id>` and acts on the decision (off_hours → nothing;
     post → send content+mentions to chatId; complete → send the completion summary, then
-    DEREGISTER the poller). Blocks if the meeting chat isn't activated (run activate_chat).
+    run the central cleanup plan, DELETE the live poller, then deregister it).
+    Blocks if the meeting chat isn't activated (run activate_chat).
   faqs:
     - q: "When do the updates run?"
       a: "Every 2 hours during working hours — 09:00–18:00 America/Los_Angeles, weekdays only, skipping hardcoded US federal holidays. Outside that window a tick returns off_hours and sends nothing; it resumes at 09:00 the next working day."
     - q: "When do the updates stop?"
-      a: "Either automatically when every test is complete (a tick returns `complete`, posts a wrap-up, and deregisters the poller) OR when the owner attests the bugbash_complete gate (the skill deregisters the poller then)."
+      a: "Either automatically when every test is complete (a tick records poll_complete, posts a wrap-up, and central cleanup deletes then deregisters the poller) OR when the owner signs off and cleanup removes it."
     - q: "Why group by AssignedTo instead of the test point's tester?"
       a: "The ADO test-point `tester` field is NOT synced with the case's System.AssignedTo. distribute_tests sets AssignedTo, so progress is grouped by AssignedTo to reflect who actually owns each test."
     - q: "Why are some of the owner's failures marked 'Automated failure — triage'?"
@@ -1016,17 +1015,17 @@ bug_bash.bugbash_complete:
     The owner approves it (`approve` / `done --step bugbash_complete`). Until then — or until
     every test auto-completes — the `bug-bash-update-poller` keeps posting every 2h.
   how: >
-    When the owner signs off, DEREGISTER the bug-bash update poller so it stops posting:
-    `automation list --release <id> --step-filter bug_bash.bugbash_updates --json` to find its
-    id, then `automation deregister --id <id>`. (If all tests had already completed, the poller
-    deregistered itself on its last `complete` tick — deregister is idempotent/safe to skip.)
+    When the owner signs off, run `automation cleanup --release <id> --json`.
+    For the returned bug-bash poller, call `m_delete_automation` first and deregister
+    only after deletion succeeds. If all tests already completed, its `poll_complete`
+    flag makes the same cleanup rule eligible on the last poll.
   faqs:
     - q: "Can I sign off before every single test passes?"
       a: "Yes — this is a judgement gate. If the remaining tests are triaged/blocked and the team agrees the bash is done, approve it. It doesn't require 100% pass; that's what the sign-off is for."
     - q: "What about the failed Authenticator automation cases?"
       a: "Those were pre-assigned to you (the owner) by ui_test_status and surfaced in ui_failures. Review/triage them as part of your sign-off — they don't block the gate, but you should have ruled on them before approving."
     - q: "What stops the 2-hour chat updates?"
-      a: "Two things: the poller stops itself when every test is complete, and approving this gate deregisters the poller. Either way the updates end when the bash is done."
+      a: "Two things make the central cleanup rule eligible: the all-tests-complete tick records poll_complete, or the phase finishes. Cleanup deletes the Scout automation first and deregisters it after success."
 
 # ============================= Phase 4 · finalize =============================
 
@@ -1350,14 +1349,12 @@ finalize.final_status_email:
     - "template: orchestrator/status_email.py (same as the daily email)"
   how: >
     Runs via step-action → workiq_send_email with the composed closing email; the payload names
-    `record-status-email --final` as the follow-up (stamps the day + closes). After sending +
-    recording, DEREGISTER the daily partner status-email automation (`<release> · Phases 2–4 — daily
-    status email`) via `automation deregister`. To test,
-    set the `send_to` mock to your own address.
+    `record-status-email --final` as the follow-up (stamps the day, completes this step, and
+    closes the channel). Then run `automation cleanup --release <id> --json`; delete the
+    returned daily status automation with `m_delete_automation`, and deregister only after
+    deletion succeeds. To test, set the `send_to` mock to your own address.
   faqs:
     - q: "Won't this double-send with the daily automation?"
       a: "The daily automation is idempotent per day (last_status_email_date), and its window ends at Phase 5. The terminal step is the guaranteed CLOSING send; at worst you get a morning daily + the closing email on the last day, which is intended."
     - q: "Who tears down the daily automation?"
-      a: "The skill, after this step completes — it deregisters the daily partner status-email automation (`<release> · Phases 2–4 — daily status email`; also removed at release close as a backstop)."
-
-
+      a: "The central cleanup plan makes it eligible after Phase 4 completes. The skill deletes the live automation first and deregisters it after success; release-close cleanup is the backstop."

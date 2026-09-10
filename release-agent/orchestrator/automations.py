@@ -23,6 +23,16 @@ import yaml
 import steps as steps_pkg
 from orchestrator import schedule
 
+_CLEANUP_RULES = {"steps_done", "steps_settled", "release_done", "manual"}
+
+
+def _cleanup_rules(value) -> list:
+    return list(value) if isinstance(value, list) else [value]
+
+
+def _valid_cleanup_rule(rule) -> bool:
+    return rule in _CLEANUP_RULES or str(rule).startswith(("phase_done:", "step_flag:"))
+
 
 def automations_path(config_path: str) -> str:
     """config/automations.yaml sits next to phases.yaml (config_path)."""
@@ -109,6 +119,9 @@ def validate(config_path: str) -> list:
     owned = {}                       # step_key -> slug (time-of-day only)
     for d in defs:
         slug = d.get("slug", "?")
+        rules = _cleanup_rules(d.get("cleanup_when"))
+        if not rules or not all(_valid_cleanup_rule(rule) for rule in rules):
+            problems.append(f"automation '{slug}' has invalid/missing cleanup_when")
         s_steps = d.get("steps", []) or []
         if not s_steps:
             problems.append(f"automation '{slug}' has no steps")
@@ -175,6 +188,11 @@ def _prompt_for(spec: dict, release: str) -> str:
     prompt below."""
     steps = spec.get("steps") or []
     step_list = ", ".join(steps)
+    cleanup = (
+        f"\nFinally run `automation cleanup --release {release} --json`. For each removal "
+        f"IN ORDER, call `m_delete_automation` with its id; only after that succeeds run "
+        f"`automation deregister --id <id>`. If deletion fails, leave the registry entry "
+        f"and report it so a later worker can retry cleanup.")
 
     # Single-step automation whose step owns a bespoke prompt → delegate to the module.
     if len(steps) == 1:
@@ -184,7 +202,7 @@ def _prompt_for(spec: dict, release: str) -> str:
         if callable(fn):
             prompt = fn(release, spec)
             if prompt:
-                return prompt
+                return prompt + cleanup
 
     # Default: send/trigger + record-step done (reminders).
     return (
@@ -203,7 +221,7 @@ def _prompt_for(spec: dict, release: str) -> str:
         f"4. silently journal it: `journal --release {release} --source scout "
         f"--kind automation --text \"<slug> ran <step>\"`.\n"
         f"Respect the mocks.local.yaml redirects if present. Report a one-line summary."
-    )
+    ) + cleanup
 
 
 def plan(config_path: str, release: str, ccd: str) -> dict:
@@ -251,6 +269,7 @@ def plan(config_path: str, release: str, ccd: str) -> dict:
             # start — the skill creates them only when their trigger condition arises
             # (an in-flight re-triggered RC) and tears them down when it clears.
             "on_demand": bool(d.get("on_demand")),
+            "cleanup_when": d.get("cleanup_when"),
         }
         spec["prompt"] = _prompt_for(spec, release)
         # Exactly what to record after creating it, so linkage + schedule are captured
@@ -258,6 +277,65 @@ def plan(config_path: str, release: str, ccd: str) -> dict:
         spec["registration"] = {
             "name": name, "release": release, "purpose": d.get("purpose", ""),
             "steps": s_steps, "kind": "step-driving", "schedule": sched, "slug": slug,
+            "cleanup_when": d.get("cleanup_when"),
         }
         out.append(spec)
     return {"release": release, "ccd": ccd, "problems": problems, "automations": out}
+
+
+def cleanup_plan(state, entries: list, config_path: str) -> dict:
+    """Decide which registered automations reached their declared lifecycle end."""
+    with open(config_path, "r", encoding="utf-8") as fh:
+        phases = {p["id"]: p for p in (yaml.safe_load(fh) or {}).get("phases", [])}
+    removals, problems = [], []
+
+    def evaluate(rule, entry, steps):
+        if rule == "manual":
+            return False, ""
+        if rule == "release_done":
+            return state.status == "complete", "release complete"
+        if rule == "steps_done":
+            return (bool(steps) and all(state.is_done(*s.split(".", 1)) for s in steps),
+                    "all driven steps done")
+        if rule == "steps_settled":
+            return (bool(steps) and all(
+                state.get_step(*s.split(".", 1)).status in ("done", "skipped", "blocked")
+                for s in steps), "all driven steps settled")
+        if isinstance(rule, str) and rule.startswith("phase_done:"):
+            phase_id = rule.split(":", 1)[1]
+            phase = phases.get(phase_id)
+            if phase is None:
+                problems.append(f"{entry.get('id')}: unknown cleanup phase '{phase_id}'")
+                return False, ""
+            return (all(state.is_done(phase_id, s["id"]) for s in phase.get("steps", [])),
+                    f"phase {phase_id} complete")
+        if isinstance(rule, str) and rule.startswith("step_flag:"):
+            try:
+                step_key, flag = rule[len("step_flag:"):].rsplit(":", 1)
+                phase_id, step_id = step_key.split(".", 1)
+            except ValueError:
+                problems.append(f"{entry.get('id')}: malformed cleanup rule '{rule}'")
+                return False, ""
+            return (bool(state.get_step(phase_id, step_id).data.get(flag)),
+                    f"{step_key}.{flag} set")
+        problems.append(f"{entry.get('id')}: invalid/missing cleanup_when")
+        return False, ""
+
+    for entry in entries:
+        rules = _cleanup_rules(entry.get("cleanup_when"))
+        steps = entry.get("steps") or []
+        if rules == ["manual"]:
+            continue
+        due, reason = False, ""
+        for rule in rules:
+            due, reason = evaluate(rule, entry, steps)
+            if due:
+                break
+        if due:
+            removals.append({
+                "id": entry["id"], "name": entry["name"], "slug": entry.get("slug"),
+                "cleanup_when": entry.get("cleanup_when"), "reason": reason,
+            })
+    kinds = {e["id"]: e.get("kind") for e in entries}
+    removals.sort(key=lambda r: (kinds.get(r["id"]) == "release-level", r["name"]))
+    return {"release": state.release_id, "removals": removals, "problems": problems}

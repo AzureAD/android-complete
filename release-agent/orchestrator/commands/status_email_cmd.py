@@ -85,9 +85,13 @@ def cmd_status_email(args):
 def cmd_record_status_email(args):
     """Stamp the day a status email was sent (idempotency) and, with --final, close the channel
     (nothing more to send). The skill runs this AFTER a successful send."""
-    st = C.load_state(args.runs_root, args.release)
+    st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     today = C.parse_as_of(args) or date.today()
     st.last_status_email_date = today.isoformat()
+    if getattr(args, "final", False):
+        orch.record_scout_step(
+            "finalize", "final_status_email", "pass",
+            "Closing partner status email sent; daily status channel closed.")
     C.save_state(st, args.runs_root, args.release)
     print(_json.dumps({"recorded": today.isoformat(), "final": bool(getattr(args, "final", False)),
                        "release": args.release}))

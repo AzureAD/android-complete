@@ -388,7 +388,10 @@ def automation_prompt(release: str, spec: dict) -> str:
         f"3. run `record-localization-run --release {release} --build-id <buildId>` "
         f"— this leaves the step IN-FLIGHT (do NOT record-step done; the poller "
         f"finishes it once the run completes or times out);\n"
-        f"4. silently journal: `journal --release {release} --source scout --kind "
+        f"4. provision its poller with `automation plan --release {release} --on-demand "
+        f"ccd-localization-poller --json`; create exactly the returned automation and "
+        f"register every field including cleanup_when;\n"
+        f"5. silently journal: `journal --release {release} --source scout --kind "
         f"automation --text \"ccd-noon triggered ccd.localization\"`.")
 
 

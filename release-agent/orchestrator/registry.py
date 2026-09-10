@@ -89,7 +89,8 @@ class AutomationRegistry:
     # ---- api ----
     def register(self, auto_id: str, name: str, release: str = None,
                  shared: bool = False, purpose: str = "", steps: list = None,
-                 kind: str = None, schedule: str = None, slug: str = None) -> dict:
+                 kind: str = None, schedule: str = None, slug: str = None,
+                 cleanup_when: str = None) -> dict:
         """Record an automation (upsert by id). Shared automations store release=None and
         live in the machine-wide file; release automations live in <release>/. `steps` is
         the list of '<phase>.<step>' ids this automation drives — the automation<->step
@@ -114,6 +115,8 @@ class AutomationRegistry:
             raise ValueError("a 'step-driving' automation must declare at least one step")
         elif kind == "release-level" and steps:
             raise ValueError("a 'release-level' automation must not own steps")
+        if not cleanup_when:
+            raise ValueError("cleanup_when is required for every automation")
         entry = {
             "id": auto_id,
             "name": name,
@@ -124,6 +127,7 @@ class AutomationRegistry:
             "purpose": purpose,
             "steps": steps,
             "schedule": schedule or None,
+            "cleanup_when": cleanup_when,
             "registered_at": _now(),
         }
         # Upsert: drop any prior copy of this id wherever it lived, then write to its

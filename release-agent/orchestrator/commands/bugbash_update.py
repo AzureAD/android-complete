@@ -8,8 +8,8 @@ on:
   off_hours  — outside the working window; send nothing.
   no_chat    — the meeting chat isn't activated (run activate_chat).
   error      — couldn't read progress (detail included).
-  complete   — every test is done: content is the completion summary; the poller posts it,
-               deregisters itself, and the owner signs off (bugbash_complete).
+  complete   — every test is done: records poll_complete; the poller posts the summary,
+               then central cleanup removes it and the owner signs off.
   post       — content (HTML) + mentions to send to chatId.
 
 `--now` overrides the clock for the window math (tests). `--force` skips the window gate
@@ -61,6 +61,10 @@ def cmd_post_bugbash_update(args):
     month_year = schedule.target_month_label(st) or "Bug Bash"
 
     if BB.all_complete(progress):
+        step = st.get_step("bug_bash", "bugbash_updates")
+        step.data["poll_complete"] = True
+        st.set_step("bug_bash", "bugbash_updates", step)
+        C.save_state(st, args.runs_root, args.release)
         summary = (f'<div style="font-family:\'Segoe UI\',Arial,sans-serif;font-size:14px;">'
                    f'<p><b>🎉 {month_year} Bug Bash — all {progress["total"]} tests complete!</b><br>'
                    f'Thanks everyone. Closing out the bash; no more automated updates.</p></div>')

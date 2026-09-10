@@ -304,7 +304,8 @@ def test_automation_localization_poller_is_interval():
     by = {a["slug"]: a for a in A.plan(CONFIG, "2026-09", "2026-09-09")["automations"]}
     poller = by["ccd-localization-poller"]
     assert poller["interval"] == "10 minutes"
-    assert poller["schedule"] == "every 10 minutes" and poller["one_shot"] is False
+    assert (poller["schedule"] == "every 10 minutes" and poller["one_shot"] is False
+            and poller["on_demand"] is True)
     assert poller["steps"] == ["ccd.localization"]
     # the noon trigger also drives localization (one-shot) — shared step is fine
     assert by["ccd-noon"]["steps"] == ["ccd.localization"] and by["ccd-noon"]["one_shot"] is True
@@ -335,4 +336,3 @@ def test_ccd_phase_not_due_before_ccd_and_no_scout_pending():
     r2 = orch.status_report()
     assert r2["current_phase"] == "ccd"
     assert set(r2["scout_pending"]) == {"final_reminder", "pr_reminder", "localization"}
-

@@ -103,6 +103,7 @@ def build(state):
             "content": content,
             "contentType": "html",
             "_mentions": mentions,     # [{id,upn,name}] — skill builds the <at> mention array
+            "_automation": {"on_demand": "bug-bash-update-poller"},
         },
         record_as=ID,
         summary=(f"Post the first {month_year} bug-bash update ({progress['done']}/"
@@ -127,8 +128,8 @@ def automation_prompt(release: str, spec: dict) -> str:
         f"@mentions (contentType html, <at id=\"i\">Name</at> tags matching the mentions "
         f"array) so owners with remaining tests are pinged.\n"
         f"  • complete → every test is done: send decision.content (the completion summary) "
-        f"to decision.chatId, then DEREGISTER this poller (`automation deregister --id "
-        f"<this automation's id>`) and tell the owner the bash is ready to sign off "
+        f"to decision.chatId; the command records the terminal poll flag and the common "
+        f"cleanup planner removes this automation. Tell the owner the bash is ready to sign off "
         f"(bugbash_complete).\n"
         f"  • no_chat / error → surface briefly; nothing to send.\n"
         f"Silently journal: `journal --release {release} --source scout --kind automation "
