@@ -2,8 +2,8 @@
 `auth_ecs`; checklist Phase 3.3 Step 9, relocated to run right after the Authenticator ECS
 build is verified).
 
-Once the Authenticator release-app build (AndroidBuild-1ES) exists, its version IS the bug-bash
-APK version. This step checks that telemetry for that version is landing in the ADX release
+The Authenticator ECS RC build captured by auth_ecs supplies the tested APK version,
+not the separate release-app/NGMS build. This step checks that telemetry for that version is landing in the ADX release
 cluster — proof that the build's instrumentation reaches Kusto from at least one device. The
 query is the checklist's own:
 
@@ -20,6 +20,7 @@ else `attention` — which surfaces the Android-Core-Team heads-up as a blocked 
 from __future__ import annotations
 
 import os as _os
+import re
 
 from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.lib.mockctx import mock_input, MISSING
@@ -37,7 +38,7 @@ VERSION_COLUMN = "AppInfo_Version"
 MOCKABLE = {
     "version": {"kind": "input",
                 "desc": "Use this bug-bash APK version instead of discovering it from the "
-                        "Authenticator release-app build (a REAL Kusto query on your version)."},
+                        "verified Authenticator ECS RC build (a REAL Kusto query on your version)."},
 }
 
 
@@ -78,22 +79,22 @@ def _query(version: str) -> str:
 
 
 def _version(state):
-    """The bug-bash APK version = the Authenticator release-app build's version. A `version`
+    """Use the current verified ECS RC APK, stripping its build-number RC suffix. A `version`
     mock overrides discovery. Returns (version, detail) — version is None on failure."""
     ov = mock_input("version", MISSING)
     if ov is not MISSING and ov:
         return (str(ov).strip(), "")
-    branch = (getattr(state, "versions", None) or {}).get("authenticator")
-    if not branch:
-        return (None, "no Authenticator release branch on record yet — Phase-2 "
-                      "orchestrator_health populates state.versions.authenticator")
-    from tools.pipelines import find_auth_release_build
-    ok, info, detail = find_auth_release_build(branch)
-    if not ok:
-        return (None, f"could not read the Authenticator release-app build ({detail})")
-    if not info:
-        return (None, "no succeeded Authenticator release-app build on the release branch yet")
-    return (info.get("version"), "")
+    from steps.build_verify._common import latest_rc
+    build = (latest_rc(state).get("auth") or {}).get("build") or {}
+    if not build.get("complete") or build.get("result") not in ("succeeded", "partiallySucceeded"):
+        return (None, "no successful Authenticator ECS RC build recorded for the current RC — "
+                      "run auth_ecs first")
+    number = build.get("build_number") or ""
+    match = re.fullmatch(r"(\d+\.\d+\.\d+)-rc(\d+)", number, re.IGNORECASE)
+    if not match or match.group(2) != str(build.get("run_id")):
+        return (None, f"Authenticator ECS build {build.get('run_id')} has a missing or invalid "
+                      f"APK build number ({number!r}) — re-run auth_ecs to capture it")
+    return (match.group(1), "")
 
 
 def build(state):
@@ -105,6 +106,23 @@ def build(state):
         return Blocked("telemetry_verify: could not read the ADX cluster coordinates from "
                        "config/readiness.yaml (adx_access item).")
 
+    from steps.build_verify._common import latest_rc
+    from tools.coordinates import coords
+    from tools.pipelines import auth_build_url
+    rc = latest_rc(state)
+    auth = rc.get("auth") or {}
+    apk = auth.get("build") or {}
+    pipeline = coords.pipeline("auth_build")
+    source = {
+        "rc": rc.get("rc"),
+        "org": pipeline["org"], "project": pipeline["project"],
+        "pipeline_id": pipeline["def"],
+        "build_id": apk.get("run_id"), "build_number": apk.get("build_number"),
+        "ui_test_build_id": (auth.get("test") or {}).get("run_id"),
+        "version_source": "ADO buildNumber: <AppInfo_Version>-rc<build_id>",
+    }
+    if mock_input("version", MISSING) is not MISSING:
+        source = {"version_source": "explicit test override"}
     return NeedsSkill(
         tool="kusto_query",
         payload={
@@ -112,6 +130,10 @@ def build(state):
             "database": database,
             "query": _query(version),
             "version": version,
+            "source": source,
+            "links": ([{"name": "Authenticator ECS APK build",
+                        "url": auth_build_url(source["build_id"])}]
+                      if source.get("build_id") else []),
             # After running the query, DON'T blind-record pass: read the Count and run this
             # follow-up with it — it passes only when telemetry is flowing (rows > 0), else it
             # records `attention` (post the heads-up in the Android Core Team channel).

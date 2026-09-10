@@ -29,9 +29,16 @@ steps run inside `next`. Each records the ADO run it evaluated as a Details 🔗
   version's telemetry is smoke-checked early.
 - **Resolve:** `step-action --release <id> --phase build_verify --step telemetry_verify` →
   `needs_skill` with `tool: kusto_query` and `payload` = `{cluster_uri, database, query, version,
-  followup_command}`. Run the query with the given `cluster_uri`+`database` (the ADX MCP), read
-  the returned **Count**, then run **`record-telemetry --release <id> --rows <N> --version <ver>`**
+  source, links, followup_command}`. The APK comes from the current RC's persisted
+  `pipeline_runs.rcs[].auth.build` captured by `auth_ecs` (pipeline 475778).
+  Its ADO `buildNumber` supplies the app version before `-rc<buildId>`; never substitute
+  the broker library version or the separate release-app pipeline 355246.
+  Run the query with the given `cluster_uri`+`database` (the ADX MCP), read
+  the returned **Count**, then run **`record-telemetry --release <id> --rows <N> --version <ver> --build-id <source.build_id>`**
   (do NOT blind-`record-step`):
+  The recorder rejects stale/mismatched build evidence and negative counts. It stores
+  source IDs, APK version/build number, query, cluster/database, count, timestamp and
+  build link in `steps["build_verify.telemetry_verify"]` in the release JSON.
   - **rows > 0 → pass** — telemetry is flowing; the step is done and the flow continues to `rc_report`.
   - **rows == 0 → `attention`** — the step BLOCKS. Post a heads-up in the **Android Core Team**
     channel that telemetry isn't reaching Kusto yet, then re-run once it is.

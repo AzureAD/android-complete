@@ -93,6 +93,7 @@ def test_find_auth_ecs_build_matches_live_release_versions(monkeypatch):
         {"id": 180488147, "status": "completed", "result": "partiallySucceeded",
          "templateParameters": {"adAccountsVersion": "16.6.0-RC1-local-flights"}},
         {"id": 180481190, "status": "completed", "result": "succeeded",
+         "buildNumber": "6.2609.6056-rc180481190",
          "templateParameters": {"adAccountsVersion": "16.6.0-RC1-ecs"}},
         {"id": 180488148, "templateParameters": {"adAccountsVersion": "16.6.0"}},
         {"id": 180488149, "templateParameters": {}},
@@ -103,6 +104,7 @@ def test_find_auth_ecs_build_matches_live_release_versions(monkeypatch):
     ok, info, detail = P.find_auth_ecs_build("release/2026/09/10")
     assert ok and not detail
     assert info == {"build_id": 180481190, "rc": 1, "version": "16.6.0-RC1-ecs",
+                    "build_number": "6.2609.6056-rc180481190",
                     "status": "completed", "result": "succeeded"}
     builds.remove(builds[1])
     ok, info, detail = P.find_auth_ecs_build("release/2026/09/10")
@@ -818,11 +820,46 @@ def test_telemetry_verify_composes_kusto_needsskill():
 
 
 def test_telemetry_verify_blocks_without_version():
-    """No Authenticator release branch on state → Blocked (nothing to query)."""
+    """No current verified ECS APK on state means there is nothing reliable to query."""
     from steps.build_verify import telemetry_verify as TV
     st = ReleaseState(release_id="2026-08")               # no versions.authenticator
     out = TV.build(st)
-    assert out.kind == "blocked" and "release branch" in out.reason
+    assert out.kind == "blocked" and "run auth_ecs first" in out.reason
+
+
+def test_telemetry_uses_captured_ecs_apk_not_release_app(monkeypatch):
+    from tools import pipelines as P
+    from steps.build_verify import telemetry_verify as TV
+    from steps.build_verify._common import latest_rc
+
+    def unexpected_lookup(*args, **kwargs):
+        raise AssertionError("Telemetry must reuse the captured APK, not rediscover a build")
+
+    monkeypatch.setattr(P, "find_auth_release_build", unexpected_lookup)
+    monkeypatch.setattr(P, "find_auth_ecs_build", unexpected_lookup)
+    st, orch = _bv_state({"build_verify.auth_ecs": {
+        "auth_build": {"build_id": 180481190, "rc": 1, "version": "16.6.0-RC1-ecs",
+                       "build_number": "6.2609.6056-rc180481190",
+                       "status": "completed", "result": "succeeded"},
+        "test_build": 180491310, "suites": _auth_suites(82.76, 100.0)}})
+    assert _bv_build(orch, st, "auth_ecs")["kind"] == "done"
+    assert latest_rc(st)["auth"]["build"]["build_number"] == "6.2609.6056-rc180481190"
+    out = TV.build(st)
+    assert out.kind == "needs_skill"
+    assert out.payload["version"] == "6.2609.6056"
+    assert 'AppInfo_Version == "6.2609.6056"' in out.payload["query"]
+    assert "16.6.0" not in out.payload["query"]
+
+    build = latest_rc(st)["auth"]["build"]
+    for number in (None, "16.6.0-RC1-ecs", "6.2609.6056-rc999", "20260910.5"):
+        build["build_number"] = number
+        assert TV.build(st).kind == "blocked"
+    build["build_number"] = "6.2609.6056-rc180481190"
+    build["result"] = "failed"
+    assert TV.build(st).kind == "blocked"
+    build["result"] = "succeeded"
+    st.pipeline_runs["rcs"].append({"rc": 2})
+    assert TV.build(st).kind == "blocked"  # Never reuse an older RC's telemetry version.
 
 
 
@@ -839,13 +876,36 @@ def test_record_telemetry_pass_and_attention():
         orch = Orchestrator(CONFIG, st)
         _pass_scout_checks(orch); orch.gate.sign()
         C = __import__("orchestrator.cli_common", fromlist=["x"])
+        from steps.build_verify._common import stash_auth
+        stash_auth(st, 1, {
+            "build": {"run_id": "180481190", "build_number": "6.2609.6056-rc180481190",
+                      "complete": True, "result": "succeeded"},
+            "test": {"run_id": "180491310"},
+        })
         C.save_state(st, d, rid)
 
         class A:
-            runs_root = d; release = rid; config = CONFIG; as_of = None; version = "6.2608.5658"
+            runs_root = d; release = rid; config = CONFIG; as_of = None; version = "6.2609.6056"
+            build_id = "180481190"
             rows = "5"
         assert TC.cmd_record_telemetry(A) == 0
         assert C.load_state(d, rid).is_done("build_verify", "telemetry_verify")
+        recorded = C.load_state(d, rid).get_step("build_verify", "telemetry_verify")
+        assert recorded.data["rows"] == 5 and recorded.data["version"] == A.version
+        assert recorded.data["source"]["build_id"] == A.build_id
+        assert recorded.data["source"]["pipeline_id"] == 475778
+        assert recorded.data["source"]["ui_test_build_id"] == "180491310"
+        assert recorded.data["source"]["version_source"].startswith("ADO buildNumber")
+        assert recorded.data["query"] and recorded.data["cluster_uri"] and recorded.data["database"]
+        assert recorded.data["checked_at"] and recorded.links
+
+        for field, bad in (("version", "16.6.0-RC1-ecs"), ("build_id", "999"), ("rows", "-1")):
+            before = C.load_state(d, rid).steps
+            original = getattr(A, field)
+            setattr(A, field, bad)
+            assert TC.cmd_record_telemetry(A) == 1
+            assert C.load_state(d, rid).steps == before
+            setattr(A, field, original)
 
         # zero rows → attention
         A.rows = "0"
@@ -853,3 +913,4 @@ def test_record_telemetry_pass_and_attention():
         s2 = C.load_state(d, rid)
         step = s2.get_step("build_verify", "telemetry_verify")
         assert step.status == "blocked" and "Android Core Team" in step.note
+        assert step.data["rows"] == 0 and step.data["source"]["build_id"] == A.build_id

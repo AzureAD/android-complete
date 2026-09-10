@@ -6,9 +6,11 @@ Team channel before the bug bash is declared complete).
 """
 from __future__ import annotations
 import json as _json
+from datetime import datetime, timezone
 
 from orchestrator import cli_common as C
 from tools.coordinates import coords
+from steps.build_verify import telemetry_verify as TV
 
 
 def cmd_record_telemetry(args):
@@ -18,7 +20,20 @@ def cmd_record_telemetry(args):
     except (TypeError, ValueError):
         print(_json.dumps({"error": f"--rows must be an integer (got {args.rows!r})."}))
         return 1
-    version = (args.version or "the bug-bash version").strip()
+    if rows < 0:
+        print(_json.dumps({"error": "--rows must be non-negative."}))
+        return 1
+    expected = TV.build(orch.state)
+    if expected.kind != "needs_skill":
+        print(_json.dumps({"error": expected.reason}))
+        return 1
+    payload = expected.payload
+    version = (args.version or "").strip()
+    if (version != payload["version"]
+            or str(args.build_id) != str(payload["source"].get("build_id"))):
+        print(_json.dumps({"error": "Telemetry result does not match the current ECS APK "
+                                  "build and version. Run telemetry_verify again."}))
+        return 1
 
     if rows > 0:
         status = "pass"
@@ -36,6 +51,12 @@ def cmd_record_telemetry(args):
         return 0
     step = orch.state.get_step("build_verify", "telemetry_verify")
     step.by = "scout"
+    step.data = {
+        "version": version, "rows": rows, "source": payload["source"],
+        "cluster_uri": payload["cluster_uri"], "database": payload["database"],
+        "query": payload["query"], "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    step.links = payload["links"]
     orch.state.set_step("build_verify", "telemetry_verify", step)
     C.save_state(orch.state, args.runs_root, args.release)
 
@@ -53,6 +74,8 @@ def register(sub):
              "attention (post the Android Core Team heads-up)")
     rt.add_argument("--release", required=True)
     rt.add_argument("--rows", required=True, help="Row count returned by the telemetry query")
-    rt.add_argument("--version", default=None, help="The bug-bash APK version that was queried")
+    rt.add_argument("--version", required=True, help="The exact APK version returned by telemetry_verify")
+    rt.add_argument("--build-id", required=True, dest="build_id",
+                    help="The source.build_id returned by telemetry_verify")
     rt.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     rt.set_defaults(func=cmd_record_telemetry)

@@ -50,7 +50,9 @@ def _auth_build_ref(auth_branch):
 def find_auth_ecs_build(auth_branch, timeout=90):
     """Discover the CURRENT-RC Authenticator ECS build (def 475778) on the release's auth
     working-branch. Returns (ok, info, detail) where info is
-      {build_id, rc, version, status, result}  (or None when no ECS build exists yet).
+      {build_id, rc, version, build_number, status, result}
+      (or None when no ECS build exists yet). version is the broker library version;
+      build_number carries the Authenticator APK version.
 
     Deterministic selection: among builds on `refs/heads/working-<auth_branch>` whose
     adAccountsVersion matches '-RC<N>-ecs', take the HIGHEST N (the current RC iteration,
@@ -71,12 +73,14 @@ def find_auth_ecs_build(auth_branch, timeout=90):
         if not m or m.group(2).lower() != "ecs":
             continue
         by_rc.setdefault(int(m.group(1)), []).append(
-            {"id": b.get("id"), "version": ver, "status": b.get("status"), "result": b.get("result")})
+            {"id": b.get("id"), "version": ver, "build_number": b.get("buildNumber"),
+             "status": b.get("status"), "result": b.get("result")})
     if not by_rc:
         return (True, None, f"no ECS release-candidate auth build found on {ref}")
     n = max(by_rc)                               # highest RC iteration = current
     newest = max(by_rc[n], key=lambda x: x.get("id") or 0)
     return (True, {"build_id": newest["id"], "rc": n, "version": newest["version"],
+                   "build_number": newest["build_number"],
                    "status": newest["status"], "result": newest["result"]}, "")
 
 

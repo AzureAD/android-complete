@@ -953,6 +953,7 @@ def verify_auth_ecs(state):
     if result not in (None, "succeeded", "partiallySucceeded"):
         stash_auth(state, rc_num, {
             "build": {"run_id": str(build_id), "rc": rc_num, "version": ab.get("version"),
+                      "build_number": ab.get("build_number"),
                       "result": result, "complete": True},
             "test": None,
             "verdict": "attention",
@@ -992,6 +993,7 @@ def verify_auth_ecs(state):
     # 4) snapshot the whole leg into the RC iteration (its own report section).
     stash_auth(state, rc_num, {
         "build": {"run_id": str(build_id), "rc": rc_num, "version": ab.get("version"),
+                  "build_number": ab.get("build_number"),
                   "result": result, "complete": True},
         "test": {"run_id": str(tb), "suites": suites},
         "verdict": gate["verdict"],
@@ -1024,4 +1026,3 @@ def auth_report_gate(model) -> dict:
                   f"suite is < {AUTH_UI_PASS_THRESHOLD:.0f}% (or the build did not succeed). "
                   f"Investigate + re-run the post-build UI test, then re-evaluate.")
     return {"present": True, "verdict": v, "blocking": v == "attention", "detail": detail}
-
