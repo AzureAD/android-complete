@@ -66,13 +66,13 @@ def test_find_auth_ecs_build_picks_highest_rc_ecs(monkeypatch):
     from tools import pipelines as P
     builds = [
         {"id": 10, "status": "completed", "result": "succeeded",
-         "templateParameters": {"adAccountsVersion": "0.0.02468-rc-RC1-ecs"}},
+         "templateParameters": {"adAccountsVersion": "16.6.0-RC1-ecs"}},
         {"id": 11, "status": "completed", "result": "succeeded",
-         "templateParameters": {"adAccountsVersion": "0.0.02468-rc-RC1-local-flights"}},
+         "templateParameters": {"adAccountsVersion": "16.6.0-RC1-local-flights"}},
         {"id": 20, "status": "completed", "result": "partiallySucceeded",
-         "templateParameters": {"adAccountsVersion": "0.0.02468-rc-RC2-ecs"}},
+         "templateParameters": {"adAccountsVersion": "16.6.0-RC2-ecs"}},
         {"id": 19, "status": "completed", "result": "succeeded",
-         "templateParameters": {"adAccountsVersion": "0.0.02468-rc-RC2-ecs"}},
+         "templateParameters": {"adAccountsVersion": "16.6.0-RC2-ecs"}},
     ]
     seen = {}
     def fake_az(args, timeout):
@@ -85,6 +85,28 @@ def test_find_auth_ecs_build_picks_highest_rc_ecs(monkeypatch):
     # queried the WORKING branch ref for def 475778 in msazure/One
     assert "refs/heads/working-release/2026/08/28" in seen["args"]
     assert str(P.AUTH_BUILD_DEF) in seen["args"] and P.AUTH_PROJECT in seen["args"]
+
+
+def test_find_auth_ecs_build_matches_live_release_versions(monkeypatch):
+    from tools import pipelines as P
+    builds = [
+        {"id": 180488147, "status": "completed", "result": "partiallySucceeded",
+         "templateParameters": {"adAccountsVersion": "16.6.0-RC1-local-flights"}},
+        {"id": 180481190, "status": "completed", "result": "succeeded",
+         "templateParameters": {"adAccountsVersion": "16.6.0-RC1-ecs"}},
+        {"id": 180488148, "templateParameters": {"adAccountsVersion": "16.6.0"}},
+        {"id": 180488149, "templateParameters": {}},
+        {"id": 180488150,
+         "templateParameters": {"adAccountsVersion": "16.6.0-RC2-ecs-extra"}},
+    ]
+    monkeypatch.setattr(P, "_az_json", lambda args, timeout: (True, builds, ""))
+    ok, info, detail = P.find_auth_ecs_build("release/2026/09/10")
+    assert ok and not detail
+    assert info == {"build_id": 180481190, "rc": 1, "version": "16.6.0-RC1-ecs",
+                    "status": "completed", "result": "succeeded"}
+    builds.remove(builds[1])
+    ok, info, detail = P.find_auth_ecs_build("release/2026/09/10")
+    assert ok and info is None and "no ECS release-candidate" in detail
 
 
 
@@ -831,4 +853,3 @@ def test_record_telemetry_pass_and_attention():
         s2 = C.load_state(d, rid)
         step = s2.get_step("build_verify", "telemetry_verify")
         assert step.status == "blocked" and "Android Core Team" in step.note
-

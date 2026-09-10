@@ -25,10 +25,10 @@ _ZERO_SHA = "0" * 40                                 # ADO "create ref" sentinel
 AUTH_UI_SUITES = tuple(coords.gate("auth_ui_suites"))
 AUTH_UI_PASS_THRESHOLD = coords.gate("auth_ui_pass_pct")
 
-# adAccountsVersion encodes the RC iteration + flight flavor, e.g. '0.0.02468-rc-RC1-ecs'
-# (ECS) or '0.0.02468-rc-RC1-local-flights' (Local). This is the deterministic key that
+# adAccountsVersion encodes the RC iteration + flight flavor, e.g. '16.6.0-RC1-ecs'
+# (ECS) or '16.6.0-RC1-local-flights' (Local). This is the deterministic key that
 # says which RC/flavor an auth build is — no branch/date parsing needed.
-_AUTH_RC_VERSION = _re_mod.compile(r"-rc-RC(\d+)-(ecs|local-flights)$", _re_mod.I)
+_AUTH_RC_VERSION = _re_mod.compile(r"-RC(\d+)-(ecs|local-flights)$", _re_mod.I)
 
 
 def _auth_build_ref(auth_branch):
@@ -53,7 +53,7 @@ def find_auth_ecs_build(auth_branch, timeout=90):
       {build_id, rc, version, status, result}  (or None when no ECS build exists yet).
 
     Deterministic selection: among builds on `refs/heads/working-<auth_branch>` whose
-    adAccountsVersion matches '-rc-RC<N>-ecs', take the HIGHEST N (the current RC iteration,
+    adAccountsVersion matches '-RC<N>-ecs', take the HIGHEST N (the current RC iteration,
     mirroring mrwp_run_ids), newest build id within it. `status`/`result` are returned raw
     so the caller can distinguish in-flight (status != 'completed') from a bad result."""
     ref = _pp._auth_build_ref(auth_branch)
