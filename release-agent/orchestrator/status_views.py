@@ -8,6 +8,7 @@ dict that render.py turns into a view. Behaviour is identical to the in-engine v
 from __future__ import annotations
 
 from typing import Optional
+from orchestrator import schedule
 
 
 class StatusViewMixin:
@@ -260,6 +261,8 @@ class StatusViewMixin:
             "owner_email": self.state.owner_email,
             "owner_name": self.state.owner_name,
             "ccd": self.state.ccd,
+            "target_month": self.state.target_month,
+            "target_month_label": schedule.target_month_label(self.state),
             "ccd_source": self.state.ccd_source,
             "ccd_conflict": self.state.ccd_conflict,
             "as_of": self.as_of.isoformat(),

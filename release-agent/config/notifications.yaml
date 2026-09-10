@@ -8,6 +8,11 @@
 # when a specific step requires it (that's the step-driving automations' job, e.g.
 # the CCD reminders) — NOT this digest.
 #
+# Separately, tick may emit `core_alert` to the configured Android Core Team chat
+# from coordinates.yaml when Phase 0 is still incomplete at 09:00 on the last
+# working day before CCD, and again on CCD morning. This deadline escalation is
+# independent of owner-digest silence/dedup and has its own release-state checkpoints.
+#
 # Fields:
 #   channels.email : email the digest to owner_email (existing behavior).
 #   channels.teams : ALSO deliver the digest over Teams.

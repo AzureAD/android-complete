@@ -346,6 +346,119 @@ def test_tick_payload_carries_teams_block_when_enabled():
         assert p2["message"] == "" and p2["teams"] is None
 
 
+def test_preflight_escalation_checkpoint_timing_and_dedup():
+    from datetime import date, datetime
+    from orchestrator import notifications as N, render
+    report = {
+        "ccd": "2026-09-09",
+        "active_phase": {
+            "id": "preflight",
+            "outstanding": [{"id": "cg"}],
+            "steps": [
+                {"id": "cg", "name": "Report critical CG alerts",
+                 "status": "blocked", "note": "High alert remains"},
+                {"id": "vitals", "name": "Review Play vitals",
+                 "status": "confirm", "note": None},
+            ],
+        },
+    }
+    assert N.previous_business_day(date(2026, 9, 8)) == date(2026, 9, 4)  # Labor Day weekend
+    assert N.preflight_escalation(report, datetime(2026, 9, 8, 8, 59), {}) is None
+    pre = N.preflight_escalation(report, datetime(2026, 9, 8, 9, 0), {})
+    assert pre["checkpoint"] == "pre_ccd" and pre["blocked"][0]["id"] == "cg"
+    assert pre["confirmations"][0]["id"] == "vitals"
+    assert N.preflight_escalation(report, datetime(2026, 9, 8, 12),
+                                  {pre["key"]: {"emitted_at": "x"}}) is None
+    # CCD checkpoint is independent; it also catches a machine that missed CCD-1.
+    ccd = N.preflight_escalation(report, datetime(2026, 9, 9, 9), {})
+    assert ccd["checkpoint"] == "ccd"
+    assert N.preflight_escalation(report, datetime(2026, 9, 9, 9),
+                                  {pre["key"]: {}, ccd["key"]: {}}) is None
+    done = {**report, "active_phase": {"id": "ccd", "outstanding": [], "steps": []}}
+    assert N.preflight_escalation(done, datetime(2026, 9, 9, 9), {}) is None
+    holiday_report = {**report, "ccd": "2026-09-08",
+                      "owner_name": "Owner", "owner_email": "owner@microsoft.com",
+                      "target_month_label": "October 2026"}
+    holiday_model = N.preflight_escalation(holiday_report, datetime(2026, 9, 4, 9), {})
+    holiday_text = render.preflight_core_alert(holiday_report, holiday_model)
+    assert "in 4 calendar days" in holiday_text and "tomorrow" not in holiday_text
+
+
+def test_tick_core_alert_is_independent_of_owner_digest_and_checkpointed(monkeypatch):
+    import argparse
+    import tempfile as _tf
+    import yaml
+    from orchestrator.commands import notify as ncmd
+    from orchestrator.engine import Orchestrator
+    from orchestrator.state import StepState
+    with _tf.TemporaryDirectory() as d:
+        rid = "2026-09"
+        st = ReleaseState(release_id=rid, ccd="2026-09-09", target_month="2026-10",
+                          readiness_signed=True, owner_email="owner@microsoft.com",
+                          owner_name="Release Owner")
+        cfg = yaml.safe_load(open(CONFIG, encoding="utf-8"))
+        preflight = next(p for p in cfg["phases"] if p["id"] == "preflight")
+        for step in preflight["steps"]:
+            st.set_step("preflight", step["id"], StepState(status="done"))
+        st.steps.pop("preflight.notice")
+        # A pending Scout step suppresses the normal owner digest; blocked CG still needs
+        # the independent Core Team deadline warning.
+        st.set_step("preflight", "cg", StepState(
+            status="blocked", note="High Bouncy Castle alert still unresolved",
+            links=[{"name": "CG alert", "url": "https://example.com/cg"}]))
+        C.save_state(st, d, rid)
+        monkeypatch.setattr(Orchestrator, "run_until_gate", lambda self: [])
+
+        class A:
+            runs_root = d; release = rid; config = CONFIG
+            as_of = "2026-09-08"; force = False; json = True
+
+        # Read-only notify cannot consume or emit automation checkpoints.
+        observation = ncmd._notify_payload(A, rid, advance=False)
+        assert observation["core_alert"] is None
+        assert C.load_state(d, rid).escalation_checkpoints == {}
+
+        first = ncmd._notify_payload(A, rid, advance=True)
+        assert first["message"] == "" and first["teams"] is None
+        alert = first["core_alert"]
+        assert alert["chatName"] == "Android Core Team"
+        assert alert["mentions"][0]["mentioned"]["user"]["id"] == "owner@microsoft.com"
+        assert "October 2026 release at risk" in alert["content"]
+        assert "Failed / blocked checks" in alert["content"]
+        assert 'href="https://example.com/cg"' in alert["content"]
+        assert "manager approval" in alert["content"]
+        assert "does not pause the ADO release schedule" in alert["content"]
+        assert alert["checkpoint"] not in C.load_state(d, rid).escalation_checkpoints
+        # Until successful delivery is acknowledged, retry remains available.
+        second = ncmd._notify_payload(A, rid, advance=True)
+        assert second["core_alert"]["checkpoint"] == alert["checkpoint"]
+        checkpoint = alert["checkpoint"]
+        ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG,
+                                checkpoint=checkpoint)
+        assert ncmd.cmd_record_core_alert(ns) == 0
+        assert checkpoint in C.load_state(d, rid).escalation_checkpoints
+        A.force = True
+        assert ncmd._notify_payload(A, rid, advance=True)["core_alert"] is None
+
+        # Still blocked on CCD morning => one separate checkpoint.
+        A.as_of = "2026-09-09"; A.force = False
+        ccd = ncmd._notify_payload(A, rid, advance=True)["core_alert"]
+        assert ccd and ccd["checkpoint"].endswith(":ccd")
+        assert "code complete today" in ccd["content"]
+
+
+def test_non_json_tick_reports_digest_and_core_alert_independently(monkeypatch, capsys):
+    from orchestrator.commands import notify as ncmd
+    payload = {"message": "owner digest", "core_alert": {"checkpoint": "preflight:x:pre_ccd"}}
+    monkeypatch.setattr(ncmd.C, "resolve_release_id", lambda *_: "x")
+    monkeypatch.setattr(ncmd, "_notify_payload", lambda *_args, **_kwargs: payload)
+    class A:
+        runs_root = "unused"; release = "x"; config = CONFIG; json = False
+    assert ncmd.cmd_tick(A) == 0
+    out = capsys.readouterr().out
+    assert "owner digest" in out and "Core Team deadline alert due" in out
+
+
 
 
 def test_ui_automation_verdicts_per_config():

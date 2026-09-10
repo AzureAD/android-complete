@@ -17,8 +17,12 @@ side-effects stay in the automation.
 from __future__ import annotations
 
 import os
+from datetime import datetime, time, timedelta
 
 import yaml
+from orchestrator import schedule
+from tools import bugbash as BB
+from tools.coordinates import coords
 
 # Conservative default when the file is absent: email only (today's behavior),
 # Teams off. Adding the file with channels.teams: true opts in. Teams target
@@ -84,3 +88,55 @@ def teams_delivery(cfg: dict, html: str, message: str, markdown: str = None):
         return {"via": "scout_bot", "text": markdown or message}
     return {"via": "chat", "chatId": target,
             "content": html or f"<pre>{message}</pre>", "contentType": "html"}
+
+
+def previous_business_day(day):
+    candidate = day - timedelta(days=1)
+    while not BB.is_business_day(candidate):
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def preflight_escalation(report: dict, now: datetime, emitted: dict) -> dict | None:
+    """Return the due Phase-0 risk checkpoint, independent of digest silence rules."""
+    ccd = schedule.parse_date(report.get("ccd"))
+    phase = report.get("active_phase") or {}
+    if not ccd or phase.get("id") != "preflight" or not phase.get("outstanding"):
+        return None
+    pre_ccd = previous_business_day(ccd)
+    today = now.date()
+    if now.time() < time(9) or today < pre_ccd:
+        return None
+    checkpoint = "pre_ccd" if today < ccd else "ccd"
+    key = f"preflight:{ccd.isoformat()}:{checkpoint}"
+    if key in (emitted or {}):
+        return None
+
+    incomplete = [s for s in phase.get("steps", []) if s.get("status") != "done"]
+    blocked = [s for s in incomplete if s.get("status") == "blocked"]
+    confirmations = [s for s in incomplete if s.get("status") in ("confirm", "action", "approval")]
+    other = [s for s in incomplete if s not in blocked and s not in confirmations]
+    return {
+        "key": key, "checkpoint": checkpoint, "ccd": ccd.isoformat(),
+        "pre_ccd": pre_ccd.isoformat(), "today": today.isoformat(),
+        "blocked": blocked, "confirmations": confirmations, "other": other,
+    }
+
+
+def core_alert_delivery(report: dict, model: dict, html: str) -> dict:
+    """WorkIQ descriptor for the configured Android Core Team group chat."""
+    target = coords.team("android_core")
+    owner_email = report.get("owner_email") or ""
+    owner_name = report.get("owner_name") or owner_email.split("@")[0] or "Release owner"
+    mentions = []
+    if owner_email:
+        mentions.append({
+            "id": 0, "mentionText": owner_name,
+            "mentioned": {"user": {"id": owner_email, "displayName": owner_name,
+                                   "userIdentityType": "aadUser"}},
+        })
+    return {
+        "via": "chat", "chatId": target["chat"], "chatName": target["name"],
+        "content": html, "contentType": "html", "mentions": mentions,
+        "checkpoint": model["key"],
+    }

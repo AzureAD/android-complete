@@ -7,6 +7,7 @@ it its own way. These are pure functions: data in, string out. No state, no IO.
 from __future__ import annotations
 
 import re
+from orchestrator import schedule
 
 # First URL anywhere in a note (e.g. the wiki page link) — surfaced as a compact
 # [link](…) in the Details column instead of a long raw URL.
@@ -439,6 +440,59 @@ def notification_subject(r: dict) -> str:
     if not ap:
         return f"Release {r.get('release_id','?')} — update"
     return f"Release {r.get('release_id','?')} — Phase {ap.get('num')} status"
+
+
+def preflight_core_alert(r: dict, model: dict) -> str:
+    """Teams HTML for a Phase-0 blocker near CCD."""
+    ship = r.get("target_month_label") or r.get("release_id", "release")
+    owner = _esc(r.get("owner_name") or (r.get("owner_email") or "").split("@")[0]
+                 or "Release owner")
+    owner_ref = f'<at id="0">{owner}</at>' if r.get("owner_email") else owner
+    today, ccd = model["today"], model["ccd"]
+    days = (schedule.parse_date(ccd) - schedule.parse_date(today)).days
+    ccd_date = schedule.parse_date(ccd)
+    ccd_long = f"{ccd_date.strftime('%A, %B')} {ccd_date.day}, {ccd_date.year}"
+    timing = (("code complete tomorrow" if days == 1
+               else f"code complete {ccd_long} (in {days} calendar days)")
+              if model["checkpoint"] == "pre_ccd"
+              else ("code complete today" if today == ccd else f"code complete passed on {ccd}"))
+
+    def rows(items):
+        rendered = []
+        for s in items:
+            links = " ".join(
+                f'<a href="{_esc(link["url"])}">{_esc(link.get("name") or "details")}</a>'
+                for link in (s.get("links") or []) if link.get("url"))
+            rendered.append(
+                f"<li><b>{_esc(s['name'])}</b>"
+                + (f" — {_esc(s.get('note'))}" if s.get("note") else "")
+                + (f" ({links})" if links else "") + "</li>")
+        return "".join(rendered)
+
+    sections = []
+    if model["blocked"]:
+        sections.append("<p><b>Failed / blocked checks:</b></p><ul>"
+                        + rows(model["blocked"]) + "</ul>")
+    if model["confirmations"]:
+        sections.append("<p><b>Owner decisions or confirmations still missing:</b></p><ul>"
+                        + rows(model["confirmations"]) + "</ul>")
+    if model["other"]:
+        sections.append("<p><b>Other unfinished Phase 0 work:</b></p><ul>"
+                        + rows(model["other"]) + "</ul>")
+    cg = any(s.get("id") == "cg" for s in model["blocked"])
+    cg_rule = (" For Component Governance: fix and re-run the check, or obtain the "
+               "release engineer's manager approval and record the audited skip reason."
+               if cg else "")
+    return (
+        f"<p><b>{_esc(ship)} release at risk — {_esc(timing)}.</b></p>"
+        f"<p>{owner_ref}, Phase 0 is incomplete, so Scout cannot advance to Code Complete Day."
+        f"{_esc(cg_rule)}</p>"
+        + "".join(sections)
+        + "<p><b>Decision needed:</b> resolve and re-check the outstanding work, use an "
+          "authorized audited override where policy permits, or escalate a CCD-delay decision.</p>"
+          "<p><i>This Scout hold does not pause the ADO release schedule; a CCD delay is a "
+          "separate authorized change.</i></p>"
+    )
 
 
 def _digest_model(r: dict):

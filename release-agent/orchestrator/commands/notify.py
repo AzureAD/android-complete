@@ -16,7 +16,8 @@ def _empty_payload(rid, config_path=None):
     so callers see a stable shape."""
     ch = notif.channels(notif.load_config(config_path)) if config_path else {"email": True, "teams": False}
     return {"message": "", "html": "", "subject": "", "owner_email": None,
-            "owner_name": None, "release": rid, "channels": ch, "teams": None}
+            "owner_name": None, "release": rid, "channels": ch, "teams": None,
+            "core_alert": None}
 
 
 def cmd_set_owner(args):
@@ -74,6 +75,17 @@ def _notify_payload(args, rid, advance):
         st = ReleaseState.load(sp)
         orch = Orchestrator(args.config, st, as_of=as_of)
     report = orch.status_report()
+    # Deadline escalations are a side effect of the automation heartbeat only.
+    # `notify` remains observational/read-only and must never consume a checkpoint.
+    alert_model = (notif.preflight_escalation(
+        report, orch.now_local, getattr(st, "escalation_checkpoints", {}))
+        if advance else None)
+    core_alert = None
+    if alert_model:
+        core_alert = notif.core_alert_delivery(
+            report, alert_model, render.preflight_core_alert(report, alert_model))
+        core_alert["followup_command"] = (
+            f"record-core-alert --release {rid} --checkpoint {alert_model['key']}")
     msg = render.notification(report)
     html = render.notification_html(report)
     md = render.notification_markdown(report)
@@ -96,7 +108,7 @@ def _notify_payload(args, rid, advance):
     return {"message": msg if fresh else "", "html": html if fresh else "",
             "subject": subject, "owner_email": st.owner_email,
             "owner_name": st.owner_name, "release": rid,
-            "channels": ch, "teams": teams}
+            "channels": ch, "teams": teams, "core_alert": core_alert}
 
 
 def cmd_tick(args):
@@ -113,8 +125,33 @@ def cmd_tick(args):
     payload = _notify_payload(args, rid, advance=True)
     if getattr(args, "json", False):
         print(_json.dumps(payload))
-    elif payload["message"]:
-        print(payload["message"])
+    else:
+        if payload["message"]:
+            print(payload["message"])
+        if payload["core_alert"]:
+            print(f"Core Team deadline alert due: {payload['core_alert']['checkpoint']}")
+    return 0
+
+
+def cmd_record_core_alert(args):
+    """Acknowledge a Core Team alert only after WorkIQ confirms the send."""
+    st, orch = C.load_orch(args.runs_root, args.release, args.config)
+    valid = {f"preflight:{st.ccd}:pre_ccd", f"preflight:{st.ccd}:ccd"} if st.ccd else set()
+    if args.checkpoint not in valid:
+        print("Checkpoint does not match this release's CCD.")
+        return 1
+    if args.checkpoint in st.escalation_checkpoints:
+        print("Core Team alert already recorded; no changes.")
+        return 0
+    target = notif.core_alert_delivery(
+        orch.status_report(), {"key": args.checkpoint}, "")["chatName"]
+    st.escalation_checkpoints[args.checkpoint] = {
+        "sent_at": orch.now_local.isoformat(), "target": target,
+    }
+    C.save_state(st, args.runs_root, args.release)
+    C.elog(args.runs_root, args.release).log(
+        "preflight_escalation_sent", checkpoint=args.checkpoint, target=target)
+    print(f"Recorded Core Team deadline alert: {args.checkpoint}")
     return 0
 
 
@@ -138,3 +175,9 @@ def register(sub):
     tk.add_argument("--force", action="store_true", help="Bypass the once-per-day digest de-dup")
     tk.add_argument("--json", action="store_true", help="Emit {message,subject,owner_email,owner_name,release} for the mailer")
     tk.set_defaults(func=cmd_tick)
+
+    ra = sub.add_parser("record-core-alert",
+                        help="Record a Core Team deadline alert after successful delivery")
+    ra.add_argument("--release", required=True)
+    ra.add_argument("--checkpoint", required=True)
+    ra.set_defaults(func=cmd_record_core_alert)
