@@ -571,64 +571,38 @@ def test_non_json_tick_reports_digest_and_core_alert_independently(monkeypatch, 
 
 
 
-def test_ui_automation_verdicts_per_config():
-    """Per (case, flight, variant): pass if any run passed; fail if a real result but never
-    passed; NotApplicable if only skipped. Flight comes from the build; variant from the run
-    name. Runs with no PROD/RC-MSAL marker (e.g. 'Lab Api Tests') are ignored."""
+def test_ui_projection_per_config():
+    """Use recorded exact-title verdicts; preserve provider/config separation and diagnose skips."""
     from tools import pipelines as P
-    flight = {"b1": "ECS", "b2": "Local"}
-    runs_by_build = {
-        "b1": {"value": [{"id": "r1", "name": "PROD MSAL - RC Broker (API 32)"},
-                         {"id": "r2", "name": "RC MSAL - PROD Broker (API 32)"}]},
-        "b2": {"value": [{"id": "r3", "name": "PROD MSAL - RC Broker (API 32)"},
-                         {"id": "r4", "name": "Lab Api Tests"}]},
-    }
-    results_by_run = {
-        "r1": [{"automatedTestName": "test_100_X", "outcome": "Failed"},
-               {"automatedTestName": "test_100_X", "outcome": "Passed"}],       # retry -> Passed
-        "r2": [{"automatedTestName": "test_100_X", "outcome": "Failed"}],        # ECS/rc -> Failed
-        "r3": [{"automatedTestName": "test_100_X", "outcome": "NotExecuted"}],   # Local/prod -> N/A
-        "r4": [{"automatedTestName": "test_999_Unplaceable", "outcome": "Passed"}],  # no variant -> ignored
-    }
-
-    def fake_get(url, timeout):
-        for b, data in runs_by_build.items():
-            if f"Build/Build/{b}" in url:
-                return (True, data, "")
-        return (True, {"value": []}, "")
-
-    def fake_flight(org, project, bid, timeout=60):
-        return flight.get(bid)
-
-    def fake_run_results(org, project, run_id, timeout=90, **k):
-        return (True, results_by_run.get(run_id, []), "")
-
-    o = (P._ado_rest_get, P._flight_provider, P._run_results)
-    P._ado_rest_get, P._flight_provider, P._run_results = fake_get, fake_flight, fake_run_results
-    try:
-        ok, v, d = P.ui_automation_verdicts("ORG", "PROJ", ["b1", "b2"])
-    finally:
-        P._ado_rest_get, P._flight_provider, P._run_results = o
+    from tests._mrwp_evidence import current_rc, PROD, RC
+    rc = current_rc(
+        ecs={PROD: [("test_100_X", "Failed"), ("test_100_X", "Passed")],
+             RC: [("test_100_X", "Failed")]},
+        local={PROD: [("test_100_X", "NotExecuted")],
+               "Lab Api Tests": [("test_999_Unplaceable", "Passed")]})
+    ok, projection, d = P.project_mrwp_ui_results(rc)
     assert ok, d
+    v = projection["verdicts"]
     assert v == {100: {("ECS", "prod"): "Passed", ("ECS", "rc"): "Failed",
                        ("Local", "prod"): "NotApplicable"}}
-    assert 999 not in v                          # unplaceable run never recorded
+    assert 999 not in v
+    assert projection["provenance"]["providers"][1]["skipped_mapping"][0]["reason"] == "unknown_suite_variant"
 
 
 
 
 def test_fill_ui_automation_results_maps_configs():
     """Each plan point (case, config) takes the outcome of its matching (flight, variant); a
-    config with no verdict is NotApplicable. Mirrors the user's test_3321136 example."""
+    config with no verdict is untouched. Mirrors the user's test_3321136 example."""
     from tools import pipelines as P
     from tools import testplans as T
     verdicts = {3321136: {("ECS", "prod"): "Passed", ("ECS", "rc"): "Failed",
-                          ("Local", "prod"): "NotApplicable"}}   # Local/rc omitted -> N/A
+                          ("Local", "prod"): "NotApplicable"}}   # Local/rc omitted -> untouched
     points = [
         {"id": 1, "testCase": {"id": "3321136"}, "configuration": {"id": "292"}},  # ECS prod -> Passed
         {"id": 2, "testCase": {"id": "3321136"}, "configuration": {"id": "294"}},  # ECS rc  -> Failed
         {"id": 3, "testCase": {"id": "3321136"}, "configuration": {"id": "328"}},  # Local prod -> N/A
-        {"id": 4, "testCase": {"id": "3321136"}, "configuration": {"id": "344"}},  # Local rc (no verdict) -> N/A
+        {"id": 4, "testCase": {"id": "3321136"}, "configuration": {"id": "344"}},  # no verdict
     ]
     sent = []
 
@@ -650,7 +624,9 @@ def test_fill_ui_automation_results_maps_configs():
     finally:
         P._ado_rest_get_all, P._ado_rest_send = og, os_
     assert ok, d
-    assert summ["set_passed"] == 1 and summ["set_failed"] == 1 and summ["set_not_applicable"] == 2
+    assert summ["set_passed"] == 1 and summ["set_failed"] == 1 and summ["set_not_applicable"] == 1
+    assert summ["untouched_points"] == [{"point_id": 4, "case_id": 3321136, "config_id": 344,
+                                         "reason": "no_source_verdict"}]
     assert summ["cases_touched"] == 1
     by_outcome = {}
     for u, b in sent:
@@ -658,7 +634,7 @@ def test_fill_ui_automation_results_maps_configs():
         by_outcome.setdefault(b["outcome"], set()).update(ids)
     assert by_outcome["Passed"] == {"1"}
     assert by_outcome["Failed"] == {"2"}
-    assert by_outcome["NotApplicable"] == {"3", "4"}
+    assert by_outcome["NotApplicable"] == {"3"}
 
 
 

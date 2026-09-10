@@ -80,6 +80,26 @@ Unreadable, missing or invalid result pages mean unavailable evidence, not aggre
 fallback or zero failures. Refresh stale execution-count snapshots before reporting
 or gating; never relabel old counts, migrate them, or invent missing evidence.
 
+### Phase-3 Broker UI result fill uses this same evidence
+
+`bug_bash.ui_test_status` projects only `rcs[-1]` through the pure tools-level
+`project_mrwp_ui_results` helper. Do not refetch MRWP results in Phase 3, merge historical
+RCs, or recompute retry verdicts. Missing/incomplete evidence, a stale `count_basis`,
+or mismatched summary `build_id`/MRWP `run_id` blocks before **any** plan/assignment write:
+refresh Phase-2 MRWP verification first.
+
+The existing case/config map preserves ECS/Local and PROD/RC-MSAL. Multiple distinct
+titles/parameterizations/API suites mapping to one point use **Failed if any fails**,
+otherwise Passed if anything passed, otherwise NotApplicable for NA-only evidence.
+Only same-title retries within a normalized suite get pass-any, upstream. Unknown
+title/suite mappings are explicit diagnostics (Lab API tests need not carry case IDs);
+unmatched/manual plan points stay untouched. Compact fill provenance records the current
+RC, build IDs, count policy and mapping statuses; raw attempts remain in Phase-2 evidence.
+Assignments and `ui_failures` use these current verdicts; recovered failures are cleared
+on rerun without changing human completion or unrelated notes/data. Partial writes must
+be surfaced, not reported as fully applied. Authenticator's independent selected-run fill
+and Firebase gate remain unchanged.
+
 ## `rc_report` — email the RC report + apply the 90% UI gate (`scout`, terminal)
 For identical evidence, API arrival order must not affect verdicts, saved evidence
 ordering or report ordering. Test-run/result IDs must be positive numeric IDs;

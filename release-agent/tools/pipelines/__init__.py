@@ -19,5 +19,6 @@ from __future__ import annotations
 from ._rest import *
 from .orchestrator import *
 from .tests_results import *
+from .ui_projection import *
 from .rc_model import *
 from .auth_app import *

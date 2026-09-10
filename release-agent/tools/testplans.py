@@ -409,14 +409,14 @@ UI_CONFIG_FLIGHT_VARIANT = {
 def fill_ui_automation_results(plan_id, verdicts, timeout=120):
     """Fill the plan's flat "UI Automation (Android Broker)" suite from per-config verdicts
     ({case_id: {(flight, variant): 'Passed'|'Failed'|'NotApplicable'}} — from
-    pipelines.ui_automation_verdicts).
+    pipelines.project_mrwp_ui_results).
 
     Each of the suite's four flight-configs maps to a (flight, variant) via
     UI_CONFIG_FLIGHT_VARIANT, so every (case, config) test point gets the outcome of the matching
-    pipeline run(s): passed if it passed there in >=1 run, failed if it really ran but never
-    passed, else NotApplicable (skipped / never run for that flight+variant). Outcomes are written
-    batched by value. Returns (ok, summary, detail) where summary =
-      {points_total, set_passed, set_failed, set_not_applicable, cases_touched}."""
+    reconciled source tests. This writer never evaluates retries: distinct source failures
+    already win in the projection. Explicit NA-only evidence sets NotApplicable; missing
+    evidence/config mappings leave points untouched (including manual cases).
+    Returns counts, mapping diagnostics and completed-write counts, also on a partial failure."""
     verdicts = {int(k): v for k, v in (verdicts or {}).items()}
     oks, sid, d = _find_suite_by_name(plan_id, BROKER_UI_SUITE_NAME, timeout)
     if not oks:
@@ -430,31 +430,44 @@ def fill_ui_automation_results(plan_id, verdicts, timeout=120):
 
     buckets = {"Passed": [], "Failed": [], "NotApplicable": []}
     cases_touched = set()
+    matched = set()
+    untouched = []
     for p in pts:
         try:
             cid = int((p.get("testCase") or {}).get("id"))
             cfg = int((p.get("configuration") or {}).get("id"))
         except (TypeError, ValueError):
-            buckets["NotApplicable"].append(p.get("id"))
+            untouched.append({"point_id": p.get("id"), "reason": "invalid_case_or_config"})
             continue
         fv = UI_CONFIG_FLIGHT_VARIANT.get(cfg)
         outcome = (verdicts.get(cid) or {}).get(fv) if fv else None
-        if outcome not in ("Passed", "Failed"):
-            outcome = "NotApplicable"          # skipped / no data for this flight+variant
-        else:
-            cases_touched.add(cid)
+        if outcome not in buckets:
+            untouched.append({"point_id": p.get("id"), "case_id": cid, "config_id": cfg,
+                              "reason": "unknown_config" if not fv else "no_source_verdict"})
+            continue
+        cases_touched.add(cid)
+        matched.add((cid, fv))
         buckets[outcome].append(p.get("id"))
 
+    summary = {"points_total": len(pts), "set_passed": 0, "set_failed": 0,
+               "set_not_applicable": 0, "cases_touched": len(cases_touched),
+               "untouched_points": untouched,
+               "unmatched_verdicts": [
+                   {"case_id": cid, "flight": fv[0], "variant": fv[1], "verdict": outcome,
+                    "status": "no_matching_plan_point"}
+                   for cid, values in sorted(verdicts.items()) for fv, outcome in sorted(values.items())
+                   if (cid, fv) not in matched]}
+    count_key = {"Passed": "set_passed", "Failed": "set_failed", "NotApplicable": "set_not_applicable"}
     for outcome, point_ids in buckets.items():
         if point_ids:
             oko, do = _set_points_outcome(plan_id, sid, point_ids, outcome, timeout)
             if not oko:
-                return (False, None, f"setting {len(point_ids)} points -> {outcome} failed: {do}")
+                summary["incomplete_outcome"] = outcome
+                return (False, summary, f"setting {len(point_ids)} points -> {outcome} failed: {do}; "
+                        "earlier outcome batches remain applied; this batch may be partially applied")
+            summary[count_key[outcome]] = len(point_ids)
 
-    return (True, {"points_total": len(pts), "set_passed": len(buckets["Passed"]),
-                   "set_failed": len(buckets["Failed"]),
-                   "set_not_applicable": len(buckets["NotApplicable"]),
-                   "cases_touched": len(cases_touched)}, "")
+    return (True, summary, "")
 
 
 def fill_auth_ui_results(plan_id, suite_id, case_outcomes, timeout=120):

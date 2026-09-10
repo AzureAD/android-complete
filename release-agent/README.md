@@ -123,6 +123,19 @@ Unreadable, missing or invalid result pages are unavailable evidence, never aggr
 fallback or zero failures. Stale raw-count snapshots must be refreshed before gating/reporting:
 there is no relabeling, migration or backwards-compatibility interpretation.
 
+Phase-3 `ui_test_status` uses `tools/pipelines/ui_projection.py` to project those **same
+current-RC snapshots** onto Broker plan points; it never refetches MRWP results or redoes
+retry math. Both snapshots, policy/build attribution, counts and per-test evidence are
+validated before any external mutation. Refresh missing/stale evidence in Phase 2.
+Several distinct titles/API suites may map to one case/config: **any Failed wins**;
+otherwise Passed wins over NA, and NA-only sets NotApplicable. ECS/Local and PROD/RC-MSAL
+remain separate. Unknown mappings are diagnosed, unmatched/manual points stay untouched.
+The step records compact RC/build/policy provenance and mapping/partial-write status;
+failure reassignment and the generated human reminder use the same current verdicts.
+Recovered tests disappear from that reminder on rerun without changing human completion
+or unrelated notes. Authenticator's separate selected-run best-effort fill and Firebase
+gate are unchanged.
+
 **Two homes for data (by lifetime):**
 - **Release metadata + run-state** → `.release-runs/<id>/release-state.json` (per-release; the `ReleaseState` record). Holds `owner_email`/`owner_name` (the release owner, resolved from the signed-in `az` user at `init`; reminders email this person), `ccd`/`ccd_source`/`ccd_conflict`, step completion, gate decisions, `last_notified_date`, etc. Add release-scoped fields here.
 - **Tool config** → `release-agent/config/*.yaml` (not release-specific; committed): `phases.yaml`, `readiness.yaml`, `schedule.yaml`, `requirements.yaml`.

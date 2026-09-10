@@ -821,10 +821,10 @@ def test_ui_test_status_blocks_without_rc_runs():
     import steps as _steps
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
-    st = _uts_state(plan_id="900")     # plan present, but no build_ids + no pipeline_runs
+    st = _uts_state(plan_id="900")     # plan present, but no pipeline_runs
     with mockctx.active({}):
         out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
-    assert out["kind"] == "blocked" and "RC pipeline runs" in out["reason"]
+    assert out["kind"] == "blocked" and "current RC not identified" in out["reason"]
 
 
 

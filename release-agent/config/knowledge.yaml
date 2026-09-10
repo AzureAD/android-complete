@@ -826,38 +826,46 @@ bug_bash.distribute_tests:
       a: "Empirically, from this release's auth ECS post-build UI-test run (the one auth_ecs captured): a case whose test-case id appears in that run is automated and is excluded from the manual split. We deliberately do NOT rely on the 'Automated' tag — it is shared with iOS, so a case automated on Android but not iOS must not be tagged. Reading the run keeps the split correct for Android and leaves the shared tag alone."
 
 bug_bash.ui_test_status:
-  summary: "Fill BOTH the Broker + Authenticator UI suites from the RC pipelines; assign auth failures to the owner."
+  summary: "Fill Broker from the report's current-RC evidence and Authenticator from its selected UI run; triage failures."
   what: >
     Fills the release's UI-automation results from Phase-2's captured runs — for BOTH apps.
-    (1) BROKER: reads the UI-automation results across all RC MRWP builds
-    (state.pipeline_runs.rcs[].ecs/local) and fills the flat 'UI Automation (Android Broker)'
-    suite (from clone_plans_broker) with per-config outcomes; each build is one flight
-    (ECS/Local), its runs split into PROD-MSAL / RC-MSAL variants that map 1:1 to the suite's
-    four flight-configs (292/294/328/344); a point is PASSED if it passed in >=1 matching run,
-    FAILED if it ran but never passed, else NotApplicable. (2) AUTHENTICATOR: reads this
+    (1) BROKER: projects the SAME reconciled current-RC evidence as rc_report
+    (state.pipeline_runs.rcs[-1].ecs/local.tests.suites[].test_results), without refetching
+    pipeline results or reevaluating retries. Each build is one flight (ECS/Local); PROD-MSAL /
+    RC-MSAL suite markers select the existing four flight-config mappings (292/294/328/344).
+    Distinct exact titles, parameters and API suites stay separate in the report. If several
+    map to one plan point, any Failed verdict wins; otherwise any Passed wins over NA, and
+    NA-only evidence sets NotApplicable. Historical RCs never contribute. (2) AUTHENTICATOR: reads this
     release's auth ECS post-build UI-test run (state.rcs[-1].auth.test, captured by auth_ecs)
     and fills the Authenticator bug-bash suite (from clone_plans_auth) for the automated cases
     only — Passed->Passed, Failed->Failed — leaving the manual cases untouched for testers.
-    Every FAILED automated auth case is REASSIGNED to the release owner (System.AssignedTo) for
+    Every identifiable current Broker failure and FAILED automated auth case is REASSIGNED
+    to the release owner (System.AssignedTo) for
     triage. The auth fill is best-effort: if the auth suite or run isn't available yet it is
     skipped with a note, and the Broker fill still completes.
-  who: "Scout runs it automatically during `next` (an agent step) — right after distribute_tests."
+  who: "Scout runs it automatically during `next` (an agent step) — before distribute_tests."
   how: >
-    The join from a pipeline result to a plan test case is the case id embedded in the automated
-    test name ('test_<caseId>_...' / storage '...TestCase<caseId>'). For Broker, only
-    'ui'-classified runs carrying a PROD/RC-MSAL marker are placed on a config. For Authenticator,
+    Broker uses the existing case-id extractor on the recorded exact title ('test_<caseId>_...').
+    Unmapped titles/suites are explicit skipped-mapping diagnostics, never guessed IDs. Only
+    'ui'-classified suites carrying a PROD/RC-MSAL marker are placed on a config. For Authenticator,
     the auth run's UIAutomator E2E suite carries the case ids (the Monthly suite does not, so it
-    contributes nothing). Idempotent — a re-run re-fills from the current runs. Blocks only if the
-    Broker plan hasn't been cloned or no RC runs are recorded yet.
+    contributes nothing). Before ANY external mutation, both MRWP snapshots must be complete,
+    have count_basis distinct_tests_pass_any and build_id matching their MRWP run_id, and contain
+    valid complete reconciled test/attempt evidence. Missing/stale evidence blocks: refresh
+    Phase-2 verification, never fall back to raw counts or historical runs. Plan points without
+    matching evidence are untouched, including manual points. Stores compact current-RC/build
+    provenance and mapping diagnostics; reports partial writes explicitly. Re-runs replace/clear
+    generated ui_failures content from the same current verdicts without changing human
+    completion, notes or unrelated data. Authenticator's separate selection/gate policy is unchanged.
   faqs:
     - q: "A test failed for one config but passed for another — what gets written?"
       a: "Per config. Each of the four flight-configs (ECS/PROD, ECS/RC, Local/PROD, Local/RC) takes its own matching run's verdict — so a case can be Passed on one config and Failed on another."
     - q: "What happens to a Firebase E2E test that FAILED?"
       a: "It's written FAILED in the Authenticator suite (a visible failure, never dropped), and that case is reassigned to the release owner so the owner triages it (real bug vs automation flake). Passed automated cases are marked Passed; both are excluded from the manual tester split by distribute_tests."
-    - q: "What does a case that failed then passed (retries / multiple RCs) get?"
-      a: "Passed — for a given config the rule is at-least-one-success across all its runs and retries."
+    - q: "What does a test that failed then passed get?"
+      a: "Passed only for retries of that exact title within the same normalized suite and current build. A failed sibling parameter/API suite mapping to the same point still makes the point Failed. Earlier RC successes or failures are irrelevant; recovered titles are not reassigned."
     - q: "What outcome do skipped / not-run tests get?"
-      a: "NotApplicable. A config-point with only skipped results, or no result at all for that flight+variant, is marked NotApplicable (not left blank)."
+      a: "Explicit NA-only evidence becomes NotApplicable. No matching evidence leaves the point untouched and is diagnosed; it is not silently converted to NotApplicable."
 
 bug_bash.send_invite:
   summary: "Schedule the combined Bug Bash and send the Teams meeting invite."

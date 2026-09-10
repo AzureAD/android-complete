@@ -1,6 +1,12 @@
 """Release-agent tests — bug_bash. Shared harness in tests/_harness.py."""
 from tests._harness import *  # noqa: F401,F403
+from tests._mrwp_evidence import current_rc, PROD
 
+
+def _ui_state(plan_id="900"):
+    st = _uts_state(plan_id=plan_id)
+    st.pipeline_runs = {"rcs": [current_rc()]}
+    return st
 
 
 
@@ -41,13 +47,13 @@ def test_clone_plans_broker_blocks_on_api_failure():
 
 
 
-def test_ui_test_status_fills_from_verdicts():
-    """With a cloned plan + injected verdicts, the step fills the UI suite and reports/stores a summary."""
+def test_ui_test_status_fills_from_snapshot():
+    """With a cloned plan + reconciled snapshot, fill and persist the summary."""
     import steps as _steps
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
     from tools import testplans as T
-    st = _uts_state(plan_id="3737697")
+    st = _ui_state(plan_id="3737697")
     captured = {}
 
     def fake_fill(plan_id, verdicts, timeout=120):
@@ -58,7 +64,7 @@ def test_ui_test_status_fills_from_verdicts():
     o = T.fill_ui_automation_results
     T.fill_ui_automation_results = fake_fill
     try:
-        with mockctx.active({"verdicts": {"3321136": {("ECS", "prod"): "Passed"}}}):
+        with mockctx.active({}):
             out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
     finally:
         T.fill_ui_automation_results = o
@@ -81,7 +87,7 @@ def test_ui_test_status_fills_auth_and_assigns_failures_to_owner():
     from orchestrator.state import StepState
     from tools import testplans as T
     from tools import distribution as D
-    st = _uts_state(plan_id="3737697")
+    st = _ui_state(plan_id="3737697")
     st.owner_email = "owner@microsoft.com"
     st.set_step("bug_bash", "clone_plans_auth", StepState(status="done", data={"suite_id": 714999}))
 
@@ -96,8 +102,7 @@ def test_ui_test_status_fills_auth_and_assigns_failures_to_owner():
                "failed_case_ids": [2916347, 2916524, 3094649, 3261599, 3741283]}, "")
     D.set_assigned_to = lambda cid, upn, timeout=60: (assigned.append((cid, upn)), (True, ""))[1]
     try:
-        with mockctx.active({"verdicts": {"1": {("ECS", "prod"): "Passed"}},
-                             "auth_outcomes": {2916347: "Failed", 100: "Passed"}}):
+        with mockctx.active({"auth_outcomes": {2916347: "Failed", 100: "Passed"}}):
             out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
     finally:
         T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_assigned_to = (
@@ -124,17 +129,14 @@ def test_ui_test_status_surfaces_combined_failures_to_ui_failures():
     from orchestrator.state import StepState
     from tools import testplans as T
     from tools import distribution as D
-    st = _uts_state(plan_id="3737697")
+    st = _ui_state(plan_id="3737697")
     st.owner_email = "owner@microsoft.com"
     st.set_step("bug_bash", "clone_plans_auth", StepState(status="done", data={"suite_id": 714999}))
     # seed a broker RC snapshot with a failing UI suite (individual tests) + an auth run
-    st.pipeline_runs = {"rcs": [{"rc": 1,
-        "ecs": {"run_id": "1678863", "failed_suites": [
-            {"name": "PROD MSAL - RC Broker (API 32)", "failed": 2, "total": 44, "category": "ui",
-             "tests": ["test_831126_MDM_FirstPartyAppSignIn",
-                       "test_3321136_UpgradeFromRegularWpjToStrongKeyWpj"]}]},
-        "local": {"run_id": "1678864", "failed_suites": []},
-        "auth": {"build": {"run_id": "178685087"}, "test": {"run_id": "178777988"}}}]}
+    rc = current_rc(ecs={PROD: [("test_831126_MDM_FirstPartyAppSignIn", "Failed"),
+                               ("test_3321136_UpgradeFromRegularWpjToStrongKeyWpj", "Failed")]})
+    rc["auth"] = {"build": {"run_id": "178685087"}, "test": {"run_id": "178777988"}}
+    st.pipeline_runs = {"rcs": [rc]}
     o_b, o_a, o_as = T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_assigned_to
     from tools import pipelines as P
     o_ar = P.auth_ui_case_results
@@ -155,7 +157,7 @@ def test_ui_test_status_surfaces_combined_failures_to_ui_failures():
     assigned_calls = []
     D.set_assigned_to = lambda cid, upn, timeout=60: (assigned_calls.append((str(cid), upn)), (True, ""))[1]
     try:
-        with mockctx.active({"verdicts": {"1": {("ECS", "prod"): "Passed"}}}):
+        with mockctx.active({}):
             as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
     finally:
         T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_assigned_to = o_b, o_a, o_as
@@ -164,7 +166,7 @@ def test_ui_test_status_surfaces_combined_failures_to_ui_failures():
     # step-8-style rich note: EVERY failing test listed individually, all 🔬 investigate for owner,
     # Broker grouped by provider (ECS/Local) then by bucket (suite name).
     assert uf.note.startswith("\U0001f9ea") and "UI failures to investigate" in uf.note
-    assert "all assigned to owner@microsoft.com to investigate" in uf.note
+    assert "for owner@microsoft.com to investigate" in uf.note
     assert "**Broker (MRWP)** \u2014 2 failing test(s):" in uf.note
     assert "**ECS** \u2014 2 failing:" in uf.note                     # provider separation
     assert "_PROD MSAL - RC Broker (API 32)_ (2):" in uf.note         # bucket separation
@@ -203,13 +205,13 @@ def test_ui_test_status_auth_skipped_when_no_auth_suite():
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
     from tools import testplans as T
-    st = _uts_state(plan_id="900")
+    st = _ui_state(plan_id="900")
     o = T.fill_ui_automation_results
     T.fill_ui_automation_results = lambda p, v, timeout=120: (
         True, {"points_total": 5, "set_passed": 5, "set_failed": 0,
                "set_not_applicable": 0, "cases_touched": 3}, "")
     try:
-        with mockctx.active({"verdicts": {"1": {("ECS", "prod"): "Passed"}}}):
+        with mockctx.active({}):
             out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
     finally:
         T.fill_ui_automation_results = o
@@ -223,44 +225,45 @@ def test_ui_test_status_blocks_without_broker_plan():
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
     st = _uts_state(plan_id=None)
-    with mockctx.active({"verdicts": {"1": "Passed"}}):
+    with mockctx.active({}):
         out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
     assert out["kind"] == "blocked" and "cloned" in out["reason"]
 
 
 
 
-def test_ui_test_status_reads_build_ids_from_pipeline_runs():
-    """Absent injected build_ids/verdicts, the step derives builds from state.pipeline_runs.rcs[]
-    (ecs + local of every RC iteration, de-duped, order preserved)."""
+def test_ui_test_status_uses_current_recorded_evidence(monkeypatch):
+    """Historical failure details cannot cause reassignment after current recovery."""
     import steps as _steps
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
     from tools import pipelines as P, testplans as T
-    st = _uts_state(plan_id="900")
+    st = _ui_state(plan_id="900")
     st.pipeline_runs = {"rcs": [
-        {"rc": 1, "ecs": {"run_id": "1681650"}, "local": {"run_id": "1681651"}},
-        {"rc": 2, "ecs": {"run_id": "1681650"}, "local": {"run_id": "1690000"}},
+        current_rc(ecs={PROD: [("test_100_Default", "Failed")]}, rc=1),
+        current_rc(ecs={PROD: [("test_100_Default", "Failed"), ("test_100_Default", "Passed")]}),
     ]}
     seen = {}
 
-    def fake_verdicts(org, project, build_ids, timeout=90):
-        seen["build_ids"] = list(build_ids)
-        return (True, {111: {("ECS", "prod"): "Passed"}}, "")
+    def forbidden(*a, **k):
+        raise AssertionError("No live MRWP reads or recovered-case assignments")
 
     def fake_fill(plan_id, verdicts, timeout=120):
+        seen["verdicts"] = verdicts
         return (True, {"points_total": 4, "set_passed": 1, "set_failed": 0,
                        "set_not_applicable": 3, "cases_touched": 1}, "")
 
-    ov, of = P.ui_automation_verdicts, T.fill_ui_automation_results
-    P.ui_automation_verdicts, T.fill_ui_automation_results = fake_verdicts, fake_fill
-    try:
-        with mockctx.active({}):
-            out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
-    finally:
-        P.ui_automation_verdicts, T.fill_ui_automation_results = ov, of
+    from tools import distribution as D
+    st.owner_email = "owner@example.com"
+    monkeypatch.setattr(P, "_ado_rest_get", forbidden)
+    monkeypatch.setattr(P, "_run_results", forbidden)
+    monkeypatch.setattr(D, "set_assigned_to", forbidden)
+    monkeypatch.setattr(T, "fill_ui_automation_results", fake_fill)
+    with mockctx.active({}):
+        out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
     assert out["kind"] == "done"
-    assert seen["build_ids"] == ["1681650", "1681651", "1690000"]
+    assert seen["verdicts"] == {100: {("ECS", "prod"): "Passed", ("Local", "prod"): "Passed"}}
+    assert not st.get_step("bug_bash", "ui_failures").note
 
 
 
