@@ -85,12 +85,14 @@ _SAFE_AGENTS = {
         "stages": [{"name": "Build", "state": "completed", "result": "succeeded"},
                    {"name": "UI Automation", "state": "completed", "result": "failed"}],
         "tests": {"total": 100, "passed": 96, "failed": 4,
+                  "count_basis": "distinct_tests_pass_any", "failed_suites": [],
                   "categories": {"ui": {"total": 100, "passed": 96, "failed": 4}}}},
     "build_verify.mrwp_local": {
         "mrwp_id": "900002",
         "stages": [{"name": "Build", "state": "completed", "result": "succeeded"},
                    {"name": "UI Automation", "state": "completed", "result": "failed"}],
         "tests": {"total": 100, "passed": 98, "failed": 2,
+                  "count_basis": "distinct_tests_pass_any", "failed_suites": [],
                   "categories": {"ui": {"total": 100, "passed": 98, "failed": 2}}}},
     "build_verify.auth_ecs": {
         "auth_build": {"build_id": 900010, "rc": 1, "version": "0.0.02468-rc-RC1-ecs",
@@ -322,7 +324,9 @@ def _seed_rc_pipeline(st, ecs_ui, local_ui, *, ecs_suites=None,
     def snap(run_id, ui, suites):
         return {"run_id": run_id, "complete": True, "ran": 23, "total": 23,
                 "failed_stages": [], "yellow_stages": [], "never_ran": [],
-                "tests": {"categories": {"ui": ui}}, "failed_suites": suites or []}
+                "tests": {"count_basis": "distinct_tests_pass_any",
+                          "categories": {"ui": ui}, "failed_suites": suites or []},
+                "failed_suites": suites or []}
     K.stash_mrwp(st, "ECS", snap(ecs_id, ecs_ui, ecs_suites))
     K.stash_mrwp(st, "Local", snap(local_id, local_ui, None))
     _seed_auth(st)

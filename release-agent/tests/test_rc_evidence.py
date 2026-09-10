@@ -30,12 +30,71 @@ def args_for(tmp_path, st):
                      as_of="2026-09-10", now="2026-09-10T12:00:00Z")
 
 
+@pytest.mark.parametrize("mrwp_failed,auth_failed,incomplete,recommendation", [
+    (0, False, False, "PROCEED"),
+    (5, False, False, "CONTINUE WITH WARNINGS"),
+    (20, False, False, "STOP / HOLD"),
+    (5, True, False, "STOP / HOLD"),
+    (0, False, True, "WAIT"),
+])
+def test_report_prominent_consolidated_recommendation(
+        ready, mrwp_failed, auth_failed, incomplete, recommendation):
+    from html import unescape
+    model = rc_report.rc_report_model(ready)
+    for run in model["mrwp"].values():
+        run["tests"]["categories"]["ui"].update(
+            total=100, passed=100 - mrwp_failed, failed=mrwp_failed)
+    if auth_failed:
+        model["auth"]["test"]["suites"][AUTH_UI_SUITES[0]].update(
+            present=True, passed=23, failed=6, total=29)
+    if incomplete:
+        model["mrwp"]["ECS"]["complete"] = False
+    action = rc_report.rc_next_action(model)
+    assert action.startswith(recommendation + " —")
+    gate, auth = rc_report.rc_ui_gate(model), rc_report.auth_report_gate(model)
+    html = rendering.rc_email_html(model, {}, gate, auth, action)
+    plain = rendering.rc_email_plain(model, {}, gate, auth, action)
+    assert action in unescape(html) and action in plain
+    assert html.index("Recommendation:") < html.index("UI-automation results")
+    assert plain.index("RECOMMENDATION:") < plain.index("GATES")
+    if auth_failed:
+        assert "Authenticator ECS did not clear" in action
+        assert not gate["blocking"] and auth["blocking"]
+
+
+def test_report_auth_percentages_two_decimals_without_rounding_gate(ready):
+    model = rc_report.rc_report_model(ready)
+    suites = model["auth"]["test"]["suites"]
+    suites[AUTH_UI_SUITES[0]].update(present=True, passed=23, failed=6, total=29)
+    suites[AUTH_UI_SUITES[1]].update(present=True, passed=329, failed=4, total=333)
+
+    def rendered():
+        gate, auth = rc_report.rc_ui_gate(model), rc_report.auth_report_gate(model)
+        action = rc_report.rc_next_action(model)
+        return (rendering.rc_email_html(model, {}, gate, auth, action),
+                rendering.rc_email_plain(model, {}, gate, auth, action))
+
+    for text in rendered():
+        assert "79.31%" in text and "98.80%" in text
+        assert "79.310344" not in text and "98.798798" not in text
+    # Display rounding cannot turn a sub-threshold result into a pass.
+    suites[AUTH_UI_SUITES[0]].update(passed=89999, failed=10001, total=100000)
+    assert rc_report.auth_report_gate(model)["blocking"]
+    for text in rendered():
+        assert "90.00%" in text and "STOP / HOLD" in text
+    suites[AUTH_UI_SUITES[0]].update(passed=1, failed=0, total=1)
+    for text in rendered():
+        assert "100.00%" in text
+
+
 @pytest.mark.parametrize("path,value", [
     (("checker", "run_id"), None), (("orchestrator", "run_id"), "None"),
     (("rc",), None), (("ecs",), None), (("local",), None),
     (("ecs", "run_id"), "abc"), (("ecs", "run_id"), True),
     (("ecs", "complete"), False), (("local", "complete"), None),
     (("ecs", "ran"), 0), (("ecs", "tests"), None),
+    (("ecs", "tests", "count_basis"), None),
+    (("local", "tests", "count_basis"), "result_entries"),
     (("local", "tests", "categories"), {}),
     (("ecs", "tests", "categories", "ui", "total"), 0),
     (("ecs", "tests", "categories", "ui", "passed"), 101),
@@ -69,10 +128,10 @@ def test_missing_provider_and_zero_ui_never_gate_clean():
         assert "RC verified" not in html
 
 
-def test_real_rc_counts_hold_at_84_5_and_missing_auth_still_prevents_report(ready, tmp_path):
+def test_reconciled_counts_hold_at_84_5_and_missing_auth_still_prevents_report(ready, tmp_path):
     current = K.latest_rc(ready)
-    current["ecs"]["tests"]["categories"]["ui"] = {"passed": 168, "total": 204, "failed": 30}
-    current["local"]["tests"]["categories"]["ui"] = {"passed": 137, "total": 157, "failed": 8}
+    current["ecs"]["tests"]["categories"]["ui"] = {"passed": 168, "total": 204, "failed": 36}
+    current["local"]["tests"]["categories"]["ui"] = {"passed": 137, "total": 157, "failed": 20}
     assert rc_report.rc_ui_gate(rc_report.rc_report_model(ready))["pass_pct"] == 84.5
     assert rc_report.build(ready).kind == "needs_skill"
     assert RR.cmd_record_rc_report(args_for(tmp_path, ready)) == 2
@@ -170,6 +229,94 @@ def test_mrwp_missing_summary_retries_instead_of_finishing():
         "mrwp_id": 123, "stages": [{"name": "UI", "state": "completed", "result": "succeeded"}],
         "tests": None}})
     assert _bv_build(orch, st, "mrwp_ecs")["kind"] == "blocked"
+
+
+def test_mrwp_failure_fetch_error_persists_and_prevents_complete_report(
+        ready, tmp_path, monkeypatch):
+    from tools import pipelines as P
+    from steps.build_verify import _mrwp
+    from steps.lib import mockctx
+    monkeypatch.setattr(P, "get_test_summary", lambda *a, **k: (False, None, "result page offline"))
+    def no_refetch(*a, **k):
+        raise AssertionError("Must reuse single summary acquisition")
+    monkeypatch.setattr(P, "get_failed_tests", no_refetch)
+    injected = {"mrwp_id": "1678863", "rc": 1,
+                "stages": [{"name": "UI", "state": "completed", "result": "failed"}]}
+    with mockctx.active(injected):
+        outcome = _mrwp.verify_mrwp(ready, "ECS")
+    assert outcome.kind == "blocked"
+    assert K.latest_rc(ready)["ecs"]["failed_suites"] is None
+    assert K.latest_rc(ready)["ecs"]["tests_error"] == "result page offline"
+    args = args_for(tmp_path, ready)
+    saved = C.load_state(str(tmp_path), ready.release_id)
+    model = rc_report.rc_report_model(saved)
+    assert not rc_report.report_readiness(model)["ready"]
+    assert any("result page offline" in p for p in model["problems"])
+    gate, auth = rc_report.rc_ui_gate(model), rc_report.auth_report_gate(model)
+    assert gate["verdict"] == "unavailable"
+    for text in (RR._format(model), rendering.rc_email_html(model, {}, gate, auth, ""),
+                 rendering.rc_email_plain(model, {}, gate, auth, "")):
+        assert "result page offline" in text and "unavailable" in text
+        assert "pipeline aborted" not in text.lower()
+    assert RR.cmd_record_rc_report(args) == 1
+    suites = [{"name": "UI", "total": 100, "failed": 1, "category": "ui",
+               "tests": ["failed"], "count_basis": P.MRWP_COUNT_BASIS, "run_ids": [123],
+               "test_results": [{"title": "failed", "verdict": "Failed", "recovered": False,
+                                 "outcome_counts": {"Failed": 2},
+                                 "attempts": [{"run_id": 123, "result_id": 1, "outcome": "Failed"},
+                                              {"run_id": 123, "result_id": 2, "outcome": "Failed"}]}]}]
+    summary = {"total": 100, "passed": 99, "failed": 1, "count_basis": P.MRWP_COUNT_BASIS,
+               "categories": {"ui": {"total": 100, "passed": 99, "failed": 1}},
+               "suites": suites, "failed_suites": suites}
+    monkeypatch.setattr(P, "get_test_summary", lambda *a, **k: (True, summary, ""))
+    with mockctx.active(injected):
+        assert _mrwp.verify_mrwp(ready, "ECS").kind == "done"
+    assert K.latest_rc(ready)["ecs"]["tests_error"] is None
+    assert rc_report.report_readiness(rc_report.rc_report_model(ready))["ready"]
+    args_for(tmp_path, ready)
+    saved = C.load_state(str(tmp_path), ready.release_id)
+    assert K.latest_rc(saved)["ecs"]["failed_suites"] == suites
+    assert K.latest_rc(saved)["ecs"]["tests"] == summary
+
+
+def test_mrwp_summary_page_error_is_explicit(ready, monkeypatch):
+    from tools import pipelines as P
+    from steps.build_verify import _mrwp
+    from steps.lib import mockctx
+    monkeypatch.setattr(P, "get_test_summary", lambda *a, **k: (False, None, "run page offline"))
+    with mockctx.active({"mrwp_id": "1678863", "rc": 1,
+                         "stages": [{"name": "UI", "state": "completed", "result": "failed"}]}):
+        outcome = _mrwp.verify_mrwp(ready, "ECS")
+    assert outcome.kind == "blocked" and "run page offline" in outcome.reason
+    model = rc_report.rc_report_model(ready)
+    assert any("run page offline" in p for p in model["problems"])
+    assert not rc_report.report_readiness(model)["ready"]
+    assert "Test summary unavailable: run page offline" in RR._format(model)
+
+
+@pytest.mark.parametrize("error", ["run page offline", "result page offline"])
+def test_live_failure_fetch_error_is_explicit_and_survives_cli_persistence(
+        ready, tmp_path, monkeypatch, error):
+    from tools import pipelines as P
+    monkeypatch.setattr(P, "find_checker_runs", lambda *a, **k: (True, [{"id": 1}], ""))
+    monkeypatch.setattr(P, "get_timeline", lambda *a, **k: (
+        True, [{"type": "Job", "name": "Trigger Monthly Release", "result": "succeeded"}], ""))
+    monkeypatch.setattr(P, "find_orchestrator_run", lambda *a, **k: (True, {"id": 2}, ""))
+    monkeypatch.setattr(P, "get_stages", lambda *a, **k: (
+        True, [{"name": "UI", "state": "completed", "result": "succeeded"}], ""))
+    monkeypatch.setattr(P, "mrwp_run_ids", lambda *a, **k: (
+        True, {"ECS": 3, "Local": 4, "rc": 1}, "", "tags"))
+    monkeypatch.setattr(P, "get_test_summary", lambda *a, **k: (False, None, error))
+    def no_refetch(*a, **k):
+        raise AssertionError("Must reuse single summary acquisition")
+    monkeypatch.setattr(P, "get_failed_tests", no_refetch)
+    model = P.release_report("O", "P", ready.release_id)
+    assert model["mrwp"]["ECS"]["tests_error"] == error
+    assert any("test summary unavailable" in p for p in model["problems"])
+    RR._persist(ready, model, args_for(tmp_path, ready))
+    saved = C.load_state(str(tmp_path), ready.release_id)
+    assert K.latest_rc(saved)["ecs"]["tests_error"] == error
+    assert not rc_report.report_readiness(rc_report.rc_report_model(saved))["ready"]
 
 
 @pytest.mark.parametrize("sid,status,expected", [

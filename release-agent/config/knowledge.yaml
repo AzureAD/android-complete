@@ -674,6 +674,12 @@ build_verify.rc_report:
     when BOTH gates clear; if EITHER holds, the step blocks and WAITS for human attestation. There is
     no separate approval gate. Scout-assisted (source: scout): the engine composes it; the skill sends
     via WorkIQ.
+    All MRWP categories count distinct exact titles within each normalized suite and
+    current-RC build/provider. Any Passed attempt wins across reruns, in any order;
+    prior failures do not count against the gate. The denominator is passed + failed,
+    excluding NA-only titles. Parameterizations and suite/API/device distinctions stay
+    separate. Full unresolved-failure and recovered-success lists preserve source evidence.
+    The separate Authenticator Firebase gate retains its existing count/build policy.
   who: >
     Scout composes the email; the skill sends it via workiq_send_email to the release owner
     (state.owner_email). Redirect for testing with the step's `send_to` payload knob.
@@ -699,6 +705,18 @@ build_verify.rc_report:
       a: "No. In a sim the step is marked done without sending; only the real skill flow composes + sends it via WorkIQ."
     - q: "Does the report cover the Authenticator ECS leg too?"
       a: "Yes. The report shows both independent gates and a dedicated Authenticator ECS section with the two Firebase suites. auth_ecs captures completed build/test evidence; rc_report decides both gates. Authenticator results do not feed the MRWP UI percentage."
+    - q: "Do the MRWP counts represent unique tests?"
+      a: "Yes, within each normalized suite and current-RC build/provider: count an exact title once, with any Passed attempt winning even before a later failure. Never merge parameterized titles, other API/device suites, ECS/Local providers or historical RC builds. The denominator is passed + failed. NA-only titles (NotExecuted, NotApplicable, None/null, Inconclusive, Warning) are excluded; real non-NA results without a pass count as one failure. The UI threshold remains 90%."
+    - q: "How are repeated failures and successful retries displayed?"
+      a: "A title with two Failed attempts and one Passed is SUCCESS, counted once as passed, never in unresolved failures. Historical attempts remain informational audit evidence. All unresolved failing titles and all recovered successes are shown in HTML, plain text and CLI without a show-more cutoff, with provider/suite context. Repeated attempts do not inflate either numerator or denominator."
+    - q: "Where are the failure details sourced and stored?"
+      a: "One tools-level read of all ADO Test Runs/Results pages per MRWP build, including clean reruns, drives both summary and detail. pipeline_runs.rcs[].ecs/local.tests contains count_basis=distinct_tests_pass_any, build_id, categories, suites and failed_suites; suites include run_ids, result_entries and test_results with exact titles, verdicts, outcome_counts and every attempt's run/result IDs. Unreadable/missing/invalid pages are unavailable evidence, not aggregate fallback. Stale execution-count snapshots require a fresh verification read; never relabel or migrate old raw totals."
+    - q: "How should a requested report preview be presented?"
+      a: "Use the existing RC report HTML renderer, not a handwritten substitute. Label review copies as previews and incomplete results as provisional, honor the approved recipient, and do not record completion or advance the release for a preview. The normal final-report readiness guard still applies to release execution."
+    - q: "Are the retry results deterministic?"
+      a: "For identical evidence, changing API run/result order does not change counts, verdicts, evidence ordering or rendered failure order. Positive numeric run/result IDs are canonicalized before duplicate detection; invalid, missing or duplicated IDs reject the read. IDs are scoped per collection, so the same result ID in different runs is valid. Suites, attempts, outcome counts and equal-failure display ties have stable ordering."
+    - q: "What does the report recommend?"
+      a: "A prominent Recommendation combines both gates: WAIT for incomplete evidence; STOP / HOLD if either gate blocks; CONTINUE WITH WARNINGS if MRWP passes with warnings and Authenticator clears; PROCEED when both gates are clean. These are recommendations, not actions that stop ADO pipelines. Authenticator percentages display two decimals, but gate decisions use the unrounded ratio."
 
 # =============================== Phase 3 · bug_bash ===============================
 

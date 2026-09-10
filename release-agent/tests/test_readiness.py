@@ -509,7 +509,7 @@ def test_build_verify_phase_shape():
 
 def test_get_failed_tests_aggregates_repeated_suites():
     """get_failed_tests merges the SAME suite that appears as several runs (the cause of
-    the confusing duplicates) into one entry, summing failures and collecting test names."""
+    the confusing duplicates) into one entry, reconciling exact titles across all runs."""
     from tools import pipelines as P
     calls = {"n": 0}
     runs = {"value": [
@@ -521,10 +521,16 @@ def test_get_failed_tests_aggregates_repeated_suites():
          "totalTests": 8, "passedTests": 6, "notApplicableTests": 0},     # 2 failed (same suite!)
     ]}
     results = {
-        1: {"value": [{"testCaseTitle": f"test_a{i}"} for i in range(18)]},
-        2: {"value": [{"testCaseTitle": "test_ltw_x"}, {"testCaseTitle": "test_ltw_y"}]},
-        3: {"value": [{"testCaseTitle": "test_ltw_y"}, {"testCaseTitle": "test_ltw_z"}]},  # y dup
+        1: {"value": [{"testCaseTitle": f"test_a{i}", "outcome": "Failed"} for i in range(18)]
+                      + [{"testCaseTitle": f"pass_a{i}", "outcome": "Passed"} for i in range(26)]},
+        2: {"value": [{"testCaseTitle": f"test_ltw_{t}", "outcome": "Failed"} for t in ("x", "y")]
+                      + [{"testCaseTitle": f"pass_ltw_{i}", "outcome": "Passed"} for i in range(6)]},
+        3: {"value": [{"testCaseTitle": f"test_ltw_{t}", "outcome": "Failed"} for t in ("y", "z")]
+                      + [{"testCaseTitle": f"pass_ltw_{i}", "outcome": "Passed"} for i in range(6)]},
     }
+    for response in results.values():
+        for result_id, row in enumerate(response["value"], 1):
+            row["id"] = result_id
     orig = P._ado_rest_get
 
     def fake(url, timeout):
@@ -539,10 +545,13 @@ def test_get_failed_tests_aggregates_repeated_suites():
         ok, suites, _ = P.get_failed_tests("O", "P", 1678863)
         assert ok
         by = {s["name"]: s for s in suites}
-        # the two LTW runs merged into one suite: 2+2 failed, total 16, names deduped
+        # Repeated passes and failures both collapse; no cross-suite title merging.
         ltw = by["LTW, RC MSAL - RC Broker (API 32)"]
-        assert ltw["failed"] == 4 and ltw["total"] == 16
+        assert ltw["failed"] == 3 and ltw["total"] == 9
         assert sorted(ltw["tests"]) == ["test_ltw_x", "test_ltw_y", "test_ltw_z"]
+        assert next(t for t in ltw["test_results"] if t["title"] == "test_ltw_y")[
+            "outcome_counts"] == {"Failed": 2}
+        assert ltw["run_ids"] == [2, 3] and ltw["count_basis"] == P.MRWP_COUNT_BASIS
         # sorted by failure count desc → PROD MSAL suite (18) first
         assert suites[0]["name"] == "PROD MSAL - RC Broker (API 32)" and suites[0]["failed"] == 18
     finally:

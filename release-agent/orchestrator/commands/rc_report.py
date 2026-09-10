@@ -52,7 +52,8 @@ def _persist(st, model, args):
             if m.get("run_id"):
                 K.stash_mrwp(st, slot, {k: m.get(k) for k in
                                         ("run_id", "complete", "ran", "total", "failed_stages",
-                                         "yellow_stages", "never_ran", "tests", "failed_suites")},
+                                         "yellow_stages", "never_ran", "tests", "failed_suites",
+                                         "failed_suites_error", "tests_error")},
                              rc=model.get("rc"))
         C.save_state(st, args.runs_root, args.release)
     except Exception:
@@ -126,7 +127,7 @@ def cmd_record_rc_report(args):
 
 
 def _format(m) -> str:
-    L = [f"## RC Pipeline Status — Release {m['release']}", ""]
+    L = [f"## RC Pipeline Status — Release {m['release']}", "", rendering.COUNT_NOTE, ""]
 
     ch = m.get("checker") or {}
     if ch.get("fired"):
@@ -170,7 +171,8 @@ def _format(m) -> str:
         if not r.get("complete") and r.get("never_ran"):
             L.append(f"   never ran: {', '.join(n for n in r['never_ran'] if n)}")
         t = r.get("tests") or {}
-        cats = t.get("categories") or {}
+        current = t.get("count_basis") == P.MRWP_COUNT_BASIS
+        cats = (t.get("categories") or {}) if current else {}
         _lbl = {"unit": "Unit", "instrumented": "Instrumented", "ui": "UI automation"}
         for cat in ("unit", "instrumented", "ui"):
             c = cats.get(cat) or {}
@@ -181,19 +183,18 @@ def _format(m) -> str:
             L.append(f"   {_lbl[cat]:13} {c.get('passed')}/{c.get('total')} passed · "
                      f"{c.get('failed')} failed · {fr}%{gate}")
         # Failing tests, grouped by suite (UI first), each tagged by category.
-        suites = r.get("failed_suites")
+        suites = r.get("failed_suites") if current else []
         if suites:
             for s in rendering.sort_failed_suites(suites):
                 cat = _lbl.get(s.get("category", "ui"), "UI automation")
                 fr = round(s["failed"] * 100.0 / s["total"], 1) if s["total"] else 0.0
-                L.append(f"   • [{cat}] {s['name']}: {s['failed']}/{s['total']} failed ({fr}%)")
-                for tname in s.get("tests", []):
+                L.append(f"   • [{cat}] {s['name']}: {s['failed']}/{s['total']} failed "
+                         f"{rendering.suite_count_label(s)} ({fr}%)")
+                L.append("       " + rendering.suite_failure_note(s))
+                for tname in rendering.failure_test_names(s):
                     L.append(f"       - {tname}")
-                shown = len(s.get("tests", []))
-                if shown < s["failed"]:
-                    L.append(f"       … and {s['failed'] - shown} more (see the run)")
-        elif t and t.get("failed"):
-            L.append("   (failing test names unavailable — open the run)")
+        if rendering.failure_evidence_error(r):
+            L.append("   " + rendering.failure_evidence_error(r))
         L.append(f"   {_u(r.get('run_id'))}")
 
     probs = m.get("problems") or []
@@ -201,15 +202,12 @@ def _format(m) -> str:
         L += ["", "**Issues:**"]
         for p in probs:
             L.append(f"  - {p}")
-    # Unit retry warning — failed-then-passed on retry (counted as passed).
-    recovered = rendering.recovered_unit_tests(m)
+    recovered = rendering.recovered_tests(m)
     if recovered:
-        L += ["", f"⚠ **Retry warning** — {len(recovered)} unit test(s) failed then passed "
-                  f"on retry (counted as passed):"]
-        for t in recovered[:20]:
+        L += ["", f"⚠ **Retry warning** — {len(recovered)} recovered test(s): SUCCESS "
+                  f"(Passed and Failed attempts in any order; counted once as passed):"]
+        for t in recovered:
             L.append(f"  - {t}")
-        if len(recovered) > 20:
-            L.append(f"  … and {len(recovered) - 20} more")
     return "\n".join(L)
 
 

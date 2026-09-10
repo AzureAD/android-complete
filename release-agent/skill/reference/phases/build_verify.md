@@ -51,8 +51,47 @@ steps run inside `next`. Each records the ADO run it evaluated as a Details 🔗
   - **rows == 0 → `attention`** — the step BLOCKS. Post a heads-up in the **Android Core Team**
     channel that telemetry isn't reaching Kusto yet, then re-run once it is.
 
+## Reading and previewing the RC report
+
+Use the existing HTML report renderer for requested review copies; do not replace it
+with a handwritten summary. Clearly label previews and provisional/incomplete data,
+confirm the recipient and exact content before sending, and never run the completion
+follow-up or advance the release for a preview.
+
+All MRWP categories use **distinct-test, any-pass-wins counts**: one exact title
+within each normalized suite in the current build/provider counts once. Two Failed
+attempts plus one Passed means SUCCESS; a Passed followed by Failed also stays success.
+Keep parameterizations and suite/API/device distinctions separate, and never merge
+ECS/Local or historical RC builds. A real non-NA result without any pass is one failure.
+The denominator is **passed + failed**, excluding NA-only titles (`NotExecuted`,
+`NotApplicable`, `None`/null, `Inconclusive`, `Warning`). The UI threshold stays 90%.
+Authenticator Firebase retains its separate existing count/build/suite-selection policy.
+
+HTML, plain text and CLI show **every unresolved failing title and every recovered
+success**, with suite/provider context; never shorten these lists with "and N more."
+Historical failed attempts are informational audit evidence, not extra gate failures.
+
+One tools-level paged read of all Test Runs/Results, including successful reruns, feeds
+both counts and details. `pipeline_runs.rcs[].ecs/local.tests` stores
+`count_basis: distinct_tests_pass_any`, `build_id`, `categories`, `suites` and
+`failed_suites`. Each suite has `run_ids`, `result_entries`, and `test_results` with
+exact title, verdict, outcome counts and every attempt's run/result IDs.
+Unreadable, missing or invalid result pages mean unavailable evidence, not aggregate
+fallback or zero failures. Refresh stale execution-count snapshots before reporting
+or gating; never relabel old counts, migrate them, or invent missing evidence.
+
 ## `rc_report` — email the RC report + apply the 90% UI gate (`scout`, terminal)
+For identical evidence, API arrival order must not affect verdicts, saved evidence
+ordering or report ordering. Test-run/result IDs must be positive numeric IDs;
+equivalent numeric forms are normalized before duplicate detection. Missing/invalid
+IDs and duplicate IDs within a collection are incomplete evidence, not retries.
+
 This is the Phase-2 go/no-go — there is **no separate approval gate**.
+The HTML/plain report prominently states the combined recommendation: **WAIT** for
+incomplete evidence, **STOP / HOLD** if either gate blocks, **CONTINUE WITH WARNINGS**
+when MRWP has warnings and Authenticator clears, or **PROCEED** when both are clean.
+This recommendation does not stop or change an ADO pipeline. Authenticator percentages
+display exactly two decimals; gate calculations still use unrounded ratios.
 - **Trigger:** `status --json` shows current step `rc_report` (state `scout`), after the
   five agent steps and telemetry are complete (or explicitly overridden).
 - **Resolve:** `step-action --release <id> --phase build_verify --step rc_report` →

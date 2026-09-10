@@ -4,7 +4,7 @@ decision point — the verification steps only CAPTURE data; this step decides. 
 human approval gate.
 
 When verification and telemetry prerequisites have resolved the chain, this step composes the
-Phase-2 RC report (checker → orchestrator → ECS/Local MRWP + per-run test failures)
+Phase-2 RC report (checker → orchestrator → ECS/Local MRWP + reconciled test failures)
 from complete current-RC snapshots and emails it to the release owner. Once evidence is
 ready, the report is sent even for failures (the owner gets the dashboard of
 failures + links either way). The step's OUTCOME is then decided by TWO independent gates:
@@ -63,10 +63,16 @@ def _caps_versions(state) -> dict:
 
 
 def ui_evidence_issues(model):
-    return [f"MRWP {provider}: missing or invalid non-zero UI results"
-            for provider in ("ECS", "Local")
-            if not valid_counts(((((model.get("mrwp") or {}).get(provider) or {})
-                                  .get("tests") or {}).get("categories") or {}).get("ui"))]
+    issues = []
+    for provider in ("ECS", "Local"):
+        tests = ((model.get("mrwp") or {}).get(provider) or {}).get("tests") or {}
+        if tests.get("count_basis") != P.MRWP_COUNT_BASIS:
+            issues.append(f"MRWP {provider}: stale/unreconciled counts; refresh verification "
+                          "for distinct-test pass-any evidence")
+        ui = (tests.get("categories") or {}).get("ui")
+        if not valid_counts(ui) or ui["total"] != ui["passed"] + ui["failed"]:
+            issues.append(f"MRWP {provider}: missing or invalid non-zero UI results")
+    return issues
 
 
 def report_readiness(model):
@@ -85,6 +91,8 @@ def report_readiness(model):
                 or type(run.get("ran")) is not int or run["ran"] != run["total"]
                 or run.get("never_ran") or run.get("error")):
             issues.append(f"MRWP {provider}: missing completed stage snapshot")
+        if run.get("failed_suites_error"):
+            issues.append(f"MRWP {provider}: failure details unavailable ({run['failed_suites_error']})")
     issues.extend(ui_evidence_issues(model))
     issues.extend(A.auth_evidence_issues(model))
     return {"ready": not issues, "issues": issues,
@@ -122,6 +130,8 @@ def rc_report_model(state, timeout=120):
             "yellow_stages": s.get("yellow_stages") or [],
             "never_ran": s.get("never_ran") or [],
             "tests": s.get("tests"), "failed_suites": s.get("failed_suites"),
+            "tests_error": s.get("tests_error"),
+            "failed_suites_error": s.get("failed_suites_error"),
         }
     return P.assemble_rc_model(state.release_id, checker, orchestrator, mrwp, rc=rc.get("rc"),
                                auth=rc.get("auth"))
@@ -162,11 +172,11 @@ def _ui_failing_suites_summary(model, limit=6) -> str:
         for s in (((model.get("mrwp") or {}).get(prov) or {}).get("failed_suites") or []):
             if s.get("category", "ui") == "ui" and s.get("failed"):
                 suites.append((prov, s))
-    suites.sort(key=lambda ps: -ps[1]["failed"])
+    suites.sort(key=lambda ps: (-ps[1]["failed"], ps[0], ps[1]["name"]))
     if not suites:
         return ""
-    return "\nTop UI failures:\n" + "\n".join(
-        f"  \u2022 [{prov}] {s['name']}: {s['failed']}/{s['total']} failed"
+    return "\nTop UI failures (summary; full details in report):\n" + "\n".join(
+        f"  \u2022 [{prov}] {s['name']}: {s['failed']}/{s['total']} distinct tests failed"
         for prov, s in suites[:limit])
 
 
@@ -201,16 +211,16 @@ def rc_ui_gate(model) -> dict:
                 "detail": "; ".join(missing) + ". Capture both providers before evaluating."}
     pass_pct = round(ui_pass * 100.0 / ui_total, 1)
     head = (f"UI-automation pass rate {pass_pct}% ({ui_pass}/{ui_total} passed, "
-            f"{ui_fail} failed) across ECS + Local")
+            f"{ui_fail} failed distinct tests) across ECS + Local")
     if ui_pass == ui_total:
         return {**base, "pass_pct": pass_pct, "verdict": "clean", "blocking": False,
                 "detail": (f"UI-automation pass rate 100% ({ui_pass}/{ui_total}) — all UI "
-                           f"tests passed. Proceeding to bug bash.")}
+                           f"distinct tests passed. Proceeding to bug bash.")}
     if ui_pass * 100 >= thr * ui_total:
         return {**base, "pass_pct": pass_pct, "verdict": "warn", "blocking": False,
                 "detail": (f"{head} \u2014 at or above the {thr:.0f}% gate but not clean. "
                            f"Proceeding to bug bash; release owner: investigate the {ui_fail} "
-                           f"failing UI test(s) in parallel (a later step confirms the retest, "
+                           f"failing UI tests in parallel (a later step confirms the retest, "
                            f"so bug bash is not blocked)." + _ui_failing_suites_summary(model))}
     return {**base, "pass_pct": pass_pct, "verdict": "attention", "blocking": True,
             "detail": (
@@ -256,12 +266,23 @@ def auth_report_gate(model) -> dict:
 
 
 def rc_next_action(model):
-    if rc_ui_gate(model)["blocking"] or auth_report_gate(model)["blocking"]:
-        return ("HOLD — investigate the evidence and failures below; re-trigger and re-evaluate, "
-                "or use an explicit owner-reviewed skip with a reason. No automatic advance.")
-    return ("Both quality gates clear. After recording this report, Phase 2 can advance "
-            "automatically once all prerequisites are complete; no separate RC approval is needed. "
-            "Investigate any warnings in parallel.")
+    readiness = report_readiness(model)
+    if not readiness["ready"]:
+        return ("WAIT — current RC evidence is incomplete. " + readiness["detail"]
+                + " Refresh verification before deciding whether to proceed. No automatic advance.")
+    gate, auth = rc_ui_gate(model), auth_report_gate(model)
+    holding = [name for name, result in (("MRWP UI", gate), ("Authenticator ECS", auth))
+               if result["blocking"]]
+    if holding:
+        return (f"STOP / HOLD — {' and '.join(holding)} did not clear the quality gate. "
+                "Do not proceed to Bug Bash; investigate and re-evaluate, or use an explicit "
+                "owner-reviewed skip with a reason. No automatic advance.")
+    if gate["verdict"] == "warn":
+        return ("CONTINUE WITH WARNINGS — both quality gates clear. Proceed to Bug Bash after "
+                "recording this report and completing all prerequisites; investigate remaining "
+                "MRWP UI failures in parallel. No separate RC approval is needed.")
+    return ("PROCEED — both quality gates are clean. Proceed to Bug Bash after recording this "
+            "report and completing all prerequisites. No separate RC approval is needed.")
 
 
 def rc_email(state):

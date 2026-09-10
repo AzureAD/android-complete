@@ -104,6 +104,25 @@ it receives decisions from `rc_report`, rather than importing the step.
 `_common.py` holds only shared snapshot storage, evidence primitives, and recovery/link
 utilities. Underscore-prefixed helpers are intentionally excluded from step discovery.
 
+MRWP RC reports count **distinct tests with any-pass-wins reconciliation** for unit,
+instrumented and UI categories. One exact title within one normalized suite in the
+current build/provider counts once: any `Passed` attempt is success, even if a failure
+comes later. A real non-NA result with no pass is one failure. The denominator is
+`passed + failed`; titles with only `NotExecuted`, `NotApplicable`, `None`/null,
+`Inconclusive` or `Warning` outcomes are excluded. Parameterized titles and suite/API/device
+distinctions remain separate; providers and RC builds are never combined for reconciliation.
+
+One complete paged read of all runs/results (including clean reruns) produces category
+counts, full failed/recovered lists and audit evidence. Stored `tests.suites[].test_results`
+records each title's verdict, outcome counts and run/result IDs for every attempt;
+`count_basis: distinct_tests_pass_any` identifies this policy. HTML, plain text and CLI
+show all unresolved failures and all recovered successes, with provider/suite context.
+Historical failure attempts are informational, not extra gate failures. The UI threshold
+remains 90%; the separate Authenticator Firebase gate retains its existing count/build policy.
+Unreadable, missing or invalid result pages are unavailable evidence, never aggregate
+fallback or zero failures. Stale raw-count snapshots must be refreshed before gating/reporting:
+there is no relabeling, migration or backwards-compatibility interpretation.
+
 **Two homes for data (by lifetime):**
 - **Release metadata + run-state** → `.release-runs/<id>/release-state.json` (per-release; the `ReleaseState` record). Holds `owner_email`/`owner_name` (the release owner, resolved from the signed-in `az` user at `init`; reminders email this person), `ccd`/`ccd_source`/`ccd_conflict`, step completion, gate decisions, `last_notified_date`, etc. Add release-scoped fields here.
 - **Tool config** → `release-agent/config/*.yaml` (not release-specific; committed): `phases.yaml`, `readiness.yaml`, `schedule.yaml`, `requirements.yaml`.

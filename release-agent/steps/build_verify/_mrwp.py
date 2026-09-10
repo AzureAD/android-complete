@@ -84,10 +84,12 @@ def verify_mrwp(state, provider):
     # 3) test summary (missing coverage holds collection; evaluated failures do not)
     tests = mock_input("tests", MISSING)
     tests_injected = tests is not MISSING
+    tests_error = None
     if not tests_injected:
-        ok, tests, _ = P.get_test_summary(ORG, PROJECT, mid)
+        ok, tests, detail = P.get_test_summary(ORG, PROJECT, mid)
         if not ok:
             tests = None
+            tests_error = detail or "could not fetch complete test summary"
     tnote = ""
     if tests:
         tnote = f" Tests: {tests['passed']}/{tests['total']} passed, {tests['failed']} failed."
@@ -99,25 +101,22 @@ def verify_mrwp(state, provider):
         extras.append(f"{len(comp['yellow'])} yellow")
     extra = f" ({', '.join(extras)} — triaged later)" if extras else ""
 
-    # 4) failing suites (individual test names) — snapshot alongside the summary so the RC
-    # report + gate read everything from state (no re-discovery). Mockable via `suites`.
-    # Only fetch LIVE when the summary was read live (tests not injected) — an injected
-    # summary means an offline/test context, so we don't make the extra network call.
+    # Full details come from the same read as the counts; never race a second fetch.
     suites = mock_input("suites", MISSING)
     if suites is MISSING:
-        suites = None
-        if not tests_injected and tests and tests.get("failed"):
-            okf, fsuites, _ = P.get_failed_tests(ORG, PROJECT, mid)
-            if okf:
-                suites = fsuites
+        suites = (tests or {}).get("failed_suites")
 
     # 5) stash the FULL per-provider snapshot into the RC iteration (authoritative rc from tag).
     stash_mrwp(state, provider, {
         "run_id": mid, "complete": comp["complete"], "ran": comp["ran"],
         "total": comp["total"], "failed_stages": comp["failed"],
         "yellow_stages": comp["yellow"], "never_ran": comp["never_ran"],
-        "tests": tests, "failed_suites": suites,
+        "tests": tests, "tests_error": tests_error,
+        "failed_suites": suites,
     }, rc=rc_num)
+    if tests_error:
+        return Blocked(f"{label}: test summary unavailable ({tests_error}); retry verification.",
+                       links=links)
     ui = ((tests or {}).get("categories") or {}).get("ui")
     if not valid_counts(ui):
         return Blocked(f"{label}: missing or invalid non-zero UI results; retry this verification "

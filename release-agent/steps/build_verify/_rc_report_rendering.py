@@ -4,19 +4,23 @@ from __future__ import annotations
 from steps.build_verify._common import build_url, valid_id, valid_counts
 from steps.build_verify.auth_ecs import auth_build_url, auth_pass_pct
 from steps.lib import templating as T
-from tools.pipelines import format_versions, AUTH_UI_SUITES, AUTH_UI_PASS_THRESHOLD
+from tools.pipelines import format_versions, AUTH_UI_SUITES, AUTH_UI_PASS_THRESHOLD, MRWP_COUNT_BASIS
 
 
-def recovered_unit_tests(model) -> list:
-    """Unit tests that FAILED then PASSED on retry (the unit retry rule) across both MRWP
-    providers — counted as passed, but surfaced as a warning in the report. De-duplicated,
-    sorted."""
-    out = set()
+def recovered_tests(model) -> list:
+    """Complete successful retry list, retaining suite and provider identity."""
+    out = []
     for prov in ("ECS", "Local"):
-        cats = (((model.get("mrwp") or {}).get(prov) or {}).get("tests") or {}) \
-            .get("categories", {})
-        for t in ((cats.get("unit") or {}).get("recovered") or []):
-            out.add(t)
+        tests = ((model.get("mrwp") or {}).get(prov) or {}).get("tests") or {}
+        if tests.get("count_basis") != MRWP_COUNT_BASIS:
+            continue
+        for suite in tests.get("suites") or []:
+            for test in suite.get("test_results") or []:
+                if test.get("recovered"):
+                    attempts = ", ".join(f"{count} {outcome}" for outcome, count
+                                         in sorted(test["outcome_counts"].items()))
+                    out.append(f"[{prov}] {suite['name']} — {test['title']} "
+                               f"({attempts} historical attempts; informational)")
     return sorted(out)
 
 
@@ -45,7 +49,7 @@ def auth_leg_summary(model, auth) -> dict:
     elif worst and worst[1] is None:
         headline = f"{worst[0]}: no result"
     elif worst:
-        headline = f"{worst[0]} {worst[1]}%"
+        headline = f"{worst[0]} {worst[1]:.2f}%"
     else:
         headline = f"< {AUTH_UI_PASS_THRESHOLD:.0f}%"
     return {"present": True, "verdict": verdict, "blocking": verdict != "clean",
@@ -80,6 +84,44 @@ _CAT_LABEL = {"unit": "Unit", "instrumented": "Instrumented", "ui": "UI automati
 # Failing-suite display order: UI first (the RC-critical bucket), then instrumented, unit.
 _SUITE_ORDER = {"ui": 0, "instrumented": 1, "unit": 2}
 
+COUNT_NOTE = ("MRWP counts are distinct tests: one exact title per normalized suite within "
+              "each current-RC build/provider; parameterizations and API/device suites stay separate. "
+              "Any Passed attempt wins, even before a later failure. The denominator is "
+              "passed + failed; NA-only tests are excluded. Historical attempts are informational, "
+              "not additional gate failures. Stale snapshots require a fresh verification read.")
+
+
+def suite_count_label(suite):
+    return "distinct tests"
+
+
+def suite_failure_note(suite):
+    if suite.get("count_basis") != MRWP_COUNT_BASIS:
+        return "Stale/unreconciled counts; refresh verification."
+    names = suite.get("tests") or []
+    note = f"All {len(names)} unresolved failing titles (none ever passed in this suite/build)."
+    note += f" Source: {suite.get('result_entries', 0)} execution entries before reconciliation."
+    ids = suite.get("run_ids") or []
+    if ids:
+        note += " Test runs: " + ", ".join(str(i) for i in ids) + "."
+    return note
+
+
+def failure_test_names(suite):
+    yield from suite.get("tests") or []
+
+
+def failure_evidence_error(run):
+    if run.get("tests_error"):
+        return "Test summary unavailable: " + run["tests_error"]
+    if run.get("failed_suites_error"):
+        return "Failure details unavailable: " + run["failed_suites_error"]
+    if (run.get("tests") or {}).get("count_basis") != MRWP_COUNT_BASIS:
+        return "Stale/unreconciled test counts unavailable; refresh verification for pass-any evidence."
+    if (run.get("tests") or {}).get("failed") and run.get("failed_suites") is None:
+        return "Failure details unavailable; refresh verification for a complete list."
+    return ""
+
 
 def sort_failed_suites(suites):
     """Failing suites ordered UI-first then instrumented/unit, each by descending failure
@@ -87,7 +129,7 @@ def sort_failed_suites(suites):
     them identically."""
     return sorted(suites or [],
                   key=lambda s: (_SUITE_ORDER.get(s.get("category", "ui"), 9),
-                                 -(s.get("failed") or 0)))
+                                 -(s.get("failed") or 0), s["name"]))
 
 
 def rc_email_plain(model, ctx, gate, auth, next_action) -> str:
@@ -98,7 +140,8 @@ def rc_email_plain(model, ctx, gate, auth, next_action) -> str:
     vstr = format_versions(o.get("versions"), fallback="n/a")
     L.append(f"Hi {ctx.get('owner', 'there')},")
     L.append("")
-    L.append(f"Captured RC verification results for {rid}. {next_action}")
+    L.append(f"Captured RC verification results for {rid}.")
+    L.append("RECOMMENDATION: " + next_action)
     L.append("")
     _g = gate
     _mpct = _g.get("pass_pct")
@@ -121,10 +164,12 @@ def rc_email_plain(model, ctx, gate, auth, next_action) -> str:
     L.append(f"      Run: {build_url(o.get('run_id'))}")
     L.append("")
     L.append("RC TESTING — captured results by category:")
+    L.append("  " + COUNT_NOTE)
     for prov in ("ECS", "Local"):
         r = (model.get("mrwp") or {}).get(prov) or {}
         t = r.get("tests") or {}
-        cats = t.get("categories") or {}
+        current = t.get("count_basis") == MRWP_COUNT_BASIS
+        cats = (t.get("categories") or {}) if current else {}
         ui = cats.get("ui") or {}
         L.append(f"  MRWP {prov} — run {r.get('run_id')} ({r.get('ran')}/{r.get('total')} stages)")
         for cat in ("unit", "instrumented", "ui"):
@@ -137,15 +182,16 @@ def rc_email_plain(model, ctx, gate, auth, next_action) -> str:
         fs = r.get("failed_stages") or []
         if fs:
             L.append(f"      Red stages ({len(fs)}): {', '.join(fs)}")
-        for s in sort_failed_suites(r.get("failed_suites")):
+        for s in sort_failed_suites(r.get("failed_suites") if current else []):
             sr = _fail_rate(s["failed"], s["total"])
             L.append(f"      [{_CAT_LABEL.get(s.get('category', 'ui'), 'UI automation')}] "
-                     f"{s['name']} — {s['failed']}/{s['total']} failed ({sr}%):")
-            names = s.get("tests", [])
-            for tname in names[:10]:
+                     f"{s['name']} — {s['failed']}/{s['total']} failed "
+                     f"{suite_count_label(s)} ({sr}%):")
+            L.append("          " + suite_failure_note(s))
+            for tname in failure_test_names(s):
                 L.append(f"          - {tname}")
-            if len(names) < s["failed"]:
-                L.append(f"          … and {s['failed'] - len(names)} more (see the run)")
+        if failure_evidence_error(r):
+            L.append("      " + failure_evidence_error(r))
         L.append(f"      Run: {build_url(r.get('run_id'))}")
         L.append("")
     a = model.get("auth") or {}
@@ -165,21 +211,19 @@ def rc_email_plain(model, ctx, gate, auth, next_action) -> str:
             passed, failed = s.get("passed", 0) or 0, s.get("failed", 0) or 0
             pct = auth_pass_pct(s)
             L.append(f"      {name}: {passed}/{passed + failed} passed "
-                     f"({'n/a' if pct is None else str(pct) + '%'})")
+                     f"({'n/a' if pct is None else f'{pct:.2f}%'})")
         L.append(f"      Run: {auth_build_url(b.get('run_id'))}")
         L.append("")
     probs = model.get("problems") or []
     if probs:
-        L.append("BLOCKING ISSUES (a stage that never ran = the pipeline aborted):")
+        L.append("PIPELINE ISSUES / INCOMPLETE EVIDENCE:")
         L += [f"  - {p}" for p in probs]
         L.append("")
-    recovered = recovered_unit_tests(model)
+    recovered = recovered_tests(model)
     if recovered:
-        L.append(f"\u26a0 RETRY WARNING — {len(recovered)} unit test(s) FAILED then PASSED "
-                 f"on retry (counted as passed; verify they aren't genuinely flaky):")
-        L += [f"  - {t}" for t in recovered[:20]]
-        if len(recovered) > 20:
-            L.append(f"  … and {len(recovered) - 20} more")
+        L.append(f"\u26a0 RETRY WARNING — {len(recovered)} recovered test(s): SUCCESS "
+                 f"(at least one Passed and Failed attempt, in any order; counted once as passed):")
+        L += [f"  - {t}" for t in recovered]
         L.append("")
     L.append("NEXT: " + next_action)
     L.append("")
@@ -236,6 +280,8 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
         if not valid_id(r.get("run_id")):
             return f"<p>MRWP {prov}: evidence unavailable — no run captured.</p>"
         t = r.get("tests") or {}
+        if t.get("count_basis") != MRWP_COUNT_BASIS:
+            return f"<p>MRWP {prov} run {r.get('run_id')}: {T.esc(failure_evidence_error(r))}</p>"
         cats = t.get("categories") or {}
         ui = cats.get("ui") or {}
         ui_total, ui_pass, ui_fail = ui.get("total") or 0, ui.get("passed") or 0, ui.get("failed") or 0
@@ -252,11 +298,9 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
         suite_html = ""
         for s in suites:
             sr = _fail_rate(s["failed"], s["total"])
-            names = s.get("tests", [])
             items = "".join(
-                f"<li style='margin:1px 0;color:#475467;'>{T.esc(n)}</li>" for n in names[:4])
-            more = (f"<li style='margin:1px 0;color:#98a2b3;list-style:none;'>… and "
-                    f"{s['failed'] - len(names)} more</li>" if len(names) < s["failed"] else "")
+                f"<li style='margin:1px 0;color:#475467;'>{T.esc(n)}</li>"
+                for n in failure_test_names(s))
             tag = _chip(_CAT_LABEL.get(s.get("category", "ui"), "UI automation"), "#eef4ff", "#0b5cad")
             suite_html += (
                 f"<div style='margin:9px 0 0;'>"
@@ -265,9 +309,13 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
                 f"<td align='right' style='font-size:13px;white-space:nowrap;'>"
                 f"<strong style='color:#b42318;'>{s['failed']}</strong>"
                 f"<span style='color:#98a2b3;'>/{s['total']}</span> "
-                f"<span style='color:#b42318;font-weight:600;'>&middot; {sr}%</span></td></tr></table>"
+                f"<span style='color:#b42318;font-weight:600;'>&middot; {sr}%</span>"
+                f" failed {suite_count_label(s)}</td></tr></table>"
+                f"<div style='font-size:12px;color:#667085;'>{T.esc(suite_failure_note(s))}</div>"
                 f"<ul style='margin:2px 0 0 18px;padding:0;font-size:12px;"
-                f"font-family:Consolas,ui-monospace,monospace;'>{items}{more}</ul></div>")
+                f"font-family:Consolas,ui-monospace,monospace;'>{items}</ul></div>")
+        if failure_evidence_error(r):
+            suite_html += f"<p>{T.esc(failure_evidence_error(r))}</p>"
 
         rate_color = "#b42318" if ui_rate >= 5 else ("#b54708" if ui_rate > 0 else "#067647")
         return (
@@ -284,7 +332,7 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
             f"<span style='font-size:26px;font-weight:800;color:{rate_color};'>{str(ui_rate) + '%' if valid_counts(ui) else 'unavailable'}</span>"
             f"<span style='font-size:13px;color:#667085;'> UI-automation failure rate &nbsp;·&nbsp; "
             f"<strong style='color:#12b76a;'>{ui_pass}</strong> passed / "
-            f"<strong style='color:#b42318;'>{ui_fail}</strong> failed of {ui_total} UI tests</span></div>"
+            f"<strong style='color:#b42318;'>{ui_fail}</strong> failed of {ui_total} distinct UI tests</span></div>"
             f"{_split_bar(ui_pass * 100 / ui_total) if valid_counts(ui) else ''}"
             # per-category breakdown
             f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
@@ -315,7 +363,7 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
             pcol = "#067647" if ok else "#b42318"
             passed, failed = s.get("passed", 0) or 0, s.get("failed", 0) or 0
             denom = passed + failed
-            disp = "no result" if not present else (f"{pct}%" if pct is not None else "n/a")
+            disp = "no result" if not present else (f"{pct:.2f}%" if pct is not None else "n/a")
             rows += (
                 f"<tr><td style='padding:5px 0;font-size:13px;color:#1d2939;'>{T.esc(name)}</td>"
                 f"<td style='padding:5px 10px;font-size:12px;color:#98a2b3;white-space:nowrap;'>"
@@ -374,24 +422,21 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
 
     probs = model.get("problems") or []
     issues = (("<div style='margin:12px 0;padding:10px 12px;background:#fef3f2;border:1px solid #fda29b;"
-               "border-radius:8px;color:#b42318;'><strong>Blocking issues</strong> (a stage that never "
-               "ran = pipeline aborted):<ul style='margin:6px 0 0 18px;'>"
+               "border-radius:8px;color:#b42318;'><strong>Pipeline issues / incomplete evidence</strong>"
+               "<ul style='margin:6px 0 0 18px;'>"
                + "".join(f"<li>{T.esc(p)}</li>" for p in probs) + "</ul></div>")
               if probs else "")
 
-    recovered = recovered_unit_tests(model)
+    recovered = recovered_tests(model)
     retry_warn = ""
     if recovered:
-        shown = recovered[:15]
-        more = (f"<li style='list-style:none;color:#b54708;'>&hellip; and "
-                f"{len(recovered) - len(shown)} more</li>" if len(recovered) > len(shown) else "")
         retry_warn = (
             "<div style='margin:12px 0;padding:10px 12px;background:#fffaeb;border:1px solid #fedf89;"
             "border-radius:8px;color:#b54708;'><strong>&#9888; Retry warning</strong> &mdash; "
-            f"{len(recovered)} unit test(s) failed then <strong>passed on retry</strong> (counted as "
-            "passed; verify they aren&rsquo;t genuinely flaky):"
+            f"{len(recovered)} recovered test(s): <strong>SUCCESS</strong> (at least one Passed "
+            "and Failed attempt, in any order; counted once as passed):"
             "<ul style='margin:6px 0 0 18px;font-family:Consolas,ui-monospace,monospace;font-size:12px;'>"
-            + "".join(f"<li>{T.esc(t)}</li>" for t in shown) + more + "</ul></div>")
+            + "".join(f"<li>{T.esc(t)}</li>" for t in recovered) + "</ul></div>")
 
     return f"""\
 <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:#101828;line-height:1.5;max-width:720px;margin:0 auto;">
@@ -401,6 +446,9 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
       <div style="font-size:13px;opacity:.92;margin-top:2px;">Release {T.esc(rid)} &middot; Phase 2 &mdash; Build &amp; RC testing</div>
     </td></tr>
   </table>
+  <div style="margin:12px 0;padding:12px 16px;border:1px solid #d0d5dd;border-radius:8px;background:#f9fafb;">
+    <strong>Recommendation:</strong> {T.esc(next_action)}
+  </div>
   {_gates_banner()}
 
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:12px 0;border:1px solid #e4e7ec;border-radius:10px;">
@@ -408,7 +456,7 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
       <td style="padding:12px 16px;border-right:1px solid #eef0f3;" width="33%">
         <div style="font-size:12px;color:#667085;">UI-automation failure rate</div>
         <div style="font-size:22px;font-weight:800;color:{'#b42318' if overall_rate >= 5 else '#b54708'};">{str(overall_rate) + '%' if gate['verdict'] != 'unavailable' else 'unavailable'}</div>
-        <div style="font-size:12px;color:#98a2b3;">{tot_f} failed / {tot_t} UI tests</div>
+        <div style="font-size:12px;color:#98a2b3;">{f'{tot_f} failed / {tot_t} distinct UI tests' if gate['verdict'] != 'unavailable' else 'Counts unavailable — refresh verification'}</div>
       </td>
       <td style="padding:12px 16px;border-right:1px solid #eef0f3;" width="33%">
         <div style="font-size:12px;color:#667085;">Checker</div>
@@ -427,6 +475,7 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
      <a href="{build_url(o.get('run_id'))}" style="color:#0b5cad;">orchestrator run {o.get('run_id')}</a></p>
 
   <p style="margin:16px 0 2px;font-size:15px;font-weight:700;">UI-automation results</p>
+  <p style="font-size:12px;color:#667085;">{T.esc(COUNT_NOTE)}</p>
   {mrwp_card('ECS')}
   {mrwp_card('Local')}
   {_auth_card()}

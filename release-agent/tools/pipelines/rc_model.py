@@ -58,6 +58,11 @@ def assemble_rc_model(release, checker, orchestrator, mrwp, *, rc=None,
         elif e.get("complete") is False:
             nv = ", ".join(n for n in (e.get("never_ran") or []) if n) or "(unknown)"
             problems.append(f"MRWP {provider}: did NOT run to completion — never-ran: {nv}.")
+        if e.get("failed_suites_error"):
+            problems.append(f"MRWP {provider}: failure details unavailable "
+                            f"({e['failed_suites_error']}).")
+        if e.get("tests_error"):
+            problems.append(f"MRWP {provider}: test summary unavailable ({e['tests_error']}).")
 
     model = {"release": release, "checker": checker, "orchestrator": orchestrator,
              "mrwp": mrwp, "problems": problems, "rc": rc}
@@ -134,12 +139,13 @@ def release_report(org, project, release_month, checker_def=CHECKER_DEF,
             entry.update({"complete": comp["complete"], "ran": comp["ran"],
                           "total": comp["total"], "failed_stages": comp["failed"],
                           "yellow_stages": comp["yellow"], "never_ran": comp["never_ran"]})
-        okt, tests, _ = _pp.get_test_summary(org, project, bid, timeout)
+        okt, tests, detail = _pp.get_test_summary(org, project, bid, timeout)
         entry["tests"] = tests if okt else None
-        # Individual failing tests, aggregated by suite (deduped across repeated runs).
-        if with_failed_tests and bid and tests and tests.get("failed"):
-            okf, suites, _ = _pp.get_failed_tests(org, project, bid, timeout=timeout)
-            entry["failed_suites"] = suites if okf else None
+        if not okt:
+            entry["tests_error"] = detail or "could not fetch complete test summary"
+        # Reuse the exact evidence used to calculate the counts; no second acquisition.
+        if with_failed_tests:
+            entry["failed_suites"] = (tests or {}).get("failed_suites") if okt else None
         mrwp[provider] = entry
     return _pp.assemble_rc_model(release_month, checker, o, mrwp, rc=ids.get("rc"),
                              id_source=source)

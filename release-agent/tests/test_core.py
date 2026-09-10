@@ -987,10 +987,10 @@ def test_get_failed_tests_drops_fully_recovered_unit_suite():
     """A unit suite whose only failure recovered on retry produces NO failing suite."""
     from tools import pipelines as P
     runs = {"value": [{"id": 701, "name": "broker4j_UnitTests # 700_build.1",
-                       "totalTests": 5, "passedTests": 4, "notApplicableTests": 0}]}
+                       "totalTests": 2, "passedTests": 1, "notApplicableTests": 0}]}
     results = {"value": [
-        {"testCaseTitle": "flaky", "outcome": "Failed"},
-        {"testCaseTitle": "flaky", "outcome": "Passed"},
+        {"id": 1, "testCaseTitle": "flaky", "outcome": "Failed"},
+        {"id": 2, "testCaseTitle": "flaky", "outcome": "Passed"},
     ]}
     orig = P._ado_rest_get
     P._ado_rest_get = lambda url, timeout: (True, runs if "buildUri" in url else results, "")

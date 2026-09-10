@@ -122,21 +122,23 @@ def auth_ui_suite_rates(test_build_id, timeout=90):
     """Per-suite pass rates for the auth UI gate. Returns (ok, suites, detail) where
     `suites` maps each AUTH_UI_SUITES name -> {present, passed, failed, total, pct}
     (pct = passed/(passed+failed)*100, excluding not-applicable; None when the suite has no
-    executed result). Reuses get_test_summary's per-run breakdown (single Test-Runs read)."""
-    ok, summ, detail = _pp.get_test_summary(AUTH_ORG, AUTH_PROJECT, test_build_id, timeout)
+    executed result). Keeps the separate Firebase gate's ADO aggregate policy; MRWP's
+    per-title pass-any policy does not change this gate or its selected build."""
+    ok, runs, detail = _pp._test_runs(AUTH_ORG, AUTH_PROJECT, test_build_id, timeout)
     if not ok:
         return (False, None, detail)
-    by_name = {r.get("name"): r for r in (summ or {}).get("runs", [])}
+    by_name = {r.get("name"): r for r in runs}
     out = {}
     for name in AUTH_UI_SUITES:
         r = by_name.get(name)
         if not r:
             out[name] = {"present": False, "passed": 0, "failed": 0, "total": 0, "pct": None}
             continue
-        passed, failed = r.get("passed") or 0, r.get("failed") or 0
+        passed, total = r.get("passedTests") or 0, r.get("totalTests") or 0
+        failed = max(total - passed - (r.get("notApplicableTests") or 0), 0)
         denom = passed + failed
         out[name] = {"present": True, "passed": passed, "failed": failed,
-                     "total": r.get("total") or 0,
+                     "total": total,
                      "pct": (round(passed * 100.0 / denom, 1) if denom else None)}
     return (True, out, "")
 

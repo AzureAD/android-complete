@@ -246,7 +246,8 @@ def test_build_verify_rc_report_emails_owner():
     K.stash_mrwp(st, "ECS", {
         "run_id": "1678863", "complete": True, "ran": 23, "total": 23,
         "failed_stages": ["UI Automation"], "yellow_stages": [], "never_ran": [],
-        "tests": {"total": 5871, "passed": 5767, "failed": 104, "categories": {
+        "tests": {"count_basis": "distinct_tests_pass_any",
+                  "total": 5871, "passed": 5767, "failed": 104, "categories": {
             "unit": {"total": 5248, "passed": 5248, "failed": 0},
             "instrumented": {"total": 442, "passed": 440, "failed": 2},
             "ui": {"total": 165, "passed": 63, "failed": 102}}},
@@ -255,7 +256,8 @@ def test_build_verify_rc_report_emails_owner():
     K.stash_mrwp(st, "Local", {
         "run_id": "1678864", "complete": True, "ran": 23, "total": 23,
         "failed_stages": [], "yellow_stages": [], "never_ran": [],
-        "tests": {"total": 5856, "passed": 5756, "failed": 100, "categories": {
+        "tests": {"count_basis": "distinct_tests_pass_any",
+                  "total": 5856, "passed": 5756, "failed": 100, "categories": {
             "ui": {"total": 165, "passed": 63, "failed": 102}}},
         "failed_suites": []})
     _seed_auth(st)
@@ -293,9 +295,9 @@ def test_rc_ui_gate_and_run_links():
             "orchestrator": {"found": True, "run_id": 222},
             "mrwp": {
                 "ECS": {"run_id": 333, "failed_suites": ecs_suites or [],
-                        "tests": {"categories": {"ui": ecs_ui}}},
+                        "tests": {"count_basis": "distinct_tests_pass_any", "categories": {"ui": ecs_ui}}},
                 "Local": {"run_id": 444, "failed_suites": [],
-                          "tests": {"categories": {"ui": local_ui}}}}}
+                          "tests": {"count_basis": "distinct_tests_pass_any", "categories": {"ui": local_ui}}}}}
 
     # 200/200 = 100% → clean (non-blocking)
     g0 = report.rc_ui_gate(_model({"total": 100, "passed": 100, "failed": 0},
@@ -448,19 +450,100 @@ def test_rc_report_email_shows_retry_warning():
     model = {"release": "2026-08", "checker": {"run_id": 1},
              "orchestrator": {"run_id": 2, "versions": {}, "parked": True},
              "mrwp": {"ECS": {"run_id": 3, "ran": 23, "total": 23,
-                              "tests": {"categories": {
+                              "tests": {"count_basis": "distinct_tests_pass_any",
+                                  "suites": [{"name": "sdk_UnitTests", "test_results": [{
+                                      "title": "testNullDrsMetadata", "recovered": True,
+                                      "outcome_counts": {"Passed": 1, "Failed": 1}}]}],
+                                  "categories": {
                                   "unit": {"total": 100, "passed": 100, "failed": 0,
                                            "recovered": ["testNullDrsMetadata"]},
                                   "ui": {"total": 10, "passed": 10, "failed": 0}}}},
                       "Local": {"run_id": 4, "ran": 23, "total": 23, "tests": {"categories": {}}}},
              "problems": []}
-    assert rendering.recovered_unit_tests(model) == ["testNullDrsMetadata"]
+    assert rendering.recovered_tests(model) == [
+        "[ECS] sdk_UnitTests — testNullDrsMetadata (1 Failed, 1 Passed historical attempts; informational)"]
     gate, auth = report.rc_ui_gate(model), report.auth_report_gate(model)
     next_action = report.rc_next_action(model)
     plain = rendering.rc_email_plain(model, {}, gate, auth, next_action)
     html = rendering.rc_email_html(model, {}, gate, auth, next_action)
     assert "RETRY WARNING" in plain and "testNullDrsMetadata" in plain
     assert "Retry warning" in html and "testNullDrsMetadata" in html
+
+
+def test_rc_report_all_renderers_show_every_failure_and_recovery(monkeypatch):
+    from html import unescape
+    from orchestrator.commands import rc_report as RR
+    from tools import pipelines as P
+    from tests.test_tools import _paged_test_api
+    titles = [f"test_42_variant[{i:03}]<value>&" for i in range(55)]
+    recovered = [f"recovered[{i:03}]<value>&" for i in range(35)]
+    rows = {100 + i: [{"id": n + 1, "testCaseTitle": t, "outcome": "Failed"}
+                      for n, t in enumerate(titles if i == 0 else [f"last_test_suite_{i}"])]
+            for i in range(8)}
+    rows[200] = [{"id": n + 1, "testCaseTitle": t, "outcome": "Failed"}
+                 for n, t in enumerate(titles)]
+    rows[300] = [{"id": n + 1, "testCaseTitle": t, "outcome": o}
+                 for n, (t, o) in enumerate((t, o) for t in recovered for o in ("Passed", "Failed"))]
+    rows[301] = rows[302] = rows[300]
+    runs = [{"id": rid, "name": f"Suite {rid - 100} # first", "totalTests": len(r)}
+            for rid, r in rows.items() if rid < 200]
+    runs += [{"id": 200, "name": "Suite 0 # second", "totalTests": len(rows[200])},
+             {"id": 300, "name": "sdk_UnitTests", "totalTests": len(rows[300])},
+             {"id": 301, "name": "sdk_InstrumentedTests", "totalTests": len(rows[301])},
+             {"id": 302, "name": "Recovered UI (API32)", "totalTests": len(rows[302])}]
+    _paged_test_api(monkeypatch, runs, rows)
+    ok, summary, detail = P.get_test_summary("O", "P", 1678863)
+    assert ok, detail
+    st = ReleaseState(release_id="2026-08")
+    _seed_rc_pipeline(st, summary["categories"]["ui"],
+                      {"total": 100, "passed": 100, "failed": 0},
+                      ecs_suites=summary["failed_suites"])
+    st.pipeline_runs["rcs"][-1]["ecs"]["tests"] = summary
+    st.pipeline_runs["rcs"][-1]["local"]["tests"]["suites"] = [
+        s for s in summary["suites"] if s["recovered"]]
+    model = report.rc_report_model(st)
+    gate, auth = report.rc_ui_gate(model), report.auth_report_gate(model)
+    html = rendering.rc_email_html(model, {}, gate, auth, report.rc_next_action(model))
+    plain = rendering.rc_email_plain(model, {}, gate, auth, report.rc_next_action(model))
+    for text in (unescape(html), plain, RR._format(model)):
+        assert all(t in text for t in titles + recovered)
+        assert all(f"last_test_suite_{i}" in text for i in range(1, 8))
+        assert "distinct tests" in text and "Any Passed attempt wins" in text
+        assert "All 55 unresolved failing titles" in text and "110 execution entries" in text
+        assert "historical attempts; informational" in text and "Test runs: 100, 200" in text
+        assert "[ECS] sdk_UnitTests" in text and "[Local] sdk_UnitTests" in text
+        assert "[ECS] sdk_InstrumentedTests" in text and "[Local] Recovered UI (API32)" in text
+        assert "210 recovered test(s)" in text
+        assert "SUCCESS" in text
+        assert "more" not in text
+    assert "&lt;value&gt;&amp;" in html and "<value>" not in html
+
+
+def test_rc_report_stale_raw_counts_require_refresh_not_relabeling():
+    from orchestrator.commands import rc_report as RR
+    st = ReleaseState(release_id="2026-08")
+    _seed_rc_pipeline(st, {"total": 100, "passed": 20, "failed": 80},
+                      {"total": 100, "passed": 100, "failed": 0},
+                      ecs_suites=[{"name": "UI", "total": 100, "failed": 80,
+                                   "tests": [f"legacy_{i}" for i in range(45)]}])
+    st.pipeline_runs["rcs"][-1]["ecs"]["tests"]["count_basis"] = "result_entries"
+    model = report.rc_report_model(st)
+    gate, auth = report.rc_ui_gate(model), report.auth_report_gate(model)
+    assert gate["verdict"] == "unavailable" and gate["blocking"]
+    assert not report.report_readiness(model)["ready"]
+    for text in (rendering.rc_email_html(model, {}, gate, auth, ""),
+                 rendering.rc_email_plain(model, {}, gate, auth, ""), RR._format(model)):
+        assert "legacy_44" not in text and "refresh verification" in text
+        assert "20/100 passed" not in text
+        assert "more" not in text
+
+
+def test_rc_report_suite_note_explains_reconciled_failures():
+    note = rendering.suite_failure_note({
+        "category": "ui", "count_basis": "distinct_tests_pass_any", "failed": 1,
+        "tests": ["aborted"], "result_entries": 3})
+    assert "All 1 unresolved failing titles" in note and "3 execution entries" in note
+    assert "none ever passed" in note
 
 
 
@@ -502,9 +585,12 @@ def test_rc_report_aggregates_and_formats():
             ("find_checker_runs", "get_timeline", "find_orchestrator_run", "get_stages",
              "mrwp_run_ids", "get_test_summary", "get_failed_tests")}
     try:
-        P.get_failed_tests = lambda *a, **k: (True, [
+        suites = [
             {"name": "PROD MSAL - RC Broker (API 32)", "failed": 2, "total": 44,
-             "tests": ["test_1_Foo", "test_2_Bar"]}], "")
+             "count_basis": P.MRWP_COUNT_BASIS, "tests": ["test_1_Foo", "test_2_Bar"]}]
+        def no_refetch(*a, **k):
+            raise AssertionError("Summary and details must use the same acquisition")
+        P.get_failed_tests = no_refetch
         P.find_checker_runs = lambda *a, **k: (True, [{"id": 10, "queueTime": "2026-08-13T06:00:00Z"}], "")
         P.get_timeline = lambda *a, **k: (True, [{"type": "Job", "name": "Trigger Monthly Release",
                                                   "result": "succeeded"}], "")
@@ -524,7 +610,8 @@ def test_rc_report_aggregates_and_formats():
         P.get_stages = _stages
         P.mrwp_run_ids = lambda *a, **k: (True, {"ECS": 111, "Local": 222, "rc": 2}, "", "tags")
         P.get_test_summary = lambda org, project, bid, timeout=90: (
-            True, {"total": 100, "passed": 96, "failed": 4,
+            True, {"total": 100, "passed": 96, "failed": 4, "count_basis": P.MRWP_COUNT_BASIS,
+                   "failed_suites": suites,
                    "runs": [{"name": "UI", "total": 20, "passed": 16, "failed": 4}]}, "")
 
         m = P.release_report("O", "P", "2026-08")

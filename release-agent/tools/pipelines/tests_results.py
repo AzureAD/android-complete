@@ -47,14 +47,19 @@ def classify_test_run(name):
 
 # Outcomes that are neither a pass nor a real failure (skipped / not run / inconclusive).
 _NA_OUTCOMES = {"NotExecuted", "NotApplicable", "None", "Inconclusive", "Warning", None}
+MRWP_COUNT_BASIS = "distinct_tests_pass_any"
+_RESULT_OUTCOMES = _NA_OUTCOMES | {
+    "Passed", "Failed", "Error", "Timeout", "Aborted", "Blocked", "NotImpacted",
+    "Paused", "InProgress", "Unspecified",
+}
 
 
-def reconcile_retries(results):
+def reconcile_retries(results, *, include_tests=False):
     """Collapse ADO's per-attempt test results into ONE verdict per test (by title).
 
-    UNIT tests run under a RETRY rule: a flaky test can appear several times in the same
-    run — e.g. Passed, Failed, Passed. ADO's run aggregate still counts that as a failure,
-    but the test ultimately PASSED. This groups results by testCaseTitle and rules:
+    Callers supply ONE normalized suite within ONE build/provider/RC. Order does not
+    matter: Failed, Failed, Passed and Passed, Failed both yield one successful test.
+    Exact titles (including parameterizations) are the identity, not case IDs. Rules:
       * PASSED    — at least one attempt Passed.
       * RECOVERED — Passed AND Failed on different attempts (a flaky pass — surfaced as a
                     warning, but counted as passed).
@@ -62,92 +67,159 @@ def reconcile_retries(results):
     Not-executed / not-applicable attempts are ignored. Counts are DISTINCT tests. Returns
       {passed, failed, recovered:[titles], total, na}."""
     import collections
-    by = collections.defaultdict(set)
+    by = collections.defaultdict(list)
     for r in results or []:
-        title = (r.get("testCaseTitle") or r.get("automatedTestName") or "").strip()
-        if not title:
+        title = r.get("testCaseTitle") or r.get("automatedTestName") or ""
+        if not title.strip():
             continue
-        by[title].add(r.get("outcome"))
+        by[title].append(r)
     passed = failed = na = 0
     recovered = []
-    for title, outs in by.items():
+    tests = []
+    for title, attempts in sorted(by.items()):
+        counts = collections.Counter(r.get("outcome") for r in attempts)
+        outs = set(counts)
         eff = {o for o in outs if o not in _NA_OUTCOMES}
         if not eff:
             na += 1
-            continue
-        if "Passed" in eff:
+            verdict = "NotApplicable"
+        elif "Passed" in eff:
             passed += 1
+            verdict = "Passed"
             if "Failed" in eff:
                 recovered.append(title)
         else:
             failed += 1
-    return {"passed": passed, "failed": failed, "recovered": sorted(recovered),
-            "total": passed + failed, "na": na}
+            verdict = "Failed"
+        if include_tests:
+            ordered_attempts = sorted(attempts, key=lambda r: (
+                r.get("run_id") or 0, r.get("id") or 0, r.get("outcome") or ""))
+            tests.append({"title": title, "verdict": verdict,
+                          "recovered": verdict == "Passed" and "Failed" in outs,
+                          "outcome_counts": {"null" if k is None else k: v
+                                             for k, v in sorted(counts.items(), key=lambda kv:
+                                                                "null" if kv[0] is None else kv[0])},
+                          "attempts": [{"run_id": r.get("run_id"), "result_id": r.get("id"),
+                                        "outcome": r.get("outcome")} for r in ordered_attempts]})
+    summary = {"passed": passed, "failed": failed, "recovered": recovered,
+               "total": passed + failed, "na": na}
+    if include_tests:
+        summary["test_results"] = tests
+        summary["tests"] = [t["title"] for t in tests if t["verdict"] == "Failed"]
+    return summary
 
 
-def _run_results(org, project, run_id, timeout=90, page=1000, cap=10000):
-    """All test results for a run (paged). Returns (ok, [results], detail)."""
-    base = org.rstrip("/")
-    out, skip = [], 0
-    while len(out) < cap:
-        url = (f"{base}/{project}/_apis/test/Runs/{run_id}/results"
-               f"?api-version=7.1&$top={page}&$skip={skip}")
-        ok, data, detail = _pp._ado_rest_get(url, timeout)
+def _positive_test_id(value):
+    """Normalize Test API run/result IDs before attribution and duplicate detection."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return None
+    text = str(value)
+    if not text.isascii() or not text.isdigit():
+        return None
+    number = int(text)
+    return number if number > 0 else None
+
+
+def _test_pages(url, timeout, page=1000, cap=None):
+    """Read a Test API $top/$skip collection; never report a capped/partial read as complete."""
+    out, seen = [], set()
+    previous = None
+    while True:
+        top = page if cap is None else min(page, cap - len(out))
+        if top <= 0:
+            return (False, None, f"Test API result limit {cap} reached; evidence incomplete")
+        ok, data, detail = _pp._ado_rest_get(f"{url}&$top={top}&$skip={len(out)}", timeout)
         if not ok:
-            return (False, out, detail)
-        batch = (data or {}).get("value", []) or []
-        out.extend(batch)
-        if len(batch) < page:
-            break
-        skip += page
-    return (True, out, "")
+            return (False, None, detail)
+        if not isinstance(data, dict) or not isinstance(data.get("value"), list):
+            return (False, None, "Invalid Test API collection; evidence incomplete")
+        batch = data["value"]
+        if batch and batch == previous:
+            return (False, None, "Repeated Test API page; evidence incomplete")
+        previous = batch
+        for item in batch:
+            if not isinstance(item, dict):
+                return (False, None, "Invalid Test API row; evidence incomplete")
+            ident = _positive_test_id(item.get("id"))
+            if ident is None:
+                return (False, None, "Invalid/missing Test API id; evidence incomplete")
+            if ident in seen:
+                return (False, None, "Repeated Test API page/id; evidence incomplete")
+            seen.add(ident)
+            out.append({**item, "id": ident})
+        if len(batch) < top:
+            return (True, out, "")
+
+
+def _test_runs(org, project, build_id, timeout=90):
+    return _test_pages(
+        f"{org.rstrip('/')}/{project}/_apis/test/runs"
+        f"?buildUri=vstfs:///Build/Build/{build_id}&api-version=7.1", timeout)
+
+
+def _run_results(org, project, run_id, timeout=90, page=1000, cap=10000, outcomes=None):
+    """Paged results. cap=None requests complete evidence without a size limit."""
+    url = (f"{org.rstrip('/')}/{project}/_apis/test/Runs/{run_id}/results"
+           f"?api-version=7.1")
+    if outcomes:
+        url += f"&outcomes={outcomes}"
+    return _test_pages(url, timeout, page=page, cap=cap)
 
 
 def get_test_summary(org, project, build_id, timeout=60):
-    """Return (ok, summary, detail) for a build's Test-tab results. summary =
-    {total, passed, failed, runs:[{name,total,passed,failed,category,recovered}],
-     categories:{unit|instrumented|ui: {total,passed,failed,recovered:[titles]}}}
-    aggregated across all test runs, classified into unit / instrumented / UI-automation.
+    """One complete MRWP evidence read, with pass-any counts and full suite/audit details.
 
-    UNIT runs apply the retry rule (reconcile_retries): a run WITH failures is re-read at
-    the per-result level so a flaky test that failed-then-passed counts as passed (and is
-    reported as `recovered`). UI/instrumented runs use ADO's run aggregate unchanged.
-
-    Uses the Test Runs REST API directly (az devops invoke mis-routes this one)."""
-    base = org.rstrip("/")
-    url = (f"{base}/{project}/_apis/test/runs"
-           f"?buildUri=vstfs:///Build/Build/{build_id}&api-version=7.1")
-    ok, data, detail = _pp._ado_rest_get(url, timeout)
+    Every run is read, including successful runs: a pass there may recover a failure in
+    another run of the same suite. No ADO aggregate fallback. NA-only tests are excluded
+    from the denominator. Calls are scoped to one build (never mix providers or RCs).
+    """
+    ok, runs, detail = _pp._test_runs(org, project, build_id, timeout)
     if not ok:
         return (False, None, detail)
-    runs = (data or {}).get("value", []) or []
-    out_runs, tot, passed = [], 0, 0
-    cats = {c: {"total": 0, "passed": 0, "failed": 0, "recovered": []} for c in TEST_CATEGORIES}
-    for r in runs:
-        t = r.get("totalTests") or 0
-        p = r.get("passedTests") or 0
-        na = r.get("notApplicableTests") or 0
-        f = max(t - p - na, 0)
-        cat = _pp.classify_test_run(r.get("name"))
-        recovered = []
-        # UNIT retry rule: re-read a failing unit run per-result and reconcile flaky passes.
-        if cat == "unit" and f > 0:
-            ok2, results, _ = _pp._run_results(org, project, r.get("id"), timeout)
-            if ok2 and results:
-                rec = _pp.reconcile_retries(results)
-                t, p, f, recovered = rec["total"], rec["passed"], rec["failed"], rec["recovered"]
-        tot += t
-        passed += p
-        cats[cat]["total"] += t
-        cats[cat]["passed"] += p
-        cats[cat]["failed"] += f
-        if recovered:
-            cats[cat]["recovered"].extend(recovered)
-        out_runs.append({"name": r.get("name"), "total": t, "passed": p,
-                         "failed": f, "category": cat, "recovered": recovered})
-    failed_total = sum(c["failed"] for c in cats.values())
-    return (True, {"total": tot, "passed": passed, "failed": failed_total,
-                   "runs": out_runs, "categories": cats}, "")
+    groups, out_runs = {}, []
+    for r in sorted(runs, key=lambda r: r["id"]):
+        rid, name = r.get("id"), r.get("name")
+        if rid is None or not isinstance(name, str) or not name.strip():
+            return (False, None, "Test run id/name unavailable; evidence incomplete")
+        ok2, results, d2 = _pp._run_results(org, project, rid, timeout, cap=None)
+        if not ok2:
+            return (False, None, f"Test run {rid}: {d2}")
+        expected = r.get("totalTests")
+        if type(expected) is not int or expected < 0 or len(results) != expected:
+            return (False, None, f"Test run {rid}: expected {expected} result entries, "
+                    f"received {len(results)}; refresh incomplete/changing evidence")
+        for res in results:
+            title = res.get("testCaseTitle") or res.get("automatedTestName")
+            if not isinstance(title, str) or not title.strip():
+                return (False, None, f"Test run {rid}: result title unavailable")
+            outcome = res.get("outcome")
+            if ("outcome" not in res or
+                    (outcome is not None and not isinstance(outcome, str)) or
+                    outcome not in _RESULT_OUTCOMES):
+                return (False, None, f"Test run {rid}: invalid/missing result outcome")
+        base = _pp._suite_base_name(name)
+        group = groups.setdefault(base, {"run_ids": [], "results": []})
+        group["run_ids"].append(rid)
+        group["results"].extend({**res, "run_id": rid} for res in results)
+        out_runs.append({"id": rid, "name": name, "result_entries": len(results)})
+    suites = []
+    cats = {c: {"total": 0, "passed": 0, "failed": 0, "na": 0, "recovered": []}
+            for c in TEST_CATEGORIES}
+    for name, group in sorted(groups.items()):
+        rec = _pp.reconcile_retries(group["results"], include_tests=True)
+        cat = _pp.classify_test_run(name)
+        suite = {**rec, "name": name, "category": cat, "run_ids": group["run_ids"],
+                 "count_basis": MRWP_COUNT_BASIS, "result_entries": len(group["results"])}
+        suites.append(suite)
+        for key in ("total", "passed", "failed", "na"):
+            cats[cat][key] += suite[key]
+        cats[cat]["recovered"].extend({"suite": name, "title": title} for title in rec["recovered"])
+    totals = {key: sum(c[key] for c in cats.values()) for key in ("total", "passed", "failed", "na")}
+    return (True, {**totals, "count_basis": MRWP_COUNT_BASIS, "build_id": build_id,
+                   "result_entries": sum(s["result_entries"] for s in suites),
+                   "runs": out_runs, "categories": cats, "suites": suites,
+                   "failed_suites": sorted((s for s in suites if s["failed"]),
+                                           key=lambda s: (-s["failed"], s["name"]))}, "")
 
 
 def _ui_case_id_from_result(res):
@@ -247,74 +319,10 @@ def _suite_base_name(name):
     return ((name or "").split(" # ")[0].strip()) or "(unnamed suite)"
 
 
-def get_failed_tests(org, project, build_id, max_result_calls=20, per_suite_cap=40, timeout=90):
-    """Return (ok, suites, detail) — the individual FAILING tests for a build, aggregated
-    by suite name (the same suite appears as multiple runs; merged). suites is a list of
-    {name, failed, total, category, tests:[titles], recovered:[titles]}, sorted by failure
-    count desc. Test titles are fetched for the worst runs first, bounded by
-    max_result_calls; per suite capped at per_suite_cap names.
+def get_failed_tests(org, project, build_id, timeout=90):
+    """Standalone failure query using the same complete pass-any evidence as the summary.
+    Report collectors reuse summary['failed_suites'] instead of fetching a second time."""
+    ok, summary, detail = _pp.get_test_summary(org, project, build_id, timeout)
+    return (ok, summary["failed_suites"] if ok else None, detail)
 
-    UNIT suites apply the retry rule: a failing unit run is re-read per-result and
-    reconciled (reconcile_retries), so a flaky test that failed-then-passed is NOT listed
-    as a failure — it's collected under `recovered` and a suite that fully recovers is
-    dropped."""
-    base = org.rstrip("/")
-    url = (f"{base}/{project}/_apis/test/runs"
-           f"?buildUri=vstfs:///Build/Build/{build_id}&api-version=7.1")
-    ok, data, detail = _pp._ado_rest_get(url, timeout)
-    if not ok:
-        return (False, None, detail)
-
-    def fcount(r):
-        return max((r.get("totalTests") or 0) - (r.get("passedTests") or 0)
-                   - (r.get("notApplicableTests") or 0), 0)
-
-    failing = sorted((r for r in (data or {}).get("value", []) if fcount(r) > 0),
-                     key=lambda r: -fcount(r))
-    suites, calls = {}, 0
-    for r in failing:
-        name = _pp._suite_base_name(r.get("name"))
-        cat = _pp.classify_test_run(name)
-        s = suites.setdefault(name, {"name": name, "failed": 0, "total": 0,
-                                     "category": cat, "tests": [], "recovered": []})
-        # UNIT retry rule: reconcile per-result so flaky-recovered tests aren't failures.
-        if cat == "unit":
-            ok2, results, _ = _pp._run_results(org, project, r.get("id"), timeout)
-            if ok2:
-                rec = _pp.reconcile_retries(results)
-                s["failed"] += rec["failed"]
-                s["total"] += rec["total"]
-                for t in rec["recovered"]:
-                    if t not in s["recovered"]:
-                        s["recovered"].append(t)
-                # only the tests that truly failed (never passed) — reconcile again for names
-                import collections
-                by = collections.defaultdict(set)
-                for res in results:
-                    title = (res.get("testCaseTitle") or res.get("automatedTestName") or "").strip()
-                    if title:
-                        by[title].add(res.get("outcome"))
-                for title, outs in by.items():
-                    eff = {o for o in outs if o not in _NA_OUTCOMES}
-                    if eff and "Passed" not in eff and title not in s["tests"] \
-                            and len(s["tests"]) < per_suite_cap:
-                        s["tests"].append(title)
-            continue
-        # NON-unit (UI / instrumented) — ADO aggregate + the failed titles (unchanged).
-        s["failed"] += fcount(r)
-        s["total"] += r.get("totalTests") or 0
-        if calls < max_result_calls:
-            calls += 1
-            rurl = (f"{base}/{project}/_apis/test/Runs/{r.get('id')}/results"
-                    f"?outcomes=Failed&$top=100&api-version=7.1")
-            ok2, rdata, _ = _pp._ado_rest_get(rurl, timeout)
-            if ok2:
-                for res in (rdata or {}).get("value", []):
-                    title = (res.get("testCaseTitle") or res.get("automatedTestName") or "").strip()
-                    if title and title not in s["tests"] and len(s["tests"]) < per_suite_cap:
-                        s["tests"].append(title)
-    # Drop suites whose failures all recovered on retry (unit); keep real failures.
-    real = [s for s in suites.values() if s["failed"] > 0]
-    return (True, sorted(real, key=lambda x: -x["failed"]), "")
-
-__all__ = ['TEST_CATEGORIES', '_CATEGORY_LABEL', '_NA_OUTCOMES', '_UI_API_RE', '_VERSION_KEYS', '_flight_provider', '_msal_variant', '_run_results', '_suite_base_name', '_ui_case_id_from_result', 'classify_test_run', 'format_release_versions', 'format_versions', 'get_failed_tests', 'get_test_summary', 'reconcile_retries', 'ui_automation_verdicts']
+__all__ = ['TEST_CATEGORIES', 'MRWP_COUNT_BASIS', '_CATEGORY_LABEL', '_NA_OUTCOMES', '_UI_API_RE', '_VERSION_KEYS', '_flight_provider', '_msal_variant', '_run_results', '_test_runs', '_suite_base_name', '_ui_case_id_from_result', 'classify_test_run', 'format_release_versions', 'format_versions', 'get_failed_tests', 'get_test_summary', 'reconcile_retries', 'ui_automation_verdicts']
