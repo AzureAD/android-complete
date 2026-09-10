@@ -1,7 +1,7 @@
 """`poll-rc` — one poll of an in-flight Phase-2 RC verification (the 30-min RC poller).
 
 After a re-triggered RC (see `rc-retriggered`), the Build & RC Verification phase holds
-on an IN-FLIGHT MRWP run (status-aware verify — see steps/build_verify/_common). This
+on an IN-FLIGHT MRWP run (status-aware verify — see steps/build_verify/_mrwp). This
 command is the poller seam the `build-verify-rc-poller` automation calls every 30 min:
 
   1. advance the drain (`run_until_gate`) so the in-flight verify step re-checks the run's

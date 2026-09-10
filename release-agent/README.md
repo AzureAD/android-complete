@@ -95,6 +95,15 @@ That's it. Mocking works automatically (`outcome`/knobs); `step-info` shows its 
 `step-action`/`mock-spec` find it. The **`test_step_modules_and_config_stay_in_sync`**
 guardrail fails loudly if a module and `phases.yaml` drift, so nothing silently breaks.
 
+Phase-2 ownership follows the same rule: `steps/build_verify/rc_report.py` owns the
+captured report model, readiness, and consolidated gate decisions; `auth_ecs.py` owns
+Authenticator collection, evidence checks, and the informational suite verdict.
+The ECS/Local MRWP steps share `_mrwp.py`. `_rc_report_rendering.py` renders the
+evaluated report as HTML/plain text (and supplies display helpers to the CLI);
+it receives decisions from `rc_report`, rather than importing the step.
+`_common.py` holds only shared snapshot storage, evidence primitives, and recovery/link
+utilities. Underscore-prefixed helpers are intentionally excluded from step discovery.
+
 **Two homes for data (by lifetime):**
 - **Release metadata + run-state** → `.release-runs/<id>/release-state.json` (per-release; the `ReleaseState` record). Holds `owner_email`/`owner_name` (the release owner, resolved from the signed-in `az` user at `init`; reminders email this person), `ccd`/`ccd_source`/`ccd_conflict`, step completion, gate decisions, `last_notified_date`, etc. Add release-scoped fields here.
 - **Tool config** → `release-agent/config/*.yaml` (not release-specific; committed): `phases.yaml`, `readiness.yaml`, `schedule.yaml`, `requirements.yaml`.

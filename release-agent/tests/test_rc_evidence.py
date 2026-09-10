@@ -11,7 +11,8 @@ from orchestrator import cli, cli_common as C, mocks
 from orchestrator.commands import rc_report as RR, rc_poll as RP
 from orchestrator.engine import Orchestrator
 from orchestrator.state import ReleaseState, StepState
-from steps.build_verify import _common as K, rc_report
+from steps.build_verify import _common as K, rc_report, _rc_report_rendering as rendering
+from tools.pipelines import AUTH_UI_SUITES
 
 
 @pytest.fixture
@@ -60,9 +61,10 @@ def test_builder_and_recorder_refuse_missing_evidence(ready, tmp_path, path, val
 def test_missing_provider_and_zero_ui_never_gate_clean():
     for model in ({}, {"mrwp": {"ECS": {"tests": {"categories": {"ui": {
             "total": 100, "passed": 100, "failed": 0}}}}}}):
-        assert K.rc_ui_gate(model)["blocking"]
-        assert K.auth_report_gate(model)["blocking"]
-        html = K._rc_email_html(model, {})
+        gate, auth = rc_report.rc_ui_gate(model), rc_report.auth_report_gate(model)
+        assert gate["blocking"]
+        assert auth["blocking"]
+        html = rendering.rc_email_html(model, {}, gate, auth, rc_report.rc_next_action(model))
         assert "MRWP ECS: evidence unavailable" in html or "MRWP Local: evidence unavailable" in html
         assert "RC verified" not in html
 
@@ -71,7 +73,7 @@ def test_real_rc_counts_hold_at_84_5_and_missing_auth_still_prevents_report(read
     current = K.latest_rc(ready)
     current["ecs"]["tests"]["categories"]["ui"] = {"passed": 168, "total": 204, "failed": 30}
     current["local"]["tests"]["categories"]["ui"] = {"passed": 137, "total": 157, "failed": 8}
-    assert K.rc_ui_gate(K.rc_report_model(ready))["pass_pct"] == 84.5
+    assert rc_report.rc_ui_gate(rc_report.rc_report_model(ready))["pass_pct"] == 84.5
     assert rc_report.build(ready).kind == "needs_skill"
     assert RR.cmd_record_rc_report(args_for(tmp_path, ready)) == 2
     assert C.load_state(str(tmp_path), ready.release_id).get_step("build_verify", "rc_report").status == "blocked"
@@ -82,7 +84,7 @@ def test_real_rc_counts_hold_at_84_5_and_missing_auth_still_prevents_report(read
 @pytest.mark.parametrize("failure", ["build", "suite", "absent-suite", "empty-suite"])
 def test_evaluated_auth_failures_reportable_when_prerequisites_settled(ready, failure):
     auth = K.latest_rc(ready)["auth"]
-    suite = auth["test"]["suites"][K.AUTH_UI_SUITES[0]]
+    suite = auth["test"]["suites"][AUTH_UI_SUITES[0]]
     if failure == "build":
         auth["build"]["result"], auth["test"] = "failed", None
     elif failure == "suite":
@@ -92,9 +94,9 @@ def test_evaluated_auth_failures_reportable_when_prerequisites_settled(ready, fa
     else:
         suite.update(passed=0, failed=0, total=0, pct=None)
     auth["verdict"] = "clean"
-    model = K.rc_report_model(ready)
-    assert K.report_readiness(model)["ready"]
-    assert K.auth_report_gate(model)["blocking"]
+    model = rc_report.rc_report_model(ready)
+    assert rc_report.report_readiness(model)["ready"]
+    assert rc_report.auth_report_gate(model)["blocking"]
     out = rc_report.build(ready)
     assert out.kind == "needs_skill" and "HOLD" in out.payload["subject"]
     assert out.payload["followup_command"] == "record-rc-report"
@@ -106,11 +108,11 @@ def test_gate_uses_unrounded_counts(ready):
     for key in ("ecs", "local"):
         K.latest_rc(ready)[key]["tests"]["categories"]["ui"] = {
             "total": 2000, "passed": 1799, "failed": 201}
-    assert K.rc_ui_gate(K.rc_report_model(ready))["blocking"]
+    assert rc_report.rc_ui_gate(rc_report.rc_report_model(ready))["blocking"]
     for key in ("ecs", "local"):
         K.latest_rc(ready)[key]["tests"]["categories"]["ui"] = {
             "total": 20000, "passed": 19999, "failed": 1}
-    assert K.rc_ui_gate(K.rc_report_model(ready))["verdict"] == "warn"
+    assert rc_report.rc_ui_gate(rc_report.rc_report_model(ready))["verdict"] == "warn"
 
 
 def test_cli_dispatch_and_recorder_cannot_bypass_predecessors(ready, tmp_path, capsys, monkeypatch):
@@ -150,8 +152,8 @@ def test_recorder_preserves_terminal_records(ready, tmp_path, status):
 def test_new_partial_rc_cannot_reuse_previous_complete_rc(ready):
     old = copy.deepcopy(K.latest_rc(ready))
     K.stash_mrwp(ready, "ECS", {**old["ecs"], "run_id": "99999"}, rc=2)
-    assert K.rc_report_model(ready)["rc"] == 2
-    assert not K.report_readiness(K.rc_report_model(ready))["ready"]
+    assert rc_report.rc_report_model(ready)["rc"] == 2
+    assert not rc_report.report_readiness(rc_report.rc_report_model(ready))["ready"]
     assert rc_report.build(ready).kind == "blocked"
 
 

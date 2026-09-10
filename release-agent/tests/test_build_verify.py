@@ -1,5 +1,6 @@
 """Release-agent tests — build_verify. Shared harness in tests/_harness.py."""
 from tests._harness import *  # noqa: F401,F403
+from steps.build_verify import rc_report as report, _rc_report_rendering as rendering
 
 
 
@@ -179,11 +180,13 @@ def test_rc_email_includes_separate_auth_section():
                   "complete": True, "result": "succeeded"},
         "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(82.76, 100.0)},
         "verdict": "attention"})
-    model = K.rc_report_model(st)
+    model = report.rc_report_model(st)
     assert (model.get("auth") or {}).get("verdict") == "attention"
-    html = K._rc_email_html(model, {"owner": "pedro"})
+    gate, auth = report.rc_ui_gate(model), report.auth_report_gate(model)
+    next_action = report.rc_next_action(model)
+    html = rendering.rc_email_html(model, {"owner": "pedro"}, gate, auth, next_action)
     assert "Authenticator ECS" in html and "UIAutomator E2E" in html
-    plain = K._rc_email_plain(model, {"owner": "pedro"})
+    plain = rendering.rc_email_plain(model, {"owner": "pedro"}, gate, auth, next_action)
     assert "AUTHENTICATOR ECS" in plain and "does NOT affect" in plain
 
 
@@ -203,12 +206,14 @@ def test_rc_report_contemplates_both_gates_at_a_glance():
                   "complete": True, "result": "succeeded"},
         "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(82.76, 100.0)},
         "verdict": "attention"})
-    model = K.rc_report_model(st)
-    subj = K.rc_email_subject(model)
+    model = report.rc_report_model(st)
+    gate, auth = report.rc_ui_gate(model), report.auth_report_gate(model)
+    next_action = report.rc_next_action(model)
+    subj = rendering.rc_email_subject(model, gate, auth)
     assert "MRWP UI:" in subj and "Auth ECS: HOLD" in subj
-    html = K._rc_email_html(model, {"owner": "pedro"})
+    html = rendering.rc_email_html(model, {"owner": "pedro"}, gate, auth, next_action)
     assert "MRWP UI:" in html and "Auth ECS:" in html          # gates banner has both
-    plain = K._rc_email_plain(model, {"owner": "pedro"})
+    plain = rendering.rc_email_plain(model, {"owner": "pedro"}, gate, auth, next_action)
     assert "GATES (evaluated independently)" in plain
     assert "MRWP UI:" in plain and "Authenticator ECS: HOLD" in plain
     # a clean auth leg flips only the auth surfaces, not the MRWP verdict
@@ -217,7 +222,9 @@ def test_rc_report_contemplates_both_gates_at_a_glance():
                   "complete": True, "result": "succeeded"},
         "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(97.0, 100.0)},
         "verdict": "clean"})
-    assert "Auth ECS: pass" in K.rc_email_subject(K.rc_report_model(st))
+    model = report.rc_report_model(st)
+    assert "Auth ECS: pass" in rendering.rc_email_subject(
+        model, report.rc_ui_gate(model), report.auth_report_gate(model))
 
 
 
@@ -291,12 +298,12 @@ def test_rc_ui_gate_and_run_links():
                           "tests": {"categories": {"ui": local_ui}}}}}
 
     # 200/200 = 100% → clean (non-blocking)
-    g0 = K.rc_ui_gate(_model({"total": 100, "passed": 100, "failed": 0},
+    g0 = report.rc_ui_gate(_model({"total": 100, "passed": 100, "failed": 0},
                              {"total": 100, "passed": 100, "failed": 0}))
     assert g0["verdict"] == "clean" and g0["blocking"] is False and g0["pass_pct"] == 100.0
 
     # 180/200 = 90.0% → exactly at the bar, not clean → warn (non-blocking)
-    g = K.rc_ui_gate(_model({"total": 100, "passed": 100, "failed": 0},
+    g = report.rc_ui_gate(_model({"total": 100, "passed": 100, "failed": 0},
                             {"total": 100, "passed": 80, "failed": 20}))
     assert g["verdict"] == "warn" and g["blocking"] is False
     assert g["pass_pct"] == 90.0 and g["ui_total"] == 200
@@ -307,7 +314,7 @@ def test_rc_ui_gate_and_run_links():
                         {"total": 100, "passed": 100, "failed": 0},
                         ecs_suites=[{"name": "PROD MSAL - RC Broker (API 32)",
                                      "failed": 40, "total": 100, "category": "ui"}])
-    g2 = K.rc_ui_gate(fail_model)
+    g2 = report.rc_ui_gate(fail_model)
     assert g2["verdict"] == "attention" and g2["blocking"] is True and g2["pass_pct"] == 80.0
     assert "BELOW" in g2["detail"] and "PROD MSAL - RC Broker (API 32)" in g2["detail"]
     # the three exits are spelled out: re-trigger (flaky) / cherry-pick (bug) / override
@@ -316,13 +323,13 @@ def test_rc_ui_gate_and_run_links():
     assert "LAST RESORT" in g2["detail"] and "skip" in g2["detail"]
 
     # No UI tests anywhere is unavailable evidence, never a clean pass.
-    g3 = K.rc_ui_gate({"mrwp": {"ECS": {"tests": {"categories": {}}},
+    g3 = report.rc_ui_gate({"mrwp": {"ECS": {"tests": {"categories": {}}},
                                 "Local": {"tests": {"categories": {}}}}})
     assert g3["verdict"] == "unavailable" and g3["blocking"] is True
     assert g3["ui_total"] == 0 and "UI results" in g3["detail"]
 
     # every evaluated run becomes a durable link
-    links = K.rc_run_links(fail_model)
+    links = report.rc_run_links(fail_model)
     names = [l["name"] for l in links]
     assert names == ["Code Complete Checker run", "Release Orchestrator run",
                      "MRWP ECS run", "MRWP Local run"]
@@ -447,9 +454,11 @@ def test_rc_report_email_shows_retry_warning():
                                   "ui": {"total": 10, "passed": 10, "failed": 0}}}},
                       "Local": {"run_id": 4, "ran": 23, "total": 23, "tests": {"categories": {}}}},
              "problems": []}
-    assert K.recovered_unit_tests(model) == ["testNullDrsMetadata"]
-    plain = K._rc_email_plain(model, {})
-    html = K._rc_email_html(model, {})
+    assert rendering.recovered_unit_tests(model) == ["testNullDrsMetadata"]
+    gate, auth = report.rc_ui_gate(model), report.auth_report_gate(model)
+    next_action = report.rc_next_action(model)
+    plain = rendering.rc_email_plain(model, {}, gate, auth, next_action)
+    html = rendering.rc_email_html(model, {}, gate, auth, next_action)
     assert "RETRY WARNING" in plain and "testNullDrsMetadata" in plain
     assert "Retry warning" in html and "testNullDrsMetadata" in html
 
@@ -458,7 +467,7 @@ def test_rc_report_email_shows_retry_warning():
 
 def test_rc_model_shape_agrees_across_live_and_state_paths():
     """H1 guard: the live builder (pipelines.release_report → assemble_rc_model) and the
-    state builder (steps._common.rc_report_model → assemble_rc_model) produce the SAME
+    state builder (steps.build_verify.rc_report.rc_report_model → assemble_rc_model) produce the SAME
     top-level model shape, so the gate/email/diagnostic never drift."""
     from tools import pipelines as P
     from steps.build_verify import _common as K
@@ -471,14 +480,14 @@ def test_rc_model_shape_agrees_across_live_and_state_paths():
     st = ReleaseState(release_id="2026-08")
     _seed_rc_pipeline(st, {"total": 10, "passed": 10, "failed": 0},
                       {"total": 10, "passed": 10, "failed": 0})
-    sm = K.rc_report_model(st)
+    sm = report.rc_report_model(st)
     assert {"release", "checker", "orchestrator", "mrwp", "problems", "rc"} <= set(sm)
     assert sm["rc"] == 1 and sm["problems"] == []
     # a never-ran MRWP snapshot yields the SAME problem string the live path derives
     st2 = ReleaseState(release_id="2026-08")
     from steps.build_verify import _common as K2
     K2.stash_mrwp(st2, "ECS", {"run_id": "9", "complete": False, "never_ran": ["UI Automation"]})
-    pm = K2.rc_report_model(st2)
+    pm = report.rc_report_model(st2)
     assert any("did NOT run to completion" in p and "UI Automation" in p for p in pm["problems"])
 
 

@@ -4,12 +4,12 @@
 Local-flighting counterpart to `mrwp_ecs`: verifies the Local MRWP (def 2519) run "ran
 to completion" (every stage executed; skipped/canceled/pending = block) and reports its
 Test-tab results. Red/yellow stages and failed tests do NOT block — triaged later. All
-logic is shared in `_common.verify_mrwp`.
+logic is shared in `_mrwp.verify_mrwp`.
 """
 from __future__ import annotations
 
 from steps.lib.agent import legacy_run
-from steps.build_verify import _common as K
+from steps.build_verify._mrwp import verify_mrwp
 
 ID = "mrwp_local"
 KIND = "agent"
@@ -24,7 +24,7 @@ MOCKABLE = {
 
 
 def build(state):
-    return K.verify_mrwp(state, "Local")
+    return verify_mrwp(state, "Local")
 
 
 run = legacy_run(build)

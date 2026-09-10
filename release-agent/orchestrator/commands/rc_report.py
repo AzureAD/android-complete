@@ -10,14 +10,15 @@ import json as _json
 
 from orchestrator import cli_common as C
 from steps.build_verify import _common as K
+from steps.build_verify import rc_report as R, _rc_report_rendering as rendering
+from tools import pipelines as P
 
 
 def cmd_rc_report(args):
-    from tools import pipelines as P
     st = C.load_state(args.runs_root, args.release)
     month = getattr(st, "release_id", None) or args.release
     model = P.release_report(K.ORG, K.PROJECT, month,
-                             checker_def=K.CHECKER_DEF, orch_def=K.ORCHESTRATOR_DEF)
+                             checker_def=P.CHECKER_DEF, orch_def=P.ORCHESTRATOR_DEF)
     _persist(st, model, args)
     if getattr(args, "json", False):
         print(_json.dumps(model, indent=2))
@@ -83,8 +84,8 @@ def cmd_record_rc_report(args):
         print(_json.dumps({"error": guard.reason}))
         return 1
     try:
-        model = K.rc_report_model(orch.state)
-        readiness = K.report_readiness(model)
+        model = R.rc_report_model(orch.state)
+        readiness = R.report_readiness(model)
         if not readiness["ready"]:
             print(_json.dumps({"error": readiness["detail"]}))
             return 1
@@ -92,9 +93,9 @@ def cmd_record_rc_report(args):
         print(_json.dumps({"error": f"could not build the RC model ({e})."}))
         return 1
 
-    gate = K.rc_ui_gate(model)
-    auth = K.auth_report_gate(model)
-    links = K.rc_run_links(model)
+    gate = R.rc_ui_gate(model)
+    auth = R.auth_report_gate(model)
+    links = R.rc_run_links(model)
     # The consolidation decision: the release auto-advances only when BOTH the MRWP UI gate
     # AND the Authenticator-ECS gate clear. Either one holding -> the step blocks (the
     # release WAITS for human attestation). The two remain SEPARATE evaluations.
@@ -140,7 +141,7 @@ def _format(m) -> str:
         err = f" ({o['error']})" if "error" in o else ""
         L.append(f"⛔ **Release Orchestrator** — no run found{err}.")
     else:
-        vstr = K.format_versions(o.get("versions"), fallback="versions n/a")
+        vstr = P.format_versions(o.get("versions"), fallback="versions n/a")
         if o.get("healthy"):
             park = "parked at 'Remove RC Tags' (awaiting owner approval)" if o.get("parked") \
                 else f"'{o.get('park_stage')}' already cleared"
@@ -182,7 +183,7 @@ def _format(m) -> str:
         # Failing tests, grouped by suite (UI first), each tagged by category.
         suites = r.get("failed_suites")
         if suites:
-            for s in K.sort_failed_suites(suites):
+            for s in rendering.sort_failed_suites(suites):
                 cat = _lbl.get(s.get("category", "ui"), "UI automation")
                 fr = round(s["failed"] * 100.0 / s["total"], 1) if s["total"] else 0.0
                 L.append(f"   • [{cat}] {s['name']}: {s['failed']}/{s['total']} failed ({fr}%)")
@@ -201,7 +202,7 @@ def _format(m) -> str:
         for p in probs:
             L.append(f"  - {p}")
     # Unit retry warning — failed-then-passed on retry (counted as passed).
-    recovered = K.recovered_unit_tests(m)
+    recovered = rendering.recovered_unit_tests(m)
     if recovered:
         L += ["", f"⚠ **Retry warning** — {len(recovered)} unit test(s) failed then passed "
                   f"on retry (counted as passed):"]

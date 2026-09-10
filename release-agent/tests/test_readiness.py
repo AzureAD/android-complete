@@ -461,8 +461,8 @@ def test_build_verify_orchestrator_blocks_on_failed_pregate_stage():
 
 
 def test_auth_gate_clean_when_both_suites_pass():
-    from steps.build_verify import _common as K
-    g = K.auth_gate(_auth_suites(96.0, 100.0))
+    from steps.build_verify import auth_ecs
+    g = auth_ecs.auth_gate(_auth_suites(96.0, 100.0))
     assert g["verdict"] == "clean" and g["blocking"] is False
     assert "clear the 90% bar" in g["detail"]
 
@@ -470,8 +470,8 @@ def test_auth_gate_clean_when_both_suites_pass():
 
 
 def test_auth_gate_blocks_when_a_suite_below_threshold():
-    from steps.build_verify import _common as K
-    g = K.auth_gate(_auth_suites(82.76, 100.0))    # the live example: E2E 24/29
+    from steps.build_verify import auth_ecs
+    g = auth_ecs.auth_gate(_auth_suites(82.76, 100.0))    # the live example: E2E 24/29
     assert g["verdict"] == "attention" and g["blocking"] is True
     assert "NOT met" in g["detail"] and "UIAutomator" in g["detail"]
 
@@ -479,8 +479,8 @@ def test_auth_gate_blocks_when_a_suite_below_threshold():
 
 
 def test_auth_gate_blocks_when_a_suite_missing():
-    from steps.build_verify import _common as K
-    g = K.auth_gate(_auth_suites(100.0, 100.0, monthly_present=False))
+    from steps.build_verify import auth_ecs
+    g = auth_ecs.auth_gate(_auth_suites(100.0, 100.0, monthly_present=False))
     assert g["blocking"] is True and "no result" in g["detail"]
 
 
@@ -818,4 +818,3 @@ def test_approve_orchestrator_gate_command_rejects_wrong_gate():
     finally:
         gw.submit_approval = o
     assert rc == 1 and called["n"] == 0                  # no ADO submit attempted on the wrong gate
-

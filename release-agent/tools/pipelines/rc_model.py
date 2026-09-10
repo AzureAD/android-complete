@@ -13,7 +13,7 @@ def assemble_rc_model(release, checker, orchestrator, mrwp, *, rc=None,
                       id_source=None, io_problems=None, auth=None):
     """The ONE canonical Phase-2 RC report model — built from already-resolved pieces,
     whether they came from LIVE reads (release_report) or the state snapshot
-    (steps.build_verify._common.rc_report_model). Both paths call this so they can never
+    (steps.build_verify.rc_report.rc_report_model). Both paths call this so they can never
     drift on shape or on how `problems` are derived.
 
     Sections:

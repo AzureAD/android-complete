@@ -17,14 +17,15 @@ from orchestrator.outcomes import Done, Blocked
 from steps.lib.agent import legacy_run
 from steps.lib.mockctx import mock_input, MISSING
 from steps.build_verify import _common as K
+from tools.pipelines import ORCHESTRATOR_DEF, ORCH_REQUIRED_STAGES, ORCH_PARK_STAGE
 
 ID = "orchestrator_health"
 KIND = "agent"
 
 CONFIG = {
-    "org": K.ORG, "project": K.PROJECT, "def_id": K.ORCHESTRATOR_DEF,
-    "required_stages": K.ORCH_REQUIRED_STAGES,
-    "park_stage": K.ORCH_PARK_STAGE,
+    "org": K.ORG, "project": K.PROJECT, "def_id": ORCHESTRATOR_DEF,
+    "required_stages": ORCH_REQUIRED_STAGES,
+    "park_stage": ORCH_PARK_STAGE,
 }
 
 MOCKABLE = {

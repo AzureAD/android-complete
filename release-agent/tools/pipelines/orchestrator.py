@@ -7,7 +7,7 @@ from tools.pipelines._rest import RAN_RESULTS
 
 # ── Engineering release-chain coordinates (identitydivision / Engineering) — SINGLE SOURCE.
 # The run-discovery below queries this chain; rc_model imports these for release_report's
-# defaults, and steps/build_verify/_common.py imports them from the package. Values come from
+# defaults, and build_verify steps import them from the package. Values come from
 # config/coordinates.yaml; the constant NAMES stay so every consumer is unchanged.
 # Other areas own their own coordinates (localization/wiki/CG live in their step modules).
 IDENTITYDIVISION = coords.org_url("engineering")
