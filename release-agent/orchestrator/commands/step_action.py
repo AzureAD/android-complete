@@ -121,11 +121,13 @@ def cmd_step_action(args):
         print(_json.dumps({"error": str(e)}))
         return 1
 
-    st = C.load_state(args.runs_root, args.release)
-    kwargs = _accepted_kwargs(mod.build, params)
+    st, orch = C.load_orch(args.runs_root, args.release, args.config)
     spec = mocks_mod.load_mocks().get(f"{args.phase}.{getattr(mod, 'ID', args.step)}") or {}
-    with mockctx.active(spec):                     # expose `input` knobs to build()
-        outcome = mod.build(st, **kwargs)
+    outcome = orch.completed_step_outcome(args.phase, args.step)
+    if outcome is None:
+        kwargs = _accepted_kwargs(mod.build, params)
+        with mockctx.active(spec):                 # expose `input` knobs to build()
+            outcome = mod.build(st, **kwargs)
 
     out = as_dict(outcome)
     out["phase"] = args.phase
@@ -302,4 +304,3 @@ def register(sub):
     gi.add_argument("--item", required=True, help="Readiness item id, e.g. build_access, oncall_now, yubikey")
     gi.add_argument("--json", action="store_true", help="Emit the knowledge as JSON")
     gi.set_defaults(func=cmd_gate_info)
-

@@ -18,6 +18,7 @@ from typing import Optional
 import yaml
 
 from .state import ReleaseState, StepState, GateDecision, _now
+from .outcomes import Done
 from .readiness import ReadinessGate
 from . import schedule
 from . import mocks as mocks_mod
@@ -462,6 +463,14 @@ class Orchestrator(StatusViewMixin):
         return actions
 
     # ---- manual overrides (human-driven transitions, §7.1 constraint #5) ----
+    def completed_step_outcome(self, phase_id: str, step_id: str) -> Optional[Done]:
+        """Terminal steps stay terminal until explicitly reopened."""
+        if not self.state.is_done(phase_id, step_id):
+            return None
+        record = self.state.get_step(phase_id, step_id)
+        return Done(note=f"Already {record.status}: {phase_id}/{step_id}; no action required.",
+                    links=list(record.links or []))
+
     def _find_step(self, phase_id: str, step_id: str):
         phase = next((p for p in self.config["phases"] if p["id"] == phase_id), None)
         if phase and any(s["id"] == step_id for s in phase["steps"]):
@@ -491,6 +500,9 @@ class Orchestrator(StatusViewMixin):
         step_id = step_id or self.state.current_step
         if not (phase_id and step_id) or not self._find_step(phase_id, step_id):
             return NextAction(kind="idle", message=f"No such step: {phase_id}/{step_id}")
+        completed = self.completed_step_outcome(phase_id, step_id)
+        if completed is not None:
+            return NextAction(kind="idle", phase=phase_id, step=step_id, message=completed.note)
         self.state.set_step(phase_id, step_id,
                             StepState(status="done", completed_at=_now(),
                                       note=(note.strip() or "Marked done"), by="human"))
@@ -512,6 +524,9 @@ class Orchestrator(StatusViewMixin):
             (e.g. a Production CCOA lockdown overlaps — the owner must shift CCD)."""
         if not self._find_step(phase_id, step_id):
             return NextAction(kind="idle", message=f"No such step: {phase_id}/{step_id}")
+        completed = self.completed_step_outcome(phase_id, step_id)
+        if completed is not None:
+            return NextAction(kind="idle", phase=phase_id, step=step_id, message=completed.note)
         if status == "pass":
             return self.complete_step(phase_id, step_id, detail)
         # attention: leave the step outstanding, flagged for the owner.

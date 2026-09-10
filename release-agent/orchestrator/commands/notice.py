@@ -14,6 +14,9 @@ def cmd_record_step(args):
     out-of-engine work, e.g. sending the notice email)."""
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     act = orch.record_scout_step(args.phase, args.step, args.status, args.detail or "")
+    if act.kind == "idle":
+        C.emit(args.runs_root, args.release, act.message, kind="step")
+        return 0
     C.save_state(orch.state, args.runs_root, args.release)
     C.emit(args.runs_root, args.release,
            f"[{'ok' if args.status == 'pass' else 'attention'}] {args.step}: {act.message}",

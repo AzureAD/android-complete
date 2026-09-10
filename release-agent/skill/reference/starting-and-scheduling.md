@@ -18,6 +18,13 @@ Pick current → `init --release <id>` immediately. Pick different → follow-up
 
 ## Ensure push reminders exist (per release — provisioned at start, torn down at close)
 
+Every provisioned worker prompt must include the stale-approval replay rule from
+SKILL.md's universal loop: re-run `step-action` after approval, immediately before
+sending, and obey its fresh result. Update the existing hourly/morning prompts and
+installed skill on the release owner's machine before rollout; source edits alone
+do not update stored automations. This prevents completed-step replays, not concurrent
+sends by two workers that both read pending work.
+
 Right after `init`, make sure the **push-reminder automation** exists for THIS release so reminders reach the user even with Scout closed. Per-release: created at start, removed at close.
 1. `m_list_automations`. If **"`<YYYY-MM> · Release-wide — push reminders`"** exists AND `automation list --release <YYYY-MM> --json` has it scoped to this release, **leave it** — don't duplicate.
 2. If missing, `m_create_automation`:

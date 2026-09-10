@@ -1335,6 +1335,91 @@ def test_record_step_generic_pass():
         assert C.load_state(d, rid).is_done("preflight", "notice")
 
 
+def test_terminal_step_dispatch_does_not_rebuild_payload(tmp_path, capsys, monkeypatch):
+    import json
+    from orchestrator import cli, mocks
+    from orchestrator.state import StepState
+    import steps
+    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    rid = "2026-09"
+
+    def must_not_build(_state):
+        raise AssertionError("A terminal step must not rebuild a sendable payload")
+
+    for phase, sid in (("ccd", "final_reminder"), ("ccd", "pr_reminder"),
+                       ("preflight", "notice"), ("preflight", "flight_reminder"),
+                       ("ccd", "localization")):
+        monkeypatch.setattr(steps.get_step(phase, sid), "build", must_not_build)
+        for status in ("done", "skipped"):
+            st = ReleaseState(release_id=rid, ccd="2026-09-09")
+            st.set_step(phase, sid, StepState(status=status, completed_at="original",
+                                            note="original evidence", by="scout",
+                                            links=[{"name": "receipt", "url": "https://example.com/receipt"}],
+                                            data={"message_id": "original"}))
+            path = tmp_path / rid / "release-state.json"
+            st.save(str(path))
+            before = path.read_bytes()
+            rc = cli.main(["--runs-root", str(tmp_path), "step-action", "--release", rid,
+                           "--phase", phase, "--step", sid])
+            result = json.loads(capsys.readouterr().out)
+            assert rc == 0 and result["kind"] == "done"
+            assert "tool" not in result and "payload" not in result
+            assert path.read_bytes() == before
+
+
+def test_stale_approval_refresh_skips_completed_step_and_preserves_record(tmp_path, capsys, monkeypatch):
+    import json
+    from orchestrator import cli, mocks
+    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    rid = "2026-09"
+    st = ReleaseState(release_id=rid, ccd="2026-09-09",
+                      owner_name="Release owner", owner_email="owner@example.com")
+    path = tmp_path / rid / "release-state.json"
+    st.save(str(path))
+    base = ["--runs-root", str(tmp_path)]
+    target = ["--release", rid, "--phase", "ccd", "--step", "final_reminder"]
+
+    # An interactive runner prepared its message before another runner finished.
+    assert cli.main(base + ["step-action"] + target) == 0
+    assert json.loads(capsys.readouterr().out)["kind"] == "needs_skill"
+    assert cli.main(base + ["record-step"] + target + ["--status", "pass", "--detail", "First send"]) == 0
+    capsys.readouterr()
+    completed = path.read_bytes()
+
+    # User approval of the old preview cannot authorize replay of completed work.
+    assert cli.main(base + ["step-action"] + target) == 0
+    assert json.loads(capsys.readouterr().out)["kind"] == "done"
+    for status in ("pass", "attention"):
+        assert cli.main(base + ["record-step"] + target + ["--status", status, "--detail", "Late result"]) == 0
+        assert "Already done" in capsys.readouterr().out
+        assert path.read_bytes() == completed
+
+    # A deliberate reopen remains the established path for running a step again.
+    assert cli.main(base + ["reopen"] + target + ["--reason", "Explicit rerun requested"]) == 0
+    capsys.readouterr()
+    assert cli.main(base + ["step-action"] + target) == 0
+    assert json.loads(capsys.readouterr().out)["kind"] == "needs_skill"
+
+
+def test_engine_preserves_terminal_records_until_explicit_reopen():
+    from copy import deepcopy
+    from orchestrator.state import StepState
+    for status in ("done", "skipped"):
+        st = ReleaseState(release_id="replay")
+        original = StepState(status=status, completed_at="original", note="evidence",
+                             by="scout", data={"message_id": "123"})
+        st.set_step("preflight", "notice", original)
+        orch = Orchestrator(CONFIG, st, mocks={})
+        before = deepcopy(st.steps)
+        assert orch.complete_step("preflight", "notice", "replace").kind == "idle"
+        assert orch.record_scout_step("preflight", "notice", "pass", "replace").kind == "idle"
+        assert orch.record_scout_step("preflight", "notice", "attention", "late failure").kind == "idle"
+        assert st.steps == before
+        orch.reopen_step("preflight", "notice", "Explicit retry")
+        assert orch.completed_step_outcome("preflight", "notice") is None
+        assert orch.record_scout_step("preflight", "notice", "pass", "New execution").kind == "ran"
+
+
 
 
 def test_stepstate_data_persists():
@@ -1828,4 +1913,3 @@ def test_oneauth_merge_conflict_surfaces_not_forced(monkeypatch):
     monkeypatch.setattr(OA, "abandon_pr", lambda pid, timeout=60: (abandoned.__setitem__("n", abandoned["n"] + 1), (True, ""))[1])
     ok, info, detail = OA.merge_dev_into_ingestion(dry_run=False)
     assert ok is False and info["conflict"] is True and abandoned["n"] == 1 and "CONFLICT" in detail
-

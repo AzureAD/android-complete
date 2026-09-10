@@ -42,6 +42,12 @@ Throughout this skill, **`<AGENT_ROOT>`** = that confirmed `release-agent` folde
 9. **Log silently.** Human-readable commands auto-log. YOU must journal user choices: `journal --release <id> --source user --kind choice --text "<said>" --choice "<option>"` — silently, never announced (detail in commands.md).
 
 ## The universal loop
+**Prevent stale-approval replays:** after user approval, immediately re-run the same
+`step-action` before any send; never send a cached payload. `done` means skip,
+`blocked`/error means stop. Send only the fresh `needs_skill` result. If its tool or
+payload differs from what was approved, show the changed content and obtain approval
+again. Record success only after sending. This rule applies to all step executors.
+
 Discover → (if no gate cleared, run the entry gate) → `next` to advance → **render the resulting `status`/`checklist` table** → relay what's outstanding → on a gate, `m_ask_user` Approve/Deny → repeat. Every phase rides this same loop; per-phase specifics are in the reference docs.
 
 ## Behaviour dispatch
