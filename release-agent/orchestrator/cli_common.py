@@ -16,6 +16,7 @@ import errno
 import time
 from datetime import date, datetime
 from contextlib import contextmanager
+from contextvars import ContextVar
 
 from orchestrator.state import ReleaseState
 from orchestrator.engine import Orchestrator
@@ -34,6 +35,7 @@ DEFAULT_RUNS_ROOT = os.path.join(os.path.dirname(ROOT), ".release-runs")
 
 # ---- inter-process state lock ----
 _LOCK_TIMEOUT = 30.0    # max seconds to wait for another CLI process to release
+_LOCKED_STATE = ContextVar("locked_release_state", default=None)
 
 
 @contextmanager
@@ -71,7 +73,11 @@ def state_lock(runs_root: str, release):
                 if time.monotonic() >= deadline:
                     raise TimeoutError(f"State for {release} is locked by another process") from e
                 time.sleep(0.05)
-        yield
+        token = _LOCKED_STATE.set((os.path.abspath(state_path(runs_root, release)), object()))
+        try:
+            yield
+        finally:
+            _LOCKED_STATE.reset(token)
     finally:
         try:
             if acquired:
@@ -108,7 +114,17 @@ def state_path(runs_root: str, release: str) -> str:
 
 
 def load_state(runs_root: str, release: str) -> ReleaseState:
-    return ReleaseState.load(state_path(runs_root, release))
+    path = os.path.abspath(state_path(runs_root, release))
+    st = ReleaseState.load(path)
+    transaction = _LOCKED_STATE.get()
+
+    def checkpoint():
+        if transaction is None or transaction[0] != path or _LOCKED_STATE.get() is not transaction:
+            raise RuntimeError("Checkpoint requires state loaded inside the current release state lock")
+        st.save(path)
+
+    st._checkpoint = checkpoint
+    return st
 
 
 def save_state(st: ReleaseState, runs_root: str, release: str) -> None:

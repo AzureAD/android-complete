@@ -4,6 +4,7 @@ from __future__ import annotations
 import json as _json
 import shutil
 import subprocess
+from urllib.parse import quote
 
 from tools.coordinates import coords
 from tools import pipelines as _pp
@@ -118,17 +119,24 @@ def _ado_rest_get_all(url, timeout, cap_pages=60):
     """GET every page of a paged ADO collection, following the `x-ms-continuationtoken`
     response header. `url` must already carry its api-version (no continuationToken).
     Returns (ok, all_items, detail) where all_items is the concatenated `.value` lists."""
-    items, token = [], None
+    items, token, seen = [], None, set()
     for _ in range(cap_pages):
-        u = url + (f"&continuationToken={token}" if token else "")
+        u = url + (f"&continuationToken={quote(str(token), safe='')}" if token else "")
         ok, j, hdrs, detail = _pp._ado_rest_get_h(u, timeout)
         if not ok:
             return (False, None, detail)
-        items += (j or {}).get("value") or []
+        if not isinstance(j, dict) or not isinstance(j.get("value"), list):
+            return (False, None, "Malformed paged ADO collection")
+        if "count" in j and (type(j["count"]) is not int or j["count"] != len(j["value"])):
+            return (False, None, "Inconsistent ADO page count; collection is incomplete")
+        items += j["value"]
         token = hdrs.get("x-ms-continuationtoken")
         if not token:
-            break
-    return (True, items, "")
+            return (True, items, "")
+        if token in seen:
+            return (False, None, "Repeated ADO continuation token; collection is incomplete")
+        seen.add(token)
+    return (False, None, f"ADO collection exceeded {cap_pages} pages; collection is incomplete")
 
 
 def _ado_rest_get_text(url, timeout):

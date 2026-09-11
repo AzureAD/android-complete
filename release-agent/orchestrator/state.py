@@ -13,7 +13,7 @@ import json
 import os
 from dataclasses import dataclass, field, asdict, fields
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, ClassVar, Optional
 
 
 SCHEMA_VERSION = 1
@@ -92,6 +92,8 @@ class ReleaseState:
     last_status_email_date: Optional[str] = None       # YYYY-MM-DD of the last partner status email sent
     escalation_checkpoints: dict = field(default_factory=dict)  # successfully sent alert key -> {sent_at, target}
     notification_deliveries: dict = field(default_factory=dict)  # id -> immutable descriptor, status, attempts, completion
+    resources: dict = field(default_factory=dict)  # release-owned external identities; survives step reopen
+    _checkpoint: ClassVar[Optional[Callable[[], None]]] = None
     # Phase-2 release-pipeline runs — the RECORD of what verification resolved, reused by
     # the RC report + gate (no re-discovery). Because a re-triggered 'Trigger RC Testing'
     # stage spawns NEW MRWP runs, these are re-resolved (newest wins) — not a fixed cache.
@@ -125,6 +127,8 @@ class ReleaseState:
         obj = cls(**{k: v for k, v in data.items() if k in known})
         if not isinstance(obj.notification_deliveries, dict):
             raise ValueError("Invalid notification ledger; owner recovery required")
+        if not isinstance(obj.resources, dict):
+            raise ValueError("Invalid resource registry; owner recovery required")
         return obj
 
     def save(self, path: str) -> None:
@@ -133,7 +137,15 @@ class ReleaseState:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(asdict(self), fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
         os.replace(tmp, path)
+
+    def checkpoint(self) -> None:
+        """Persist an external-action boundary through the active CLI transaction."""
+        if self._checkpoint is None:
+            raise RuntimeError("External resource work requires a locked, persisted release state")
+        self._checkpoint()
 
     # ---- step helpers ----
     @staticmethod
