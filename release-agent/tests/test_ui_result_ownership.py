@@ -43,7 +43,7 @@ def block_upstream(monkeypatch):
 
 
 def distribution_inputs():
-    return {"roster": [{"upn": "tester@example.test", "name": "Tester"}],
+    return {"roster": [{"upn": "tester@example.test", "name": "Tester"}], "oce": "oce@example.test",
             "broker_cases": [{"id": 10}], "auth_cases": [{"id": 100}, {"id": 200}, {"id": 300}]}
 
 

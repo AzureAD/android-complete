@@ -6,8 +6,8 @@ sets are combined into one fair split:
 
   * BROKER — the test cases in the "Manual Tests (Android Broker)" subtree of the Broker
     plan (the release's cloned plan references the master's cases).
-  * AUTHENTICATOR — the ReleaseBugBash query set (tools.testplans.auth_bugbash_query)
-    minus cases tagged Automated (run in CI) or Blocked (can't be run manually).
+  * AUTHENTICATOR — the ReleaseBugBash query set with tags and assignments; the owning
+    step separates actual Android automation and owner triage from runnable manual work.
 
 Eligible testers = members of the roster DL (config/distribution.yaml `roster_group`)
 MINUS: the always-excluded people, owner-confirmed OOF people, the release owner, and
@@ -415,23 +415,76 @@ def _tags_of(case_ids, timeout=90):
     return (True, out, "")
 
 
-def auth_bugbash_cases(exclude_tags, timeout=90):
-    """(ok, [{id, assignee}], detail) — the Authenticator ReleaseBugBash cases minus any
-    carrying an excluded tag (case-insensitive), with their default AssignedTo."""
+def auth_bugbash_cases(timeout=90):
+    """Return every query case with tags/assignee; selection belongs to the step."""
     ok, ids, d = _wiql_ids(T.auth_bugbash_query(), timeout)
     if not ok:
         return (False, None, d)
     okt, meta, dt = _tags_of(ids, timeout)
     if not okt:
         return (False, None, dt)
-    drop = {t.strip().lower() for t in (exclude_tags or [])}
     out = []
     for cid in ids:
-        m = meta.get(cid) or {}
-        if any(t.lower() in drop for t in m.get("tags", [])):
-            continue
-        out.append({"id": cid, "assignee": m.get("assignee")})
+        if cid not in meta:
+            return False, None, f"Missing metadata for Authenticator case {cid}"
+        m = meta[cid]
+        out.append({"id": cid, "assignee": m.get("assignee"), "tags": m["tags"]})
     return (True, out, "")
+
+
+def sync_point_testers(plan_id, suite_id, assignments, timeout=90):
+    """Align selected point testers to already-written case assignees; no outcome writes."""
+    if not assignments:
+        return True, ""
+    url = f"{ORG}/{PROJECT}/_apis/test/Plans/{plan_id}/Suites/{suite_id}/points"
+    ok, points, detail = P._ado_rest_get_all(url + "?api-version=5.0", timeout)
+    if not ok:
+        return False, detail
+    error = T._point_validation_error(points, require_config=True)
+    if error:
+        return False, error
+    selected = {int(cid): upn.casefold() for cid, upn in assignments.items()}
+    if not set(selected) <= {int(p["testCase"]["id"]) for p in points}:
+        return False, "Assigned cases are missing from the target suite; refresh distribution"
+    identities = {}
+    ids = sorted(selected)
+    for start in range(0, len(ids), 190):
+        ok, data, detail = P._ado_rest_get(
+            f"{ORG}/{PROJECT}/_apis/wit/workitems?ids={','.join(map(str, ids[start:start+190]))}"
+            "&fields=System.Id,System.AssignedTo&api-version=7.1", timeout)
+        if not ok:
+            return False, detail
+        for item in data.get("value", []):
+            cid = int(item["id"])
+            assignee = item["fields"].get("System.AssignedTo") or {}
+            if not assignee.get("id") or assignee.get("uniqueName", "").casefold() != selected.get(cid):
+                return False, f"Case {cid} assignee differs from the approved allocation"
+            identities[cid] = assignee["id"]
+    if set(identities) != set(selected):
+        return False, "Incomplete case-assignee identities; no tester alignment attempted"
+    groups = {}
+    for point in points:
+        cid = int(point["testCase"]["id"])
+        if cid in selected and (point.get("assignedTo") or {}).get("id") != identities[cid]:
+            groups.setdefault(identities[cid], []).append(point["id"])
+    for identity, point_ids in groups.items():
+        for start in range(0, len(point_ids), 40):
+            ok, _, detail = P._ado_rest_send(
+                f"{url}/{','.join(map(str, point_ids[start:start+40]))}?api-version=5.0",
+                "PATCH", {"tester": {"id": identity}}, timeout)
+            if not ok:
+                return False, f"Tester alignment incomplete: {detail}; read back before retry"
+    ok, after, detail = P._ado_rest_get_all(url + "?api-version=5.0", timeout)
+    if not ok:
+        return False, detail
+    def signature(point, expected=False):
+        cid = int(point["testCase"]["id"])
+        return (cid, point["configuration"], point.get("outcome"), point.get("state"),
+                point.get("lastTestRun"), point.get("lastResult"),
+                identities[cid] if expected and cid in selected else (point.get("assignedTo") or {}).get("id"))
+    if {p["id"]: signature(p, True) for p in points} != {p["id"]: signature(p) for p in after}:
+        return False, "Tester alignment read-back differs, or outcomes/membership changed"
+    return True, ""
 
 
 def set_assigned_to(case_id, upn, timeout=60):

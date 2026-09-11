@@ -44,9 +44,9 @@ _Loaded on demand. Run all from `<AGENT_ROOT>` — the confirmed `release-agent`
 | **Phase 2 — signal a re-triggered RC** | `python -m orchestrator.cli rc-retriggered --release <YYYY-MM> [--reason "..."]` — after the owner re-runs RC (flaky) or the orchestrator triggers a fresh RC (broker cherry-pick), reopens `mrwp_ecs`/`mrwp_local`/`rc_report` so Scout re-evaluates the **newest** RC. Holds `in_flight` (no action) while the run executes; the poller re-applies the gate on completion |
 | **Phase 2 — one RC poll** | `python -m orchestrator.cli poll-rc --release <YYYY-MM>` — `waiting` / `nudge` / `ready` / `resolved` / `blocked` / `idle`. `ready` lists eligible Scout work: execute it and its follow-up, then re-poll. `resolved` requires all Phase-2 steps settled as done/skipped; distinguish `status: overridden` from `status: passed`. The worker lives until its owning phase completes, not merely an old RC report. |
 | **Phase 3 — one bug-bash update** | `python -m orchestrator.cli post-bugbash-update --release <YYYY-MM> [--force]` — `off_hours` / `no_chat` / `error` / `post` / `complete`. The final message's successful claim/result records `poll_complete`; central cleanup deletes then deregisters the on-demand poller. |
-| **Phase 3 — OOF candidates / manual distribution preview** | `python -m orchestrator.cli distribute-tests --release <id> [--json]` — blocks with candidate names/verified UPNs until the owner answers; subsequent runs reuse that release's confirmation |
+| **Phase 3 — OOF candidates / manual distribution preview** | `python -m orchestrator.cli distribute-tests --release <id> --oce <verified-primary-upn> [--json]` — owner/OCE/configured exclusions removed before listing candidates; missing OCE blocks without candidates; subsequent runs reuse the recorded OCE and availability |
 | **Phase 3 — record owner availability and refresh preview** | `python -m orchestrator.cli distribute-tests --release <id> --no-oof` OR `… --oof <verified-upn> [--oof <verified-upn> …] [--oce <upn>]` — only after explicit owner input; never sends or writes assignments |
-| **Phase 3 — apply reviewed distribution** | `python -m orchestrator.cli distribute-tests --release <id> --apply` — separate explicit write of stored assignments; rejects missing/stale confirmation or changed roster/exclusions |
+| **Phase 3 — apply reviewed distribution** | `python -m orchestrator.cli distribute-tests --release <id> --apply` — apply stored manual/owner-triage case assignments and align plan testers; preserves tags/outcomes; rejects stale availability, result or triage |
 | **Phase 3 — inspect Broker plan recovery** | `python -m orchestrator.cli broker-plan --release <id>` — JSON resource record and all same-release candidates; read-only ADO |
 | **Phase 3 — preview UI mapping repair** | `python -m orchestrator.cli broker-plan --release <id> --preview-ui-repair [--plan-id <id>]` — deterministic source/old/new configs and affected points; read-only ADO, no state save, bind, apply or cleanup |
 | **Phase 3 — bind owner-selected existing plan** | `python -m orchestrator.cli broker-plan --release <id> --plan-id <plan-id> --reason "<owner selection>" [--area-path "<observed area>"]` — local identity binding only; no ADO writes, step completion, or plan replacement |
@@ -133,9 +133,14 @@ must supply availability for **this release's Bug Bash**. Do not query calendars
 Teams presence, O365 automatic replies/OOF, or infer dates. Graph is used only to resolve
 the configured roster and its names/verified UPNs, not to determine availability.
 
-1. When `next` reports the distribution owner-input block, run
-   `python -m orchestrator.cli distribute-tests --release <id> --json`. Its blocked JSON
-   includes `candidates` (`name`, `upn`). Display that list as context.
+1. Resolve the **current primary** on-call engineer using ICM
+   `get_on_call_schedule_by_team_id` for the team in `readiness.yaml`'s `oncall_now`
+   (currently 78848). Resolve the returned contact to a verified UPN; never guess it.
+   Run `python -m orchestrator.cli distribute-tests --release <id> --oce <verified-upn> --json`.
+   Its blocked JSON includes filtered `candidates` (`name`, `upn`). Display only that list,
+   not the raw DL membership: the release owner, OCE, Jia Le He, Moumita Ghosh and Veena
+   Soman have already been removed. Missing OCE blocks without showing candidates; resolve
+   it before asking OOF. The recorded OCE is reused; refresh it if the on-call engineer changes.
 2. Call `m_ask_user` with **"Is anyone OOF for this Bug Bash?"** and exactly the choices
    **"Nobody is OOF"** and **"Exclude people"**. **Stop and wait for the actual reply.**
    No response is not confirmation. An unattended runner must surface the question to
@@ -147,11 +152,22 @@ the configured roster and its names/verified UPNs, not to determine availability
 4. Only after the owner answers, run `distribute-tests … --no-oof` or repeat
    `--oof <verified-upn>` per excluded person. Exact roster display names are also accepted
    by the CLI, which rejects unknown/ambiguous entries. `--no-oof` and `--oof` are mutually exclusive.
-   Optional `--oce` keeps the existing best-effort ICM exclusion; it is not an OOF source.
+   `--oce` is required before the first availability list and is then retained for this
+   distribution; it is not an OOF source. The full roster still validates explicit/stored
+   OOF answers, so an already-excluded person's older OOF entry does not re-enable them.
 5. Show the new preview, including the OOF names/UPNs. Keep the existing explicit
    **review then `--apply`** flow. Never combine `--apply` with `--oof`, `--no-oof`, or `--oce`,
    and never use `done`/`record-step` as a substitute for availability confirmation.
    Continue normal `next` after handling the distribution.
+
+The preview has two separate groups: balanced **manual assignments** for eligible testers,
+and **owner triage** for Blocked-tagged cases and applied automated failures. Show every
+triage case and reason; do not silently leave those cases with excluded/former owners.
+The cross-platform `Automated` tag is not an Android automation exclusion; only the
+completed fill's automated-case set proves that. The owner remains excluded from manual
+work but receives triage. Apply writes both case assignees and selected plan-point testers;
+neither outcomes nor Blocked tags are changed. A failed tester update is an incomplete
+apply, not success. Review again if the triage set changes.
 
 The answer is saved in `bug_bash.distribute_tests.data.oof` with canonical UPNs,
 `confirmed_by` (owner), `source: release-owner`, `confirmed_at`, and `release_id`.

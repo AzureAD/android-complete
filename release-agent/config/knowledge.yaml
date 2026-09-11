@@ -836,24 +836,32 @@ bug_bash.distribute_tests:
     the eligible team, keeping each test on its current assignee where possible (preference),
     only reassigning to hit an even count. The Authenticator set EXCLUDES cases already
     automated by this release's auth ECS UI-test run — read from ui_test_status's completed
-    result through its public accessor, NOT from the cross-platform 'Automated' tag, plus the
-    'Blocked' tag. So of the ~49 ReleaseBugBash cases, the ~26 automated ones are dropped and
-    the ~23 genuinely-manual cases are distributed. (Failed automated cases are triaged by the
-    owner via ui_test_status, not by a manual tester.) Eligible = the roster DL
-    'androididentity@microsoft.com' MINUS the always-excluded people (moghosh,
+    result through its public accessor, NOT from the cross-platform 'Automated' tag.
+    Cases with a configured triage tag (Blocked) remain explicit owner-triage work, not
+    silently discarded or treated as runnable. Applied automated failures also belong to
+    owner triage. The remaining manual cases are evenly distributed; triage is not counted
+    in the manual workload. Eligible = the roster DL
+    'androididentity@microsoft.com' MINUS the always-excluded people (jialh, moghosh,
     veenasoman), the release owner, the current on-call engineer (OCE), and anybody the owner
     says is OOF for this Bug Bash. Default assignee +
-    the written field are both System.AssignedTo.
+    the written field are both System.AssignedTo. Apply also aligns the selected test-point
+    tester fields, so the Execute view matches the intended manual/triage owner.
   who: >
     The release owner supplies availability (never calendar/presence/automatic OOF lookup).
     Scout asks "Is anyone OOF for this Bug Bash?" before the first preview; without an
-    explicit answer the agent blocks and exposes roster names/verified UPNs. After that,
+    explicit answer the agent blocks and exposes only eligible names/verified UPNs.
+    The release owner, resolved primary OCE, Jia Le He, Moumita Ghosh and Veena Soman
+    are removed BEFORE availability choices are shown. An unresolved OCE blocks without
+    exposing candidates; Scout must resolve it, not ask the user to exclude it as OOF. After that,
     Scout computes the PREVIEW during `next` (an agent step). Applying it is
     a separate, explicit action you trigger — it writes System.AssignedTo, which mutates
     the shared test-case work items (so this release's assignment becomes next release's
-    default preference).
+    default preference), and the corresponding testers in the two release suites. Outcomes,
+    completed results and shared tags are not changed by assignment alignment.
   how: >
-    First run `distribute-tests --release <id> --json` to expose candidates. Ask the owner
+    First resolve the current primary OCE using the ICM team configured in readiness.yaml,
+    then run `distribute-tests --release <id> --oce <verified-upn> --json` to expose filtered
+    candidates. Never guess the on-call UPN or silently omit that exclusion. Ask the owner
     with m_ask_user: "Is anyone OOF for this Bug Bash?" with "Nobody is OOF" or "Exclude people";
     stop and wait. For "Exclude people", show the candidate list and ask for actual names
     or verified UPNs (free-text), then stop and wait again. Resolve exact names uniquely
@@ -864,9 +872,14 @@ bug_bash.distribute_tests:
     step.data.oof, builds a preview, and shows OOF exclusions. No availability dates are inferred.
     Later previews reuse the confirmation; either choice flag explicitly replaces it.
     Failed/revised previews invalidate any previous plan. Review the new preview, then
-    `distribute-tests --release <id> --apply` writes the assignments; never combine
+    The preview separately lists each owner-triage case and reason (blocked or failed
+    automation). `distribute-tests --release <id> --apply` writes the manual and triage
+    case assignments and aligns their plan testers; never combine
     selection/OCE flags with --apply. Apply rechecks the roster and saved input provenance,
-    and refuses missing/stale confirmation or assignments to excluded people.
+    and refuses missing/stale confirmation, changed triage, or manual assignments to
+    excluded people. The owner is excluded from manual work, not from triage responsibility.
+    Apply is complete only after both shared case assignments and plan testers succeed;
+    alignment failures remain explicit and do not report applied=true.
     Already-written assignments are not changed by answering; a fresh preview and separate
     explicit apply are required. The OCE team id (ICM 78848) is the SAME source the entry gate's oncall_now
     check uses (read from readiness.yaml — no second copy).
@@ -881,7 +894,7 @@ bug_bash.distribute_tests:
     - q: "Does applying it change the master plan?"
       a: "Yes — System.AssignedTo lives on the shared test-case work items, so the new assignee shows in the master and every plan referencing them. That's intentional: it carries the preference into the next release's clone."
     - q: "Who is excluded?"
-      a: "Always: moghosh, veenasoman. Per-release: the owner, the current OCE (ICM team 78848), and the owner's explicit OOF selection for this Bug Bash. Nobody is OOF must be explicitly confirmed too; silence never means an empty list."
+      a: "Always: jialh (Jia Le He), moghosh (Moumita Ghosh), veenasoman (Veena Soman). The release owner and resolved primary OCE are also removed before showing availability choices. Missing OCE means no candidate list until Scout resolves it. Owner-confirmed OOF removes additional eligible people per release; Shahzaib is not a permanent exclusion. Nobody is OOF must be explicitly confirmed too."
     - q: "How do we know which Authenticator cases are automated vs manual?"
       a: "From ui_test_status's completed result API: its recorded automated case IDs are excluded, without reading raw Phase-2 evidence, reprojecting or refetching. Missing/partial/stale receipts block, never yield an empty set. Preview/apply recheck the receipt ID plus release/RC, ECS/Local builds, Auth APK/test builds and both plan/suite identities. A new fill invalidates the preview even with identical source IDs. Refresh the owning clone/verification steps and rerun ui_test_status when needed; historical state is not migrated."
 

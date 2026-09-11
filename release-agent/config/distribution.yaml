@@ -12,6 +12,7 @@ roster_group: "androididentity@microsoft.com"
 # People ALWAYS removed from distribution (in addition to the release owner + the current
 # on-call engineer, which are resolved per-release).
 always_excluded:
+  - "jialh@microsoft.com"       # Jia Le He
   - "moghosh@microsoft.com"     # Moumita Ghosh
   - "veenasoman@microsoft.com"  # Veena Soman
 
@@ -23,8 +24,7 @@ broker:
   suite_name: "Manual Tests (Android Broker)"
 
 authenticator:
-  # The Authenticator bug-bash query set (tools.testplans.auth_bugbash_query), minus test
-  # cases carrying any of these tags (Automated run in CI; Blocked can't be run manually).
-  exclude_tags:
-    - "Automated"
+  # Blocked cases remain owned for triage, outside the balanced manual allocation.
+  # Automation exclusions come only from the completed Android fill, never a shared tag.
+  triage_tags:
     - "Blocked"

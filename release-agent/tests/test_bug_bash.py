@@ -335,6 +335,7 @@ def test_distribute_excludes_automated_auth_cases():
     """distribute_tests drops auth cases already automated by this release's auth ECS run
     (empirical, via the `auth_automated` set) so they don't go to manual testers."""
     mocks = {
+        "oce": "oce@microsoft.com",
         "roster": [{"name": "A", "upn": "a@microsoft.com"}, {"name": "B", "upn": "b@microsoft.com"}],
         "broker_cases": [],
         "auth_cases": [{"id": "5", "assignee": None}, {"id": "6", "assignee": None},
@@ -358,7 +359,7 @@ def test_distribute_tests_blocks_without_broker_clone():
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08", owner_email="o@x")
-    with mockctx.active({"auth_cases": [], "roster": [{"name": "A", "upn": "a@x"}]}):
+    with mockctx.active({"auth_cases": [], "roster": [{"name": "A", "upn": "a@x"}], "oce": "oce@x"}):
         out = as_dict(_steps.get_step("bug_bash", "distribute_tests").build(st, oof=[]))
     assert out["kind"] == "blocked" and "ui_test_status" in out["reason"]
 

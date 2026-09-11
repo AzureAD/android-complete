@@ -24,6 +24,8 @@ def inputs():
             {"name": "Owner", "upn": "owner@example.com"},
             {"name": "OCE", "upn": "oce@example.com"},
             {"name": "Always excluded", "upn": "moghosh@microsoft.com"},
+            {"name": "Jia Le He", "upn": "JIALH@microsoft.com"},
+            {"name": "Veena Soman", "upn": "veenasoman@microsoft.com"},
         ],
         "oce": "oce@example.com",
         "broker_cases": [{"id": str(i), "assignee": "ALICE@example.com"} for i in range(1, 8)],
@@ -57,6 +59,7 @@ def _cli(monkeypatch, state, inputs, *flags):
                         lambda *_: (state, Orchestrator(C.DEFAULT_CONFIG, state, mocks={})))
     monkeypatch.setattr(command.mocks_mod, "load_mocks",
                         lambda: {"bug_bash.distribute_tests": inputs})
+    monkeypatch.setattr(step, "sync_plan_testers", lambda *args: (True, ""))
     args = build_parser().parse_args(["distribute-tests", "--release", state.release_id, *flags])
     return command.cmd_distribute_tests(args), saved
 
@@ -68,11 +71,12 @@ def test_no_confirmation_blocks_before_case_reads_or_distribution(state, inputs,
     monkeypatch.setattr(D, "broker_manual_cases", unexpected)
     monkeypatch.setattr(D, "auth_bugbash_cases", unexpected)
     monkeypatch.setattr(D, "distribute", unexpected)
-    out = _build(state, {"roster": inputs["roster"]})
+    out = _build(state, {"roster": inputs["roster"], "oce": inputs["oce"]})
     assert isinstance(out, Blocked)
     assert "Is anyone OOF for this Bug Bash?" in out.reason
     assert "--no-oof" in out.reason
-    assert _data(state)["oof_candidates"] == D.canonical_roster(inputs["roster"])
+    assert _data(state)["oof_candidates"] == [
+        {"name": name, "upn": f"{name.lower()}@example.com"} for name in ("Alice", "Bob", "Charlie")]
     assert "oof" not in _data(state) and "plan" not in _data(state)
     # An undocumented mock key is not an alternate production confirmation source.
     out = _build(state, {**inputs, "oof": [], "oof_confirmed": True})
@@ -160,13 +164,130 @@ def test_failed_rebuild_never_leaves_previous_plan(state, inputs, monkeypatch, f
 
 
 def test_cli_returns_candidates_then_records_and_prints_owner_choice(state, inputs, monkeypatch, capsys):
+    import json
+
     result, saved = _cli(monkeypatch, state, inputs, "--json")
     assert result == 1 and len(saved) == 1
-    assert '"candidates":' in capsys.readouterr().out
+    candidates = json.loads(capsys.readouterr().out)["candidates"]
+    assert [m["upn"] for m in candidates] == ["alice@example.com", "bob@example.com", "charlie@example.com"]
     result, saved = _cli(monkeypatch, state, inputs, "--oof", "Alice", "--oof", "alice@example.com")
     assert result == 0 and len(saved) == 1
     assert "Alice <alice@example.com>" in capsys.readouterr().out
     assert _data(saved[-1])["oof"]["upns"] == ["alice@example.com"]
+
+
+@pytest.mark.parametrize("oce", [None, "", "OCE", "a@@example.com", "@example.com", "a@", "a b@example.com"])
+def test_unresolved_oce_hides_candidates_and_blocks_before_roster_reads(state, inputs, monkeypatch, oce):
+    def unexpected(*args, **kwargs):
+        pytest.fail("Roster or test data read before the on-call identity was resolved")
+
+    monkeypatch.setattr(D, "resolve_roster", unexpected)
+    _build(state, inputs)
+    assert _data(state)["oof_candidates"]
+    record = state.get_step("bug_bash", step.ID)
+    record.data["oce"] = oce
+    state.set_step("bug_bash", step.ID, record)
+    out = _build(state, {})
+    assert isinstance(out, Blocked) and "--oce <verified-upn>" in out.reason
+    assert not _data(state).get("oof_candidates") and "plan" not in _data(state)
+
+
+def test_owner_is_required_before_displaying_candidates(state, inputs):
+    state.owner_email = None
+    out = _build(state, inputs)
+    assert isinstance(out, Blocked) and "release owner missing" in out.reason
+    assert not _data(state).get("oof_candidates")
+
+
+def test_changed_oce_refilters_candidates_without_changing_the_roster(state, inputs):
+    original = deepcopy(inputs["roster"])
+    _build(state, inputs, oce=" BOB@EXAMPLE.COM ")
+    assert [m["upn"] for m in _data(state)["oof_candidates"]] == [
+        "alice@example.com", "charlie@example.com", "oce@example.com"]
+    _build(state, inputs)
+    assert "bob@example.com" not in {m["upn"] for m in _data(state)["oof_candidates"]}
+    assert inputs["roster"] == original
+    assert {"jialh@microsoft.com", "moghosh@microsoft.com", "veenasoman@microsoft.com"} <= set(
+        D.load_config()["always_excluded"])
+    assert "shjameel@microsoft.com" not in D.load_config()["always_excluded"]
+
+
+def test_blocked_cases_remain_owner_triage_not_silently_excluded(state, inputs):
+    inputs["auth_cases"] += [
+        {"id": "10", "assignee": "oce@example.com", "tags": ["Blocked"]},
+        {"id": "11", "assignee": "former@example.com", "tags": ["blocked"]},
+        {"id": "12", "assignee": "former@example.com", "tags": ["Automated"]},
+    ]
+    inputs["auth_automated"] = [8]
+    inputs["auth_failed"] = [8]
+    assert isinstance(_build(state, inputs, oof=[]), Done)
+    plan = _data(state)["plan"]
+    assert set(plan["owner_triage"]) == {"A:8", "A:10", "A:11"}
+    assert plan["owner_triage"]["A:8"]["reasons"] == ["failed_automation"]
+    assert all(v["assignee"] == state.owner_email for v in plan["owner_triage"].values())
+    assert "A:12" in plan["assignments"]  # Shared tag alone does not prove Android automation.
+    assert not set(plan["assignments"]) & set(plan["owner_triage"])
+    with mockctx.active(inputs):
+        step.validate_stored_plan(state)
+    inputs["auth_cases"][-3]["tags"] = []
+    with mockctx.active(inputs), pytest.raises(ValueError, match="triage changed"):
+        step.validate_stored_plan(state)
+
+
+def test_apply_includes_triage_and_requires_tester_alignment(state, inputs, monkeypatch):
+    inputs["auth_cases"].append({"id": "10", "tags": ["Blocked"], "assignee": "former@example.com"})
+    writes = []
+    monkeypatch.setattr(D, "set_assigned_to", lambda cid, upn: (writes.append((cid, upn)) is None, ""))
+    assert _cli(monkeypatch, state, inputs, "--no-oof")[0] == 0
+    captured = []
+    monkeypatch.setattr(C, "load_state", lambda *_: state)
+    monkeypatch.setattr(C, "save_state", lambda *_: None)
+    monkeypatch.setattr(step, "sync_plan_testers",
+                        lambda st, assignments: (captured.append(assignments.copy()) is None and False,
+                                                 "tester write failed"))
+    args = build_parser().parse_args(["distribute-tests", "--release", state.release_id, "--apply"])
+    assert command.cmd_distribute_tests(args) == 2
+    assert ("10", state.owner_email) in writes
+    assert captured[0]["A:10"] == state.owner_email
+    assert not _data(state)["plan"]["applied"]
+
+
+def test_sync_point_testers_preserves_outcomes_and_unselected_testers(monkeypatch):
+    from tools import pipelines as P
+    pts = [
+        {"id": 1, "testCase": {"id": 10}, "configuration": {"id": 84},
+         "outcome": "Failed", "state": "NotReady", "assignedTo": {"id": "old"}},
+        {"id": 2, "testCase": {"id": 11}, "configuration": {"id": 84},
+         "outcome": "Passed", "state": "Completed", "assignedTo": {"id": "unchanged"}},
+    ]
+    monkeypatch.setattr(P, "_ado_rest_get_all", lambda *a: (True, deepcopy(pts), ""))
+    monkeypatch.setattr(P, "_ado_rest_get", lambda *a: (True, {"value": [
+        {"id": 10, "fields": {"System.AssignedTo": {"id": "owner-id", "uniqueName": "owner@example.com"}}}]}, ""))
+    calls = []
+    def send(url, method, body, timeout):
+        calls.append(body)
+        pts[0]["assignedTo"] = {"id": body["tester"]["id"]}
+        return True, {}, ""
+    monkeypatch.setattr(P, "_ado_rest_send", send)
+    assert D.sync_point_testers(714514, 901, {10: "owner@example.com"}) == (True, "")
+    assert calls == [{"tester": {"id": "owner-id"}}]
+    assert pts[0]["outcome"] == "Failed" and pts[1]["assignedTo"]["id"] == "unchanged"
+
+
+def test_auth_reader_retains_blocked_and_shared_automated_tags_for_step_classification(monkeypatch):
+    monkeypatch.setattr(D, "_wiql_ids", lambda *a: (True, ["10", "11"], ""))
+    monkeypatch.setattr(D, "_tags_of", lambda *a: (True, {
+        "10": {"tags": ["Blocked"], "assignee": "former@example.com"},
+        "11": {"tags": ["Automated"], "assignee": "alice@example.com"},
+    }, ""))
+    ok, cases, detail = D.auth_bugbash_cases()
+    assert ok and not detail
+    assert cases == [
+        {"id": "10", "tags": ["Blocked"], "assignee": "former@example.com"},
+        {"id": "11", "tags": ["Automated"], "assignee": "alice@example.com"},
+    ]
+    monkeypatch.setattr(D, "_tags_of", lambda *a: (True, {}, ""))
+    assert not D.auth_bugbash_cases()[0]
 
 
 def test_cli_selection_flags_are_mutually_exclusive():

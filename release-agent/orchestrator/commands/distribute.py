@@ -2,14 +2,14 @@
 
   --preview (default) : re-run the distribute_tests step to (re)compute the plan and print
                         the per-tester table. Read-only; stores the plan on the step.
-  --apply             : write System.AssignedTo on every test case per the STORED plan
-                        (from a prior preview). Mutates the shared work items. Records the
-                        step done with an applied summary.
+  --apply             : write manual and owner-triage case assignees per the STORED plan,
+                        then align selected plan testers without changing outcomes.
+                        Records done only after both assignment surfaces succeed.
 
 The owner must first answer the Bug Bash OOF question: --no-oof or repeatable --oof.
 No answer means reuse an existing confirmation, never assume nobody is OOF.
-The OCE is supplied with --oce; the owner comes from state. --json includes roster
-candidates when owner input is needed, or the plan and its review inputs.
+The OCE is supplied with --oce before availability choices; the owner comes from state.
+--json includes only eligible candidates when owner input is needed, or the plan and its review inputs.
 """
 from __future__ import annotations
 import json as _json
@@ -33,6 +33,8 @@ def _print_table(plan):
     print(f"  owner-confirmed OOF: {excluded or 'nobody'}")
     for u in sorted(plan.get("eligible") or [], key=lambda e: -counts.get(e, 0)):
         print(f"    {counts.get(u,0):3}  {u}")
+    for key, triage in plan.get("owner_triage", {}).items():
+        print(f"  owner triage: {key} -> {triage['assignee']} ({', '.join(triage['reasons'])})")
 
 
 def cmd_distribute_tests(args):
@@ -79,7 +81,9 @@ def _apply(args, st):
         print(_json.dumps({"error": str(exc)}) if args.json else f"BLOCKED: {exc}")
         return 1
     plan = (st.get_step("bug_bash", "distribute_tests").data or {}).get("plan") or {}
-    assignments = plan.get("assignments") or {}
+    manual = plan.get("assignments") or {}
+    triage = {key: entry["assignee"] for key, entry in plan.get("owner_triage", {}).items()}
+    assignments = {**manual, **triage}
     if not assignments:
         print("No stored distribution plan — run the preview first "
               "(distribute-tests --release <id>).")
@@ -98,6 +102,10 @@ def _apply(args, st):
             fail.append((case_id, upn, detail))
             if str(detail).startswith("AUTH"):
                 break                            # stop on auth failure — nothing will work
+    if not fail:
+        ok, detail = distribution_step.sync_plan_testers(st, assignments)
+        if not ok:
+            fail.append(("plan testers", "", detail))
 
     plan["applied"] = not fail
     step = st.get_step("bug_bash", "distribute_tests")
@@ -115,11 +123,14 @@ def _apply(args, st):
     # mark the step done on a clean apply
     st2, orch = C.load_orch(args.runs_root, args.release, args.config)
     orch.record_scout_step("bug_bash", "distribute_tests", "pass",
-                           f"Assigned {ok_n} bug-bash tests across {len(plan.get('eligible') or [])} testers.")
+                           f"Assigned {len(manual)} manual cases across {len(plan.get('eligible') or [])} testers "
+                           f"and {len(triage)} cases to the release owner for triage; plan testers aligned.")
     C.save_state(orch.state, args.runs_root, args.release)
     C.emit(args.runs_root, args.release,
-           f"[distribute] assigned {ok_n} tests across {len(plan.get('eligible') or [])} testers", kind="step")
-    print(f"Applied {ok_n} assignments across {len(plan.get('eligible') or [])} testers.")
+           f"[distribute] assigned {len(manual)} manual cases across {len(plan.get('eligible') or [])} "
+           f"testers and {len(triage)} owner-triage cases; plan testers aligned", kind="step")
+    print(f"Applied {len(manual)} manual assignments and {len(triage)} owner-triage assignments; "
+          "plan testers aligned. Outcomes unchanged.")
     return 0
 
 
@@ -128,13 +139,13 @@ def register(sub):
                        help="Preview or apply the Phase-3 bug-bash test distribution")
     p.add_argument("--release", required=True)
     p.add_argument("--oce", default=None,
-                   help="On-call engineer identifier to exclude (skill resolves via ICM 78848)")
+                   help="Verified primary on-call UPN; required before availability choices unless already recorded")
     choice = p.add_mutually_exclusive_group()
     choice.add_argument("--oof", action="append", metavar="UPN",
                        help="Owner-confirmed OOF tester; repeat per person (exact roster name also accepted)")
     choice.add_argument("--no-oof", action="store_true",
                        help="Record the release owner's explicit answer that nobody is OOF")
     p.add_argument("--apply", action="store_true",
-                   help="Write System.AssignedTo per the stored plan (mutates shared work items)")
+                   help="Apply reviewed manual/triage case assignees and plan testers; preserve outcomes")
     p.add_argument("--json", action="store_true", help="Emit the raw plan JSON")
     p.set_defaults(func=cmd_distribute_tests)
