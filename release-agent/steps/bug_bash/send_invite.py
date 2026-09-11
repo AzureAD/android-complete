@@ -32,6 +32,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from orchestrator import schedule
+from orchestrator.delivery import fingerprint
 from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.lib.context import resolve_recipients
 from steps.lib.mockctx import mock_input, MISSING
@@ -57,6 +58,45 @@ MOCKABLE = {
 def _latest_rc(state):
     rcs = (getattr(state, "pipeline_runs", None) or {}).get("rcs") or []
     return rcs[-1] if rcs else {}
+
+
+def delivered_invite(state):
+    """Identity from this step's acknowledged calendar receipt, never a topic search."""
+    step = state.get_step("bug_bash", ID)
+    execution = (step.data or {}).get("_execution") or {}
+    notification_id = execution.get("notification_id")
+    record = state.notification_deliveries.get(notification_id) or {}
+    item = record.get("descriptor") or {}
+    attempts = record.get("attempts") or []
+    if (step.status != "done" or record.get("status") != "sent"
+            or (record.get("completion") or {}).get("status") != "applied"
+            or not attempts):
+        raise ValueError("A completed send_invite with its sent calendar receipt is required; "
+                         "recover the original invitation evidence, do not create another meeting.")
+    attempt = attempts[-1]
+    receipt = attempt.get("receipt") or {}
+    event_id = receipt.get("id")
+    payload = item.get("payload") or {}
+    scope = item.get("scope") or {}
+    expected_subject = f"{schedule.target_month_label(state)} Release Bug Bash"
+    if (not isinstance(event_id, str) or not event_id.strip()
+            or item.get("id") != notification_id or item.get("release") != state.release_id
+            or item.get("tool") != "workiq_create_event"
+            or scope.get("phase") != "bug_bash" or scope.get("step") != ID
+            or attempt.get("id") != execution.get("id") or attempt.get("status") != "sent"
+            or item.get("hash") != fingerprint({k: v for k, v in item.items() if k != "hash"})
+            or attempt.get("hash") != item.get("hash")
+            or (item.get("completion") or {}).get("record_as") != ID
+            or scope.get("release_matches", {}).get("owner_email") != state.owner_email
+            or scope.get("release_matches", {}).get("ccd") != state.ccd
+            or payload.get("subject") != expected_subject
+            or not all(isinstance(payload.get(k), str) and payload[k] for k in ("start", "end", "timeZone"))):
+        raise ValueError("Missing or mismatched invitation identity/receipt; owner recovery required.")
+    return {"release": state.release_id, "notification_id": notification_id,
+            "delivery_hash": item["hash"], "execution_id": execution["id"],
+            "receipt_hash": fingerprint(receipt), "event_id": event_id,
+            "owner": state.owner_email, "subject": payload["subject"],
+            "start": payload["start"], "end": payload["end"], "timeZone": payload["timeZone"]}
 
 
 def build(state):
@@ -134,7 +174,8 @@ def build(state):
         },
         record_as=ID,
         summary=f"Schedule the {month_year} Bug Bash ({when_note}) + invite {len(recipients)} "
-                f"recipient(s) ({rnote})",
+                f"recipient(s) ({rnote}). Save the returned event (including id) with "
+                "notification result --receipt-file so chat activation can bind to this meeting.",
         note=f"invited {', '.join(recipients) if recipients else '(no recipients)'}",
         outbound=True,
         notification={"expires_at": start_zoned.isoformat()},

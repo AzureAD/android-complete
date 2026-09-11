@@ -987,6 +987,9 @@ bug_bash.send_invite:
     Send permission expires at
     the meeting start. An unclaimed invitation can be re-prepared with a new approved hash;
     any ever-claimed invitation stays frozen and requires owner recovery if expired.
+    Preserve the actual workiq_create_event response (including its event id) as the
+    notification result --receipt-file. Chat activation consumes this durable receipt;
+    a bare "sent" note cannot identify which meeting was created.
   links:
     - name: "Local flags — variable group 40"
       url: "https://identitydivision.visualstudio.com/Engineering/_library?view=VariableGroupView&variableGroupId=40&path=release"
@@ -1031,26 +1034,34 @@ bug_bash.notify_native_auth:
       a: "No — it just asks them to reply to the release owner when they finish. It's a one-shot notification, not a poller."
 
 bug_bash.activate_chat:
-  summary: "Activate the Bug Bash meeting chat and store its id for the periodic updates."
+  summary: "Verify and bind the exact sent invitation's meeting chat for periodic updates."
   what: >
-    A Teams meeting chat is DORMANT until it's activated once (first join, first message,
-    or opening its Chat pane) — only then does it get a stable 19:meeting_…@thread.v2 id
-    that automation can post to. This step resolves + activates that chat and stores the id
-    on the step (data.chat_id) so the periodic-update step can post to it.
+    Resolves the current send_invite calendar receipt's event id, reads that exact event's
+    Teams join URL, resolves the onlineMeeting for that URL and uses chatInfo.threadId.
+    Calendar subject, organizer, times, cancellation state and chat type/topic are verified.
+    Stores chat_id plus meeting identity and the originating invitation binding.
+    A previous month's chat, a topic-only match or a pasted thread id is not proof.
   who: >
-    Scout resolves it during `next` (a scout step). Three tiers: (1) SEARCH the meeting
-    chat by topic; (2) if dormant, ACTIVATE via Playwright (open the meeting in Teams web,
-    click Chat); (3) HUMAN FALLBACK — if activation fails, the owner opens the meeting and
-    clicks Chat / sends one message, then it's re-resolved.
+    Scout runs the read-only Graph resolution as the invitation's organizer. If Teams
+    has not exposed the thread, open that exact calendar event's Chat pane with Playwright
+    or ask the owner to do so, then retry. Auth/permission failures remain blocked;
+    never choose a different chat or manufacture a thread id.
   how: >
-    The skill runs `record-bugbash-chat --release <id> --chat-id <resolved>` to store it
-    and mark the step done. If it truly can't be resolved, the same command WITHOUT
-    --chat-id holds the step for the owner (who activates the chat, then re-runs).
+    Run record-bugbash-chat --release <id>. The command enforces phase prerequisites,
+    requires a completed invite with an applied sent receipt and resolves the thread itself.
+    Optional --chat-id must equal the verified thread; it never authorizes an unverified chat.
+    Graph resolution needs delegated access to the organizer's event, online meeting and chat.
+    No calendar or Teams message is sent. An identical completed binding is a no-op;
+    changing a completed binding requires owner-reviewed reopen of activate_chat first.
+    Missing historical event receipts require explicit owner recovery, not creating a
+    replacement invitation or hand-editing state. Progress only consumes a current binding;
+    prepared messages bind the invite receipt and chat so changed sources cannot authorize
+    delivery or completion. Previously prepared legacy messages require owner review at deployment.
   faqs:
     - q: "Why can't it just post to the meeting chat directly?"
-      a: "A freshly-scheduled meeting's chat has no thread yet — it must be activated once (join / message / open Chat). This step does that activation and captures the id so the recurring poster can reach it."
+      a: "A topic is not unique and can identify an older release. The destination must be the thread returned for the exact calendar event that send_invite created. If the thread is unavailable, activate that event's Chat pane and retry."
     - q: "What if Playwright can't open the chat?"
-      a: "It falls back to the owner: open the meeting in Teams and click Chat (or send one message) to activate the thread, then re-run the step."
+      a: "Ask the organizer to open the exact event and its Chat pane, then rerun verification. A supplied chat link is only a candidate to validate, never a bypass."
 
 bug_bash.bugbash_updates:
   summary: "Post the first bug-bash progress update to the meeting chat and start the 2h update poller."

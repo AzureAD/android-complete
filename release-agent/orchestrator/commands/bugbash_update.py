@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 from orchestrator import cli_common as C
 from orchestrator import schedule, delivery as D
 from tools import bugbash as BB
-from steps.bug_bash.activate_chat import stored_chat_id
+from steps.bug_bash.activate_chat import stored_chat_id, chat_state_matches
 from steps.bug_bash import bugbash_updates as BU
 
 _LA = ZoneInfo("America/Los_Angeles")
@@ -58,10 +58,9 @@ def cmd_post_bugbash_update(args):
     chat_id = stored_chat_id(st)
     if not chat_id:
         print(_json.dumps({"decision": "no_chat",
-                           "note": "meeting chat not activated (run activate_chat)"}))
+                           "note": "meeting chat binding missing/stale (run activate_chat against current invitation)"}))
         return 0
-    scope["state_matches"] = [{"path": ["steps", "bug_bash.activate_chat", "data", "chat_id"],
-                               "value": chat_id}]
+    scope["state_matches"] = chat_state_matches(st)
 
     ok, progress, detail = BU.gather(st)
     if not ok:

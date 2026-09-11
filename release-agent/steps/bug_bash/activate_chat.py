@@ -1,70 +1,75 @@
-"""Step: `activate_chat` — resolve & activate the Bug Bash meeting chat, store its id
-(Phase 3, bug_bash).
+"""Bind the Bug Bash chat to the exact acknowledged calendar invitation.
 
-The periodic bug-bash updates (next step) post to the meeting's Teams chat. But a Teams
-meeting chat is DORMANT until it's activated once (first join, first message, or opening
-its Chat pane) — only then does it get a stable `19:meeting_…@thread.v2` id that the
-automated poster can reach via workiq_send_chat_message.
-
-This scout step resolves + activates that chat and stores the id on the step
-(`data.chat_id`) so the poller step can read it. Three-tier resolution (skill-driven):
-
-  1. SEARCH — find the meeting chat by topic (workiq_search_chats). Already active → done.
-  2. ACTIVATE (Playwright) — if dormant, open Teams web (signed in) → Calendar → the
-     meeting → click Chat (materializes the thread), then re-search for the id.
-  3. HUMAN FALLBACK — if activation fails, ask the owner to open the meeting and click
-     Chat / send one message, then re-search (or accept a pasted chat id).
-
-The skill runs `record-bugbash-chat --release <id> --chat-id <resolved>` to store it (or
-without --chat-id to hold the step for the owner when it truly can't be resolved).
+Resolve event ID -> join URL -> onlineMeeting.chatInfo.threadId. Topic searches and
+bare pasted IDs are not evidence. Downstream senders only consume a current binding.
 """
 from __future__ import annotations
 
-from orchestrator import schedule
+from orchestrator import delivery
 from orchestrator.outcomes import NeedsSkill, Blocked
+from steps.bug_bash.send_invite import delivered_invite
+from tools.bugbash_meeting import meeting_chat_id
 
 ID = "activate_chat"
 KIND = "scout"
 
 
 def stored_chat_id(state):
-    """The resolved Bug Bash meeting chat id, or None — read by the periodic-update step."""
-    return (state.get_step("bug_bash", ID).data or {}).get("chat_id")
+    """Return only a chat bound to the still-current sent invitation."""
+    step = state.get_step("bug_bash", ID)
+    data = step.data or {}
+    try:
+        invite = delivered_invite(state)
+        verified = data.get("meeting") or {}
+        if (step.status != "done" or data.get("invite") != invite
+                or not meeting_chat_id(data.get("chat_id"))
+                or verified.get("chat_id") != data["chat_id"]
+                or verified.get("event_id") != invite["event_id"]
+                or verified.get("subject") != invite["subject"]
+                or not verified.get("join_url") or not verified.get("online_meeting_id")):
+            return None
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+    return data["chat_id"]
+
+
+def chat_state_matches(state):
+    """Freeze chat and invite sources in the existing notification scope."""
+    if not stored_chat_id(state):
+        raise ValueError("Missing/stale invitation-to-chat binding; run activate_chat")
+    invite = delivered_invite(state)
+    return [{"path": path, "hash": delivery.fingerprint(value)} for path, value in (
+        (["steps", "bug_bash.activate_chat"], state.steps["bug_bash.activate_chat"]),
+        (["steps", "bug_bash.send_invite"], state.steps["bug_bash.send_invite"]),
+        (["notification_deliveries", invite["notification_id"]],
+         state.notification_deliveries[invite["notification_id"]]),
+        (["target_month"], state.target_month), (["ccd"], state.ccd), (["owner_email"], state.owner_email),
+    )]
 
 
 def build(state):
     if not state.ccd:
-        return Blocked("activate_chat: no CCD set — can't identify the Bug Bash meeting.")
-    month_year = schedule.target_month_label(state)
-    topic = f"{month_year} Release Bug Bash"
-
+        return Blocked("activate_chat: no CCD set - cannot identify the Bug Bash meeting.")
+    try:
+        invite = delivered_invite(state)
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        return Blocked(f"activate_chat: {exc}")
     instructions = (
-        f"Resolve and activate the Bug Bash meeting chat, then store its id.\n"
-        f"1. SEARCH: `workiq_search_chats` for a meeting chat whose topic is "
-        f"'{topic}' (chatType 'meeting', id like 19:meeting_…@thread.v2). If found, that's "
-        f"the id — go to step 4.\n"
-        f"2. ACTIVATE (Playwright) if not found — the chat is dormant: open Teams web "
-        f"(https://teams.microsoft.com/v2/, already signed in) → Calendar → next week if "
-        f"needed → click the '{topic}' meeting → click the **Chat** button in the peek "
-        f"(this 'turns on' the meeting chat). Then re-run `workiq_search_chats` for "
-        f"'{topic}' to get the now-active id.\n"
-        f"3. HUMAN FALLBACK if Playwright can't activate it: use `m_ask_user` to ask the "
-        f"owner to open the '{topic}' meeting in Teams and click **Chat** (or send one "
-        f"message) to activate the thread — then re-search, or accept a chat id they paste.\n"
-        f"4. Run `record-bugbash-chat --release {state.release_id} --chat-id '<id>'`. If it "
-        f"truly can't be resolved, run it WITHOUT --chat-id to hold the step for the owner."
+        f"Run `record-bugbash-chat --release {state.release_id}` as the invite organizer. "
+        f"It reads event {invite['event_id']} from the sent calendar receipt, resolves its "
+        "join URL to onlineMeeting.chatInfo.threadId, verifies the chat and stores the binding. "
+        "Never search by topic or accept a pasted ID as proof. If Teams has not exposed the "
+        "thread, use Playwright to open THAT exact event's Chat pane, or ask the owner via "
+        "m_ask_user to do so, then retry. Permission errors must remain blocked. "
+        "A supplied --chat-id is only an assertion to compare against the resolved thread."
     )
-
     return NeedsSkill(
-        tool="record-bugbash-chat",              # follow-up recorder command
-        payload={
-            "release": state.release_id,
-            "chat_id": None,
-            "followup_command": (f"record-bugbash-chat --release {state.release_id} "
-                                 f"--chat-id '<resolved-chat-id>'"),
-            "_gather": {"meeting_topic": topic, "instructions": instructions},
-        },
+        tool="record-bugbash-chat",
+        payload={"release": state.release_id,
+                 "followup_command": f"record-bugbash-chat --release {state.release_id}",
+                 "_gather": {"meeting_topic": invite["subject"], "event_id": invite["event_id"],
+                             "instructions": instructions}},
         record_as=ID,
-        summary=f"Resolve + activate the '{topic}' meeting chat, then store its id",
-        note="awaiting meeting-chat resolution (search → Playwright activate → human fallback)",
+        summary=f"Verify the exact meeting chat for '{invite['subject']}'",
+        note="awaiting event-bound chat verification",
     )

@@ -546,6 +546,8 @@ def test_activate_chat_composes_needs_skill():
     import steps as _steps
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
+    from tests._meeting import seed_invite
+    seed_invite(st)
     out = as_dict(_steps.get_step("bug_bash", "activate_chat").build(st))
     assert out["kind"] == "needs_skill" and out["tool"] == "record-bugbash-chat"
     g = out["payload"]["_gather"]
@@ -566,33 +568,42 @@ def test_activate_chat_blocks_without_ccd():
 
 
 
-def test_record_bugbash_chat_stores_id_and_marks_done():
-    """record-bugbash-chat with --chat-id stores it on the step (readable by the poller)
-    and marks the step done; without --chat-id it holds the step for the owner."""
+def test_record_bugbash_chat_stores_verified_id_and_marks_done(monkeypatch):
+    """Recorder resolves the exact invitation; a bare ID cannot bypass missing evidence."""
     import tempfile, argparse
     from orchestrator import cli_common as _C
     from orchestrator.commands import bugbash_chat as BC
     from steps.bug_bash.activate_chat import stored_chat_id
+    from tests._meeting import seed_invite, meeting
+    from tools import bugbash_meeting
+    from orchestrator.state import StepState
     with tempfile.TemporaryDirectory() as d:
         rid = "2026-08"
         _stub_build_defs("pass")
-        st = ReleaseState(release_id=rid, ccd="2026-08-13", ccd_source="confirmed")
+        st = _active_phase(ReleaseState(release_id=rid, ccd="2026-08-13", ccd_source="confirmed"), "bug_bash")
+        phase = next(p for p in Orchestrator(CONFIG, st, mocks={}).config["phases"] if p["id"] == "bug_bash")
+        for s in phase["steps"]:
+            if s["id"] == "activate_chat":
+                break
+            st.set_step("bug_bash", s["id"], StepState(status="done"))
+        seed_invite(st)
         _C.save_state(st, d, rid)
         cid = "19:meeting_ABC123@thread.v2"
+        monkeypatch.setattr(bugbash_meeting, "resolve", lambda inv: meeting(inv, cid))
         ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, chat_id=cid)
         assert BC.cmd_record_bugbash_chat(ns) == 0
         again = _C.load_state(d, rid)
         assert again.is_done("bug_bash", "activate_chat")
         assert stored_chat_id(again) == cid
 
-        # no chat id -> attention hold (human fallback), step not done
+        # Missing prerequisite state cannot record even a supplied syntactically valid ID.
         st2 = ReleaseState(release_id=rid, ccd="2026-08-13", ccd_source="confirmed")
         _C.save_state(st2, d, rid)
         ns2 = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, chat_id=None)
-        assert BC.cmd_record_bugbash_chat(ns2) == 2
+        assert BC.cmd_record_bugbash_chat(ns2) == 1
         after = _C.load_state(d, rid)
         assert not after.is_done("bug_bash", "activate_chat")
-        assert after.get_step("bug_bash", "activate_chat").status == "blocked"
+        assert after.get_step("bug_bash", "activate_chat").status == "pending"
 
 
 

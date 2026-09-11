@@ -30,7 +30,7 @@ from orchestrator.outcomes import NeedsSkill, Blocked, Done
 from steps.lib.mockctx import mock_input, MISSING
 from tools import bugbash as BB
 from tools import testplans as T
-from steps.bug_bash.activate_chat import stored_chat_id
+from steps.bug_bash.activate_chat import stored_chat_id, chat_state_matches
 from steps.bug_bash.ui_results import completed_result
 
 ID = "bugbash_updates"
@@ -87,8 +87,8 @@ def build(state):
         return Blocked("bugbash_updates: no CCD set — can't title the Bug Bash.")
     chat_id = stored_chat_id(state)
     if not chat_id:
-        return Blocked("bugbash_updates: the Bug Bash meeting chat isn't activated yet "
-                       "(run activate_chat first).")
+        return Blocked("bugbash_updates: meeting chat binding is missing/stale "
+                       "(run activate_chat against the current invitation).")
 
     ok, progress, detail = gather(state)
     if not ok:
@@ -115,6 +115,7 @@ def build(state):
                  f"update poller"),
         note=f"{progress['remaining']} test(s) remaining across {len(progress['owners'])} owner(s)",
         outbound=True,
+        notification={"state_matches": chat_state_matches(state)},
     )
 
 

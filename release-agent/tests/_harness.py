@@ -468,7 +468,8 @@ def _bb_updates_state(chat_id="19:meeting_X@thread.v2"):
     st.set_step("bug_bash", "clone_plans_broker", StepState(status="done", data={"plan_id": 3730001}))
     st.set_step("bug_bash", "clone_plans_auth", StepState(status="done", data={"suite_id": 3730002}))
     if chat_id:
-        st.set_step("bug_bash", "activate_chat", StepState(status="done", data={"chat_id": chat_id}))
+        from tests._meeting import seed_invite
+        seed_invite(st, chat_id)
     return st
 
 

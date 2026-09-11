@@ -43,7 +43,8 @@ _Loaded on demand. Run all from `<AGENT_ROOT>` — the confirmed `release-agent`
 | Localization: deliver staged follow-up | `notification prepare --release <YYYY-MM> --source pending` then claim/result for the initial PR, deadline warning or timeout email. A PR ID alone is not delivery evidence. |
 | **Phase 2 — signal a re-triggered RC** | `python -m orchestrator.cli rc-retriggered --release <YYYY-MM> [--reason "..."]` — after the owner re-runs RC (flaky) or the orchestrator triggers a fresh RC (broker cherry-pick), reopens `mrwp_ecs`/`mrwp_local`/`rc_report` so Scout re-evaluates the **newest** RC. Holds `in_flight` (no action) while the run executes; the poller re-applies the gate on completion |
 | **Phase 2 — one RC poll** | `python -m orchestrator.cli poll-rc --release <YYYY-MM>` — `waiting` / `nudge` / `ready` / `resolved` / `blocked` / `idle`. `ready` lists eligible Scout work: execute it and its follow-up, then re-poll. `resolved` requires all Phase-2 steps settled as done/skipped; distinguish `status: overridden` from `status: passed`. The worker lives until its owning phase completes, not merely an old RC report. |
-| **Phase 3 — one bug-bash update** | `python -m orchestrator.cli post-bugbash-update --release <YYYY-MM> [--force]` — `off_hours` / `no_chat` / `error` / `post` / `complete`. The final message's successful claim/result records `poll_complete`; central cleanup deletes then deregisters the on-demand poller. |
+| **Phase 3 — bind the invitation's meeting chat** | `python -m orchestrator.cli record-bugbash-chat --release <id> [--chat-id <expected-thread>]` — resolves the exact sent event's join URL/thread; enforces prerequisites; never chooses by title |
+| **Phase 3 — one bug-bash update** | `python -m orchestrator.cli post-bugbash-update --release <YYYY-MM> [--force]` — `off_hours` / `no_chat` / `error` / `post` / `complete`. Missing/stale invite-chat bindings return no_chat, including with force. The final message's successful claim/result records `poll_complete`; central cleanup deletes then deregisters the on-demand poller. |
 | **Phase 3 — OOF candidates / manual distribution preview** | `python -m orchestrator.cli distribute-tests --release <id> --oce <verified-primary-upn> [--json]` — owner/OCE/configured exclusions removed before listing candidates; missing OCE blocks without candidates; subsequent runs reuse the recorded OCE and availability |
 | **Phase 3 — record owner availability and refresh preview** | `python -m orchestrator.cli distribute-tests --release <id> --no-oof` OR `… --oof <verified-upn> [--oof <verified-upn> …] [--oce <upn>]` — only after explicit owner input; never sends or writes assignments |
 | **Phase 3 — apply reviewed distribution** | `python -m orchestrator.cli distribute-tests --release <id> --apply` — apply stored manual/owner-triage case assignments and align plan testers; preserves tags/outcomes; rejects stale availability, result or triage |
@@ -126,7 +127,7 @@ Authenticator's Monthly UI Tests intentionally has no case map. All failures rem
 the standard report and release-owner `ui_failures` reminder, by exact title and source
 link. No case creation, forced mapping, new notification lifecycle, or automatic attestation.
 
-## Bug Bash availability
+## Bug Bash invite and exact chat identity
 
 For the `send_invite` step, preserve its exact `start`, `end`, and `timeZone` payload.
 The body and approval summary include the scheduling timezone and meeting-date UTC offset;
@@ -135,6 +136,27 @@ time regardless of the owner/runner location. DST offsets follow the meeting dat
 an existing event's actual calendar times separately from body
 text before diagnosing an overnight invite. Do not rerun creation to correct an existing
 meeting; any organizer update must keep the displayed body time consistent with start/end.
+
+After `workiq_create_event` succeeds, preserve its returned event JSON (top-level `id`)
+using `notification result ... --receipt-file <response.json>`. Never invent an event ID.
+If sending succeeded but recording failed, retry acknowledgement, not calendar creation.
+
+`activate_chat` consumes the completed send_invite's acknowledged receipt. Run
+`record-bugbash-chat --release <id>` as the organizer. It reads that exact event, validates
+organizer/subject/times and resolves its join URL to `onlineMeeting.chatInfo.threadId`,
+then verifies that thread. Do not use `workiq_search_chats` or a matching title as identity.
+`--chat-id` only asserts that a user-provided candidate equals the resolved thread.
+If the thread is unavailable, open the exact event's Chat pane and retry; API permission
+failures remain blocked, not a reason to accept an unverified chat.
+
+The same completed binding is a no-op. To replace a stale/completed binding, the owner must
+first review and reopen **activate_chat**, never recreate the meeting. Older runs missing
+the event receipt require explicit owner recovery; this change does not migrate them.
+Both initial and recurring updates reject missing/stale bindings. Their prepared payloads
+also bind the invitation receipt and chat record for claim/finalization checks. Stop old
+workers and review already-prepared legacy payloads when deploying; do not replay them.
+
+## Bug Bash availability
 
 Before `distribute_tests` computes the first manual-test preview, the **release owner**
 must supply availability for **this release's Bug Bash**. Do not query calendars,
