@@ -70,8 +70,10 @@ def cmd_post_bugbash_update(args):
     month_year = schedule.target_month_label(st) or "Bug Bash"
 
     if BB.all_complete(progress):
+        completion_text = (f'all {progress["total"]} tests complete!' if progress["total"] else
+                           'no manual or triage work remaining!')
         summary = (f'<div style="font-family:\'Segoe UI\',Arial,sans-serif;font-size:14px;">'
-                   f'<p><b>🎉 {month_year} Bug Bash — all {progress["total"]} tests complete!</b><br>'
+                   f'<p><b>🎉 {month_year} Bug Bash — {completion_text}</b><br>'
                    f'Thanks everyone. Closing out the bash; no more automated updates.</p></div>')
         item = D.descriptor(st, "bugbash:complete", scope, "workiq_send_chat_message",
                             {"chatId": chat_id, "content": summary, "contentType": "html"},

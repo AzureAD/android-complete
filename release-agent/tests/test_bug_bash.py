@@ -876,9 +876,8 @@ def test_bugbash_render_marks_auto_failed_auth_as_triage():
 
 
 
-def test_bugbash_updates_passes_auto_failed_ids_to_gather(monkeypatch):
-    """bugbash_updates.gather threads the completed fill's applied failed-auth case ids into
-    gather_progress so they can be flagged in the update."""
+def test_bugbash_updates_passes_automation_classification_and_failures_to_gather(monkeypatch):
+    """Progress gets the same automated set as distribution and retains applied failure triage."""
     from steps.bug_bash import bugbash_updates as BU
     from orchestrator.state import StepState
     st = _bb_updates_state()
@@ -886,7 +885,8 @@ def test_bugbash_updates_passes_auto_failed_ids_to_gather(monkeypatch):
     rc = current_rc(rc=1)
     rc["auth"] = auth_snapshot(rows={
         "Firebase Test Lab - UIAutomator E2E": [("test_2916347_x", "Failed"),
-                                               ("test_2916524_y", "Failed")]})
+                                               ("test_2916524_y", "Failed"),
+                                               ("test_1579395_z", "Passed")]})
     st.pipeline_runs = {"rcs": [rc]}
     st.set_step("bug_bash", "clone_plans_broker",
                 StepState(status="done", data={"plan_id": "900", "ui_suite_id": 901}))
@@ -894,11 +894,13 @@ def test_bugbash_updates_passes_auto_failed_ids_to_gather(monkeypatch):
     publish(st)
     captured = {}
     from tools import bugbash as BB
-    monkeypatch.setattr(BB, "gather_progress",
-                        lambda bp, sn, ap, asid, timeout=90, auto_failed_ids=None:
-                        (True, captured.setdefault("ids", auto_failed_ids) or {"ok": 1}, ""))
+    def gather(*args, **kwargs):
+        captured.update(kwargs)
+        return True, {"ok": 1}, ""
+    monkeypatch.setattr(BB, "gather_progress", gather)
     ok, _prog, _ = BU.gather(st)
-    assert ok and captured["ids"] == [2916347, 2916524]
+    assert ok and captured["auto_failed_ids"] == [2916347, 2916524]
+    assert captured["auth_automated_ids"] == [1579395, 2916347, 2916524]
 
 
 

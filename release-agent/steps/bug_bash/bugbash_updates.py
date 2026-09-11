@@ -16,11 +16,19 @@ by name with an "all completed" line (no mention). A test counts as done only wh
 distinctly as 'triage', not a manual test to run. Live assignments identify the current
 owner; a failed reassignment must not invent an owner change.
 
+The denominator covers manual/triage work, not every case in the Authenticator suite.
+Use the completed fill's automated-case classification (the same source as distribution)
+to exclude automation-only Auth cases, regardless of their current ADO owner/outcome.
+Keep applied automation failures as explicit triage; keep genuine manual Passed/N/A
+results in the done count. No internal assignment list or cached owner totals are used.
+
 Depends on: clone_plans_broker (Broker plan id), clone_plans_auth (Auth suite id),
-activate_chat (meeting chat id). Blocks if the chat hasn't been activated.
+ui_test_status (completed automation classification), activate_chat (meeting chat id).
+Blocks if the chat hasn't been activated or the completed fill is missing/stale.
 
 Mock knobs (mocks.local.yaml / tests):
   progress : inject the gathered progress dict (skip the live ADO reads).
+  people   : verified Teams people {upn: {id: Entra GUID, name}} for offline rendering.
   send_to  : redirect the post to this chat id for testing.
 """
 from __future__ import annotations
@@ -71,11 +79,12 @@ def gather(state):
     if not bp or not asuite:
         return (False, None, "the Broker plan / Auth suite aren't ready (run the clone steps).")
     try:
-        failed_ids = _auto_failed_ids(state)
+        auth = completed_result(state)["auth"]
     except ValueError as exc:
         return False, None, str(exc)
     return BB.gather_progress(bp, BROKER_SUITE_NAME, T.AUTH_PLAN, asuite,
-                              auto_failed_ids=failed_ids)
+                              auto_failed_ids=auth["failed_case_ids"],
+                              auth_automated_ids=auth["automated_case_ids"])
 
 
 def plan_links(state):
@@ -125,6 +134,8 @@ def build(state, members_file=None):
 
     month_year = schedule.target_month_label(state)
     if BB.all_complete(progress):
+        if not progress["total"]:
+            return Done(f"No manual or triage bug-bash work remains for {month_year}; nothing to poll.")
         return Done(f"All {progress['total']} bug-bash tests are already complete — "
                     f"nothing to poll; ready for {month_year} bug bash sign-off.")
 

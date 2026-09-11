@@ -164,6 +164,11 @@ Never replace the GUID with an email, omit mentions metadata, or rewrite `<at id
 as plain text. Unresolved pending owners block rather than producing fake mentions;
 fix the assignment/membership or directory access and prepare again. Completed owners
 remain plain names and are not notified. No new message is sent merely to validate tagging.
+The numerator/denominator cover human manual/triage work, not the entire Authenticator
+suite. The completed fill's automated-case classification excludes automation-only Auth
+cases from both counts (as distribution does), while applied automation failures remain
+visible as triage. Preserve real manual Passed/N/A completions. Do not infer automation
+from a Passed outcome, a shared tag, or a saved assignment list.
 If the CLI Graph token lacks chat-member access, fetch the exact verified chat with
 `workiq_get_chat` and save its fresh `id`, `chatType`, and complete `members` fields as
 JSON (do not copy message history). Re-prepare the first post with `--param members_file=<path>`, or rerun

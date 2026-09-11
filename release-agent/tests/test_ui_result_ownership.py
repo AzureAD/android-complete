@@ -99,8 +99,8 @@ def test_distribution_progress_use_result_without_raw_evidence(monkeypatch):
     assert "plan" not in st.get_step("bug_bash", D.ID).data
     seen = []
     monkeypatch.setattr(bugbash, "gather_progress",
-                        lambda *a, **kw: (seen.append(kw["auto_failed_ids"]) is None, {}, ""))
-    assert BU.gather(st)[0] and seen == [[200]]
+                        lambda *a, **kw: (seen.append(kw) is None, {}, ""))
+    assert BU.gather(st)[0] and seen == [{"auto_failed_ids": [200], "auth_automated_ids": [100, 200]}]
 
 
 @pytest.mark.parametrize("damage", ["missing", "incomplete", "failed_ids", "target", "point", "duplicate"])

@@ -6,8 +6,9 @@ Two concerns:
     poster runs every 2h inside this window (America/Los_Angeles), skipping weekends and
     hardcoded US federal holidays; it resumes at 09:00 the next working day.
   * progress — gather_progress(...): read the live test-point outcomes from BOTH the Broker
-    'Manual Tests (Android Broker)' subtree and the Authenticator bug-bash suite, grouped
-    by the case's System.AssignedTo (what distribute_tests set — the point's own `tester`
+    'Manual Tests (Android Broker)' subtree and the Authenticator bug-bash suite, excluding
+    automation-only Auth cases using the completed fill's classification. Grouped
+    by the case's live System.AssignedTo (the point's own `tester`
     field is NOT reliably synced with AssignedTo). render_update(...) turns that into the
     Teams message HTML + the @mention list (mention owners with remaining tests; name-only
     for owners who finished all).
@@ -158,10 +159,15 @@ def _broker_points(broker_plan_id, suite_name, timeout=90):
 
 
 def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_id,
-                    timeout=90, auto_failed_ids=None):
+                    timeout=90, auto_failed_ids=None, *, auth_automated_ids):
     """(ok, progress, detail). Reads live test points from the Broker manual subtree +
     the Auth bug-bash suite, groups the CASES by their System.AssignedTo, and computes a
-    per-owner + overall breakdown.
+    per-owner + overall breakdown of manual work and retained failure triage.
+
+    `auth_automated_ids` is the completed fill's automated-case classification, also
+    used by distribution. Exclude those Auth cases unless they are applied failures
+    requiring triage. Never infer automation from a Passed outcome or a shared tag:
+    real manual passes must count, and ownership/outcomes still come from live ADO.
 
     `auto_failed_ids` are the Authenticator cases written Failed by `ui_test_status`;
     actual owners come from live assignments — they're flagged per-test as
@@ -169,12 +175,17 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
     owner still needs to RUN. They still count as remaining (a failure needs resolution).
 
     progress = {
-      total, done, remaining, auto_failed_remaining,
+      total, done, remaining, auto_failed_remaining, auth_excluded_automated,
       owners: { upn: {name, total, done, remaining,
                       tests: [{id, name, url, state, auto_failed}]} },
       unassigned: <count of cases with no AssignedTo> }
     """
+    if auth_automated_ids is None:
+        return False, None, "Missing completed-fill automated-case classification; no progress prepared"
+    automated = {str(i) for i in auth_automated_ids}
     auto_failed = {str(i) for i in (auto_failed_ids or [])}
+    if not auto_failed <= automated:
+        return False, None, "Applied Auth failures are missing from the automated-case classification"
     okb, bpts, db = _broker_points(broker_plan_id, broker_suite_name, timeout)
     if not okb:
         return (False, None, f"broker: {db}")
@@ -182,6 +193,10 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
     if not oka:
         return (False, None, f"auth: {da}")
 
+    automation_only = automated - auto_failed
+    excluded = {pt["case_id"] for pt in apts if pt["case_id"] in automation_only}
+    apts = [pt for pt in apts if pt["case_id"] not in excluded]
+    auth_triage = {pt["case_id"] for pt in apts if pt["case_id"] in auto_failed}
     # case_id -> {name, outcomes:[...]}
     cases = {}
     for pt in bpts + apts:
@@ -202,7 +217,7 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
         is_done = state in ("passed", "na")     # only clean-pass / N-A count as done;
         if is_done:                              # failed + blocked + notrun are "remaining"
             done += 1
-        af = cid in auto_failed
+        af = cid in auth_triage
         if af and not is_done:
             auto_failed_remaining += 1
         upn = amap.get(cid)
@@ -220,13 +235,15 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
 
     return (True, {"total": total, "done": done, "remaining": total - done,
                    "auto_failed_remaining": auto_failed_remaining,
+                   "auth_excluded_automated": len(excluded),
                    "owners": owners, "unassigned": unassigned}, "")
 
 
 # ----------------------------------------------------------------- render
 
 def all_complete(progress) -> bool:
-    return bool(progress) and progress.get("total", 0) > 0 and progress.get("remaining", 0) == 0
+    return (bool(progress) and (progress.get("total", 0) > 0 or progress.get("auth_excluded_automated", 0) > 0)
+            and progress.get("remaining") == 0)
 
 
 def resolve_mention_people(chat_id, owners, timeout=90, *, member_observation=None):

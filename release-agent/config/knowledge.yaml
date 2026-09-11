@@ -1075,6 +1075,12 @@ bug_bash.bugbash_updates:
     provisions the on-demand `bug-bash-update-poller` automation. Each update is grouped by
     each test's owner (System.AssignedTo, set by distribute_tests, read live from BOTH the
     Broker 'Manual Tests (Android Broker)' subtree and the Authenticator bug-bash suite).
+    Counts cover manual/triage work, not every Authenticator suite case. The completed
+    ui_test_status result supplies the same automated-case classification used by
+    distribution. Automation-only Auth cases are excluded from both done and total,
+    even if their shared ADO assignee is a manual tester. Applied automated failures
+    remain visible as triage; genuine manual Passed/N/A cases still count as done.
+    The filter is classification-based, never "remove all passes" or a shared Automated tag.
     A test counts as done only when it PASSED (or is N/A); not-run, failed, and blocked all
     count as remaining and are LISTED (failed first, then blocked, then not-run) with links +
     state so failures are surfaced, not buried. Authenticator cases actually written Failed
@@ -1117,6 +1123,8 @@ bug_bash.bugbash_updates:
       a: "After every test completes, the final wrap-up must be claimed and successfully acknowledged before poll_complete is recorded. Known failed sends retry while the phase remains open. Owner sign-off/phase completion stops stale sends. Cleanup deletes first, then deregisters."
     - q: "Why group by AssignedTo instead of the test point's tester?"
       a: "The ADO test-point `tester` field is NOT synced with the case's System.AssignedTo. distribute_tests sets AssignedTo, so progress is grouped by AssignedTo to reflect who actually owns each test."
+    - q: "Why doesn't progress count every test assigned to someone in the full ADO suite?"
+      a: "The suite also contains automated results whose shared case owner may be a manual tester. Those automation-only cases are not that person's Bug Bash workload: exclude them from both completed and total counts. Real manual completions still count; applied automation failures remain explicit owner-triage work."
     - q: "Why are some of the owner's failures marked 'Automated failure — triage'?"
       a: "Those are Authenticator cases recorded as actually written Failed by ui_test_status. Current ownership comes from live System.AssignedTo, not an assumed successful reassignment. They are investigations rather than new manual assignments, and remain outstanding until resolved."
 
