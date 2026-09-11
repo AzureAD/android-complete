@@ -10,18 +10,47 @@ from tools.pipelines import format_versions, AUTH_UI_SUITES, AUTH_UI_PASS_THRESH
 def recovered_tests(model) -> list:
     """Complete successful retry list, retaining suite and provider identity."""
     out = []
-    for prov in ("ECS", "Local"):
-        tests = ((model.get("mrwp") or {}).get(prov) or {}).get("tests") or {}
-        if tests.get("count_basis") != MRWP_COUNT_BASIS:
-            continue
-        for suite in tests.get("suites") or []:
-            for test in suite.get("test_results") or []:
-                if test.get("recovered"):
-                    attempts = ", ".join(f"{count} {outcome}" for outcome, count
-                                         in sorted(test["outcome_counts"].items()))
-                    out.append(f"[{prov}] {suite['name']} — {test['title']} "
-                               f"({attempts} historical attempts; informational)")
+    for test in (model.get("ui_evidence") or {}).get("recovered", []):
+        attempts = ", ".join(f"{count} {outcome}" for outcome, count in sorted(test["outcomes"].items()))
+        out.append(f"[{test['provider']}] {test['suite']} — {test['title']} "
+                   f"({attempts} historical attempts; informational)")
     return sorted(out)
+
+
+def source_evidence_lines(model):
+    """Render prepared facts only: no acquisition, reconciliation or target-plan projection."""
+    facts = model.get("ui_evidence")
+    if not isinstance(facts, dict):
+        return ["UI source evidence unavailable: refresh the RC report preparation."]
+    lines = list(facts["issues"])
+    for provider in facts["providers"]:
+        lines.append(f"Broker {provider['flight']}: {provider['distinct_tests']} distinct UI tests; "
+                     f"{provider['source_executions']} source executions.")
+    if facts["policy"]:
+        lines.append(facts["policy"])
+    if facts["auth"]:
+        auth = facts["auth"]
+        lines.append(f"Authenticator: {auth['source_executions']} source executions; "
+                     f"{auth['distinct_tests']} distinct tests.")
+    for failure in facts["failures"]:
+        policy = "; intentional_report_only" if failure.get("report_only") else ""
+        lines.append(f"INVESTIGATE {failure['product']} {failure['provider']} "
+                     f"[{failure['suite']}{policy}] {failure['title']}")
+        lines.extend(f"Source {link['run_id']}/{link['result_id']}: {link['url']}"
+                     for link in failure["links"])
+    return lines
+
+
+def source_evidence_html(model):
+    items = []
+    for line in source_evidence_lines(model):
+        if line.startswith("Source ") and ": https://" in line:
+            label, url = line.split(": ", 1)
+            content = f'<a href="{T.esc(url)}">{T.esc(label)}</a>'
+        else:
+            content = T.esc(line)
+        items.append(f"<li>{content}</li>")
+    return "".join(items)
 
 
 def auth_leg_summary(model, auth) -> dict:
@@ -214,6 +243,8 @@ def rc_email_plain(model, ctx, gate, auth, next_action) -> str:
                      f"({'n/a' if pct is None else f'{pct:.2f}%'})")
         L.append(f"      Run: {auth_build_url(b.get('run_id'))}")
         L.append("")
+    L.append("SOURCE EVIDENCE / RELEASE-OWNER INVESTIGATION")
+    L.extend(source_evidence_lines(model))
     probs = model.get("problems") or []
     if probs:
         L.append("PIPELINE ISSUES / INCOMPLETE EVIDENCE:")
@@ -479,6 +510,10 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
   {mrwp_card('ECS')}
   {mrwp_card('Local')}
   {_auth_card()}
+  <div style="margin:12px 0;padding:10px 12px;border:1px solid #fedf89;background:#fffaeb;">
+    <strong>Source evidence / release-owner investigation</strong>
+    <ul>{source_evidence_html(model)}</ul>
+  </div>
   {issues}
   {retry_warn}
 

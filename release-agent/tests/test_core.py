@@ -1077,6 +1077,10 @@ def test_build_broker_plan_makes_three_flat_suites_by_reference():
         return (True, {}, "")
 
     def fake_get_all(url, timeout, **k):
+        if "/testplan/configurations?" in url:
+            from tools.ui_mapping import CONFIG_NAMES
+            return True, [{"id": cid, "name": name, "state": "active", "values": []}
+                          for cid, name in CONFIG_NAMES.items()], ""
         if f"/Plans/{T.BROKER_MASTER_PLAN}/suites?" in url:       # _fetch_source_suites
             return (True, list(FLAT), "")
         return (True, [], "")
@@ -1085,10 +1089,19 @@ def test_build_broker_plan_makes_three_flat_suites_by_reference():
     P._ado_rest_send, P._ado_rest_get, P._ado_rest_get_all = fake_send, fake_get, fake_get_all
     D.broker_manual_cases = lambda *a, **k: (True, [{"id": "111", "assignee": "a@x"}], "")
     try:
-        ok, pid, d = T.build_broker_plan("TEST plan")
+        from tools import broker_plans as B
+        from tests._mrwp_evidence import current_rc, PROD
+        ok, source, d = B._snapshot(120, current_rc(
+            ecs={PROD: [("test_111_x", "Passed")]}, local={PROD: [("test_111_x", "Passed")]}))
+        assert ok, d
+        created_ids = []
+        ok, pid, d = T.build_broker_plan(
+            "TEST plan", source=source, description="test identity", on_created=created_ids.append)
     finally:
         (P._ado_rest_send, P._ado_rest_get, P._ado_rest_get_all, D.broker_manual_cases) = o
     assert ok and pid == 9000 and d == "", d
+    assert created_ids == [9000]
+    assert sends[0][2]["areaPath"] == T.BROKER_AREA_PATH
 
     # SAFETY: the duplicating classic Test Suite Clone is NEVER used
     assert not any("/cloneoperation" in u for (u, m, b) in sends)
@@ -1120,9 +1133,9 @@ def test_build_broker_plan_makes_three_flat_suites_by_reference():
 
 
 
-def test_build_broker_plan_cleans_up_on_case_failure():
+def test_build_broker_plan_retains_identity_on_case_failure():
     """If adding the Broker cases fails after the plan is created, the half-built plan is
-    DELETEd so a re-run starts clean, and the function returns (False, ...)."""
+    retained with its checkpointed ID, never automatically deleted/replaced."""
     from tools import pipelines as P
     from tools import testplans as T
     from tools import distribution as D
@@ -1146,11 +1159,17 @@ def test_build_broker_plan_cleans_up_on_case_failure():
     P._ado_rest_send, P._ado_rest_get = fake_send, fake_get
     D.broker_manual_cases = lambda *a, **k: (True, [{"id": "111", "assignee": "a@x"}], "")
     try:
-        ok, pid, d = T.build_broker_plan("TEST plan")
+        created_ids = []
+        ok, pid, d = T.build_broker_plan(
+            "TEST plan", description="test identity", on_created=created_ids.append,
+            source={"root_configs": [293], "broker_configs": T.BROKER_CONFIGS,
+                    "ui_configs": T.BROKER_UI_CONFIGS, "broker_cases": [111],
+                    "ui_cases": [222], "native_query": "SELECT x"})
     finally:
         P._ado_rest_send, P._ado_rest_get, D.broker_manual_cases = o
     assert not ok and "400" in d
-    assert any(m == "DELETE" and "/plans/9200" in u for (m, u) in calls)   # cleaned up
+    assert pid == 9200 and created_ids == [9200]
+    assert not any(m == "DELETE" for (m, u) in calls)
 
 
 

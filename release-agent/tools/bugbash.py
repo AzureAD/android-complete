@@ -160,8 +160,8 @@ def gather_progress(broker_plan_id, broker_suite_name, auth_plan_id, auth_suite_
     the Auth bug-bash suite, groups the CASES by their System.AssignedTo, and computes a
     per-owner + overall breakdown.
 
-    `auto_failed_ids` are the Authenticator cases that FAILED in automation and were
-    pre-assigned to the release owner by `ui_test_status` — they're flagged per-test as
+    `auto_failed_ids` are the Authenticator cases written Failed by `ui_test_status`;
+    actual owners come from live assignments — they're flagged per-test as
     `auto_failed` so the update can show them as 'triage', distinct from manual tests the
     owner still needs to RUN. They still count as remaining (a failure needs resolution).
 
@@ -279,7 +279,7 @@ def render_update(progress, month_year, plan_links, name_by_upn=None):
     links = " &nbsp;·&nbsp; ".join(f'<a href="{l["url"]}">{l["name"]}</a>' for l in (plan_links or []))
     auto_n = progress.get("auto_failed_remaining", 0)
     auto_note = (f'<p style="font-size:13px;color:#a4262c;">\U0001f52c {auto_n} failed '
-                 f'automated Authenticator case(s) are pre-assigned for owner triage '
+                 f'automated Authenticator case(s) need investigation (see current assignees) '
                  f'(investigate — not manual re-runs).</p>' if auto_n else "")
     html = (
         f'<div style="font-family:\'Segoe UI\',Arial,sans-serif;font-size:14px;">'

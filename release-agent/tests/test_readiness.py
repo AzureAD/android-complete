@@ -594,19 +594,17 @@ def test_oncall_team_is_single_source_from_readiness():
 
 
 
-def test_auth_ui_case_outcomes_aggregates(monkeypatch):
-    """Per-case outcomes: Passed if the case passed in >=1 run (retry recovery), Failed if it
-    only ever failed, and NotApplicable-only cases are omitted (no case-id name -> ignored)."""
+def test_auth_ui_projection_aggregates(monkeypatch):
+    """Exact-title recovery, distinct-scenario failure dominance and NA-only exclusion."""
     from tools import pipelines as P
-    monkeypatch.setattr(P, "_ado_rest_get", lambda url, t: (True, {"value": [{"id": 1}, {"id": 2}]}, ""))
-    runs = {1: [{"automatedTestName": "test_100_x", "outcome": "Failed"},
-                {"automatedTestName": "test_200_y", "outcome": "Failed"}],
-            2: [{"automatedTestName": "test_100_x", "outcome": "Passed"},   # retry recovery
-                {"automatedTestName": "test_300_z", "outcome": "NotApplicable"},
-                {"automatedTestName": "no_case_id_here", "outcome": "Failed"}]}
-    monkeypatch.setattr(P, "_run_results", lambda o, pj, rid, t=90: (True, runs[rid], ""))
-    ok, out, _ = P.auth_ui_case_outcomes(999)
-    assert ok and out == {100: "Passed", 200: "Failed"}    # 300 NA-only + unnamed -> omitted
+    from tests._auth_evidence import auth_snapshot
+    rc = {"rc": 1, "auth": auth_snapshot(rows={P.AUTH_UI_SUITES[0]: [
+        ("test_100_x", "Failed"), ("test_100_x", "Passed"),
+        ("test_200_freshInstall", "Passed"), ("test_200_upgrade", "Failed"),
+        ("test_300_z", "NotApplicable"), ("no_case_id_here", "Failed")]})}
+    ok, out, _ = P.project_auth_ui_results(rc)
+    assert ok and {cid: c["outcome"] for cid, c in out["cases"].items()} == {
+        100: "Passed", 200: "Failed", 300: "NotApplicable"}
 
 
 

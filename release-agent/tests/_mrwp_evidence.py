@@ -25,4 +25,6 @@ def snapshot(build_id, suites=None):
 
 
 def current_rc(ecs=None, local=None, rc=2):
-    return {"rc": rc, "ecs": snapshot(201, ecs), "local": snapshot(202, local)}
+    from tests._auth_evidence import auth_snapshot
+    return {"rc": rc, "ecs": snapshot(201, ecs), "local": snapshot(202, local),
+            "auth": auth_snapshot(rc=rc)}

@@ -9,7 +9,7 @@ from . import (release, readiness, pipeline, notify, infra_cmd, automation,
                logs, lockdown, notice, step_action, localization, rc_report, rc_poll,
                distribute, bugbash_chat, bugbash_update, sim, gate_approve, integ_prs_cmd,
                oneauth_pr_cmd, telemetry_cmd, payload_wiki_cmd, status_email_cmd, paths_cmd,
-               preview_cmd, delivery_cmd)
+               preview_cmd, delivery_cmd, broker_plan)
 
 # Order controls how subcommands appear in --help.
 REGISTRARS = [
@@ -26,6 +26,7 @@ REGISTRARS = [
     rc_poll.register,
     telemetry_cmd.register,
     distribute.register,
+    broker_plan.register,
     bugbash_chat.register,
     bugbash_update.register,
     gate_approve.register,

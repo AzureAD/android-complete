@@ -588,8 +588,8 @@ def test_ui_projection_per_config():
     ok, projection, d = P.project_mrwp_ui_results(rc)
     assert ok, d
     v = projection["verdicts"]
-    assert v == {100: {("ECS", "prod"): "Passed", ("ECS", "rc"): "Failed",
-                       ("Local", "prod"): "NotApplicable"}}
+    assert v == {100: {("ECS", "prod_msal_rc_broker"): "Passed", ("ECS", "rc_msal_prod_broker"): "Failed",
+                       ("Local", "prod_msal_rc_broker"): "NotApplicable"}}
     assert 999 not in v
     assert projection["provenance"]["providers"][1]["skipped_mapping"][0]["reason"] == "unknown_suite_variant"
 
@@ -601,8 +601,8 @@ def test_fill_ui_automation_results_maps_configs():
     config with no verdict is untouched. Mirrors the user's test_3321136 example."""
     from tools import pipelines as P
     from tools import testplans as T
-    verdicts = {3321136: {("ECS", "prod"): "Passed", ("ECS", "rc"): "Failed",
-                          ("Local", "prod"): "NotApplicable"}}   # Local/rc omitted -> untouched
+    verdicts = {3321136: {("ECS", "prod_msal_rc_broker"): "Passed", ("ECS", "rc_msal_prod_broker"): "Failed",
+                          ("Local", "prod_msal_rc_broker"): "NotApplicable"}}  # absent pair untouched
     points = [
         {"id": 1, "testCase": {"id": "3321136"}, "configuration": {"id": "292"}},  # ECS prod -> Passed
         {"id": 2, "testCase": {"id": "3321136"}, "configuration": {"id": "294"}},  # ECS rc  -> Failed

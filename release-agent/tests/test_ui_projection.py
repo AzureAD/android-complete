@@ -10,13 +10,16 @@ from steps.bug_bash import ui_test_status as U
 from steps.build_verify import rc_report as R
 from steps.lib import mockctx
 from tests._mrwp_evidence import current_rc, PROD, RC
+from tests._ui_results import checkpoint_memory, auth_fill
 from tools import distribution as D, pipelines as P, testplans as T
 
 
 def state_for(rc):
     st = ReleaseState(release_id="projection-test", owner_email="owner@example.com")
     st.pipeline_runs = {"rcs": [rc]}
-    st.set_step("bug_bash", "clone_plans_broker", StepState(data={"plan_id": 900}))
+    st.set_step("bug_bash", "clone_plans_broker", StepState(data={"plan_id": 900, "ui_suite_id": 901}))
+    st.set_step("bug_bash", "clone_plans_auth", StepState(data={"suite_id": 902}))
+    checkpoint_memory(st)
     return st
 
 
@@ -27,10 +30,9 @@ def forbidden(*args, **kwargs):
 @pytest.fixture
 def offline(monkeypatch):
     # Fixture snapshots use explicit, short-lived stubs for get_test_summary's reads.
-    for name in ("_ado_rest_get", "_ado_rest_send", "_ado_rest_get_all", "_test_runs", "_run_results",
-                 "auth_ui_case_results"):
+    for name in ("_ado_rest_get", "_ado_rest_send", "_ado_rest_get_all", "_test_runs", "_run_results"):
         monkeypatch.setattr(P, name, forbidden)
-    monkeypatch.setattr(T, "fill_auth_ui_results", forbidden)
+    monkeypatch.setattr(T, "fill_auth_ui_results", auth_fill)
     monkeypatch.setattr(D, "set_assigned_to", forbidden)
 
 
@@ -92,9 +94,11 @@ def test_distinct_parameters_and_api_failures_cannot_be_hidden_by_a_sibling_pass
     ok, projection, detail = P.project_mrwp_ui_results(rc)
     assert ok, detail
     assert projection["verdicts"] == {
-        100: {("ECS", "prod"): "Failed", ("ECS", "rc"): "Passed", ("Local", "prod"): "Passed"},
-        200: {("ECS", "prod"): "Failed"}, 300: {("ECS", "prod"): "NotApplicable"},
-        400: {("ECS", "prod"): "Passed"}}
+        100: {("ECS", "prod_msal_rc_broker"): "Failed", ("ECS", "rc_msal_prod_broker"): "Passed",
+              ("Local", "prod_msal_rc_broker"): "Passed"},
+        200: {("ECS", "prod_msal_rc_broker"): "Failed"},
+        300: {("ECS", "prod_msal_rc_broker"): "NotApplicable"},
+        400: {("ECS", "prod_msal_rc_broker"): "Passed"}}
     assert R.rc_ui_gate(R.rc_report_model(st))["ui_failed"] == len(projection["failures"]) == 2
     calls = plan_stub(monkeypatch, [point(100), point(100, 294, 2), point(100, 328, 3),
                                     point(200, point_id=4), point(300, point_id=5),
@@ -142,7 +146,8 @@ def test_invalid_evidence_blocks_before_any_external_mutation(offline, monkeypat
     with mockctx.active({}):
         result = U.build(st)
     assert result.kind == "blocked" and "refresh Phase-2" in result.reason
-    assert st == before
+    assert st.pipeline_runs == before.pipeline_runs
+    assert st.get_step("bug_bash", U.ID).data["result"]["status"] == "incomplete"
 
 
 def test_na_only_and_skipped_mapping_are_not_success_shaped_missing_evidence(offline, monkeypatch):
@@ -236,13 +241,13 @@ def test_unmarked_note_is_not_guessed_to_be_generated(offline, monkeypatch):
     assert step.links == before.links
 
 
-def test_missing_auth_read_does_not_redisplay_an_earlier_auth_failure(offline, monkeypatch):
+def test_current_auth_snapshot_replaces_earlier_auth_failure(offline, monkeypatch):
     st = state_for(current_rc())
     st.set_step("bug_bash", U.ID, StepState(data={"auth": {"failed_case_ids": [999]}}))
     plan_stub(monkeypatch, [point(100)])
     with mockctx.active({}):
         assert U.build(st).kind == "done"
-    assert "auth" not in st.get_step("bug_bash", U.ID).data
+    assert st.get_step("bug_bash", U.ID).data["auth"]["failures"] == []
     assert not st.get_step("bug_bash", "ui_failures").note
 
 
@@ -269,9 +274,9 @@ def test_partial_fill_and_assignment_errors_are_explicit(offline, monkeypatch):
 
 def test_unmatched_verdicts_are_diagnosed_without_touching_manual_points(offline, monkeypatch):
     calls = plan_stub(monkeypatch, [point(300), point(100, 999, 2)])
-    ok, summary, detail = T.fill_ui_automation_results(900, {100: {("ECS", "prod"): "Passed"}})
+    ok, summary, detail = T.fill_ui_automation_results(900, {100: {("ECS", "prod_msal_rc_broker"): "Passed"}})
     assert ok, detail
     assert not calls and len(summary["untouched_points"]) == 2
     assert summary["unmatched_verdicts"] == [
-        {"case_id": 100, "flight": "ECS", "variant": "prod", "verdict": "Passed",
+        {"case_id": 100, "flight": "ECS", "variant": "prod_msal_rc_broker", "verdict": "Passed",
          "status": "no_matching_plan_point"}]

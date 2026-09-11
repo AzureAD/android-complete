@@ -616,7 +616,9 @@ build_verify.auth_ecs:
     This step is a DATA-AVAILABILITY check (exactly like the mrwp_ecs/mrwp_local steps): it discovers
     the current-RC ECS build on 'working-<release-branch>' (the build whose adAccountsVersion is
     '...-rc-RC<N>-ecs', highest N), follows the deterministic build->test resource link to its UI-test
-    run, reads the two Firebase device suites, and CAPTURES it all into rcs[rc].auth. It does NOT
+    run, completely pages Test Runs and Results and CAPTURES both Firebase suites into
+    rcs[rc].auth.test.evidence (versioned RC/APK/test-build attribution, exact titles, attempt
+    outcomes and run/result IDs), with neutral source validation, not plan projections. It does NOT
     apply the 90% gate — a sub-90% result is DATA, not a block here. The rc_report step consolidates
     MRWP + auth and makes the go/hold decision.
   where:
@@ -624,11 +626,17 @@ build_verify.auth_ecs:
     - "Authenticator Post-Build UI Tests (def 444678): https://msazure.visualstudio.com/One/_build?definitionId=444678"
   how: >
     It HOLDS (Scout polls every 30 min) while the build is in-flight or its UI-test run hasn't
-    appeared yet (data not ready). It BLOCKS only when there is NO ECS build at all (the branch
-    wasn't cut / nothing to report on). A completed build — even a failed one, or one whose Firebase
+    appeared yet (data not ready). It BLOCKS when there is NO ECS build or detailed evidence is
+    malformed, incomplete or attributed to another RC/APK/test build. Refresh is required for
+    historical aggregate-only snapshots; never silently migrate them. A refreshed discovery
+    invalidates the old capture even while new results are pending. A completed build — even a failed one, or one whose Firebase
     suites are below 90% — is captured and the step is DONE; the RC report then decides. The build is
     read cross-org via az/REST (no ADO MCP); the build->test link is the test run's
     resources.pipeline.authenticatorBuild id.
+    'Firebase Test Lab - Monthly UI Tests' intentionally has NO test-plan case map.
+    This is valid report-only coverage, not permission to create cases or force mappings.
+    Every unresolved failure is retained by exact name and source link for release-owner
+    investigation. The existing independent aggregate Firebase gates remain unchanged.
   faqs:
     - q: "Why doesn't this step block when a Firebase suite is below 90%?"
       a: "Because it is a data-availability check, not a gate — same as the MRWP verify steps, where failing tests don't block (they're data). It captures the suite results + an informational verdict into state; the rc_report step consolidates MRWP + auth and makes the single go/hold decision. This keeps one decision point."
@@ -692,6 +700,9 @@ build_verify.rc_report:
     excluding NA-only titles. Parameterizations and suite/API/device distinctions stay
     separate. Full unresolved-failure and recovered-success lists preserve source evidence.
     The separate Authenticator Firebase gate retains its existing count/build policy.
+    rc_report prepares source-only execution counts, failures, recoveries and result links.
+    Renderers consume those prepared facts and public provider summaries; they never map
+    target plans, acquire results or reconcile retries. Phase 2 does not select target configs.
   who: >
     Scout composes the email; the skill sends it via workiq_send_email to the release owner
     (state.owner_email). Redirect for testing with the step's `send_to` payload knob.
@@ -752,11 +763,28 @@ bug_bash.clone_plans_broker:
     + the progress updates find the flat Broker suite by name, so it's a drop-in.
   who: "Scout runs it automatically during `next` (an agent step, via the ADO test-plan API)."
   how: >
-    Idempotent — the new plan id is stashed on the step; a re-run re-confirms that plan
-    exists and reports done without rebuilding. If the build fails (auth/API) the half-built
-    plan is deleted and the step blocks with the ADO error; fix and `next`, or `skip
-    --reason` to override. Suites are built by recreating them and referencing the master's
-    cases (static suites) / re-using its query (the Native-Auth dynamic suite).
+    Find/reuse before create. The release-owned resources.broker_test_plan record survives
+    step reopen; step.data.plan_id remains the downstream reference. A recorded ID is
+    verified, never replaced after an API/auth/404 error. Without an ID, complete paged ADO
+    discovery includes inactive and same-name plans. One matching plan must pass identity,
+    flat-suite, query, configuration and point checks; multiple matches block for owner
+    selection. Tell Scout which existing plan to retain. Scout uses broker-plan --release
+    <id> to inspect candidates, then --plan-id <id> --reason "<owner selection>" to bind
+    without ADO writes or marking the step done. --area-path <observed area> can explicitly
+    bind an existing plan whose area differs from configuration; new creates use areaPath.
+    A new build checkpoints its source snapshot and creating intent under the existing
+    release lock BEFORE POST, then checkpoints the returned ID before building suites.
+    Partial plans are retained, not deleted. Retries verify the SAME plan against the
+    frozen source and per-case UI configuration matrix: four baseline configs plus
+    RC/RC293/330 selectively assigned to cases represented by captured source evidence.
+    Never blanket-expand to six configs or silently migrate historical source snapshots.
+    Missing points require owner-approved in-place repair; preview with --preview-ui-repair.
+    Repair missing suites/points in that plan before continuing. An uncertain
+    create remains blocked even if no candidate is yet visible. Only after the owner confirms
+    the original runner is stopped and creation did not occur may Scout use broker-plan
+    --confirm-not-created --reason "<evidence>"; this also verifies absence and retains the
+    previous attempt. Do not clear IDs, reopen to recreate, or infer absence from a failed read.
+    One authoritative runs directory is required; the local lock is not cross-machine uniqueness.
   links:
     - name: "Broker master test plan (#2007357, Manual Tests subtree)"
       url: "https://identitydivision.visualstudio.com/Engineering/_testPlans/define?planId=2007357&suiteId=2008656"
@@ -768,7 +796,9 @@ bug_bash.clone_plans_broker:
     - q: "Does it duplicate the test cases?"
       a: "No — it references the existing test cases (shared). Edit test cases only in the master template. (The classic Test Suite Clone is deliberately avoided because it COPIES cases, which previously exploded the Native-Auth tag count.)"
     - q: "Does it auto-update if the master changes later?"
-      a: "The two static suites (Manual Broker, UI Automation) are frozen snapshots at build time (stable monthly cut). The Native Auth dynamic suite re-resolves its query, so it reflects current Native Auth cases. Rebuild (delete the plan id + re-run) to re-snapshot the static suites."
+      a: "The two static suites (Manual Broker, UI Automation) are frozen snapshots at build time (stable monthly cut). The Native Auth dynamic suite re-resolves its query. Retrying/reopening reuses the same plan and saved snapshot; never delete its ID to request another plan. Changing the monthly test set needs a separate explicit review."
+    - q: "How do I recover missing metadata or duplicate plans?"
+      a: "Tell Scout which existing plan to retain after reviewing candidate IDs, areas, suites and results. Scout binds the verified plan with broker-plan, then resumes next. A bound plan cannot be silently switched because downstream results/assignments may already refer to it. Duplicate-plan deletion is a separate owner-approved action; never delete the shared case work items."
 
 bug_bash.clone_plans_auth:
   summary: "Create the Authenticator bug-bash query-based test suite for this release."
@@ -805,8 +835,8 @@ bug_bash.distribute_tests:
     ~48 cases) + Authenticator (the ReleaseBugBash query set) — and splits them EVENLY across
     the eligible team, keeping each test on its current assignee where possible (preference),
     only reassigning to hit an even count. The Authenticator set EXCLUDES cases already
-    automated by this release's auth ECS UI-test run — read EMPIRICALLY from the run (by
-    test-case id), NOT from the cross-platform 'Automated' tag (iOS owns that tag), plus the
+    automated by this release's auth ECS UI-test run — read from ui_test_status's completed
+    result through its public accessor, NOT from the cross-platform 'Automated' tag, plus the
     'Blocked' tag. So of the ~49 ReleaseBugBash cases, the ~26 automated ones are dropped and
     the ~23 genuinely-manual cases are distributed. (Failed automated cases are triaged by the
     owner via ui_test_status, not by a manual tester.) Eligible = the roster DL
@@ -853,45 +883,66 @@ bug_bash.distribute_tests:
     - q: "Who is excluded?"
       a: "Always: moghosh, veenasoman. Per-release: the owner, the current OCE (ICM team 78848), and the owner's explicit OOF selection for this Bug Bash. Nobody is OOF must be explicitly confirmed too; silence never means an empty list."
     - q: "How do we know which Authenticator cases are automated vs manual?"
-      a: "Empirically, from this release's auth ECS post-build UI-test run (the one auth_ecs captured): a case whose test-case id appears in that run is automated and is excluded from the manual split. We deliberately do NOT rely on the 'Automated' tag — it is shared with iOS, so a case automated on Android but not iOS must not be tagged. Reading the run keeps the split correct for Android and leaves the shared tag alone."
+      a: "From ui_test_status's completed result API: its recorded automated case IDs are excluded, without reading raw Phase-2 evidence, reprojecting or refetching. Missing/partial/stale receipts block, never yield an empty set. Preview/apply recheck the receipt ID plus release/RC, ECS/Local builds, Auth APK/test builds and both plan/suite identities. A new fill invalidates the preview even with identical source IDs. Refresh the owning clone/verification steps and rerun ui_test_status when needed; historical state is not migrated."
 
 bug_bash.ui_test_status:
-  summary: "Fill Broker from the report's current-RC evidence and Authenticator from its selected UI run; triage failures."
+  summary: "Own both plan mappings/writes and publish the completed UI fill result; retain report-only failures."
   what: >
     Fills the release's UI-automation results from Phase-2's captured runs — for BOTH apps.
-    (1) BROKER: projects the SAME reconciled current-RC evidence as rc_report
+    (1) BROKER: maps the reconciled current-RC source evidence also displayed by rc_report
     (state.pipeline_runs.rcs[-1].ecs/local.tests.suites[].test_results), without refetching
-    pipeline results or reevaluating retries. Each build is one flight (ECS/Local); PROD-MSAL /
-    RC-MSAL suite markers select the existing four flight-config mappings (292/294/328/344).
+    pipeline results or reevaluating retries. Routing encodes the FULL MSAL/Broker combination:
+    PROD MSAL + RC Broker -> ECS292/Local328; RC MSAL + PROD Broker -> ECS294/Local344;
+    RC MSAL + RC Broker (including LTW and mapped Stress) -> ECS293/Local330.
+    BrokerHost explicitly rolls up into PROD MSAL + RC Broker, matching the master subtree.
     Distinct exact titles, parameters and API suites stay separate in the report. If several
     map to one plan point, any Failed verdict wins; otherwise any Passed wins over NA, and
     NA-only evidence sets NotApplicable. Historical RCs never contribute. (2) AUTHENTICATOR: reads this
-    release's auth ECS post-build UI-test run (state.rcs[-1].auth.test, captured by auth_ecs)
+    release's frozen auth ECS post-build UI-test evidence (rcs[-1].auth.test, captured by auth_ecs)
     and fills the Authenticator bug-bash suite (from clone_plans_auth) for the automated cases
     only — Passed->Passed, Failed->Failed — leaving the manual cases untouched for testers.
-    Every identifiable current Broker failure and FAILED automated auth case is REASSIGNED
-    to the release owner (System.AssignedTo) for
-    triage. The auth fill is best-effort: if the auth suite or run isn't available yet it is
-    skipped with a note, and the Broker fill still completes.
+    Only cases actually written Failed are submitted for release-owner assignment
+    (System.AssignedTo). Assignment errors are nonblocking, explicitly recorded, and never
+    claimed as successful reassignment. Both source projections are validated before any external write; no alternate
+    Phase-3 Authenticator refetch or best-effort evidence skip is allowed.
   who: "Scout runs it automatically during `next` (an agent step) — before distribute_tests."
   how: >
     Broker uses the existing case-id extractor on the recorded exact title ('test_<caseId>_...').
     Unmapped titles/suites are explicit skipped-mapping diagnostics, never guessed IDs. Only
-    'ui'-classified suites carrying a PROD/RC-MSAL marker are placed on a config. For Authenticator,
-    the auth run's UIAutomator E2E suite carries the case ids (the Monthly suite does not, so it
-    contributes nothing). Before ANY external mutation, both MRWP snapshots must be complete,
+    explicitly recognized full suite combinations are placed on a config. New plans retain
+    the four baseline configs and add 293/330 only to cases represented by current RC/RC
+    evidence; membership and per-case matrix are frozen for recovery. No duplicate work items.
+    Missing RC/RC target points block all Broker outcome writes and require read-only
+    broker-plan --preview-ui-repair followed by separate owner-approved in-place repair.
+    Old LTW outcomes at 294/344 are NEVER auto-cleared: equal outcomes are not ownership;
+    cleanup needs provenance receipts, match-before-write and later exact approval.
+    For Authenticator, E2E carries case ids; Monthly intentionally has no map and remains
+    report-only, including ALL failures in the existing ui_failures owner reminder and report.
+    Before ANY external mutation, both MRWP snapshots must be complete,
     have count_basis distinct_tests_pass_any and build_id matching their MRWP run_id, and contain
     valid complete reconciled test/attempt evidence. Missing/stale evidence blocks: refresh
     Phase-2 verification, never fall back to raw counts or historical runs. Plan points without
     matching evidence are untouched, including manual points. Stores compact current-RC/build
     provenance and mapping diagnostics; reports partial writes explicitly. Re-runs replace/clear
     generated ui_failures content from the same current verdicts without changing human
-    completion, notes or unrelated data. Authenticator's separate selection/gate policy is unchanged.
+    completion, notes or unrelated data. Exact-title retry Passed wins first;
+    different scenarios mapped to the same case use Failed-wins. Source executions, distinct
+    tests and case points have separate denominators. The independent aggregate gate is unchanged.
+    This step durably invalidates any old result BEFORE a new attempt, then checkpoints partial
+    write diagnostics. Only after BOTH required fills succeed does it publish data.result:
+    actual applied target/point references, automated and applied-failed case IDs, report-only/
+    unmapped investigations, and minimal source/target binding. Consumers use the small
+    ui_results.completed_result API, not diagnostic summary fields or raw evidence. Missing,
+    partial or stale results require supported owner refresh, never fallback/migration.
+    clone_plans_broker records the validated UI suite ID as well as plan identity; refresh
+    that owning step if an older state lacks it, then rerun ui_test_status.
   faqs:
     - q: "A test failed for one config but passed for another — what gets written?"
-      a: "Per config. Each of the four flight-configs (ECS/PROD, ECS/RC, Local/PROD, Local/RC) takes its own matching run's verdict — so a case can be Passed on one config and Failed on another."
+      a: "Per full combination AND flight. Never treat RC MSAL + RC Broker as RC MSAL + PROD Broker. Distinct API/device/parameterized tests stay separate as evidence and use Failed-wins only at their explicitly mapped case/config point."
+    - q: "Should Monthly UI Tests get test-plan cases?"
+      a: "No. Its intentionally unmapped coverage is valid. Do not create cases, force mappings or block merely for that absence. Prominently retain every failure by exact title and source-result link for the release owner. Its aggregate gate remains independent of Broker."
     - q: "What happens to a Firebase E2E test that FAILED?"
-      a: "It's written FAILED in the Authenticator suite (a visible failure, never dropped), and that case is reassigned to the release owner so the owner triages it (real bug vs automation flake). Passed automated cases are marked Passed; both are excluded from the manual tester split by distribute_tests."
+      a: "A matching point is written Failed and owner reassignment is attempted for triage. Missing target points remain explicit investigations, not applied failures. Passed automated cases are marked Passed; both passed and failed automated case IDs are excluded from the manual split. Assignment errors remain visible and do not imply owner changes."
     - q: "What does a test that failed then passed get?"
       a: "Passed only for retries of that exact title within the same normalized suite and current build. A failed sibling parameter/API suite mapping to the same point still makes the point Failed. Earlier RC successes or failures are irrelevant; recovered titles are not reassigned."
     - q: "What outcome do skipped / not-run tests get?"
@@ -990,10 +1041,11 @@ bug_bash.bugbash_updates:
     Broker 'Manual Tests (Android Broker)' subtree and the Authenticator bug-bash suite).
     A test counts as done only when it PASSED (or is N/A); not-run, failed, and blocked all
     count as remaining and are LISTED (failed first, then blocked, then not-run) with links +
-    state so failures are surfaced, not buried. Failed AUTOMATED Authenticator cases (the ones
-    ui_test_status pre-assigned to the release owner) are shown DISTINCTLY — 🔬 'Automated
-    failure — triage', listed first in the owner's block, plus a header note — so they read as
-    an investigation the owner already owns, not a manual test to run. Owners with any remaining
+    state so failures are surfaced, not buried. Authenticator cases actually written Failed
+    in ui_test_status's completed result are shown DISTINCTLY — 🔬 'Automated failure — triage',
+    listed first under their LIVE assignee, plus a header note. No raw Phase-2 capture schema,
+    new projection or source-only/unapplied failure enters this set. Missing/partial/stale
+    results surface an error requiring the owning fill's refresh. Owners with any remaining
     test are @mentioned; owners who passed everything appear by name with an 'all completed'
     line (no mention). It is fire-and-continue — the step completes after the first post so the
     phase proceeds; the poller runs in the background.
@@ -1020,7 +1072,7 @@ bug_bash.bugbash_updates:
     - q: "Why group by AssignedTo instead of the test point's tester?"
       a: "The ADO test-point `tester` field is NOT synced with the case's System.AssignedTo. distribute_tests sets AssignedTo, so progress is grouped by AssignedTo to reflect who actually owns each test."
     - q: "Why are some of the owner's failures marked 'Automated failure — triage'?"
-      a: "Those are Authenticator cases that FAILED in automation (the auth ECS Firebase run) and were pre-assigned to the release owner by ui_test_status. They're distinct from manual tests: the owner investigates them (flake vs real bug), they don't need a manual re-run. They still count as remaining until resolved."
+      a: "Those are Authenticator cases recorded as actually written Failed by ui_test_status. Current ownership comes from live System.AssignedTo, not an assumed successful reassignment. They are investigations rather than new manual assignments, and remain outstanding until resolved."
 
 bug_bash.native_auth_signoff:
   summary: "The release owner attests they received the Native Auth team's sign-off."
@@ -1059,26 +1111,26 @@ bug_bash.ui_failures:
   how: >
     Read the Details — a structured summary (like the bug-bash progress update): a header + a bold
     total-count line, then a **Broker (MRWP)** section and an **Authenticator (ECS)** section. EACH
-    failing test is its own 🔬 line with a link to its ADO test case — Broker and Authenticator
+    failing test is its own 🔬 line with source-result links and, when mapped, its ADO test case — Broker and Authenticator
     alike — and all are framed as investigations the RELEASE OWNER owns (flake vs real bug). Broker
     lines also carry their flight + suite context. The owner follows the run links, rules on each
     failure, and manually runs the affected tests. Once the owner tells Scout every failure has been
     investigated and executed, Scout closes the step with `done --step ui_failures`.
   faqs:
     - q: "Does this include the Authenticator app failures?"
-      a: "Yes. The list is combined: every failing Broker MRWP UI test AND every failing Authenticator ECS automated test. BOTH sets are also physically reassigned to the release owner in ADO (by ui_test_status)."
+      a: "Yes. Every unresolved Broker MRWP UI and Authenticator ECS failure is included, including intentional Monthly report-only coverage and unmapped tests. Only cases actually written Failed are submitted for owner reassignment; check fill details for assignment errors."
     - q: "Why are Broker failures shown the same way as Authenticator ones?"
-      a: "Because all UI failures are the release owner's to investigate. Both are listed per-test with a 🔬 investigate marker and an ADO test-case link (no failure is collapsed into a bare pass/fail stat), and both are reassigned to the owner in ADO."
+      a: "All UI failures require release-owner investigation. Each retains a source-result link and a case link when one exists; unmapped tests are not forced into a plan. Assignment success is separately recorded."
     - q: "Where does the failure list come from if this step has no code?"
-      a: "From ui_test_status, which runs earlier in the phase — it filled both the Broker and Authenticator suites, reassigned every failing case (Broker + Auth) to the owner, and writes the full per-test failure list + links onto this step for the owner."
+      a: "From ui_test_status, which owns plan mapping/writes and publishes the full source failure list plus links onto this existing reminder. It preserves human notes and completion while refreshing generated evidence."
 
 bug_bash.bugbash_complete:
   summary: "The release owner attests the Bug Bash is finished — the gate that closes the bash."
   what: >
     A human sign-off gate: the owner confirms the assigned tests have been run (or explicitly
     triaged/blocked) and the team agrees the bash is done. This includes the Authenticator ECS
-    automation failures that `ui_test_status` pre-assigned to the owner for triage — the owner
-    reviews those (already in their queue) alongside the manual results. Approving it advances the
+    automation failures surfaced by `ui_test_status` for owner investigation — the owner
+    reviews those and any assignment errors alongside manual results. Approving it advances the
     release out of Phase 3. It also STOPS the periodic updates.
   who: >
     The owner approves it (`approve` / `done --step bugbash_complete`). Until then — or until
@@ -1092,7 +1144,7 @@ bug_bash.bugbash_complete:
     - q: "Can I sign off before every single test passes?"
       a: "Yes — this is a judgement gate. If the remaining tests are triaged/blocked and the team agrees the bash is done, approve it. It doesn't require 100% pass; that's what the sign-off is for."
     - q: "What about the failed Authenticator automation cases?"
-      a: "Those were pre-assigned to you (the owner) by ui_test_status and surfaced in ui_failures. Review/triage them as part of your sign-off — they don't block the gate, but you should have ruled on them before approving."
+      a: "Those are surfaced in ui_failures for owner investigation; check ui_test_status for any assignment errors. Review/triage them as part of sign-off — they don't block the gate, but you should have ruled on them before approving."
     - q: "What stops the 2-hour chat updates?"
       a: "Two things make cleanup eligible: confirmed final-summary delivery records poll_complete, or the phase finishes. Initial bugbash_updates completion does not stop the phase-owned poller. Cleanup deletes the Scout automation first and deregisters after success."
 

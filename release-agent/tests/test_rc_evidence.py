@@ -13,6 +13,11 @@ from orchestrator.engine import Orchestrator
 from orchestrator.state import ReleaseState, StepState
 from steps.build_verify import _common as K, rc_report, _rc_report_rendering as rendering
 from tools.pipelines import AUTH_UI_SUITES
+from tests._auth_evidence import auth_test
+
+
+def stored_vars(state):
+    return {k: v for k, v in vars(state).items() if not k.startswith("_")}
 
 
 @pytest.fixture
@@ -63,7 +68,11 @@ def test_rc_report_source_change_rejects_claim_or_suppresses_completion(
     if not in_flight:
         with pytest.raises(ValueError, match="source checkpoint changed"):
             D.claim(orch, item["id"], item["hash"], "test-worker")
-        fresh = prepare_step(args, ready, orch)["notifications"][0]
+        prepared = prepare_step(args, ready, orch)
+        if path[:4] == ["pipeline_runs", "rcs", -1, "auth"] or "categories" in path:
+            assert prepared["kind"] == "blocked"
+            return
+        fresh = prepared["notifications"][0]
         assert fresh["hash"] != item["hash"]
         D.offer(orch, fresh)
         assert D.claim(orch, fresh["id"], fresh["hash"], "test-worker")["permission_to_send"]
@@ -84,9 +93,9 @@ def test_rc_report_source_change_rejects_claim_or_suppresses_completion(
     assert record["completion"]["status"] == "suppressed"
     assert record["completion"]["reason"] == "source checkpoint changed"
     assert saved.get_step("build_verify", "rc_report").status == "running"
-    before = copy.deepcopy(vars(saved))
+    before = copy.deepcopy(stored_vars(saved))
     assert cli.main(base + ["finalize"] + scope) == 0
-    assert vars(C.load_state(str(tmp_path), ready.release_id)) == before
+    assert stored_vars(C.load_state(str(tmp_path), ready.release_id)) == before
 
 
 @pytest.mark.parametrize("mrwp_failed,auth_failed,incomplete,recommendation", [
@@ -106,6 +115,7 @@ def test_report_prominent_consolidated_recommendation(
     if auth_failed:
         model["auth"]["test"]["suites"][AUTH_UI_SUITES[0]].update(
             present=True, passed=23, failed=6, total=29)
+        model["auth"]["test"] = auth_test(model["auth"]["test"]["suites"])
     if incomplete:
         model["mrwp"]["ECS"]["complete"] = False
     action = rc_report.rc_next_action(model)
@@ -128,6 +138,7 @@ def test_report_auth_percentages_two_decimals_without_rounding_gate(ready):
     suites[AUTH_UI_SUITES[1]].update(present=True, passed=329, failed=4, total=333)
 
     def rendered():
+        model["auth"]["test"] = auth_test(suites)
         gate, auth = rc_report.rc_ui_gate(model), rc_report.auth_report_gate(model)
         action = rc_report.rc_next_action(model)
         return (rendering.rc_email_html(model, {}, gate, auth, action),
@@ -171,9 +182,9 @@ def test_builder_and_recorder_refuse_missing_evidence(ready, tmp_path, path, val
     container[path[-1]] = value
     assert rc_report.build(ready).kind == "blocked"
     args = args_for(tmp_path, ready)
-    before = vars(C.load_state(str(tmp_path), ready.release_id))
+    before = stored_vars(C.load_state(str(tmp_path), ready.release_id))
     assert RR.cmd_record_rc_report(args) == 1
-    assert vars(C.load_state(str(tmp_path), ready.release_id)) == before
+    assert stored_vars(C.load_state(str(tmp_path), ready.release_id)) == before
 
 
 def test_missing_provider_and_zero_ui_never_gate_clean():
@@ -188,9 +199,9 @@ def test_missing_provider_and_zero_ui_never_gate_clean():
 
 
 def test_reconciled_counts_hold_at_84_5_and_missing_auth_still_prevents_report(ready, tmp_path):
+    _seed_rc_pipeline(ready, {"passed": 168, "total": 204, "failed": 36},
+                      {"passed": 137, "total": 157, "failed": 20})
     current = K.latest_rc(ready)
-    current["ecs"]["tests"]["categories"]["ui"] = {"passed": 168, "total": 204, "failed": 36}
-    current["local"]["tests"]["categories"]["ui"] = {"passed": 137, "total": 157, "failed": 20}
     assert rc_report.rc_ui_gate(rc_report.rc_report_model(ready))["pass_pct"] == 84.5
     assert rc_report.build(ready).kind == "needs_skill"
     from tests._harness import _ack_step
@@ -213,6 +224,8 @@ def test_evaluated_auth_failures_reportable_when_prerequisites_settled(ready, fa
         suite.update(present=False, passed=0, failed=0, total=0, pct=None)
     else:
         suite.update(passed=0, failed=0, total=0, pct=None)
+    if failure != "build":
+        auth["test"] = auth_test(auth["test"]["suites"])
     auth["verdict"] = "clean"
     model = rc_report.rc_report_model(ready)
     assert rc_report.report_readiness(model)["ready"]
@@ -240,13 +253,13 @@ def test_cli_dispatch_and_recorder_cannot_bypass_predecessors(ready, tmp_path, c
     ready.steps.pop("build_verify.telemetry_verify")
     C.save_state(ready, str(tmp_path), ready.release_id)
     base = ["--config", CONFIG, "--runs-root", str(tmp_path)]
-    before = copy.deepcopy(vars(C.load_state(str(tmp_path), ready.release_id)))
+    before = copy.deepcopy(stored_vars(C.load_state(str(tmp_path), ready.release_id)))
     assert cli.main(base + ["step-action", "--release", ready.release_id,
                             "--phase", "build_verify", "--step", "rc_report"]) == 0
     assert json.loads(capsys.readouterr().out)["kind"] == "blocked"
     assert cli.main(base + ["record-rc-report", "--release", ready.release_id]) == 1
     assert "notification claim/result" in json.loads(capsys.readouterr().out)["error"]
-    assert vars(C.load_state(str(tmp_path), ready.release_id)) == before
+    assert stored_vars(C.load_state(str(tmp_path), ready.release_id)) == before
 
 
 def test_skipping_prerequisite_does_not_fabricate_evidence(ready, tmp_path):
@@ -264,9 +277,9 @@ def test_recorder_preserves_terminal_records(ready, tmp_path, status):
         status=status, by="human", note="Owner reviewed", data={"review": "retained"}))
     ready.pipeline_runs = {}
     args = args_for(tmp_path, ready)
-    before = vars(C.load_state(str(tmp_path), ready.release_id))
+    before = stored_vars(C.load_state(str(tmp_path), ready.release_id))
     assert RR.cmd_record_rc_report(args) == 0
-    assert vars(C.load_state(str(tmp_path), ready.release_id)) == before
+    assert stored_vars(C.load_state(str(tmp_path), ready.release_id)) == before
 
 
 def test_new_partial_rc_cannot_reuse_previous_complete_rc(ready):
@@ -320,15 +333,13 @@ def test_mrwp_failure_fetch_error_persists_and_prevents_complete_report(
         assert "result page offline" in text and "unavailable" in text
         assert "pipeline aborted" not in text.lower()
     assert RR.cmd_record_rc_report(args) == 1
-    suites = [{"name": "UI", "total": 100, "failed": 1, "category": "ui",
-               "tests": ["failed"], "count_basis": P.MRWP_COUNT_BASIS, "run_ids": [123],
-               "test_results": [{"title": "failed", "verdict": "Failed", "recovered": False,
-                                 "outcome_counts": {"Failed": 2},
-                                 "attempts": [{"run_id": 123, "result_id": 1, "outcome": "Failed"},
-                                              {"run_id": 123, "result_id": 2, "outcome": "Failed"}]}]}]
-    summary = {"total": 100, "passed": 99, "failed": 1, "count_basis": P.MRWP_COUNT_BASIS,
-               "categories": {"ui": {"total": 100, "passed": 99, "failed": 1}},
-               "suites": suites, "failed_suites": suites}
+    from tests._mrwp_evidence import snapshot, PROD
+    # Build captured evidence before replacing the acquisition function under test.
+    from tools.pipelines.tests_results import get_test_summary
+    monkeypatch.setattr(P, "get_test_summary", get_test_summary)
+    summary = snapshot(1678863, {PROD: [("failed", "Failed"), ("failed", "Failed")] +
+                               [(f"passed_{i}", "Passed") for i in range(99)]})["tests"]
+    suites = summary["failed_suites"]
     monkeypatch.setattr(P, "get_test_summary", lambda *a, **k: (True, summary, ""))
     with mockctx.active(injected):
         assert _mrwp.verify_mrwp(ready, "ECS").kind == "done"

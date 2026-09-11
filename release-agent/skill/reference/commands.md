@@ -47,12 +47,84 @@ _Loaded on demand. Run all from `<AGENT_ROOT>` — the confirmed `release-agent`
 | **Phase 3 — OOF candidates / manual distribution preview** | `python -m orchestrator.cli distribute-tests --release <id> [--json]` — blocks with candidate names/verified UPNs until the owner answers; subsequent runs reuse that release's confirmation |
 | **Phase 3 — record owner availability and refresh preview** | `python -m orchestrator.cli distribute-tests --release <id> --no-oof` OR `… --oof <verified-upn> [--oof <verified-upn> …] [--oce <upn>]` — only after explicit owner input; never sends or writes assignments |
 | **Phase 3 — apply reviewed distribution** | `python -m orchestrator.cli distribute-tests --release <id> --apply` — separate explicit write of stored assignments; rejects missing/stale confirmation or changed roster/exclusions |
+| **Phase 3 — inspect Broker plan recovery** | `python -m orchestrator.cli broker-plan --release <id>` — JSON resource record and all same-release candidates; read-only ADO |
+| **Phase 3 — preview UI mapping repair** | `python -m orchestrator.cli broker-plan --release <id> --preview-ui-repair [--plan-id <id>]` — deterministic source/old/new configs and affected points; read-only ADO, no state save, bind, apply or cleanup |
+| **Phase 3 — bind owner-selected existing plan** | `python -m orchestrator.cli broker-plan --release <id> --plan-id <plan-id> --reason "<owner selection>" [--area-path "<observed area>"]` — local identity binding only; no ADO writes, step completion, or plan replacement |
+| **Phase 3 — authorize retry after confirmed non-creation** | `python -m orchestrator.cli broker-plan --release <id> --confirm-not-created --reason "<owner-reviewed evidence>"` — only after original runner stopped; also requires successful discovery with zero candidates and no recorded plan ID |
 | Activate conditional hotfix phase | `python -m orchestrator.cli activate --release <YYYY-MM> --phase hotfix` |
 | **Notify** — push line if something needs me | `python -m orchestrator.cli notify [--release <YYYY-MM>] [--as-of <date>] [--force]` |
 | **Plan startup automations** | `automation plan --release <YYYY-MM> [--json]` — excludes all `on_demand:true` pollers |
 | **Plan one on-demand poller** | `automation plan --release <YYYY-MM> --on-demand <slug> --json` |
 | **Plan lifecycle cleanup** | `automation cleanup --release <YYYY-MM> --json` — delete each returned Scout id with `m_delete_automation`, then deregister only after success |
 | **Track automations** | `automation register --id <id> --name "<n>" --cleanup-when "<rule>" [--cleanup-when "<OR-rule>"] [--shared\|--release <YYYY-MM>] [--purpose "..."] [--step <phase.step> …]` · `automation list …` · `automation deregister --id <id>` |
+
+## Broker plan recovery
+
+`clone_plans_broker` runs through `next`. Its durable identity and source snapshot live
+in `resources.broker_test_plan`, independent of step status. Reopen clears completion,
+not this resource record. Successful discovery/validation restores `step.data.plan_id`.
+Never hand-edit either record, infer an ID from a note, or use `done`/`skip` to claim a
+plan was recovered. Never delete the ID to force another create.
+
+1. On a discovery/identity block, run `broker-plan --release <id>`. Present the returned
+   candidates (IDs, URLs, names, areas, iteration) and the saved identity. Inspect the
+   candidate's suites and test-point results with read-only ADO tools before recommending
+   retention or cleanup. Do not choose newest/first automatically.
+2. Ask the owner which existing plan to retain using `m_ask_user`, then wait. Run
+   `broker-plan ... --plan-id <confirmed-id> --reason "<owner's selection>"` only after
+   confirmation. It verifies identity, the three flat suites, query, configurations and
+   complete static point matrices without changing outcomes/assignments. It cannot replace
+   an already-bound ID. If an existing plan's area differs, explicitly confirm its exact
+   observed area and supply `--area-path`; this binds the existing location, never moves it.
+   Older creates used an ignored `area` field and may live at the project root; new creates
+   correctly use `areaPath`. No automatic area migration is performed.
+3. Resume `next`. Binding alone neither completes the step nor advances a phase.
+   API/auth/404 errors always block; fix access or restore/repair the existing plan.
+   Partial plans are retained and must be repaired in place against the saved source.
+4. After a timeout/interruption, `creating` with no ID remains reserved even when no plan
+   is visible. Stop the original runner and inspect ADO. Only an explicit owner confirmation
+   that creation did NOT occur permits `--confirm-not-created --reason "<evidence>"`.
+   The command independently requires a successful zero-candidate discovery, retains the
+   interrupted attempt and records retry authorization; it does not itself create a plan.
+   An unattended worker must surface this hold, never assert non-creation on its own.
+
+Creation snapshots the master before writes, checkpoints intent under the existing OS
+release lock, and checkpoints the returned ID immediately. Success requires read-back
+against that snapshot. ADO also carries the release identity and completion marker for
+recovery after local metadata loss. Lookup pagination errors/caps are failures, not absence.
+Future resource creators should use release-owned identity + locked checkpoints rather
+than engine special cases. This protects workers sharing one authoritative runs directory;
+ADO does not provide an atomic uniqueness key, so independent copied runners are NOT safe.
+Stop old workers before deploying the updated code and installed skill together.
+
+Duplicate-plan cleanup remains a separate explicit approval. Deleting a duplicate plan
+must never delete its shared test-case work items. No historical release-state migration
+or automatic plan deletion is part of recovery.
+
+### Two-plan mapping and existing-point repair
+
+Broker suite routing includes **both** MSAL and Broker versions and keeps ECS/Local
+separate: 292/328 = PROD MSAL + RC Broker, 294/344 = RC MSAL + PROD Broker,
+293/330 = RC MSAL + RC Broker. LTW and mapped Stress use 293/330. BrokerHost explicitly
+rolls up into 292/328, matching the master BrokerHost subtree. Unknown combinations
+are diagnosed, never guessed. Distinct API/device tests use Failed-wins at a mapped point.
+
+New-plan snapshots freeze per-case assignments: the four baseline configurations plus
+293/330 only for cases represented by current source evidence. Recovery validates this
+exact frozen matrix, not a freshly queried master or a blanket six-config expansion.
+Existing historical four-config snapshots are not silently migrated.
+
+Use `--preview-ui-repair` to inspect source titles/result URLs, old/new configuration IDs,
+existing point IDs/outcomes and missing pairs. Missing RC/RC points block the Broker
+writer before its first outcome write. **No repair apply command is implemented.**
+Obtain later exact approval for in-place changes. Never recreate the plan, duplicate case
+work items, or automatically clear old 294/344 LTW results. Equal outcomes do not prove
+automation ownership; historical cleanup requires owner review, ownership receipts and
+match-before-write. If receipts are unavailable, leave the old/manual results intact.
+
+Authenticator's Monthly UI Tests intentionally has no case map. All failures remain in
+the standard report and release-owner `ui_failures` reminder, by exact title and source
+link. No case creation, forced mapping, new notification lifecycle, or automatic attestation.
 
 ## Bug Bash availability
 

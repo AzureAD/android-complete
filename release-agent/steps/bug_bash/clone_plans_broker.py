@@ -12,9 +12,9 @@ All cases are REFERENCED (shared, not duplicated) — the classic Test Suite Clo
 deliberately avoided because it COPIES the case work items. Flat = easy to track; downstream
 steps find the Broker suite by name → drop-in.
 
-Idempotent: the created plan id is stashed on the step (data.plan_id). On a re-run the step
-re-confirms that plan still exists and reports done WITHOUT rebuilding — so a `next` that
-re-enters Phase 3 never spawns a duplicate plan.
+Identity lives in the release resource registry, separately from step completion.
+Re-entry validates/reuses the bound plan; lost metadata triggers discovery, not a
+blind create. Ambiguous/partial/uncertain work blocks for owner recovery.
 
 Mock knobs (mocks.local.yaml / tests):
   plan_id     : pretend the build already ran (this plan id) — verifies + reports done.
@@ -27,6 +27,7 @@ from orchestrator.outcomes import Done, Blocked
 from steps.lib.agent import legacy_run
 from steps.lib.mockctx import mock_input, MISSING
 from tools import testplans as T
+from tools import broker_plans as B
 
 ID = "clone_plans_broker"
 KIND = "agent"
@@ -43,6 +44,15 @@ def _links(plan_id):
     return [{"name": f"Broker test plan {plan_id}", "url": T.plan_web_url(plan_id)}]
 
 
+def record_plan(state, plan_id, name):
+    step = state.get_step("bug_bash", ID)
+    step.data = dict(step.data or {})
+    step.data.update(plan_id=plan_id, plan_name=name)
+    resource = state.resources.get(B.RESOURCE) or {}
+    step.data["ui_suite_id"] = resource.get("ui_suite_id")
+    state.set_step("bug_bash", ID, step)
+
+
 def build(state):
     fail = mock_input("fail", MISSING)
     if fail is not MISSING:
@@ -53,36 +63,30 @@ def build(state):
         dest = T.broker_plan_name(state.release_id)
     step = state.get_step("bug_bash", ID)
 
-    # Already built? A test injects `plan_id` to assert idempotency; otherwise the stored id
-    # from a prior run is re-confirmed against ADO. Either way → done, no rebuild.
+    # Explicit offline mocks do not acquire resources or call external APIs.
     injected = mock_input("plan_id", MISSING)
     if injected is not MISSING:
+        record_plan(state, injected, dest)
         return Done(f"Broker test plan already built for {state.release_id}: "
                     f"'{dest}' (plan {injected}).", links=_links(injected))
-    stored = (step.data or {}).get("plan_id")
-    if stored:
-        ok, info, _ = T.get_plan(stored)
-        if ok and info:
-            return Done(f"Broker test plan already built for {state.release_id}: "
-                        f"'{info.get('name') or dest}' (plan {stored}).", links=_links(stored))
-        # recorded id no longer resolves — fall through and rebuild
-
-    # Build the plan (or take the injected clone_id offline).
     clone_id = mock_input("clone_id", MISSING)
     if clone_id is MISSING:
-        ok, clone_id, detail = T.build_broker_plan(dest)
+        record = state.resources.setdefault(B.RESOURCE, {})
+        if not isinstance(record, dict):
+            return Blocked("Invalid Broker resource record; owner recovery required")
+        try:
+            from steps.build_verify._common import latest_rc
+            ok, clone_id, detail = B.ensure_plan(
+                state.release_id, dest, record, state.checkpoint,
+                stored_id=(step.data or {}).get("plan_id", B.MISSING_ID), rc=latest_rc(state))
+        except ValueError as exc:
+            return Blocked(f"clone_plans_broker: {exc}")
         if not ok:
-            hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
             return Blocked(
-                f"clone_plans_broker: could not build the Broker test plan '{dest}' "
-                f"from the master (#{T.BROKER_MASTER_PLAN}) ({detail}){hint}.")
-
-    step.data = dict(step.data or {})
-    step.data["plan_id"] = clone_id
-    step.data["plan_name"] = dest
-    state.set_step("bug_bash", ID, step)
+                f"clone_plans_broker: {detail}", links=_links(clone_id) if clone_id else [])
+    record_plan(state, clone_id, dest)
     return Done(
-        f"Built the Broker test plan '{dest}' (plan {clone_id}) — three flat suites "
+        f"Broker test plan ready: '{dest}' (plan {clone_id}) — three flat suites "
         f"('{T.BROKER_MANUAL_SUITE_NAME}', '{T.BROKER_NATIVE_AUTH_SUITE_NAME}', "
         f"'{T.BROKER_UI_SUITE_NAME}'), referencing existing test cases.",
         links=_links(clone_id))

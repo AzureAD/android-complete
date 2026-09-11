@@ -2,32 +2,28 @@
 pipelines, and reassign failed auth automation to the release owner (Phase 3, bug_bash;
 runs right before `distribute_tests`).
 
-BROKER: projects the SAME reconciled current-RC ECS/Local snapshots as rc_report. No
-pipeline refetch or retry evaluation here. Distinct titles/API suites mapping to one plan
+BROKER: maps validated current-RC ECS/Local snapshots, with no pipeline refetch.
+Distinct titles/API suites mapping to one plan
 point use failed-wins (only retries of the SAME exact title get pass-any, in Phase 2).
 Unmapped source tests and untouched plan points are diagnosed explicitly.
 
 AUTHENTICATOR: this step ALSO fills the Authenticator bug-bash suite (from `clone_plans_auth`)
 from this release's auth ECS post-build UI-test run (`state.rcs[-1].auth.test`, captured by
 the Phase-2 `auth_ecs` step). For the automated cases only (join on `test_<caseId>_`), it
-writes Passed->Passed / Failed->Failed and LEAVES manual cases untouched; every FAILED
-automated case is reassigned to the release owner (`state.owner_email`) for triage. Best-effort
-— if the auth suite / run isn't available yet, the auth fill is skipped with a note and the
-Broker fill still completes.
+writes Passed->Passed / Failed->Failed and LEAVES manual cases untouched; reassignment of
+applied FAILED cases to the release owner (`state.owner_email`) is attempted for triage.
+Monthly UI Tests is intentionally report-only; all its failures remain owner investigations.
 
 Depends on `clone_plans_broker` (and, for the auth fill, `clone_plans_auth` + the Phase-2 RC
-runs). Missing, incomplete or stale Broker evidence blocks BEFORE any external writes.
+runs). Missing, incomplete or stale evidence for either app blocks BEFORE external writes.
 Refresh evidence in Phase 2, then re-run this step to fill from the new snapshot.
 
-REASSIGNMENT: every FAILED UI case — Broker (parsed from the failing suite titles) AND
-Authenticator (the failed automated cases) — is reassigned to the release owner
-(`state.owner_email`) in ADO, so all UI failures land in one queue for investigation. Then the
+REASSIGNMENT: only cases actually written FAILED — Broker AND Authenticator — are
+submitted for release-owner assignment in ADO. Assignment errors are nonblocking and
+recorded separately, never treated as successful owner changes. Then the
 downstream `ui_failures` human reminder is forward-populated with the full per-test list.
 
 Mock knobs (mocks.local.yaml / tests):
-  auth_build_id : inject the auth ECS UI-test build id (skip state.rcs[].auth).
-  auth_suite_id : inject the Authenticator bug-bash suite id (skip clone_plans_auth).
-  auth_outcomes : inject the auth per-case outcomes {case_id: 'Passed'|'Failed'} (skip ADO).
   fail          : force a Blocked with this detail.
 """
 from __future__ import annotations
@@ -39,6 +35,7 @@ from steps.lib.mockctx import mock_input, MISSING
 from tools import testplans as T
 from tools import pipelines as P
 from tools import distribution as D
+from steps.bug_bash import ui_results
 
 ID = "ui_test_status"
 KIND = "agent"
@@ -47,9 +44,6 @@ ORG = T.ORG
 PROJECT = T.PROJECT
 
 MOCKABLE = {
-    "auth_build_id": {"kind": "input", "desc": "Inject the auth ECS UI-test build id (skip state.rcs[].auth)."},
-    "auth_suite_id": {"kind": "input", "desc": "Inject the Authenticator bug-bash suite id (skip clone_plans_auth)."},
-    "auth_outcomes": {"kind": "input", "desc": "Inject auth per-case outcomes {case_id: 'Passed'|'Failed'} (skip ADO)."},
     "fail": {"kind": "input", "desc": "Force a Blocked with this detail."},
 }
 
@@ -64,55 +58,38 @@ def _auth_suite_id(state):
     return (state.get_step("bug_bash", "clone_plans_auth").data or {}).get("suite_id")
 
 
-def _auth_test_build_id(state):
-    """The auth ECS post-build UI-test build id captured by the Phase-2 auth_ecs step
-    (state.pipeline_runs.rcs[-1].auth.test.run_id), or None."""
-    rcs = (getattr(state, "pipeline_runs", None) or {}).get("rcs") or []
-    if not rcs:
-        return None
-    return (((rcs[-1].get("auth") or {}).get("test") or {}) or {}).get("run_id")
-
-
-def _fill_auth(state, notes):
-    """Fill the Authenticator bug-bash suite from this release's auth ECS UI-test run, and
-    reassign the FAILED automated cases to the release owner for triage. Best-effort: appends
-    a note and returns None if the auth suite / run data isn't available yet (the Broker fill
-    must not be blocked by a missing auth leg). Returns a short summary string on success."""
-    suite_id = mock_input("auth_suite_id", MISSING)
-    suite_id = suite_id if suite_id is not MISSING else _auth_suite_id(state)
-    if not suite_id:
-        notes.append("Authenticator suite not created yet (clone_plans_auth) — auth results skipped.")
-        return None
-
-    outcomes = mock_input("auth_outcomes", MISSING)
-    case_titles = {}                                       # {case_id(int): automation test title}
-    if outcomes is MISSING:
-        build_id = mock_input("auth_build_id", MISSING)
-        build_id = build_id if build_id is not MISSING else _auth_test_build_id(state)
-        if not build_id:
-            notes.append("No auth ECS UI-test run captured yet (Phase-2 auth_ecs) — auth results skipped.")
-            return None
-        ok, results, d = P.auth_ui_case_results(build_id)
-        if not ok:
-            notes.append(f"Could not read auth UI results ({d}) — auth results skipped.")
-            return None
-        outcomes = {cid: v["outcome"] for cid, v in results.items()}
-        case_titles = {cid: v["title"] for cid, v in results.items() if v.get("title")}
+def _fill_auth(state, notes, projection):
+    """Write only validated mapped cases; retain report-only failures and assignment errors."""
+    suite_id = _auth_suite_id(state)
+    outcomes = {cid: v["outcome"] for cid, v in projection["cases"].items()
+                if v["outcome"] in ("Passed", "Failed")}
+    case_titles = {cid: "; ".join(v["titles"]) for cid, v in projection["cases"].items()}
 
     ok, summ, d = T.fill_auth_ui_results(T.AUTH_PLAN, suite_id, outcomes)
+    step = state.get_step("bug_bash", ID)
+    step.data["auth"] = {"suite_id": suite_id, "mapping": summ,
+                         "failures": projection["failures"], "provenance": projection["provenance"]}
+    state.set_step("bug_bash", ID, step)
+    state.checkpoint()
     if not ok:
-        notes.append(f"Could not fill auth UI results ({d}) — auth results skipped.")
-        return None
+        return False, f"Could not completely fill auth UI results ({d}); retry with current evidence"
+    if (not isinstance(summ, dict)
+            or summ.get("target") != {"plan_id": int(T.AUTH_PLAN), "suite_id": int(suite_id)}
+            or not isinstance(summ.get("applied_points"), list)):
+        return False, "Missing actual applied Authenticator target/points; retry ui_test_status"
 
-    # Reassign every FAILED automated case to the release owner for triage.
-    failed_ids = summ.get("failed_case_ids") or []
+    # Only acknowledged Failed point writes may trigger an owner assignment.
+    failed_ids = sorted({p["case_id"] for p in summ["applied_points"] if p["outcome"] == "Failed"})
     owner = state.owner_email
     assigned = 0
+    errors = []
     if owner:
         for cid in failed_ids:
-            oka, _ = D.set_assigned_to(cid, owner)
+            oka, detail = D.set_assigned_to(cid, owner)
             if oka:
                 assigned += 1
+            else:
+                errors.append({"case_id": cid, "detail": detail})
     elif failed_ids:
         notes.append("No release owner on record — failed auth cases not reassigned (set-owner).")
 
@@ -131,20 +108,24 @@ def _fill_auth(state, notes):
     step.data["auth"] = {"suite_id": suite_id, "passed": summ.get("set_passed", 0),
                          "failed": summ.get("set_failed", 0), "failed_case_ids": failed_ids,
                          "failed_case_titles": failed_titles,
+                         "failures": projection["failures"], "provenance": projection["provenance"],
+                         "mapping": summ,
+                         "assignment_errors": errors,
                          "failed_assigned_to_owner": assigned}
     state.set_step("bug_bash", ID, step)
     owner_note = (f"; {assigned} failed case(s) assigned to owner {owner}"
-                  if failed_ids and owner else "")
-    return (f"Auth: {summ.get('set_passed', 0)} Passed, {summ.get('set_failed', 0)} Failed "
-            f"filled in suite {suite_id}{owner_note}")
+                  if assigned else "")
+    if errors:
+        notes.append(f"Auth reassignment incomplete: {len(errors)} case(s); see auth.assignment_errors.")
+    return True, (f"Auth: {summ.get('set_passed', 0)} Passed, {summ.get('set_failed', 0)} Failed "
+                  f"filled in suite {suite_id}{owner_note}. {P.AUTH_MAPPING_NOTE}")
 
 
-def _reassign_broker_failures(state, failures, notes):
+def _reassign_broker_failures(state, ids, notes):
     """Reassign every failing Broker UI case to the release owner for investigation — mirrors the
     auth reassignment in _fill_auth so BOTH apps' failures land in the owner's queue. Stores the
     ids + assigned count on the step. Best-effort: a case with no parseable id is skipped, and a
     missing owner is noted rather than fatal."""
-    ids = sorted({test["case_id"] for test in failures if test["case_id"]})
     owner = state.owner_email
     assigned = 0
     errors = []
@@ -189,7 +170,7 @@ def _replace_failure_reminder(state, note, links, broker_count, failed_ids):
     step.links = [link for link in (step.links or []) if link not in old_links]
     new_links = [link for link in links if link not in step.links]
     step.links.extend(new_links)
-    for key in ("broker_failed_tests", "auth_failed_cases"):
+    for key in ("broker_failed_tests", "auth_failed_cases", "auth_failed_tests"):
         data.pop(key, None)
     if note:
         data.update(broker_failed_tests=broker_count, auth_failed_cases=failed_ids,
@@ -235,9 +216,10 @@ def _surface_ui_failures(state, rc, failures):
     # Authenticator ECS failures — the failed automated case ids from the fill.
     astep = (state.get_step("bug_bash", ID).data or {}).get("auth") or {}
     failed_ids = astep.get("failed_case_ids") or []
+    auth_failures = astep.get("failures") or []
     auth = rc.get("auth") or {}
 
-    if not broker_count and not failed_ids:
+    if not broker_count and not auth_failures:
         _replace_failure_reminder(state, "", [], 0, [])
         return
 
@@ -250,7 +232,7 @@ def _surface_ui_failures(state, rc, failures):
     owner = state.owner_email or "the release owner"
     title = f"\U0001f9ea {month_year + ' ' if month_year else ''}Bug Bash \u2014 UI failures to investigate"
 
-    total = broker_count + len(failed_ids)
+    total = broker_count + len(auth_failures)
     summary = (f"**{total} failing UI test(s)** across Broker MRWP + Authenticator ECS \u2014 "
                f"for {owner} to investigate (flake vs real bug). "
                "See UI result-fill details for assignment status; unmapped tests have no case link.")
@@ -272,12 +254,19 @@ def _surface_ui_failures(state, rc, failures):
                 lines.append(f"_{suite}_ ({len(tests)}):")
                 for t in tests:
                     lines.append(_mark(t["case_id"], t["title"]))
+                    for link in t.get("links", []):
+                        lines.append(f"  [Source {link['run_id']}/{link['result_id']}]({link['url']})")
+                        links.append({"name": f"Test {link['run_id']}/{link['result_id']}", "url": link["url"]})
 
-    if failed_ids:
-        titles = astep.get("failed_case_titles") or {}
-        lines.append(f"**Authenticator (ECS)** \u2014 {len(failed_ids)} failing automated test(s):")
-        for cid in failed_ids:
-            lines.append(_mark(cid, titles.get(str(cid)) or "Automated failure"))
+    if auth_failures:
+        lines.append(f"**Authenticator (ECS)** \u2014 {len(auth_failures)} failing distinct test(s):")
+        lines.append(P.AUTH_MAPPING_NOTE)
+        for failure in auth_failures:
+            lines.append(_mark(failure["case_id"],
+                               f"[{failure['suite']}; {failure['status']}] {failure['title']}"))
+            for link in failure["links"]:
+                lines.append(f"  [Source {link['run_id']}/{link['result_id']}]({link['url']})")
+                links.append({"name": f"Test {link['run_id']}/{link['result_id']}", "url": link["url"]})
         for key, name in (("build", "Authenticator ECS build"), ("test", "Authenticator ECS UI tests")):
             rid = (auth.get(key) or {}).get("run_id")
             if rid:
@@ -289,9 +278,62 @@ def _surface_ui_failures(state, rc, failures):
 
     note = "\n".join(lines)
     _replace_failure_reminder(state, note, links, broker_count, failed_ids)
+    step = state.get_step("bug_bash", "ui_failures")
+    step.data["auth_failed_tests"] = auth_failures
+    state.set_step("bug_bash", "ui_failures", step)
 
 
 def build(state):
+    """Invalidate durably before work; publish only after both required fills succeeded."""
+    from uuid import uuid4
+
+    step = state.get_step("bug_bash", ID)
+    step.data = dict(step.data or {})
+    for key in ("auth", "broker", "summary", "provenance", "fill_status"):
+        step.data.pop(key, None)
+    step.data["result"] = {"id": uuid4().hex, "status": "incomplete", "stage": "validation"}
+    step.data["fill_status"] = "incomplete"
+    state.set_step("bug_bash", ID, step)
+    # A missing persistence capability must prevent even the first provider write.
+    state.checkpoint()
+    try:
+        outcome = _build(state)
+        if isinstance(outcome, Done):
+            step = state.get_step("bug_bash", ID)
+            result = step.data["result"]
+            for product, summary in (("broker", step.data["summary"]),
+                                     ("auth", step.data["auth"]["mapping"])):
+                if summary.get("target") != result["binding"][product] or not isinstance(
+                        summary.get("applied_points"), list):
+                    raise ValueError(f"Missing actual applied {product} target/points; retry ui_test_status")
+                result[product] = {
+                    "target": summary["target"], "applied_points": summary["applied_points"],
+                    "automated_case_ids": result[product]["automated_case_ids"],
+                    "failed_case_ids": sorted({p["case_id"] for p in summary["applied_points"]
+                                               if p["outcome"] == "Failed"}),
+                }
+            if result["binding"] != ui_results.current_binding(state):
+                raise ValueError("RC/build/target binding changed during fill; retry ui_test_status")
+            result.update(status="complete", stage="complete")
+            step.data["fill_status"] = "complete"
+            state.set_step("bug_bash", ID, step)
+            ui_results.completed_result(state)
+        else:
+            step = state.get_step("bug_bash", ID)
+            step.data["result"]["error"] = outcome.reason
+            state.set_step("bug_bash", ID, step)
+        state.checkpoint()
+    except (ValueError, OSError) as exc:
+        step = state.get_step("bug_bash", ID)
+        step.data["result"].update(status="incomplete", error=str(exc))
+        step.data["fill_status"] = "incomplete"
+        state.set_step("bug_bash", ID, step)
+        outcome = Blocked(f"ui_test_status: {exc}. Results may be partially applied; retry this step.")
+        state.checkpoint()
+    return outcome
+
+
+def _build(state):
     fail = mock_input("fail", MISSING)
     if fail is not MISSING:
         return Blocked(f"ui_test_status: {fail}")
@@ -305,20 +347,43 @@ def build(state):
     ok, projection, d = P.project_mrwp_ui_results(rc)
     if not ok:
         return Blocked(f"ui_test_status: {d}.")
+    ok, auth_projection, d = P.project_auth_ui_results(rc)
+    if not ok:
+        return Blocked(f"ui_test_status: {d}. No test-plan writes attempted.")
+    if not _auth_suite_id(state):
+        return Blocked("ui_test_status: Authenticator release suite missing; run clone_plans_auth first.")
 
     step = state.get_step("bug_bash", ID)
     step.data = dict(step.data or {})
     step.data["plan_id"] = plan_id
     step.data["provenance"] = projection["provenance"]
-    ok, summ, d = T.fill_ui_automation_results(plan_id, projection["verdicts"])
-    step.data["summary"] = summ
-    step.data["fill_status"] = "complete" if ok else "incomplete"
+    binding = ui_results.current_binding(state)
+    step.data["result"].update(
+        binding=binding, stage="broker_write",
+        broker={"automated_case_ids": sorted(projection["verdicts"])},
+        auth={"automated_case_ids": sorted(cid for cid, case in auth_projection["cases"].items()
+                                            if case["outcome"] in ("Passed", "Failed"))},
+        investigations={"broker": projection["failures"], "auth": auth_projection["failures"],
+                        "unmapped_broker": [s for p in projection["provenance"]["providers"]
+                                            for s in p["skipped_mapping"]],
+                        "report_only_or_unmapped_auth": [s for s in auth_projection["sources"]
+                                                        if s["status"] != "mapped"]})
     state.set_step("bug_bash", ID, step)
+    state.checkpoint()
+    ok, summ, d = T.fill_ui_automation_results(
+        plan_id, projection["verdicts"], suite_id=binding["broker"]["suite_id"])
+    step.data["summary"] = summ
+    step.data["result"]["stage"] = "auth_write" if ok else "broker_write"
+    state.set_step("bug_bash", ID, step)
+    state.checkpoint()
     if not ok:
         return Blocked(f"ui_test_status: couldn't completely fill the UI Automation results ({d}). "
                        "Some points may already have changed; retry with current evidence.")
+    if (not isinstance(summ, dict) or summ.get("target") != binding["broker"]
+            or not isinstance(summ.get("applied_points"), list)):
+        return Blocked("Missing actual applied Broker target/points; retry ui_test_status")
 
-    # Also fill the Authenticator bug-bash suite from the auth ECS UI-test run (best-effort);
+    # Also fill the Authenticator bug-bash suite from the captured auth ECS evidence;
     # every FAILED automated auth case is reassigned to the release owner for triage.
     notes = []
     skipped = sum(len(p["skipped_mapping"]) for p in projection["provenance"]["providers"])
@@ -329,14 +394,17 @@ def build(state):
     if untouched or unmatched:
         notes.append(f"{untouched} plan point(s) left untouched; {unmatched} projected verdict(s) "
                      "had no matching plan point; see summary mapping diagnostics.")
-    # A skipped best-effort auth read must not redisplay failures from an earlier fill.
+    # Store only this attempt's Auth write diagnostics.
     step.data.pop("auth", None)
     state.set_step("bug_bash", ID, step)
-    auth_note = _fill_auth(state, notes)
+    ok, auth_note = _fill_auth(state, notes, auth_projection)
+    if not ok:
+        return Blocked(f"ui_test_status: {auth_note}. Broker results may already have changed.")
 
     # Reassign every FAILED Broker UI case to the release owner too — all UI failures (Broker +
     # Auth) are the owner's to investigate.
-    broker_assigned = _reassign_broker_failures(state, projection["failures"], notes)
+    failed_broker_ids = sorted({p["case_id"] for p in summ["applied_points"] if p["outcome"] == "Failed"})
+    broker_assigned = _reassign_broker_failures(state, failed_broker_ids, notes)
 
     # Forward-populate the downstream `ui_failures` human-review reminder with the combined
     # Broker + Authenticator Phase-2 UI failure list (it has no module of its own).

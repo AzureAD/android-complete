@@ -12,9 +12,9 @@ Each update is grouped by the test's owner (System.AssignedTo, set by distribute
 owners with remaining tests (not-run, failed, or blocked — failed/blocked surfaced, not
 hidden) are @mentioned with those tests (links + state); owners who passed everything appear
 by name with an "all completed" line (no mention). A test counts as done only when it passed
-(or is N/A). Failed AUTOMATED Authenticator cases (pre-assigned to the release owner by
-`ui_test_status`) are shown distinctly as 'triage' — an investigation the owner already owns,
-not a manual test to run.
+(or is N/A). Authenticator cases actually written Failed by `ui_test_status` are shown
+distinctly as 'triage', not a manual test to run. Live assignments identify the current
+owner; a failed reassignment must not invent an owner change.
 
 Depends on: clone_plans_broker (Broker plan id), clone_plans_auth (Auth suite id),
 activate_chat (meeting chat id). Blocks if the chat hasn't been activated.
@@ -31,6 +31,7 @@ from steps.lib.mockctx import mock_input, MISSING
 from tools import bugbash as BB
 from tools import testplans as T
 from steps.bug_bash.activate_chat import stored_chat_id
+from steps.bug_bash.ui_results import completed_result
 
 ID = "bugbash_updates"
 KIND = "scout"
@@ -54,10 +55,8 @@ def _auth_suite(state):
 
 
 def _auto_failed_ids(state):
-    """The Authenticator cases that FAILED in automation and were pre-assigned to the release
-    owner by `ui_test_status` — flagged distinctly in the update (triage, not a manual run)."""
-    return ((state.get_step("bug_bash", "ui_test_status").data or {})
-            .get("auth") or {}).get("failed_case_ids") or []
+    """Applied automation failures, independent of whether owner reassignment succeeded."""
+    return completed_result(state)["auth"]["failed_case_ids"]
 
 
 def gather(state):
@@ -68,8 +67,12 @@ def gather(state):
     bp, asuite = _broker_plan(state), _auth_suite(state)
     if not bp or not asuite:
         return (False, None, "the Broker plan / Auth suite aren't ready (run the clone steps).")
+    try:
+        failed_ids = _auto_failed_ids(state)
+    except ValueError as exc:
+        return False, None, str(exc)
     return BB.gather_progress(bp, BROKER_SUITE_NAME, T.AUTH_PLAN, asuite,
-                              auto_failed_ids=_auto_failed_ids(state))
+                              auto_failed_ids=failed_ids)
 
 
 def plan_links(state):

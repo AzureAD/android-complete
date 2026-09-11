@@ -20,6 +20,11 @@ def cmd_rc_report(args):
     model = P.release_report(K.ORG, K.PROJECT, month,
                              checker_def=P.CHECKER_DEF, orch_def=P.ORCHESTRATOR_DEF)
     _persist(st, model, args)
+    # Authenticator is the Phase-2 frozen capture, never a diagnostic refetch.
+    current = K.latest_rc(st) if st else {}
+    if current.get("rc") == model.get("rc"):
+        model["auth"] = current.get("auth")
+    R.prepare_report_evidence(model)
     if getattr(args, "json", False):
         print(_json.dumps(model, indent=2))
         return 0
@@ -146,6 +151,8 @@ def _format(m) -> str:
             L.append("   " + rendering.failure_evidence_error(r))
         L.append(f"   {_u(r.get('run_id'))}")
 
+    L += ["", "Source evidence / release-owner investigation",
+          *rendering.source_evidence_lines(m)]
     probs = m.get("problems") or []
     if probs:
         L += ["", "**Issues:**"]

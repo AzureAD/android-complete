@@ -34,6 +34,7 @@ MOCKABLE = {
                    "desc": "Inject the UI-test build status; in-progress runs are not captured."},
     "suites": {"kind": "input",
                "desc": "Inject the Firebase suite rates {name:{present,passed,failed,total,pct}}."},
+    "capture": {"kind": "input", "desc": "Inject complete attributed Authenticator source evidence."},
     "rc": {"kind": "input", "desc": "Override the RC iteration number (else from the auth build version)."},
 }
 
@@ -70,6 +71,9 @@ def auth_evidence_issues(model):
             if not all(type(suite.get(k)) is int and suite[k] == 0
                        for k in ("total", "passed", "failed")):
                 issues.append(f"Authenticator ECS: invalid counts for {name}")
+    ok, _, detail = P.inspect_auth_ui_evidence({"rc": model.get("rc"), "auth": auth})
+    if not ok:
+        issues.append(detail)
     return issues
 
 
@@ -162,6 +166,11 @@ def verify_auth_ecs(state):
     if int(rc_num) < int(latest_rc(state).get("rc") or 0):
         return Blocked(f"{label}: build {build_id} belongs to older RC{rc_num}; waiting for "
                        "the current-RC auth build.", links=links)
+    # A refreshed discovery invalidates the prior capture immediately, including while
+    # the newly discovered APK/tests are pending or incomplete. Never reuse stale data.
+    old = latest_rc(state).get("auth")
+    if old:
+        latest_rc(state).pop("auth", None)
     if status != "completed":
         return InProgress(
             f"{label} build {build_id} is still running (status: {status}) — Scout is polling "
@@ -205,9 +214,10 @@ def verify_auth_ecs(state):
     # informational verdict. This step does NOT enforce it — rc_report consolidates MRWP +
     # auth and makes the go/hold decision.
     suites = mock_input("suites", MISSING)
+    capture = mock_input("capture", MISSING)
     test_status = mock_input("test_status", MISSING)
     if test_status is MISSING:
-        if suites is not MISSING:
+        if suites is not MISSING or capture is not MISSING:
             test_status = "completed"  # Injected suites are a completed offline observation.
         else:
             ok, test_status, _, detail = P.get_build_status(AUTH_ORG, AUTH_PROJECT, tb)
@@ -216,11 +226,13 @@ def verify_auth_ecs(state):
     if test_status != "completed":
         return InProgress(f"{label} UI-test run {tb} is still running (status: {test_status}).",
                           links=links)
-    if suites is MISSING:
-        ok, suites, detail = P.auth_ui_suite_rates(tb)
+    if capture is MISSING:
+        ok, capture, detail = P.collect_auth_ui_evidence(tb, build_id, rc_num)
         if not ok:
             return Blocked(f"{label}: could not read UI test results for run {tb} ({detail}).",
                            links=links)
+    if suites is MISSING:
+        suites = capture["suites"]
     gate = auth_gate(suites)
 
     # 4) snapshot the whole leg into the RC iteration (its own report section).
@@ -228,7 +240,8 @@ def verify_auth_ecs(state):
         "build": {"run_id": str(build_id), "rc": rc_num, "version": ab.get("version"),
                   "build_number": ab.get("build_number"),
                   "result": result, "complete": True},
-        "test": {"run_id": str(tb), "complete": True, "suites": suites},
+        "test": {"run_id": str(tb), "complete": True, "suites": suites,
+                 "evidence": capture["evidence"]},
         "verdict": gate["verdict"],
     }
     issues = auth_evidence_issues({"rc": rc_num, "auth": snapshot})

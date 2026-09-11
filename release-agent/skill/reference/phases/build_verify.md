@@ -80,7 +80,34 @@ Unreadable, missing or invalid result pages mean unavailable evidence, not aggre
 fallback or zero failures. Refresh stale execution-count snapshots before reporting
 or gating; never relabel old counts, migrate them, or invent missing evidence.
 
-### Phase-3 Broker UI result fill uses this same evidence
+### Authenticator detailed capture and intentional report-only coverage
+
+`auth_ecs` completely pages Test Runs and Results once in Phase 2. It verifies the
+test-build → APK resource link and each completed Test Run's build attribution and
+aggregate/detail counts. `auth.test.evidence` freezes version, RC, APK/test build IDs,
+run metadata, exact titles, outcome/attempt evidence and source run/result IDs.
+Capture and neutral validation do not decide target-plan mappings. `rc_report` prepares
+source-only counts, failures, recovery facts and links for renderers; `ui_test_status`
+separately maps the capture during the Phase-3 fill. Distribution and progress consume
+the fill's published result, not raw capture internals.
+No alternate Phase-3 refetch. Missing/incomplete/mismatched data blocks before writes;
+historical aggregate-only captures require refresh, not silent migration. Rediscovery
+invalidates old Auth evidence while a new APK/test build is still pending.
+
+**Firebase Test Lab - Monthly UI Tests intentionally has NO test-plan case map.**
+This is valid report-only evidence, not a reason to create cases, force mappings or
+block merely for unmapped coverage. Keep every failure by name and source link in the
+standard HTML/plain/CLI report and existing release-owner `ui_failures` reminder.
+Do not mark investigations complete or send outside the existing lifecycle.
+Preserve owner notes and attestations when generated evidence changes.
+
+Authenticator gates retain aggregate source-execution counts per exact gated suite
+(Passed + Failed denominator), separately from Broker. Plan projection first reconciles
+exact-title retries with Passed-wins, then applies Failed-wins across distinct mapped
+scenarios (for example freshInstall versus upgrade). Execution counts, distinct tests
+and mapped case points are not interchangeable. Monthly failures never enter Broker's rate.
+
+### Phase-3 two-plan result fill uses this same evidence
 
 `bug_bash.ui_test_status` projects only `rcs[-1]` through the pure tools-level
 `project_mrwp_ui_results` helper. Do not refetch MRWP results in Phase 3, merge historical
@@ -88,17 +115,39 @@ RCs, or recompute retry verdicts. Missing/incomplete evidence, a stale `count_ba
 or mismatched summary `build_id`/MRWP `run_id` blocks before **any** plan/assignment write:
 refresh Phase-2 MRWP verification first.
 
-The existing case/config map preserves ECS/Local and PROD/RC-MSAL. Multiple distinct
+The map preserves ECS/Local AND the full MSAL/Broker pair: 292/328 = PROD MSAL/RC Broker,
+294/344 = RC MSAL/PROD Broker, 293/330 = RC MSAL/RC Broker (including LTW and mapped Stress).
+BrokerHost explicitly rolls up into 292/328, matching the master subtree. Multiple distinct
 titles/parameterizations/API suites mapping to one point use **Failed if any fails**,
 otherwise Passed if anything passed, otherwise NotApplicable for NA-only evidence.
 Only same-title retries within a normalized suite get pass-any, upstream. Unknown
 title/suite mappings are explicit diagnostics (Lab API tests need not carry case IDs);
 unmatched/manual plan points stay untouched. Compact fill provenance records the current
 RC, build IDs, count policy and mapping statuses; raw attempts remain in Phase-2 evidence.
-Assignments and `ui_failures` use these current verdicts; recovered failures are cleared
+Assignments use only cases actually written Failed; failures without applied points remain
+investigations in `ui_failures`, including every report-only failure. Reassignment errors
+are separately visible and nonblocking, never claimed as owner changes. Recovered failures are cleared
 on rerun without changing human completion or unrelated notes/data. Partial writes must
-be surfaced, not reported as fully applied. Authenticator's independent selected-run fill
-and Firebase gate remain unchanged.
+be surfaced, not reported as fully applied. New plans selectively add RC/RC points and
+freeze that per-case matrix for recovery. Missing RC/RC points require
+`broker-plan --preview-ui-repair`; the writer never mislabels or clears historical results.
+The preview does not apply repairs or mutate release state. In-place changes need later
+exact approval; cleanup additionally needs ownership receipts and match-before-write.
+Authenticator mapping is owned by this fill; its independent Firebase gate stays unchanged.
+
+The fill durably invalidates its prior result before any new attempt, retains partial-write
+diagnostics, and publishes one completed result only after both required writes succeed.
+`steps.bug_bash.ui_results.completed_result` exposes actual targets/points, automated and
+applied-failed case IDs, investigation evidence and minimal authoritative identity binding.
+`distribute_tests` consumes automated IDs; `bugbash_updates` consumes applied-failed IDs
+plus live progress/assignments. Neither reacquires, reprojects, reconciles or fingerprints
+raw Phase-2 evidence. Distribution preview/apply checks the receipt ID and current release,
+RC, ECS/Local builds, Auth APK/test builds, and both plan/suite identities.
+
+Missing, partial or stale results are errors, not empty work or successful historical
+fallback. Refresh the owning clone/verification steps as needed and rerun `ui_test_status`;
+older clone records also require the validated Broker UI suite ID from `clone_plans_broker`.
+Do not silently migrate copied historical state. Renderers never call either target projection.
 
 ## `rc_report` — email the RC report + apply the 90% UI gate (`scout`, terminal)
 For identical evidence, API arrival order must not affect verdicts, saved evidence

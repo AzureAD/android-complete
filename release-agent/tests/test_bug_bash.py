@@ -1,6 +1,7 @@
 """Release-agent tests — bug_bash. Shared harness in tests/_harness.py."""
 from tests._harness import *  # noqa: F401,F403
 from tests._mrwp_evidence import current_rc, PROD
+from tests._ui_results import broker_fill, auth_fill, publish
 
 
 def _ui_state(plan_id="900"):
@@ -47,19 +48,21 @@ def test_clone_plans_broker_blocks_on_api_failure():
 
 
 
-def test_ui_test_status_fills_from_snapshot():
+def test_ui_test_status_fills_from_snapshot(monkeypatch):
     """With a cloned plan + reconciled snapshot, fill and persist the summary."""
     import steps as _steps
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
     from tools import testplans as T
     st = _ui_state(plan_id="3737697")
+    from orchestrator.state import StepState
+    st.set_step("bug_bash", "clone_plans_auth", StepState(data={"suite_id": 902}))
+    monkeypatch.setattr(T, "fill_auth_ui_results", auth_fill)
     captured = {}
 
-    def fake_fill(plan_id, verdicts, timeout=120):
+    def fake_fill(plan_id, verdicts, timeout=120, *, suite_id):
         captured["plan_id"] = plan_id
-        return (True, {"points_total": 308, "set_passed": 250, "set_failed": 6,
-                       "set_not_applicable": 52, "cases_touched": 76}, "")
+        return broker_fill(plan_id, verdicts, suite_id=suite_id)
 
     o = T.fill_ui_automation_results
     T.fill_ui_automation_results = fake_fill
@@ -69,10 +72,10 @@ def test_ui_test_status_fills_from_snapshot():
     finally:
         T.fill_ui_automation_results = o
     assert out["kind"] == "done"
-    assert "250 Passed" in out["note"] and "6 Failed" in out["note"] and "52 N/A" in out["note"]
+    assert "2 Passed" in out["note"] and "0 Failed" in out["note"] and "0 N/A" in out["note"]
     assert captured["plan_id"] == "3737697"
     data = st.get_step("bug_bash", "ui_test_status").data
-    assert data["plan_id"] == "3737697" and data["summary"]["cases_touched"] == 76
+    assert data["plan_id"] == "3737697" and data["summary"]["cases_touched"] == 1
     assert out["links"][0]["url"].endswith("planId=3737697")
 
 
@@ -90,25 +93,26 @@ def test_ui_test_status_fills_auth_and_assigns_failures_to_owner():
     st = _ui_state(plan_id="3737697")
     st.owner_email = "owner@microsoft.com"
     st.set_step("bug_bash", "clone_plans_auth", StepState(status="done", data={"suite_id": 714999}))
+    from tests._auth_evidence import auth_snapshot
+    from tools import pipelines as P
+    rc = st.pipeline_runs["rcs"][-1]
+    rc["auth"] = auth_snapshot(rc=rc["rc"], rows={P.AUTH_UI_SUITES[0]: [
+        (f"test_{cid}_failed", "Failed") for cid in (2916347, 2916524, 3094649, 3261599, 3741283)]})
 
     assigned = []
     o_bfill, o_afill, o_assign = (T.fill_ui_automation_results, T.fill_auth_ui_results,
                                   D.set_assigned_to)
-    T.fill_ui_automation_results = lambda p, v, timeout=120: (
-        True, {"points_total": 10, "set_passed": 8, "set_failed": 2,
-               "set_not_applicable": 0, "cases_touched": 5}, "")
-    T.fill_auth_ui_results = lambda plan, suite, outcomes, timeout=120: (
-        True, {"points_total": 26, "set_passed": 21, "set_failed": 5,
-               "failed_case_ids": [2916347, 2916524, 3094649, 3261599, 3741283]}, "")
+    T.fill_ui_automation_results = broker_fill
+    T.fill_auth_ui_results = auth_fill
     D.set_assigned_to = lambda cid, upn, timeout=60: (assigned.append((cid, upn)), (True, ""))[1]
     try:
-        with mockctx.active({"auth_outcomes": {2916347: "Failed", 100: "Passed"}}):
+        with mockctx.active({}):
             out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
     finally:
         T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_assigned_to = (
             o_bfill, o_afill, o_assign)
     assert out["kind"] == "done"
-    assert "Auth: 21 Passed, 5 Failed" in out["note"]
+    assert "Auth: 0 Passed, 5 Failed" in out["note"]
     assert "5 failed case(s) assigned to owner owner@microsoft.com" in out["note"]
     # every failed auth case was reassigned to the owner
     assert {c for c, _ in assigned} == {2916347, 2916524, 3094649, 3261599, 3741283}
@@ -135,25 +139,18 @@ def test_ui_test_status_surfaces_combined_failures_to_ui_failures():
     # seed a broker RC snapshot with a failing UI suite (individual tests) + an auth run
     rc = current_rc(ecs={PROD: [("test_831126_MDM_FirstPartyAppSignIn", "Failed"),
                                ("test_3321136_UpgradeFromRegularWpjToStrongKeyWpj", "Failed")]})
-    rc["auth"] = {"build": {"run_id": "178685087"}, "test": {"run_id": "178777988"}}
+    from tests._auth_evidence import auth_snapshot
+    rc["auth"] = auth_snapshot(rc=rc["rc"], apk=178685087, build=178777988, rows={
+        "Firebase Test Lab - UIAutomator E2E": [
+            ("test_2916347_passkeyInAppRegistration_fullWizard", "Failed"),
+            ("test_2916524_passkeyDeregister_deleteFromAppAndVerifyMySecurityInfo", "Failed"),
+            ("test_3094649_passkeyFromL2_createPasskeyFromAccountFullscreen", "Failed"),
+            ("test_3261599_psiPushNotification_registerAfterEnablingNotifications", "Failed"),
+            ("test_3741283_mfaDialogSurvivesProcessDeathRestore", "Failed")]})
     st.pipeline_runs = {"rcs": [rc]}
     o_b, o_a, o_as = T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_assigned_to
-    from tools import pipelines as P
-    o_ar = P.auth_ui_case_results
-    T.fill_ui_automation_results = lambda p, v, timeout=120: (
-        True, {"points_total": 10, "set_passed": 8, "set_failed": 2,
-               "set_not_applicable": 0, "cases_touched": 5}, "")
-    T.fill_auth_ui_results = lambda plan, suite, outcomes, timeout=120: (
-        True, {"points_total": 26, "set_passed": 21, "set_failed": 5,
-               "failed_case_ids": [2916347, 2916524, 3094649, 3261599, 3741283]}, "")
-    # auth results carry the automation test TITLE per case (shown in the ui_failures render)
-    P.auth_ui_case_results = lambda bid, timeout=120: (True, {
-        2916347: {"outcome": "Failed", "title": "test_2916347_passkeyInAppRegistration_fullWizard"},
-        2916524: {"outcome": "Failed", "title": "test_2916524_passkeyDeregister_deleteFromAppAndVerifyMySecurityInfo"},
-        3094649: {"outcome": "Failed", "title": "test_3094649_passkeyFromL2_createPasskeyFromAccountFullscreen"},
-        3261599: {"outcome": "Failed", "title": "test_3261599_psiPushNotification_registerAfterEnablingNotifications"},
-        3741283: {"outcome": "Failed", "title": "test_3741283_mfaDialogSurvivesProcessDeathRestore"},
-    }, "")
+    T.fill_ui_automation_results = broker_fill
+    T.fill_auth_ui_results = auth_fill
     assigned_calls = []
     D.set_assigned_to = lambda cid, upn, timeout=60: (assigned_calls.append((str(cid), upn)), (True, ""))[1]
     try:
@@ -161,7 +158,6 @@ def test_ui_test_status_surfaces_combined_failures_to_ui_failures():
             as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
     finally:
         T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_assigned_to = o_b, o_a, o_as
-        P.auth_ui_case_results = o_ar
     uf = st.get_step("bug_bash", "ui_failures")
     # step-8-style rich note: EVERY failing test listed individually, all 🔬 investigate for owner,
     # Broker grouped by provider (ECS/Local) then by bucket (suite name).
@@ -173,7 +169,7 @@ def test_ui_test_status_surfaces_combined_failures_to_ui_failures():
     # each broker test is its own 🔬 line, linked by the case id parsed from the title
     assert "[831126](https://identitydivision.visualstudio.com/Engineering/_workitems/edit/831126)" in uf.note
     assert "test_3321136_UpgradeFromRegularWpjToStrongKeyWpj" in uf.note
-    assert "**Authenticator (ECS)** \u2014 5 failing automated test(s):" in uf.note
+    assert "**Authenticator (ECS)** \u2014 5 failing distinct test(s):" in uf.note
     assert "[2916347](https://identitydivision.visualstudio.com/Engineering/_workitems/edit/2916347)" in uf.note
     # auth lines show the automation test NAME, not a generic "Automated failure"
     assert "test_2916347_passkeyInAppRegistration_fullWizard" in uf.note
@@ -198,9 +194,8 @@ def test_ui_test_status_surfaces_combined_failures_to_ui_failures():
 
 
 
-def test_ui_test_status_auth_skipped_when_no_auth_suite():
-    """No clone_plans_auth suite → the auth fill is skipped (best-effort) but the Broker fill
-    still completes and the step is done."""
+def test_ui_test_status_blocks_before_writes_when_no_auth_suite():
+    """Missing target suite is not confused with Monthly's intentional lack of mapping."""
     import steps as _steps
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
@@ -215,7 +210,7 @@ def test_ui_test_status_auth_skipped_when_no_auth_suite():
             out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
     finally:
         T.fill_ui_automation_results = o
-    assert out["kind"] == "done" and "Authenticator suite not created yet" in out["note"]
+    assert out["kind"] == "blocked" and "Authenticator release suite" in out["reason"]
 
 
 
@@ -239,6 +234,8 @@ def test_ui_test_status_uses_current_recorded_evidence(monkeypatch):
     from orchestrator.outcomes import as_dict
     from tools import pipelines as P, testplans as T
     st = _ui_state(plan_id="900")
+    from orchestrator.state import StepState
+    st.set_step("bug_bash", "clone_plans_auth", StepState(data={"suite_id": 902}))
     st.pipeline_runs = {"rcs": [
         current_rc(ecs={PROD: [("test_100_Default", "Failed")]}, rc=1),
         current_rc(ecs={PROD: [("test_100_Default", "Failed"), ("test_100_Default", "Passed")]}),
@@ -248,10 +245,9 @@ def test_ui_test_status_uses_current_recorded_evidence(monkeypatch):
     def forbidden(*a, **k):
         raise AssertionError("No live MRWP reads or recovered-case assignments")
 
-    def fake_fill(plan_id, verdicts, timeout=120):
+    def fake_fill(plan_id, verdicts, timeout=120, *, suite_id):
         seen["verdicts"] = verdicts
-        return (True, {"points_total": 4, "set_passed": 1, "set_failed": 0,
-                       "set_not_applicable": 3, "cases_touched": 1}, "")
+        return broker_fill(plan_id, verdicts, suite_id=suite_id)
 
     from tools import distribution as D
     st.owner_email = "owner@example.com"
@@ -259,10 +255,12 @@ def test_ui_test_status_uses_current_recorded_evidence(monkeypatch):
     monkeypatch.setattr(P, "_run_results", forbidden)
     monkeypatch.setattr(D, "set_assigned_to", forbidden)
     monkeypatch.setattr(T, "fill_ui_automation_results", fake_fill)
+    monkeypatch.setattr(T, "fill_auth_ui_results", auth_fill)
     with mockctx.active({}):
         out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
     assert out["kind"] == "done"
-    assert seen["verdicts"] == {100: {("ECS", "prod"): "Passed", ("Local", "prod"): "Passed"}}
+    assert seen["verdicts"] == {100: {("ECS", "prod_msal_rc_broker"): "Passed",
+                                    ("Local", "prod_msal_rc_broker"): "Passed"}}
     assert not st.get_step("bug_bash", "ui_failures").note
 
 
@@ -362,7 +360,7 @@ def test_distribute_tests_blocks_without_broker_clone():
     st = ReleaseState(release_id="2026-08", owner_email="o@x")
     with mockctx.active({"auth_cases": [], "roster": [{"name": "A", "upn": "a@x"}]}):
         out = as_dict(_steps.get_step("bug_bash", "distribute_tests").build(st, oof=[]))
-    assert out["kind"] == "blocked" and "hasn't been cloned" in out["reason"]
+    assert out["kind"] == "blocked" and "ui_test_status" in out["reason"]
 
 
 
@@ -822,7 +820,7 @@ def test_bugbash_render_marks_auto_failed_auth_as_triage():
             {"id": "50", "name": "Manual T", "url": "uM", "state": "notrun", "auto_failed": False},
             {"id": "51", "name": "Manual F", "url": "uF", "state": "failed", "auto_failed": False}]}}}
     html, mentions = BB.render_update(prog, "August 2026", [{"name": "Broker", "url": "b"}])
-    assert "\U0001f52c 1 failed automated Authenticator case(s) are pre-assigned" in html  # header note
+    assert "\U0001f52c 1 failed automated Authenticator case(s) need investigation" in html
     assert "Automated failure — triage" in html                        # the auto-failed row
     assert "2916347" in html and "50" in html and "51" in html         # all three listed
     assert "Not run" in html and "Failed" in html                      # manual labels intact
@@ -834,15 +832,21 @@ def test_bugbash_render_marks_auto_failed_auth_as_triage():
 
 
 def test_bugbash_updates_passes_auto_failed_ids_to_gather(monkeypatch):
-    """bugbash_updates.gather threads the ui_test_status failed-auth case ids into
+    """bugbash_updates.gather threads the completed fill's applied failed-auth case ids into
     gather_progress so they can be flagged in the update."""
     from steps.bug_bash import bugbash_updates as BU
     from orchestrator.state import StepState
     st = _bb_updates_state()
-    st.set_step("bug_bash", "clone_plans_broker", StepState(status="done", data={"plan_id": "900"}))
+    from tests._auth_evidence import auth_snapshot
+    rc = current_rc(rc=1)
+    rc["auth"] = auth_snapshot(rows={
+        "Firebase Test Lab - UIAutomator E2E": [("test_2916347_x", "Failed"),
+                                               ("test_2916524_y", "Failed")]})
+    st.pipeline_runs = {"rcs": [rc]}
+    st.set_step("bug_bash", "clone_plans_broker",
+                StepState(status="done", data={"plan_id": "900", "ui_suite_id": 901}))
     st.set_step("bug_bash", "clone_plans_auth", StepState(status="done", data={"suite_id": 714999}))
-    st.set_step("bug_bash", "ui_test_status",
-                StepState(status="done", data={"auth": {"failed_case_ids": [2916347, 2916524]}}))
+    publish(st)
     captured = {}
     from tools import bugbash as BB
     monkeypatch.setattr(BB, "gather_progress",

@@ -178,7 +178,7 @@ def test_rc_email_includes_separate_auth_section():
     K.stash_auth(st, rc["rc"], {
         "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
                   "complete": True, "result": "succeeded"},
-        "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(82.76, 100.0)},
+        "test": _auth_test(_auth_suites(82.76, 100.0), rc=rc["rc"]),
         "verdict": "attention"})
     model = report.rc_report_model(st)
     assert (model.get("auth") or {}).get("verdict") == "attention"
@@ -204,7 +204,7 @@ def test_rc_report_contemplates_both_gates_at_a_glance():
     K.stash_auth(st, rc["rc"], {
         "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
                   "complete": True, "result": "succeeded"},
-        "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(82.76, 100.0)},
+        "test": _auth_test(_auth_suites(82.76, 100.0), rc=rc["rc"]),
         "verdict": "attention"})
     model = report.rc_report_model(st)
     gate, auth = report.rc_ui_gate(model), report.auth_report_gate(model)
@@ -220,7 +220,7 @@ def test_rc_report_contemplates_both_gates_at_a_glance():
     K.stash_auth(st, rc["rc"], {
         "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
                   "complete": True, "result": "succeeded"},
-        "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(97.0, 100.0)},
+        "test": _auth_test(_auth_suites(97.0, 100.0), rc=rc["rc"]),
         "verdict": "clean"})
     model = report.rc_report_model(st)
     assert "Auth ECS: pass" in rendering.rc_email_subject(
@@ -243,23 +243,13 @@ def test_build_verify_rc_report_emails_owner():
     K.stash_checker(st, "1678599", "2026-08-13T06:00")
     K.stash_orchestrator(st, "1678611", parked=True)
     st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"})
-    K.stash_mrwp(st, "ECS", {
-        "run_id": "1678863", "complete": True, "ran": 23, "total": 23,
-        "failed_stages": ["UI Automation"], "yellow_stages": [], "never_ran": [],
-        "tests": {"count_basis": "distinct_tests_pass_any",
-                  "total": 5871, "passed": 5767, "failed": 104, "categories": {
-            "unit": {"total": 5248, "passed": 5248, "failed": 0},
-            "instrumented": {"total": 442, "passed": 440, "failed": 2},
-            "ui": {"total": 165, "passed": 63, "failed": 102}}},
-        "failed_suites": [{"name": "PROD MSAL - RC Broker (API 32)", "failed": 18,
-                           "total": 44, "category": "ui", "tests": ["test_1_Foo", "test_2_Bar"]}]})
-    K.stash_mrwp(st, "Local", {
-        "run_id": "1678864", "complete": True, "ran": 23, "total": 23,
-        "failed_stages": [], "yellow_stages": [], "never_ran": [],
-        "tests": {"count_basis": "distinct_tests_pass_any",
-                  "total": 5856, "passed": 5756, "failed": 100, "categories": {
-            "ui": {"total": 165, "passed": 63, "failed": 102}}},
-        "failed_suites": []})
+    from tests._mrwp_evidence import snapshot, PROD
+    ui = [(f"test_{i}_Foo", "Failed") for i in range(1, 103)]
+    ui += [(f"test_{i}_pass", "Passed") for i in range(103, 166)]
+    K.stash_mrwp(st, "ECS", snapshot(1678863, {
+        PROD: ui, "sdk_UnitTests": [("unit", "Passed")],
+        "sdk_InstrumentedTests": [("instrumented", "Failed")]}))
+    K.stash_mrwp(st, "Local", snapshot(1678864, {PROD: ui}))
     _seed_auth(st)
 
     out = as_dict(_steps.get_step("build_verify", "rc_report").build(st))
@@ -419,7 +409,7 @@ def test_record_rc_report_holds_when_auth_gate_fails_though_mrwp_clean():
         K.stash_auth(st, rc["rc"], {
             "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
                       "complete": True, "result": "succeeded"},
-            "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(82.76, 100.0)},
+            "test": _auth_test(_auth_suites(82.76, 100.0), rc=rc["rc"]),
             "verdict": "attention"})
         C.save_state(st, d, rid)
         _ack_step(d, rid, "build_verify", "rc_report")
@@ -436,7 +426,7 @@ def test_record_rc_report_holds_when_auth_gate_fails_though_mrwp_clean():
         K.stash_auth(s1, rc["rc"], {
             "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
                       "complete": True, "result": "succeeded"},
-            "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(97.0, 100.0)},
+            "test": _auth_test(_auth_suites(97.0, 100.0), rc=rc["rc"]),
             "verdict": "clean"})
         C.save_state(s1, d, rid)
         _ack_step(d, rid, "build_verify", "rc_report")
@@ -448,20 +438,12 @@ def test_record_rc_report_holds_when_auth_gate_fails_though_mrwp_clean():
 def test_rc_report_email_shows_retry_warning():
     """When a unit test recovered on retry, the RC report (plain + HTML) surfaces a retry
     warning that lists it (counted as passed but flagged)."""
-    from steps.build_verify import _common as K
-    model = {"release": "2026-08", "checker": {"run_id": 1},
-             "orchestrator": {"run_id": 2, "versions": {}, "parked": True},
-             "mrwp": {"ECS": {"run_id": 3, "ran": 23, "total": 23,
-                              "tests": {"count_basis": "distinct_tests_pass_any",
-                                  "suites": [{"name": "sdk_UnitTests", "test_results": [{
-                                      "title": "testNullDrsMetadata", "recovered": True,
-                                      "outcome_counts": {"Passed": 1, "Failed": 1}}]}],
-                                  "categories": {
-                                  "unit": {"total": 100, "passed": 100, "failed": 0,
-                                           "recovered": ["testNullDrsMetadata"]},
-                                  "ui": {"total": 10, "passed": 10, "failed": 0}}}},
-                      "Local": {"run_id": 4, "ran": 23, "total": 23, "tests": {"categories": {}}}},
-             "problems": []}
+    from tests._mrwp_evidence import current_rc, PROD
+    st = ReleaseState(release_id="2026-08")
+    st.pipeline_runs = {"rcs": [current_rc(ecs={
+        PROD: [("test_100_UI", "Passed")],
+        "sdk_UnitTests": [("testNullDrsMetadata", "Failed"), ("testNullDrsMetadata", "Passed")]})]}
+    model = report.rc_report_model(st)
     assert rendering.recovered_tests(model) == [
         "[ECS] sdk_UnitTests — testNullDrsMetadata (1 Failed, 1 Passed historical attempts; informational)"]
     gate, auth = report.rc_ui_gate(model), report.auth_report_gate(model)
@@ -497,12 +479,18 @@ def test_rc_report_all_renderers_show_every_failure_and_recovery(monkeypatch):
     ok, summary, detail = P.get_test_summary("O", "P", 1678863)
     assert ok, detail
     st = ReleaseState(release_id="2026-08")
-    _seed_rc_pipeline(st, summary["categories"]["ui"],
-                      {"total": 100, "passed": 100, "failed": 0},
-                      ecs_suites=summary["failed_suites"])
-    st.pipeline_runs["rcs"][-1]["ecs"]["tests"] = summary
-    st.pipeline_runs["rcs"][-1]["local"]["tests"]["suites"] = [
-        s for s in summary["suites"] if s["recovered"]]
+    _seed_rc_pipeline(st, summary["categories"]["ui"], {"total": 100, "passed": 100, "failed": 0})
+    rc = st.pipeline_runs["rcs"][-1]
+    rc["ecs"]["tests"] = summary
+    rc["ecs"]["run_id"] = summary["build_id"]
+    rc["ecs"]["failed_suites"] = summary["failed_suites"]
+    recovery_runs = [r for r in runs if r["id"] >= 300]
+    _paged_test_api(monkeypatch, recovery_runs, {rid: rows[rid] for rid in (300, 301, 302)})
+    ok, local, detail = P.get_test_summary("O", "P", 1678864)
+    assert ok, detail
+    rc["local"]["tests"] = local
+    rc["local"]["run_id"] = local["build_id"]
+    rc["local"]["failed_suites"] = local["failed_suites"]
     model = report.rc_report_model(st)
     gate, auth = report.rc_ui_gate(model), report.auth_report_gate(model)
     html = rendering.rc_email_html(model, {}, gate, auth, report.rc_next_action(model))
@@ -525,9 +513,9 @@ def test_rc_report_stale_raw_counts_require_refresh_not_relabeling():
     from orchestrator.commands import rc_report as RR
     st = ReleaseState(release_id="2026-08")
     _seed_rc_pipeline(st, {"total": 100, "passed": 20, "failed": 80},
-                      {"total": 100, "passed": 100, "failed": 0},
-                      ecs_suites=[{"name": "UI", "total": 100, "failed": 80,
-                                   "tests": [f"legacy_{i}" for i in range(45)]}])
+                      {"total": 100, "passed": 100, "failed": 0})
+    st.pipeline_runs["rcs"][-1]["ecs"]["failed_suites"] = [
+        {"name": "UI", "total": 100, "failed": 80, "tests": [f"legacy_{i}" for i in range(45)]}]
     st.pipeline_runs["rcs"][-1]["ecs"]["tests"]["count_basis"] = "result_entries"
     model = report.rc_report_model(st)
     gate, auth = report.rc_ui_gate(model), report.auth_report_gate(model)
@@ -865,7 +853,13 @@ def test_sim_fast_forwards_to_rc_gate_offline():
     import tempfile
     from orchestrator import sim as SIM
     with tempfile.TemporaryDirectory() as tmp:
-        res = SIM.run_scenario("at_rc_gate", runs_root=tmp)
+        scenario = SIM.load_scenario("at_rc_gate")
+        auth = scenario.setdefault("mocks", {}).setdefault("build_verify.auth_ecs", {})
+        auth["capture"] = _auth_capture(auth.get("suites", _auth_suites(100)),
+                                      apk=auth.get("auth_build", {}).get("build_id", 900010),
+                                      build=auth.get("test_build", 900011))
+        auth["suites"] = auth["capture"]["suites"]
+        res = SIM.run_scenario(scenario, runs_root=tmp)
     assert res.reached and res.stop_kind == "done"
     st = res.state
     # earlier phases complete

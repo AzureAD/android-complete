@@ -14,9 +14,8 @@ input. Owner = state.owner_email. OOF availability comes ONLY from that owner's 
 answer for this Bug Bash, saved in step.data.oof (including an explicit empty list).
 Neither Graph calendars nor presence nor automatic OOF detection is used.
 
-The Authenticator set EXCLUDES cases already automated by this release's auth ECS UI-test run
-— resolved EMPIRICALLY from the run (by test-case id, via `pipelines.auth_ui_case_outcomes`
-off `state.rcs[-1].auth.test`), NOT from the cross-platform 'Automated' tag (iOS owns that
+The Authenticator set EXCLUDES cases recorded as automated by the completed `ui_test_status`
+result, NOT from Phase-2 projections or the cross-platform 'Automated' tag (iOS owns that
 tag, so a case automated only on Android must not carry it). Both passed and failed automated
 cases are dropped from the manual split — failures are triaged by the owner via
 `ui_test_status`, not by a manual tester.
@@ -30,7 +29,7 @@ Mock knobs (mocks.local.yaml / tests):
   roster         : inject the team roster [{name, upn}] (skip Graph).
   broker_cases   : inject the Broker cases [{id, assignee}] (skip ADO).
   auth_cases     : inject the Authenticator cases [{id, assignee}] (skip ADO).
-  auth_automated : inject the automated auth case ids to exclude [..] (skip the auth run read).
+  auth_automated : inject automated auth case ids to exclude [..] (offline receipt substitute).
   fail           : force a Blocked with this detail.
 """
 from __future__ import annotations
@@ -39,7 +38,7 @@ from orchestrator.outcomes import Done, Blocked
 from steps.lib.agent import legacy_run
 from steps.lib.mockctx import mock_input, MISSING
 from tools import distribution as D
-from tools import pipelines as P
+from steps.bug_bash.ui_results import completed_result
 
 ID = "distribute_tests"
 KIND = "agent"
@@ -49,7 +48,7 @@ MOCKABLE = {
     "roster": {"kind": "input", "desc": "Inject the team roster [{name, upn}] (skip Graph)."},
     "broker_cases": {"kind": "input", "desc": "Inject Broker cases [{id, assignee}] (skip ADO)."},
     "auth_cases": {"kind": "input", "desc": "Inject Authenticator cases [{id, assignee}] (skip ADO)."},
-    "auth_automated": {"kind": "input", "desc": "Inject the automated auth case ids to exclude [..] (skip the auth ECS run read)."},
+    "auth_automated": {"kind": "input", "desc": "Inject automated auth case ids [..] (offline receipt substitute)."},
     "fail": {"kind": "input", "desc": "Force a Blocked with this detail."},
 }
 
@@ -59,30 +58,18 @@ def _broker_plan_id(state):
     return (state.get_step("bug_bash", "clone_plans_broker").data or {}).get("plan_id")
 
 
-def _auth_test_build_id(state):
-    """The auth ECS post-build UI-test build id captured by Phase-2 auth_ecs
-    (state.pipeline_runs.rcs[-1].auth.test.run_id), or None."""
-    rcs = (getattr(state, "pipeline_runs", None) or {}).get("rcs") or []
-    if not rcs:
-        return None
-    return (((rcs[-1].get("auth") or {}).get("test") or {}) or {}).get("run_id")
+def _fill_input(state):
+    """Stable owner API; an absent/partial receipt is never an empty automated set."""
+    injected = mock_input("auth_automated", MISSING)
+    if injected is not MISSING:
+        ids = sorted({int(i) for i in (injected or [])})
+        return ids, {"offline_automated_ids": ids}
+    result = completed_result(state)
+    return result["auth"]["automated_case_ids"], {"id": result["id"], "binding": result["binding"]}
 
 
 def _auth_automated_ids(state):
-    """Case ids already automated by this release's auth ECS UI-test run — excluded from the
-    MANUAL distribution. Read EMPIRICALLY from the run (via pipelines.auth_ui_case_outcomes),
-    NOT from the shared 'Automated' tag (that tag is cross-platform; iOS owns it). Passed and
-    Failed automated cases are both excluded — failures are triaged by the owner via
-    ui_test_status, not by a manual tester. Offline: inject via the `auth_automated` knob.
-    Returns a set (empty when no auth run has been captured yet)."""
-    injected = mock_input("auth_automated", MISSING)
-    if injected is not MISSING:
-        return {int(i) for i in (injected or [])}
-    bid = _auth_test_build_id(state)
-    if not bid:
-        return set()
-    ok, outcomes, _ = P.auth_ui_case_outcomes(bid)
-    return {int(k) for k in outcomes} if ok else set()
+    return set(_fill_input(state)[0])
 
 
 def invalidate_preview(state, *, clear_oof=False):
@@ -120,6 +107,10 @@ def validate_stored_plan(state):
         D.validate_oof(None, [], state.owner_email, state.release_id)
     D.validate_distribution_plan(data.get("plan"), data["oof"], _roster(cfg), cfg,
                                  state.owner_email, _oce(data), state.release_id)
+    ids, binding = _fill_input(state)
+    if (data["plan"].get("auth_automated_ids") != ids
+            or data["plan"].get("ui_fill_result") != binding):
+        raise ValueError("UI fill result changed; refresh the distribution preview")
 
 
 def build(state, *, oof=None, oce=None):
@@ -165,6 +156,7 @@ def _build(state, *, oof):
         return Blocked("distribute_tests: no eligible testers after exclusions — check the "
                        "roster, owner, on-call and owner-confirmed OOF exclusions.")
 
+    recorded_ids, fill_binding = _fill_input(state)
     # Read the two test sets only after owner-confirmed availability.
     bcases = mock_input("broker_cases", MISSING)
     if bcases is MISSING:
@@ -188,11 +180,8 @@ def _build(state, *, oof):
             hint = " — run `az login`" if str(d).startswith("AUTH") else ""
             return Blocked(f"distribute_tests: couldn't read Authenticator bug-bash tests ({d}){hint}.")
 
-    # Exclude auth cases already automated by this release's auth ECS UI-test run — they don't
-    # need a manual tester (passes are done; failures are triaged by the owner via
-    # ui_test_status). Empirical (from the run), so no reliance on the cross-platform
-    # 'Automated' tag that iOS also uses.
-    auto_ids = _auth_automated_ids(state)
+    # The completed fill owns this set, including unmatched automated cases requiring triage.
+    auto_ids = set(recorded_ids)
     auth_before = len(acases)
     if auto_ids:
         acases = [c for c in acases if int(c.get("id")) not in auto_ids]
@@ -221,6 +210,8 @@ def _build(state, *, oof):
         "broker_total": len(bcases),
         "auth_total": len(acases),
         "auth_excluded_automated": auth_excluded,
+        "auth_automated_ids": sorted(auto_ids),
+        "ui_fill_result": fill_binding,
         "applied": False,
     }
     state.set_step("bug_bash", ID, step)

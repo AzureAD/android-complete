@@ -31,6 +31,7 @@ from steps.build_verify._common import build_url, latest_rc, valid_id, valid_cou
 from steps.lib.context import release_ctx
 from tools import pipelines as P
 from tools.coordinates import coords
+from tools.pipelines.test_evidence import require, validate_snapshot_tests, result_links
 
 ID = "rc_report"
 KIND = "scout"
@@ -97,9 +98,58 @@ def report_readiness(model):
             issues.append(f"MRWP {provider}: failure details unavailable ({run['failed_suites_error']})")
     issues.extend(ui_evidence_issues(model))
     issues.extend(A.auth_evidence_issues(model))
+    evidence = model.get("ui_evidence")
+    issues.extend(evidence["issues"] if isinstance(evidence, dict) else
+                  ["Source investigation evidence not prepared; refresh rc_report"])
     return {"ready": not issues, "issues": issues,
             "detail": "RC report evidence not ready: " + "; ".join(issues) if issues else
                       "Current RC evidence is ready."}
+
+
+def prepare_report_evidence(model):
+    """Prepare source-only investigation facts; Phase 2 never selects target plan configs."""
+    providers, failures, issues, recovered = [], [], [], []
+    for flight in ("ECS", "Local"):
+        snapshot = (model.get("mrwp") or {}).get(flight)
+        try:
+            require(valid_id(model.get("rc")), "current RC not identified")
+            bid, tests = validate_snapshot_tests(snapshot)
+            providers.append({"flight": flight, "build_id": bid, "distinct_tests": len(tests),
+                              "source_executions": sum(len(t["attempts"]) for _, t in tests)})
+            for suite, test in tests:
+                if test["verdict"] == "Failed":
+                    failures.append({"product": "Broker", "provider": flight, "suite": suite,
+                                     "title": test["title"],
+                                     "links": result_links(test["attempts"], "engineering")})
+            for suite in snapshot["tests"]["suites"]:
+                for test in suite["test_results"]:
+                    if test["recovered"]:
+                        recovered.append({"provider": flight, "suite": suite["name"],
+                                          "title": test["title"], "outcomes": test["outcome_counts"]})
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:
+            issues.append(f"Broker {flight} evidence unavailable: {exc}; refresh Phase-2 verification")
+    if len(providers) == 2 and providers[0]["build_id"] == providers[1]["build_id"]:
+        issues.append("Broker evidence unavailable: ECS and Local reference the same build; refresh verification")
+    auth_facts = None
+    if model.get("auth"):
+        build = model["auth"].get("build") or {}
+        if build.get("result") not in ("failed", "canceled"):
+            ok, source, detail = P.inspect_auth_ui_evidence({"rc": model.get("rc"), "auth": model["auth"]})
+            if not ok:
+                issues.append(f"Authenticator evidence unavailable: {detail}")
+            else:
+                auth_facts = source["provenance"]
+                for failure in source["failures"]:
+                    failures.append({"product": "Authenticator", "provider": "ECS",
+                                     "suite": failure["suite"], "title": failure["title"],
+                                     "report_only": failure["suite"] == P.MONTHLY_REPORT_ONLY,
+                                     "links": failure["links"]})
+    model["ui_evidence"] = {
+        "providers": providers, "auth": auth_facts, "failures": failures, "issues": issues,
+        "policy": P.AUTH_MAPPING_NOTE if model.get("auth") else "",
+        "recovered": sorted(recovered, key=lambda r: (r["provider"], r["suite"], r["title"])),
+    }
+    return model
 
 
 def rc_report_model(state, timeout=120):
@@ -135,8 +185,8 @@ def rc_report_model(state, timeout=120):
             "tests_error": s.get("tests_error"),
             "failed_suites_error": s.get("failed_suites_error"),
         }
-    return P.assemble_rc_model(state.release_id, checker, orchestrator, mrwp, rc=rc.get("rc"),
-                               auth=rc.get("auth"))
+    return prepare_report_evidence(P.assemble_rc_model(
+        state.release_id, checker, orchestrator, mrwp, rc=rc.get("rc"), auth=rc.get("auth")))
 
 
 def rc_run_links(model) -> list:

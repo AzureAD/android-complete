@@ -22,3 +22,4 @@ from .tests_results import *
 from .ui_projection import *
 from .rc_model import *
 from .auth_app import *
+from .auth_evidence import *

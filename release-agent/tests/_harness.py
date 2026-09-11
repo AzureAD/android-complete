@@ -27,6 +27,7 @@ from orchestrator.engine import Orchestrator
 from orchestrator import cli_common as C
 
 from orchestrator import mocks as _mocks_mod
+from tests._auth_evidence import capture as _auth_capture, auth_test as _auth_test
 
 
 CONFIG = os.path.join(ROOT, "config", "phases.yaml")
@@ -142,6 +143,8 @@ _SAFE_AGENTS = {
     "finalize.final_status_email": {"outcome": "done", "note": "closing status email sent (test)"},
 
 }
+_SAFE_AGENTS["build_verify.auth_ecs"]["capture"] = _auth_capture(
+    _SAFE_AGENTS["build_verify.auth_ecs"]["suites"])
 
 
 
@@ -305,13 +308,18 @@ def _bv_build(orch, st, sid):
     import steps as _steps
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
-    with mockctx.active(orch.mocks.get(f"build_verify.{sid}", {})):
+    inputs = dict(orch.mocks.get(f"build_verify.{sid}", {}))
+    if sid == "auth_ecs" and "suites" in inputs:
+        inputs["capture"] = _auth_capture(inputs["suites"],
+            rc=inputs["auth_build"]["rc"], apk=inputs["auth_build"]["build_id"],
+            build=inputs["test_build"])
+        inputs["suites"] = inputs["capture"]["suites"]
+    with mockctx.active(inputs):
         return as_dict(_steps.get_step("build_verify", sid).build(st))
 
 
 
-def _seed_rc_pipeline(st, ecs_ui, local_ui, *, ecs_suites=None,
-                      ecs_id="1678863", local_id="1678864"):
+def _seed_rc_pipeline(st, ecs_ui, local_ui, *, ecs_id="1678863", local_id="1678864"):
     """Seed state.pipeline_runs with a full RC snapshot (checker + orchestrator + one RC
     pair) the way the verify steps would, so rc_report / record-rc-report read it from
     state (no live re-discovery). `ecs_ui`/`local_ui` are the UI category dicts the gate
@@ -321,14 +329,14 @@ def _seed_rc_pipeline(st, ecs_ui, local_ui, *, ecs_suites=None,
     K.stash_orchestrator(st, "1678611", parked=True)
     st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"})
 
-    def snap(run_id, ui, suites):
-        return {"run_id": run_id, "complete": True, "ran": 23, "total": 23,
-                "failed_stages": [], "yellow_stages": [], "never_ran": [],
-                "tests": {"count_basis": "distinct_tests_pass_any",
-                          "categories": {"ui": ui}, "failed_suites": suites or []},
-                "failed_suites": suites or []}
-    K.stash_mrwp(st, "ECS", snap(ecs_id, ecs_ui, ecs_suites))
-    K.stash_mrwp(st, "Local", snap(local_id, local_ui, None))
+    from tests._mrwp_evidence import snapshot, PROD
+
+    def snap(run_id, ui):
+        return snapshot(run_id, {PROD: [
+            (f"test_{1000 + i}_Scenario", "Passed" if i < ui["passed"] else "Failed")
+            for i in range(ui["total"])]})
+    K.stash_mrwp(st, "ECS", snap(ecs_id, ecs_ui))
+    K.stash_mrwp(st, "Local", snap(local_id, local_ui))
     _seed_auth(st)
 
 
@@ -337,7 +345,7 @@ def _seed_auth(st):
     rc = K.latest_rc(st)["rc"]
     K.stash_auth(st, rc, {
         "build": {"run_id": "900010", "rc": rc, "complete": True, "result": "succeeded"},
-        "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(97)},
+        "test": _auth_test(_auth_suites(97), rc=rc),
         "verdict": "clean"})
 
 
@@ -406,7 +414,9 @@ def _uts_state(plan_id="900", release="2026-08"):
     st = ReleaseState(release_id=release)
     if plan_id is not None:
         st.set_step("bug_bash", "clone_plans_broker",
-                    StepState(status="done", data={"plan_id": plan_id}))
+                    StepState(status="done", data={"plan_id": plan_id, "ui_suite_id": 901}))
+    from tests._ui_results import checkpoint_memory
+    checkpoint_memory(st)
     return st
 
 
@@ -417,7 +427,14 @@ def _dist_build(mocks, owner="owner@microsoft.com", broker_plan="900", *, oof=No
     from orchestrator.outcomes import as_dict
     from orchestrator.state import StepState
     st = ReleaseState(release_id="2026-08", owner_email=owner)
-    st.set_step("bug_bash", "clone_plans_broker", StepState(status="done", data={"plan_id": broker_plan}))
+    from tests._mrwp_evidence import current_rc
+    st.pipeline_runs = {"rcs": [current_rc()]}
+    st.set_step("bug_bash", "clone_plans_broker",
+                StepState(status="done", data={"plan_id": broker_plan, "ui_suite_id": 901}))
+    st.set_step("bug_bash", "clone_plans_auth", StepState(status="done", data={"suite_id": 902}))
+    if broker_plan:
+        from tests._ui_results import publish
+        publish(st)
     with mockctx.active(mocks):
         return st, as_dict(_steps.get_step("bug_bash", "distribute_tests").build(st, oof=oof))
 

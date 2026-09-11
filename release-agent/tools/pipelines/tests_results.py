@@ -100,7 +100,13 @@ def reconcile_retries(results, *, include_tests=False):
                                              for k, v in sorted(counts.items(), key=lambda kv:
                                                                 "null" if kv[0] is None else kv[0])},
                           "attempts": [{"run_id": r.get("run_id"), "result_id": r.get("id"),
-                                        "outcome": r.get("outcome")} for r in ordered_attempts]})
+                                        "outcome": r.get("outcome"),
+                                        **{k: r[k] for k in ("errorMessage", "stackTrace",
+                                                            "automatedTestName", "automatedTestStorage")
+                                           if isinstance(r.get(k), str)}}
+                                       for r in ordered_attempts]})
+            tests[-1]["case_ids"] = sorted({_ui_case_id_from_result(r) for r in attempts
+                                           if _ui_case_id_from_result(r)})
     summary = {"passed": passed, "failed": failed, "recovered": recovered,
                "total": passed + failed, "na": na}
     if include_tests:
@@ -176,6 +182,11 @@ def get_test_summary(org, project, build_id, timeout=60):
     ok, runs, detail = _pp._test_runs(org, project, build_id, timeout)
     if not ok:
         return (False, None, detail)
+    return summarize_test_runs(org, project, build_id, runs, timeout)
+
+
+def summarize_test_runs(org, project, build_id, runs, timeout=90):
+    """Complete detailed read of an already acquired run list; shared by both providers."""
     groups, out_runs = {}, []
     for r in sorted(runs, key=lambda r: r["id"]):
         rid, name = r.get("id"), r.get("name")
@@ -263,4 +274,4 @@ def get_failed_tests(org, project, build_id, timeout=90):
     ok, summary, detail = _pp.get_test_summary(org, project, build_id, timeout)
     return (ok, summary["failed_suites"] if ok else None, detail)
 
-__all__ = ['TEST_CATEGORIES', 'MRWP_COUNT_BASIS', '_CATEGORY_LABEL', '_NA_OUTCOMES', '_UI_API_RE', '_VERSION_KEYS', '_msal_variant', '_run_results', '_test_runs', '_suite_base_name', '_ui_case_id_from_result', 'classify_test_run', 'format_release_versions', 'format_versions', 'get_failed_tests', 'get_test_summary', 'reconcile_retries']
+__all__ = ['TEST_CATEGORIES', 'MRWP_COUNT_BASIS', '_CATEGORY_LABEL', '_NA_OUTCOMES', '_UI_API_RE', '_VERSION_KEYS', '_msal_variant', '_run_results', '_test_runs', '_suite_base_name', '_ui_case_id_from_result', 'classify_test_run', 'format_release_versions', 'format_versions', 'get_failed_tests', 'get_test_summary', 'summarize_test_runs', 'reconcile_retries']
