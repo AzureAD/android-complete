@@ -308,9 +308,8 @@ def test_bug_bash_clone_steps_are_real_agents():
 
 
 
-def test_distribute_tests_step_previews_and_stores_plan():
-    """The step computes the combined distribution offline and STASHES the plan on the step
-    (read-only preview) — it does NOT write assignments."""
+def test_distribute_tests_step_returns_transient_corrections_without_storing_plan():
+    """Corrections are read-only report data; the step waits for valid ADO."""
     mocks = {
         "roster": [{"name": "A", "upn": "a@microsoft.com"}, {"name": "B", "upn": "b@microsoft.com"},
                    {"name": "Owner", "upn": "owner@microsoft.com"}, {"name": "Oce", "upn": "oce@microsoft.com"}],
@@ -320,13 +319,13 @@ def test_distribute_tests_step_previews_and_stores_plan():
         "auth_cases": [{"id": "5", "assignee": "b@microsoft.com"}, {"id": "6", "assignee": None}],
     }
     st, out = _dist_build(mocks, oof=[])
-    assert out["kind"] == "done" and "PREVIEW" in out["note"]
-    plan = st.get_step("bug_bash", "distribute_tests").data["plan"]
-    assert plan["applied"] is False
+    assert out["kind"] == "blocked" and "corrections need review" in out["reason"]
+    plan = out["report"]
+    assert "plan" not in st.get_step("bug_bash", "distribute_tests").data
     assert plan["owner_excluded"] == "owner@microsoft.com" and plan["oce_excluded"] == "oce@microsoft.com"
     # 6 tests / 2 eligible (a,b; owner+oce excluded) -> 3 each
-    assert sorted(plan["counts"].values()) == [3, 3]
-    assert set(plan["assignments"].values()) == {"a@microsoft.com", "b@microsoft.com"}
+    assert sorted(plan["proposed_counts"].values()) == [3, 3]
+    assert set(plan["_targets"].values()) == {"a@microsoft.com", "b@microsoft.com"}
 
 
 
@@ -343,11 +342,11 @@ def test_distribute_excludes_automated_auth_cases():
         "auth_automated": [6, 8],                       # 6 + 8 already automated -> excluded
     }
     st, out = _dist_build(mocks, oof=[])
-    assert out["kind"] == "done"
-    plan = st.get_step("bug_bash", "distribute_tests").data["plan"]
+    assert out["kind"] == "blocked"
+    plan = out["report"]
+    assert "plan" not in st.get_step("bug_bash", "distribute_tests").data
     assert plan["auth_total"] == 2 and plan["auth_excluded_automated"] == 2   # 4 -> 2
-    assert "Excluded 2 already-automated auth case(s)" in out["note"]
-    assigned_ids = {k.split(":")[1] for k in plan["assignments"]}
+    assigned_ids = {k.split(":")[1] for k in plan["_targets"]}
     assert assigned_ids == {"5", "7"}                   # only the non-automated cases distributed
 
 

@@ -1,151 +1,127 @@
-"""`distribute-tests` — preview or apply the Phase-3 bug-bash test distribution.
-
-  --preview (default) : re-run the distribute_tests step to (re)compute the plan and print
-                        the per-tester table. Read-only; stores the plan on the step.
-  --apply             : write manual and owner-triage case assignees per the STORED plan,
-                        then align selected plan testers without changing outcomes.
-                        Records done only after both assignment surfaces succeed.
-
-The owner must first answer the Bug Bash OOF question: --no-oof or repeatable --oof.
-No answer means reuse an existing confirmation, never assume nobody is OOF.
-The OCE is supplied with --oce before availability choices; the owner comes from state.
---json includes only eligible candidates when owner input is needed, or the plan and its review inputs.
-"""
+"""Read/validate live ADO distribution; apply only explicitly reviewed current corrections."""
 from __future__ import annotations
-import json as _json
 
-from orchestrator import cli_common as C
-from orchestrator import mocks as mocks_mod
-from orchestrator.outcomes import as_dict
+import json
+
+from orchestrator import cli_common as C, mocks as mocks_mod
+from steps.bug_bash import distribute_tests as S
 from steps.lib import mockctx
 from tools import distribution as D
-from steps.bug_bash import distribute_tests as distribution_step
 
 
-def _print_table(plan):
-    counts = plan.get("counts") or {}
-    print(f"Eligible testers: {len(plan.get('eligible') or [])} | "
-          f"Broker {plan.get('broker_total')} + Auth {plan.get('auth_total')} = "
-          f"{plan.get('broker_total',0)+plan.get('auth_total',0)} tests | "
-          f"applied={plan.get('applied')}")
-    print(f"  excluded owner: {plan.get('owner_excluded')} | OCE: {plan.get('oce_excluded') or '(none)'}")
-    excluded = ", ".join(f"{m['name']} <{m['upn']}>" for m in plan.get("oof_excluded", []))
-    print(f"  owner-confirmed OOF: {excluded or 'nobody'}")
-    for u in sorted(plan.get("eligible") or [], key=lambda e: -counts.get(e, 0)):
-        print(f"    {counts.get(u,0):3}  {u}")
-    for key, triage in plan.get("owner_triage", {}).items():
-        print(f"  owner triage: {key} -> {triage['assignee']} ({', '.join(triage['reasons'])})")
+def _print_report(report, as_json):
+    public = {key: value for key, value in report.items() if not key.startswith("_")}
+    if as_json:
+        print(json.dumps(public, indent=2))
+        return
+    if "error" in report:
+        print(f"BLOCKED: {report['error']}")
+        if "valid" not in report:
+            for member in report.get("candidates", []):
+                print(f"  {member['name']} <{member['upn']}>")
+            return
+    print(f"Live ADO distribution: {'VALID' if report['valid'] else 'CORRECTIONS NEED REVIEW'}")
+    print(f"  Manual: Broker {report['broker_total']} + Auth {report['auth_total']}; "
+          f"owner triage: {len(report['owner_triage'])}")
+    print(f"  Excluded owner: {report['owner_excluded']} | OCE: {report['oce_excluded']}")
+    print("  Owner-confirmed OOF: " + (", ".join(f"{m['name']} <{m['upn']}>" for m in report["oof_excluded"]) or "nobody"))
+    for upn in report["eligible"]:
+        print(f"  {upn}: {report['current_counts'][upn]} now -> {report['proposed_counts'][upn]} proposed")
+    for change in report["case_changes"]:
+        print(f"  {change['case']}: {change['from'] or '(unassigned)'} -> {change['to']} ({change['reason']})")
+    for change in report["point_changes"]:
+        print(f"  Plan {change['plan_id']} suite {change['suite_id']} point {change['point_id']}: "
+              f"{change['from'] or '(unassigned)'} -> {change['to']}")
+    if not report["valid"]:
+        print(f"  After approval: --apply --review-hash {report['review_hash']}")
+
+
+def _inspect(args, state):
+    try:
+        return S.inspect_distribution(state, oof=[] if args.no_oof else args.oof, oce=args.oce)[1]
+    finally:
+        C.save_state(state, args.runs_root, args.release)
+
+
+def _finish(args, state):
+    # Completion is based on fresh ADO validation, never on a saved applied flag.
+    if state.is_done("bug_bash", S.ID):
+        return
+    _, orch = C.load_orch(args.runs_root, args.release, args.config)
+    orch.record_scout_step("bug_bash", S.ID, "pass", state.get_step("bug_bash", S.ID).note)
+    C.save_state(orch.state, args.runs_root, args.release)
 
 
 def cmd_distribute_tests(args):
-    selection = [] if args.no_oof else args.oof
-    if args.apply and (selection is not None or args.oce is not None):
-        message = "Do not combine --apply with --oof/--no-oof/--oce. Create and review a new preview first."
-        print(_json.dumps({"error": message}) if args.json else message)
+    if args.apply and (args.no_oof or args.oof is not None or args.oce is not None):
+        print("Do not combine --apply with --oof/--no-oof/--oce. Review the live corrections first.")
         return 1
-    st = C.load_state(args.runs_root, args.release)
-    spec = dict(mocks_mod.load_mocks().get("bug_bash.distribute_tests", {}))
-    with mockctx.active(spec):
-        if args.apply:
-            return _apply(args, st)
-        try:
-            out = as_dict(distribution_step.build(st, oof=selection, oce=args.oce))
-        finally:
-            # Persist invalidation even if gathering a replacement preview raises.
-            C.save_state(st, args.runs_root, args.release)
-    if out["kind"] == "blocked":
-        data = st.get_step("bug_bash", "distribute_tests").data or {}
-        candidates = data.get("oof_candidates", [])
-        if args.json:
-            print(_json.dumps({"error": out["reason"], "candidates": candidates,
-                              "oof": data.get("oof")}, indent=2))
-        else:
-            print(f"BLOCKED: {out['reason']}")
-            for member in candidates:
-                print(f"  {member['name']} <{member['upn']}>")
-        return 1
-    plan = (st.get_step("bug_bash", "distribute_tests").data or {}).get("plan") or {}
-    if args.json:
-        print(_json.dumps(plan, indent=2))
-    else:
-        print(out["note"]); print(); _print_table(plan)
-    return 0
-
-
-def _apply(args, st):
-    try:
-        distribution_step.validate_stored_plan(st)
-    except ValueError as exc:
-        distribution_step.invalidate_preview(st)
-        C.save_state(st, args.runs_root, args.release)
-        print(_json.dumps({"error": str(exc)}) if args.json else f"BLOCKED: {exc}")
-        return 1
-    plan = (st.get_step("bug_bash", "distribute_tests").data or {}).get("plan") or {}
-    manual = plan.get("assignments") or {}
-    triage = {key: entry["assignee"] for key, entry in plan.get("owner_triage", {}).items()}
-    assignments = {**manual, **triage}
-    if not assignments:
-        print("No stored distribution plan — run the preview first "
-              "(distribute-tests --release <id>).")
-        return 1
-    if plan.get("applied"):
-        print("This distribution was already applied.")
+    state = C.load_state(args.runs_root, args.release)
+    with mockctx.active(dict(mocks_mod.load_mocks().get("bug_bash.distribute_tests", {}))):
+        report = _inspect(args, state)
+        if "error" in report:
+            _print_report(report, args.json)
+            return 1
+        if not args.apply:
+            _print_report(report, args.json)
+            return 1 if args.validate and not report["valid"] else 0
+        if report["valid"]:
+            _finish(args, state)
+            _print_report(report, args.json)
+            return 0
+        if not args.review_hash or args.review_hash != report["review_hash"]:
+            report["error"] = "Review hash missing/stale. Review the fresh live corrections; no assignments written."
+            _print_report(report, args.json)
+            return 1
+        # Validate every revision before the first write, even when an earlier case is unchanged.
+        if any(type(row.get("revision")) is not int or row["revision"] < 1 for row in report["_current"].values()):
+            print("Missing ADO work-item revisions; no assignments written.")
+            return 1
+        failure = None
+        for change in report["case_changes"]:
+            row = report["_current"][change["case"]]
+            ok, detail = D.set_assigned_to(
+                change["case"][2:], change["to"], expected_revision=row["revision"])
+            if not ok:
+                failure = f"{change['case']}: {detail}"
+                break
+        if failure is None:
+            for group in report["_point_sets"]:
+                if not any(c["plan_id"] == group["plan_id"] and c["suite_id"] == group["suite_id"]
+                           for c in report["point_changes"]):
+                    continue
+                targets = {p["case_id"]: report["_targets"][f"{group['prefix']}:{p['case_id']}"]
+                           for p in group["points"]}
+                ok, detail = D.sync_point_testers(
+                    group["plan_id"], group["suite_id"], targets,
+                    expected_testers={p["id"]: p["tester_id"] for p in group["points"]})
+                if not ok:
+                    failure = detail
+                    break
+        # Never replay a saved map: report what actually landed, including partial failures.
+        after = _inspect(args, state)
+        if failure:
+            after["error"] = f"Apply stopped: {failure}. Earlier writes may have succeeded; inspect live ADO before retry."
+        elif "error" not in after and not after["valid"]:
+            after["error"] = "Live ADO validation still reports mismatches; review the remaining corrections."
+        if "error" in after:
+            _print_report(after, args.json)
+            return 2
+        _finish(args, state)
+        _print_report(after, args.json)
         return 0
-
-    ok_n, fail = 0, []
-    for key, upn in assignments.items():
-        case_id = key.split(":", 1)[1]          # 'B:123' / 'A:123' -> '123'
-        ok, detail = D.set_assigned_to(case_id, upn)
-        if ok:
-            ok_n += 1
-        else:
-            fail.append((case_id, upn, detail))
-            if str(detail).startswith("AUTH"):
-                break                            # stop on auth failure — nothing will work
-    if not fail:
-        ok, detail = distribution_step.sync_plan_testers(st, assignments)
-        if not ok:
-            fail.append(("plan testers", "", detail))
-
-    plan["applied"] = not fail
-    step = st.get_step("bug_bash", "distribute_tests")
-    step.data = dict(step.data or {}); step.data["plan"] = plan
-    st.set_step("bug_bash", "distribute_tests", step)
-    C.save_state(st, args.runs_root, args.release)
-
-    if fail:
-        C.emit(args.runs_root, args.release,
-               f"[distribute] applied {ok_n}/{len(assignments)}; {len(fail)} failed", kind="step")
-        print(f"Applied {ok_n}/{len(assignments)} assignments; {len(fail)} FAILED:")
-        for cid, upn, d in fail[:10]:
-            print(f"  case {cid} -> {upn}: {d}")
-        return 2
-    # mark the step done on a clean apply
-    st2, orch = C.load_orch(args.runs_root, args.release, args.config)
-    orch.record_scout_step("bug_bash", "distribute_tests", "pass",
-                           f"Assigned {len(manual)} manual cases across {len(plan.get('eligible') or [])} testers "
-                           f"and {len(triage)} cases to the release owner for triage; plan testers aligned.")
-    C.save_state(orch.state, args.runs_root, args.release)
-    C.emit(args.runs_root, args.release,
-           f"[distribute] assigned {len(manual)} manual cases across {len(plan.get('eligible') or [])} "
-           f"testers and {len(triage)} owner-triage cases; plan testers aligned", kind="step")
-    print(f"Applied {len(manual)} manual assignments and {len(triage)} owner-triage assignments; "
-          "plan testers aligned. Outcomes unchanged.")
-    return 0
 
 
 def register(sub):
-    p = sub.add_parser("distribute-tests",
-                       help="Preview or apply the Phase-3 bug-bash test distribution")
+    p = sub.add_parser("distribute-tests", help="Validate live ADO assignments and preview/apply reviewed corrections")
     p.add_argument("--release", required=True)
-    p.add_argument("--oce", default=None,
-                   help="Verified primary on-call UPN; required before availability choices unless already recorded")
+    p.add_argument("--oce", default=None, help="Verified primary on-call UPN")
     choice = p.add_mutually_exclusive_group()
-    choice.add_argument("--oof", action="append", metavar="UPN",
-                       help="Owner-confirmed OOF tester; repeat per person (exact roster name also accepted)")
-    choice.add_argument("--no-oof", action="store_true",
-                       help="Record the release owner's explicit answer that nobody is OOF")
-    p.add_argument("--apply", action="store_true",
-                   help="Apply reviewed manual/triage case assignees and plan testers; preserve outcomes")
-    p.add_argument("--json", action="store_true", help="Emit the raw plan JSON")
+    choice.add_argument("--oof", action="append", metavar="UPN", help="Owner-confirmed OOF tester; repeat per person")
+    choice.add_argument("--no-oof", action="store_true", help="Confirm nobody is OOF")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true", help="Apply the reviewed live corrections, then validate ADO")
+    mode.add_argument("--validate", action="store_true", help="Read only; return nonzero if ADO is not valid")
+    p.add_argument("--review-hash", help="Digest from the explicitly approved preview; never a saved assignment list")
+    p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_distribute_tests)

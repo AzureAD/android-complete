@@ -829,12 +829,13 @@ bug_bash.clone_plans_auth:
       a: "The curated bug-bash set — Android test cases tagged 'ReleaseBugBash' (the tag also matches month-specific 'ReleaseBugBash<Month>' tags), not Closed. This matches prod; a broad 'all Android' filter would over-include (e.g. ComposeTesting/DarkMode cases)."
 
 bug_bash.distribute_tests:
-  summary: "Evenly distribute the manual bug-bash tests across the eligible team."
+  summary: "Validate live ADO distribution and apply only reviewed corrections."
   what: >
-    Combines the two manual test sets — Broker ('Manual Tests (Android Broker)' subtree,
-    ~48 cases) + Authenticator (the ReleaseBugBash query set) — and splits them EVENLY across
-    the eligible team, keeping each test on its current assignee where possible (preference),
-    only reassigning to hit an even count. The Authenticator set EXCLUDES cases already
+    Combines the two manual test sets — Broker ('Manual Tests (Android Broker)' subtree)
+    + Authenticator (the ReleaseBugBash query set) — and checks
+    that live ADO assignments are eligible and evenly balanced, with matching plan testers.
+    Proposes corrections only for mismatches, preserving current assignments where possible.
+    It never silently redistributes or replays a saved assignment map. The Authenticator set EXCLUDES cases already
     automated by this release's auth ECS UI-test run — read from ui_test_status's completed
     result through its public accessor, NOT from the cross-platform 'Automated' tag.
     Cases with a configured triage tag (Blocked) remain explicit owner-triage work, not
@@ -853,8 +854,9 @@ bug_bash.distribute_tests:
     The release owner, resolved primary OCE, Jia Le He, Moumita Ghosh and Veena Soman
     are removed BEFORE availability choices are shown. An unresolved OCE blocks without
     exposing candidates; Scout must resolve it, not ask the user to exclude it as OOF. After that,
-    Scout computes the PREVIEW during `next` (an agent step). Applying it is
-    a separate, explicit action you trigger — it writes System.AssignedTo, which mutates
+    Scout validates live ADO during `next` (an agent step), holding on mismatches and
+    completing only when ADO is correct. Applying reviewed corrections is
+    a separate, explicit action — it writes System.AssignedTo, which mutates
     the shared test-case work items (so this release's assignment becomes next release's
     default preference), and the corresponding testers in the two release suites. Outcomes,
     completed results and shared tags are not changed by assignment alignment.
@@ -869,26 +871,29 @@ bug_bash.distribute_tests:
     Record ONLY the owner's answer: `distribute-tests --release <id> --no-oof` or
     `distribute-tests --release <id> --oof <upn> [--oof <upn> ...] [--oce <upn>]`.
     The command stores canonical UPNs, who confirmed, source, time and release scope in
-    step.data.oof, builds a preview, and shows OOF exclusions. No availability dates are inferred.
-    Later previews reuse the confirmation; either choice flag explicitly replaces it.
-    Failed/revised previews invalidate any previous plan. Review the new preview, then
-    The preview separately lists each owner-triage case and reason (blocked or failed
-    automation). `distribute-tests --release <id> --apply` writes the manual and triage
-    case assignments and aligns their plan testers; never combine
-    selection/OCE flags with --apply. Apply rechecks the roster and saved input provenance,
-    and refuses missing/stale confirmation, changed triage, or manual assignments to
-    excluded people. The owner is excluded from manual work, not from triage responsibility.
-    Apply is complete only after both shared case assignments and plan testers succeed;
-    alignment failures remain explicit and do not report applied=true.
-    Already-written assignments are not changed by answering; a fresh preview and separate
-    explicit apply are required. The OCE team id (ICM 78848) is the SAME source the entry gate's oncall_now
-    check uses (read from readiness.yaml — no second copy).
+    step.data.oof. No availability dates are inferred. Later reads reuse the confirmation;
+    either choice flag explicitly replaces it. `distribute-tests --release <id> --validate --json`
+    reads ADO and reports current eligibility, balance, triage and tester mismatches without
+    writing assignments. The default command also provides transient proposed corrections.
+    Show the exact corrections and obtain approval, then use
+    `distribute-tests --release <id> --apply --review-hash <approved-preview-hash>`.
+    Do not combine selection/OCE flags with --apply. The command rereads live inputs and
+    checks the digest before writing; it never loads a saved assignment plan. The digest
+    is not stored either. Native work-item revision checks protect concurrent case edits.
+    Only mismatches are corrected, then live ADO is read again to verify both assignment
+    surfaces. Outcomes/tags are preserved. Partial failures remain visible; review the live
+    remaining corrections instead of replaying or rolling back. If ADO is already valid,
+    no redistribution is needed, including after an interrupted local completion.
+    Only availability decisions and workflow status are retained internally; legacy
+    data.plan is ignored and removed on step execution. Progress reads live ADO.
   links:
     - name: "Broker test-plans doc"
       url: "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/internal-release-checklist/test-plans"
     - name: "How to make a test suite for bug bash (IDWiki 33580)"
       url: "https://identitydivision.visualstudio.com/IdentityWiki/_wiki/wikis/IdentityWiki.wiki/33580/How-to-make-test-suite-for-bug-bash-"
   faqs:
+    - q: "What happens when someone changes assignments directly in ADO?"
+      a: "ADO is authoritative. Read and validate the current values against eligibility, balance, triage and matching-tester rules. Valid manual changes remain untouched. Mismatches are reported for approval, never silently reverted to an internal list. The temporary review hash prevents applying different corrections from those reviewed; no hash or assignment map is saved."
     - q: "How is 'even' decided when counts don't divide evenly?"
       a: "target = total ÷ eligible; the remainder people (those with the most default tests) get one extra, so heavy-default folks keep their preference."
     - q: "Does applying it change the master plan?"

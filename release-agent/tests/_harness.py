@@ -435,8 +435,10 @@ def _dist_build(mocks, owner="owner@microsoft.com", broker_plan="900", *, oof=No
     if broker_plan:
         from tests._ui_results import publish
         publish(st)
-    with mockctx.active(mocks):
-        return st, as_dict(_steps.get_step("bug_bash", "distribute_tests").build(st, oof=oof))
+    from tests.test_distribution import observe
+    with mockctx.active(observe(mocks)):
+        outcome, report = _steps.get_step("bug_bash", "distribute_tests").inspect_distribution(st, oof=oof)
+        return st, {**as_dict(outcome), "report": report}
 
 
 

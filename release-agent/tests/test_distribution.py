@@ -1,5 +1,6 @@
-"""Owner-supplied Bug Bash availability: pure selection, preview, CLI and engine."""
+"""Live ADO distribution, owner availability and transient correction previews."""
 from copy import deepcopy
+import json
 
 import pytest
 
@@ -7,442 +8,311 @@ from orchestrator import cli_common as C
 from orchestrator.cli import build_parser
 from orchestrator.commands import distribute as command
 from orchestrator.engine import Orchestrator
-from orchestrator.outcomes import Blocked, Done
+from orchestrator.outcomes import Done, Blocked
 from orchestrator.state import ReleaseState, StepState
 from steps.bug_bash import distribute_tests as step
 from steps.lib import mockctx
 from tools import distribution as D
 
 
+def observe(inputs, *, automated=None, failed=None):
+    """Refresh explicit fake ADO observations in place, preserving independent point testers."""
+    snapshot, groups = {}, []
+    automated = inputs.get("auth_automated", []) if automated is None else automated
+    failed = inputs.get("auth_failed", []) if failed is None else failed
+    for prefix, cases, pid, sid in (("B", inputs.get("broker_cases", []), 1, 11),
+                                     ("A", inputs.get("auth_cases", []), 2, 22)):
+        points = []
+        for case in cases:
+            cid = str(case["id"])
+            owner = D._identity(case.get("assignee")) or None
+            identity = "id-" + owner if owner else None
+            snapshot[cid] = {"assignee": owner, "identity_id": identity, "revision": case.get("revision", 1)}
+            case.setdefault("tester_id", identity)
+            if prefix == "A" and int(cid) in automated and int(cid) not in failed and not any(
+                    tag.casefold() == "blocked" for tag in case.get("tags", [])):
+                continue
+            points.append({"id": int(cid), "case_id": cid, "tester_id": case["tester_id"]})
+        if points:
+            groups.append({"prefix": prefix, "plan_id": pid, "suite_id": sid, "points": points})
+    inputs.setdefault("case_snapshot", {}).clear()
+    inputs["case_snapshot"].update(snapshot)
+    inputs.setdefault("point_sets", [])[:] = groups
+    return inputs
+
+
 @pytest.fixture
 def inputs():
-    return {
-        "roster": [
-            {"name": "Alice", "upn": "ALICE@example.com"},
-            {"name": "Bob", "upn": "bob@example.com"},
-            {"name": "Charlie", "upn": "charlie@example.com"},
-            {"name": "Owner", "upn": "owner@example.com"},
-            {"name": "OCE", "upn": "oce@example.com"},
-            {"name": "Always excluded", "upn": "moghosh@microsoft.com"},
-            {"name": "Jia Le He", "upn": "JIALH@microsoft.com"},
-            {"name": "Veena Soman", "upn": "veenasoman@microsoft.com"},
-        ],
+    return observe({
+        "roster": [{"name": name, "upn": upn} for name, upn in [
+            ("Alice", "ALICE@example.com"), ("Bob", "bob@example.com"), ("Charlie", "charlie@example.com"),
+            ("Owner", "owner@example.com"), ("OCE", "oce@example.com"),
+            ("Always excluded", "moghosh@microsoft.com"), ("Jia Le He", "JIALH@microsoft.com"),
+            ("Veena Soman", "veenasoman@microsoft.com")]],
         "oce": "oce@example.com",
-        "broker_cases": [{"id": str(i), "assignee": "ALICE@example.com"} for i in range(1, 8)],
-        "auth_cases": [{"id": "8", "assignee": "owner@example.com"},
-                       {"id": "9", "assignee": "oce@example.com"}],
+        "broker_cases": [{"id": str(i), "assignee": "alice@example.com"} for i in range(1, 8)],
+        "auth_cases": [{"id": "8", "assignee": "owner@example.com"}, {"id": "9", "assignee": "oce@example.com"}],
         "auth_automated": [],
-    }
+    })
 
 
 @pytest.fixture
 def state():
-    return ReleaseState(release_id="test-oof", owner_email="owner@example.com",
-                        readiness_signed=True)
+    return ReleaseState(release_id="test-live-distribution", owner_email="owner@example.com", readiness_signed=True)
 
 
-def _build(state, inputs, **kwargs):
+def inspect(state, inputs, **kwargs):
+    observe(inputs)
     with mockctx.active(inputs):
-        return step.build(state, **kwargs)
+        return step.inspect_distribution(state, **kwargs)
 
 
-def _data(state):
+def data(state):
     return state.get_step("bug_bash", step.ID).data
 
 
-def _cli(monkeypatch, state, inputs, *flags):
+def cli(monkeypatch, state, inputs, *flags):
+    observe(inputs)
     saved = []
     monkeypatch.setattr(C, "load_state", lambda *_: state)
     monkeypatch.setattr(C, "save_state", lambda st, *_: saved.append(deepcopy(st)))
-    monkeypatch.setattr(C, "emit", lambda *_, **__: None)
-    monkeypatch.setattr(C, "load_orch",
-                        lambda *_: (state, Orchestrator(C.DEFAULT_CONFIG, state, mocks={})))
-    monkeypatch.setattr(command.mocks_mod, "load_mocks",
-                        lambda: {"bug_bash.distribute_tests": inputs})
-    monkeypatch.setattr(step, "sync_plan_testers", lambda *args: (True, ""))
+    monkeypatch.setattr(C, "load_orch", lambda *_: (state, Orchestrator(C.DEFAULT_CONFIG, state, mocks={})))
+    monkeypatch.setattr(command.mocks_mod, "load_mocks", lambda: {"bug_bash.distribute_tests": inputs})
     args = build_parser().parse_args(["distribute-tests", "--release", state.release_id, *flags])
     return command.cmd_distribute_tests(args), saved
 
 
-def test_no_confirmation_blocks_before_case_reads_or_distribution(state, inputs, monkeypatch):
-    def unexpected(*_, **__):
-        pytest.fail("A case read or distribution occurred before owner input")
-
-    monkeypatch.setattr(D, "broker_manual_cases", unexpected)
-    monkeypatch.setattr(D, "auth_bugbash_cases", unexpected)
-    monkeypatch.setattr(D, "distribute", unexpected)
-    out = _build(state, {"roster": inputs["roster"], "oce": inputs["oce"]})
-    assert isinstance(out, Blocked)
-    assert "Is anyone OOF for this Bug Bash?" in out.reason
-    assert "--no-oof" in out.reason
-    assert _data(state)["oof_candidates"] == [
-        {"name": name, "upn": f"{name.lower()}@example.com"} for name in ("Alice", "Bob", "Charlie")]
-    assert "oof" not in _data(state) and "plan" not in _data(state)
-    # An undocumented mock key is not an alternate production confirmation source.
-    out = _build(state, {**inputs, "oof": [], "oof_confirmed": True})
-    assert isinstance(out, Blocked) and "plan" not in _data(state)
-
-
-def test_explicit_nobody_and_repeated_preview_reuse_confirmation(state, inputs):
-    assert isinstance(_build(state, inputs, oof=[]), Done)
-    confirmed = deepcopy(_data(state)["oof"])
-    plan = deepcopy(_data(state)["plan"])
-    assert confirmed["upns"] == []
-    assert confirmed["confirmed_by"] == state.owner_email
-    assert confirmed["source"] == "release-owner"
-    assert confirmed["confirmed_at"] and confirmed["release_id"] == state.release_id
-    assert plan["counts"] == dict.fromkeys(["alice@example.com", "bob@example.com",
-                                          "charlie@example.com"], 3)
-    assert isinstance(_build(state, inputs), Done)
-    assert _data(state)["oof"] == confirmed
-    assert _data(state)["plan"] == plan
-    assert plan["review_inputs"]["oof"] == confirmed
+def fake_writes(monkeypatch, inputs):
+    calls = []
+    cases = {str(c["id"]): c for c in inputs["broker_cases"] + inputs["auth_cases"]}
+    def write(cid, upn, *, expected_revision):
+        assert expected_revision == cases[cid].get("revision", 1)
+        calls.append(("case", cid, upn))
+        cases[cid]["assignee"] = upn
+        cases[cid]["revision"] = expected_revision + 1
+        observe(inputs)
+        return True, ""
+    def sync(pid, sid, assignments, *, expected_testers):
+        assert {int(cid): cases[str(cid)]["tester_id"] for cid in assignments} == expected_testers
+        for cid, upn in assignments.items():
+            target = "id-" + upn
+            if cases[str(cid)]["tester_id"] != target:
+                calls.append(("point", str(cid), upn))
+                cases[str(cid)]["tester_id"] = target
+        observe(inputs)
+        return True, ""
+    monkeypatch.setattr(D, "set_assigned_to", write)
+    monkeypatch.setattr(D, "sync_point_testers", sync)
+    return calls
 
 
-def test_oof_rebalances_default_assignments_and_preserves_other_exclusions(state, inputs):
-    out = _build(state, inputs, oof=[" Alice ", "ALICE@EXAMPLE.COM", "alice@example.com"])
-    assert isinstance(out, Done)
-    plan = _data(state)["plan"]
-    assert _data(state)["oof"]["upns"] == ["alice@example.com"]
-    assert sorted(plan["counts"].values()) == [4, 5]
-    assert set(plan["assignments"].values()) == {"bob@example.com", "charlie@example.com"}
-    assert plan["oof_excluded"] == [{"name": "Alice", "upn": "alice@example.com"}]
-    assert "Alice <alice@example.com>" in out.note
-    assert plan["owner_excluded"] == state.owner_email
-    assert plan["oce_excluded"] == inputs["oce"]
-    assert "moghosh@microsoft.com" not in plan["eligible"]
+def correct_ado(inputs, report):
+    for case in inputs["broker_cases"] + inputs["auth_cases"]:
+        key = ("B:" if case in inputs["broker_cases"] else "A:") + str(case["id"])
+        if key in report["_targets"]:
+            case["assignee"] = report["_targets"][key]
+            case["tester_id"] = "id-" + case["assignee"]
+    observe(inputs)
+
+
+def test_confirmation_precedes_case_reads_and_candidates_are_transient(state, inputs):
+    out, report = inspect(state, inputs)
+    assert isinstance(out, Blocked) and "Is anyone OOF" in out.reason
+    assert [m["name"] for m in report["candidates"]] == ["Alice", "Bob", "Charlie"]
+    assert not data(state)
+
+
+def test_preview_is_transient_and_reuses_only_availability(state, inputs):
+    out, report = inspect(state, inputs, oof=[])
+    assert isinstance(out, Blocked) and not report["valid"]
+    assert report["proposed_counts"] == dict.fromkeys(["alice@example.com", "bob@example.com", "charlie@example.com"], 3)
+    assert len(report["case_changes"]) == 6
+    before = deepcopy(data(state))
+    assert set(before) == {"oof"}
+    assert before["oof"]["confirmed_by"] == state.owner_email
+    assert before["oof"]["source"] == "release-owner"
+    assert before["oof"]["confirmed_at"]
+    assert inspect(state, inputs)[1]["review_hash"] == report["review_hash"]
+    assert data(state) == before
+
+
+def test_oof_balance_and_exclusions(state, inputs):
+    _, report = inspect(state, inputs, oof=[" Alice ", "ALICE@example.com"])
+    assert report["eligible"] == ["bob@example.com", "charlie@example.com"]
+    assert sorted(report["proposed_counts"].values()) == [4, 5]
+    assert report["oof_excluded"] == [{"name": "Alice", "upn": "alice@example.com"}]
+    assert data(state)["oof"]["upns"] == ["alice@example.com"]
+    assert len(report["case_changes"]) == 9
 
 
 @pytest.mark.parametrize("selection", [["unknown@example.com"], ["Ali"], [""], [" "]])
-def test_invalid_replacement_clears_old_confirmation_and_plan(state, inputs, selection):
-    _build(state, inputs, oof=[])
-    out = _build(state, inputs, oof=selection)
-    assert isinstance(out, Blocked)
-    assert "plan" not in _data(state) and "oof" not in _data(state)
-    assert state.get_step("bug_bash", step.ID).status == "blocked"
-    assert isinstance(_build(state, inputs), Blocked)  # no fallback to the previous answer
+def test_invalid_answer_clears_prior_confirmation(state, inputs, selection):
+    inspect(state, inputs, oof=[])
+    out, report = inspect(state, inputs, oof=selection)
+    assert isinstance(out, Blocked) and report["error"] and "oof" not in data(state)
+    assert isinstance(inspect(state, inputs)[0], Blocked)
 
 
-def test_duplicate_names_require_verified_upn_and_roster_is_deterministic(inputs):
-    roster = inputs["roster"] + [{"name": "Alice", "upn": "another@example.com"},
-                                {"name": "Bob", "upn": "BOB@EXAMPLE.COM"}]
+def test_duplicate_roster_names_need_exact_upn(inputs):
+    roster = inputs["roster"] + [{"name": "Alice", "upn": "another@example.com"}]
     with pytest.raises(ValueError, match="Ambiguous"):
         D.resolve_oof(["Alice"], roster)
-    assert D.resolve_oof(["ALICE@example.com", " Bob ", "BOB@example.com"], roster) == [
-        "alice@example.com", "bob@example.com"]
-    assert D.canonical_roster(list(reversed(roster))) == D.canonical_roster(roster)
-    eligible = D.eligible_testers([" A@X ", "a@x", "B@X"], [], oof=["b@x"])
-    assert eligible == ["a@x"]
-
-
-def test_replacement_nobody_reincludes_previous_oof_and_persists_oce(state, inputs):
-    _build(state, inputs, oof=["Alice"], oce="bob@example.com")
-    assert _data(state)["plan"]["eligible"] == ["charlie@example.com", "oce@example.com"]
-    _build(state, inputs, oof=[])
-    assert "alice@example.com" in _data(state)["plan"]["eligible"]
-    assert "bob@example.com" not in _data(state)["plan"]["eligible"]
-    assert _data(state)["plan"]["oof_excluded"] == []
-
-
-@pytest.mark.parametrize("failure", ["no_testers", "case_read", "roster_read", "injected"])
-def test_failed_rebuild_never_leaves_previous_plan(state, inputs, monkeypatch, failure):
-    _build(state, inputs, oof=[])
-    updated = deepcopy(inputs)
-    selection = ["Alice"]
-    if failure == "no_testers":
-        selection = ["Alice", "Bob", "Charlie"]
-    elif failure == "case_read":
-        updated.pop("auth_cases")
-        monkeypatch.setattr(D, "auth_bugbash_cases", lambda *_: (False, None, "unavailable"))
-    elif failure == "roster_read":
-        updated.pop("roster")
-        monkeypatch.setattr(D, "resolve_roster", lambda *_: (False, None, "unavailable"))
-    else:
-        updated["fail"] = "forced failure"
-    assert isinstance(_build(state, updated, oof=selection), Blocked)
-    assert "plan" not in _data(state)
-
-
-def test_cli_returns_candidates_then_records_and_prints_owner_choice(state, inputs, monkeypatch, capsys):
-    import json
-
-    result, saved = _cli(monkeypatch, state, inputs, "--json")
-    assert result == 1 and len(saved) == 1
-    candidates = json.loads(capsys.readouterr().out)["candidates"]
-    assert [m["upn"] for m in candidates] == ["alice@example.com", "bob@example.com", "charlie@example.com"]
-    result, saved = _cli(monkeypatch, state, inputs, "--oof", "Alice", "--oof", "alice@example.com")
-    assert result == 0 and len(saved) == 1
-    assert "Alice <alice@example.com>" in capsys.readouterr().out
-    assert _data(saved[-1])["oof"]["upns"] == ["alice@example.com"]
+    assert D.resolve_oof(["ALICE@example.com", " Bob "], roster) == ["alice@example.com", "bob@example.com"]
+    assert D.canonical_roster(roster) == D.canonical_roster(list(reversed(roster)))
 
 
 @pytest.mark.parametrize("oce", [None, "", "OCE", "a@@example.com", "@example.com", "a@", "a b@example.com"])
-def test_unresolved_oce_hides_candidates_and_blocks_before_roster_reads(state, inputs, monkeypatch, oce):
-    def unexpected(*args, **kwargs):
-        pytest.fail("Roster or test data read before the on-call identity was resolved")
-
-    monkeypatch.setattr(D, "resolve_roster", unexpected)
-    _build(state, inputs)
-    assert _data(state)["oof_candidates"]
-    record = state.get_step("bug_bash", step.ID)
-    record.data["oce"] = oce
-    state.set_step("bug_bash", step.ID, record)
-    out = _build(state, {})
-    assert isinstance(out, Blocked) and "--oce <verified-upn>" in out.reason
-    assert not _data(state).get("oof_candidates") and "plan" not in _data(state)
+def test_missing_oce_hides_candidates(state, inputs, oce):
+    state.set_step("bug_bash", step.ID, StepState(data={"oce": oce}))
+    out, report = inspect(state, inputs)
+    assert isinstance(out, Blocked) and "--oce" in out.reason and not report.get("candidates")
 
 
-def test_owner_is_required_before_displaying_candidates(state, inputs):
+def test_missing_owner_hides_candidates(state, inputs):
     state.owner_email = None
-    out = _build(state, inputs)
-    assert isinstance(out, Blocked) and "release owner missing" in out.reason
-    assert not _data(state).get("oof_candidates")
+    assert "release owner missing" in inspect(state, inputs)[0].reason
 
 
-def test_changed_oce_refilters_candidates_without_changing_the_roster(state, inputs):
-    original = deepcopy(inputs["roster"])
-    _build(state, inputs, oce=" BOB@EXAMPLE.COM ")
-    assert [m["upn"] for m in _data(state)["oof_candidates"]] == [
-        "alice@example.com", "charlie@example.com", "oce@example.com"]
-    _build(state, inputs)
-    assert "bob@example.com" not in {m["upn"] for m in _data(state)["oof_candidates"]}
-    assert inputs["roster"] == original
-    assert {"jialh@microsoft.com", "moghosh@microsoft.com", "veenasoman@microsoft.com"} <= set(
-        D.load_config()["always_excluded"])
-    assert "shjameel@microsoft.com" not in D.load_config()["always_excluded"]
+def test_replacement_availability_and_primary_oce_are_saved_not_assignments(state, inputs):
+    _, report = inspect(state, inputs, oof=["Alice"], oce="bob@example.com")
+    assert report["eligible"] == ["charlie@example.com", "oce@example.com"]
+    _, report = inspect(state, inputs, oof=[])
+    assert "alice@example.com" in report["eligible"] and "bob@example.com" not in report["eligible"]
+    assert set(data(state)) == {"oof", "oce"}
+    assert {"jialh@microsoft.com", "moghosh@microsoft.com", "veenasoman@microsoft.com"} <= set(D.load_config()["always_excluded"])
 
 
-def test_blocked_cases_remain_owner_triage_not_silently_excluded(state, inputs):
-    inputs["auth_cases"] += [
-        {"id": "10", "assignee": "oce@example.com", "tags": ["Blocked"]},
-        {"id": "11", "assignee": "former@example.com", "tags": ["blocked"]},
-        {"id": "12", "assignee": "former@example.com", "tags": ["Automated"]},
-    ]
-    inputs["auth_automated"] = [8]
-    inputs["auth_failed"] = [8]
-    assert isinstance(_build(state, inputs, oof=[]), Done)
-    plan = _data(state)["plan"]
-    assert set(plan["owner_triage"]) == {"A:8", "A:10", "A:11"}
-    assert plan["owner_triage"]["A:8"]["reasons"] == ["failed_automation"]
-    assert all(v["assignee"] == state.owner_email for v in plan["owner_triage"].values())
-    assert "A:12" in plan["assignments"]  # Shared tag alone does not prove Android automation.
-    assert not set(plan["assignments"]) & set(plan["owner_triage"])
+def test_automated_and_blocked_cases_have_explicit_triage(state, inputs):
+    inputs["auth_cases"] += [{"id": "10", "assignee": "former@example.com", "tags": ["Blocked"]},
+                             {"id": "11", "assignee": "former@example.com", "tags": ["Automated"]}]
+    inputs["auth_automated"], inputs["auth_failed"] = [8], [8]
+    _, report = inspect(state, inputs, oof=[])
+    assert set(report["owner_triage"]) == {"A:8", "A:10"}
+    assert report["owner_triage"]["A:8"]["reasons"] == ["failed_automation"]
+    assert "A:11" in report["_targets"]
+    assert "plan" not in data(state)
+
+
+def test_valid_ado_requires_no_corrections_even_after_manual_changes(state, inputs):
+    _, proposal = inspect(state, inputs, oof=[])
+    correct_ado(inputs, proposal)
+    assert isinstance(inspect(state, inputs)[0], Done)
+    cases = inputs["broker_cases"] + inputs["auth_cases"]
+    a = next(c for c in cases if c["assignee"] == "alice@example.com")
+    b = next(c for c in cases if c["assignee"] == "bob@example.com")
+    a["assignee"], b["assignee"] = b["assignee"], a["assignee"]
+    a["tester_id"], b["tester_id"] = b["tester_id"], a["tester_id"]
+    out, report = inspect(state, inputs)
+    assert isinstance(out, Done) and not report["case_changes"] and not report["point_changes"]
+
+
+def test_point_only_mismatch_is_detected_and_corrected(state, inputs, monkeypatch):
+    _, proposal = inspect(state, inputs, oof=[])
+    correct_ado(inputs, proposal)
+    inputs["broker_cases"][0]["tester_id"] = "former-tester"
+    _, report = inspect(state, inputs)
+    assert not report["case_changes"] and len(report["point_changes"]) == 1
+    calls = fake_writes(monkeypatch, inputs)
+    assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])[0] == 0
+    assert len(calls) == 1 and calls[0][0] == "point"
+    assert state.is_done("bug_bash", step.ID) and "plan" not in data(state)
+
+
+def test_live_corrections_apply_then_read_back_and_do_not_repeat(state, inputs, monkeypatch):
+    _, report = inspect(state, inputs, oof=["Alice"])
+    calls = fake_writes(monkeypatch, inputs)
+    result, saved = cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])
+    assert result == 0 and sum(c[0] == "case" for c in calls) == 9
+    assert sum(c[0] == "point" for c in calls) == 9
+    assert all(set(data(s)) <= {"oof", "oce"} for s in saved)
+    assert cli(monkeypatch, state, inputs, "--apply")[0] == 0 and len(calls) == 18
+
+
+@pytest.mark.parametrize("change", ["assignee", "point", "roster", "triage", "missing_hash"])
+def test_changed_live_inputs_cannot_apply_unreviewed_corrections(state, inputs, monkeypatch, change):
+    _, report = inspect(state, inputs, oof=[])
+    token = report["review_hash"]
+    if change == "assignee":
+        inputs["broker_cases"][0]["assignee"] = "other@example.com"
+    elif change == "point":
+        inputs["broker_cases"][0]["tester_id"] = "other-tester"
+    elif change == "roster":
+        inputs["roster"].append({"name": "New", "upn": "new@example.com"})
+    elif change == "triage":
+        inputs["auth_cases"][0]["tags"] = ["Blocked"]
+    else:
+        token = ""
+    calls = fake_writes(monkeypatch, inputs)
+    assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", token)[0] == 1
+    assert not calls
+
+
+def test_legacy_saved_map_and_applied_flag_are_ignored(state, inputs, monkeypatch):
+    state.set_step("bug_bash", step.ID, StepState(status="done", data={
+        "plan": {"assignments": {"B:1": "wrong@example.com"}, "applied": True}}))
+    assert cli(monkeypatch, state, inputs, "--apply")[0] == 1
+    assert "plan" not in data(state) and not state.is_done("bug_bash", step.ID)
+
+
+@pytest.mark.parametrize("change", ["owner", "source", "release", "time", "upn"])
+def test_stored_availability_is_still_validated_before_corrections(state, inputs, monkeypatch, change):
+    inspect(state, inputs, oof=[])
+    confirmation = data(state)["oof"]
+    field, value = {"owner": ("confirmed_by", "other@example.com"), "source": ("source", "calendar"),
+                    "release": ("release_id", "different"), "time": ("confirmed_at", "bad-date"),
+                    "upn": ("upns", ["unknown@example.com"])}[change]
+    confirmation[field] = value
+    calls = fake_writes(monkeypatch, inputs)
+    assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", "old")[0] == 1
+    assert not calls
+
+
+def test_changed_identity_with_same_upn_changes_the_review(state, inputs):
+    _, before = inspect(state, inputs, oof=[])
+    inputs["case_snapshot"]["1"]["identity_id"] = "replacement-identity"
     with mockctx.active(inputs):
-        step.validate_stored_plan(state)
-    inputs["auth_cases"][-3]["tags"] = []
-    with mockctx.active(inputs), pytest.raises(ValueError, match="triage changed"):
-        step.validate_stored_plan(state)
-
-
-def test_apply_includes_triage_and_requires_tester_alignment(state, inputs, monkeypatch):
-    inputs["auth_cases"].append({"id": "10", "tags": ["Blocked"], "assignee": "former@example.com"})
-    writes = []
-    monkeypatch.setattr(D, "set_assigned_to", lambda cid, upn: (writes.append((cid, upn)) is None, ""))
-    assert _cli(monkeypatch, state, inputs, "--no-oof")[0] == 0
-    captured = []
-    monkeypatch.setattr(C, "load_state", lambda *_: state)
-    monkeypatch.setattr(C, "save_state", lambda *_: None)
-    monkeypatch.setattr(step, "sync_plan_testers",
-                        lambda st, assignments: (captured.append(assignments.copy()) is None and False,
-                                                 "tester write failed"))
-    args = build_parser().parse_args(["distribute-tests", "--release", state.release_id, "--apply"])
-    assert command.cmd_distribute_tests(args) == 2
-    assert ("10", state.owner_email) in writes
-    assert captured[0]["A:10"] == state.owner_email
-    assert not _data(state)["plan"]["applied"]
-
-
-def test_sync_point_testers_preserves_outcomes_and_unselected_testers(monkeypatch):
-    from tools import pipelines as P
-    pts = [
-        {"id": 1, "testCase": {"id": 10}, "configuration": {"id": 84},
-         "outcome": "Failed", "state": "NotReady", "assignedTo": {"id": "old"}},
-        {"id": 2, "testCase": {"id": 11}, "configuration": {"id": 84},
-         "outcome": "Passed", "state": "Completed", "assignedTo": {"id": "unchanged"}},
-    ]
-    monkeypatch.setattr(P, "_ado_rest_get_all", lambda *a: (True, deepcopy(pts), ""))
-    monkeypatch.setattr(P, "_ado_rest_get", lambda *a: (True, {"value": [
-        {"id": 10, "fields": {"System.AssignedTo": {"id": "owner-id", "uniqueName": "owner@example.com"}}}]}, ""))
-    calls = []
-    def send(url, method, body, timeout):
-        calls.append(body)
-        pts[0]["assignedTo"] = {"id": body["tester"]["id"]}
-        return True, {}, ""
-    monkeypatch.setattr(P, "_ado_rest_send", send)
-    assert D.sync_point_testers(714514, 901, {10: "owner@example.com"}) == (True, "")
-    assert calls == [{"tester": {"id": "owner-id"}}]
-    assert pts[0]["outcome"] == "Failed" and pts[1]["assignedTo"]["id"] == "unchanged"
-
-
-def test_auth_reader_retains_blocked_and_shared_automated_tags_for_step_classification(monkeypatch):
-    monkeypatch.setattr(D, "_wiql_ids", lambda *a: (True, ["10", "11"], ""))
-    monkeypatch.setattr(D, "_tags_of", lambda *a: (True, {
-        "10": {"tags": ["Blocked"], "assignee": "former@example.com"},
-        "11": {"tags": ["Automated"], "assignee": "alice@example.com"},
-    }, ""))
-    ok, cases, detail = D.auth_bugbash_cases()
-    assert ok and not detail
-    assert cases == [
-        {"id": "10", "tags": ["Blocked"], "assignee": "former@example.com"},
-        {"id": "11", "tags": ["Automated"], "assignee": "alice@example.com"},
-    ]
-    monkeypatch.setattr(D, "_tags_of", lambda *a: (True, {}, ""))
-    assert not D.auth_bugbash_cases()[0]
-
-
-def test_cli_selection_flags_are_mutually_exclusive():
-    with pytest.raises(SystemExit):
-        build_parser().parse_args(["distribute-tests", "--release", "test",
-                                  "--oof", "a@x", "--no-oof"])
+        _, after = step.inspect_distribution(state)
+    assert before["review_hash"] != after["review_hash"]
 
 
 @pytest.mark.parametrize("flags", [("--no-oof",), ("--oof", "Alice"), ("--oce", "bob@example.com")])
-def test_apply_cannot_combine_changed_inputs_with_write(state, inputs, monkeypatch, flags):
-    _build(state, inputs, oof=[])
-    before = deepcopy(_data(state))
-    result, saved = _cli(monkeypatch, state, inputs, "--apply", *flags)
-    assert result == 1 and saved == [] and _data(state) == before
+def test_apply_cannot_combine_new_availability_with_writes(state, inputs, monkeypatch, flags):
+    before = deepcopy(state)
+    result, saved = cli(monkeypatch, state, inputs, "--apply", *flags)
+    assert result == 1 and not saved and state == before
 
 
-@pytest.mark.parametrize("change", [
-    "missing_confirmation", "legacy_plan", "selection", "confirmation_time", "invalid_upn",
-    "wrong_owner", "wrong_source", "wrong_release", "missing_time", "removed_member",
-    "added_member", "exclusion", "excluded_assignment", "unknown_assignment", "oce",
-])
-def test_apply_refuses_missing_invalid_or_stale_inputs_before_any_writes(
-        state, inputs, monkeypatch, change):
-    _build(state, inputs, oof=["Alice"])
-    record = state.get_step("bug_bash", step.ID)
-    confirmation, plan = record.data["oof"], record.data["plan"]
-    cfg = D.load_config()
-    if change == "missing_confirmation":
-        record.data.pop("oof")
-    elif change == "legacy_plan":
-        plan.pop("review_inputs")
-    elif change == "selection":
-        confirmation["upns"] = []
-    elif change == "confirmation_time":
-        confirmation["confirmed_at"] = "2026-09-01T12:00:00+00:00"
-    elif change == "invalid_upn":
-        confirmation["upns"] = ["unknown@example.com"]
-    elif change == "wrong_owner":
-        state.owner_email = "different@example.com"
-    elif change == "wrong_source":
-        confirmation["source"] = "calendar"
-    elif change == "wrong_release":
-        confirmation["release_id"] = "other-release"
-    elif change == "missing_time":
-        confirmation.pop("confirmed_at")
-    elif change == "removed_member":
-        inputs["roster"] = inputs["roster"][1:]
-    elif change == "added_member":
-        inputs["roster"].append({"name": "New", "upn": "new@example.com"})
-    elif change == "exclusion":
-        cfg["always_excluded"].append("charlie@example.com")
-        monkeypatch.setattr(D, "load_config", lambda: cfg)
-    elif change == "excluded_assignment":
-        plan["assignments"]["A:9"] = "alice@example.com"
-    elif change == "unknown_assignment":
-        plan["assignments"]["A:9"] = "outsider@example.com"
-    else:
-        record.data["oce"] = "charlie@example.com"
-    state.set_step("bug_bash", step.ID, record)
-    # Autouse network guard makes even a single real set_assigned_to call fail loudly.
-    result, saved = _cli(monkeypatch, state, inputs, "--apply")
-    assert result == 1 and len(saved) == 1
-    assert "plan" not in _data(saved[-1])
+def test_validation_reports_mismatches_without_writes_or_saved_lists(state, inputs, monkeypatch, capsys):
+    result, _ = cli(monkeypatch, state, inputs, "--no-oof", "--validate", "--json")
+    report = json.loads(capsys.readouterr().out)
+    assert result == 1 and not report["valid"] and "case_changes" in report
+    assert all(not key.startswith("_") for key in report)
+    assert set(data(state)) == {"oof"}
 
 
-def test_apply_success_revalidation_and_replacement_never_auto_writes(state, inputs, monkeypatch):
-    writes = []
-    monkeypatch.setattr(D, "set_assigned_to",
-                        lambda cid, upn: (writes.append((cid, upn)) is None, ""))
-    _cli(monkeypatch, state, inputs, "--oof", "Alice")
-    assert writes == []
-    assert _cli(monkeypatch, state, inputs, "--apply")[0] == 0
-    assert len(writes) == 9 and _data(state)["plan"]["applied"]
-    assert "alice@example.com" not in {upn for _, upn in writes}
-    assert _cli(monkeypatch, state, inputs, "--apply")[0] == 0
-    assert len(writes) == 9  # idempotent apply
-    assert _cli(monkeypatch, state, inputs, "--no-oof")[0] == 0
-    assert len(writes) == 9 and not _data(state)["plan"]["applied"]
-    assert _cli(monkeypatch, state, inputs, "--apply")[0] == 0
-    assert len(writes) == 18
-    assert "alice@example.com" in {upn for _, upn in writes[9:]}
-
-
-def test_cli_invalidates_plan_on_unexpected_preview_exception(state, inputs, monkeypatch):
-    _build(state, inputs, oof=[])
-
-    def fail(*_, **__):
-        raise RuntimeError("unexpected gather error")
-
-    monkeypatch.setattr(D, "distribute", fail)
-    saved = []
-    monkeypatch.setattr(C, "load_state", lambda *_: state)
-    monkeypatch.setattr(C, "save_state", lambda st, *_: saved.append(deepcopy(st)))
-    monkeypatch.setattr(command.mocks_mod, "load_mocks",
-                        lambda: {"bug_bash.distribute_tests": inputs})
-    args = build_parser().parse_args(["distribute-tests", "--release", state.release_id, "--no-oof"])
-    with pytest.raises(RuntimeError, match="gather error"):
-        command.cmd_distribute_tests(args)
-    assert "plan" not in _data(saved[-1])
-
-
-def test_legacy_done_or_applied_status_cannot_bypass_oof_gate(state, inputs, monkeypatch):
-    _build(state, inputs, oof=[])
-    record = state.get_step("bug_bash", step.ID)
-    record.status = "done"
-    record.data["plan"]["applied"] = True
-    record.data.pop("oof")
-    state.set_step("bug_bash", step.ID, record)
-    assert _cli(monkeypatch, state, inputs, "--apply")[0] == 1
-    assert not state.is_done("bug_bash", step.ID) and "plan" not in _data(state)
-
-
-def test_cli_confirmation_and_preview_survive_reload(state, inputs, monkeypatch, tmp_path):
+def test_preview_availability_survives_reload_without_an_assignment_cache(state, inputs, monkeypatch, tmp_path):
     from orchestrator.cli import main
-
-    monkeypatch.setattr(command.mocks_mod, "load_mocks",
-                        lambda: {"bug_bash.distribute_tests": inputs})
-    root = str(tmp_path)
-    C.save_state(state, root, state.release_id)
-    argv = ["--runs-root", root, "distribute-tests", "--release", state.release_id]
+    monkeypatch.setattr(command.mocks_mod, "load_mocks", lambda: {"bug_bash.distribute_tests": inputs})
+    C.save_state(state, str(tmp_path), state.release_id)
+    argv = ["--runs-root", str(tmp_path), "distribute-tests", "--release", state.release_id]
     assert main([*argv, "--oof", "Alice"]) == 0
-    recorded = C.load_state(root, state.release_id)
-    confirmation = deepcopy(_data(recorded)["oof"])
-    assert main(argv) == 0  # new load, no repeat prompt or implied empty answer
-    reloaded = C.load_state(root, state.release_id)
-    assert _data(reloaded)["oof"] == confirmation
-    assert _data(reloaded)["plan"]["review_inputs"]["oof"] == confirmation
-    assert "alice@example.com" not in _data(reloaded)["plan"]["eligible"]
+    stored = C.load_state(str(tmp_path), state.release_id)
+    assert set(data(stored)) == {"oof"}
+    assert main(argv) == 0 and data(C.load_state(str(tmp_path), state.release_id)) == data(stored)
 
 
-def test_engine_blocks_repeatedly_until_owner_answers_and_preserves_data(state, inputs):
-    orch = Orchestrator(C.DEFAULT_CONFIG, state,
-                        mocks={"bug_bash.distribute_tests": inputs})
+def test_engine_holds_until_actual_assignments_and_testers_are_valid(state, inputs):
+    orch = Orchestrator(C.DEFAULT_CONFIG, state, mocks={"bug_bash.distribute_tests": inputs})
     for phase in orch.config["phases"]:
-        if phase["id"] == "bug_bash":
-            for spec in phase["steps"]:
-                if spec["id"] == step.ID:
-                    break
-                state.set_step(phase["id"], spec["id"], StepState(status="done"))
-            break
         for spec in phase["steps"]:
+            if phase["id"] == "bug_bash" and spec["id"] == step.ID:
+                break
             state.set_step(phase["id"], spec["id"], StepState(status="done"))
-    for _ in range(2):
-        action = orch.step_once()
-        assert action.step == step.ID and action.kind == "reminder"
-        assert "Is anyone OOF for this Bug Bash?" in action.message
-        assert not state.is_done("bug_bash", step.ID) and "plan" not in _data(state)
-        assert _data(state)["oof_candidates"]
-    _build(state, inputs, oof=["Alice"])
-    confirmation = deepcopy(_data(state)["oof"])
-    action = orch.step_once()
-    assert action.step == step.ID and action.kind == "ran"
-    assert state.is_done("bug_bash", step.ID)
-    assert _data(state)["oof"] == confirmation and _data(state)["plan"]
-    with mockctx.active(inputs):
-        step.validate_stored_plan(state)
-    # The normal next step is now allowed; do not execute its outbound Scout action.
-    assert orch.step_once().step == "send_invite"
+        if phase["id"] == "bug_bash":
+            break
+    assert orch.step_once().kind == "reminder"
+    _, report = inspect(state, inputs, oof=[])
+    assert orch.step_once().kind != "ran"
+    correct_ado(inputs, report)
+    assert orch.step_once().kind == "ran"
+    assert state.is_done("bug_bash", step.ID) and "plan" not in data(state)

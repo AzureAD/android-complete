@@ -47,7 +47,8 @@ _Loaded on demand. Run all from `<AGENT_ROOT>` — the confirmed `release-agent`
 | **Phase 3 — one bug-bash update** | `python -m orchestrator.cli post-bugbash-update --release <YYYY-MM> [--force]` — `off_hours` / `no_chat` / `error` / `post` / `complete`. Missing/stale invite-chat bindings return no_chat, including with force. The final message's successful claim/result records `poll_complete`; central cleanup deletes then deregisters the on-demand poller. |
 | **Phase 3 — OOF candidates / manual distribution preview** | `python -m orchestrator.cli distribute-tests --release <id> --oce <verified-primary-upn> [--json]` — owner/OCE/configured exclusions removed before listing candidates; missing OCE blocks without candidates; subsequent runs reuse the recorded OCE and availability |
 | **Phase 3 — record owner availability and refresh preview** | `python -m orchestrator.cli distribute-tests --release <id> --no-oof` OR `… --oof <verified-upn> [--oof <verified-upn> …] [--oce <upn>]` — only after explicit owner input; never sends or writes assignments |
-| **Phase 3 — apply reviewed distribution** | `python -m orchestrator.cli distribute-tests --release <id> --apply` — apply stored manual/owner-triage case assignments and align plan testers; preserves tags/outcomes; rejects stale availability, result or triage |
+| **Phase 3 — validate current distribution** | `python -m orchestrator.cli distribute-tests --release <id> --validate --json` — read live ADO; report eligibility, balance, triage and tester mismatches without writes |
+| **Phase 3 — apply reviewed corrections** | `python -m orchestrator.cli distribute-tests --release <id> --apply --review-hash <approved-preview-hash>` — reread ADO, apply only reviewed current corrections and read back; no stored assignment plan |
 | **Phase 3 — inspect Broker plan recovery** | `python -m orchestrator.cli broker-plan --release <id>` — JSON resource record and all same-release candidates; read-only ADO |
 | **Phase 3 — preview UI mapping repair** | `python -m orchestrator.cli broker-plan --release <id> --preview-ui-repair [--plan-id <id>]` — deterministic source/old/new configs and affected points; read-only ADO, no state save, bind, apply or cleanup |
 | **Phase 3 — bind owner-selected existing plan** | `python -m orchestrator.cli broker-plan --release <id> --plan-id <plan-id> --reason "<owner selection>" [--area-path "<observed area>"]` — local identity binding only; no ADO writes, step completion, or plan replacement |
@@ -198,8 +199,9 @@ the configured roster and its names/verified UPNs, not to determine availability
    `--oce` is required before the first availability list and is then retained for this
    distribution; it is not an OOF source. The full roster still validates explicit/stored
    OOF answers, so an already-excluded person's older OOF entry does not re-enable them.
-5. Show the new preview, including the OOF names/UPNs. Keep the existing explicit
-   **review then `--apply`** flow. Never combine `--apply` with `--oof`, `--no-oof`, or `--oce`,
+5. Show the live validation and any proposed corrections, including OOF names/UPNs.
+   After explicit approval, use **`--apply --review-hash <hash from that preview>`**.
+   Never combine `--apply` with `--oof`, `--no-oof`, or `--oce`,
    and never use `done`/`record-step` as a substitute for availability confirmation.
    Continue normal `next` after handling the distribution.
 
@@ -212,16 +214,32 @@ work but receives triage. Apply writes both case assignees and selected plan-poi
 neither outcomes nor Blocked tags are changed. A failed tester update is an incomplete
 apply, not success. Review again if the triage set changes.
 
+**ADO is the sole assignment source.** Validation reads case assignees and release-plan
+testers, checks the distribution rules, and proposes only needed corrections. It does not
+silently rebalance. `next` holds when mismatches exist and completes this step when ADO is
+valid. Existing valid manual changes are accepted without restoring any old allocation.
+
+Previews exist only in command output/memory. The returned `review_hash` is an approval
+digest, not an assignment list; it is not saved in run-state. On `--apply`, live inputs
+must still match the reviewed digest before any correction is written. Changed work items
+also use ADO's native revision check. Read-back must confirm correct assignments and testers
+before completion; tags and outcomes are preserved.
+
+After partial failure or timeout, read the current ADO values and review remaining
+corrections. Never restore a saved map or roll back earlier successes. If ADO is already
+valid, the command does not redistribute; it can finish local completion after an earlier
+interruption. Legacy `data.plan` allocations are ignored and removed when this step runs.
+
 The answer is saved in `bug_bash.distribute_tests.data.oof` with canonical UPNs,
 `confirmed_by` (owner), `source: release-owner`, `confirmed_at`, and `release_id`.
 The engine and CLI read the same record. Repeated previews reuse it; explicit choices
-replace it (including "Nobody is OOF"). The saved plan binds that confirmation plus
-roster/owner/OCE/always-excluded inputs in `review_inputs`. A failed/revised preview
-cannot leave an old plan applicable. Apply revalidates those inputs and every assignee
-before writing anything. Availability changes never alter already-written assignments;
-review a new preview and explicitly apply it separately.
+replace it (including "Nobody is OOF"). Only availability choices and workflow status are
+retained: no assignment map, preview baseline, approval digest or apply-attempt ledger.
+Availability changes never alter already-written assignments; review live corrections and
+explicitly apply them separately.
 
-For offline tests, inject the step's documented `roster`/case mocks and explicitly
+For offline tests, inject the step's documented `roster`, case-selection, `case_snapshot`
+and `point_sets` observations, and explicitly
 confirm OOF in the test fixture or call `build(..., oof=[])`. There is no permissive OOF
 default or production `--param` override. Engine-level `outcome: done` mocks short-circuit
 steps for simulation only; they are not an availability record and cannot authorize apply.

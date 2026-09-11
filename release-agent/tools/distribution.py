@@ -134,28 +134,11 @@ def validate_oof(confirmation, roster, owner, release_id):
 
 
 def review_inputs(roster, always_excluded, owner, oce, confirmation):
-    """Inputs bound to the saved preview; changing any requires a fresh preview."""
+    """Availability inputs included in the transient approval digest."""
     return {"roster": [m["upn"] for m in canonical_roster(roster)],
             "always_excluded": sorted({_identity(u) for u in always_excluded or []}),
             "owner": _identity(owner), "oce": _identity(oce),
             "oof": {**confirmation, "upns": list(confirmation["upns"])}}
-
-
-def validate_distribution_plan(plan, confirmation, roster, cfg, owner, oce, release_id):
-    """Fail closed before ANY assignment writes if owner input or preview is stale."""
-    oof = validate_oof(confirmation, roster, owner, release_id)
-    expected = review_inputs(roster, cfg.get("always_excluded"), owner, oce, confirmation)
-    eligible = eligible_testers(expected["roster"], expected["always_excluded"],
-                                owner=owner, oce=oce, oof=oof)
-    if not plan or plan.get("review_inputs") != expected or plan.get("eligible") != eligible:
-        raise ValueError("Distribution preview is missing or stale; run and review a fresh "
-                         "distribute-tests preview, then --apply separately.")
-    assignments = plan.get("assignments") or {}
-    for key, upn in assignments.items():
-        if upn not in eligible:
-            raise ValueError(f"Assignment to excluded/noneligible tester {upn!r}; refresh the preview.")
-        if not isinstance(key, str) or key[:2] not in ("B:", "A:") or not key[2:].isdigit():
-            raise ValueError("Invalid test-case id in distribution preview; refresh the preview.")
 
 
 def eligible_testers(roster, always_excluded, owner=None, oce=None, oof=None):
@@ -312,8 +295,14 @@ def _suite_subtree(plan_id, root_suite, timeout=90):
 
 def _cases_assignedto(case_ids, timeout=90):
     """{case_id(str): assignedTo_upn_or_None} for a batch of test-case work items."""
+    ok, snapshot, detail = case_assignment_snapshot(case_ids, timeout)
+    return ok, {cid: row["assignee"] for cid, row in snapshot.items()} if ok else None, detail
+
+
+def case_assignment_snapshot(case_ids, timeout=90):
+    """Read assignees and revisions together, rejecting incomplete/ambiguous responses."""
     out = {}
-    ids = [str(i) for i in case_ids if i]
+    ids = sorted({str(i) for i in case_ids})
     for i in range(0, len(ids), 190):
         batch = ",".join(ids[i:i + 190])
         url = (f"{ORG}/{PROJECT}/_apis/wit/workitems?ids={batch}"
@@ -321,9 +310,22 @@ def _cases_assignedto(case_ids, timeout=90):
         ok, j, _h, d = P._ado_rest_get_h(url, timeout)
         if not ok:
             return (False, None, d)
-        for w in (j or {}).get("value") or []:
-            a = (w.get("fields") or {}).get("System.AssignedTo")
-            out[str(w["fields"]["System.Id"])] = (a or {}).get("uniqueName") if isinstance(a, dict) else None
+        if not isinstance(j, dict) or not isinstance(j.get("value"), list):
+            return False, None, "Malformed case-assignment response"
+        for w in j["value"]:
+            if not isinstance(w, dict) or not isinstance(w.get("fields"), dict):
+                return False, None, "Malformed case-assignment entry"
+            cid = str(w["fields"].get("System.Id"))
+            a = w["fields"].get("System.AssignedTo")
+            if cid in out or cid not in ids[i:i + 190]:
+                return False, None, f"Unexpected/duplicate case-assignment entry {cid}"
+            if a is not None and (not isinstance(a, dict) or not isinstance(a.get("uniqueName"), str)
+                                  or not a["uniqueName"].strip()):
+                return False, None, f"Unresolved assignee for case {cid}"
+            out[cid] = {"assignee": a["uniqueName"] if a else None,
+                        "identity_id": a.get("id") if a else None, "revision": w.get("rev")}
+    if set(out) != set(ids):
+        return False, None, "Missing case assignments: " + ", ".join(sorted(set(ids) - set(out)))
     return (True, out, "")
 
 
@@ -432,7 +434,39 @@ def auth_bugbash_cases(timeout=90):
     return (True, out, "")
 
 
-def sync_point_testers(plan_id, suite_id, assignments, timeout=90):
+def read_point_testers(plan_id, root_suite, case_ids, timeout=90):
+    """Read selected test-point identities across a suite subtree without changing ADO."""
+    selected = {str(cid) for cid in case_ids}
+    if not selected:
+        return True, [], ""
+    ok, suites, detail = _suite_subtree(plan_id, root_suite, timeout)
+    if not ok:
+        return False, None, detail
+    groups, covered = [], set()
+    for sid in sorted(set(suites)):
+        ok, points, detail = P._ado_rest_get_all(
+            f"{ORG}/{PROJECT}/_apis/test/Plans/{plan_id}/Suites/{sid}/points?api-version=5.0", timeout)
+        if not ok:
+            return False, None, detail
+        error = T._point_validation_error(points, require_config=True)
+        if error:
+            return False, None, error
+        rows = []
+        for p in points:
+            cid = str(p["testCase"]["id"])
+            if cid in selected:
+                covered.add(cid)
+                rows.append({"id": p["id"], "case_id": cid,
+                             "tester_id": (p.get("assignedTo") or {}).get("id")})
+        if rows:
+            groups.append({"plan_id": plan_id, "suite_id": sid,
+                           "points": sorted(rows, key=lambda p: int(p["id"]))})
+    if covered != selected:
+        return False, None, "Selected cases missing from release suite: " + ", ".join(sorted(selected - covered))
+    return True, groups, ""
+
+
+def sync_point_testers(plan_id, suite_id, assignments, timeout=90, *, expected_testers=None):
     """Align selected point testers to already-written case assignees; no outcome writes."""
     if not assignments:
         return True, ""
@@ -443,6 +477,11 @@ def sync_point_testers(plan_id, suite_id, assignments, timeout=90):
     error = T._point_validation_error(points, require_config=True)
     if error:
         return False, error
+    if expected_testers is not None:
+        current = {p["id"]: (p.get("assignedTo") or {}).get("id")
+                   for p in points if str(p["testCase"]["id"]) in {str(cid) for cid in assignments}}
+        if current != expected_testers:
+            return False, "Plan testers changed after review; inspect the fresh ADO corrections"
     selected = {int(cid): upn.casefold() for cid, upn in assignments.items()}
     if not set(selected) <= {int(p["testCase"]["id"]) for p in points}:
         return False, "Assigned cases are missing from the target suite; refresh distribution"
@@ -487,11 +526,15 @@ def sync_point_testers(plan_id, suite_id, assignments, timeout=90):
     return True, ""
 
 
-def set_assigned_to(case_id, upn, timeout=60):
+def set_assigned_to(case_id, upn, timeout=60, *, expected_revision=None):
     """WRITE: set System.AssignedTo on a test-case work item. (ok, detail). This mutates
     the shared work item (visible in the master + every plan referencing it)."""
     url = f"{ORG}/{PROJECT}/_apis/wit/workitems/{case_id}?api-version=7.1"
     body = [{"op": "add", "path": "/fields/System.AssignedTo", "value": upn}]
+    if expected_revision is not None:
+        if type(expected_revision) is not int or expected_revision < 1:
+            return False, "Invalid expected work-item revision; no assignment written"
+        body.insert(0, {"op": "test", "path": "/rev", "value": expected_revision})
     az = shutil.which("az")
     if az is None:
         return (False, "az CLI not found")

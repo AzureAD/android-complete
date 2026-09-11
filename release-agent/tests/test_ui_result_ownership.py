@@ -43,8 +43,13 @@ def block_upstream(monkeypatch):
 
 
 def distribution_inputs():
-    return {"roster": [{"upn": "tester@example.test", "name": "Tester"}], "oce": "oce@example.test",
-            "broker_cases": [{"id": 10}], "auth_cases": [{"id": 100}, {"id": 200}, {"id": 300}]}
+    from tests.test_distribution import observe
+    return observe({
+        "roster": [{"upn": "tester@example.test", "name": "Tester"}], "oce": "oce@example.test",
+        "broker_cases": [{"id": 10, "assignee": "tester@example.test"}],
+        "auth_cases": [{"id": 100, "assignee": "tester@example.test"}, {"id": 200, "assignee": "owner@example.test"},
+                       {"id": 300, "assignee": "tester@example.test"}],
+    }, automated=[100, 200], failed=[200])
 
 
 def test_capture_and_report_prepare_no_target_mappings(monkeypatch):
@@ -87,12 +92,11 @@ def test_distribution_progress_use_result_without_raw_evidence(monkeypatch):
         rc[slot].pop("tests")
         rc[slot].pop("failed_suites")
     with mockctx.active(distribution_inputs()):
-        assert D.build(st, oof=[]).kind == "done"
-        D.validate_stored_plan(st)
-    plan = st.get_step("bug_bash", D.ID).data["plan"]
-    assert set(plan["assignments"]) == {"B:10", "A:300"}
-    assert plan["auth_automated_ids"] == [100, 200]
-    assert set(plan["ui_fill_result"]) == {"id", "binding"}
+        outcome, report = D.inspect_distribution(st, oof=[])
+        assert outcome.kind == "done"
+    assert set(report["_targets"]) == {"B:10", "A:200", "A:300"}
+    assert set(report["owner_triage"]) == {"A:200"} and report["auth_excluded_automated"] == 2
+    assert "plan" not in st.get_step("bug_bash", D.ID).data
     seen = []
     monkeypatch.setattr(bugbash, "gather_progress",
                         lambda *a, **kw: (seen.append(kw["auto_failed_ids"]) is None, {}, ""))
@@ -158,8 +162,8 @@ def test_all_authoritative_binding_changes_reject_result_and_preview(monkeypatch
         rc["auth"]["test"]["complete"] = False
     with pytest.raises(ValueError):
         ui_results.completed_result(st)
-    with mockctx.active(distribution_inputs()), pytest.raises(ValueError):
-        D.validate_stored_plan(st)
+    with mockctx.active(distribution_inputs()):
+        assert D.build(st).kind == "blocked"
     assert not BU.gather(st)[0]
 
 
@@ -167,13 +171,14 @@ def test_same_source_new_fill_requires_distribution_review():
     st = state()
     publish(st)
     with mockctx.active(distribution_inputs()):
-        assert D.build(st, oof=[]).kind == "done"
-    old = st.get_step("bug_bash", D.ID).data["plan"]["ui_fill_result"]
+        _, old = D.inspect_distribution(st, oof=[])
+    prior_result = ui_results.completed_result(st)
     publish(st)
     current = ui_results.completed_result(st)
-    assert old["id"] != current["id"] and old["binding"] == current["binding"]
-    with mockctx.active(distribution_inputs()), pytest.raises(ValueError, match="result changed"):
-        D.validate_stored_plan(st)
+    assert prior_result["id"] != current["id"] and prior_result["binding"] == current["binding"]
+    with mockctx.active(distribution_inputs()):
+        _, fresh = D.inspect_distribution(st)
+    assert old["review_hash"] != fresh["review_hash"] and "plan" not in st.get_step("bug_bash", D.ID).data
 
 
 def test_crash_before_write_durably_invalidates_previous_receipt(monkeypatch, tmp_path):
