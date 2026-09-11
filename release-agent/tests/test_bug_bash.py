@@ -321,7 +321,7 @@ def test_distribute_tests_step_previews_and_stores_plan():
                          {"id": "3", "assignee": "owner@microsoft.com"}, {"id": "4", "assignee": None}],
         "auth_cases": [{"id": "5", "assignee": "b@microsoft.com"}, {"id": "6", "assignee": None}],
     }
-    st, out = _dist_build(mocks)
+    st, out = _dist_build(mocks, oof=[])
     assert out["kind"] == "done" and "PREVIEW" in out["note"]
     plan = st.get_step("bug_bash", "distribute_tests").data["plan"]
     assert plan["applied"] is False
@@ -343,7 +343,7 @@ def test_distribute_excludes_automated_auth_cases():
                        {"id": "7", "assignee": None}, {"id": "8", "assignee": None}],
         "auth_automated": [6, 8],                       # 6 + 8 already automated -> excluded
     }
-    st, out = _dist_build(mocks)
+    st, out = _dist_build(mocks, oof=[])
     assert out["kind"] == "done"
     plan = st.get_step("bug_bash", "distribute_tests").data["plan"]
     assert plan["auth_total"] == 2 and plan["auth_excluded_automated"] == 2   # 4 -> 2
@@ -361,7 +361,7 @@ def test_distribute_tests_blocks_without_broker_clone():
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08", owner_email="o@x")
     with mockctx.active({"auth_cases": [], "roster": [{"name": "A", "upn": "a@x"}]}):
-        out = as_dict(_steps.get_step("bug_bash", "distribute_tests").build(st))
+        out = as_dict(_steps.get_step("bug_bash", "distribute_tests").build(st, oof=[]))
     assert out["kind"] == "blocked" and "hasn't been cloned" in out["reason"]
 
 

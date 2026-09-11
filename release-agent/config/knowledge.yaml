@@ -798,17 +798,34 @@ bug_bash.distribute_tests:
     the ~23 genuinely-manual cases are distributed. (Failed automated cases are triaged by the
     owner via ui_test_status, not by a manual tester.) Eligible = the roster DL
     'androididentity@microsoft.com' MINUS the always-excluded people (moghosh,
-    veenasoman), the release owner, and the current on-call engineer (OCE). Default assignee +
+    veenasoman), the release owner, the current on-call engineer (OCE), and anybody the owner
+    says is OOF for this Bug Bash. Default assignee +
     the written field are both System.AssignedTo.
   who: >
-    Scout computes the PREVIEW automatically during `next` (an agent step). Applying it is
+    The release owner supplies availability (never calendar/presence/automatic OOF lookup).
+    Scout asks "Is anyone OOF for this Bug Bash?" before the first preview; without an
+    explicit answer the agent blocks and exposes roster names/verified UPNs. After that,
+    Scout computes the PREVIEW during `next` (an agent step). Applying it is
     a separate, explicit action you trigger — it writes System.AssignedTo, which mutates
     the shared test-case work items (so this release's assignment becomes next release's
     default preference).
   how: >
-    Preview: `distribute-tests --release <id> [--oce <upn>]` prints the per-tester table and
-    stores the plan. Apply: `distribute-tests --release <id> --apply` writes the
-    assignments. The OCE team id (ICM 78848) is the SAME source the entry gate's oncall_now
+    First run `distribute-tests --release <id> --json` to expose candidates. Ask the owner
+    with m_ask_user: "Is anyone OOF for this Bug Bash?" with "Nobody is OOF" or "Exclude people";
+    stop and wait. For "Exclude people", show the candidate list and ask for actual names
+    or verified UPNs (free-text), then stop and wait again. Resolve exact names uniquely
+    against the roster; ambiguous/unknown input needs clarification, never a guess.
+    Record ONLY the owner's answer: `distribute-tests --release <id> --no-oof` or
+    `distribute-tests --release <id> --oof <upn> [--oof <upn> ...] [--oce <upn>]`.
+    The command stores canonical UPNs, who confirmed, source, time and release scope in
+    step.data.oof, builds a preview, and shows OOF exclusions. No availability dates are inferred.
+    Later previews reuse the confirmation; either choice flag explicitly replaces it.
+    Failed/revised previews invalidate any previous plan. Review the new preview, then
+    `distribute-tests --release <id> --apply` writes the assignments; never combine
+    selection/OCE flags with --apply. Apply rechecks the roster and saved input provenance,
+    and refuses missing/stale confirmation or assignments to excluded people.
+    Already-written assignments are not changed by answering; a fresh preview and separate
+    explicit apply are required. The OCE team id (ICM 78848) is the SAME source the entry gate's oncall_now
     check uses (read from readiness.yaml — no second copy).
   links:
     - name: "Broker test-plans doc"
@@ -821,7 +838,7 @@ bug_bash.distribute_tests:
     - q: "Does applying it change the master plan?"
       a: "Yes — System.AssignedTo lives on the shared test-case work items, so the new assignee shows in the master and every plan referencing them. That's intentional: it carries the preference into the next release's clone."
     - q: "Who is excluded?"
-      a: "Always: moghosh, veenasoman. Per-release: the release owner and the current on-call engineer (OCE, resolved via ICM team 78848 — the same team the entry gate checks)."
+      a: "Always: moghosh, veenasoman. Per-release: the owner, the current OCE (ICM team 78848), and the owner's explicit OOF selection for this Bug Bash. Nobody is OOF must be explicitly confirmed too; silence never means an empty list."
     - q: "How do we know which Authenticator cases are automated vs manual?"
       a: "Empirically, from this release's auth ECS post-build UI-test run (the one auth_ecs captured): a case whose test-case id appears in that run is automated and is excluded from the manual split. We deliberately do NOT rely on the 'Automated' tag — it is shared with iOS, so a case automated on Android but not iOS must not be tagged. Reading the run keeps the split correct for Android and leaves the shared tag alone."
 

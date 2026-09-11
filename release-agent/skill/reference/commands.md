@@ -44,12 +44,56 @@ _Loaded on demand. Run all from `<AGENT_ROOT>` — the confirmed `release-agent`
 | **Phase 2 — signal a re-triggered RC** | `python -m orchestrator.cli rc-retriggered --release <YYYY-MM> [--reason "..."]` — after the owner re-runs RC (flaky) or the orchestrator triggers a fresh RC (broker cherry-pick), reopens `mrwp_ecs`/`mrwp_local`/`rc_report` so Scout re-evaluates the **newest** RC. Holds `in_flight` (no action) while the run executes; the poller re-applies the gate on completion |
 | **Phase 2 — one RC poll** | `python -m orchestrator.cli poll-rc --release <YYYY-MM>` — `waiting` / `nudge` / `ready` / `resolved` / `blocked` / `idle`. `ready` lists eligible Scout work: execute it and its follow-up, then re-poll. `resolved` requires all Phase-2 steps settled as done/skipped; distinguish `status: overridden` from `status: passed`. Automation cleanup rules are unchanged. |
 | **Phase 3 — one bug-bash update** | `python -m orchestrator.cli post-bugbash-update --release <YYYY-MM> [--force]` — `off_hours` / `no_chat` / `error` / `post` / `complete`. Complete records `poll_complete`; central cleanup deletes then deregisters the on-demand poller. |
+| **Phase 3 — OOF candidates / manual distribution preview** | `python -m orchestrator.cli distribute-tests --release <id> [--json]` — blocks with candidate names/verified UPNs until the owner answers; subsequent runs reuse that release's confirmation |
+| **Phase 3 — record owner availability and refresh preview** | `python -m orchestrator.cli distribute-tests --release <id> --no-oof` OR `… --oof <verified-upn> [--oof <verified-upn> …] [--oce <upn>]` — only after explicit owner input; never sends or writes assignments |
+| **Phase 3 — apply reviewed distribution** | `python -m orchestrator.cli distribute-tests --release <id> --apply` — separate explicit write of stored assignments; rejects missing/stale confirmation or changed roster/exclusions |
 | Activate conditional hotfix phase | `python -m orchestrator.cli activate --release <YYYY-MM> --phase hotfix` |
 | **Notify** — push line if something needs me | `python -m orchestrator.cli notify [--release <YYYY-MM>] [--as-of <date>] [--force]` |
 | **Plan startup automations** | `automation plan --release <YYYY-MM> [--json]` — excludes all `on_demand:true` pollers |
 | **Plan one on-demand poller** | `automation plan --release <YYYY-MM> --on-demand <slug> --json` |
 | **Plan lifecycle cleanup** | `automation cleanup --release <YYYY-MM> --json` — delete each returned Scout id with `m_delete_automation`, then deregister only after success |
 | **Track automations** | `automation register --id <id> --name "<n>" --cleanup-when "<rule>" [--cleanup-when "<OR-rule>"] [--shared\|--release <YYYY-MM>] [--purpose "..."] [--step <phase.step> …]` · `automation list …` · `automation deregister --id <id>` |
+
+## Bug Bash availability
+
+Before `distribute_tests` computes the first manual-test preview, the **release owner**
+must supply availability for **this release's Bug Bash**. Do not query calendars,
+Teams presence, O365 automatic replies/OOF, or infer dates. Graph is used only to resolve
+the configured roster and its names/verified UPNs, not to determine availability.
+
+1. When `next` reports the distribution owner-input block, run
+   `python -m orchestrator.cli distribute-tests --release <id> --json`. Its blocked JSON
+   includes `candidates` (`name`, `upn`). Display that list as context.
+2. Call `m_ask_user` with **"Is anyone OOF for this Bug Bash?"** and exactly the choices
+   **"Nobody is OOF"** and **"Exclude people"**. **Stop and wait for the actual reply.**
+   No response is not confirmation. An unattended runner must surface the question to
+   the owner and leave the step blocked; it must not invent an answer.
+3. If "Exclude people", ask which people with free-text `m_ask_user`, using the displayed
+   roster as context; **stop and wait again**. Do not turn a large roster into choice chips
+   (the tool supports at most five). Resolve each exact name uniquely to a candidate UPN.
+   Ask for clarification for ambiguous/unknown names; never guess aliases or email addresses.
+4. Only after the owner answers, run `distribute-tests … --no-oof` or repeat
+   `--oof <verified-upn>` per excluded person. Exact roster display names are also accepted
+   by the CLI, which rejects unknown/ambiguous entries. `--no-oof` and `--oof` are mutually exclusive.
+   Optional `--oce` keeps the existing best-effort ICM exclusion; it is not an OOF source.
+5. Show the new preview, including the OOF names/UPNs. Keep the existing explicit
+   **review then `--apply`** flow. Never combine `--apply` with `--oof`, `--no-oof`, or `--oce`,
+   and never use `done`/`record-step` as a substitute for availability confirmation.
+   Continue normal `next` after handling the distribution.
+
+The answer is saved in `bug_bash.distribute_tests.data.oof` with canonical UPNs,
+`confirmed_by` (owner), `source: release-owner`, `confirmed_at`, and `release_id`.
+The engine and CLI read the same record. Repeated previews reuse it; explicit choices
+replace it (including "Nobody is OOF"). The saved plan binds that confirmation plus
+roster/owner/OCE/always-excluded inputs in `review_inputs`. A failed/revised preview
+cannot leave an old plan applicable. Apply revalidates those inputs and every assignee
+before writing anything. Availability changes never alter already-written assignments;
+review a new preview and explicitly apply it separately.
+
+For offline tests, inject the step's documented `roster`/case mocks and explicitly
+confirm OOF in the test fixture or call `build(..., oof=[])`. There is no permissive OOF
+default or production `--param` override. Engine-level `outcome: done` mocks short-circuit
+steps for simulation only; they are not an availability record and cannot authorize apply.
 
 ## Manual overrides (steer when reality diverges from the plan)
 - **skip** — a step doesn't apply, or was done manually outside the tool. **Reason required** (audited). Confirm the reason, then run.

@@ -10,8 +10,8 @@ sets are combined into one fair split:
     minus cases tagged Automated (run in CI) or Blocked (can't be run manually).
 
 Eligible testers = members of the roster DL (config/distribution.yaml `roster_group`)
-MINUS: the always-excluded people, the release owner, and the current on-call engineer
-(OCE). The OCE's team id is read from readiness.yaml (oncall_now.team_id) so the entry
+MINUS: the always-excluded people, owner-confirmed OOF people, the release owner, and
+the current on-call engineer (OCE). The OCE's team id is read from readiness.yaml (oncall_now.team_id) so the entry
 gate and this step share ONE source of truth.
 
 Default assignment source is each test case's `System.AssignedTo` (decision: consistent
@@ -30,6 +30,7 @@ import subprocess
 import urllib.parse
 import urllib.request
 import urllib.error
+from datetime import datetime, timezone
 
 import yaml
 
@@ -69,15 +70,103 @@ def oncall_team(readiness_path: str = None):
 
 # ----------------------------------------------------------------- pure algorithm
 
-def eligible_testers(roster, always_excluded, owner=None, oce=None):
+def _identity(value):
+    return str(value or "").strip().casefold()
+
+
+def canonical_roster(roster):
+    """Stable, unique verified identities; display names are for owner selection only."""
+    members = {}
+    for member in sorted(roster, key=lambda m: (_identity(m.get("upn")),
+                                               str(m.get("name") or ""))):
+        upn = _identity(member.get("upn"))
+        if upn:
+            members.setdefault(upn, {"name": str(member.get("name") or upn).strip(), "upn": upn})
+    return [members[u] for u in sorted(members)]
+
+
+def resolve_oof(selection, roster):
+    """Resolve exact names/UPNs against the roster, never guess aliases or partial names."""
+    if not isinstance(selection, list):
+        raise ValueError("OOF selection must be an explicit list (empty means nobody is OOF).")
+    members = canonical_roster(roster)
+    selected = set()
+    for value in selection:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("OOF names/UPNs must not be blank.")
+        matches = {m["upn"] for m in members
+                   if _identity(value) in (m["upn"], _identity(m["name"]))}
+        if len(matches) != 1:
+            why = "Ambiguous" if matches else "Unknown"
+            raise ValueError(f"{why} OOF person {value!r}; use a verified roster UPN.")
+        selected.update(matches)
+    return sorted(selected)
+
+
+def confirm_oof(selection, roster, owner, release_id):
+    """Record the release owner's explicit answer, not inferred availability."""
+    if not owner:
+        raise ValueError("A release owner is required to confirm OOF availability.")
+    return {"upns": resolve_oof(selection, roster), "confirmed_by": _identity(owner),
+            "source": "release-owner", "confirmed_at": datetime.now(timezone.utc).isoformat(),
+            "release_id": release_id}
+
+
+def validate_oof(confirmation, roster, owner, release_id):
+    if not isinstance(confirmation, dict):
+        raise ValueError("Owner input needed: Is anyone OOF for this Bug Bash? "
+                         "Ask the release owner; record --no-oof or --oof <verified-upn> "
+                         "with distribute-tests before computing a preview.")
+    if (not owner or confirmation.get("confirmed_by") != _identity(owner)
+            or confirmation.get("source") != "release-owner"
+            or confirmation.get("release_id") != release_id):
+        raise ValueError("OOF confirmation must come from this release's owner; ask again.")
+    try:
+        confirmed_at = datetime.fromisoformat(confirmation["confirmed_at"])
+        if confirmed_at.tzinfo is None:
+            raise ValueError()
+    except (KeyError, TypeError, ValueError):
+        raise ValueError("OOF confirmation is missing a valid confirmation time.") from None
+    upns = resolve_oof(confirmation.get("upns"), roster)
+    if upns != confirmation["upns"]:
+        raise ValueError("OOF confirmation must contain canonical roster UPNs; ask again.")
+    return upns
+
+
+def review_inputs(roster, always_excluded, owner, oce, confirmation):
+    """Inputs bound to the saved preview; changing any requires a fresh preview."""
+    return {"roster": [m["upn"] for m in canonical_roster(roster)],
+            "always_excluded": sorted({_identity(u) for u in always_excluded or []}),
+            "owner": _identity(owner), "oce": _identity(oce),
+            "oof": {**confirmation, "upns": list(confirmation["upns"])}}
+
+
+def validate_distribution_plan(plan, confirmation, roster, cfg, owner, oce, release_id):
+    """Fail closed before ANY assignment writes if owner input or preview is stale."""
+    oof = validate_oof(confirmation, roster, owner, release_id)
+    expected = review_inputs(roster, cfg.get("always_excluded"), owner, oce, confirmation)
+    eligible = eligible_testers(expected["roster"], expected["always_excluded"],
+                                owner=owner, oce=oce, oof=oof)
+    if not plan or plan.get("review_inputs") != expected or plan.get("eligible") != eligible:
+        raise ValueError("Distribution preview is missing or stale; run and review a fresh "
+                         "distribute-tests preview, then --apply separately.")
+    assignments = plan.get("assignments") or {}
+    for key, upn in assignments.items():
+        if upn not in eligible:
+            raise ValueError(f"Assignment to excluded/noneligible tester {upn!r}; refresh the preview.")
+        if not isinstance(key, str) or key[:2] not in ("B:", "A:") or not key[2:].isdigit():
+            raise ValueError("Invalid test-case id in distribution preview; refresh the preview.")
+
+
+def eligible_testers(roster, always_excluded, owner=None, oce=None, oof=None):
     """The people tests are distributed to: roster MINUS always_excluded, the owner, and
-    the OCE. Comparison is case-insensitive on the identifier (UPN/email). Order preserved.
+    the OCE and owner-confirmed OOF people. Comparison is case-insensitive. Order preserved.
     `roster` is a list of identifiers; the excludes are identifiers too."""
-    drop = {str(x).strip().lower() for x in (always_excluded or [])}
+    drop = {_identity(x) for x in [*(always_excluded or []), *(oof or [])]}
     for x in (owner, oce):
         if x:
-            drop.add(str(x).strip().lower())
-    return [p for p in roster if str(p).strip().lower() not in drop]
+            drop.add(_identity(x))
+    return list(dict.fromkeys(_identity(p) for p in roster if _identity(p) not in drop))
 
 
 def distribute(tests, eligible):

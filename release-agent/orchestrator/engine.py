@@ -449,9 +449,11 @@ class Orchestrator(StatusViewMixin):
             return NextAction(kind="waiting", phase=pid, step=step["id"], name=step["name"],
                               message=f"WAITING — {step['name']}: {result.action}")
         if not result.ok:
+            data = self.state.get_step(pid, step["id"]).data
             self.state.set_step(pid, step["id"],
                                 StepState(status="blocked", note=result.action, by=result.by,
-                                          links=list(getattr(result, "links", None) or [])))
+                                          links=list(getattr(result, "links", None) or []),
+                                          data=data))
             if key not in self.state.pending_human:
                 self.state.pending_human.append(key)
             if block_holds:
@@ -461,10 +463,12 @@ class Orchestrator(StatusViewMixin):
                                   message=f"ACTION NEEDED — {step['name']}: {result.action}")
             return NextAction(kind="ran", phase=pid, step=step["id"], name=step["name"],
                               message=f"BLOCKED — {step['name']}: {result.action}")
+        data = self.state.get_step(pid, step["id"]).data
         self.state.set_step(pid, step["id"],
                             StepState(status="done", completed_at=_now(),
                                       note=result.action, by=result.by,
-                                      links=list(getattr(result, "links", None) or [])))
+                                      links=list(getattr(result, "links", None) or []),
+                                      data=data))
         if result.by == "human":
             self.state.pending_human = [p for p in self.state.pending_human if p != key]
         self.state.status = "running"

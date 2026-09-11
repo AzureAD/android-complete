@@ -411,7 +411,7 @@ def _uts_state(plan_id="900", release="2026-08"):
 
 
 
-def _dist_build(mocks, owner="owner@microsoft.com", broker_plan="900"):
+def _dist_build(mocks, owner="owner@microsoft.com", broker_plan="900", *, oof=None):
     import steps as _steps
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
@@ -419,7 +419,7 @@ def _dist_build(mocks, owner="owner@microsoft.com", broker_plan="900"):
     st = ReleaseState(release_id="2026-08", owner_email=owner)
     st.set_step("bug_bash", "clone_plans_broker", StepState(status="done", data={"plan_id": broker_plan}))
     with mockctx.active(mocks):
-        return st, as_dict(_steps.get_step("bug_bash", "distribute_tests").build(st))
+        return st, as_dict(_steps.get_step("bug_bash", "distribute_tests").build(st, oof=oof))
 
 
 

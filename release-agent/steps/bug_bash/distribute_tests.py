@@ -7,10 +7,12 @@ step (`data.plan`), reporting a summary. It does NOT write `System.AssignedTo` �
 the plan (which mutates the shared test-case work items) is a separate, explicit action:
 `distribute-tests --release <id> --apply`.
 
-Eligible = roster DL minus the always-excluded people, the release owner, and the current
-on-call engineer (OCE). The OCE's team id comes from readiness.yaml (single source with the
+Eligible = roster DL minus owner-confirmed OOF people, always-excluded people, the owner,
+and the current on-call engineer (OCE). The OCE's team id comes from readiness.yaml (single source with the
 entry gate); the OCE identity is resolved via ICM by the skill and passed in as the `oce`
-input. Owner = state.owner_email.
+input. Owner = state.owner_email. OOF availability comes ONLY from that owner's explicit
+answer for this Bug Bash, saved in step.data.oof (including an explicit empty list).
+Neither Graph calendars nor presence nor automatic OOF detection is used.
 
 The Authenticator set EXCLUDES cases already automated by this release's auth ECS UI-test run
 — resolved EMPIRICALLY from the run (by test-case id, via `pipelines.auth_ui_case_outcomes`
@@ -83,14 +85,87 @@ def _auth_automated_ids(state):
     return {int(k) for k in outcomes} if ok else set()
 
 
-def build(state):
+def invalidate_preview(state, *, clear_oof=False):
+    """A failed/revised preview must not leave an earlier plan available to --apply."""
+    step = state.get_step("bug_bash", ID)
+    step.data = dict(step.data or {})
+    step.data.pop("plan", None)
+    if clear_oof:
+        step.data.pop("oof", None)
+    step.status = "blocked"
+    step.completed_at = None
+    step.note = "Distribution preview needs refresh; no assignments changed."
+    state.set_step("bug_bash", ID, step)
+
+
+def _roster(cfg):
+    roster = mock_input("roster", MISSING)
+    if roster is MISSING:
+        ok, roster, detail = D.resolve_roster(cfg["roster_group"])
+        if not ok:
+            raise ValueError(f"Couldn't resolve roster '{cfg['roster_group']}' ({detail}).")
+    return D.canonical_roster(roster)
+
+
+def _oce(data):
+    return data.get("oce", mock_input("oce", None))
+
+
+def validate_stored_plan(state):
+    """Recheck current roster/exclusions, without recomputing or writing assignments."""
+    data = state.get_step("bug_bash", ID).data or {}
+    cfg = D.load_config()
+    # Missing confirmation must fail even if roster access is unavailable.
+    if not isinstance(data.get("oof"), dict):
+        D.validate_oof(None, [], state.owner_email, state.release_id)
+    D.validate_distribution_plan(data.get("plan"), data["oof"], _roster(cfg), cfg,
+                                 state.owner_email, _oce(data), state.release_id)
+
+
+def build(state, *, oof=None, oce=None):
+    # None means no new answer, [] means the owner explicitly said nobody is OOF.
+    invalidate_preview(state, clear_oof=oof is not None)
+    step = state.get_step("bug_bash", ID)
+    step.data.pop("oof_candidates", None)
+    if oce is not None:
+        step.data["oce"] = oce.strip()
+    state.set_step("bug_bash", ID, step)
+    try:
+        outcome = _build(state, oof=oof)
+    except ValueError as exc:
+        outcome = Blocked(f"distribute_tests: {exc}")
+    step = state.get_step("bug_bash", ID)
+    step.note = outcome.reason if isinstance(outcome, Blocked) else outcome.note
+    # The engine owns completion; CLI previews leave successful work ready for next.
+    step.status = "blocked" if isinstance(outcome, Blocked) else "pending"
+    state.set_step("bug_bash", ID, step)
+    return outcome
+
+
+def _build(state, *, oof):
     fail = mock_input("fail", MISSING)
     if fail is not MISSING:
         return Blocked(f"distribute_tests: {fail}")
 
     cfg = D.load_config()
 
-    # 1) the two test sets (combined)
+    roster = _roster(cfg)
+    step = state.get_step("bug_bash", ID)
+    step.data["oof_candidates"] = roster
+    state.set_step("bug_bash", ID, step)
+    if oof is not None:
+        step.data["oof"] = D.confirm_oof(oof, roster, state.owner_email, state.release_id)
+        state.set_step("bug_bash", ID, step)
+    confirmation = step.data.get("oof")
+    excluded_oof = D.validate_oof(confirmation, roster, state.owner_email, state.release_id)
+    owner, oce = state.owner_email, _oce(step.data)
+    eligible = D.eligible_testers([m["upn"] for m in roster], cfg.get("always_excluded", []),
+                                  owner=owner, oce=oce, oof=excluded_oof)
+    if not eligible:
+        return Blocked("distribute_tests: no eligible testers after exclusions — check the "
+                       "roster, owner, on-call and owner-confirmed OOF exclusions.")
+
+    # Read the two test sets only after owner-confirmed availability.
     bcases = mock_input("broker_cases", MISSING)
     if bcases is MISSING:
         plan_id = _broker_plan_id(state)
@@ -126,27 +201,10 @@ def build(state):
     tests = [{"id": f"B:{c['id']}", "assignee": c.get("assignee")} for c in bcases] + \
             [{"id": f"A:{c['id']}", "assignee": c.get("assignee")} for c in acases]
 
-    # 2) eligible testers = roster - always_excluded - owner - OCE
-    roster = mock_input("roster", MISSING)
-    if roster is MISSING:
-        ok, roster, d = D.resolve_roster(cfg["roster_group"])
-        if not ok:
-            hint = " — run `az login`" if str(d).startswith("AUTH") else ""
-            return Blocked(f"distribute_tests: couldn't resolve the roster "
-                           f"'{cfg['roster_group']}' ({d}){hint}.")
-    upns = [m.get("upn") for m in roster if m.get("upn")]
-    owner = state.owner_email
-    oce = mock_input("oce", MISSING)
-    oce = None if oce is MISSING else oce
-    eligible = D.eligible_testers(upns, cfg.get("always_excluded", []), owner=owner, oce=oce)
-    if not eligible:
-        return Blocked("distribute_tests: no eligible testers after exclusions — check the "
-                       "roster, owner, and on-call exclusions.")
-
-    # 3) distribute (combined, even, preference-preserving)
+    # Distribute the combined set evenly, preserving preferences where possible.
     result = D.distribute(tests, eligible)
 
-    # 4) store the plan for the apply step; report a preview summary
+    # Store the preview and its reviewed inputs for the separate apply command.
     name_by_upn = {m.get("upn"): m.get("name") for m in roster if m.get("upn")}
     counts = result["counts"]
     step = state.get_step("bug_bash", ID)
@@ -157,6 +215,9 @@ def build(state):
         "eligible": eligible,
         "owner_excluded": owner,
         "oce_excluded": oce,
+        "oof_excluded": [m for m in roster if m["upn"] in excluded_oof],
+        "review_inputs": D.review_inputs(roster, cfg.get("always_excluded"), owner, oce,
+                                         confirmation),
         "broker_total": len(bcases),
         "auth_total": len(acases),
         "auth_excluded_automated": auth_excluded,
@@ -174,7 +235,9 @@ def build(state):
         f"Distribution PREVIEW ready: {len(tests)} tests (Broker {len(bcases)} + Auth "
         f"{len(acases)}) across {len(eligible)} testers — {lo}–{hi} each "
         f"({result['kept']} kept, {result['reassigned']} reassigned).{auto_note} Excluded owner "
-        f"{owner}{oce_note}. e.g. {top}. Review, then apply with "
+        f"{owner}{oce_note}. Owner-confirmed OOF: "
+        f"{', '.join(f'{name_by_upn[u]} <{u}>' for u in excluded_oof) or 'nobody'}. "
+        f"e.g. {top}. Review, then apply with "
         f"`distribute-tests --release {state.release_id} --apply`.")
 
 

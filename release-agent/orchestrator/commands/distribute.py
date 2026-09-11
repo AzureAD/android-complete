@@ -6,8 +6,10 @@
                         (from a prior preview). Mutates the shared work items. Records the
                         step done with an applied summary.
 
-The OCE is supplied with --oce (the skill resolves it via ICM team 78848); the owner comes
-from state. --json emits the raw plan for the skill.
+The owner must first answer the Bug Bash OOF question: --no-oof or repeatable --oof.
+No answer means reuse an existing confirmation, never assume nobody is OOF.
+The OCE is supplied with --oce; the owner comes from state. --json includes roster
+candidates when owner input is needed, or the plan and its review inputs.
 """
 from __future__ import annotations
 import json as _json
@@ -17,7 +19,7 @@ from orchestrator import mocks as mocks_mod
 from orchestrator.outcomes import as_dict
 from steps.lib import mockctx
 from tools import distribution as D
-import steps
+from steps.bug_bash import distribute_tests as distribution_step
 
 
 def _print_table(plan):
@@ -27,25 +29,38 @@ def _print_table(plan):
           f"{plan.get('broker_total',0)+plan.get('auth_total',0)} tests | "
           f"applied={plan.get('applied')}")
     print(f"  excluded owner: {plan.get('owner_excluded')} | OCE: {plan.get('oce_excluded') or '(none)'}")
+    excluded = ", ".join(f"{m['name']} <{m['upn']}>" for m in plan.get("oof_excluded", []))
+    print(f"  owner-confirmed OOF: {excluded or 'nobody'}")
     for u in sorted(plan.get("eligible") or [], key=lambda e: -counts.get(e, 0)):
         print(f"    {counts.get(u,0):3}  {u}")
 
 
 def cmd_distribute_tests(args):
+    selection = [] if args.no_oof else args.oof
+    if args.apply and (selection is not None or args.oce is not None):
+        message = "Do not combine --apply with --oof/--no-oof/--oce. Create and review a new preview first."
+        print(_json.dumps({"error": message}) if args.json else message)
+        return 1
     st = C.load_state(args.runs_root, args.release)
-
-    if args.apply:
-        return _apply(args, st)
-
-    # PREVIEW: run the step's build() with the OCE injected, persist the plan, print it.
     spec = dict(mocks_mod.load_mocks().get("bug_bash.distribute_tests", {}))
-    if args.oce:
-        spec["oce"] = args.oce
     with mockctx.active(spec):
-        out = as_dict(steps.get_step("bug_bash", "distribute_tests").build(st))
-    C.save_state(st, args.runs_root, args.release)
+        if args.apply:
+            return _apply(args, st)
+        try:
+            out = as_dict(distribution_step.build(st, oof=selection, oce=args.oce))
+        finally:
+            # Persist invalidation even if gathering a replacement preview raises.
+            C.save_state(st, args.runs_root, args.release)
     if out["kind"] == "blocked":
-        print(_json.dumps({"error": out["reason"]}) if args.json else f"BLOCKED: {out['reason']}")
+        data = st.get_step("bug_bash", "distribute_tests").data or {}
+        candidates = data.get("oof_candidates", [])
+        if args.json:
+            print(_json.dumps({"error": out["reason"], "candidates": candidates,
+                              "oof": data.get("oof")}, indent=2))
+        else:
+            print(f"BLOCKED: {out['reason']}")
+            for member in candidates:
+                print(f"  {member['name']} <{member['upn']}>")
         return 1
     plan = (st.get_step("bug_bash", "distribute_tests").data or {}).get("plan") or {}
     if args.json:
@@ -56,6 +71,13 @@ def cmd_distribute_tests(args):
 
 
 def _apply(args, st):
+    try:
+        distribution_step.validate_stored_plan(st)
+    except ValueError as exc:
+        distribution_step.invalidate_preview(st)
+        C.save_state(st, args.runs_root, args.release)
+        print(_json.dumps({"error": str(exc)}) if args.json else f"BLOCKED: {exc}")
+        return 1
     plan = (st.get_step("bug_bash", "distribute_tests").data or {}).get("plan") or {}
     assignments = plan.get("assignments") or {}
     if not assignments:
@@ -107,6 +129,11 @@ def register(sub):
     p.add_argument("--release", required=True)
     p.add_argument("--oce", default=None,
                    help="On-call engineer identifier to exclude (skill resolves via ICM 78848)")
+    choice = p.add_mutually_exclusive_group()
+    choice.add_argument("--oof", action="append", metavar="UPN",
+                       help="Owner-confirmed OOF tester; repeat per person (exact roster name also accepted)")
+    choice.add_argument("--no-oof", action="store_true",
+                       help="Record the release owner's explicit answer that nobody is OOF")
     p.add_argument("--apply", action="store_true",
                    help="Write System.AssignedTo per the stored plan (mutates shared work items)")
     p.add_argument("--json", action="store_true", help="Emit the raw plan JSON")
