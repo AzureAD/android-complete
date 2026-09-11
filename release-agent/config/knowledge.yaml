@@ -1137,11 +1137,20 @@ bug_bash.bugbash_updates:
     snapshot). Run cleanup in a finally block even on silence/errors; delete first,
     deregister after success. Only acknowledged final delivery sets poll_complete.
     Blocks if the meeting chat isn't activated (run activate_chat).
+    Ordinary periodic updates keep only the latest unclaimed preview; expired unsent
+    snapshots are removed. After confirmed delivery and settled completion they become
+    small unsendable receipts, retained until 24 hours beyond expiry. Source pending
+    omits those receipts; an explicit notification --id can inspect one while retained.
+    Real-clock retention never deletes claimed/uncertain or sent-unfinalized work, the
+    first/final posts, invitation receipts or referenced records. No old send is replayed
+    because its expired record is absent.
   faqs:
     - q: "When do the updates run?"
       a: "Every 3 hours, configured by bug-bash-update-poller.every in config/automations.yaml. Ticks post only during 09:00–18:00 America/Los_Angeles on weekdays excluding US federal holidays. Outside that window they send nothing; posting resumes at the next scheduled tick inside the working window, not necessarily exactly at 09:00."
     - q: "When is the first progress message sent?"
       a: "When the engine reaches bug_bash.bugbash_updates with its prerequisites ready, it prepares the first post for the normal approval/delivery flow. It does not wait for a polling interval and is not scheduled relative to the meeting start. After confirmed first delivery/completion, Scout creates the recurring poller. Only recurring ticks use the working-hours gate. If all work is already complete, the initial step sends nothing and starts no poller."
+    - q: "Why does a periodic update still retain a small delivery receipt?"
+      a: "It prevents a retry or restarted worker from repeating a confirmed send without retaining the full report. Acknowledged message IDs (or provider evidence), destination, execution identity and the approved hash remain temporarily. Teams contains the delivered report; ADO remains authoritative for test progress. Uncertain sends retain full evidence and still require recovery."
     - q: "When do the updates stop?"
       a: "After every test completes, the final wrap-up must be claimed and successfully acknowledged before poll_complete is recorded. Known failed sends retry while the phase remains open. Owner sign-off/phase completion stops stale sends. Cleanup deletes first, then deregisters."
     - q: "Why are resolved tests still listed?"

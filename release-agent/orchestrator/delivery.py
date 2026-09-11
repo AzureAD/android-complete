@@ -13,6 +13,9 @@ import json
 import uuid
 
 from orchestrator.outcomes import NeedsSkill
+from orchestrator.delivery_retention import (
+    is_progress_receipt, receipt_descriptor, is_routine_progress, prune_progress,
+)
 
 
 TRANSPORTS = {
@@ -147,6 +150,8 @@ def descriptor(st, logical_id, scope, tool, payload, completion=None):
 
 def validate_record(orch, record):
     """Old/incomplete or corrupted records require deliberate recovery, never a resend."""
+    if is_progress_receipt(record):
+        return receipt_descriptor(orch, record)
     item = record.get("descriptor") if isinstance(record, dict) else None
     fields = {"id", "release", "scope", "channel", "target", "tool", "payload", "completion", "hash"}
     if (not isinstance(item, dict) or not fields.issubset(item)
@@ -180,7 +185,7 @@ def available(orch, item):
 
 
 def offer(orch, item):
-    """Refresh only never-claimed preparation; retain each superseded snapshot for audit."""
+    """Refresh only never-claimed preparation; routine progress needs only its latest preview."""
     ledger = orch.state.notification_deliveries
     candidate = {"descriptor": deepcopy(item), "status": "prepared",
                  "prepared_at": now_iso(), "attempts": []}
@@ -197,16 +202,21 @@ def offer(orch, item):
         if old["status"] == "prepared" and previous["hash"] != item["hash"]:
             if not old.get("prepared_at") or not isinstance(old.get("superseded", []), list):
                 raise ValueError("Incomplete preparation history; owner recovery required")
-            candidate["superseded"] = [*deepcopy(old.get("superseded", [])), {
-                "descriptor": deepcopy(previous), "prepared_at": old["prepared_at"],
-                "superseded_at": candidate["prepared_at"],
-            }]
+            if not is_routine_progress(previous) or not is_routine_progress(item):
+                candidate["superseded"] = [*deepcopy(old.get("superseded", [])), {
+                    "descriptor": deepcopy(previous), "prepared_at": old["prepared_at"],
+                    "superseded_at": candidate["prepared_at"],
+                }]
             ledger[item["id"]] = candidate
     return preview(orch, ledger[item["id"]])
 
 
 def preview(orch, record):
     item = validate_record(orch, record)
+    if is_progress_receipt(record):
+        return {**deepcopy(item), "delivery_status": "sent", "completion_status": {"status": "settled"},
+                "sent_receipt": deepcopy(record["sent_receipt"]), "stop_reason": "already sent",
+                "permission_to_send": False}
     return {**deepcopy(item), "delivery_status": record["status"],
             "completion_status": deepcopy(record.get("completion")),
             "stop_reason": scope_reason(orch, item["scope"]), "permission_to_send": False}
@@ -214,7 +224,7 @@ def preview(orch, record):
 
 def claim(orch, notification_id, approved_hash, executor):
     record = orch.state.notification_deliveries.get(notification_id)
-    if not record or not record.get("descriptor") or "attempts" not in record:
+    if not record or (not is_progress_receipt(record) and (not record.get("descriptor") or "attempts" not in record)):
         raise ValueError("Missing/incomplete preparation; owner recovery required for legacy records")
     item = validate_record(orch, record)
     if item["id"] != notification_id:
@@ -253,6 +263,11 @@ def claim(orch, notification_id, approved_hash, executor):
 def result(orch, notification_id, execution_id, outcome, evidence, receipt=None, review=False):
     """Record a transport result, never infer success from a lack of errors."""
     record = orch.state.notification_deliveries.get(notification_id)
+    if is_progress_receipt(record):
+        item = validate_record(orch, record)
+        if item["id"] != notification_id or record["sent_receipt"]["execution_id"] != execution_id:
+            raise ValueError("Only the owning execution can acknowledge this delivery")
+        return False
     if not record or not record.get("attempts"):
         raise ValueError("No delivery claim; legacy acknowledgement is not evidence")
     validate_record(orch, record)
@@ -286,6 +301,8 @@ def result(orch, notification_id, execution_id, outcome, evidence, receipt=None,
 def has_pending(orch, step_keys):
     for record in orch.state.notification_deliveries.values():
         item = validate_record(orch, record)
+        if is_progress_receipt(record):
+            continue
         scope = item["scope"]
         if ((record["status"] != "sent" or not record.get("completion"))
                 and not scope_reason(orch, scope, acknowledgement=record["status"] == "sent")
@@ -300,6 +317,11 @@ PROTOCOL = (
     "whose completion_status is empty; do not resend them. Review eligible prepared/not_sent "
     "records for claim; leave expired/closed work unsent. Surface claimed/uncertain records "
     "for evidence-based owner recovery, never automatic replay. "
+    "Ordinary Bug Bash updates use bounded retention: settled sends become unsendable compact "
+    "receipts and are omitted from source pending (use --id for a retained receipt); expired "
+    "unsent updates and sufficiently old settled receipts are removed. Absence after expiry "
+    "is not permission to recreate an old send. Pending claims/uncertain outcomes retain their "
+    "full evidence; first/final messages and invitation receipts are not compacted. "
     "Notification payloads are previews, never permission to send. For each notification, "
     "prepare it with `notification prepare --release <release> --source <source>` "
     "(step source also takes --phase/--step and the same --param inputs), review the exact "

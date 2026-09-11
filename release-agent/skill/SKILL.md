@@ -55,9 +55,14 @@ Review the exact destination and payload, then `notification claim --release <id
 when `permission_to_send:true`. No extra courtesy copies. For the Scout bot transport,
 verify the signed-in runner is the descriptor's owner target before claiming.
 Only preparation accepts `--as-of`; claim/result/finalize use the trusted current clock.
-Changed never-claimed preparations may refresh with an audited new hash: review again.
+Changed never-claimed preparations may refresh with a new hash: review again.
 After any claim, the snapshot is frozen (including known-not-sent attempts); source or
 recipient changes require deliberate owner recovery, not a new identity to bypass a claim.
+Routine Bug Bash updates retain only their latest never-claimed preview. Settled sends
+become compact receipts, excluded from `source pending` (explicit `--id` can inspect one).
+Expired unsent snapshots and old settled receipts are removed automatically; absence
+after expiry never authorizes an old resend. Claimed/uncertain and sent-unfinalized work,
+first/final messages, invitation receipts and referenced records keep their recovery data.
 
 Immediately acknowledge each channel separately: `notification result --release <id>
 --id <notification-id> --execution-id <execution-id> --outcome sent --evidence "<provider success>"

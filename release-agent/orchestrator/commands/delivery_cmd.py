@@ -9,6 +9,8 @@ from orchestrator import cli_common as C, delivery as D
 def finish(orch, notification_id):
     record = orch.state.notification_deliveries[notification_id]
     D.validate_record(orch, record)
+    if D.is_progress_receipt(record):
+        return False
     if record["status"] != "sent":
         raise ValueError("Completion requires a confirmed successful delivery")
     if record.get("completion"):
@@ -59,6 +61,8 @@ def finish(orch, notification_id):
 
 def prepare(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    if D.prune_progress(orch):
+        C.save_state(st, args.runs_root, args.release)
     if args.source == "step":
         from orchestrator.commands.step_action import prepare_step
         out = prepare_step(args, st, orch)
@@ -80,6 +84,7 @@ def prepare(args):
     return {"release": args.release, "notifications": [
         D.preview(orch, r) for key, r in st.notification_deliveries.items()
         if (not args.id or args.id == key)
+        and (args.id or not D.is_progress_receipt(r))
         and (args.source == "pending" or key in {i["id"] for i in items})],
         **({"reason": out["reason"]} if out.get("reason") else {})}
 
@@ -115,6 +120,8 @@ def cmd_notification(args):
             if changed:
                 C.save_state(st, args.runs_root, args.release)
             out = {"finalized": changed}
+        if D.prune_progress(orch):
+            C.save_state(st, args.runs_root, args.release)
         print(json.dumps(out))
         return 0
     except (ValueError, KeyError, TypeError, OSError) as exc:

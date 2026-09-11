@@ -43,6 +43,8 @@ def cmd_post_bugbash_update(args):
     now_naive = now.replace(tzinfo=None)
 
     st, orch = C.load_orch(args.runs_root, args.release, args.config, now)
+    if D.prune_progress(orch):
+        C.save_state(st, args.runs_root, args.release)
     scope = {"kind": "phase", "phase": "bug_bash", "step": "bugbash_updates",
              "until_flag": "poll_complete"}
     reason = D.scope_reason(orch, scope)

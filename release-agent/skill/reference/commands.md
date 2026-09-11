@@ -140,6 +140,25 @@ guarantee a post exactly at 09:00. The first post is not subject to that tick-on
 When deploying a cadence change, update the existing worker's schedule/prompt instead
 of creating a duplicate or replaying the first post.
 
+Routine progress delivery uses bounded local storage, not a report archive. The shared
+delivery contract keeps the current full approved payload while it can still be sent or
+its outcome is uncertain. Never-claimed refreshes replace the previous preview without
+keeping full superseded reports. Once sending AND completion have been saved, ordinary
+updates retain only the notification/release identity, approved hash, destination,
+execution ID, acknowledgement time, expiry and provider message ID (or evidence).
+
+Retention runs on progress ticks and notification commands using the real clock, never
+`--now`/`--as-of`. Expired `prepared`/`not_sent` updates are removed. Compact sent receipts
+remain for 24 hours beyond expiry to cover supported cadence changes, then are removed.
+They cannot be claimed again. `notification prepare --source pending` omits settled
+compact receipts; add `--id` to inspect a retained one. Missing expired history is not
+permission to replay. Claimed/uncertain and sent-but-unfinalized records are never aged
+out. First/final notifications, calendar invitations, other notification types and any
+record referenced by a source binding or step execution are untouched.
+Deploy the updated delivery readers together and stop old workers before switching.
+Older binaries cannot read compact receipts; do not delete recovery records to work
+around that incompatibility. Retention is automatic, not a reason to resend anything.
+
 For the `send_invite` step, preserve its exact `start`, `end`, and `timeZone` payload.
 The body and approval summary include the scheduling timezone and meeting-date UTC offset;
 all scheduling rules use `America/Los_Angeles`, with the earliest start at 09:00 Los Angeles
