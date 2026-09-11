@@ -722,8 +722,10 @@ def test_bugbash_render_mentions_finished_and_complete():
         "b@x": {"name": "Bob", "total": 2, "done": 2, "remaining": 0, "tests": [
             {"id": "201", "name": "X", "url": "u", "state": "passed"}]}}}
     html, mentions = BB.render_update(prog, "August 2026",
-                                      [{"name": "Broker plan", "url": "bp"}])
-    assert mentions == [{"id": 0, "upn": "a@x", "name": "Alice"}]   # only Alice (remaining)
+                                      [{"name": "Broker plan", "url": "bp"}],
+                                      {"a@x": {"id": "11111111-1111-1111-1111-111111111111", "name": "Alice"}})
+    assert len(mentions) == 1 and mentions[0]["mentionText"] == "Alice"
+    assert mentions[0]["mentioned"]["user"]["id"] == "11111111-1111-1111-1111-111111111111"
     assert '<at id="0">Alice</at>' in html                          # id matches mentions[0]
     # the FAILED test is surfaced (Option A) with a link, and ordered before the not-run one
     assert '<a href="u102">102</a>' in html and "(Failed)" in html
@@ -750,7 +752,7 @@ def test_bugbash_updates_blocks_without_chat():
 
 def test_bugbash_updates_composes_needs_skill():
     """With the chat activated + progress injected, the first update is a NeedsSkill send to
-    the stored chat carrying content + the _mentions list, recorded as bugbash_updates."""
+    the stored chat carrying content + canonical Graph mentions, recorded as bugbash_updates."""
     import steps as _steps
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
@@ -760,11 +762,14 @@ def test_bugbash_updates_composes_needs_skill():
         "a@x": {"name": "Alice", "total": 2, "done": 0, "remaining": 2, "tests": [
             {"id": "1", "name": "T1", "url": "u1", "state": "notrun"},
             {"id": "2", "name": "T2", "url": "u2", "state": "notrun"}]}}}
-    with mockctx.active({"progress": prog}):
+    with mockctx.active({"progress": prog, "people": {
+            "a@x": {"id": "11111111-1111-1111-1111-111111111111", "name": "Alice"}}}):
         out = as_dict(_steps.get_step("bug_bash", "bugbash_updates").build(st))
     assert out["kind"] == "needs_skill" and out["tool"] == "workiq_send_chat_message"
     assert out["payload"]["chatId"] == "19:meeting_X@thread.v2"
-    assert out["payload"]["_mentions"] == [{"id": 0, "upn": "a@x", "name": "Alice"}]
+    assert out["payload"]["mentions"][0]["mentionText"] == "Alice"
+    assert out["payload"]["mentions"][0]["mentioned"]["user"]["id"] == "11111111-1111-1111-1111-111111111111"
+    assert "_mentions" not in out["payload"]
     assert out["payload"]["_automation"] == {"on_demand": "bug-bash-update-poller"}
     assert "September 2026 Bug Bash" in out["payload"]["content"]
     assert out["record_as"] == "bugbash_updates" and out["outbound"] is True
@@ -823,7 +828,8 @@ def test_post_bugbash_update_decisions():
         remaining = {"total": 2, "done": 1, "remaining": 1, "unassigned": 0, "owners": {
             "a@x": {"name": "Alice", "total": 2, "done": 1, "remaining": 1, "tests": [
                 {"id": "1", "name": "T1", "url": "u1", "state": "notrun"}]}}}
-        _, dec = run("2026-08-21T10:00:00", {"progress": remaining})   # Fri 10am
+        _, dec = run("2026-08-21T10:00:00", {"progress": remaining, "people": {
+            "a@x": {"id": "11111111-1111-1111-1111-111111111111", "name": "Alice"}}})   # Fri 10am
         assert dec["decision"] == "post" and dec["remaining"] == 1
         assert dec["chatId"] == "19:meeting_X@thread.v2" and dec["mentions"]
 
@@ -857,14 +863,16 @@ def test_bugbash_render_marks_auto_failed_auth_as_triage():
             {"id": "2916347", "name": "Passkey reg", "url": "uA", "state": "failed", "auto_failed": True},
             {"id": "50", "name": "Manual T", "url": "uM", "state": "notrun", "auto_failed": False},
             {"id": "51", "name": "Manual F", "url": "uF", "state": "failed", "auto_failed": False}]}}}
-    html, mentions = BB.render_update(prog, "August 2026", [{"name": "Broker", "url": "b"}])
+    html, mentions = BB.render_update(prog, "August 2026", [{"name": "Broker", "url": "b"}],
+                                     {"o@x": {"id": "11111111-1111-1111-1111-111111111111", "name": "Owner"}})
     assert "\U0001f52c 1 failed automated Authenticator case(s) need investigation" in html
     assert "Automated failure — triage" in html                        # the auto-failed row
     assert "2916347" in html and "50" in html and "51" in html         # all three listed
     assert "Not run" in html and "Failed" in html                      # manual labels intact
     # the auto-failed case is listed FIRST within the owner's pending block
     assert html.index("2916347") < html.index("Manual T")
-    assert mentions == [{"id": 0, "upn": "o@x", "name": "Owner"}]
+    assert len(mentions) == 1 and mentions[0]["mentionText"] == "Owner"
+    assert mentions[0]["mentioned"]["user"]["id"] == "11111111-1111-1111-1111-111111111111"
 
 
 

@@ -25,6 +25,8 @@ Mock knobs (mocks.local.yaml / tests):
 """
 from __future__ import annotations
 
+import json
+
 from orchestrator import schedule
 from orchestrator.outcomes import NeedsSkill, Blocked, Done
 from steps.lib.mockctx import mock_input, MISSING
@@ -41,6 +43,7 @@ BROKER_SUITE_NAME = "Manual Tests (Android Broker)"
 
 MOCKABLE = {
     "progress": {"kind": "input", "desc": "Inject the gathered progress dict (skip ADO reads)."},
+    "people": {"kind": "input", "desc": "Verified Teams people {upn:{id: AAD GUID,name}} for offline mention tests."},
     "send_to": {"kind": "payload", "sets": "chatId",
                 "desc": "Post to this chat id instead of the resolved meeting chat (test)."},
 }
@@ -82,7 +85,33 @@ def plan_links(state):
     ]
 
 
-def build(state):
+def prepare_update(state, progress, members_file=None):
+    """One resolved transport payload shared by initial and periodic progress posts."""
+    chat_id = stored_chat_id(state)
+    if not chat_id:
+        return False, None, "Missing/stale meeting binding"
+    people = mock_input("people", MISSING)
+    if people is MISSING:
+        observation = None
+        if members_file is not None:
+            try:
+                with open(members_file, encoding="utf-8-sig") as fh:
+                    observation = json.load(fh)
+            except (OSError, ValueError) as exc:
+                return False, None, f"Cannot read meeting-member observation: {exc}"
+        ok, people, detail = BB.resolve_mention_people(
+            chat_id, progress.get("owners") or {}, member_observation=observation)
+        if not ok:
+            return False, None, detail
+    try:
+        content, mentions = BB.render_update(progress, schedule.target_month_label(state) or "Bug Bash",
+                                             plan_links(state), people)
+    except ValueError as exc:
+        return False, None, str(exc)
+    return True, {"chatId": chat_id, "content": content, "contentType": "html", "mentions": mentions}, ""
+
+
+def build(state, members_file=None):
     if not state.ccd:
         return Blocked("bugbash_updates: no CCD set — can't title the Bug Bash.")
     chat_id = stored_chat_id(state)
@@ -99,14 +128,13 @@ def build(state):
         return Done(f"All {progress['total']} bug-bash tests are already complete — "
                     f"nothing to poll; ready for {month_year} bug bash sign-off.")
 
-    content, mentions = BB.render_update(progress, month_year, plan_links(state))
+    ok, payload, detail = prepare_update(state, progress, members_file)
+    if not ok:
+        return Blocked(f"bugbash_updates: {detail}")
     return NeedsSkill(
         tool="workiq_send_chat_message",
         payload={
-            "chatId": chat_id,
-            "content": content,
-            "contentType": "html",
-            "_mentions": mentions,     # resolved into transport mentions before the claim hash
+            **payload,
             "_automation": {"on_demand": "bug-bash-update-poller"},
         },
         record_as=ID,
@@ -133,5 +161,9 @@ def automation_prompt(release: str, spec: dict) -> str:
         f"delivery of the final summary records poll_complete; known failed sends remain "
         f"retryable. Initial trigger-step completion does not end this phase-owned poller.\n"
         f"  • no_chat / error / stopped → nothing to send; always perform cleanup.\n"
+        f"If member resolution lacks Graph access, use workiq_get_chat on the returned "
+        f"chatId, save its fresh id/chatType/complete members fields as JSON, then rerun "
+        f"with --members-file <path>. "
+        f"Never invent member identities or omit mentions to bypass a resolution failure.\n"
         f"Silently journal: `journal --release {release} --source scout --kind automation "
         f"--text \"bugbash-poller: <decision>\"`.")

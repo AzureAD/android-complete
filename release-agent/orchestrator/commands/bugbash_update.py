@@ -83,17 +83,19 @@ def cmd_post_bugbash_update(args):
                            "permission_to_send": False}))
         return 0
 
-    content, mentions = BB.render_update(progress, month_year, BU.plan_links(st))
+    ok, payload, detail = BU.prepare_update(st, progress, getattr(args, "members_file", None))
+    if not ok:
+        print(_json.dumps({"decision": "error", "chatId": chat_id, "detail": detail, "notifications": []}))
+        return 0
     checkpoint = now.replace(hour=now.hour - now.hour % 2, minute=0, second=0, microsecond=0)
     from datetime import timedelta
     scope["expires_at"] = (checkpoint + timedelta(hours=2)).isoformat()
     item = D.descriptor(st, f"bugbash:update:{checkpoint.isoformat()}", scope, "workiq_send_chat_message",
-                        {"chatId": chat_id, "content": content, "contentType": "html",
-                         "mentions": D.chat_mentions(mentions)})
+                        payload)
     prepared = D.offer(orch, item)
     C.save_state(st, args.runs_root, args.release)
     print(_json.dumps({"decision": "post", "chatId": chat_id,
-                       "content": content, "mentions": mentions,
+                       "content": payload["content"], "mentions": payload["mentions"],
                        "done": progress["done"], "total": progress["total"],
                        "remaining": progress["remaining"], "notifications": [prepared],
                        "permission_to_send": False}))
@@ -107,4 +109,5 @@ def register(sub):
     p.add_argument("--release", required=True)
     p.add_argument("--now", default=None, help="Override 'now' (ISO 8601) for the window math")
     p.add_argument("--force", action="store_true", help="Skip the working-window gate")
+    p.add_argument("--members-file", help="Fresh complete workiq_get_chat JSON response for the verified meeting")
     p.set_defaults(func=cmd_post_bugbash_update)

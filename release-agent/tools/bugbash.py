@@ -17,6 +17,9 @@ All ADO reads go through tools.pipelines / tools.distribution helpers (bearer to
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from html import escape
+from urllib.parse import quote, urlparse
+from uuid import UUID
 
 from tools import pipelines as P
 from tools import testplans as T
@@ -226,17 +229,70 @@ def all_complete(progress) -> bool:
     return bool(progress) and progress.get("total", 0) > 0 and progress.get("remaining", 0) == 0
 
 
-def render_update(progress, month_year, plan_links, name_by_upn=None):
+def resolve_mention_people(chat_id, owners, timeout=90, *, member_observation=None):
+    """Resolve pending owners to real AAD users in the target meeting, not UPN mentions."""
+    url = f"{D._GRAPH}/chats/{quote(chat_id, safe='')}/members"
+    members, seen = [], set()
+    if member_observation is not None:
+        if (not isinstance(member_observation, dict) or member_observation.get("id") != chat_id
+                or member_observation.get("chatType") != "meeting"
+                or not isinstance(member_observation.get("members"), list)
+                or member_observation.get("@odata.nextLink")
+                or member_observation.get("members@odata.nextLink")):
+            return False, None, "Member observation must be the complete workiq_get_chat response for this meeting"
+        members, url = member_observation["members"], None
+    while url:
+        if (not isinstance(url, str) or url in seen or len(seen) >= 25 or urlparse(url).scheme != "https"
+                or urlparse(url).netloc != "graph.microsoft.com"):
+            return False, None, "Incomplete/invalid meeting-member pagination"
+        seen.add(url)
+        ok, page, detail = D._graph_get(url, timeout)
+        if not ok:
+            return False, None, (
+                f"Cannot resolve meeting members: {detail}. Fetch chat {chat_id} with "
+                "workiq_get_chat and supply its fresh response via members_file/--members-file.")
+        if not isinstance(page, dict) or not isinstance(page.get("value"), list):
+            return False, None, "Malformed meeting-member response"
+        members.extend(page["value"])
+        url = page.get("@odata.nextLink")
+    people = {}
+    member_ids = {m.get("userId") for m in members if isinstance(m, dict) and m.get("userId")}
+    for upn in sorted(owners):
+        matches = [m for m in members if isinstance(m, dict)
+                   and str(m.get("email") or "").casefold() == upn.casefold()]
+        if len(matches) > 1:
+            return False, None, f"Ambiguous meeting identity for {upn}"
+        person = matches[0] if matches else None
+        if person and person.get("displayName") and person.get("userId"):
+            people[upn] = {"id": person["userId"], "name": person["displayName"]}
+            continue
+        if not owners[upn]["remaining"]:
+            # Completed former owners aren't tagged; never invent a mention for them.
+            people[upn] = {"name": owners[upn]["name"]}
+            continue
+        ok, user, detail = D._graph_get(
+            f"{D._GRAPH}/users/{quote(upn, safe='')}?$select=id,displayName,userPrincipalName,mail", timeout)
+        if not ok:
+            return False, None, f"Cannot resolve pending owner {upn}: {detail}"
+        if (not isinstance(user, dict) or user.get("id") not in member_ids
+                or upn.casefold() not in {str(user.get(k) or "").casefold() for k in ("userPrincipalName", "mail")}
+                or not user.get("displayName")):
+            return False, None, f"Pending owner {upn} is not a verified user in this meeting; fix membership/assignment"
+        people[upn] = {"id": user["id"], "name": user["displayName"]}
+    return True, people, ""
+
+
+def render_update(progress, month_year, plan_links, people=None):
     """(html, mentions) for the Teams chat update.
 
-    mentions = [{upn, name}] — the owners who still have REMAINING tests (they get an
-    @mention). Owners who finished all appear by NAME with an 'all completed' line and are
-    NOT mentioned. `plan_links` = [{name,url}] (the two live test plans).
+    Returns canonical Graph mentions bound to matching <at> IDs/display names.
+    Pending owners require verified people[upn] = {id: AAD GUID, name: display name}.
+    Completed owners are displayed without tagging.
     """
-    name_by_upn = name_by_upn or {}
+    people = people or {}
 
     def disp(upn, fallback):
-        return name_by_upn.get(upn) or fallback
+        return (people.get(upn) or {}).get("name") or fallback
 
     total, done = progress.get("total", 0), progress.get("done", 0)
     pct = round(done * 100.0 / total) if total else 0
@@ -245,15 +301,24 @@ def render_update(progress, month_year, plan_links, name_by_upn=None):
 
     rows = []
     # remaining-first, most-remaining at the top
-    for upn in sorted(owners, key=lambda u: (-owners[u]["remaining"], disp(u, u).lower())):
+    for upn in sorted(owners, key=lambda u: (-owners[u]["remaining"], disp(u, u).lower(), u.casefold())):
         o = owners[upn]
         who = disp(upn, o["name"])
         if o["remaining"] == 0:
-            rows.append(f'<div style="margin:8px 0;"><b>{who}</b> — '
+            rows.append(f'<div style="margin:8px 0;"><b>{escape(who)}</b> — '
                         f'<span style="color:#107c10;">all {o["total"]} tests completed ✅</span></div>')
             continue
         mi = len(mentions)
-        mentions.append({"id": mi, "upn": upn, "name": who})
+        person = people.get(upn) or {}
+        try:
+            identity = str(UUID(person["id"]))
+        except (ValueError, KeyError, TypeError, AttributeError):
+            raise ValueError(f"Missing verified Teams user ID for {upn}; no progress message prepared") from None
+        if not isinstance(person.get("name"), str) or not person["name"].strip() or "@" in person["name"]:
+            raise ValueError(f"Missing Teams display name for {upn}; no progress message prepared")
+        mentions.append({"id": mi, "mentionText": who,
+                         "mentioned": {"user": {"id": identity, "displayName": who,
+                                                 "userIdentityType": "aadUser"}}})
         # list every not-done test (failed → blocked → not-run), each with its state icon.
         # A pre-triaged automated auth failure (auto_failed) is shown distinctly — it's an
         # investigation the owner already owns, NOT a manual test to run.
@@ -265,25 +330,26 @@ def render_update(progress, month_year, plan_links, name_by_upn=None):
         def _row(t):
             if t.get("auto_failed"):
                 return (f'<li style="margin:2px 0;">\U0001f52c '
-                        f'<a href="{t["url"]}">{t["id"]}</a> — {t["name"]} '
+                        f'<a href="{escape(t["url"], quote=True)}">{escape(str(t["id"]))}</a> — {escape(t["name"])} '
                         f'<span style="color:#a4262c;">(Automated failure — triage)</span></li>')
             return (f'<li style="margin:2px 0;">{_STATE_ICON.get(t["state"], "⬜")} '
-                    f'<a href="{t["url"]}">{t["id"]}</a> — {t["name"]} '
+                    f'<a href="{escape(t["url"], quote=True)}">{escape(str(t["id"]))}</a> — {escape(t["name"])} '
                     f'<span style="color:#605e5c;">({_STATE_WORD.get(t["state"], t["state"])})</span></li>')
         items = "".join(_row(t) for t in pending)
         rows.append(
-            f'<div style="margin:10px 0;"><b><at id="{mi}">{who}</at></b> — '
+            f'<div style="margin:10px 0;"><b><at id="{mi}">{escape(who)}</at></b> — '
             f'{o["done"]}/{o["total"]} done, <b>{o["remaining"]} remaining</b>:'
             f'<ul style="margin:4px 0 0;padding-left:20px;">{items}</ul></div>')
 
-    links = " &nbsp;·&nbsp; ".join(f'<a href="{l["url"]}">{l["name"]}</a>' for l in (plan_links or []))
+    links = " &nbsp;·&nbsp; ".join(
+        f'<a href="{escape(l["url"], quote=True)}">{escape(l["name"])}</a>' for l in (plan_links or []))
     auto_n = progress.get("auto_failed_remaining", 0)
     auto_note = (f'<p style="font-size:13px;color:#a4262c;">\U0001f52c {auto_n} failed '
                  f'automated Authenticator case(s) need investigation (see current assignees) '
                  f'(investigate — not manual re-runs).</p>' if auto_n else "")
     html = (
         f'<div style="font-family:\'Segoe UI\',Arial,sans-serif;font-size:14px;">'
-        f'<p><b>🐞 {month_year} Bug Bash — progress update</b><br>'
+        f'<p><b>🐞 {escape(month_year)} Bug Bash — progress update</b><br>'
         f'<b>{done}/{total} tests done ({pct}%)</b> · {progress.get("remaining",0)} remaining. '
         f'Mark pass/fail in the ADO test plan; report bugs/logs here.</p>'
         f'<p style="font-size:13px;color:#605e5c;">{links}</p>'

@@ -156,6 +156,19 @@ Both initial and recurring updates reject missing/stale bindings. Their prepared
 also bind the invitation receipt and chat record for claim/finalization checks. Stop old
 workers and review already-prepared legacy payloads when deploying; do not replay them.
 
+Progress posts use the exact prepared `content`, `contentType: html`, and `mentions`
+array together. The owning progress step resolves display names and Entra user GUIDs
+against that meeting's members (directory lookup handles UPN/SMTP differences).
+Never replace the GUID with an email, omit mentions metadata, or rewrite `<at id="N">`
+as plain text. Unresolved pending owners block rather than producing fake mentions;
+fix the assignment/membership or directory access and prepare again. Completed owners
+remain plain names and are not notified. No new message is sent merely to validate tagging.
+If the CLI Graph token lacks chat-member access, fetch the exact verified chat with
+`workiq_get_chat` and save its fresh `id`, `chatType`, and complete `members` fields as
+JSON (do not copy message history). Re-prepare the first post with `--param members_file=<path>`, or rerun
+`post-bugbash-update` with `--members-file <path>`. The response must match the bound chat;
+do not reuse another meeting's member list or hand-author identities.
+
 ## Bug Bash availability
 
 Before `distribute_tests` computes the first manual-test preview, the **release owner**

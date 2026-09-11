@@ -1078,7 +1078,17 @@ bug_bash.bugbash_updates:
     new projection or source-only/unapplied failure enters this set. Missing/partial/stale
     results surface an error requiring the owning fill's refresh. Owners with any remaining
     test are @mentioned; owners who passed everything appear by name with an 'all completed'
-    line (no mention). It is fire-and-continue — the step completes after the first post so the
+    line (no mention). The progress step resolves owners against the verified meeting's
+    members, using directory lookup for UPN/SMTP differences. Pending owners require a
+    real Entra user GUID and display name; membership-record IDs and UPN strings are not
+    mention user IDs. Unknown/nonmember owners or lookup failures block preparation instead
+    of silently sending plain email addresses. Both initial and periodic paths send matching
+    HTML at-tags and canonical mentions metadata unchanged through notification claim.
+    If the CLI Graph token cannot read chat members, Scout can supply a fresh complete
+    workiq_get_chat response for that exact chat: first-post notification prepare uses
+    --param members_file=<path>, and the periodic command uses --members-file <path>.
+    The chat identity is validated; never synthesize user IDs or use an unrelated chat.
+    It is fire-and-continue — the step completes after the first post so the
     phase proceeds; the poller runs in the background.
   who: >
     Scout resolves it during `next` (a scout step). It gathers progress, then uses
