@@ -1,18 +1,20 @@
 // 60-day per-error-type trend (with MergeUiRequiredExceptions to collapse variants).
 //
-// LITERAL last 60 days ending today; Sun-Sat weekly bucketing kept (Kusto
-// startofweek() is Sunday-aligned). The current in-progress week is charted as the
-// final partial bar and is excluded from delta classification by bucket-trends.js,
-// not filtered here. See 60d-trend-codes.kql for full semantics.
+// LITERAL last 60 days ending today, bucketed into ROLLING 7-day windows anchored
+// at <TREND_END> via bin_at() -- NOT Sun-Sat calendar weeks. The final bucket is
+// exactly the report's rolling WoW window, so classifier WoW == displayed WoW.
+// Every bucket is complete; there is no partial end bar and no TREND_CLASS_END.
+// See 60d-trend-codes.kql for the full rationale (it documents the false-negative
+// class this alignment fixes). Do not "restore" startofweek() here.
 //
 // Inputs (bootstrap-report.ps1 prints all values):
 //   <TREND_START>  = curEnd - 60d
-//   <TREND_END>    = curEnd (today), EXCLUSIVE
+//   <TREND_END>    = curEnd (today), EXCLUSIVE, and the bin_at anchor
 materialized_view('ErrorStatsMetrics')
 | extend unified_error_type = MergeUiRequiredExceptions(error_type)
 | where EventInfo_Time >= datetime(<TREND_START>) and EventInfo_Time < datetime(<TREND_END>)
 | where isnotempty(unified_error_type)
 | summarize errs = sum(countOverall),
             devs = dcount_hll(hll_merge(countDevicesHll))
-     by week = startofweek(EventInfo_Time), unified_error_type
+     by week = bin_at(EventInfo_Time, 7d, datetime(<TREND_END>)), unified_error_type
 | order by unified_error_type asc, week asc

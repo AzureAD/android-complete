@@ -119,21 +119,7 @@ both sides of the init↔results join or the two funnels quietly contaminate eac
    rate, overall **Unknown rate**, Broker-API success rate, crashes per 1,000 devices. WoW delta
    on each, inline SVG sparkline on each.
 
-2. **Scenario scoreboard** — one table, **all 13 scenarios, every week, no exceptions**. Even
-   scenarios that did not move get a row; a silent scenario disappearing from the table is
-   indistinguishable from a scenario that was never checked. Columns: scenario, initiated,
-   success rate, Δ success (pts), failure rate, unknown rate, Δ unknown (pts), devices, 8-week
-   sparkline, status pill. Rows under the volume floor carry a `low-volume` tag.
-
-   > **The 4 push-notification rows cannot fill the success/failure/unknown columns — that is
-   > expected, not a gap.** PN has no success/failure/Unknown model (see the outcome-model warning
-   > above; `Denied` is a healthy outcome, so a "failure rate" would be a lie). For the 4 PN rows
-   > put the **completion rate** in the success-rate column, the **error rate** in the failure
-   > column, and a literal `n/a` in the unknown-rate and Δ-unknown cells. Do **not** leave the cells
-   > blank (blank reads as "not measured") and do **not** synthesise an Unknown bucket for them.
-   > Footnote the table once: *"PN scenarios report completion/error; they have no Unknown state."*
-
-3. **Needs attention** — callouts using the `.item` flat-row pattern, ordered by **novelty, not
+2. **Needs attention** — callouts using the `.item` flat-row pattern, ordered by **novelty, not
    volume** (see Step 4b). Render the classifier's `attention` set (`NEW` + `ACCELERATING`) at the
    top level, plus **at most 2** wins, and nothing else; `ONGOING` goes in a collapsed fold.
    Budget **≤ 8 visible rows total, wins included** (`validate-report.ps1` check 17 warns above it
@@ -145,14 +131,24 @@ both sides of the init↔results join or the two funnels quietly contaminate eac
      the only multi-week bucket that stays visible, because "is it getting worse?" is the one
      question a known issue can still answer usefully. Delete the callout if the set is empty.
 
-     > **When the classifier and the headline delta disagree, keep the row here and show both.**
-     > The classifier's "not falling" gate runs on **complete Sun–Sat calendar weeks**; the headline
-     > percentage-point delta runs on the **rolling 7-day** window. Different bases, and they
-     > legitimately disagree. That is not a reason to demote the row, rename the group, or hedge the
-     > heading — keep it exactly **"Getting worse"** and resolve it *in the row body*: *"Down 2.1 pp
-     > across the last three complete weeks; the rolling window shows +0.4 pp as the slide flattens.
-     > Still 3.8 pp below its own 60-day median."* The sparkline settles it visually. Do **not**
-     > invent a "needs verification" group.
+     > **The classifier's WoW and the headline delta share the SAME window** — both the rolling
+     > 7-day window, since the 60-day trend's final `bin_at` bucket *is* that window. (They used
+     > to run on different bases — calendar weeks vs rolling — and could disagree by 100 points.
+     > That was the bug this section used to describe as a feature.)
+     >
+     > **But they are not the same measure, so do not expect them to agree numerically.** The
+     > classifier grades bad-outcome volumes (`Failed + Unknown` devices and events); the
+     > scoreboard headline is a success-**rate** delta in percentage points. When traffic moves,
+     > the two can diverge in magnitude and can even move the same direction while telling
+     > opposite stories — e.g. bad-outcome devices rising simply because the scenario got busier,
+     > with the success rate flat or improving. A sign mismatch is a **rate-vs-volume** signal to
+     > explain in prose, **not** evidence that `--start`/`--end` were passed wrong. Only suspect
+     > the invocation if the printed bucket dates disagree with the report's window.
+     >
+     > A row can still be `ACCELERATING` while its **multi-week** slide outpaces this week's step.
+     > Keep the heading exactly **"Getting worse"** and resolve it *in the row body*: *"Down 2.1 pp
+     > over three weeks, −0.3 pp this week as the slide flattens. Still 3.8 pp below its own 60-day
+     > median."* The sparkline settles it visually. Do **not** invent a "needs verification" group.
    - **🔵 Ongoing / known** — label `ONGOING`: degraded but level or easing. **Collapse into a
      `<details class="fold">`** with a one-line summary ("N scenarios still below baseline, none
      accelerating") and each row's `weeksElevated`. Still in the report, no longer competing with
@@ -162,14 +158,14 @@ both sides of the init↔results join or the two funnels quietly contaminate eac
    - `VOLATILE` / `RECOVERY` ride as clearly-labelled trailing rows in the 🔴 callout, never
      headlining a percentage (check 15).
 
-   **⚠️ Every visible row carries its own 9-week `.item-spark`** holding the scenario's success-rate
+   **⚠️ Every visible row carries its own 8-week `.item-spark`** holding the scenario's success-rate
    series — including the wins, because a recovery is a shape claim too. Check 16 hard-fails a
    visible row without one. Rows inside the fold are exempt.
    ```html
    <span class="item-name">Passkey WebAuthN Authentication</span>
    <span class="item-spark trend" data-trend="[96.4,96.2,96.3,96.4,96.1,96.3,96.2,94.1]"
          data-w="120" data-h="22" data-color="#cf222e"></span>
-   <span class="spark-cap">9 wk</span>
+   <span class="spark-cap">8 wk</span>
    ```
    Colour: `#cf222e` worsening, `#bc4c00` accelerating, `#1a7f37` improving. Tag each row with its
    label (`tag-new` / `tag-accel` / `tag-ongoing`) plus `elevated Nw` where `weeksElevated > 1`.
@@ -188,6 +184,49 @@ both sides of the init↔results join or the two funnels quietly contaminate eac
    > **Every row body must be specific to that row** — which scenario, what moved, from what to what,
    > and whether it's news. One generic sentence repeated across rows makes the section unreadable;
    > `validate-report.ps1` fails the report for it.
+
+3. **Scenario scoreboard** — one table, **all 13 scenarios, every week, no exceptions**. Even
+   scenarios that did not move get a row; a silent scenario disappearing from the table is
+   indistinguishable from a scenario that was never checked. Columns: scenario, initiated,
+   success rate, Δ success (pts), failure rate, unknown rate, Δ unknown (pts), devices, 8-week
+   sparkline, status pill. Rows under the volume floor carry a `low-volume` tag.
+
+   > **The 4 push-notification rows cannot fill the success/failure/unknown columns — that is
+   > expected, not a gap.** PN has no success/failure/Unknown model (see the outcome-model warning
+   > above; `Denied` is a healthy outcome, so a "failure rate" would be a lie). For the 4 PN rows
+   > put the **completion rate** in the success-rate column, the **error rate** in the failure
+   > column, and a literal `n/a` in the unknown-rate and Δ-unknown cells. Do **not** leave the cells
+   > blank (blank reads as "not measured") and do **not** synthesise an Unknown bucket for them.
+   > Footnote the table once: *"PN scenarios report completion/error; they have no Unknown state."*
+
+   > **⚠️ MANDATORY — every red/amber pill must be reconciled.** The scoreboard colours a row from
+   > its own rolling delta; "Needs attention" is populated from the **novelty** classifier. Those
+   > answer different questions, so a row can be legitimately red here and legitimately absent
+   > there — but the reader sees a contradiction and concludes the report is broken.
+   >
+   > Real precedent from the 2026-08-01 run: **`Passkey WebAuthN Registration`** shipped carrying
+   > `tag-bad` (−1.27 pts, the worst delta in the table) while the attention section directly above
+   > read *"Quiet week — 0 NEW or ACCELERATING"*. Both were true. That scenario peaks at ~732
+   > bad-outcome devices, **under the 1,000-device peak floor**, so it is structurally excluded from
+   > classification and can carry a red pill forever without ever being eligible for attention. No
+   > bucketing change fixes this — it has to be *explained*.
+   >
+   > So for each `tag-bad` / `tag-warn` row, either promote it into attention, **or** emit a muted
+   > `<div class="reconcile-note">` naming it and giving the reason. Test the reasons **in this
+   > order** and stop at the first that applies:
+   > 1. **Below the classification floor** — peak < 1,000 bad-outcome devices in the 60-day window.
+   > 2. **Within its own normal band** — the move is inside its 8-week variance (check the sparkline).
+   > 3. **ONGOING and flat** — already known and not accelerating; it lives in the fold.
+   >
+   > ```html
+   > <div class="reconcile-note">Flagged in the scoreboard but not escalated: <b>Passkey WebAuthN
+   > Registration</b> and <b>Entra PSI PN+CFA</b> peak below the 1,000-device classification floor,
+   > so novelty is not computed for them. Watch the sparkline; re-evaluate if volume clears the floor.</div>
+   > ```
+   >
+   > Keep it visually muted — it is a footnote, not a finding, and must not compete with `.callout`.
+   > `validate-report.ps1` **check 19 hard-fails** any red/amber pill that is neither promoted nor
+   > named in a `.reconcile-note`.
 
 4. **60-day per-scenario trend** — weekly-bucketed sparkline per scenario, first→last delta, and
    a classification pill (regression / spike / improvement / flat) from `bucket-trends.js`.
@@ -287,7 +326,7 @@ Run [`scenario-60d-trend.kql`](../queries/authapp/scenario-60d-trend.kql), then:
 
 ```pwsh
 node .github\skills\oncall-weekly-telemetry-report\assets\scripts\bucket-trends.js $data\scenario-60d.json `
-     --key=scenario --metric=devs --end=<startofweek(curEnd)> --include-partial-end `
+     --key=scenario --metric=devs --start=<TREND_START> --end=<TREND_END> `
      --peak-floor=1000 --summary
 ```
 
@@ -296,8 +335,21 @@ The query maps `errs` / `devs` to **bad outcomes** (`Failed + Unknown`), so the 
 `--metric=devs` and `--metric=reqs` and report the union of what each flags — a scenario where
 device count is flat but event count explodes is a retry storm and only shows on one axis.
 
-Do **not** filter the partial current week at the source; `--end` excludes it from the delta math
-while `--include-partial-end` keeps it as the chart's final bar.
+**Pass both `--start` and `--end`** (`<TREND_START>` = `curEnd − 60d`, `<TREND_END>` = `curEnd`;
+`bootstrap-report.ps1` prints both). The query buckets with `bin_at(…, 7d, <TREND_END>)`, so the
+newest bucket **is** the report's 7-day window and every bucket is a complete 7 days — there is no
+partial end bar to exclude, and `--include-partial-end` / `TREND_CLASS_END` are obsolete. `--end`
+filters no rows; its job is to **disable the partial-end auto-drop heuristic**, which would
+otherwise be free to discard a genuine collapse in the newest bucket. The script warns if you omit
+it — treat that warning as an error. `--start` drops the one genuinely partial bucket, which under
+this anchoring is the **oldest** (`curEnd − 63d`, 4 days), leaving 8 clean rolling weeks.
+
+> **⚠️ `--peak-floor=1000` silently excludes low-volume scenarios from classification entirely** — a
+> scenario peaking below it can never appear in "Needs attention" no matter how sharply it moves,
+> while the scoreboard will still colour its pill red. That mismatch is not a bug in either
+> component; it is why the **reconciliation rule** exists (see section 3 of § Required sections).
+> After this step, cross-check the classifier's key list against the scoreboard and note which rows
+> were dropped by the floor — you will need them for the `.reconcile-note`.
 
 ### Step 4b — Classify novelty (mandatory)
 
@@ -337,19 +389,19 @@ classifier did not — that is the defect this step exists to prevent.
 
 > **Which series get classified: the outcome funnels only — the PN funnel is NOT run through the
 > classifier.** Feed `classify-novelty.js` the **9 outcome-funnel bad-outcome series** and nothing
-> else. The 13 scenarios in Section 5's scoreboard are **9 outcome funnels + 4 push-notification
+> else. The 13 scenarios in Section 3's scoreboard are **9 outcome funnels + 4 push-notification
 > families**; only the 9 are classifiable. The PN families (Section 7) are deliberately excluded for
 > two reasons: their `FinalResult` set has **two shapes** across the window so a weekly series is not
 > comparable week-to-week, and **`Denied` is a healthy outcome** — a rising `Denied` share is a user
 > correctly rejecting a prompt, which the classifier would read as a regression. Never let a PN
-> family appear in Section 3's `attention` set.
+> family appear in Section 2's `attention` set.
 >
 > PN still gets trend treatment, just not novelty classification: chart each family's **completion
 > rate** in Section 7 with its own sparkline and report the WoW delta there. If a PN family moves
 > enough to be this week's story, say so in Section 7 and, if it warrants top-level visibility,
-> reference it from the Section 1 executive summary — not by inserting it into Section 3.
+> reference it from the Section 1 executive summary — not by inserting it into Section 2.
 
-`weeksElevated` is **derived from the 9-week series, never persisted** — it counts consecutive recent
+`weeksElevated` is **derived from the 8-week series, never persisted** — it counts consecutive recent
 weeks above the early-window baseline, so it is identical on any machine and needs no state file.
 Where the whole visible window is elevated the classifier sets `sustainedFullWindow: true`; phrase
 that as *"below baseline for the entire visible window"* rather than inventing a week count.
@@ -361,8 +413,11 @@ chip row (`validate-report.ps1` check 15 hard-fails it). Give the absolute level
 AuthApp scenarios are mostly low-variance (cv 0.02–0.2), so a `VOLATILE` scenario is itself worth a sentence —
 it usually means instrumentation is flapping, not that users are failing.
 
-**Two different WoW bases exist — do not conflate them.** The report's headline Δ is the rolling 7-day window;
-the classifier's `WoW` is calendar Sun–Sat weeks. They legitimately disagree. Use novelty as *context*
+**The two WoW figures share a window but not a measure — do not conflate them.** Since the rolling
+alignment, the classifier and the headline both cover the same 7-day window. What still differs is
+*what is counted*: the headline Δ is a success-**rate** delta in percentage points, while the
+classifier grades bad-outcome **volumes** (`Failed + Unknown`). They can legitimately disagree in
+magnitude and even in direction when traffic shifts. Use novelty as *context*
 ("flat for seven weeks, first slip this week"), never as a competing delta number.
 
 ### Step 5 — Sparklines
@@ -506,16 +561,16 @@ Then verify by hand:
 >
 > The rules below are Authenticator-specific and do **not** transfer to the Broker playbook.
 
-- **Novelty classification is mandatory, and Section 3 is ordered by it — never by volume.** Run
+- **Novelty classification is mandatory, and Section 2 is ordered by it — never by volume.** Run
   [`classify-novelty.js`](../scripts/classify-novelty.js) (Step 4b) and lead with `NEW`. Volume-ranking
   the attention section is a known, reported defect — it puts flat-but-huge rows above real step-changes.
   If `NEW` is empty, write "nothing new this week"; do not backfill it with `ONGOING` scenarios.
-- **Section 3's visible rows are the classifier's `attention` set plus at most 2 wins — nothing else.**
+- **Section 2's visible rows are the classifier's `attention` set plus at most 2 wins — nothing else.**
   `NEW` + `ACCELERATING` visible with sparklines; `ONGOING` inside a collapsed `<details class="fold">`.
   Budget **≤ 8 visible rows total, wins included** (check 17 counts wins). The Broker report this
   replaces shipped 13 visible rows with zero charts while the section below it carried 38 — the reader
   could not tell which row was that week's story.
-- **Every visible attention row carries a 9-week `.item-spark`**, wins included. Check 16 hard-fails
+- **Every visible attention row carries an 8-week `.item-spark`**, wins included. Check 16 hard-fails
   otherwise. The series is already in the trend sidecar — no extra query. Charts belong beside the
   claim they support.
 - **A quiet week is a valid outcome — publish it as one.** If `quietWeek: true`, show the quiet-week
@@ -532,7 +587,7 @@ Then verify by hand:
   shape on both apps. Report the absolute level and its position against the 60-day
   median instead. AuthApp scenarios normally sit at cv 0.02–0.2, so a genuinely `VOLATILE` scenario usually
   means flapping instrumentation — call that out rather than reporting it as a user-facing failure.
-- **No boilerplate in Section 3.** Every row body must be specific to that scenario — what moved, from what
+- **No boilerplate in Section 2.** Every row body must be specific to that scenario — what moved, from what
   to what, and whether it's news. One generic sentence repeated across rows makes the section unreadable and
   `validate-report.ps1` fails the report for it.
 - **Never `dcount_hll` / `hll_merge` / `percentile_tdigest` / `materialized_view('…')` /
@@ -589,13 +644,17 @@ Then verify by hand:
 - [ ] Volume floor applied — `low-volume` rows tagged, excluded from the regression callout, and
       any scenario that *dropped into* low-volume is flagged as its own finding.
 - [ ] **60-day bucketing run on both axes** (`--metric=devs` AND `--metric=reqs`, `--key=scenario`),
-      union of regressions reported, partial week charted but excluded from delta classification.
+      union of regressions reported. Both `--start` and `--end` passed, so the newest `bin_at` bucket
+      is the report's own 7-day window and the classifier grades the period the tables print.
+- [ ] **Every red/amber scoreboard pill reconciled** — each `tag-bad`/`tag-warn` row is either
+      promoted into "Needs attention" or named in a `.reconcile-note` with its reason (below the
+      1,000-device floor / within its normal band / ONGOING-flat). Validator check 19 enforces this.
 - [ ] **Novelty classification run** ([`classify-novelty.js`](../scripts/classify-novelty.js), Step 4b,
-      `--family-sep=none`). Section 3 leads with `NEW`, `ACCELERATING` sits in the 🟠 Getting-worse
+      `--family-sep=none`). Section 2 leads with `NEW`, `ACCELERATING` sits in the 🟠 Getting-worse
       callout, `ONGOING` is inside a collapsed fold, and no `VOLATILE`/`RECOVERY` row headlines a
       percentage. Every row body is specific — no sentence repeats across rows.
 - [ ] **Attention section is short and charted.** Visible rows == the classifier's `attention` set
-      (`NEW` + `ACCELERATING`), ≤ 8 of them, each with an `.item-spark` 9-week sparkline (wins too).
+      (`NEW` + `ACCELERATING`), ≤ 8 of them, each with an `.item-spark` 8-week sparkline (wins too).
       If `quietWeek: true`, the quiet-week banner is shown and nothing was promoted to fill the gap.
 - [ ] Every regressed scenario that cleared the volume floor has an attribution card with **all
       three** dimension bars and a fully populated 4-field block (Likely cause / Concentration /
