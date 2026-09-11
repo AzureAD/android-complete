@@ -159,6 +159,10 @@ def test_automation_plan_derives_specs_from_ccd():
     assert by["ccd-noon"]["registration"]["steps"] == ["ccd.localization"]
     # the poller stays an interval automation (not date-pinned)
     assert by["ccd-localization-poller"]["schedule"] == "every 1 hour"
+    assert by["bug-bash-update-poller"]["schedule"] == "every 3 hours"
+    assert by["bug-bash-update-poller"]["registration"]["schedule"] == "every 3 hours"
+    assert "every 3 hours" in by["bug-bash-update-poller"]["prompt"]
+    assert by["bug-bash-update-poller"]["on_demand"]
     # registration carries slug + schedule so sync can re-pin on a CCD move
     assert by["ccd-morning"]["registration"]["slug"] == "ccd-morning"
     assert by["ccd-morning"]["registration"]["schedule"] == "cron: 0 9 9 9 *"

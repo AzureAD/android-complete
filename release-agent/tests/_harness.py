@@ -467,6 +467,8 @@ def _na_state(release="2026-08", ccd="2026-08-13", broker_plan=3730001, owner="P
 def _bb_updates_state(chat_id="19:meeting_X@thread.v2"):
     from orchestrator.state import StepState
     st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
+    st.pipeline_runs = {"rcs": [{"rc": 1, "ecs": {"run_id": "201"}, "local": {"run_id": "202"},
+                               "auth": {"build": {"run_id": "301"}, "test": {"run_id": "302"}}}]}
     st.set_step("bug_bash", "clone_plans_broker", StepState(status="done", data={"plan_id": 3730001}))
     st.set_step("bug_bash", "clone_plans_auth", StepState(status="done", data={"suite_id": 3730002}))
     if chat_id:

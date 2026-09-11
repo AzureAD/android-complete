@@ -1,7 +1,7 @@
 # Single source of truth for the release toolchain's DEPLOYMENT IDENTITY — the fixed
 # Azure DevOps / Teams coordinates that change only if the underlying infrastructure is
 # renamed or recreated. This is pure DATA: pipeline definition ids, org/project names,
-# repo identifiers, test-plan ids, Teams channel ids, and the quality-gate thresholds.
+# repo identifiers, test-plan ids, Teams channel ids, portal links, and quality-gate thresholds.
 #
 # It deliberately does NOT hold pipeline-CONTRACT strings (stage names, build-tag keys like
 # AuthenticatorBranch / RC<N>-ECS, branch prefixes, the RC-tag regex). Those are coupled 1:1
@@ -30,6 +30,10 @@ orgs:
 # Non-ADO hosts.
 hosts:
   cg_governance: "https://msazure.governance.visualstudio.com"   # Component Governance API host
+
+# User-facing portals (full URLs, including application paths).
+links:
+  test_accounts: "https://labusermanagerapi.azurewebsites.net/api/WebApp"
 
 # Pipeline definition ids, each tagged with the org it lives in.
 pipelines:

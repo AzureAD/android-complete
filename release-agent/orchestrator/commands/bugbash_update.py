@@ -61,6 +61,11 @@ def cmd_post_bugbash_update(args):
                            "note": "meeting chat binding missing/stale (run activate_chat against current invitation)"}))
         return 0
     scope["state_matches"] = chat_state_matches(st)
+    try:
+        interval_hours = BU.poll_interval_hours(args.config)
+    except ValueError as exc:
+        print(_json.dumps({"decision": "error", "detail": str(exc), "notifications": []}))
+        return 1
 
     ok, progress, detail = BU.gather(st)
     if not ok:
@@ -68,15 +73,21 @@ def cmd_post_bugbash_update(args):
         return 0
 
     month_year = schedule.target_month_label(st) or "Bug Bash"
+    ok, payload, detail = BU.prepare_update(st, progress, getattr(args, "members_file", None))
+    if not ok:
+        print(_json.dumps({"decision": "error", "chatId": chat_id, "detail": detail, "notifications": []}))
+        return 0
 
     if BB.all_complete(progress):
         completion_text = (f'all {progress["total"]} tests complete!' if progress["total"] else
                            'no manual or triage work remaining!')
         summary = (f'<div style="font-family:\'Segoe UI\',Arial,sans-serif;font-size:14px;">'
                    f'<p><b>🎉 {month_year} Bug Bash — {completion_text}</b><br>'
-                   f'Thanks everyone. Closing out the bash; no more automated updates.</p></div>')
+                   f'Thanks everyone. Closing out the bash; no more automated updates.</p></div>'
+                   + payload["content"])
+        payload = {**payload, "content": summary}
         item = D.descriptor(st, "bugbash:complete", scope, "workiq_send_chat_message",
-                            {"chatId": chat_id, "content": summary, "contentType": "html"},
+                            payload,
                             {"kind": "step_data", "data": {"poll_complete": True}})
         prepared = D.offer(orch, item)
         C.save_state(st, args.runs_root, args.release)
@@ -85,13 +96,9 @@ def cmd_post_bugbash_update(args):
                            "permission_to_send": False}))
         return 0
 
-    ok, payload, detail = BU.prepare_update(st, progress, getattr(args, "members_file", None))
-    if not ok:
-        print(_json.dumps({"decision": "error", "chatId": chat_id, "detail": detail, "notifications": []}))
-        return 0
-    checkpoint = now.replace(hour=now.hour - now.hour % 2, minute=0, second=0, microsecond=0)
+    checkpoint = now.replace(hour=now.hour - now.hour % interval_hours, minute=0, second=0, microsecond=0)
     from datetime import timedelta
-    scope["expires_at"] = (checkpoint + timedelta(hours=2)).isoformat()
+    scope["expires_at"] = (checkpoint + timedelta(hours=interval_hours)).isoformat()
     item = D.descriptor(st, f"bugbash:update:{checkpoint.isoformat()}", scope, "workiq_send_chat_message",
                         payload)
     prepared = D.offer(orch, item)

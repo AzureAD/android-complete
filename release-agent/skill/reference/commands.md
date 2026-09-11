@@ -130,6 +130,16 @@ link. No case creation, forced mapping, new notification lifecycle, or automatic
 
 ## Bug Bash invite and exact chat identity
 
+The first progress post is prepared when `bugbash_updates` is reached and delivered
+through the normal approval flow; it does not wait for a polling interval or for the meeting
+start. Only after confirmed delivery/completion is the on-demand poller provisioned.
+Its cadence is owned by `bug-bash-update-poller.every` in `config/automations.yaml`
+(currently **3 hours**), also used by notification checkpoints/expiry and generated prompts.
+Recurring ticks send only within 09:00–18:00 Los Angeles on working days; they do not
+guarantee a post exactly at 09:00. The first post is not subject to that tick-only gate.
+When deploying a cadence change, update the existing worker's schedule/prompt instead
+of creating a duplicate or replaying the first post.
+
 For the `send_invite` step, preserve its exact `start`, `end`, and `timeZone` payload.
 The body and approval summary include the scheduling timezone and meeting-date UTC offset;
 all scheduling rules use `America/Los_Angeles`, with the earliest start at 09:00 Los Angeles
@@ -164,10 +174,31 @@ Never replace the GUID with an email, omit mentions metadata, or rewrite `<at id
 as plain text. Unresolved pending owners block rather than producing fake mentions;
 fix the assignment/membership or directory access and prepare again. Completed owners
 remain plain names and are not notified. No new message is sent merely to validate tagging.
+The code-generated header also links to the latest saved RC's MRWP ECS run, MRWP Local
+run and Auth pipeline (the `auth.test.run_id` UI-test run, not the upstream APK build).
+Keep those links unchanged alongside the Broker-plan and Authenticator-suite links;
+never discover another run or substitute an older RC to fill a missing ID.
+The same header includes **Get test accounts**, whose URL is owned by
+`config/coordinates.yaml` → `links.test_accounts` and read through `coords.link("test_accounts")`.
+Change that single config value to retarget the portal; share the link, not account credentials.
+Render every workload case, including completed rows and all rows under finished owners.
+Put unresolved work first, followed by Passed/N/A rows. Use only the leading icon for
+each row's outcome, with a single legend: checkmark Passed, dash N/A, cross Failed,
+stop sign Blocked, square Not run. Do not append redundant "(Passed - resolved)",
+"(Not run)", "(Blocked)" or other outcome suffixes.
+Every row identifies its source plan as `[Broker]` or `[Authenticator]` (both for a shared
+case); do not infer product from titles or IDs. Automation triage keeps only its short
+"(Automation triage)" context note; the icon reflects the current outcome. The final poller summary includes
+the full completed list too. Only owners with remaining work are mentioned.
 The numerator/denominator cover human manual/triage work, not the entire Authenticator
 suite. The completed fill's automated-case classification excludes automation-only Auth
 cases from both counts (as distribution does), while applied automation failures remain
-visible as triage. Preserve real manual Passed/N/A completions. Do not infer automation
+visible as triage for BOTH Broker and Authenticator. Broker triage comes from the
+completed fill's originally failed points in its exact UI suite, not just the Broker
+manual subtree. Match point/case/configuration IDs; missing/changed points block.
+Count each case once, requiring all originally failing configurations to resolve;
+unexecuted configurations and successful automation do not inflate triage.
+Preserve real manual Passed/N/A completions. Do not infer automation
 from a Passed outcome, a shared tag, or a saved assignment list.
 If the CLI Graph token lacks chat-member access, fetch the exact verified chat with
 `workiq_get_chat` and save its fresh `id`, `chatType`, and complete `members` fields as

@@ -22,8 +22,10 @@ def progress():
     return {"total": 2, "done": 1, "remaining": 1, "unassigned": 0, "owners": {
         "a@example.test": {"name": "a@example.test", "total": 1, "done": 0, "remaining": 1,
                            "tests": [{"id": "1", "name": "Login <test>", "url": "https://example.test/1",
-                                      "state": "notrun"}]},
-        "b@example.test": {"name": "b@example.test", "total": 1, "done": 1, "remaining": 0, "tests": []}}}
+                                      "state": "notrun", "products": ["Broker"]}]},
+        "b@example.test": {"name": "b@example.test", "total": 1, "done": 1, "remaining": 0,
+                           "tests": [{"id": "2", "name": "Done", "url": "https://example.test/2",
+                                      "state": "passed", "products": ["Authenticator"]}]}}}
 
 
 def people():
@@ -163,6 +165,10 @@ def test_both_producers_preserve_the_same_mentions_in_claimed_payload(
         assert bugbash_update.cmd_post_bugbash_update(args) == 0
     periodic = json.loads(capsys.readouterr().out)["notifications"][0]
     assert periodic["payload"] == initial["payload"]
+    assert periodic["payload"]["content"].count("<li>") == 2
+    assert "[Broker]" in periodic["payload"]["content"] and "[Authenticator]" in periodic["payload"]["content"]
+    assert '<li>✅ <b>[Authenticator]</b>' in periodic["payload"]["content"]
+    assert "(Passed — resolved)" not in periodic["payload"]["content"]
 
 
 def test_resolution_failure_stages_no_periodic_notification(monkeypatch, tmp_path, capsys):

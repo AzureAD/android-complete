@@ -1069,12 +1069,21 @@ bug_bash.activate_chat:
       a: "Ask the organizer to open the exact event and its Chat pane, then rerun verification. A supplied chat link is only a candidate to validate, never a bypass."
 
 bug_bash.bugbash_updates:
-  summary: "Post the first bug-bash progress update to the meeting chat and start the 2h update poller."
+  summary: "Post the first bug-bash progress update to the meeting chat and start the 3h update poller."
   what: >
     Reaching this step posts an initial progress update to the Bug Bash meeting chat and
     provisions the on-demand `bug-bash-update-poller` automation. Each update is grouped by
     each test's owner (System.AssignedTo, set by distribute_tests, read live from BOTH the
-    Broker 'Manual Tests (Android Broker)' subtree and the Authenticator bug-bash suite).
+    Broker 'Manual Tests (Android Broker)' subtree, Broker UI failure-triage points, and
+    the Authenticator bug-bash suite).
+    The code-generated header includes Broker test plan, Authenticator suite, MRWP · ECS
+    run, MRWP · Local run, Auth pipeline and Get test accounts
+    (portal URL from config/coordinates.yaml links.test_accounts).
+    Source IDs come from the latest recorded RC:
+    ecs.run_id, local.run_id and auth.test.run_id. Auth pipeline opens the UI-test run in
+    msazure/One, not the upstream APK build; MRWP links use identitydivision/Engineering.
+    No pipeline discovery/refetch is needed; missing/invalid run IDs require refreshing
+    the owning verification step. Initial, periodic and final reports share these links.
     Counts cover manual/triage work, not every Authenticator suite case. The completed
     ui_test_status result supplies the same automated-case classification used by
     distribution. Automation-only Auth cases are excluded from both done and total,
@@ -1082,14 +1091,26 @@ bug_bash.bugbash_updates:
     remain visible as triage; genuine manual Passed/N/A cases still count as done.
     The filter is classification-based, never "remove all passes" or a shared Automated tag.
     A test counts as done only when it PASSED (or is N/A); not-run, failed, and blocked all
-    count as remaining and are LISTED (failed first, then blocked, then not-run) with links +
-    state so failures are surfaced, not buried. Authenticator cases actually written Failed
-    in ui_test_status's completed result are shown DISTINCTLY — 🔬 'Automated failure — triage',
-    listed first under their LIVE assignee, plus a header note. No raw Phase-2 capture schema,
+    count as remaining. Always list ALL workload cases under each person, not just those
+    remaining: unresolved work first, then Passed/N/A rows. The leading icon is the only
+    row outcome indicator (checkmark Passed, dash N/A, cross Failed, stop sign Blocked,
+    square Not run), with a single report legend and no redundant trailing status text.
+    Every row has a Broker/Authenticator label from its source
+    plan (both labels if the same case is present in both); never infer product from titles.
+    Broker and Authenticator cases actually written Failed in ui_test_status's completed
+    result retain a short 'Automation triage' context note. Resolved triage rows remain
+    visible with their current outcome icon, not an open-failure label.
+    Broker triage reads the completed fill's originally failed points from its exact
+    UI suite, checking point/case/configuration identity. Count distinct cases, not
+    configuration points; all originally failing configurations must resolve to Passed/N/A.
+    Successful automation and untouched configurations outside that triage set are not
+    included. Missing or changed tracked points block rather than disappear from totals.
+    No raw Phase-2 capture schema,
     new projection or source-only/unapplied failure enters this set. Missing/partial/stale
     results surface an error requiring the owning fill's refresh. Owners with any remaining
-    test are @mentioned; owners who passed everything appear by name with an 'all completed'
-    line (no mention). The progress step resolves owners against the verified meeting's
+    test are @mentioned; owners who finished appear by name with an 'all completed'
+    line AND their complete case list (no mention). The final poller wrap-up includes the
+    same full completed-case report instead of just a summary. The progress step resolves owners against the verified meeting's
     members, using directory lookup for UPN/SMTP differences. Pending owners require a
     real Entra user GUID and display name; membership-record IDs and UPN strings are not
     mention user IDs. Unknown/nonmember owners or lookup failures block preparation instead
@@ -1118,15 +1139,19 @@ bug_bash.bugbash_updates:
     Blocks if the meeting chat isn't activated (run activate_chat).
   faqs:
     - q: "When do the updates run?"
-      a: "Every 2 hours during working hours — 09:00–18:00 America/Los_Angeles, weekdays only, skipping hardcoded US federal holidays. Outside that window a tick returns off_hours and sends nothing; it resumes at 09:00 the next working day."
+      a: "Every 3 hours, configured by bug-bash-update-poller.every in config/automations.yaml. Ticks post only during 09:00–18:00 America/Los_Angeles on weekdays excluding US federal holidays. Outside that window they send nothing; posting resumes at the next scheduled tick inside the working window, not necessarily exactly at 09:00."
+    - q: "When is the first progress message sent?"
+      a: "When the engine reaches bug_bash.bugbash_updates with its prerequisites ready, it prepares the first post for the normal approval/delivery flow. It does not wait for a polling interval and is not scheduled relative to the meeting start. After confirmed first delivery/completion, Scout creates the recurring poller. Only recurring ticks use the working-hours gate. If all work is already complete, the initial step sends nothing and starts no poller."
     - q: "When do the updates stop?"
       a: "After every test completes, the final wrap-up must be claimed and successfully acknowledged before poll_complete is recorded. Known failed sends retry while the phase remains open. Owner sign-off/phase completion stops stale sends. Cleanup deletes first, then deregisters."
+    - q: "Why are resolved tests still listed?"
+      a: "The list should show the full denominator: 1/7 done means seven visible cases, one checked as passed. Passed and N/A have distinct icons explained once in the legend; rows do not repeat status text. Finished owners retain all their rows without being mentioned. Every case is labeled Broker or Authenticator from the source plan."
     - q: "Why group by AssignedTo instead of the test point's tester?"
       a: "The ADO test-point `tester` field is NOT synced with the case's System.AssignedTo. distribute_tests sets AssignedTo, so progress is grouped by AssignedTo to reflect who actually owns each test."
     - q: "Why doesn't progress count every test assigned to someone in the full ADO suite?"
       a: "The suite also contains automated results whose shared case owner may be a manual tester. Those automation-only cases are not that person's Bug Bash workload: exclude them from both completed and total counts. Real manual completions still count; applied automation failures remain explicit owner-triage work."
-    - q: "Why are some of the owner's failures marked 'Automated failure — triage'?"
-      a: "Those are Authenticator cases recorded as actually written Failed by ui_test_status. Current ownership comes from live System.AssignedTo, not an assumed successful reassignment. They are investigations rather than new manual assignments, and remain outstanding until resolved."
+    - q: "Why are some of the owner's tests marked 'Automation triage'?"
+      a: "Those are Broker or Authenticator cases recorded as actually written Failed by ui_test_status. Current ownership comes from live System.AssignedTo, not an assumed successful reassignment. They are investigations rather than new manual assignments, and remain outstanding until resolved. Broker cases with multiple originally failing configurations count once and require every tracked failure to resolve."
 
 bug_bash.native_auth_signoff:
   summary: "The release owner attests they received the Native Auth team's sign-off."
@@ -1188,7 +1213,7 @@ bug_bash.bugbash_complete:
     release out of Phase 3. It also STOPS the periodic updates.
   who: >
     The owner approves it (`approve` / `done --step bugbash_complete`). Until then — or until
-    every test auto-completes — the `bug-bash-update-poller` keeps posting every 2h.
+    every test auto-completes — the `bug-bash-update-poller` keeps posting every 3h.
   how: >
     When the owner signs off, run `automation cleanup --release <id> --json`.
     For the returned bug-bash poller, call `m_delete_automation` first and deregister
@@ -1199,7 +1224,7 @@ bug_bash.bugbash_complete:
       a: "Yes — this is a judgement gate. If the remaining tests are triaged/blocked and the team agrees the bash is done, approve it. It doesn't require 100% pass; that's what the sign-off is for."
     - q: "What about the failed Authenticator automation cases?"
       a: "Those are surfaced in ui_failures for owner investigation; check ui_test_status for any assignment errors. Review/triage them as part of sign-off — they don't block the gate, but you should have ruled on them before approving."
-    - q: "What stops the 2-hour chat updates?"
+    - q: "What stops the recurring chat updates?"
       a: "Two things make cleanup eligible: confirmed final-summary delivery records poll_complete, or the phase finishes. Initial bugbash_updates completion does not stop the phase-owned poller. Cleanup deletes the Scout automation first and deregisters after success."
 
 # ============================= Phase 4 · finalize =============================

@@ -711,15 +711,16 @@ def test_bugbash_holidays_and_working_window():
 
 def test_bugbash_render_mentions_finished_and_complete():
     """render_update @mentions (with <at id>) only owners with remaining tests; lists
-    not-run + failed + blocked (failed first) each with a link; finished owners appear by
-    name with an 'all completed' line; all_complete flips when 0 remain."""
+    every test (unresolved first), including all cases under finished owners without
+    mentions; all_complete flips when 0 remain."""
     from tools import bugbash as BB
     prog = {"total": 4, "done": 2, "remaining": 2, "unassigned": 0, "owners": {
         "a@x": {"name": "Alice", "total": 2, "done": 0, "remaining": 2, "tests": [
-            {"id": "101", "name": "Login", "url": "u101", "state": "notrun"},
-            {"id": "102", "name": "MFA", "url": "u102", "state": "failed"}]},
+            {"id": "101", "name": "Login", "url": "u101", "state": "notrun", "products": ["Broker"]},
+            {"id": "102", "name": "MFA", "url": "u102", "state": "failed", "products": ["Authenticator"]}]},
         "b@x": {"name": "Bob", "total": 2, "done": 2, "remaining": 0, "tests": [
-            {"id": "201", "name": "X", "url": "u", "state": "passed"}]}}}
+            {"id": "201", "name": "X", "url": "u201", "state": "passed", "products": ["Broker"]},
+            {"id": "202", "name": "Y", "url": "u202", "state": "na", "products": ["Authenticator"]}]}}}
     html, mentions = BB.render_update(prog, "August 2026",
                                       [{"name": "Broker plan", "url": "bp"}],
                                       {"a@x": {"id": "11111111-1111-1111-1111-111111111111", "name": "Alice"}})
@@ -727,9 +728,10 @@ def test_bugbash_render_mentions_finished_and_complete():
     assert mentions[0]["mentioned"]["user"]["id"] == "11111111-1111-1111-1111-111111111111"
     assert '<at id="0">Alice</at>' in html                          # id matches mentions[0]
     # the FAILED test is surfaced (Option A) with a link, and ordered before the not-run one
-    assert '<a href="u102">102</a>' in html and "(Failed)" in html
+    assert '<a href="u102">102</a>' in html and '<li>❌ <b>[Authenticator]</b>' in html
     assert html.index("102") < html.index("101")                   # failed listed first
     assert "all 2 tests completed" in html and "<at" not in html.split("Bob")[0][-40:]
+    assert html.count("<li>") == 4 and '<li>✅ <b>[Broker]</b>' in html and '<li>➖ <b>[Authenticator]</b>' in html
     assert not BB.all_complete(prog)
     prog["done"], prog["remaining"] = 4, 0
     prog["owners"]["a@x"].update(done=2, remaining=0)
@@ -759,8 +761,8 @@ def test_bugbash_updates_composes_needs_skill():
     _active_phase(st, "bug_bash")
     prog = {"total": 2, "done": 0, "remaining": 2, "unassigned": 0, "owners": {
         "a@x": {"name": "Alice", "total": 2, "done": 0, "remaining": 2, "tests": [
-            {"id": "1", "name": "T1", "url": "u1", "state": "notrun"},
-            {"id": "2", "name": "T2", "url": "u2", "state": "notrun"}]}}}
+            {"id": "1", "name": "T1", "url": "u1", "state": "notrun", "products": ["Broker"]},
+            {"id": "2", "name": "T2", "url": "u2", "state": "notrun", "products": ["Authenticator"]}]}}}
     with mockctx.active({"progress": prog, "people": {
             "a@x": {"id": "11111111-1111-1111-1111-111111111111", "name": "Alice"}}}):
         out = as_dict(_steps.get_step("bug_bash", "bugbash_updates").build(st))
@@ -826,16 +828,20 @@ def test_post_bugbash_update_decisions():
 
         remaining = {"total": 2, "done": 1, "remaining": 1, "unassigned": 0, "owners": {
             "a@x": {"name": "Alice", "total": 2, "done": 1, "remaining": 1, "tests": [
-                {"id": "1", "name": "T1", "url": "u1", "state": "notrun"}]}}}
+                {"id": "1", "name": "T1", "url": "u1", "state": "notrun", "products": ["Broker"]},
+                {"id": "2", "name": "T2", "url": "u2", "state": "passed", "products": ["Authenticator"]}]}}}
         _, dec = run("2026-08-21T10:00:00", {"progress": remaining, "people": {
             "a@x": {"id": "11111111-1111-1111-1111-111111111111", "name": "Alice"}}})   # Fri 10am
         assert dec["decision"] == "post" and dec["remaining"] == 1
         assert dec["chatId"] == "19:meeting_X@thread.v2" and dec["mentions"]
 
         allc = {"total": 2, "done": 2, "remaining": 0, "unassigned": 0, "owners": {
-            "a@x": {"name": "Alice", "total": 2, "done": 2, "remaining": 0, "tests": []}}}
-        _, dec = run("2026-08-21T10:00:00", {"progress": allc})
+            "a@x": {"name": "Alice", "total": 2, "done": 2, "remaining": 0, "tests": [
+                {"id": "1", "name": "T1", "url": "u1", "state": "passed", "products": ["Broker"]},
+                {"id": "2", "name": "T2", "url": "u2", "state": "passed", "products": ["Authenticator"]}]}}}
+        _, dec = run("2026-08-21T10:00:00", {"progress": allc, "people": {"a@x": {"name": "Alice"}}})
         assert dec["decision"] == "complete" and dec["total"] == 2
+        assert dec["content"].count("<li>") == 2 and "<at" not in dec["content"]
         assert not _C.load_state(d, rid).get_step("bug_bash", "bugbash_updates").data.get("poll_complete")
         _ack_notifications(d, rid, "2026-08-21T10:00:00-07:00", dec["notifications"])
         assert _C.load_state(d, rid).get_step(
@@ -852,22 +858,23 @@ def test_post_bugbash_update_decisions():
 
 
 def test_bugbash_render_marks_auto_failed_auth_as_triage():
-    """render_update shows a pre-triaged automated-auth failure distinctly (🔬 'Automated
-    failure — triage'), separate from manual not-run tests, and adds a header note. A plain
-    failed/not-run test keeps its normal label."""
+    """Automation triage keeps its context without repeating the icon's outcome text."""
     from tools import bugbash as BB
     prog = {"total": 3, "done": 0, "remaining": 3, "auto_failed_remaining": 1,
             "unassigned": 0, "owners": {
         "o@x": {"name": "Owner", "total": 3, "done": 0, "remaining": 3, "tests": [
-            {"id": "2916347", "name": "Passkey reg", "url": "uA", "state": "failed", "auto_failed": True},
-            {"id": "50", "name": "Manual T", "url": "uM", "state": "notrun", "auto_failed": False},
-            {"id": "51", "name": "Manual F", "url": "uF", "state": "failed", "auto_failed": False}]}}}
+            {"id": "2916347", "name": "Passkey reg", "url": "uA", "state": "failed", "auto_failed": True,
+             "products": ["Authenticator"]},
+            {"id": "50", "name": "Manual T", "url": "uM", "state": "notrun", "auto_failed": False,
+             "products": ["Broker"]},
+            {"id": "51", "name": "Manual F", "url": "uF", "state": "failed", "auto_failed": False,
+             "products": ["Broker"]}]}}}
     html, mentions = BB.render_update(prog, "August 2026", [{"name": "Broker", "url": "b"}],
                                      {"o@x": {"id": "11111111-1111-1111-1111-111111111111", "name": "Owner"}})
     assert "\U0001f52c 1 failed automated Authenticator case(s) need investigation" in html
-    assert "Automated failure — triage" in html                        # the auto-failed row
+    assert "(Automation triage)" in html                              # the auto-failed row
     assert "2916347" in html and "50" in html and "51" in html         # all three listed
-    assert "Not run" in html and "Failed" in html                      # manual labels intact
+    assert "⬜ Not run" in html and "❌ Failed" in html                  # legend remains explicit
     # the auto-failed case is listed FIRST within the owner's pending block
     assert html.index("2916347") < html.index("Manual T")
     assert len(mentions) == 1 and mentions[0]["mentionText"] == "Owner"
@@ -901,6 +908,8 @@ def test_bugbash_updates_passes_automation_classification_and_failures_to_gather
     ok, _prog, _ = BU.gather(st)
     assert ok and captured["auto_failed_ids"] == [2916347, 2916524]
     assert captured["auth_automated_ids"] == [1579395, 2916347, 2916524]
+    from steps.bug_bash.ui_results import completed_result
+    assert captured["broker_ui_result"] == completed_result(st)["broker"]
 
 
 

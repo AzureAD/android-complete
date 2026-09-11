@@ -1,6 +1,6 @@
 """Loader for config/coordinates.yaml — the single source of truth for the release
 toolchain's deployment identity (ADO org/project coordinates, pipeline definition ids,
-repo identifiers, test-plan ids, Teams channel ids, quality-gate thresholds).
+repo identifiers, test-plan ids, Teams channel ids, portal links, quality-gate thresholds).
 
 Loaded ONCE (cached) at first import. Consumers read named constants whose VALUES come
 from here, e.g. `tools.pipelines.CHECKER_DEF = coords.pipeline_def("checker")`, so the
@@ -55,6 +55,10 @@ class _Coords:
     def host(self, key) -> str:
         """A non-ADO host URL (e.g. 'cg_governance')."""
         return self._get("hosts", key)
+
+    def link(self, key) -> str:
+        """A user-facing portal URL, including its application path."""
+        return self._get("links", key)
 
     # -- pipelines --
     def pipeline_def(self, key) -> int:
