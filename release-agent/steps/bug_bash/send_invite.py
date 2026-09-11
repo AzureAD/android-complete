@@ -7,8 +7,9 @@ events). The invite body is rendered from templates/bug-bash-invite.html (edit t
 restyle — the step always renders from it).
 
 When (agreed rule, see tools.invite.schedule_bugbash):
+  * all scheduling uses America/Los_Angeles, not the owner or runner timezone
   * reached after 3pm or on a weekend -> next BUSINESS morning at 09:00
-  * reached before 3pm on a weekday    -> later the SAME day
+  * reached before 3pm on a weekday    -> later the SAME day, no earlier than 09:00
   Weekends roll forward to Monday. ~2h duration (extend if failures need investigation).
 
 Recipients (real): the config `recipients` — the Azure Identity Android SDK / Android
@@ -75,7 +76,7 @@ def build(state):
     month_year = schedule.target_month_label(state)
 
     # when
-    zone_name = getattr(state, "timezone", None) or schedule.DEFAULT_TZ
+    zone_name = I.SCHEDULING_TIMEZONE
     zone = schedule.get_tz(zone_name)
     if zone is None:
         return Blocked(f"send_invite: timezone data unavailable for {zone_name}")
@@ -86,6 +87,9 @@ def build(state):
     else:
         now = schedule.now_local(zone)
     start, end, when_note = I.schedule_bugbash(now.replace(tzinfo=None))
+    start_zoned = start.replace(tzinfo=zone)
+    offset = start_zoned.strftime("%z")
+    when_note += f" ({zone_name}, UTC{offset[:3]}:{offset[3:]})"
 
     # links (Phase 2 pipeline runs — TBD if not resolved)
     rc = _latest_rc(state)
@@ -133,5 +137,5 @@ def build(state):
                 f"recipient(s) ({rnote})",
         note=f"invited {', '.join(recipients) if recipients else '(no recipients)'}",
         outbound=True,
-        notification={"expires_at": start.replace(tzinfo=zone).isoformat()},
+        notification={"expires_at": start_zoned.isoformat()},
     )

@@ -6,10 +6,10 @@ Three concerns, all here so the step stays thin:
   * render_invite(...) — fill the HTML template (templates/bug-bash-invite.html) with the
     release's real links + flags.
 
-Scheduling rule (agreed):
+Scheduling rule (America/Los_Angeles, independent of the owner/runner timezone):
   * Reached AFTER 3pm, or on a weekend  -> next BUSINESS morning at 09:00.
   * Reached before 3pm on a weekday      -> later the SAME day (now + a short notice,
-    rounded up to the next half hour).
+    rounded up to the next half hour), never before 09:00 Los Angeles time.
   Weekends always roll forward to Monday.
 """
 from __future__ import annotations
@@ -23,6 +23,7 @@ ORG = P.ENGINEERING_ORG
 PROJECT = P.ENGINEERING_PROJECT
 _TPL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates")
 
+SCHEDULING_TIMEZONE = "America/Los_Angeles"
 CUTOFF_HOUR = 15          # 3pm — after this, schedule for the next business morning
 MORNING_HOUR = 9          # next-day start
 SAME_DAY_NOTICE_H = 2     # same-day: start this many hours out (rounded up to :30)
@@ -52,7 +53,7 @@ def _round_up_half_hour(dt):
 def schedule_bugbash(now, duration_hours=DURATION_HOURS):
     """Return (start, end, when_note) — naive local datetimes for the meeting.
 
-    `now` is the local datetime the step runs at. See the module docstring for the rule."""
+    `now` is the Los Angeles wall time supplied by the step. See the module docstring."""
     weekend = now.weekday() >= 5
     late = now.hour >= CUTOFF_HOUR
     if weekend or late:
@@ -60,6 +61,7 @@ def schedule_bugbash(now, duration_hours=DURATION_HOURS):
         start = datetime(day.year, day.month, day.day, MORNING_HOUR, 0)
     else:
         start = _round_up_half_hour(now + timedelta(hours=SAME_DAY_NOTICE_H))
+        start = max(start, now.replace(hour=MORNING_HOUR, minute=0, second=0, microsecond=0))
     end = start + timedelta(hours=duration_hours)
     when = f"{start.strftime('%A, %b %d')} · {start.strftime('%-I:%M %p') if os.name != 'nt' else start.strftime('%#I:%M %p')}" \
            f"–{end.strftime('%-I:%M %p') if os.name != 'nt' else end.strftime('%#I:%M %p')}"

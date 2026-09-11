@@ -385,6 +385,9 @@ def test_bugbash_schedule_rule():
     # Tue 3:30pm -> Wed 9am
     s4, _, _ = I.schedule_bugbash(datetime(2026, 8, 25, 15, 30))
     assert (s4.day, s4.hour) == (26, 9)
+    for hour in range(7):
+        s5, e5, _ = I.schedule_bugbash(datetime(2026, 9, 11, hour, 0))
+        assert s5 == datetime(2026, 9, 11, 9) and e5 == datetime(2026, 9, 11, 11)
 
 
 
@@ -415,7 +418,7 @@ def test_send_invite_composes_create_event():
     assert out["notification"]["expires_at"] == "2026-08-24T09:00:00-07:00"
 
 
-def test_send_invite_uses_owner_timezone_and_blocks_missing_zone(monkeypatch):
+def test_send_invite_uses_los_angeles_timezone_and_blocks_missing_zone(monkeypatch):
     from datetime import datetime
     from orchestrator import schedule
     from steps.bug_bash import send_invite
@@ -427,10 +430,33 @@ def test_send_invite_uses_owner_timezone_and_blocks_missing_zone(monkeypatch):
     with mockctx.active({"flags": "{}"}):
         out = send_invite.build(st)
     assert out.payload["start"] == "2026-08-25T09:00:00"
-    assert out.payload["timeZone"] == "Asia/Tokyo"
-    assert out.notification["expires_at"] == "2026-08-25T09:00:00+09:00"
-    st.timezone = "Missing/Zone"
+    assert out.payload["timeZone"] == "America/Los_Angeles"
+    assert out.notification["expires_at"] == "2026-08-25T09:00:00-07:00"
+    monkeypatch.setattr(schedule, "get_tz", lambda _: None)
     assert send_invite.build(st).kind == "blocked"
+
+
+def test_send_invite_overnight_clock_and_timezone_are_explicit():
+    from steps.bug_bash import send_invite
+    from steps.lib import mockctx
+    st = _invite_state()
+    for now, day, offset in (
+        ("2026-09-11T00:49:35+00:00", "2026-09-11", "-07:00"),
+        ("2026-09-11T07:00:00+00:00", "2026-09-11", "-07:00"),
+        ("2026-11-06T08:00:00+00:00", "2026-11-06", "-08:00"),
+        ("2026-03-06T23:30:00+00:00", "2026-03-09", "-07:00"),
+        ("2026-10-30T22:30:00+00:00", "2026-11-02", "-08:00"),
+    ):
+        for owner_zone in ("America/Chicago", "Asia/Tokyo", "Europe/Dublin", None):
+            st.timezone = owner_zone
+            with mockctx.active({"now": now, "flags": "{}"}):
+                out = send_invite.build(st)
+            assert out.payload["start"] == f"{day}T09:00:00"
+            assert out.payload["end"] == f"{day}T11:00:00"
+            assert out.payload["timeZone"] == "America/Los_Angeles"
+            assert f"(America/Los_Angeles, UTC{offset})" in out.payload["body"]
+            assert f"(America/Los_Angeles, UTC{offset})" in out.summary
+            assert out.notification["expires_at"] == f"{day}T09:00:00{offset}"
 
 
 def test_send_invite_expiry_refresh_and_ever_claimed_safety(tmp_path, monkeypatch, capsys):

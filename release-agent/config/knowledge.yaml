@@ -975,11 +975,16 @@ bug_bash.send_invite:
     with the send_to knob (keeps the send real, points it at you).
   how: >
     When: reached after 3pm or on a weekend → next business morning at 09:00; before 3pm on
-    a weekday → later the same day. Weekends roll to Monday. Links come from the clone steps
+    a weekday → later the same day, never before 09:00 America/Los_Angeles.
+    Weekends roll to Monday. The body and approval summary include the IANA timezone and
+    UTC offset at the meeting date; start/end and timeZone must be passed unchanged.
+    Other attendees see that same instant converted to their own timezone. Links come from the clone steps
     (Broker plan, Auth suite) and Phase 2 (ECS/Local MRWP runs); flags are fetched live from
     variable group 40. Blocks if the plans haven't been cloned yet.
     Delivery uses notification prepare (source step), claim, then notification result.
-    Scheduling uses the owner's timezone, not the runner's. Send permission expires at
+    Scheduling, the 3pm cutoff and weekend decisions use Los Angeles time regardless of
+    the owner's or runner's timezone; daylight saving time is handled by the IANA zone.
+    Send permission expires at
     the meeting start. An unclaimed invitation can be re-prepared with a new approved hash;
     any ever-claimed invitation stays frozen and requires owner recovery if expired.
   links:
@@ -987,7 +992,9 @@ bug_bash.send_invite:
       url: "https://identitydivision.visualstudio.com/Engineering/_library?view=VariableGroupView&variableGroupId=40&path=release"
   faqs:
     - q: "When is it scheduled?"
-      a: "After 3pm or on a weekend → next business morning (9am); before 3pm on a weekday → later the same day. Weekends always roll to Monday."
+      a: "All rules use America/Los_Angeles: after 3pm or on a weekend → next business morning (9am); before 3pm on a weekday → two hours later rounded to a half hour, but never before 9am Los Angeles time. The timezone and meeting-date UTC offset are explicit. Attendees elsewhere see the equivalent local time. Weekends roll to Monday."
+    - q: "Why might an old invite show an overnight time?"
+      a: "Older code used the runner's naive local clock but labelled the payload with the owner's timezone, and the same-day rule had no morning floor. Current code converts to Los Angeles time first and never schedules before 9am there, independent of owner timezone. Check actual calendar times separately from stale body text; correcting an existing invitation requires its organizer and a reviewed update, not rerunning create."
     - q: "Who gets invited?"
       a: "The Azure Identity Android SDK / Android Identity team (androididentity@microsoft.com) and idnadevexciamdublin@microsoft.com. For a test, the send_to knob redirects it to you."
     - q: "Where does the template live?"

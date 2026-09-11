@@ -128,6 +128,14 @@ link. No case creation, forced mapping, new notification lifecycle, or automatic
 
 ## Bug Bash availability
 
+For the `send_invite` step, preserve its exact `start`, `end`, and `timeZone` payload.
+The body and approval summary include the scheduling timezone and meeting-date UTC offset;
+all scheduling rules use `America/Los_Angeles`, with the earliest start at 09:00 Los Angeles
+time regardless of the owner/runner location. DST offsets follow the meeting date. Check
+an existing event's actual calendar times separately from body
+text before diagnosing an overnight invite. Do not rerun creation to correct an existing
+meeting; any organizer update must keep the displayed body time consistent with start/end.
+
 Before `distribute_tests` computes the first manual-test preview, the **release owner**
 must supply availability for **this release's Bug Bash**. Do not query calendars,
 Teams presence, O365 automatic replies/OOF, or infer dates. Graph is used only to resolve
@@ -269,7 +277,7 @@ optional `NeedsSkill.notification` supplies a semantic checkpoint, `not_before`/
 (dictionary keys/list indexes) with either exact `value` or `hash: delivery.fingerprint(value)`.
 Bind the actual evaluated inputs, not just an RC number: result changes and reruns matter.
 Keep the logical identity stable when refreshing the same unsent work; don't use a payload
-hash as an identity that evades an existing claim. Invitations expire at their owner-local
+hash as an identity that evades an existing claim. Invitations expire at their Los Angeles-local
 start time; expiry is not a claim lease and never discards an in-flight receipt.
 A polling producer supplies `delivery.descriptor` with explicit
 scope, checkpoint (day/build/PR), target and completion, then `delivery.offer` under
