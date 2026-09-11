@@ -45,13 +45,26 @@ def load_config(config_path: str) -> dict:
     if os.path.exists(p):
         try:
             with open(p, "r", encoding="utf-8") as fh:
-                doc = yaml.safe_load(fh) or {}
-        except (OSError, yaml.YAMLError):
-            doc = {}
+                doc = yaml.safe_load(fh)
+            if doc is None:
+                doc = {}
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Malformed notifications.yaml: {exc}") from exc
+    if not isinstance(doc, dict):
+        raise ValueError("notifications.yaml must be a mapping")
+    for section in ("channels", "teams", "status_email"):
+        if section in doc and not isinstance(doc[section], dict):
+            raise ValueError(f"notifications.{section} must be a mapping")
     ch = {**_DEFAULTS["channels"], **(doc.get("channels") or {})}
+    if ch.keys() - _DEFAULTS["channels"].keys():
+        raise ValueError("Unknown notification channel")
     tm = {**_DEFAULTS["teams"], **(doc.get("teams") or {})}
-    return {"channels": {"email": bool(ch.get("email", True)),
-                         "teams": bool(ch.get("teams", False))},
+    if any(not isinstance(v, bool) for v in ch.values()):
+        raise ValueError("Notification channel flags must be booleans")
+    if not isinstance(tm.get("target"), str) or not tm["target"].strip():
+        raise ValueError("Notification Teams target must be a non-empty string")
+    return {**doc, "channels": {"email": ch.get("email", True),
+                         "teams": ch.get("teams", False)},
             "teams": tm}
 
 
@@ -105,7 +118,7 @@ def preflight_escalation(report: dict, now: datetime, emitted: dict) -> dict | N
         return None
     pre_ccd = previous_business_day(ccd)
     today = now.date()
-    if now.time() < time(9) or today < pre_ccd:
+    if now.time() < time(9) or today not in (pre_ccd, ccd):
         return None
     checkpoint = "pre_ccd" if today < ccd else "ccd"
     key = f"preflight:{ccd.isoformat()}:{checkpoint}"

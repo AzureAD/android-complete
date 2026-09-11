@@ -16,13 +16,13 @@ command is the poller seam the `build-verify-rc-poller` automation calls every 3
        ready    — eligible Scout work remains (telemetry or report); execute it.
        idle     — nothing in-flight (not in Phase 2, or nothing was re-triggered).
 
-Decisions are pure functions of state; the 6h nudge stamps `nudged_at` on the step so it
-is sent at most once. `--now` overrides the clock for the elapsed/nudge math (tests)."""
+The 6h nudge uses a durable per-channel claim, never a preview-time send stamp.
+`--now` overrides the clock for elapsed/nudge math and lifecycle checks (tests)."""
 from __future__ import annotations
 import json as _json
 from datetime import datetime, timezone
 
-from orchestrator import cli_common as C
+from orchestrator import cli_common as C, delivery as D
 
 # The poll cadence + courtesy-nudge threshold. A re-triggered RC that runs longer than
 # NUDGE_AFTER_HOURS gets ONE heads-up to the owner (it is not a failure — Scout keeps
@@ -77,17 +77,25 @@ def cmd_poll_rc(args):
         print(_json.dumps({"error": f"bad --now: {args.now!r}"}))
         return 1
 
-    st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args) or now)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=orch.tz or timezone.utc)
     # Advance: the in-flight verify step re-checks the run's LIVE status. Still running →
     # stays in-flight; completed → the stage rule + UI gate run and the phase moves on.
     orch.run_until_gate()
     st = orch.state
     C.save_state(st, args.runs_root, args.release)
+    scope = {"kind": "phase", "phase": "build_verify"}
+    reason = D.scope_reason(orch, scope)
+    if reason and not D.phase_done(orch, "build_verify"):
+        print(_json.dumps({"decision": "blocked" if st.halted or st.blocked else "idle",
+                           "note": reason, "notifications": []}))
+        return 0
 
     inflight = None
     for sid in _RC_VERIFY_STEPS:
         s = st.get_step("build_verify", sid)
-        if s.status == "in_flight":
+        if s.status == "in_flight" and not reason:
             inflight = (sid, s)
             break
 
@@ -97,14 +105,23 @@ def cmd_poll_rc(args):
         decision = {"decision": "waiting", "step": sid,
                     "elapsed_hours": round(elapsed, 2), "poll_in_min": POLL_INTERVAL_MIN}
         if elapsed >= NUDGE_AFTER_HOURS and not s.data.get("nudged_at"):
-            s.data["nudged_at"] = now.isoformat()
-            st.set_step("build_verify", sid, s)
-            C.save_state(st, args.runs_root, args.release)
             decision["decision"] = "nudge"
             decision["nudge"] = _nudge_payload(st, sid, int(elapsed))
-            C.emit(args.runs_root, args.release,
-                   f"[rc-poller] {sid} in-flight ~{int(elapsed)}h — 6h courtesy nudge sent "
-                   f"to the owner.", kind="build_verify")
+            scope.update(step=sid, statuses=["in_flight"],
+                         step_matches={"in_flight_since": s.data.get("in_flight_since")},
+                         release_matches={"owner_email": st.owner_email})
+            logical = f"rc-nudge:{sid}:{s.data.get('in_flight_since')}"
+            payload = decision["nudge"]
+            items = [
+                D.descriptor(st, logical, scope, "workiq_send_email", {**payload["email"], "isHtml": False}),
+                D.descriptor(st, logical, scope, "m_send_teams_message", {"message": payload["teams"]["text"]}),
+            ]
+            decision["notifications"] = [D.offer(orch, item) for item in items if D.available(orch, item)]
+            if not decision["notifications"]:
+                decision["decision"] = "waiting"
+                decision.pop("nudge")
+            decision["permission_to_send"] = False
+            C.save_state(st, args.runs_root, args.release)
     else:
         rc = st.get_step("build_verify", "rc_report")
         phase = next(p for p in orch.config["phases"] if p["id"] == "build_verify")

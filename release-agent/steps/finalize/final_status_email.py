@@ -8,8 +8,8 @@ might not fire again — and signals the skill to tear the daily automation down
 emails leak into Phase 5+.
 
 Scout-assisted: `build()` composes the closing email (the Phase-4-complete snapshot) and returns
-NeedsSkill(workiq_send_email); the payload names `record-status-email --final` as the follow-up.
-After sending + recording, the skill DEREGISTERS the daily partner status-email automation
+NeedsSkill(workiq_send_email); the generic notification protocol completes it after delivery.
+After acknowledgement, cleanup deletes then deregisters the daily partner status-email automation
 (`<release> · Phases 2–4 — daily status email`; see the finalize phase reference / knowledge).
 
 Mock knobs (mocks.local.yaml / tests):
@@ -26,6 +26,7 @@ from steps.lib.mockctx import mock_input, MISSING
 
 ID = "final_status_email"
 KIND = "scout"
+NOTIFICATION = True
 
 _CONFIG_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "config")
@@ -43,13 +44,16 @@ def _phase_order():
         with open(_PHASES, "r", encoding="utf-8") as fh:
             doc = yaml.safe_load(fh) or {}
         return [p["id"] for p in (doc.get("phases") or [])]
-    except Exception:  # noqa: BLE001
-        return []
+    except (OSError, yaml.YAMLError, KeyError, TypeError) as exc:
+        raise ValueError(f"Invalid phase configuration: {exc}") from exc
 
 
 def _recipients():
     cfg = notif.load_config(_PHASES) or {}
-    return list((cfg.get("status_email") or {}).get("recipients") or [])
+    recipients = (cfg.get("status_email") or {}).get("recipients")
+    if not isinstance(recipients, list) or not recipients:
+        raise ValueError("Configure status_email.recipients as a non-empty list")
+    return recipients
 
 
 def _broker_changes(state):
@@ -84,12 +88,11 @@ def build(state):
             "subject": subject,
             "body": res["html"],
             "isHtml": True,
-            # After sending, stamp + close, then run the central automation cleanup plan.
-            "followup_command": f"record-status-email --release {state.release_id} --final",
         },
         record_as=ID,
         summary=f"Send the CLOSING {month_year} status email to "
                 f"{len(recipients)} recipient(s) + close the daily status automation",
         note="final status email (Phase 4 complete); run automation cleanup, delete the daily status-email automation, then deregister it",
         outbound=True,
+        notification={"completion": {"note": "Closing partner status email delivered; channel closed."}},
     )

@@ -32,6 +32,10 @@
 #   cleanup_when : REQUIRED lifecycle rule for the central cleanup planner:
 #              steps_done | steps_settled | phase_done:<phase> |
 #              step_flag:<phase.step>:<data-key> | release_done | manual
+#              OR rules may be listed. A halted release suspends work; completion
+#              retires explicitly release-scoped nonmanual workers regardless of rule.
+#              Pending required delivery/completion defers step cleanup. Use phase_done
+#              for workers that outlive their initial trigger step.
 
 version: 1
 
@@ -50,7 +54,10 @@ automations:
     phase: ccd
     steps:
       - ccd.localization        # trigger pipeline 405133 (isCreatePrSelected=true)
-    cleanup_when: step_flag:ccd.localization:started_at
+    cleanup_when:
+      - step_flag:ccd.localization:started_at
+      - steps_done
+      - phase_done:ccd
     purpose: "Trigger the localization pipeline at noon"
 
   - slug: ccd-localization-poller
@@ -60,7 +67,9 @@ automations:
     on_demand: true
     steps:
       - ccd.localization        # poll the triggered run (check-localization)
-    cleanup_when: steps_settled
+    cleanup_when:
+      - steps_settled
+      - phase_done:ccd
     purpose: "Poll localization hourly; warn at 4 PM Los Angeles time if unmerged, then omit localization at 6 PM so the release proceeds"
 
   # ON-DEMAND (not provisioned at release start). Created only when Build & RC
@@ -74,13 +83,13 @@ automations:
     on_demand: true
     steps:
       - build_verify.rc_report  # poll the in-flight RC (poll-rc): re-gate on completion, nudge at 6h
-    cleanup_when: steps_settled
+    cleanup_when: phase_done:build_verify
     purpose: "Poll a re-triggered RC every 30 min; hold while in-flight, re-apply the gate on completion, courtesy-nudge the owner at 6h"
 
   # ON-DEMAND (not provisioned at release start). Created when `bugbash_updates` fires the
   # first progress post; drives `post-bugbash-update` every 2h during working hours
   # (09:00–18:00 LA, weekdays, skipping US holidays). Torn down when the tick reports
-  # `complete` (all tests done) or the owner attests `bugbash_complete`. Interval
+  # a successfully acknowledged final summary or the phase completes. Interval
   # automation, so its step needs no fire_at_local.
   - slug: bug-bash-update-poller
     label: "bug-bash update poller"

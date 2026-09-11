@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import errno
 import time
+from datetime import date, datetime
 from contextlib import contextmanager
 
 from orchestrator.state import ReleaseState
@@ -117,7 +118,9 @@ def save_state(st: ReleaseState, runs_root: str, release: str) -> None:
 def parse_as_of(args):
     """The simulated clock from --as-of (None ⇒ engine uses today)."""
     s = getattr(args, "as_of", None)
-    return schedule.parse_date(s) if s else None
+    if not s:
+        return None
+    return datetime.fromisoformat(s) if "T" in s else date.fromisoformat(s)
 
 
 def load_orch(runs_root: str, release: str, config: str, as_of=None):

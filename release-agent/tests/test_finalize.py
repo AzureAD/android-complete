@@ -1066,5 +1066,4 @@ def test_final_status_email_step_sends_and_closes():
     assert out.kind == "needs_skill" and out.tool == "workiq_send_email"
     assert out.payload["to"] == ["me@microsoft.com"]
     assert "Final Status" in out.payload["subject"]
-    assert out.payload["followup_command"] == "record-status-email --release 2026-08 --final"
-
+    assert "followup_command" not in out.payload

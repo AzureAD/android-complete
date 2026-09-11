@@ -34,6 +34,7 @@ from tools.coordinates import coords
 
 ID = "release_announcement"
 KIND = "scout"
+NOTIFICATION = True
 
 # The "General" channel used to sync release plans between Android DevX and partner teams.
 _ANNOUNCE = coords.team("general_announce")

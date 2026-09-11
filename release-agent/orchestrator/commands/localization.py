@@ -8,15 +8,15 @@ These commands are the thin CLI seam the skill/poller calls:
     build id + start time on the step (leaves it IN-FLIGHT, not done).
   * check-localization — one poll: given the run or PR state, apply `decide()` and
     either wait, request a notification, or finish. Prints the decision JSON so the
-    poller can perform any email/chat side effect described in it.
-  * record-localization-post — acknowledge a successful initial/deadline Code reviews
-    post so future polls do not repeat it.
+    poller can claim and acknowledge each notification through the shared delivery protocol.
+  * record-localization-post — legacy readback of an already acknowledged Code reviews
+    post; a PR identifier alone never proves delivery.
 """
 from __future__ import annotations
 import json as _json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from orchestrator import cli_common as C
+from orchestrator import cli_common as C, delivery as D
 from orchestrator import mocks as mocks_mod
 from steps.lib.context import SELF_CHAT_ID
 from steps.ccd import localization as L
@@ -29,8 +29,21 @@ def _now_iso():
 def cmd_record_localization_run(args):
     """Store the triggered build id + start time on the localization step. Leaves the
     step in-flight so the poller can drive it to completion."""
-    st = C.load_state(args.runs_root, args.release)
+    st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     step = st.get_step("ccd", "localization")
+    if step.status in ("done", "skipped", "blocked"):
+        print(_json.dumps({"recorded": False, "reason": "localization is terminal"}))
+        return 0
+    reason = D.scope_reason(orch, {"kind": "step", "phase": "ccd", "step": "localization"})
+    if reason:
+        print(_json.dumps({"error": reason}))
+        return 1
+    if step.data.get("build_id"):
+        if str(step.data["build_id"]) != str(args.build_id):
+            print(_json.dumps({"error": "A different localization build is already recorded; owner review required"}))
+            return 1
+        print(_json.dumps({"recorded": False, "reason": "build already recorded"}))
+        return 0
     step.data["build_id"] = args.build_id
     step.data["started_at"] = args.started_at or _now_iso()
     step.status = "in_flight"
@@ -61,8 +74,14 @@ def cmd_check_localization(args):
             print(_json.dumps({"error": f"bad --now: {args.now!r}"}))
             return 1
 
-    st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    st, orch = C.load_orch(args.runs_root, args.release, args.config, now or C.parse_as_of(args))
+    now = now or orch.now_local
     step = st.get_step("ccd", "localization")
+    scope = {"kind": "step", "phase": "ccd", "step": "localization"}
+    reason = D.scope_reason(orch, scope)
+    if reason:
+        print(_json.dumps({"decision": "stopped", "note": reason, "notifications": []}))
+        return 0
 
     # Guard: nothing to poll if it wasn't triggered, or it's already terminal.
     if not step.data.get("started_at"):
@@ -94,6 +113,13 @@ def cmd_check_localization(args):
         print(_json.dumps({"error": str(e)}))
         return 1
     d = decision["decision"]
+    # Completion evidence is monotonic: a delayed timeout receipt cannot undo recovery.
+    step.data["pipeline_complete"] = bool(
+        step.data.get("pipeline_complete") or _truthy(args.complete) or decision.get("pr_id"))
+    if decision.get("pr_id"):
+        step.data.update(pr_id=decision["pr_id"], pr_url=decision["pr_url"])
+    if getattr(args, "pr_status", None) is not None:
+        step.data["pr_status"] = str(args.pr_status).strip().lower()
 
     # mocks.local.yaml send_to → redirect localization PR posts to your own chat.
     if d in ("announce_pr", "warn_unmerged") and decision.get("chat"):
@@ -112,11 +138,9 @@ def cmd_check_localization(args):
         C.save_state(st, args.runs_root, args.release)
         C.emit(args.runs_root, args.release, f"[localization] {decision['note']}", kind="localization")
     elif d == "timeout":
-        # Hold the step for the engineer; the poller sends decision['email'].
-        orch.record_scout_step("ccd", "localization", "attention", decision["note"])
-        C.save_state(orch.state, args.runs_root, args.release)
-        C.emit(args.runs_root, args.release, f"[attention] localization: {decision['note']}",
-               kind="localization")
+        # Keep the worker alive until its required escalation is acknowledged.
+        step.note = "localization timeout; required owner notification awaiting delivery"
+        st.set_step("ccd", "localization", step)
     elif d == "announce_pr":
         step.data["pr_id"] = decision["pr_id"]
         step.data["pr_url"] = decision["pr_url"]
@@ -159,6 +183,32 @@ def cmd_check_localization(args):
         print(_json.dumps({"error": f"unsupported localization decision: {d}"}))
         return 1
 
+    if d in ("timeout", "announce_pr", "warn_unmerged"):
+        scope["step_matches"] = {"build_id": step.data.get("build_id")}
+        if d == "timeout":
+            scope["step_matches"].update(
+                started_at=step.data["started_at"], pr_id=None, pipeline_complete=False)
+            started = datetime.fromisoformat(step.data["started_at"].replace("Z", "+00:00"))
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            scope["not_before"] = (started + timedelta(hours=L.CONFIG["timeout_hours"])).isoformat()
+        else:
+            scope["step_matches"]["pr_id"] = step.data.get("pr_id")
+            deadline_cfg = {**L.CONFIG, "merge_deadline_local": L.CONFIG["omission_deadline_local"]}
+            scope["expires_at"] = L.merge_deadline(st, deadline_cfg).isoformat()
+        scope["release_matches"] = {"owner_email": st.owner_email, "ccd": st.ccd}
+        completion = ({"kind": "step_result", "status": "attention", "note": decision["note"],
+                       "stamp": ["timeout_notified_at"]} if d == "timeout" else
+                      {"kind": "step_data", "stamp": [
+                          "pr_announced_at" if d == "announce_pr" else "merge_deadline_alert_at"]})
+        checkpoint = f"localization:{step.data.get('build_id')}:{decision.get('pr_id', '')}:{d}"
+        item = D.descriptor(st, checkpoint, scope,
+                            "workiq_send_email" if d == "timeout" else "workiq_send_chat_message",
+                            decision.get("email") if d == "timeout" else decision["chat"],
+                            completion)
+        decision["notifications"] = [D.offer(orch, item)]
+        decision["permission_to_send"] = False
+        C.save_state(st, args.runs_root, args.release)
     print(_json.dumps(decision))
     return 0
 
@@ -180,12 +230,8 @@ def cmd_record_localization_post(args):
     key = "pr_announced_at" if args.kind == "initial" else "merge_deadline_alert_at"
     already = step.data.get(key)
     if not already:
-        step.data[key] = _now_iso()
-        st.set_step("ccd", "localization", step)
-        C.save_state(st, args.runs_root, args.release)
-        C.emit(args.runs_root, args.release,
-               f"[localization] recorded {args.kind} Code reviews post for PR #{stored_pr_id}",
-               kind="localization")
+        print(_json.dumps({"error": "Use notification claim/result; a PR ID alone does not prove delivery"}))
+        return 1
     print(_json.dumps({
         "recorded": not bool(already), "kind": args.kind, "pr_id": stored_pr_id,
         "at": already or step.data[key],
@@ -197,6 +243,7 @@ def register(sub):
     rr = sub.add_parser("record-localization-run",
                         help="Record the triggered localization build id + start time (leaves it in-flight)")
     rr.add_argument("--release", required=True)
+    rr.add_argument("--as-of", default=None)
     rr.add_argument("--build-id", required=True, dest="build_id")
     rr.add_argument("--run-url", default=None, dest="run_url")
     rr.add_argument("--started-at", default=None, dest="started_at",

@@ -12,15 +12,15 @@ _Loaded on demand. Run all from `<AGENT_ROOT>` — the confirmed `release-agent`
 | Attest human items (+auto verify) | `python -m orchestrator.cli sign --release <YYYY-MM> --item <id> [--item <id> …] --note "<what they confirmed>"` |
 | Record a scout-assisted check (e.g. ICM on-call) | `python -m orchestrator.cli record-check --release <YYYY-MM> --item <id> --status pass\|fail\|degraded --detail "..."` |
 | Decide CCOA lockdown overlap | `python -m orchestrator.cli check-lockdown --release <YYYY-MM> --periods-json '[{"name","environment","start","end"}]'` |
-| Resolve a migrated step → outcome JSON (done\|blocked\|needs_human\|needs_skill) | `python -m orchestrator.cli step-action --release <YYYY-MM> --step <id> [--phase <p>] [--param k=v …]` — enforces the same configured prerequisites as engine execution and Scout discovery: parallel phases use explicit `depends_on`; default sequential phases also require predecessors done/skipped. After approval, add `--reserve --executor <automation/session-id>` for `reservable:true` actions |
+| Resolve a migrated step → outcome JSON (done\|blocked\|needs_human\|needs_skill) | `python -m orchestrator.cli step-action --release <YYYY-MM> --step <id> [--phase <p>] [--param k=v …]` — configured prerequisites and stop guards apply. Notification outputs are previews; use the shared protocol below. Non-notification reservable actions retain `--reserve --executor <session>` |
 | Answer a STEP question (knowledge) | `python -m orchestrator.cli step-info --step <id> [--phase <p>]` |
 | **Phase 2 — RC pipeline + test report** (read-only) | `python -m orchestrator.cli rc-report --release <YYYY-MM> [--json]` → the checker→orchestrator→ECS/Local-MRWP chain + per-run test breakdown |
-| **Phase 2 — record RC verdict** (after successful report delivery) | `python -m orchestrator.cli record-rc-report --release <YYYY-MM>` → verifies configured prerequisites and complete current-RC evidence, then applies independent MRWP UI and Authenticator gates and stores the evaluated run links. Missing evidence never passes, including after an explicit prerequisite skip. Evaluated failures record `attention`; both gates clearing records `pass`. Run this follow-up **instead of** `record-step`. |
+| **Phase 2 — RC report and verdict** | `notification prepare --release <YYYY-MM> --source step --phase build_verify --step rc_report` → claim/result applies the approved report's independent MRWP/Auth verdict and links after confirmed delivery. Legacy `record-rc-report` cannot acknowledge new work. |
 | **Simulate a mid-release point** (testing) | `python -m orchestrator.cli sim list` · `python -m orchestrator.cli sim run --scenario <name> [--freeze] [--json]` → **seeds the real release** to a scenario's target (`config/scenarios/<name>.yaml`): fast-forwards the real engine, signs the entry gate + completes earlier phases from mocks, then stops `open`/`gate`/`done` at the target. `data: live` runs the target phase against real `az`; `data: mock` is offline. Any existing state at that id is backed up first, so afterwards you use the **normal** commands (`status`, `rc-report`, `next`, `approve`). `--runs-root <path>` targets a throwaway sandbox instead; `--freeze` snapshots state to `tests/fixtures/<name>.json` |
 | Answer an ENTRY-GATE item question (knowledge) | `python -m orchestrator.cli gate-info --item <id>` (build_access, mcp_servers, ccd_confirmed, silent_perms, teams_notify, adx_access, oncall_now, play_console_access, oncall_window, saw_ame, yubikey) |
 | Prepare early code-complete notice (JSON) — _legacy; prefer `step-action --step notice`_ | `python -m orchestrator.cli prepare-notice --release <YYYY-MM> [--variant initial\|update]` |
 | Prepare flight & string reminders (JSON) | `python -m orchestrator.cli prepare-flight-reminder --release <YYYY-MM>` |
-| Record a scout-assisted phase step | `python -m orchestrator.cli record-step --release <YYYY-MM> --step <id> --status pass\|attention --detail "..." [--execution-id <id>]` — execution ID required for reserved work |
+| Record a non-notification Scout step | `python -m orchestrator.cli record-step --release <YYYY-MM> --step <id> --status pass\|attention --detail "..." [--execution-id <id>]` — notification steps require notification result instead |
 | Declare you CANNOT satisfy an item | `python -m orchestrator.cli decline --release <YYYY-MM> --item <id>` |
 | Status (structured) | `python -m orchestrator.cli status --release <YYYY-MM> --json` |
 | Advance to next gate | `python -m orchestrator.cli next --release <YYYY-MM>` |
@@ -40,10 +40,10 @@ _Loaded on demand. Run all from `<AGENT_ROOT>` — the confirmed `release-agent`
 | Journal a step Q&A (silent) | `python -m orchestrator.cli journal --release <YYYY-MM> --kind qa --phase <p> --step <id> --question "..." --answer "..."` |
 | Localization: record trigger | `python -m orchestrator.cli record-localization-run --release <YYYY-MM> --build-id <buildId>` — store the queued build; leaves the step in-flight |
 | Localization: one poll | `python -m orchestrator.cli check-localization --release <YYYY-MM> [--complete <true\|false>] [--logs "<OneLocBuild@3 log>"] [--pr-status <active\|completed\|abandoned>]` — poll the pipeline before PR discovery and the PR afterward; acts on the printed decision |
-| Localization: record post | `python -m orchestrator.cli record-localization-post --release <YYYY-MM> --kind <initial\|deadline> --pr-id <id>` — run only after the corresponding Code Reviews post succeeds |
+| Localization: deliver staged follow-up | `notification prepare --release <YYYY-MM> --source pending` then claim/result for the initial PR, deadline warning or timeout email. A PR ID alone is not delivery evidence. |
 | **Phase 2 — signal a re-triggered RC** | `python -m orchestrator.cli rc-retriggered --release <YYYY-MM> [--reason "..."]` — after the owner re-runs RC (flaky) or the orchestrator triggers a fresh RC (broker cherry-pick), reopens `mrwp_ecs`/`mrwp_local`/`rc_report` so Scout re-evaluates the **newest** RC. Holds `in_flight` (no action) while the run executes; the poller re-applies the gate on completion |
-| **Phase 2 — one RC poll** | `python -m orchestrator.cli poll-rc --release <YYYY-MM>` — `waiting` / `nudge` / `ready` / `resolved` / `blocked` / `idle`. `ready` lists eligible Scout work: execute it and its follow-up, then re-poll. `resolved` requires all Phase-2 steps settled as done/skipped; distinguish `status: overridden` from `status: passed`. Automation cleanup rules are unchanged. |
-| **Phase 3 — one bug-bash update** | `python -m orchestrator.cli post-bugbash-update --release <YYYY-MM> [--force]` — `off_hours` / `no_chat` / `error` / `post` / `complete`. Complete records `poll_complete`; central cleanup deletes then deregisters the on-demand poller. |
+| **Phase 2 — one RC poll** | `python -m orchestrator.cli poll-rc --release <YYYY-MM>` — `waiting` / `nudge` / `ready` / `resolved` / `blocked` / `idle`. `ready` lists eligible Scout work: execute it and its follow-up, then re-poll. `resolved` requires all Phase-2 steps settled as done/skipped; distinguish `status: overridden` from `status: passed`. The worker lives until its owning phase completes, not merely an old RC report. |
+| **Phase 3 — one bug-bash update** | `python -m orchestrator.cli post-bugbash-update --release <YYYY-MM> [--force]` — `off_hours` / `no_chat` / `error` / `post` / `complete`. The final message's successful claim/result records `poll_complete`; central cleanup deletes then deregisters the on-demand poller. |
 | **Phase 3 — OOF candidates / manual distribution preview** | `python -m orchestrator.cli distribute-tests --release <id> [--json]` — blocks with candidate names/verified UPNs until the owner answers; subsequent runs reuse that release's confirmation |
 | **Phase 3 — record owner availability and refresh preview** | `python -m orchestrator.cli distribute-tests --release <id> --no-oof` OR `… --oof <verified-upn> [--oof <verified-upn> …] [--oce <upn>]` — only after explicit owner input; never sends or writes assignments |
 | **Phase 3 — apply reviewed distribution** | `python -m orchestrator.cli distribute-tests --release <id> --apply` — separate explicit write of stored assignments; rejects missing/stale confirmation or changed roster/exclusions |
@@ -113,10 +113,81 @@ provide evidence via `--note`/`--reason`. Never automatically repeat an uncertai
 - **`done`** — already complete; nothing to run.
 - **`blocked`** — surface `reason` to the owner; don't proceed.
 - **`needs_human`** — show `prompt` (attestation or reminder to-do).
-- **`needs_skill`** — run `tool` with `payload` (an MCP/browser call the engine can't make, already fully resolved), then confirm with `record-step --step <record_as> --status pass\|attention`. **UNLESS `payload.followup_command` is set** — then run that engine command **instead** of `record-step`, only after successful delivery. `rc_report` supplies `record-rc-report --release <id>` to recheck readiness and evaluate both RC gates; do not invent a pass. Runs are real — the payload targets the real DL/chat unless the engineer's `mocks.local.yaml` has a `send_to` redirect (then `payload.to`/`chatId` points at them and the subject carries `[TEST → me]`).
-- A private `payload._automation.on_demand` field is an executor directive, not an MCP argument. Remove it from the tool payload; after successful delivery and before `record-step`, provision that slug through `automation plan --on-demand`.
+- **`needs_skill`** — notifications MUST use prepare/claim/result, not raw tool/payload or legacy followup_command. Non-notification browser/gather/trigger work retains its named follow-up. Existing local test redirects are applied BEFORE snapshot hashing; never change a claimed payload.
+- `completion.automation.on_demand` is an executor directive, not an MCP argument. After confirmed delivery and completion, provision that slug if absent using `automation plan --on-demand`. Source pending retains the directive for recovery if provisioning failed.
 
-If a step isn't migrated yet, `step-action` returns `{"error": …}` with exit 1. **Use `step-action` for scout steps** (`needs_skill` → run the tool, then `record-step`) **and attest steps** (`needs_human` → show the `prompt` via `m_ask_user`, then clear with `done --step <id>`). Migrated: scout — `preflight.notice`, `preflight.flight_reminder`, `preflight.lockdown` (gather-then-decide: its `needs_skill` carries a `_gather` browser-scrape directive + a `check-lockdown` follow-up); attest — `preflight.confirm_reminders`, `preflight.vitals`. **Agent steps** (`preflight.breaking`, `cg`, `cron`, `wiki`) are migrated too but the **engine runs them in-process during `next`** — `step-action` refuses them (exit 1); relay their results from the `status` table.
+If a step isn't migrated yet, `step-action` returns `{"error": …}` with exit 1.
+Scout notification steps use the shared contract; attest steps return `needs_human`
+for the owner's explicit decision. Agent steps execute only in-process through `next`.
+
+## Shared notification delivery and persisted schema
+
+All commands below require an explicit release and use the existing OS-held state lock.
+
+| Operation | Command |
+| --- | --- |
+| Persist exact preparation, without send permission | `notification prepare --release <id> --source step\|digest\|status-email\|pending [--phase <phase> --step <step> --param k=v]` |
+| Approve and reserve that exact target/payload | `notification claim --release <id> --id <logical-id:channel> --hash <hash> --executor <session>` |
+| Acknowledge one channel | `notification result --release <id> --id <id> --execution-id <execution> --outcome sent\|not_sent\|uncertain --evidence "<proof>" [--receipt-file <JSON>] [--owner-review]` |
+| Retry domain completion, never sending again | `notification finalize --release <id> --id <id>` |
+
+Send ONLY a successful claim's exact returned payload (`permission_to_send:true`).
+`not_sent` requires proof nothing was sent; timeout, interruption or unknown outcome is
+uncertain. Claims never expire. After successful send plus failed acknowledgement, retry
+the acknowledgement only. Owner-reviewed recovery requires the original runner stopped.
+Exactly-once delivery is impossible without downstream idempotency support.
+
+Schema v1 adds `notification_deliveries`, an empty map for a new release. Each
+release-local `logical-checkpoint:channel` maps to `descriptor`, `prepared_at`, `status`,
+`attempts`, optional `superseded` preparation history, and optional `completion`.
+Never-claimed preparations may refresh on source/payload changes; their previous descriptor
+and preparation/replacement timestamps remain in `superseded`, and the new hash needs approval.
+After the first claim the snapshot is frozen, even for known-not-sent outcomes. An expired
+claimed invitation requires owner recovery; it is never automatically replaced by another event.
+The descriptor contains release, scope (release,
+phase, window or step), semantic checkpoint, target, tool, exact payload, completion
+metadata and hash. Attempts preserve execution ID, runner, timestamps, outcome,
+evidence and raw provider receipt (null if none). Successful result replay preserves
+evidence. Step-owned sends share the engine's `_execution` ID. Legacy date-only stamps
+are conservative stop evidence, never converted into provider receipts; incomplete
+old claims/registrations require deliberate owner recovery, not automatic migration.
+
+Daily identities use the owner's configured timezone; acknowledgement preserves the
+prepared day even across midnight. `--force` changes cadence only, never halt,
+scope, terminal state or acknowledged identity. There is no automatic resend operation.
+All workers execute cleanup in a finally block, delete live automation before deregistration,
+and preserve shared/manual exceptions. Suspended work can resume.
+Scope and source evidence are checked at preparation, claim and completion. Source changes
+during delivery preserve the receipt but suppress completion; stale RC verdicts cannot advance.
+A halt racing an already executing external call
+cannot undo that call; retain its evidence without advancing closed work. Claims are not
+transport idempotency keys. Never change the shared state path or retry ambiguous calls.
+An explicit `done` + `no_delivery_required:true` outcome (for example already-complete tests)
+may use `record-step --status pass`, which revalidates that no message is required.
+The ledger contains destination-specific payloads and receipts: protect the run directory
+with the same access controls as release source evidence; don't relay ledger dumps to Teams.
+Every worker run discovers `notification prepare --release <id> --source pending`, even
+after a silent/terminal producer result. Finalize sent-but-unfinished work without sending;
+only eligible prepared/not_sent records can be claimed. Only **preparation** accepts `--as-of`
+(ISO date or timestamp, normalized to the owner timezone). Claim/result/finalize reject
+clock overrides and use trusted current time. An unavailable timezone blocks
+delivery rather than silently falling back to the runner's local day.
+
+### Adding an upcoming notification
+Declare `NOTIFICATION = True` on an outbound step module and return a supported
+transport. The generic dispatcher derives step/phase scope and the stable step identity;
+optional `NeedsSkill.notification` supplies a semantic checkpoint, `not_before`/`expires_at`,
+`state_matches`, and declarative completion data. A source binding is a state `path`
+(dictionary keys/list indexes) with either exact `value` or `hash: delivery.fingerprint(value)`.
+Bind the actual evaluated inputs, not just an RC number: result changes and reruns matter.
+Keep the logical identity stable when refreshing the same unsent work; don't use a payload
+hash as an identity that evades an existing claim. Invitations expire at their owner-local
+start time; expiry is not a claim lease and never discards an in-flight receipt.
+A polling producer supplies `delivery.descriptor` with explicit
+scope, checkpoint (day/build/PR), target and completion, then `delivery.offer` under
+the existing command lock. Never stamp a send during preparation. Declare automation
+`cleanup_when` against configured phase/step keys, not name heuristics, and reuse the
+same claim/result prompt. No engine branch or bespoke sender is needed.
 
 
 The human-readable commands (`checklist`, `status`, `next`, `approve`, `deny`, `decline` without `--json`) emit a **canonical block AND auto-log it**. Prefer these and show their output; use `--json` only for your own logic.

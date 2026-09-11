@@ -17,13 +17,14 @@ attestation).
 
 Sending email needs the WorkIQ MCP the engine can't reach, so this is a `scout`
 step: `build()` composes the email deterministically and returns a
-NeedsSkill(workiq_send_email); the payload names the `record-rc-report` follow-up
-command, which rechecks readiness, applies BOTH gates, records pass|attention, and
-stashes the evaluated run links on the step. Redirect for tests with the `send_to`
+NeedsSkill(workiq_send_email); notification completion carries BOTH evaluated gate verdicts
+and run links. Confirmed delivery applies that exact snapshot; retries never invent a pass.
+Redirect for tests with the `send_to`
 payload knob (keeps the send real, points it at you).
 """
 from __future__ import annotations
 
+from orchestrator.delivery import fingerprint
 from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.build_verify import auth_ecs as A, _rc_report_rendering as R
 from steps.build_verify._common import build_url, latest_rc, valid_id, valid_counts
@@ -33,6 +34,7 @@ from tools.coordinates import coords
 
 ID = "rc_report"
 KIND = "scout"
+NOTIFICATION = True
 
 MOCKABLE = {
     "send_to": {
@@ -340,15 +342,23 @@ def build(state):
             "body": html,
             "isHtml": True,
             "_plain_body": plain,
-            # After sending, DON'T blind-record pass: run this engine command instead — it
-            # consolidates the MRWP UI gate AND the Authenticator-ECS gate (pass|attention)
-            # and stashes the run links.
-            "followup_command": "record-rc-report",
         },
         record_as=ID,
         summary=summary,
         note=note,
         outbound=True,
+        notification={
+            "checkpoint": "rc:" + ":".join(str(link["url"]) for link in rc_run_links(model)),
+            "state_matches": [
+                {"path": ["pipeline_runs", key], "hash": fingerprint(state.pipeline_runs[key])}
+                for key in ("checker", "orchestrator")
+            ] + [
+                {"path": ["pipeline_runs", "rcs", -1], "hash": fingerprint(latest_rc(state))},
+                {"path": ["versions"], "hash": fingerprint(state.versions)},
+            ],
+            "completion": {"status": "attention" if gate["blocking"] or auth["blocking"] else "pass",
+                           "note": note, "links": rc_run_links(model)},
+        },
     )
 
 
@@ -365,11 +375,11 @@ def automation_prompt(release: str, spec: dict) -> str:
         f"2. act on the printed decision:\n"
         f"   • waiting  → still running; send nothing.\n"
         f"   • ready    → run step-action for each decision.steps entry in decision.phase, "
-        f"execute its tool only for needs_skill, then use its followup_command after "
-        f"success. Re-poll afterward; never blind-record a report pass.\n"
-        f"   • nudge    → running past 6h; send the courtesy heads-up in decision.nudge "
-        f"(email decision.nudge.email to the owner AND post decision.nudge.teams.text to "
-        f"the owner's Scout chat). It is stamped, so it goes out at most once.\n"
+        f"prepare notifications with source step, claim and acknowledge each confirmed send. "
+        f"Non-notification telemetry retains its domain follow-up. Re-poll afterward; "
+        f"never blind-record a report pass.\n"
+        f"   • nudge    → running past 6h; use source pending for its per-channel "
+        f"notifications and the shared claim/result protocol. Never send raw decision.nudge.\n"
         f"   • resolved → inspect decision.status: 'passed' means the RC passed the gates; "
         f"'overridden' means Phase 2 completed by an authorized manual override, NOT a "
         f"quality-gate pass. Report the matching outcome and decision.note; never describe "

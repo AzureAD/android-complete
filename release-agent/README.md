@@ -209,6 +209,8 @@ and reports any conflict.
   dependency-driven for now; add an `anchor:` to any phase to time-gate it too.
 - **Simulated clock:** every read/advance command takes `--as-of YYYY-MM-DD` so a
   `--as-of` can jump to CCD-7 and prove a phase opens on schedule. Normal runs use today.
+  Notification preparation can preview that clock; claim/result/finalize cannot. Send
+  authorization always checks the trusted current clock.
 - **Resolving a conflict / changing the CCD.** `set-ccd` and `skip-release`
   **write back** to pipeline 3038 (override / `skipRelease`) — real production
   changes, so they're gated: preview first, then re-run with `--confirm` (a
@@ -236,17 +238,22 @@ Everything the engine surfaces is **pull** — you see it when you open Scout. T
   digest takes over when it opens (each phase notifies on open).
 
 ```powershell
-python -m orchestrator.cli tick --json                    # advance to today + {message,subject,owner_email,...}
-python -m orchestrator.cli tick --as-of 2026-08-06         # simulate a date (debug)
-python -m orchestrator.cli notify --json                   # read-only: report WITHOUT advancing (manual check)
+python -m orchestrator.cli tick --release 2026-08 --json   # advance + preview notifications
+python -m orchestrator.cli tick --release 2026-08 --as-of 2026-08-06   # preview clock
+python -m orchestrator.cli notify --release 2026-08 --json # read-only; no send stamps
 ```
 
-A **Scout automation** runs **`tick --json` hourly** and, when `message` is non‑empty,
-emails it to `owner_email` (subject from the JSON). `tick` both **advances** the release
-to the current date and reports; running hourly means a tick missed while the machine
-was off is picked up by the next one, and a once-per-calendar-day guard
-(`last_notified_date`) keeps it to one advance-effect and one email per day. `notify` is
-the **read-only** variant (report without advancing); `--as-of`/`--force` are debug overrides.
+A **Scout automation** runs **`tick --release <id> --json` hourly**. Its output is only
+a preview: `notification prepare --release <id> --source digest`, review, then
+`notification claim` with the approved hash/executor. Send only the returned payload
+when `permission_to_send:true`, then acknowledge that channel with `notification result`.
+Email and Teams deduplicate independently using the owner's day. `notify` is read-only.
+`--force` changes cadence, never lifecycle or acknowledged identities. Unknown transport
+outcomes require owner review, not automatic retries; there is no exactly-once guarantee.
+Every worker discovers saved pending delivery/completion and runs cleanup even on silence.
+See [the command contract](skill/reference/commands.md) and
+[deployment checklist](skill/reference/starting-and-scheduling.md): updating git does not
+update stored Scout prompts, and legacy state is not automatically migrated.
 
 **Automation registry.** Every automation the orchestrator provisions is recorded via
 `cli automation register` so it can be torn down cleanly. **Per-release** automations

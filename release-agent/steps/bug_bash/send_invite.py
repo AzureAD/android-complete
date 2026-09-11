@@ -39,6 +39,7 @@ from tools import testplans as T
 
 ID = "send_invite"
 KIND = "scout"
+NOTIFICATION = True
 
 # The real invite recipients (the Azure Identity Android SDK / Android Identity team DL +
 # the Dublin CIAM alias). Redirect for a test with the `send_to` knob.
@@ -74,12 +75,17 @@ def build(state):
     month_year = schedule.target_month_label(state)
 
     # when
+    zone_name = getattr(state, "timezone", None) or schedule.DEFAULT_TZ
+    zone = schedule.get_tz(zone_name)
+    if zone is None:
+        return Blocked(f"send_invite: timezone data unavailable for {zone_name}")
     now_raw = mock_input("now", MISSING)
     if now_raw is not MISSING:
-        now = datetime.fromisoformat(str(now_raw).replace("Z", "+00:00")).replace(tzinfo=None)
+        now = datetime.fromisoformat(str(now_raw).replace("Z", "+00:00"))
+        now = now.astimezone(zone) if now.tzinfo else now.replace(tzinfo=zone)
     else:
-        now = datetime.now()
-    start, end, when_note = I.schedule_bugbash(now)
+        now = schedule.now_local(zone)
+    start, end, when_note = I.schedule_bugbash(now.replace(tzinfo=None))
 
     # links (Phase 2 pipeline runs — TBD if not resolved)
     rc = _latest_rc(state)
@@ -119,7 +125,7 @@ def build(state):
             "bodyContentType": "html",
             "start": start.strftime("%Y-%m-%dT%H:%M:%S"),
             "end": end.strftime("%Y-%m-%dT%H:%M:%S"),
-            "timeZone": getattr(state, "timezone", None) or "America/Los_Angeles",
+            "timeZone": zone_name,
             "isOnlineMeeting": True,
         },
         record_as=ID,
@@ -127,4 +133,5 @@ def build(state):
                 f"recipient(s) ({rnote})",
         note=f"invited {', '.join(recipients) if recipients else '(no recipients)'}",
         outbound=True,
+        notification={"expires_at": start.replace(tzinfo=zone).isoformat()},
     )

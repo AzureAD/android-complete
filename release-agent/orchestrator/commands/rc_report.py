@@ -65,65 +65,14 @@ def _u(build_id):
 
 
 def cmd_record_rc_report(args):
-    """Record the rc_report step's outcome AFTER the skill has emailed the RC report.
-
-    Re-reads the captured model, verifies readiness, applies the UI-automation gate,
-    records `pass` (>=90% UI pass — clean/warn → step done, release auto-advances into bug
-    bash) or `attention` (<90% → step BLOCKS for owner investigation), and stashes the
-    evaluated pipeline-run links on the step so its Details point at every artifact behind
-    the verdict.
-
-    This is the follow-up the rc_report NeedsSkill names (`payload.followup_command`), so
-    the skill runs it instead of a blind `record-step --status pass`."""
+    """Reject legacy send acknowledgements; completed work stays an idempotent no-op."""
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     completed = orch.completed_step_outcome("build_verify", "rc_report")
     if completed is not None:
         print(_json.dumps({"status": "unchanged", "note": completed.note}))
         return 0
-    guard = orch.step_action_guard("build_verify", "rc_report")
-    if guard is not None:
-        print(_json.dumps({"error": guard.reason}))
-        return 1
-    try:
-        model = R.rc_report_model(orch.state)
-        readiness = R.report_readiness(model)
-        if not readiness["ready"]:
-            print(_json.dumps({"error": readiness["detail"]}))
-            return 1
-    except Exception as e:                       # pragma: no cover - defensive
-        print(_json.dumps({"error": f"could not build the RC model ({e})."}))
-        return 1
-
-    gate = R.rc_ui_gate(model)
-    auth = R.auth_report_gate(model)
-    links = R.rc_run_links(model)
-    # The consolidation decision: the release auto-advances only when BOTH the MRWP UI gate
-    # AND the Authenticator-ECS gate clear. Either one holding -> the step blocks (the
-    # release WAITS for human attestation). The two remain SEPARATE evaluations.
-    blocking = gate["blocking"] or auth["blocking"]
-    status = "attention" if blocking else "pass"
-    detail = gate["detail"]
-    if auth["present"]:
-        detail = f"{detail}\n\n{auth['detail']}"
-    orch.record_scout_step("build_verify", "rc_report", status, detail)
-
-    # record_scout_step doesn't carry links — attach the evaluated-run refs (and stamp
-    # the recorder as scout) on the resulting step, preserving its status/note.
-    step = orch.state.get_step("build_verify", "rc_report")
-    step.links = links
-    step.by = "scout"
-    orch.state.set_step("build_verify", "rc_report", step)
-    C.save_state(orch.state, args.runs_root, args.release)
-
-    C.emit(args.runs_root, args.release,
-           f"[{'ok' if status == 'pass' else 'attention'}] rc_report: "
-           f"{detail.splitlines()[0]}", kind="step")
-    print(_json.dumps({"verdict": gate["verdict"], "auth_verdict": auth["verdict"],
-                       "status": status, "blocking": blocking,
-                       "pass_pct": gate["pass_pct"], "ui_total": gate["ui_total"],
-                       "ui_failed": gate["ui_failed"], "threshold": gate["threshold"],
-                       "detail": detail, "links": links}))
-    return 0 if status == "pass" else 2
+    print(_json.dumps({"error": "Use notification claim/result; the approved report snapshot carries its gate verdict"}))
+    return 1
 
 
 def _format(m) -> str:

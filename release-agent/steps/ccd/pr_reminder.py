@@ -21,6 +21,7 @@ from tools.coordinates import coords
 
 ID = "pr_reminder"
 KIND = "scout"
+NOTIFICATION = True
 
 # Step config (co-located). Posts to the real "Code reviews" chat (redirect for
 # tests via send_to). The two deadlines below are single-sourced here and echoed by

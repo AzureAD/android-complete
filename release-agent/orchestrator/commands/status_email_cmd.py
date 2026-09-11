@@ -1,21 +1,11 @@
-"""`status-email` — compose the partner-facing DAILY release status email; `record-status-email`
-— stamp it after the skill sends (idempotency + last-sent tracking).
-
-`status-email --json` returns either {skip:true, reason} (out of the Phase-2..Phase-4 window, a
-weekend/US holiday, or already sent today) or {skip:false, to, subject, html, followup_command}.
-The skill sends the payload via workiq_send_email (redirecting to the owner via --send-to for a
-test run), then runs `record-status-email` to stamp the day. The composer + template live in
-orchestrator/status_email.py (pure); this command adds the live broker change-list + the
-business-day/idempotency gates.
-"""
+"""Read-only partner digest preparation. Delivery uses notification claim/result."""
 from __future__ import annotations
 import json as _json
-from datetime import date
 
 import yaml
 
 from orchestrator import cli_common as C
-from orchestrator import status_email as SE
+from orchestrator import status_email as SE, delivery as D
 from orchestrator import notifications as notif
 from tools import bugbash as BB
 from tools import prs
@@ -26,13 +16,16 @@ def _phase_order(config_path):
         with open(config_path, "r", encoding="utf-8") as fh:
             doc = yaml.safe_load(fh) or {}
         return [p["id"] for p in (doc.get("phases") or [])]
-    except (OSError, yaml.YAMLError, KeyError, TypeError):
-        return []
+    except (OSError, yaml.YAMLError, KeyError, TypeError) as exc:
+        raise ValueError(f"Invalid phase configuration: {exc}") from exc
 
 
 def _recipients(config_path):
     cfg = notif.load_config(config_path) or {}
-    return list((cfg.get("status_email") or {}).get("recipients") or [])
+    recipients = (cfg.get("status_email") or {}).get("recipients")
+    if not isinstance(recipients, list) or not recipients:
+        raise ValueError("Configure status_email.recipients as a non-empty list")
+    return recipients
 
 
 def _broker_changes(state):
@@ -49,10 +42,19 @@ def _broker_changes(state):
         return []
 
 
-def cmd_status_email(args):
-    st, _orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    today = C.parse_as_of(args) or date.today()
+def prepare_status_email(args, st, _orch):
+    today = _orch.now_local.date()
     force = bool(getattr(args, "force", False))
+    cfg = notif.load_config(args.config)
+    phases = (cfg.get("status_email") or {}).get("phases")
+    if not isinstance(phases, list) or not phases:
+        raise ValueError("Configure status_email.phases explicitly")
+    scope = {"kind": "window", "phases": phases,
+             "until_steps": (cfg.get("status_email") or {}).get("until_steps", []),
+             "date": today.isoformat(), "release_matches": {"owner_email": st.owner_email}}
+    reason = D.scope_reason(_orch, scope)
+    if reason:
+        return {"skip": True, "reason": reason, "release": args.release}
 
     recipients = _recipients(args.config)
     if getattr(args, "send_to", None):                     # test redirect
@@ -61,41 +63,43 @@ def cmd_status_email(args):
     res = SE.compose(st, _phase_order(args.config), recipients, changes=_broker_changes(st))
 
     # 1) window (Phase 2 <= current < Phase 5)
-    if res["skip"] and not force:
-        print(_json.dumps({"skip": True, "reason": res["reason"], "release": args.release}))
-        return 0
+    if res["skip"]:
+        return {"skip": True, "reason": res["reason"], "release": args.release}
     # 2) business day (weekday + not a US holiday)
     if not force and not BB.is_business_day(today):
-        print(_json.dumps({"skip": True, "reason": "weekend/holiday", "release": args.release}))
-        return 0
+        return {"skip": True, "reason": "weekend/holiday", "release": args.release}
     # 3) idempotency — already sent today
-    if not force and getattr(st, "last_status_email_date", None) == today.isoformat():
-        print(_json.dumps({"skip": True, "reason": "already sent today", "release": args.release}))
-        return 0
+    if getattr(st, "last_status_email_date", None) == today.isoformat():
+        return {"skip": True, "reason": "already recorded today", "release": args.release}
 
-    print(_json.dumps({
+    item = D.descriptor(st, f"status-email:{today.isoformat()}", scope, "workiq_send_email",
+                        {"to": res["to"], "subject": res["subject"],
+                         "body": res["html"], "isHtml": True},
+                        {"release_field": "last_status_email_date", "date": today.isoformat()})
+    if not D.available(_orch, item):
+        return {"skip": True, "reason": "already claimed or acknowledged", "release": args.release}
+    return {
         "skip": False, "release": args.release, "to": res["to"],
         "subject": res["subject"], "html": res["html"],
         "redirected": bool(getattr(args, "send_to", None)),
-        "followup_command": "record-status-email",
-    }))
+        "notifications": [item], "permission_to_send": False,
+    }
+
+
+def cmd_status_email(args):
+    try:
+        st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+        print(_json.dumps(prepare_status_email(args, st, orch)))
+    except ValueError as exc:
+        print(_json.dumps({"error": str(exc)}))
+        return 1
     return 0
 
 
 def cmd_record_status_email(args):
-    """Stamp the day a status email was sent (idempotency) and, with --final, close the channel
-    (nothing more to send). The skill runs this AFTER a successful send."""
-    st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    today = C.parse_as_of(args) or date.today()
-    st.last_status_email_date = today.isoformat()
-    if getattr(args, "final", False):
-        orch.record_scout_step(
-            "finalize", "final_status_email", "pass",
-            "Closing partner status email sent; daily status channel closed.")
-    C.save_state(st, args.runs_root, args.release)
-    print(_json.dumps({"recorded": today.isoformat(), "final": bool(getattr(args, "final", False)),
-                       "release": args.release}))
-    return 0
+    """Reject legacy date-only acknowledgements without channel delivery evidence."""
+    print(_json.dumps({"error": "Use notification claim/result; date-only acknowledgement is unsafe"}))
+    return 1
 
 
 def register(sub):
@@ -105,13 +109,13 @@ def register(sub):
     se.add_argument("--release", required=True)
     se.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     se.add_argument("--force", action="store_true",
-                    help="Compose regardless of window/business-day/idempotency (testing)")
+                    help="Bypass business-day cadence only, never lifecycle or acknowledgement")
     se.add_argument("--send-to", default=None,
                     help="Redirect recipients to these address(es) (comma-separated) for a test run")
     se.set_defaults(func=cmd_status_email)
 
     rs = sub.add_parser("record-status-email",
-                        help="Stamp that the daily status email was sent (idempotency); --final closes it")
+                        help="Retired acknowledgement; use notification claim/result")
     rs.add_argument("--release", required=True)
     rs.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     rs.add_argument("--final", action="store_true", help="This was the closing (end of Phase 4) email")

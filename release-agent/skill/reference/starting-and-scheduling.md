@@ -18,42 +18,45 @@ Pick current → `init --release <id>` immediately. Pick different → follow-up
 
 ## Ensure push reminders exist (per release — provisioned at start, torn down at close)
 
-Every provisioned worker prompt must include the stale-approval replay rule from
-SKILL.md's universal loop: re-run `step-action` after approval, immediately before
-sending, and obey its fresh result. Update the existing hourly/morning prompts and
-installed skill on the release owner's machine before rollout; source edits alone
-do not update stored automations. Include the universal loop's reservation rule for
-`reservable:true` actions. Standard MCP actions completed through `record-step` use
-`step-action --reserve`; specialized follow-up/pipeline-trigger flows remain unchanged.
-Stop old runners before deploying the new protocol and lock implementation together.
-The OS-held `.state.lock` file now remains in place; do not delete it to recover a
-live process. Reservations coordinate only workers using one authoritative state
-folder; copied release folders must never run as additional production senders.
+### Deployment checklist (owner-controlled, never an automatic migration)
+1. Stop old runners. Review interrupted sends and existing legacy checkpoints with the
+   owner; incomplete records are not permission to resend. Do not import/infer receipts.
+2. Install matching source and skill. A git pull does NOT update stored Scout prompts.
+3. With the owner's explicit deployment authorization, replace stored worker prompts
+   deliberately using this contract and the current `automation plan`. Do not silently
+   migrate existing registrations or settings; preserve deliberate shared/manual workers.
+4. All senders must use ONE authoritative state directory. Copies, including production
+   snapshots used for investigation, are read-only and must not become additional senders.
+5. Never delete `.state.lock` to break a live lock, or steal a claim by age. Verify the
+   original runner has stopped before owner-reviewed recovery.
+6. Claims/results/finalization use trusted current time. Re-prepare and review a new hash
+   for changed never-claimed work (including an expired invitation). Never refresh an
+   ever-claimed payload automatically, even after a known-not-sent result. Investigate
+   suppressed source-changed completion without re-sending.
 
 Right after `init`, make sure the **push-reminder automation** exists for THIS release so reminders reach the user even with Scout closed. Per-release: created at start, removed at close.
-1. `m_list_automations`. If **"`<YYYY-MM> · Release-wide — push reminders`"** exists AND `automation list --release <YYYY-MM> --json` has it scoped to this release, **do not duplicate it**. Inspect it with `m_get_automation`: if its prompt does not handle `core_alert` independently of `message`, or lacks the current reservation protocol, update that same automation with `m_update_automation` (preserve its id, schedule, enabled state, model, and notification settings). Otherwise leave it unchanged.
+1. `m_list_automations`. If **"`<YYYY-MM> · Release-wide — push reminders`"** exists AND `automation list --release <YYYY-MM> --json` scopes it to this release, do not duplicate it. Inspect its prompt; report outdated protocols for the deliberate deployment checklist above, do not auto-update live settings.
 2. If missing, `m_create_automation`:
    - **name:** `<YYYY-MM> · Release-wide — push reminders`  (fill `<YYYY-MM>` with the release id — the standard `<release-id> · <scope> — <purpose>` title)
    - **schedule:** `every hour`
    - **teamsNotify:** `never`
    - **prompt:** From `<AGENT_ROOT>` (**substitute the absolute confirmed release-agent path** — see SKILL.md → FIRST RUN — since this runs headless with no one to resolve a placeholder; e.g. run `paths --json` and paste the real `agent_root`), advance the active release **AUTONOMOUSLY** (no user is watching) and send the daily digest:
-     1. Run `python -m orchestrator.cli status --json`. If there is **no** release, or it is **unsigned / halted**, STOP silently. If it is **complete**, skip directly to cleanup in step 4 (this removes completed release automations, including this hourly worker), then stop.
-     2. **Run Scout's own steps until none remain.** Loop: run `next --json`; read `scout_pending`; if empty, go to step 3; else for EACH id: run `step-action --release <id> --phase <phase> --step <stepId>` (Phase 0 = `preflight`), perform the returned `needs_skill` `tool`+`payload` via the matching MCP tool (`workiq_send_email` / `workiq_send_chat_message` / `azure_devops-pipelines_run_pipeline`, honoring `test_redirect`), then finalize with `record-step … --status pass` — **UNLESS** the action names a follow-up engine command (via `payload.followup_command`, or the known two-hop steps: `check-lockdown`, `record-localization-run`/`check-localization`, and **`record-rc-report`** for `rc_report` — send the RC email, then run `record-rc-report`, which applies the 90% UI gate and records pass/block), which you run instead as the action describes. **Headless safety copy:** whenever a `needs_skill` action has **`outbound: true`**, after performing it also `m_send_teams_message` a **ONE-LINE** courtesy copy — `🤖 [release <id>] Autonomous: <summary>.` — so the owner sees what went out (never paste the full email/message body). A scout step that records `attention` is left blocked (it surfaces in the digest). Do it silently.
-     3. Run `python -m orchestrator.cli tick --json` → `{message, html, subject, owner_email, owner_name, release, channels, teams, core_alert}`. Treat `message` and `core_alert` independently. Deliver each populated block; if both are empty/null, skip delivery but **still continue to cleanup in step 4**:
-        - **Email** (when `message` is non-empty and `channels.email`): `workiq_send_email` (`to:[owner_email]`, `subject:` the value, `body:` the `html` with `isHtml:true` — fall back to plain `message`/`isHtml:false` only if `html` empty). Recipient from `owner_email` — never hardcode.
-        - **Teams owner digest** (when `message` is non-empty, `channels.teams`, and `teams` is non-null): dispatch on `teams.via` —
-          - `"scout_bot"` (default): `m_send_teams_message` with `message:` the `teams.text` value (the **markdown** digest, sent verbatim). This is the **Scout Teams bot** DM — the owner's Scout notification channel. Requires the Teams relay connected (`m_relay_status`); if it's down, email still covers it.
-          - `"chat"`: `workiq_send_chat_message` with **exactly** the `teams` block fields (`chatId`, `content`, `contentType`) — only used when a specific shared chat is configured.
-        - **Core Team deadline alert** (when `core_alert` is non-null): this is independent
-          of `message` and must still be sent when the normal owner digest is empty. Call
-          `workiq_send_chat_message` with its `chatId`, `content`, `contentType`, and
-          `mentions`. Only after WorkIQ confirms success, run its `followup_command`
-          (`record-core-alert`). If delivery fails, do not record it; the next hourly tick
-          retries. It is sent once on the last working day before CCD and once on CCD
-          morning while Phase 0 remains incomplete. Do not embellish it.
-
-     The `teams` descriptor is only present when a digest is actually due (it respects the same once-per-day de-dup), so delivering it never double-notifies. The digest is identical across channels — send it verbatim, don't embellish. Channels are configured in `config/notifications.yaml`.
-     4. Run `automation cleanup --release <YYYY-MM> --json`. For each removal in order, call `m_delete_automation`; only after deletion succeeds run `automation deregister --id <id>`. Leave failed deletions registered so the next hourly run can retry.
+     1. Run `python -m orchestrator.cli status --release <YYYY-MM> --json`.
+        Missing, unsigned, halted or complete means skip work, NOT cleanup.
+     2. Loop `next --release <YYYY-MM> --json` and resolve `scout_pending` with
+        `step-action --release <YYYY-MM> --phase <phase> --step <step>`. For notifications
+        use the universal `notification prepare` (source step), claim/result protocol
+        from SKILL.md. RC reports and Native Auth use this same protocol. Non-notification
+        gather/trigger actions retain their domain follow-ups. Never blind-record pass.
+     3. Run `tick --release <YYYY-MM> --json`, then
+        `notification prepare --release <YYYY-MM> --source digest`. Independently deliver
+        eligible owner email, owner Teams and Core alerts through claim/result, not raw
+        message blocks. Core alerts are scoped to active preflight after 9 AM on the
+        previous business day or CCD only. Inspect source pending for completion/provisioning
+        recovery; never resend claimed/uncertain/sent records. Do not add courtesy copies.
+     4. ALWAYS, in a finally block (including silence/errors), run
+        `automation cleanup --release <YYYY-MM> --json`. Delete each live automation,
+        then deregister only after success. Failed deletions remain registered.
 3. **Register it** so it's torn down at close: `automation register --id <id> --name "<YYYY-MM> · Release-wide — push reminders" --release <YYYY-MM> --cleanup-when release_done --purpose "hourly autonomous advance (runs scout steps) + phase digest to owner (email + Teams)"` — no `--step`, so it's recorded as a **release-level** automation (it advances the whole release, owns no step).
 
 Do it silently as part of start (the user already opted into push). **Why hourly, not once at 9am:** `tick` is idempotent (advancing no-ops once holding; digest de-dupes to one email/day), so a tick missed while the machine was off is picked up by the next. A single daily trigger would be skipped that day.
@@ -67,12 +70,18 @@ Alongside the push reminders, provision the **partner status email** — an **en
    - **schedule:** `every weekday at 5pm`  (end of day; weekends are skipped natively; the command also skips US holidays and the window)
    - **teamsNotify:** `never`
    - **prompt:** From `<AGENT_ROOT>` (**substitute the absolute confirmed release-agent path** — see SKILL.md → FIRST RUN — since this runs headless; `paths --json` prints the real `agent_root`), send the daily partner status email if one is due:
-     1. Run `python -m orchestrator.cli status-email --release <YYYY-MM> --json`. **For a TEST release, add `--send-to <you@microsoft.com>`** so the real DLs are never emailed.
-     2. If `skip` is `true` (reasons: out of the Phase 2-4 window, weekend/holiday, or already sent today), **STOP silently**.
-     3. Otherwise `workiq_send_email` with `to:` the payload `to`, `subject:` the `subject`, `body:` the `html` (`isHtml:true`). Then run `python -m orchestrator.cli record-status-email --release <YYYY-MM>` to stamp the day. **Headless safety copy:** `m_send_teams_message` a one-line courtesy — `🤖 [release <id>] Sent daily status email.` (never paste the body).
+     1. Run `notification prepare --release <YYYY-MM> --source status-email`.
+        For an isolated TEST release, add `--send-to <verified-test-address>`.
+     2. For each eligible notification, use SKILL.md's exact prepare/claim/result protocol.
+        Empty/stopped/claimed/uncertain/sent means no send, never an automatic retry.
+     3. ALWAYS run `automation cleanup --release <YYYY-MM> --json` in a finally block,
+        even when no email is due. Delete first, deregister only on success.
 3. **Register it** for teardown: `automation register --id <id> --name "<YYYY-MM> · Phases 2–4 — daily status email" --release <YYYY-MM> --cleanup-when phase_done:finalize --purpose "business-day partner status email (Phase 2-4)"`.
 
-**Closing it (end of Phase 4).** The terminal `finalize.final_status_email` step sends the guaranteed CLOSING status email and runs `record-status-email --final`. Then immediately run `automation cleanup --release <YYYY-MM> --json`, delete the returned daily status-email automation with `m_delete_automation`, and deregister only after deletion succeeds. This prevents status emails in Phase 5+. Release-close cleanup is the backstop.
+**Closing it (end of Phase 4).** `finalize.final_status_email` uses source step and the
+same claim/result protocol; only acknowledged delivery completes the step. Cleanup
+then retires the daily worker. Known-not-sent failures remain retryable while its
+scope is open; explicit owner skip or phase completion ends delivery eligibility.
 
 
 ## Provision the timed phase automations (config-driven, per release)
@@ -101,8 +110,9 @@ America/Los_Angeles on CCD, an unmerged
 PR causes one additional Code Reviews warning that the translated strings are at risk.
 If the PR is still unmerged at 6:00 PM America/Los_Angeles, the command marks localization
 skipped/omitted so Phase 2 proceeds without those strings and the poller is cleaned up.
-Record each post with its returned `record-localization-post` follow-up only after delivery
-succeeds.
+Initial PR, deadline warning and timeout email are staged per-channel notifications.
+Use source pending and claim/result. Timeout does not block the step before required
+delivery is acknowledged. A merge, owner skip or closed phase cancels stale follow-ups.
 
 **Traceability:** every timed step is owned by exactly one automation (a guardrail test enforces this). Each registry entry has a **kind** — `step-driving` (owns steps, e.g. the CCD automations) or `release-level` (whole-release, no steps, e.g. push reminders), auto-derived from whether you pass `--step`. To answer "which automation runs step X?" → `automation list --release <YYYY-MM> --step-filter <phase.step>`. To see "what does this automation drive?" → `automation list --release <YYYY-MM>` (each row shows its `[kind]` and `drives: …`, or `(release-level — no steps)`). At runtime each step-driving automation journals `<slug> ran <step>` into the release event log, so the whole chain (config → registered automation → step execution) is inspectable.
 
@@ -114,8 +124,9 @@ At **release close** (status complete / Release Close phase / user asks to "clea
 1. `automation list --release <YYYY-MM> --json` — the release's automations.
 2. Run `automation cleanup --release <YYYY-MM> --json`; for each removal in order,
    `m_delete_automation` (id from entry), then `automation deregister --id <id>`.
-   Delete any remaining release-scoped entries with the same ordering.
-3. Shared automations aren't in the release-scoped list — leave them. Confirm before deleting; report what was removed.
+   The universal release-complete backstop includes explicitly release-scoped nonmanual entries.
+3. Preserve shared/manual entries. Missing/invalid lifecycle metadata requires owner review,
+   not inferred ownership or automatic migration. A halted release suspends, not deletes.
 
 ## Code Complete Date (CCD) & phase scheduling
 
@@ -129,7 +140,9 @@ Either resolution clears the conflict. Never pick for the user.
 
 - **Phase 0 opens at CCD‑7.** You can `init` anytime, but until CCD‑7 the release sits in **`scheduled`** — the engine runs nothing. Status says *"🗓 Scheduled — Pre‑flight opens `<date>` (in N days)."* Relay plainly; don't force it.
 - At CCD‑7, `next` opens Phase 0 and runs to the first gate.
-- **Testing the clock:** every read/advance command accepts `--as-of YYYY-MM-DD` to simulate the date. Normal runs use today.
+- **Testing the clock:** read/advance previews and `notification prepare` accept `--as-of`
+  to simulate the date. `notification claim/result/finalize` reject overrides and use the
+  trusted current clock; tests patch clocks only in isolated fixtures.
 
 **Changing the CCD (real production change).** `set-ccd` **writes the pipeline override** — gated: run without `--confirm` first (preview) → present → explicit yes (a `--reason` is always required) → re-run with `--confirm`. Month-scoped (date must be in the release month). `--default` reverts to 2nd-Wednesday.
 
@@ -148,8 +161,16 @@ Everything else is **pull** (seen when the user opens Scout). The **push** layer
 - **Daily while a phase has outstanding work.** Once open (and Scout's steps drained), the owner gets a **once‑per‑day** digest (progress + what needs them) until the phase's actions are done; the next phase's digest takes over when it opens.
 - **Channels** are set in `config/notifications.yaml` (`channels.email`, `channels.teams`; `teams.target: scout` → the **Scout Teams bot** DM via `m_send_teams_message`, or an explicit chat id for a shared chat). Purpose: keep the **release owner** aware and pull them in when a step needs them. Anyone else is notified only when a specific step requires it (that's the step-driving automations, e.g. the CCD reminders) — not this digest.
 
-`tick` is the deterministic automation half: `tick --json` first **advances** the release (runs runnable steps, holds at gates/actions — idempotent), then returns `{message, html, subject, owner_email, owner_name, release, channels, teams}` — `message` plain-text digest, `html` rich version, `channels` the enabled map, `teams` a delivery descriptor (`{via:"scout_bot", text}` for the Scout bot, or `{via:"chat", chatId, content, contentType}` for an explicit chat, or null); all empty/null when nothing's due or already sent today. (`notify --json` is the read-only variant — same payload, does NOT advance.) `--as-of <date>` debug clock; `--force` bypasses once‑per‑day.
+`tick --release <id> --json` advances runnable work, then returns preview notifications.
+`notify --release <id> --json` is read-only: no advancement or send stamp.
+Use `notification prepare --release <id> --source digest` and independent channel
+claim/result calls to send. The owner's timezone determines the day; an acknowledgement
+after midnight retains the prepared date. `--force` never bypasses dedup or lifecycle.
 
-The **"`<YYYY-MM> · Release-wide — push reminders`"** automation is **autonomous** and runs **hourly**: it (1) advances the release, (2) **runs Scout's own steps** for the open phase — `scout_pending` steps that need MCP: it performs each `step-action` (send the early-release notice email, post feature-owner reminders, run the lockdown check, trigger localization…) and records it, exactly as the interactive skill would — then (3) delivers the daily digest via `tick --json` on every enabled channel (`channels`): **email** (`html`/`message` → `owner_email`, subject from JSON — never a hardcoded address) and, when `teams` is non-null, **Scout Teams** (`m_send_teams_message` with the markdown `teams.text` for the `scout_bot` target, or `workiq_send_chat_message` for an explicit chat). Empty `message` → silent. **Headless safety copy:** because these outbound actions happen with no one watching, every `needs_skill` action flagged **`outbound: true`** (email / Teams post / pipeline trigger) also drops a **one-line** courtesy copy in the owner's Scout DM (`🤖 [release <id>] Autonomous: <summary>`) so they see what went out — the local `lockdown` scrape is `outbound: false` and stays quiet. Per‑release: auto‑provisioned at start, torn down at close. Email is the guaranteed floor; Teams is a bonus channel that degrades gracefully (the `teams_notify` readiness item records `degraded` = email-only if the Scout bot isn't reachable).
+The hourly worker advances its explicitly pinned release, drains eligible Scout work,
+then prepares the owner digest. Email and Teams acknowledge separately: failure on one
+does not erase the other. No ad-hoc courtesy copies or automatic summary-to-Teams;
+`teamsNotify: never` avoids leaking payloads to the runner's owner. The bot transport
+requires verified runner/owner identity. Every exit runs cleanup, even silence.
 
-If the user asks "how will I be reminded" / "set up notifications," explain this; create the automation if missing. Keep the email subject/body exactly as `tick` returns — don't embellish.
+If the user asks "how will I be reminded" / "set up notifications," explain this; create the automation if missing. Keep the email subject/body exactly as the successful claim returns — don't embellish or send the raw `tick` preview.

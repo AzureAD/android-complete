@@ -557,7 +557,7 @@ def notification(r: dict) -> str:
     """The DAILY PHASE DIGEST emailed to the release owner, or "" to stay silent.
     `r` is Orchestrator.status_report(). Plain-text form (email fallback / logs);
     the markdown and HTML forms render the same model differently. The once-per-day
-    cadence is enforced by the CLI (last_notified_date)."""
+    cadence is enforced by the CLI's per-channel notification ledger."""
     m = _digest_model(r)
     if m is None:
         return ""

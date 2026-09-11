@@ -59,7 +59,12 @@ If any item is unsatisfied the gate stays closed. If the engineer can't satisfy 
         - **`match`** (future-dated CCD, no override or override equals it) → `record-check --release <id> --item ccd_confirmed --status pass --detail "CCD <ccd> reconciled with pipeline"`.
         - **`unset`** (release id isn't YYYY-MM, so no CCD) → keeps the gate closed; the release needs a proper month id.
         - **`compressed: true` (WARN, never blocks) — applies on ANY non-past status:** Phase 0 normally runs CCD-7→CCD (7 days) but only `runway_days` remain (Phase 0 opens `phase0_open`). Tell the user once — *"Heads up: your CCD is `<ccd>` (`<days_to_ccd humanized>`), so Phase 0 has only `<runway_days>` day(s) of prep instead of 7. Proceed, or move the CCD out with set-ccd?"* If they move it → `set-ccd … --confirm --reason` then re-check. If they proceed → still `record-check … --status pass --detail "CCD <ccd> — compressed Phase 0 (<runway_days>d), user accepted"`. A squeezed window is a risk to flag, not a blocker.
-    - **`teams_notify` (Scout Teams bot):** verifies the daily digest can also reach the user over Teams (email is the guaranteed channel; Teams is a bonus). Read `config/notifications.yaml` (or the `tick --json` payload's `channels`):
+    - **`teams_notify` (Scout Teams bot):** an interactive setup diagnostic, not a recurring
+      release notification. Its one-time relay handshake contains no release payload and
+      precedes readiness signing; never invoke it from a scheduled worker or as a delivery
+      fallback. It verifies the daily digest can also reach the user over Teams (email is the
+      primary channel; Teams is a bonus). Read `config/notifications.yaml` (or the
+      `tick --release <id> --json` payload's `channels`):
         - **`channels.teams` is OFF** → Teams isn't requested: `record-check --release <id> --item teams_notify --status pass --detail "teams channel disabled — email only"`.
         - **`channels.teams` is ON** → call **`m_relay_status`**; if not `connected`, call **`m_relay_connect`** and re-check. Then send a silent handshake via **`m_send_teams_message`** (e.g. "✅ Scout Teams notifications are set up for your release digests.").
             - Relay connected AND the handshake sends → `record-check … --item teams_notify --status pass --detail "relay connected; Scout bot reachable"`.

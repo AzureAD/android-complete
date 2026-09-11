@@ -16,9 +16,17 @@ _Copy this to `reference/phases/<id>.md` when a phase gets real agents. Delete t
 For every step that needs the skill to act (`source: scout`, `attest`, or a gate):
 ### `<step_id>` — `<what it does>` (`<scout|attest|gate|agent>`)
 - **Trigger:** when `status --json` shows current step `<step_id>` (state …).
-- **Prepare (deterministic):** `python -m orchestrator.cli <prepare-cmd> --release <id>` → returns `{…}`.
-- **Act:** the MCP/browser action (WorkIQ email/Teams, Playwright, ICM/Kusto), using the prepared payload. Never override resolved recipients/targets.
-- **Record:** `record-step --release <id> --step <step_id> --status pass\|attention --detail "…"` (scout steps) OR `done --step <step_id> --note "…"` (attestations) OR relay the gate for Approve/Deny.
+- **Notifications:** `notification prepare --release <id> --source step --phase <phase> --step <step_id>`,
+  review target/payload, then `notification claim` with the approved hash and executor.
+  Only `permission_to_send:true` authorizes the returned transport payload. Acknowledge each
+  result with `notification result`; never blind-record a notification pass. Unknown outcomes
+  need owner review, not automatic retries. See `commands.md` for exact flags.
+- **Non-notification actions:** use `step-action` and its existing reservation/domain follow-up
+  for MCP/browser work. Attestations use `done --release <id> --step <step_id> --note "…"` only
+  after explicit confirmation; relay gates for Approve/Deny.
+- **Lifecycle:** declare the owning step/phase/window, source checkpoint bindings and any
+  expiry. All worker prompts discover pending notifications even on silence, then run cleanup
+  in finally; delete live automation before deregistration. Never infer scope from a name.
 - **Blocked?** If an agent step can block on a real problem, state the exit: fix + `next` (re-check), or `skip … --reason`.
 
 ## Automated steps (no skill action)

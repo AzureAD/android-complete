@@ -11,7 +11,7 @@
 #   steps[].id/name           : step identifier + label (id matches the step module's ID)
 #   steps[].gate              : if true, conductor HOLDS at this step for human approval
 #   steps[].owner             : agent | human  (who acts; gates are always human-decided)
-#   steps[].source            : scout -> the skill runs it via MCP + record-step
+#   steps[].source            : scout -> notification claim/result or the named domain follow-up
 #   steps[].attest            : if true, a human confirms it (owner: human)
 #   steps[].depends_on        : step ids in this phase that must finish first
 #   steps[].maps_to           : the Release-Stabilization action-item ID(s) this step uses
@@ -138,5 +138,4 @@ phases:
     steps:
       - { id: closeout,        name: "Close-out checklist (approvals/comms/bugs)", owner: agent, maps_to: [C1] }
       - { id: done,            name: "Release complete",                        owner: human, gate: true }
-
 

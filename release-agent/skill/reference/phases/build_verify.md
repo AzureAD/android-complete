@@ -48,15 +48,15 @@ steps run inside `next`. Each records the ADO run it evaluated as a Details 🔗
   source IDs, APK version/build number, query, cluster/database, count, timestamp and
   build link in `steps["build_verify.telemetry_verify"]` in the release JSON.
   - **rows > 0 → pass** — telemetry is flowing; the step is done and the flow continues to `rc_report`.
-  - **rows == 0 → `attention`** — the step BLOCKS. Post a heads-up in the **Android Core Team**
-    channel that telemetry isn't reaching Kusto yet, then re-run once it is.
+  - **rows == 0 → `attention`** — the step BLOCKS. Ask the owner to post a heads-up in
+    **Android Core Team** that telemetry isn't reaching Kusto yet, then re-run once it is.
+    This is an owner task, not permission for an ad-hoc automated notification.
 
 ## Reading and previewing the RC report
 
-Use the existing HTML report renderer for requested review copies; do not replace it
-with a handwritten summary. Clearly label previews and provisional/incomplete data,
-confirm the recipient and exact content before sending, and never run the completion
-follow-up or advance the release for a preview.
+Use the existing HTML report renderer for local review; do not replace it with a
+handwritten summary. Clearly label previews and provisional/incomplete data. A preview
+never authorizes delivery, completion or extra copies; report sends use the shared protocol.
 
 All MRWP categories use **distinct-test, any-pass-wins counts**: one exact title
 within each normalized suite in the current build/provider counts once. Two Failed
@@ -114,19 +114,17 @@ This recommendation does not stop or change an ADO pipeline. Authenticator perce
 display exactly two decimals; gate calculations still use unrounded ratios.
 - **Trigger:** `status --json` shows current step `rc_report` (state `scout`), after the
   five agent steps and telemetry are complete (or explicitly overridden).
-- **Resolve:** `step-action --release <id> --phase build_verify --step rc_report` →
-  `needs_skill` (`workiq_send_email`) with a fully-composed HTML dashboard, plus
-  `payload.followup_command: record-rc-report`.
-- **Act:** send the email verbatim (`payload.to/subject/body`, `isHtml:true`) — honoring
-  a `send_to` redirect if the engineer set one. **Send only when `needs_skill` is
-  returned**: the checker/orchestrator identifiers and complete current-RC ECS, Local
-  and Authenticator snapshots must exist. Missing or zero MRWP UI data is not a pass.
-  Once ready, send even for evaluated failures.
-- **Record (the two-hop):** because `followup_command` is set, run
-  the **exact follow-up** plus `--release <id>` **instead of** `record-step`, only after
-  successful delivery. It rechecks sequencing/readiness and rejects missing or incomplete
-  evidence without writing a verdict. It evaluates the captured snapshots, not live
-  pipeline discovery. It applies the **three-tier 90% UI-automation gate** (combined pass
+- **Prepare:** `notification prepare --release <id> --source step --phase build_verify
+  --step rc_report` prepares a report bound to the exact evaluated source evidence, verdict
+  and run links. Claim freezes it; changed source data invalidates claims and suppresses
+  stale completion even within the same RC/build. Retain any delivered receipt.
+  Missing/zero evidence blocks preparation; evaluated failures still generate a report.
+- **Claim:** review the exact target/payload and use `notification claim` with its ID/hash.
+  Send only a durable claim returning permission_to_send; do not send raw previews.
+- **Acknowledge:** `notification result --outcome sent` requires provider evidence and
+  completes that exact report snapshot. No bare legacy recorder can invent a delivery.
+  Failure after successful send requires acknowledgement/finalize recovery, never a resend.
+  Completion applies the **three-tier 90% UI-automation gate** (combined pass
   rate across ECS + Local), independently of the Authenticator build/Firebase gate:
   - **100% → `clean`** — step done; the release auto-advances into Phase 3 (bug bash).
   - **≥ 90% & < 100% → `warn`** — step done; auto-advances into bug bash, but the owner

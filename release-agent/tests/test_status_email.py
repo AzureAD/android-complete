@@ -57,6 +57,7 @@ def test_status_email_command_gates_and_stamp():
     prs.broker_change_list = lambda *a, **k: (True, [], "")     # no network
     with tempfile.TemporaryDirectory() as d:
         st = _status_state("build_verify")
+        _active_phase(st, "build_verify")
         _C.save_state(st, d, "2026-08")
 
         def run(as_of, force=False, send_to=None):
@@ -70,13 +71,13 @@ def test_status_email_command_gates_and_stamp():
             assert run("2026-08-15")["skip"] is True                    # Sat → skip
             sent = run("2026-08-12", send_to="me@x.com")                # Wed → send
             assert sent["skip"] is False and sent["to"] == ["me@x.com"]
-            assert sent["followup_command"] == "record-status-email"
+            assert sent["permission_to_send"] is False
             # stamp, then idempotent skip
             rA = argparse.Namespace(runs_root=d, release="2026-08", config=CONFIG,
                                     as_of="2026-08-12", final=False)
-            SEC.cmd_record_status_email(rA)
+            _ack_notifications(d, "2026-08", "2026-08-12T12:00:00", sent["notifications"])
             assert _C.load_state(d, "2026-08").last_status_email_date == "2026-08-12"
-            assert run("2026-08-12")["reason"] == "already sent today"  # idempotent
+            assert run("2026-08-12")["reason"] == "already recorded today"
         finally:
             prs.broker_change_list = orig
 
@@ -92,7 +93,7 @@ def test_final_status_recorder_completes_terminal_step():
         _C.save_state(st, d, rid)
         args = argparse.Namespace(runs_root=d, release=rid, config=CONFIG,
                                   as_of="2026-08-12", final=True)
-        assert SEC.cmd_record_status_email(args) == 0
+        assert SEC.cmd_record_status_email(args) == 1
         saved = _C.load_state(d, rid)
-        assert saved.last_status_email_date == "2026-08-12"
-        assert saved.is_done("finalize", "final_status_email")
+        assert saved.last_status_email_date is None
+        assert not saved.is_done("finalize", "final_status_email")

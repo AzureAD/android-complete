@@ -22,7 +22,7 @@ from __future__ import annotations
 import inspect
 import json as _json
 
-from orchestrator import cli_common as C
+from orchestrator import cli_common as C, delivery as D
 from orchestrator import mocks as mocks_mod
 from orchestrator import knowledge as kb
 from orchestrator.outcomes import as_dict
@@ -89,56 +89,31 @@ def _accepted_kwargs(build, params: dict) -> dict:
     return {k: v for k, v in params.items() if k in names}
 
 
-def cmd_step_action(args):
+def prepare_step(args, st, orch):
     mod = steps.get_step(args.phase, args.step)
     if mod is None:
-        print(_json.dumps({
-            "error": f"step '{args.phase}.{args.step}' is not migrated to the "
-                     f"uniform contract; no co-located handler in steps/.",
-            "phase": args.phase, "step": args.step,
-        }))
-        return 1
+        raise ValueError(f"No handler for {args.phase}.{args.step}")
     if not hasattr(mod, "build"):
-        print(_json.dumps({
-            "error": f"step module '{args.phase}.{args.step}' has no build()",
-        }))
-        return 1
+        raise ValueError(f"step module '{args.phase}.{args.step}' has no build()")
 
     # Agent steps run IN-PROCESS inside the engine's `next` (they perform the real
     # deterministic action). Executing their build() here would run that action a
     # second time, out of band — refuse and point to `next`.
     if getattr(mod, "KIND", None) == "agent":
-        print(_json.dumps({
-            "error": f"step '{args.phase}.{args.step}' is an agent step — the engine "
-                     f"runs it in-process via `next`; don't dispatch it with step-action.",
-            "phase": args.phase, "step": args.step, "kind": "agent",
-        }))
-        return 1
-
-    try:
-        params = _parse_params(getattr(args, "param", None))
-    except ValueError as e:
-        print(_json.dumps({"error": str(e)}))
-        return 1
-
-    st, orch = C.load_orch(args.runs_root, args.release, args.config)
+        raise ValueError("Agent steps run in-process via next, not step-action")
+    params = _parse_params(getattr(args, "param", None))
     spec = mocks_mod.load_mocks().get(f"{args.phase}.{getattr(mod, 'ID', args.step)}") or {}
     outcome = orch.step_action_guard(args.phase, args.step)
     if outcome is None:
         kwargs = _accepted_kwargs(mod.build, params)
         with mockctx.active(spec):                 # expose `input` knobs to build()
             outcome = mod.build(st, **kwargs)
-    if getattr(args, "reserve", False):
-        try:
-            outcome = orch.reserve_step(args.phase, args.step, outcome, getattr(args, "executor", None))
-        except ValueError as e:
-            print(_json.dumps({"error": str(e)}))
-            return 1
-
     out = as_dict(outcome)
     out["phase"] = args.phase
     out["step"] = getattr(mod, "ID", args.step)
     out["release"] = args.release
+    if out["kind"] == "done" and getattr(mod, "NOTIFICATION", False):
+        out["no_delivery_required"] = True
 
     # Local-test payload overrides: a mocks.local.yaml entry may set knobs the step
     # DECLARES via its MOCKABLE spec (e.g. `send_to` on notice) — keeps the send
@@ -147,15 +122,54 @@ def cmd_step_action(args):
         _apply_overrides(out, getattr(mod, "MOCKABLE", {}), spec)
     if out.get("kind") == "needs_skill":
         out["reservable"] = orch.supports_step_reservation(outcome)
-        if getattr(args, "reserve", False):
-            execution = orch.step_execution(args.phase, args.step)
-            C.save_state(st, args.runs_root, args.release)
-            C.elog(args.runs_root, args.release).log(
-                "step_reserved", phase=args.phase, step=args.step, execution=execution)
-            out["execution_id"] = execution["id"]
+        if (out.get("outbound") and getattr(mod, "NOTIFICATION", False)
+                and out["tool"] not in D.TRANSPORTS):
+            raise ValueError("Notification transport has no delivery contract")
+        if out["tool"] in D.TRANSPORTS and out.get("outbound"):
+            if out.get("record_as") != args.step:
+                raise ValueError("Notification record_as must match the requested owning step")
+            metadata = out.get("notification") or {}
+            scope = {"kind": "step", "phase": args.phase, "step": args.step,
+                     "release_matches": {"ccd": st.ccd, "owner_email": st.owner_email},
+                     "state_matches": metadata.get("state_matches", [])}
+            for key in ("not_before", "expires_at"):
+                if key in metadata:
+                    scope[key] = metadata[key]
+            completion = {"note": out.get("note", ""), **metadata.get("completion", {}),
+                          "kind": "step", "record_as": out["record_as"]}
+            if out["payload"].get("_automation"):
+                completion["automation"] = out["payload"]["_automation"]
+            payload = {k: v for k, v in out["payload"].items()
+                       if not k.startswith("_") and k not in ("followup_command", "links")}
+            if out["payload"].get("_mentions"):
+                payload["mentions"] = D.chat_mentions(out["payload"]["_mentions"])
+            item = D.descriptor(
+                st, f"step:{args.phase}.{args.step}:{metadata.get('checkpoint', 'once')}",
+                scope, out["tool"], payload, completion)
+            out["notifications"] = [item] if D.available(orch, item) else []
+            out["permission_to_send"] = False
+            out["reservable"] = False
+            if getattr(args, "reserve", False):
+                raise ValueError("Use notification prepare/claim with the approved hash, not step-action --reserve")
+        elif getattr(args, "reserve", False):
+            outcome = orch.reserve_step(args.phase, args.step, outcome, getattr(args, "executor", None))
+            if outcome.kind != "needs_skill":
+                return as_dict(outcome)
+            out["execution_id"] = orch.step_execution(args.phase, args.step)["id"]
+    return out
 
-    print(_json.dumps(out))
-    return 0
+
+def cmd_step_action(args):
+    try:
+        st, orch = C.load_orch(args.runs_root, args.release, args.config)
+        out = prepare_step(args, st, orch)
+        if out.get("execution_id"):
+            C.save_state(st, args.runs_root, args.release)
+        print(_json.dumps(out))
+        return 0
+    except ValueError as exc:
+        print(_json.dumps({"error": str(exc)}))
+        return 1
 
 
 def _classify(step: dict) -> str:

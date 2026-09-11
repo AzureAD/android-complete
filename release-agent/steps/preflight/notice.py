@@ -16,6 +16,7 @@ from steps.lib.mockctx import mock_input
 
 ID = "notice"
 KIND = "scout"
+NOTIFICATION = True
 
 # Step config (co-located). Filled from the local template and sent to the real DL
 # (redirect for tests with the send_to mock knob).

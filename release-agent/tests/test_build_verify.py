@@ -265,7 +265,7 @@ def test_build_verify_rc_report_emails_owner():
     out = as_dict(_steps.get_step("build_verify", "rc_report").build(st))
     assert out["kind"] == "needs_skill" and out["tool"] == "workiq_send_email"
     assert out["payload"]["to"] == ["dev@microsoft.com"] and out["payload"]["isHtml"]
-    assert out["payload"]["followup_command"] == "record-rc-report"
+    assert out["notification"]["completion"]["status"] == "attention"
     body = out["payload"]["body"]
     assert "1678863" in body                          # run id present
     assert "UI-automation failure rate" in body       # per-category headline metric
@@ -363,7 +363,7 @@ def test_record_rc_report_applies_ui_gate_and_stashes_links():
         _seed_rc_pipeline(st, {"total": 100, "passed": 95, "failed": 5},
                           {"total": 100, "passed": 95, "failed": 5})
         C.save_state(st, d, rid)
-        assert RR.cmd_record_rc_report(A) == 0
+        _ack_step(d, rid, "build_verify", "rc_report")
         s1 = C.load_state(d, rid)
         assert s1.is_done("build_verify", "rc_report")
         step1 = s1.get_step("build_verify", "rc_report")
@@ -374,11 +374,12 @@ def test_record_rc_report_applies_ui_gate_and_stashes_links():
 
         # reset the step + re-seed the SAME runs with a failing UI slice (60% < 90) →
         # blocked, links still stashed. Same run ids → updates the current rc in place.
+        s1 = st  # Independent unsent fixture, not a replay of the acknowledged checkpoint.
         s1.set_step("build_verify", "rc_report", StepState())
         _seed_rc_pipeline(s1, {"total": 100, "passed": 60, "failed": 40},
                           {"total": 100, "passed": 60, "failed": 40})
         C.save_state(s1, d, rid)
-        assert RR.cmd_record_rc_report(A) == 2
+        _ack_step(d, rid, "build_verify", "rc_report")
         s2 = C.load_state(d, rid)
         step2 = s2.get_step("build_verify", "rc_report")
         assert step2.status == "blocked" and not s2.is_done("build_verify", "rc_report")
@@ -421,7 +422,7 @@ def test_record_rc_report_holds_when_auth_gate_fails_though_mrwp_clean():
             "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(82.76, 100.0)},
             "verdict": "attention"})
         C.save_state(st, d, rid)
-        assert RR.cmd_record_rc_report(A) == 2                     # blocked by AUTH, not MRWP
+        _ack_step(d, rid, "build_verify", "rc_report")
         s1 = C.load_state(d, rid)
         assert s1.get_step("build_verify", "rc_report").status == "blocked"
         # links now include the auth build + test
@@ -429,6 +430,7 @@ def test_record_rc_report_holds_when_auth_gate_fails_though_mrwp_clean():
         assert "Authenticator ECS build" in names and "Authenticator ECS UI tests" in names
 
         # flip auth to clean -> now both gates clear -> pass (auto-advance)
+        s1 = st  # Independent unsent fixture for the clean gate.
         s1.set_step("build_verify", "rc_report", StepState())
         rc = s1.pipeline_runs["rcs"][-1]
         K.stash_auth(s1, rc["rc"], {
@@ -437,7 +439,7 @@ def test_record_rc_report_holds_when_auth_gate_fails_though_mrwp_clean():
             "test": {"run_id": "900011", "complete": True, "suites": _auth_suites(97.0, 100.0)},
             "verdict": "clean"})
         C.save_state(s1, d, rid)
-        assert RR.cmd_record_rc_report(A) == 0
+        _ack_step(d, rid, "build_verify", "rc_report")
         assert C.load_state(d, rid).is_done("build_verify", "rc_report")
 
 
@@ -734,22 +736,24 @@ def test_poll_rc_waits_then_nudges_once_at_6h():
         _stub_build_defs("pass")
         st = ReleaseState(release_id=rid, ccd="2026-08-26", ccd_source="confirmed",
                           owner_email="dev@microsoft.com", owner_name="Dev")
+        _active_phase(st, "build_verify")
         st.set_step("build_verify", "mrwp_ecs",
                     StepState(status="in_flight", note="RC running",
-                              data={"in_flight_since": "2026-08-20T00:00:00+00:00",
+                              data={"in_flight_since": "2026-08-28T00:00:00+00:00",
                                     "poll_in_min": 30}))
         C.save_state(st, d, rid)
         # +2h → still waiting
-        dec = _run_poll_rc(d, rid, "2026-08-20T02:00:00+00:00")
+        dec = _run_poll_rc(d, rid, "2026-08-28T02:00:00+00:00")
         assert dec["decision"] == "waiting" and dec["step"] == "mrwp_ecs"
         assert abs(dec["elapsed_hours"] - 2.0) < 0.01 and dec["poll_in_min"] == 30
         # +7h → nudge (once), addressed to the owner
-        dec = _run_poll_rc(d, rid, "2026-08-20T07:00:00+00:00")
+        dec = _run_poll_rc(d, rid, "2026-08-28T07:00:00+00:00")
         assert dec["decision"] == "nudge"
         assert dec["nudge"]["email"]["to"] == ["dev@microsoft.com"]
         assert "polling" in dec["nudge"]["teams"]["text"]
-        # nudged_at stamped → a later poll is waiting again (no repeat nudge)
-        dec = _run_poll_rc(d, rid, "2026-08-20T09:00:00+00:00")
+        _ack_notifications(d, rid, "2026-09-11T12:00:00Z", dec["notifications"])
+        # Per-channel acknowledgements → waiting again without a preview-time stamp.
+        dec = _run_poll_rc(d, rid, "2026-08-28T09:00:00+00:00")
         assert dec["decision"] == "waiting"
 
 
@@ -774,7 +778,7 @@ def test_poll_rc_resolved_blocked_idle():
 
         st.set_step("build_verify", "rc_report", StepState(status="blocked", note="UI 80%"))
         C.save_state(st, d, rid)
-        r = _run_poll_rc(d, rid, "2026-08-20T09:00:00+00:00")
+        r = _run_poll_rc(d, rid, "2026-08-28T09:00:00+00:00")
         assert r["decision"] == "blocked" and r["note"] == "UI 80%"
 
 

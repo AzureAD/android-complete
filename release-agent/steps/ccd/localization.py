@@ -302,9 +302,9 @@ def decide(state, is_complete: bool, logs: str = None, now=None, cfg: dict = Non
     should act on:
       wait          -> {decision, elapsed_min, poll_in_min, note}
       timeout       -> {decision, email:{...}, note}          (hold the step)
-      announce_pr   -> {decision, pr_id, pr_url, chat:{...}, followup_command, links, note}
+      announce_pr   -> {decision, pr_id, pr_url, chat:{...}, links, note}
       wait_for_merge -> {decision, pr_id, pr_url, poll_in_min, note}
-      warn_unmerged  -> {decision, chat:{...}, followup_command, note}
+      warn_unmerged  -> {decision, chat:{...}, note}
       omit_unmerged  -> {decision, pr_id, pr_url, links, note}    (skipped)
       merged        -> {decision, pr_id, pr_url, links, note}      (done)
       complete_none -> {decision, links, note}                (done, no strings)
@@ -326,8 +326,12 @@ def decide(state, is_complete: bool, logs: str = None, now=None, cfg: dict = Non
         run_link = _run_link(state, cfg)
         if run_link:
             links.append(run_link)
-        normalized = str(pr_status or "").strip().lower()
-        if normalized != "completed" and omission_deadline_passed(state, now, cfg):
+        normalized = str(pr_status or data.get("pr_status") or "").strip().lower()
+        if normalized == "completed":
+            return {"decision": "merged", "pr_id": stored_pr_id,
+                    "pr_url": stored_pr_url, "links": links,
+                    "note": f"localization PR #{stored_pr_id} merged"}
+        if omission_deadline_passed(state, now, cfg):
             return {
                 "decision": "omit_unmerged", "pr_id": stored_pr_id,
                 "pr_url": stored_pr_url, "links": links,
@@ -340,24 +344,14 @@ def decide(state, is_complete: bool, logs: str = None, now=None, cfg: dict = Non
                 "decision": "announce_pr", "pr_id": stored_pr_id,
                 "pr_url": stored_pr_url, "chat": _review_post(
                     state, cfg, stored_pr_id, stored_pr_url),
-                "followup_command": (
-                    f"record-localization-post --release {state.release_id} "
-                    f"--kind initial --pr-id {stored_pr_id}"),
                 "links": links,
                 "note": f"localization PR #{stored_pr_id} created; initial Code reviews post due",
             }
-        if normalized == "completed":
-            return {"decision": "merged", "pr_id": stored_pr_id,
-                    "pr_url": stored_pr_url, "links": links,
-                    "note": f"localization PR #{stored_pr_id} merged"}
         if merge_deadline_passed(state, now, cfg) and not data.get("merge_deadline_alert_at"):
             return {
                 "decision": "warn_unmerged", "pr_id": stored_pr_id,
                 "pr_url": stored_pr_url, "chat": _deadline_post(
                     state, cfg, stored_pr_id, stored_pr_url),
-                "followup_command": (
-                    f"record-localization-post --release {state.release_id} "
-                    f"--kind deadline --pr-id {stored_pr_id}"),
                 "links": links,
                 "note": f"localization PR #{stored_pr_id} is still unmerged at "
                         f"{cfg.get('merge_deadline_label', '4:00 PM Los Angeles time')}; "
@@ -386,7 +380,7 @@ def decide(state, is_complete: bool, logs: str = None, now=None, cfg: dict = Non
         hrs = cfg.get("timeout_hours", 3)
         return {"decision": "timeout", "email": _timeout_email(state, cfg),
                 "note": f"localization pipeline did not complete within {hrs}h — "
-                        f"emailed the release engineer to check it / do the manual steps"}
+                        f"notify the release engineer to check it / do the manual steps"}
 
     # completed — always include the run link as proof; add the PR link when present.
     run_link = _run_link(state, cfg)
@@ -395,11 +389,14 @@ def decide(state, is_complete: bool, logs: str = None, now=None, cfg: dict = Non
         links = [{"name": f"Localization PR #{pr_id}", "url": url}]
         if run_link:
             links.append(run_link)
+        if str(pr_status or "").strip().lower() == "completed":
+            return {"decision": "merged", "pr_id": pr_id, "pr_url": url, "links": links,
+                    "note": f"localization PR #{pr_id} merged"}
+        if omission_deadline_passed(state, now, cfg):
+            return {"decision": "omit_unmerged", "pr_id": pr_id, "pr_url": url, "links": links,
+                    "note": "localization omitted — PR discovered after the 6 PM omission deadline"}
         return {"decision": "announce_pr", "pr_id": pr_id, "pr_url": url,
                 "chat": _review_post(state, cfg, pr_id, url),
-                "followup_command": (
-                   f"record-localization-post --release {state.release_id} "
-                   f"--kind initial --pr-id {pr_id}"),
                 "links": links,
                 "note": f"localization pipeline complete — translations PR #{pr_id} "
                         f"created; monitoring until merged"}
@@ -525,11 +522,11 @@ def automation_prompt(release: str, spec: dict) -> str:
             f"{release} --complete <true|false> [--logs \"<OneLocBuild@3 log>\"]`.\n"
             f"3. for `poll_pr`, run its az status command and pass the returned status to "
             f"`check-localization --release {release} --pr-status <status>`.\n"
-            f"4. act on the printed decision: `timeout` → send the given email; "
-            f"`announce_pr` or `warn_unmerged` → post the given chat message, then "
-            f"run its followup_command only after delivery succeeds; "
+            f"4. `timeout`, `announce_pr`, and `warn_unmerged` stage notifications. "
+            f"Use notification prepare --release {release} --source pending and the shared "
+            f"claim/result protocol; never send raw decision.email/chat or call legacy post recorders. "
             f"`wait`/`wait_for_merge`/`omit_unmerged`/`merged`/`complete_none`/`not_started`/"
-            f"`already_final` → nothing to send. The command marks the step done only "
+            f"`already_final`/`stopped` → nothing to send. The command marks the step done only "
             f"for `merged` or `complete_none`, or skipped/omitted at the 6 PM cutoff.\n"
             f"5. silently journal: `journal --release {release} --source scout --kind "
             f"automation --text \"localization-poller: <decision>\"`. Stay silent if "
@@ -539,7 +536,7 @@ def automation_prompt(release: str, spec: dict) -> str:
     return (
         f"Release {release} — trigger localization.\n"
         f"1. run `step-action --release {release} --phase ccd --step localization`;\n"
-        f"2. run the returned needs_skill action to start pipeline 405133 "
+        f"2. only for a fresh needs_skill (never done/blocked), run the action to start pipeline 405133 "
         f"(isCreatePrSelected=true); note the queued build id;\n"
         f"3. run `record-localization-run --release {release} --build-id <buildId>` "
         f"— this leaves the step IN-FLIGHT (do NOT record-step done; the poller "
@@ -566,7 +563,8 @@ KNOWLEDGE = {
         "4:00 PM Los Angeles time, Scout posts one Code reviews warning that translated "
         "strings are at risk. At 6:00 PM Los Angeles time, Scout marks localization "
         "omitted so the scheduled release continues to Phase 2 without those strings. "
-        "If no PR was created, there were no new strings."),
+        "If no PR was created, there were no new strings. Confirmed merge wins even "
+        "if the initial post was not acknowledged; never omit a confirmed merged PR."),
     "who": (
         "Scout runs the whole flow automatically (trigger + poll + notify/post). The "
         "release engineer only steps in if the 3-hour timeout email arrives, or to "
@@ -582,7 +580,10 @@ KNOWLEDGE = {
         "Automatic. If the timeout email arrives, open the pipeline and either wait/"
         "re-run it or follow the manual localization steps in the doc below. Once the "
         "PR is posted to Code reviews, review and merge it into the release branch. "
-        "The localization step completes only after ADO reports the PR merged."),
+        "Notifications use prepare/claim/result with persisted progress bindings. "
+        "Pipeline completion or PR discovery cancels a stale timeout; a delayed receipt "
+        "is retained without blocking recovered work. A confirmed merge completes the "
+        "step even when the initial post is still unacknowledged."),
     "links": [
         {"name": "Localization instructions (manual steps)",
          "url": "https://eng.ms/docs/microsoft-security/identity/entra-developer-application-platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/combined-release-checklist/localization"},

@@ -72,7 +72,8 @@ class NeedsSkill:
                    'workiq_send_chat_message', or a follow-up engine command name.
       payload    — kwargs for that tool (already resolved: recipients, subject,
                    html body, chat target, …). The skill passes it through.
-      record_as  — the step id to `record-step` once the tool succeeds.
+      record_as  — owning step; notifications complete through claim/result, other
+                    work uses record-step or its domain follow-up.
       summary    — a one-line human description ('email the code-complete notice
                    to <n> recipients') for the skill to show / log.
       note       — optional detail stored with the recorded step.
@@ -88,6 +89,7 @@ class NeedsSkill:
     summary: str = ""
     note: str = ""
     outbound: bool = False
+    notification: dict = field(default_factory=dict)  # optional checkpoint + completion metadata
     kind: str = "needs_skill"
 
 
@@ -120,4 +122,3 @@ def command_verb(s):
         return None
     head = str(s).strip().split()[0]
     return head if _ENGINE_CMD_RE.match(head) else None
-

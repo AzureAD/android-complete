@@ -1,5 +1,6 @@
 """Release-agent tests — ccd. Shared harness in tests/_harness.py."""
 from tests._harness import *  # noqa: F401,F403
+import pytest
 
 
 
@@ -193,12 +194,14 @@ def test_localization_decide_branches(monkeypatch):
     import pytest
     from steps.ccd import localization as L
     from datetime import datetime, timezone, timedelta
-    now = datetime.now(timezone.utc)
+    now = datetime.fromisoformat("2026-09-09T20:00:00+00:00")
 
     st = _loc_state(started_min_ago=20)
+    st.get_step("ccd", "localization").data["started_at"] = (now - timedelta(minutes=20)).isoformat()
     assert L.decide(st, False, None, now)["decision"] == "wait"
 
     st2 = _loc_state(started_min_ago=4 * 60 + 5)          # 4h+ → timeout
+    st2.get_step("ccd", "localization").data["started_at"] = (now - timedelta(hours=4)).isoformat()
     d = L.decide(st2, False, None, now)
     assert d["decision"] == "timeout"
     assert d["email"]["to"] == ["pedroro@microsoft.com"]
@@ -226,8 +229,8 @@ def test_localization_decide_branches(monkeypatch):
         "pr_id": "16790317", "pr_url": L.pr_url("16790317"),
     })
     st3.set_step("ccd", "localization", step)
-    # A fast merge cannot bypass the required initial delivery acknowledgement.
-    assert L.decide(st3, False, now=now, pr_status="completed")["decision"] == "announce_pr"
+    # Confirmed merge wins; a delayed initial post cannot turn merged work into omitted work.
+    assert L.decide(st3, False, now=now, pr_status="completed")["decision"] == "merged"
     step.data["pr_announced_at"] = "2026-09-09T20:05:00Z"
     st3.set_step("ccd", "localization", step)
     before = datetime.fromisoformat("2026-09-09T22:59:59+00:00")
@@ -246,6 +249,11 @@ def test_localization_decide_branches(monkeypatch):
     assert omitted["decision"] == "omit_unmerged"
     assert "release continues without these translated strings" in omitted["note"]
     assert L.decide(st3, False, now=omission, pr_status="completed")["decision"] == "merged"
+    first_discovery = _loc_state(started_min_ago=60)
+    assert L.decide(first_discovery, True, _PR_LOG, omission,
+                    pr_status="completed")["decision"] == "merged"
+    assert L.decide(first_discovery, True, _PR_LOG, omission,
+                    pr_status="active")["decision"] == "omit_unmerged"
 
     monkeypatch.setattr(L, "get_tz", lambda _name: None)
     with pytest.raises(ValueError, match="timezone data unavailable"):
@@ -261,7 +269,7 @@ def test_localization_review_post_no_owner_has_no_mention():
     st.owner_email = ""
     st.owner_name = ""
     from datetime import datetime, timezone
-    d = L.decide(st, True, _PR_LOG, datetime.now(timezone.utc))
+    d = L.decide(st, True, _PR_LOG, datetime.fromisoformat("2026-09-09T20:00:00+00:00"))
     assert d["decision"] == "announce_pr"
     assert "mentions" not in d["chat"]
     assert "4:00 PM Los Angeles time" in d["chat"]["content"]
@@ -279,10 +287,11 @@ def test_localization_command_lifecycle_wait_announce_escalate_then_merge():
         rid = "2026-09"
         st = ReleaseState(release_id=rid, ccd="2026-09-09",
                           owner_email="p@ms.com", owner_name="P")
+        _active_phase(st, "ccd")
         C.save_state(st, d, rid)
 
         class RR:
-            runs_root = d; release = rid
+            runs_root = d; release = rid; config = CONFIG; as_of = "2026-09-09"
             build_id = "176407869"; run_url = None; started_at = "2026-09-09T19:00:00Z"
         lc.cmd_record_localization_run(RR)
         s1 = C.load_state(d, rid).get_step("ccd", "localization")
@@ -313,6 +322,7 @@ def test_localization_command_lifecycle_wait_announce_escalate_then_merge():
 
         class ACKinitial:
             runs_root = d; release = rid; kind = "initial"; pr_id = "16790317"
+        _ack_notifications(d, rid, "2026-09-09T20:00:00Z")
         assert lc.cmd_record_localization_post(ACKinitial) == 0
         assert lc.cmd_record_localization_post(ACKinitial) == 0
         announced = C.load_state(d, rid).get_step("ccd", "localization")
@@ -332,6 +342,7 @@ def test_localization_command_lifecycle_wait_announce_escalate_then_merge():
 
         class ACKdeadline:
             runs_root = d; release = rid; kind = "deadline"; pr_id = "16790317"
+        _ack_notifications(d, rid, "2026-09-09T23:00:00Z")
         assert lc.cmd_record_localization_post(ACKdeadline) == 0
         assert C.load_state(d, rid).get_step("ccd", "localization").data["merge_deadline_alert_at"]
 
@@ -350,10 +361,11 @@ def test_localization_command_timeout_holds():
     with tempfile.TemporaryDirectory() as d:
         rid = "2026-09"
         st = ReleaseState(release_id=rid, ccd="2026-09-09", owner_email="p@ms.com")
+        _active_phase(st, "ccd")
         C.save_state(st, d, rid)
 
         class RR:
-            runs_root = d; release = rid
+            runs_root = d; release = rid; config = CONFIG; as_of = "2026-09-09"
             build_id = "1"; run_url = None; started_at = "2026-09-09T12:00:00Z"
         lc.cmd_record_localization_run(RR)
 
@@ -362,7 +374,103 @@ def test_localization_command_timeout_holds():
             complete = "false"; logs = None; logs_file = None
             now = "2026-09-09T15:30:00Z"; as_of = None; pr_status = None
         lc.cmd_check_localization(CK)
+        assert C.load_state(d, rid).get_step("ccd", "localization").status == "in_flight"
+        _ack_notifications(d, rid, CK.now)
         assert C.load_state(d, rid).get_step("ccd", "localization").status == "blocked"
+
+
+@pytest.mark.parametrize("delivery_status", ["prepared", "not_sent", "claimed"])
+@pytest.mark.parametrize("recovery", ["pr", "complete_none"])
+def test_localization_recovery_invalidates_timeout(
+        tmp_path, delivery_status, recovery, monkeypatch):
+    from argparse import Namespace
+    from datetime import datetime
+    from orchestrator import delivery as D, mocks
+    from orchestrator.commands import localization as lc
+    from orchestrator.commands.delivery_cmd import finish
+    from orchestrator.state import StepState
+    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    st = ReleaseState(release_id="2026-09", ccd="2026-09-09", owner_email="owner@example.com")
+    _active_phase(st, "ccd")
+    st.set_step("ccd", "localization", StepState(status="in_flight", data={
+        "build_id": "1", "started_at": "2026-09-09T19:00:00Z"}))
+    C.save_state(st, str(tmp_path), st.release_id)
+    args = Namespace(runs_root=str(tmp_path), release=st.release_id, config=CONFIG, as_of=None,
+                     now="2026-09-09T22:30:00Z", complete="false", logs=None, logs_file=None,
+                     pr_status=None)
+    assert lc.cmd_check_localization(args) == 0
+    st, orch = C.load_orch(str(tmp_path), st.release_id, CONFIG,
+                          datetime.fromisoformat(args.now.replace("Z", "+00:00")))
+    item = next(iter(st.notification_deliveries.values()))["descriptor"]
+    if delivery_status != "prepared":
+        claim = D.claim(orch, item["id"], item["hash"], "test-worker")
+        if delivery_status == "not_sent":
+            D.result(orch, item["id"], claim["execution_id"], "not_sent", "Simulated rejection")
+        C.save_state(st, str(tmp_path), st.release_id)
+    args.complete, args.now = "true", "2026-09-09T22:40:00Z"
+    args.logs = _PR_LOG if recovery == "pr" else "no strings changed"
+    assert lc.cmd_check_localization(args) == 0
+    st, orch = C.load_orch(str(tmp_path), st.release_id, CONFIG,
+                          datetime.fromisoformat(args.now.replace("Z", "+00:00")))
+    expected = "in_flight" if recovery == "pr" else "done"
+    assert st.get_step("ccd", "localization").status == expected
+    assert st.get_step("ccd", "localization").data["pipeline_complete"]
+    if delivery_status == "claimed":
+        D.result(orch, item["id"], claim["execution_id"], "sent", "Simulated accepted receipt")
+        C.save_state(st, str(tmp_path), st.release_id)
+        assert finish(orch, item["id"])
+        assert st.notification_deliveries[item["id"]]["completion"]["status"] == "suppressed"
+    else:
+        with pytest.raises(ValueError, match="checkpoint changed|owning step complete"):
+            D.claim(orch, item["id"], item["hash"], "test-worker")
+    assert st.get_step("ccd", "localization").status == expected
+    C.save_state(st, str(tmp_path), st.release_id)
+    assert C.load_state(str(tmp_path), st.release_id).get_step("ccd", "localization").status == expected
+
+
+@pytest.mark.parametrize("when", ["2026-09-09T22:00:00Z", "2026-09-10T01:00:00Z"])
+@pytest.mark.parametrize("delivery_status", ["prepared", "not_sent", "claimed"])
+def test_localization_confirmed_merge_wins_over_unacknowledged_initial_post(
+        tmp_path, monkeypatch, when, delivery_status):
+    from argparse import Namespace
+    from datetime import datetime
+    from orchestrator import delivery as D, mocks
+    from orchestrator.commands import localization as lc
+    from orchestrator.commands.delivery_cmd import finish
+    from orchestrator.state import StepState
+    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    st = ReleaseState(release_id="2026-09", ccd="2026-09-09", owner_email="owner@example.com")
+    _active_phase(st, "ccd")
+    st.set_step("ccd", "localization", StepState(status="in_flight", data={
+        "build_id": "1", "started_at": "2026-09-09T19:00:00Z"}))
+    C.save_state(st, str(tmp_path), st.release_id)
+    args = Namespace(runs_root=str(tmp_path), release=st.release_id, config=CONFIG, as_of=None,
+                     now="2026-09-09T20:00:00Z", complete="true", logs=_PR_LOG, logs_file=None,
+                     pr_status=None)
+    assert lc.cmd_check_localization(args) == 0
+    st, orch = C.load_orch(str(tmp_path), st.release_id, CONFIG,
+                          datetime.fromisoformat(args.now.replace("Z", "+00:00")))
+    item = next(iter(st.notification_deliveries.values()))["descriptor"]
+    if delivery_status != "prepared":
+        claim = D.claim(orch, item["id"], item["hash"], "test-worker")
+        if delivery_status == "not_sent":
+            D.result(orch, item["id"], claim["execution_id"], "not_sent", "Simulated rejection")
+        C.save_state(st, str(tmp_path), st.release_id)
+    args.now, args.pr_status, args.complete, args.logs = when, "completed", None, None
+    assert lc.cmd_check_localization(args) == 0
+    st, orch = C.load_orch(str(tmp_path), st.release_id, CONFIG,
+                          datetime.fromisoformat(when.replace("Z", "+00:00")))
+    done = st.get_step("ccd", "localization")
+    assert done.status == "done" and done.data["pr_status"] == "completed"
+    assert not done.data.get("pr_announced_at") and "merged" in done.note
+    if delivery_status == "claimed":
+        D.result(orch, item["id"], claim["execution_id"], "sent", "Simulated delayed receipt")
+        finish(orch, item["id"])
+        assert st.notification_deliveries[item["id"]]["completion"]["status"] == "suppressed"
+    else:
+        with pytest.raises(ValueError, match="owning step complete"):
+            D.claim(orch, item["id"], item["hash"], "test-worker")
+    assert st.get_step("ccd", "localization") == done
 
 
 def test_localization_command_omits_unmerged_pr_at_6pm():
@@ -370,6 +478,7 @@ def test_localization_command_omits_unmerged_pr_at_6pm():
     with tempfile.TemporaryDirectory() as d:
         rid = "2026-09"
         st = ReleaseState(release_id=rid, ccd="2026-09-09")
+        _active_phase(st, "ccd")
         step = st.get_step("ccd", "localization")
         step.status = "in_flight"
         step.data = {
@@ -402,6 +511,7 @@ def test_localization_poll_target_is_available_from_cli(capsys):
     with tempfile.TemporaryDirectory() as d:
         rid = "2026-09"
         st = ReleaseState(release_id=rid, ccd="2026-09-09")
+        _active_phase(st, "ccd")
         step = st.get_step("ccd", "localization")
         step.status = "in_flight"
         step.data = {
@@ -459,7 +569,8 @@ def test_automation_localization_poller_is_interval():
     assert poller["steps"] == ["ccd.localization"]
     # the noon trigger also drives localization (one-shot) — shared step is fine
     assert by["ccd-noon"]["steps"] == ["ccd.localization"] and by["ccd-noon"]["one_shot"] is True
-    assert by["ccd-noon"]["cleanup_when"] == "step_flag:ccd.localization:started_at"
+    assert by["ccd-noon"]["cleanup_when"] == [
+        "step_flag:ccd.localization:started_at", "steps_done", "phase_done:ccd"]
 
 
 

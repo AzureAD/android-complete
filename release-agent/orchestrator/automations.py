@@ -21,7 +21,7 @@ from datetime import datetime
 import yaml
 
 import steps as steps_pkg
-from orchestrator import schedule
+from orchestrator import schedule, delivery
 
 _CLEANUP_RULES = {"steps_done", "steps_settled", "release_done", "manual"}
 
@@ -31,7 +31,8 @@ def _cleanup_rules(value) -> list:
 
 
 def _valid_cleanup_rule(rule) -> bool:
-    return rule in _CLEANUP_RULES or str(rule).startswith(("phase_done:", "step_flag:"))
+    return isinstance(rule, str) and (rule in _CLEANUP_RULES
+                                     or rule.startswith(("phase_done:", "step_flag:")))
 
 
 def automations_path(config_path: str) -> str:
@@ -178,13 +179,13 @@ def _ccd_cron(ccd_date, hhmm: str):
 
 
 def _prompt_for(spec: dict, release: str) -> str:
-    """A concrete instruction the automation runs. Scout resolves each step via
-    step-action, executes the send/trigger, records it, and journals it.
+    """A concrete instruction the automation runs. Notifications use shared claim/result;
+    other steps retain their reservation/domain follow-up and journaling.
 
     A step MAY OWN a bespoke prompt by declaring `automation_prompt(release, spec)` on its
     module (the single source of truth, like `fire_at_local`) — used for genuinely bespoke
     flows such as the localization trigger + poller. This keeps the planner generic: it
-    never special-cases a step id. Steps without one get the default send + record-step
+    never special-cases a step id. Steps without one get the default claim/result
     prompt below."""
     steps = spec.get("steps") or []
     step_list = ", ".join(steps)
@@ -192,7 +193,9 @@ def _prompt_for(spec: dict, release: str) -> str:
         f"\nFinally run `automation cleanup --release {release} --json`. For each removal "
         f"IN ORDER, call `m_delete_automation` with its id; only after that succeeds run "
         f"`automation deregister --id <id>`. If deletion fails, leave the registry entry "
-        f"and report it so a later worker can retry cleanup.")
+        f"and report it so a later worker can retry cleanup. This is a finally block: "
+        f"execute it even on silence, stopped work, or errors. Halts suspend, not delete.")
+    protocol = delivery.PROTOCOL.replace("<release>", release)
 
     # Single-step automation whose step owns a bespoke prompt → delegate to the module.
     if len(steps) == 1:
@@ -202,22 +205,18 @@ def _prompt_for(spec: dict, release: str) -> str:
         if callable(fn):
             prompt = fn(release, spec)
             if prompt:
-                return prompt + cleanup
+                return protocol + "\n" + prompt + cleanup
 
-    # Default: send/trigger + record-step done (reminders).
+    # Default: notification claim/result, or the existing non-notification follow-up.
     return (
         f"Release {release} — {spec['name']}.\n"
         f"It is Code Complete Day. For EACH of these steps in order: {step_list} —\n"
         f"1. run `step-action --release {release} --phase {spec['phase']} --step <step>`;\n"
-        f"2. done means skip; blocked/error means stop. Obtain the required approval, "
-        f"then re-run the same step-action immediately before sending, adding "
-        f"--reserve --executor <automation/session-id> when reservable is true. Never send "
-        f"a cached payload: only execute a fresh needs_skill result whose tool and "
-        f"payload match the approval. For a reserved action, retain execution_id; "
-        f"if changed or the outcome is ambiguous, record attention with that ID and stop, "
-        f"never retry automatically. Owner-reviewed done/reopen is required after interruption;\n"
-        f"3. `record-step --release {release} --phase {spec['phase']} --step <step> "
-        f"--status pass --execution-id <id>` for reserved work (omit execution-id for unreserved work);\n"
+        f"2. done means no send (record-step only for no_delivery_required:true); "
+        f"blocked/error means skip sending and proceed to cleanup. "
+        f"For notifications use source step with phase {spec['phase']} and the step ID. "
+        f"{protocol}\n"
+        f"3. Non-notification actions retain their existing reservation and domain follow-up.\n"
         f"4. silently journal it: `journal --release {release} --source scout "
         f"--kind automation --text \"<slug> ran <step>\"`.\n"
         f"Respect the mocks.local.yaml redirects if present. Report a one-line summary."
@@ -287,7 +286,10 @@ def cleanup_plan(state, entries: list, config_path: str) -> dict:
     """Decide which registered automations reached their declared lifecycle end."""
     with open(config_path, "r", encoding="utf-8") as fh:
         phases = {p["id"]: p for p in (yaml.safe_load(fh) or {}).get("phases", [])}
+    from orchestrator.engine import Orchestrator
+    orch = Orchestrator(config_path, state, mocks={})
     removals, problems = [], []
+    known_steps = {f"{p['id']}.{s['id']}" for p in phases.values() for s in p["steps"]}
 
     def evaluate(rule, entry, steps):
         if rule == "manual":
@@ -316,6 +318,9 @@ def cleanup_plan(state, entries: list, config_path: str) -> dict:
             except ValueError:
                 problems.append(f"{entry.get('id')}: malformed cleanup rule '{rule}'")
                 return False, ""
+            if step_key not in known_steps or not flag:
+                problems.append(f"{entry.get('id')}: unknown cleanup step/flag '{rule}'")
+                return False, ""
             return (bool(state.get_step(phase_id, step_id).data.get(flag)),
                     f"{step_key}.{flag} set")
         problems.append(f"{entry.get('id')}: invalid/missing cleanup_when")
@@ -324,10 +329,32 @@ def cleanup_plan(state, entries: list, config_path: str) -> dict:
     for entry in entries:
         rules = _cleanup_rules(entry.get("cleanup_when"))
         steps = entry.get("steps") or []
-        if rules == ["manual"]:
+        if "manual" in rules or entry.get("scope") == "shared":
             continue
-        due, reason = False, ""
+        if entry.get("scope") != "release" or entry.get("release") != state.release_id:
+            problems.append(f"{entry.get('id')}: explicit release scope required; owner recovery needed")
+            continue
+        due = state.status == "complete"
+        reason = "release complete (universal backstop)" if due else ""
+        if (state.halted or state.blocked or state.status in ("halted", "blocked")) and not due:
+            continue
+        if not due:
+            if (not isinstance(steps, list)
+                    or any(not isinstance(s, str) or s not in known_steps for s in steps)):
+                problems.append(f"{entry.get('id')}: invalid/unknown driven step; owner recovery required")
+                continue
+            if not rules:
+                problems.append(f"{entry.get('id')}: invalid/missing cleanup_when; owner recovery required")
+                continue
+            try:
+                if delivery.has_pending(orch, steps):
+                    continue
+            except ValueError as exc:
+                problems.append(f"{entry.get('id')}: {exc}")
+                continue
         for rule in rules:
+            if due:
+                break
             due, reason = evaluate(rule, entry, steps)
             if due:
                 break

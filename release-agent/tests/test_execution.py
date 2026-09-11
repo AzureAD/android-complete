@@ -39,27 +39,43 @@ def invoke(run, capsys, command, *options):
 
 
 def reserve(run, capsys):
-    rc, text = invoke(run, capsys, "step-action", "--reserve", "--executor", "worker-A")
-    out = json.loads(text)
-    assert rc == 0 and out["kind"] == "needs_skill" and out["reservable"]
+    base = ["--runs-root", str(run[0]), "notification"]
+    assert cli.main(base + ["prepare", "--release", "2000-01", "--source", "step",
+                           "--phase", "ccd", "--step", "final_reminder"]) == 0
+    item = json.loads(capsys.readouterr().out)["notifications"][0]
+    assert cli.main(base + ["claim", "--release", "2000-01", "--id", item["id"],
+                           "--hash", item["hash"], "--executor", "worker-A"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["permission_to_send"]
     return out["execution_id"]
 
 
-def test_two_workers_only_one_receives_reserved_work(run):
+def report_result(run, capsys, execution_id, outcome="sent", review=False):
+    rc = cli.main(["--runs-root", str(run[0]), "notification", "result",
+                   "--release", "2000-01", "--id", "step:ccd.final_reminder:once:email",
+                   "--execution-id", execution_id, "--outcome", outcome,
+                   "--evidence", "Test provider evidence", *(["--owner-review"] if review else [])])
+    return rc, capsys.readouterr().out
+
+
+def test_two_workers_only_one_receives_reserved_work(run, capsys):
+    base = ["--runs-root", str(run[0]), "notification", "prepare", "--release", "2000-01",
+            "--source", "step", "--phase", "ccd", "--step", "final_reminder"]
+    assert cli.main(base) == 0
+    item = json.loads(capsys.readouterr().out)["notifications"][0]
     args = [sys.executable, "-m", "orchestrator.cli", "--runs-root", str(run[0]),
-            "step-action", "--release", "2000-01", "--phase", "ccd",
-            "--step", "final_reminder", "--reserve", "--executor"]
+            "notification", "claim", "--release", "2000-01", "--id", item["id"],
+            "--hash", item["hash"], "--executor"]
     with ThreadPoolExecutor(max_workers=2) as pool:
         jobs = [pool.submit(subprocess.run, args + [owner], cwd=ROOT,
                             capture_output=True, text=True, timeout=30)
                 for owner in ("A", "B")]
         results = [job.result() for job in jobs]
-    assert all(r.returncode == 0 for r in results), [(r.stdout, r.stderr) for r in results]
     rows = [json.loads(r.stdout) for r in results]
-    assert sorted(r["kind"] for r in rows) == ["blocked", "needs_skill"]
-    loser = next(r for r in rows if r["kind"] == "blocked")
+    assert sum(bool(r["permission_to_send"]) for r in rows) == 1
+    loser = next(r for r in rows if not r["permission_to_send"])
     assert "payload" not in loser and "tool" not in loser
-    winner = next(r for r in rows if r["kind"] == "needs_skill")
+    winner = next(r for r in rows if r["permission_to_send"])
     st = ReleaseState.load(str(run[1]))
     assert st.get_step("ccd", "final_reminder").data["_execution"]["id"] == winner["execution_id"]
 
@@ -70,13 +86,13 @@ def test_only_owner_records_and_success_preserves_execution(run, capsys):
     for token in ([], ["--execution-id", "wrong"]):
         assert invoke(run, capsys, "record-step", "--status", "pass", *token)[0] == 1
         assert run[1].read_bytes() == before
-    assert invoke(run, capsys, "record-step", "--status", "pass",
-                  "--execution-id", execution_id, "--detail", "Provider success: message-1")[0] == 0
+    assert report_result(run, capsys, "wrong")[0] == 1
+    assert report_result(run, capsys, execution_id)[0] == 0
     st = ReleaseState.load(str(run[1]))
     assert st.is_done("ccd", "final_reminder")
     assert st.get_step("ccd", "final_reminder").data["_execution"]["id"] == execution_id
     before = run[1].read_bytes()
-    assert invoke(run, capsys, "record-step", "--status", "pass", "--execution-id", execution_id)[0] == 0
+    assert report_result(run, capsys, execution_id)[0] == 0
     assert run[1].read_bytes() == before
     assert json.loads(invoke(run, capsys, "step-action", "--reserve", "--executor", "B")[1])["kind"] == "done"
 
@@ -87,13 +103,12 @@ def test_interruption_stays_reserved_until_owner_review(run, capsys):
     st.steps["ccd.final_reminder"]["data"]["_execution"]["started_at"] = "2000-01-01"
     st.save(str(run[1]))
     assert json.loads(invoke(run, capsys, "step-action")[1])["kind"] == "blocked"
-    assert invoke(run, capsys, "record-step", "--status", "attention",
-                  "--execution-id", execution_id, "--detail", "Timeout; outcome unknown")[0] == 0
-    assert invoke(run, capsys, "record-step", "--status", "pass", "--execution-id", execution_id)[0] == 1
+    assert report_result(run, capsys, execution_id, "uncertain")[0] == 0
+    assert report_result(run, capsys, execution_id)[0] == 1
     assert invoke(run, capsys, "done")[0] == 1
     assert invoke(run, capsys, "reopen")[0] == 1
     assert invoke(run, capsys, "skip", "--reason", "bypass")[0] == 1
-    assert invoke(run, capsys, "reopen", "--reason", "Owner confirmed no action occurred; old runner stopped")[0] == 0
+    assert report_result(run, capsys, execution_id, "not_sent", review=True)[0] == 0
     # Late completion from the previous execution cannot finish a reopened step.
     assert invoke(run, capsys, "record-step", "--status", "pass", "--execution-id", execution_id)[0] == 1
     assert reserve(run, capsys) != execution_id

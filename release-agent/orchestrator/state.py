@@ -91,6 +91,7 @@ class ReleaseState:
     last_notified_date: Optional[str] = None          # YYYY-MM-DD of the last daily digest sent
     last_status_email_date: Optional[str] = None       # YYYY-MM-DD of the last partner status email sent
     escalation_checkpoints: dict = field(default_factory=dict)  # successfully sent alert key -> {sent_at, target}
+    notification_deliveries: dict = field(default_factory=dict)  # id -> immutable descriptor, status, attempts, completion
     # Phase-2 release-pipeline runs — the RECORD of what verification resolved, reused by
     # the RC report + gate (no re-discovery). Because a re-triggered 'Trigger RC Testing'
     # stage spawns NEW MRWP runs, these are re-resolved (newest wins) — not a fixed cache.
@@ -122,6 +123,8 @@ class ReleaseState:
         # matching a declared field are applied.
         known = {f.name for f in fields(cls)}
         obj = cls(**{k: v for k, v in data.items() if k in known})
+        if not isinstance(obj.notification_deliveries, dict):
+            raise ValueError("Invalid notification ledger; owner recovery required")
         return obj
 
     def save(self, path: str) -> None:

@@ -49,36 +49,14 @@ def cmd_record_bugbash_chat(args):
 
 
 def cmd_record_nativeauth_notify(args):
-    """Record that the Native Auth release engineer was notified the bug bash is ready.
-      * --engineer given  -> store it (data.engineer) + mark notify_native_auth done.
-      * --engineer omitted -> hold the step for the owner (attention): couldn't resolve/send.
-    """
+    """Legacy terminal replay only; a bare engineer is not delivery evidence."""
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    eng = (args.engineer or "").strip()
-
-    if not eng:
-        detail = ("Could not resolve/notify the Native Auth release engineer. Check the "
-                  "release-engineer schedule and send them the bug-bash-ready message, then "
-                  "re-run this step with --engineer.")
-        orch.record_scout_step("bug_bash", "notify_native_auth", "attention", detail)
-        C.save_state(orch.state, args.runs_root, args.release)
-        C.emit(args.runs_root, args.release,
-               f"[attention] notify_native_auth: {detail}", kind="step")
-        print(detail)
-        return 2
-
-    orch.record_scout_step("bug_bash", "notify_native_auth", "pass",
-                           f"Native Auth RE notified: {eng}")
-    step = orch.state.get_step("bug_bash", "notify_native_auth")
-    step.data = dict(step.data or {})
-    step.data["engineer"] = eng
-    step.by = "scout"
-    orch.state.set_step("bug_bash", "notify_native_auth", step)
-    C.save_state(orch.state, args.runs_root, args.release)
-    C.emit(args.runs_root, args.release,
-           f"[ok] notify_native_auth: Native Auth RE notified ({eng})", kind="step")
-    print(f"Recorded Native Auth RE notification: {eng}")
-    return 0
+    completed = orch.completed_step_outcome("bug_bash", "notify_native_auth")
+    if completed:
+        print(completed.note)
+        return 0
+    print("Use notification prepare/claim/result with a verified engineer; no delivery may be inferred.")
+    return 1
 
 
 def register(sub):
@@ -97,4 +75,3 @@ def register(sub):
                    help="Alias or UPN of the notified Native Auth RE. Omit to hold for the owner.")
     n.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     n.set_defaults(func=cmd_record_nativeauth_notify)
-

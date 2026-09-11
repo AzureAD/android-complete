@@ -34,6 +34,7 @@ from steps.bug_bash.activate_chat import stored_chat_id
 
 ID = "bugbash_updates"
 KIND = "scout"
+NOTIFICATION = True
 
 BROKER_SUITE_NAME = "Manual Tests (Android Broker)"
 
@@ -102,7 +103,7 @@ def build(state):
             "chatId": chat_id,
             "content": content,
             "contentType": "html",
-            "_mentions": mentions,     # [{id,upn,name}] — skill builds the <at> mention array
+            "_mentions": mentions,     # resolved into transport mentions before the claim hash
             "_automation": {"on_demand": "bug-bash-update-poller"},
         },
         record_as=ID,
@@ -123,14 +124,10 @@ def automation_prompt(release: str, spec: dict) -> str:
         f"Run `post-bugbash-update --release {release}` and act on the printed decision:\n"
         f"  • off_hours / weekend / holiday → send nothing (outside 09:00–18:00 LA on a "
         f"working day).\n"
-        f"  • post → send decision.content (HTML) to decision.chatId via "
-        f"`workiq_send_chat_message`. If decision.mentions is non-empty, include the "
-        f"@mentions (contentType html, <at id=\"i\">Name</at> tags matching the mentions "
-        f"array) so owners with remaining tests are pinged.\n"
-        f"  • complete → every test is done: send decision.content (the completion summary) "
-        f"to decision.chatId; the command records the terminal poll flag and the common "
-        f"cleanup planner removes this automation. Tell the owner the bash is ready to sign off "
-        f"(bugbash_complete).\n"
-        f"  • no_chat / error → surface briefly; nothing to send.\n"
+        f"  • post / complete → use source pending for the staged notifications and the "
+        f"shared claim/result protocol. Never send raw decision.content. Only confirmed "
+        f"delivery of the final summary records poll_complete; known failed sends remain "
+        f"retryable. Initial trigger-step completion does not end this phase-owned poller.\n"
+        f"  • no_chat / error / stopped → nothing to send; always perform cleanup.\n"
         f"Silently journal: `journal --release {release} --source scout --kind automation "
         f"--text \"bugbash-poller: <decision>\"`.")

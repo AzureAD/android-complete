@@ -20,6 +20,7 @@ from tools.coordinates import coords
 
 ID = "flight_reminder"
 KIND = "scout"
+NOTIFICATION = True
 
 # Step config (co-located). Posts to the real Android Core Team group chat
 # (redirect for tests with the send_to mock knob).

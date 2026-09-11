@@ -83,6 +83,11 @@ class Orchestrator(StatusViewMixin):
         else:                                    # live: real now in the owner's zone
             self.now_local = schedule.now_local(self.tz)
             self.as_of = self.now_local.date()
+        if self.tz is not None:
+            self.now_local = (self.now_local.astimezone(self.tz) if self.now_local.tzinfo
+                              else self.now_local.replace(tzinfo=self.tz))
+            if isinstance(as_of, datetime) or (as_of is None and now is not None):
+                self.as_of = self.now_local.date()
 
     @staticmethod
     def _config_timezone(config_path: str) -> Optional[str]:

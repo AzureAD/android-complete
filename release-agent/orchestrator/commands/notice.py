@@ -10,9 +10,16 @@ from orchestrator import cli_common as C
 
 
 def cmd_record_step(args):
-    """Record a scout-assisted phase step result (skill calls this after doing the
-    out-of-engine work, e.g. sending the notice email)."""
+    """Record non-notification work, or revalidate an explicit no-delivery outcome."""
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    import steps
+    mod = steps.get_step(args.phase, args.step)
+    if getattr(mod, "NOTIFICATION", False) and not orch.state.is_done(args.phase, args.step):
+        from orchestrator.commands.step_action import prepare_step
+        outcome = prepare_step(args, orch.state, orch)
+        if args.status != "pass" or not outcome.get("no_delivery_required"):
+            print("Use notification claim/result for notification steps; record-step is not delivery evidence.")
+            return 1
     try:
         act = orch.record_scout_step(args.phase, args.step, args.status, args.detail or "",
                                      execution_id=getattr(args, "execution_id", None))

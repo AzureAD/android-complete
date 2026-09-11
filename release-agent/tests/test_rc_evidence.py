@@ -30,6 +30,65 @@ def args_for(tmp_path, st):
                      as_of="2026-09-10", now="2026-09-10T12:00:00Z")
 
 
+@pytest.mark.parametrize("path,value", [
+    (["pipeline_runs", "checker", "run_id"], "900100"),
+    (["pipeline_runs", "orchestrator", "run_id"], "900101"),
+    (["versions"], {"msal": "changed"}),
+    (["pipeline_runs", "rcs", -1, "auth", "test", "run_id"], "900099"),
+    (["pipeline_runs", "rcs", -1, "auth", "test", "suites", AUTH_UI_SUITES[0]],
+     {"present": True, "total": 100, "passed": 10, "failed": 90}),
+    (["pipeline_runs", "rcs", -1, "ecs", "tests", "categories", "ui"],
+     {"total": 100, "passed": 10, "failed": 90}),
+    (["pipeline_runs", "rcs", -1, "ecs", "resolved_at"], "2026-09-10T20:00:00Z"),
+])
+@pytest.mark.parametrize("in_flight", [False, True])
+def test_rc_report_source_change_rejects_claim_or_suppresses_completion(
+        ready, tmp_path, monkeypatch, capsys, path, value, in_flight):
+    from orchestrator import delivery as D, schedule
+    from orchestrator.commands.step_action import prepare_step
+    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    orch = Orchestrator(CONFIG, ready, mocks={}, as_of=date(2026, 9, 10))
+    monkeypatch.setattr(schedule, "now_local", lambda zone: orch.now_local.astimezone(zone))
+    args = Namespace(phase="build_verify", step="rc_report", release=ready.release_id)
+    item = prepare_step(args, ready, orch)["notifications"][0]
+    assert item["completion"]["status"] == "pass"
+    D.offer(orch, item)
+    if in_flight:
+        claim = D.claim(orch, item["id"], item["hash"], "test-worker")
+    container = vars(ready)
+    for key in path[:-1]:
+        container = container[key]
+    container[path[-1]] = value
+
+    if not in_flight:
+        with pytest.raises(ValueError, match="source checkpoint changed"):
+            D.claim(orch, item["id"], item["hash"], "test-worker")
+        fresh = prepare_step(args, ready, orch)["notifications"][0]
+        assert fresh["hash"] != item["hash"]
+        D.offer(orch, fresh)
+        assert D.claim(orch, fresh["id"], fresh["hash"], "test-worker")["permission_to_send"]
+        return
+
+    C.save_state(ready, str(tmp_path), ready.release_id)
+    receipt = {"provider": "test fixture", "response": {"accepted": True}}
+    receipt_path = tmp_path / "receipt.json"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    base = ["--config", CONFIG, "--runs-root", str(tmp_path), "notification"]
+    scope = ["--release", ready.release_id, "--id", item["id"]]
+    assert cli.main(base + ["result"] + scope + [
+        "--execution-id", claim["execution_id"], "--outcome", "sent",
+        "--evidence", "Simulated provider accepted", "--receipt-file", str(receipt_path)]) == 0
+    saved = C.load_state(str(tmp_path), ready.release_id)
+    record = saved.notification_deliveries[item["id"]]
+    assert record["status"] == "sent" and record["attempts"][-1]["receipt"] == receipt
+    assert record["completion"]["status"] == "suppressed"
+    assert record["completion"]["reason"] == "source checkpoint changed"
+    assert saved.get_step("build_verify", "rc_report").status == "running"
+    before = copy.deepcopy(vars(saved))
+    assert cli.main(base + ["finalize"] + scope) == 0
+    assert vars(C.load_state(str(tmp_path), ready.release_id)) == before
+
+
 @pytest.mark.parametrize("mrwp_failed,auth_failed,incomplete,recommendation", [
     (0, False, False, "PROCEED"),
     (5, False, False, "CONTINUE WITH WARNINGS"),
@@ -134,7 +193,9 @@ def test_reconciled_counts_hold_at_84_5_and_missing_auth_still_prevents_report(r
     current["local"]["tests"]["categories"]["ui"] = {"passed": 137, "total": 157, "failed": 20}
     assert rc_report.rc_ui_gate(rc_report.rc_report_model(ready))["pass_pct"] == 84.5
     assert rc_report.build(ready).kind == "needs_skill"
-    assert RR.cmd_record_rc_report(args_for(tmp_path, ready)) == 2
+    from tests._harness import _ack_step
+    args_for(tmp_path, ready)
+    _ack_step(str(tmp_path), ready.release_id, "build_verify", "rc_report")
     assert C.load_state(str(tmp_path), ready.release_id).get_step("build_verify", "rc_report").status == "blocked"
     current.pop("auth")
     assert rc_report.build(ready).kind == "blocked"
@@ -158,7 +219,7 @@ def test_evaluated_auth_failures_reportable_when_prerequisites_settled(ready, fa
     assert rc_report.auth_report_gate(model)["blocking"]
     out = rc_report.build(ready)
     assert out.kind == "needs_skill" and "HOLD" in out.payload["subject"]
-    assert out.payload["followup_command"] == "record-rc-report"
+    assert out.notification["completion"]["status"] in ("pass", "attention")
     assert "RC verified" not in out.payload["body"]
     assert "No automatic advance" in out.payload["_plain_body"]
 
@@ -184,7 +245,7 @@ def test_cli_dispatch_and_recorder_cannot_bypass_predecessors(ready, tmp_path, c
                             "--phase", "build_verify", "--step", "rc_report"]) == 0
     assert json.loads(capsys.readouterr().out)["kind"] == "blocked"
     assert cli.main(base + ["record-rc-report", "--release", ready.release_id]) == 1
-    assert "prerequisite" in json.loads(capsys.readouterr().out)["error"]
+    assert "notification claim/result" in json.loads(capsys.readouterr().out)["error"]
     assert vars(C.load_state(str(tmp_path), ready.release_id)) == before
 
 

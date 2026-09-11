@@ -413,6 +413,82 @@ def test_send_invite_composes_create_event():
         assert frag in b, frag
     assert "release-engineer-schedule" not in b     # Native Auth row removed
     assert out["outbound"] is True
+    assert out["notification"]["expires_at"] == "2026-08-24T09:00:00-07:00"
+
+
+def test_send_invite_uses_owner_timezone_and_blocks_missing_zone(monkeypatch):
+    from datetime import datetime
+    from orchestrator import schedule
+    from steps.bug_bash import send_invite
+    from steps.lib import mockctx
+    st = _invite_state()
+    st.timezone = "Asia/Tokyo"
+    monkeypatch.setattr(schedule, "now_local", lambda zone:
+                        datetime.fromisoformat("2026-08-24T22:00:00+00:00").astimezone(zone))
+    with mockctx.active({"flags": "{}"}):
+        out = send_invite.build(st)
+    assert out.payload["start"] == "2026-08-25T09:00:00"
+    assert out.payload["timeZone"] == "Asia/Tokyo"
+    assert out.notification["expires_at"] == "2026-08-25T09:00:00+09:00"
+    st.timezone = "Missing/Zone"
+    assert send_invite.build(st).kind == "blocked"
+
+
+def test_send_invite_expiry_refresh_and_ever_claimed_safety(tmp_path, monkeypatch, capsys):
+    import json
+    from datetime import datetime
+    from orchestrator import cli, delivery as D, mocks, schedule
+    from orchestrator.state import StepState
+    current = datetime.fromisoformat("2026-08-24T10:00:00-07:00")
+    monkeypatch.setattr(schedule, "now_local", lambda zone: current.astimezone(zone))
+    monkeypatch.setattr(mocks, "load_mocks", lambda: {"bug_bash.send_invite": {"flags": "{}"}})
+    st = _active_phase(_invite_state(), "bug_bash")
+    for sid in ("ui_test_status", "distribute_tests"):
+        st.set_step("bug_bash", sid, StepState(status="done"))
+    base = ["--config", CONFIG, "--runs-root", str(tmp_path), "notification"]
+    scope = ["--release", st.release_id]
+    prepare = base + ["prepare"] + scope + ["--source", "step", "--phase", "bug_bash",
+                                          "--step", "send_invite"]
+    C.save_state(st, str(tmp_path), st.release_id)
+    assert cli.main(prepare) == 0
+    first = json.loads(capsys.readouterr().out)["notifications"][0]
+    claim_args = base + ["claim"] + scope + ["--id", first["id"], "--executor", "test-worker", "--hash"]
+    current = datetime.fromisoformat("2026-08-24T12:00:00-07:00")
+    assert cli.main(claim_args + [first["hash"]]) == 1
+    assert "deadline expired" in json.loads(capsys.readouterr().out)["error"]
+    current = datetime.fromisoformat("2026-08-25T10:00:00-07:00")
+    assert cli.main(prepare) == 0
+    fresh = json.loads(capsys.readouterr().out)["notifications"][0]
+    assert fresh["id"] == first["id"] and fresh["hash"] != first["hash"]
+    assert fresh["payload"]["start"] == "2026-08-25T12:00:00"
+    refreshed = C.load_state(str(tmp_path), st.release_id)
+    assert refreshed.notification_deliveries[first["id"]]["superseded"]
+    assert cli.main(claim_args + [first["hash"]]) == 1
+    capsys.readouterr()
+    assert cli.main(claim_args + [fresh["hash"]]) == 0
+    claim = json.loads(capsys.readouterr().out)
+    assert claim["permission_to_send"]
+    assert cli.main(base + ["result"] + scope + ["--id", first["id"], "--execution-id",
+        claim["execution_id"], "--outcome", "uncertain", "--evidence", "Simulated timeout"]) == 0
+    capsys.readouterr()
+    current = datetime.fromisoformat("2026-08-26T10:00:00-07:00")
+    assert cli.main(prepare) == 0
+    capsys.readouterr()
+    saved = C.load_state(str(tmp_path), st.release_id).notification_deliveries[first["id"]]
+    assert saved["descriptor"]["hash"] == fresh["hash"] and len(saved["attempts"]) == 1
+    assert cli.main(claim_args + [fresh["hash"]]) == 1
+    capsys.readouterr()
+    # Even explicit positive not-sent recovery cannot silently issue a different meeting.
+    assert cli.main(base + ["result"] + scope + ["--id", first["id"], "--execution-id",
+        claim["execution_id"], "--outcome", "not_sent", "--evidence", "Owner verified no event",
+        "--owner-review"]) == 0
+    capsys.readouterr()
+    assert cli.main(prepare) == 0
+    capsys.readouterr()
+    saved = C.load_state(str(tmp_path), st.release_id).notification_deliveries[first["id"]]
+    assert saved["status"] == "not_sent" and saved["descriptor"]["hash"] == fresh["hash"]
+    assert cli.main(claim_args + [fresh["hash"]]) == 1
+    assert "deadline expired" in json.loads(capsys.readouterr().out)["error"]
 
 
 
@@ -508,7 +584,7 @@ def test_notify_native_auth_composes_needs_skill():
     assert out["payload"]["engineer_hint"] == "silviu.petrescu"      # Aug 2026 from schedule
     assert "planId=3730001" in out["payload"]["content"]            # links the Broker plan
     assert "confirmation" in out["payload"]["content"].lower()
-    assert "record-nativeauth-notify --release 2026-08" in out["payload"]["followup_command"]
+    assert "notification prepare --release 2026-08" in out["payload"]["_gather"]["instructions"]
     assert "release-engineer-schedule" in out["payload"]["_gather"]["schedule_doc"]
     assert _steps.get_step("bug_bash", "notify_native_auth").KIND == "scout"
 
@@ -643,6 +719,7 @@ def test_bugbash_updates_composes_needs_skill():
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
     st = _bb_updates_state()
+    _active_phase(st, "bug_bash")
     prog = {"total": 2, "done": 0, "remaining": 2, "unassigned": 0, "owners": {
         "a@x": {"name": "Alice", "total": 2, "done": 0, "remaining": 2, "tests": [
             {"id": "1", "name": "T1", "url": "u1", "state": "notrun"},
@@ -697,6 +774,10 @@ def test_post_bugbash_update_decisions():
         rid = "2026-08"
         _stub_build_defs("pass")
         st = _bb_updates_state()
+        _active_phase(st, "bug_bash")
+        step = st.get_step("bug_bash", "bugbash_updates")
+        step.status = "done"
+        st.set_step("bug_bash", "bugbash_updates", step)
         _C.save_state(st, d, rid)
 
         # weekend → off_hours, nothing gathered
@@ -714,11 +795,14 @@ def test_post_bugbash_update_decisions():
             "a@x": {"name": "Alice", "total": 2, "done": 2, "remaining": 0, "tests": []}}}
         _, dec = run("2026-08-21T10:00:00", {"progress": allc})
         assert dec["decision"] == "complete" and dec["total"] == 2
+        assert not _C.load_state(d, rid).get_step("bug_bash", "bugbash_updates").data.get("poll_complete")
+        _ack_notifications(d, rid, "2026-08-21T10:00:00-07:00", dec["notifications"])
         assert _C.load_state(d, rid).get_step(
             "bug_bash", "bugbash_updates").data["poll_complete"] is True
 
         # no chat activated → no_chat
         st2 = _bb_updates_state(chat_id=None)
+        _active_phase(st2, "bug_bash")
         _C.save_state(st2, d, rid)
         _, dec = run("2026-08-21T10:00:00", {"progress": remaining})
         assert dec["decision"] == "no_chat"

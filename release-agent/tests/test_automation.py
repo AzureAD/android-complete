@@ -163,7 +163,7 @@ def test_automation_plan_derives_specs_from_ccd():
     assert by["ccd-morning"]["registration"]["slug"] == "ccd-morning"
     assert by["ccd-morning"]["registration"]["schedule"] == "cron: 0 9 9 9 *"
     assert by["ccd-morning"]["registration"]["cleanup_when"] == "steps_done"
-    assert by["build-verify-rc-poller"]["cleanup_when"] == "steps_settled"
+    assert by["build-verify-rc-poller"]["cleanup_when"] == "phase_done:build_verify"
 
 
 def test_automation_names_follow_standard_format():
@@ -240,6 +240,7 @@ def test_cleanup_plan_applies_declared_lifecycle_rules():
         {"id": "manual", "name": "Manual", "kind": "release-level",
          "steps": [], "cleanup_when": "manual"},
     ]
+    entries = [{**e, "scope": "release", "release": st.release_id} for e in entries]
     first = A.cleanup_plan(st, entries, CONFIG)
     assert [r["id"] for r in first["removals"]] == ["bug", "loc", "morning", "rc"]
     assert first["problems"] == []
@@ -415,6 +416,8 @@ def test_tick_dedup_same_day():
             force = False
             json = True
         first = ncmd._notify_payload(A, rid, advance=True)
+        assert ncmd._notify_payload(A, rid, advance=False)["message"] == first["message"]
+        _ack_notifications(d, rid, "2026-07-08T12:00:00", first["notifications"])
         second = ncmd._notify_payload(A, rid, advance=True)
         assert first["message"] and second["message"] == ""
 
@@ -451,6 +454,7 @@ def test_tick_payload_carries_teams_block_when_enabled():
         expected_md = render.notification_markdown(Orchestrator(CONFIG, st_now).status_report())
         assert p["teams"]["text"] == expected_md
         assert "\n\n" in p["teams"]["text"] and "**Release" in p["teams"]["text"]
+        _ack_notifications(d, rid, "2026-07-08T12:00:00", p["notifications"])
         # deduped second tick → message empty AND no teams delivery
         p2 = ncmd._notify_payload(A, rid, advance=True)
         assert p2["message"] == "" and p2["teams"] is None
@@ -525,7 +529,7 @@ def test_tick_core_alert_is_independent_of_owner_digest_and_checkpointed(monkeyp
 
         # Read-only notify cannot consume or emit automation checkpoints.
         observation = ncmd._notify_payload(A, rid, advance=False)
-        assert observation["core_alert"] is None
+        assert observation["core_alert"] is not None and not observation["permission_to_send"]
         assert C.load_state(d, rid).escalation_checkpoints == {}
 
         first = ncmd._notify_payload(A, rid, advance=True)
@@ -545,7 +549,8 @@ def test_tick_core_alert_is_independent_of_owner_digest_and_checkpointed(monkeyp
         checkpoint = alert["checkpoint"]
         ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG,
                                 checkpoint=checkpoint)
-        assert ncmd.cmd_record_core_alert(ns) == 0
+        assert ncmd.cmd_record_core_alert(ns) == 1
+        _ack_notifications(d, rid, "2026-09-08T12:00:00", first["notifications"])
         assert checkpoint in C.load_state(d, rid).escalation_checkpoints
         A.force = True
         assert ncmd._notify_payload(A, rid, advance=True)["core_alert"] is None
@@ -652,15 +657,30 @@ def test_record_nativeauth_notify_stores_or_holds():
         _C.save_state(_na_state(), d, rid)
         ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None,
                                 engineer="silviu.petrescu")
-        assert BC.cmd_record_nativeauth_notify(ns) == 0
+        assert BC.cmd_record_nativeauth_notify(ns) == 1
+        st = _C.load_state(d, rid)
+        _active_phase(st, "bug_bash")
+        for s in Orchestrator(CONFIG, st, mocks={}).config["phases"][3]["steps"]:
+            if s["id"] == "notify_native_auth":
+                break
+            from orchestrator.state import StepState
+            prior = st.get_step("bug_bash", s["id"])
+            prior.status = "done"
+            st.set_step("bug_bash", s["id"], prior)
+        _C.save_state(st, d, rid)
+        _ack_step(d, rid, "bug_bash", "notify_native_auth",
+                  engineer="verified@example.com", engineer_source="directory lookup + on-call schedule")
         again = _C.load_state(d, rid)
         assert again.is_done("bug_bash", "notify_native_auth")
-        assert notified_engineer(again) == "silviu.petrescu"
+        assert notified_engineer(again) == "verified@example.com"
+        original = again.get_step("bug_bash", "notify_native_auth")
+        assert BC.cmd_record_nativeauth_notify(ns) == 0
+        assert _C.load_state(d, rid).get_step("bug_bash", "notify_native_auth") == original
 
         # no engineer -> attention hold
         _C.save_state(_na_state(), d, rid)
         ns2 = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None, engineer=None)
-        assert BC.cmd_record_nativeauth_notify(ns2) == 2
+        assert BC.cmd_record_nativeauth_notify(ns2) == 1
         after = _C.load_state(d, rid)
         assert not after.is_done("bug_bash", "notify_native_auth")
-        assert after.get_step("bug_bash", "notify_native_auth").status == "blocked"
+        assert after.get_step("bug_bash", "notify_native_auth").status == "pending"

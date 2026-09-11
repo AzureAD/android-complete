@@ -611,6 +611,47 @@ def _status_state(phase="build_verify"):
 
 _PHASE_ORDER = ["preflight", "ccd", "build_verify", "bug_bash", "finalize", "rollout_start", "monitor"]
 
+
+def _active_phase(st, phase):
+    """Make an isolated domain fixture satisfy the shared lifecycle prerequisites."""
+    from orchestrator.state import StepState
+    st.readiness_signed = True
+    st.current_phase = phase
+    for p in Orchestrator(CONFIG, st, mocks={}).config["phases"]:
+        if p["id"] == phase:
+            break
+        for s in p["steps"]:
+            st.set_step(p["id"], s["id"], StepState(status="done"))
+    return st
+
+
+def _ack_notifications(root, rid, as_of, items=None):
+    """Simulated provider receipts, never transport calls; exercises real completion."""
+    from orchestrator import delivery as D
+    from orchestrator.commands.delivery_cmd import finish
+    from datetime import datetime
+    st, orch = C.load_orch(root, rid, CONFIG, datetime.fromisoformat(as_of.replace("Z", "+00:00")))
+    items = items or [r["descriptor"] for r in st.notification_deliveries.values()
+                      if r["status"] in ("prepared", "not_sent")]
+    for item in items:
+        D.offer(orch, item)
+        claim = D.claim(orch, item["id"], item["hash"], "test-worker")
+        D.result(orch, item["id"], claim["execution_id"], "sent", "Simulated provider success")
+        finish(orch, item["id"])
+    C.save_state(st, root, rid)
+
+
+def _ack_step(root, rid, phase, sid, as_of="2026-09-11T12:00:00+00:00", **params):
+    from argparse import Namespace
+    from orchestrator.commands.step_action import prepare_step
+    from datetime import datetime
+    st, orch = C.load_orch(root, rid, CONFIG, datetime.fromisoformat(as_of))
+    args = Namespace(phase=phase, step=sid, release=rid,
+                     param=[f"{k}={v}" for k, v in params.items()])
+    out = prepare_step(args, st, orch)
+    assert out["kind"] == "needs_skill", out
+    _ack_notifications(root, rid, as_of, out["notifications"])
+
 # Re-export the entire harness namespace so per-area test files get an identical
 # module scope via `from tests._harness import *` (includes underscore helpers).
 __all__ = [k for k in list(globals()) if not k.startswith('__')]

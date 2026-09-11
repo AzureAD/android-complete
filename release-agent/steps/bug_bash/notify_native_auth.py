@@ -16,8 +16,8 @@ Scout-assisted (skill-driven), three tiers:
   3. HUMAN FALLBACK — if the engineer can't be resolved, ask the owner who the Native Auth RE
      is (m_ask_user), or hold the step.
 
-The skill records completion with `record-nativeauth-notify --release <id> --engineer <who>`
-(or without --engineer to hold the step for the owner).
+The skill records completion through notification claim/result with a verified engineer;
+unresolved identity stays pending for owner review.
 
 Depends on clone_plans_broker (for the Native Auth suite link). Idempotent — once recorded
 with an engineer it reports done without re-sending.
@@ -30,6 +30,7 @@ from tools import testplans as T
 
 ID = "notify_native_auth"
 KIND = "scout"
+NOTIFICATION = True
 
 SCHEDULE_DOC = ("https://eng.ms/docs/microsoft-security/identity/entra-developer-application-"
                 "platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/"
@@ -66,7 +67,7 @@ def _message_html(month_year, owner_name, plan_url):
         f'</div>')
 
 
-def build(state):
+def build(state, engineer=None, engineer_source=None):
     if not state.ccd:
         return Blocked("notify_native_auth: no CCD set — can't identify the release month.")
     broker_plan = (state.get_step("bug_bash", "clone_plans_broker").data or {}).get("plan_id")
@@ -77,6 +78,8 @@ def build(state):
     # Idempotent: already recorded as notified → done, no re-send.
     already = notified_engineer(state)
     if already:
+        if not state.is_done("bug_bash", ID):
+            return Blocked("Native Auth engineer data lacks terminal delivery evidence; owner recovery required.")
         return Done(f"Native Auth RE ({already}) already notified the {ID} for "
                     f"{state.release_id}.")
 
@@ -84,6 +87,16 @@ def build(state):
     re_hint = NATIVE_AUTH_RE.get(month_year, "")
     plan_url = T.plan_web_url(broker_plan)
     html = _message_html(month_year, state.owner_name, plan_url)
+    if engineer:
+        if "@" not in engineer or not engineer_source:
+            return Blocked("Provide the verified Native Auth RE UPN and engineer_source evidence; never guess.")
+        return NeedsSkill(
+            tool="microsoft_teams-SendMessageToUser",
+            payload={"userIdOrUpn": engineer, "content": html, "contentType": "html"},
+            record_as=ID, summary=f"Notify verified Native Auth RE {engineer}",
+            outbound=True,
+            notification={"completion": {"data": {"engineer": engineer,
+                                                  "engineer_source": engineer_source}}})
 
     hint_txt = (f"The schedule lists '{re_hint}' as the Native Auth RE for {month_year} "
                 f"(confirm against the doc)." if re_hint
@@ -93,13 +106,15 @@ def build(state):
         f"1. RESOLVE the Native Auth RE for '{month_year}' from the schedule doc "
         f"({SCHEDULE_DOC}) — the 'Native Auth Release Engineer' column (aliases are in "
         f"parens, e.g. 'Silviu (silviu.petrescu)'). {hint_txt}\n"
-        f"2. SEND the message below to that engineer as a 1:1 Teams message: resolve their "
-        f"UPN with `workiq_search_people` (or the alias@microsoft.com), then "
-        f"`workiq_send_chat_message` (or SendMessageToUser). contentType html.\n"
+        f"2. PREPARE a 1:1 Teams notification for that engineer: resolve their "
+        f"UPN with `workiq_search_people`; never infer an email from an alias. Then prepare "
+        f"`notification prepare --release {state.release_id} --source step --phase bug_bash "
+        f"--step notify_native_auth --param engineer=<verified-UPN> "
+        f"--param engineer_source=<schedule-and-directory-evidence>`. Review, claim and acknowledge.\n"
         f"3. HUMAN FALLBACK if you can't resolve them: `m_ask_user` for the Native Auth RE's "
-        f"alias/email, then send.\n"
-        f"4. Record: `record-nativeauth-notify --release {state.release_id} --engineer "
-        f"'<alias-or-upn>'`. If it truly can't be sent, run WITHOUT --engineer to hold it.")
+        f"identity, then verify and prepare as above. Do not send to an unverified alias.\n"
+        f"4. Only notification result acknowledges delivery and records the verified engineer. "
+        f"If unresolved, leave the step pending and surface the blocker.")
 
     return NeedsSkill(
         tool="record-nativeauth-notify",
@@ -108,8 +123,6 @@ def build(state):
             "engineer_hint": re_hint,
             "content": html,
             "contentType": "html",
-            "followup_command": (f"record-nativeauth-notify --release {state.release_id} "
-                                 f"--engineer '<alias-or-upn>'"),
             "_gather": {"month_year": month_year, "schedule_doc": SCHEDULE_DOC,
                         "instructions": instructions},
         },
@@ -117,6 +130,6 @@ def build(state):
         summary=(f"Notify the {month_year} Native Auth RE"
                  + (f" ({re_hint})" if re_hint else "")
                  + " that the bug bash is ready + ask for a confirmation when done"),
-        note="awaiting Native Auth RE notification (resolve from schedule → send → record)",
-        outbound=True,
+        note="awaiting Native Auth RE notification (resolve → prepare → claim → send → result)",
+        outbound=False,
     )

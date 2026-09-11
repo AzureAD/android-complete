@@ -5,7 +5,7 @@ import os
 
 from orchestrator.state import ReleaseState
 from orchestrator.engine import Orchestrator
-from orchestrator import render, schedule
+from orchestrator import render, schedule, delivery as D
 from orchestrator import notifications as notif
 from orchestrator import cli_common as C
 from tools import checks
@@ -17,7 +17,7 @@ def _empty_payload(rid, config_path=None):
     ch = notif.channels(notif.load_config(config_path)) if config_path else {"email": True, "teams": False}
     return {"message": "", "html": "", "subject": "", "owner_email": None,
             "owner_name": None, "release": rid, "channels": ch, "teams": None,
-            "core_alert": None}
+            "core_alert": None, "notifications": [], "permission_to_send": False}
 
 
 def cmd_set_owner(args):
@@ -39,7 +39,7 @@ def cmd_set_owner(args):
 def cmd_notify(args):
     """Emit the daily phase digest IF the active phase is open with outstanding
     work, else nothing. Read-only (does NOT advance the flow — use `tick` for that).
-    De-duped to one per calendar day; --force bypasses; --json prints the mailer
+    De-duped per channel and owner-local day; --force cannot resend; --json prints the
     payload {message,subject,owner_email,owner_name,release}."""
     rid = C.resolve_release_id(args.runs_root, args.release)
     want_json = getattr(args, "json", False)
@@ -59,7 +59,7 @@ def _notify_payload(args, rid, advance):
     """Shared by `notify` and `tick`. Optionally ADVANCE the flow first
     (run_until_gate), then read the state machine and build the once-per-day
     digest payload. Returns {message, subject, owner_email, owner_name, release}.
-    `message` is "" unless a digest is due AND not already sent today (or --force)."""
+    `message` is "" unless an eligible digest channel is not yet acknowledged today."""
     sp = C.state_path(args.runs_root, rid)
     if not os.path.exists(sp):
         return _empty_payload(rid, getattr(args, "config", None))
@@ -75,40 +75,60 @@ def _notify_payload(args, rid, advance):
         st = ReleaseState.load(sp)
         orch = Orchestrator(args.config, st, as_of=as_of)
     report = orch.status_report()
-    # Deadline escalations are a side effect of the automation heartbeat only.
-    # `notify` remains observational/read-only and must never consume a checkpoint.
-    alert_model = (notif.preflight_escalation(
+    if D.scope_reason(orch, {"kind": "release"}):
+        return _empty_payload(rid, args.config)
+    # Both preview paths are read-only with respect to delivery checkpoints.
+    alert_model = notif.preflight_escalation(
         report, orch.now_local, getattr(st, "escalation_checkpoints", {}))
-        if advance else None)
     core_alert = None
     if alert_model:
         core_alert = notif.core_alert_delivery(
             report, alert_model, render.preflight_core_alert(report, alert_model))
-        core_alert["followup_command"] = (
-            f"record-core-alert --release {rid} --checkpoint {alert_model['key']}")
     msg = render.notification(report)
     html = render.notification_html(report)
     md = render.notification_markdown(report)
     subject = render.notification_subject(report)
-    today = (as_of or schedule.today()).isoformat()
-    fresh = bool(msg) and (getattr(args, "force", False) or st.last_notified_date != today)
-    if fresh:
-        st.last_notified_date = today
-        st.save(sp)
-        try:
-            C.elog(args.runs_root, rid).log("notified", text=msg, owner=st.owner_email)
-        except Exception:
-            pass
+    today = orch.now_local.date().isoformat()
+    fresh = bool(msg) and st.last_notified_date != today
     # Fan-out channels (config/notifications.yaml). Email is the existing path; when
     # Teams is on and a digest is actually due, attach a delivery descriptor (Scout
     # bot by default, or an explicit chat).
     ncfg = notif.load_config(getattr(args, "config", None))
     ch = notif.channels(ncfg)
     teams = notif.teams_delivery(ncfg, html, msg, md) if (fresh and msg and ch.get("teams")) else None
+    items = []
+    scope = {"kind": "phase", "phase": orch.current_phase_id(), "date": today,
+             "release_matches": {"owner_email": st.owner_email}}
+    if fresh and ch.get("email"):
+        items.append(D.descriptor(st, f"digest:{today}", scope, "workiq_send_email",
+                                  {"to": [st.owner_email] if st.owner_email else [],
+                                   "subject": subject, "body": html or msg, "isHtml": bool(html)}))
+    if teams:
+        tool = "m_send_teams_message" if teams["via"] == "scout_bot" else "workiq_send_chat_message"
+        payload = ({"message": teams["text"]} if teams["via"] == "scout_bot" else
+                   {k: v for k, v in teams.items() if k != "via"})
+        items.append(D.descriptor(st, f"digest:{today}", scope, tool, payload))
+    if core_alert:
+        items.append(D.descriptor(
+            st, f"core-alert:{alert_model['key']}",
+            {"kind": "phase", "phase": "preflight", "date": today,
+             "release_matches": {"ccd": st.ccd, "owner_email": st.owner_email}},
+            "workiq_send_chat_message",
+            {k: core_alert[k] for k in ("chatId", "content", "contentType", "mentions")},
+            {"checkpoint": alert_model["key"]}))
+    items = [i for i in items if D.available(orch, i)]
+    digest_channels = {i["channel"] for i in items if i["id"].startswith("digest:")}
+    fresh = bool(digest_channels)
+    if "teams" not in digest_channels:
+        teams = None
+    if not any(i["id"].startswith("core-alert:") for i in items):
+        core_alert = None
     return {"message": msg if fresh else "", "html": html if fresh else "",
             "subject": subject, "owner_email": st.owner_email,
             "owner_name": st.owner_name, "release": rid,
-            "channels": ch, "teams": teams, "core_alert": core_alert}
+            "channels": {k: v and k in digest_channels for k, v in ch.items()},
+            "teams": teams, "core_alert": core_alert, "notifications": items,
+            "permission_to_send": False}
 
 
 def cmd_tick(args):
@@ -143,16 +163,8 @@ def cmd_record_core_alert(args):
     if args.checkpoint in st.escalation_checkpoints:
         print("Core Team alert already recorded; no changes.")
         return 0
-    target = notif.core_alert_delivery(
-        orch.status_report(), {"key": args.checkpoint}, "")["chatName"]
-    st.escalation_checkpoints[args.checkpoint] = {
-        "sent_at": orch.now_local.isoformat(), "target": target,
-    }
-    C.save_state(st, args.runs_root, args.release)
-    C.elog(args.runs_root, args.release).log(
-        "preflight_escalation_sent", checkpoint=args.checkpoint, target=target)
-    print(f"Recorded Core Team deadline alert: {args.checkpoint}")
-    return 0
+    print("Use notification claim/result; a checkpoint alone cannot prove delivery.")
+    return 1
 
 
 def register(sub):
@@ -165,14 +177,14 @@ def register(sub):
     nt = sub.add_parser("notify", help="Emit a push line if something needs the user now (else nothing)")
     nt.add_argument("--release", default=None, help="Target release; if omitted, discover the active one")
     nt.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD) — debug override; default today")
-    nt.add_argument("--force", action="store_true", help="Bypass de-dup (always emit if actionable)")
+    nt.add_argument("--force", action="store_true", help="Never bypasses acknowledgement or lifecycle guards")
     nt.add_argument("--json", action="store_true", help="Emit {message,subject,owner_email,owner_name,release} for the mailer")
     nt.set_defaults(func=cmd_notify)
 
     tk = sub.add_parser("tick", help="Automation heartbeat: ADVANCE the active release, then emit the digest payload")
     tk.add_argument("--release", default=None, help="Target release; if omitted, discover the active one")
     tk.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD) — debug override; default today")
-    tk.add_argument("--force", action="store_true", help="Bypass the once-per-day digest de-dup")
+    tk.add_argument("--force", action="store_true", help="Never bypasses acknowledgement or lifecycle guards")
     tk.add_argument("--json", action="store_true", help="Emit {message,subject,owner_email,owner_name,release} for the mailer")
     tk.set_defaults(func=cmd_tick)
 

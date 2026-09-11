@@ -11,7 +11,7 @@ AAD-gated web app the engine can't read, so the flow is two hops:
      step: no Production overlap → pass; one or more → hold for the owner (attention).
 
 Both the gather description and the decision live here, so `commands/lockdown.py`
-is just the thin recorder seam (like `record-step` is for `notice`).
+is just the thin recorder seam; notification steps use notification claim/result instead.
 """
 from __future__ import annotations
 

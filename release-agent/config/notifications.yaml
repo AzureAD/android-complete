@@ -40,6 +40,8 @@ teams:
 # to the release distribution lists. For a TEST run, the skill redirects these to the owner via
 # the `send_to` mock so the real DLs are never emailed.
 status_email:
+  phases: [build_verify, bug_bash, finalize]
+  until_steps: [finalize.final_status_email]
   recipients:
     - authsdkrelease@microsoft.com
     - androididentity@microsoft.com

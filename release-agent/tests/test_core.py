@@ -1336,8 +1336,8 @@ def test_record_step_generic_pass():
         class A:
             runs_root = d; release = rid; config = CONFIG
             phase = "preflight"; step = "notice"; status = "pass"; detail = "sent"; as_of = None
-        ncmd.cmd_record_step(A)
-        assert C.load_state(d, rid).is_done("preflight", "notice")
+        assert ncmd.cmd_record_step(A) == 1
+        assert not C.load_state(d, rid).is_done("preflight", "notice")
 
 
 def test_terminal_step_dispatch_does_not_rebuild_payload(tmp_path, capsys, monkeypatch):
@@ -1392,7 +1392,7 @@ def test_stale_approval_refresh_skips_completed_step_and_preserves_record(tmp_pa
     # An interactive runner prepared its message before another runner finished.
     assert cli.main(base + ["step-action"] + target) == 0
     assert json.loads(capsys.readouterr().out)["kind"] == "needs_skill"
-    assert cli.main(base + ["record-step"] + target + ["--status", "pass", "--detail", "First send"]) == 0
+    _ack_step(str(tmp_path), rid, "ccd", "final_reminder")
     capsys.readouterr()
     completed = path.read_bytes()
 
@@ -1408,7 +1408,8 @@ def test_stale_approval_refresh_skips_completed_step_and_preserves_record(tmp_pa
     assert cli.main(base + ["reopen"] + target + ["--reason", "Explicit rerun requested"]) == 0
     capsys.readouterr()
     assert cli.main(base + ["step-action"] + target) == 0
-    assert json.loads(capsys.readouterr().out)["kind"] == "needs_skill"
+    reopened = json.loads(capsys.readouterr().out)
+    assert reopened["kind"] == "needs_skill" and reopened["notifications"] == []
 
 
 def test_engine_preserves_terminal_records_until_explicit_reopen():

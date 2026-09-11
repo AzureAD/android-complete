@@ -48,7 +48,7 @@ def _scan_files():
 # `tool=` kwarg, for plain and f-strings (the verb precedes any f-string `{...}`). `tool=`
 # (kwarg) — NOT `"tool":` (which is how unrelated config dicts, e.g. integ_prs.CONFIG's
 # gh/ado backend selector, spell it) — so config data isn't mistaken for a NeedsSkill tool.
-_FOLLOWUP_RE = re.compile(r"""followup_command["']?\s*[:=]\s*f?["']([^"'{]+)""")
+_FOLLOWUP_RE = re.compile(r"""followup_command["']?\s*[:=]\s*\(?\s*f?["']([^"'{]+)""")
 _TOOL_RE = re.compile(r"""\btool\s*=\s*f?["']([^"'{]+)""")
 
 
@@ -112,5 +112,5 @@ def test_guardrail_actually_sees_the_contract():
             if v:
                 seen_tools.add(v)
     # known contract members must be discovered by the scan
-    assert {"record-rc-report", "record-telemetry", "record-status-email"} <= seen_followups
+    assert {"record-bugbash-chat", "record-telemetry", "create-integration-prs"} <= seen_followups
     assert {"create-payload-wiki", "create-oneauth-common-pr", "check-lockdown"} <= seen_tools

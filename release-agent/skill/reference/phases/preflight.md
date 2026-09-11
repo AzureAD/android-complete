@@ -5,7 +5,7 @@ _Loaded on demand when advancing Phase 0. Phase 0 is `execution: parallel`._
 ## Parallel phases — process ALL the holds, not one at a time
 
 A single `next` runs **every independent automated step at once** (breaking, CG, cron — all in one call) then surfaces **all the human/scout holds together** (e.g. *"4 item(s) need you: …"*). After `next`, read `status --json` → **`pending_human`** (and `active_phase.steps` with `status`/`needs_owner`) — the full outstanding set. Work through **all** of them this pass:
-- **`source: scout`** steps (notice, flight_reminder, lockdown) → run each via MCP/browser + `record-step` (below). Independent — do them all.
+- **`source: scout`** steps → notices use notification prepare/claim/result; lockdown keeps its browser + `check-lockdown` follow-up (below). Independent — do them all.
 - **`attest`** steps (confirm_reminders, vitals) → ask the owner to confirm, then `done --step <id>`.
 - **`blocked`** steps (cg/cron on a real problem) → show the note; fix + rerun, or skip.
 
@@ -13,22 +13,31 @@ Dependencies still hold: `confirm_reminders` only appears **after** `flight_remi
 
 > **State writes are safe to parallelize.** The CLI serializes every state read-modify-write per release with an exclusive lock, so firing several `record-step`/`record-check`/`done` calls at once (or an hourly `tick` overlapping) can't clobber — a second invocation waits for the first to save.
 
-**Render the table ONCE per advance pass — at the END.** Within a single pass, do the work first: run `next`, execute every resulting scout step (MCP/browser + `record-step`) and clear the attest holds, THEN paste the `status` table once to show the settled state (see the presenting-status reference). Don't paste an interim table before/while you run the scout steps — that early render is stale the moment you act and just duplicates the final one. One pass → one table. (The only exception is the golden rule: if this pass ends by asking for an attestation/gate decision, that final table must be in the same message as the `m_ask_user`.) Never a bare prose list.
+**Render the table ONCE per advance pass — at the END.** Within a single pass, do the work first: run `next`, execute every resulting scout step using its notification or domain protocol and clear the attest holds, THEN paste the `status` table once to show the settled state (see the presenting-status reference). Don't paste an interim table before/while you run the scout steps — that early render is stale the moment you act and just duplicates the final one. One pass → one table. (The only exception is the golden rule: if this pass ends by asking for an attestation/gate decision, that final table must be in the same message as the `m_ask_user`.) Never a bare prose list.
 
-## `notice` & `flight_reminder` — migrated scout comms steps (use `step-action`)
+## `notice` & `flight_reminder` — shared notification delivery
 
-Both are now co-located step modules (`steps/preflight/`). Don't use their old `prepare-*` commands — run the **generic** dispatcher and execute the `needs_skill` payload it returns (see the `step-action` section in `commands.md`):
+Both are co-located step modules (`steps/preflight/`). `step-action` is a read-only preview,
+not permission to send. Use the shared protocol in `commands.md`:
 
 ```
-python -m orchestrator.cli step-action --release <id> --step <notice|flight_reminder> [--param variant=update]
+python -m orchestrator.cli notification prepare --release <id> --source step --phase preflight --step <notice|flight_reminder> [--param variant=update]
 ```
 
-It returns `{"kind":"needs_skill","tool":..., "payload":{...}, "record_as":...}` fully resolved (recipients/chat target = the real DL/chat unless a `send_to` mock redirects). Steps:
-1. **Run `step-action`** for the current step. `kind:"blocked"` (e.g. no CCD) → surface `reason`, stop. `kind:"needs_skill"` → continue.
-2. **Execute `tool` with `payload` verbatim** — don't override recipients/chatId/body; the mode already decided them:
-   - **`notice`** → `workiq_send_email` (payload has `to`, `subject`, `body` (HTML), `isHtml:true`). Real run → the real DL (see EXTERNAL-REFERENCES.md); to test, the engineer's `mocks.local.yaml` `preflight.notice.send_to` redirects it to them (`[TEST → me]` subject). `--param variant=update` swaps the CCD-day wording.
-   - **`flight_reminder`** → `workiq_send_chat_message` (payload has `chatId`, `content` (HTML), `contentType:"html"`). Real run → the Android Core Team thread; to test, `preflight.flight_reminder.send_to: me` redirects to the engineer's own chat (`48:notes`). Directly sendable, no `workiq_create_chat_by_email` needed.
-3. **Record.** `record-step --release <id> --step <record_as> --status pass --detail "<note>"`; on failure `--status attention --detail "<why>"`.
+1. Review each eligible descriptor's exact destination/payload. `notice` targets the configured
+   DL; `flight_reminder` targets the configured Android Core Team chat. Local test redirects
+   (`send_to`) apply before hashing. A wording variant never authorizes a second acknowledged send.
+2. **Claim:** `notification claim --release <id> --id <notification-id> --hash <approved-hash> --executor <session-id>`.
+3. Only when the claim returns **`permission_to_send:true`**, execute its returned `tool`/`payload`
+   verbatim. Never send raw `step-action` output or override recipients.
+4. **Acknowledge:** `notification result --release <id> --id <notification-id> --execution-id <execution-id>
+   --outcome sent --evidence "<provider-confirmed success>" [--receipt-file <JSON>]`.
+   This completes the owning step; legacy `record-step` is not send evidence. Positive proof of
+   no delivery permits `not_sent`; unknown outcomes are `uncertain`, never automatically retried.
+   Retry acknowledgement after a failed ack, not the send.
+
+Discover saved work (`notification prepare --release <id> --source pending`) even after silence.
+Every worker exit runs cleanup; delete the live automation before deregistering it.
 
 ## `confirm_reminders` — attestation (after flight_reminder)
 

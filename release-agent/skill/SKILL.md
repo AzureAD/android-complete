@@ -42,17 +42,38 @@ Throughout this skill, **`<AGENT_ROOT>`** = that confirmed `release-agent` folde
 9. **Log silently.** Human-readable commands auto-log. YOU must journal user choices: `journal --release <id> --source user --kind choice --text "<said>" --choice "<option>"` — silently, never announced (detail in commands.md).
 
 ## The universal loop
-**Prevent stale-approval replays:** after user approval, immediately re-run the same
-`step-action` before any send; never send a cached payload. If the prepared action has
-`reservable:true`, add `--reserve --executor <automation/session-id>` to this fresh call.
-Only the winner receives `needs_skill` plus `execution_id`; other runners must stop
-on `blocked` or skip `done`. Send once and pass that ID to `record-step --execution-id
-<id> --status pass`. A timeout/ambiguous result, or a changed approved payload, means
-**do not retry**: record `attention` with the ID and explanation. Interrupted reservations
-do not expire. After the original runner is stopped and the owner reviews evidence,
-use existing `done --note "<evidence>"` if completed, or `reopen --reason "<evidence>"`
-only if it is safe to retry. Specialized follow-up actions have `reservable:false`
-and retain their existing lifecycle. Their fresh tool/payload must still match approval.
+**Every notification uses one delivery contract, including specialized follow-ups.**
+On every run, including silent or terminal producer outcomes, discover `notification prepare
+--release <id> --source pending`. Finalize sent records with empty completion status;
+claim only eligible prepared/not_sent records. Keep expired/closed work unsent and
+surface claimed/uncertain work for evidence-based owner recovery.
+`step-action`, `notify`, `tick`, `status-email`, and polling output are previews, never send
+permission. Run `notification prepare --release <id> --source step|digest|status-email|pending`
+(step source needs the same `--phase`, `--step`, `--param` inputs).
+Review the exact destination and payload, then `notification claim --release <id> --id <notification-id>
+--hash <approved-hash> --executor <session-id>`. Send exactly the returned tool/payload ONLY
+when `permission_to_send:true`. No extra courtesy copies. For the Scout bot transport,
+verify the signed-in runner is the descriptor's owner target before claiming.
+Only preparation accepts `--as-of`; claim/result/finalize use the trusted current clock.
+Changed never-claimed preparations may refresh with an audited new hash: review again.
+After any claim, the snapshot is frozen (including known-not-sent attempts); source or
+recipient changes require deliberate owner recovery, not a new identity to bypass a claim.
+
+Immediately acknowledge each channel separately: `notification result --release <id>
+--id <notification-id> --execution-id <execution-id> --outcome sent --evidence "<provider success>"
+[--receipt-file <JSON>]`. Supply real receipts when available; never invent message IDs.
+`not_sent` means positive evidence nothing was delivered; only that outcome permits retry.
+Timeouts/unknown outcomes are `uncertain`. Claims never expire or get stolen. If sending
+succeeds but acknowledgement fails, retry acknowledgement, NEVER the send. Owner recovery
+requires stopping the original runner and `--owner-review` plus evidence. `done`/`reopen`
+cannot authorize replay of a claimed/uncertain/sent notification.
+If delivery was saved but completion failed, retry `notification finalize --release <id>
+--id <notification-id>`. There is no exactly-once guarantee without downstream idempotency.
+Source bindings are rechecked before completion. A source change during a send preserves
+the receipt but suppresses stale completion; it never applies an obsolete quality-gate pass.
+Non-notification outbound actions retain their existing guard/reservation/domain follow-up.
+A `done` outcome marked `no_delivery_required:true` can use `record-step --status pass`;
+the recorder revalidates it. This never acknowledges a send.
 
 Discover → (if no gate cleared, run the entry gate) → `next` to advance → **render the resulting `status`/`checklist` table** → relay what's outstanding → on a gate, `m_ask_user` Approve/Deny → repeat. Every phase rides this same loop; per-phase specifics are in the reference docs.
 
@@ -61,9 +82,9 @@ Discover → (if no gate cleared, run the entry gate) → `next` to advance → 
 - **"start a release":** *(FIRST: if the clone path isn't resolved yet on this machine, do the **FIRST RUN** resolution above — confirm `<AGENT_ROOT>` — before anything.)* **Confirm which release in ONE prompt** — run `python -m orchestrator.cli preview-release --json` (returns candidates, each with `release_id`, `ship_label`, `ccd_pretty` — the release is NAMED for its **ship month** = code-complete month + 1). Lead with candidate[0] (the current month's release) and `m_ask_user`: recommended chip **"Yes — start the `<ship_label>` release (code-complete `<ccd_pretty>`)"**, plus a **"A different month"** chip. Show the ship name and the CCD date TOGETHER so there's no month-mismatch surprise (never make the user pick a bare month, then tell them it's a different one). If they pick "A different month" → a second `m_ask_user` offering candidates[1..3] as chips (each **"`<ship_label>` (CC `<ccd_pretty>`)"**) plus a free-text "another month" fallback. → `init --release <chosen release_id>` (this stores + prints the confirmed ship-name; do NOT re-ask it) → ensure push-reminder automation exists → run the **entry gate** (this settles + confirms the CCD via `ccd_confirmed`) → **now that the CCD is confirmed**, provision the timed phase automations (`automation plan`, cron-pinned to the CCD) → `next` → present status. *(Provision the CCD-day automations only AFTER the gate confirms the CCD — their cron pins to that date. → starting-and-scheduling.md, readiness-gate.md)*
 - **Engine HOLDS at a gate:** present it; `m_ask_user` Approve/Deny; run `approve`/`deny --comment` with their reason; present new status.
 - **Phase 3 `distribute_tests` needs owner input:** this is NOT a technical failure to skip or mark done. Follow **reference/commands.md → Bug Bash availability**: ask "Is anyone OOF for this Bug Bash?", stop and wait, then record the owner's explicit answer with `distribute-tests`. Never infer availability from calendars, presence, O365 OOF, or silence. The confirmation is for this release's Bug Bash only.
-- **Scout steps pending** (`scout_pending` non-empty in `status`): these are **Scout's automated work, NOT a user to-do** — run them yourself, don't wait for the user and don't present them as "you need to". For EACH id in `scout_pending`: `step-action --release <id> --phase <p> --step <id>` → it returns `needs_skill` (an email/Teams/browser action) → perform the returned `tool`+`payload` (respect any `test_redirect`) → `record-step --step <record_as> --status pass` (or the step's follow-up, e.g. `check-lockdown`). Do this **silently** for each, then re-run `next`. Only once `scout_pending` is empty do you surface the remaining user holds below. (A scout step that records `attention` becomes a `blocked` user task — handle it like any block.)
-- **Structured post-action automation directive:** when a `needs_skill` payload contains `_automation.on_demand`, do not pass `_automation` to the MCP tool. After the tool succeeds and before recording the step, run `automation plan --release <id> --on-demand <slug> --json`, create exactly the returned automation, and register every `registration` field.
-- **Automation lifecycle:** after an automation's work, run `automation cleanup --release <id> --json`; for each removal in order, `m_delete_automation`, then deregister only after deletion succeeds. When a flow requests an on-demand poller, create it from `automation plan --on-demand <slug>`; initialization must never provision on-demand pollers.
+- **Scout steps pending** are Scout's work: resolve each with `step-action --release <id> --phase <p> --step <step>`. Notifications MUST use the universal prepare/claim/result protocol; legacy `record-step`, `record-rc-report`, `record-nativeauth-notify`, `record-status-email`, `record-core-alert`, and `record-localization-post` are not send evidence. Non-notification gather/trigger work retains its named domain follow-up. Re-run `next --release <id>` after acknowledged completion.
+- **Structured post-action automation directive:** private `_automation` is never a transport argument. It is retained in notification `completion.automation`. Only after `completion_status.status` is `applied`, and while the named worker's configured lifecycle remains open, ensure its `on_demand` slug is registered: plan, create if absent, then register every returned field. On every worker run inspect `notification prepare --release <id> --source pending` for sent-but-unfinalized records and sent records with an unprovisioned directive; recover completion/provisioning without sending again. Never provision from suppressed completion or recreate a retired worker.
+- **Automation lifecycle:** ALWAYS run `automation cleanup --release <id> --json` in a finally block, even when silent, skipped, halted, terminal or errored. Delete each live automation first, deregister only on successful deletion; preserve failed deletions for retry. Halts suspend workers, release completion retires all explicitly release-scoped nonmanual workers, and shared/manual entries survive. Never infer lifecycle from names. On-demand pollers are not provisioned at initialization.
 - **Engine HOLDS for a reminder** (`awaiting_action` with `action`/`needs_owner` — an attest or blocked USER task): present as "you need to do X"; when done, `done --release <id> --note "<what they did>"`. Not a decision — no Approve/Deny.
 - **A step is BLOCKED** (agent found a real problem, e.g. `cg` on High/Critical CG alerts, `cron` on a stale Calendar Checker): show the note plainly. Two exits: **(a) fix** → `next` re-runs the check; **(b) override** → `skip --release <id> --phase <p> --step <s> --reason "<why>"`. No other way to clear it. **Exception — `build_verify.rc_report` (the <90% UI gate)** has a richer **three-exit** flow: **re-trigger** (flaky → re-run RC, then `rc-retriggered --release <id>`), **cherry-pick** (real bug → patch via the broker cherry-pick process, then `rc-retriggered`), or **override** (`skip …`, the last resort — discuss with the team first). After `rc-retriggered`, Scout tracks the newest RC: the verify step is `in_flight` (⏳ no action) while it runs, and the 30-min poller re-applies the gate on completion. See `reference/phases/build_verify.md`. Present all three — don't collapse it to "fix or override".
 - **Engine is `scheduled`** (before CCD‑7): relay the opens-date + countdown; nothing to advance. Earlier start = a CCD change (`set-ccd`), not `next`.
@@ -95,6 +116,6 @@ _As later phases get real agents, add one row here → `reference/phases/<id>.md
 ## Guardrails (see GOLDEN RULES; these are the hard lines)
 - Engine owns sequencing/gate state; when unsure, `status --json`.
 - Gates are human-decided — present and relay, never authorize.
-- Runs are real (no dry-run); the engineer's `mocks.local.yaml` provides test-safe skips/redirects. `--as-of` still simulates the clock.
+- Runs are real (no dry-run); the engineer's `mocks.local.yaml` provides test-safe skips/redirects. Preview/read clocks can be simulated; notification claim/result/finalize never accept a simulated clock.
 - Never sign/attest/approve/done on an assumption — require explicit user confirmation.
 - Never hardcode recipients; never fence CLI output; never invent a release or a flow.

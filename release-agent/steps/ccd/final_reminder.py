@@ -19,6 +19,7 @@ from steps.lib.mockctx import mock_input
 
 ID = "final_reminder"
 KIND = "scout"
+NOTIFICATION = True
 
 # Step config (co-located). CCD-day "update" variant of the notice template, to the
 # real Android DL (redirect for tests via send_to). fire_at_local is the intended

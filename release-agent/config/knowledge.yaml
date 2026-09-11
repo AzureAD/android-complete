@@ -149,6 +149,8 @@ readiness.teams_notify:
   who: >
     The skill checks it (m_relay_status / m_relay_connect + a silent
     m_send_teams_message handshake — the engine can't reach the relay). OPT-OUT.
+    This is an interactive setup diagnostic before signing, never a recurring-worker
+    notification or fallback. Its one-time handshake contains no release payload.
   where:
     - "Channels are configured in config/notifications.yaml (channels.teams, teams.target: scout)."
     - "The Scout bot: open the Microsoft Scout chat in Teams."
@@ -295,8 +297,9 @@ preflight.notice:
     teams stop landing feature work and switch to the hotfix cherry-pick process
     after code complete. Filled from a local template with the CCD and release owner.
   how: >
-    Scout resolves the email (subject, HTML body, recipients) and sends it via
-    WorkIQ, then records the step. Recipients are the configured distribution list;
+    Scout uses `notification prepare --release <id> --source step --phase preflight
+    --step notice`, reviews and claims the exact hash, sends only the claim's payload,
+    then acknowledges with `notification result`. Recipients are the configured distribution list;
     for a test, redirect with the `send_to` mock knob.
   links:
     - name: "Hotfix cherry-pick guide (linked in the email)"
@@ -314,7 +317,9 @@ preflight.flight_reminder:
     flights, write flight pre-mortem docs, merge user-facing strings by CCD-7, and
     complete the feature-flag freeze / default-OFF review.
   how: >
-    Scout posts the message to the Android Core Team group chat and records the step.
+    Scout uses `notification prepare --release <id> --source step --phase preflight
+    --step flight_reminder`, reviews and claims the hash, posts only the claimed payload,
+    then acknowledges with `notification result`. A raw preview is not send permission.
     For a test, redirect to your own chat with the `send_to: me` mock knob.
   links:
     - name: "release variable group (local flights)"
@@ -481,7 +486,8 @@ ccd.final_reminder:
     Scout sends it automatically (a scout step) on the morning of CCD, driven by the
     per-release CCD-morning automation. The release owner owns the content/recipients.
   how: >
-    Runs via step-action → workiq_send_email. To test, redirect with the send_to
+    Uses notification prepare (source step, phase ccd, step final_reminder), then
+    claim → the exact returned email payload → notification result. To test, redirect with the send_to
     mock knob (keeps the send real, points it at you). Sent ~09:00 local on CCD.
   faqs:
     - q: "How is this different from the Phase 0 notice?"
@@ -501,7 +507,8 @@ ccd.pr_reminder:
   where:
     - "Target: the 'Code reviews' Teams chat (fixed chat id in the step CONFIG / EXTERNAL-REFERENCES.md)."
   how: >
-    Runs via step-action → workiq_send_chat_message. To test, redirect with the
+    Uses notification prepare (source step, phase ccd, step pr_reminder), then
+    claim → the exact returned chat payload → notification result. To test, redirect with the
     send_to mock knob ('me' = your own chat).
   faqs:
     - q: "Who approves a CCD delay or cherry-pick?"
@@ -651,8 +658,9 @@ build_verify.telemetry_verify:
   how: >
     Runs via step-action → the kusto_query MCP with the step's cluster_uri/database/query. Read
     the returned Count, then run the follow-up `record-telemetry --release <id> --rows <N>
-    --version <ver>`: rows > 0 records pass; rows == 0 records `attention` — post a heads-up in
-    the Android Core Team channel before declaring the bug bash complete, then re-run the check.
+    --version <ver>`: rows > 0 records pass; rows == 0 records `attention` — the owner posts
+    a heads-up in Android Core Team before declaring the bug bash complete, then re-runs the check.
+    This owner task is not permission for an ad-hoc automatic send.
     For a dry test, set the `version` mock to query a version you know has telemetry.
   faqs:
     - q: "Why is a Phase-3 checklist step (3.3 S9) run in Phase 2?"
@@ -667,13 +675,17 @@ build_verify.rc_report:
     healthy/parked, both MRWP runs' stage completion + tests, and the Authenticator ECS build +
     Firebase suites), this step CONSOLIDATES it into the Phase-2 RC report and emails it to the
     release owner (on CCD+1). It is the terminal Phase-2 step and the single decision point — the
-    verification steps only gather data; this step decides. After sending, `record-rc-report` applies
+    verification steps only gather data; this step decides. After claimed delivery, `notification result` applies
     TWO independent gates: (1) the three-tier MRWP UI gate on the combined UI-automation pass rate
     across both MRWP runs (100% clean, >=90% warn/proceed, <90% hold); and (2) the Authenticator ECS
     gate (both Firebase suites >= 90%, and the auth build succeeded). The release AUTO-ADVANCES only
     when BOTH gates clear; if EITHER holds, the step blocks and WAITS for human attestation. There is
     no separate approval gate. Scout-assisted (source: scout): the engine composes it; the skill sends
     via WorkIQ.
+    The notification binds hashes of the exact checker/orchestrator, current RC verification
+    snapshots and versions. A same-RC rerun or changed results invalidate stale send permission.
+    If sources change during delivery, its receipt is retained but stale gate completion is
+    suppressed; owner recovery is required, never a fabricated pass or automatic resend.
     All MRWP categories count distinct exact titles within each normalized suite and
     current-RC build/provider. Any Passed attempt wins across reruns, in any order;
     prior failures do not count against the gate. The denominator is passed + failed,
@@ -692,9 +704,10 @@ build_verify.rc_report:
     and rerun. No email is prepared until current-RC snapshots are complete, both MRWP runs
     have valid non-zero UI counts, and all preceding steps (including telemetry) are done
     or explicitly skipped. Missing evidence is not a clean gate, even after a prerequisite
-    skip. Evaluated failures are emailed once prerequisites settle. After successful delivery,
-    use `record-rc-report --release <id>`; it rechecks eligibility and evidence readiness
-    before evaluating either gate. When BOTH gates clear
+    skip. Evaluated failures are emailed once prerequisites settle. Before delivery,
+    use the common `notification prepare` (source step), claim/result protocol. It binds
+    the exact report and gate verdict before sending, then completes only after confirmed delivery.
+    When BOTH gates clear
     (MRWP UI >=90% AND auth ECS >=90%) the release auto-advances into
     bug bash. If either holds, the owner investigates and rules on it (patch a real bug + re-trigger
     RC, or proceed as an automation flake): fix + re-run then `next`, or `skip --reason` to override.
@@ -712,7 +725,7 @@ build_verify.rc_report:
     - q: "Where are the failure details sourced and stored?"
       a: "One tools-level read of all ADO Test Runs/Results pages per MRWP build, including clean reruns, drives both summary and detail. pipeline_runs.rcs[].ecs/local.tests contains count_basis=distinct_tests_pass_any, build_id, categories, suites and failed_suites; suites include run_ids, result_entries and test_results with exact titles, verdicts, outcome_counts and every attempt's run/result IDs. Unreadable/missing/invalid pages are unavailable evidence, not aggregate fallback. Stale execution-count snapshots require a fresh verification read; never relabel or migrate old raw totals."
     - q: "How should a requested report preview be presented?"
-      a: "Use the existing RC report HTML renderer, not a handwritten substitute. Label review copies as previews and incomplete results as provisional, honor the approved recipient, and do not record completion or advance the release for a preview. The normal final-report readiness guard still applies to release execution."
+      a: "Use the existing RC report HTML renderer for local review, not a handwritten substitute. Label previews and incomplete results as provisional. Previewing never authorizes delivery, extra copies or completion; report sends require the shared notification protocol and final-report readiness guard."
     - q: "Are the retry results deterministic?"
       a: "For identical evidence, changing API run/result order does not change counts, verdicts, evidence ordering or rendered failure order. Positive numeric run/result IDs are canonicalized before duplicate detection; invalid, missing or duplicated IDs reject the read. IDs are scoped per collection, so the same result ID in different runs is valid. Suites, attempts, outcome counts and equal-failure display ties have stable ordering."
     - q: "What does the report recommend?"
@@ -901,6 +914,10 @@ bug_bash.send_invite:
     a weekday → later the same day. Weekends roll to Monday. Links come from the clone steps
     (Broker plan, Auth suite) and Phase 2 (ECS/Local MRWP runs); flags are fetched live from
     variable group 40. Blocks if the plans haven't been cloned yet.
+    Delivery uses notification prepare (source step), claim, then notification result.
+    Scheduling uses the owner's timezone, not the runner's. Send permission expires at
+    the meeting start. An unclaimed invitation can be re-prepared with a new approved hash;
+    any ever-claimed invitation stays frozen and requires owner recovery if expired.
   links:
     - name: "Local flags — variable group 40"
       url: "https://identitydivision.visualstudio.com/Engineering/_library?view=VariableGroupView&variableGroupId=40&path=release"
@@ -924,11 +941,13 @@ bug_bash.notify_native_auth:
     Scout runs it during `next` (a scout step). It resolves the Native Auth RE for the release
     month from the schedule doc (an inline hint seeds the likely alias; the skill confirms
     against the live doc), resolves their UPN (workiq_search_people), and sends a 1:1 Teams
-    message (workiq_send_chat_message). Human fallback: if it can't resolve them it asks the
+    message through the notification contract (microsoft_teams-SendMessageToUser). Human fallback: if it can't resolve them it asks the
     owner for the alias, or holds the step.
   how: >
-    The skill runs `record-nativeauth-notify --release <id> --engineer <alias-or-upn>` to mark
-    it done (stores who was notified); without --engineer it holds the step for the owner.
+    The skill verifies the engineer's UPN and schedule source, then uses
+    `notification prepare --release <id> --source step --phase bug_bash --step notify_native_auth`
+    with engineer and engineer_source parameters, followed by claim/result.
+    Only confirmed delivery records who was notified; replay never changes that evidence.
     Idempotent — once an engineer is recorded it reports done without re-sending. Blocks if the
     Broker plan isn't built yet (needs the Native Auth suite link).
   links:
@@ -979,24 +998,25 @@ bug_bash.bugbash_updates:
     line (no mention). It is fire-and-continue — the step completes after the first post so the
     phase proceeds; the poller runs in the background.
   who: >
-    Scout resolves it during `next` (a scout step). It gathers progress, posts the first
-    update via `workiq_send_chat_message` (contentType html; the payload carries `_mentions`
-    = [{id,upn,name}] — the skill builds the mentions array + matching <at id="i"> tags so
-    owners with remaining tests are pinged), then provisions the poller.
+    Scout resolves it during `next` (a scout step). It gathers progress, then uses
+    notification prepare/claim/result for the first update. The claimed payload already
+    contains the resolved mentions; never rebuild it. Provision the poller only after
+    delivery and completion are acknowledged.
   how: >
     After the first post, provision the on-demand poller from its single source:
     `automation plan --release <id> --on-demand bug-bash-update-poller --json`.
     Create exactly that returned automation, then register every `registration`
     field including `cleanup_when`. Each tick runs
     `post-bugbash-update --release <id>` and acts on the decision (off_hours → nothing;
-    post → send content+mentions to chatId; complete → send the completion summary, then
-    run the central cleanup plan, DELETE the live poller, then deregister it).
+    post/complete → use the shared notification claim/result protocol for the staged
+    snapshot). Run cleanup in a finally block even on silence/errors; delete first,
+    deregister after success. Only acknowledged final delivery sets poll_complete.
     Blocks if the meeting chat isn't activated (run activate_chat).
   faqs:
     - q: "When do the updates run?"
       a: "Every 2 hours during working hours — 09:00–18:00 America/Los_Angeles, weekdays only, skipping hardcoded US federal holidays. Outside that window a tick returns off_hours and sends nothing; it resumes at 09:00 the next working day."
     - q: "When do the updates stop?"
-      a: "Either automatically when every test is complete (a tick records poll_complete, posts a wrap-up, and central cleanup deletes then deregisters the poller) OR when the owner signs off and cleanup removes it."
+      a: "After every test completes, the final wrap-up must be claimed and successfully acknowledged before poll_complete is recorded. Known failed sends retry while the phase remains open. Owner sign-off/phase completion stops stale sends. Cleanup deletes first, then deregisters."
     - q: "Why group by AssignedTo instead of the test point's tester?"
       a: "The ADO test-point `tester` field is NOT synced with the case's System.AssignedTo. distribute_tests sets AssignedTo, so progress is grouped by AssignedTo to reflect who actually owns each test."
     - q: "Why are some of the owner's failures marked 'Automated failure — triage'?"
@@ -1067,14 +1087,14 @@ bug_bash.bugbash_complete:
     When the owner signs off, run `automation cleanup --release <id> --json`.
     For the returned bug-bash poller, call `m_delete_automation` first and deregister
     only after deletion succeeds. If all tests already completed, its `poll_complete`
-    flag makes the same cleanup rule eligible on the last poll.
+    flag makes the same cleanup rule eligible only after the final summary delivery is acknowledged.
   faqs:
     - q: "Can I sign off before every single test passes?"
       a: "Yes — this is a judgement gate. If the remaining tests are triaged/blocked and the team agrees the bash is done, approve it. It doesn't require 100% pass; that's what the sign-off is for."
     - q: "What about the failed Authenticator automation cases?"
       a: "Those were pre-assigned to you (the owner) by ui_test_status and surfaced in ui_failures. Review/triage them as part of your sign-off — they don't block the gate, but you should have ruled on them before approving."
     - q: "What stops the 2-hour chat updates?"
-      a: "Two things make the central cleanup rule eligible: the all-tests-complete tick records poll_complete, or the phase finishes. Cleanup deletes the Scout automation first and deregisters it after success."
+      a: "Two things make cleanup eligible: confirmed final-summary delivery records poll_complete, or the phase finishes. Initial bugbash_updates completion does not stop the phase-owned poller. Cleanup deletes the Scout automation first and deregisters after success."
 
 # ============================= Phase 4 · finalize =============================
 
@@ -1172,8 +1192,9 @@ finalize.release_announcement:
   where:
     - "Team be33b3e7-c501-4225-9413-3b88046f3eb3, channel 'General' 19:715820c336d3454bbd75ef0bad68e460@thread.tacv2"
   how: >
-    Runs via step-action -> microsoft_teams-SendMessageToChannel (a ROOT channel post needs the
-    microsoft_teams MCP; WorkIQ only does channel replies). To test, redirect with the `post_to`
+    Uses notification prepare (source step), claim, then the returned
+    microsoft_teams-SendMessageToChannel payload and notification result. A ROOT channel post
+    needs the microsoft_teams MCP; WorkIQ only does channel replies. To test, redirect with the `post_to`
     mock knob ({teamId, channelId}) to a test channel — keeps the post real, points it elsewhere.
     The `versions` mock overrides the shown SDK versions.
   faqs:
@@ -1397,9 +1418,10 @@ finalize.final_status_email:
     - "recipients: config/notifications.yaml status_email.recipients (authsdkrelease@, androididentity@)"
     - "template: orchestrator/status_email.py (same as the daily email)"
   how: >
-    Runs via step-action → workiq_send_email with the composed closing email; the payload names
-    `record-status-email --final` as the follow-up (stamps the day, completes this step, and
-    closes the channel). Then run `automation cleanup --release <id> --json`; delete the
+    Runs via `notification prepare --release <id> --source step --phase finalize --step final_status_email`.
+    Claim the exact snapshot and acknowledge confirmed delivery with `notification result`;
+    only then does the step complete and close the channel. Always run
+    `automation cleanup --release <id> --json`; delete the
     returned daily status automation with `m_delete_automation`, and deregister only after
     deletion succeeds. To test, set the `send_to` mock to your own address.
   faqs:
