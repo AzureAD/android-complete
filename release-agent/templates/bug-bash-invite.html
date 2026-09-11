@@ -1,7 +1,9 @@
+<meta charset="utf-8">
 <!-- Bug Bash invite template. Filled by tools/invite.render_invite (manual {{TOKEN}}
      replacement so the braces in the flags JSON are safe). Edit freely — the step always
      renders from this file. Tokens: MONTH_YEAR, WHEN, BROKER_PLAN_URL, ECS_URL, LOCAL_URL,
-     LOCAL_FLAGS_HTML, FLAGS_GROUP_URL, AUTH_PLAN_URL, AUTH_PIPELINE.
+     LOCAL_FLAGS_HTML, FLAGS_GROUP_URL, AUTH_PLAN_URL, AUTH_PIPELINE_URL.
+     UTF-8 is declared for standalone browser previews.
      NOTE: table-based + solid bgcolor (Outlook/Teams ignore CSS gradients & many
      background rules); width:100% so it fills the pane instead of squeezing left. -->
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;font-family:'Segoe UI',Arial,sans-serif;color:#201f1e;">
@@ -47,7 +49,7 @@
             <div style="font-size:16px;font-weight:700;color:#107c10;margin-bottom:8px;">&#128241; Auth App Test Pass</div>
             <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;font-size:14px;">
               <tr><td style="padding:3px 14px 3px 0;color:#605e5c;">Test Plan</td><td style="padding:3px 0;"><a href="{{AUTH_PLAN_URL}}" style="color:#107c10;">Authenticator bug-bash suite &mdash; {{MONTH_YEAR}}</a></td></tr>
-              <tr><td style="padding:3px 14px 3px 0;color:#605e5c;">Auth pipeline</td><td style="padding:3px 0;">{{AUTH_PIPELINE}}</td></tr>
+              <tr><td style="padding:3px 14px 3px 0;color:#605e5c;">Auth pipeline</td><td style="padding:3px 0;"><a href="{{AUTH_PIPELINE_URL}}" style="color:#107c10;">Authenticator &middot; ECS build</a></td></tr>
             </table>
           </td>
         </tr>

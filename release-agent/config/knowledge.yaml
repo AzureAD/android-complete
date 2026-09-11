@@ -972,7 +972,8 @@ bug_bash.send_invite:
     Composes the Bug Bash Teams meeting from the release's real artifacts and sends the
     invite. Subject '<Month Year> Release Bug Bash'; ~2h; body has the Broker section
     (test plan + ECS/Local MRWP runs + the local-flights JSON from variable group 40) and
-    the Auth App section (test suite + auth pipeline). Rendered from
+    the Auth App section (test suite + real ECS build pipeline from the latest
+    RC's auth.build.run_id, using the msazure/One URL helper). Rendered from
     templates/bug-bash-invite.html (edit the file to restyle).
   who: >
     Scout composes it automatically during `next` (a scout step → workiq_create_event).
@@ -984,8 +985,10 @@ bug_bash.send_invite:
     Weekends roll to Monday. The body and approval summary include the IANA timezone and
     UTC offset at the meeting date; start/end and timeZone must be passed unchanged.
     Other attendees see that same instant converted to their own timezone. Links come from the clone steps
-    (Broker plan, Auth suite) and Phase 2 (ECS/Local MRWP runs); flags are fetched live from
-    variable group 40. Blocks if the plans haven't been cloned yet.
+    (Broker plan, Auth suite) and Phase 2 (ECS/Local MRWP runs and the Authenticator ECS build);
+    flags are fetched live from variable group 40. Blocks if the plans haven't been cloned
+    or the Auth ECS build ID is absent/invalid or belongs to a different RC. Refresh auth_ecs,
+    rather than sending a TBD or substituting the post-build UI-test run.
     Delivery uses notification prepare (source step), claim, then notification result.
     Scheduling, the 3pm cutoff and weekend decisions use Los Angeles time regardless of
     the owner's or runner's timezone; daylight saving time is handled by the IANA zone.

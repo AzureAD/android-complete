@@ -412,6 +412,9 @@ def test_send_invite_composes_create_event():
                  "planId=714514&suiteId=3730002", "EnableBrowserSso",
                  "variableGroupId=40", "September 2026"):
         assert frag in b, frag
+    assert 'href="https://msazure.visualstudio.com/One/_build/results?buildId=301&amp;view=results"' in b
+    assert "Authenticator &middot; ECS build</a>" in b and "buildId=302" not in b
+    assert "&lt;TBD&gt;" not in b and "{{AUTH_PIPELINE" not in b
     assert "release-engineer-schedule" not in b     # Native Auth row removed
     assert out["outbound"] is True
     assert out["notification"]["expires_at"] == "2026-08-24T09:00:00-07:00"

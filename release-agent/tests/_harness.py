@@ -448,7 +448,8 @@ def _invite_state():
                       owner_email="owner@microsoft.com", timezone="America/Los_Angeles")
     st.set_step("bug_bash", "clone_plans_broker", StepState(status="done", data={"plan_id": 3730001}))
     st.set_step("bug_bash", "clone_plans_auth", StepState(status="done", data={"suite_id": 3730002}))
-    st.pipeline_runs = {"rcs": [{"rc": 1, "ecs": {"run_id": "1678863"}, "local": {"run_id": "1678864"}}]}
+    st.pipeline_runs = {"rcs": [{"rc": 1, "ecs": {"run_id": "1678863"}, "local": {"run_id": "1678864"},
+                               "auth": {"build": {"run_id": "301", "rc": 1}, "test": {"run_id": "302"}}}]}
     return st
 
 

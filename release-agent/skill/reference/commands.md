@@ -130,6 +130,12 @@ link. No case creation, forced mapping, new notification lifecycle, or automatic
 
 ## Bug Bash invite and exact chat identity
 
+The invitation template's **Auth pipeline** link opens the current RC's Authenticator
+ECS APK build (`auth.build.run_id`), supplied by `auth_ecs`. It is not a TBD and must
+match the current RC. This differs from the progress report's Auth pipeline link, which
+opens the post-build UI-test run. Missing/stale build metadata blocks invite preparation;
+refresh the owning verification step rather than inserting an arbitrary run URL.
+
 The first progress post is prepared when `bugbash_updates` is reached and delivered
 through the normal approval flow; it does not wait for a polling interval or for the meeting
 start. Only after confirmed delivery/completion is the on-demand poller provisioned.

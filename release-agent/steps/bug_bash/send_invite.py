@@ -20,6 +20,7 @@ Links come from prior steps + Phase 2 (no re-discovery):
   * Broker test plan  <- clone_plans_broker.data.plan_id   (blocks if not cloned)
   * Auth test suite   <- clone_plans_auth.data.suite_id     (blocks if not created)
   * ECS / Local MRWP  <- state.pipeline_runs latest rc      (TBD if unresolved)
+  * Auth ECS build    <- latest rc.auth.build.run_id         (blocks if missing/stale)
   * Local flags       <- ADO variable group 40 'local-flights' (live; TBD on failure)
 
 Mock knobs (mocks.local.yaml / tests):
@@ -30,14 +31,17 @@ Mock knobs (mocks.local.yaml / tests):
 from __future__ import annotations
 
 from datetime import datetime
+from html import escape
 
 from orchestrator import schedule
 from orchestrator.delivery import fingerprint
 from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.lib.context import resolve_recipients
 from steps.lib.mockctx import mock_input, MISSING
+from steps.build_verify._common import valid_id
 from tools import invite as I
 from tools import testplans as T
+from tools.pipelines.auth_app import auth_build_url
 
 ID = "send_invite"
 KIND = "scout"
@@ -135,6 +139,11 @@ def build(state):
     rc = _latest_rc(state)
     ecs = (rc.get("ecs") or {}).get("run_id")
     local = (rc.get("local") or {}).get("run_id")
+    auth_build = ((rc.get("auth") or {}).get("build") or {})
+    if (not valid_id(auth_build.get("run_id")) or not valid_id(auth_build.get("rc"))
+            or not valid_id(rc.get("rc")) or int(auth_build["rc"]) != int(rc["rc"])):
+        return Blocked("send_invite: current RC Authenticator ECS build link is missing/invalid "
+                       "or belongs to another RC; refresh auth_ecs before preparing the invitation.")
 
     # local flags (live var group 40, mockable)
     flags = mock_input("flags", MISSING)
@@ -153,7 +162,7 @@ def build(state):
         "LOCAL_FLAGS_HTML": flags_html,
         "FLAGS_GROUP_URL": I.FLAGS_GROUP_URL,
         "AUTH_PLAN_URL": I.testplan_url(T.AUTH_PLAN, auth_suite),
-        "AUTH_PIPELINE": "&lt;TBD&gt;",
+        "AUTH_PIPELINE_URL": escape(auth_build_url(auth_build["run_id"]), quote=True),
     }
     body = I.render_invite(tokens)
 
