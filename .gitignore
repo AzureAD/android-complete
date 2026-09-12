@@ -16,6 +16,8 @@ tsl
 msalcpp
 design-docs
 1ES-Pipelines
+AuthClientAndroidPipelines
+IdentityWiki.wiki
 nativeauthsample
 
 # Gradle files
@@ -60,3 +62,16 @@ ehthumbs_vista.db
 out/
 
 plugins/buildsystem/bin
+
+ICM-investigation/
+# Release Orchestrator generated run-state (per-release, ephemeral)
+.release-runs/
+.sim-runs/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+
+# Personal step-mock overrides for release-agent (local testing only)
+release-agent/mocks.local.yaml

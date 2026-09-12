@@ -1,0 +1,314 @@
+# Release Orchestrator — external dependency manifest (single source of truth).
+#
+# Lists everything the tool needs on a machine, so a DIFFERENT release engineer
+# can verify their setup is complete. `bootstrap.ps1` reads this file and checks
+# each entry (or, for MCP servers, prints them for the engineer to confirm in Scout).
+#
+# KEEP THIS UPDATED: whenever a feature or phase agent introduces a new dependency
+# (a CLI, a Python package, or an MCP server), add it here in the same change.
+#
+# Entry fields:
+#   id           unique short id
+#   name         human name
+#   type         cli | python | host | mcp
+#   required_by  which part(s) of the tool need it (traceability)
+#   check        shell command that succeeds (exit 0) when present   [cli/python/host]
+#   install      how to install it (shown when the check fails)      [cli/python/host]
+#   note         guidance (used for `mcp` entries — not shell-checkable)
+
+requirements:
+  - id: scout
+    name: "Microsoft Scout (host app)"
+    type: host
+    required_by: [everything — the skill runs inside Scout]
+    # Detected by the presence of the Scout profile dir (~/.scout). This is a soft
+    # check surfaced by `infra`; if absent, the engineer must install Scout FIRST
+    # (MCP servers can't be registered without it).
+    check: "cmd /c \"if exist \"%USERPROFILE%\\.scout\" (exit 0) else (exit 1)\""
+    install: "Install Microsoft Scout first, then re-run bootstrap. (Get it from your team's Scout distribution / the internal Scout install page.)"
+
+  - id: python
+    name: "Python 3.9+"
+    type: host
+    required_by: [engine]
+    check: "python --version"
+    install: "Install Python 3.9 or newer from https://www.python.org/downloads/"
+
+  - id: pyyaml
+    name: "PyYAML"
+    type: python
+    required_by: [engine (reads config/*.yaml)]
+    check: "python -c \"import yaml\""
+    install: "python -m pip install pyyaml"
+
+  - id: tzdata
+    name: "tzdata (IANA timezone database)"
+    type: python
+    required_by: [engine (owner-timezone due-ness + fire_at_local gating)]
+    check: "python -c \"from zoneinfo import ZoneInfo; ZoneInfo('America/Los_Angeles')\""
+    install: "python -m pip install tzdata"
+
+  - id: tzlocal
+    name: "tzlocal (detect the owner's local timezone)"
+    type: python
+    required_by: [init (captures the owner's IANA timezone)]
+    check: "python -c \"import tzlocal\""
+    install: "python -m pip install tzlocal"
+
+  - id: azure-cli
+    name: "Azure CLI (az)"
+    type: cli
+    required_by: [readiness.build_access]
+    check: "az version"
+    install: "https://learn.microsoft.com/cli/azure/install-azure-cli"
+
+  - id: azure-devops-ext
+    name: "Azure CLI 'azure-devops' extension"
+    type: cli
+    required_by: [readiness.build_access]
+    check: "az extension show --name azure-devops"
+    install: "az extension add --name azure-devops"
+
+  - id: az-login
+    name: "Signed in to Azure DevOps (az login)"
+    type: cli
+    required_by: [readiness.build_access]
+    check: "az account show"
+    install: "az login   (must have access to the release build definitions)"
+
+  - id: agency-cli
+    name: "Agency CLI (provides the ICM MCP server)"
+    type: cli
+    required_by: [readiness.oncall_now, mcp.icm]
+    check: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
+    install: "Install the Agency platform: https://aka.ms/agency (provides agency.exe under %APPDATA%\\agency)"
+
+# MCP servers the skill needs inside Scout. Unlike CLIs these live in Scout's own
+# config (~/.scout/m-mcp-servers.json) and load at startup — so `bootstrap.ps1`
+# REGISTERS any missing ones (create-if-absent, backing up the file first) and then
+# tells the engineer to RESTART Scout for them to load. Each entry:
+#   id          short id
+#   name        human name
+#   scout_key   the key to use under "servers" in m-mcp-servers.json
+#   provider    a shell check that the launcher exists (so we don't register a broken server)
+#   command     absolute launcher path (supports %APPDATA% etc.; expanded at register time)
+#   args        launcher args
+#   required_by which part(s) of the tool need it
+#   note        guidance
+mcp_servers:
+  - id: icm
+    name: "ICM MCP server (on-call / incidents)"
+    scout_key: icm
+    provider: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
+    command: "%APPDATA%\\agency\\CurrentVersion\\agency.exe"
+    args: ["mcp", "icm"]
+    required_by: [readiness.oncall_now, on-call lookups]
+    # Populated allowlist (Scout auto-discovers on a good first load, but an empty
+    # list risks a first-load DROP for command servers — so ship the tools).
+    tools:
+      - get_contact_by_id
+      - get_incident_details_by_id
+      - search_incidents_by_owning_team_id
+      - mitigate_incident
+      - get_impacted_azure_priority0_customers
+      - update_incident_severity
+      - transfer_incident
+      - get_incident_discussion_entries_and_insights
+      - get_incident_context
+      - reactivate_incident
+      - get_teams_by_public_id
+      - post_discussion_entry
+      - get_ai_summary
+      - get_teams_by_name
+      - acknowledge_incident
+      - get_team_by_id
+      - update_incident
+      - request_assistance
+      - is_specific_customer_impacted
+      - get_incident_customer_impact
+      - get_similar_incidents
+      - get_contact_by_alias
+      - get_services_by_names
+      - search_teams_or_services
+      - get_support_requests_crisit
+      - get_support_answer
+      - get_incident_location
+      - get_impacted_services_regions_clouds
+      - get_impacted_ace_customers
+      - get_on_call_schedule_by_team_id
+      - post_incident_insight
+      - get_mitigation_hints
+      - resolve_incident
+      - get_outage_high_priority_events
+      - get_my_icm_context
+      - get_impacted_s500_customers
+      - search_incidents
+      - get_impacted_subscription_count
+    note: "Provided by the Agency CLI. After registering, RESTART Scout so it loads; then Scout auto-discovers the ICM tools."
+
+  - id: kusto
+    name: "Kusto / ADX MCP server (query telemetry)"
+    scout_key: kusto
+    provider: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
+    command: "%APPDATA%\\agency\\CurrentVersion\\agency.exe"
+    args: ["mcp", "kusto"]
+    # Multi-cluster: infra appends '--known-services <json>' built from the
+    # `kusto_clusters` list below, so ALL our clusters are queryable through one
+    # MCP. Add a cluster there (data only) to make it available — no code change.
+    known_services_from: kusto_clusters
+    required_by: [monitoring/ADX dashboards, Play vitals, crash metrics, readiness.adx_access]
+    # Populated allowlist (non-empty avoids a first-load DROP; Scout still discovers
+    # any additional tools the MCP advertises). readiness.adx_access needs kusto_query.
+    tools:
+      - kusto_query
+      - kusto_command
+      - kusto_list_entities
+      - kusto_describe_database
+      - kusto_describe_database_entity
+      - kusto_sample_entity
+      - kusto_show_queryplan
+      - kusto_graph_query
+      - kusto_diagnostics
+      - kusto_ingest_inline_into_table
+      - kusto_deeplink_from_query
+      - kusto_get_shots
+      - kusto_known_services
+    note: "Provided by the Agency CLI (uvx microsoft-fabric-rti-mcp). After registering, RESTART Scout. Add clusters under kusto_clusters."
+
+  - id: teams
+    name: "Microsoft Teams MCP server (Agency — group chats + rich messaging)"
+    scout_key: teams
+    provider: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
+    command: "%APPDATA%\\agency\\CurrentVersion\\agency.exe"
+    args: ["mcp", "teams"]
+    required_by: [Teams notification gaps, group-chat creation, rich Teams messaging]
+    # CRITICAL: command-based servers read this allowlist STATICALLY — an empty list
+    # makes Scout silently DROP the server. These are the 36 Agency Teams tools
+    # (namespaced microsoft_teams-* once loaded). Keep this populated.
+    tools:
+      - ListTeams
+      - ListChats
+      - ListChannels
+      - GetTeam
+      - ListTeamMembers
+      - GetChat
+      - CreateChat
+      - DeleteChat
+      - UpdateChat
+      - GetChannel
+      - CreateChannel
+      - UpdateChannel
+      - ListChatMembers
+      - ListChannelMembers
+      - AddChatMember
+      - AddChannelMember
+      - UpdateChannelMember
+      - SendFileToChat
+      - SendFileToUser
+      - SendFileToChannel
+      - ListChannelFiles
+      - SendMessageToUser
+      - ListChatMessages
+      - ListChannelMessages
+      - SendMessageToChat
+      - SendMessageToSelf
+      - SendMessageToChannel
+      - GetChatMessage
+      - UpdateChatMessage
+      - DeleteChatMessage
+      - ReplyToChannelMessage
+      - ListChannelMessageReplies
+      - GetRichMessageFormats
+      - GetUserPresence
+      - SearchTeamsMessages
+      - SearchTeamMessagesQueryParameters
+    note: "Provided by the Agency CLI (agency mcp teams). Fills Teams gaps WorkIQ lacks (group-chat creation, add members, channel posts). After registering, RESTART Scout. NOT auto-approved — Teams writes prompt for confirmation; see docs/teams-mcp-setup.md."
+
+  - id: ecs
+    name: "ECS MCP server (Experimentation & Configuration Service)"
+    scout_key: ecs
+    provider: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
+    command: "%APPDATA%\\agency\\CurrentVersion\\agency.exe"
+    args: ["mcp", "ecs"]
+    required_by: [ECS configuration lookups, feature-flag / rollout status, experiment status checks]
+    # CRITICAL: command-based servers read this allowlist STATICALLY — an empty list
+    # makes Scout silently DROP the server. This is the READ-ONLY subset (64 of the 118
+    # ECS tools): get_*/search_*/preview_* + the no-apply validate_* (compute only). ALL 54
+    # mutating tools (create/update/delete/replace/change/set/bypass/execute/convert, plus the
+    # env-gated validators that POST to ECS) are intentionally EXCLUDED so the autonomous
+    # release agent can never change ECS. Add write tools here only with a deliberate decision.
+    tools:
+      - get_server_info
+      - health_check
+      - get_ecs_configurations
+      - get_ecs_config_by_external_id
+      - get_ecs_specific_configuration
+      - get_ecs_configuration_by_name
+      - get_ecs_configuration_state
+      - get_ecs_configuration_ownership
+      - get_ecs_configs_updated_in_range
+      - get_ecs_clients
+      - get_ecs_client_teams
+      - get_ecs_specific_client_team
+      - get_ecs_experiments
+      - get_ecs_specific_experiment
+      - get_ecs_experiment_state
+      - get_ecs_experiment_scorecard
+      - get_ecs_treatment_by_external_id
+      - get_ecs_experiment_treatments
+      - get_ecs_specific_treatment
+      - get_ecs_treatment_config
+      - get_ecs_rollout
+      - get_ecs_rollout_state
+      - get_ecs_rollout_features
+      - get_ecs_rollout_feature
+      - get_ecs_rollout_feature_config
+      - get_ecs_orchestrated_rollout
+      - get_ecs_orchestrated_rollout_history
+      - validate_ecs_orchestration_change
+      - get_ecs_default
+      - get_ecs_default_state
+      - get_ecs_default_features
+      - get_ecs_default_feature
+      - get_ecs_default_feature_config
+      - get_ecs_insights_config_version
+      - get_ecs_insights_change_events
+      - get_ecs_topology_properties
+      - get_ecs_saturation_graph
+      - get_ecs_greenlighting_status
+      - get_ecs_config_params
+      - get_ecs_filters_by_client
+      - get_ecs_ring_definitions
+      - get_ecs_rollout_policies
+      - get_ecs_rollout_policy_templates
+      - get_ecs_config_type
+      - get_ecs_configuration_config_types
+      - search_ecs_configurations
+      - search_ecs_config_keys
+      - search_ecs_filters
+      - search_ecs_user_configurations
+      - get_ecs_config_by_id
+      - get_ecs_cross_links
+      - validate_ecs_cross_link
+      - preview_ecs_cross_link_impact
+      - get_ecs_rollout_plans
+      - get_ecs_effective_rollout_policies
+      - get_ecs_orchestrated_experiment
+      - validate_ecs_experiment_orchestration_change
+      - validate_ecs_rollout_feature_change
+      - validate_ecs_rollout_feature_config_change
+      - validate_ecs_rollout_features_change
+      - validate_ecs_default_feature_change
+      - validate_ecs_default_feature_config_change
+      - validate_ecs_default_features_change
+      - validate_ecs_experiment_treatments_change
+    note: "Provided by the Agency CLI (agency mcp ecs). EntraID auth (automatic). READ-ONLY tool set (64 of 118; all ECS writes excluded). After registering, RESTART Scout so it loads; then Scout auto-discovers the ECS tools."
+
+# Kusto/ADX clusters the tool queries (data — infra wires these into the kusto MCP
+# via --known-services). Add an entry per cluster we use.
+kusto_clusters:
+  - service_uri: "https://idsharedeus2.eastus2.kusto.windows.net"
+    default_database: "d496be22d62a46b0a3cf67ea2e736fd8"
+    description: "ID shared EastUS2 (idsharedeus2) — Android release telemetry"
+
+
