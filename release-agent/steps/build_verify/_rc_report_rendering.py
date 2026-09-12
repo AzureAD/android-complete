@@ -41,16 +41,54 @@ def source_evidence_lines(model):
     return lines
 
 
-def source_evidence_html(model):
-    items = []
-    for line in source_evidence_lines(model):
-        if line.startswith("Source ") and ": https://" in line:
-            label, url = line.split(": ", 1)
-            content = f'<a href="{T.esc(url)}">{T.esc(label)}</a>'
-        else:
-            content = T.esc(line)
-        items.append(f"<li>{content}</li>")
-    return "".join(items)
+def source_result_links_html(links):
+    return " &middot; ".join(
+        f"<a href='{T.esc(link['url'])}' style='color:#0b5cad;'>"
+        f"Source {T.esc(link['run_id'])}/{T.esc(link['result_id'])}</a>"
+        for link in sorted(links, key=lambda l: (l["run_id"], l["result_id"], l["url"])))
+
+
+def auth_failure_details_html(model):
+    """Render prepared Authenticator failures beside their suite rates, never reproject evidence."""
+    facts = model.get("ui_evidence")
+    if (not isinstance(facts, dict) or not isinstance(facts.get("auth"), dict)
+            or not isinstance(facts.get("failures"), list)):
+        return "<p>Detailed Authenticator failure evidence unavailable; refresh Phase-2 Authenticator verification.</p>"
+    groups = {}
+    for failure in facts["failures"]:
+        if failure["product"] == "Authenticator":
+            groups.setdefault(failure["suite"], []).append(failure)
+    suites = ((model.get("auth") or {}).get("test") or {}).get("suites") or {}
+    sections = []
+    for name in [*AUTH_UI_SUITES, *sorted(set(groups) - set(AUTH_UI_SUITES))]:
+        failures = sorted(groups.get(name, []), key=lambda f: f["title"])
+        if not failures:
+            if (suites.get(name) or {}).get("failed", 0):
+                sections.append(
+                    f"<div style='margin:9px 0 0;font-size:12px;color:#667085;'>"
+                    f"{T.esc(name)}: no unresolved failing titles after same-title retry reconciliation. "
+                    f"The source-execution failure count and gate percentage above are unchanged.</div>")
+            continue
+        items = []
+        for failure in failures:
+            links = source_result_links_html(failure["links"])
+            items.append(
+                f"<li style='margin:4px 0;color:#475467;'>"
+                f"<span style='font-family:Consolas,ui-monospace,monospace;'>{T.esc(failure['title'])}</span>"
+                f"<div style='font-size:12px;'>{links}</div></li>")
+        report_only = (" <span style='font-size:12px;color:#0b5cad;'>"
+                       "(report-only; no test-plan case map)</span>"
+                       if any(f.get("report_only") for f in failures) else "")
+        sections.append(
+            f"<div style='margin:9px 0 0;'>"
+            f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0'><tr>"
+            f"<td style='font-size:13px;font-weight:600;color:#1d2939;'>{T.esc(name)}{report_only}</td>"
+            f"<td align='right' style='font-size:13px;color:#b42318;white-space:nowrap;'>"
+            f"<strong>{len(failures)}</strong> unresolved failing titles</td></tr></table>"
+            f"<div style='font-size:12px;color:#667085;'>All failing titles and source results below; "
+            f"gate rates above use source executions, not distinct titles.</div>"
+            f"<ul style='margin:2px 0 0 18px;padding:0;font-size:12px;'>{''.join(items)}</ul></div>")
+    return "".join(sections)
 
 
 def auth_leg_summary(model, auth) -> dict:
@@ -269,6 +307,10 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
     o = model.get("orchestrator") or {}
     vstr = format_versions(o.get("versions"), fallback="n/a")
     ch = model.get("checker") or {}
+    broker_failure_links = {
+        (f["provider"], f["suite"], f["title"]): f["links"]
+        for f in (model.get("ui_evidence") or {}).get("failures", [])
+        if f["product"] == "Broker"}
     park = ("parked at &lsquo;Remove RC Tags&rsquo;"
             if o.get("parked") else "gate cleared")
 
@@ -329,9 +371,11 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
         suite_html = ""
         for s in suites:
             sr = _fail_rate(s["failed"], s["total"])
-            items = "".join(
-                f"<li style='margin:1px 0;color:#475467;'>{T.esc(n)}</li>"
-                for n in failure_test_names(s))
+            items = []
+            for name in failure_test_names(s):
+                links = source_result_links_html(broker_failure_links.get((prov, s["name"], name), []))
+                detail = f"<div style='font-size:12px;'>{links}</div>" if links else ""
+                items.append(f"<li style='margin:1px 0;color:#475467;'>{T.esc(name)}{detail}</li>")
             tag = _chip(_CAT_LABEL.get(s.get("category", "ui"), "UI automation"), "#eef4ff", "#0b5cad")
             suite_html += (
                 f"<div style='margin:9px 0 0;'>"
@@ -344,7 +388,7 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
                 f" failed {suite_count_label(s)}</td></tr></table>"
                 f"<div style='font-size:12px;color:#667085;'>{T.esc(suite_failure_note(s))}</div>"
                 f"<ul style='margin:2px 0 0 18px;padding:0;font-size:12px;"
-                f"font-family:Consolas,ui-monospace,monospace;'>{items}</ul></div>")
+                f"font-family:Consolas,ui-monospace,monospace;'>{''.join(items)}</ul></div>")
         if failure_evidence_error(r):
             suite_html += f"<p>{T.esc(failure_evidence_error(r))}</p>"
 
@@ -424,6 +468,7 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
             f"<td align='right'>{chip}</td></tr></table>"
             f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
             f"style='margin:8px 0 0;border-top:1px solid #eef0f3;'>{rows}</table>"
+            f"{auth_failure_details_html(model)}"
             f"{link}</td></tr></table>")
 
     # Overall headline — UI-automation failures ONLY (the RC-critical bucket), across both providers.
@@ -505,15 +550,11 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
   <p style="margin:6px 0;color:#475467;">Versions: <strong>{T.esc(vstr)}</strong> &middot;
      <a href="{build_url(o.get('run_id'))}" style="color:#0b5cad;">orchestrator run {o.get('run_id')}</a></p>
 
-  <p style="margin:16px 0 2px;font-size:15px;font-weight:700;">UI-automation results</p>
+  <p style="margin:16px 0 2px;font-size:15px;font-weight:700;">Broker UI-automation results</p>
   <p style="font-size:12px;color:#667085;">{T.esc(COUNT_NOTE)}</p>
   {mrwp_card('ECS')}
   {mrwp_card('Local')}
   {_auth_card()}
-  <div style="margin:12px 0;padding:10px 12px;border:1px solid #fedf89;background:#fffaeb;">
-    <strong>Source evidence / release-owner investigation</strong>
-    <ul>{source_evidence_html(model)}</ul>
-  </div>
   {issues}
   {retry_warn}
 

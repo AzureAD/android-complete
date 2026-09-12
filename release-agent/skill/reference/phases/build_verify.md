@@ -100,6 +100,15 @@ block merely for unmapped coverage. Keep every failure by name and source link i
 standard HTML/plain/CLI report and existing release-owner `ui_failures` reminder.
 Do not mark investigations complete or send outside the existing lifecycle.
 Preserve owner notes and attestations when generated evidence changes.
+The HTML uses **Broker UI-automation results** for the MRWP section. Broker source links
+are attached to the failing titles in each suite card. The **Authenticator ECS** card
+includes its full failing-title lists and source links grouped by Firebase suite,
+immediately below the rates. There is no separate source-evidence/investigation panel
+duplicating these lists. Monthly keeps its report-only mapping label.
+These lists use already-prepared source facts; rendering must not collect/project again
+or replace aggregate gate counts with distinct-title counts. Recovered titles do not
+appear as unresolved; when retries explain aggregate failures with no unresolved titles,
+the card explains that distinction.
 
 Authenticator gates retain aggregate source-execution counts per exact gated suite
 (Passed + Failed denominator), separately from Broker. Plan projection first reconciles

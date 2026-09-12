@@ -701,6 +701,15 @@ build_verify.rc_report:
     separate. Full unresolved-failure and recovered-success lists preserve source evidence.
     The separate Authenticator Firebase gate retains its existing count/build policy.
     rc_report prepares source-only execution counts, failures, recoveries and result links.
+    The HTML heading is Broker UI-automation results. Failure titles and source-result
+    links live in their product/suite cards; the separate Source evidence / release-owner
+    investigation panel is omitted to avoid duplication. Source facts remain available
+    to the plaintext/CLI report and gate logic.
+    The Authenticator ECS HTML card lists every unresolved failing title and its source
+    result links grouped by Firebase suite directly beneath the suite rates, like the
+    Broker cards. Monthly failures retain their report-only/no-case-map label. Distinct
+    failing-title counts do not replace the source-execution counts used by the Auth gate;
+    recovered titles are not shown as unresolved failures.
     Renderers consume those prepared facts and public provider summaries; they never map
     target plans, acquire results or reconcile retries. Phase 2 does not select target configs.
   who: >
@@ -728,7 +737,7 @@ build_verify.rc_report:
     - q: "Does the sim send this email?"
       a: "No. In a sim the step is marked done without sending; only the real skill flow composes + sends it via WorkIQ."
     - q: "Does the report cover the Authenticator ECS leg too?"
-      a: "Yes. The report shows both independent gates and a dedicated Authenticator ECS section with the two Firebase suites. auth_ecs captures completed build/test evidence; rc_report decides both gates. Authenticator results do not feed the MRWP UI percentage."
+      a: "Yes. The dedicated Authenticator ECS section shows the Firebase suite rates plus every unresolved failing title and source-result link, grouped by suite. Monthly is explicitly report-only for plan mapping, not exempt from its gate. auth_ecs captures evidence; rc_report decides both gates; the renderer only presents prepared facts. Authenticator results do not feed the MRWP UI percentage."
     - q: "Do the MRWP counts represent unique tests?"
       a: "Yes, within each normalized suite and current-RC build/provider: count an exact title once, with any Passed attempt winning even before a later failure. Never merge parameterized titles, other API/device suites, ECS/Local providers or historical RC builds. The denominator is passed + failed. NA-only titles (NotExecuted, NotApplicable, None/null, Inconclusive, Warning) are excluded; real non-NA results without a pass count as one failure. The UI threshold remains 90%."
     - q: "How are repeated failures and successful retries displayed?"
