@@ -14,6 +14,8 @@ for the fixed chat id.
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+
 from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.lib import templating as T
 from steps.lib.context import release_ctx, resolve_chat_target, SELF_CHAT_ID
@@ -78,17 +80,17 @@ def _html(ctx: dict, cfg: dict) -> str:
 <p>Thanks,<br>{T.esc(ctx['owner'])}</p>"""
 
 
-def build(state):
+def build(context: StepContext):
     """Resolve the reminder into a NeedsSkill(workiq_send_chat_message), or Blocked
     if the release has no CCD."""
-    if not state.ccd:
+    if not context.release.ccd:
         return Blocked("no CCD set for this release")
 
     cfg = CONFIG
-    ctx = release_ctx(state)
+    ctx = release_ctx(context)
     html = _html(ctx, cfg)
     chat_id, target_note, prefix = resolve_chat_target(
-        state, cfg.get("live_chat_id"), cfg.get("live_chat_name", "the group chat"))
+        context, cfg.get("live_chat_id"), cfg.get("live_chat_name", "the group chat"))
 
     return NeedsSkill(
         tool="workiq_send_chat_message",

@@ -1,4 +1,5 @@
 """Shared lifecycle/delivery contract; only isolated local fixtures, never transports."""
+from tests._context import invoke as _invoke
 import copy
 import json
 import os
@@ -12,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from orchestrator import automations, cli, cli_common as C, delivery as D, mocks, notifications, schedule
-from orchestrator.engine import Orchestrator
+from tests._context import fresh_orchestrator as Orchestrator
 from orchestrator.state import ReleaseState, StepState
 from orchestrator.commands.delivery_cmd import finish
 
@@ -23,15 +24,11 @@ ROOT = Path(__file__).resolve().parents[1]
 def orch(tmp_path, monkeypatch):
     monkeypatch.setattr(mocks, "load_mocks", lambda: {})
     monkeypatch.setenv("RELEASE_AGENT_MOCKS", str(tmp_path / "missing.yaml"))
-    st = ReleaseState(release_id="2026-09", ccd="2026-09-09", readiness_signed=True,
+    st = ReleaseState(release_id="2026-09", ccd="2026-09-09",
                       owner_email="owner@example.com", timezone="America/Los_Angeles")
+    from tests._harness import _active_phase
+    _active_phase(st, "ccd")
     obj = Orchestrator(C.DEFAULT_CONFIG, st, mocks={}, as_of=datetime.fromisoformat("2026-09-09T12:00:00-07:00"))
-    for p in obj.config["phases"]:
-        if p["id"] == "ccd":
-            break
-        for s in p["steps"]:
-            st.set_step(p["id"], s["id"], StepState(status="done"))
-    st.current_phase = "ccd"
     return obj
 
 
@@ -99,6 +96,9 @@ def test_preparation_rejects_builder_ownership_mismatch(orch, monkeypatch, recor
     monkeypatch.setattr(final_reminder, "build", lambda _st: NeedsSkill(
         tool="workiq_send_email", payload={"to": ["owner@example.com"], "body": "PR reminder"},
         record_as=record_as, outbound=True))
+    orch = Orchestrator(
+        C.DEFAULT_CONFIG, orch.state, mocks=orch.mocks, as_of=orch.as_of, now=orch.now_local
+    )
     args = SimpleNamespace(phase="ccd", step="final_reminder", release=orch.state.release_id)
     before = copy.deepcopy(orch.state)
     with pytest.raises(ValueError, match="record_as"):
@@ -122,6 +122,7 @@ def test_claim_and_finalization_validate_captured_step_owner(orch):
     record["descriptor"] = copy.deepcopy(item)
     claim = D.claim(orch, item["id"], item["hash"], "A")
     D.result(orch, item["id"], claim["execution_id"], "sent", "provider receipt")
+    record = orch.state.notification_deliveries[item["id"]]
     record["descriptor"]["scope"]["step"] = "pr_reminder"
     record["descriptor"]["hash"] = D.fingerprint(
         {k: v for k, v in record["descriptor"].items() if k != "hash"})
@@ -280,7 +281,7 @@ def test_native_auth_legacy_engineer_is_not_delivery_evidence(orch):
     from orchestrator.outcomes import Blocked
     orch.state.set_step("bug_bash", "notify_native_auth",
                         StepState(status="pending", data={"engineer": "engineer@example.com"}))
-    assert isinstance(notify_native_auth.build(orch.state), Blocked)
+    assert isinstance(_invoke(notify_native_auth.build, orch.state), Blocked)
 
 
 @pytest.mark.parametrize("content", ["[]", "''", "true"])
@@ -295,9 +296,22 @@ def test_stale_claims_stop_even_if_prepared(orch, state):
     item = email(orch)
     D.offer(orch, item)
     if state == "halted":
-        orch.state.halted = True
+        orch.state.halt = {"reason": "test", "at": "2026-09-12T00:00:00Z"}
     elif state == "complete":
-        orch.state.status = "complete"
+        for phase in orch.config["phases"]:
+            if phase.get("conditional"):
+                continue
+            for step in phase["steps"]:
+                orch.state.set_step(
+                    phase["id"], step["id"], StepState(status="done")
+                )
+                if step.get("kind") == "approval_gate":
+                    orch.state.gate_decisions.append(
+                        {
+                            "step": f"{phase['id']}.{step['id']}",
+                            "decision": "approved",
+                        }
+                    )
     else:
         for s in orch.config["phases"][1]["steps"]:
             orch.state.set_step("ccd", s["id"], StepState(status="done"))
@@ -319,6 +333,49 @@ def test_two_processes_only_one_send_permission(orch, tmp_path):
         rows = [json.loads(f.result().stdout) for f in futures]
     assert sum(bool(r.get("permission_to_send")) for r in rows) == 1
     assert "payload" not in next(r for r in rows if not r["permission_to_send"])
+
+
+def test_reopen_fences_old_prepared_notification_generation(orch):
+    from argparse import Namespace
+    from orchestrator.commands.step_action import prepare_step
+
+    args = Namespace(
+        phase="ccd",
+        step="final_reminder",
+        release=orch.state.release_id,
+        param=[],
+        reserve=False,
+        executor=None,
+    )
+    old = prepare_step(args, orch.state, orch)["notifications"][0]
+    D.offer(orch, old)
+    assert orch.skip_step(
+        "ccd", "final_reminder", "cancel first generation").kind == "ran"
+    orch.reopen_step("ccd", "final_reminder", "new generation")
+    with pytest.raises(ValueError, match="generation changed"):
+        D.claim(orch, old["id"], old["hash"], "worker")
+
+
+def test_refresh_notification_cannot_be_claimed_after_phase_advances(orch):
+    for step in orch._workflow_definition().phase("ccd").steps:
+        orch.state.set_step("ccd", step.id, StepState(status="done"))
+    assert orch.current_phase_id() == "build_verify"
+    item = D.descriptor(
+        orch.state,
+        "refresh:ccd.localization:initial",
+        {
+            "kind": "refresh",
+            "phase": "ccd",
+            "step": "localization",
+            "generation": "initial",
+        },
+        "workiq_send_email",
+        {"to": ["owner@example.com"], "subject": "stale", "body": "stale"},
+    )
+    D.offer(orch, item)
+    with pytest.raises(ValueError, match="outside owning phase"):
+        D.claim(orch, item["id"], item["hash"], "worker")
+    assert not orch.state.notification_deliveries[item["id"]]["attempts"]
 
 
 def test_notify_is_read_only_and_order_independent(orch, tmp_path):
@@ -348,9 +405,17 @@ def test_cleanup_backstop_and_suspend(orch):
     entry = {"id": "old", "name": "old", "release": orch.state.release_id, "scope": "release",
              "steps": [], "cleanup_when": None}
     assert not automations.cleanup_plan(orch.state, [entry], C.DEFAULT_CONFIG)["removals"]
-    orch.state.halted = True
+    orch.state.halt = {"reason": "test", "at": "2026-09-12T00:00:00Z"}
     assert not automations.cleanup_plan(orch.state, [entry], C.DEFAULT_CONFIG)["removals"]
-    orch.state.status = "complete"
+    for phase in orch.config["phases"]:
+        if phase.get("conditional"):
+            continue
+        for step in phase["steps"]:
+            orch.state.set_step(phase["id"], step["id"], StepState(status="done"))
+            if step.get("gate"):
+                orch.state.gate_decisions.append(
+                    {"step": f"{phase['id']}.{step['id']}", "decision": "approved"}
+                )
     entries = [entry, {**entry, "id": "manual", "cleanup_when": "manual"},
                {**entry, "id": "shared", "scope": "shared"}]
     assert [r["id"] for r in automations.cleanup_plan(orch.state, entries, C.DEFAULT_CONFIG)["removals"]] == ["old"]
@@ -370,7 +435,8 @@ def test_generated_worker_contract_cannot_omit_lifecycle():
         assert spec["cleanup_when"]
         assert "notification claim --release 2026-09" in spec["prompt"]
         assert "finally" in spec["prompt"]
-        assert "deregister only after deletion succeeds" in spec["prompt"]
+        assert "permission_to_delete" in spec["prompt"]
+        assert "delete-result" in spec["prompt"]
 
 
 @pytest.mark.parametrize("fail_save_at", [1, 2])
@@ -429,11 +495,11 @@ def test_suspended_ack_defers_completion_and_skip_suppresses_it(orch):
         {"kind": "step_data", "stamp": ["pr_announced_at"]})
     D.offer(orch, item)
     claim = D.claim(orch, item["id"], item["hash"], "A")
-    orch.state.halted = True
+    orch.state.halt = {"reason": "test", "at": "2026-09-12T00:00:00Z"}
     D.result(orch, item["id"], claim["execution_id"], "sent", "provider receipt")
     assert not finish(orch, item["id"])
     assert not orch.state.get_step("ccd", "localization").data.get("pr_announced_at")
-    orch.state.halted = False
+    orch.state.halt = None
     assert finish(orch, item["id"])
     original = copy.deepcopy(orch.state.get_step("ccd", "localization"))
     assert not finish(orch, item["id"])
@@ -453,13 +519,23 @@ def test_suspended_ack_defers_completion_and_skip_suppresses_it(orch):
 
 def test_required_timeout_only_blocks_after_success(orch, tmp_path, capsys):
     from orchestrator.commands.localization import cmd_check_localization, cmd_record_localization_run
+    orch.state.set_step("ccd", "final_reminder", StepState(status="done"))
+    orch.state.set_step("ccd", "pr_reminder", StepState(status="done"))
     orch.state.set_step("ccd", "localization", StepState(
-        status="in_flight", data={"build_id": "123", "started_at": "2026-09-09T11:00:00-07:00"}))
+        status="in_flight",
+        execution={
+            "id": "localization-execution",
+            "owner": "test-worker",
+            "started_at": "2026-09-09T11:00:00-07:00",
+            "write_review": {"hash": "sha256:" + "a" * 64, "approved_by": "test-reviewer"},
+        },
+        data={"build_id": "123", "started_at": "2026-09-09T11:00:00-07:00"}))
     C.save_state(orch.state, str(tmp_path), orch.state.release_id)
     args = SimpleNamespace(runs_root=str(tmp_path), config=C.DEFAULT_CONFIG,
                            release=orch.state.release_id, as_of=None,
                            now="2026-09-09T15:00:00-07:00", complete="false", pr_status=None,
-                           logs=None, logs_file=None)
+                           logs=None, logs_file=None,
+                           execution_id="localization-execution")
     assert cmd_check_localization(args) == 0
     item = json.loads(capsys.readouterr().out)["notifications"][0]
     st, current = C.load_orch(str(tmp_path), orch.state.release_id, C.DEFAULT_CONFIG, orch.now_local)
@@ -472,23 +548,35 @@ def test_required_timeout_only_blocks_after_success(orch, tmp_path, capsys):
     D.result(current, item["id"], claim["execution_id"], "sent", "provider receipt")
     finish(current, item["id"])
     assert st.get_step("ccd", "localization").status == "blocked"
+    assert st.get_step("ccd", "localization").execution["id"] == args.execution_id
     assert not D.has_pending(current, ["ccd.localization"])
     C.save_state(st, str(tmp_path), st.release_id)
     before = Path(C.state_path(str(tmp_path), st.release_id)).read_bytes()
     args.build_id, args.started_at, args.run_url = "999", None, None
-    assert cmd_record_localization_run(args) == 0
+    args.execution_id = "unreviewed-retry"
+    assert cmd_record_localization_run(args) == 1
     assert Path(C.state_path(str(tmp_path), st.release_id)).read_bytes() == before
 
 
 def test_future_timeout_preview_cannot_authorize_early_send(orch, tmp_path, capsys, monkeypatch):
     from orchestrator.commands.localization import cmd_check_localization
+    for sid in ("final_reminder", "pr_reminder"):
+        orch.state.set_step("ccd", sid, StepState(status="done"))
     orch.state.set_step("ccd", "localization", StepState(
-        status="in_flight", data={"build_id": "123", "started_at": "2026-09-09T11:00:00-07:00"}))
+        status="in_flight",
+        execution={
+            "id": "localization-execution",
+            "owner": "test-worker",
+            "started_at": "2026-09-09T11:00:00-07:00",
+            "write_review": {"hash": "sha256:" + "a" * 64, "approved_by": "test-reviewer"},
+        },
+        data={"build_id": "123", "started_at": "2026-09-09T11:00:00-07:00"}))
     C.save_state(orch.state, str(tmp_path), orch.state.release_id)
     args = SimpleNamespace(runs_root=str(tmp_path), config=C.DEFAULT_CONFIG,
                            release=orch.state.release_id, as_of=None,
                            now="2026-09-09T15:00:00-07:00", complete="false", pr_status=None,
-                           logs=None, logs_file=None)
+                           logs=None, logs_file=None,
+                           execution_id="localization-execution")
     assert cmd_check_localization(args) == 0
     item = json.loads(capsys.readouterr().out)["notifications"][0]
     monkeypatch.setattr(schedule, "now_local", lambda zone: orch.now_local.astimezone(zone))
@@ -507,11 +595,12 @@ def test_future_timeout_preview_cannot_authorize_early_send(orch, tmp_path, caps
 @pytest.mark.parametrize("command_name", ["cmd_check_localization", "cmd_post_bugbash_update", "cmd_poll_rc"])
 def test_halted_poll_commands_never_offer_send(orch, tmp_path, capsys, monkeypatch, command_name):
     from orchestrator.commands import localization, bugbash_update, rc_poll
-    orch.state.halted = True
+    orch.state.halt = {"reason": "test", "at": "2026-09-12T00:00:00Z"}
     orch.state.set_step("build_verify", "mrwp_ecs", StepState(
         status="in_flight", data={"in_flight_since": "2026-09-01T00:00:00Z"}))
     C.save_state(orch.state, str(tmp_path), orch.state.release_id)
-    monkeypatch.setattr(Orchestrator, "run_until_gate", lambda _self: [])
+    from orchestrator.engine import Orchestrator as EngineOrchestrator
+    monkeypatch.setattr(EngineOrchestrator, "run_until_gate", lambda _self: [])
     module = next(m for m in (localization, bugbash_update, rc_poll) if hasattr(m, command_name))
     args = SimpleNamespace(runs_root=str(tmp_path), config=C.DEFAULT_CONFIG,
                            release=orch.state.release_id, as_of="2026-09-09",
@@ -649,7 +738,6 @@ def test_partner_preparation_honors_configured_closing_step(orch, monkeypatch):
     from tests._harness import _active_phase
     from orchestrator.commands import status_email_cmd
     _active_phase(orch.state, "finalize")
-    orch.state.current_phase = "finalize"
     orch.now_local = datetime.fromisoformat("2026-09-11T17:00:00-07:00")
     monkeypatch.setattr(status_email_cmd, "_broker_changes", lambda _st: [])
     args = SimpleNamespace(config=C.DEFAULT_CONFIG, release=orch.state.release_id, force=True,

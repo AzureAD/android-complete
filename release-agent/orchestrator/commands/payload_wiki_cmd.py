@@ -10,8 +10,9 @@ Honors the release's `finalize.wiki_payload` mocks (version / prs / page_name) f
 """
 from __future__ import annotations
 
-from orchestrator import cli_common as C
-from steps.lib import mockctx
+import json
+
+from orchestrator import cli_common as C, write_review as W
 from steps.finalize import wiki_payload as S
 from tools import checks
 
@@ -21,62 +22,84 @@ def _step_mocks(orch):
 
 
 def _record(orch, args, status, summary, url=None):
-    orch.record_scout_step("finalize", "wiki_payload", status, summary)
+    orch.record_scout_step(
+        "finalize", "wiki_payload", status, summary,
+        execution_id=args.execution_id)
     if url:
-        step = orch.state.get_step("finalize", "wiki_payload")
-        step.links = [{"name": "Release payload page", "url": url}]
-        step.by = "scout"
-        orch.state.set_step("finalize", "wiki_payload", step)
+        orch.annotate_step(
+            "finalize", "wiki_payload",
+            links=[{"name": "Release payload page", "url": url}],
+            by="scout")
     C.save_state(orch.state, args.runs_root, args.release)
     C.emit(args.runs_root, args.release, f"[wiki_payload] {summary}", kind="step", log_text=summary)
 
 
-def cmd_create_payload_wiki(args):
-    st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    with mockctx.active(_step_mocks(orch)):
-        ok, plan, detail = S.compose_payload(st)
+def plan_payload_wiki(orch):
+    ok, plan, detail = S.compose_payload(
+        orch.context("finalize", S.ID, inputs=_step_mocks(orch)))
     if not ok:
-        print(f"Could not compose the payload page: {detail}")
-        return 1
-
+        raise ValueError(f"Could not compose the payload page: {detail}")
     org, project, wiki = S.CONFIG["org"], S.CONFIG["project"], S.CONFIG["wiki"]
     path = plan["page_path"]
     exists = checks.wiki_page_exists(org, project, wiki, path)
-    action = "update" if exists else "create"     # None (unknown) -> create (create is exist-safe)
-
-    print(f"Release payload page — {plan['page_name']}")
-    print(f"  wiki:    {wiki}  ({org}/{project})")
-    print(f"  path:    {path}")
-    print(f"  action:  {action.upper()}")
-    print(f"  version: {plan['version']}   ·   merged PRs: {plan['pr_count']}")
-    print(f"  link:    {plan['url']}")
-
-    if not args.execute:
-        print("\n----- PAGE CONTENT (preview) -----")
-        print(plan["content"])
-        print("----- end preview -----")
-        print("\n(dry-run — nothing written. Re-run with --execute to create/update the page.)")
-        return 0
-
+    if type(exists) is not bool:
+        raise ValueError("Payload page existence is unknown; no write can be reviewed.")
+    before = {"exists": exists}
     if exists:
-        okg, _content, etag, dg = checks.get_wiki_page(org, project, wiki, path)
-        if not okg:
-            _record(orch, args, "attention", f"wiki_payload: couldn't read the page to update ({dg})")
-            print(f"\nRead-for-update failed: {dg}")
-            return 2
-        res = checks.update_wiki_page(org, project, wiki, path, plan["content"], etag)
-    else:
-        res = checks.create_wiki_page(org, project, wiki, path, plan["content"])
+        ok, content, etag, detail = checks.get_wiki_page(org, project, wiki, path)
+        if (not ok or not isinstance(content, str) or not isinstance(etag, str)
+                or not etag.strip().strip('"') or etag.strip().strip('"') == "*"):
+            raise ValueError(f"Payload update needs readable content and a nonempty exact ETag: {detail}")
+        before.update(content=content, etag=etag)
+    return W.WritePlan(
+        S.WRITE_COMMAND, {k: v for k, v in plan.items() if k != "content"},
+        (W.WriteOperation(
+            "update_wiki_page" if exists else "create_wiki_page",
+            {"org": org, "project": project, "wiki": wiki, "path": path},
+            {"content": plan["content"]}, before),))
 
-    if not res.ok:
-        _record(orch, args, "attention", f"wiki_payload: {action} failed — {res.detail}")
-        print(f"\n{action.capitalize()} failed: {res.detail}")
+
+def cmd_create_payload_wiki(args):
+    _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    try:
+        if args.dry_run and (args.execute or args.reserve):
+            raise ValueError("--dry-run cannot be combined with --execute/--reserve.")
+        if not (args.execute or args.reserve):
+            print(json.dumps(W.preview(orch, "finalize", S.ID, plan_payload_wiki(orch)), indent=2))
+            return 0
+        authorization = W.authorize(args, orch, "finalize", S.ID, lambda: plan_payload_wiki(orch))
+    except ValueError as exc:
+        print(json.dumps({"error": str(exc), "permission_to_execute": False}))
+        return 1
+    if authorization.reserved_only:
+        W.print_reservation(authorization)
+        return 0
+    operation = authorization.plan.operations[0]
+    target = operation.target
+    args.execution_id = authorization.execution_id
+    try:
+        authorization.validate()
+        if operation.kind == "update_wiki_page":
+            result = checks.update_wiki_page(
+                **target, content=operation.content["content"], etag=operation.preconditions["etag"])
+        else:
+            result = checks.create_wiki_page(
+                **target, content=operation.content["content"], require_absent=True)
+        if not result.ok:
+            raise ValueError(result.detail)
+        ok, content, _, detail = checks.get_wiki_page(**target)
+        if not ok or content != operation.content["content"]:
+            raise ValueError(f"Payload readback differs or is unavailable: {detail}")
+        authorization.validate()
+    except Exception as exc:
+        _record(orch, args, "attention",
+                f"wiki_payload: write result uncertain — {exc}; inspect the page before owner resolution.")
+        print(json.dumps({"error": str(exc)}))
         return 2
-
-    summary = (f"wiki_payload: {action}d '{plan['page_name']}' — App Version {plan['version']}, "
-               f"{plan['pr_count']} merged PR(s). Link: {plan['url']}")
-    _record(orch, args, "pass", summary, url=plan["url"])
-    print(f"\n{action.capitalize()}d payload page. {plan['url']}")
+    info = authorization.plan.parameters
+    summary = f"wiki_payload: verified '{info['page_name']}' — App Version {info['version']}."
+    _record(orch, args, "pass", summary, url=info["url"])
+    print(summary)
     return 0
 
 
@@ -89,4 +112,6 @@ def register(sub):
     p.add_argument("--dry-run", action="store_true", help="Preview only (default behavior)")
     p.add_argument("--execute", action="store_true",
                    help="Perform the create-or-update write. Default is dry-run.")
+    p.add_argument("--execution-id", help="Active reserve-step execution id")
+    W.add_arguments(p)
     p.set_defaults(func=cmd_create_payload_wiki)

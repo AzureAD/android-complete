@@ -1,4 +1,5 @@
 """Invite Auth pipeline resolves the current ECS build, never TBD or the UI-test run."""
+from tests._context import invoke as _invoke
 from copy import deepcopy
 from html import escape
 
@@ -13,7 +14,7 @@ from tests._harness import _invite_state
 
 def render(state):
     with mockctx.active({"now": "2026-09-11T10:00:00-07:00", "flags": "{}"}):
-        return S.build(state)
+        return _invoke(S.build, state)
 
 
 def test_invite_uses_latest_rc_ecs_build_not_previous_or_post_build_tests():
@@ -42,7 +43,7 @@ def test_missing_or_stale_auth_build_blocks_before_flags_read(monkeypatch, build
     state = _invite_state()
     state.pipeline_runs["rcs"][-1]["auth"]["build"] = build
     monkeypatch.setattr(I, "local_flights", lambda *a: pytest.fail("No flags read for invalid Auth metadata"))
-    result = S.build(state)
+    result = _invoke(S.build, state)
     assert result.kind == "blocked" and "auth_ecs" in result.reason
 
 
@@ -55,7 +56,7 @@ def test_missing_current_auth_does_not_fall_back_to_previous_rc():
 
 def test_standalone_invitation_declares_utf8_before_non_ascii_header():
     with mockctx.active({"now": "2026-09-11T14:59:38.059-07:00", "flags": "{}"}):
-        result = S.build(_invite_state())
+        result = _invoke(S.build, _invite_state())
     assert result.kind == "needs_skill"
     body = result.payload["body"]
     assert body.encode("utf-8")[:1024].startswith(b'<meta charset="utf-8">')

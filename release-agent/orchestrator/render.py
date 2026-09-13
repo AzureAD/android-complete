@@ -21,6 +21,10 @@ def _cell(text: str) -> str:
 
 
 def _execution_guidance(execution: dict) -> str:
+    if execution.get("approval"):
+        return (f"External approval owned by {execution['owner']} (execution {execution['id']}). "
+                "Use approve-orchestrator-gate --execution-id with this identity to reconcile; "
+                "never resend an attempted approval or clear it with done/reopen.")
     return (f"Reserved by {execution['owner']} (execution {execution['id']}). Do not repeat the action. "
             "Wait if active; if interrupted, stop the original runner and review the outcome "
             "with the owner before telling Scout to mark done or reopen.")
@@ -234,6 +238,7 @@ _STATE_LABEL = {
     "readiness_gate": "Entry gate — checklist pending",
     "blocked": "Blocked",
     "halted": "Halted",
+    "cancelled": "Cancelled",
     "complete": "Complete",
 }
 _PHASE_ICON = {"done": "✅", "current": "⏸", "pending": "⬜", "scheduled": "🗓"}
@@ -308,7 +313,17 @@ def status_view(r: dict) -> str:
     lines.append("")
 
     # 1) Next-action headline — the single most important thing.
-    if r.get("halted"):
+    invariant_errors = [
+        issue["message"] for issue in r.get("invariant_violations", [])
+        if issue.get("severity") == "error"
+    ]
+    if invariant_errors:
+        lines.append("⛔ **State integrity requires owner review.** No new work is authorized.")
+        lines.extend(f"- {_cell(message)}" for message in invariant_errors)
+        lines.append("Preserve execution ownership; use verified recovery rather than guessing success or resending.")
+    elif r.get("status") == "cancelled":
+        lines.append("⛔ **Release cancelled.** Clear `skip-release` before continuing.")
+    elif r.get("halted"):
         rsn = f" — {r['halt_reason']}" if r.get("halt_reason") else ""
         lines.append(f"⛔ **HALTED**{rsn}. Nothing advances until you resume.")
     elif r["blocked"]:
@@ -330,8 +345,14 @@ def status_view(r: dict) -> str:
                          f"(Phase {_phase_num(r, a['phase'])} · {a['phase_name']}). Mark it done when complete.")
     elif r["gate"]:
         g = r["gate"]
-        lines.append(f"⏸ **Next: your decision** — approve or deny **{g['step_name']}** "
-                     f"(Phase {_phase_num(r, g['phase'])} · {g['phase_name']}).")
+        if g.get("kind") == "denied":
+            lines.append(f"⛔ **Gate denied — {g['step_name']}.** "
+                         f"{g.get('reason') or 'Owner review is required before reconsidering.'}")
+        else:
+            approval = (f"approve with `{g['approval_command']}`"
+                        if g.get("approval_command") else "approve")
+            lines.append(f"⏸ **Next: your decision** — {approval} or deny **{g['step_name']}** "
+                         f"(Phase {_phase_num(r, g['phase'])} · {g['phase_name']}).")
     elif r["status"] == "complete":
         lines.append("✔ **Release complete.** All phases done.")
     elif r["status"] == "not_started":
@@ -504,7 +525,8 @@ def _digest_model(r: dict):
       * The FIRST push is a phase opening (Phase 0 at CCD-7). Nothing before it.
       * While a phase is open (due) with outstanding steps, report status daily.
     """
-    if (r.get("halted") or r.get("blocked") or r.get("status") == "complete"
+    if (r.get("halted") or r.get("blocked")
+            or r.get("status") in ("complete", "cancelled")
             or not r.get("readiness_signed")):
         return None                            # setup / paused — no push
     ap = r.get("active_phase")
@@ -519,9 +541,10 @@ def _digest_model(r: dict):
 
     hold = None
     if r.get("gate"):
-        hold = ("gate", r["gate"]["step_name"])
+        gate = r["gate"]
+        hold = (gate.get("kind", "gate"), gate["step_name"], gate.get("reason"))
     elif r.get("action") and not r["action"].get("execution"):
-        hold = ("action", r["action"]["step_name"])
+        hold = ("action", r["action"]["step_name"], None)
     human_all = [o for o in ap.get("outstanding", []) if o["gate"] or o["reminder"]]
     completed_all = ap.get("completed") or []
     # Phase-2 RC one-liner — only while a phase that opts in (show_pipeline_runs) is
@@ -569,9 +592,13 @@ def notification(r: dict) -> str:
         lines.append(f"Completed ({m['completed_total']}):")
         lines += [f"  ✓ {name}" for name in m["completed"]]
     if m["hold"]:
-        kind, name = m["hold"]
-        lines.append(f"Waiting on your decision: {name} (approve or deny)." if kind == "gate"
-                     else f"Action needed now: {name} (do it, then mark done).")
+        kind, name, reason = m["hold"]
+        if kind == "denied":
+            lines.append(f"Gate denied: {name} — {reason}. Reopen it with a reason to reconsider.")
+        elif kind == "gate":
+            lines.append(f"Waiting on your decision: {name} (approve or deny).")
+        else:
+            lines.append(f"Action needed now: {name} (do it, then mark done).")
     for s in m["executions"]:
         lines.append(f"{s['name']}: {_execution_guidance(s['execution'])}")
     if m["human"]:
@@ -598,9 +625,15 @@ def notification_markdown(r: dict) -> str:
         blocks.append("\n".join([f"**Completed ({m['completed_total']}):**"]
                                 + [f"- ✓ {n}" for n in m["completed"]]))
     if m["hold"]:
-        kind, name = m["hold"]
-        blocks.append(f"**Waiting on your decision:** {name} (approve or deny)." if kind == "gate"
-                      else f"**Action needed now:** {name} (do it, then mark done).")
+        kind, name, reason = m["hold"]
+        if kind == "denied":
+            blocks.append(
+                f"**Gate denied:** {name} — {reason}. Reopen it with a reason to reconsider."
+            )
+        elif kind == "gate":
+            blocks.append(f"**Waiting on your decision:** {name} (approve or deny).")
+        else:
+            blocks.append(f"**Action needed now:** {name} (do it, then mark done).")
     for s in m["executions"]:
         blocks.append(f"**{s['name']}:** {_execution_guidance(s['execution'])}")
     if m["human"]:
@@ -660,6 +693,10 @@ def notification_html(r: dict) -> str:
     hold = r.get("gate") or r.get("action")
     hold_name = _esc(hold["step_name"]) if hold else ""
     hold_kind = "approve or deny" if r.get("gate") else "do it, then mark it done"
+    if hold and hold.get("kind") == "denied":
+        hold_kind = _esc(
+            f"denied — {hold.get('reason') or 'reopen with a reason to reconsider'}"
+        )
     if hold and hold.get("execution"):
         hold_kind = _esc(_execution_guidance(hold["execution"]))
 

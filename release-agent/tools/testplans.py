@@ -140,14 +140,23 @@ def get_plan(plan_id, timeout=60):
                    "rootSuiteId": root.get("id"), "description": j.get("description", "")}, "")
 
 
-def get_suite(plan_id, suite_id, timeout=60):
-    """(ok, {id,name,suiteType}, detail) for a suite under a plan."""
-    url = f"{ORG}/{PROJECT}/_apis/testplan/Plans/{plan_id}/suites/{suite_id}?{_API}"
+def get_suite(plan_id, suite_id, timeout=60, *, org=ORG, project=PROJECT):
+    """Return the identity-defining fields for one suite under a plan."""
+    url = f"{org}/{project}/_apis/testplan/Plans/{plan_id}/suites/{suite_id}?{_API}"
     ok, j, d = P._ado_rest_get(url, timeout)
     if not ok:
         return (False, None, d)
-    return (True, {"id": j.get("id"), "name": j.get("name"),
-                   "suiteType": j.get("suiteType")}, "")
+    return (
+        True,
+        {
+            "id": j.get("id"),
+            "name": j.get("name"),
+            "suiteType": j.get("suiteType"),
+            "parentSuite": j.get("parentSuite"),
+            "queryString": j.get("queryString"),
+        },
+        "",
+    )
 
 
 def find_child_suite_by_name(plan_id, parent_suite_id, name, timeout=90):
@@ -165,6 +174,106 @@ def find_child_suite_by_name(plan_id, parent_suite_id, name, timeout=90):
             if str(parent.get("id")) == str(parent_suite_id):
                 return (True, s.get("id"), "")
     return (True, None, "")
+
+
+def _normalized_query(value):
+    return " ".join(str(value or "").split())
+
+
+def validate_auth_query_suite(
+    suite_id,
+    name,
+    query,
+    timeout=90,
+    *,
+    org=ORG,
+    project=PROJECT,
+    plan_id=AUTH_PLAN,
+    parent_suite_id=AUTH_ROOT_SUITE,
+):
+    """Verify the exact Authenticator query-suite identity before adoption."""
+    ok, info, detail = get_suite(
+        plan_id, suite_id, timeout, org=org, project=project
+    )
+    if not ok:
+        return False, None, detail
+    parent = (info or {}).get("parentSuite") or {}
+    problems = []
+    if str(info.get("id")) != str(suite_id):
+        problems.append("suite id")
+    if (info.get("name") or "").strip() != str(name).strip():
+        problems.append("name")
+    if info.get("suiteType") != "dynamicTestSuite":
+        problems.append("suite type")
+    if str(parent.get("id")) != str(parent_suite_id):
+        problems.append("parent suite")
+    if _normalized_query(info.get("queryString")) != _normalized_query(query):
+        problems.append("query")
+    if problems:
+        return (
+            False,
+            info,
+            "suite identity mismatch: " + ", ".join(problems),
+        )
+    return True, info, ""
+
+
+def find_auth_query_suite(
+    name,
+    query,
+    timeout=90,
+    *,
+    org=ORG,
+    project=PROJECT,
+    plan_id=AUTH_PLAN,
+    parent_suite_id=AUTH_ROOT_SUITE,
+):
+    """Find exactly one valid direct child by name; duplicates fail closed."""
+    want = (name or "").strip().lower()
+    url = f"{org}/{project}/_apis/testplan/Plans/{plan_id}/suites?{_API}"
+    ok, suites, detail = P._ado_rest_get_all(url, timeout)
+    if not ok:
+        return False, None, detail
+    matches = [
+        suite
+        for suite in suites
+        if (suite.get("name") or "").strip().lower() == want
+        and str(((suite.get("parentSuite") or {}).get("id")))
+        == str(parent_suite_id)
+    ]
+    if len(matches) > 1:
+        return (
+            False,
+            None,
+            "multiple same-named Authenticator suites found: "
+            + ", ".join(str(suite.get("id")) for suite in matches),
+        )
+    if not matches:
+        return True, None, ""
+    suite_id = matches[0].get("id")
+    valid, info, validation = validate_auth_query_suite(
+        suite_id,
+        name,
+        query,
+        timeout,
+        org=org,
+        project=project,
+        plan_id=plan_id,
+        parent_suite_id=parent_suite_id,
+    )
+    return (True, info, "") if valid else (False, None, validation)
+
+
+def auth_suite_create_definitely_absent(detail):
+    """True only when the write primitive proves no POST reached ADO."""
+    text = str(detail or "")
+    return (
+        text == "az CLI not found"
+        or text.startswith("failed to get token:")
+        or text.startswith("AUTH: could not get an ADO token")
+        or text.startswith("AUTH: HTTP ")
+        or text.startswith(("HTTP 400", "HTTP 404", "HTTP 409"))
+    )
 
 
 # ---------------------------------------------------------------- writes
@@ -374,10 +483,12 @@ def build_broker_plan(dest_name, timeout=120, *, source, description, on_created
     return (True, pid, "")
 
 
-def _find_suite_by_name(plan_id, name, timeout=90):
+def _find_suite_by_name(
+    plan_id, name, timeout=90, *, org=ORG, project=PROJECT
+):
     """The id of the suite named `name` in `plan_id` (case-insensitive), or None. (ok, sid, detail)."""
     ok, suites, d = P._ado_rest_get_all(
-        f"{ORG}/{PROJECT}/_apis/testplan/Plans/{plan_id}/suites?{_API}", timeout)
+        f"{org}/{project}/_apis/testplan/Plans/{plan_id}/suites?{_API}", timeout)
     if not ok:
         return (False, None, d)
     want = (name or "").strip().lower()
@@ -387,7 +498,17 @@ def _find_suite_by_name(plan_id, name, timeout=90):
     return (True, None, "")
 
 
-def _set_points_outcome(plan_id, suite_id, point_ids, outcome, timeout=90, chunk=40):
+def _set_points_outcome(
+    plan_id,
+    suite_id,
+    point_ids,
+    outcome,
+    timeout=90,
+    chunk=40,
+    *,
+    org=ORG,
+    project=PROJECT,
+):
     """Set the manual outcome ('Passed' | 'Failed' | 'NotApplicable') on many test points at
     once. The classic points PATCH accepts a comma-separated id list (one shared outcome), so we
     chunk to keep the URL length safe — turning hundreds of single PATCHes into a handful.
@@ -395,7 +516,7 @@ def _set_points_outcome(plan_id, suite_id, point_ids, outcome, timeout=90, chunk
     ids = [str(i) for i in point_ids]
     for i in range(0, len(ids), chunk):
         batch = ",".join(ids[i:i + chunk])
-        url = (f"{ORG}/{PROJECT}/_apis/test/Plans/{plan_id}/Suites/{suite_id}"
+        url = (f"{org}/{project}/_apis/test/Plans/{plan_id}/Suites/{suite_id}"
                f"/points/{batch}?api-version=5.0")
         ok, _j, d = P._ado_rest_send(url, "PATCH", {"outcome": outcome}, timeout)
         if not ok:
@@ -425,7 +546,15 @@ def _point_validation_error(points, *, require_config):
     return ""
 
 
-def fill_ui_automation_results(plan_id, verdicts, timeout=120, *, suite_id=None):
+def fill_ui_automation_results(
+    plan_id,
+    verdicts,
+    timeout=120,
+    *,
+    suite_id=None,
+    org=ORG,
+    project=PROJECT,
+):
     """Fill the plan's flat "UI Automation (Android Broker)" suite from per-config verdicts
     ({case_id: {(flight, variant): 'Passed'|'Failed'|'NotApplicable'}} — from
     pipelines.project_mrwp_ui_results).
@@ -437,7 +566,9 @@ def fill_ui_automation_results(plan_id, verdicts, timeout=120, *, suite_id=None)
     evidence/config mappings leave points untouched (including manual cases).
     Returns counts, mapping diagnostics and completed-write counts, also on a partial failure."""
     verdicts = {int(k): v for k, v in (verdicts or {}).items()}
-    oks, sid, d = _find_suite_by_name(plan_id, BROKER_UI_SUITE_NAME, timeout)
+    oks, sid, d = _find_suite_by_name(
+        plan_id, BROKER_UI_SUITE_NAME, timeout, org=org, project=project
+    )
     if not oks:
         return (False, None, d)
     if not sid:
@@ -445,7 +576,7 @@ def fill_ui_automation_results(plan_id, verdicts, timeout=120, *, suite_id=None)
     if suite_id is not None and int(sid) != int(suite_id):
         return False, None, "Broker UI suite identity changed; refresh clone_plans_broker before filling"
     okp, pts, dp = P._ado_rest_get_all(
-        f"{ORG}/{PROJECT}/_apis/test/Plans/{plan_id}/Suites/{sid}/points?api-version=5.0", timeout)
+        f"{org}/{project}/_apis/test/Plans/{plan_id}/Suites/{sid}/points?api-version=5.0", timeout)
     if not okp:
         return (False, None, dp)
     error = _point_validation_error(pts, require_config=True)
@@ -488,7 +619,15 @@ def fill_ui_automation_results(plan_id, verdicts, timeout=120, *, suite_id=None)
             batch = [{"point_id": int(p["id"]), "case_id": int(p["testCase"]["id"]),
                       "config_id": int(p["configuration"]["id"]), "outcome": outcome}
                      for p in pts if p["id"] in point_ids]
-            oko, do = _set_points_outcome(plan_id, sid, point_ids, outcome, timeout)
+            oko, do = _set_points_outcome(
+                plan_id,
+                sid,
+                point_ids,
+                outcome,
+                timeout,
+                org=org,
+                project=project,
+            )
             if not oko:
                 summary["incomplete_outcome"] = outcome
                 summary["uncertain_points"] = batch
@@ -500,7 +639,15 @@ def fill_ui_automation_results(plan_id, verdicts, timeout=120, *, suite_id=None)
     return (True, summary, "")
 
 
-def fill_auth_ui_results(plan_id, suite_id, case_outcomes, timeout=120):
+def fill_auth_ui_results(
+    plan_id,
+    suite_id,
+    case_outcomes,
+    timeout=120,
+    *,
+    org=ORG,
+    project=PROJECT,
+):
     """Fill the Authenticator bug-bash suite's points from per-case AUTOMATED outcomes
     ({case_id: 'Passed'|'Failed'} — supplied by the ui_test_status mapping owner).
 
@@ -511,7 +658,7 @@ def fill_auth_ui_results(plan_id, suite_id, case_outcomes, timeout=120):
     failed_case_ids} — `failed_case_ids` is what the step reassigns to the release owner."""
     outcomes = {int(k): v for k, v in (case_outcomes or {}).items()}
     okp, pts, dp = P._ado_rest_get_all(
-        f"{ORG}/{PROJECT}/_apis/test/Plans/{plan_id}/Suites/{suite_id}/points?api-version=5.0",
+        f"{org}/{project}/_apis/test/Plans/{plan_id}/Suites/{suite_id}/points?api-version=5.0",
         timeout)
     if not okp:
         return (False, None, dp)
@@ -541,7 +688,15 @@ def fill_auth_ui_results(plan_id, suite_id, case_outcomes, timeout=120):
         if point_ids:
             batch = [{"point_id": int(p["id"]), "case_id": int(p["testCase"]["id"]), "outcome": outcome}
                      for p in pts if p["id"] in point_ids]
-            oko, do = _set_points_outcome(plan_id, suite_id, point_ids, outcome, timeout)
+            oko, do = _set_points_outcome(
+                plan_id,
+                suite_id,
+                point_ids,
+                outcome,
+                timeout,
+                org=org,
+                project=project,
+            )
             if not oko:
                 summary.update(incomplete_outcome=outcome, uncertain_points=batch)
                 return False, summary, f"setting {len(point_ids)} auth points -> {outcome} failed: {do}"
@@ -552,12 +707,24 @@ def fill_auth_ui_results(plan_id, suite_id, case_outcomes, timeout=120):
     return True, summary, ""
 
 
-def create_auth_query_suite(name, query, timeout=90):
+def create_auth_query_suite(
+    name,
+    query,
+    timeout=90,
+    *,
+    org=ORG,
+    project=PROJECT,
+    plan_id=AUTH_PLAN,
+    parent_suite_id=AUTH_ROOT_SUITE,
+):
     """CREATE a query-based (dynamic) test suite `name` under the Authenticator plan's
     root suite, selecting the given WIQL. Returns (ok, new_suite_id, detail)."""
-    url = f"{ORG}/{PROJECT}/_apis/testplan/Plans/{AUTH_PLAN}/suites?api-version=7.1-preview.1"
+    url = (
+        f"{org}/{project}/_apis/testplan/Plans/{plan_id}/suites?"
+        "api-version=7.1-preview.1"
+    )
     body = {"suiteType": "dynamicTestSuite", "name": name,
-            "parentSuite": {"id": AUTH_ROOT_SUITE}, "queryString": query}
+            "parentSuite": {"id": parent_suite_id}, "queryString": query}
     ok, j, d = P._ado_rest_send(url, "POST", body, timeout)
     if not ok:
         return (False, None, d)
@@ -569,9 +736,9 @@ def create_auth_query_suite(name, query, timeout=90):
 
 # ---------------------------------------------------------------- links
 
-def plan_web_url(plan_id, suite_id=None):
+def plan_web_url(plan_id, suite_id=None, *, org=ORG, project=PROJECT):
     """A human 'define' URL for a plan (optionally a suite)."""
-    u = f"{ORG}/{PROJECT}/_testPlans/define?planId={plan_id}"
+    u = f"{org}/{project}/_testPlans/define?planId={plan_id}"
     if suite_id:
         u += f"&suiteId={suite_id}"
     return u

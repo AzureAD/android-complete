@@ -1,4 +1,5 @@
 """Owner boundaries and durable publication, using synthetic evidence and local state."""
+from tests._context import context as _context, invoke as _invoke
 from copy import deepcopy
 
 import pytest
@@ -60,7 +61,7 @@ def test_capture_and_report_prepare_no_target_mappings(monkeypatch):
         monkeypatch.setattr(module, "project_mrwp_ui_results", forbidden)
     captured = capture(rows={P.MONTHLY_REPORT_ONLY: [("monthly_failure", "Failed")]})
     assert set(captured) == {"evidence", "suites"}
-    model = R.rc_report_model(st)
+    model = R.rc_report_model(_context(st))
     assert not model["ui_evidence"]["issues"]
     monthly = next(f for f in model["ui_evidence"]["failures"] if f.get("report_only"))
     assert monthly["title"] == "monthly_failure" and monthly["links"]
@@ -69,7 +70,7 @@ def test_capture_and_report_prepare_no_target_mappings(monkeypatch):
 
 def test_renderers_only_render_prepared_facts(monkeypatch):
     st = state()
-    model = R.rc_report_model(st)
+    model = R.rc_report_model(_context(st))
     gate, auth = R.rc_ui_gate(model), R.auth_report_gate(model)
     block_upstream(monkeypatch)
     monkeypatch.setattr(R, "validate_snapshot_tests", forbidden)
@@ -92,7 +93,7 @@ def test_distribution_progress_use_result_without_raw_evidence(monkeypatch):
         rc[slot].pop("tests")
         rc[slot].pop("failed_suites")
     with mockctx.active(distribution_inputs()):
-        outcome, report = D.inspect_distribution(st, oof=[])
+        outcome, report = D.inspect_distribution(_context(st), oof=[])
         assert outcome.kind == "done"
     assert set(report["_targets"]) == {"B:10", "A:200", "A:300"}
     assert set(report["owner_triage"]) == {"A:200"} and report["auth_excluded_automated"] == 2
@@ -100,16 +101,17 @@ def test_distribution_progress_use_result_without_raw_evidence(monkeypatch):
     seen = []
     monkeypatch.setattr(bugbash, "gather_progress",
                         lambda *a, **kw: (seen.append(kw) is None, {}, ""))
-    assert BU.gather(st)[0] and seen == [{
+    assert BU.gather(_context(st))[0] and seen == [{
         "auto_failed_ids": [200], "auth_automated_ids": [100, 200],
-        "broker_ui_result": ui_results.completed_result(st)["broker"]}]
+        "broker_ui_result": ui_results.completed_result(_context(st))["broker"]}]
 
 
 @pytest.mark.parametrize("damage", ["missing", "incomplete", "failed_ids", "target", "point", "duplicate"])
 def test_missing_partial_malformed_receipt_never_becomes_empty_work(monkeypatch, damage):
     st = state()
     publish(st)
-    data = st.get_step("bug_bash", U.ID).data
+    record = st.get_step("bug_bash", U.ID)
+    data = record.data
     result = data["result"]
     if damage == "missing":
         del data["result"]
@@ -123,14 +125,15 @@ def test_missing_partial_malformed_receipt_never_becomes_empty_work(monkeypatch,
         result["auth"]["applied_points"][0]["point_id"] = None
     else:
         result["auth"]["applied_points"].append(deepcopy(result["auth"]["applied_points"][0]))
+    st.set_step("bug_bash", U.ID, record)
     block_upstream(monkeypatch)
     monkeypatch.setattr(bugbash, "gather_progress", forbidden)
     with pytest.raises(ValueError):
-        ui_results.completed_result(st)
+        ui_results.completed_result(_context(st))
     with mockctx.active(distribution_inputs()):
-        assert D.build(st, oof=[]).kind == "blocked"
+        assert _invoke(D.build, st, oof=[]).kind == "blocked"
     assert not st.get_step("bug_bash", D.ID).data.get("plan")
-    assert not BU.gather(st)[0]
+    assert not BU.gather(_context(st))[0]
 
 
 @pytest.mark.parametrize("change", [
@@ -141,7 +144,7 @@ def test_all_authoritative_binding_changes_reject_result_and_preview(monkeypatch
     st = state()
     publish(st)
     with mockctx.active(distribution_inputs()):
-        assert D.build(st, oof=[]).kind == "done"
+        assert _invoke(D.build, st, oof=[]).kind == "done"
     rc = st.pipeline_runs["rcs"][-1]
     if change == "release":
         st.release_id = "2000-02"
@@ -152,41 +155,52 @@ def test_all_authoritative_binding_changes_reject_result_and_preview(monkeypatch
     elif change in ("apk", "test"):
         rc["auth"]["build" if change == "apk" else "test"]["run_id"] = 999
     elif change in ("broker_plan", "broker_suite"):
-        st.get_step("bug_bash", "clone_plans_broker").data[
+        plan = st.get_step("bug_bash", "clone_plans_broker")
+        plan.data[
             "plan_id" if change == "broker_plan" else "ui_suite_id"] = 999
+        st.set_step("bug_bash", "clone_plans_broker", plan)
     elif change == "auth_plan":
         monkeypatch.setattr(T, "AUTH_PLAN", 999)
     elif change == "auth_suite":
-        st.get_step("bug_bash", "clone_plans_auth").data["suite_id"] = 999
+        plan = st.get_step("bug_bash", "clone_plans_auth")
+        plan.data["suite_id"] = 999
+        st.set_step("bug_bash", "clone_plans_auth", plan)
     elif change == "ecs_inflight":
         rc["ecs"]["complete"] = False
     else:
         rc["auth"]["test"]["complete"] = False
     with pytest.raises(ValueError):
-        ui_results.completed_result(st)
+        ui_results.completed_result(_context(st))
     with mockctx.active(distribution_inputs()):
-        assert D.build(st).kind == "blocked"
-    assert not BU.gather(st)[0]
+        assert _invoke(D.build, st).kind == "blocked"
+    assert not BU.gather(_context(st))[0]
 
 
 def test_same_source_new_fill_requires_distribution_review():
+    from tests._context import fresh_orchestrator, inspect
+    from tests.test_distribution import _review_hash
+
     st = state()
+    fresh_orchestrator(C.DEFAULT_CONFIG, st, mocks={})
     publish(st)
-    with mockctx.active(distribution_inputs()):
-        _, old = D.inspect_distribution(st, oof=[])
-    prior_result = ui_results.completed_result(st)
+    inputs = distribution_inputs()
+    with mockctx.active(inputs):
+        inspect(D.inspect_distribution, st, oof=[])
+    old = _review_hash(st, inputs)
+    prior_result = ui_results.completed_result(_context(st))
     publish(st)
-    current = ui_results.completed_result(st)
+    current = ui_results.completed_result(_context(st))
     assert prior_result["id"] != current["id"] and prior_result["binding"] == current["binding"]
-    with mockctx.active(distribution_inputs()):
-        _, fresh = D.inspect_distribution(st)
-    assert old["review_hash"] != fresh["review_hash"] and "plan" not in st.get_step("bug_bash", D.ID).data
+    with mockctx.active(inputs):
+        inspect(D.inspect_distribution, st)
+    fresh = _review_hash(st, inputs)
+    assert old != fresh and "plan" not in st.get_step("bug_bash", D.ID).data
 
 
 def test_crash_before_write_durably_invalidates_previous_receipt(monkeypatch, tmp_path):
     st = state()
     publish(st)
-    old_id = ui_results.completed_result(st)["id"]
+    old_id = ui_results.completed_result(_context(st))["id"]
     path = tmp_path / st.release_id / "release-state.json"
     st.save(str(path))
 
@@ -194,7 +208,7 @@ def test_crash_before_write_durably_invalidates_previous_receipt(monkeypatch, tm
         persisted = ReleaseState.load(str(path))
         assert persisted.get_step("bug_bash", U.ID).data["result"]["id"] != old_id
         with pytest.raises(ValueError, match="missing/partial/invalidated"):
-            ui_results.completed_result(persisted)
+            ui_results.completed_result(_context(persisted))
         raise SystemExit("simulated process termination")
 
     monkeypatch.setattr(T, "fill_ui_automation_results", crash)
@@ -202,23 +216,23 @@ def test_crash_before_write_durably_invalidates_previous_receipt(monkeypatch, tm
     with C.state_lock(str(tmp_path), st.release_id):
         current = C.load_state(str(tmp_path), st.release_id)
         with pytest.raises(SystemExit):
-            U.build(current)
+            _invoke(U.build, current)
     persisted = ReleaseState.load(str(path))
     assert persisted.get_step("bug_bash", U.ID).data["result"]["stage"] == "broker_write"
-    assert not BU.gather(persisted)[0]
+    assert not BU.gather(_context(persisted))[0]
 
 
-def test_failed_initial_checkpoint_prevents_all_provider_work(monkeypatch):
+def test_failed_initial_checkpoint_allows_validation_but_prevents_provider_writes(
+        monkeypatch):
     st = state()
     publish(st)
-    block_upstream(monkeypatch)
     monkeypatch.setattr(T, "fill_ui_automation_results", forbidden)
     monkeypatch.setattr(T, "fill_auth_ui_results", forbidden)
     st._checkpoint = lambda: (_ for _ in ()).throw(OSError("disk unavailable"))
     with pytest.raises(OSError, match="disk unavailable"):
-        U.build(st)
-    with pytest.raises(ValueError):
-        ui_results.completed_result(st)
+        _invoke(U.build, st)
+    # Checkpoint failure restores memory and prevents any later provider operation.
+    assert ui_results.completed_result(_context(st))["status"] == "complete"
 
 
 def test_unexpected_writer_error_propagates_after_durable_invalidation(monkeypatch, tmp_path):
@@ -228,9 +242,9 @@ def test_unexpected_writer_error_propagates_after_durable_invalidation(monkeypat
     st._checkpoint = lambda: st.save(str(path))
     monkeypatch.setattr(T, "fill_ui_automation_results", forbidden)
     with pytest.raises(AssertionError, match="must not run here"):
-        U.build(st)
+        _invoke(U.build, st)
     with pytest.raises(ValueError, match="missing/partial/invalidated"):
-        ui_results.completed_result(ReleaseState.load(str(path)))
+        ui_results.completed_result(_context(ReleaseState.load(str(path))))
 
 
 def test_failed_completion_checkpoint_invalidates_in_memory_and_disk(monkeypatch, tmp_path):
@@ -245,11 +259,12 @@ def test_failed_completion_checkpoint_invalidates_in_memory_and_disk(monkeypatch
     st._checkpoint = checkpoint
     monkeypatch.setattr(T, "fill_ui_automation_results", broker_fill)
     monkeypatch.setattr(T, "fill_auth_ui_results", auth_fill)
-    monkeypatch.setattr(distribution, "set_assigned_to", lambda *a: (True, ""))
-    assert U.build(st).kind == "blocked"
+    monkeypatch.setattr(
+        distribution, "set_assigned_to", lambda *a, **kw: (True, ""))
+    assert _invoke(U.build, st).kind == "blocked"
     for copy in (st, ReleaseState.load(str(path))):
         with pytest.raises(ValueError):
-            ui_results.completed_result(copy)
+            ui_results.completed_result(_context(copy))
         assert "completion checkpoint failed" in copy.get_step("bug_bash", U.ID).data["result"]["error"]
 
 
@@ -258,7 +273,7 @@ def test_partial_auth_write_preserves_diagnostics_without_publishing(monkeypatch
     publish(st)
     monkeypatch.setattr(T, "fill_ui_automation_results", broker_fill)
 
-    def partial(plan, suite, outcomes):
+    def partial(plan, suite, outcomes, **_coordinates):
         _, summary, _ = auth_fill(plan, suite, outcomes)
         summary["uncertain_points"] = [p for p in summary["applied_points"] if p["outcome"] == "Failed"]
         summary["applied_points"] = [p for p in summary["applied_points"] if p["outcome"] == "Passed"]
@@ -267,11 +282,11 @@ def test_partial_auth_write_preserves_diagnostics_without_publishing(monkeypatch
 
     monkeypatch.setattr(T, "fill_auth_ui_results", partial)
     monkeypatch.setattr(distribution, "set_assigned_to", forbidden)
-    assert U.build(st).kind == "blocked"
+    assert _invoke(U.build, st).kind == "blocked"
     data = st.get_step("bug_bash", U.ID).data
     assert data["summary"]["applied_points"] and data["auth"]["mapping"]["uncertain_points"]
     assert data["result"]["investigations"]["report_only_or_unmapped_auth"]
-    assert not BU.gather(st)[0]
+    assert not BU.gather(_context(st))[0]
 
 
 def test_only_applied_failures_enter_progress_or_assignments(monkeypatch):
@@ -281,26 +296,31 @@ def test_only_applied_failures_enter_progress_or_assignments(monkeypatch):
     monkeypatch.setattr(T, "fill_ui_automation_results",
                         lambda plan, verdicts, **kw: broker_fill(plan, {}, **kw))
     monkeypatch.setattr(T, "fill_auth_ui_results",
-                        lambda plan, suite, outcomes: auth_fill(plan, suite, {100: "Passed"}))
+                        lambda plan, suite, outcomes, **_coordinates: auth_fill(
+                            plan, suite, {100: "Passed"}))
     monkeypatch.setattr(distribution, "set_assigned_to", forbidden)
-    assert U.build(st).kind == "done"
-    result = ui_results.completed_result(st)
+    assert _invoke(U.build, st).kind == "done"
+    result = ui_results.completed_result(_context(st))
     assert result["auth"]["automated_case_ids"] == [100, 200]
     assert result["auth"]["failed_case_ids"] == result["broker"]["failed_case_ids"] == []
     assert {f["title"] for f in result["investigations"]["auth"]} == {"test_200_fail", "monthly_failure"}
     assert "test_500_unmatched" in st.get_step("bug_bash", "ui_failures").note
-    assert BU._auto_failed_ids(st) == []
+    assert BU._auto_failed_ids(_context(st)) == []
 
 
 def test_assignment_failure_is_nonblocking_and_not_claimed_as_success(monkeypatch):
     st = state()
     monkeypatch.setattr(T, "fill_ui_automation_results", broker_fill)
     monkeypatch.setattr(T, "fill_auth_ui_results", auth_fill)
-    monkeypatch.setattr(distribution, "set_assigned_to", lambda *a: (False, "assignment rejected"))
-    outcome = U.build(st)
+    monkeypatch.setattr(
+        distribution,
+        "set_assigned_to",
+        lambda *a, **kw: (False, "assignment rejected"),
+    )
+    outcome = _invoke(U.build, st)
     assert outcome.kind == "done" and "reassignment incomplete" in outcome.note
     assert "assigned to owner" not in outcome.note
-    assert ui_results.completed_result(st)["auth"]["failed_case_ids"] == [200]
+    assert ui_results.completed_result(_context(st))["auth"]["failed_case_ids"] == [200]
     data = st.get_step("bug_bash", U.ID).data["auth"]
     assert data["failed_assigned_to_owner"] == 0 and data["assignment_errors"]
 
@@ -310,23 +330,25 @@ def test_success_shaped_writer_summary_cannot_publish(monkeypatch, missing):
     st = state()
     monkeypatch.setattr(T, "fill_ui_automation_results", broker_fill)
 
-    def incomplete(plan, suite, outcomes):
+    def incomplete(plan, suite, outcomes, **_coordinates):
         ok, summary, detail = auth_fill(plan, suite, outcomes)
         del summary[missing]
         return ok, summary, detail
 
     monkeypatch.setattr(T, "fill_auth_ui_results", incomplete)
-    monkeypatch.setattr(distribution, "set_assigned_to", lambda *a: (True, ""))
-    assert U.build(st).kind == "blocked"
+    monkeypatch.setattr(
+        distribution, "set_assigned_to", lambda *a, **kw: (True, ""))
+    assert _invoke(U.build, st).kind == "blocked"
     with pytest.raises(ValueError, match="missing/partial/invalidated"):
-        ui_results.completed_result(st)
+        ui_results.completed_result(_context(st))
 
 
 def test_auth_writer_reports_completed_and_uncertain_batches(monkeypatch):
     points = [{"id": 1, "testCase": {"id": 100}}, {"id": 2, "testCase": {"id": 200}}]
     monkeypatch.setattr(P, "_ado_rest_get_all", lambda *a: (True, points, ""))
     monkeypatch.setattr(T, "_set_points_outcome",
-                        lambda p, s, ids, outcome, t: (outcome == "Passed", "partial batch"))
+                        lambda p, s, ids, outcome, t, **kw:
+                        (outcome == "Passed", "partial batch"))
     ok, summary, detail = T.fill_auth_ui_results(900, 902, {100: "Passed", 200: "Failed"})
     assert not ok and "partial batch" in detail
     assert summary["target"] == {"plan_id": 900, "suite_id": 902}

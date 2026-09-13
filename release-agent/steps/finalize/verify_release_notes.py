@@ -23,14 +23,15 @@ Mock knobs (mocks.local.yaml / tests):
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+
 from orchestrator.outcomes import Done, Blocked, InProgress
-from steps.lib.agent import legacy_run
-from steps.lib.mockctx import mock_input, MISSING
-from tools import prs as PR
+from steps.lib.mockctx import MISSING
 from steps.finalize import integ_prs as IP
 
 ID = "verify_release_notes"
 KIND = "agent"
+EFFECT_MODE = "read_only"
 
 # (repo key in integ_prs.CONFIG, which state.versions value supplies its version, label).
 TARGETS = [
@@ -48,11 +49,11 @@ MOCKABLE = {
 }
 
 
-def _versions(state):
-    v = mock_input("versions", MISSING)
+def _versions(context):
+    v = context.input("versions", MISSING)
     if v is not MISSING and v:
         return dict(v)
-    return dict(getattr(state, "versions", {}) or {})
+    return dict(getattr(context.release, "versions", {}) or {})
 
 
 def _gh_repo(key):
@@ -63,9 +64,9 @@ def _tag(version):
     return f"v{version}"
 
 
-def _check(key, version):
+def _check(context, key, version):
     """(ok, published, url, detail) — mock-first, else a live `gh release view`."""
-    inj = mock_input("results", MISSING)
+    inj = context.input("results", MISSING)
     if inj is not MISSING and isinstance(inj, dict) and key in inj:
         r = str(inj[key]).lower()
         if r == "published":
@@ -73,7 +74,7 @@ def _check(key, version):
         if r == "missing":
             return (True, False, None, "injected missing")
         return (False, False, None, "injected error")
-    ok, pub, info, detail = PR.gh_release_exists(_gh_repo(key), _tag(version))
+    ok, pub, info, detail = context.services.repositories.gh_release_exists(_gh_repo(key), _tag(version))
     return (ok, pub, (info or {}).get("url"), detail)
 
 
@@ -84,8 +85,8 @@ def _release_url(key, version):
     return f"{base}/releases/tag/{_tag(version)}"
 
 
-def build(state):
-    versions = _versions(state)
+def build(context: StepContext):
+    versions = _versions(context)
     missing_v = [lbl for _k, vk, lbl in TARGETS if not versions.get(vk)]
     if missing_v:
         return Blocked(
@@ -96,7 +97,7 @@ def build(state):
     links, published, pending, errors = [], [], [], []
     for key, vkey, label in TARGETS:
         version = versions.get(vkey)
-        ok, pub, url, detail = _check(key, version)
+        ok, pub, url, detail = _check(context, key, version)
         links.append({"name": f"{label} {version} GitHub release",
                       "url": url or _release_url(key, version)})
         tag = f"{label} {version}"
@@ -121,6 +122,3 @@ def build(state):
             links=links, poll_in_min=CONFIG["poll_in_min"])
     return Done(
         f"All three GitHub release notes are published: {', '.join(published)}.", links=links)
-
-
-run = legacy_run(build)

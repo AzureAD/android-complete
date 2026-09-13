@@ -30,10 +30,6 @@ from orchestrator import cli_common as C, delivery as D
 POLL_INTERVAL_MIN = 30
 NUDGE_AFTER_HOURS = 6
 
-# The verify steps whose run can be in-flight (checker/orchestrator resolve instantly).
-_RC_VERIFY_STEPS = ("mrwp_ecs", "mrwp_local", "auth_ecs")
-
-
 def _parse_iso(s):
     try:
         return datetime.fromisoformat(str(s).replace("Z", "+00:00"))
@@ -50,10 +46,9 @@ def _elapsed_hours(since_iso, now):
     return max(0.0, (now - since).total_seconds() / 3600.0)
 
 
-def _nudge_payload(st, sid, hrs: int) -> dict:
+def _nudge_payload(st, label, hrs: int) -> dict:
     """A SHORT courtesy heads-up (not the full RC report) — the re-triggered RC is taking
     a while but Scout is still polling; no action needed yet."""
-    label = {"mrwp_ecs": "MRWP (ECS)", "mrwp_local": "MRWP (Local)"}.get(sid, sid)
     subject = f"[Release {st.release_id}] Re-triggered RC still running after ~{hrs}h"
     body = (
         f"Heads-up: the re-triggered {label} run for release {st.release_id} has been "
@@ -87,26 +82,30 @@ def cmd_poll_rc(args):
     C.save_state(st, args.runs_root, args.release)
     scope = {"kind": "phase", "phase": "build_verify"}
     reason = D.scope_reason(orch, scope)
+    selection = orch.scheduling()
     if reason and not D.phase_done(orch, "build_verify"):
-        print(_json.dumps({"decision": "blocked" if st.halted or st.blocked else "idle",
+        print(_json.dumps({"decision": "blocked"
+                           if selection.status in ("halted", "blocked", "cancelled")
+                           else "idle",
                            "note": reason, "notifications": []}))
         return 0
 
-    inflight = None
-    for sid in _RC_VERIFY_STEPS:
-        s = st.get_step("build_verify", sid)
-        if s.status == "in_flight" and not reason:
-            inflight = (sid, s)
-            break
+    inflight = next(
+        ((item.step, st.get_step(item.step.phase_id, item.step.id))
+         for item in selection.runnable
+         if item.step.phase_id == "build_verify"
+         and selection.step(item.step.phase_id, item.step.id).status == "in_flight"),
+        None) if not reason else None
 
     if inflight:
-        sid, s = inflight
+        definition, s = inflight
+        sid = definition.id
         elapsed = _elapsed_hours(s.data.get("in_flight_since"), now)
         decision = {"decision": "waiting", "step": sid,
                     "elapsed_hours": round(elapsed, 2), "poll_in_min": POLL_INTERVAL_MIN}
         if elapsed >= NUDGE_AFTER_HOURS and not s.data.get("nudged_at"):
             decision["decision"] = "nudge"
-            decision["nudge"] = _nudge_payload(st, sid, int(elapsed))
+            decision["nudge"] = _nudge_payload(st, definition.name, int(elapsed))
             scope.update(step=sid, statuses=["in_flight"],
                          step_matches={"in_flight_since": s.data.get("in_flight_since")},
                          release_matches={"owner_email": st.owner_email})
@@ -124,18 +123,18 @@ def cmd_poll_rc(args):
             C.save_state(st, args.runs_root, args.release)
     else:
         rc = st.get_step("build_verify", "rc_report")
-        phase = next(p for p in orch.config["phases"] if p["id"] == "build_verify")
-        outstanding = [s["id"] for s in phase["steps"] if not st.is_done("build_verify", s["id"])]
+        outstanding = [item.definition.id for item in selection.steps
+                       if item.definition.phase_id == "build_verify" and not item.complete]
         blocked = next((sid for sid in outstanding
                         if st.get_step("build_verify", sid).status == "blocked"), None)
         pending = orch.scout_pending_steps() if orch.current_phase_id() == "build_verify" else []
-        if st.halted or st.blocked:
+        if selection.status in ("halted", "blocked", "cancelled"):
             decision = {"decision": "blocked", "note": "Release is halted or blocked."}
+        elif pending:
+            decision = {"decision": "ready", "phase": "build_verify", "steps": pending}
         elif blocked:
             decision = {"decision": "blocked", "step": blocked,
                         "note": st.get_step("build_verify", blocked).note}
-        elif pending:
-            decision = {"decision": "ready", "phase": "build_verify", "steps": pending}
         elif not outstanding:
             decision = {"decision": "resolved",
                         "status": "overridden" if rc.status == "skipped" or rc.by == "human" else "passed",

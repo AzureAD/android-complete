@@ -4,6 +4,9 @@ Resolve event ID -> join URL -> onlineMeeting.chatInfo.threadId. Topic searches 
 bare pasted IDs are not evidence. Downstream senders only consume a current binding.
 """
 from __future__ import annotations
+from dataclasses import asdict
+
+from orchestrator.step_context import StepContext, thaw
 
 from orchestrator import delivery
 from orchestrator.outcomes import NeedsSkill, Blocked
@@ -14,12 +17,12 @@ ID = "activate_chat"
 KIND = "scout"
 
 
-def stored_chat_id(state):
+def stored_chat_id(context):
     """Return only a chat bound to the still-current sent invitation."""
-    step = state.get_step("bug_bash", ID)
+    step = context.evidence.step("bug_bash", ID)
     data = step.data or {}
     try:
-        invite = delivered_invite(state)
+        invite = delivered_invite(context)
         verified = data.get("meeting") or {}
         if (step.status != "done" or data.get("invite") != invite
                 or not meeting_chat_id(data.get("chat_id"))
@@ -33,29 +36,29 @@ def stored_chat_id(state):
     return data["chat_id"]
 
 
-def chat_state_matches(state):
+def chat_state_matches(context):
     """Freeze chat and invite sources in the existing notification scope."""
-    if not stored_chat_id(state):
+    if not stored_chat_id(context):
         raise ValueError("Missing/stale invitation-to-chat binding; run activate_chat")
-    invite = delivered_invite(state)
+    invite = delivered_invite(context)
     return [{"path": path, "hash": delivery.fingerprint(value)} for path, value in (
-        (["steps", "bug_bash.activate_chat"], state.steps["bug_bash.activate_chat"]),
-        (["steps", "bug_bash.send_invite"], state.steps["bug_bash.send_invite"]),
+        (["steps", "bug_bash.activate_chat"], thaw(asdict(context.evidence.steps["bug_bash.activate_chat"]))),
+        (["steps", "bug_bash.send_invite"], thaw(asdict(context.evidence.steps["bug_bash.send_invite"]))),
         (["notification_deliveries", invite["notification_id"]],
-         state.notification_deliveries[invite["notification_id"]]),
-        (["target_month"], state.target_month), (["ccd"], state.ccd), (["owner_email"], state.owner_email),
+         context.evidence.notification_deliveries[invite["notification_id"]]),
+        (["target_month"], context.release.target_month), (["ccd"], context.release.ccd), (["owner_email"], context.release.owner_email),
     )]
 
 
-def build(state):
-    if not state.ccd:
+def build(context: StepContext):
+    if not context.release.ccd:
         return Blocked("activate_chat: no CCD set - cannot identify the Bug Bash meeting.")
     try:
-        invite = delivered_invite(state)
+        invite = delivered_invite(context)
     except (ValueError, TypeError, KeyError, AttributeError) as exc:
         return Blocked(f"activate_chat: {exc}")
     instructions = (
-        f"Run `record-bugbash-chat --release {state.release_id}` as the invite organizer. "
+        f"Run `record-bugbash-chat --release {context.release.release_id}` as the invite organizer. "
         f"It reads event {invite['event_id']} from the sent calendar receipt, resolves its "
         "join URL to onlineMeeting.chatInfo.threadId, verifies the chat and stores the binding. "
         "Never search by topic or accept a pasted ID as proof. If Teams has not exposed the "
@@ -65,8 +68,8 @@ def build(state):
     )
     return NeedsSkill(
         tool="record-bugbash-chat",
-        payload={"release": state.release_id,
-                 "followup_command": f"record-bugbash-chat --release {state.release_id}",
+        payload={"release": context.release.release_id,
+                 "followup_command": f"record-bugbash-chat --release {context.release.release_id}",
                  "_gather": {"meeting_topic": invite["subject"], "event_id": invite["event_id"],
                              "instructions": instructions}},
         record_as=ID,

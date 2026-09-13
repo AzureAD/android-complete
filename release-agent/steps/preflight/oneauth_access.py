@@ -19,13 +19,48 @@ Mock knobs (mocks.local.yaml / tests):
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+
 from orchestrator.outcomes import Done, Blocked
-from steps.lib.agent import legacy_run
-from steps.lib.mockctx import mock_input, MISSING
+from steps.lib.mockctx import MISSING
 from tools import checks
 
+from orchestrator.authority import WriteOperation
+
+WRITES = (WriteOperation.ONEAUTH_WRITE_ACCESS,)
 ID = "oneauth_access"
 KIND = "agent"
+EFFECT_MODE = "idempotent"
+EFFECT_RECOVERY = "frozen"
+
+
+def prepare_effect(context):
+    execution = context.evidence.step("preflight", ID).execution or {}
+    if isinstance(execution.get("effect_input"), dict):
+        return dict(execution["effect_input"])
+    fail = context.input("fail", MISSING)
+    if fail is not MISSING:
+        return Blocked(f"oneauth_access: {fail}", links=_links())
+    alias = _alias(context)
+    if not alias:
+        return Blocked("oneauth_access: couldn't resolve your alias (az account) to build the "
+                       "'user/<alias>/…' probe branch — run `az login`.", links=_links())
+    return {
+        "alias": alias,
+        "org": checks.ONEAUTH_ORG,
+        "project": checks.ONEAUTH_PROJECT,
+        "repo": checks.ONEAUTH_REPO,
+    }
+
+
+def execute(context: StepContext):
+    frozen = context.effect.execution["effect_input"]
+    return _check_access(context,
+        frozen["alias"],
+        org=frozen["org"],
+        project=frozen["project"],
+        repo=frozen["repo"],
+    )
 
 CONFIG = {
     "repo_url": checks.ONEAUTH_REPO_URL,
@@ -45,30 +80,35 @@ def _links():
             {"name": "Request OneAuth R/W (access package)", "url": CONFIG["access_package"]}]
 
 
-def _alias():
-    a = mock_input("alias", MISSING)
+def _alias(context):
+    a = context.input("alias", MISSING)
     if a is not MISSING:
         return a
-    user = checks.current_az_user()
+    user = context.services.identities.current_az_user()
     return ((user or "").split("@")[0]) or None
 
 
-def build(state):
-    fail = mock_input("fail", MISSING)
-    if fail is not MISSING:
-        return Blocked(f"oneauth_access: {fail}", links=_links())
+def build(context: StepContext):
+    if context.effect is None:
+        raise ValueError("Access probing requires an authorized effect context")
+    return execute(context)
 
-    alias = _alias()
-    if not alias:
-        return Blocked("oneauth_access: couldn't resolve your alias (az account) to build the "
-                       "'user/<alias>/…' probe branch — run `az login`.", links=_links())
 
-    access = mock_input("access", MISSING)
+def _check_access(context,
+    alias,
+    *,
+    org=checks.ONEAUTH_ORG,
+    project=checks.ONEAUTH_PROJECT,
+    repo=checks.ONEAUTH_REPO,
+):
+    access = context.input("access", MISSING)
     if access is not MISSING:
         granted = str(access).lower() == "granted"
         detail = f"injected access={access}"
     else:
-        granted, detail = checks.oneauth_write_access(alias)
+        granted, detail = context.effect.services.oneauth_write_access(
+            alias, org=org, project=project, repo=repo
+        )
 
     if granted:
         return Done(
@@ -80,6 +120,3 @@ def build(state):
         f"Request R/W via the access package (link below), then RERUN this step once access is "
         f"granted — the release can't push its OneAuth PR without it.",
         links=_links())
-
-
-run = legacy_run(build)

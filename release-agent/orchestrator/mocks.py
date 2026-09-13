@@ -26,7 +26,7 @@ import os
 
 import yaml
 
-from phases.stub_runner import StepResult
+from orchestrator.outcomes import Done, Blocked
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # release-agent/
 _DONE = {"done", "pass", "ok", "complete"}
@@ -51,11 +51,10 @@ def load_mocks(path: str | None = None) -> dict:
             if isinstance(v, dict) and k != "version"}
 
 
-def stepresult_for(mocks: dict, phase_id: str, step_id: str):
-    """Return the mocked StepResult for a step, or None if it isn't mocked.
+def outcome_for(mocks: dict, phase_id: str, step_id: str) -> Done | Blocked | None:
+    """Return a canonical outcome for a step, or None if it isn't mocked.
 
-    done  → StepResult(ok=True,  ...)  → the engine records it complete.
-    blocked → StepResult(ok=False, ...) → the engine holds it for the owner.
+    done marks the step complete; blocked holds it for the owner.
     """
     spec = mocks.get(f"{phase_id}.{step_id}")
     if not isinstance(spec, dict):
@@ -63,10 +62,10 @@ def stepresult_for(mocks: dict, phase_id: str, step_id: str):
     outcome = str(spec.get("outcome", "")).strip().lower()
     if outcome in _DONE:
         note = spec.get("note") or f"[MOCK] {phase_id}.{step_id} forced pass"
-        return StepResult(ok=True, action=str(note), by="mock")
+        return Done(note=str(note), by="mock")
     if outcome in _BLOCK:
         reason = spec.get("reason") or spec.get("note") or f"[MOCK] {phase_id}.{step_id} forced block"
-        return StepResult(ok=False, action=str(reason), by="mock")
+        return Blocked(reason=str(reason), by="mock")
     return None
 
 

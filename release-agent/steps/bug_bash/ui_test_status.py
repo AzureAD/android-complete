@@ -28,17 +28,143 @@ Mock knobs (mocks.local.yaml / tests):
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+from copy import deepcopy
+from dataclasses import replace
+import hashlib
+import json
+
 from orchestrator.outcomes import Done, Blocked
+from orchestrator.evidence import StepData, UIFailureReminder
 from steps.build_verify._common import latest_rc
-from steps.lib.agent import legacy_run
-from steps.lib.mockctx import mock_input, MISSING
+from steps.lib.mockctx import MISSING
 from tools import testplans as T
 from tools import pipelines as P
-from tools import distribution as D
 from steps.bug_bash import ui_results
 
+from orchestrator.authority import OwnStepData, UIFailureContribution, WriteOperation
+
+EVIDENCE = (OwnStepData(), UIFailureContribution("bug_bash.ui_failures"))
+WRITES = (WriteOperation.FILL_AUTH_UI_RESULTS, WriteOperation.FILL_UI_AUTOMATION_RESULTS,
+          WriteOperation.SET_ASSIGNED_TO)
 ID = "ui_test_status"
 KIND = "agent"
+EFFECT_MODE = "idempotent"
+EFFECT_RECOVERY = "match_current"
+
+
+def prepare_effect(context):
+    fail = context.input("fail", MISSING)
+    if fail is not MISSING:
+        return Blocked(f"ui_test_status: {fail}")
+    plan_id = _broker_plan_id(context)
+    if not plan_id:
+        return Blocked(
+            "ui_test_status: the Broker test plan hasn't been cloned yet "
+            "(clone_plans_broker) — run that first so the UI Automation suite exists."
+        )
+    rc = latest_rc(context)
+    ok, projection, detail = P.project_mrwp_ui_results(rc)
+    if not ok:
+        return Blocked(f"ui_test_status: {detail}.")
+    ok, auth_projection, detail = P.project_auth_ui_results(rc)
+    if not ok:
+        return Blocked(
+            f"ui_test_status: {detail}. No test-plan writes attempted."
+        )
+    if not _auth_suite_id(context):
+        return Blocked(
+            "ui_test_status: Authenticator release suite missing; run "
+            "clone_plans_auth first."
+        )
+    try:
+        current_binding = ui_results.current_binding(context)
+    except ValueError as exc:
+        return Blocked(f"ui_test_status: {exc}")
+    auth = rc.get("auth") or {}
+    binding = {
+        "release": context.release.release_id,
+        "rc": rc.get("rc"),
+        "ecs": (rc.get("ecs") or {}).get("run_id"),
+        "local": (rc.get("local") or {}).get("run_id"),
+        "auth_build": (auth.get("build") or {}).get("run_id"),
+        "auth_test": (auth.get("test") or {}).get("run_id"),
+        "broker_plan": _broker_plan_id(context),
+        "auth_suite": _auth_suite_id(context),
+    }
+    frozen_broker = _freeze_broker_projection(projection)
+    frozen_auth = _freeze_auth_projection(auth_projection)
+    evidence = {
+        "binding": binding,
+        "pipeline_runs": context.evidence.pipeline_runs,
+        "current_binding": current_binding,
+        "broker_projection": frozen_broker,
+        "auth_projection": frozen_auth,
+    }
+    digest = hashlib.sha256(
+        json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:16]
+    return {
+        "binding": current_binding,
+        "broker_plan_id": plan_id,
+        "evidence_sha256": digest,
+        "broker_projection": frozen_broker,
+        "auth_projection": frozen_auth,
+        "rc": rc,
+        "owner_email": context.release.owner_email,
+        "coordinates": {
+            "test_plan_org": T.ORG,
+            "test_plan_project": T.PROJECT,
+        },
+    }
+
+
+def _freeze_broker_projection(projection):
+    frozen = deepcopy(projection)
+    frozen["verdicts"] = [
+        {
+            "case_id": case_id,
+            "flight": key[0],
+            "suite": key[1],
+            "outcome": outcome,
+        }
+        for case_id, results in projection["verdicts"].items()
+        for key, outcome in results.items()
+    ]
+    return frozen
+
+
+def _thaw_broker_projection(frozen):
+    projection = deepcopy(frozen)
+    verdicts = {}
+    for item in projection.pop("verdicts", []):
+        verdicts.setdefault(int(item["case_id"]), {})[
+            (item["flight"], item["suite"])
+        ] = item["outcome"]
+    projection["verdicts"] = verdicts
+    return projection
+
+
+def _freeze_auth_projection(projection):
+    frozen = deepcopy(projection)
+    frozen["cases"] = [
+        {"case_id": case_id, **case}
+        for case_id, case in projection["cases"].items()
+    ]
+    return frozen
+
+
+def _thaw_auth_projection(frozen):
+    projection = deepcopy(frozen)
+    projection["cases"] = {
+        int(case.pop("case_id")): case
+        for case in projection.get("cases", [])
+    }
+    return projection
+
+
+def execute(context: StepContext):
+    return _run_effect(context, thaw(context.effect.execution["effect_input"]))
 
 ORG = T.ORG
 PROJECT = T.PROJECT
@@ -48,44 +174,54 @@ MOCKABLE = {
 }
 
 
-def _broker_plan_id(state):
+def _broker_plan_id(context):
     """The release's cloned Broker plan id (from clone_plans_broker), or None."""
-    return (state.get_step("bug_bash", "clone_plans_broker").data or {}).get("plan_id")
+    return (context.evidence.step("bug_bash", "clone_plans_broker").data or {}).get("plan_id")
 
 
-def _auth_suite_id(state):
+def _auth_suite_id(context):
     """The release's Authenticator bug-bash suite id (from clone_plans_auth), or None."""
-    return (state.get_step("bug_bash", "clone_plans_auth").data or {}).get("suite_id")
+    return (context.evidence.step("bug_bash", "clone_plans_auth").data or {}).get("suite_id")
 
 
-def _fill_auth(state, notes, projection):
+def _fill_auth(context, notes, projection, binding, owner, coordinates):
     """Write only validated mapped cases; retain report-only failures and assignment errors."""
-    suite_id = _auth_suite_id(state)
+    suite_id = binding["auth"]["suite_id"]
+    plan_id = binding["auth"]["plan_id"]
     outcomes = {cid: v["outcome"] for cid, v in projection["cases"].items()
                 if v["outcome"] in ("Passed", "Failed")}
     case_titles = {cid: "; ".join(v["titles"]) for cid, v in projection["cases"].items()}
 
-    ok, summ, d = T.fill_auth_ui_results(T.AUTH_PLAN, suite_id, outcomes)
-    step = state.get_step("bug_bash", ID)
-    step.data["auth"] = {"suite_id": suite_id, "mapping": summ,
+    ok, summ, d = context.effect.services.fill_auth_ui_results(
+        plan_id,
+        suite_id,
+        outcomes,
+        org=coordinates["test_plan_org"],
+        project=coordinates["test_plan_project"],
+    )
+    data = thaw(context.recovery().step("bug_bash", ID).data or {})
+    data["auth"] = {"suite_id": suite_id, "mapping": summ,
                          "failures": projection["failures"], "provenance": projection["provenance"]}
-    state.set_step("bug_bash", ID, step)
-    state.checkpoint()
+    context.effect.commit.commit(StepData(data))
     if not ok:
         return False, f"Could not completely fill auth UI results ({d}); retry with current evidence"
     if (not isinstance(summ, dict)
-            or summ.get("target") != {"plan_id": int(T.AUTH_PLAN), "suite_id": int(suite_id)}
+            or summ.get("target") != {"plan_id": int(plan_id), "suite_id": int(suite_id)}
             or not isinstance(summ.get("applied_points"), list)):
         return False, "Missing actual applied Authenticator target/points; retry ui_test_status"
 
     # Only acknowledged Failed point writes may trigger an owner assignment.
     failed_ids = sorted({p["case_id"] for p in summ["applied_points"] if p["outcome"] == "Failed"})
-    owner = state.owner_email
     assigned = 0
     errors = []
     if owner:
         for cid in failed_ids:
-            oka, detail = D.set_assigned_to(cid, owner)
+            oka, detail = context.effect.services.set_assigned_to(
+                cid,
+                owner,
+                org=coordinates["test_plan_org"],
+                project=coordinates["test_plan_project"],
+            )
             if oka:
                 assigned += 1
             else:
@@ -103,16 +239,16 @@ def _fill_auth(state, notes, projection):
         if t:
             failed_titles[str(cid)] = t
 
-    step = state.get_step("bug_bash", ID)
-    step.data = dict(step.data or {})
-    step.data["auth"] = {"suite_id": suite_id, "passed": summ.get("set_passed", 0),
+    data = thaw(context.recovery().step("bug_bash", ID).data or {})
+    data = dict(data or {})
+    data["auth"] = {"suite_id": suite_id, "passed": summ.get("set_passed", 0),
                          "failed": summ.get("set_failed", 0), "failed_case_ids": failed_ids,
                          "failed_case_titles": failed_titles,
                          "failures": projection["failures"], "provenance": projection["provenance"],
                          "mapping": summ,
                          "assignment_errors": errors,
                          "failed_assigned_to_owner": assigned}
-    state.set_step("bug_bash", ID, step)
+    context.effect.commit.commit(StepData(data))
     owner_note = (f"; {assigned} failed case(s) assigned to owner {owner}"
                   if assigned else "")
     if errors:
@@ -121,66 +257,46 @@ def _fill_auth(state, notes, projection):
                   f"filled in suite {suite_id}{owner_note}. {P.AUTH_MAPPING_NOTE}")
 
 
-def _reassign_broker_failures(state, ids, notes):
+def _reassign_broker_failures(context, ids, notes, owner, coordinates):
     """Reassign every failing Broker UI case to the release owner for investigation — mirrors the
     auth reassignment in _fill_auth so BOTH apps' failures land in the owner's queue. Stores the
     ids + assigned count on the step. Best-effort: a case with no parseable id is skipped, and a
     missing owner is noted rather than fatal."""
-    owner = state.owner_email
     assigned = 0
     errors = []
     if ids and owner:
         for cid in ids:
-            oka, detail = D.set_assigned_to(cid, owner)
+            oka, detail = context.effect.services.set_assigned_to(
+                cid,
+                owner,
+                org=coordinates["test_plan_org"],
+                project=coordinates["test_plan_project"],
+            )
             if oka:
                 assigned += 1
             else:
                 errors.append({"case_id": cid, "detail": detail})
     elif ids and not owner:
         notes.append("No release owner on record — failed Broker UI cases not reassigned (set-owner).")
-    step = state.get_step("bug_bash", ID)
-    step.data = dict(step.data or {})
-    step.data["broker"] = {"failed_case_ids": ids, "failed_assigned_to_owner": assigned,
+    data = thaw(context.recovery().step("bug_bash", ID).data or {})
+    data = dict(data or {})
+    data["broker"] = {"failed_case_ids": ids, "failed_assigned_to_owner": assigned,
                            "assignment_errors": errors}
-    state.set_step("bug_bash", ID, step)
+    context.effect.commit.commit(StepData(data))
     if errors:
         notes.append(f"Broker reassignment incomplete: {len(errors)} case(s) failed; "
                      "see broker.assignment_errors and retry.")
     return assigned
 
 
-def _replace_failure_reminder(state, note, links, broker_count, failed_ids):
+def _replace_failure_reminder(context, note, links, broker_count, failed_ids):
     """Replace only this producer's note prefix/links/data, never human status or notes."""
-    import hashlib
-
-    def digest(text):
-        return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-    step = state.get_step("bug_bash", "ui_failures")
-    data = dict(step.data or {})
-    generated = data.pop("ui_test_status_generated", {})
-    human_note = step.note or ""
-    old_links = generated.get("links", [])
-    length = generated.get("note_length", 0)
-    if length:
-        start = human_note.find("\U0001f9ea")
-        if start >= 0 and digest(human_note[start:start + length]) == generated.get("note_sha256"):
-            human_note = (human_note[:start] + human_note[start + length:]).strip("\n")
-    step.note = "\n".join(part for part in (note, human_note) if part)
-    step.links = [link for link in (step.links or []) if link not in old_links]
-    new_links = [link for link in links if link not in step.links]
-    step.links.extend(new_links)
-    for key in ("broker_failed_tests", "auth_failed_cases", "auth_failed_tests"):
-        data.pop(key, None)
-    if note:
-        data.update(broker_failed_tests=broker_count, auth_failed_cases=failed_ids,
-                    ui_test_status_generated={"note_length": len(note), "note_sha256": digest(note),
-                                              "links": new_links})
-    step.data = data
-    state.set_step("bug_bash", "ui_failures", step)
+    auth = context.recovery().step("bug_bash", ID).data.get("auth") or {}
+    context.effect.commit.commit(UIFailureReminder(
+        note, tuple(links), broker_count, tuple(failed_ids), tuple(auth.get("failures") or ())))
 
 
-def _surface_ui_failures(state, rc, failures):
+def _surface_ui_failures(context, rc, failures, coordinates):
     """Forward-populate the downstream `ui_failures` HUMAN-review reminder with the combined
     Phase-2 UI failure list — BOTH the Broker MRWP UI suites AND the Authenticator ECS failed
     cases — so the engineer sees everything in one place when the engine holds at that step.
@@ -196,10 +312,16 @@ def _surface_ui_failures(state, rc, failures):
     links = []
 
     def _eng_run_url(rid):
-        return f"{ORG}/{PROJECT}/_build/results?buildId={rid}"
+        return (
+            f"{coordinates['test_plan_org']}/"
+            f"{coordinates['test_plan_project']}/_build/results?buildId={rid}"
+        )
 
     def _case_url(cid):
-        return f"{ORG}/{PROJECT}/_workitems/edit/{cid}"
+        return (
+            f"{coordinates['test_plan_org']}/"
+            f"{coordinates['test_plan_project']}/_workitems/edit/{cid}"
+        )
 
     # Broker MRWP UI failures — every failing test, GROUPED by provider (ECS/Local) then by
     # bucket (suite name, e.g. 'PROD MSAL - RC Broker (API 32)'). Preserves discovery order.
@@ -214,22 +336,22 @@ def _surface_ui_failures(state, rc, failures):
         links.append({"name": f"MRWP {label} run", "url": _eng_run_url(rc[prov]["run_id"])})
 
     # Authenticator ECS failures — the failed automated case ids from the fill.
-    astep = (state.get_step("bug_bash", ID).data or {}).get("auth") or {}
+    astep = (context.recovery().step("bug_bash", ID).data or {}).get("auth") or {}
     failed_ids = astep.get("failed_case_ids") or []
     auth_failures = astep.get("failures") or []
     auth = rc.get("auth") or {}
 
     if not broker_count and not auth_failures:
-        _replace_failure_reminder(state, "", [], 0, [])
+        _replace_failure_reminder(context, "", [], 0, [])
         return
 
     # ---- build the step-8-style markdown note ----
     try:
         from orchestrator import schedule
-        month_year = schedule.target_month_label(state)
+        month_year = schedule.target_month_label(context.release)
     except Exception:
         month_year = ""
-    owner = state.owner_email or "the release owner"
+    owner = context.release.owner_email or "the release owner"
     title = f"\U0001f9ea {month_year + ' ' if month_year else ''}Bug Bash \u2014 UI failures to investigate"
 
     total = broker_count + len(auth_failures)
@@ -277,32 +399,34 @@ def _surface_ui_failures(state, rc, failures):
                  "I'll mark this step complete for you.")
 
     note = "\n".join(lines)
-    _replace_failure_reminder(state, note, links, broker_count, failed_ids)
-    step = state.get_step("bug_bash", "ui_failures")
-    step.data["auth_failed_tests"] = auth_failures
-    state.set_step("bug_bash", "ui_failures", step)
+    _replace_failure_reminder(context, note, links, broker_count, failed_ids)
 
 
-def build(state):
+def build(context: StepContext):
     """Invalidate durably before work; publish only after both required fills succeeded."""
-    from uuid import uuid4
+    if context.effect is None:
+        raise ValueError("UI publication requires an authorized effect context")
+    return execute(context)
 
-    step = state.get_step("bug_bash", ID)
-    step.data = dict(step.data or {})
+
+def _run_effect(context, prepared):
+    """Apply only the validated, frozen desired-state snapshot for this execution."""
+
+    data = thaw(context.recovery().step("bug_bash", ID).data or {})
+    data = dict(data or {})
     for key in ("auth", "broker", "summary", "provenance", "fill_status"):
-        step.data.pop(key, None)
-    step.data["result"] = {"id": uuid4().hex, "status": "incomplete", "stage": "validation"}
-    step.data["fill_status"] = "incomplete"
-    state.set_step("bug_bash", ID, step)
+        data.pop(key, None)
+    data["result"] = {"id": context.new_id(), "status": "incomplete", "stage": "validation"}
+    data["fill_status"] = "incomplete"
+    context.effect.commit.commit(StepData(data))
     # A missing persistence capability must prevent even the first provider write.
-    state.checkpoint()
     try:
-        outcome = _build(state)
+        outcome = _apply_prepared(context, prepared)
         if isinstance(outcome, Done):
-            step = state.get_step("bug_bash", ID)
-            result = step.data["result"]
-            for product, summary in (("broker", step.data["summary"]),
-                                     ("auth", step.data["auth"]["mapping"])):
+            data = thaw(context.recovery().step("bug_bash", ID).data or {})
+            result = data["result"]
+            for product, summary in (("broker", data["summary"]),
+                                     ("auth", data["auth"]["mapping"])):
                 if summary.get("target") != result["binding"][product] or not isinstance(
                         summary.get("applied_points"), list):
                     raise ValueError(f"Missing actual applied {product} target/points; retry ui_test_status")
@@ -312,53 +436,39 @@ def build(state):
                     "failed_case_ids": sorted({p["case_id"] for p in summary["applied_points"]
                                                if p["outcome"] == "Failed"}),
                 }
-            if result["binding"] != ui_results.current_binding(state):
-                raise ValueError("RC/build/target binding changed during fill; retry ui_test_status")
+            if result["binding"] != prepared["binding"]:
+                raise ValueError("UI fill result changed its frozen execution binding")
             result.update(status="complete", stage="complete")
-            step.data["fill_status"] = "complete"
-            state.set_step("bug_bash", ID, step)
-            ui_results.completed_result(state)
+            data["fill_status"] = "complete"
+            context.effect.commit.commit(StepData(data))
+            ui_results.completed_result(replace(context, evidence=context.recovery()))
         else:
-            step = state.get_step("bug_bash", ID)
-            step.data["result"]["error"] = outcome.reason
-            state.set_step("bug_bash", ID, step)
-        state.checkpoint()
+            data = thaw(context.recovery().step("bug_bash", ID).data or {})
+            data["result"]["error"] = outcome.reason
+            context.effect.commit.commit(StepData(data))
     except (ValueError, OSError) as exc:
-        step = state.get_step("bug_bash", ID)
-        step.data["result"].update(status="incomplete", error=str(exc))
-        step.data["fill_status"] = "incomplete"
-        state.set_step("bug_bash", ID, step)
+        data = thaw(context.recovery().step("bug_bash", ID).data or {})
+        data["result"].update(status="incomplete", error=str(exc))
+        data["fill_status"] = "incomplete"
+        context.effect.commit.commit(StepData(data))
         outcome = Blocked(f"ui_test_status: {exc}. Results may be partially applied; retry this step.")
-        state.checkpoint()
     return outcome
 
 
-def _build(state):
-    fail = mock_input("fail", MISSING)
-    if fail is not MISSING:
-        return Blocked(f"ui_test_status: {fail}")
+def _apply_prepared(context, prepared):
+    binding = prepared["binding"]
+    plan_id = prepared["broker_plan_id"]
+    rc = prepared["rc"]
+    projection = _thaw_broker_projection(prepared["broker_projection"])
+    auth_projection = _thaw_auth_projection(prepared["auth_projection"])
+    owner = prepared["owner_email"]
+    coordinates = prepared["coordinates"]
 
-    plan_id = _broker_plan_id(state)
-    if not plan_id:
-        return Blocked("ui_test_status: the Broker test plan hasn't been cloned yet "
-                       "(clone_plans_broker) — run that first so the UI Automation suite exists.")
-
-    rc = latest_rc(state)
-    ok, projection, d = P.project_mrwp_ui_results(rc)
-    if not ok:
-        return Blocked(f"ui_test_status: {d}.")
-    ok, auth_projection, d = P.project_auth_ui_results(rc)
-    if not ok:
-        return Blocked(f"ui_test_status: {d}. No test-plan writes attempted.")
-    if not _auth_suite_id(state):
-        return Blocked("ui_test_status: Authenticator release suite missing; run clone_plans_auth first.")
-
-    step = state.get_step("bug_bash", ID)
-    step.data = dict(step.data or {})
-    step.data["plan_id"] = plan_id
-    step.data["provenance"] = projection["provenance"]
-    binding = ui_results.current_binding(state)
-    step.data["result"].update(
+    data = thaw(context.recovery().step("bug_bash", ID).data or {})
+    data = dict(data or {})
+    data["plan_id"] = plan_id
+    data["provenance"] = projection["provenance"]
+    data["result"].update(
         binding=binding, stage="broker_write",
         broker={"automated_case_ids": sorted(projection["verdicts"])},
         auth={"automated_case_ids": sorted(cid for cid, case in auth_projection["cases"].items()
@@ -368,14 +478,17 @@ def _build(state):
                                             for s in p["skipped_mapping"]],
                         "report_only_or_unmapped_auth": [s for s in auth_projection["sources"]
                                                         if s["status"] != "mapped"]})
-    state.set_step("bug_bash", ID, step)
-    state.checkpoint()
-    ok, summ, d = T.fill_ui_automation_results(
-        plan_id, projection["verdicts"], suite_id=binding["broker"]["suite_id"])
-    step.data["summary"] = summ
-    step.data["result"]["stage"] = "auth_write" if ok else "broker_write"
-    state.set_step("bug_bash", ID, step)
-    state.checkpoint()
+    context.effect.commit.commit(StepData(data))
+    ok, summ, d = context.effect.services.fill_ui_automation_results(
+        plan_id,
+        projection["verdicts"],
+        suite_id=binding["broker"]["suite_id"],
+        org=coordinates["test_plan_org"],
+        project=coordinates["test_plan_project"],
+    )
+    data["summary"] = summ
+    data["result"]["stage"] = "auth_write" if ok else "broker_write"
+    context.effect.commit.commit(StepData(data))
     if not ok:
         return Blocked(f"ui_test_status: couldn't completely fill the UI Automation results ({d}). "
                        "Some points may already have changed; retry with current evidence.")
@@ -395,37 +508,50 @@ def _build(state):
         notes.append(f"{untouched} plan point(s) left untouched; {unmatched} projected verdict(s) "
                      "had no matching plan point; see summary mapping diagnostics.")
     # Store only this attempt's Auth write diagnostics.
-    step.data.pop("auth", None)
-    state.set_step("bug_bash", ID, step)
-    ok, auth_note = _fill_auth(state, notes, auth_projection)
+    data.pop("auth", None)
+    context.effect.commit.commit(StepData(data))
+    ok, auth_note = _fill_auth(
+        context, notes, auth_projection, binding, owner, coordinates
+    )
     if not ok:
         return Blocked(f"ui_test_status: {auth_note}. Broker results may already have changed.")
 
     # Reassign every FAILED Broker UI case to the release owner too — all UI failures (Broker +
     # Auth) are the owner's to investigate.
     failed_broker_ids = sorted({p["case_id"] for p in summ["applied_points"] if p["outcome"] == "Failed"})
-    broker_assigned = _reassign_broker_failures(state, failed_broker_ids, notes)
+    broker_assigned = _reassign_broker_failures(
+        context, failed_broker_ids, notes, owner, coordinates
+    )
 
     # Forward-populate the downstream `ui_failures` human-review reminder with the combined
     # Broker + Authenticator Phase-2 UI failure list (it has no module of its own).
-    _surface_ui_failures(state, rc, projection["failures"])
+    _surface_ui_failures(context, rc, projection["failures"], coordinates)
 
     p, f, na = summ.get("set_passed", 0), summ.get("set_failed", 0), summ.get("set_not_applicable", 0)
     tail = (f" {auth_note}." if auth_note else "")
     if broker_assigned:
-        tail += f" {broker_assigned} failed Broker UI case(s) assigned to owner {state.owner_email}."
+        tail += f" {broker_assigned} failed Broker UI case(s) assigned to owner {owner}."
     if notes:
         tail += " " + " ".join(notes)
-    links = [{"name": f"Broker UI Automation (plan {plan_id})", "url": T.plan_web_url(plan_id)}]
-    astep = (state.get_step("bug_bash", ID).data or {}).get("auth") or {}
+    links = [{
+        "name": f"Broker UI Automation (plan {plan_id})",
+        "url": T.plan_web_url(
+            plan_id,
+            org=coordinates["test_plan_org"],
+            project=coordinates["test_plan_project"],
+        ),
+    }]
+    astep = (context.recovery().step("bug_bash", ID).data or {}).get("auth") or {}
     if astep.get("suite_id"):
         links.append({"name": f"Authenticator results (suite {astep['suite_id']})",
-                      "url": T.plan_web_url(T.AUTH_PLAN, astep["suite_id"])})
+                      "url": T.plan_web_url(
+                          binding["auth"]["plan_id"],
+                          astep["suite_id"],
+                          org=coordinates["test_plan_org"],
+                          project=coordinates["test_plan_project"],
+                      )})
     return Done(
         f"Filled UI Automation results in Broker plan {plan_id}: {p + f + na} test points "
         f"({p} Passed, {f} Failed, {na} N/A) across {summ.get('cases_touched', 0)} cases."
         f"{tail}",
         links=links)
-
-
-run = legacy_run(build)

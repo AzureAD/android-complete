@@ -12,7 +12,7 @@ import hashlib
 import json
 import uuid
 
-from orchestrator.outcomes import NeedsSkill
+from orchestrator.outcomes import NeedsSkill, valid_links
 from orchestrator.delivery_retention import (
     is_progress_receipt, receipt_descriptor, is_routine_progress, prune_progress,
 )
@@ -44,9 +44,8 @@ def fingerprint(value):
 
 
 def phase_done(orch, phase_id):
-    phase = next((p for p in orch.config["phases"] if p["id"] == phase_id), None)
-    return bool(phase and phase["steps"]
-                and all(orch.state.is_done(phase_id, s["id"]) for s in phase["steps"]))
+    phase = next((p for p in orch.scheduling().phases if p.definition.id == phase_id), None)
+    return bool(phase and phase.definition.steps and phase.complete)
 
 
 def scope_reason(orch, scope, *, acknowledgement=False):
@@ -55,35 +54,61 @@ def scope_reason(orch, scope, *, acknowledgement=False):
     Acknowledgements may retain evidence after halt/expiry, but never mutate a
     completed/skipped owner or advance a closed phase.
     """
+    from orchestrator.revision import mismatch_reason
+    revision_problem = mismatch_reason(orch)
+    if revision_problem:
+        return revision_problem
     st = orch.state
-    if st.status == "complete":
-        return "release complete"
-    if st.halted or st.blocked or st.status in ("halted", "blocked") or not st.readiness_signed:
-        return "release suspended or unsigned"
-    if orch.tz is None:
-        return "owner timezone unavailable; repair configuration or tzdata"
     if not isinstance(scope, dict):
         return "missing/invalid lifecycle scope"
     kind = scope.get("kind")
-    if kind not in ("release", "phase", "window", "step"):
+    if kind not in ("release", "phase", "window", "step", "refresh"):
         return "missing/invalid lifecycle scope"
+    errors = [v.message for v in orch.invariant_violations() if v.severity == "error"]
+    if errors:
+        return "invalid release state: " + "; ".join(errors)
+    selection = orch.scheduling()
+    phase_readiness = {item.definition.id: item for item in selection.phases}
+    step_readiness = {item.definition.key: item for item in selection.steps}
+    frontier = selection.frontier
+    current_phase = frontier.id if frontier else None
+    projected_status = selection.status
+    if projected_status == "complete":
+        return "release complete"
+    if projected_status in ("halted", "blocked", "readiness_gate", "cancelled"):
+        return "release suspended or unsigned"
+    if orch.tz is None:
+        return "owner timezone unavailable; repair configuration or tzdata"
     phases = scope.get("phases") if kind == "window" else [scope.get("phase")]
-    if kind != "release":
-        if not phases or orch.current_phase_id() not in phases:
+    if kind == "refresh":
+        pid, sid = scope.get("phase"), scope.get("step")
+        ready = step_readiness.get(f"{pid}.{sid}")
+        if not ready or not ready.definition.repeatable:
+            return "unknown/non-repeatable refresh step"
+        if current_phase != pid:
             return "outside owning phase/window"
-        if any(p not in {x["id"] for x in orch.config["phases"]} for p in phases):
+        if not phase_readiness[pid].due:
+            return "owning phase not due"
+    elif kind != "release":
+        if not phases or current_phase not in phases:
+            return "outside owning phase/window"
+        if any(p not in phase_readiness for p in phases):
             return "unknown owning phase"
-        phase = orch._current_phase()
-        if not phase or not orch._phase_due(phase):
+        if not frontier or not phase_readiness[frontier.id].due:
             return "owning phase not due"
     if scope.get("step"):
         pid, sid = scope["phase"], scope["step"]
-        if not orch._find_step(pid, sid):
+        ready = step_readiness.get(f"{pid}.{sid}")
+        if not ready:
             return "unknown owning step"
         record = st.get_step(pid, sid)
-        if record.status == "skipped":
+        definition = ready.definition
+        if ("generation" in scope
+                and scope.get("generation") != (record.invalidated_at or "initial")):
+            return "owning step generation changed"
+        if record.status == "skipped" and not (definition and definition.is_gate):
             return "owning step skipped"
-        if kind == "step" and record.status == "done":
+        if kind == "step" and ready.complete:
             return "owning step complete"
         if scope.get("statuses") and record.status not in scope["statuses"]:
             return "owning work no longer in expected state"
@@ -106,9 +131,10 @@ def scope_reason(orch, scope, *, acknowledgement=False):
             return "source checkpoint changed"
     for key in scope.get("until_steps", []):
         pid, sid = key.split(".", 1)
-        if not orch._find_step(pid, sid):
+        ready = step_readiness.get(f"{pid}.{sid}")
+        if not ready:
             return "unknown closing step"
-        if st.is_done(pid, sid):
+        if ready.complete:
             return "closing step complete"
     if not acknowledgement:
         if scope.get("date") and orch.now_local.date().isoformat() != scope["date"]:
@@ -139,6 +165,11 @@ def descriptor(st, logical_id, scope, tool, payload, completion=None):
     if any(not isinstance(v, str) or not v.strip() for k, v in target.items()
            if k not in ("to", "attendees")):
         raise ValueError(f"{logical_id}: invalid {channel} destination")
+    scope = deepcopy(scope)
+    if st.workflow_revision is not None:
+        scope.setdefault("state_matches", []).append({
+            "path": ["workflow_revision"], "hash": fingerprint(st.workflow_revision),
+        })
     value = {
         "id": f"{logical_id}:{channel}", "release": st.release_id,
         "scope": deepcopy(scope), "channel": channel, "target": target,
@@ -152,16 +183,43 @@ def validate_record(orch, record):
     """Old/incomplete or corrupted records require deliberate recovery, never a resend."""
     if is_progress_receipt(record):
         return receipt_descriptor(orch, record)
+    return validate_record_state(orch.state, record)
+
+
+def validate_record_state(state, record):
+    """Validate full ledger evidence without needing an engine or mutable aliases."""
     item = record.get("descriptor") if isinstance(record, dict) else None
     fields = {"id", "release", "scope", "channel", "target", "tool", "payload", "completion", "hash"}
     if (not isinstance(item, dict) or not fields.issubset(item)
             or not isinstance(record.get("attempts"), list)
             or record.get("status") not in ("prepared", "claimed", "sent", "not_sent", "uncertain")):
         raise ValueError("Incomplete notification record; owner recovery required")
-    if item["release"] != orch.state.release_id:
+    if (not all(isinstance(item[k], dict) for k in ("scope", "target", "payload", "completion"))
+            or not all(isinstance(item[k], str) and item[k].strip() for k in ("id", "release", "hash", "channel", "tool"))):
+        raise ValueError("Malformed notification descriptor; owner recovery required")
+    if item["release"] != state.release_id:
         raise ValueError("Prepared notification belongs to another release")
     if item["hash"] != fingerprint({k: v for k, v in item.items() if k != "hash"}):
         raise ValueError("Prepared snapshot hash is corrupt; owner recovery required")
+    completion, scope = item["completion"], item["scope"]
+    if (completion.get("kind") not in (None, "step", "step_result", "step_data")
+            or not isinstance(completion.get("data", {}), dict)
+            or not valid_links(completion.get("links", []))
+            or not isinstance(completion.get("stamp", []), list)
+            or any(not isinstance(k, str) for k in completion.get("stamp", []))
+            or completion.get("release_field") not in (None, "last_notified_date", "last_status_email_date")
+            or "checkpoint" in completion and not isinstance(completion["checkpoint"], str)
+            or completion.get("release_field") and not isinstance(completion.get("date"), str)):
+        raise ValueError("Malformed notification completion evidence; owner recovery required")
+    if (not isinstance(scope.get("step_matches", {}), dict)
+            or not isinstance(scope.get("release_matches", {}), dict)
+            or not isinstance(scope.get("state_matches", []), list)
+            or any(not isinstance(m, dict) or not isinstance(m.get("path"), list)
+                   or not ("value" in m or isinstance(m.get("hash"), str))
+                   for m in scope.get("state_matches", []))
+            or not isinstance(scope.get("until_steps", []), list)
+            or any(not isinstance(k, str) or "." not in k for k in scope.get("until_steps", []))):
+        raise ValueError("Malformed notification lifecycle scope; owner recovery required")
     if item["completion"].get("kind") == "step" and (
             item["scope"].get("kind") != "step"
             or not item["scope"].get("step")
@@ -170,11 +228,23 @@ def validate_record(orch, record):
     if record["status"] == "prepared" and (record["attempts"] or record.get("completion")):
         raise ValueError("Prepared notification has execution evidence; owner recovery required")
     if record["status"] != "prepared" and (not record["attempts"]
+            or not isinstance(record["attempts"][-1], dict)
             or not all(k in record["attempts"][-1] for k in ("id", "owner", "status", "hash"))
+            or not all(isinstance(record["attempts"][-1][k], str) and record["attempts"][-1][k].strip()
+                       for k in ("id", "owner", "hash"))
             or record["attempts"][-1]["status"] != record["status"]
             or record["attempts"][-1]["hash"] != item["hash"]):
         raise ValueError("Incomplete notification attempt; owner recovery required")
     return item
+
+
+def require_receipt(record):
+    attempt = record["attempts"][-1] if record.get("attempts") else {}
+    if not all(
+        isinstance(attempt.get(k), str) and attempt[k].strip()
+        for k in ("acknowledged_at", "evidence")
+    ):
+        raise ValueError("Notification receipt lacks explicit transport evidence; owner recovery required")
 
 
 def available(orch, item):
@@ -186,6 +256,8 @@ def available(orch, item):
 
 def offer(orch, item):
     """Refresh only never-claimed preparation; routine progress needs only its latest preview."""
+    from orchestrator.revision import assert_current
+    assert_current(orch)
     ledger = orch.state.notification_deliveries
     candidate = {"descriptor": deepcopy(item), "status": "prepared",
                  "prepared_at": now_iso(), "attempts": []}
@@ -223,6 +295,8 @@ def preview(orch, record):
 
 
 def claim(orch, notification_id, approved_hash, executor):
+    from orchestrator.revision import assert_current
+    assert_current(orch)
     record = orch.state.notification_deliveries.get(notification_id)
     if not record or (not is_progress_receipt(record) and (not record.get("descriptor") or "attempts" not in record)):
         raise ValueError("Missing/incomplete preparation; owner recovery required for legacy records")
@@ -240,27 +314,24 @@ def claim(orch, notification_id, approved_hash, executor):
     reason = scope_reason(orch, item["scope"])
     if reason:
         raise ValueError(reason)
-    if not executor or not executor.strip():
+    if not isinstance(executor, str) or not executor.strip():
         raise ValueError("executor/session identifier is required")
     scope = item["scope"]
     execution = {"id": uuid.uuid4().hex, "owner": executor.strip(), "started_at": now_iso()}
     if item["completion"].get("kind") == "step":
-        # Reuse the engine reservation; no second independently stealable claim.
-        action = NeedsSkill(tool=item["tool"], payload=item["payload"], outbound=True,
-                            record_as=item["completion"]["record_as"])
-        result = orch.reserve_step(scope["phase"], scope["step"], action, executor)
-        if result.kind != "needs_skill":
-            raise ValueError(getattr(result, "reason", getattr(result, "note", "Step not eligible")))
+        result = orch.claim_notification_step(notification_id, approved_hash, executor)
+        if not result.changed:
+            raise ValueError(result.message)
         execution = orch.step_execution(scope["phase"], scope["step"])
-        step = orch.state.get_step(scope["phase"], scope["step"])
-        step.data["_execution"]["notification_id"] = item["id"]
-        orch.state.set_step(scope["phase"], scope["step"], step)
-    record["status"] = "claimed"
-    record["attempts"].append({**execution, "status": "claimed", "hash": item["hash"]})
+    else:
+        record["status"] = "claimed"
+        record["attempts"].append({**execution, "status": "claimed", "hash": item["hash"]})
     return {**deepcopy(item), "execution_id": execution["id"], "permission_to_send": True}
 
 
 def result(orch, notification_id, execution_id, outcome, evidence, receipt=None, review=False):
+    from orchestrator.revision import assert_current
+    assert_current(orch)
     """Record a transport result, never infer success from a lack of errors."""
     record = orch.state.notification_deliveries.get(notification_id)
     if is_progress_receipt(record):
@@ -270,13 +341,15 @@ def result(orch, notification_id, execution_id, outcome, evidence, receipt=None,
         return False
     if not record or not record.get("attempts"):
         raise ValueError("No delivery claim; legacy acknowledgement is not evidence")
-    validate_record(orch, record)
+    item = validate_record(orch, record)
+    if item["id"] != notification_id:
+        raise ValueError("Notification ledger identity mismatch; owner recovery required")
     attempt = record["attempts"][-1]
     if attempt["id"] != execution_id:
         raise ValueError("Only the owning execution can acknowledge this delivery")
     if record["status"] == "sent":
         return False
-    if not evidence or not evidence.strip():
+    if not isinstance(evidence, str) or not evidence.strip():
         raise ValueError("Explicit transport evidence is required")
     if record["status"] == "uncertain" and not review:
         raise ValueError("Uncertain delivery requires owner-reviewed evidence")
@@ -288,13 +361,7 @@ def result(orch, notification_id, execution_id, outcome, evidence, receipt=None,
                    receipt=deepcopy(receipt), owner_review=review)
     record["status"] = outcome
     if outcome == "not_sent" and record["descriptor"]["completion"].get("kind") == "step":
-        scope = record["descriptor"]["scope"]
-        step = orch.state.get_step(scope["phase"], scope["step"])
-        if (step.status == "running"
-                and step.data.get("_execution", {}).get("id") == execution_id):
-            step.data.pop("_execution")
-            step.status = "pending"
-            orch.state.set_step(scope["phase"], scope["step"], step)
+        orch.release_notification_step(notification_id, execution_id)
     return True
 
 
@@ -342,7 +409,8 @@ PROTOCOL = (
     "completion.automation.on_demand. Only after completion_status is applied, and while the "
     "named worker's configured lifecycle remains open, provision that slug if unregistered; never resend "
     "to retry provisioning. All exit paths (including silent/terminal/error) MUST execute "
-    "automation cleanup; delete live automation first and deregister only after deletion succeeds. "
+    "automation cleanup; claim each deletion, delete only with permission_to_delete, and record "
+    "delete-result with provider evidence. "
     "For the Scout bot transport, verify the runner's signed-in user is the descriptor's "
     "owner target BEFORE claiming; otherwise stop, never route another owner's content to yourself."
     " A done outcome with no_delivery_required:true can use record-step --status pass; "

@@ -1,4 +1,5 @@
 """Explicit offline fill writers and checkpoint recording for result-owner tests."""
+from tests._context import invoke as _invoke
 from copy import deepcopy
 from dataclasses import asdict
 from unittest.mock import patch
@@ -13,7 +14,7 @@ def checkpoint_memory(state):
     return snapshots
 
 
-def broker_fill(plan, verdicts, timeout=120, *, suite_id=901):
+def broker_fill(plan, verdicts, timeout=120, *, suite_id=901, **_coordinates):
     points = [{"point_id": i, "case_id": cid, "config_id": config_for(*pair), "outcome": outcome}
               for i, (cid, pair, outcome) in enumerate(
                   ((cid, pair, outcome) for cid, variants in sorted(verdicts.items())
@@ -26,7 +27,7 @@ def broker_fill(plan, verdicts, timeout=120, *, suite_id=901):
                   "cases_touched": len(verdicts)}, ""
 
 
-def auth_fill(plan, suite, outcomes, timeout=120):
+def auth_fill(plan, suite, outcomes, timeout=120, **_coordinates):
     points = [{"point_id": i, "case_id": cid, "outcome": outcome}
               for i, (cid, outcome) in enumerate(sorted(outcomes.items()), 1)]
     return True, {"target": {"plan_id": int(plan), "suite_id": int(suite)}, "applied_points": points,
@@ -40,5 +41,5 @@ def publish(state):
     checkpoint_memory(state)
     with patch.object(T, "fill_ui_automation_results", broker_fill), patch.object(
             T, "fill_auth_ui_results", auth_fill), patch.object(D, "set_assigned_to", return_value=(True, "")):
-        outcome = U.build(state)
+        outcome = _invoke(U.build, state)
     assert outcome.kind == "done", outcome

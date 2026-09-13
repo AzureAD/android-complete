@@ -11,6 +11,8 @@ sign-off hasn't arrived).
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+
 from orchestrator.outcomes import NeedsHuman
 
 
@@ -18,13 +20,13 @@ ID = "native_auth_signoff"
 KIND = "attest"
 
 
-def _notified_engineer(state):
+def _notified_engineer(context):
     """The Native Auth RE captured in notify_native_auth, or None."""
-    return (state.get_step("bug_bash", "notify_native_auth").data or {}).get("engineer")
+    return (context.evidence.step("bug_bash", "notify_native_auth").data or {}).get("engineer")
 
 
-def build(state):
-    eng = _notified_engineer(state)
+def build(context: StepContext):
+    eng = _notified_engineer(context)
     who = (f"the Native Auth RE ({eng}, notified in notify_native_auth)" if eng
            else "the Native Auth team (see notify_native_auth for who was notified)")
     return NeedsHuman(

@@ -1,8 +1,8 @@
 """Release Orchestrator — the conductor (deterministic engine, X4).
 
 Responsibilities (per §7.1):
-  1. Load the release state machine from config/phases.yaml.
-  2. Own the dispatch loop: find next step -> run its (stub) agent ->
+  1. Compile config/phases.yaml and bind its validated handler catalog.
+  2. Own the dispatch loop: find next step -> invoke its bound handler ->
      record result -> advance, or HOLD at a gate for human approval.
   3. Persist run-state via ReleaseState (X5).
 
@@ -11,33 +11,45 @@ No LLM logic here — this is fully unit-testable and replayable.
 """
 from __future__ import annotations
 import os
-import uuid
-from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time
-from typing import Optional
+from typing import Iterable, Optional
 
 import yaml
 
-from .state import ReleaseState, StepState, GateDecision, _now
-from .outcomes import Done, Blocked, NeedsSkill, command_verb
+from .state import ReleaseState, _now
+from .context_boundary import EvidenceSession, evidence_view, release_view
+from .step_context import Clock, EffectContext, StepContext, freeze, thaw
+from .handler_contracts import HookRole
+from .evidence import RetryDecision
+from .outcomes import AutoOutcome, Done, Blocked, InProgress, NeedsSkill, require_auto_outcome
+from .invariants import validate_snapshot
+from . import effects
+from .effects import EffectMode, EffectRecovery
+from .handlers import HandlerCatalog, HandlerResolver, StepHandler
+from .projection import SchedulingResult, StateProjection
 from .readiness import ReadinessGate
 from . import schedule
 from . import mocks as mocks_mod
 from .status_views import StatusViewMixin
-from steps.lib import mockctx
+from .transitions import OutcomePermit, TransitionIntent, TransitionKernel, TransitionResult
+from .workflow import (
+    StepKind,
+    WorkflowDefinition,
+    workflow_fingerprint,
+)
 import steps
-from phases import stub_runner
 
 
 @dataclass
 class NextAction:
     """What the conductor decided on this invocation — the engine's output."""
-    kind: str                 # 'ran' | 'gate' | 'reminder' | 'scheduled' | 'complete' | 'idle' | 'readiness' | 'blocked' | 'halted'
+    kind: str                 # presentation category; drain control is separate
     phase: Optional[str] = None
     step: Optional[str] = None
     name: Optional[str] = None
     message: str = ""
+    continue_drain: bool = False
 
 
 class Orchestrator(StatusViewMixin):
@@ -46,16 +58,33 @@ class Orchestrator(StatusViewMixin):
     presentation lives in render.py. This class holds no formatting logic."""
 
     def __init__(self, config_path: str, state: ReleaseState, readiness_path: str = None,
-                 as_of: date = None, mocks: dict = None, tz=None, now: datetime = None):
+                 as_of: date = None, mocks: dict = None, tz=None, now: datetime = None,
+                 *, handler_resolver: HandlerResolver | None = None, services=None,
+                 effect_services=None, clock=None, new_id=None):
+        self.config_path = os.path.abspath(config_path)
         with open(config_path, "r", encoding="utf-8") as fh:
             self.config = yaml.safe_load(fh)
+        self._config_file_fingerprint = workflow_fingerprint(self.config)
+        self.workflow = WorkflowDefinition.compile(self.config)
+        self._handler_resolver = handler_resolver if handler_resolver is not None else steps.get_step
+        self.handlers = HandlerCatalog.compile(self.workflow, self._handler_resolver)
         readiness_cfg = None
         if readiness_path is None:
             readiness_path = os.path.join(os.path.dirname(config_path), "readiness.yaml")
         if os.path.exists(readiness_path):
             with open(readiness_path, "r", encoding="utf-8") as fh:
                 readiness_cfg = yaml.safe_load(fh)
+        self.readiness_path = os.path.abspath(readiness_path)
+        from .revision import runtime_hash
+        self._loaded_runtime_hash = runtime_hash(
+            config_path=self.config_path, readiness_path=self.readiness_path)
         self.state = state
+        self._services = services
+        self._effect_services = effect_services
+        self._clock = clock
+        self._new_id = new_id
+        self._evidence_sessions = {}
+        self._approval_results = {}
         self.gate = ReadinessGate(readiness_cfg, state)
         # Local step mocks (personal, gitignored mocks.local.yaml). Absent → {}.
         # Pass mocks={} in tests for isolation from any developer's local file.
@@ -89,6 +118,208 @@ class Orchestrator(StatusViewMixin):
             if isinstance(as_of, datetime) or (as_of is None and now is not None):
                 self.as_of = self.now_local.date()
 
+    def _workflow_definition(self) -> WorkflowDefinition:
+        """Recompile after disk or in-memory changes without caching source identity."""
+        with open(self.config_path, encoding="utf-8") as fh:
+            disk_config = yaml.safe_load(fh)
+        disk_fingerprint = workflow_fingerprint(disk_config)
+        if disk_fingerprint != self._config_file_fingerprint:
+            self.config = disk_config
+            self._config_file_fingerprint = disk_fingerprint
+        if workflow_fingerprint(self.config) != self.workflow.fingerprint:
+            workflow = WorkflowDefinition.compile(self.config)
+            handlers = HandlerCatalog.compile(workflow, self._handler_resolver)
+            self.workflow, self.handlers = workflow, handlers
+        return self.workflow
+
+    def handler(self, phase_id: str, step_id: str) -> StepHandler:
+        """Return the bound handler for a configured step."""
+        self._workflow_definition()
+        return self.handlers.get(phase_id, step_id)
+
+    def context(self, phase_id, step_id, *, permit=None, parameters=None,
+                inputs=None, role=HookRole.BUILD, execution_id=None) -> StepContext:
+        """Build one immutable invocation. Writers require current engine authority."""
+        from uuid import uuid4
+        from . import service_adapters
+
+        handler = self.handler(phase_id, step_id)
+        parameters = handler.parse_parameters(role, parameters)
+        role = HookRole(role)
+        effect = role in (HookRole.EXECUTE, HookRole.RECONCILE)
+        approval = role in (HookRole.APPROVAL, HookRole.APPROVAL_RECONCILE)
+        clock = self._clock or Clock(self.now_local)
+        services = self._services
+        if services is None:
+            status_email = None
+            if handler.status_email:
+                from . import status_email as SE
+                from . import notifications
+                snapshot = freeze(SE.compose(
+                    self.state, [p.id for p in self.workflow.phases], [],
+                    selection=self.scheduling()))
+
+                def status_email(recipients, *, changes):
+                    result = thaw(snapshot)
+                    result["to"] = list(recipients)
+                    result["model"]["changes"] = thaw(changes)
+                    result["html"] = SE.render_html(result["model"])
+                    return result
+
+                def status_recipients():
+                    cfg = notifications.load_config(os.path.join(
+                        os.path.dirname(__file__), "..", "config", "phases.yaml")) or {}
+                    recipients = (cfg.get("status_email") or {}).get("recipients")
+                    if not isinstance(recipients, list) or not recipients:
+                        raise ValueError("Configure status_email.recipients as a non-empty list")
+                    return recipients
+            else:
+                status_recipients = None
+            services = service_adapters.production_services(
+                status_email=status_email, status_recipients=status_recipients)
+        session = None
+        if permit is not None and not approval:
+            self.validate_outcome_permit(permit)
+            if (permit.phase, permit.step) != (phase_id, step_id):
+                raise ValueError("Outcome permit targets another handler")
+            session = self._evidence_sessions.get(permit)
+            if session is None:
+                session = EvidenceSession(self.state, permit, self.validate_evidence_permit,
+                                          authority=handler.evidence, durable=effect)
+                self._evidence_sessions[permit] = session
+            elif effect:
+                session.enable_durable()
+        effect_context = None
+        if effect:
+            execution = self.step_execution(phase_id, step_id)
+            if (session is None or permit.intent != TransitionIntent.EFFECT
+                    or not execution.get("id") or handler.effect is None
+                    or not effects.execution_input_is_valid(step_id, execution)):
+                raise ValueError("Durable effects require a valid owned execution permit")
+            writers = (
+                self._effect_services(handler.writes, lambda: self.validate_outcome_permit(permit), session, clock)
+                if self._effect_services else service_adapters.production_effects(
+                    handler.writes, validate=lambda: self.validate_outcome_permit(permit),
+                    committer=session, clock=clock))
+            effect_context = EffectContext(
+                freeze(execution), session.committer(), handler.writes.validate_services(writers))
+        approval_writer = None
+        if approval:
+            from .approvals import ApprovalPermit, request_from_dict
+            from .step_context import ApprovalContext
+            kernel = self._transition_kernel()
+            if role == HookRole.APPROVAL:
+                if (not isinstance(permit, ApprovalPermit)
+                        or (permit.phase, permit.step) != (phase_id, step_id)):
+                    raise ValueError("Submission requires an exact live approval permit")
+                if rejected := kernel.validate_approval_permit(permit):
+                    raise ValueError(rejected.message)
+                execution_id = permit.execution_id
+            elif permit is not None:
+                raise ValueError("Approval reconciliation cannot carry a submission permit")
+            if rejected := kernel.validate_approval_owner(phase_id, step_id, execution_id):
+                raise ValueError(rejected.message)
+            record = self.state.get_step(phase_id, step_id)
+            generation = kernel._generation(record)
+            request = request_from_dict(record.execution["approval"]["request"])
+            submit = None
+            if role == HookRole.APPROVAL:
+                def validate_approval():
+                    if rejected := kernel.validate_approval_owner(phase_id, step_id, execution_id, active=True):
+                        raise ValueError(rejected.message)
+                    if generation != kernel._generation(self.state.get_step(phase_id, step_id)):
+                        raise ValueError("Approval invocation is no longer authorized")
+
+                approval_services = (
+                    self._effect_services(handler.writes, validate_approval, None, clock)
+                    if self._effect_services else service_adapters.production_effects(
+                        handler.writes, validate=validate_approval, committer=None, clock=clock))
+                provider = handler.writes.validate_services(approval_services).submit_pipeline_approval
+
+                def submit():
+                    kernel.consume_approval_permit(permit)
+                    result = provider(request.org, request.project, request.approval_id, request.comment)
+                    from .handler_contracts import validate_result
+                    validate_result(result, HookRole.APPROVAL)
+                    self._approval_results[permit] = result[0]
+                    return result
+            approval_writer = ApprovalContext(execution_id, request, submit)
+        return StepContext(
+            release_view(self.state), evidence_view(self.state), clock, services,
+            parameters,
+            freeze(inputs if inputs is not None else self.mocks.get(f"{phase_id}.{step_id}", {})),
+            effect_context, self._new_id or (lambda: uuid4().hex), approval_writer,
+            role, handler.definition.key,
+        )
+
+    def apply_evidence(self, permit, outcome, *, checkpoint=False):
+        updates = outcome.updates
+        if updates:
+            self.validate_evidence_permit(permit)
+            session = self._evidence_sessions.get(permit)
+            if session is None:
+                raise ValueError("Evidence requires an invocation context")
+            session.apply(updates, checkpoint=checkpoint)
+
+    def preview_gate_approval(self, phase_id, step_id, *, comment=""):
+        from .approvals import preview
+        return preview(self, phase_id, step_id, comment=comment)
+
+    def execute_gate_approval(self, phase_id, step_id, **authorization):
+        from .approvals import execute
+        return execute(self, phase_id, step_id, **authorization)
+
+    def _projection(self) -> StateProjection:
+        from .revision import mismatch_reason
+        workflow = self._workflow_definition()
+        handlers = self.handlers
+        return StateProjection(
+            self.state,
+            workflow,
+            self.as_of,
+            self.now_local,
+            readiness_signed=self.gate.signed,
+            readiness_blocked=self.gate.blocked,
+            is_mocked=lambda step: self._is_mocked(step.phase_id, step.raw),
+            fire_at=lambda step: handlers.get(step.phase_id, step.id).fire_at_local,
+            revision_problem=mismatch_reason(self),
+        )
+
+    def _transition_kernel(self) -> TransitionKernel:
+        workflow = self._workflow_definition()
+        kernel = getattr(self, "_kernel", None)
+        if kernel is None or kernel.workflow is not workflow:
+            self._kernel = TransitionKernel(self.state, workflow, self._projection, _now)
+        return self._kernel
+
+    def scheduling(self, attempted: Iterable[str] = ()) -> SchedulingResult:
+        """Public, pure scheduling query shared by dispatch and presentation."""
+        return self._projection().scheduling(attempted=attempted)
+
+    def _next_from_transition(self, result) -> NextAction:
+        definition = (
+            self._workflow_definition().step(result.phase, result.step)
+            if result.phase and result.step
+            else None
+        )
+        return NextAction(
+            kind=result.kind,
+            phase=result.phase,
+            step=result.step,
+            name=definition.name if definition else None,
+            message=result.message,
+            continue_drain=result.changed and result.kind == "ran" and not self.scheduling().suspension,
+        )
+
+    def _step_complete(self, phase_id: str, step_id: str) -> bool:
+        step = self._workflow_definition().step(phase_id, step_id)
+        return bool(step and self._projection().step_complete(step))
+
+    def invariant_violations(self):
+        return validate_snapshot(
+            self.state, self._workflow_definition()
+        )
+
     @staticmethod
     def _config_timezone(config_path: str) -> Optional[str]:
         """Read the release timezone from config/schedule.yaml (`timezone:`), or None
@@ -108,16 +339,13 @@ class Orchestrator(StatusViewMixin):
 
     def _phase_anchor_date(self, phase: dict) -> Optional[date]:
         """The date a phase opens, or None if it has no anchor / CCD is unknown."""
-        spec = phase.get("anchor")
-        ccd = self._ccd()
-        if not spec or ccd is None:
-            return None
-        return schedule.anchor_date(ccd, spec)
+        definition = self._workflow_definition().phase(phase["id"])
+        return self._projection().phase_anchor_date(definition) if definition else None
 
     def _phase_due(self, phase: dict) -> bool:
         """A phase is due once the clock reaches its anchor. No anchor ⇒ always due."""
-        ad = self._phase_anchor_date(phase)
-        return ad is None or self.as_of >= ad
+        definition = self._workflow_definition().phase(phase["id"])
+        return bool(definition and self._projection().phase_due(definition))
 
     def _step_time_ready(self, phase: dict, step: dict) -> bool:
         """A step that declares a `fire_at_local` (e.g. the 09:00 CCD comms) is NOT
@@ -126,48 +354,34 @@ class Orchestrator(StatusViewMixin):
         draining a timed step the instant its phase goes due — the step is left for its
         dedicated cron-pinned automation. Direct step-action enforces the same time
         boundary. Non-timed steps are always ready."""
-        from orchestrator import automations
-        fire = automations.fire_at(phase["id"], step["id"])
-        if not fire:
-            return True
-        try:
-            hh, mm = (int(x) for x in str(fire).split(":")[:2])
-        except (ValueError, TypeError):
-            return True                          # malformed fire_at_local ⇒ don't gate
-        anchor = self._phase_anchor_date(phase)
-        if anchor is not None:
-            if self.as_of > anchor:              # past the fire day ⇒ run ASAP (catch-up)
-                return True
-            if self.as_of < anchor:              # before it (phase not due) ⇒ not ready
-                return False
-        return self.now_local.time() >= time(hh, mm)
+        definition = self._workflow_definition().step(phase["id"], step["id"])
+        return bool(definition and self._projection().step_time_ready(definition))
 
     @staticmethod
     def _is_reminder(step: dict) -> bool:
         """A human, non-gate step is a reminder: the engine can't do it, so it
         holds and tells the person to do it, then waits for them to mark it done."""
-        return step.get("owner") == "human" and not step.get("gate")
+        return step.get("kind") in (
+            StepKind.HUMAN_ACTION.value,
+            StepKind.ATTESTATION.value,
+        )
 
     # ---- state-machine traversal ----
     def _activated_conditionals(self) -> set:
         # A conditional phase (e.g. hotfix) is activated by an explicit note flag.
-        return {n.split("activate:")[1].strip()
-                for n in self.state.notes if isinstance(n, str) and n.startswith("activate:")}
+        return self._projection().activated_conditionals()
 
-    def activate_conditional(self, phase_id: str) -> None:
-        self.state.notes.append(f"activate:{phase_id}")
+    def activate_conditional(self, phase_id: str) -> NextAction:
+        return self._next_from_transition(
+            self._transition_kernel().activate(phase_id)
+        )
 
     # ---- dispatch ----
     def _current_phase(self):
         """The first included phase that still has incomplete steps (definition
         order). Conditional phases are skipped unless activated."""
-        for phase in self.config["phases"]:
-            if not self._phase_included(phase):
-                continue
-            if all(self.state.is_done(phase["id"], s["id"]) for s in phase["steps"]):
-                continue
-            return phase
-        return None
+        phase = self.scheduling().frontier
+        return phase.raw if phase else None
 
     def current_phase_id(self) -> Optional[str]:
         """Public: id of the first included phase with incomplete steps, or None when
@@ -180,59 +394,74 @@ class Orchestrator(StatusViewMixin):
     @staticmethod
     def _step_kind(step: dict) -> str:
         """Classify a step: gate | scout | attest | reminder | auto."""
-        if step.get("gate"):
-            return "gate"
-        if step.get("source") == "scout":
-            return "scout"
-        if step.get("attest"):
-            return "attest"
-        if step.get("owner") == "human":
-            return "reminder"
-        return "auto"
+        return {
+            StepKind.APPROVAL_GATE.value: "gate",
+            StepKind.EXTERNAL.value: "scout",
+            StepKind.ATTESTATION.value: "attest",
+            StepKind.HUMAN_ACTION.value: "reminder",
+            StepKind.AUTO.value: "auto",
+        }[step["kind"]]
 
     def _is_mocked(self, pid: str, step: dict) -> bool:
         """True if a local mock replaces this step. Gate steps are never mockable
         (a gate needs a real human decision)."""
-        return ((not step.get("gate"))
-                and mocks_mod.stepresult_for(self.mocks, pid, step["id"]) is not None)
+        return ((step.get("kind") != StepKind.APPROVAL_GATE.value)
+                and mocks_mod.outcome_for(self.mocks, pid, step["id"]) is not None)
 
 
     def _prerequisites_met(self, phase: dict, step: dict) -> bool:
         """Parallel phases use explicit dependencies; sequential phases also require predecessors."""
-        pid = phase["id"]
-        if any(not self.state.is_done(pid, dep) for dep in step.get("depends_on", []) or []):
-            return False
-        if phase.get("execution") == "parallel":
-            return True
-        for predecessor in phase["steps"]:
-            if predecessor["id"] == step["id"]:
-                return True
-            if not self.state.is_done(pid, predecessor["id"]):
-                return False
-        return False
+        workflow = self._workflow_definition()
+        phase_def = workflow.phase(phase["id"])
+        step_def = workflow.step(phase["id"], step["id"])
+        return bool(
+            phase_def
+            and step_def
+            and self._projection().prerequisites_met(phase_def, step_def)
+        )
 
-    def step_once(self, attempted=None) -> NextAction:
+    def step_once(self, attempted: set[str] | None = None) -> NextAction:
         """Advance exactly one step (or hold). For a sequential phase this is the
         classic first-incomplete-step logic. For a parallel phase it runs one ready
         step whose dependencies are met, letting independent steps progress even
         when a sibling is holding. `attempted` (a set, managed by run_until_gate)
-        prevents re-running an auto step twice within one drain."""
-        if self.state.status == "complete":
+        prevents re-running an auto step twice within one drain. The returned
+        continue_drain distinguishes step-local waits from a settled phase hold."""
+        from .revision import mismatch_reason
+        revision_problem = mismatch_reason(self)
+        if revision_problem:
+            return NextAction(kind="blocked", message=revision_problem)
+        errors = [
+            violation for violation in self.invariant_violations()
+            if violation.severity == "error"
+        ]
+        if errors:
+            return NextAction(
+                kind="blocked",
+                message="Invalid release state: " + "; ".join(
+                    violation.message for violation in errors
+                ),
+            )
+        selection = self.scheduling(attempted=attempted or ())
+        projected_status = selection.status
+        if projected_status == "cancelled":
+            return NextAction(
+                kind="cancelled",
+                message="Release is skipped/cancelled; clear skip-release before continuing.",
+            )
+        if projected_status == "complete":
             return NextAction(kind="complete", message="Release already complete.")
 
-        # HALTED: emergency hold set by a human. Nothing advances until resume().
-        if self.state.halted:
-            self.state.status = "halted"
+        if projected_status == "halted":
             return NextAction(
                 kind="halted",
                 message="Release is HALTED"
-                        + (f": {self.state.halt_reason}" if self.state.halt_reason else "")
+                        + (f": {self.state.halt.get('reason')}"
+                           if self.state.halt else "")
                         + ". Run resume to continue.",
             )
 
-        # BLOCKED: an entry-gate item was declared unsatisfiable.
-        if self.state.blocked:
-            self.state.status = "blocked"
+        if selection.suspension == "blocked":
             labels = self.gate.blocked_labels()
             msg = (self.gate.config or {}).get("blocked_message", "").strip()
             return NextAction(
@@ -240,179 +469,115 @@ class Orchestrator(StatusViewMixin):
                 message="Entry gate blocked — cannot start: " + ", ".join(labels) + ". " + msg,
             )
 
-        # ENTRY GATE: nothing runs until the readiness checklist is signed.
-        if not self.state.readiness_signed:
-            self.state.status = "readiness_gate"
+        if selection.suspension == "readiness_gate":
             return NextAction(
                 kind="readiness",
                 message="HOLDING at the readiness entry gate. Sign the checklist before Phase 0 can start.",
             )
 
-        phase = self._current_phase()
-        if phase is None:
-            self.state.status = "complete"
-            self.state.current_phase = None
-            self.state.current_step = None
-            return NextAction(kind="complete", message="All steps done — release complete.")
-
-        self.state.current_phase = phase["id"]
-
-        # TIME GATE: if this phase hasn't reached its anchor date yet, hold as scheduled.
-        if not self._phase_due(phase):
-            opens = self._phase_anchor_date(phase)
-            self.state.status = "scheduled"
-            days = (opens - self.as_of).days
-            first = next((s for s in phase["steps"]
-                          if not self.state.is_done(phase["id"], s["id"])), None)
+        hold = selection.focus_hold
+        if selection.suspension == "denied" and hold:
             return NextAction(
-                kind="scheduled", phase=phase["id"],
-                step=first["id"] if first else None,
-                name=first["name"] if first else None,
-                message=f"{phase['name']} opens {opens.isoformat()} "
-                        f"({schedule.humanize_delta(days)}). Nothing to do yet.",
+                kind="blocked",
+                phase=hold.phase_id,
+                step=hold.step_id,
+                message=f"Gate denied — {hold.reason} Reopen the gate with a reason to reconsider.",
             )
 
-        if phase.get("execution") == "parallel":
-            return self._step_parallel(phase, attempted)
-        return self._step_sequential(phase)
-
-    # ---- sequential dispatch (classic: one step at a time, stop at first hold) ----
-    def _step_sequential(self, phase: dict) -> NextAction:
-        step = next(s for s in phase["steps"]
-                    if not self.state.is_done(phase["id"], s["id"]))
-        self.state.current_step = step["id"]
-        if not self._prerequisites_met(phase, step):
-            self.state.status = "awaiting_action"
-            return NextAction(kind="waiting", phase=phase["id"], step=step["id"],
-                              message="Waiting on prerequisite steps to complete.")
-        if self.step_execution(phase["id"], step["id"]):
-            self.state.status = "awaiting_action"
-            return NextAction(kind="waiting", phase=phase["id"], step=step["id"],
-                              name=step["name"], message="Step execution is reserved; do not run it again.")
-
-        # A locally-mocked step is resolved right here (skips its real scout/attest/
-        # agent handling) so the flow advances naturally under Scout.
-        if self._is_mocked(phase["id"], step):
-            return self._run_auto_step(phase, step, block_holds=True)
-
-        # TIME GATE (within the day): a step with a fire_at_local isn't runnable until
-        # its wall-clock time — hold as scheduled so the every-hour worker doesn't fire
-        # it early; its dedicated cron automation runs it at the pinned time.
-        if not self._step_time_ready(phase, step):
-            from orchestrator import automations
-            fire = automations.fire_at(phase["id"], step["id"])
-            self.state.status = "scheduled"
-            return NextAction(
-                kind="scheduled", phase=phase["id"], step=step["id"], name=step["name"],
-                message=f"{phase['name']} → {step['name']} is scheduled for {fire} "
-                        f"(fires via its timed automation). Nothing to do yet.")
-
-        if step.get("gate") and not self._gate_approved(phase["id"], step["id"]):
-            self.state.status = "holding_gate"
-            return NextAction(
-                kind="gate", phase=phase["id"], step=step["id"], name=step["name"],
-                message=f"HOLDING at gate: {phase['name']} → {step['name']}. Awaiting human decision.",
-            )
-
-        if self._is_reminder(step):
-            self.state.status = "awaiting_action"
-            key = f"{phase['id']}.{step['id']}"
-            if key not in self.state.pending_human:
-                self.state.pending_human.append(key)
-            if step.get("attest"):
-                msg = (f"CONFIRM — attest that this is done to proceed: {step['name']}. "
-                       f"Mark it done once you've verified it.")
-            else:
-                msg = f"ACTION NEEDED — you need to: {step['name']}. Mark it done when complete."
-            return NextAction(kind="reminder", phase=phase["id"], step=step["id"],
-                              name=step["name"], message=msg)
-
-        if step.get("source") == "scout":
-            self.state.status = "awaiting_action"
-            key = f"{phase['id']}.{step['id']}"
-            if key not in self.state.pending_human:
-                self.state.pending_human.append(key)
-            return NextAction(
-                kind="reminder", phase=phase["id"], step=step["id"], name=step["name"],
-                message=f"Scout-assisted check pending — {step['name']}. "
-                        f"Scout runs this automatically when you open it.",
-            )
-
-        return self._run_auto_step(phase, step, block_holds=True)
-
-    # ---- parallel dispatch (dependency-aware; independent steps don't block) ----
-    def _step_parallel(self, phase: dict, attempted) -> NextAction:
-        pid = phase["id"]
-
-        def ready(s):
-            return ((not self.state.is_done(pid, s["id"])) and self._prerequisites_met(phase, s)
-                    and self._step_time_ready(phase, s) and not self.step_execution(pid, s["id"]))
-
-        # 1) Run ONE ready, not-yet-attempted runnable step (auto agent, or an
-        #    already-approved gate). Independent steps progress even if a sibling holds.
-        for s in phase["steps"]:
-            if not ready(s):
-                continue
-            kind = self._step_kind(s)
-            runnable = (kind == "auto"
-                        or (kind == "gate" and self._gate_approved(pid, s["id"]))
-                        or self._is_mocked(pid, s))          # mocked steps run here too
-            if not runnable:
-                continue
-            key = f"{pid}.{s['id']}"
-            if attempted is not None and key in attempted:
-                continue
+        phase = selection.frontier
+        if selection.runnable:
+            candidate = selection.runnable[0]
             if attempted is not None:
-                attempted.add(key)
-            return self._run_auto_step(phase, s, block_holds=False)
+                attempted.add(candidate.step.key)
+            action = self._run_auto_step(
+                phase.raw, candidate.step.raw,
+                block_holds=phase.execution != "parallel",
+            )
+            # A step-local wait or recovery hold must not starve its siblings.
+            return (
+                replace(action, continue_drain=True)
+                if phase.execution == "parallel" and not self.scheduling().suspension else action
+            )
+        return self._scheduled_hold_action(selection)
 
-        # 2) No more auto progress — surface the holds (all at once).
-        holds = []
-        for s in phase["steps"]:
-            if not ready(s):
-                continue
-            kind = self._step_kind(s)
-            blocked_auto = kind == "auto" and self.state.get_step(pid, s["id"]).status == "blocked"
-            unapproved_gate = kind == "gate" and not self._gate_approved(pid, s["id"])
-            if kind in ("scout", "attest", "reminder") or blocked_auto or unapproved_gate:
-                holds.append(s)
-
-        gates = [s for s in holds if self._step_kind(s) == "gate"]
-        if gates:
-            g = gates[0]
-            self.state.status = "holding_gate"
-            self.state.current_step = g["id"]
-            return NextAction(kind="gate", phase=pid, step=g["id"], name=g["name"],
-                              message=f"HOLDING at gate: {phase['name']} → {g['name']}. Awaiting human decision.")
-
-        non_gate = [s for s in holds if self._step_kind(s) != "gate"]
-        for s in non_gate:
-            key = f"{pid}.{s['id']}"
-            if key not in self.state.pending_human:
-                self.state.pending_human.append(key)
-        if non_gate:
-            self.state.status = "awaiting_action"
-            # Scout steps are the SKILL's automated work (it runs them via step-action),
-            # NOT a user hold — so the current-step / action cue should point at a
-            # genuine USER hold (attest / blocked / reminder) when one exists, and only
-            # fall back to a scout step when scout work is all that's left.
-            user_holds = [s for s in non_gate if self._step_kind(s) != "scout"]
-            focus = (user_holds or non_gate)[0]
-            self.state.current_step = focus["id"]
-            names = "; ".join(s["name"] for s in non_gate)
-            return NextAction(kind="reminder", phase=pid, step=focus["id"],
-                              name=focus["name"],
-                              message=f"{len(non_gate)} item(s) need attention: {names}")
-
-        for s in phase["steps"]:
-            if not self.state.is_done(pid, s["id"]) and self.step_execution(pid, s["id"]):
-                self.state.status, self.state.current_step = "awaiting_action", s["id"]
-                return NextAction(kind="waiting", phase=pid, step=s["id"], name=s["name"],
-                                  message="Step execution is reserved; do not run it again.")
-        # Not complete, but nothing is ready — remaining steps wait on unmet deps.
-        self.state.status = "awaiting_action"
-        return NextAction(kind="reminder", phase=pid,
-                          message="Waiting on prerequisite steps to complete.")
+    def _scheduled_hold_action(self, selection: SchedulingResult) -> NextAction:
+        """Render the shared selection; no readiness or hold-priority policy here."""
+        phase = selection.frontier
+        hold = selection.focus_hold
+        step = phase.step(hold.step_id) if hold and hold.step_id else None
+        action = NextAction(
+            kind="waiting", phase=phase.id,
+            step=step.id if step else None, name=step.name if step else None,
+        )
+        execution = self.step_execution(phase.id, step.id) if step else {}
+        if execution.get("approval"):
+            action.message = (
+                f"External gate approval {execution['id']} retains ownership. Use "
+                f"{step.approval_command} --release {self.state.release_id} "
+                f"--execution-id {execution['id']} to reconcile. "
+                "An unattempted reservation also requires its original review hash/reviewer. "
+                "Never resend an attempted approval or clear ownership with done/reopen."
+            )
+            return action
+        if not hold or hold.kind == "waiting":
+            action.message = (
+                "Step execution is reserved; do not run it again."
+                if hold and hold.reason == "reservation" else
+                "Ready work has already been attempted in this drain."
+                if hold and hold.reason == "attempted" else
+                "Waiting on prerequisite steps to complete."
+            )
+        elif hold.kind == "scheduled":
+            action.kind = "scheduled"
+            readiness = selection.phase(phase.id)
+            if not readiness.due:
+                opens = readiness.opens
+                days = (opens - self.as_of).days
+                action.message = (
+                    f"{phase.name} opens {opens.isoformat()} "
+                    f"({schedule.humanize_delta(days)}). Nothing to do yet."
+                )
+            else:
+                fire = self.handler(phase.id, step.id).fire_at_local
+                action.message = (
+                    f"{phase.name} → {step.name} is scheduled for {fire} "
+                    "(fires via its timed automation). Nothing to do yet."
+                )
+        elif hold.kind == "in_flight":
+            record = self.state.get_step(phase.id, step.id)
+            action.message = (
+                f"WAITING — {step.name}: "
+                f"{record.note or 'Underlying work is still running.'}"
+            )
+        elif hold.kind == "gate":
+            action.kind = "gate"
+            action.message = (
+                f"HOLDING at gate: {phase.name} → {step.name}. Awaiting human decision."
+            )
+        else:
+            action.kind = "reminder"
+            if phase.execution == "parallel":
+                holds = [
+                    item for item in selection.action_holds
+                    if item.kind in ("action", "scout")
+                ]
+                names = "; ".join(phase.step(item.step_id).name for item in holds)
+                action.message = f"{len(holds)} item(s) need attention: {names}"
+            elif step.kind == StepKind.ATTESTATION:
+                action.message = (
+                    f"CONFIRM — attest that this is done to proceed: {step.name}. "
+                    "Mark it done once you've verified it."
+                )
+            elif hold.kind == "scout":
+                action.message = (
+                    f"Scout-assisted check pending — {step.name}. "
+                    "Scout runs this automatically when you open it."
+                )
+            else:
+                action.message = (
+                    f"ACTION NEEDED — you need to: {step.name}. Mark it done when complete."
+                )
+        return action
 
     def _run_auto_step(self, phase: dict, step: dict, block_holds: bool) -> NextAction:
         """Run an agent step. On success → done. On failure: in sequential mode
@@ -420,206 +585,443 @@ class Orchestrator(StatusViewMixin):
         (block_holds=False) mark it blocked + register it, but return 'ran' so the
         drain continues with independent steps."""
         pid = phase["id"]
-        # A local mock short-circuits the real runner (agent call), returning the
-        # declared StepResult (done → complete; blocked → hold).
-        result = mocks_mod.stepresult_for(self.mocks, pid, step["id"])
-        if result is None:
-            # Resolve the runner from the co-located step module (KIND == 'agent');
-            # steps without a module fall back to the stub. No agent registry.
-            mod = steps.get_step(pid, step["id"])
-            if mod is not None and getattr(mod, "KIND", None) == "agent" and hasattr(mod, "run"):
-                runner = mod.run
+        handler = self.handler(pid, step["id"])
+        definition = handler.definition
+        active_effect = bool(
+            definition
+            and definition.effect_mode
+            and definition.effect_mode.writes_external_state
+            and (self.state.get_step(pid, step["id"]).execution or {}).get(
+                "effect_mode"
+            )
+        )
+        # A local mock short-circuits the real handler, returning the
+        # declared outcome. Active effects always recover first; a later-added
+        # outcome mock must never erase uncertain provider ownership.
+        outcome: AutoOutcome | None = (
+            None
+            if active_effect
+            else mocks_mod.outcome_for(self.mocks, pid, step["id"])
+        )
+        kernel = self._transition_kernel()
+        permit = kernel.authorize_outcome(
+            TransitionIntent.EFFECT if active_effect else (
+                TransitionIntent.MOCK if outcome is not None else TransitionIntent.EXECUTE),
+            pid, step["id"],
+            execution_id=self.step_execution(pid, step["id"]).get("id") if active_effect else None,
+        )
+        if isinstance(permit, TransitionResult):
+            return self._next_from_transition(permit)
+        if outcome is None:
+            effect = handler.effect
+            if effect is not None:
+                execution = self.step_execution(pid, step["id"])
+                recovering = bool(execution)
+                if not recovering:
+                    prepared = effects.prepare(
+                        effect,
+                        self.context(pid, step["id"], permit=permit, role=HookRole.PREPARE),
+                        self.mocks.get(f"{pid}.{step['id']}", {}),
+                    )
+                    if isinstance(prepared, Blocked):
+                        outcome = prepared
+                        execution = {}
+                    else:
+                        previous = self.state.get_step(pid, step["id"])
+                        transition = kernel.begin_effect(
+                            permit,
+                            effect_mode=effect.mode,
+                            operation_key=prepared["operation_key"],
+                            effect_input=prepared["input"],
+                        )
+                        if not transition.changed:
+                            return self._next_from_transition(transition)
+                        self._evidence_sessions.pop(permit, None)
+                        try:
+                            self.state.checkpoint()
+                        except Exception:
+                            self.state.set_step(pid, step["id"], previous)
+                            raise
+                        execution = self.step_execution(pid, step["id"])
+                        permit = kernel.authorize_outcome(
+                            TransitionIntent.EFFECT, pid, step["id"],
+                            execution_id=execution["id"],
+                        )
+                        if isinstance(permit, TransitionResult):
+                            return self._next_from_transition(permit)
+                else:
+                    if not effects.execution_input_is_valid(
+                        step["id"], execution
+                    ):
+                        return self._next_from_transition(
+                            self._transition_kernel().hold_effect(
+                                pid,
+                                step["id"],
+                                "Frozen effect input failed its operation-key "
+                                "integrity check. Ownership is preserved for review.",
+                            )
+                        )
+                    if effect.recovery == EffectRecovery.MATCH_CURRENT:
+                        frozen_mocks = (execution.get("effect_input") or {}).get(
+                            "__effect_mocks__", {}
+                        )
+                        current = effects.prepare(
+                            effect, self.context(pid, step["id"], permit=permit,
+                                                 inputs=frozen_mocks, role=HookRole.PREPARE), frozen_mocks
+                        )
+                        if isinstance(current, Blocked):
+                            return self._next_from_transition(
+                                self._transition_kernel().hold_effect(
+                                    pid,
+                                    step["id"],
+                                    "Effect inputs cannot currently be verified. "
+                                    f"{current.reason}",
+                                )
+                            )
+                        if execution.get("operation_key") != current["operation_key"]:
+                            return self._next_from_transition(
+                                self._transition_kernel().hold_effect(
+                                    pid,
+                                    step["id"],
+                                    "Effect inputs changed after execution started. "
+                                    "The previous operation remains reserved; owner "
+                                    "review is required.",
+                                )
+                            )
+                if execution:
+                    rejected = kernel.validate_outcome_permit(permit)
+                    if rejected:
+                        return self._next_from_transition(rejected)
+                    effect_mocks = (
+                        (execution.get("effect_input") or {}).get(
+                            "__effect_mocks__", {}
+                        )
+                    )
+                    outcome = effects.invoke(
+                        effect,
+                        self.context(pid, step["id"], permit=permit,
+                                     inputs=effect_mocks, role=(
+                                         HookRole.RECONCILE if recovering and effect.mode == EffectMode.TRANSACTIONAL
+                                         else HookRole.EXECUTE)),
+                        recovering=recovering,
+                    )
             else:
-                runner = stub_runner.run_stub
-            # Expose any declared `input` knobs (e.g. cg `alerts`) to the step's
-            # build() so its REAL logic runs on the injected data.
-            with mockctx.active(self.mocks.get(f"{pid}.{step['id']}", {})):
-                result = runner(pid, step, self.state)
-        key = f"{pid}.{step['id']}"
-        # IN-FLIGHT: the step's underlying pipeline run is still executing — NOT a failure.
-        # Hold the phase as 'waiting on the pipeline' (no user action) and let the poller /
-        # tick re-run the step until the run completes. Stamp when we first saw it in-flight
-        # so a poller can send the 6h courtesy nudge.
-        if getattr(result, "in_flight", False):
-            prev = self.state.get_step(pid, step["id"])
-            data = dict(getattr(prev, "data", {}) or {})
-            data.setdefault("in_flight_since", _now())
-            data["poll_in_min"] = getattr(result, "poll_in_min", 30)
-            self.state.set_step(pid, step["id"],
-                                StepState(status="in_flight", note=result.action, by="agent",
-                                          links=list(getattr(result, "links", None) or []),
-                                          data=data))
-            self.state.pending_human = [p for p in self.state.pending_human if p != key]
-            self.state.status = "running"
-            return NextAction(kind="waiting", phase=pid, step=step["id"], name=step["name"],
-                              message=f"WAITING — {step['name']}: {result.action}")
-        if not result.ok:
-            data = self.state.get_step(pid, step["id"]).data
-            self.state.set_step(pid, step["id"],
-                                StepState(status="blocked", note=result.action, by=result.by,
-                                          links=list(getattr(result, "links", None) or []),
-                                          data=data))
-            if key not in self.state.pending_human:
-                self.state.pending_human.append(key)
-            if block_holds:
-                self.state.status = "awaiting_action"
-                return NextAction(kind="reminder", phase=pid, step=step["id"],
-                                  name=step["name"],
-                                  message=f"ACTION NEEDED — {step['name']}: {result.action}")
-            return NextAction(kind="ran", phase=pid, step=step["id"], name=step["name"],
-                              message=f"BLOCKED — {step['name']}: {result.action}")
-        data = self.state.get_step(pid, step["id"]).data
-        self.state.set_step(pid, step["id"],
-                            StepState(status="done", completed_at=_now(),
-                                      note=result.action, by=result.by,
-                                      links=list(getattr(result, "links", None) or []),
-                                      data=data))
-        if result.by == "human":
-            self.state.pending_human = [p for p in self.state.pending_human if p != key]
-        self.state.status = "running"
-        return NextAction(kind="ran", phase=pid, step=step["id"],
-                          name=step["name"], message=result.action)
+                # Input mocks exercise the bound handler's real build logic.
+                outcome = handler.build(self.context(pid, step["id"], permit=permit))
+        outcome = require_auto_outcome(outcome)
+        rejected = kernel.validate_outcome_application(permit, outcome)
+        if rejected:
+            return self._next_from_transition(rejected)
+        self.apply_evidence(permit, outcome)
+        transition = kernel.apply_outcome(permit, outcome, block_holds=block_holds)
+        if transition.changed:
+            self._evidence_sessions.pop(permit, None)
+        return self._next_from_transition(transition)
 
-    def run_until_gate(self, max_steps: int = 500) -> list:
-        """Drive the loop until a gate hold, completion, or step cap.
-        Returns the list of NextAction taken. `attempted` prevents re-running an
-        auto step twice within this drain (so a re-blocking step can't loop)."""
+    def run_until_gate(self, max_steps: int = 500) -> list[NextAction]:
+        """Drain independent work until a settled hold, completion, or step cap.
+
+        Step-local parallel waits retain their kind but allow another selection.
+        Each handler, including effect recovery, is attempted once per
+        drain. A later invocation can poll/reconcile it again.
+        """
         actions = []
         attempted = set()
         for _ in range(max_steps):
             act = self.step_once(attempted)
             actions.append(act)
-            if act.kind in ("gate", "reminder", "scheduled", "complete", "readiness", "blocked", "halted", "waiting"):
+            if not act.continue_drain:
                 break
         return actions
 
     # ---- external step execution (caller holds the release transaction lock) ----
     def step_execution(self, phase_id: str, step_id: str) -> dict:
-        return dict(self.state.get_step(phase_id, step_id).data.get("_execution") or {})
+        value = self.state.get_step(phase_id, step_id).execution
+        return dict(value) if isinstance(value, dict) else {}
+
+    def authorize_outcome(
+        self, intent: TransitionIntent, phase_id: str, step_id: str, *,
+        execution_id: str | None = None,
+    ) -> OutcomePermit:
+        """Capture permission before invoking an observation, prepare, poll or refresh."""
+        from .revision import assert_current
+        assert_current(self)
+        result = self._transition_kernel().authorize_outcome(
+            intent, phase_id, step_id, execution_id=execution_id,
+        )
+        if isinstance(result, TransitionResult):
+            raise ValueError(result.message)
+        return result
+
+    def apply_outcome(
+        self, permit: OutcomePermit, outcome: AutoOutcome, *, data: dict | None = None,
+    ) -> NextAction:
+        outcome = require_auto_outcome(outcome)
+        if data is not None and not isinstance(data, dict):
+            raise TypeError("Outcome data must be a dictionary")
+        self.validate_evidence_permit(permit)
+        if permit.intent == TransitionIntent.RECOVER_EVIDENCE:
+            raise ValueError("Evidence recovery cannot apply a lifecycle outcome")
+        self.validate_outcome_application(permit, outcome, data=data)
+        self.apply_evidence(permit, outcome)
+        result = self._transition_kernel().apply_outcome(permit, outcome, data=data)
+        if not result.changed:
+            raise ValueError(result.message)
+        self._evidence_sessions.pop(permit, None)
+        return self._next_from_transition(result)
+
+    def validate_outcome_application(
+        self, permit: OutcomePermit, outcome: AutoOutcome, *, data: dict | None = None,
+    ) -> None:
+        """Check a proposed result without changing evidence, ownership or its permit."""
+        rejected = self._transition_kernel().validate_outcome_application(permit, outcome, data=data)
+        if rejected:
+            raise ValueError(rejected.message)
+
+    def validate_outcome_permit(self, permit: OutcomePermit) -> None:
+        """Revalidate a prepared action before offering or invoking further work."""
+        from .revision import assert_current
+        assert_current(self)
+        rejected = self._transition_kernel().validate_outcome_permit(permit)
+        if rejected:
+            raise ValueError(rejected.message)
+
+    def validate_evidence_permit(self, permit: OutcomePermit) -> None:
+        from .revision import assert_current
+        assert_current(self)
+        rejected = self._transition_kernel().validate_evidence_permit(permit)
+        if rejected:
+            raise ValueError(rejected.message)
+
+    def settle_execution(
+        self, phase_id: str, step_id: str, execution_id: str, outcome: AutoOutcome,
+        *, data: dict | None = None,
+    ) -> NextAction:
+        """Settle an existing owner's receipt; this does not authorize new work."""
+        from .revision import assert_current
+        assert_current(self)
+        result = self._transition_kernel().settle_execution(
+            phase_id, step_id, execution_id, outcome, data=data,
+        )
+        if not result.changed:
+            raise ValueError(result.message)
+        return self._next_from_transition(result)
+
+    def step_action_intent(self, phase_id: str, step_id: str) -> TransitionIntent:
+        if rejected := self._transition_kernel()._invalid():
+            raise ValueError(rejected.message)
+        definition = self._workflow_definition().step(phase_id, step_id)
+        record = self.state.get_step(phase_id, step_id)
+        if definition and definition.pollable and record.status == "in_flight":
+            return TransitionIntent.POLL
+        if definition and definition.repeatable and self._step_complete(phase_id, step_id):
+            return TransitionIntent.REFRESH
+        return TransitionIntent.PREPARE
+
+    def omit_execution(
+        self, permit: OutcomePermit, reason: str, *, links: list | None = None,
+    ) -> NextAction:
+        result = self._transition_kernel().omit_execution(permit, reason, links=links)
+        if not result.changed:
+            raise ValueError(result.message)
+        return self._next_from_transition(result)
 
     def step_action_guard(self, phase_id: str, step_id: str):
+        if rejected := self._transition_kernel()._invalid():
+            return Blocked(rejected.message)
+        definition = self._workflow_definition().step(phase_id, step_id)
+        record = self.state.get_step(phase_id, step_id)
+        if definition and definition.pollable and record.status == "in_flight":
+            check = self._transition_kernel().eligibility().evaluate(
+                TransitionIntent.POLL, phase_id, step_id
+            )
+            return None if check.allowed else Blocked(check.reason)
         completed = self.completed_step_outcome(phase_id, step_id)
+        if completed is not None and definition and definition.repeatable:
+            check = self._transition_kernel().eligibility().evaluate(
+                TransitionIntent.REFRESH, phase_id, step_id
+            )
+            return None if check.allowed else Blocked(check.reason)
         if completed is not None:
             return completed
-        execution = self.step_execution(phase_id, step_id)
-        if execution:
-            return Blocked(f"Reserved by {execution['owner']} (execution {execution['id']}). "
-                           "Wait if active; if interrupted, stop the original runner and review "
-                           "the outcome with the owner before done or reopen. Do not repeat the action.")
-        phase = self._find_step(phase_id, step_id)
-        if (not phase or self.current_phase_id() != phase_id or self.state.halted
-                or self.state.blocked or not self.state.readiness_signed
-                or self.state.status == "complete" or not self._phase_due(phase)):
-            return Blocked("Step is not currently eligible: release/phase is not ready.")
-        step = next(s for s in phase["steps"] if s["id"] == step_id)
-        if not self._prerequisites_met(phase, step):
-            return Blocked("Waiting on prerequisite steps to complete.")
-        if not self._is_mocked(phase_id, step) and not self._step_time_ready(phase, step):
-            return Blocked("Step is not currently eligible: scheduled time has not arrived.")
-        return None
+        check = self._transition_kernel().eligibility().evaluate(
+            TransitionIntent.PREPARE, phase_id, step_id
+        )
+        return None if check.allowed else Blocked(check.reason)
 
     @staticmethod
     def supports_step_reservation(outcome) -> bool:
-        """Standard MCP action -> record-step. Specialized follow-up flows keep their own lifecycle."""
-        return (isinstance(outcome, NeedsSkill) and outcome.outbound
-                and command_verb(outcome.tool) is None
-                and "followup_command" not in outcome.payload and "_trigger" not in outcome.payload)
+        """Every non-notification outbound action requires a durable reservation."""
+        return isinstance(outcome, NeedsSkill) and outcome.outbound
 
     def reserve_step(self, phase_id: str, step_id: str, outcome, executor: str):
-        guard = self.step_action_guard(phase_id, step_id)
-        if guard is not None:
-            return guard
+        from .revision import assert_current
+        assert_current(self)
         if not isinstance(outcome, NeedsSkill):
             return outcome
+        eligibility = self._transition_kernel().eligibility().evaluate(
+            TransitionIntent.RESERVE, phase_id, step_id
+        )
+        if not eligibility.allowed:
+            return Blocked(eligibility.reason)
         if not self.supports_step_reservation(outcome) or outcome.record_as != step_id:
             return Blocked("Reservation requires a standard action completed through record-step.")
-        if not executor or not executor.strip():
-            raise ValueError("The claiming executor/session identifier is required")
-        phase = self._find_step(phase_id, step_id)
-        step = next((s for s in (phase or {}).get("steps", []) if s["id"] == step_id), None)
-        if (not step or step_id not in self.scout_pending_steps()
-                or self.current_phase_id() != phase_id):
-            return Blocked("Step is not currently eligible to execute.")
-        record = self.state.get_step(phase_id, step_id)
-        record.status = "running"
-        record.data["_execution"] = {"id": uuid.uuid4().hex, "owner": executor.strip(), "started_at": _now()}
-        self.state.set_step(phase_id, step_id, record)
-        return outcome
+        result = self._transition_kernel().reserve(phase_id, step_id, executor)
+        return outcome if result.changed else Blocked(result.message)
+
+    def reserve_execution(self, phase_id: str, step_id: str, executor: str) -> TransitionResult:
+        from .revision import assert_current
+        assert_current(self)
+        return self._transition_kernel().reserve(phase_id, step_id, executor)
+
+    def annotate_step(self, phase_id: str, step_id: str, *, data: dict | None = None,
+                      links: list | None = None, note: str | None = None,
+                      by: str | None = None) -> TransitionResult:
+        return self._transition_kernel().annotate_step(
+            phase_id, step_id, data=data, links=links, note=note, by=by)
+
+    def reopen(self, phase_id: str, step_id: str, reason: str = "") -> TransitionResult:
+        return self._transition_kernel().reopen(phase_id, step_id, reason)
+
+    def cancel(self, reason: str) -> TransitionResult:
+        return self._transition_kernel().cancel(reason)
+
+    def reactivate(self, reason: str) -> TransitionResult:
+        return self._transition_kernel().reactivate(reason)
+
+    def retry_effect(self, phase_id: str, step_id: str, execution_id: str, reason: str,
+                     *, confirm_absent: bool = False) -> TransitionResult:
+        kernel = self._transition_kernel()
+        if confirm_absent is not True:
+            return kernel._reject("Review the provider first, then pass --confirm-absent.")
+        generation = kernel._prepare_effect_recovery(phase_id, step_id, execution_id, reason, retry=True)
+        if isinstance(generation, TransitionResult):
+            return generation
+        effect = self.handler(phase_id, step_id).effect
+        if effect is None or effect.authorize_retry is None:
+            return kernel._reject("Configured effect retry handler is unavailable.")
+        permit = self.authorize_outcome(TransitionIntent.RECOVER_EVIDENCE, phase_id, step_id,
+                                        execution_id=execution_id)
+        verified = effect.authorize_retry(self.context(
+            phase_id, step_id, permit=permit, role=HookRole.RETRY, parameters={"reason": reason}))
+        if not isinstance(verified, RetryDecision):
+            raise TypeError("Effect retry verification must return RetryDecision.")
+        if not verified.allowed:
+            return kernel._reject(verified.detail)
+        if rejected := kernel.validate_outcome_permit(permit):
+            return rejected
+        if verified.updates:
+            self._evidence_sessions[permit].apply(verified.updates, checkpoint=True)
+        return kernel._apply_effect_recovery(
+            phase_id, step_id, execution_id, reason, generation, retry=True)
+
+    def supersede_effect(self, phase_id: str, step_id: str, execution_id: str, reason: str,
+                         *, confirm_idempotent: bool = False) -> TransitionResult:
+        kernel = self._transition_kernel()
+        if confirm_idempotent is not True:
+            return kernel._reject("Confirm that the desired-state write is idempotent before superseding.")
+        generation = kernel._prepare_effect_recovery(phase_id, step_id, execution_id, reason, retry=False)
+        if isinstance(generation, TransitionResult):
+            return generation
+        return kernel._apply_effect_recovery(
+            phase_id, step_id, execution_id, reason, generation, retry=False)
+
+    def claim_notification_step(self, notification_id: str, approved_hash: str, executor: str) -> TransitionResult:
+        from orchestrator import delivery
+
+        if rejected := self._transition_kernel()._invalid():
+            return rejected
+        if not isinstance(self.state.notification_deliveries, dict):
+            return self._transition_kernel()._reject("Notification ledger must be a mapping.")
+        try:
+            ledger = self.state.notification_deliveries.get(notification_id)
+            item = delivery.validate_record(self, ledger)
+        except ValueError as exc:
+            return self._transition_kernel()._reject(str(exc))
+        if delivery.is_progress_receipt(ledger):
+            return self._transition_kernel()._reject("A settled notification receipt cannot be claimed.")
+        reason = delivery.scope_reason(self, item["scope"])
+        if reason:
+            return self._transition_kernel()._reject(reason)
+        return self._transition_kernel()._claim_notification_step(notification_id, approved_hash, executor)
+
+    def release_notification_step(self, notification_id: str, execution_id: str) -> TransitionResult:
+        if not isinstance(self.state.notification_deliveries, dict):
+            return self._transition_kernel()._reject("Notification ledger must be a mapping.")
+        try:
+            return self._transition_kernel().release_notification_step(notification_id, execution_id)
+        except ValueError as exc:
+            return self._transition_kernel()._reject(str(exc))
+
+    def record_notification_evidence(self, notification_id: str) -> TransitionResult:
+        from orchestrator import delivery
+
+        if not isinstance(self.state.notification_deliveries, dict):
+            return self._transition_kernel()._reject("Notification ledger must be a mapping.")
+        try:
+            ledger = self.state.notification_deliveries.get(notification_id)
+            item = delivery.validate_record(self, ledger)
+        except ValueError as exc:
+            return self._transition_kernel()._reject(str(exc))
+        if delivery.is_progress_receipt(ledger):
+            return TransitionResult("annotated", "Notification receipt is already settled.")
+        reason = delivery.scope_reason(self, item["scope"], acknowledgement=True)
+        completed_reasons = ("owning step complete", "release complete", "outside owning phase/window")
+        if reason and reason not in completed_reasons:
+            return self._transition_kernel()._reject(reason)
+        scope = item["scope"]
+        completed_owner = False
+        if item["completion"].get("kind") == "step" and self.workflow.step(scope.get("phase"), scope.get("step")):
+            record = self.state.get_step(scope["phase"], scope["step"])
+            ledger = self.state.notification_deliveries[notification_id]
+            attempt = ledger["attempts"][-1] if ledger["attempts"] else {}
+            completed_owner = (
+                record.status == "done" and not record.execution
+                and record.data.get("notification_id") == notification_id
+                and record.data.get("notification_execution_id") == attempt.get("id"))
+        if reason and not completed_owner:
+            return self._transition_kernel()._reject(reason)
+        return self._transition_kernel().record_notification_evidence(notification_id)
 
     def scout_pending_steps(self) -> list:
-        phase = self._current_phase()
-        if (not phase or self.state.halted or self.state.blocked or not self.state.readiness_signed
-                or self.state.status == "complete" or not self._phase_due(phase)):
-            return []
-        return [s["id"] for s in phase["steps"]
-                if self._step_kind(s) == "scout" and not s.get("attest")
-                and self.state.get_step(phase["id"], s["id"]).status == "pending"
-                and not self.step_execution(phase["id"], s["id"])
-                and self._prerequisites_met(phase, s) and self._step_time_ready(phase, s)]
+        return list(self.scheduling().scout_pending)
 
     # ---- manual overrides (human-driven transitions, §7.1 constraint #5) ----
     def completed_step_outcome(self, phase_id: str, step_id: str) -> Optional[Done]:
         """Terminal steps stay terminal until explicitly reopened."""
-        if not self.state.is_done(phase_id, step_id):
+        if not self._step_complete(phase_id, step_id):
             return None
         record = self.state.get_step(phase_id, step_id)
         return Done(note=f"Already {record.status}: {phase_id}/{step_id}; no action required.",
                     links=list(record.links or []))
 
     def _find_step(self, phase_id: str, step_id: str):
-        phase = next((p for p in self.config["phases"] if p["id"] == phase_id), None)
-        if phase and any(s["id"] == step_id for s in phase["steps"]):
-            return phase
-        return None
+        workflow = self._workflow_definition()
+        phase = workflow.phase(phase_id)
+        return phase.raw if phase and workflow.step(phase_id, step_id) else None
 
     def skip_step(self, phase_id: str, step_id: str, reason: str) -> NextAction:
         """Mark a step skipped (counts as done for progression) without running it.
         A reason is REQUIRED (audit). For 'doesn't apply' or 'done manually outside the tool'."""
-        if not (reason and reason.strip()):
-            return NextAction(kind="idle", message="A reason is required to skip a step.")
-        if not self._find_step(phase_id, step_id):
-            return NextAction(kind="idle", message=f"No such step: {phase_id}/{step_id}")
-        if self.step_execution(phase_id, step_id):
-            completed = self.completed_step_outcome(phase_id, step_id)
-            return NextAction(kind="idle", message=completed.note if completed else
-                              "Review the reserved execution first; use done or reopen with evidence.")
-        self.state.set_step(phase_id, step_id,
-                            StepState(status="skipped", completed_at=_now(),
-                                      note=f"Skipped: {reason.strip()}", by="human"))
-        if self.state.status == "holding_gate" and self.state.current_step == step_id:
-            self.state.status = "running"
-        return NextAction(kind="ran", phase=phase_id, step=step_id,
-                          message=f"Skipped {phase_id}/{step_id} — {reason.strip()}")
+        return self._next_from_transition(
+            self._transition_kernel().skip(phase_id, step_id, reason)
+        )
 
     def complete_step(self, phase_id: str = None, step_id: str = None, note: str = "") -> NextAction:
         """Mark a reminder (human, non-gate) step done. Defaults to the step the
         conductor is currently holding on. This is how a person clears an
         'ACTION NEEDED' hold once they've actually done the task."""
-        phase_id = phase_id or self.state.current_phase
-        step_id = step_id or self.state.current_step
-        if not (phase_id and step_id) or not self._find_step(phase_id, step_id):
-            return NextAction(kind="idle", message=f"No such step: {phase_id}/{step_id}")
-        completed = self.completed_step_outcome(phase_id, step_id)
-        if completed is not None:
-            return NextAction(kind="idle", phase=phase_id, step=step_id, message=completed.note)
-        if self.step_execution(phase_id, step_id) and not note.strip():
-            return NextAction(kind="idle", message="Reserved execution needs owner-reviewed evidence in --note.")
-        return self._complete_step(phase_id, step_id, note)
-
-    def _complete_step(self, phase_id: str, step_id: str, note: str) -> NextAction:
-        previous = self.state.get_step(phase_id, step_id)
-        self.state.set_step(phase_id, step_id,
-                            StepState(status="done", completed_at=_now(),
-                                      note=(note.strip() or "Marked done"), by="human",
-                                      links=previous.links, data=deepcopy(previous.data)))
-        key = f"{phase_id}.{step_id}"
-        self.state.pending_human = [p for p in self.state.pending_human
-                                    if p != key and not p.startswith(key + " ")]
-        if self.state.status == "awaiting_action":
-            self.state.status = "running"
-        tail = f" — {note.strip()}" if note and note.strip() else ""
-        return NextAction(kind="ran", phase=phase_id, step=step_id,
-                          message=f"Done: {phase_id}/{step_id}{tail}")
+        if rejected := self._transition_kernel()._invalid():
+            return self._next_from_transition(rejected)
+        if bool(phase_id) != bool(step_id):
+            return NextAction(kind="idle", message="Provide both --phase and --step, or neither.")
+        if not phase_id:
+            hold = self._projection().current_hold()
+            phase_id = hold.phase_id if hold else None
+            step_id = hold.step_id if hold else None
+        return self._next_from_transition(
+            self._transition_kernel().complete(phase_id, step_id, note)
+        )
 
     def record_scout_step(self, phase_id: str, step_id: str, status: str,
                           detail: str = "", *, execution_id: str = None,
@@ -631,114 +1033,72 @@ class Orchestrator(StatusViewMixin):
             (e.g. a Production CCOA lockdown overlaps — the owner must shift CCD).
         Repeatable observation commands may refresh prior results explicitly;
         this never overrides a reservation or a human skip."""
-        if not self._find_step(phase_id, step_id):
+        if rejected := self._transition_kernel()._invalid():
+            raise ValueError(rejected.message)
+        definition = self._workflow_definition().step(phase_id, step_id)
+        if not definition:
             return NextAction(kind="idle", message=f"No such step: {phase_id}/{step_id}")
+        if definition.is_gate:
+            raise ValueError(f"record-step cannot complete a human gate: {phase_id}/{step_id}")
         execution = self.step_execution(phase_id, step_id)
-        if refresh and execution:
-            raise ValueError("An observation refresh cannot override a reserved execution")
         completed = self.completed_step_outcome(phase_id, step_id)
         if completed is not None and (not refresh or self.state.get_step(phase_id, step_id).status == "skipped"):
             return NextAction(kind="idle", phase=phase_id, step=step_id, message=completed.note)
-        if execution or execution_id:
-            if not execution or execution["id"] != execution_id:
-                raise ValueError("Only the owning execution can record this result")
-            if self.state.get_step(phase_id, step_id).status != "running":
-                raise ValueError("Interrupted execution requires owner review before done or reopen")
         if status not in ("pass", "attention"):
             raise ValueError("Scout result must be pass or attention")
-        if status == "pass":
-            return self._complete_step(phase_id, step_id, detail)
-        # attention: leave the step outstanding, flagged for the owner.
-        record = self.state.get_step(phase_id, step_id)
-        record.status, record.note, record.by = "blocked", detail, "scout"
-        self.state.set_step(phase_id, step_id, record)
-        self.state.status = "awaiting_action"
-        key = f"{phase_id}.{step_id}"
-        if key not in self.state.pending_human:
-            self.state.pending_human.append(key)
-        return NextAction(kind="reminder", phase=phase_id, step=step_id,
-                          message=f"Needs your attention — {detail}")
+        if definition.kind != StepKind.EXTERNAL:
+            raise ValueError("Only external steps accept generic record-step results.")
+        if definition.write_command and not execution:
+            raise ValueError(
+                f"{phase_id}/{step_id} requires an active {definition.write_command} reservation."
+            )
+        links = self.state.get_step(phase_id, step_id).links
+        outcome = Done(detail, by="scout", links=links) if status == "pass" else Blocked(
+            detail, by="scout", links=links)
+        if execution or execution_id:
+            return self.settle_execution(phase_id, step_id, execution_id, outcome)
+        permit = self.authorize_outcome(
+            TransitionIntent.REFRESH if refresh else TransitionIntent.RECORD,
+            phase_id, step_id,
+        )
+        return self.apply_outcome(permit, outcome)
 
     def reopen_step(self, phase_id: str, step_id: str, reason: str = "") -> NextAction:
         """Undo a done/skipped step so the conductor runs it again. Reason optional."""
-        if not self._find_step(phase_id, step_id):
-            return NextAction(kind="idle", message=f"No such step: {phase_id}/{step_id}")
-        if self.step_execution(phase_id, step_id) and not reason.strip():
-            return NextAction(kind="idle", message="Reopening reserved work requires owner-reviewed evidence in --reason.")
-        self.state.steps.pop(self.state.key(phase_id, step_id), None)  # remove -> pending
-        key = self.state.key(phase_id, step_id)
-        self.state.pending_human = [p for p in self.state.pending_human if p != key and not p.startswith(key + " ")]
-        # drop any prior gate approval for this step so a gate re-holds
-        self.state.gate_decisions = [g for g in self.state.gate_decisions
-                                     if g.get("step") != f"{phase_id}.{step_id}"]
-        if self.state.status == "complete":
-            self.state.status = "running"
-        note = f" — {reason.strip()}" if reason and reason.strip() else ""
-        return NextAction(kind="ran", phase=phase_id, step=step_id,
-                          message=f"Reopened {phase_id}/{step_id}{note}")
+        return self._next_from_transition(
+            self.reopen(phase_id, step_id, reason)
+        )
 
     def halt(self, reason: str) -> NextAction:
         """Emergency hold — nothing advances until resume(). Reason REQUIRED (audit)."""
-        if not (reason and reason.strip()):
-            return NextAction(kind="idle", message="A reason is required to halt the release.")
-        self.state.halted = True
-        self.state.halt_reason = reason.strip()
-        self.state.status = "halted"
-        return NextAction(kind="halted", message=f"Release HALTED — {reason.strip()}")
+        return self._next_from_transition(self._transition_kernel().halt(reason))
 
     def resume(self, reason: str = "") -> NextAction:
         """Clear an emergency halt. Reason optional."""
-        if not self.state.halted:
-            return NextAction(kind="idle", message="Release is not halted.")
-        self.state.halted = False
-        self.state.halt_reason = None
-        self.state.status = "running"
-        note = f" — {reason.strip()}" if reason and reason.strip() else ""
-        return NextAction(kind="idle", message=f"Release resumed{note}.")
+        return self._next_from_transition(self._transition_kernel().resume(reason))
 
     # ---- gates ----
     def _gate_approved(self, phase: str, step: str) -> bool:
-        for gd in self.state.gate_decisions:
-            if gd.get("step") == f"{phase}.{step}" and gd.get("decision") == "approved":
-                return True
-        return False
+        definition = self._workflow_definition().step(phase, step)
+        return bool(
+            definition
+            and definition.kind == StepKind.APPROVAL_GATE
+            and self._projection().gate_approved(definition)
+        )
 
     def approve_gate(self, comment: str = "") -> NextAction:
         """Record approval for the current holding gate and continue."""
-        phase = self.state.current_phase
-        step = self.state.current_step
-        if self.state.status != "holding_gate" or not phase:
-            return NextAction(kind="idle", message="No gate is currently holding.")
-        self.state.gate_decisions.append(
-            asdict_gate(GateDecision(step=f"{phase}.{step}", decision="approved",
-                                     at=_now(), comment=comment)))
-        # mark the gate step done and advance
-        self.state.set_step(phase, step,
-                            StepState(status="done", completed_at=_now(),
-                                      note=f"Gate approved. {comment}".strip(), by="human"))
-        self.state.status = "running"
-        return NextAction(kind="ran", phase=phase, step=step,
-                          message=f"Gate approved: {phase} → {step}. {comment}".strip())
+        return self._next_from_transition(
+            self._transition_kernel().approve_gate(comment)
+        )
 
     def deny_gate(self, comment: str = "") -> NextAction:
-        phase = self.state.current_phase
-        step = self.state.current_step
-        if self.state.status != "holding_gate" or not phase:
-            return NextAction(kind="idle", message="No gate is currently holding.")
-        self.state.gate_decisions.append(
-            asdict_gate(GateDecision(step=f"{phase}.{step}", decision="denied",
-                                     at=_now(), comment=comment)))
-        self.state.pending_human.append(f"{phase}.{step} (denied: {comment})")
-        self.state.status = "blocked"
-        return NextAction(kind="gate", phase=phase, step=step,
-                          message=f"Gate DENIED: {phase} → {step}. Release blocked. {comment}".strip())
+        return self._next_from_transition(
+            self._transition_kernel().deny_gate(comment)
+        )
 
     # `_phase_included` is a shared helper (used by both the state machine and the status
     # views mixin). The status view-model builders live in orchestrator/status_views.py.
     def _phase_included(self, phase: dict) -> bool:
-        return (not phase.get("conditional")) or phase["id"] in self._activated_conditionals()
-
-
-def asdict_gate(gd: GateDecision) -> dict:
-    return {"step": gd.step, "decision": gd.decision, "at": gd.at,
-            "by": gd.by, "comment": gd.comment}
+        definition = self._workflow_definition().phase(phase["id"])
+        return bool(definition and self._projection().phase_included(definition))

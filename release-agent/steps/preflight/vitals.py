@@ -8,13 +8,15 @@ confirmation the skill clears it with `done --step vitals`.
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+
 from orchestrator.outcomes import NeedsHuman
 
 ID = "vitals"
 KIND = "attest"
 
 
-def build(state):
+def build(context: StepContext):
     return NeedsHuman(
         prompt=(
             "Open Google Play Console and confirm the app is healthy before I proceed:\n"

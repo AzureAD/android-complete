@@ -12,10 +12,10 @@ from tools import checks
 
 def cmd_init(args):
     sp = C.state_path(args.runs_root, args.release)
-    if os.path.exists(sp) and not args.force:
-        print(f"Release {args.release} already exists at {sp} (use --force to recreate).")
+    if os.path.exists(sp):
+        print(f"Release {args.release} already exists at {sp}; initialization never replaces release history.")
         return 1
-    st = ReleaseState(release_id=args.release, status="not_started")
+    st = ReleaseState(release_id=args.release)
 
     # Release owner (the engineer running this release) — release metadata.
     # Priority: explicit --owner-email (skill can pass the richer profile) then
@@ -56,6 +56,9 @@ def cmd_init(args):
     # The month the release is NAMED for (ship month) = CCD month + 1 by default. Stored so the
     # docs/comms never misname the release; the owner confirms/adjusts it at init (set-target-month).
     st.target_month = schedule.default_target_month(args.release)
+    from orchestrator.engine import Orchestrator
+    from orchestrator.revision import bind_initial
+    bind_initial(Orchestrator(args.config, st, mocks={}))
     st.save(sp)
 
     C.elog(args.runs_root, args.release).log(
@@ -83,7 +86,8 @@ def cmd_init(args):
 
 def cmd_list(args):
     """List discovered releases (none/one/many). --json for the skill."""
-    res = discovery.resolve(args.runs_root, getattr(args, "release", None))
+    res = discovery.resolve(
+        args.runs_root, getattr(args, "release", None), args.config)
     if args.json:
         print(_json.dumps(res, indent=2))
         return 0
@@ -106,7 +110,9 @@ def cmd_list(args):
 
 def cmd_status(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    if not getattr(args, "no_pipeline_check", False) and C.refresh_conflict(st):
+    from orchestrator.revision import mismatch_reason
+    if (not mismatch_reason(orch) and not getattr(args, "no_pipeline_check", False)
+            and C.refresh_conflict(st)):
         C.save_state(st, args.runs_root, args.release)
     if getattr(args, "json", False):
         print(_json.dumps(orch.status_report(), indent=2))
@@ -135,11 +141,24 @@ def cmd_next(args):
 
 def cmd_approve(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    gate_phase, gate_step = st.current_phase, st.current_step
+    selection = orch.scheduling()
+    hold = selection.focus_hold
+    if hold and hold.kind == "gate":
+        definition = selection.step(hold.phase_id, hold.step_id).definition
+        approval_command = definition.approval_command if definition else None
+        if approval_command:
+            print(
+                f"Gate {hold.phase_id}/{hold.step_id} requires external approval; "
+                f"use `{approval_command}`."
+            )
+            return 1
     act = orch.approve_gate(args.comment or "")
+    if act.kind == "idle":
+        print(act.message)
+        return 1
+    C.save_state(st, args.runs_root, args.release)
     el = C.elog(args.runs_root, args.release)
-    if act.kind != "idle":
-        el.log("gate_approved", phase=gate_phase, step=gate_step, driver=args.comment or None)
+    el.log("gate_approved", phase=act.phase, step=act.step, driver=args.comment or None)
     actions = orch.run_until_gate()
     C.save_state(st, args.runs_root, args.release)   # persist BEFORE any display
     C.log_actions(el, actions, state=st)
@@ -151,11 +170,10 @@ def cmd_approve(args):
 
 def cmd_deny(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    gate_phase, gate_step = st.current_phase, st.current_step
     act = orch.deny_gate(args.comment or "")
     if act.kind != "idle":
         C.elog(args.runs_root, args.release).log(
-            "gate_denied", phase=gate_phase, step=gate_step, driver=args.comment or None)
+            "gate_denied", phase=act.phase, step=act.step, driver=args.comment or None)
     C.save_state(st, args.runs_root, args.release)
     C.emit(args.runs_root, args.release,
            f"  {act.message}\n\n" + render.status_view(orch.status_report()), kind="deny",
@@ -187,9 +205,14 @@ def cmd_skip(args):
     if act.kind == "idle":            # rejected (no reason / bad step) — nothing changed
         print(act.message)
         return 1
+    el = C.elog(args.runs_root, args.release)
+    el.log("step_skipped", phase=args.phase, step=args.step, driver=args.reason)
+    actions = orch.run_until_gate()
     C.save_state(st, args.runs_root, args.release)
-    C.elog(args.runs_root, args.release).log("step_skipped", phase=args.phase, step=args.step, driver=args.reason)
-    C.emit(args.runs_root, args.release, act.message, kind="override")
+    C.log_actions(el, actions, state=st)
+    C.emit(args.runs_root, args.release,
+           C.advance_block(actions, orch, lead=[f"  {act.message}"]), kind="override",
+           log_text=C.advance_log_summary(actions, lead=[act.message]))
     return 0
 
 
@@ -205,10 +228,7 @@ def cmd_reopen(args):
     return 0
 
 
-# The Phase-2 RC-testing steps a re-triggered RC invalidates: the two MRWP verifications
-# and the terminal RC report/gate. checker_fired / orchestrator_health are NOT reopened —
-# a re-triggered RC re-runs MRWP against the same orchestrator run.
-_RC_RETRIGGER_STEPS = ("mrwp_ecs", "mrwp_local", "rc_report")
+_RC_RETRIGGER_ANCHOR = "mrwp_ecs"
 
 
 def cmd_rc_retriggered(args):
@@ -221,24 +241,18 @@ def cmd_rc_retriggered(args):
     early poll can't mark an in-progress RC as a false failure."""
     st, orch = C.load_orch(args.runs_root, args.release, args.config)
     reason = (args.reason or "RC re-triggered").strip()
-    reopened = []
-    for sid in _RC_RETRIGGER_STEPS:
-        act = orch.reopen_step("build_verify", sid, reason)
-        if act.kind != "idle":
-            reopened.append(sid)
-        # a reopened step is no longer an owner action / block
-        key = f"build_verify.{sid}"
-        st.pending_human = [p for p in st.pending_human if p != key]
-    if not reopened:
-        print("No Phase-2 RC steps found to reopen (is this release in Build & RC "
-              "Verification?).")
+    result = orch.reopen(
+        "build_verify", _RC_RETRIGGER_ANCHOR, reason
+    )
+    if not result.changed:
+        print(result.message)
         return 1
-    if st.status in ("awaiting_action", "holding_gate", "complete", "halted"):
-        st.status = "running"
+    affected = list(result.affected)
     C.save_state(st, args.runs_root, args.release)
     C.elog(args.runs_root, args.release).log(
-        "rc_retriggered", driver=reason, steps=",".join(reopened))
-    msg = (f"RC re-trigger acknowledged — reopened {', '.join(reopened)}. Scout will "
+        "rc_retriggered", driver=reason, steps=",".join(affected))
+    msg = (f"RC re-trigger acknowledged — invalidated {len(affected)} downstream step(s) "
+           f"from build_verify.{_RC_RETRIGGER_ANCHOR}. Scout will "
            f"re-resolve the newest RC and re-apply the gate; it holds (no action needed) "
            f"while the run is still in-flight and polls every 30 min. Reason: {reason}")
     C.emit(args.runs_root, args.release, msg, kind="override")
@@ -275,9 +289,12 @@ def cmd_resume(args):
 
 def cmd_activate(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config)
-    orch.activate_conditional(args.phase)
+    act = orch.activate_conditional(args.phase)
+    if act.kind == "idle":
+        print(act.message)
+        return 1
     C.save_state(st, args.runs_root, args.release)
-    print(f"Activated conditional phase: {args.phase}")
+    print(act.message)
     return 0
 
 
@@ -355,7 +372,7 @@ def register(sub):
     dn.set_defaults(func=cmd_done)
 
     # ---- manual overrides ----
-    sk = sub.add_parser("skip", help="Skip a step without running it (reason REQUIRED)")
+    sk = sub.add_parser("skip", help="Skip an eligible non-gate step without running it (reason REQUIRED)")
     sk.add_argument("--release", required=True)
     sk.add_argument("--phase", required=True)
     sk.add_argument("--step", required=True)

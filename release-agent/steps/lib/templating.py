@@ -31,15 +31,11 @@ def parse_template(text: str, variant: str):
     return out["subject"].strip(), out["body"]
 
 
-def load_template(rel_path: str, variant: str):
-    """Read a template file (relative to root) and return (subject, body) or an
-    {'error': ...} dict on failure — callers decide how to surface it."""
-    path = template_path(rel_path)
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            parsed = parse_template(fh.read(), variant)
-    except OSError:
-        return {"error": f"template not found: {path}"}
+def select_template(text, variant: str):
+    """Select fields from fetched template text, preserving an IO error if supplied."""
+    if isinstance(text, dict):
+        return text
+    parsed = parse_template(text, variant)
     if not parsed:
         return {"error": f"variant '{variant}' not in template"}
     return parsed

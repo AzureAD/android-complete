@@ -2,12 +2,25 @@
 from tests._harness import *  # noqa: F401,F403
 
 
+def _compose(state, recipients, changes=None):
+    from orchestrator import status_email as SE
+
+    selection = Orchestrator(CONFIG, state).scheduling()
+    return SE.compose(
+        state,
+        _PHASE_ORDER,
+        recipients,
+        changes=changes,
+        selection=selection,
+    )
+
+
 
 
 def test_status_email_composes_milestone_dashboard():
     from orchestrator import status_email as SE
     st = _status_state("build_verify")
-    res = SE.compose(st, _PHASE_ORDER, ["authsdkrelease@microsoft.com"], changes=[
+    res = _compose(st, ["authsdkrelease@microsoft.com"], changes=[
         {"level": "PATCH", "text": "Update common", "pr": 260}])
     assert res["skip"] is False
     assert res["subject"] == "Auth Client Android SDKs September 2026 Release — Daily Status"
@@ -26,14 +39,41 @@ def test_status_email_composes_milestone_dashboard():
 def test_status_email_window_boundaries():
     from orchestrator import status_email as SE
     # before Phase 2 → skip
-    r0 = SE.compose(_status_state("preflight"), _PHASE_ORDER, [])
+    r0 = _compose(_status_state("preflight"), [])
     assert r0["skip"] and "before Phase 2" in r0["reason"]
     # Phase 4 → in window
-    r4 = SE.compose(_status_state("finalize"), _PHASE_ORDER, [])
+    r4 = _compose(_status_state("finalize"), [])
     assert r4["skip"] is False
     # Phase 5 → skip (done)
-    r5 = SE.compose(_status_state("rollout_start"), _PHASE_ORDER, [])
+    r5 = _compose(_status_state("rollout_start"), [])
     assert r5["skip"] and "after Phase 5" in r5["reason"]
+
+
+def test_status_email_projection_does_not_complete_legacy_skipped_gate():
+    from orchestrator import status_email as SE
+    from orchestrator.state import StepState
+
+    st = _status_state("bug_bash")
+    _active_phase(st, "bug_bash")
+    st.set_step(
+        "bug_bash",
+        "bugbash_complete",
+        StepState(status="skipped", note="legacy override"),
+    )
+    orch = Orchestrator(CONFIG, st, mocks={})
+    result = SE.compose(
+        st,
+        _PHASE_ORDER,
+        ["authsdkrelease@microsoft.com"],
+        selection=orch.scheduling(),
+    )
+    milestone = next(
+        item
+        for item in result["model"]["milestones"]
+        if item["label"] == "Manual Test Pass Complete"
+    )
+    assert result["skip"] is False
+    assert milestone["status"] != "complete"
 
 
 
@@ -57,6 +97,7 @@ def test_status_email_command_gates_and_stamp():
     prs.broker_change_list = lambda *a, **k: (True, [], "")     # no network
     with tempfile.TemporaryDirectory() as d:
         st = _status_state("build_verify")
+        st.timezone = "America/Los_Angeles"
         _active_phase(st, "build_verify")
         _C.save_state(st, d, "2026-08")
 
@@ -75,7 +116,7 @@ def test_status_email_command_gates_and_stamp():
             # stamp, then idempotent skip
             rA = argparse.Namespace(runs_root=d, release="2026-08", config=CONFIG,
                                     as_of="2026-08-12", final=False)
-            _ack_notifications(d, "2026-08", "2026-08-12T12:00:00", sent["notifications"])
+            _ack_notifications(d, "2026-08", "2026-08-12T17:00:00", sent["notifications"])
             assert _C.load_state(d, "2026-08").last_status_email_date == "2026-08-12"
             assert run("2026-08-12")["reason"] == "already recorded today"
         finally:

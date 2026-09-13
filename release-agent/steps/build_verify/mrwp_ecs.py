@@ -8,11 +8,16 @@ block — they're triaged in a later phase. All logic is shared in `_mrwp.verify
 """
 from __future__ import annotations
 
-from steps.lib.agent import legacy_run
+from orchestrator.step_context import StepContext, thaw
+
 from steps.build_verify._mrwp import verify_mrwp
 
+from orchestrator.authority import PipelineScope, PipelineSlot
+
+EVIDENCE = (PipelineScope(PipelineSlot.ECS),)
 ID = "mrwp_ecs"
 KIND = "agent"
+EFFECT_MODE = "read_only"
 
 # Mock knobs (mocks.local.yaml): mrwp_id (inject build id), stages (inject stage list),
 # tests (inject test summary). Consumed inside _mrwp.verify_mrwp via mock_input.
@@ -25,8 +30,5 @@ MOCKABLE = {
 }
 
 
-def build(state):
-    return verify_mrwp(state, "ECS")
-
-
-run = legacy_run(build)
+def build(context: StepContext):
+    return verify_mrwp(context, "ECS")

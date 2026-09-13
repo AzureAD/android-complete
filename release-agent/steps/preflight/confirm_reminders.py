@@ -10,6 +10,8 @@ Depends on `flight_reminder` (only surfaces once the reminders were sent).
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+
 from orchestrator.outcomes import NeedsHuman
 from steps.lib.context import release_ctx
 
@@ -17,8 +19,8 @@ ID = "confirm_reminders"
 KIND = "attest"
 
 
-def build(state):
-    month = release_ctx(state)["month"] if state.ccd else "this"
+def build(context: StepContext):
+    month = release_ctx(context)["month"] if context.release.ccd else "this"
     return NeedsHuman(
         prompt=(
             f"Confirm feature owners completed the {month}-release pre-code-complete work "

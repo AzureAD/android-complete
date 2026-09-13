@@ -12,14 +12,36 @@ from orchestrator import cli_common as C
 def cmd_record_step(args):
     """Record non-notification work, or revalidate an explicit no-delivery outcome."""
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    import steps
-    mod = steps.get_step(args.phase, args.step)
-    if getattr(mod, "NOTIFICATION", False) and not orch.state.is_done(args.phase, args.step):
+    try:
+        handler = orch.handler(args.phase, args.step)
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    if handler.definition.write_command:
+        print(
+            f"Use the checked {handler.definition.write_command} adapter and its receipt recovery. "
+            "For explicit owner resolution, use done/reopen with reviewed provider evidence; "
+            "record-step cannot certify provider writes.")
+        return 1
+    if handler.notification and not orch.state.is_done(args.phase, args.step):
         from orchestrator.commands.step_action import prepare_step
-        outcome = prepare_step(args, orch.state, orch)
+        try:
+            outcome = prepare_step(args, orch.state, orch)
+        except ValueError as exc:
+            print(str(exc))
+            return 1
         if args.status != "pass" or not outcome.get("no_delivery_required"):
             print("Use notification claim/result for notification steps; record-step is not delivery evidence.")
             return 1
+        if outcome.get("state_changed"):
+            C.save_state(orch.state, args.runs_root, args.release)
+            C.emit(
+                args.runs_root,
+                args.release,
+                outcome.get("note", "No delivery required; step completed."),
+                kind="step",
+            )
+            return 0
     try:
         act = orch.record_scout_step(args.phase, args.step, args.status, args.detail or "",
                                      execution_id=getattr(args, "execution_id", None))

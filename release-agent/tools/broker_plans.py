@@ -30,8 +30,20 @@ def identity(release_id, name):
             "marker": _MARKER + release_id}
 
 
+def _runtime_matches(expected):
+    current = identity(expected.get("release_id"), expected.get("name"))
+    return all(
+        current.get(key) == expected.get(key)
+        for key in (
+            "release_id", "name", "org", "project", "area", "iteration", "marker"
+        )
+    )
+
+
 def find_candidates(expected, timeout=120):
     """Include inactive plans and all pages; same-name collisions must not be hidden."""
+    if not _runtime_matches(expected):
+        return False, None, "Broker provider coordinates changed; restore configuration before recovery"
     ok, plans, detail = P._ado_rest_get_all(
         f"{T.ORG}/{T.PROJECT}/_apis/testplan/plans?{T._API}"
         "&filterActivePlans=false&includePlanDetails=true", timeout)
@@ -115,8 +127,12 @@ def _snapshot(timeout, rc=None):
     return True, source, ""
 
 
-def validate_plan(pid, expected, source=None, timeout=120):
+def validate_plan(
+    pid, expected, source=None, timeout=120, *, runtime_identity=None
+):
     """Read-only identity/flat-suite/config/point verification; never overwrite results."""
+    if not _runtime_matches(runtime_identity or expected):
+        return False, None, "Broker provider coordinates changed; restore configuration before recovery"
     pid = positive_id(pid)
     if source is not None:
         _validate_source(source)
@@ -191,11 +207,26 @@ def validate_plan(pid, expected, source=None, timeout=120):
     return True, info, ""
 
 
+def prepare_source(timeout=120, rc=None):
+    """Resolve and validate every fallible source read before create reservation."""
+    ok, source, detail = _snapshot(timeout, rc)
+    if not ok:
+        return False, None, f"Cannot snapshot master: {detail}"
+    try:
+        _validate_source(source)
+    except ValueError as exc:
+        return False, None, str(exc)
+    return True, source, ""
+
+
 def ensure_plan(release_id, name, record, checkpoint, *, stored_id=MISSING_ID,
                 selected_id=None, reason="", area_path=None, allow_create=True, timeout=120,
-                rc=None):
+                rc=None, prepared_source=None, expected_identity=None, now=None):
     """Reuse a bound plan or discover exactly one; only a fresh intent can POST a plan."""
-    expected = identity(release_id, name)
+    now = now or (lambda: datetime.now(timezone.utc))
+    expected = deepcopy(expected_identity or identity(release_id, name))
+    if not _runtime_matches(expected):
+        return False, None, "Broker provider coordinates changed; restore configuration before recovery"
     if record and record.get("identity") != expected:
         return False, None, "Saved resource identity changed; owner recovery required"
     if record and record.get("status") not in ("creating", "created", "ready", "retry_authorized"):
@@ -242,16 +273,28 @@ def ensure_plan(release_id, name, record, checkpoint, *, stored_id=MISSING_ID,
             return False, None, "No existing plan selected; recovery never creates a plan"
     if pid:
         pid = positive_id(pid)
-        ok, info, detail = validate_plan(pid, validation_identity, record.get("source"), timeout)
+        validation_source = record.get("source") or prepared_source
+        if validation_source is not None:
+            _validate_source(validation_source)
+        ok, info, detail = validate_plan(
+            pid,
+            validation_identity,
+            validation_source,
+            timeout,
+            runtime_identity=expected,
+        )
         if not ok:
             return False, pid, detail
     else:
-        ok, source, detail = _snapshot(timeout, rc)
-        if not ok:
-            return False, None, f"Cannot snapshot master: {detail}"
-        _validate_source(source)
+        if prepared_source is None:
+            ok, source, detail = prepare_source(timeout, rc)
+            if not ok:
+                return False, None, detail
+        else:
+            source = deepcopy(prepared_source)
+            _validate_source(source)
         record.update(identity=expected, status="creating", source=source,
-                      started_at=datetime.now(timezone.utc).isoformat())
+                      started_at=now().isoformat())
         checkpoint()  # Save permission-to-create BEFORE calling the non-idempotent POST.
 
         def created(new_id):
@@ -262,7 +305,9 @@ def ensure_plan(release_id, name, record, checkpoint, *, stored_id=MISSING_ID,
             name, timeout, source=source, description=expected["marker"], on_created=created)
         if not ok:
             return False, pid, detail
-        ok, info, detail = validate_plan(pid, expected, source, timeout)
+        ok, info, detail = validate_plan(
+            pid, expected, source, timeout, runtime_identity=expected
+        )
         if not ok:
             return False, pid, detail
     # After lost acknowledgement, publish only the completion marker, never re-create suites.
@@ -272,9 +317,12 @@ def ensure_plan(release_id, name, record, checkpoint, *, stored_id=MISSING_ID,
             {"description": (info.get("description") or expected["marker"]) + "\n" + _COMPLETE}, timeout)
         if not ok:
             return False, pid, f"Plan {pid} is verified but its completion marker could not be saved: {detail}"
+    adopted_source = record.get("source") or prepared_source
     record.update(identity=expected, plan_id=pid, ui_suite_id=info["ui_suite_id"],
                   status="ready", area_path=info["areaPath"],
-                  verified_at=datetime.now(timezone.utc).isoformat())
+                  verified_at=now().isoformat())
+    if adopted_source is not None:
+        record["source"] = deepcopy(adopted_source)
     if selected_id is not None:
         record["selection"] = {"plan_id": selected_id, "reason": reason.strip(),
                                "source": "release-owner", "at": record["verified_at"]}
@@ -282,11 +330,23 @@ def ensure_plan(release_id, name, record, checkpoint, *, stored_id=MISSING_ID,
     return True, pid, ""
 
 
-def confirm_not_created(release_id, name, record, checkpoint, reason, timeout=120):
+def confirm_not_created(
+    release_id,
+    name,
+    record,
+    checkpoint,
+    reason,
+    timeout=120,
+    *,
+    expected_identity=None,
+    now=None,
+):
     """Owner-reviewed retry permission, not a create; retain the interrupted attempt."""
     if not reason.strip():
         return False, "Retry authorization requires owner-reviewed evidence in --reason"
-    expected = identity(release_id, name)
+    expected = deepcopy(expected_identity or identity(release_id, name))
+    if not _runtime_matches(expected):
+        return False, "Broker provider coordinates changed; restore configuration before recovery"
     if record.get("identity") != expected or record.get("status") != "creating" or "plan_id" in record:
         return False, "Only an unresolved creation with no recorded ID can be reviewed as not created"
     _validate_source(record.get("source"))
@@ -299,7 +359,7 @@ def confirm_not_created(release_id, name, record, checkpoint, reason, timeout=12
     history.append({k: deepcopy(v) for k, v in record.items() if k != "attempt_history"})
     record.update(status="retry_authorized", attempt_history=history,
                   retry_review={"reason": reason.strip(), "source": "release-owner",
-                                "at": datetime.now(timezone.utc).isoformat()})
+                                "at": (now() if now else datetime.now(timezone.utc)).isoformat()})
     checkpoint()
     return True, ""
 

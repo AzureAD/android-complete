@@ -27,13 +27,15 @@ Mock knobs (mocks.local.yaml / tests):
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+
 from orchestrator.outcomes import NeedsSkill, Blocked
-from steps.lib.agent import legacy_run
-from steps.lib.mockctx import mock_input, MISSING
+from steps.lib.mockctx import MISSING
 from tools.coordinates import coords
 
 ID = "wiki_payload"
-KIND = "agent"
+KIND = "scout"
+WRITE_COMMAND = "create-payload-wiki"
 
 # The payload page lives in a DIFFERENT project (IdentityWiki) from the release chain — only the
 # org host is shared. Same parent as the standing payloads-history tree.
@@ -59,24 +61,24 @@ MOCKABLE = {
 }
 
 
-def _month_year(state) -> str:
+def _month_year(context) -> str:
     from orchestrator import schedule
-    return schedule.target_month_label(state) or str(state.release_id)
+    return schedule.target_month_label(context.release) or str(context.release.release_id)
 
 
-def page_name(state) -> str:
+def page_name(context) -> str:
     """Payload page name: '<Ship Month> <Year> Release' (the release's display month, e.g.
     'September 2026 Release')."""
-    ov = mock_input("page_name", MISSING)
+    ov = context.input("page_name", MISSING)
     if ov is not MISSING and ov:
         return str(ov)
     from orchestrator import schedule
-    label = schedule.target_month_label(state)
-    return f"{label} Release" if label else f"{state.release_id} Release"
+    label = schedule.target_month_label(context.release)
+    return f"{label} Release" if label else f"{context.release.release_id} Release"
 
 
-def page_path(state) -> str:
-    return f"{CONFIG['parent_path'].rstrip('/')}/{page_name(state)}"
+def page_path(context) -> str:
+    return f"{CONFIG['parent_path'].rstrip('/')}/{page_name(context)}"
 
 
 def wiki_url(path: str) -> str:
@@ -85,34 +87,33 @@ def wiki_url(path: str) -> str:
             f"{CONFIG['wiki']}?pagePath={quote(path or '')}")
 
 
-def _auth_build(state):
+def _auth_build(context):
     """(version, build_number, build_url, detail) — from a `version` mock, else the live
     Authenticator release-app build. version is None on failure."""
-    ov = mock_input("version", MISSING)
+    ov = context.input("version", MISSING)
     if ov is not MISSING and ov:
         d = ov if isinstance(ov, dict) else {"version": ov}
         return (d.get("version"), d.get("build_number"), d.get("build_url"), "")
-    branch = (getattr(state, "versions", None) or {}).get("authenticator")
+    branch = (getattr(context.release, "versions", None) or {}).get("authenticator")
     if not branch:
         return (None, None, None, "no Authenticator release branch on record (state.versions.authenticator)")
-    from tools.pipelines import find_auth_release_build, auth_build_url
-    ok, info, detail = find_auth_release_build(branch)
+    from tools.pipelines import auth_build_url
+    ok, info, detail = context.services.pipelines.find_auth_release_build(branch)
     if not ok or not info:
         return (None, None, None, detail or "no succeeded Authenticator release-app build yet")
     return (info.get("version"), info.get("build_number"), auth_build_url(info.get("build_id")), "")
 
 
-def _prs(state):
+def _prs(context):
     """(prs, detail) — merged-PR list [{id,title}], noise-filtered. From a `prs` mock, else live."""
-    ov = mock_input("prs", MISSING)
+    ov = context.input("prs", MISSING)
     if ov is not MISSING and ov is not None:
         rows = list(ov)
     else:
-        branch = (getattr(state, "versions", None) or {}).get("authenticator")
+        branch = (getattr(context.release, "versions", None) or {}).get("authenticator")
         if not branch:
             return (None, "no Authenticator release branch to derive PRs from")
-        from tools.pipelines import merged_release_prs
-        ok, rows, detail = merged_release_prs(branch)
+        ok, rows, detail = context.services.pipelines.merged_release_prs(branch)
         if not ok:
             return (None, detail)
     clean = [p for p in rows
@@ -120,13 +121,13 @@ def _prs(state):
     return (clean, "")
 
 
-def _render(state, version, build_number, build_url, prs) -> str:
+def _render(context, version, build_number, build_url, prs) -> str:
     run_link = ""
     if build_url:
         label = f"Pipelines - Run {build_number}" if build_number else "Pipelines - Run"
         run_link = f" [{label}]({build_url})"
     pr_lines = "\n".join(f"PR {p.get('id')}: {p.get('title')}" for p in prs) or "_No merged PRs derived._"
-    sv = getattr(state, "versions", None) or {}
+    sv = getattr(context.release, "versions", None) or {}
     sdk_lines = "\n".join(f"*   {label}: {sv.get(key) or '_TBD_'}" for key, label in CONFIG["sdks"])
     return (
         f"#App Version\n{version}{run_link}\n\n\n"
@@ -134,7 +135,7 @@ def _render(state, version, build_number, build_url, prs) -> str:
         f"Authenticator + DID\n-------------\n{pr_lines}\n\n"
         f"* * *\n\n"
         f"Auth Client Android SDKs\n------------------------\n\n"
-        f"### Release: {_month_year(state)}\n\n"
+        f"### Release: {_month_year(context)}\n\n"
         f"Email with release notes: _Add the Broker release-announcement email title._\n\n"
         f"{sdk_lines}\n\n"
         f"* * *\n\n"
@@ -148,52 +149,50 @@ def _render(state, version, build_number, build_url, prs) -> str:
     )
 
 
-def compose_payload(state):
+def compose_payload(context):
     """Resolve everything and render the payload markdown. Returns (ok, plan, detail) where
     plan = {content, page_name, page_path, url, version, build_url, pr_count}. Read-only."""
-    version, build_number, build_url, d = _auth_build(state)
+    version, build_number, build_url, d = _auth_build(context)
     if not version:
         return (False, None, f"couldn't resolve the Authenticator version ({d})")
-    prs, dp = _prs(state)
+    prs, dp = _prs(context)
     if prs is None:
         return (False, None, f"couldn't derive the merged-PR list ({dp})")
-    content = _render(state, version, build_number, build_url, prs)
-    path = page_path(state)
-    return (True, {"content": content, "page_name": page_name(state), "page_path": path,
+    content = _render(context, version, build_number, build_url, prs)
+    path = page_path(context)
+    return (True, {"content": content, "page_name": page_name(context), "page_path": path,
                    "url": wiki_url(path), "version": version, "build_url": build_url,
                    "pr_count": len(prs)}, "")
 
 
-def build(state):
-    fail = mock_input("fail", MISSING)
+def build(context: StepContext):
+    fail = context.input("fail", MISSING)
     if fail is not MISSING:
         return Blocked(f"wiki_payload: {fail}")
 
-    ok, plan, detail = compose_payload(state)
+    ok, plan, detail = compose_payload(context)
     if not ok:
         hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
         return Blocked(f"wiki_payload: {detail}{hint}.")
 
-    from tools.checks import wiki_page_exists
-    exists = wiki_page_exists(CONFIG["org"], CONFIG["project"], CONFIG["wiki"], plan["page_path"])
-    verb = "update" if exists else "create"      # None (unknown) -> treated as create (create is exist-safe)
+    exists = context.services.repositories.wiki_page_exists(CONFIG["org"], CONFIG["project"], CONFIG["wiki"], plan["page_path"])
+    if type(exists) is not bool:
+        return Blocked("wiki_payload: page existence is unknown; inspect access before reviewing a write.")
+    verb = "update" if exists else "create"
     summary = (f"{verb.capitalize()} the '{plan['page_name']}' payload wiki page — App Version "
                f"{plan['version']} + {plan['pr_count']} merged PR(s) + SDK versions "
                f"(email/sign-offs/feature-flags left as placeholders).")
     return NeedsSkill(
         tool="create-payload-wiki",
         payload={
-            "release": state.release_id,
+            "release": context.release.release_id,
             "plan": {"page_name": plan["page_name"], "page_path": plan["page_path"],
                      "url": plan["url"], "version": plan["version"], "pr_count": plan["pr_count"],
                      "action": verb, "content": plan["content"]},
-            "followup_command": f"create-payload-wiki --release {state.release_id} --dry-run",
+            "followup_command": f"create-payload-wiki --release {context.release.release_id} --dry-run",
         },
         record_as=ID,
         summary=summary,
         note=f"{verb} payload page '{plan['page_name']}' ({plan['pr_count']} PRs)",
         outbound=True,
     )
-
-
-run = legacy_run(build)

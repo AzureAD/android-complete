@@ -1,7 +1,9 @@
-"""Read-only ADO pipeline queries for Phase 2 (build_verify) release verification.
+"""ADO pipeline queries for release verification and explicit gate approval writes.
 
-Every function shells out to `az` and returns an (ok, data, detail) triple — no
-writes, deterministic, so the build_verify agent steps stay pure verification. The
+Reads use `az`/ADO REST and return success, data, and detail. The explicit
+`submit_pipeline_approval` writer is separately capability-fenced by core; the
+build_verify steps receive read-only services. Approval recovery reads a frozen
+approval id, validates identity and build ownership, and never submits again. The
 release chain these read (all in identitydivision/Engineering):
 
     3038 Code Complete Calendar Checker  → on the CCD, triggers →

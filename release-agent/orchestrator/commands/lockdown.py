@@ -14,6 +14,7 @@ from __future__ import annotations
 import json as _json
 
 from orchestrator import cli_common as C
+from orchestrator.outcomes import Blocked, Done
 from steps.preflight.lockdown import overlapping_periods, decide  # noqa: F401 (re-export)
 
 
@@ -28,9 +29,17 @@ def cmd_check_lockdown(args):
         print("Could not parse --periods-json (expected a JSON array).")
         return 1
 
-    status, detail = decide(st, raw)
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    orch.record_scout_step("preflight", "lockdown", status, detail)
+    completed = orch.completed_step_outcome("preflight", "lockdown")
+    if completed:
+        C.emit(args.runs_root, args.release, completed.note, kind="lockdown")
+        return 0
+    permit = orch.authorize_outcome(
+        orch.step_action_intent("preflight", "lockdown"), "preflight", "lockdown",
+    )
+    status, detail = decide(orch.context("preflight", "lockdown", permit=permit), raw)
+    outcome = Done(detail, by="scout") if status == "pass" else Blocked(detail, by="scout")
+    orch.apply_outcome(permit, outcome)
     C.save_state(orch.state, args.runs_root, args.release)
     tag = "ok" if status == "pass" else "attention"
     lead = "Lockdown check" if status == "pass" else "Lockdown overlap"

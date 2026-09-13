@@ -1,4 +1,5 @@
 """Release-agent tests — schedule_state. Shared harness in tests/_harness.py."""
+from tests._context import pipeline as _pipeline
 from tests._harness import *  # noqa: F401,F403
 
 
@@ -56,7 +57,7 @@ def test_phase0_scheduled_before_ccd_minus_7():
     st, orch = _ccd_orch("2026-06-28")     # before the window opens (CCD-7 = 07-01)
     actions = orch.run_until_gate()
     assert actions[-1].kind == "scheduled"
-    assert st.status == "scheduled"
+    assert orch.status_report()["status"] == "scheduled"
     # nothing ran — the window isn't open
     assert not st.is_done("preflight", "notice")
     rpt = orch.status_report()
@@ -122,7 +123,7 @@ def test_status_render_shows_versions_from_state():
     from orchestrator import render
     from steps.build_verify import _common as K
     st = ReleaseState(release_id="2026-08")
-    K.stash_orchestrator(st, "1678611", parked=True)
+    _pipeline(K.stash_orchestrator, st, "1678611", parked=True)
     st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0",
                         "authenticator": "release/2026/08/22"})
     line = render._pipelines_line(asdict(st))
@@ -208,11 +209,13 @@ def test_target_month_label_uses_stored_then_default():
 
 
 
-def test_init_stores_default_target_month():
+def test_init_stores_default_target_month(monkeypatch):
     """`init` persists the ship month (CCD month + 1) so docs/comms don't misname the release."""
     import tempfile, argparse
     from orchestrator.commands import release as R
     from orchestrator import cli_common as _C
+    from tools import checks
+    monkeypatch.setattr(checks, "read_pipeline_variable", lambda *a, **k: (False, None, "offline"))
     _stub_build_defs("pass")
     with tempfile.TemporaryDirectory() as tmp:
         ns = argparse.Namespace(runs_root=tmp, release="2026-08", force=False,
@@ -242,4 +245,3 @@ def test_set_target_month_command_overrides_and_resets():
         # bad input is rejected, state unchanged
         rc = R.cmd_set_target_month(argparse.Namespace(runs_root=tmp, release="2026-08", month="2026/13"))
         assert rc == 1 and _C.load_state(tmp, "2026-08").target_month == "2026-09"
-

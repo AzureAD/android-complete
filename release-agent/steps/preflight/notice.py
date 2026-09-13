@@ -8,15 +8,25 @@ deterministically and returns a NeedsSkill action describing the exact
 instructions required.
 """
 from __future__ import annotations
+from dataclasses import dataclass
+
+from orchestrator.step_context import StepContext, thaw
 
 from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.lib import templating as T
 from steps.lib.context import release_ctx, resolve_recipients
-from steps.lib.mockctx import mock_input
 
 ID = "notice"
 KIND = "scout"
 NOTIFICATION = True
+
+
+@dataclass(frozen=True)
+class BuildParameters:
+    variant: str | None = None
+
+
+PARAMETERS = {"build": BuildParameters}
 
 # Step config (co-located). Filled from the local template and sent to the real DL
 # (redirect for tests with the send_to mock knob).
@@ -80,26 +90,27 @@ def _html(variant: str, ctx: dict) -> str:
 </div>"""
 
 
-def build(state, variant: str | None = None):
+def build(context: StepContext[BuildParameters]):
     """Resolve the notice into a NeedsSkill(workiq_send_email) action, or Blocked
     if the release has no CCD / the template is missing."""
-    if not state.ccd:
+    variant = context.parameters.variant
+    if not context.release.ccd:
         return Blocked("no CCD set for this release")
 
     cfg = CONFIG
-    variant = variant or mock_input("variant") or cfg.get("variant", "initial")
+    variant = variant or context.input("variant") or cfg.get("variant", "initial")
     tpl_rel = cfg.get("template", "templates/early-code-complete-notice.md")
-    parsed = T.load_template(tpl_rel, variant)
+    parsed = T.select_template(context.services.assets.template(tpl_rel), variant)
     if isinstance(parsed, dict) and "error" in parsed:
         return Blocked(parsed["error"])
     subject_tpl, body_tpl = parsed
 
-    ctx = release_ctx(state)
+    ctx = release_ctx(context)
     subject = T.fill(subject_tpl, ctx)
     body = T.fill(body_tpl, ctx)
     html = _html(variant, ctx)
 
-    recipients, rnote, prefix = resolve_recipients(state, cfg.get("recipients", []))
+    recipients, rnote, prefix = resolve_recipients(context, cfg.get("recipients", []))
     subject_out = f"{prefix}{subject}"
 
     return NeedsSkill(

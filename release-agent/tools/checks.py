@@ -91,14 +91,21 @@ ONEAUTH_ACCESS_PACKAGE = ("https://myaccess.microsoft.com/@microsoft.onmicrosoft
 _ZERO_SHA = "0" * 40
 
 
-def oneauth_write_access(alias, timeout: int = 60):
+def oneauth_write_access(
+    alias,
+    timeout: int = 60,
+    *,
+    org=ONEAUTH_ORG,
+    project=ONEAUTH_PROJECT,
+    repo=ONEAUTH_REPO,
+):
     """Probe write access to the OneAuth repo by CREATING (then deleting) a
     'user/<alias>/scout-oneauth-access-check' branch off master. Returns (granted, detail):
     granted is True only when the branch create succeeds (it is then cleaned up); on any
     create rejection / permission error it is False. Self-cleaning and idempotent — a stale
     probe branch from a crashed run is removed before the create."""
     from tools import pipelines as P
-    base = f"{ONEAUTH_ORG}/{ONEAUTH_PROJECT}/_apis/git/repositories/{ONEAUTH_REPO}"
+    base = f"{org}/{project}/_apis/git/repositories/{repo}"
     ref = f"refs/heads/user/{alias}/scout-oneauth-access-check"
     ref_filter = f"heads/user/{alias}/scout-oneauth-access-check"
 
@@ -227,7 +234,7 @@ def wiki_page_exists(org: str, project: str, wiki: str, path: str,
 
 
 def create_wiki_page(org: str, project: str, wiki: str, path: str,
-                     content: str, timeout: int = 60) -> CheckResult:
+                     content: str, timeout: int = 60, *, require_absent: bool = False) -> CheckResult:
     az = shutil.which("az")
     if az is None:
         return CheckResult(False, False, "az CLI not found")
@@ -251,6 +258,8 @@ def create_wiki_page(org: str, project: str, wiki: str, path: str,
             return CheckResult(True, True, f"created '{path}'")
         stderr = (out.stderr or "").strip()
         if "exist" in stderr.lower():                 # already there — fine
+            if require_absent:
+                return CheckResult(False, True, f"page '{path}' appeared after review; inspect before retry")
             return CheckResult(True, True, f"page '{path}' already exists")
         msg = stderr.splitlines()[-1] if stderr else f"could not create '{path}'"
         return CheckResult(False, True, msg[:200])
@@ -291,7 +300,9 @@ def get_wiki_page(org: str, project: str, wiki: str, path: str, timeout: int = 6
         return (False, None, None, "could not parse az wiki page show output")
     etag = (d.get("eTag") or d.get("etag") or "").strip().strip('"')
     content = ((d.get("page") or {}).get("content")) if isinstance(d.get("page"), dict) else d.get("content")
-    return (True, content or "", etag, "")
+    if not isinstance(content, str):
+        return (False, None, None, "wiki page response omitted its content")
+    return (True, content, etag, "")
 
 
 def update_wiki_page(org: str, project: str, wiki: str, path: str, content: str,
@@ -399,4 +410,3 @@ def latest_scheduled_build(org: str, project: str, def_id: int, timeout: int = 6
     latest = max(sched, key=lambda b: b.get("queueTime") or "")
     return (True, {"queueTime": latest.get("queueTime"), "result": latest.get("result"),
                    "status": latest.get("status")}, "ok")
-

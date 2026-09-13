@@ -7,13 +7,14 @@ alerts — the owner must fix them and RERUN, or skip to override. Deterministic
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+
 from orchestrator.outcomes import Done, Blocked
-from steps.lib.agent import legacy_run
-from steps.lib.mockctx import mock_input
 from tools.coordinates import coords
 
 ID = "cg"
 KIND = "agent"
+EFFECT_MODE = "read_only"
 
 # Step config (co-located — this module is the single home for the step).
 # Component Governance alerts for the governed repo, read (read-only) from the CG
@@ -97,19 +98,18 @@ def _cg_links(cfg: dict, high: list) -> list:
     return links
 
 
-def build(state):
+def build(context: StepContext):
     cfg = CONFIG
     # Injected `alerts` (mocks.local.yaml) → run the REAL report/block logic on your
     # data, skipping the live az call.
-    injected = mock_input("alerts")
+    injected = context.input("alerts")
     if injected is not None:
         alerts = injected
     else:
         required = ("resource", "governance_host", "project_id", "governed_repo_id", "branch")
         if not all(cfg.get(k) for k in required):
             return Blocked("cg: incomplete configuration")
-        from tools.checks import fetch_cg_alerts
-        ok, alerts, detail = fetch_cg_alerts(
+        ok, alerts, detail = context.services.repositories.fetch_cg_alerts(
             cfg["resource"], cfg["governance_host"], cfg["project_id"],
             cfg["governed_repo_id"], cfg["branch"])
         if not ok:
@@ -125,6 +125,3 @@ def build(state):
             "RERUN this step to re-check — or skip to override with a reason.",
             links=links)
     return Done(report, links=links)
-
-
-run = legacy_run(build)

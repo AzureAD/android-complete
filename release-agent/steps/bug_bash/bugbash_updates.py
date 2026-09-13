@@ -53,13 +53,16 @@ Mock knobs (mocks.local.yaml / tests):
   send_to  : redirect the post to this chat id for testing.
 """
 from __future__ import annotations
+from dataclasses import dataclass
+
+from orchestrator.step_context import StepContext, thaw
 
 import json
 import re
 
 from orchestrator import schedule
 from orchestrator.outcomes import NeedsSkill, Blocked, Done
-from steps.lib.mockctx import mock_input, MISSING
+from steps.lib.mockctx import MISSING
 from tools import bugbash as BB
 from tools import testplans as T
 from tools.coordinates import coords
@@ -82,40 +85,40 @@ MOCKABLE = {
 }
 
 
-def _broker_plan(state):
-    return (state.get_step("bug_bash", "clone_plans_broker").data or {}).get("plan_id")
+def _broker_plan(context):
+    return (context.evidence.step("bug_bash", "clone_plans_broker").data or {}).get("plan_id")
 
 
-def _auth_suite(state):
-    return (state.get_step("bug_bash", "clone_plans_auth").data or {}).get("suite_id")
+def _auth_suite(context):
+    return (context.evidence.step("bug_bash", "clone_plans_auth").data or {}).get("suite_id")
 
 
-def _auto_failed_ids(state):
+def _auto_failed_ids(context):
     """Applied automation failures, independent of whether owner reassignment succeeded."""
-    return completed_result(state)["auth"]["failed_case_ids"]
+    return completed_result(context)["auth"]["failed_case_ids"]
 
 
-def gather(state):
+def gather(context):
     """(ok, progress, detail) — live progress, or the injected `progress` mock."""
-    inj = mock_input("progress", MISSING)
+    inj = context.input("progress", MISSING)
     if inj is not MISSING:
         return (True, inj, "")
-    bp, asuite = _broker_plan(state), _auth_suite(state)
+    bp, asuite = _broker_plan(context), _auth_suite(context)
     if not bp or not asuite:
         return (False, None, "the Broker plan / Auth suite aren't ready (run the clone steps).")
     try:
-        result = completed_result(state)
+        result = completed_result(context)
     except ValueError as exc:
         return False, None, str(exc)
-    return BB.gather_progress(bp, BROKER_SUITE_NAME, T.AUTH_PLAN, asuite,
+    return context.services.testplans.gather_progress(bp, BROKER_SUITE_NAME, T.AUTH_PLAN, asuite,
                               auto_failed_ids=result["auth"]["failed_case_ids"],
                               auth_automated_ids=result["auth"]["automated_case_ids"],
                               broker_ui_result=result["broker"])
 
 
-def plan_links(state):
+def plan_links(context):
     """Header destinations from the current release targets and recorded RC run IDs."""
-    rc = latest_rc(state)
+    rc = latest_rc(context)
     runs = [
         ("MRWP · ECS run", (rc.get("ecs") or {}).get("run_id"), build_url),
         ("MRWP · Local run", (rc.get("local") or {}).get("run_id"), build_url),
@@ -125,17 +128,16 @@ def plan_links(state):
         if not valid_id(run_id):
             raise ValueError(f"Missing/invalid current RC run ID for {name}; refresh the owning verification step")
     return [
-        {"name": "Broker test plan", "url": T.plan_web_url(_broker_plan(state))},
-        {"name": "Authenticator suite", "url": T.plan_web_url(T.AUTH_PLAN, _auth_suite(state))},
+        {"name": "Broker test plan", "url": T.plan_web_url(_broker_plan(context))},
+        {"name": "Authenticator suite", "url": T.plan_web_url(T.AUTH_PLAN, _auth_suite(context))},
     ] + [{"name": name, "url": url_for(run_id)} for name, run_id, url_for in runs] + [
         {"name": "Get test accounts", "url": coords.link("test_accounts")},
     ]
 
 
-def poll_interval_hours(config_path):
+def poll_interval_hours(context, config_path):
     """Use the provisioning interval for notification checkpoints/expiry too."""
-    from orchestrator.automations import load_defs
-    specs = [spec for spec in load_defs(config_path) if spec.get("slug") == "bug-bash-update-poller"]
+    specs = [spec for spec in context.services.assets.automation_definitions(config_path) if spec.get("slug") == "bug-bash-update-poller"]
     interval = specs[0].get("every") if len(specs) == 1 else None
     match = re.fullmatch(r"([1-9][0-9]*) hours?", interval) if isinstance(interval, str) else None
     hours = int(match[1]) if match else 0
@@ -144,52 +146,60 @@ def poll_interval_hours(config_path):
     return hours
 
 
-def prepare_update(state, progress, members_file=None):
+def prepare_update(context, progress, members_file=None):
     """One resolved transport payload shared by initial and periodic progress posts."""
-    chat_id = stored_chat_id(state)
+    chat_id = stored_chat_id(context)
     if not chat_id:
         return False, None, "Missing/stale meeting binding"
-    people = mock_input("people", MISSING)
+    people = context.input("people", MISSING)
     if people is MISSING:
         observation = None
         if members_file is not None:
             try:
-                with open(members_file, encoding="utf-8-sig") as fh:
-                    observation = json.load(fh)
+                observation = context.services.assets.json_file(members_file)
             except (OSError, ValueError) as exc:
                 return False, None, f"Cannot read meeting-member observation: {exc}"
-        ok, people, detail = BB.resolve_mention_people(
+        ok, people, detail = context.services.identities.resolve_mention_people(
             chat_id, progress.get("owners") or {}, member_observation=observation)
         if not ok:
             return False, None, detail
     try:
-        content, mentions = BB.render_update(progress, schedule.target_month_label(state) or "Bug Bash",
-                                             plan_links(state), people)
+        content, mentions = BB.render_update(progress, schedule.target_month_label(context.release) or "Bug Bash",
+                                             plan_links(context), people)
     except ValueError as exc:
         return False, None, str(exc)
     return True, {"chatId": chat_id, "content": content, "contentType": "html", "mentions": mentions}, ""
 
 
-def build(state, members_file=None):
-    if not state.ccd:
+@dataclass(frozen=True)
+class BuildParameters:
+    members_file: str | None = None
+
+
+PARAMETERS = {"build": BuildParameters}
+
+
+def build(context: StepContext[BuildParameters]):
+    members_file = context.parameters.members_file
+    if not context.release.ccd:
         return Blocked("bugbash_updates: no CCD set — can't title the Bug Bash.")
-    chat_id = stored_chat_id(state)
+    chat_id = stored_chat_id(context)
     if not chat_id:
         return Blocked("bugbash_updates: meeting chat binding is missing/stale "
                        "(run activate_chat against the current invitation).")
 
-    ok, progress, detail = gather(state)
+    ok, progress, detail = gather(context)
     if not ok:
         return Blocked(f"bugbash_updates: couldn't read test progress ({detail}).")
 
-    month_year = schedule.target_month_label(state)
+    month_year = schedule.target_month_label(context.release)
     if BB.all_complete(progress):
         if not progress["total"]:
             return Done(f"No manual or triage bug-bash work remains for {month_year}; nothing to poll.")
         return Done(f"All {progress['total']} bug-bash tests are already complete — "
                     f"nothing to poll; ready for {month_year} bug bash sign-off.")
 
-    ok, payload, detail = prepare_update(state, progress, members_file)
+    ok, payload, detail = prepare_update(context, progress, members_file)
     if not ok:
         return Blocked(f"bugbash_updates: {detail}")
     return NeedsSkill(
@@ -204,7 +214,7 @@ def build(state, members_file=None):
                  f"update poller"),
         note=f"{progress['remaining']} test(s) remaining across {len(progress['owners'])} owner(s)",
         outbound=True,
-        notification={"state_matches": chat_state_matches(state)},
+        notification={"state_matches": chat_state_matches(context)},
     )
 
 

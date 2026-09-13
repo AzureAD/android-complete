@@ -1,4 +1,5 @@
 """Auth failure details belong in the Auth card, not only the general evidence appendix."""
+from tests._context import context as _context
 from copy import deepcopy
 from html import unescape
 
@@ -16,7 +17,7 @@ def model(rows, broker_rows=None):
     rc = current_rc(rc=1, ecs=broker_rows)
     rc["auth"] = auth_snapshot(rows=rows)
     st.pipeline_runs = {"rcs": [rc]}
-    return R.rc_report_model(st)
+    return R.rc_report_model(_context(st))
 
 
 def auth_section(m):

@@ -1,4 +1,5 @@
 """Release-agent tests — build_verify. Shared harness in tests/_harness.py."""
+from tests._context import context as _context, invoke as _invoke, pipeline as _pipeline
 from tests._harness import *  # noqa: F401,F403
 from steps.build_verify import rc_report as report, _rc_report_rendering as rendering
 
@@ -6,20 +7,17 @@ from steps.build_verify import rc_report as report, _rc_report_rendering as rend
 
 
 def test_rc_retriggered_reopens_phase2_rc_steps():
-    """`rc-retriggered` reopens the two MRWP verifies + rc_report so Scout re-evaluates the
-    NEWEST RC, clears them from pending_human, and flips status back to running — while
-    leaving checker_fired / orchestrator_health (which a re-triggered RC doesn't invalidate)
-    untouched."""
+    """`rc-retriggered` invalidates the RC source and every downstream result while
+    leaving checker_fired / orchestrator_health untouched."""
     import tempfile, argparse
     from orchestrator.commands import release as R
     from orchestrator.state import StepState
     from orchestrator import cli_common as _C
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26", ccd_source="confirmed")
+    Orchestrator(CONFIG, st, mocks={})
     for sid in ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local"):
         st.set_step("build_verify", sid, StepState(status="done"))
     st.set_step("build_verify", "rc_report", StepState(status="blocked", note="UI 88%"))
-    st.pending_human = ["build_verify.rc_report"]
-    st.status = "awaiting_action"
     with tempfile.TemporaryDirectory() as d:
         _C.save_state(st, d, "2026-08")
         ns = argparse.Namespace(runs_root=d, release="2026-08", config=CONFIG,
@@ -31,8 +29,7 @@ def test_rc_retriggered_reopens_phase2_rc_steps():
     assert again.get_step("build_verify", "rc_report").status == "pending"
     assert again.is_done("build_verify", "checker_fired")        # untouched
     assert again.is_done("build_verify", "orchestrator_health")  # untouched
-    assert "build_verify.rc_report" not in again.pending_human
-    assert again.status == "running"
+    assert again.get_step("bug_bash", "clone_plans_broker").status == "pending"
 
 
 
@@ -175,12 +172,12 @@ def test_rc_email_includes_separate_auth_section():
     _seed_rc_pipeline(st, {"total": 100, "passed": 100, "failed": 0},
                       {"total": 100, "passed": 100, "failed": 0})
     rc = st.pipeline_runs["rcs"][-1]
-    K.stash_auth(st, rc["rc"], {
+    _pipeline(K.stash_auth, st, rc["rc"], {
         "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
                   "complete": True, "result": "succeeded"},
         "test": _auth_test(_auth_suites(82.76, 100.0), rc=rc["rc"]),
         "verdict": "attention"})
-    model = report.rc_report_model(st)
+    model = report.rc_report_model(_context(st))
     assert (model.get("auth") or {}).get("verdict") == "attention"
     gate, auth = report.rc_ui_gate(model), report.auth_report_gate(model)
     next_action = report.rc_next_action(model)
@@ -201,12 +198,12 @@ def test_rc_report_contemplates_both_gates_at_a_glance():
     _seed_rc_pipeline(st, {"total": 100, "passed": 94, "failed": 6},
                       {"total": 100, "passed": 100, "failed": 0})
     rc = st.pipeline_runs["rcs"][-1]
-    K.stash_auth(st, rc["rc"], {
+    _pipeline(K.stash_auth, st, rc["rc"], {
         "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
                   "complete": True, "result": "succeeded"},
         "test": _auth_test(_auth_suites(82.76, 100.0), rc=rc["rc"]),
         "verdict": "attention"})
-    model = report.rc_report_model(st)
+    model = report.rc_report_model(_context(st))
     gate, auth = report.rc_ui_gate(model), report.auth_report_gate(model)
     next_action = report.rc_next_action(model)
     subj = rendering.rc_email_subject(model, gate, auth)
@@ -217,12 +214,12 @@ def test_rc_report_contemplates_both_gates_at_a_glance():
     assert "GATES (evaluated independently)" in plain
     assert "MRWP UI:" in plain and "Authenticator ECS: HOLD" in plain
     # a clean auth leg flips only the auth surfaces, not the MRWP verdict
-    K.stash_auth(st, rc["rc"], {
+    _pipeline(K.stash_auth, st, rc["rc"], {
         "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
                   "complete": True, "result": "succeeded"},
         "test": _auth_test(_auth_suites(97.0, 100.0), rc=rc["rc"]),
         "verdict": "clean"})
-    model = report.rc_report_model(st)
+    model = report.rc_report_model(_context(st))
     assert "Auth ECS: pass" in rendering.rc_email_subject(
         model, report.rc_ui_gate(model), report.auth_report_gate(model))
 
@@ -240,19 +237,19 @@ def test_build_verify_rc_report_emails_owner():
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26",
                       owner_email="dev@microsoft.com", owner_name="Dev")
     # Seed the RC snapshot the verify steps would have stored (full categories + a suite).
-    K.stash_checker(st, "1678599", "2026-08-13T06:00")
-    K.stash_orchestrator(st, "1678611", parked=True)
+    _pipeline(K.stash_checker, st, "1678599", "2026-08-13T06:00")
+    _pipeline(K.stash_orchestrator, st, "1678611", parked=True)
     st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"})
     from tests._mrwp_evidence import snapshot, PROD
     ui = [(f"test_{i}_Foo", "Failed") for i in range(1, 103)]
     ui += [(f"test_{i}_pass", "Passed") for i in range(103, 166)]
-    K.stash_mrwp(st, "ECS", snapshot(1678863, {
+    _pipeline(K.stash_mrwp, st, "ECS", snapshot(1678863, {
         PROD: ui, "sdk_UnitTests": [("unit", "Passed")],
         "sdk_InstrumentedTests": [("instrumented", "Failed")]}))
-    K.stash_mrwp(st, "Local", snapshot(1678864, {PROD: ui}))
+    _pipeline(K.stash_mrwp, st, "Local", snapshot(1678864, {PROD: ui}))
     _seed_auth(st)
 
-    out = as_dict(_steps.get_step("build_verify", "rc_report").build(st))
+    out = as_dict(_invoke(_steps.get_step("build_verify", "rc_report").build, st))
     assert out["kind"] == "needs_skill" and out["tool"] == "workiq_send_email"
     assert out["payload"]["to"] == ["dev@microsoft.com"] and out["payload"]["isHtml"]
     assert out["notification"]["completion"]["status"] == "attention"
@@ -265,7 +262,7 @@ def test_build_verify_rc_report_emails_owner():
     assert out["record_as"] == "rc_report" and out["outbound"] is True
     # no owner → blocked
     st2 = ReleaseState(release_id="2026-08", ccd="2026-08-26")
-    out2 = as_dict(_steps.get_step("build_verify", "rc_report").build(st2))
+    out2 = as_dict(_invoke(_steps.get_step("build_verify", "rc_report").build, st2))
     assert out2["kind"] == "blocked" and "owner" in out2["reason"]
 
 
@@ -373,8 +370,9 @@ def test_record_rc_report_applies_ui_gate_and_stashes_links():
         s2 = C.load_state(d, rid)
         step2 = s2.get_step("build_verify", "rc_report")
         assert step2.status == "blocked" and not s2.is_done("build_verify", "rc_report")
-        assert s2.status == "awaiting_action"
-        assert "build_verify.rc_report" in s2.pending_human
+        report = Orchestrator(CONFIG, s2).status_report()
+        assert report["status"] == "awaiting_action"
+        assert "build_verify.rc_report" in report["pending_human"]
         assert "BELOW" in step2.note and len(step2.links) == 6
         # the same rc was updated in place (not a spurious new RC iteration)
         assert len(s2.pipeline_runs["rcs"]) == 1
@@ -406,7 +404,7 @@ def test_record_rc_report_holds_when_auth_gate_fails_though_mrwp_clean():
         _seed_rc_pipeline(st, {"total": 100, "passed": 100, "failed": 0},
                           {"total": 100, "passed": 100, "failed": 0})
         rc = st.pipeline_runs["rcs"][-1]
-        K.stash_auth(st, rc["rc"], {
+        _pipeline(K.stash_auth, st, rc["rc"], {
             "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
                       "complete": True, "result": "succeeded"},
             "test": _auth_test(_auth_suites(82.76, 100.0), rc=rc["rc"]),
@@ -423,7 +421,7 @@ def test_record_rc_report_holds_when_auth_gate_fails_though_mrwp_clean():
         s1 = st  # Independent unsent fixture for the clean gate.
         s1.set_step("build_verify", "rc_report", StepState())
         rc = s1.pipeline_runs["rcs"][-1]
-        K.stash_auth(s1, rc["rc"], {
+        _pipeline(K.stash_auth, s1, rc["rc"], {
             "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
                       "complete": True, "result": "succeeded"},
             "test": _auth_test(_auth_suites(97.0, 100.0), rc=rc["rc"]),
@@ -443,7 +441,7 @@ def test_rc_report_email_shows_retry_warning():
     st.pipeline_runs = {"rcs": [current_rc(ecs={
         PROD: [("test_100_UI", "Passed")],
         "sdk_UnitTests": [("testNullDrsMetadata", "Failed"), ("testNullDrsMetadata", "Passed")]})]}
-    model = report.rc_report_model(st)
+    model = report.rc_report_model(_context(st))
     assert rendering.recovered_tests(model) == [
         "[ECS] sdk_UnitTests — testNullDrsMetadata (1 Failed, 1 Passed historical attempts; informational)"]
     gate, auth = report.rc_ui_gate(model), report.auth_report_gate(model)
@@ -491,7 +489,7 @@ def test_rc_report_all_renderers_show_every_failure_and_recovery(monkeypatch):
     rc["local"]["tests"] = local
     rc["local"]["run_id"] = local["build_id"]
     rc["local"]["failed_suites"] = local["failed_suites"]
-    model = report.rc_report_model(st)
+    model = report.rc_report_model(_context(st))
     gate, auth = report.rc_ui_gate(model), report.auth_report_gate(model)
     html = rendering.rc_email_html(model, {}, gate, auth, report.rc_next_action(model))
     plain = rendering.rc_email_plain(model, {}, gate, auth, report.rc_next_action(model))
@@ -517,7 +515,7 @@ def test_rc_report_stale_raw_counts_require_refresh_not_relabeling():
     st.pipeline_runs["rcs"][-1]["ecs"]["failed_suites"] = [
         {"name": "UI", "total": 100, "failed": 80, "tests": [f"legacy_{i}" for i in range(45)]}]
     st.pipeline_runs["rcs"][-1]["ecs"]["tests"]["count_basis"] = "result_entries"
-    model = report.rc_report_model(st)
+    model = report.rc_report_model(_context(st))
     gate, auth = report.rc_ui_gate(model), report.auth_report_gate(model)
     assert gate["verdict"] == "unavailable" and gate["blocking"]
     assert not report.report_readiness(model)["ready"]
@@ -553,14 +551,14 @@ def test_rc_model_shape_agrees_across_live_and_state_paths():
     st = ReleaseState(release_id="2026-08")
     _seed_rc_pipeline(st, {"total": 10, "passed": 10, "failed": 0},
                       {"total": 10, "passed": 10, "failed": 0})
-    sm = report.rc_report_model(st)
+    sm = report.rc_report_model(_context(st))
     assert {"release", "checker", "orchestrator", "mrwp", "problems", "rc"} <= set(sm)
     assert sm["rc"] == 1 and sm["problems"] == []
     # a never-ran MRWP snapshot yields the SAME problem string the live path derives
     st2 = ReleaseState(release_id="2026-08")
     from steps.build_verify import _common as K2
-    K2.stash_mrwp(st2, "ECS", {"run_id": "9", "complete": False, "never_ran": ["UI Automation"]})
-    pm = report.rc_report_model(st2)
+    _pipeline(K2.stash_mrwp, st2, "ECS", {"run_id": "9", "complete": False, "never_ran": ["UI Automation"]})
+    pm = report.rc_report_model(_context(st2))
     assert any("did NOT run to completion" in p and "UI Automation" in p for p in pm["problems"])
 
 
@@ -682,19 +680,19 @@ def test_stash_mrwp_uses_authoritative_rc_number():
     from steps.build_verify import _common as K
     st = ReleaseState(release_id="2026-08")
     # RC1: ECS then Local -> one entry rc=1 with both providers
-    K.stash_mrwp(st, "ECS", {"run_id": "100"}, rc=1)
-    K.stash_mrwp(st, "Local", {"run_id": "101"}, rc=1)
+    _pipeline(K.stash_mrwp, st, "ECS", {"run_id": "100"}, rc=1)
+    _pipeline(K.stash_mrwp, st, "Local", {"run_id": "101"}, rc=1)
     rcs = st.pipeline_runs["rcs"]
     assert len(rcs) == 1 and rcs[0]["rc"] == 1
     assert rcs[0]["ecs"]["run_id"] == "100" and rcs[0]["local"]["run_id"] == "101"
     # RC2 (re-trigger, authoritative) -> a second entry rc=2
-    K.stash_mrwp(st, "ECS", {"run_id": "200"}, rc=2)
+    _pipeline(K.stash_mrwp, st, "ECS", {"run_id": "200"}, rc=2)
     rcs = st.pipeline_runs["rcs"]
     assert len(rcs) == 2 and rcs[-1]["rc"] == 2 and rcs[-1]["ecs"]["run_id"] == "200"
     # authoritative numbering is preserved even if the pipeline SKIPS a number (RC1 -> RC4)
     st2 = ReleaseState(release_id="2026-09")
-    K.stash_mrwp(st2, "ECS", {"run_id": "1"}, rc=1)
-    K.stash_mrwp(st2, "ECS", {"run_id": "4"}, rc=4)
+    _pipeline(K.stash_mrwp, st2, "ECS", {"run_id": "1"}, rc=1)
+    _pipeline(K.stash_mrwp, st2, "ECS", {"run_id": "4"}, rc=4)
     assert [e["rc"] for e in st2.pipeline_runs["rcs"]] == [1, 4]
 
 
@@ -705,10 +703,10 @@ def test_stash_mrwp_falls_back_to_local_counter_without_rc():
     local rc number (unchanged legacy behavior)."""
     from steps.build_verify import _common as K
     st = ReleaseState(release_id="2026-08")
-    K.stash_mrwp(st, "ECS", {"run_id": "100"})
-    K.stash_mrwp(st, "Local", {"run_id": "101"})           # same rc (no run_id change for local)
+    _pipeline(K.stash_mrwp, st, "ECS", {"run_id": "100"})
+    _pipeline(K.stash_mrwp, st, "Local", {"run_id": "101"})           # same rc (no run_id change for local)
     assert [e["rc"] for e in st.pipeline_runs["rcs"]] == [1]
-    K.stash_mrwp(st, "ECS", {"run_id": "200"})             # ECS run_id changed -> new rc
+    _pipeline(K.stash_mrwp, st, "ECS", {"run_id": "200"})             # ECS run_id changed -> new rc
     assert [e["rc"] for e in st.pipeline_runs["rcs"]] == [1, 2]
 
 
@@ -725,6 +723,8 @@ def test_poll_rc_waits_then_nudges_once_at_6h():
         st = ReleaseState(release_id=rid, ccd="2026-08-26", ccd_source="confirmed",
                           owner_email="dev@microsoft.com", owner_name="Dev")
         _active_phase(st, "build_verify")
+        for sid in ("checker_fired", "orchestrator_health"):
+            st.set_step("build_verify", sid, StepState(status="done"))
         st.set_step("build_verify", "mrwp_ecs",
                     StepState(status="in_flight", note="RC running",
                               data={"in_flight_since": "2026-08-28T00:00:00+00:00",
@@ -756,6 +756,7 @@ def test_poll_rc_resolved_blocked_idle():
         rid = "2026-08"
         _stub_build_defs("pass")
         st = ReleaseState(release_id=rid, ccd="2026-08-26", ccd_source="confirmed")
+        Orchestrator(CONFIG, st, mocks={})
         C.save_state(st, d, rid)
         assert _run_poll_rc(d, rid, "2026-08-20T09:00:00+00:00")["decision"] == "idle"
 
@@ -792,19 +793,19 @@ def test_stash_mrwp_appends_new_rc_on_id_change():
     from steps.build_verify import _common as K
     st = ReleaseState(release_id="2026-08")
     ecs1 = {"run_id": "900001", "complete": True, "tests": {"categories": {"ui": {"total": 10, "passed": 9, "failed": 1}}}}
-    K.stash_mrwp(st, "ECS", ecs1)
-    K.stash_mrwp(st, "Local", {"run_id": "900002", "complete": True})
+    _pipeline(K.stash_mrwp, st, "ECS", ecs1)
+    _pipeline(K.stash_mrwp, st, "Local", {"run_id": "900002", "complete": True})
     assert len(st.pipeline_runs["rcs"]) == 1                      # both merged into rc 1
-    assert K.latest_rc(st)["rc"] == 1
+    assert K.latest_rc(_context(st))["rc"] == 1
     # re-resolving the SAME ecs id updates in place — no new rc
-    K.stash_mrwp(st, "ECS", ecs1)
+    _pipeline(K.stash_mrwp, st, "ECS", ecs1)
     assert len(st.pipeline_runs["rcs"]) == 1
     # a NEW ecs id → RC re-triggered → append rc 2
-    K.stash_mrwp(st, "ECS", {"run_id": "910001", "complete": True})
-    K.stash_mrwp(st, "Local", {"run_id": "910002", "complete": True})
+    _pipeline(K.stash_mrwp, st, "ECS", {"run_id": "910001", "complete": True})
+    _pipeline(K.stash_mrwp, st, "Local", {"run_id": "910002", "complete": True})
     rcs = st.pipeline_runs["rcs"]
     assert [r["rc"] for r in rcs] == [1, 2]
-    assert K.latest_rc(st)["ecs"]["run_id"] == "910001"          # latest = last
+    assert K.latest_rc(_context(st))["ecs"]["run_id"] == "910001"          # latest = last
 
 
 
@@ -815,7 +816,7 @@ def test_ui_test_status_blocks_without_rc_runs():
     from orchestrator.outcomes import as_dict
     st = _uts_state(plan_id="900")     # plan present, but no pipeline_runs
     with mockctx.active({}):
-        out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
+        out = as_dict(_invoke(_steps.get_step("bug_bash", "ui_test_status").build, st))
     assert out["kind"] == "blocked" and "current RC not identified" in out["reason"]
 
 
@@ -869,12 +870,12 @@ def test_sim_fast_forwards_to_rc_gate_offline():
     # the 4 verification steps ran (real build() on mocks) and rc_report auto-advanced
     for s in ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local", "rc_report"):
         assert st.is_done("build_verify", s), s
-    from orchestrator.engine import Orchestrator as _O
+    from tests._context import fresh_orchestrator as _O
     assert _O(CONFIG, st).current_phase_id() == "bug_bash"   # positioned past Phase 2
     # pipeline runs were stashed by the steps during the sim (nested RC schema)
     assert st.pipeline_runs["orchestrator"]["run_id"] == "1678611"
     assert st.pipeline_runs["rcs"][-1]["ecs"]["run_id"] == "1678863"
-    assert st.readiness_signed
+    assert _O(CONFIG, st).gate.signed
 
 
 
@@ -892,7 +893,7 @@ def test_orchestrator_health_populates_state_versions():
               for n in OH.CONFIG["required_stages"]]
     stages.append({"name": OH.CONFIG["park_stage"], "state": "pending", "result": None})
     with mockctx.active({"run": run, "stages": stages}):
-        OH.build(st)
+        _invoke(OH.build, st)
     assert st.versions == {"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0",
                            "authenticator": "release/2026/08/22"}
 
@@ -908,7 +909,7 @@ def test_telemetry_verify_composes_kusto_needsskill():
     from steps.build_verify import telemetry_verify as TV
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({"version": "6.2608.5658"}):
-        out = TV.build(st)
+        out = _invoke(TV.build, st)
     assert out.kind == "needs_skill" and out.tool == "kusto_query"
     p = out.payload
     assert p["cluster_uri"].startswith("https://") and p["database"]
@@ -923,7 +924,7 @@ def test_telemetry_verify_blocks_without_version():
     """No current verified ECS APK on state means there is nothing reliable to query."""
     from steps.build_verify import telemetry_verify as TV
     st = ReleaseState(release_id="2026-08")               # no versions.authenticator
-    out = TV.build(st)
+    out = _invoke(TV.build, st)
     assert out.kind == "blocked" and "run auth_ecs first" in out.reason
 
 
@@ -943,23 +944,23 @@ def test_telemetry_uses_captured_ecs_apk_not_release_app(monkeypatch):
                        "status": "completed", "result": "succeeded"},
         "test_build": 180491310, "suites": _auth_suites(82.76, 100.0)}})
     assert _bv_build(orch, st, "auth_ecs")["kind"] == "done"
-    assert latest_rc(st)["auth"]["build"]["build_number"] == "6.2609.6056-rc180481190"
-    out = TV.build(st)
+    assert latest_rc(_context(st))["auth"]["build"]["build_number"] == "6.2609.6056-rc180481190"
+    out = _invoke(TV.build, st)
     assert out.kind == "needs_skill"
     assert out.payload["version"] == "6.2609.6056"
     assert 'AppInfo_Version == "6.2609.6056"' in out.payload["query"]
     assert "16.6.0" not in out.payload["query"]
 
-    build = latest_rc(st)["auth"]["build"]
+    build = st.pipeline_runs["rcs"][-1]["auth"]["build"]
     for number in (None, "16.6.0-RC1-ecs", "6.2609.6056-rc999", "20260910.5"):
         build["build_number"] = number
-        assert TV.build(st).kind == "blocked"
+        assert _invoke(TV.build, st).kind == "blocked"
     build["build_number"] = "6.2609.6056-rc180481190"
     build["result"] = "failed"
-    assert TV.build(st).kind == "blocked"
+    assert _invoke(TV.build, st).kind == "blocked"
     build["result"] = "succeeded"
     st.pipeline_runs["rcs"].append({"rc": 2})
-    assert TV.build(st).kind == "blocked"  # Never reuse an older RC's telemetry version.
+    assert _invoke(TV.build, st).kind == "blocked"  # Never reuse an older RC's telemetry version.
 
 
 
@@ -973,11 +974,11 @@ def test_record_telemetry_pass_and_attention():
         rid = "2026-08"
         _stub_build_defs("pass")
         st = ReleaseState(release_id=rid, ccd="2026-08-26", owner_email="dev@microsoft.com")
+        _active_step(st, "build_verify", "telemetry_verify")
         orch = Orchestrator(CONFIG, st)
-        _pass_scout_checks(orch); orch.gate.sign()
         C = __import__("orchestrator.cli_common", fromlist=["x"])
         from steps.build_verify._common import stash_auth
-        stash_auth(st, 1, {
+        _pipeline(stash_auth, st, 1, {
             "build": {"run_id": "180481190", "build_number": "6.2609.6056-rc180481190",
                       "complete": True, "result": "succeeded"},
             "test": {"run_id": "180491310"},

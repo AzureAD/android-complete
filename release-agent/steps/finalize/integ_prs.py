@@ -16,8 +16,9 @@ for a person. One shared PBI is created and referenced (AB#<id>) in every PR bod
 This step is PREVIEW-FIRST: `build()` only READS — it computes the full plan (branch
 existence, existing-vs-new PR detection, per-RI edit analysis) and returns it for
 review. The actual writes (create PBI, edit RI, open PRs, add labels) happen in the
-`create-integration-prs` command, which supports `--dry-run`. Idempotent: an existing
-open PR for a head->base is reused, never duplicated.
+`create-integration-prs` command. Its complete default preview must be approved with
+`--execute --review-hash <hash> --approved-by <reviewer>`. Existing PRs are reused;
+an uncertain attempt remains owned and must not be automatically retried.
 
 Gating: if the branches aren't all present yet (orchestrator still finishing the
 Remove-RC-Tags stage), the step reports in-progress and is re-checked later.
@@ -29,16 +30,18 @@ Mock knobs (mocks.local.yaml / tests):
   pbi      : PBI work-item id to reference (skip creating one); "skip" = omit AB# line.
 """
 from __future__ import annotations
+from collections.abc import Mapping
+
+from orchestrator.step_context import StepContext, thaw
 
 from orchestrator.outcomes import InProgress, NeedsSkill, Blocked
-from steps.lib.agent import legacy_run
-from steps.lib.mockctx import mock_input, MISSING
-from tools import prs as PR
+from steps.lib.mockctx import MISSING
 from tools import pipelines as PL
 from tools.coordinates import coords
 
 ID = "integ_prs"
-KIND = "agent"
+KIND = "scout"
+WRITE_COMMAND = "create-integration-prs"
 
 # The authenticator repo lives in msazure/One; its coordinates come from coordinates.yaml.
 _AUTH_REPO = coords.repo("authenticator")
@@ -93,36 +96,36 @@ MOCKABLE = {
 
 
 # --------------------------------------------------------------------------- helpers
-def _selected_repos():
-    sel = mock_input("repos", MISSING)
+def _selected_repos(context):
+    sel = context.input("repos", MISSING)
     keys = list(sel) if sel is not MISSING and sel else REPO_ORDER
     return [k for k in REPO_ORDER if k in keys]
 
 
-def _versions(state):
+def _versions(context):
     """repo_key -> version. SOURCE OF TRUTH is state.versions (populated at Phase 2 by
     build_verify.orchestrator_health). The `versions` mock overrides for testing;
     discover_versions is only a last-resort fallback if state has none yet (it shouldn't,
     since integ_prs runs in Phase 4, well after Phase 2)."""
-    v = mock_input("versions", MISSING)
+    v = context.input("versions", MISSING)
     if v is not MISSING and v:
         return dict(v)
-    if getattr(state, "versions", None):
-        return {k: val for k, val in state.versions.items() if val}
+    if getattr(context.release, "versions", None):
+        return {k: val for k, val in context.release.versions.items() if val}
     try:
-        ok, versions, _detail = PL.discover_versions(
-            PL.ENGINEERING_ORG, PL.ENGINEERING_PROJECT, getattr(state, "release_id", ""))
+        ok, versions, _detail = context.services.pipelines.discover_versions(
+            PL.ENGINEERING_ORG, PL.ENGINEERING_PROJECT, getattr(context.release, "release_id", ""))
     except Exception:  # noqa: BLE001 — never crash the engine on a network hiccup
         return {}
     return {k: val for k, val in (versions or {}).items() if val} if ok else {}
 
 
-def _branches(repo_key, cfg, version):
+def _branches(context, repo_key, cfg, version):
     """Resolve the {wr, r, ri, target} branch names for a repo, honoring the `branches` mock
     override. For authenticator, state stores its release BRANCH (release/YYYY/MM/DD) rather
     than a semver, so strip the 'release/' prefix to get the branch token."""
-    ov = (mock_input("branches", MISSING) or {})
-    ov = ov.get(repo_key, {}) if isinstance(ov, dict) else {}
+    ov = (context.input("branches", MISSING) or {})
+    ov = ov.get(repo_key, {}) if isinstance(ov, Mapping) else {}
     wr_prefix = cfg.get("wr_prefix", WORKING_PREFIX)
     token = version
     if repo_key == "authenticator" and version and str(version).startswith(RELEASE_PREFIX):
@@ -135,10 +138,10 @@ def _branches(repo_key, cfg, version):
     }
 
 
-def _pbi_ref():
+def _pbi_ref(context):
     """(mode, value) — how the PBI is referenced. ('existing', id) reuses an id;
     ('skip', None) omits the AB# line; ('create', None) means the command must create one."""
-    p = mock_input("pbi", MISSING)
+    p = context.input("pbi", MISSING)
     if p is MISSING:
         return ("create", None)
     if str(p).lower() == "skip":
@@ -171,18 +174,18 @@ def pr_body(repo_key, kind, br, pbi_id):
 
 
 # --------------------------------------------------------------------------- planning
-def _plan_repo(repo_key, version):
+def _plan_repo(context, repo_key, version):
     """Read-only plan for one repo: resolve branches, check existence, detect existing PRs,
     and (for gh repos) analyze the RI edit. Returns a dict (never raises)."""
     cfg = CONFIG[repo_key]
-    br = _branches(repo_key, cfg, version)
+    br = _branches(context, repo_key, cfg, version)
     out = {"key": repo_key, "tool": cfg["tool"], "version": version, "branches": br,
            "labels": cfg.get("labels", []), "prs": [], "notes": []}
 
     # branch existence (git ls-remote against the on-disk clone)
     exists = {}
     for role in ("wr", "r", "ri", "target"):
-        ok, present, detail = PR.remote_branch_exists(cfg["dir"], br[role])
+        ok, present, detail = context.services.repositories.remote_branch_exists(cfg["dir"], br[role])
         exists[role] = present if ok else None
         if not ok:
             out["notes"].append(f"branch check failed for {br[role]}: {detail}")
@@ -197,29 +200,29 @@ def _plan_repo(repo_key, version):
               "existing": None}
         # existing-PR detection (idempotency) — tool-specific.
         if cfg["tool"] == "gh":
-            ok, found, detail = PR.gh_find_open_pr(cfg["gh_repo"], head, base)
+            ok, found, detail = context.services.repositories.gh_find_open_pr(cfg["gh_repo"], head, base)
         else:
             a = cfg["ado"]
-            ok, found, detail = PR.az_find_open_pr(a["org"], a["project"], a["repository"],
+            ok, found, detail = context.services.repositories.az_find_open_pr(a["org"], a["project"], a["repository"],
                                                    head, base)
         pr["existing"] = found if ok else None
         if not ok:
             pr["note"] = f"PR lookup failed: {detail}"
         # RI edit analysis (read-only) — same local-git logic for every host.
         if kind == "integration" and exists.get("ri") and exists.get("target"):
-            pr["ri_analysis"] = _ri_analysis(cfg["dir"], head, base)
+            pr["ri_analysis"] = _ri_analysis(context, cfg["dir"], head, base)
         out["prs"].append(pr)
     return out
 
 
-def _ri_analysis(dir_name, ri, target):
+def _ri_analysis(context, dir_name, ri, target):
     """Read-only 'what would the RI edit do' summary."""
     a = {}
-    okb, n, _d = PR.behind_count(dir_name, ri, target)
+    okb, n, _d = context.services.repositories.behind_count(dir_name, ri, target)
     a["behind_target"] = n if okb else None
-    okg, files, _d2 = PR.gradle_diff_files(dir_name, ri, target)
+    okg, files, _d2 = context.services.repositories.gradle_diff_files(dir_name, ri, target)
     a["gradle_to_revert"] = files if okg else None
-    okm, conflicts, _d3 = PR.merge_conflict_preview(dir_name, ri, target)
+    okm, conflicts, _d3 = context.services.repositories.merge_conflict_preview(dir_name, ri, target)
     # conflicts that are NOT just build.gradle are the ones a human must resolve.
     if okm:
         gradle = set(files or [])
@@ -231,13 +234,13 @@ def _ri_analysis(dir_name, ri, target):
     return a
 
 
-def plan(state):
+def plan(context):
     """Full read-only preview across all selected repos."""
-    pbi_mode, pbi_id = _pbi_ref()
-    versions = _versions(state)
+    pbi_mode, pbi_id = _pbi_ref(context)
+    versions = _versions(context)
     repos = []
     missing = []
-    for key in _selected_repos():
+    for key in _selected_repos(context):
         v = versions.get(key)
         if not v:
             repos.append({"key": key, "tool": CONFIG[key]["tool"], "version": None,
@@ -245,7 +248,7 @@ def plan(state):
                                     "orchestrator vars)"], "prs": []})
             missing.append(f"{key}: version")
             continue
-        rp = _plan_repo(key, v)
+        rp = _plan_repo(context, key, v)
         repos.append(rp)
         # a branch that must exist but doesn't -> not ready yet
         for role, label in (("wr", "working/release"), ("r", "release"),
@@ -257,11 +260,11 @@ def plan(state):
 
 
 # --------------------------------------------------------------------------- outcome
-def _ir_stage_status(state):
+def _ir_stage_status(context):
     """('ready'|'wait'|'failed'|'unknown', detail) — has the orchestrator's IR_STAGE completed?
     The release-integration branches don't exist until it does, so integ_prs must monitor it
     and only proceed on 'ready'. Mock-first via the `stage` knob; never raises."""
-    inj = mock_input("stage", MISSING)
+    inj = context.input("stage", MISSING)
     if inj is not MISSING:
         s = str(inj).lower()
         if s in ("ready", "completed", "succeeded", "true"):
@@ -270,8 +273,8 @@ def _ir_stage_status(state):
             return ("failed", f"injected stage={inj}")
         return ("wait", f"injected stage={inj}")
     try:
-        ok, st, detail = PL.orchestrator_stage_state(
-            PL.ENGINEERING_ORG, PL.ENGINEERING_PROJECT, getattr(state, "release_id", ""), IR_STAGE)
+        ok, st, detail = context.services.pipelines.orchestrator_stage_state(
+            PL.ENGINEERING_ORG, PL.ENGINEERING_PROJECT, getattr(context.release, "release_id", ""), IR_STAGE)
     except Exception:  # noqa: BLE001 — never crash the engine on a network hiccup
         return ("unknown", "could not read the orchestrator stage")
     if not ok:
@@ -286,15 +289,15 @@ def _ir_stage_status(state):
     return ("failed", f"'{IR_STAGE}' completed with result={res}")
 
 
-def build(state):
-    if not _versions(state):
+def build(context: StepContext):
+    if not _versions(context):
         return Blocked(
             "integ_prs: no release versions resolved. Provide them via the `versions` mock "
             "(e.g. {msal: '8.4.2'}) for testing, or wait for orchestrator version discovery.")
 
     # Gate on the orchestrator stage that creates the release-integration branches — NOT merely
     # on gate_watch passing. Monitor it and only proceed once it has completed successfully.
-    status, detail = _ir_stage_status(state)
+    status, detail = _ir_stage_status(context)
     if status == "failed":
         return Blocked(
             f"integ_prs: the Release Orchestrator '{IR_STAGE}' stage FAILED ({detail}) — the "
@@ -306,7 +309,7 @@ def build(state):
             f"to complete before the release-integration branches exist ({detail}).",
             poll_in_min=15)
 
-    p = plan(state)
+    p = plan(context)
     if not p["ready"]:
         return InProgress(
             "integ_prs: the orchestrator IR stage is done but not all branches are visible yet — "
@@ -320,9 +323,13 @@ def build(state):
     return NeedsSkill(
         tool="create-integration-prs",
         payload={
-            "release": state.release_id,
+            "release": context.release.release_id,
             "plan": p,
-            "followup_command": f"create-integration-prs --release {state.release_id} --dry-run",
+            "followup_command": f"create-integration-prs --release {context.release.release_id}",
+            "execution_instructions": (
+                "Review the complete checked-command preview, then execute that exact plan with "
+                "--execute --review-hash <review_hash> --approved-by <reviewer>. "
+                "A step preview or an execution id alone is not write approval."),
             "_gather": {"preview": render_preview(p)},
         },
         record_as=ID,
@@ -367,6 +374,3 @@ def render_preview(p) -> str:
     if not p["ready"]:
         lines.append(f"\nNOT READY — missing: {', '.join(p['missing'])}")
     return "\n".join(lines)
-
-
-run = legacy_run(build)

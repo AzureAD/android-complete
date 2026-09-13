@@ -7,6 +7,9 @@ from orchestrator import cli_common as C, delivery as D
 
 
 def finish(orch, notification_id):
+    from orchestrator.revision import mismatch_reason
+    if mismatch_reason(orch):
+        return False
     record = orch.state.notification_deliveries[notification_id]
     D.validate_record(orch, record)
     if D.is_progress_receipt(record):
@@ -15,9 +18,12 @@ def finish(orch, notification_id):
         raise ValueError("Completion requires a confirmed successful delivery")
     if record.get("completion"):
         return False
+    D.require_receipt(record)
     item, st = record["descriptor"], orch.state
     scope, completion = item["scope"], item["completion"]
     reason = D.scope_reason(orch, scope, acknowledgement=True)
+    if reason.startswith("invalid release state:"):
+        raise ValueError(reason)
     if reason in ("release suspended or unsigned",
                   "owner timezone unavailable; repair configuration or tzdata"):
         return False
@@ -30,38 +36,56 @@ def finish(orch, notification_id):
         pid = scope["phase"]
         sid = completion["record_as"] if kind == "step" else scope["step"]
         step = st.get_step(pid, sid)
-        if step.status not in ("done", "skipped"):
+        refreshing_result = kind == "step_result" and bool(completion.get("refresh"))
+        if refreshing_result or step.status not in ("done", "skipped"):
             if kind in ("step", "step_result"):
-                execution_id = record["attempts"][-1]["id"] if kind == "step" else None
+                execution_id = (
+                    record["attempts"][-1]["id"]
+                    if kind == "step"
+                    else completion.get("execution_id")
+                )
                 orch.record_scout_step(pid, sid, completion.get("status", "pass"),
                                        completion.get("note", "Notification delivered"),
-                                       execution_id=execution_id)
+                                       execution_id=execution_id,
+                                       refresh=bool(completion.get("refresh")))
                 step = st.get_step(pid, sid)
-                step.by = "scout"
-            step.data.update(completion.get("data", {}))
+            data = dict(completion.get("data", {}))
             for key in completion.get("stamp", []):
-                step.data.setdefault(key, sent_at)
-            if "links" in completion:
-                step.links = completion["links"]
-            st.set_step(pid, sid, step)
+                if key not in step.data:
+                    data[key] = sent_at
+            orch.annotate_step(
+                pid,
+                sid,
+                data=data,
+                links=completion.get("links") if "links" in completion else None,
+                by="scout" if kind in ("step", "step_result") else None,
+            )
         elif kind == "step_data" and scope["kind"] == "phase" and step.status == "done":
             # A recurring phase-owned worker can outlive its initial trigger step.
-            step.data.update(completion.get("data", {}))
-            st.set_step(pid, sid, step)
-    if completion.get("release_field"):
-        field = completion["release_field"]
-        if (getattr(st, field, None) or "") < completion["date"]:
-            setattr(st, field, completion["date"])
-    if completion.get("checkpoint"):
-        st.escalation_checkpoints.setdefault(completion["checkpoint"],
-                                             {"sent_at": sent_at, "target": item["target"]})
+            data = dict(completion.get("data", {}))
+            for key in completion.get("stamp", []):
+                if key not in step.data:
+                    data[key] = sent_at
+            orch.annotate_step(
+                pid,
+                sid,
+                data=data,
+                links=completion.get("links") if "links" in completion else None,
+            )
+    if completion.get("release_field") or completion.get("checkpoint"):
+        transition = orch.record_notification_evidence(notification_id)
+        if transition.kind != "annotated":
+            raise ValueError(transition.message)
     record["completion"] = {"status": "applied", "at": D.now_iso()}
     return True
 
 
 def prepare(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    if D.prune_progress(orch):
+    from orchestrator.revision import assert_current, mismatch_reason
+    if args.source != "pending":
+        assert_current(orch)
+    if not mismatch_reason(orch) and D.prune_progress(orch):
         C.save_state(st, args.runs_root, args.release)
     if args.source == "step":
         from orchestrator.commands.step_action import prepare_step
@@ -79,7 +103,7 @@ def prepare(args):
         out, items = {}, []
     for item in items:
         D.offer(orch, item)
-    if items:
+    if items or out.get("state_changed"):
         C.save_state(st, args.runs_root, args.release)
     return {"release": args.release, "notifications": [
         D.preview(orch, r) for key, r in st.notification_deliveries.items()

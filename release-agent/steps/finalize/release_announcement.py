@@ -27,9 +27,11 @@ as individual users instead.
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+
 from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.lib import templating as T
-from steps.lib.mockctx import mock_input, MISSING
+from steps.lib.mockctx import MISSING
 from tools.coordinates import coords
 
 ID = "release_announcement"
@@ -73,22 +75,22 @@ MOCKABLE = {
 }
 
 
-def _month_year(state) -> str:
+def _month_year(context) -> str:
     """The release's display month — the ship/target month (CCD month + 1), e.g. 'August 2026'."""
     from orchestrator import schedule
-    return schedule.target_month_label(state) or str(state.release_id)
+    return schedule.target_month_label(context.release) or str(context.release.release_id)
 
 
-def _sdk_versions(state) -> dict:
+def _sdk_versions(context) -> dict:
     """{key: version} for the announcement — mock override first, else state.versions."""
-    v = mock_input("versions", MISSING)
-    src = dict(v) if v is not MISSING and v else dict(getattr(state, "versions", {}) or {})
+    v = context.input("versions", MISSING)
+    src = dict(v) if v is not MISSING and v else dict(getattr(context.release, "versions", {}) or {})
     return {k: src.get(k) for k, _label in CONFIG["sdks"]}
 
 
-def _target(state):
+def _target(context):
     """(team_id, channel_id, note) — the live General channel, or a test override via `post_to`."""
-    ov = mock_input("post_to", MISSING)
+    ov = context.input("post_to", MISSING)
     if ov is not MISSING and isinstance(ov, dict) and ov.get("channelId"):
         return (ov.get("teamId", CONFIG["team_id"]), ov["channelId"], "a test channel")
     return (CONFIG["team_id"], CONFIG["channel_id"], f"the '{CONFIG['channel_name']}' channel")
@@ -102,13 +104,12 @@ def _rows_html(versions: dict) -> str:
     return "".join(rows)
 
 
-def _load_groups():
+def _load_groups(context):
     """Ordered [(group_name, [{name,email}])] from config/announcement_cc.yaml — empty groups
     skipped, per-group member order preserved. Never raises (missing/broken file -> [])."""
     try:
         import yaml
-        with open(_CC_PATH, "r", encoding="utf-8") as fh:
-            data = yaml.safe_load(fh) or {}
+        data = yaml.safe_load(context.services.assets.text_file(_CC_PATH)) or {}
     except Exception:  # noqa: BLE001
         return []
     out = []
@@ -121,10 +122,10 @@ def _load_groups():
     return out
 
 
-def _load_members():
+def _load_members(context):
     """Flattened, de-duplicated [{name,email}] across all groups (registry order)."""
     seen, out = set(), []
-    for _group, members in _load_groups():
+    for _group, members in _load_groups(context):
         for m in members:
             if m["email"].lower() not in seen:
                 seen.add(m["email"].lower())
@@ -132,30 +133,30 @@ def _load_members():
     return out
 
 
-def _effective_cc_mode(state):
+def _effective_cc_mode(context):
     """Resolve the cc mode. Explicit `cc_mode` wins. Otherwise a TEST redirect (`post_to`)
     defaults to 'off' — the FULL real cc (all teams + members) rendered as PLAIN TEXT, so a
     test post mirrors reality without @-mentioning anyone. With no redirect, default 'mention'."""
-    m = mock_input("cc_mode", MISSING)
+    m = context.input("cc_mode", MISSING)
     if m is not MISSING and m:
         return str(m).lower()
-    if mock_input("post_to", MISSING) is not MISSING:       # test/redirect -> plain text, no pings
+    if context.input("post_to", MISSING) is not MISSING:       # test/redirect -> plain text, no pings
         return "off"
     return "mention"
 
 
-def _groups_for_cc(state):
+def _groups_for_cc(context):
     """The groups to render — a `cc_groups`/`cc_members` mock overrides the registry (for tests)."""
-    g = mock_input("cc_groups", MISSING)
+    g = context.input("cc_groups", MISSING)
     if g is not MISSING and g:
         return [(x.get("group"), list(x.get("members") or [])) for x in g]
-    fm = mock_input("cc_members", MISSING)
+    fm = context.input("cc_members", MISSING)
     if fm is not MISSING and fm:
         return [(None, list(fm))]                            # single unlabeled group
-    return _load_groups()
+    return _load_groups(context)
 
 
-def _cc(state):
+def _cc(context):
     """(html_block, mentions) — the cc block (one line PER TEAM) + the microsoft_teams
     `mentions` array.
 
@@ -163,17 +164,17 @@ def _cc(state):
     self_email once (safe test — pings just you); 'off' lists names as plain text. Any test
     redirect (post_to) auto-selects self/off so a test post never pings the real members.
     """
-    mode = _effective_cc_mode(state)
+    mode = _effective_cc_mode(context)
 
     if mode == "self":
-        se = mock_input("self_email", MISSING)
+        se = context.input("self_email", MISSING)
         if se is MISSING or not se:
             return ("", [])
         name = str(se).split("@")[0]
         return (f"<p>cc: @{T.esc(name)}</p>",
                 [{"displayName": name, "id": se, "type": "user"}])
 
-    groups = _groups_for_cc(state)
+    groups = _groups_for_cc(context)
     if not groups:
         return ("", [])
 
@@ -193,7 +194,7 @@ def _cc(state):
     return ("".join(lines), mentions)
 
 
-def _html(state, versions: dict, cc_line: str) -> str:
+def _html(context, versions: dict, cc_line: str) -> str:
     return (
         "<div><p>Hi all,</p>"
         "<p>The latest Android SDK Library release has been completed.</p>"
@@ -203,18 +204,18 @@ def _html(state, versions: dict, cc_line: str) -> str:
         f"{cc_line}</div>")
 
 
-def build(state):
-    versions = _sdk_versions(state)
+def build(context: StepContext):
+    versions = _sdk_versions(context)
     if not any(versions.values()):
         return Blocked(
             "release_announcement: no SDK versions available in state.versions — Phase 2 "
             "(orchestrator_health) should have populated them. Provide the `versions` mock "
             "for testing, or re-run Phase 2 version discovery.")
 
-    subject = f"Auth Client Android SDKs {_month_year(state)} Release"
-    cc_line, mentions = _cc(state)
-    html = _html(state, versions, cc_line)
-    team_id, channel_id, note = _target(state)
+    subject = f"Auth Client Android SDKs {_month_year(context)} Release"
+    cc_line, mentions = _cc(context)
+    html = _html(context, versions, cc_line)
+    team_id, channel_id, note = _target(context)
 
     payload = {
         "teamId": team_id,

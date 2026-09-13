@@ -12,17 +12,18 @@ easy to reuse and test.
 from __future__ import annotations
 
 import os
-import errno
-import time
 from datetime import date, datetime
 from contextlib import contextmanager
 from contextvars import ContextVar
 
 from orchestrator.state import ReleaseState
 from orchestrator.engine import Orchestrator
+from orchestrator.outcomes import Blocked
+from orchestrator.transitions import TransitionIntent
 from orchestrator import discovery, render, schedule
 from orchestrator.eventlog import EventLog
 from tools import checks
+from orchestrator.locking import file_lock
 import yaml as _yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -32,6 +33,29 @@ SCHEDULE_CONFIG = os.path.join(ROOT, "config", "schedule.yaml")
 REQUIREMENTS_CONFIG = os.path.join(ROOT, "config", "requirements.yaml")
 # runs live OUTSIDE release-agent/, in android-complete/.release-runs (gitignored)
 DEFAULT_RUNS_ROOT = os.path.join(os.path.dirname(ROOT), ".release-runs")
+
+
+def external_write_guard(
+    orch: Orchestrator, phase_id: str, step_id: str, execution_id: str
+):
+    """Return None when a configured external step may perform writes."""
+    errors = [
+        violation
+        for violation in orch.invariant_violations()
+        if violation.severity == "error"
+    ]
+    if errors:
+        return Blocked(
+            "Invalid release state: "
+            + "; ".join(violation.message for violation in errors)
+        )
+    try:
+        orch.authorize_outcome(
+            TransitionIntent.WRITE, phase_id, step_id, execution_id=execution_id,
+        )
+    except ValueError as exc:
+        return Blocked(str(exc))
+    return None
 
 # ---- inter-process state lock ----
 _LOCK_TIMEOUT = 30.0    # max seconds to wait for another CLI process to release
@@ -51,43 +75,15 @@ def state_lock(runs_root: str, release):
     lock_dir = os.path.join(runs_root, release)
     os.makedirs(lock_dir, exist_ok=True)
     lock_path = os.path.join(lock_dir, ".state.lock")
-    deadline = time.monotonic() + _LOCK_TIMEOUT
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-    acquired = False
     try:
-        if os.name == "nt":
-            import msvcrt
-        else:
-            import fcntl
-        while not acquired:
+        with file_lock(lock_path, _LOCK_TIMEOUT):
+            token = _LOCKED_STATE.set((os.path.abspath(state_path(runs_root, release)), object()))
             try:
-                if os.name == "nt":
-                    os.lseek(fd, 0, os.SEEK_SET)
-                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-                else:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                acquired = True
-            except OSError as e:
-                if e.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
-                    raise
-                if time.monotonic() >= deadline:
-                    raise TimeoutError(f"State for {release} is locked by another process") from e
-                time.sleep(0.05)
-        token = _LOCKED_STATE.set((os.path.abspath(state_path(runs_root, release)), object()))
-        try:
-            yield
-        finally:
-            _LOCKED_STATE.reset(token)
-    finally:
-        try:
-            if acquired:
-                if os.name == "nt":
-                    os.lseek(fd, 0, os.SEEK_SET)
-                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-                else:
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-        finally:
-            os.close(fd)
+                yield
+            finally:
+                _LOCKED_STATE.reset(token)
+    except TimeoutError as exc:
+        raise TimeoutError(f"State for {release} is locked by another process") from exc
 
 
 def effective_release(runs_root, release):

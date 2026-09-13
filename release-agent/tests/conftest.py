@@ -19,12 +19,33 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 
+def _offline_process(run, command, *args, **kwargs):
+    if not isinstance(command, (list, tuple)) or not command:
+        raise RuntimeError("test attempted a REAL shell command; mock the provider")
+    executable = os.path.basename(str(command[0])).lower()
+    if executable in ("az", "az.cmd", "az.exe", "gh", "gh.exe",
+                      "workiq", "workiq.cmd", "workiq.exe", "curl", "curl.exe"):
+        raise RuntimeError("test attempted a REAL provider CLI; mock the provider")
+    if executable in ("git", "git.exe"):
+        kwargs["env"] = {**(kwargs.get("env") or os.environ), "GIT_ALLOW_PROTOCOL": "file"}
+    return run(command, *args, **kwargs)
+
+
 @pytest.fixture(autouse=True)
 def _no_real_network(monkeypatch):
     """Block real ADO/az calls in tests. Any un-mocked network access raises with a hint
     naming what to patch — this is what turns an accidental live call into a fast, clear
     failure instead of a multi-minute hang."""
     from tools import pipelines as P
+    import socket
+    import subprocess
+
+    native_run = subprocess.run
+    monkeypatch.setattr(subprocess, "run", lambda command, *args, **kwargs:
+                        _offline_process(native_run, command, *args, **kwargs))
+    import subprocess
+    import shlex
+    from urllib.parse import urlsplit
 
     def _blocked(*_a, **_k):
         raise RuntimeError(
@@ -37,6 +58,41 @@ def _no_real_network(monkeypatch):
     monkeypatch.setattr(P, "_ado_rest_get_text", _blocked)
     monkeypatch.setattr(P, "_ado_rest_send", _blocked)
     monkeypatch.setattr(P, "_az_json", _blocked)
+    monkeypatch.setattr(socket.socket, "connect", _blocked)
+    popen = subprocess.Popen
+
+    def network_target(value):
+        value = str(value).strip('"')
+        if "://" in value:
+            url = urlsplit(value)
+            return url.scheme != "file" or url.hostname not in (None, "", "localhost")
+        return "@" in value or value.startswith(("\\\\", "//"))
+
+    def offline_popen(args, *positional, **kwargs):
+        tokens = shlex.split(args, posix=False) if isinstance(args, str) else list(args)
+        names = [os.path.basename(str(token).strip('"')).lower()
+                 .removesuffix(".exe").removesuffix(".cmd").removesuffix(".bat")
+                 for token in tokens]
+        if any(name in {"az", "gh", "curl", "wget", "workiq"} for name in names):
+            return _blocked()
+        if names and names[0] == "git":
+            for operation in ("clone", "fetch", "push", "pull", "ls-remote"):
+                if operation not in names:
+                    continue
+                if any(network_target(token) for token in tokens):
+                    return _blocked()
+                if operation != "clone":
+                    cwd = kwargs.get("cwd")
+                    prefix = tokens[1:names.index(operation)]
+                    with popen(["git", *prefix, "remote", "-v"], cwd=cwd, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True) as process:
+                        remotes, _ = process.communicate()
+                    if any(network_target(line.split("\t", 1)[-1].rsplit(" (", 1)[0])
+                           for line in remotes.splitlines()):
+                        return _blocked()
+        return popen(args, *positional, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", offline_popen)
     # tools.distribution has its own Graph + WIQL + write primitives — block those too.
     try:
         from tools import distribution as Dm

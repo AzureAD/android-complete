@@ -6,8 +6,8 @@ bespoke `prepare-notice`, `prepare-flight-reminder`, … the skill runs
 
     python -m orchestrator.cli step-action --release <id> --phase preflight --step notice
 
-The command looks up the step module (`steps.get_step`), calls its `build(state)`
-(passing through any `--param k=v` the module's signature accepts, e.g. variant),
+The command resolves the workflow's validated handler, calls its bound `build(context)`
+(validating `--param k=v` against its module-owned build parameter model),
 and prints the outcome as JSON. The skill reads `kind` and reacts uniformly:
 
     done         → already complete, nothing to run.
@@ -19,14 +19,15 @@ Adding a scout step is now: write ONE module under steps/<phase>/ (auto-discover
 — no CLI command, no registry, no skill-reference edits.
 """
 from __future__ import annotations
-import inspect
 import json as _json
 
 from orchestrator import cli_common as C, delivery as D
 from orchestrator import mocks as mocks_mod
 from orchestrator import knowledge as kb
-from orchestrator.outcomes import as_dict
-from steps.lib import mockctx
+from orchestrator.handlers import HandlerCatalog
+from orchestrator.outcomes import Blocked, Done, InProgress, as_dict
+from orchestrator.transitions import TransitionIntent
+from orchestrator.workflow import WorkflowDefinition
 import steps
 
 
@@ -72,90 +73,121 @@ def _parse_params(pairs) -> dict:
         if "=" not in item:
             raise ValueError(f"--param must be KEY=VALUE, got: {item!r}")
         k, v = item.split("=", 1)
-        out[k.strip()] = v
+        k = k.strip()
+        if not k or k in out:
+            raise ValueError(f"--param requires a non-empty, unique name: {k!r}")
+        out[k] = v
     return out
 
 
-def _accepted_kwargs(build, params: dict) -> dict:
-    """Filter params to only the keyword args `build` actually declares, so an
-    unrelated --param never crashes a step that doesn't take it."""
-    try:
-        sig = inspect.signature(build)
-    except (TypeError, ValueError):
-        return dict(params)
-    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
-        return dict(params)  # build(**kwargs) takes anything
-    names = {name for name in sig.parameters if name != "state"}
-    return {k: v for k, v in params.items() if k in names}
-
-
 def prepare_step(args, st, orch):
-    mod = steps.get_step(args.phase, args.step)
-    if mod is None:
-        raise ValueError(f"No handler for {args.phase}.{args.step}")
-    if not hasattr(mod, "build"):
-        raise ValueError(f"step module '{args.phase}.{args.step}' has no build()")
+    handler = orch.handler(args.phase, args.step)
 
     # Agent steps run IN-PROCESS inside the engine's `next` (they perform the real
     # deterministic action). Executing their build() here would run that action a
     # second time, out of band — refuse and point to `next`.
-    if getattr(mod, "KIND", None) == "agent":
+    definition = handler.definition
+    if definition.kind.value == "auto":
         raise ValueError("Agent steps run in-process via next, not step-action")
-    params = _parse_params(getattr(args, "param", None))
-    spec = mocks_mod.load_mocks().get(f"{args.phase}.{getattr(mod, 'ID', args.step)}") or {}
+    intent = orch.step_action_intent(args.phase, args.step)
+    refreshing = intent == TransitionIntent.REFRESH
+    params = handler.parse_parameters(values=_parse_params(getattr(args, "param", None)), cli=True)
+    spec = mocks_mod.load_mocks().get(f"{args.phase}.{args.step}") or {}
     outcome = orch.step_action_guard(args.phase, args.step)
+    built = outcome is None
     if outcome is None:
-        kwargs = _accepted_kwargs(mod.build, params)
-        with mockctx.active(spec):                 # expose `input` knobs to build()
-            outcome = mod.build(st, **kwargs)
+        permit = orch.authorize_outcome(
+            intent, args.phase, args.step,
+            execution_id=getattr(args, "execution_id", None),
+        )
+        outcome = handler.build(orch.context(
+            args.phase, args.step, permit=permit, parameters=params, inputs=spec))
+    transition = None
+    if built and isinstance(outcome, (Done, Blocked, InProgress)):
+        transition = orch.apply_outcome(permit, outcome)
+    elif built:
+        orch.validate_outcome_permit(permit)
+        orch.apply_evidence(permit, outcome)
     out = as_dict(outcome)
     out["phase"] = args.phase
-    out["step"] = getattr(mod, "ID", args.step)
+    out["step"] = definition.id
     out["release"] = args.release
-    if out["kind"] == "done" and getattr(mod, "NOTIFICATION", False):
+    if refreshing:
+        out["refresh"] = True
+    if transition or (built and outcome.updates):
+        out["state_changed"] = True
+    if out["kind"] == "done" and handler.notification:
         out["no_delivery_required"] = True
 
     # Local-test payload overrides: a mocks.local.yaml entry may set knobs the step
     # DECLARES via its MOCKABLE spec (e.g. `send_to` on notice) — keeps the send
     # real but redirects it. See `mock-spec` for what each step exposes.
     if out.get("kind") == "needs_skill" and spec:
-        _apply_overrides(out, getattr(mod, "MOCKABLE", {}), spec)
+        _apply_overrides(out, handler.mockable_spec(), spec)
     if out.get("kind") == "needs_skill":
         out["reservable"] = orch.supports_step_reservation(outcome)
-        if (out.get("outbound") and getattr(mod, "NOTIFICATION", False)
+        if (out.get("outbound") and handler.notification
                 and out["tool"] not in D.TRANSPORTS):
             raise ValueError("Notification transport has no delivery contract")
         if out["tool"] in D.TRANSPORTS and out.get("outbound"):
             if out.get("record_as") != args.step:
                 raise ValueError("Notification record_as must match the requested owning step")
             metadata = out.get("notification") or {}
-            scope = {"kind": "step", "phase": args.phase, "step": args.step,
+            record = st.get_step(args.phase, args.step)
+            scope = {"kind": "refresh" if refreshing else "step",
+                     "phase": args.phase, "step": args.step,
+                     "generation": record.invalidated_at or "initial",
                      "release_matches": {"ccd": st.ccd, "owner_email": st.owner_email},
                      "state_matches": metadata.get("state_matches", [])}
             for key in ("not_before", "expires_at"):
                 if key in metadata:
                     scope[key] = metadata[key]
-            completion = {"note": out.get("note", ""), **metadata.get("completion", {}),
-                          "kind": "step", "record_as": out["record_as"]}
+            completion = {
+                "note": out.get("note", ""),
+                **metadata.get("completion", {}),
+                "kind": "step_result" if refreshing else "step",
+                "record_as": out["record_as"],
+                "refresh": refreshing,
+            }
             if out["payload"].get("_automation"):
                 completion["automation"] = out["payload"]["_automation"]
             payload = {k: v for k, v in out["payload"].items()
                        if not k.startswith("_") and k not in ("followup_command", "links")}
             if out["payload"].get("_mentions"):
                 payload["mentions"] = D.chat_mentions(out["payload"]["_mentions"])
+            generation = D.fingerprint(
+                record.invalidated_at or "initial")[:12]
             item = D.descriptor(
-                st, f"step:{args.phase}.{args.step}:{metadata.get('checkpoint', 'once')}",
+                st,
+                f"step:{args.phase}.{args.step}:"
+                f"{metadata.get('checkpoint', 'once')}:{generation}",
                 scope, out["tool"], payload, completion)
             out["notifications"] = [item] if D.available(orch, item) else []
             out["permission_to_send"] = False
             out["reservable"] = False
             if getattr(args, "reserve", False):
                 raise ValueError("Use notification prepare/claim with the approved hash, not step-action --reserve")
+        elif out.get("outbound"):
+            out["permission_to_execute"] = False
+            if definition.write_command:
+                out["reservable"] = False
+                out["review_command"] = definition.write_command
+                out["note"] = (
+                    out.get("note", "") + " Preview the checked write command and approve its exact "
+                    "--review-hash with --approved-by. A generic reservation cannot authorize writes."
+                ).strip()
+                if getattr(args, "reserve", False):
+                    raise ValueError(f"Use {definition.write_command} --reserve with its exact reviewed hash")
+                return out
+            if getattr(args, "reserve", False):
+                outcome = orch.reserve_step(
+                    args.phase, args.step, outcome, getattr(args, "executor", None))
+                if outcome.kind != "needs_skill":
+                    return as_dict(outcome)
+                out["execution_id"] = orch.step_execution(args.phase, args.step)["id"]
+                out["permission_to_execute"] = True
         elif getattr(args, "reserve", False):
-            outcome = orch.reserve_step(args.phase, args.step, outcome, getattr(args, "executor", None))
-            if outcome.kind != "needs_skill":
-                return as_dict(outcome)
-            out["execution_id"] = orch.step_execution(args.phase, args.step)["id"]
+            raise ValueError("Read-only external work does not require a reservation")
     return out
 
 
@@ -163,7 +195,7 @@ def cmd_step_action(args):
     try:
         st, orch = C.load_orch(args.runs_root, args.release, args.config)
         out = prepare_step(args, st, orch)
-        if out.get("execution_id"):
+        if out.get("execution_id") or out.get("state_changed"):
             C.save_state(st, args.runs_root, args.release)
         print(_json.dumps(out))
         return 0
@@ -172,16 +204,46 @@ def cmd_step_action(args):
         return 1
 
 
+def cmd_reserve_step(args):
+    try:
+        st, orch = C.load_orch(args.runs_root, args.release, args.config)
+        definition = orch.handler(args.phase, args.step).definition
+        if definition.write_command:
+            raise ValueError(
+                f"Use {definition.write_command} --reserve --review-hash <hash> --approved-by <reviewer> "
+                "with the reviewed command parameters; reserve-step cannot authorize provider writes.")
+        args.param = []
+        args.reserve = True
+        out = prepare_step(args, st, orch)
+        if not out.get("permission_to_execute"):
+            print(_json.dumps({
+                "kind": "blocked",
+                "reason": "Step did not produce a reservable outbound action.",
+            }))
+            return 1
+        C.save_state(st, args.runs_root, args.release)
+        print(_json.dumps({
+            "kind": "reserved",
+            "release": args.release,
+            "phase": args.phase,
+            "step": args.step,
+            "execution_id": orch.step_execution(args.phase, args.step)["id"],
+            "permission_to_execute": True,
+        }))
+        return 0
+    except ValueError as exc:
+        print(_json.dumps({"error": str(exc)}))
+        return 1
+
+
 def _classify(step: dict) -> str:
-    if step.get("gate"):
-        return "gate"
-    if step.get("source") == "scout":
-        return "scout"
-    if step.get("attest"):
-        return "attest"
-    if step.get("owner") == "human":
-        return "reminder"
-    return "agent"
+    return {
+        "approval_gate": "gate",
+        "external": "scout",
+        "attestation": "attest",
+        "human_action": "reminder",
+        "auto": "agent",
+    }[step["kind"]]
 
 
 def _catalog(config_path: str) -> dict:
@@ -191,18 +253,16 @@ def _catalog(config_path: str) -> dict:
     import yaml
     with open(config_path, "r", encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
+    catalog = HandlerCatalog.compile(WorkflowDefinition.compile(cfg), steps.get_step)
     out = {}
-    for phase in cfg.get("phases", []):
-        pid = phase["id"]
-        for s in phase.get("steps", []):
-            kind = _classify(s)
-            key = f"{pid}.{s['id']}"
-            entry = {"phase": pid, "name": s.get("name", s["id"]), "kind": kind,
-                     "outcome_mockable": kind != "gate", "overrides": {}}
-            mod = steps.get_step(pid, s["id"])            # migrated?
-            if mod is not None:
-                entry["overrides"] = getattr(mod, "MOCKABLE", {}) or {}
-            out[key] = entry
+    for key, handler in catalog.handler_by_key.items():
+        step = handler.definition
+        kind = _classify(step.raw)
+        out[key] = {
+            "phase": step.phase_id, "name": step.name, "kind": kind,
+            "implementation": step.implementation.value,
+            "outcome_mockable": kind != "gate", "overrides": handler.mockable_spec(),
+        }
     return out
 
 
@@ -312,7 +372,18 @@ def register(sub):
                          "(e.g. --param variant=update). Repeatable.")
     sp.add_argument("--reserve", action="store_true", help="Reserve standard record-step work after approval")
     sp.add_argument("--executor", help="Automation/session identifier for the reservation")
+    sp.add_argument("--execution-id", help="Exact active execution ID when polling reserved work")
     sp.set_defaults(func=cmd_step_action)
+
+    reserve = sub.add_parser(
+        "reserve-step",
+        help="Reserve an eligible external step before any non-idempotent write",
+    )
+    reserve.add_argument("--release", required=True)
+    reserve.add_argument("--phase", required=True)
+    reserve.add_argument("--step", required=True)
+    reserve.add_argument("--executor", required=True)
+    reserve.set_defaults(func=cmd_reserve_step)
 
     ms = sub.add_parser(
         "mock-spec",

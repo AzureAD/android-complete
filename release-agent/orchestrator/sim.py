@@ -135,7 +135,7 @@ def build_mock_profile(config: dict, target_phase: str, data: str, mocks: dict) 
         before = i < tgt_idx
         is_target = i == tgt_idx
         for step in phase["steps"]:
-            if step.get("gate"):
+            if step.get("kind") == "approval_gate":
                 continue                                   # gates are never step-mockable
             key = f"{phase['id']}.{step['id']}"
             if before:
@@ -190,8 +190,7 @@ def _sign_readiness(orch: Orchestrator) -> None:
 
 # ---------------------------------------------------------------- driver
 def _is_auto_agent(step: dict) -> bool:
-    return (step.get("owner", "agent") == "agent" and step.get("source") != "scout"
-            and not step.get("attest") and not step.get("gate"))
+    return step.get("kind") == "auto"
 
 
 def _fast_forward(orch: Orchestrator, config: dict, target_phase: str, mode: str,
@@ -238,6 +237,9 @@ def _fast_forward(orch: Orchestrator, config: dict, target_phase: str, mode: str
                                  forwarded, approved, problems)
             forwarded += 1
             continue
+        if act.kind == "waiting" and act.continue_drain:
+            # Attempt independent work without counting an in-flight observation as completion.
+            continue
         if act.kind == "complete":
             return _stop("complete", act.message, forwarded, approved, problems)
         if act.kind in ("readiness", "blocked", "halted", "scheduled"):
@@ -265,6 +267,19 @@ def _fast_forward(orch: Orchestrator, config: dict, target_phase: str, mode: str
         if act.kind == "reminder":
             step = _find_step(config, act.phase, act.step)
             stp = orch.state.get_step(act.phase, act.step)
+            definition = orch._workflow_definition().step(act.phase, act.step)
+            if definition and definition.write_command:
+                problems.append(
+                    f"external write pending: {definition.key} requires "
+                    f"reserve-step then {definition.write_command}"
+                )
+                return _stop(
+                    "external",
+                    f"{definition.key} requires a reserved external write.",
+                    forwarded,
+                    approved,
+                    problems,
+                )
             # A blocked AUTO agent step in the target is a genuine finding — stop and
             # surface it (that's exactly what live validation is meant to catch).
             if stp.status == "blocked" and _is_auto_agent(step or {}):
@@ -272,7 +287,7 @@ def _fast_forward(orch: Orchestrator, config: dict, target_phase: str, mode: str
                 return _stop("blocked", f"{act.phase}.{act.step} blocked: {stp.note}",
                              forwarded, approved, problems)
             # Otherwise it's an expected scout/attest/human hold — clear it.
-            if (step or {}).get("source") == "scout":
+            if (step or {}).get("kind") == "external":
                 orch.record_scout_step(act.phase, act.step, "pass", "[sim] auto-pass")
             else:
                 orch.complete_step(act.phase, act.step, "[sim] auto-complete")
@@ -345,22 +360,13 @@ def run_scenario(name_or_dict, runs_root: str = None, config_path: str = None,
 
     profile = build_mock_profile(config, tphase, data, sc.get("mocks") or {})
     orch = Orchestrator(config_path, st, as_of=as_of, mocks=profile)
+    from orchestrator.revision import bind_initial
+    bind_initial(orch)
 
     _sign_readiness(orch)
 
     approve = set(sc.get("approve_gates") or [])
     stop = _fast_forward(orch, config, tphase, mode, approve)
-
-    # In 'open' mode we break BEFORE the engine acts on the target, so its cached
-    # cursor still points at the last completed phase. Sync it to the derived target
-    # so status' "you are here" marker is correct (position itself is always derived).
-    if stop["kind"] == "open":
-        st.current_phase = tphase
-        tp = _phase_by_id(config, tphase)
-        first = next((s for s in (tp or {}).get("steps", [])
-                      if not st.is_done(tphase, s["id"])), None)
-        st.current_step = first["id"] if first else None
-        st.status = "running"
 
     reached = stop["kind"] == mode
     res = SimResult(

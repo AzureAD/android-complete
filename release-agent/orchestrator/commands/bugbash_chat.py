@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from orchestrator import cli_common as C, delivery
 from orchestrator.outcomes import Done
+from orchestrator.transitions import TransitionIntent
 from steps.bug_bash import activate_chat, send_invite
 from tools import bugbash_meeting
 
@@ -16,7 +17,7 @@ def cmd_record_bugbash_chat(args):
     chat_id = (args.chat_id or "").strip()
     guard = orch.step_action_guard("bug_bash", "activate_chat")
     if isinstance(guard, Done):
-        stored = activate_chat.stored_chat_id(st)
+        stored = activate_chat.stored_chat_id(orch.context("bug_bash", "activate_chat"))
         if stored and (not chat_id or stored == chat_id):
             print(f"Already bound to meeting chat {stored}; no changes.")
             return 0
@@ -27,25 +28,29 @@ def cmd_record_bugbash_chat(args):
         print(guard.reason)
         return 1
     try:
+        permit = orch.authorize_outcome(TransitionIntent.PREPARE, "bug_bash", "activate_chat")
         if getattr(args, "as_of", None):
             raise ValueError("Chat recording requires the current clock, not --as-of")
         if chat_id and not bugbash_meeting.meeting_chat_id(chat_id):
             raise ValueError("Invalid meeting chat ID")
-        invite = send_invite.delivered_invite(st)
+        invite = send_invite.delivered_invite(orch.context(
+            "bug_bash", "activate_chat", permit=permit))
         meeting = bugbash_meeting.resolve(invite)
         if chat_id and chat_id != meeting["chat_id"]:
             raise ValueError("Supplied chat does not belong to the acknowledged invitation")
-    except (ValueError, KeyError, TypeError, AttributeError) as exc:
+    except ValueError as exc:
         print(f"Chat binding blocked: {exc}")
         return 1
-    orch.record_scout_step("bug_bash", "activate_chat", "pass",
-                           f"Bug Bash chat verified for event {invite['event_id']}: {meeting['chat_id']}")
-    step = orch.state.get_step("bug_bash", "activate_chat")
-    step.data = dict(step.data or {})
-    step.data.update(chat_id=meeting["chat_id"], invite=invite, meeting=meeting,
-                     verified_at=delivery.now_iso())
-    step.by = "scout"
-    orch.state.set_step("bug_bash", "activate_chat", step)
+    orch.apply_outcome(
+        permit,
+        Done(f"Bug Bash chat verified for event {invite['event_id']}: {meeting['chat_id']}", by="scout"),
+        data={
+            "chat_id": meeting["chat_id"],
+            "invite": invite,
+            "meeting": meeting,
+            "verified_at": delivery.now_iso(),
+        },
+    )
     C.save_state(orch.state, args.runs_root, args.release)
     C.emit(args.runs_root, args.release,
            f"[ok] activate_chat: event-bound chat stored ({meeting['chat_id']})", kind="step")

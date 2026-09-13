@@ -8,6 +8,8 @@ import pytest
 from tools import distribution as D, pipelines as P
 from tools.distribution import set_assigned_to as set_assigned_to_request
 from tests.test_distribution import inputs, state, inspect, data, cli, observe, fake_writes
+from tests._context import fresh_orchestrator
+from orchestrator import cli_common as C
 
 
 def test_partial_failure_is_read_back_and_old_approval_cannot_overwrite_it(state, inputs, monkeypatch):
@@ -23,8 +25,16 @@ def test_partial_failure_is_read_back_and_old_approval_cannot_overwrite_it(state
     assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])[0] == 2
     assert len(calls) == 1 and not state.is_done("bug_bash", "distribute_tests")
     assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])[0] == 1
-    assert len(calls) == 1 and set(data(state)) == {"oof"}
-    _, fresh = inspect(state, inputs)
+    assert len(calls) == 1 and set(data(state)) == {"oof", "in_flight_since"}
+    owner = deepcopy(state.get_step("bug_bash", "distribute_tests").execution)
+    assert owner["write_review"]["hash"] == report["review_hash"]
+    _, pending = inspect(state, inputs)
+    assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", pending["review_hash"])[0] == 1
+    assert state.get_step("bug_bash", "distribute_tests").execution == owner
+    orch = fresh_orchestrator(C.DEFAULT_CONFIG, state, mocks={})
+    assert orch.reopen("bug_bash", "distribute_tests",
+                       "Owner verified the first ADO update and stopped the failed worker.").changed
+    _, fresh = inspect(state, inputs, oof=["Alice"])
     monkeypatch.setattr(D, "set_assigned_to", writer)
     assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", fresh["review_hash"])[0] == 0
     assert sum(c[0] == "case" for c in calls) == 9
@@ -47,26 +57,37 @@ def test_unexpected_crash_leaves_no_assignment_map_and_fresh_reads_detect_partia
             raise RuntimeError("crashed")
         return writer(cid, upn, **kwargs)
     monkeypatch.setattr(D, "set_assigned_to", crash)
-    with pytest.raises(RuntimeError, match="crashed"):
-        cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])
+    assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])[0] == 2
     _, after = inspect(state, inputs)
     assert not after["valid"] and after["review_hash"] != report["review_hash"]
-    assert set(data(state)) == {"oof"}
+    assert set(data(state)) == {"oof", "in_flight_since"}
+    record = state.get_step("bug_bash", "distribute_tests")
+    assert record.status == "blocked"
+    assert record.execution["write_review"]["hash"] == report["review_hash"]
 
 
 def test_completion_failure_is_recovered_using_ado_without_reapplying(state, inputs, monkeypatch):
     from orchestrator.commands import distribute as command
     _, report = inspect(state, inputs, oof=[])
     calls = fake_writes(monkeypatch, inputs)
-    finish = command._finish
-    def crash(*a):
-        raise RuntimeError("completion failed")
-    monkeypatch.setattr(command, "_finish", crash)
-    with pytest.raises(RuntimeError, match="completion failed"):
-        cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])
+    readback = command._inspect
+    def crash(*args, **kwargs):
+        if calls:
+            raise RuntimeError("completion failed")
+        return readback(*args, **kwargs)
+    monkeypatch.setattr(command, "_inspect", crash)
+    assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])[0] == 2
     before = len(calls)
-    monkeypatch.setattr(command, "_finish", finish)
-    assert cli(monkeypatch, state, inputs, "--apply")[0] == 0 and len(calls) == before
+    monkeypatch.setattr(command, "_inspect", readback)
+    assert cli(monkeypatch, state, inputs, "--apply")[0] == 1 and len(calls) == before
+    _, current = inspect(state, inputs)
+    assert current["valid"]
+    orch = fresh_orchestrator(C.DEFAULT_CONFIG, state, mocks={})
+    assert orch.reopen("bug_bash", "distribute_tests",
+                       "Owner verified ADO has all reviewed assignments and the worker stopped.").changed
+    _, current = inspect(state, inputs, oof=[])
+    assert cli(monkeypatch, state, inputs, "--apply", "--review-hash", current["review_hash"])[0] == 0
+    assert len(calls) == before
 
 
 @pytest.mark.parametrize("rows", [

@@ -1,5 +1,7 @@
 """Release-agent tests — preflight. Shared harness in tests/_harness.py."""
+from tests._context import context as _context, invoke as _invoke, invoke_effect as _invoke_effect
 from tests._harness import *  # noqa: F401,F403
+from orchestrator.outcomes import Done, Blocked
 
 
 
@@ -28,12 +30,14 @@ def test_paths_command_reports_self_located_roots(capsys):
     assert set(rep) >= {"agent_root", "repo_root", "runs_root", "repo_name"}
 
 
-def test_next_json_emits_status_report_with_scout_pending(capsys):
+def test_next_json_emits_status_report_with_scout_pending(capsys, monkeypatch):
     """`next --json` advances THEN prints the status report as JSON (same shape as
     `status --json`, carrying `scout_pending`) — so a caller advances + reads the pending
     scout steps in ONE call. Plain `next` still prints the human advance block, not JSON."""
     import json as _json, tempfile
     from orchestrator import cli as _cli
+    from tools import checks
+    monkeypatch.setattr(checks, "read_pipeline_variable", lambda *a, **k: (False, None, "offline"))
     with tempfile.TemporaryDirectory() as rr:
         R = "2099-05"
         _cli.main(["--runs-root", rr, "init", "--release", R,
@@ -89,14 +93,20 @@ def test_ccd_cron_pins_to_exact_date():
     """_ccd_cron builds a cron 'M H D Mo *' targeting the CCD's day+month+time, so a
     one-shot fires ON the CCD — never the next matching weekday (the early-fire bug)."""
     from orchestrator import automations as A
-    from datetime import date
-    assert A._ccd_cron(date(2026, 8, 26), "09:00") == "cron: 0 9 26 8 *"
-    assert A._ccd_cron(date(2026, 8, 26), "12:00") == "cron: 0 12 26 8 *"
-    assert A._ccd_cron(date(2026, 12, 9), "13:30") == "cron: 30 13 9 12 *"
-    # missing/invalid inputs → None (caller falls back / skips)
-    assert A._ccd_cron(None, "09:00") is None
-    assert A._ccd_cron(date(2026, 8, 26), "") is None
-    assert A._ccd_cron(date(2026, 8, 26), "nonsense") is None
+    from datetime import date, datetime, timezone
+    import pytest
+
+    clock = {
+        "owner_timezone": "America/Los_Angeles",
+        "scheduler_timezone": "America/Los_Angeles",
+        "now": datetime(2026, 8, 1, tzinfo=timezone.utc),
+    }
+    assert A._ccd_cron(date(2026, 8, 26), "09:00", **clock) == "cron: 0 9 26 8 *"
+    assert A._ccd_cron(date(2026, 8, 26), "12:00", **clock) == "cron: 0 12 26 8 *"
+    assert A._ccd_cron(date(2026, 12, 9), "13:30", **clock) == "cron: 30 13 9 12 *"
+    for target, fire in ((None, "09:00"), (date(2026, 8, 26), ""), (date(2026, 8, 26), "nonsense")):
+        with pytest.raises(ValueError):
+            A._ccd_cron(target, fire, **clock)
 
 
 
@@ -137,50 +147,48 @@ def test_parse_breaking_none_when_no_major():
 
 def test_breaking_agent_detects_and_drafts():
     from steps.preflight import breaking, cg, cron
-    from steps.preflight import breaking as _bk
-    orig = _bk._fetch_text
-    _bk._fetch_text = lambda *a, **k: _SAMPLE_CHANGELOG
+    from orchestrator import service_adapters as _bk
+    orig = _bk._changelog
+    _bk._changelog = lambda *a, **k: _SAMPLE_CHANGELOG
     try:
         st = ReleaseState(release_id="2026-08")
-        r = breaking.run("preflight", {"id": "breaking"}, st)
-        assert r.ok
-        assert "Detected 1 breaking" in r.action
-        assert "(#2)" in r.action and "DRAFT COMMS" in r.action
+        r = _invoke(breaking.build, st)
+        assert isinstance(r, Done)
+        assert "Detected 1 breaking" in r.note
+        assert "(#2)" in r.note and "DRAFT COMMS" in r.note
     finally:
-        _bk._fetch_text = orig
+        _bk._changelog = orig
 
 
 
 
 def test_breaking_agent_none_found_passes():
     from steps.preflight import breaking, cg, cron
-    from steps.preflight import breaking as _bk
-    orig = _bk._fetch_text
-    _bk._fetch_text = lambda *a, **k: "vNext\n----------\n- [MINOR] x (#1)\nVersion 1.0.0\n"
+    from orchestrator import service_adapters as _bk
+    orig = _bk._changelog
+    _bk._changelog = lambda *a, **k: "vNext\n----------\n- [MINOR] x (#1)\nVersion 1.0.0\n"
     try:
-        r = breaking.run("preflight", {"id": "breaking"},
-                            ReleaseState(release_id="2026-08"))
-        assert r.ok and "No breaking" in r.action
+        r = _invoke(breaking.build, ReleaseState(release_id="2026-08"))
+        assert isinstance(r, Done) and "No breaking" in r.note
     finally:
-        _bk._fetch_text = orig
+        _bk._changelog = orig
 
 
 
 
 def test_breaking_agent_fetch_error_holds():
     from steps.preflight import breaking, cg, cron
-    from steps.preflight import breaking as _bk
-    orig = _bk._fetch_text
+    from orchestrator import service_adapters as _bk
+    orig = _bk._changelog
 
     def _boom(*a, **k):
         raise RuntimeError("network down")
-    _bk._fetch_text = _boom
+    _bk._changelog = _boom
     try:
-        r = breaking.run("preflight", {"id": "breaking"},
-                            ReleaseState(release_id="2026-08"))
-        assert not r.ok and "could not fetch" in r.action
+        r = _invoke(breaking.build, ReleaseState(release_id="2026-08"))
+        assert isinstance(r, Blocked) and "could not fetch" in r.reason
     finally:
-        _bk._fetch_text = orig
+        _bk._changelog = orig
 
 
 
@@ -208,14 +216,16 @@ def test_engine_in_flight_step_holds_without_flagging_owner():
     drain returns a 'waiting' action, and first-seen time is stamped for the 6h nudge."""
     st, orch = _bv_state({"build_verify.mrwp_ecs": {
         "mrwp_id": "999", "build_status": "inProgress"}})
+    _active_step(st, "build_verify", "mrwp_ecs")
     phase = next(p for p in orch.config["phases"] if p["id"] == "build_verify")
     step = next(s for s in phase["steps"] if s["id"] == "mrwp_ecs")
     act = orch._run_auto_step(phase, step, block_holds=True)
     assert act.kind == "waiting"
     rec = st.get_step("build_verify", "mrwp_ecs")
     assert rec.status == "in_flight"
-    assert "build_verify.mrwp_ecs" not in st.pending_human
-    assert st.status == "running"
+    report = orch.status_report()
+    assert "build_verify.mrwp_ecs" not in report["pending_human"]
+    assert report["status"] == "running"
     assert rec.data.get("in_flight_since") and rec.data.get("poll_in_min") == 30
     assert not st.is_done("build_verify", "mrwp_ecs")     # not done → re-runs on next poll
 
@@ -269,12 +279,12 @@ def test_engine_holds_scout_assisted_lockdown():
     _pass_scout_checks(orch)
     orch.gate.sign()                 # NOTE: no scout steps cleared yet
     orch.run_until_gate()
-    assert st.status == "awaiting_action"
     rep = orch.status_report()
+    assert rep["status"] == "awaiting_action"
     # the three scout steps are pending FOR THE SKILL — not surfaced as a user action
     assert set(rep["scout_pending"]) == {"notice", "flight_reminder", "lockdown"}
     assert (rep["action"] or {}).get("step") not in ("notice", "flight_reminder", "lockdown")
-    assert "preflight.notice" in st.pending_human
+    assert "notice" in rep["scout_pending"]
     # the skill runs each scout step (record_scout_step = its step-action + record-step)
     _clear_notice(orch)
     orch.run_until_gate()
@@ -283,7 +293,7 @@ def test_engine_holds_scout_assisted_lockdown():
     orch.run_until_gate()
     assert "flight_reminder" not in orch.status_report()["scout_pending"]
     # confirm_reminders (attest, dep on flight_reminder now done) is a genuine user hold
-    assert "preflight.confirm_reminders" in st.pending_human
+    assert "preflight.confirm_reminders" in orch.status_report()["pending_human"]
     orch.complete_step("preflight", "confirm_reminders", "owner confirmed")
     orch.record_scout_step("preflight", "lockdown", "pass", "no overlap")
     orch.run_until_gate()
@@ -326,7 +336,7 @@ def test_check_lockdown_pass_and_attention():
         assert lk.cmd_check_lockdown(B) == 0
         st3 = C.load_state(d, rid)
         assert not st3.is_done("preflight", "lockdown")
-        assert st3.status == "awaiting_action"
+        assert Orchestrator(CONFIG, st3).status_report()["status"] == "awaiting_action"
 
 
 
@@ -338,7 +348,7 @@ def test_notice_build_real_recipients_and_html():
     from steps.lib import templating as T
     st = ReleaseState(release_id="2026-08", ccd="2026-08-12", ccd_source="default",
                       owner_email="pedroro@microsoft.com", owner_name="Pedro")
-    out = notice.build(st)
+    out = _invoke(notice.build, st)
     html = out.payload["body"]
     assert "<table" in html and "</table>" in html
     assert ">the hotfix cherry-pick guide</a>" in html          # clean anchor, no raw URL
@@ -360,9 +370,9 @@ def test_confirm_reminders_is_attestation_hold():
     _clear_notice(orch)
     orch.record_scout_step("preflight", "flight_reminder", "pass", "sent")
     orch.run_until_gate()
-    assert st.status == "awaiting_action"
+    assert orch.status_report()["status"] == "awaiting_action"
     # confirm_reminders (dep on flight_reminder, now done) is among the pending holds
-    assert "preflight.confirm_reminders" in st.pending_human
+    assert "preflight.confirm_reminders" in orch.status_report()["pending_human"]
     ap = orch.status_report()["active_phase"]
     step = next(s for s in ap["steps"] if s["id"] == "confirm_reminders")
     assert step["status"] == "confirm" and step["needs_owner"]
@@ -381,8 +391,9 @@ def test_confirm_reminders_gated_by_flight_send():
     _clear_notice(orch)
     # flight_reminder NOT yet recorded → confirm_reminders is not ready
     orch.run_until_gate()
-    assert "preflight.confirm_reminders" not in st.pending_human
-    assert "preflight.flight_reminder" in st.pending_human   # the send is what's pending
+    report = orch.status_report()
+    assert "preflight.confirm_reminders" not in report["pending_human"]
+    assert "flight_reminder" in report["scout_pending"]
 
 
 
@@ -409,7 +420,7 @@ def test_cg_report_summarizes_and_flags_high():
 
 
 def test_cg_agent_blocks_on_high():
-    """High/Critical active alerts BLOCK the step (ok=False) with a fix-and-rerun message."""
+    """High/Critical active alerts return Blocked with a fix-and-rerun reason."""
     from steps.preflight import breaking, cg, cron
     from tools import checks
     orig = checks.fetch_cg_alerts
@@ -418,9 +429,9 @@ def test_cg_agent_blocks_on_high():
          "component": {"displayName": "pkg", "displayVersion": "1.0"}},
     ], "ok")
     try:
-        r = cg.run("preflight", {"id": "cg"}, None)
-        assert not r.ok                       # High → blocks
-        assert "CVE-9" in r.action and "RERUN" in r.action
+        r = _invoke(cg.build, None)
+        assert isinstance(r, Blocked)         # High → blocks
+        assert "CVE-9" in r.reason and "RERUN" in r.reason
     finally:
         checks.fetch_cg_alerts = orig
 
@@ -436,8 +447,8 @@ def test_cg_agent_passes_when_no_high():
         {"alertState": "active", "severity": "medium", "title": "CVE-M"},
     ], "ok")
     try:
-        r = cg.run("preflight", {"id": "cg"}, None)
-        assert r.ok and "1 active" in r.action
+        r = _invoke(cg.build, None)
+        assert isinstance(r, Done) and "1 active" in r.note
     finally:
         checks.fetch_cg_alerts = orig
 
@@ -452,10 +463,61 @@ def test_oneauth_access_granted():
     from orchestrator.state import ReleaseState
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({"alias": "pedroro", "access": "granted"}):
-        out = as_dict(_steps.get_step("preflight", "oneauth_access").build(st))
+        out = as_dict(_invoke(_steps.get_step("preflight", "oneauth_access").build, st))
     assert out["kind"] == "done"
     assert "pedroro" in out["note"] and "write access confirmed" in out["note"]
     assert any("access-packages" in l["url"] for l in out["links"])
+
+
+def test_oneauth_effect_freezes_alias_and_repository():
+    from orchestrator.state import ReleaseState, StepState
+    from steps.preflight import oneauth_access as step
+    from steps.lib import mockctx
+    from tools import checks
+
+    state = ReleaseState(release_id="2026-08")
+    with mockctx.active({"alias": "first"}):
+        frozen = step.prepare_effect(_context(state))
+    state.set_step(
+        "preflight",
+        step.ID,
+        StepState(
+            status="running",
+            execution={
+                "effect_input": frozen,
+                "effect_mode": "idempotent",
+                "effect_recovery": "frozen",
+                "operation_key": "key",
+                "id": "effect",
+                "owner": "engine",
+                "started_at": "2026-09-12T00:00:00Z",
+                "refresh": False,
+            },
+        ),
+    )
+    seen = {}
+    original = checks.oneauth_write_access
+
+    def access(alias, timeout=60, **coordinates):
+        seen.update(alias=alias, **coordinates)
+        return True, "ok"
+
+    checks.oneauth_write_access = access
+    try:
+        with mockctx.active({"alias": "second"}):
+            assert step.prepare_effect(_context(state)) == frozen
+            assert _invoke_effect(step.execute,
+                state, state.get_step("preflight", step.ID).execution
+            ).kind == "done"
+    finally:
+        checks.oneauth_write_access = original
+
+    assert seen == {
+        "alias": "first",
+        "org": checks.ONEAUTH_ORG,
+        "project": checks.ONEAUTH_PROJECT,
+        "repo": checks.ONEAUTH_REPO,
+    }
 
 
 
@@ -468,7 +530,7 @@ def test_oneauth_access_denied_blocks():
     from orchestrator.state import ReleaseState
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({"alias": "pedroro", "access": "denied"}):
-        out = as_dict(_steps.get_step("preflight", "oneauth_access").build(st))
+        out = as_dict(_invoke(_steps.get_step("preflight", "oneauth_access").build, st))
     assert out["kind"] == "blocked"
     assert "no write access" in out["reason"] and "RERUN" in out["reason"]
     assert any("access-packages" in l["url"] for l in out["links"])
@@ -488,7 +550,7 @@ def test_oneauth_access_blocks_without_alias():
     checks.current_az_user = lambda *a, **k: None
     try:
         with mockctx.active({}):
-            out = as_dict(_steps.get_step("preflight", "oneauth_access").build(st))
+            out = as_dict(_invoke(_steps.get_step("preflight", "oneauth_access").build, st))
     finally:
         checks.current_az_user = o
     assert out["kind"] == "blocked" and "alias" in out["reason"]
@@ -503,7 +565,9 @@ def test_cg_blocked_step_reruns_and_clears_when_fixed():
                           "reason": "CG: 1 critical active\n→ Fix and RERUN or skip."}})
     _clear_phase0_scout(orch)          # clear the earlier scout/human holds
     orch.run_until_gate()
-    assert st.status == "awaiting_action" and st.current_step == "cg"
+    report = orch.status_report()
+    assert report["status"] == "awaiting_action"
+    assert report["current_step"] == "cg"
     assert st.get_step("preflight", "cg").status == "blocked"
     # the digest shows it blocked / needs owner
     step = next(s for s in orch.status_report()["active_phase"]["steps"] if s["id"] == "cg")
@@ -512,6 +576,7 @@ def test_cg_blocked_step_reruns_and_clears_when_fixed():
     orch.mocks["preflight.cg"] = {"outcome": "done", "note": "CG: 0 active alerts."}
     orch.run_until_gate()
     assert st.is_done("preflight", "cg")
+    assert "preflight.cg" not in orch.status_report()["pending_human"]
 
 
 
@@ -521,12 +586,42 @@ def test_cg_blocked_step_skip_override():
     st, orch = _mock_orch({"preflight.cg": {"outcome": "blocked", "reason": "CG: 1 high active"}})
     _clear_phase0_scout(orch)
     orch.run_until_gate()
-    assert st.current_step == "cg" and st.get_step("preflight", "cg").status == "blocked"
+    assert orch.status_report()["current_step"] == "cg"
+    assert st.get_step("preflight", "cg").status == "blocked"
     orch.skip_step("preflight", "cg", "accepted risk; tracked separately")
     assert st.is_done("preflight", "cg")   # skipped counts as done
     assert st.get_step("preflight", "cg").status == "skipped"
+    assert "preflight.cg" not in orch.status_report()["pending_human"]
 
 
+def test_cli_skip_surfaces_the_next_parallel_human_hold(tmp_path, capsys, monkeypatch):
+    from orchestrator import cli, mocks
+    from orchestrator.state import StepState
+
+    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    rid = "2026-08"
+    st, orch = _orch()
+    st.release_id = rid
+    for step in orch.config["phases"][0]["steps"]:
+        if step["id"] not in ("cg", "vitals"):
+            st.set_step("preflight", step["id"], StepState(status="done"))
+    st.set_step("preflight", "cg", StepState(status="blocked", note="CG alert"))
+    st.set_step("preflight", "vitals", StepState(status="pending"))
+    C.save_state(st, str(tmp_path), rid)
+
+    rc = cli.main([
+        "--runs-root", str(tmp_path),
+        "skip", "--release", rid,
+        "--phase", "preflight", "--step", "cg",
+        "--reason", "accepted risk",
+    ])
+    capsys.readouterr()
+    saved = C.load_state(str(tmp_path), rid)
+    assert rc == 0
+    report = Orchestrator(CONFIG, saved, mocks={}).status_report()
+    assert report["status"] == "awaiting_action"
+    assert report["current_step"] == "vitals"
+    assert report["pending_human"] == ["preflight.vitals"]
 
 
 def test_cg_agent_fetch_error_holds():
@@ -535,8 +630,8 @@ def test_cg_agent_fetch_error_holds():
     orig = checks.fetch_cg_alerts
     checks.fetch_cg_alerts = lambda *a, **k: (False, [], "403 forbidden")
     try:
-        r = cg.run("preflight", {"id": "cg"}, None)
-        assert not r.ok and "could not read alerts" in r.action
+        r = _invoke(cg.build, None)
+        assert isinstance(r, Blocked) and "could not read alerts" in r.reason
     finally:
         checks.fetch_cg_alerts = orig
 
@@ -552,8 +647,8 @@ def test_cron_check_passes_on_recent_scheduled_run():
     checks.latest_scheduled_build = lambda *a, **k: (True, {
         "queueTime": now_iso, "result": "succeeded", "status": "completed"}, "ok")
     try:
-        r = cron.run("preflight", {"id": "cron"}, None)
-        assert r.ok and "scheduled and firing" in r.action
+        r = _invoke(cron.build, None)
+        assert isinstance(r, Done) and "scheduled and firing" in r.note
     finally:
         checks.latest_scheduled_build = orig
 
@@ -567,8 +662,8 @@ def test_cron_check_blocks_when_stale():
     checks.latest_scheduled_build = lambda *a, **k: (True, {
         "queueTime": "2026-01-01T06:00:00Z", "result": "succeeded", "status": "completed"}, "ok")
     try:
-        r = cron.run("preflight", {"id": "cron"}, None)
-        assert not r.ok and "stale" in r.action
+        r = _invoke(cron.build, None)
+        assert isinstance(r, Blocked) and "stale" in r.reason
     finally:
         checks.latest_scheduled_build = orig
 
@@ -581,8 +676,8 @@ def test_cron_check_blocks_when_no_scheduled_run():
     orig = checks.latest_scheduled_build
     checks.latest_scheduled_build = lambda *a, **k: (True, None, "no scheduled runs in recent history")
     try:
-        r = cron.run("preflight", {"id": "cron"}, None)
-        assert not r.ok and "no scheduled run" in r.action
+        r = _invoke(cron.build, None)
+        assert isinstance(r, Blocked) and "no scheduled run" in r.reason
     finally:
         checks.latest_scheduled_build = orig
 
@@ -596,8 +691,9 @@ def test_vitals_is_attestation_hold():
     # re-open vitals to observe its natural hold
     orch.reopen_step("preflight", "vitals")
     orch.run_until_gate()
-    assert st.status == "awaiting_action"
-    assert st.current_step == "vitals"
+    report = orch.status_report()
+    assert report["status"] == "awaiting_action"
+    assert report["current_step"] == "vitals"
     step = next(s for s in orch.status_report()["active_phase"]["steps"] if s["id"] == "vitals")
     assert step["status"] == "confirm" and step["needs_owner"]
     orch.complete_step("preflight", "vitals", "reviewed vitals + policy status in Play Console")
@@ -618,8 +714,8 @@ def test_create_payload_wiki_dry_run_and_execute(capsys):
         st = ReleaseState(release_id=rid, ccd="2026-08-13", owner_email="dev@microsoft.com")
         st.versions = {"authenticator": "release/2026/08/13", "broker": "16.5.0",
                        "common": "24.6.0", "msal": "8.4.2"}
+        _active_step(st, "finalize", "wiki_payload")
         orch = Orchestrator(CONFIG, st)
-        _pass_scout_checks(orch); orch.gate.sign()
         C = __import__("orchestrator.cli_common", fromlist=["x"])
         C.save_state(st, d, rid)
         # the step's version/prs mocks so compose_payload runs offline (no ADO)
@@ -628,17 +724,21 @@ def test_create_payload_wiki_dry_run_and_execute(capsys):
             "prs": [{"id": 1, "title": "Feature"}]}}
 
         # patch the checks helpers so no network/az
-        oe, oc = checks.wiki_page_exists, checks.create_wiki_page
+        oe, oc, og = checks.wiki_page_exists, checks.create_wiki_page, checks.get_wiki_page
         created = {}
         checks.wiki_page_exists = lambda *a, **k: False        # absent → create
-        def _create(org, project, wiki, path, content, timeout=60):
+        def _create(org, project, wiki, path, content, timeout=60, *, require_absent=False):
+            assert require_absent
             created["path"] = path
+            created["content"] = content
             return checks.CheckResult(True, True, "created")
         checks.create_wiki_page = _create
+        checks.get_wiki_page = lambda **kwargs: (True, created["content"], "etag", "")
 
         class A:
             runs_root = d; release = rid; config = CONFIG; as_of = None
-            execute = False; dry_run = True
+            execute = False; dry_run = True; reserve = False
+            execution_id = None; approved_by = "test-reviewer"; executor = "test-executor"
 
         # surface the step mocks on the orch the command loads (so compose runs offline)
         import orchestrator.cli_common as _CC
@@ -651,11 +751,15 @@ def test_create_payload_wiki_dry_run_and_execute(capsys):
         try:
             assert PW.cmd_create_payload_wiki(A) == 0        # dry-run
             out = capsys.readouterr().out
-            assert "PAGE CONTENT (preview)" in out and "#App Version" in out
+            preview = __import__("json").loads(out)
+            assert "#App Version" in preview["plan"]["operations"][0]["content"]["content"]
+            assert preview["permission_to_execute"] is False
             assert not created                                # nothing written on dry-run
 
             A.execute = True; A.dry_run = False
-            assert PW.cmd_create_payload_wiki(A) == 0
+            A.review_hash = preview["review_hash"]
+            with C.state_lock(d, rid):
+                assert PW.cmd_create_payload_wiki(A) == 0
             assert created["path"].endswith("September 2026 Release")
             s2 = C.load_state(d, rid)
             assert s2.is_done("finalize", "wiki_payload")
@@ -663,5 +767,4 @@ def test_create_payload_wiki_dry_run_and_execute(capsys):
             assert step.links and "pagePath=" in step.links[0]["url"]
         finally:
             _CC.load_orch = real_load
-            checks.wiki_page_exists, checks.create_wiki_page = oe, oc
-
+            checks.wiki_page_exists, checks.create_wiki_page, checks.get_wiki_page = oe, oc, og

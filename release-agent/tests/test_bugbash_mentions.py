@@ -1,4 +1,5 @@
 """Name/GUID mention rendering and first/poller payload parity; no live sends."""
+from tests._context import context as _context, invoke as _invoke, command_inputs
 from argparse import Namespace
 from copy import deepcopy
 import json
@@ -7,7 +8,7 @@ import pytest
 
 from orchestrator import cli_common as C, delivery as D
 from orchestrator.commands import step_action, bugbash_update
-from orchestrator.engine import Orchestrator
+from tests._context import fresh_orchestrator as Orchestrator
 from orchestrator.state import StepState
 from steps.bug_bash import bugbash_updates as U
 from steps.lib import mockctx
@@ -87,12 +88,12 @@ def test_native_member_response_is_chat_bound_and_renders_without_graph(monkeypa
     path.write_text(json.dumps(snapshot), encoding="utf-8")
     monkeypatch.setattr(G, "_graph_get", lambda *a: pytest.fail("Native member response should avoid Graph"))
     with mockctx.active({}):
-        ok, payload, detail = U.prepare_update(st, progress(), str(path))
+        ok, payload, detail = U.prepare_update(_context(st), progress(), str(path))
     assert ok and not detail and payload["mentions"][0]["mentioned"]["user"]["id"] == ALICE
     snapshot["id"] = "19:meeting_OLD@thread.v2"
     path.write_text(json.dumps(snapshot), encoding="utf-8")
     with mockctx.active({}):
-        ok, payload, detail = U.prepare_update(st, progress(), str(path))
+        ok, payload, detail = U.prepare_update(_context(st), progress(), str(path))
     assert not ok and payload is None and "this meeting" in detail
 
 
@@ -127,7 +128,7 @@ def test_unresolved_nonmember_blocks_initial_update_without_payload(monkeypatch)
         True, {"value": []} if "/members" in url else
         {"id": ALICE, "displayName": "Alice", "userPrincipalName": "a@example.test"}, ""))
     with mockctx.active({"progress": progress()}):
-        out = U.build(state())
+        out = _invoke(U.build, state())
     assert out.kind == "blocked" and "not a verified user in this meeting" in out.reason
 
 
@@ -161,7 +162,7 @@ def test_both_producers_preserve_the_same_mentions_in_claimed_payload(
     C.save_state(st, str(tmp_path), st.release_id)
     args = Namespace(runs_root=str(tmp_path), release=st.release_id, config=CONFIG,
                      now="2026-09-11T10:00:00-07:00", force=True, members_file=members_file)
-    with mockctx.active(spec):
+    with command_inputs("bug_bash.bugbash_updates", spec):
         assert bugbash_update.cmd_post_bugbash_update(args) == 0
     periodic = json.loads(capsys.readouterr().out)["notifications"][0]
     assert periodic["payload"] == initial["payload"]
@@ -178,7 +179,7 @@ def test_resolution_failure_stages_no_periodic_notification(monkeypatch, tmp_pat
     args = Namespace(runs_root=str(tmp_path), release=st.release_id, config=CONFIG,
                      now="2026-09-11T10:00:00-07:00", force=True)
     before = deepcopy(st.notification_deliveries)
-    with mockctx.active({"progress": progress()}):
+    with command_inputs("bug_bash.bugbash_updates", {"progress": progress()}):
         assert bugbash_update.cmd_post_bugbash_update(args) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["decision"] == "error" and out["notifications"] == []

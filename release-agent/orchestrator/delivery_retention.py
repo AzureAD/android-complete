@@ -85,7 +85,8 @@ def _referenced_ids(state):
                 if isinstance(path, list) and path and path[0] == "notification_deliveries":
                     protected.update(ledger if len(path) == 1 else [path[1]])
     for step in state.steps.values():
-        notification_id = ((step.get("data") or {}).get("_execution") or {}).get("notification_id")
+        notification_id = ((step.get("data") or {}).get("notification_id")
+                           or (step.get("execution") or {}).get("notification_id"))
         if notification_id:
             protected.add(notification_id)
     return protected

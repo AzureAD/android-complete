@@ -23,6 +23,9 @@ Depends on clone_plans_broker (for the Native Auth suite link). Idempotent — o
 with an engineer it reports done without re-sending.
 """
 from __future__ import annotations
+from dataclasses import dataclass
+
+from orchestrator.step_context import StepContext, thaw
 
 from orchestrator import schedule
 from orchestrator.outcomes import NeedsSkill, Blocked, Done
@@ -31,6 +34,15 @@ from tools import testplans as T
 ID = "notify_native_auth"
 KIND = "scout"
 NOTIFICATION = True
+
+
+@dataclass(frozen=True)
+class BuildParameters:
+    engineer: str | None = None
+    engineer_source: str | None = None
+
+
+PARAMETERS = {"build": BuildParameters}
 
 SCHEDULE_DOC = ("https://eng.ms/docs/microsoft-security/identity/entra-developer-application-"
                 "platform/auth-client/authn-sdk-msal-android/android-auth-libraries/releases/"
@@ -48,9 +60,9 @@ NATIVE_AUTH_RE = {
 }
 
 
-def notified_engineer(state):
+def notified_engineer(context):
     """The alias/UPN the step recorded as notified, or None."""
-    return (state.get_step("bug_bash", ID).data or {}).get("engineer")
+    return (context.evidence.step("bug_bash", ID).data or {}).get("engineer")
 
 
 def _message_html(month_year, owner_name, plan_url):
@@ -67,26 +79,28 @@ def _message_html(month_year, owner_name, plan_url):
         f'</div>')
 
 
-def build(state, engineer=None, engineer_source=None):
-    if not state.ccd:
+def build(context: StepContext[BuildParameters]):
+    engineer = context.parameters.engineer
+    engineer_source = context.parameters.engineer_source
+    if not context.release.ccd:
         return Blocked("notify_native_auth: no CCD set — can't identify the release month.")
-    broker_plan = (state.get_step("bug_bash", "clone_plans_broker").data or {}).get("plan_id")
+    broker_plan = (context.evidence.step("bug_bash", "clone_plans_broker").data or {}).get("plan_id")
     if not broker_plan:
         return Blocked("notify_native_auth: the Broker test plan isn't built yet "
                        "(clone_plans_broker) — run that first.")
 
     # Idempotent: already recorded as notified → done, no re-send.
-    already = notified_engineer(state)
+    already = notified_engineer(context)
     if already:
-        if not state.is_done("bug_bash", ID):
+        if not context.evidence.completed("bug_bash", ID):
             return Blocked("Native Auth engineer data lacks terminal delivery evidence; owner recovery required.")
         return Done(f"Native Auth RE ({already}) already notified the {ID} for "
-                    f"{state.release_id}.")
+                    f"{context.release.release_id}.")
 
-    month_year = schedule.target_month_label(state)
+    month_year = schedule.target_month_label(context.release)
     re_hint = NATIVE_AUTH_RE.get(month_year, "")
     plan_url = T.plan_web_url(broker_plan)
-    html = _message_html(month_year, state.owner_name, plan_url)
+    html = _message_html(month_year, context.release.owner_name, plan_url)
     if engineer:
         if "@" not in engineer or not engineer_source:
             return Blocked("Provide the verified Native Auth RE UPN and engineer_source evidence; never guess.")
@@ -108,7 +122,7 @@ def build(state, engineer=None, engineer_source=None):
         f"parens, e.g. 'Silviu (silviu.petrescu)'). {hint_txt}\n"
         f"2. PREPARE a 1:1 Teams notification for that engineer: resolve their "
         f"UPN with `workiq_search_people`; never infer an email from an alias. Then prepare "
-        f"`notification prepare --release {state.release_id} --source step --phase bug_bash "
+        f"`notification prepare --release {context.release.release_id} --source step --phase bug_bash "
         f"--step notify_native_auth --param engineer=<verified-UPN> "
         f"--param engineer_source=<schedule-and-directory-evidence>`. Review, claim and acknowledge.\n"
         f"3. HUMAN FALLBACK if you can't resolve them: `m_ask_user` for the Native Auth RE's "
@@ -119,7 +133,7 @@ def build(state, engineer=None, engineer_source=None):
     return NeedsSkill(
         tool="record-nativeauth-notify",
         payload={
-            "release": state.release_id,
+            "release": context.release.release_id,
             "engineer_hint": re_hint,
             "content": html,
             "contentType": "html",

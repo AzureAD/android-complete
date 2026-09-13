@@ -5,10 +5,9 @@ submit the real ADO pipeline approval:
   * `gate_watch`         → the 'Remove RC Tags' stage (publishes the release),
   * `publish_notes_gate` → the 'Publish GitHub Release Notes' stage (after the integration PRs merge).
 
-Rather than teach the engine about that ADO action, this command composes it: it looks up whichever
-gate step is currently holding, calls its `submit_approval` (which submits the ADO approval), then
-records the release-agent gate the usual way (the same `approve_gate` + advance the plain `approve`
-command uses). The engine and the shared `approve` command are untouched. Plain `deny` still denies.
+Preview the exact provider target, then submit only its reviewed hash. The engine checkpoints
+ownership, the attempt, the provider receipt and local completion separately. Interrupted work
+uses its exact execution ID to reconcile; this adapter never infers permission to resubmit.
 """
 from __future__ import annotations
 import json as _json
@@ -18,36 +17,47 @@ from orchestrator import cli_common as C
 
 def cmd_approve_orchestrator_gate(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    # Works for ANY finalize gate whose step module exposes submit_approval (gate_watch =
-    # 'Remove RC Tags', publish_notes_gate = 'Publish GitHub Release Notes').
-    import steps as _steps
-    mod = (_steps.get_step(st.current_phase, st.current_step)
-           if st.status == "holding_gate" else None)
-    if not mod or not hasattr(mod, "submit_approval"):
-        print(_json.dumps({
-            "error": "not holding at a Release Orchestrator gate (gate_watch / publish_notes_gate) "
-                     "— nothing to approve here.",
-            "status": st.status, "phase": st.current_phase, "step": st.current_step}))
+    selection = orch.scheduling()
+    try:
+        phase_id, step_id = getattr(args, "phase", None), getattr(args, "step", None)
+        execution_id = getattr(args, "execution_id", None)
+        if bool(phase_id) != bool(step_id):
+            raise ValueError("--phase and --step must be provided together")
+        if phase_id is None and execution_id:
+            owners = [item.definition for item in selection.steps
+                      if orch.step_execution(item.definition.phase_id, item.definition.id).get("id") == execution_id]
+            if len(owners) != 1:
+                raise ValueError("No unique gate owns that --execution-id")
+            phase_id, step_id = owners[0].phase_id, owners[0].id
+        elif phase_id is None:
+            hold = selection.focus_hold
+            phase_id, step_id = (hold.phase_id, hold.step_id) if hold else (None, None)
+        definition = next((item.definition for item in selection.steps
+                           if (item.definition.phase_id, item.definition.id) == (phase_id, step_id)), None)
+        if not definition or definition.approval_command != "approve-orchestrator-gate":
+            raise ValueError("Not holding at a Release Orchestrator gate; use its exact --phase/--step or --execution-id")
+        if getattr(args, "preview", False):
+            print(_json.dumps(orch.preview_gate_approval(phase_id, step_id, comment=args.comment), indent=2))
+            return 0
+        result = orch.execute_gate_approval(
+            phase_id, step_id, comment=args.comment,
+            review_hash=getattr(args, "review_hash", None), approved_by=getattr(args, "approved_by", None),
+            executor=getattr(args, "executor", None), execution_id=execution_id,
+            reserve_only=getattr(args, "reserve", False))
+    except ValueError as exc:
+        print(_json.dumps({"error": str(exc), "permission_to_execute": False}))
         return 1
-
-    # 1) submit the REAL ADO approval first — don't record the gate if this fails.
-    ok, detail = mod.submit_approval(st, args.comment or "")
-    if not ok:
-        print(_json.dumps({"error": f"orchestrator approval NOT submitted: {detail}"}))
-        return 1
-
-    # 2) record the release-agent gate + advance (identical to `approve`).
-    gate_phase, gate_step = st.current_phase, st.current_step
-    act = orch.approve_gate(f"{(args.comment or '').strip()} [ADO: {detail}]".strip())
+    if result["status"] != "approved":
+        print(_json.dumps(result, indent=2))
+        return 0 if result["status"] in ("reserved", "receipt_recorded") else 1
     el = C.elog(args.runs_root, args.release)
-    if act.kind != "idle":
-        el.log("gate_approved", phase=gate_phase, step=gate_step, driver=args.comment or None)
+    el.log("gate_approved", phase=phase_id, step=step_id, driver=args.comment or None)
     actions = orch.run_until_gate()
     C.save_state(st, args.runs_root, args.release)
     C.log_actions(el, actions, state=st)
     C.emit(args.runs_root, args.release,
-           C.advance_block(actions, orch, lead=[f"  {act.message}"]), kind="advance",
-           log_text=C.advance_log_summary(actions, lead=[act.message]))
+           C.advance_block(actions, orch, lead=[f"  {result['message']}"]), kind="advance",
+           log_text=C.advance_log_summary(actions, lead=[result["message"]]))
     return 0
 
 
@@ -59,4 +69,12 @@ def register(sub):
     sp.add_argument("--release", required=True)
     sp.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     sp.add_argument("--comment", default="")
+    sp.add_argument("--phase", default=None)
+    sp.add_argument("--step", default=None)
+    sp.add_argument("--preview", action="store_true", help="Read the exact target and review hash; no state changes")
+    sp.add_argument("--review-hash", default=None, help="Exact hash from the human-reviewed preview")
+    sp.add_argument("--approved-by", default=None, help="Human reviewer recorded with the frozen request")
+    sp.add_argument("--executor", default=None, help="Claiming session/worker; defaults to approved-by")
+    sp.add_argument("--reserve", action="store_true", help="Checkpoint the reviewed request without submitting")
+    sp.add_argument("--execution-id", default=None, help="Resume/reconcile exactly this owned approval; never resend an attempted write")
     sp.set_defaults(func=cmd_approve_orchestrator_gate)

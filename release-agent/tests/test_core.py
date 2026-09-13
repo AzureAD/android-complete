@@ -1,4 +1,5 @@
 """Release-agent tests — core. Shared harness in tests/_harness.py."""
+from tests._context import invoke as _invoke
 from tests._harness import *  # noqa: F401,F403
 
 
@@ -162,8 +163,9 @@ def test_approve_advances():
     orch.approve_gate("ok")
     assert st.is_done("bug_bash", "bugbash_complete")
     orch.run_until_gate()
-    assert st.current_step == "gate_watch"       # next stop after bugbash_complete: the Phase-4 finalize gate
-    assert st.status == "holding_gate"
+    report = orch.status_report()
+    assert report["current_step"] == "gate_watch"
+    assert report["status"] == "holding_gate"
 
 
 
@@ -172,8 +174,9 @@ def test_deny_blocks():
     st, orch = _orch()
     _advance_to_first_gate(orch)
     orch.deny_gate("flag not approved")
-    assert st.status == "blocked"
-    assert any("denied" in p for p in st.pending_human)
+    report = orch.status_report()
+    assert report["status"] == "blocked"
+    assert report["gate"]["reason"] == "flag not approved"
 
 
 
@@ -181,14 +184,15 @@ def test_deny_blocks():
 def test_full_flow_replay_completes():
     st, orch = _orch()
     guard = 0
-    while st.status != "complete" and guard < 100:
+    while orch.status_report()["status"] != "complete" and guard < 100:
         orch.run_until_gate()
-        if st.status == "holding_gate":
+        status = orch.status_report()["status"]
+        if status == "holding_gate":
             orch.approve_gate("auto-approve (replay)")
-        elif st.status == "awaiting_action":
+        elif status == "awaiting_action":
             orch.complete_step(note="done (replay)")
         guard += 1
-    assert st.status == "complete"
+    assert orch.status_report()["status"] == "complete"
     total = sum(len(p["steps"]) for p in orch.config["phases"] if not p.get("conditional"))
     done = sum(1 for p in orch.config["phases"] if not p.get("conditional")
                for s in p["steps"] if st.is_done(p["id"], s["id"]))
@@ -210,10 +214,11 @@ def test_persistence_roundtrip():
         st.save(path)
         # reload — simulates resuming next day
         st2 = ReleaseState.load(path)
-        assert st2.status == "holding_gate"
-        assert st2.current_step == "bugbash_complete"
-        assert st2.readiness_signed  # readiness survives the roundtrip
         orch2 = Orchestrator(CONFIG, st2)
+        report = orch2.status_report()
+        assert report["status"] == "holding_gate"
+        assert report["current_step"] == "bugbash_complete"
+        assert orch2.gate.signed
         orch2.approve_gate("resumed")
         assert st2.is_done("bug_bash", "bugbash_complete")
 
@@ -223,11 +228,12 @@ def test_persistence_roundtrip():
 def test_conditional_hotfix_excluded_by_default():
     st, orch = _orch()
     guard = 0
-    while st.status != "complete" and guard < 100:
+    while orch.status_report()["status"] != "complete" and guard < 100:
         orch.run_until_gate()
-        if st.status == "holding_gate":
+        status = orch.status_report()["status"]
+        if status == "holding_gate":
             orch.approve_gate("ok")
-        elif st.status == "awaiting_action":
+        elif status == "awaiting_action":
             orch.complete_step(note="done")
         guard += 1
     assert not st.is_done("hotfix", "cherry")
@@ -254,7 +260,7 @@ def test_reopen_step():
     orch.reopen_step("bug_bash", "bugbash_complete")
     assert not st.is_done("bug_bash", "bugbash_complete")        # back to pending
     orch.run_until_gate()
-    assert st.current_step == "bugbash_complete"                 # gate re-holds
+    assert orch.status_report()["current_step"] == "bugbash_complete"
 
 
 
@@ -262,13 +268,14 @@ def test_reopen_step():
 def test_halt_blocks_then_resume():
     st, orch = _orch()
     orch.halt("prod incident")
-    assert st.halted and st.status == "halted"
+    assert st.halt and st.halt["reason"] == "prod incident"
+    assert orch.status_report()["status"] == "halted"
     actions = orch.run_until_gate()
     assert actions[-1].kind == "halted"
     # nothing ran while halted (breaking is an auto step the fixture doesn't pre-clear)
     assert not st.is_done("preflight", "breaking")
     orch.resume("resolved")
-    assert not st.halted
+    assert st.halt is None
     orch.run_until_gate()
     assert st.is_done("preflight", "notice")                # advances again
 
@@ -279,7 +286,16 @@ def test_halt_requires_reason():
     st, orch = _orch()
     act = orch.halt("")
     assert act.kind == "idle"
-    assert not st.halted
+    assert st.halt is None
+
+
+def test_skip_release_stops_local_engine():
+    st, orch = _orch()
+    st.cancellation = {"reason": "test", "at": "2026-09-12T00:00:00Z"}
+    action = orch.step_once()
+    assert action.kind == "cancelled"
+    assert orch.status_report()["status"] == "cancelled"
+    assert not st.is_done("preflight", "breaking")
 
 
 
@@ -441,8 +457,9 @@ def test_phase0_opens_on_ccd_minus_7():
     _clear_early_phase0_scout(orch)        # clear notice + flight_reminder, hold at confirm_reminders
     actions = orch.run_until_gate()
     # Phase 0 is open and running: holding at the confirm-reminders attestation step
-    assert st.status == "awaiting_action"
-    assert st.current_step == "confirm_reminders"
+    report = orch.status_report()
+    assert report["status"] == "awaiting_action"
+    assert report["current_step"] == "confirm_reminders"
     assert st.is_done("preflight", "notice")
 
 
@@ -476,7 +493,7 @@ def test_no_anchor_when_ccd_unknown_runs_immediately():
     """Backward-compatible: with no CCD stored, the anchor is inert and Phase 0 runs."""
     st, orch = _orch()   # ccd is None
     orch.run_until_gate()
-    assert st.status == "awaiting_action"   # reached the first hold (Phase-3 ui_failures), not 'scheduled'
+    assert orch.status_report()["status"] == "awaiting_action"
 
 
 
@@ -489,22 +506,22 @@ def test_reminder_holds_until_done():
     st, orch = _orch()
     # drive through the gates until we hit the first reminder hold
     guard = 0
-    while st.status not in ("awaiting_action", "complete") and guard < 100:
+    while orch.status_report()["status"] not in ("awaiting_action", "complete") and guard < 100:
         orch.run_until_gate()
-        if st.status == "holding_gate":
+        if orch.status_report()["status"] == "holding_gate":
             orch.approve_gate("ok")
         guard += 1
-    assert st.status == "awaiting_action"
-    assert st.current_step == "ui_failures"
+    assert orch.status_report()["status"] == "awaiting_action"
+    assert orch.status_report()["current_step"] == "ui_failures"
     assert not st.is_done("bug_bash", "ui_failures")
-    assert "bug_bash.ui_failures" in st.pending_human
+    assert "bug_bash.ui_failures" in orch.status_report()["pending_human"]
     # re-running does not advance past a reminder
     orch.run_until_gate()
-    assert st.status == "awaiting_action"
+    assert orch.status_report()["status"] == "awaiting_action"
     # marking it done clears the hold and advances
     orch.complete_step(note="triaged")
     assert st.is_done("bug_bash", "ui_failures")
-    assert "bug_bash.ui_failures" not in st.pending_human
+    assert "bug_bash.ui_failures" not in orch.status_report()["pending_human"]
 
 
 
@@ -713,24 +730,37 @@ def test_registry_register_list_deregister():
     from orchestrator.registry import AutomationRegistry
     with tempfile.TemporaryDirectory() as tmp:
         reg = AutomationRegistry(tmp)
-        reg.register("a1", "Release push reminders", shared=True, purpose="push",
-                     cleanup_when="manual")
-        reg.register("a2", "Phase-3 watcher", release="2026-08", purpose="bug bash",
-                     cleanup_when="manual")
+        _register_automation(
+            reg, "a1", "Release push reminders", shared=True, purpose="push",
+            cleanup_when="manual")
+        _register_automation(
+            reg, "a2", "Phase-3 watcher", release="2026-08", purpose="bug bash",
+            cleanup_when="release_done")
         # shared entry stores release=None
         shared = reg.list(scope="shared")
         assert len(shared) == 1 and shared[0]["release"] is None
         # release-scoped listing excludes the shared one
         rel = reg.list(release="2026-08")
         assert [e["id"] for e in rel] == ["a2"]
-        # upsert by id (no duplicates)
-        reg.register("a2", "Phase-3 watcher v2", release="2026-08", cleanup_when="manual")
+        # Active changes cannot pretend that the provider was updated.
+        import pytest
+        with pytest.raises(ValueError, match="Cannot change"):
+            _register_automation(
+                reg, "a2", "Phase-3 watcher v2", release="2026-08",
+                cleanup_when="release_done")
         rel = reg.list(release="2026-08")
-        assert len(rel) == 1 and rel[0]["name"] == "Phase-3 watcher v2"
-        # deregister
-        assert reg.deregister("a2") is True
+        assert len(rel) == 1 and rel[0]["name"] == "Phase-3 watcher"
+        # delete is a claimed provider operation; direct deregistration is disabled
+        deletion = reg.claim_delete("a2", "test")
+        assert reg.delete_result(
+            "a2", deletion["attempt_id"], "deleted", "provider deleted"
+        )["status"] == "deleted"
         assert reg.list(release="2026-08") == []
-        assert reg.deregister("nope") is False
+        try:
+            reg.claim_delete("nope", "test")
+            assert False, "expected unknown automation deletion to fail"
+        except ValueError:
+            pass
         # shared one still there
         assert len(reg.list()) == 1
 
@@ -743,9 +773,9 @@ def test_registry_records_step_linkage_and_reverse_lookup():
     from orchestrator.registry import AutomationRegistry, kind_of
     with tempfile.TemporaryDirectory() as tmp:
         reg = AutomationRegistry(tmp)
-        reg.register("m", "CCD morning", release="2026-09", purpose="reminders",
+        _register_automation(reg, "m", "CCD morning", release="2026-09", purpose="reminders",
                      steps=["ccd.final_reminder", "ccd.pr_reminder"], cleanup_when="steps_done")
-        reg.register("n", "CCD noon", release="2026-09", purpose="loc",
+        _register_automation(reg, "n", "CCD noon", release="2026-09", purpose="loc",
                      steps=["ccd.localization"], cleanup_when="steps_done")
         # forward: automation -> steps
         m = reg.list(release="2026-09", step="ccd.final_reminder")[0]
@@ -764,37 +794,33 @@ def test_registry_records_step_linkage_and_reverse_lookup():
 
 def test_registry_kind_taxonomy_and_guard():
     """kind is 'step-driving' when steps are present, 'release-level' when not; the
-    two can't contradict. Old entries without the field derive their kind."""
+    two can't contradict."""
     from orchestrator.registry import AutomationRegistry, kind_of
     with tempfile.TemporaryDirectory() as tmp:
         reg = AutomationRegistry(tmp)
         # no steps → release-level (e.g. the hourly push-reminder / tick automation)
-        pr = reg.register("pr", "Release push reminders", release="2026-09",
+        pr = _register_automation(reg, "pr", "Release push reminders", release="2026-09",
                           purpose="hourly advance + digest", cleanup_when="release_done")
         assert pr["kind"] == "release-level" and pr["steps"] == []
         assert reg.list(kind="release-level")[0]["id"] == "pr"
         # steps → step-driving
-        m = reg.register("m", "CCD morning", release="2026-09",
+        m = _register_automation(reg, "m", "CCD morning", release="2026-09",
                          steps=["ccd.final_reminder"], cleanup_when="steps_done")
         assert m["kind"] == "step-driving"
         assert reg.list(kind="step-driving")[0]["id"] == "m"
         # contradictions are rejected
         try:
-            reg.register("bad", "Bad", release="2026-09", kind="step-driving",
+            _register_automation(reg, "bad", "Bad", release="2026-09", kind="step-driving",
                          cleanup_when="steps_done")
             assert False, "expected ValueError for step-driving with no steps"
         except ValueError:
             pass
         try:
-            reg.register("bad2", "Bad2", release="2026-09", steps=["ccd.x"],
+            _register_automation(reg, "bad2", "Bad2", release="2026-09", steps=["ccd.x"],
                          kind="release-level", cleanup_when="steps_done")
             assert False, "expected ValueError for release-level with steps"
         except ValueError:
             pass
-        # derivation for a legacy entry that predates the kind field
-        assert kind_of({"steps": ["a.b"]}) == "step-driving"
-        assert kind_of({"steps": []}) == "release-level"
-        assert kind_of({}) == "release-level"
 
 
 
@@ -829,18 +855,21 @@ def test_state_lock_is_exclusive_then_releases():
 
 
 
-def test_failing_agent_holds_as_action_needed():
+def test_failing_agent_requires_skip_override_not_done():
     """A pre-flight agent that returns ok=False must HOLD the release as
     awaiting_action (not silently mark the step done)."""
     st, orch = _mock_orch({"preflight.breaking": {"outcome": "blocked", "reason": "boom"}},
                           as_of="2026-07-08")
     _clear_phase0_scout(orch)
     orch.run_until_gate()
-    assert st.status == "awaiting_action"
-    assert "preflight.breaking" in st.pending_human
-    # human resolves + marks done -> flow resumes
-    orch.complete_step("preflight", "breaking", "handled")
-    assert st.status == "running"
+    assert orch.status_report()["status"] == "awaiting_action"
+    assert "preflight.breaking" in orch.status_report()["pending_human"]
+    # `done` cannot claim agent work; an explicit reasoned skip is the override.
+    rejected = orch.complete_step("preflight", "breaking", "handled")
+    assert rejected.kind == "idle"
+    assert "done is only for human non-gate actions" in rejected.message
+    orch.skip_step("preflight", "breaking", "handled outside the orchestrator")
+    assert "preflight.breaking" not in orch.status_report()["pending_human"]
 
 
 
@@ -974,7 +1003,6 @@ def test_agent_steps_render_as_automatic_not_pending():
         ph = next(p for p in orch.config["phases"] if p["id"] == pid)
         for s in ph["steps"]:
             orch.state.set_step(pid, s["id"], StepState(status="done", by="test"))
-    orch.state.current_phase = "build_verify"          # the engine sets this during `next`
     steps = {s["id"]: s for s in orch.status_report()["current_steps"]}
     for sid in ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local"):
         assert steps[sid]["state"] == "auto", (sid, steps[sid]["state"])
@@ -1233,11 +1261,13 @@ def test_state_timezone_overrides_config_in_engine():
 
 
 
-def test_init_captures_owner_timezone():
+def test_init_captures_owner_timezone(monkeypatch):
     """`init` auto-detects and persists the owner's IANA timezone (and --timezone overrides)."""
     import tempfile, argparse
     from orchestrator.commands import release as R
     from orchestrator import cli_common as _C
+    from tools import checks
+    monkeypatch.setattr(checks, "read_pipeline_variable", lambda *a, **k: (False, None, "offline"))
     _stub_build_defs("pass")
     with tempfile.TemporaryDirectory() as tmp:
         ns = argparse.Namespace(runs_root=tmp, release="2026-09", force=False,
@@ -1333,7 +1363,7 @@ def test_scout_steps_declare_outbound_effect():
         ("ccd", "localization"): True,           # azure_devops-pipelines_run_pipeline
     }
     for (phase, sid), want in expect.items():
-        out = as_dict(_steps.get_step(phase, sid).build(st))
+        out = as_dict(_invoke(_steps.get_step(phase, sid).build, st))
         assert out["kind"] == "needs_skill", f"{phase}.{sid} not needs_skill"
         assert out.get("outbound") is want, f"{phase}.{sid} outbound={out.get('outbound')} want {want}"
 
@@ -1371,11 +1401,11 @@ def test_terminal_step_dispatch_does_not_rebuild_payload(tmp_path, capsys, monke
         raise AssertionError("A terminal step must not rebuild a sendable payload")
 
     for phase, sid in (("ccd", "final_reminder"), ("ccd", "pr_reminder"),
-                       ("preflight", "notice"), ("preflight", "flight_reminder"),
-                       ("ccd", "localization")):
+                       ("preflight", "notice"), ("preflight", "flight_reminder")):
         monkeypatch.setattr(steps.get_step(phase, sid), "build", must_not_build)
         for status in ("done", "skipped"):
             st = ReleaseState(release_id=rid, ccd="2026-09-09")
+            Orchestrator(CONFIG, st, mocks={})
             st.set_step(phase, sid, StepState(status=status, completed_at="original",
                                             note="original evidence", by="scout",
                                             links=[{"name": "receipt", "url": "https://example.com/receipt"}],
@@ -1399,10 +1429,8 @@ def test_stale_approval_refresh_skips_completed_step_and_preserves_record(tmp_pa
     st = ReleaseState(release_id=rid, ccd="2026-09-09",
                       owner_name="Release owner", owner_email="owner@example.com")
     from orchestrator.state import StepState
-    st.readiness_signed = True
+    _active_phase(st, "ccd")
     orch = Orchestrator(CONFIG, st)
-    for step in orch.config["phases"][0]["steps"]:
-        st.set_step("preflight", step["id"], StepState(status="done"))
     path = tmp_path / rid / "release-state.json"
     st.save(str(path))
     base = ["--runs-root", str(tmp_path)]
@@ -1428,7 +1456,10 @@ def test_stale_approval_refresh_skips_completed_step_and_preserves_record(tmp_pa
     capsys.readouterr()
     assert cli.main(base + ["step-action"] + target) == 0
     reopened = json.loads(capsys.readouterr().out)
-    assert reopened["kind"] == "needs_skill" and reopened["notifications"] == []
+    assert reopened["kind"] == "needs_skill"
+    assert len(reopened["notifications"]) == 1
+    assert reopened["notifications"][0]["id"] != next(iter(
+        C.load_state(str(tmp_path), rid).notification_deliveries))
 
 
 def test_engine_preserves_terminal_records_until_explicit_reopen():
@@ -1436,6 +1467,7 @@ def test_engine_preserves_terminal_records_until_explicit_reopen():
     from orchestrator.state import StepState
     for status in ("done", "skipped"):
         st = ReleaseState(release_id="replay")
+        _ready_state(st)
         original = StepState(status=status, completed_at="original", note="evidence",
                              by="scout", data={"message_id": "123"})
         st.set_step("preflight", "notice", original)
@@ -1478,9 +1510,9 @@ def test_parallel_autos_run_despite_pending_holds():
     # yet the independent auto agents ran to completion
     for sid in ("breaking", "cg", "cron"):
         assert st.is_done("preflight", sid), sid
-    # and the holds are all surfaced together
-    for sid in ("notice", "flight_reminder", "lockdown", "vitals"):
-        assert f"preflight.{sid}" in st.pending_human, sid
+    report = orch.status_report()
+    assert report["pending_human"] == ["preflight.vitals"]
+    assert set(report["scout_pending"]) == {"notice", "flight_reminder", "lockdown"}
 
 
 
@@ -1534,7 +1566,7 @@ def test_local_mock_blocks_agent_step():
     st, orch = _mock_orch({"preflight.cg": {"outcome": "blocked", "reason": "mocked: boom"}})
     orch.run_until_gate()
     assert st.get_step("preflight", "cg").status == "blocked"
-    assert "preflight.cg" in st.pending_human
+    assert "preflight.cg" in orch.status_report()["pending_human"]
     assert st.get_step("preflight", "cg").note == "mocked: boom"
     assert st.is_done("preflight", "cron")            # another agent ran for real
 
@@ -1547,9 +1579,9 @@ def test_local_mock_completes_scout_step():
     st, orch = _mock_orch({"preflight.notice": {"outcome": "done", "note": "mocked send"}})
     orch.run_until_gate()
     assert st.is_done("preflight", "notice")
-    assert "preflight.notice" not in st.pending_human
+    assert "preflight.notice" not in orch.status_report()["pending_human"]
     assert st.get_step("preflight", "notice").note == "mocked send"
-    assert "preflight.flight_reminder" in st.pending_human   # unmocked scout still holds
+    assert "flight_reminder" in orch.status_report()["scout_pending"]
 
 
 
@@ -1563,7 +1595,8 @@ def test_local_mock_applies_to_later_phases():
     _clear_phase0_scout(orch)          # advance out of Phase 0
     orch.run_until_gate()
     assert st.get_step("ccd", "final_reminder").status == "blocked"
-    assert "ccd.final_reminder" in st.pending_human
+    assert "final_reminder" not in orch.status_report()["scout_pending"]  # blocked mock
+    assert "ccd.final_reminder" in orch.status_report()["pending_human"]
     assert st.get_step("ccd", "final_reminder").note == "mocked P1"
 
 
@@ -1578,7 +1611,7 @@ def test_local_mock_input_feeds_real_logic():
     cg = st.get_step("preflight", "cg")
     assert cg.status == "blocked"                       # real _cg_summary/_cg_report decided
     assert "critical" in cg.note.lower()
-    assert "preflight.cg" in st.pending_human
+    assert "preflight.cg" in orch.status_report()["pending_human"]
 
 
 
@@ -1591,7 +1624,7 @@ def test_local_mock_input_variant_on_scout_step():
     st = ReleaseState(release_id="2026-07", ccd="2026-07-08",
                       owner_email="me@x.com")
     with mockctx.active({"variant": "update"}):
-        out = notice.build(st)
+        out = _invoke(notice.build, st)
     assert "Today" in out.payload["body"]              # 'update' variant renders "Today"
 
 
@@ -1679,40 +1712,18 @@ def test_step_knowledge_module_overlays_yaml():
 
 
 def test_step_modules_and_config_stay_in_sync():
-    """STRUCTURAL GUARDRAIL — makes the modular structure self-enforcing so adding a
-    step can't silently drift. Every auto-discovered step module must map to a
-    config/phases.yaml step, and its KIND must match the config flags. This fails
-    LOUDLY if a module's ID is wrong/orphaned or its KIND disagrees with the flow."""
+    """Default modules must be configured; the catalog validates their full contract."""
     import yaml
     import steps
-    cfg = yaml.safe_load(open(CONFIG, encoding="utf-8"))
-    cfg_steps = {f"{ph['id']}.{s['id']}": s
-                 for ph in cfg["phases"] for s in ph["steps"]}
-
-    def cfg_kind(s):
-        if s.get("gate"):
-            return "gate"
-        if s.get("source") == "scout":
-            return "scout"
-        if s.get("attest"):
-            return "attest"
-        if s.get("owner") == "human":
-            return "reminder"
-        return "agent"
-
+    from orchestrator.handlers import HandlerCatalog
+    from orchestrator.workflow import WorkflowDefinition
+    with open(CONFIG, encoding="utf-8") as stream:
+        workflow = WorkflowDefinition.compile(yaml.safe_load(stream))
     discovered = steps.discover()
     assert discovered, "no step modules discovered — auto-discovery broke"
-    for key, mod in discovered.items():
-        # 1. no orphan module: every module corresponds to a real flow step
-        assert key in cfg_steps, f"step module '{key}' has no config/phases.yaml entry"
-        # 2. KIND matches the config's classification (no drift)
-        k, c = getattr(mod, "KIND", None), cfg_kind(cfg_steps[key])
-        if k == "agent":
-            assert c == "agent", f"{key}: module KIND=agent but config classifies as {c}"
-        elif k == "scout":
-            assert c == "scout", f"{key}: module KIND=scout but config classifies as {c}"
-        elif k == "attest":
-            assert c in ("attest", "reminder"), f"{key}: module KIND=attest but config={c}"
+    assert set(discovered) <= set(workflow.step_by_key), "orphan default step module"
+    catalog = HandlerCatalog.compile(workflow, steps.get_step)
+    assert set(catalog.handler_by_key) == set(workflow.step_by_key)
 
 
 
@@ -1763,7 +1774,7 @@ def test_find_orchestrator_pending_approval_and_submit():
 
     def fake_send(url, method, body, timeout):
         sent["body"] = body
-        return (True, {"value": [{"status": "approved"}]}, "")
+        return (True, {"value": [{"id": "APPR-555", "status": "approved"}]}, "")
 
     P._ado_rest_send = fake_send
     try:

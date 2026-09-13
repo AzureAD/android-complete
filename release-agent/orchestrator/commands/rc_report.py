@@ -15,13 +15,12 @@ from tools import pipelines as P
 
 
 def cmd_rc_report(args):
-    st = C.load_state(args.runs_root, args.release)
+    st, orch = C.load_orch(args.runs_root, args.release, args.config)
     month = getattr(st, "release_id", None) or args.release
     model = P.release_report(K.ORG, K.PROJECT, month,
                              checker_def=P.CHECKER_DEF, orch_def=P.ORCHESTRATOR_DEF)
-    _persist(st, model, args)
     # Authenticator is the Phase-2 frozen capture, never a diagnostic refetch.
-    current = K.latest_rc(st) if st else {}
+    current = K.latest_rc(orch.context("build_verify", "rc_report"))
     if current.get("rc") == model.get("rc"):
         model["auth"] = current.get("auth")
     R.prepare_report_evidence(model)
@@ -30,39 +29,6 @@ def cmd_rc_report(args):
         return 0
     print(_format(model))
     return 1 if model.get("problems") else 0
-
-
-def _persist(st, model, args):
-    """Record the resolved runs (+ snapshots) on state so status/digest/rc_report read
-    them without a live call. Best-effort — a report must never fail because the state
-    write did. (This is the LIVE `rc-report` diagnostic refreshing the record; the verify
-    steps are the primary writers.)"""
-    if st is None:
-        return
-    try:
-        ch = model.get("checker") or {}
-        if ch.get("run_id"):
-            K.stash_checker(st, ch["run_id"], ch.get("when"))
-        o = model.get("orchestrator") or {}
-        if o.get("run_id"):
-            K.stash_orchestrator(st, o["run_id"], parked=o.get("parked"))
-            # Model versions are capitalized {Common,Msal,Broker}; persist to the canonical
-            # (lowercase) state.versions source of truth.
-            mv = o.get("versions") or {}
-            st.record_versions({"common": mv.get("Common"), "msal": mv.get("Msal"),
-                                "broker": mv.get("Broker")})
-        mr = model.get("mrwp") or {}
-        for slot in ("ECS", "Local"):
-            m = mr.get(slot) or {}
-            if m.get("run_id"):
-                K.stash_mrwp(st, slot, {k: m.get(k) for k in
-                                        ("run_id", "complete", "ran", "total", "failed_stages",
-                                         "yellow_stages", "never_ran", "tests", "failed_suites",
-                                         "failed_suites_error", "tests_error")},
-                             rc=model.get("rc"))
-        C.save_state(st, args.runs_root, args.release)
-    except Exception:
-        pass
 
 
 def _u(build_id):

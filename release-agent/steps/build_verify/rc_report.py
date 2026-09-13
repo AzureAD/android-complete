@@ -1,9 +1,9 @@
 """Step: `rc_report` — consolidate the RC data, email the report, and make the Phase-2
-go/hold decision (Phase 2, build_verify). This is the terminal Phase-2 step and the single
-decision point — the verification steps only CAPTURE data; this step decides. No separate
+go/hold decision (Phase 2, build_verify). This is a terminal Phase-2 child alongside telemetry
+verification — the verification steps CAPTURE data; this step decides quality. No separate
 human approval gate.
 
-When verification and telemetry prerequisites have resolved the chain, this step composes the
+When the explicit verification capture chain resolves, this step composes the
 Phase-2 RC report (checker → orchestrator → ECS/Local MRWP + reconciled test failures)
 from complete current-RC snapshots and emails it to the release owner. Once evidence is
 ready, the report is sent even for failures (the owner gets the dashboard of
@@ -11,7 +11,8 @@ failures + links either way). The step's OUTCOME is then decided by TWO independ
 (1) the three-tier MRWP UI gate on the combined UI-automation pass rate across both MRWP
 runs (100% clean; >= RC_UI_PASS_THRESHOLD (90%) but < 100% warn — proceed + investigate in
 parallel; < 90% hold); and (2) the Authenticator ECS gate (both Firebase suites >= 90% and
-the auth build succeeded). The release AUTO-ADVANCES into Phase 3 only when BOTH gates clear;
+the auth build succeeded). The release AUTO-ADVANCES into Phase 3 only when BOTH gates AND
+the independent telemetry prerequisite clear;
 if EITHER holds, the step records `attention` and BLOCKS (the release WAITS for human
 attestation).
 
@@ -23,6 +24,8 @@ Redirect for tests with the `send_to`
 payload knob (keeps the send real, points it at you).
 """
 from __future__ import annotations
+
+from orchestrator.step_context import StepContext, thaw
 
 from orchestrator.delivery import fingerprint
 from orchestrator.outcomes import NeedsSkill, Blocked
@@ -60,8 +63,8 @@ CHERRY_PICK_TSG = ("https://eng.ms/docs/microsoft-security/identity/"
 _VMAP = {"common": "Common", "msal": "Msal", "broker": "Broker"}
 
 
-def _caps_versions(state) -> dict:
-    sv = getattr(state, "versions", None) or {}
+def _caps_versions(context) -> dict:
+    sv = getattr(context.release, "versions", None) or {}
     return {cap: sv[low] for low, cap in _VMAP.items() if sv.get(low)}
 
 
@@ -152,23 +155,23 @@ def prepare_report_evidence(model):
     return model
 
 
-def rc_report_model(state, timeout=120):
+def rc_report_model(context, timeout=120):
     """The Phase-2 RC report model — assembled from the RECORD in state.pipeline_runs
     (the verification steps stored it), NOT a live re-discovery. Uses the LATEST RC
     iteration (rcs[-1]) and routes through `tools.pipelines.assemble_rc_model` — the SAME
     assembler the live path uses — so the state-based model can't drift from the live one.
     """
-    pr = getattr(state, "pipeline_runs", None) or {}
+    pr = getattr(context.evidence, "pipeline_runs", None) or {}
     ch = pr.get("checker") or {}
     o = pr.get("orchestrator") or {}
-    rc = latest_rc(state)
+    rc = latest_rc(context)
 
     checker = {"fired": bool(ch.get("run_id")), "run_id": ch.get("run_id"), "when": ch.get("when")}
     # healthy=True is true by construction here: rc_report only runs AFTER orchestrator_health
     # passed (a failed pre-gate stage blocks that step, so we never reach this with an
     # unhealthy orchestrator). The live path (release_report) derives it from stages.
     orchestrator = {"found": bool(o.get("run_id")), "healthy": True,
-                    "run_id": o.get("run_id"), "versions": _caps_versions(state),
+                    "run_id": o.get("run_id"), "versions": _caps_versions(context),
                     "parked": o.get("parked")}
     mrwp = {}
     for slot, prov in (("ecs", "ECS"), ("local", "Local")):
@@ -186,7 +189,7 @@ def rc_report_model(state, timeout=120):
             "failed_suites_error": s.get("failed_suites_error"),
         }
     return prepare_report_evidence(P.assemble_rc_model(
-        state.release_id, checker, orchestrator, mrwp, rc=rc.get("rc"), auth=rc.get("auth")))
+        context.release.release_id, checker, orchestrator, mrwp, rc=rc.get("rc"), auth=rc.get("auth")))
 
 
 def rc_run_links(model) -> list:
@@ -337,14 +340,14 @@ def rc_next_action(model):
             "report and completing all prerequisites. No separate RC approval is needed.")
 
 
-def rc_email(state):
+def rc_email(context):
     """Compose the RC verification email (subject, html, plain) for this release from
     verified snapshots. Returns (subject, html, plain, model); refuses incomplete evidence."""
-    model = rc_report_model(state)
+    model = rc_report_model(context)
     readiness = report_readiness(model)
     if not readiness["ready"]:
         raise ValueError(readiness["detail"])
-    ctx = release_ctx(state)
+    ctx = release_ctx(context)
     gate, auth = rc_ui_gate(model), auth_report_gate(model)
     next_action = rc_next_action(model)
     return (R.rc_email_subject(model, gate, auth),
@@ -352,18 +355,18 @@ def rc_email(state):
             R.rc_email_plain(model, ctx, gate, auth, next_action), model)
 
 
-def build(state):
+def build(context: StepContext):
     """Compose the RC verification email → NeedsSkill(workiq_send_email). Blocks if the
     owner email is unknown (nowhere to send) — set it with `set-owner`. The email is
     sent only with complete evidence; the gate verdict (recorded by the follow-up) then
     decides whether the step passes or blocks."""
-    to = state.owner_email
+    to = context.release.owner_email
     if not to:
         return Blocked(
             "rc_report: no release owner email on record — set it with "
             "`set-owner --email <you@microsoft.com>` so the RC report can be sent.")
     try:
-        subject, html, plain, model = rc_email(state)
+        subject, html, plain, model = rc_email(context)
     except Exception as e:                       # pragma: no cover - defensive
         return Blocked(f"rc_report: could not build the RC report ({e}).")
 
@@ -400,11 +403,11 @@ def build(state):
         notification={
             "checkpoint": "rc:" + ":".join(str(link["url"]) for link in rc_run_links(model)),
             "state_matches": [
-                {"path": ["pipeline_runs", key], "hash": fingerprint(state.pipeline_runs[key])}
+                {"path": ["pipeline_runs", key], "hash": fingerprint(context.evidence.pipeline_runs[key])}
                 for key in ("checker", "orchestrator")
             ] + [
-                {"path": ["pipeline_runs", "rcs", -1], "hash": fingerprint(latest_rc(state))},
-                {"path": ["versions"], "hash": fingerprint(state.versions)},
+                {"path": ["pipeline_runs", "rcs", -1], "hash": fingerprint(latest_rc(context))},
+                {"path": ["versions"], "hash": fingerprint(context.release.versions)},
             ],
             "completion": {"status": "attention" if gate["blocking"] or auth["blocking"] else "pass",
                            "note": note, "links": rc_run_links(model)},

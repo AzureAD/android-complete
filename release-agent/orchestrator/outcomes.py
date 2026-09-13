@@ -11,19 +11,24 @@ of these, and the engine/skill react uniformly:
 
     Done       — the step is complete (an agent did it, or nothing to do).
     Blocked    — an agent hit a real problem the owner must resolve.
+    InProgress — underlying work is still running; retain ownership and poll later.
     NeedsHuman — a person must confirm/act (attestation or reminder).
     NeedsSkill — scout-assisted: the SKILL must run `tool` with `payload` (an MCP
                  call the engine can't make), then record the step. The step
                  DESCRIBES the action as data, so the skill executor is generic —
                  no per-step instructions in the skill's reference docs.
 
-Pure data — no IO, no engine imports — so it's trivially testable and shared by
-the engine, the CLI, and the step handlers.
+Auto handlers return AutoOutcome directly from build(context), execute(context), or
+reconcile(context). The engine rejects other return types before applying an outcome.
+There is no separate runner result or compatibility adapter.
+
+Pure data — no IO, no engine imports — shared by the engine, CLI, and handlers.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+from .evidence import EvidenceUpdate
 
 
 @dataclass
@@ -32,13 +37,16 @@ class Done:
     by: str = "agent"          # 'agent' | 'human'
     links: list = field(default_factory=list)   # [{name, url}] durable refs
     kind: str = "done"
+    updates: tuple[EvidenceUpdate, ...] = ()
 
 
 @dataclass
 class Blocked:
     reason: str
     links: list = field(default_factory=list)   # [{name, url}] durable refs
+    by: str = "agent"
     kind: str = "blocked"
+    updates: tuple[EvidenceUpdate, ...] = ()
 
 
 @dataclass
@@ -54,6 +62,36 @@ class InProgress:
     links: list = field(default_factory=list)
     poll_in_min: int = 30
     kind: str = "in_progress"
+    updates: tuple[EvidenceUpdate, ...] = ()
+
+
+AutoOutcome = Done | Blocked | InProgress
+
+
+def valid_links(value: object) -> bool:
+    return isinstance(value, list) and all(isinstance(link, dict) for link in value)
+
+
+def require_auto_outcome(value: object) -> AutoOutcome:
+    """Reject unsupported handler results before changing step lifecycle state."""
+    if isinstance(value, (Done, Blocked, InProgress)):
+        expected_kind = "done" if isinstance(value, Done) else (
+            "blocked" if isinstance(value, Blocked) else "in_progress")
+        if value.kind != expected_kind:
+            raise ValueError("Outcome kind must match its canonical type")
+        text = value.reason if isinstance(value, Blocked) else value.note
+        if not isinstance(text, str) or not valid_links(value.links):
+            raise TypeError("Outcome text and links must be a string and list")
+        if isinstance(value, (Done, Blocked)) and not isinstance(value.by, str):
+            raise TypeError("Outcome by must be an attribution string")
+        if isinstance(value, InProgress) and (
+            type(value.poll_in_min) is not int or value.poll_in_min <= 0
+        ):
+            raise ValueError("Outcome poll_in_min must be a positive integer")
+        return value
+    raise TypeError(
+        f"Auto handler returned {type(value).__name__}; expected Done/Blocked/InProgress"
+    )
 
 
 @dataclass
@@ -61,6 +99,7 @@ class NeedsHuman:
     prompt: str
     attest: bool = False       # True → attestation (confirm), False → plain reminder/to-do
     kind: str = "needs_human"
+    updates: tuple[EvidenceUpdate, ...] = ()
 
 
 @dataclass
@@ -91,11 +130,16 @@ class NeedsSkill:
     outbound: bool = False
     notification: dict = field(default_factory=dict)  # optional checkpoint + completion metadata
     kind: str = "needs_skill"
+    updates: tuple[EvidenceUpdate, ...] = ()
+
+
+Outcome = AutoOutcome | NeedsHuman | NeedsSkill
 
 
 def as_dict(outcome: Any) -> dict:
     """Serialize any outcome to a plain dict (for `--json` CLI output / the skill)."""
-    d = {k: v for k, v in vars(outcome).items()}
+    from .step_context import thaw
+    d = {k: thaw(v) for k, v in vars(outcome).items() if k != "updates"}
     return d
 
 

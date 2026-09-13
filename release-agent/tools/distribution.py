@@ -103,12 +103,12 @@ def resolve_oof(selection, roster):
     return sorted(selected)
 
 
-def confirm_oof(selection, roster, owner, release_id):
+def confirm_oof(selection, roster, owner, release_id, *, now=None):
     """Record the release owner's explicit answer, not inferred availability."""
     if not owner:
         raise ValueError("A release owner is required to confirm OOF availability.")
     return {"upns": resolve_oof(selection, roster), "confirmed_by": _identity(owner),
-            "source": "release-owner", "confirmed_at": datetime.now(timezone.utc).isoformat(),
+            "source": "release-owner", "confirmed_at": (now or datetime.now(timezone.utc)).isoformat(),
             "release_id": release_id}
 
 
@@ -466,11 +466,42 @@ def read_point_testers(plan_id, root_suite, case_ids, timeout=90):
     return True, groups, ""
 
 
-def sync_point_testers(plan_id, suite_id, assignments, timeout=90, *, expected_testers=None):
+def resolve_tester_identity(upn, *, org=ORG, timeout=60):
+    """Resolve one exact ADO identity before review, never after write authorization."""
+    parsed = urllib.parse.urlparse(org)
+    if parsed.hostname == "dev.azure.com":
+        organization = parsed.path.strip("/").split("/")[0]
+    elif (parsed.hostname or "").endswith(".visualstudio.com"):
+        organization = parsed.hostname[:-len(".visualstudio.com")]
+    else:
+        raise ValueError("Unsupported distribution ADO organization")
+    url = (f"https://vssps.dev.azure.com/{urllib.parse.quote(organization, safe='')}/_apis/identities"
+           f"?searchFilter=General&filterValue={urllib.parse.quote(upn, safe='')}"
+           "&queryMembership=None&api-version=7.1")
+    ok, rows, detail = P._ado_rest_get(url, timeout)
+    if not ok or not isinstance(rows, dict):
+        raise ValueError(f"Cannot resolve ADO tester identity for {upn}: {detail}")
+    ids = set()
+    for row in rows.get("value", []):
+        properties = row.get("properties") or {}
+        names = [row.get("providerDisplayName")]
+        for key in ("Account", "Mail"):
+            value = properties.get(key) or {}
+            names.append(value.get("$value") if isinstance(value, dict) else value)
+        if row.get("id") and row.get("isActive") is not False and upn in {_identity(v) for v in names}:
+            ids.add(row["id"])
+    if len(ids) != 1:
+        raise ValueError(f"ADO tester {upn} did not resolve to one exact active identity")
+    return ids.pop()
+
+
+def sync_point_testers(plan_id, suite_id, assignments, timeout=90, *, expected_testers=None,
+                       org=ORG, project=PROJECT, validate=None, expected_identities=None,
+                       reviewed_updates=None):
     """Align selected point testers to already-written case assignees; no outcome writes."""
     if not assignments:
         return True, ""
-    url = f"{ORG}/{PROJECT}/_apis/test/Plans/{plan_id}/Suites/{suite_id}/points"
+    url = f"{org}/{project}/_apis/test/Plans/{plan_id}/Suites/{suite_id}/points"
     ok, points, detail = P._ado_rest_get_all(url + "?api-version=5.0", timeout)
     if not ok:
         return False, detail
@@ -489,7 +520,7 @@ def sync_point_testers(plan_id, suite_id, assignments, timeout=90, *, expected_t
     ids = sorted(selected)
     for start in range(0, len(ids), 190):
         ok, data, detail = P._ado_rest_get(
-            f"{ORG}/{PROJECT}/_apis/wit/workitems?ids={','.join(map(str, ids[start:start+190]))}"
+            f"{org}/{project}/_apis/wit/workitems?ids={','.join(map(str, ids[start:start+190]))}"
             "&fields=System.Id,System.AssignedTo&api-version=7.1", timeout)
         if not ok:
             return False, detail
@@ -501,13 +532,22 @@ def sync_point_testers(plan_id, suite_id, assignments, timeout=90, *, expected_t
             identities[cid] = assignee["id"]
     if set(identities) != set(selected):
         return False, "Incomplete case-assignee identities; no tester alignment attempted"
+    if expected_identities is not None and identities != {int(k): v for k, v in expected_identities.items()}:
+        return False, "Case-assignee identities differ from the reviewed tester identities"
     groups = {}
     for point in points:
         cid = int(point["testCase"]["id"])
         if cid in selected and (point.get("assignedTo") or {}).get("id") != identities[cid]:
             groups.setdefault(identities[cid], []).append(point["id"])
+    if reviewed_updates is not None:
+        reviewed = {row["tester_id"]: list(row["point_ids"]) for row in reviewed_updates}
+        if {key: sorted(value) for key, value in groups.items()} != reviewed:
+            return False, "Point tester updates differ from the reviewed operations"
+        groups = reviewed
     for identity, point_ids in groups.items():
         for start in range(0, len(point_ids), 40):
+            if validate is not None:
+                validate()
             ok, _, detail = P._ado_rest_send(
                 f"{url}/{','.join(map(str, point_ids[start:start+40]))}?api-version=5.0",
                 "PATCH", {"tester": {"id": identity}}, timeout)
@@ -526,10 +566,18 @@ def sync_point_testers(plan_id, suite_id, assignments, timeout=90, *, expected_t
     return True, ""
 
 
-def set_assigned_to(case_id, upn, timeout=60, *, expected_revision=None):
+def set_assigned_to(
+    case_id,
+    upn,
+    timeout=60,
+    *,
+    expected_revision=None,
+    org=ORG,
+    project=PROJECT,
+):
     """WRITE: set System.AssignedTo on a test-case work item. (ok, detail). This mutates
     the shared work item (visible in the master + every plan referencing it)."""
-    url = f"{ORG}/{PROJECT}/_apis/wit/workitems/{case_id}?api-version=7.1"
+    url = f"{org}/{project}/_apis/wit/workitems/{case_id}?api-version=7.1"
     body = [{"op": "add", "path": "/fields/System.AssignedTo", "value": upn}]
     if expected_revision is not None:
         if type(expected_revision) is not int or expected_revision < 1:

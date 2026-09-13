@@ -19,11 +19,13 @@ else `attention` — which surfaces the Android-Core-Team heads-up as a blocked 
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+
 import os as _os
 import re
 
 from orchestrator.outcomes import NeedsSkill, Blocked
-from steps.lib.mockctx import mock_input, MISSING
+from steps.lib.mockctx import MISSING
 
 ID = "telemetry_verify"
 KIND = "scout"
@@ -42,15 +44,14 @@ MOCKABLE = {
 }
 
 
-def _adx_target():
+def _adx_target(context):
     """(cluster_uri, database) for the ADX release cluster — read from the `adx_access` readiness
     item so the cluster coordinates have one home. Returns (None, None) if it can't be read."""
     path = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
                          "config", "readiness.yaml")
     try:
         import yaml
-        with open(path, "r", encoding="utf-8") as fh:
-            data = yaml.safe_load(fh) or {}
+        data = yaml.safe_load(context.services.assets.text_file(path)) or {}
     except Exception:  # noqa: BLE001
         return (None, None)
 
@@ -78,14 +79,14 @@ def _query(version: str) -> str:
             f"| count")
 
 
-def _version(state):
+def _version(context):
     """Use the current verified ECS RC APK, stripping its build-number RC suffix. A `version`
     mock overrides discovery. Returns (version, detail) — version is None on failure."""
-    ov = mock_input("version", MISSING)
+    ov = context.input("version", MISSING)
     if ov is not MISSING and ov:
         return (str(ov).strip(), "")
     from steps.build_verify._common import latest_rc
-    build = (latest_rc(state).get("auth") or {}).get("build") or {}
+    build = (latest_rc(context).get("auth") or {}).get("build") or {}
     if not build.get("complete") or build.get("result") not in ("succeeded", "partiallySucceeded"):
         return (None, "no successful Authenticator ECS RC build recorded for the current RC — "
                       "run auth_ecs first")
@@ -97,11 +98,11 @@ def _version(state):
     return (match.group(1), "")
 
 
-def build(state):
-    version, detail = _version(state)
+def build(context: StepContext):
+    version, detail = _version(context)
     if not version:
         return Blocked(f"telemetry_verify: {detail}.")
-    cluster_uri, database = _adx_target()
+    cluster_uri, database = _adx_target(context)
     if not cluster_uri:
         return Blocked("telemetry_verify: could not read the ADX cluster coordinates from "
                        "config/readiness.yaml (adx_access item).")
@@ -109,7 +110,7 @@ def build(state):
     from steps.build_verify._common import latest_rc
     from tools.coordinates import coords
     from tools.pipelines import auth_build_url
-    rc = latest_rc(state)
+    rc = latest_rc(context)
     auth = rc.get("auth") or {}
     apk = auth.get("build") or {}
     pipeline = coords.pipeline("auth_build")
@@ -121,7 +122,7 @@ def build(state):
         "ui_test_build_id": (auth.get("test") or {}).get("run_id"),
         "version_source": "ADO buildNumber: <AppInfo_Version>-rc<build_id>",
     }
-    if mock_input("version", MISSING) is not MISSING:
+    if context.input("version", MISSING) is not MISSING:
         source = {"version_source": "explicit test override"}
     return NeedsSkill(
         tool="kusto_query",

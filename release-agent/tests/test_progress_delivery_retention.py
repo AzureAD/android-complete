@@ -1,4 +1,5 @@
 """Bounded routine delivery state without weakening claims, receipts or lifecycle recovery."""
+from tests._context import context as _context
 from argparse import Namespace
 from copy import deepcopy
 from datetime import datetime, timedelta
@@ -7,7 +8,7 @@ import json
 import pytest
 
 from orchestrator import cli_common as C, delivery as D, schedule
-from orchestrator.engine import Orchestrator
+from tests._context import fresh_orchestrator as Orchestrator
 from orchestrator.commands import delivery_cmd, bugbash_update
 from steps.bug_bash.activate_chat import chat_state_matches, stored_chat_id
 from tests._harness import _bb_updates_state, _active_phase
@@ -31,8 +32,8 @@ def progress(orch, start="2026-09-11T12:00:00-07:00", hours=3, text="X" * 20000)
     end = datetime.fromisoformat(start) + timedelta(hours=hours)
     return D.descriptor(orch.state, f"bugbash:update:{start}", {
         "kind": "phase", "phase": "bug_bash", "step": "bugbash_updates", "until_flag": "poll_complete",
-        "state_matches": chat_state_matches(orch.state), "expires_at": end.isoformat(),
-    }, "workiq_send_chat_message", {"chatId": stored_chat_id(orch.state), "content": text,
+        "state_matches": chat_state_matches(_context(orch.state)), "expires_at": end.isoformat(),
+    }, "workiq_send_chat_message", {"chatId": stored_chat_id(_context(orch.state)), "content": text,
                                     "contentType": "html", "mentions": []})
 
 
@@ -177,7 +178,7 @@ def test_ever_claimed_known_failure_keeps_frozen_payload_for_retry(orch):
 def test_invitation_first_final_and_other_notifications_are_untouched(orch, clock):
     invitation = deepcopy(orch.state.notification_deliveries)
     scope = {"kind": "phase", "phase": "bug_bash", "step": "bugbash_updates", "until_flag": "poll_complete"}
-    payload = {"chatId": stored_chat_id(orch.state), "content": "message", "contentType": "html"}
+    payload = {"chatId": stored_chat_id(_context(orch.state)), "content": "message", "contentType": "html"}
     for logical, completion in (
         ("step:bug_bash.bugbash_updates:once", {"kind": "step", "record_as": "bugbash_updates"}),
         ("bugbash:complete", {"kind": "step_data", "data": {"poll_complete": True}}),
@@ -190,7 +191,7 @@ def test_invitation_first_final_and_other_notifications_are_untouched(orch, cloc
     clock[0] += timedelta(days=365)
     assert not D.prune_progress(orch) and orch.state.notification_deliveries == before
     assert all(orch.state.notification_deliveries[k] == v for k, v in invitation.items())
-    assert stored_chat_id(orch.state) == payload["chatId"]
+    assert stored_chat_id(_context(orch.state)) == payload["chatId"]
 
 
 @pytest.mark.parametrize("kind", ["state_match", "step_execution"])
@@ -205,7 +206,11 @@ def test_referenced_records_are_not_compacted_or_deleted(orch, clock, kind):
         D.offer(orch, other)
     else:
         record = orch.state.get_step("bug_bash", "bugbash_updates")
-        record.data["_execution"] = {"notification_id": item["id"]}
+        record.execution = {
+            "id": "test-execution",
+            "owner": "test",
+            "notification_id": item["id"],
+        }
         orch.state.set_step("bug_bash", "bugbash_updates", record)
     before = deepcopy(orch.state.notification_deliveries)
     clock[0] += timedelta(days=365)

@@ -3,7 +3,7 @@
 `config/automations.yaml` declares WHICH Scout automations a release provisions and
 WHICH STEPS each drives. This module turns that data into:
 
-  * plan(release, ccd)  — concrete specs the skill uses to create + register each
+  * plan(release, ccd)  — complete specs for prepare/reconcile/owning create-result
     automation (name, schedule, prompt, steps, fire time). Timing is DERIVED from
     each step module's `fire_at_local`, so the step module is the single source.
   * validate()          — the self-enforcing guardrail: every step that declares a
@@ -16,7 +16,7 @@ computation (no IO beyond reading the two yaml files).
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import yaml
 
@@ -40,13 +40,35 @@ def automations_path(config_path: str) -> str:
     return os.path.join(os.path.dirname(config_path), "automations.yaml")
 
 
+def _definition_document(config_path: str) -> dict:
+    try:
+        with open(automations_path(config_path), "r", encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh)
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError("Cannot read canonical automation definitions") from exc
+    if (not isinstance(doc, dict) or doc.get("version") != 2
+            or set(doc) != {"version", "provider_defaults", "automations"}
+            or not isinstance(doc["automations"], list)
+            or not doc["automations"]
+            or any(not isinstance(d, dict) or not isinstance(d.get("slug"), str)
+                   or not d["slug"].strip() or not isinstance(d.get("steps", []), list)
+                   or any(not isinstance(step, str) for step in d.get("steps", []))
+                   for d in doc["automations"])):
+        raise ValueError("Invalid canonical automation definitions; explicit version-2 data required")
+    return doc
+
+
 def load_defs(config_path: str) -> list:
-    p = automations_path(config_path)
-    if not os.path.exists(p):
-        return []
-    with open(p, "r", encoding="utf-8") as fh:
-        doc = yaml.safe_load(fh) or {}
-    return doc.get("automations", []) or []
+    return _definition_document(config_path)["automations"]
+
+
+def _provider_defaults(config_path: str) -> dict:
+    defaults = _definition_document(config_path)["provider_defaults"]
+    if not isinstance(defaults, dict) or set(defaults) != {
+        "model", "enabled", "triggerType", "conditionCheckInterval", "browserHeadless", "teamsNotify",
+    }:
+        raise ValueError("Canonical provider_defaults require exactly the explicit supported flags")
+    return defaults
 
 
 def phase_label(config_path: str, phase_id: str) -> str:
@@ -117,14 +139,23 @@ def validate(config_path: str) -> list:
     """
     problems = []
     defs = load_defs(config_path)
+    slugs = set()
     owned = {}                       # step_key -> slug (time-of-day only)
     for d in defs:
         slug = d.get("slug", "?")
+        if slug in slugs:
+            problems.append(f"duplicate automation slug '{slug}'")
+        slugs.add(slug)
+        if set(d) - {
+            "slug", "label", "phase", "scope", "steps", "every", "on_demand",
+            "cleanup_when", "purpose", "prompt_kind",
+        }:
+            problems.append(f"automation '{slug}' has unknown settings")
         rules = _cleanup_rules(d.get("cleanup_when"))
         if not rules or not all(_valid_cleanup_rule(rule) for rule in rules):
             problems.append(f"automation '{slug}' has invalid/missing cleanup_when")
         s_steps = d.get("steps", []) or []
-        if not s_steps:
+        if not s_steps and d.get("prompt_kind") not in ("push-reminders", "daily-status-email"):
             problems.append(f"automation '{slug}' has no steps")
             continue
         interval = bool(d.get("every"))
@@ -156,26 +187,33 @@ def validate(config_path: str) -> list:
     return problems
 
 
-def _ccd_cron(ccd_date, hhmm: str):
-    """A cron schedule pinned to the EXACT Code Complete Date + fire time — NOT a
-    recurring weekday. `every <weekday>` fires on the NEXT matching weekday, which for
-    a CCD more than a week out (these are provisioned at release start) is the wrong
-    date — it fired the CCD-day comms a week early. Cron `M H D Mo *` targets the CCD's
-    day-of-month + month exactly, so a one-shot fires ON the CCD. Returns the NL Scout
-    accepts (e.g. 'cron: 0 9 26 8 *') or None if inputs are missing/invalid.
-
-    TIMEZONE: emit the LOCAL wall-clock time directly — do NOT convert to UTC.
-    Scout's scheduler interprets cron in host-local time (empirically verified
-    2026-08-20: a cron '37 9' fired at 09:37 PDT / 16:37 UTC, not 09:37 UTC). So a
-    `hhmm` of '09:00' correctly fires at 09:00 local on the CCD. Adding a UTC
-    conversion here would shift every CCD-day comm by the host's UTC offset."""
+def _ccd_cron(ccd_date, hhmm: str, *, owner_timezone, scheduler_timezone, now=None):
+    """Convert the owner CCD instant to host cron, rejecting past/ambiguous targets."""
     if not ccd_date or not hhmm:
-        return None
+        raise ValueError("Confirmed CCD and fire time are required")
+    owner = schedule.get_tz(owner_timezone) if owner_timezone else None
+    host = schedule.get_tz(scheduler_timezone) if scheduler_timezone else None
+    if owner is None or host is None:
+        raise ValueError("Owner and scheduler host IANA timezones must both be available")
     try:
         t = datetime.strptime(hhmm, "%H:%M")
     except ValueError:
-        return None
-    return f"cron: {t.minute} {t.hour} {ccd_date.day} {ccd_date.month} *"
+        raise ValueError("Invalid CCD fire time") from None
+    local = datetime.combine(ccd_date, t.time(), owner)
+    instant = local.astimezone(timezone.utc)
+    if (instant.astimezone(owner).replace(tzinfo=None) != local.replace(tzinfo=None)
+            or local.replace(fold=1).utcoffset() != local.utcoffset()):
+        raise ValueError("CCD fire time is nonexistent or ambiguous in the owner timezone")
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None or instant <= now:
+        raise ValueError("CCD fire time is past; never roll a missed one-shot into next year")
+    target = instant.astimezone(host)
+    if target.replace(fold=1).utcoffset() != target.replace(fold=0).utcoffset():
+        raise ValueError("CCD fire time is ambiguous in the scheduler host timezone")
+    # Cron has no year; more than one year ahead could first fire in the wrong year.
+    if (instant - now).total_seconds() > 365 * 86400:
+        raise ValueError("CCD target is too far ahead for a yearless one-shot cron")
+    return f"cron: {target.minute} {target.hour} {target.day} {target.month} *"
 
 
 def _prompt_for(spec: dict, release: str) -> str:
@@ -191,11 +229,62 @@ def _prompt_for(spec: dict, release: str) -> str:
     step_list = ", ".join(steps)
     cleanup = (
         f"\nFinally run `automation cleanup --release {release} --json`. For each removal "
-        f"IN ORDER, call `m_delete_automation` with its id; only after that succeeds run "
-        f"`automation deregister --id <id>`. If deletion fails, leave the registry entry "
-        f"and report it so a later worker can retry cleanup. This is a finally block: "
+        f"IN ORDER, claim it with `automation claim-delete --id <id> --executor <session> "
+        f"--json`; call `m_delete_automation` only when permission_to_delete is true, then "
+        f"record `automation delete-result --id <id> --attempt-id <attempt> --outcome "
+        f"deleted|not_deleted|uncertain --evidence <provider evidence>`. Never delete or "
+        f"deregister without a durable claim. STOP the cleanup loop on any barrier, "
+        f"error or uncertain deletion; retain the recovery worker. Terminal ID-less "
+        f"intents need owner-reviewed abandon-prepared with fresh absence evidence. "
+        f"This is a finally block: "
         f"execute it even on silence, stopped work, or errors. Halts suspend, not delete.")
     protocol = delivery.PROTOCOL.replace("<release>", release)
+    provisioning = (
+        "\nProvision workers only through `automation plan` and the exact complete "
+        "provider_spec/registration it returns. Call `automation prepare` with "
+        "--spec-json <exact-spec>, then obtain a fresh exhaustive provider list and "
+        "full details. Losslessly normalize to {observed_at:<UTC>,complete:true,"
+        "automations:[{id:<id>,spec:<complete-provider-kwargs>}]} and call "
+        "`automation reconcile-create` with the SAME --spec-json, --observed-json, "
+        "--claim and --executor. Only permission_to_create:true permits "
+        "m_create_automation with exactly returned spec. Immediately acknowledge "
+        "create-result with owning --attempt-id, SAME --spec-json and receipt evidence "
+        "of that exact invocation. Unknown outcomes are uncertain, never retry them. "
+        "Pass --on-demand <slug> for on-demand provisioning. Never register directly "
+        "or update in place; review delete/recreate. Do not persist prompts/specs "
+        "or raw provider responses in registry, journals, or evidence text."
+    )
+
+    if spec.get("prompt_kind") == "push-reminders":
+        return (
+            f"Release {release} — advance this pinned release autonomously.\n"
+            f"1. Run `status --release {release} --json`. Missing, unsigned, halted, "
+            "blocked, cancelled or complete means skip new work, NOT cleanup.\n"
+            f"2. Loop `next --release {release} --json`; resolve scout_pending via "
+            f"`step-action --release {release} --phase <phase> --step <step>`. "
+            "Non-notification gather/trigger actions retain domain follow-ups and "
+            "owning effect recovery; never blind-record pass or start another write.\n"
+            f"3. Run `tick --release {release} --json`, then `notification prepare "
+            f"--release {release} --source digest`. Independently deliver eligible "
+            "owner email, owner Teams and Core alerts through claim/result, not raw "
+            "message blocks. Core alerts are scoped to active preflight after 9 AM on "
+            "the previous business day or CCD. Inspect source pending for completion "
+            "and provisioning recovery; never resend claimed/uncertain/sent records. "
+            "Never add courtesy copies. Respect mocks.local.yaml redirects.\n"
+            + protocol + provisioning + cleanup
+        )
+    if spec.get("prompt_kind") == "daily-status-email":
+        return (
+            f"Release {release} — hourly partner status-email check. The command sends "
+            "only on the first eligible tick at/after 17:00 in the stored owner timezone "
+            "(weekdays excluding US holidays), during Phases 2–4; hourly polling avoids "
+            "host/owner DST drift. Never use --force in this worker.\n"
+            f"Run `notification prepare --release {release} --source status-email`. "
+            "For an isolated TEST release use --send-to <verified-test-address>. "
+            "Empty/stopped/claimed/uncertain/sent means no send; no automatic retry. "
+            "The final-status step has its own closing send. Respect mocks.local.yaml.\n"
+            + protocol + provisioning + cleanup
+        )
 
     # Single-step automation whose step owns a bespoke prompt → delegate to the module.
     if len(steps) == 1:
@@ -205,7 +294,7 @@ def _prompt_for(spec: dict, release: str) -> str:
         if callable(fn):
             prompt = fn(release, spec)
             if prompt:
-                return protocol + "\n" + prompt + cleanup
+                return protocol + "\n" + prompt + provisioning + cleanup
 
     # Default: notification claim/result, or the existing non-notification follow-up.
     return (
@@ -220,21 +309,25 @@ def _prompt_for(spec: dict, release: str) -> str:
         f"4. silently journal it: `journal --release {release} --source scout "
         f"--kind automation --text \"<slug> ran <step>\"`.\n"
         f"Respect the mocks.local.yaml redirects if present. Report a one-line summary."
-    ) + cleanup
+    ) + provisioning + cleanup
 
 
-def plan(config_path: str, release: str, ccd: str) -> dict:
+def plan(config_path: str, release: str, ccd: str, *, owner_timezone=None,
+         scheduler_timezone=None, now=None) -> dict:
     """Concrete provisioning specs for a release. Returns
     {release, ccd, problems, automations:[...]}. Each automation spec has:
       slug, name, phase, steps, purpose, fire_at, schedule (NL for m_create_automation),
-      ccd_date, weekday, prompt, registration (the `automation register` args)."""
+      ccd_date, weekday, prompt, registration (the `automation prepare` args)."""
     problems = validate(config_path)
     defs = load_defs(config_path)
+    defaults = _provider_defaults(config_path)
+    scheduler_timezone = scheduler_timezone or schedule.detect_local_tz()
     ccd_date = schedule.parse_date(ccd) if ccd else None
     weekday = ccd_date.strftime("%A") if ccd_date else None
 
     out = []
     for d in defs:
+        entry_problems = []
         slug = d.get("slug", "?")
         s_steps = d.get("steps", []) or []
         interval = d.get("every")
@@ -249,14 +342,22 @@ def plan(config_path: str, release: str, ccd: str) -> dict:
             fire_at = _step_fire_at(s_steps[0]) if s_steps else None
             # Pin to the EXACT CCD date via cron — never 'every <weekday>' (which fires
             # the next matching weekday, a week early for a CCD provisioned in advance).
-            sched = _ccd_cron(ccd_date, fire_at)
+            try:
+                sched = _ccd_cron(
+                    ccd_date, fire_at, owner_timezone=owner_timezone,
+                    scheduler_timezone=scheduler_timezone, now=now,
+                )
+            except ValueError as exc:
+                sched = None
+                entry_problems.append(str(exc))
             one_shot = True
         spec = {
             "slug": slug,
             "name": name,
             "phase": d.get("phase"),
             "steps": s_steps,
-            "kind": "step-driving",     # everything in automations.yaml drives steps
+            "kind": "step-driving" if s_steps else "release-level",
+            "prompt_kind": d.get("prompt_kind"),
             "purpose": d.get("purpose", ""),
             "fire_at": fire_at,
             "ccd_date": ccd_date.isoformat() if ccd_date else None,
@@ -271,15 +372,34 @@ def plan(config_path: str, release: str, ccd: str) -> dict:
             "cleanup_when": d.get("cleanup_when"),
         }
         spec["prompt"] = _prompt_for(spec, release)
+        agent_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        spec["prompt"] = (
+            f"Work from the authoritative release-agent root: {agent_root}. "
+            "All command fragments below mean `python -m orchestrator.cli` in this root. "
+            "Use ONE authoritative runs directory, never a copied release snapshot.\n"
+            + spec["prompt"]
+        )
+        from orchestrator.registry import provider_spec
+        spec["provider_spec"] = None
+        if sched:
+            try:
+                spec["provider_spec"] = provider_spec({
+                    **defaults, "name": name, "description": spec["purpose"],
+                    "prompt": spec["prompt"], "schedule": sched, "oneShot": one_shot,
+                })
+            except ValueError as exc:
+                entry_problems.append(str(exc))
+        spec["problems"] = entry_problems
         # Exactly what to record after creating it, so linkage + schedule are captured
-        # (schedule lets `automation sync` detect CCD drift and re-pin the cron).
+        # Schedule remains available for the read-only drift report.
         spec["registration"] = {
             "name": name, "release": release, "purpose": d.get("purpose", ""),
-            "steps": s_steps, "kind": "step-driving", "schedule": sched, "slug": slug,
+            "steps": s_steps, "kind": spec["kind"], "schedule": sched, "slug": slug,
             "cleanup_when": d.get("cleanup_when"),
         }
         out.append(spec)
-    return {"release": release, "ccd": ccd, "problems": problems, "automations": out}
+    return {"release": release, "ccd": ccd, "problems": problems, "automations": out,
+            "owner_timezone": owner_timezone, "scheduler_timezone": scheduler_timezone}
 
 
 def cleanup_plan(state, entries: list, config_path: str) -> dict:
@@ -288,6 +408,20 @@ def cleanup_plan(state, entries: list, config_path: str) -> dict:
         phases = {p["id"]: p for p in (yaml.safe_load(fh) or {}).get("phases", [])}
     from orchestrator.engine import Orchestrator
     orch = Orchestrator(config_path, state, mocks={})
+    from orchestrator.revision import mismatch_reason
+    revision_problem = mismatch_reason(orch)
+    if revision_problem:
+        return {"release": state.release_id, "removals": [], "problems": [revision_problem]}
+    selection = orch.scheduling()
+    release_complete = selection.frontier is None
+    release_terminal = (
+        release_complete or selection.status == "cancelled"
+    )
+    terminal_reason = (
+        "release cancelled"
+        if selection.status == "cancelled"
+        else "release complete"
+    )
     removals, problems = [], []
     known_steps = {f"{p['id']}.{s['id']}" for p in phases.values() for s in p["steps"]}
 
@@ -295,21 +429,30 @@ def cleanup_plan(state, entries: list, config_path: str) -> dict:
         if rule == "manual":
             return False, ""
         if rule == "release_done":
-            return state.status == "complete", "release complete"
+            return release_terminal, terminal_reason
         if rule == "steps_done":
-            return (bool(steps) and all(state.is_done(*s.split(".", 1)) for s in steps),
+            return (bool(steps) and all(selection.step(*s.split(".", 1)).complete for s in steps),
                     "all driven steps done")
         if rule == "steps_settled":
-            return (bool(steps) and all(
-                state.get_step(*s.split(".", 1)).status in ("done", "skipped", "blocked")
-                for s in steps), "all driven steps settled")
+            settled = []
+            for step_key in steps:
+                phase_id, step_id = step_key.split(".", 1)
+                ready = selection.step(phase_id, step_id)
+                definition = ready.definition
+                record = state.get_step(phase_id, step_id)
+                settled.append(
+                    ready.complete
+                    if definition and definition.is_gate
+                    else record.status in ("done", "skipped", "blocked")
+                )
+            return bool(steps) and all(settled), "all driven steps settled"
         if isinstance(rule, str) and rule.startswith("phase_done:"):
             phase_id = rule.split(":", 1)[1]
             phase = phases.get(phase_id)
             if phase is None:
                 problems.append(f"{entry.get('id')}: unknown cleanup phase '{phase_id}'")
                 return False, ""
-            return (all(state.is_done(phase_id, s["id"]) for s in phase.get("steps", [])),
+            return (selection.phase(phase_id).complete,
                     f"phase {phase_id} complete")
         if isinstance(rule, str) and rule.startswith("step_flag:"):
             try:
@@ -334,9 +477,9 @@ def cleanup_plan(state, entries: list, config_path: str) -> dict:
         if entry.get("scope") != "release" or entry.get("release") != state.release_id:
             problems.append(f"{entry.get('id')}: explicit release scope required; owner recovery needed")
             continue
-        due = state.status == "complete"
-        reason = "release complete (universal backstop)" if due else ""
-        if (state.halted or state.blocked or state.status in ("halted", "blocked")) and not due:
+        due = release_terminal
+        reason = f"{terminal_reason} (universal backstop)" if due else ""
+        if selection.status in ("halted", "blocked", "cancelled") and not due:
             continue
         if not due:
             if (not isinstance(steps, list)
@@ -364,5 +507,7 @@ def cleanup_plan(state, entries: list, config_path: str) -> dict:
                 "cleanup_when": entry.get("cleanup_when"), "reason": reason,
             })
     kinds = {e["id"]: e.get("kind") for e in entries}
-    removals.sort(key=lambda r: (kinds.get(r["id"]) == "release-level", r["name"]))
+    removals.sort(key=lambda r: (
+        kinds.get(r["id"]) == "release-level", r.get("slug") == "push-reminders", r["name"]
+    ))
     return {"release": state.release_id, "removals": removals, "problems": problems}

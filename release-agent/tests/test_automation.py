@@ -1,5 +1,19 @@
 """Release-agent tests — automation. Shared harness in tests/_harness.py."""
+from tests._context import context as _context
 from tests._harness import *  # noqa: F401,F403
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _planning_clock(monkeypatch):
+    from datetime import datetime, timezone
+    from orchestrator import automations, schedule
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 1, 1, tzinfo=timezone.utc).astimezone(tz or timezone.utc)
+    monkeypatch.setattr(automations, "datetime", Clock)
+    monkeypatch.setattr(schedule, "detect_local_tz", lambda: "America/Los_Angeles")
 
 
 
@@ -22,13 +36,13 @@ def test_teams_notify_is_scout_optout_item():
     orch.gate.record_check("silent_perms", "pass", "auto-approved")
     orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
     orch.gate.sign()
-    assert not st.readiness_signed
+    assert not orch.gate.signed
     # degraded (Teams unreachable → email only) satisfies the opt-out item
     res = orch.gate.record_check("teams_notify", "degraded", "Teams unreachable — email only")
     assert "error" not in res
     tn2 = next(i for i in orch.gate.checklist()["items"] if i["id"] == "teams_notify")
     assert tn2["status"] == "degraded" and tn2["satisfied"]
-    assert st.readiness_signed
+    assert orch.gate.signed
 
 
 
@@ -125,18 +139,23 @@ def test_registry_relocates_release_automations_into_release_folder():
     import os as _os, json as _json
     with tempfile.TemporaryDirectory() as tmp:
         reg = AutomationRegistry(tmp, release="2026-08")
-        reg.register("a2", "Phase-3 watcher", release="2026-08",
-                     steps=["bug_bash.bugbash_complete"], cleanup_when="steps_done")
-        reg.register("sh", "Release push reminders", shared=True, purpose="push",
-                     cleanup_when="manual")
+        _register_automation(
+            reg, "a2", "Phase-3 watcher", release="2026-08",
+            steps=["bug_bash.bugbash_complete"], cleanup_when="steps_done")
+        _register_automation(
+            reg, "sh", "Release push reminders", shared=True, purpose="push",
+            cleanup_when="manual")
         rel_file = _os.path.join(tmp, "2026-08", "_automations.json")
         shared_file = _os.path.join(tmp, "_automations.json")
         # the release automation is co-located with the release; shared stays machine-wide
-        assert [e["id"] for e in _json.load(open(rel_file))] == ["a2"]
-        assert [e["id"] for e in _json.load(open(shared_file))] == ["sh"]
-        # release listing reads the release file + shared; deregister finds it in-folder
+        assert [e["id"] for e in _json.load(open(rel_file))["entries"]] == ["a2"]
+        assert [e["id"] for e in _json.load(open(shared_file))["entries"]] == ["sh"]
+        # release listing reads the release file; claimed deletion removes it safely
         assert {e["id"] for e in reg.list(release="2026-08")} == {"a2"}
-        assert reg.deregister("a2") is True
+        deletion = reg.claim_delete("a2", "test")
+        assert reg.delete_result(
+            "a2", deletion["attempt_id"], "deleted", "provider deleted"
+        )["status"] == "deleted"
         assert reg.list(release="2026-08") == []
 
 
@@ -148,7 +167,7 @@ def test_automation_plan_derives_specs_from_ccd():
     which would fire the next matching weekday a week early), the steps it drives, and
     the registration args (so linkage is captured when it's created)."""
     from orchestrator import automations as A
-    result = A.plan(CONFIG, "2026-09", "2026-09-09")   # CCD Sept 9 (a Wednesday)
+    result = A.plan(CONFIG, "2026-09", "2026-09-09", owner_timezone="America/Los_Angeles")
     assert result["problems"] == []
     by = {a["slug"]: a for a in result["automations"]}
     assert by["ccd-morning"]["steps"] == ["ccd.final_reminder", "ccd.pr_reminder"]
@@ -175,7 +194,7 @@ def test_automation_names_follow_standard_format():
     is the phase's DISPLAY name (from phases.yaml) and <label> is the yaml `label`. This keeps
     titles consistent + scannable (release first, then phase, then purpose)."""
     from orchestrator import automations as A
-    result = A.plan(CONFIG, "2026-09", "2026-09-09")
+    result = A.plan(CONFIG, "2026-09", "2026-09-09", owner_timezone="America/Los_Angeles")
     by = {a["slug"]: a for a in result["automations"]}
     assert by["ccd-morning"]["name"] == "2026-09 · Code Complete Day — morning reminders"
     assert by["ccd-noon"]["name"] == "2026-09 · Code Complete Day — noon localization"
@@ -206,12 +225,15 @@ def test_cli_plan_separates_startup_and_on_demand_automations(capsys):
     from orchestrator import cli
     with _tf.TemporaryDirectory() as d:
         rid = "2026-09"
-        C.save_state(ReleaseState(release_id=rid, ccd="2026-09-09"), d, rid)
+        state = ReleaseState(release_id=rid, ccd="2026-09-09", timezone="America/Los_Angeles")
+        state.readiness_items["ccd_confirmed"] = {"status": "pass"}
+        C.save_state(state, d, rid)
         base = ["--runs-root", d, "automation", "plan", "--release", rid, "--json"]
         assert cli.main(base) == 0
         startup = json.loads(capsys.readouterr().out)["automations"]
         assert startup and all(not a["on_demand"] for a in startup)
-        assert {a["slug"] for a in startup} == {"ccd-morning", "ccd-noon"}
+        assert {a["slug"] for a in startup} == {
+            "ccd-morning", "ccd-noon", "push-reminders", "daily-status-email"}
 
         assert cli.main(base[:-1] + ["--on-demand", "build-verify-rc-poller", "--json"]) == 0
         on_demand = json.loads(capsys.readouterr().out)["automations"]
@@ -222,7 +244,8 @@ def test_cleanup_plan_applies_declared_lifecycle_rules():
     from orchestrator import automations as A
     from orchestrator.state import StepState
     import yaml
-    st = ReleaseState(release_id="2026-09", status="running")
+    st = ReleaseState(release_id="2026-09")
+    Orchestrator(CONFIG, st, mocks={})
     for sid in ("final_reminder", "pr_reminder", "localization"):
         st.set_step("ccd", sid, StepState(status="done"))
     st.set_step("build_verify", "rc_report", StepState(status="blocked"))
@@ -248,7 +271,18 @@ def test_cleanup_plan_applies_declared_lifecycle_rules():
     first = A.cleanup_plan(st, entries, CONFIG)
     assert [r["id"] for r in first["removals"]] == ["bug", "loc", "morning", "rc"]
     assert first["problems"] == []
-    st.status = "complete"
+    completion = Orchestrator(CONFIG, st, mocks={})
+    for phase in completion.config["phases"]:
+        if phase.get("conditional"):
+            continue
+        for step in phase["steps"]:
+            record = st.get_step(phase["id"], step["id"])
+            record.status = "done"
+            st.set_step(phase["id"], step["id"], record)
+            if step.get("kind") == "approval_gate":
+                st.gate_decisions.append(
+                    {"step": f"{phase['id']}.{step['id']}", "decision": "approved"}
+                )
     second = A.cleanup_plan(st, entries, CONFIG)
     assert [r["id"] for r in second["removals"]][-1] == "push"
     assert "manual" not in [r["id"] for r in second["removals"]]
@@ -270,16 +304,18 @@ def test_registry_requires_cleanup_rule():
     import pytest
     with _tf.TemporaryDirectory() as d:
         with pytest.raises(ValueError, match="cleanup_when"):
-            AutomationRegistry(d).register("x", "No lifecycle", release="2026-09")
+            AutomationRegistry(d).prepare(
+                "No lifecycle", release="2026-09", slug="x", spec={})
 
 
 def test_generated_prompts_run_central_cleanup():
     from orchestrator import automations as A
-    plan = A.plan(CONFIG, "2026-09", "2026-09-09")
+    plan = A.plan(CONFIG, "2026-09", "2026-09-09", owner_timezone="America/Los_Angeles")
     for spec in plan["automations"]:
         assert "automation cleanup --release 2026-09 --json" in spec["prompt"]
         assert "m_delete_automation" in spec["prompt"]
-        assert "only after" in spec["prompt"]
+        assert "permission_to_delete" in spec["prompt"]
+        assert "delete-result" in spec["prompt"]
 
 
 def test_cleanup_command_returns_registered_ids_without_mutating_registry(capsys):
@@ -291,16 +327,55 @@ def test_cleanup_command_returns_registered_ids_without_mutating_registry(capsys
     with _tf.TemporaryDirectory() as d:
         rid = "2026-09"
         st = ReleaseState(release_id=rid)
+        Orchestrator(CONFIG, st, mocks={})
         st.set_step("ccd", "final_reminder", StepState(status="done"))
         C.save_state(st, d, rid)
         reg = AutomationRegistry(d, rid)
-        reg.register("morning", "Morning", release=rid,
-                     steps=["ccd.final_reminder"], cleanup_when="steps_done")
+        _register_automation(
+            reg, "morning", "Morning", release=rid,
+            steps=["ccd.final_reminder"], cleanup_when="steps_done")
         assert cli.main(["--runs-root", d, "automation", "cleanup",
                          "--release", rid, "--json"]) == 0
         result = json.loads(capsys.readouterr().out)
         assert [r["id"] for r in result["removals"]] == ["morning"]
-        assert reg.list(release=rid)[0]["id"] == "morning"  # skill deletes, then deregisters
+        assert reg.list(release=rid)[0]["id"] == "morning"  # cleanup is a non-mutating plan
+
+
+def test_cleanup_does_not_trust_unapproved_gate_completion():
+    from orchestrator import automations
+    from orchestrator.state import StepState
+
+    rid = "2026-09"
+    st = ReleaseState(release_id=rid)
+    orch = Orchestrator(CONFIG, st, mocks={})
+    for phase in orch.config["phases"]:
+        if phase.get("conditional"):
+            continue
+        for step in phase["steps"]:
+            if step.get("kind") == "approval_gate":
+                st.gate_decisions.append(
+                    {"step": f"{phase['id']}.{step['id']}", "decision": "approved"}
+                )
+            st.set_step(phase["id"], step["id"], StepState(status="done"))
+    st.gate_decisions = [
+        decision
+        for decision in st.gate_decisions
+        if decision["step"] != "bug_bash.bugbash_complete"
+    ]
+    st.set_step(
+        "bug_bash",
+        "bugbash_complete",
+        StepState(status="skipped", note="legacy override"),
+    )
+    entry = {
+        "id": "release-worker",
+        "scope": "release",
+        "release": rid,
+        "cleanup_when": "release_done",
+        "steps": [],
+    }
+    result = automations.cleanup_plan(st, [entry], CONFIG)
+    assert result["removals"] == []
 
 
 
@@ -315,18 +390,19 @@ def test_automation_sync_repins_on_ccd_change():
     from orchestrator.commands import automation as A
     with _tf.TemporaryDirectory() as d:
         rid = "2026-08"
-        st = ReleaseState(release_id=rid, ccd="2026-08-26", ccd_source="confirmed")
+        st = ReleaseState(release_id=rid, ccd="2026-08-26", ccd_source="confirmed",
+                          timezone="America/Los_Angeles")
         C.save_state(st, d, rid)
         reg = AutomationRegistry(d)
-        reg.register("a-morn", "CCD morning", release=rid, slug="ccd-morning",
-                     steps=["ccd.final_reminder", "ccd.pr_reminder"],
-                     schedule="cron: 0 9 26 8 *", cleanup_when="steps_done")
-        reg.register("a-noon", "CCD noon", release=rid, slug="ccd-noon",
-                     steps=["ccd.localization"], schedule="cron: 0 12 26 8 *",
-                     cleanup_when="steps_done")
-        reg.register("a-poll", "poller", release=rid, slug="ccd-localization-poller",
-                     steps=["ccd.localization"], schedule="every 1 hour",
-                     cleanup_when="steps_done")
+        from orchestrator import automations
+        from tests._automation import observed
+        planned = automations.plan(CONFIG, rid, st.ccd, owner_timezone=st.timezone)
+        for item in planned["automations"]:
+            if item["slug"] not in ("ccd-morning", "ccd-noon", "ccd-localization-poller"):
+                continue
+            entry = reg.prepare(**item["registration"], spec=item["provider_spec"])
+            reg.reconcile_create(entry["key"], observed({"id": item["slug"], "spec": item["provider_spec"]}),
+                                 spec=item["provider_spec"])
 
         def sync():
             ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, json=True)
@@ -387,8 +463,9 @@ def test_tick_advances_and_reports(tmp=None):
         payload = ncmd._notify_payload(A, rid, advance=True)
         # advanced: state file now shows Phase-0 progress + holding at a gate
         st2 = C.load_state(d, rid)
-        assert st2.status in ("holding_gate", "awaiting_action")
-        assert Orchestrator(CONFIG, st2).status_report()["done"] > 0
+        report = Orchestrator(CONFIG, st2).status_report()
+        assert report["status"] in ("holding_gate", "awaiting_action")
+        assert report["done"] > 0
         # digest reflects the state machine
         assert payload["message"] and "Phase 0" in payload["message"]
         assert "Completed" in payload["message"]
@@ -507,13 +584,14 @@ def test_tick_core_alert_is_independent_of_owner_digest_and_checkpointed(monkeyp
     import tempfile as _tf
     import yaml
     from orchestrator.commands import notify as ncmd
-    from orchestrator.engine import Orchestrator
+    from tests._context import fresh_orchestrator as Orchestrator
     from orchestrator.state import StepState
     with _tf.TemporaryDirectory() as d:
         rid = "2026-09"
         st = ReleaseState(release_id=rid, ccd="2026-09-09", target_month="2026-10",
-                          readiness_signed=True, owner_email="owner@microsoft.com",
+                          owner_email="owner@microsoft.com",
                           owner_name="Release Owner")
+        _ready_state(st)
         cfg = yaml.safe_load(open(CONFIG, encoding="utf-8"))
         preflight = next(p for p in cfg["phases"] if p["id"] == "preflight")
         for step in preflight["steps"]:
@@ -525,7 +603,8 @@ def test_tick_core_alert_is_independent_of_owner_digest_and_checkpointed(monkeyp
             status="blocked", note="High Bouncy Castle alert still unresolved",
             links=[{"name": "CG alert", "url": "https://example.com/cg"}]))
         C.save_state(st, d, rid)
-        monkeypatch.setattr(Orchestrator, "run_until_gate", lambda self: [])
+        from orchestrator.engine import Orchestrator as EngineOrchestrator
+        monkeypatch.setattr(EngineOrchestrator, "run_until_gate", lambda self: [])
 
         class A:
             runs_root = d; release = rid; config = CONFIG
@@ -676,7 +755,7 @@ def test_record_nativeauth_notify_stores_or_holds():
                   engineer="verified@example.com", engineer_source="directory lookup + on-call schedule")
         again = _C.load_state(d, rid)
         assert again.is_done("bug_bash", "notify_native_auth")
-        assert notified_engineer(again) == "verified@example.com"
+        assert notified_engineer(_context(again)) == "verified@example.com"
         original = again.get_step("bug_bash", "notify_native_auth")
         assert BC.cmd_record_nativeauth_notify(ns) == 0
         assert _C.load_state(d, rid).get_step("bug_bash", "notify_native_auth") == original

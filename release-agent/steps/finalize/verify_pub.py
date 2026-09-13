@@ -20,13 +20,15 @@ Mock knobs (mocks.local.yaml / tests):
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+
 from orchestrator.outcomes import Done, Blocked, InProgress
-from steps.lib.agent import legacy_run
-from steps.lib.mockctx import mock_input, MISSING
+from steps.lib.mockctx import MISSING
 from tools import maven as M
 
 ID = "verify_pub"
 KIND = "agent"
+EFFECT_MODE = "read_only"
 
 # What to verify: (artifact key, which state.versions value supplies its version, label).
 TARGETS = [
@@ -44,16 +46,16 @@ MOCKABLE = {
 }
 
 
-def _versions(state):
-    v = mock_input("versions", MISSING)
+def _versions(context):
+    v = context.input("versions", MISSING)
     if v is not MISSING and v:
         return dict(v)
-    return dict(getattr(state, "versions", {}) or {})
+    return dict(getattr(context.release, "versions", {}) or {})
 
 
-def _check(key, version):
+def _check(context, key, version):
     """(ok, published, detail) — mock-first, else a live Maven Central HEAD."""
-    inj = mock_input("results", MISSING)
+    inj = context.input("results", MISSING)
     if inj is not MISSING and isinstance(inj, dict) and key in inj:
         r = str(inj[key]).lower()
         if r == "published":
@@ -61,11 +63,11 @@ def _check(key, version):
         if r == "missing":
             return (True, False, "injected missing")
         return (False, False, "injected error")
-    return M.is_published(key, version)
+    return context.services.assets.is_published(key, version)
 
 
-def build(state):
-    versions = _versions(state)
+def build(context: StepContext):
+    versions = _versions(context)
     if not versions.get("common") or not versions.get("msal"):
         return Blocked(
             "verify_pub: missing release versions (need common + msal in state.versions, "
@@ -76,7 +78,7 @@ def build(state):
         version = versions.get(vkey)
         links.append({"name": f"{label} {version} on Maven Central",
                       "url": M.pom_url(key, version).rsplit("/", 1)[0] + "/"})
-        ok, is_pub, detail = _check(key, version)
+        ok, is_pub, detail = _check(context, key, version)
         tag = f"{label} {version}"
         if not ok:
             errors.append(f"{tag} ({detail})")
@@ -98,6 +100,3 @@ def build(state):
             links=links, poll_in_min=CONFIG["poll_in_min"])
     return Done(
         f"All three artifacts are live on Maven Central: {', '.join(published)}.", links=links)
-
-
-run = legacy_run(build)

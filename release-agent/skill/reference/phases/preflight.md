@@ -4,7 +4,7 @@ _Loaded on demand when advancing Phase 0. Phase 0 is `execution: parallel`._
 
 ## Parallel phases — process ALL the holds, not one at a time
 
-A single `next` runs **every independent automated step at once** (breaking, CG, cron — all in one call) then surfaces **all the human/scout holds together** (e.g. *"4 item(s) need you: …"*). After `next`, read `status --json` → **`pending_human`** (and `active_phase.steps` with `status`/`needs_owner`) — the full outstanding set. Work through **all** of them this pass:
+A single `next` attempts **every independent ready automated step in the same pass** (breaking, CG, cron — one after another, not concurrent provider calls) then surfaces **all the human/scout holds together** (e.g. *"4 item(s) need you: …"*). An in-flight step or effect-recovery hold does not stop its ready siblings; each handler is attempted at most once per pass. Waiting work keeps its dependencies blocked and is polled/reconciled on a later invocation. After `next`, read `status --json` → **`pending_human`** (and `active_phase.steps` with `status`/`needs_owner`) — the full outstanding set. Work through **all** of them this pass:
 - **`source: scout`** steps → notices use notification prepare/claim/result; lockdown keeps its browser + `check-lockdown` follow-up (below). Independent — do them all.
 - **`attest`** steps (confirm_reminders, vitals) → ask the owner to confirm, then `done --step <id>`.
 - **`blocked`** steps (cg/cron on a real problem) → show the note; fix + rerun, or skip.
@@ -21,8 +21,11 @@ Both are co-located step modules (`steps/preflight/`). `step-action` is a read-o
 not permission to send. Use the shared protocol in `commands.md`:
 
 ```
-python -m orchestrator.cli notification prepare --release <id> --source step --phase preflight --step <notice|flight_reminder> [--param variant=update]
+python -m orchestrator.cli notification prepare --release <id> --source step --phase preflight --step <notice|flight_reminder>
 ```
+
+Only `notice` accepts optional `--param variant=update`; `flight_reminder` accepts no
+public parameters. Mock redirects remain separate.
 
 1. Review each eligible descriptor's exact destination/payload. `notice` targets the configured
    DL; `flight_reminder` targets the configured Android Core Team chat. Local test redirects
@@ -37,7 +40,9 @@ python -m orchestrator.cli notification prepare --release <id> --source step --p
    Retry acknowledgement after a failed ack, not the send.
 
 Discover saved work (`notification prepare --release <id> --source pending`) even after silence.
-Every worker exit runs cleanup; delete the live automation before deregistering it.
+Every worker exit runs claimed cleanup; stop on a barrier/error/uncertain outcome.
+Only `permission_to_delete:true` permits deletion; acknowledge with the owning
+`delete-result`. Never directly deregister or remove the recovery worker early.
 
 ## `confirm_reminders` — attestation (after flight_reminder)
 

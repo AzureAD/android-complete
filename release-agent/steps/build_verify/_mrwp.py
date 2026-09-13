@@ -5,12 +5,12 @@ from orchestrator.outcomes import Done, Blocked, InProgress
 from steps.build_verify._common import (
     ORG, PROJECT, UNBLOCK_HELP, links_for, stash_mrwp, valid_counts,
 )
-from steps.lib.mockctx import mock_input, MISSING
+from steps.lib.mockctx import MISSING
 from tools import pipelines as P
 from tools.pipelines import ORCHESTRATOR_DEF
 
 
-def verify_mrwp(state, provider):
+def verify_mrwp(context, provider):
     """Shared body for the mrwp_ecs / mrwp_local steps. `provider` is 'ECS' or 'Local'.
 
     Resolves this release's MRWP (def 2519) run for the provider — from the orchestrator
@@ -24,19 +24,19 @@ def verify_mrwp(state, provider):
     """
     label = f"MRWP {provider}"
     # 1) resolve the MRWP build id for this provider
-    rc_num = mock_input("rc", MISSING)
+    rc_num = context.input("rc", MISSING)
     rc_num = rc_num if rc_num is not MISSING else None
-    mid = mock_input("mrwp_id", MISSING)
+    mid = context.input("mrwp_id", MISSING)
     if mid is MISSING:
-        ok, run, detail = P.find_orchestrator_run(ORG, PROJECT, ORCHESTRATOR_DEF, state.release_id)
+        ok, run, detail = context.services.pipelines.find_orchestrator_run(ORG, PROJECT, ORCHESTRATOR_DEF, context.release.release_id)
         if not ok:
             hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
             return Blocked(f"{label}: could not read orchestrator run ({detail}){hint}.")
         if not run:
             return Blocked(
-                f"{label}: no orchestrator run found for {state.release_id} — can't locate "
+                f"{label}: no orchestrator run found for {context.release.release_id} — can't locate "
                 f"the RC-testing runs. Verify the orchestrator first.")
-        ok2, ids, detail2, source = P.mrwp_run_ids(ORG, PROJECT, run)
+        ok2, ids, detail2, source = context.services.pipelines.mrwp_run_ids(ORG, PROJECT, run)
         if not ok2:
             hint = " — run `az login`" if str(detail2).startswith("AUTH") else ""
             return Blocked(
@@ -54,9 +54,9 @@ def verify_mrwp(state, provider):
     # as in-flight and let the 30-min poller re-evaluate when it completes, instead of
     # false-blocking it as an aborted release. `build_status` mock drives this in sim/tests;
     # when stages are injected (no live call) we assume the run is complete.
-    bstatus = mock_input("build_status", MISSING)
-    if bstatus is MISSING and mock_input("stages", MISSING) is MISSING:
-        ok_s, bstatus, _bres, _bdetail = P.get_build_status(ORG, PROJECT, mid)
+    bstatus = context.input("build_status", MISSING)
+    if bstatus is MISSING and context.input("stages", MISSING) is MISSING:
+        ok_s, bstatus, _bres, _bdetail = context.services.pipelines.get_build_status(ORG, PROJECT, mid)
         if not ok_s:
             return Blocked(f"{label}: could not read build status ({_bdetail}).", links=links)
     if bstatus is None:
@@ -67,9 +67,9 @@ def verify_mrwp(state, provider):
             f"every 30 min and will re-evaluate the RC when it completes.", links=links)
 
     # 2) stage-completion rule
-    stages = mock_input("stages", MISSING)
+    stages = context.input("stages", MISSING)
     if stages is MISSING:
-        ok, stages, detail = P.get_stages(ORG, PROJECT, mid)
+        ok, stages, detail = context.services.pipelines.get_stages(ORG, PROJECT, mid)
         if not ok:
             hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
             return Blocked(f"{label}: could not read stages for run {mid} ({detail}){hint}.", links=links)
@@ -82,11 +82,11 @@ def verify_mrwp(state, provider):
             f"pipeline aborted partway.{UNBLOCK_HELP}", links=links)
 
     # 3) test summary (missing coverage holds collection; evaluated failures do not)
-    tests = mock_input("tests", MISSING)
+    tests = context.input("tests", MISSING)
     tests_injected = tests is not MISSING
     tests_error = None
     if not tests_injected:
-        ok, tests, detail = P.get_test_summary(ORG, PROJECT, mid)
+        ok, tests, detail = context.services.pipelines.get_test_summary(ORG, PROJECT, mid)
         if not ok:
             tests = None
             tests_error = detail or "could not fetch complete test summary"
@@ -102,12 +102,12 @@ def verify_mrwp(state, provider):
     extra = f" ({', '.join(extras)} — triaged later)" if extras else ""
 
     # Full details come from the same read as the counts; never race a second fetch.
-    suites = mock_input("suites", MISSING)
+    suites = context.input("suites", MISSING)
     if suites is MISSING:
         suites = (tests or {}).get("failed_suites")
 
     # 5) stash the FULL per-provider snapshot into the RC iteration (authoritative rc from tag).
-    stash_mrwp(state, provider, {
+    evidence = stash_mrwp(context, provider, {
         "run_id": mid, "complete": comp["complete"], "ran": comp["ran"],
         "total": comp["total"], "failed_stages": comp["failed"],
         "yellow_stages": comp["yellow"], "never_ran": comp["never_ran"],
@@ -116,11 +116,12 @@ def verify_mrwp(state, provider):
     }, rc=rc_num)
     if tests_error:
         return Blocked(f"{label}: test summary unavailable ({tests_error}); retry verification.",
-                       links=links)
+                       links=links, updates=(evidence,))
     ui = ((tests or {}).get("categories") or {}).get("ui")
     if not valid_counts(ui):
         return Blocked(f"{label}: missing or invalid non-zero UI results; retry this verification "
                        "after the Test tab is populated. The report cannot evaluate absent data.",
-                       links=links)
+                       links=links, updates=(evidence,))
     return Done(
-        f"{label} run {mid} ran to completion — {stage_note}{extra}.{tnote}", links=links)
+        f"{label} run {mid} ran to completion — {stage_note}{extra}.{tnote}", links=links,
+        updates=(evidence,))

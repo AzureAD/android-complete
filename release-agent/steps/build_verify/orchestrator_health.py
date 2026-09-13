@@ -13,14 +13,20 @@ state.
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+
 from orchestrator.outcomes import Done, Blocked
-from steps.lib.agent import legacy_run
-from steps.lib.mockctx import mock_input, MISSING
+from orchestrator.evidence import ReleaseVersions
+from steps.lib.mockctx import MISSING
 from steps.build_verify import _common as K
 from tools.pipelines import ORCHESTRATOR_DEF, ORCH_REQUIRED_STAGES, ORCH_PARK_STAGE
 
+from orchestrator.authority import PipelineScope, PipelineSlot, VersionEvidence
+
+EVIDENCE = (PipelineScope(PipelineSlot.ORCHESTRATOR), VersionEvidence())
 ID = "orchestrator_health"
 KIND = "agent"
+EFFECT_MODE = "read_only"
 
 CONFIG = {
     "org": K.ORG, "project": K.PROJECT, "def_id": ORCHESTRATOR_DEF,
@@ -36,14 +42,14 @@ MOCKABLE = {
 }
 
 
-def build(state):
+def build(context: StepContext):
     cfg = CONFIG
-    month = state.release_id
+    month = context.release.release_id
     from tools import pipelines as P
 
-    run = mock_input("run", MISSING)
+    run = context.input("run", MISSING)
     if run is MISSING:
-        ok, run, detail = P.find_orchestrator_run(cfg["org"], cfg["project"], cfg["def_id"], month)
+        ok, run, detail = context.services.pipelines.find_orchestrator_run(cfg["org"], cfg["project"], cfg["def_id"], month)
         if not ok:
             hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
             return Blocked(f"orchestrator_health: could not read orchestrator runs ({detail}){hint}.")
@@ -65,9 +71,9 @@ def build(state):
     auth_tag = P._tag_value(tags, "AuthenticatorBranch")
     auth_branch = auth_tag.replace("-", "/") if auth_tag else None
 
-    stages = mock_input("stages", MISSING)
+    stages = context.input("stages", MISSING)
     if stages is MISSING:
-        ok, stages, detail = P.get_stages(cfg["org"], cfg["project"], bid)
+        ok, stages, detail = context.services.pipelines.get_stages(cfg["org"], cfg["project"], bid)
         if not ok:
             hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
             return Blocked(f"orchestrator_health: could not read orchestrator stages ({detail}){hint}.", links=links)
@@ -90,21 +96,19 @@ def build(state):
     # gate was approved — surface it (out of the expected Phase-2 state), don't hard-fail.
     park = by_name.get(cfg["park_stage"])
     park_done = bool(park is not None and park.get("state") == "completed")
-    K.stash_orchestrator(state, bid, parked=not park_done)
+    pipeline_update = K.stash_orchestrator(context, bid, parked=not park_done)
     # Canonical release payload versions (lowercase keys) — the earliest authoritative point.
     # Later steps (e.g. release_announcement) read state.versions instead of re-discovering.
-    state.record_versions({"common": versions.get("Common"), "msal": versions.get("Msal"),
-                           "broker": versions.get("Broker"), "authenticator": auth_branch})
+    updates = (pipeline_update, ReleaseVersions({
+        "common": versions.get("Common"), "msal": versions.get("Msal"),
+        "broker": versions.get("Broker"), "authenticator": auth_branch}))
     if park_done:
         return Done(
             f"Release Orchestrator run {bid} healthy ({vstr}); NOTE '{cfg['park_stage']}' "
             f"already ran (result={park.get('result')}) — the approval gate was cleared. "
-            f"Pre-gate stages all succeeded.", links=links)
+            f"Pre-gate stages all succeeded.", links=links, updates=updates)
 
     return Done(
         f"Release Orchestrator run {bid} healthy — Validate / Create Branches / "
         f"Trigger RC Testing all succeeded; parked at '{cfg['park_stage']}' awaiting "
-        f"owner approval (cleared in a later phase). {vstr}.", links=links)
-
-
-run = legacy_run(build)
+        f"owner approval (cleared in a later phase). {vstr}.", links=links, updates=updates)

@@ -1,4 +1,5 @@
 """Release-agent tests — bug_bash. Shared harness in tests/_harness.py."""
+from tests._context import context as _context, invoke as _invoke, invoke_effect as _invoke_effect
 from tests._harness import *  # noqa: F401,F403
 from tests._mrwp_evidence import current_rc, PROD
 from tests._ui_results import broker_fill, auth_fill, publish
@@ -53,6 +54,7 @@ def test_ui_test_status_fills_from_snapshot(monkeypatch):
     import steps as _steps
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
+    from orchestrator import effects
     from tools import testplans as T
     st = _ui_state(plan_id="3737697")
     from orchestrator.state import StepState
@@ -60,7 +62,7 @@ def test_ui_test_status_fills_from_snapshot(monkeypatch):
     monkeypatch.setattr(T, "fill_auth_ui_results", auth_fill)
     captured = {}
 
-    def fake_fill(plan_id, verdicts, timeout=120, *, suite_id):
+    def fake_fill(plan_id, verdicts, timeout=120, *, suite_id, **_coordinates):
         captured["plan_id"] = plan_id
         return broker_fill(plan_id, verdicts, suite_id=suite_id)
 
@@ -68,7 +70,7 @@ def test_ui_test_status_fills_from_snapshot(monkeypatch):
     T.fill_ui_automation_results = fake_fill
     try:
         with mockctx.active({}):
-            out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
+            out = as_dict(_invoke(_steps.get_step("bug_bash", "ui_test_status").build, st))
     finally:
         T.fill_ui_automation_results = o
     assert out["kind"] == "done"
@@ -104,10 +106,11 @@ def test_ui_test_status_fills_auth_and_assigns_failures_to_owner():
                                   D.set_assigned_to)
     T.fill_ui_automation_results = broker_fill
     T.fill_auth_ui_results = auth_fill
-    D.set_assigned_to = lambda cid, upn, timeout=60: (assigned.append((cid, upn)), (True, ""))[1]
+    D.set_assigned_to = lambda cid, upn, timeout=60, **_coordinates: (
+        assigned.append((cid, upn)), (True, ""))[1]
     try:
         with mockctx.active({}):
-            out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
+            out = as_dict(_invoke(_steps.get_step("bug_bash", "ui_test_status").build, st))
     finally:
         T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_assigned_to = (
             o_bfill, o_afill, o_assign)
@@ -152,10 +155,11 @@ def test_ui_test_status_surfaces_combined_failures_to_ui_failures():
     T.fill_ui_automation_results = broker_fill
     T.fill_auth_ui_results = auth_fill
     assigned_calls = []
-    D.set_assigned_to = lambda cid, upn, timeout=60: (assigned_calls.append((str(cid), upn)), (True, ""))[1]
+    D.set_assigned_to = lambda cid, upn, timeout=60, **_coordinates: (
+        assigned_calls.append((str(cid), upn)), (True, ""))[1]
     try:
         with mockctx.active({}):
-            as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
+            as_dict(_invoke(_steps.get_step("bug_bash", "ui_test_status").build, st))
     finally:
         T.fill_ui_automation_results, T.fill_auth_ui_results, D.set_assigned_to = o_b, o_a, o_as
     uf = st.get_step("bug_bash", "ui_failures")
@@ -207,7 +211,7 @@ def test_ui_test_status_blocks_before_writes_when_no_auth_suite():
                "set_not_applicable": 0, "cases_touched": 3}, "")
     try:
         with mockctx.active({}):
-            out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
+            out = as_dict(_invoke(_steps.get_step("bug_bash", "ui_test_status").build, st))
     finally:
         T.fill_ui_automation_results = o
     assert out["kind"] == "blocked" and "Authenticator release suite" in out["reason"]
@@ -221,7 +225,7 @@ def test_ui_test_status_blocks_without_broker_plan():
     from orchestrator.outcomes import as_dict
     st = _uts_state(plan_id=None)
     with mockctx.active({}):
-        out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
+        out = as_dict(_invoke(_steps.get_step("bug_bash", "ui_test_status").build, st))
     assert out["kind"] == "blocked" and "cloned" in out["reason"]
 
 
@@ -245,7 +249,7 @@ def test_ui_test_status_uses_current_recorded_evidence(monkeypatch):
     def forbidden(*a, **k):
         raise AssertionError("No live MRWP reads or recovered-case assignments")
 
-    def fake_fill(plan_id, verdicts, timeout=120, *, suite_id):
+    def fake_fill(plan_id, verdicts, timeout=120, *, suite_id, **_coordinates):
         seen["verdicts"] = verdicts
         return broker_fill(plan_id, verdicts, suite_id=suite_id)
 
@@ -257,7 +261,7 @@ def test_ui_test_status_uses_current_recorded_evidence(monkeypatch):
     monkeypatch.setattr(T, "fill_ui_automation_results", fake_fill)
     monkeypatch.setattr(T, "fill_auth_ui_results", auth_fill)
     with mockctx.active({}):
-        out = as_dict(_steps.get_step("bug_bash", "ui_test_status").build(st))
+        out = as_dict(_invoke(_steps.get_step("bug_bash", "ui_test_status").build, st))
     assert out["kind"] == "done"
     assert seen["verdicts"] == {100: {("ECS", "prod_msal_rc_broker"): "Passed",
                                     ("Local", "prod_msal_rc_broker"): "Passed"}}
@@ -288,6 +292,169 @@ def test_clone_plans_auth_reuses_existing_same_named_suite():
     assert st.get_step("bug_bash", "clone_plans_auth").data["suite_id"] == "424242"
 
 
+def test_clone_plans_auth_reconciles_creation_without_duplicate():
+    from orchestrator import effects
+    from orchestrator.outcomes import as_dict
+    from orchestrator.state import ReleaseState, StepState
+    from steps.bug_bash import clone_plans_auth as step
+    from steps.lib import mockctx
+
+    state = ReleaseState(release_id="2026-08", ccd="2026-08-13")
+    handler = effects.EffectHandler(
+        step_id=step.ID,
+        mode=effects.EffectMode.TRANSACTIONAL,
+        recovery=effects.EffectRecovery.FROZEN,
+        prepare=step.prepare_effect,
+        execute=step.execute,
+        reconcile=step.reconcile,
+    )
+    with mockctx.active({"existing": "424242"}):
+        prepared = effects.prepare(handler, _context(state))
+    execution = {
+        "id": "effect",
+        "owner": "engine",
+        "started_at": "2026-09-12T00:00:00Z",
+        "refresh": False,
+        "effect_mode": "transactional",
+        "effect_recovery": "frozen",
+        "operation_key": prepared["operation_key"],
+        "effect_input": prepared["input"],
+    }
+    state.set_step(
+        "bug_bash",
+        step.ID,
+        StepState(
+            status="running",
+            execution=execution,
+            data={
+                "creation": {
+                    "operation_key": prepared["operation_key"],
+                    "status": "creating",
+                }
+            },
+        ),
+    )
+
+    with mockctx.active({"existing": "424242"}):
+        _enable_memory_checkpoints(state)
+        recovered = as_dict(_invoke_effect(step.reconcile, state, execution))
+    assert recovered["kind"] == "done"
+    assert state.get_step("bug_bash", step.ID).data["suite_id"] == "424242"
+
+    unresolved = ReleaseState(release_id="2026-08", ccd="2026-08-13")
+    unresolved.set_step(
+        "bug_bash",
+        step.ID,
+        StepState(
+            status="running",
+            execution=execution,
+            data={
+                "creation": {
+                    "operation_key": prepared["operation_key"],
+                    "status": "creating",
+                }
+            },
+        ),
+    )
+    with mockctx.active({"existing": None, "create_id": "must-not-create"}):
+        blocked = as_dict(_invoke_effect(step.reconcile, unresolved, execution))
+    assert blocked["kind"] == "blocked"
+    assert "Do not create another suite" in blocked["reason"]
+
+
+def test_auth_suite_identity_rejects_duplicates_and_wrong_query(monkeypatch):
+    from tools import pipelines as P, testplans as T
+
+    duplicate = {
+        "name": "Android release/08/13/2026",
+        "parentSuite": {"id": T.AUTH_ROOT_SUITE},
+        "suiteType": "dynamicTestSuite",
+        "queryString": "query",
+    }
+    monkeypatch.setattr(
+        P,
+        "_ado_rest_get_all",
+        lambda *_args, **_kwargs: (
+            True,
+            [{**duplicate, "id": 1}, {**duplicate, "id": 2}],
+            "",
+        ),
+    )
+    ok, _, detail = T.find_auth_query_suite(
+        duplicate["name"], duplicate["queryString"]
+    )
+    assert not ok and "multiple same-named" in detail
+
+    monkeypatch.setattr(
+        T,
+        "get_suite",
+        lambda *_args, **_kwargs: (
+            True,
+            {
+                "id": 1,
+                "name": duplicate["name"],
+                "parentSuite": {"id": T.AUTH_ROOT_SUITE},
+                "suiteType": "dynamicTestSuite",
+                "queryString": "wrong query",
+            },
+            "",
+        ),
+    )
+    ok, _, detail = T.validate_auth_query_suite(
+        1, duplicate["name"], duplicate["queryString"]
+    )
+    assert not ok and "query" in detail
+
+
+def test_clone_plans_auth_owner_verified_retry_requires_absence(monkeypatch):
+    from orchestrator.state import ReleaseState, StepState
+    from steps.bug_bash import clone_plans_auth as step
+    from tools import testplans as T
+
+    state = ReleaseState(release_id="2026-08", ccd="2026-08-13")
+    frozen = step.prepare_effect(_context(state))
+    execution = {
+        "id": "effect",
+        "owner": "engine",
+        "started_at": "2026-09-12T00:00:00Z",
+        "refresh": False,
+        "effect_mode": "transactional",
+        "effect_recovery": "frozen",
+        "operation_key": "key",
+        "effect_input": frozen,
+    }
+    state.set_step(
+        "bug_bash",
+        step.ID,
+        StepState(
+            status="blocked",
+            execution=execution,
+            data={"creation": {"status": "creating"}},
+        ),
+    )
+    captured = {}
+
+    def absent(*args, **kwargs):
+        captured.update(kwargs)
+        return True, None, ""
+
+    monkeypatch.setattr(T, "find_auth_query_suite", absent)
+
+    _enable_memory_checkpoints(state)
+    decision = _invoke_effect(step.authorize_retry, state, execution, "owner verified")
+
+    assert decision.allowed and "retry authorized" in decision.detail
+    creation = state.get_step("bug_bash", step.ID).data["creation"]
+    assert creation["status"] == "retry_authorized"
+    assert creation["retry_reason"] == "owner verified"
+    assert captured == {
+        "org": frozen["org"],
+        "project": frozen["project"],
+        "plan_id": frozen["plan_id"],
+        "parent_suite_id": frozen["parent_suite_id"],
+    }
+
+
 
 
 def test_clone_plans_auth_blocks_without_ccd():
@@ -299,11 +466,15 @@ def test_clone_plans_auth_blocks_without_ccd():
 
 
 def test_bug_bash_clone_steps_are_real_agents():
-    """Both clone steps resolve to real agent modules (KIND=agent) — no longer stubs."""
+    """Both clone steps expose real agent handlers and transactional effect hooks."""
     import steps as _steps
     for sid in ("clone_plans_broker", "clone_plans_auth"):
         mod = _steps.get_step("bug_bash", sid)
-        assert mod is not None and getattr(mod, "KIND", None) == "agent" and hasattr(mod, "run")
+        assert mod is not None and getattr(mod, "KIND", None) == "agent"
+        assert callable(getattr(mod, "build", None))
+        assert getattr(mod, "EFFECT_MODE", None) == "transactional"
+        for hook in ("prepare_effect", "execute", "reconcile"):
+            assert callable(getattr(mod, hook, None))
 
 
 
@@ -359,7 +530,7 @@ def test_distribute_tests_blocks_without_broker_clone():
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08", owner_email="o@x")
     with mockctx.active({"auth_cases": [], "roster": [{"name": "A", "upn": "a@x"}], "oce": "oce@x"}):
-        out = as_dict(_steps.get_step("bug_bash", "distribute_tests").build(st, oof=[]))
+        out = as_dict(_invoke(_steps.get_step("bug_bash", "distribute_tests").build, st, oof=[]))
     assert out["kind"] == "blocked" and "ui_test_status" in out["reason"]
 
 
@@ -400,7 +571,7 @@ def test_send_invite_composes_create_event():
     st = _invite_state()
     with mockctx.active({"now": "2026-08-21T18:00:00",
                          "flags": "{EnableBrowserSso:true,UseKdfVersion2:true}"}):
-        out = as_dict(_steps.get_step("bug_bash", "send_invite").build(st))
+        out = as_dict(_invoke(_steps.get_step("bug_bash", "send_invite").build, st))
     assert out["kind"] == "needs_skill" and out["tool"] == "workiq_create_event"
     p = out["payload"]
     assert p["subject"] == "September 2026 Release Bug Bash"
@@ -430,12 +601,13 @@ def test_send_invite_uses_los_angeles_timezone_and_blocks_missing_zone(monkeypat
     monkeypatch.setattr(schedule, "now_local", lambda zone:
                         datetime.fromisoformat("2026-08-24T22:00:00+00:00").astimezone(zone))
     with mockctx.active({"flags": "{}"}):
-        out = send_invite.build(st)
+        out = send_invite.build(_context(
+            st, now=datetime.fromisoformat("2026-08-24T22:00:00+00:00")))
     assert out.payload["start"] == "2026-08-25T09:00:00"
     assert out.payload["timeZone"] == "America/Los_Angeles"
     assert out.notification["expires_at"] == "2026-08-25T09:00:00-07:00"
     monkeypatch.setattr(schedule, "get_tz", lambda _: None)
-    assert send_invite.build(st).kind == "blocked"
+    assert _invoke(send_invite.build, st).kind == "blocked"
 
 
 def test_send_invite_overnight_clock_and_timezone_are_explicit():
@@ -452,7 +624,7 @@ def test_send_invite_overnight_clock_and_timezone_are_explicit():
         for owner_zone in ("America/Chicago", "Asia/Tokyo", "Europe/Dublin", None):
             st.timezone = owner_zone
             with mockctx.active({"now": now, "flags": "{}"}):
-                out = send_invite.build(st)
+                out = _invoke(send_invite.build, st)
             assert out.payload["start"] == f"{day}T09:00:00"
             assert out.payload["end"] == f"{day}T11:00:00"
             assert out.payload["timeZone"] == "America/Los_Angeles"
@@ -525,7 +697,7 @@ def test_send_invite_blocks_without_plans():
     import steps as _steps
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08", ccd="2026-08-13", owner_email="o@x")
-    out = as_dict(_steps.get_step("bug_bash", "send_invite").build(st))
+    out = as_dict(_invoke(_steps.get_step("bug_bash", "send_invite").build, st))
     assert out["kind"] == "blocked" and "cloned" in out["reason"]
 
 
@@ -550,7 +722,7 @@ def test_activate_chat_composes_needs_skill():
     st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
     from tests._meeting import seed_invite
     seed_invite(st)
-    out = as_dict(_steps.get_step("bug_bash", "activate_chat").build(st))
+    out = as_dict(_invoke(_steps.get_step("bug_bash", "activate_chat").build, st))
     assert out["kind"] == "needs_skill" and out["tool"] == "record-bugbash-chat"
     g = out["payload"]["_gather"]
     assert g["meeting_topic"] == "September 2026 Release Bug Bash"
@@ -564,7 +736,7 @@ def test_activate_chat_composes_needs_skill():
 def test_activate_chat_blocks_without_ccd():
     import steps as _steps
     from orchestrator.outcomes import as_dict
-    out = as_dict(_steps.get_step("bug_bash", "activate_chat").build(ReleaseState(release_id="2026-08")))
+    out = as_dict(_invoke(_steps.get_step("bug_bash", "activate_chat").build, ReleaseState(release_id="2026-08")))
     assert out["kind"] == "blocked" and "CCD" in out["reason"]
 
 
@@ -596,7 +768,7 @@ def test_record_bugbash_chat_stores_verified_id_and_marks_done(monkeypatch):
         assert BC.cmd_record_bugbash_chat(ns) == 0
         again = _C.load_state(d, rid)
         assert again.is_done("bug_bash", "activate_chat")
-        assert stored_chat_id(again) == cid
+        assert stored_chat_id(_context(again)) == cid
 
         # Missing prerequisite state cannot record even a supplied syntactically valid ID.
         st2 = ReleaseState(release_id=rid, ccd="2026-08-13", ccd_source="confirmed")
@@ -617,7 +789,7 @@ def test_notify_native_auth_composes_needs_skill():
     import steps as _steps
     from orchestrator.outcomes import as_dict
     st = _na_state()
-    out = as_dict(_steps.get_step("bug_bash", "notify_native_auth").build(st))
+    out = as_dict(_invoke(_steps.get_step("bug_bash", "notify_native_auth").build, st))
     assert out["kind"] == "needs_skill" and out["tool"] == "record-nativeauth-notify"
     assert out["payload"]["engineer_hint"] == "silviu.petrescu"      # Aug 2026 from schedule
     assert "planId=3730001" in out["payload"]["content"]            # links the Broker plan
@@ -633,7 +805,7 @@ def test_notify_native_auth_blocks_without_broker_plan():
     import steps as _steps
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
-    out = as_dict(_steps.get_step("bug_bash", "notify_native_auth").build(st))
+    out = as_dict(_invoke(_steps.get_step("bug_bash", "notify_native_auth").build, st))
     assert out["kind"] == "blocked" and "Broker test plan" in out["reason"]
 
 
@@ -646,7 +818,7 @@ def test_notify_native_auth_idempotent_after_recorded():
     st = _na_state()
     st.set_step("bug_bash", "notify_native_auth",
                 StepState(status="done", data={"engineer": "silviu.petrescu"}))
-    out = as_dict(_steps.get_step("bug_bash", "notify_native_auth").build(st))
+    out = as_dict(_invoke(_steps.get_step("bug_bash", "notify_native_auth").build, st))
     assert out["kind"] == "done" and "already notified" in out["note"]
 
 
@@ -666,7 +838,7 @@ def test_native_auth_signoff_is_owner_attestation():
     assert mod.KIND == "attest"
     # no notify yet → generic reference, still a valid attest
     st = _na_state()
-    out = as_dict(mod.build(st))
+    out = as_dict(_invoke(mod.build, st))
     assert out["kind"] == "needs_human" and out.get("attest") is True
     assert "sign-off" in out["prompt"] and "let me know" in out["prompt"]
     assert "`done --step" not in out["prompt"]              # user-facing — not a raw engine command
@@ -675,7 +847,7 @@ def test_native_auth_signoff_is_owner_attestation():
     # engineer captured upstream → named in the prompt (reused, not re-collected)
     st.set_step("bug_bash", "notify_native_auth",
                 StepState(status="done", data={"engineer": "silviu.petrescu"}))
-    out2 = as_dict(mod.build(st))
+    out2 = as_dict(_invoke(mod.build, st))
     assert "silviu.petrescu" in out2["prompt"]
 
 
@@ -748,7 +920,7 @@ def test_bugbash_updates_blocks_without_chat():
     import steps as _steps
     from orchestrator.outcomes import as_dict
     st = _bb_updates_state(chat_id=None)
-    out = as_dict(_steps.get_step("bug_bash", "bugbash_updates").build(st))
+    out = as_dict(_invoke(_steps.get_step("bug_bash", "bugbash_updates").build, st))
     assert out["kind"] == "blocked" and "chat" in out["reason"].lower()
 
 
@@ -768,7 +940,7 @@ def test_bugbash_updates_composes_needs_skill():
             {"id": "2", "name": "T2", "url": "u2", "state": "notrun", "products": ["Authenticator"]}]}}}
     with mockctx.active({"progress": prog, "people": {
             "a@x": {"id": "11111111-1111-1111-1111-111111111111", "name": "Alice"}}}):
-        out = as_dict(_steps.get_step("bug_bash", "bugbash_updates").build(st))
+        out = as_dict(_invoke(_steps.get_step("bug_bash", "bugbash_updates").build, st))
     assert out["kind"] == "needs_skill" and out["tool"] == "workiq_send_chat_message"
     assert out["payload"]["chatId"] == "19:meeting_X@thread.v2"
     assert out["payload"]["mentions"][0]["mentionText"] == "Alice"
@@ -792,13 +964,13 @@ def test_bugbash_updates_done_when_all_complete():
     prog = {"total": 2, "done": 2, "remaining": 0, "unassigned": 0, "owners": {
         "a@x": {"name": "Alice", "total": 2, "done": 2, "remaining": 0, "tests": []}}}
     with mockctx.active({"progress": prog}):
-        out = as_dict(_steps.get_step("bug_bash", "bugbash_updates").build(st))
+        out = as_dict(_invoke(_steps.get_step("bug_bash", "bugbash_updates").build, st))
     assert out["kind"] == "done" and "complete" in out["note"].lower()
 
 
 
 
-def test_post_bugbash_update_decisions():
+def test_post_bugbash_update_decisions(monkeypatch):
     """post-bugbash-update: off_hours (weekend) sends nothing; a working-hour tick with
     progress posts content+mentions; all-complete yields a `complete` wrap-up decision."""
     import tempfile, argparse, json as _json, io
@@ -808,6 +980,8 @@ def test_post_bugbash_update_decisions():
     from steps.lib import mockctx
 
     def run(now, mocks, force=False):
+        from orchestrator import mocks as mock_config
+        monkeypatch.setattr(mock_config, "load_mocks", lambda: {"bug_bash.bugbash_updates": mocks})
         buf = io.StringIO()
         ns = argparse.Namespace(runs_root=d, release=rid, config=CONFIG, as_of=None,
                                 now=now, force=force)
@@ -908,11 +1082,11 @@ def test_bugbash_updates_passes_automation_classification_and_failures_to_gather
         captured.update(kwargs)
         return True, {"ok": 1}, ""
     monkeypatch.setattr(BB, "gather_progress", gather)
-    ok, _prog, _ = BU.gather(st)
+    ok, _prog, _ = BU.gather(_context(st))
     assert ok and captured["auto_failed_ids"] == [2916347, 2916524]
     assert captured["auth_automated_ids"] == [1579395, 2916347, 2916524]
     from steps.bug_bash.ui_results import completed_result
-    assert captured["broker_ui_result"] == completed_result(st)["broker"]
+    assert captured["broker_ui_result"] == completed_result(_context(st))["broker"]
 
 
 

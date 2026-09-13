@@ -1,4 +1,5 @@
 """Creation/recovery regressions: fake ADO, real locked checkpoints in temporary runs."""
+from tests._context import invoke as _invoke, invoke_effect as _invoke_effect
 import copy
 import json
 import re
@@ -8,7 +9,7 @@ from contextlib import contextmanager
 import pytest
 
 from orchestrator import cli, cli_common as C, mocks
-from orchestrator.engine import Orchestrator
+from tests._context import fresh_orchestrator as Orchestrator
 from orchestrator.state import ReleaseState, StepState
 from steps.bug_bash import clone_plans_broker as step
 from tools import broker_plans as B, pipelines as P, testplans as T
@@ -138,6 +139,8 @@ class ADO:
 def fixture(tmp_path, monkeypatch):
     path = tmp_path / RID / "release-state.json"
     st = ReleaseState(release_id=RID, owner_email="owner@example.test", ccd="2000-01-12")
+    from tests._harness import _active_step
+    _active_step(st, "bug_bash", step.ID)
     st.save(str(path))
     ado = ADO(path)
     monkeypatch.setattr(P, "_ado_rest_get_all", ado.get_all)
@@ -165,12 +168,57 @@ def test_create_then_retry_and_reopen_reuses_resource(fixture):
         assert st.is_done("bug_bash", step.ID)
         assert st.resources[B.RESOURCE]["status"] == "ready"
         orch.reopen_step("bug_bash", step.ID, "Recheck existing work")
-        assert not st.get_step("bug_bash", step.ID).data
+        assert st.get_step("bug_bash", step.ID).data["plan_id"] == 900
+        assert st.get_step("bug_bash", step.ID).invalidation_reason
     with locked(fixture) as st:
-        assert step.build(st).kind == "done"
+        assert _invoke(step.build, st).kind == "done"
         assert st.get_step("bug_bash", step.ID).data["plan_id"] == 900
     assert len(fixture[2].creates) == 1
     assert not any(method == "DELETE" for _, method, _ in fixture[2].writes)
+
+
+def test_frozen_broker_effect_keeps_destination_identity(monkeypatch):
+    state = ReleaseState(release_id=RID)
+    frozen = {
+        "release": RID,
+        "plan_name": "FROZEN DESTINATION",
+        "identity": B.identity(RID, "FROZEN DESTINATION"),
+        "source": copy.deepcopy(SOURCE),
+    }
+    captured = {}
+
+    def ensure(release, name, record, checkpoint, **kwargs):
+        captured.update(
+            release=release,
+            name=name,
+            identity=kwargs.get("expected_identity"),
+        )
+        record.update(ui_suite_id=901)
+        return True, 900, ""
+
+    monkeypatch.setattr(T, "broker_plan_name", lambda _release: "CHANGED DESTINATION")
+    monkeypatch.setattr(B, "ensure_plan", ensure)
+    state._checkpoint = lambda: None
+
+    outcome = _invoke_effect(step.execute, state, {"effect_input": frozen})
+
+    assert outcome.kind == "done"
+    assert captured == {
+        "release": RID,
+        "name": "FROZEN DESTINATION",
+        "identity": frozen["identity"],
+    }
+
+
+def test_frozen_broker_identity_fences_configured_area_drift(monkeypatch):
+    expected = B.identity(RID, "FROZEN DESTINATION")
+    monkeypatch.setattr(T, "BROKER_AREA_PATH", "Engineering\\Changed")
+
+    ok, candidates, detail = B.find_candidates(expected)
+
+    assert not ok
+    assert candidates is None
+    assert "coordinates changed" in detail
 
 
 def test_selective_ui_matrix_is_frozen_across_partial_build_recovery(fixture, monkeypatch):
@@ -182,7 +230,7 @@ def test_selective_ui_matrix_is_frozen_across_partial_build_recovery(fixture, mo
     ado = fixture[2]
     ado.failure = "crash_after_cases"
     with pytest.raises(SystemExit), locked(fixture) as st:
-        step.build(st)
+        _invoke(step.build, st)
     ado.failure = None
     writes = len(ado.writes)
 
@@ -191,7 +239,7 @@ def test_selective_ui_matrix_is_frozen_across_partial_build_recovery(fixture, mo
 
     monkeypatch.setattr(B, "_snapshot", no_resnapshot)
     with locked(fixture) as st:
-        assert step.build(st).kind == "done"
+        assert _invoke(step.build, st).kind == "done"
         assert st.resources[B.RESOURCE]["source"] == source
     points = ado.points[(900, 9003)]
     assert len(points) == 10
@@ -200,7 +248,7 @@ def test_selective_ui_matrix_is_frozen_across_partial_build_recovery(fixture, mo
     assert len(ado.creates) == 1 and len(ado.writes) == writes + 1  # completion marker only
     points[:] = [p for p in points if p["configuration"]["id"] != 293]
     with locked(fixture) as st:
-        assert step.build(st).kind == "blocked"
+        assert _invoke(step.build, st).kind == "blocked"
     assert len(ado.writes) == writes + 1
 
 
@@ -222,7 +270,7 @@ def test_ui_repair_preview_cli_never_binds_or_saves_state(fixture, monkeypatch, 
 def test_competing_workers_share_one_creation(fixture):
     def worker():
         with locked(fixture) as st:
-            return step.build(st).kind
+            return _invoke(step.build, st).kind
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: worker(), range(2)))
     assert results == ["done", "done"]
@@ -233,7 +281,7 @@ def test_owner_can_authorize_retry_only_after_absence_is_verified(fixture, capsy
     ado = fixture[2]
     ado.failure = "create_not_visible"
     with locked(fixture) as st:
-        assert step.build(st).kind == "blocked"
+        assert _invoke(step.build, st).kind == "blocked"
     args = ["--runs-root", str(fixture[0]), "broker-plan", "--release", RID, "--confirm-not-created"]
     assert cli.main(args) == 1
     capsys.readouterr()
@@ -250,7 +298,7 @@ def test_owner_can_authorize_retry_only_after_absence_is_verified(fixture, capsy
     with locked(fixture) as st:
         assert st.resources[B.RESOURCE]["status"] == "retry_authorized"
         assert len(st.resources[B.RESOURCE]["attempt_history"]) == 1
-        assert step.build(st).kind == "done"
+        assert _invoke(step.build, st).kind == "done"
     assert len(ado.creates) == 2
 
 
@@ -258,10 +306,10 @@ def test_marker_failure_retries_patch_not_creation(fixture):
     ado = fixture[2]
     ado.failure = "marker"
     with locked(fixture) as st:
-        assert step.build(st).kind == "blocked"
+        assert _invoke(step.build, st).kind == "blocked"
     ado.failure = None
     with locked(fixture) as st:
-        assert step.build(st).kind == "done"
+        assert _invoke(step.build, st).kind == "done"
     assert len(ado.creates) == 1
 
 @pytest.mark.parametrize("failure", ["get", "deleted", "wrong_name"])
@@ -276,7 +324,7 @@ def test_bound_plan_lookup_never_falls_through_to_creation(fixture, failure):
             ado.plans[900]["name"] = "another release"
         else:
             ado.failure = failure
-        assert step.build(st).kind == "blocked"
+        assert _invoke(step.build, st).kind == "blocked"
     assert not ado.writes
 
 
@@ -286,8 +334,9 @@ def test_lost_local_id_recovers_single_complete_plan_without_writes(fixture, mar
     ado.add(marked=marked)
     before = copy.deepcopy(ado.points)
     with locked(fixture) as st:
-        assert step.build(st).kind == "done"
+        assert _invoke(step.build, st).kind == "done"
         assert st.resources[B.RESOURCE]["plan_id"] == 900
+        assert st.resources[B.RESOURCE]["source"] == SOURCE
     assert ado.points == before and not ado.writes
 
 
@@ -296,7 +345,7 @@ def test_duplicates_block_then_owner_binds_without_reopening_or_creating(fixture
     ado.add(900)
     ado.add(901)
     with locked(fixture) as st:
-        out = step.build(st)
+        out = _invoke(step.build, st)
         assert out.kind == "blocked" and "900, 901" in out.reason
     args = ["--runs-root", str(fixture[0]), "broker-plan", "--release", RID]
     assert cli.main(args) == 0
@@ -308,7 +357,7 @@ def test_duplicates_block_then_owner_binds_without_reopening_or_creating(fixture
     with locked(fixture) as st:
         assert st.resources[B.RESOURCE]["selection"]["by"] == st.owner_email
         assert not st.is_done("bug_bash", step.ID)
-        assert step.build(st).kind == "done"
+        assert _invoke(step.build, st).kind == "done"
         assert st.get_step("bug_bash", step.ID).data["plan_id"] == 901
     assert not ado.writes
     assert cli.main(args + ["--plan-id", "900", "--reason", "Replace"]) == 1
@@ -317,9 +366,9 @@ def test_duplicates_block_then_owner_binds_without_reopening_or_creating(fixture
 def test_discovery_failure_blocks_without_reserving_or_creating(fixture):
     fixture[2].failure = "list"
     with locked(fixture) as st:
-        out = step.build(st)
+        out = _invoke(step.build, st)
         assert out.kind == "blocked" and "403" in out.reason
-        assert not st.resources[B.RESOURCE]
+        assert B.RESOURCE not in st.resources
     assert not fixture[2].writes
 
 
@@ -328,11 +377,11 @@ def test_uncertain_or_partial_creation_never_reposts_plan(fixture, failure):
     ado = fixture[2]
     ado.failure = failure
     with locked(fixture) as st:
-        assert step.build(st).kind == "blocked"
+        assert _invoke(step.build, st).kind == "blocked"
     ado.failure = None
     with locked(fixture) as st:
         Orchestrator(C.DEFAULT_CONFIG, st, mocks={}).reopen_step("bug_bash", step.ID)
-        assert step.build(st).kind == "blocked"
+        assert _invoke(step.build, st).kind == "blocked"
     assert len(ado.creates) == 1
     assert not any(method == "DELETE" for _, method, _ in ado.writes)
 
@@ -342,14 +391,14 @@ def test_crash_after_last_write_recovers_from_checkpoint_without_repeating_write
     ado.failure = "crash_after_cases"
     with pytest.raises(SystemExit):
         with locked(fixture) as st:
-            step.build(st)
+            _invoke(step.build, st)
     saved = ReleaseState.load(str(fixture[1]))
     assert saved.resources[B.RESOURCE]["status"] == "created"
     assert saved.resources[B.RESOURCE]["plan_id"] == 900
     ado.failure = None
     writes = len(ado.writes)
     with locked(fixture) as st:
-        assert step.build(st).kind == "done"
+        assert _invoke(step.build, st).kind == "done"
     assert len(ado.creates) == 1
     assert all(method == "PATCH" and "/testplan/plans/" in url
                for url, method, _ in ado.writes[writes:])
@@ -374,7 +423,7 @@ def test_incomplete_or_wrong_plan_is_not_adopted(fixture, damage):
     else:
         ado.plans[900]["areaPath"] = "AnotherProject"
     with locked(fixture) as st:
-        assert step.build(st).kind == "blocked"
+        assert _invoke(step.build, st).kind == "blocked"
     assert not ado.writes
 
 
@@ -383,11 +432,11 @@ def test_saved_source_detects_entire_missing_case_even_if_remaining_matrix_is_va
     ado.failure = "crash_after_cases"
     with pytest.raises(SystemExit):
         with locked(fixture) as st:
-            step.build(st)
+            _invoke(step.build, st)
     ado.failure = None
     ado.points[(900, 9001)] = [p for p in ado.points[(900, 9001)] if p["testCase"]["id"] != 112]
     with locked(fixture) as st:
-        assert step.build(st).kind == "blocked"
+        assert _invoke(step.build, st).kind == "blocked"
     assert len(ado.creates) == 1
 
 
@@ -395,13 +444,13 @@ def test_old_project_root_plan_requires_explicit_observed_area_selection(fixture
     ado = fixture[2]
     ado.add(area=T.PROJECT)
     with locked(fixture) as st:
-        assert step.build(st).kind == "blocked"
+        assert _invoke(step.build, st).kind == "blocked"
     assert cli.main(["--runs-root", str(fixture[0]), "broker-plan", "--release", RID,
                      "--plan-id", "900", "--area-path", T.PROJECT,
                      "--reason", "Owner confirmed existing plan at the project root"]) == 0
     capsys.readouterr()
     with locked(fixture) as st:
-        assert step.build(st).kind == "done"
+        assert _invoke(step.build, st).kind == "done"
     assert not ado.writes
 
 
@@ -429,7 +478,7 @@ def test_checkpoint_failure_prevents_first_external_write(fixture, monkeypatch):
         st = C.load_state(str(fixture[0]), RID)
         st._checkpoint = fail
         with pytest.raises(OSError, match="disk full"):
-            step.build(st)
+            _invoke(step.build, st)
     assert not fixture[2].writes
 
 
@@ -457,7 +506,7 @@ def test_incomplete_paging_is_failure_not_empty_success(monkeypatch, mode):
 def test_present_invalid_stored_id_blocks_before_discovery_or_creation(fixture, value):
     with locked(fixture) as st:
         st.set_step("bug_bash", step.ID, StepState(data={"plan_id": value}))
-        assert step.build(st).kind == "blocked"
+        assert _invoke(step.build, st).kind == "blocked"
     assert not fixture[2].writes
 
 
@@ -470,7 +519,7 @@ def test_invalid_saved_source_never_adopts_partial_plan(fixture, source):
     with locked(fixture) as st:
         st.resources[B.RESOURCE] = {"identity": B.identity(RID, T.broker_plan_name(RID)),
                                     "status": "created", "plan_id": 900, "source": source}
-        assert step.build(st).kind == "blocked"
+        assert _invoke(step.build, st).kind == "blocked"
     assert not ado.writes
 
 
@@ -480,5 +529,5 @@ def test_invalid_saved_source_never_adopts_partial_plan(fixture, source):
 def test_malformed_plan_listing_cannot_authorize_create(fixture, monkeypatch, entry):
     monkeypatch.setattr(P, "_ado_rest_get_all", lambda *a, **k: (True, [entry], ""))
     with locked(fixture) as st:
-        assert step.build(st).kind == "blocked"
+        assert _invoke(step.build, st).kind == "blocked"
     assert not fixture[2].writes

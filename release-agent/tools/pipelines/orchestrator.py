@@ -1,6 +1,9 @@
 """Release Orchestrator / Checker / MRWP run discovery, stages, timeline, approvals."""
 from __future__ import annotations
 
+from collections.abc import Mapping
+from urllib.parse import parse_qs, quote, urlsplit
+
 from tools.coordinates import coords
 from tools import pipelines as _pp
 from tools.pipelines._rest import RAN_RESULTS
@@ -164,21 +167,107 @@ def named_record(records, name, types=("Job", "Phase", "Stage")):
     return None
 
 
+def _numeric_build_id(value):
+    if type(value) is int:
+        return value if value > 0 else None
+    if isinstance(value, str) and value.isascii() and value.isdecimal():
+        try:
+            number = int(value)
+        except ValueError:
+            return None
+        return number if number > 0 else None
+    return None
+
+
+def _valid_approval_id(value):
+    return isinstance(value, str) and bool(value.strip()) and value == value.strip()
+
+
+def approval_owner_build_id(approval):
+    """Read the exact numeric buildId from the provider's pipeline owner web link.
+
+    This is the owner shape exposed by pipeline approval discovery. Missing,
+    malformed, or repeated buildId parameters are not ownership evidence; neither
+    a substring in a URL nor an unrelated pipeline/definition id is a build id.
+    """
+    owner_link = approval
+    for key in ("pipeline", "owner", "_links", "web", "href"):
+        if not isinstance(owner_link, Mapping):
+            return None
+        owner_link = owner_link.get(key)
+    if not isinstance(owner_link, str):
+        return None
+    try:
+        ids = parse_qs(urlsplit(owner_link).query, keep_blank_values=True).get("buildId", [])
+    except ValueError:
+        return None
+    return _numeric_build_id(ids[0]) if len(ids) == 1 else None
+
+
 def _pending_approval_for_build(org, project, build_id, timeout=90):
-    """(ok, approval_id|None, detail) — the PENDING pipeline approval whose owner build is
-    `build_id`, from the approvals the signed-in user can act on."""
+    """(ok, approval_id|None, detail) — a uniquely identified PENDING build approval.
+
+    The list has no documented stage correlation in the observed provider shape.
+    Multiple pending approvals on this exact build must therefore fail closed,
+    rather than selecting an arbitrary approval from the same run.
+    """
+    expected_build = _numeric_build_id(build_id)
+    if expected_build is None:
+        return (False, None, "invalid approval owner build id")
     ok, data, d = _pp._ado_rest_get(
         f"{org.rstrip('/')}/{project}/_apis/pipelines/approvals?api-version=7.2-preview.1", timeout)
     if not ok:
         return (False, None, d)
-    for ap in (data or {}).get("value", []) or []:
-        if ap.get("status") in ("approved", "completed", "rejected", "canceled"):
+    if not isinstance(data, Mapping) or not isinstance(data.get("value"), list):
+        return (False, None, "malformed pipeline approvals response")
+    pending = []
+    for ap in data["value"]:
+        if not isinstance(ap, Mapping):
+            return (False, None, "malformed pipeline approval entry")
+        if approval_owner_build_id(ap) != expected_build or ap.get("status") != "pending":
             continue
-        owner = (ap.get("pipeline") or {}).get("owner") or {}
-        href = ((owner.get("_links") or {}).get("web") or {}).get("href", "")
-        if f"buildId={build_id}" in href:
-            return (True, ap.get("id"), "")
+        if not _valid_approval_id(ap.get("id")):
+            return (False, None, f"pending approval on build {build_id} has no valid id")
+        pending.append(ap["id"])
+    if len(pending) > 1:
+        return (False, None, f"ambiguous pending approvals on build {build_id}; inspect the ADO gates")
+    if pending:
+        return (True, pending[0], "")
     return (True, None, "")
+
+
+def _pending_checkpoint(records):
+    """Resolve one active checkpoint and its stage without inventing a stage join."""
+    if not isinstance(records, list) or any(not isinstance(r, Mapping) for r in records):
+        return (False, None, "malformed orchestrator timeline")
+    pending = [r for r in records
+               if r.get("type") == "Checkpoint.Approval" and r.get("state") == "inProgress"]
+    if not pending:
+        return (True, None, "")
+    if len(pending) != 1:
+        return (False, None, "ambiguous active approval checkpoints; inspect the ADO stages")
+    byid = {}
+    for record in records:
+        identifier = record.get("id")
+        if not isinstance(identifier, str) or not identifier or identifier in byid:
+            return (False, None, "missing or duplicate timeline record identity")
+        byid[identifier] = record
+    checkpoint = pending[0]
+    cur = checkpoint
+    seen = set()
+    while cur.get("type") != "Stage":
+        identifier = cur["id"]
+        if identifier in seen:
+            return (False, None, "cyclic approval checkpoint ancestry")
+        seen.add(identifier)
+        parent_id = cur.get("parentId")
+        cur = byid.get(parent_id) if isinstance(parent_id, str) else None
+        if cur is None:
+            return (False, None, "cannot identify the approval checkpoint's stage")
+    stage = cur.get("name")
+    if not isinstance(stage, str) or not stage.strip():
+        return (False, None, "approval checkpoint's stage has no name")
+    return (True, (checkpoint["id"], cur["id"], stage), "")
 
 
 def find_orchestrator_pending_approval(org, project, release_month, timeout=90):
@@ -187,39 +276,40 @@ def find_orchestrator_pending_approval(org, project, release_month, timeout=90):
     {approval_id, build_id, stage, build_url} — or None when nothing is parked.
 
     Discovery: the orchestrator run (by AuthenticatorBranch tag) → its timeline for a Stage whose
-    Checkpoint.Approval record is still inProgress → the matching PENDING approval (owned by this
-    build) from the pipelines approvals API."""
+    Checkpoint.Approval record is still inProgress → the unique PENDING approval owned by
+    this exact build. Both sides must be unique because the observed approvals payload
+    does not identify a stage. Re-read the same build's timeline before returning to
+    catch stage advancement during discovery. Concurrent/ambiguous gates fail closed;
+    timeline record ids are NOT assumed to equal approval ids."""
     ok, run, detail = _pp.find_orchestrator_run(org, project, ORCHESTRATOR_DEF, release_month, timeout)
     if not ok:
         return (False, None, detail)
     if not run:
         return (True, None, f"no orchestrator run found for {release_month}")
-    bid = run.get("id")
+    bid = _numeric_build_id(run.get("id")) if isinstance(run, Mapping) else None
+    if bid is None:
+        return (False, None, "orchestrator run has no valid build id")
     okt, recs, dt = _pp.get_timeline(org, project, bid, timeout)
     if not okt:
         return (False, None, dt)
-    byid = {r.get("id"): r for r in recs}
-
-    def _stage_of(rec):
-        cur = rec
-        while cur and cur.get("type") != "Stage":
-            cur = byid.get(cur.get("parentId"))
-        return (cur or {}).get("name")
-
-    pending_stage = None
-    for r in recs:
-        if r.get("type") == "Checkpoint.Approval" and r.get("state") == "inProgress":
-            pending_stage = _stage_of(r)
-            break
-    if not pending_stage:
+    checked, checkpoint, dc = _pending_checkpoint(recs)
+    if not checked:
+        return (False, None, dc)
+    if checkpoint is None:
         return (True, None, f"orchestrator build {bid} is not parked at a manual approval")
     oka, approval_id, da = _pp._pending_approval_for_build(org, project, bid, timeout)
     if not oka:
         return (False, None, da)
     if not approval_id:
         return (True, None, f"no pending approval visible to you on build {bid}")
+    checked, current_records, dc = _pp.get_timeline(org, project, bid, timeout)
+    if not checked:
+        return (False, None, dc)
+    checked, current_checkpoint, dc = _pending_checkpoint(current_records)
+    if not checked or current_checkpoint != checkpoint:
+        return (False, None, dc or "approval checkpoint changed during discovery; inspect the ADO gate")
     build_url = f"{org.rstrip('/')}/{project}/_build/results?buildId={bid}&view=results"
-    return (True, {"approval_id": approval_id, "build_id": bid, "stage": pending_stage,
+    return (True, {"approval_id": approval_id, "build_id": bid, "stage": checkpoint[2],
                    "build_url": build_url}, "")
 
 
@@ -242,14 +332,56 @@ def orchestrator_stage_state(org, project, release_month, stage_name, timeout=90
     return (True, None, f"stage '{stage_name}' not in the orchestrator timeline")
 
 
+def get_pipeline_approval(org, project, approval_id, timeout=60):
+    """Read one frozen approval id, never the newest run or a stage-completion proxy.
+
+    Returns (ok, approval|None, detail). Even a successful HTTP response must carry
+    the requested id; null, malformed, and mismatched payloads are not evidence.
+    Ownership/status validation is left to the caller's frozen request.
+    """
+    if not _valid_approval_id(approval_id):
+        return (False, None, "invalid pipeline approval id")
+    url = (f"{org.rstrip('/')}/{project}/_apis/pipelines/approvals/"
+           f"{quote(approval_id, safe='')}?api-version=7.2-preview.1")
+    ok, approval, detail = _pp._ado_rest_get(url, timeout)
+    if not ok:
+        return (False, None, detail)
+    if not isinstance(approval, Mapping):
+        return (False, None, f"approval {approval_id} is missing or malformed")
+    if not _valid_approval_id(approval.get("id")) or approval["id"] != approval_id:
+        return (False, None, f"approval response identity does not match {approval_id}")
+    return (True, approval, "")
+
+
 def submit_pipeline_approval(org, project, approval_id, comment="", status="approved", timeout=60):
-    """Submit a decision on a pipeline approval — status 'approved' | 'rejected'. (ok, detail)."""
+    """Submit a decision and require exact identity/status evidence. (ok, detail).
+
+    Some PATCH responses omit the id. Those are not receipts: confirm with a GET
+    of the requested id. An explicitly different id or status fails closed.
+    This helper never retries the PATCH, including when confirmation is unavailable.
+    """
+    if not _valid_approval_id(approval_id):
+        return (False, "invalid pipeline approval id")
+    if status not in ("approved", "rejected"):
+        return (False, "pipeline approval decision must be approved or rejected")
     url = f"{org.rstrip('/')}/{project}/_apis/pipelines/approvals?api-version=7.2-preview.1"
     body = [{"approvalId": approval_id, "status": status, "comment": comment}]
     ok, res, d = _pp._ado_rest_send(url, "PATCH", body, timeout)
     if not ok:
         return (False, d)
-    entry = ((res or {}).get("value") or [{}])[0] if isinstance(res, dict) else {}
+    entries = res.get("value") if isinstance(res, Mapping) else None
+    if entries is None and isinstance(res, Mapping) and "id" in res:
+        entries = [res]
+    entries = entries if isinstance(entries, list) else []
+    identified = [entry for entry in entries if isinstance(entry, Mapping) and "id" in entry]
+    if identified:
+        if len(identified) != 1 or identified[0].get("id") != approval_id:
+            return (False, f"approval response identity does not match {approval_id}")
+        entry = identified[0]
+    else:
+        checked, entry, detail = _pp.get_pipeline_approval(org, project, approval_id, timeout)
+        if not checked or not isinstance(entry, Mapping) or entry.get("id") != approval_id:
+            return (False, f"cannot confirm approval {approval_id} after submit ({detail})")
     got = entry.get("status")
     if got != status:
         return (False, f"approval status is '{got}' after submit (expected '{status}')")
@@ -309,4 +441,4 @@ def stage_completion(stages):
     return {"total": total, "ran": total - len(never), "never_ran": never,
             "failed": failed, "yellow": yellow, "complete": not never and total > 0}
 
-__all__ = ['CHECKER_DEF', 'ENGINEERING_ORG', 'ENGINEERING_PROJECT', 'IDENTITYDIVISION', 'MRWP_DEF', 'MSAZURE', 'ORCHESTRATOR_DEF', 'ORCH_PARK_STAGE', 'ORCH_REQUIRED_STAGES', 'TRIGGER_JOB', '_pending_approval_for_build', 'discover_versions', 'find_checker_runs', 'find_orchestrator_pending_approval', 'find_orchestrator_run', 'get_build_status', 'get_stages', 'get_timeline', 'mrwp_run_ids', 'named_record', 'orchestrator_stage_state', 'stage_completion', 'submit_pipeline_approval']
+__all__ = ['CHECKER_DEF', 'ENGINEERING_ORG', 'ENGINEERING_PROJECT', 'IDENTITYDIVISION', 'MRWP_DEF', 'MSAZURE', 'ORCHESTRATOR_DEF', 'ORCH_PARK_STAGE', 'ORCH_REQUIRED_STAGES', 'TRIGGER_JOB', '_pending_approval_for_build', 'approval_owner_build_id', 'discover_versions', 'find_checker_runs', 'find_orchestrator_pending_approval', 'find_orchestrator_run', 'get_build_status', 'get_pipeline_approval', 'get_stages', 'get_timeline', 'mrwp_run_ids', 'named_record', 'orchestrator_stage_state', 'stage_completion', 'submit_pipeline_approval']

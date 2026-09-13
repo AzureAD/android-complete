@@ -94,7 +94,7 @@ def cmd_check_ccd(args):
 def cmd_set_ccd(args):
     """Change the Code Complete Date. Writes the pipeline override (real change) —
     requires --confirm and a --reason. Without --confirm, previews the write."""
-    st = C.load_state(args.runs_root, args.release)
+    st, orch = C.load_orch(args.runs_root, args.release, args.config)
     src = C.ccd_source()
     if not src.get("pipeline_id"):
         print("No CCD source configured (config/schedule.yaml).")
@@ -157,7 +157,7 @@ def cmd_set_ccd(args):
 
 def cmd_skip_release(args):
     """Suppress the release by setting the pipeline 'skipRelease' switch (real change)."""
-    st = C.load_state(args.runs_root, args.release)
+    st, orch = C.load_orch(args.runs_root, args.release, args.config)
     src = C.ccd_source()
     if not (args.reason and args.reason.strip()):
         print("A --reason is required (audited).")
@@ -174,13 +174,21 @@ def cmd_skip_release(args):
     if not res.ok:
         print(f"Failed to write pipeline variable: {res.detail}")
         return 1
-    st.skip_release = not clearing
+    transition = (
+        orch.reactivate(args.reason)
+        if clearing
+        else orch.cancel(args.reason)
+    )
+    st = orch.state
     C.save_state(st, args.runs_root, args.release)
     C.elog(args.runs_root, args.release).log(
         "release_skip_cleared" if clearing else "release_skip_set", driver=args.reason.strip())
     msg = ("✅ Release un-skipped — pipeline will trigger normally."
            if clearing else
            "🛑 Release marked SKIP in the pipeline — the monthly trigger is suppressed until cleared.")
+    if clearing:
+        msg += (" Re-provision the release's automations from `automation plan` "
+                "before continuing.")
     C.emit(args.runs_root, args.release, msg + f"\n  {res.detail}", kind="skip_release")
     return 0
 

@@ -1,4 +1,5 @@
 """Synthetic acknowledged invitation and verified chat fixtures; no network."""
+from tests._context import context as _context
 from orchestrator import delivery as D, schedule
 from orchestrator.state import StepState
 from steps.bug_bash.send_invite import delivered_invite
@@ -18,9 +19,15 @@ def seed_invite(st, chat_id=None):
         "descriptor": item, "status": "sent", "completion": {"status": "applied"},
         "attempts": [{"id": "create-execution", "owner": "test-worker", "status": "sent",
                       "hash": item["hash"], "receipt": {"id": "event-1"}}]}
-    st.set_step("bug_bash", "send_invite", StepState(status="done", data={
-        "_execution": {"id": "create-execution", "notification_id": item["id"]}}))
-    invite = delivered_invite(st)
+    st.set_step(
+        "bug_bash",
+        "send_invite",
+        StepState(status="done", data={
+            "notification_id": item["id"],
+            "notification_execution_id": "create-execution",
+        }),
+    )
+    invite = delivered_invite(_context(st))
     if chat_id:
         st.set_step("bug_bash", "activate_chat", StepState(status="done", data={
             "chat_id": chat_id, "invite": invite, "meeting": meeting(invite, chat_id)}))

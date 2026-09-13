@@ -1,4 +1,6 @@
 """Release-agent tests — finalize. Shared harness in tests/_harness.py."""
+from tests._context import context as _context, invoke as _invoke, invoke_effect as _invoke_effect
+from tests._context import approval as _approval
 from tests._harness import *  # noqa: F401,F403
 
 
@@ -13,7 +15,7 @@ def test_gate_watch_build_shows_pending_brief():
     st = ReleaseState(release_id="2026-08")
     info = {"approval_id": "A1", "build_id": 1681228, "stage": "Remove RC Tags", "build_url": "u"}
     with mockctx.active({"approval": info}):
-        out = as_dict(gw.build(st))
+        out = as_dict(_invoke(gw.build, st))
     assert out["kind"] == "needs_human"
     assert "1681228" in out["prompt"] and "Remove RC Tags" in out["prompt"]
     assert "Maven Central" in out["prompt"]
@@ -28,14 +30,14 @@ def test_gate_watch_build_done_when_not_parked():
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({"approval": None}):
-        out = as_dict(gw.build(st))
+        out = as_dict(_invoke(gw.build, st))
     assert out["kind"] == "done" and "nothing to" in out["note"].lower()
 
 
 
 
 def test_gate_watch_submit_approval_submits():
-    """submit_approval submits the real ADO approval for the discovered pending approval."""
+    """Preparation freezes the pending identity/comment; submission calls the injected writer."""
     from steps.finalize import gate_watch as gw
     from steps.lib import mockctx
     from tools import pipelines as P
@@ -43,32 +45,99 @@ def test_gate_watch_submit_approval_submits():
     sent = {}
 
     def fake_submit(org, project, approval_id, comment="", status="approved", timeout=60):
-        sent.update(id=approval_id, comment=comment)
+        sent.update(org=org, project=project, id=approval_id, comment=comment)
         return (True, f"approval {approval_id} -> approved")
 
     o = P.submit_pipeline_approval
     P.submit_pipeline_approval = fake_submit
     try:
         info = {"approval_id": "A1", "build_id": 123, "stage": "Remove RC Tags", "build_url": "u"}
-        with mockctx.active({"approval": info}):
-            ok, detail = gw.submit_approval(st, "go")
+        with mockctx.active({
+            "approval": info,
+            "stage_state": {"state": "pending", "result": None},
+        }):
+            ok, detail = _approval(gw.submit_approval, st, "go")
     finally:
         P.submit_pipeline_approval = o
-    assert ok and "Remove RC Tags" in detail and "123" in detail
-    assert sent["id"] == "A1" and sent["comment"] == "go"
+    assert ok and detail == "approval A1 -> approved"
+    assert sent == {"org": gw.CONFIG["org"], "project": gw.CONFIG["project"],
+                    "id": "A1", "comment": "go"}
+
+
+def test_gate_watch_submit_approval_rejects_different_stage():
+    from steps.finalize import gate_watch as gw
+    from steps.lib import mockctx
+    from tools import pipelines as P
+
+    st = ReleaseState(release_id="2026-08")
+    original = P.submit_pipeline_approval
+    P.submit_pipeline_approval = lambda *_a, **_k: (_ for _ in ()).throw(
+        AssertionError("wrong stage must not be submitted")
+    )
+    try:
+        info = {
+            "approval_id": "A2",
+            "build_id": 124,
+            "stage": "Publish GitHub Release Notes",
+            "build_url": "u",
+        }
+        with mockctx.active({
+            "approval": info,
+            "stage_state": {"state": "pending", "result": None},
+        }):
+            ok, detail = _approval(gw.submit_approval, st, "go")
+    finally:
+        P.submit_pipeline_approval = original
+    assert not ok
+    assert "not 'Remove RC Tags'" in detail
+
+
+def test_gate_watch_submit_refuses_completed_stage_without_approval_identity():
+    from steps.finalize import gate_watch as gw
+    from steps.lib import mockctx
+
+    st = ReleaseState(release_id="2026-08")
+    with mockctx.active({
+        "approval": None,
+        "stage_state": {"state": "completed", "result": "succeeded"},
+    }):
+        ok, detail = _approval(gw.submit_approval, st, "go")
+    assert not ok
+    assert "No identifiable pending approval" in detail
+    assert "Stage completion alone" in detail
+
+
+def test_gate_watch_refuses_later_gate_even_when_original_stage_completed():
+    from steps.finalize import gate_watch as gw
+    from steps.lib import mockctx
+
+    st = ReleaseState(release_id="2026-08")
+    later = {
+        "approval_id": "A2",
+        "build_id": 125,
+        "stage": "Publish GitHub Release Notes",
+        "build_url": "u",
+    }
+    with mockctx.active({
+        "approval": later,
+        "stage_state": {"state": "completed", "result": "succeeded"},
+    }):
+        ok, detail = _approval(gw.submit_approval, st, "recover")
+    assert not ok
+    assert "not 'Remove RC Tags'" in detail
 
 
 
 
 def test_gate_watch_submit_approval_skip_knob():
-    """The `submit: skip` knob makes submit_approval a no-op (offline/tests)."""
+    """Legacy submit: skip blocks preparation; it never fabricates provider success."""
     from steps.finalize import gate_watch as gw
     from steps.lib import mockctx
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({"approval": {"approval_id": "A1", "build_id": 1, "stage": "x", "build_url": "u"},
                          "submit": "skip"}):
-        ok, detail = gw.submit_approval(st, "go")
-    assert ok and "skipped" in detail.lower()
+        ok, detail = _approval(gw.submit_approval, st, "go")
+    assert not ok and "submit='skip' cannot authorize" in detail
 
 
 
@@ -83,7 +152,7 @@ def test_publish_notes_gate_brief_when_parked_at_notes():
     st = ReleaseState(release_id="2026-08")
     info = {"approval_id": "A2", "build_id": 1678611, "stage": "Publish GitHub Release Notes", "build_url": "u"}
     with mockctx.active({"approval": info, "stage_state": {"state": "inProgress", "result": None}}):
-        out = as_dict(PG.build(st))
+        out = as_dict(_invoke(PG.build, st))
     assert out["kind"] == "needs_human"
     assert "Publish GitHub Release Notes" in out["prompt"] and "1678611" in out["prompt"]
     assert "GitHub release notes" in out["prompt"]
@@ -98,7 +167,7 @@ def test_publish_notes_gate_done_when_stage_completed():
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({"stage_state": {"state": "completed", "result": "succeeded"}}):
-        out = as_dict(PG.build(st))
+        out = as_dict(_invoke(PG.build, st))
     assert out["kind"] == "done" and "already completed" in out["note"]
 
 
@@ -112,7 +181,7 @@ def test_publish_notes_gate_warns_when_parked_elsewhere():
     st = ReleaseState(release_id="2026-08")
     info = {"approval_id": "A1", "build_id": 1, "stage": "Remove RC Tags", "build_url": "u"}
     with mockctx.active({"approval": info, "stage_state": {"state": "notStarted", "result": None}}):
-        out = as_dict(PG.build(st))
+        out = as_dict(_invoke(PG.build, st))
     assert out["kind"] == "needs_human"
     assert "Remove RC Tags" in out["prompt"] and "only approves" in out["prompt"]
 
@@ -126,14 +195,14 @@ def test_publish_notes_gate_waits_when_not_parked():
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({"approval": None, "stage_state": None}):
-        out = as_dict(PG.build(st))
+        out = as_dict(_invoke(PG.build, st))
     assert out["kind"] == "needs_human" and "isn't parked yet" in out["prompt"]
 
 
 
 
 def test_publish_notes_gate_submit_verifies_stage():
-    """submit_approval submits ONLY when the parked stage is the notes stage; refuses otherwise."""
+    """Prepare/submit freezes ONLY the notes-stage approval and forwards its comment."""
     from steps.finalize import publish_notes_gate as PG
     from steps.lib import mockctx
     from tools import pipelines as P
@@ -141,7 +210,7 @@ def test_publish_notes_gate_submit_verifies_stage():
     sent = {}
 
     def fake_submit(org, project, approval_id, comment="", status="approved", timeout=60):
-        sent["id"] = approval_id
+        sent.update(org=org, project=project, id=approval_id, comment=comment)
         return (True, f"approval {approval_id} -> approved")
 
     o = P.submit_pipeline_approval
@@ -150,18 +219,26 @@ def test_publish_notes_gate_submit_verifies_stage():
         # right stage → submits
         good = {"approval_id": "A2", "build_id": 5, "stage": "Publish GitHub Release Notes", "build_url": "u"}
         with mockctx.active({"approval": good}):
-            ok, detail = PG.submit_approval(st, "go")
-        assert ok and "Publish GitHub Release Notes" in detail and sent.get("id") == "A2"
+            ok, detail = _approval(PG.submit_approval, st, "go")
+        assert ok and detail == "approval A2 -> approved"
+        assert sent == {"org": PG.CONFIG["org"], "project": PG.CONFIG["project"],
+                        "id": "A2", "comment": "go"}
         # wrong stage → refuses (no submit)
         sent.clear()
         bad = {"approval_id": "A1", "build_id": 5, "stage": "Remove RC Tags", "build_url": "u"}
-        with mockctx.active({"approval": bad}):
-            ok2, detail2 = PG.submit_approval(st, "go")
+        with mockctx.active({
+            "approval": bad,
+            "stage_state": {"state": "pending", "result": None},
+        }):
+            ok2, detail2 = _approval(PG.submit_approval, st, "go")
         assert ok2 is False and "not 'Publish GitHub Release Notes'" in detail2 and "id" not in sent
         # not parked → refuses
-        with mockctx.active({"approval": None}):
-            ok3, detail3 = PG.submit_approval(st, "go")
-        assert ok3 is False and "isn't parked yet" in detail3
+        with mockctx.active({
+            "approval": None,
+            "stage_state": {"state": "pending", "result": None},
+        }):
+            ok3, detail3 = _approval(PG.submit_approval, st, "go")
+        assert ok3 is False and "No identifiable pending approval" in detail3
     finally:
         P.submit_pipeline_approval = o
 
@@ -193,7 +270,7 @@ def test_integ_prs_reads_versions_from_state():
                         "authenticator": "release/2026/08/22"})
     try:
         with mockctx.active({"pbi": "skip"}):        # NO versions mock -> must come from state
-            p = S.plan(st)
+            p = S.plan(_context(st))
     finally:
         restore()
     by = {r["key"]: r for r in p["repos"]}
@@ -219,7 +296,7 @@ def test_integ_prs_plan_computes_8_prs_offline():
                           "authenticator": "9.9.9"}, "pbi": "skip"}
     try:
         with mockctx.active(knobs):
-            p = S.plan(st)
+            p = S.plan(_context(st))
     finally:
         restore()
     assert p["ready"] and len(p["repos"]) == 4
@@ -252,7 +329,7 @@ def test_integ_prs_in_progress_when_branch_missing():
     try:
         with mockctx.active({"versions": {"msal": "8.4.2"}, "repos": ["msal"], "pbi": "skip",
                              "stage": "ready"}):
-            out = S.build(st)
+            out = _invoke(S.build, st)
     finally:
         restore()
     assert out.kind == "in_progress"
@@ -270,15 +347,15 @@ def test_integ_prs_monitors_ir_stage():
     base = {"versions": {"msal": "8.4.2"}, "repos": ["msal"], "pbi": "skip"}
     # stage still running -> wait
     with mockctx.active({**base, "stage": "wait"}):
-        assert S.build(st).kind == "in_progress"
+        assert _invoke(S.build, st).kind == "in_progress"
     # stage failed -> blocked (RI branches never created)
     with mockctx.active({**base, "stage": "failed"}):
-        assert S.build(st).kind == "blocked"
+        assert _invoke(S.build, st).kind == "blocked"
     # stage ready + branches exist -> needs_skill (the action)
     restore = _patch_pr_reads(P, exists=True, existing_pr=None, behind=0, gradle=[], conflicts=[])
     try:
         with mockctx.active({**base, "stage": "ready"}):
-            assert S.build(st).kind == "needs_skill"
+            assert _invoke(S.build, st).kind == "needs_skill"
     finally:
         restore()
 
@@ -291,112 +368,151 @@ def test_integ_prs_blocked_without_versions():
     from steps.finalize import integ_prs as S
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({"repos": ["msal"]}):
-        out = S.build(st)
+        out = _invoke(S.build, st)
     assert out.kind == "blocked"
 
 
+def test_step_action_persists_external_blocked_outcome():
+    from argparse import Namespace
+    from orchestrator.commands.step_action import prepare_step
+
+    st = ReleaseState(release_id="2026-08")
+    _active_step(st, "finalize", "integ_prs")
+    orch = Orchestrator(CONFIG, st, mocks={})
+    out = prepare_step(
+        Namespace(
+            phase="finalize",
+            step="integ_prs",
+            release=st.release_id,
+            param=[],
+            reserve=False,
+            executor=None,
+        ),
+        st,
+        orch,
+    )
+    assert out["kind"] == "blocked"
+    assert out["state_changed"] is True
+    assert st.get_step("finalize", "integ_prs").status == "blocked"
 
 
-def test_create_integration_prs_dry_run_writes_nothing():
+
+
+def _integration_provider(monkeypatch, *, behind=0, conflicts=()):
+    from pathlib import Path
+    from tools import git_review as G, prs as P
+
+    tips, prs, writes = {}, {}, []
+    tip = lambda name: tips.setdefault(name, "1" * 40)
+    monkeypatch.setattr(G, "clean_repository", lambda root: Path(root))
+    monkeypatch.setattr(G, "remote_url", lambda root: "https://example.test/msal.git")
+    monkeypatch.setattr(G, "remote_tip", lambda root, remote, name: tip(name))
+    monkeypatch.setattr(P, "provider_branch_object_id", lambda target, name: tip(name))
+    monkeypatch.setattr(P, "provider_repository_urls", lambda target: ["https://example.test/msal.git"])
+    monkeypatch.setattr(P, "gh_find_open_pr",
+                        lambda repo, head, base: (True, prs.get((head, base)), ""))
+
+    def plan_ri(root, head, base, target):
+        if conflicts:
+            raise ValueError("Human conflicts: " + ", ".join(conflicts))
+        return {"behind": behind, "ahead": 0, "commit": "reviewed commit" if behind else None,
+                "commit_id": "2" * 40 if behind else head, "tree": "3" * 40,
+                "parents": [head, base], "message": "Merge and restore Gradle",
+                "files_before": {"msal/build.gradle": "old"},
+                "files_after": {"msal/build.gradle": "reviewed"},
+                "gradle_reverted": ["msal/build.gradle"] if behind else []}
+
+    def push(root, remote, head, expected, content, validate):
+        validate()
+        assert tips[head] == expected
+        tips[head] = content["commit_id"]
+        writes.append(("push", head))
+
+    def create(repo, head, base, title, body, labels=None):
+        url = f"https://example.test/pr/{len(prs) + 1}"
+        prs[head, base] = {"number": len(prs) + 1, "title": title, "body": body,
+                           "labels": list(labels or []), "url": url}
+        writes.append((head, base))
+        return True, url, ""
+
+    monkeypatch.setattr(G, "plan_ri", plan_ri)
+    monkeypatch.setattr(G, "push_reviewed", push)
+    monkeypatch.setattr(P, "gh_create_pr", create)
+    monkeypatch.setattr(P, "create_pbi",
+                        lambda *a, **k: (writes.append(("pbi", 4242)) or
+                                         (True, 4242, "https://example.test/wi/4242", "")))
+    return writes
+
+
+def _run_integration_review(ns):
+    from orchestrator import write_review as W
+    from orchestrator.commands import integ_prs_cmd as CMD
+    from steps.lib import mockctx
+
+    with C.state_lock(ns.runs_root, ns.release):
+        _, orch = C.load_orch(ns.runs_root, ns.release, ns.config)
+        with mockctx.active(CMD._step_mocks(orch)):
+            plan = CMD.integration_plan(orch.context("finalize", "integ_prs"), ns)
+        ns.review_hash = W.review_hash(orch, "finalize", "integ_prs", plan)
+        return CMD.cmd_create_integration_prs(ns)
+
+
+def test_create_integration_prs_dry_run_writes_nothing(monkeypatch):
     """The command's default (no --execute) prints the plan and performs NO writes."""
     import tempfile
     from orchestrator.commands import integ_prs_cmd as CMD
-    from tools import prs as P
-    restore_reads = _patch_pr_reads(P, exists=True, existing_pr=None)
-    wrote = {"n": 0}
-    o_create = P.gh_create_pr
-    P.gh_create_pr = lambda *a, **k: wrote.__setitem__("n", wrote["n"] + 1) or (True, "url", "")
-    try:
-        with tempfile.TemporaryDirectory() as d:
-            ns, restore_mocks = _integ_release(d, {"versions": {"msal": "8.4.2"},
-                                                    "repos": ["msal"], "pbi": "skip"})
-            try:
-                rc = CMD.cmd_create_integration_prs(ns)
-            finally:
-                restore_mocks()
-    finally:
-        P.gh_create_pr = o_create
-        restore_reads()
-    assert rc == 0 and wrote["n"] == 0            # dry-run: nothing created
+    writes = _integration_provider(monkeypatch)
+    with tempfile.TemporaryDirectory() as d:
+        ns, restore_mocks = _integ_release(d, {"versions": {"msal": "8.4.2"},
+                                             "repos": ["msal"], "pbi": "skip"})
+        try:
+            rc = CMD.cmd_create_integration_prs(ns)
+        finally:
+            restore_mocks()
+    assert rc == 0 and writes == []
 
 
 
 
-def test_create_integration_prs_execute_opens_and_records():
+def test_create_integration_prs_execute_opens_and_records(monkeypatch):
     """--execute opens the msal PRs (freeze + integration), does the RI edit, and records the step."""
     import tempfile
     from orchestrator.commands import integ_prs_cmd as CMD
     from orchestrator import cli_common as _C
-    from tools import prs as P
-    restore_reads = _patch_pr_reads(P, exists=True, existing_pr=None,
-                                    behind=2, gradle=["msal/build.gradle"],
-                                    conflicts=["msal/build.gradle"])
-    created = []
-    saved = {"gh_create_pr": P.gh_create_pr, "prepare_ri_branch": P.prepare_ri_branch,
-             "create_pbi": P.create_pbi, "gh_ensure_labels": P.gh_ensure_labels}
-    P.gh_create_pr = lambda repo, h, b, t, body, labels=None, draft=False, timeout=120: (
-        created.append((h, b)) or (True, f"https://pr/{h}", ""))
-    P.prepare_ri_branch = lambda d, ri, tg, dry_run=True, timeout=240: (
-        True, {"behind": 2, "gradle_reverted": ["msal/build.gradle"], "human_conflicts": [],
-               "pushed": True, "action": "pushed"}, "")
-    P.create_pbi = lambda org, proj, title, area=None, iteration=None, timeout=90: (
-        True, 4242, "https://wi/4242", "")
-    P.gh_ensure_labels = lambda *a, **k: (True, "ok")
-    try:
-        with tempfile.TemporaryDirectory() as d:
-            ns, restore_mocks = _integ_release(d, {"versions": {"msal": "8.4.2"},
-                                                   "repos": ["msal"]})  # pbi -> create
-            ns.execute = True
-            try:
-                rc = CMD.cmd_create_integration_prs(ns)
-                after = _C.load_state(d, "2026-08")
-            finally:
-                restore_mocks()
-    finally:
-        for k, v in saved.items():
-            setattr(P, k, v)
-        restore_reads()
+    created = _integration_provider(monkeypatch, behind=2)
+    with tempfile.TemporaryDirectory() as d:
+        ns, restore_mocks = _integ_release(d, {"versions": {"msal": "8.4.2"},
+                                               "repos": ["msal"]})
+        ns.execute = True
+        try:
+            rc = _run_integration_review(ns)
+            after = _C.load_state(d, "2026-08")
+        finally:
+            restore_mocks()
     assert rc == 0
     assert ("working/release/8.4.2", "release/8.4.2") in created        # freeze opened
     assert ("release-integration/8.4.2", "dev") in created              # integration opened
     assert after.is_done("finalize", "integ_prs")                       # step recorded
+    assert ("push", "release-integration/8.4.2") in created
+    assert after.get_step("finalize", "integ_prs").data["last_write_review"]["hash"] == ns.review_hash
 
 
 
 
-def test_create_integration_prs_holds_pr_on_human_conflict():
-    """When the RI edit reports a human conflict, that PR is NOT opened (held)."""
+def test_create_integration_prs_holds_pr_on_human_conflict(monkeypatch):
+    """Incomplete conflict planning refuses the entire write batch before approval."""
     import tempfile
     from orchestrator.commands import integ_prs_cmd as CMD
-    from tools import prs as P
-    restore_reads = _patch_pr_reads(P, exists=True, existing_pr=None,
-                                    behind=1, gradle=[], conflicts=["changelog"])
-    created = []
-    saved = {"gh_create_pr": P.gh_create_pr, "prepare_ri_branch": P.prepare_ri_branch,
-             "create_pbi": P.create_pbi}
-    P.gh_create_pr = lambda repo, h, b, t, body, labels=None, draft=False, timeout=120: (
-        created.append((h, b)) or (True, "url", ""))
-    P.prepare_ri_branch = lambda d, ri, tg, dry_run=True, timeout=240: (
-        True, {"behind": 1, "gradle_reverted": [], "human_conflicts": ["changelog"],
-               "pushed": False, "action": "held"}, "")
-    P.create_pbi = lambda *a, **k: (True, 1, "url", "")
-    try:
-        with tempfile.TemporaryDirectory() as d:
-            ns, restore_mocks = _integ_release(d, {"versions": {"msal": "8.4.2"},
-                                                   "repos": ["msal"], "pbi": "skip"})
-            ns.execute = True
-            try:
-                rc = CMD.cmd_create_integration_prs(ns)
-            finally:
-                restore_mocks()
-    finally:
-        for k, v in saved.items():
-            setattr(P, k, v)
-        restore_reads()
-    # freeze PR opened, but the integration PR is HELD (not created) -> attention (rc 2)
-    assert ("working/release/8.4.2", "release/8.4.2") in created
-    assert ("release-integration/8.4.2", "dev") not in created
-    assert rc == 2
+    created = _integration_provider(monkeypatch, behind=1, conflicts=["changelog"])
+    with tempfile.TemporaryDirectory() as d:
+        ns, restore_mocks = _integ_release(d, {"versions": {"msal": "8.4.2"},
+                                               "repos": ["msal"], "pbi": "skip"})
+        try:
+            rc = CMD.cmd_create_integration_prs(ns)
+        finally:
+            restore_mocks()
+    assert created == []
+    assert rc == 1
 
 
 
@@ -411,7 +527,7 @@ def test_release_announcement_builds_channel_post_from_state_versions():
     st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0",
                         "authenticator": "release/2026/08/22"})
     with mockctx.active({}):
-        out = as_dict(RA.build(st))
+        out = as_dict(_invoke(RA.build, st))
     assert out["kind"] == "needs_skill"
     assert out["tool"] == "microsoft_teams-SendMessageToChannel"
     p = out["payload"]
@@ -438,7 +554,7 @@ def test_release_announcement_cc_grouped_by_team():
     groups = [{"group": "OneAuth", "members": [{"name": "Nick Bopp", "email": "nichbop@microsoft.com"}]},
               {"group": "Native Auth", "members": [{"name": "Yu Xin", "email": "yuxin@microsoft.com"}]}]
     with mockctx.active({"cc_groups": groups}):
-        out = RA.build(st)
+        out = _invoke(RA.build, st)
     content = out.payload["content"]
     assert "<b>OneAuth</b>: @Nick Bopp" in content
     assert "<b>Native Auth</b>: @Yu Xin" in content
@@ -456,7 +572,7 @@ def test_release_announcement_cc_mode_self_pings_only_you():
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
     st.record_versions({"common": "24.6.0"})
     with mockctx.active({"cc_mode": "self", "self_email": "pedroro@microsoft.com"}):
-        out = RA.build(st)
+        out = _invoke(RA.build, st)
     mentions = _json.loads(out.payload["mentions"])
     assert mentions == [{"displayName": "pedroro", "id": "pedroro@microsoft.com", "type": "user"}]
 
@@ -471,7 +587,7 @@ def test_release_announcement_post_to_renders_plain_text_real_cc():
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
     st.record_versions({"common": "24.6.0"})
     with mockctx.active({"post_to": {"teamId": "T", "channelId": "19:test@thread.tacv2"}}):
-        out = RA.build(st)
+        out = _invoke(RA.build, st)
     content = out.payload["content"]
     assert "mentions" not in out.payload                 # nobody @-pinged
     # full real cc present, grouped, as plain text (no @)
@@ -481,7 +597,7 @@ def test_release_announcement_post_to_renders_plain_text_real_cc():
     # explicit cc_mode:self still overrides a redirect
     with mockctx.active({"post_to": {"teamId": "T", "channelId": "19:test@thread.tacv2"},
                          "cc_mode": "self", "self_email": "pedroro@microsoft.com"}):
-        out2 = RA.build(st)
+        out2 = _invoke(RA.build, st)
     import json as _json
     assert _json.loads(out2.payload["mentions"]) == \
         [{"displayName": "pedroro", "id": "pedroro@microsoft.com", "type": "user"}]
@@ -497,7 +613,7 @@ def test_release_announcement_cc_mode_off_is_plain_text():
     st.record_versions({"common": "24.6.0"})
     groups = [{"group": "OneAuth", "members": [{"name": "Nick Bopp", "email": "nichbop@microsoft.com"}]}]
     with mockctx.active({"cc_mode": "off", "cc_groups": groups}):
-        out = RA.build(st)
+        out = _invoke(RA.build, st)
     assert "mentions" not in out.payload
     assert "<b>OneAuth</b>: Nick Bopp" in out.payload["content"]
     assert "@Nick Bopp" not in out.payload["content"]
@@ -508,10 +624,10 @@ def test_release_announcement_cc_mode_off_is_plain_text():
 def test_release_announcement_cc_registry_loads_4_groups_20_members():
     """The real config/announcement_cc.yaml resolves to 4 groups / 20 maintained members."""
     from steps.finalize import release_announcement as RA
-    groups = RA._load_groups()
+    groups = RA._load_groups(_context(ReleaseState()))
     assert [g for g, _ in groups] == ["CP/Intune", "LTW", "OneAuth", "Native Auth"]
     assert sum(len(m) for _g, m in groups) == 20
-    assert len(RA._load_members()) == 20
+    assert len(RA._load_members(_context(ReleaseState()))) == 20
     emails = {m["email"] for _g, ms in groups for m in ms}
     assert "bingxi@microsoft.com" in emails and "yuxin@microsoft.com" in emails
 
@@ -525,7 +641,7 @@ def test_release_announcement_post_to_redirects_target():
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26")
     st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"})
     with mockctx.active({"post_to": {"teamId": "T-test", "channelId": "19:test@thread.tacv2"}}):
-        out = RA.build(st)
+        out = _invoke(RA.build, st)
     assert out.payload["teamId"] == "T-test"
     assert out.payload["channelId"] == "19:test@thread.tacv2"
 
@@ -538,7 +654,7 @@ def test_release_announcement_blocks_without_versions():
     from steps.finalize import release_announcement as RA
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26")   # no versions recorded
     with mockctx.active({}):
-        out = RA.build(st)
+        out = _invoke(RA.build, st)
     assert out.kind == "blocked"
 
 
@@ -551,7 +667,7 @@ def test_release_announcement_month_year_from_release_id_without_ccd():
     st = ReleaseState(release_id="2026-08")                     # no ccd
     st.record_versions({"common": "1.0.0"})
     with mockctx.active({}):
-        out = RA.build(st)
+        out = _invoke(RA.build, st)
     assert out.payload["subject"] == "Auth Client Android SDKs September 2026 Release"
 
 
@@ -564,7 +680,7 @@ def test_verify_pub_all_published_done():
     st = ReleaseState(release_id="2026-08")
     st.record_versions({"common": "24.6.0", "msal": "8.4.2"})
     with mockctx.active({"results": {"common4j": "published", "common": "published", "msal": "published"}}):
-        out = VP.build(st)
+        out = _invoke(VP.build, st)
     assert out.kind == "done"
     assert "24.6.0" in out.note and "8.4.2" in out.note
     assert any("24.6.0" in (l.get("url") or "") for l in out.links)
@@ -579,7 +695,7 @@ def test_verify_pub_missing_is_in_progress():
     st = ReleaseState(release_id="2026-08")
     st.record_versions({"common": "24.6.0", "msal": "8.4.2"})
     with mockctx.active({"results": {"common4j": "published", "common": "published", "msal": "missing"}}):
-        out = VP.build(st)
+        out = _invoke(VP.build, st)
     assert out.kind == "in_progress"
     assert "MSAL 8.4.2" in out.note                # names the pending artifact
     assert "Common 24.6.0" in out.note             # notes what's already published
@@ -594,7 +710,7 @@ def test_verify_pub_network_error_blocks():
     st = ReleaseState(release_id="2026-08")
     st.record_versions({"common": "24.6.0", "msal": "8.4.2"})
     with mockctx.active({"results": {"common4j": "published", "common": "error", "msal": "published"}}):
-        out = VP.build(st)
+        out = _invoke(VP.build, st)
     assert out.kind == "blocked" and "Common 24.6.0" in out.reason
 
 
@@ -606,7 +722,7 @@ def test_verify_pub_blocks_without_versions():
     from steps.finalize import verify_pub as VP
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({}):
-        out = VP.build(st)
+        out = _invoke(VP.build, st)
     assert out.kind == "blocked"
 
 
@@ -629,7 +745,7 @@ def test_verify_pub_common4j_uses_common_version():
     M.is_published = fake
     try:
         with mockctx.active({}):
-            VP.build(st)
+            _invoke(VP.build, st)
     finally:
         M.is_published = o
     assert seen == {"common4j": "24.6.0", "common": "24.6.0", "msal": "8.4.2"}
@@ -643,7 +759,7 @@ def test_verify_release_notes_all_published_done():
     from steps.finalize import verify_release_notes as VR
     from orchestrator.outcomes import as_dict
     with mockctx.active({"results": {"broker": "published", "msal": "published", "common": "published"}}):
-        out = as_dict(VR.build(_vrn_state()))
+        out = as_dict(_invoke(VR.build, _vrn_state()))
     assert out["kind"] == "done"
     assert "Broker 16.5.0" in out["note"] and "MSAL 8.4.2" in out["note"] and "Common 24.6.0" in out["note"]
     urls = [l["url"] for l in out["links"]]
@@ -658,7 +774,7 @@ def test_verify_release_notes_missing_is_in_progress():
     from steps.lib import mockctx
     from steps.finalize import verify_release_notes as VR
     with mockctx.active({"results": {"broker": "published", "msal": "published", "common": "missing"}}):
-        out = VR.build(_vrn_state())
+        out = _invoke(VR.build, _vrn_state())
     assert out.kind == "in_progress"
     assert "Common 24.6.0" in out.note                       # names the pending release
     assert "Broker 16.5.0" in out.note                       # notes what's already published
@@ -671,7 +787,7 @@ def test_verify_release_notes_error_blocks():
     from steps.lib import mockctx
     from steps.finalize import verify_release_notes as VR
     with mockctx.active({"results": {"broker": "error", "msal": "published", "common": "published"}}):
-        out = VR.build(_vrn_state())
+        out = _invoke(VR.build, _vrn_state())
     assert out.kind == "blocked" and "Broker 16.5.0" in out.reason
 
 
@@ -684,7 +800,7 @@ def test_verify_release_notes_blocks_without_versions():
     st = ReleaseState(release_id="2026-08")
     st.record_versions({"common": "24.6.0", "msal": "8.4.2"})     # no broker
     with mockctx.active({}):
-        out = VR.build(st)
+        out = _invoke(VR.build, st)
     assert out.kind == "blocked" and "broker" in out.reason.lower()
 
 
@@ -734,7 +850,7 @@ def test_tag_authenticator_creates_tag():
     P.find_auth_release_build, P.create_lightweight_tag = fake_find, fake_create
     try:
         with mockctx.active({}):
-            out = TA.build(_ta_state())
+            out = _invoke(TA.build, _ta_state())
     finally:
         P.find_auth_release_build, P.create_lightweight_tag = of, oc
     assert out.kind == "done" and "6.2608.5658" in out.note and _TA_COMMIT[:8] in out.note
@@ -756,10 +872,63 @@ def test_tag_authenticator_idempotent_same_commit():
     P.create_lightweight_tag = lambda o, pj, r, t, c, timeout=60: (True, {"created": False, "objectId": _TA_COMMIT}, "")
     try:
         with mockctx.active({}):
-            out = TA.build(_ta_state())
+            out = _invoke(TA.build, _ta_state())
     finally:
         P.find_auth_release_build, P.create_lightweight_tag = of, oc
     assert out.kind == "done" and "idempotent" in out.note.lower()
+
+
+def test_tag_authenticator_recovery_uses_frozen_target():
+    from steps.lib import mockctx
+    from steps.finalize import tag_authenticator as TA
+    from tools import pipelines as P
+    from orchestrator import effects
+    from orchestrator.state import ReleaseState, StepState
+
+    state = ReleaseState(release_id="2026-08")
+    state.versions["authenticator"] = "release/2026/08/13"
+    handler = effects.EffectHandler(
+        step_id=TA.ID,
+        mode=effects.EffectMode.IDEMPOTENT,
+        recovery=effects.EffectRecovery.FROZEN,
+        prepare=TA.prepare_effect,
+        execute=TA.execute,
+    )
+    with mockctx.active({"version": "6.2608.5658", "commit": _TA_COMMIT}):
+        prepared = effects.prepare(handler, _context(state))
+    execution = {
+        "id": "effect",
+        "owner": "engine",
+        "started_at": "2026-09-12T00:00:00Z",
+        "refresh": False,
+        "effect_mode": "idempotent",
+        "effect_recovery": "frozen",
+        "operation_key": prepared["operation_key"],
+        "effect_input": prepared["input"],
+    }
+    state.set_step(
+        "finalize", TA.ID, StepState(status="running", execution=execution)
+    )
+    seen = {}
+    original = P.create_lightweight_tag
+    P.create_lightweight_tag = lambda _o, _p, _r, tag, commit, timeout=60: (
+        seen.update(tag=tag, commit=commit),
+        (True, {"created": False, "objectId": commit}, ""),
+    )[1]
+    try:
+        with mockctx.active({"version": "6.2608.9999", "commit": "f" * 40}):
+            assert TA.prepare_effect(_context(state)) == prepared["input"]
+            outcome = _invoke_effect(TA.execute, state, execution)
+    finally:
+        P.create_lightweight_tag = original
+
+    assert outcome.kind == "done"
+    assert seen == {"tag": "6.2608.5658", "commit": _TA_COMMIT}
+    assert prepared["input"]["repository"] == {
+        "org": TA._REPO["org"],
+        "project": TA._REPO["project"],
+        "name": TA._REPO["name"],
+    }
 
 
 
@@ -774,7 +943,7 @@ def test_tag_authenticator_conflict_different_commit_blocks():
     P.create_lightweight_tag = lambda o, pj, r, t, c, timeout=60: (True, {"created": False, "objectId": "dead" * 10}, "")
     try:
         with mockctx.active({}):
-            out = TA.build(_ta_state())
+            out = _invoke(TA.build, _ta_state())
     finally:
         P.find_auth_release_build, P.create_lightweight_tag = of, oc
     assert out.kind == "blocked" and "already exists" in out.reason and "reconcile" in out.reason
@@ -797,7 +966,7 @@ def test_tag_authenticator_dry_run_does_not_write():
     P.create_lightweight_tag = _boom
     try:
         with mockctx.active({"dry_run": "true"}):
-            out = TA.build(_ta_state())
+            out = _invoke(TA.build, _ta_state())
     finally:
         P.find_auth_release_build, P.create_lightweight_tag = of, oc
     assert out.kind == "done" and "dry-run" in out.note.lower() and called["create"] is False
@@ -818,7 +987,7 @@ def test_tag_authenticator_injected_version_commit_skips_lookup():
     P.create_lightweight_tag = lambda o, pj, r, t, c, timeout=60: (True, {"created": True, "objectId": c}, "")
     try:
         with mockctx.active({"version": "6.2608.9999", "commit": "abc123"}):
-            out = TA.build(_ta_state())
+            out = _invoke(TA.build, _ta_state())
     finally:
         P.find_auth_release_build, P.create_lightweight_tag = of, oc
     assert out.kind == "done" and "6.2608.9999" in out.note
@@ -831,7 +1000,7 @@ def test_tag_authenticator_blocks_without_branch():
     from steps.lib import mockctx
     from steps.finalize import tag_authenticator as TA
     with mockctx.active({}):
-        out = TA.build(ReleaseState(release_id="2026-08"))
+        out = _invoke(TA.build, ReleaseState(release_id="2026-08"))
     assert out.kind == "blocked" and "release branch" in out.reason
 
 
@@ -846,7 +1015,7 @@ def test_tag_authenticator_blocks_when_build_not_run():
     P.find_auth_release_build = lambda b, timeout=90: (True, None, "no succeeded release-app build on refs/heads/release/2026/08/13")
     try:
         with mockctx.active({}):
-            out = TA.build(_ta_state())
+            out = _invoke(TA.build, _ta_state())
     finally:
         P.find_auth_release_build = of
     assert out.kind == "blocked" and "hasn't run yet" in out.reason
@@ -878,7 +1047,7 @@ def test_oneauth_common_pr_preview_computes_plan():
     OA.find_open_pr = lambda source, target, timeout=60: (True, None, "")
     try:
         with mockctx.active({}):
-            out = as_dict(S.build(_oa_state()))
+            out = as_dict(_invoke(S.build, _oa_state()))
     finally:
         OA.ahead_behind, OA.read_text, OA.find_open_pr = o_ab, o_rt, o_fp
     assert out["kind"] == "needs_skill" and out["tool"] == "create-oneauth-common-pr"
@@ -886,7 +1055,7 @@ def test_oneauth_common_pr_preview_computes_plan():
     assert p["common"] == "24.7.0" and p["msal"] == "8.5.0"
     assert p["merge_needed"] is True and p["behind"] == 35
     assert len(p["changed_files"]) == 4 and p["existing_pr"] is None
-    assert "create-oneauth-common-pr --release 2026-08 --dry-run" in out["payload"]["followup_command"]
+    assert "create-oneauth-common-pr --release 2026-08" in out["payload"]["followup_command"]
 
 
 
@@ -904,7 +1073,7 @@ def test_oneauth_common_pr_reuses_existing_pr_in_plan():
     OA.find_open_pr = lambda source, target, timeout=60: (True, {"id": 99, "url": "u", "title": "t"}, "")
     try:
         with mockctx.active({}):
-            out = as_dict(S.build(_oa_state()))
+            out = as_dict(_invoke(S.build, _oa_state()))
     finally:
         OA.ahead_behind, OA.read_text, OA.find_open_pr = o_ab, o_rt, o_fp
     p = out["payload"]["plan"]
@@ -918,7 +1087,7 @@ def test_oneauth_common_pr_blocks_without_versions():
     from steps.lib import mockctx
     from steps.finalize import oneauth_common_pr as S
     with mockctx.active({}):
-        out = S.build(ReleaseState(release_id="2026-08"))
+        out = _invoke(S.build, ReleaseState(release_id="2026-08"))
     assert out.kind == "blocked" and "Common and MSAL" in out.reason
 
 
@@ -935,7 +1104,7 @@ def test_oneauth_common_pr_blocks_on_missing_anchor():
     OA.find_open_pr = lambda source, target, timeout=60: (True, None, "")
     try:
         with mockctx.active({}):
-            out = S.build(_oa_state())
+            out = _invoke(S.build, _oa_state())
     finally:
         OA.ahead_behind, OA.read_text, OA.find_open_pr = o_ab, o_rt, o_fp
     assert out.kind == "blocked" and "anchors" in out.reason
@@ -943,13 +1112,13 @@ def test_oneauth_common_pr_blocks_on_missing_anchor():
 
 
 
-def test_oneauth_common_pr_config_is_agent():
+def test_oneauth_common_pr_config_is_external():
     """phases.yaml classifies oneauth_common_pr as an agent step in finalize."""
     import yaml as _yaml
     cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
     fin = next(p for p in cfg["phases"] if p["id"] == "finalize")
     s = next(x for x in fin["steps"] if x["id"] == "oneauth_common_pr")
-    assert s.get("owner") == "agent" and s.get("source") != "scout"
+    assert s.get("kind") == "external" and s.get("source") == "scout"
     # runs AFTER verify_pub (Common must be published first)
     ids = [x["id"] for x in fin["steps"]]
     assert ids.index("oneauth_common_pr") > ids.index("verify_pub")
@@ -970,7 +1139,7 @@ def test_wiki_payload_composes_page_and_filters_noise():
              "prs": [{"id": 1, "title": "Real feature"},
                      {"id": 2, "title": "LEGO: check in to working."}]}
     with mockctx.active(knobs):
-        ok, plan, det = W.compose_payload(st)
+        ok, plan, det = W.compose_payload(_context(st))
     assert ok, det
     c = plan["content"]
     assert "#App Version\n6.2608.5658 [Pipelines - Run 20260824.9]" in c
@@ -999,7 +1168,7 @@ def test_wiki_payload_build_reports_create_or_update():
     checks.wiki_page_exists = lambda *a, **k: True         # page exists → update
     try:
         with mockctx.active(knobs):
-            out = W.build(st)
+            out = _invoke(W.build, st)
     finally:
         checks.wiki_page_exists = oe
     assert out.kind == "needs_skill" and out.tool == "create-payload-wiki"
@@ -1062,7 +1231,8 @@ def test_final_status_email_step_sends_and_closes():
     from steps.finalize import final_status_email as FSE
     st = _status_state("finalize")
     with mockctx.active({"send_to": "me@microsoft.com"}):
-        out = FSE.build(st)
+        out = FSE.build(Orchestrator(CONFIG, st).context(
+            "finalize", FSE.ID, inputs={"send_to": "me@microsoft.com"}))
     assert out.kind == "needs_skill" and out.tool == "workiq_send_email"
     assert out.payload["to"] == ["me@microsoft.com"]
     assert "Final Status" in out.payload["subject"]

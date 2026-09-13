@@ -15,25 +15,41 @@ CONSEQUENCES of approving — the orchestrator then automatically:
   • prints GitHub PR compare links in the next stage.
 This is a real, externally-visible publish — deny to HOLD if anything looks wrong.
 
-Mechanics: `build(state)` discovers whether the orchestrator is parked (and on which build/stage)
-so the gate brief can show it. `submit_approval(state, comment)` is called by the
-`approve-orchestrator-gate` CLI command WHEN the human approves this gate — it re-discovers the
-pending approval and submits it via the pipeline approvals API, then the command records the
-release-agent gate. The engine is untouched; the command composes submit + the normal `approve`.
-Deterministic and best-effort (if nothing is parked it no-ops).
+Mechanics: `build(context)` discovers whether the orchestrator is parked (and on which build/stage)
+so the gate brief can show it. `prepare_approval(context)` freezes the exact Remove RC Tags
+approval id, owner build, stage, coordinates, and comment. Missing or different-stage identities
+block preparation. Core persists/authorizes that request before `submit_approval(context)`
+invokes its fenced writer once. `reconcile_approval(context)` reads ONLY the persisted approval
+id and accepts matching approved evidence on its original build; it never discovers a newer run
+or resubmits. Stage completion alone cannot settle an already-owned approval execution.
 
-Mock knobs (mocks.local.yaml / tests):
+Build-preview / directly injected unit-test knobs (mocks.local.yaml / tests):
   approval : inject the pending-approval info {approval_id,build_id,stage,build_url} or None.
-  submit   : 'skip' → do NOT submit the live ADO approval (offline/tests).
+  stage_state : legacy build-preview input {state,result} or None; never recovery evidence.
+  approval_state : exact provider object {id,status,pipeline:{owner:{_links:{web:{href}}}}}
+                   or None for read-only reconciliation; href contains the owner buildId.
+  submit   : legacy 'skip' is rejected during preparation, never a success or provider receipt.
+Production rejects ANY nonempty gate mocks before approval preview, submission, or reconciliation.
+BUILD previews keep their mock inputs. Offline lifecycle tests inject a fake approval writer/
+read service directly; approval inputs alone do not mock IO or authorize provider actions.
 """
 from __future__ import annotations
+from dataclasses import dataclass
+
+from orchestrator.step_context import StepContext
 
 from orchestrator.outcomes import Done, NeedsHuman
-from steps.lib.mockctx import mock_input, MISSING
+from steps.finalize._orchestrator_gate import prepare_expected_approval, reconcile_expected_approval
+from steps.lib.mockctx import MISSING
 from tools import pipelines as P
 
+from orchestrator.authority import WriteOperation
+
+WRITES = (WriteOperation.SUBMIT_PIPELINE_APPROVAL,)
 ID = "gate_watch"
 KIND = "gate"
+STAGE = "Remove RC Tags"
+APPROVAL_COMMAND = "approve-orchestrator-gate"
 
 CONFIG = {
     "org": P.ENGINEERING_ORG,
@@ -50,16 +66,18 @@ CONSEQUENCES = ("removes RC tags, publishes internal artifacts to the ADO Maven 
 
 MOCKABLE = {
     "approval": {"kind": "input", "desc": "Inject pending-approval info {approval_id,build_id,stage,build_url} or None."},
-    "submit": {"kind": "input", "desc": "'skip' -> don't submit the live ADO approval (tests)."},
+    "stage_state": {"kind": "input", "desc": "Inject the Remove RC Tags stage state {state,result} or None."},
+    "approval_state": {"kind": "input", "desc": "Exact approval {id,status,pipeline.owner._links.web.href} or None for read-only reconciliation."},
+    "submit": {"kind": "input", "desc": "Legacy 'skip' is rejected for approval lifecycle; offline tests inject fake provider ports."},
 }
 
 
-def _pending(state):
+def _pending(context):
     """(ok, info|None, detail) — the orchestrator's pending approval for this release."""
-    inj = mock_input("approval", MISSING)
+    inj = context.input("approval", MISSING)
     if inj is not MISSING:
         return (True, inj, "")
-    return P.find_orchestrator_pending_approval(CONFIG["org"], CONFIG["project"], state.release_id)
+    return context.services.pipelines.find_orchestrator_pending_approval(CONFIG["org"], CONFIG["project"], context.release.release_id)
 
 
 def _links(info=None):
@@ -69,15 +87,32 @@ def _links(info=None):
     return lk
 
 
-def build(state):
-    ok, info, detail = _pending(state)
+def _completed(context):
+    injected = context.input("stage_state", MISSING)
+    if injected is MISSING:
+        ok, stage_state, detail = context.services.pipelines.orchestrator_stage_state(
+            CONFIG["org"], CONFIG["project"], context.release.release_id, STAGE
+        )
+    else:
+        ok, stage_state, detail = True, injected, ""
+    is_complete = bool(
+        stage_state
+        and str(stage_state.get("state")).lower() == "completed"
+        and str(stage_state.get("result")).lower()
+        in ("succeeded", "succeededwithissues")
+    )
+    return ok, is_complete, detail
+
+
+def build(context: StepContext):
+    ok, info, detail = _pending(context)
     if not ok:
         # can't check right now — surface it; the human can still decide manually.
         return NeedsHuman(
             f"gate_watch: couldn't read the orchestrator gate ({detail}). Check the Release "
-            f"Orchestrator run for {state.release_id} manually before approving.", attest=False)
+            f"Orchestrator run for {context.release.release_id} manually before approving.", attest=False)
     if not info:
-        return Done(f"No Release Orchestrator gate is parked for {state.release_id} — nothing to "
+        return Done(f"No Release Orchestrator gate is parked for {context.release.release_id} — nothing to "
                     f"approve here (the orchestrator isn't waiting at a manual approval).",
                     links=_links())
     return NeedsHuman(
@@ -87,23 +122,31 @@ def build(state):
         attest=False)
 
 
-def submit_approval(state, comment=""):
-    """Submit the real ADO orchestrator approval for this release. Called by the
-    `approve-orchestrator-gate` command when the human approves the gate. Returns (ok, detail).
-    Best-effort: no pending approval -> no-op success."""
-    if str(mock_input("submit", "")).lower() == "skip":
-        return (True, "ADO approval submit skipped (mock).")
-    ok, info, detail = _pending(state)
-    if not ok:
-        return (False, f"couldn't locate the orchestrator approval ({detail}).")
-    if not info:
-        return (True, "no pending orchestrator approval to submit (already approved / not parked).")
-    oks, ds = P.submit_pipeline_approval(
-        CONFIG["org"], CONFIG["project"], info["approval_id"],
-        comment or "Approved via Scout (release-agent gate_watch).")
-    if not oks:
-        return (False, f"submitting the '{info['stage']}' approval on build "
-                       f"{info['build_id']} FAILED ({ds}) - the ADO gate is NOT approved.")
-    return (True, f"submitted the '{info['stage']}' approval on Release Orchestrator build "
-                  f"{info['build_id']} - publish stages will now run.")
+@dataclass(frozen=True)
+class ApprovalParameters:
+    comment: str = ""
 
+
+PARAMETERS = {"prepare_approval": ApprovalParameters}
+
+
+def prepare_approval(context: StepContext[ApprovalParameters]):
+    """Freeze the exact stage/approval/build and comment without submitting."""
+    return prepare_expected_approval(
+        context,
+        pending=_pending,
+        config=CONFIG,
+        expected_stage=STAGE,
+        comment=context.parameters.comment,
+        default_comment="Approved via Scout (release-agent gate_watch).",
+    )
+
+
+def submit_approval(context: StepContext) -> tuple[bool, str]:
+    """Invoke only core's fenced writer for the already-frozen request."""
+    return context.approval.submit()
+
+
+def reconcile_approval(context: StepContext) -> tuple[bool, str]:
+    """Read the frozen approval; retain the hold without matching approved evidence."""
+    return reconcile_expected_approval(context, expected_stage=STAGE)

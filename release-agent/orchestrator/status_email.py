@@ -43,9 +43,11 @@ def _step(state, phase, step):
         return None
 
 
-def _is_done(state, phase, step) -> bool:
+def _is_done(state, phase, step, selection=None) -> bool:
     try:
-        return state.is_done(phase, step)
+        ready = next((item for item in selection.steps
+                      if item.definition.key == f"{phase}.{step}"), None) if selection else None
+        return ready.complete if ready else state.is_done(phase, step)
     except Exception:  # noqa: BLE001
         return False
 
@@ -57,26 +59,28 @@ def _phase_index(phase_order, phase_id):
         return -1
 
 
-def _step_status(state, phase, step, phase_order):
+def _step_status(state, phase, step, phase_order, selection=None):
     """Derive a partner-facing status for one of OUR steps: complete | blocked | in_progress
     (it's the current phase's active work) | not_started."""
     st = _step(state, phase, step)
     if st is not None and getattr(st, "status", None) == "blocked":
         return "blocked"
-    if _is_done(state, phase, step):
+    if _is_done(state, phase, step, selection):
         return "complete"
     # In progress if we've reached this step's phase (current phase index >= its phase index).
-    cur_i = _phase_index(phase_order, getattr(state, "current_phase", None))
+    frontier = selection.frontier if selection else None
+    current_phase = frontier.id if frontier else None
+    cur_i = _phase_index(phase_order, current_phase)
     ph_i = _phase_index(phase_order, phase)
     if cur_i >= ph_i >= 0:
         return "in_progress"
     return "not_started"
 
 
-def _roll_up(state, steps, phase_order):
+def _roll_up(state, steps, phase_order, selection=None):
     """Combine several of our steps into one milestone status: all done → complete;
     any blocked → blocked; any reached → in_progress; else not_started."""
-    statuses = [_step_status(state, p, s, phase_order) for p, s in steps]
+    statuses = [_step_status(state, p, s, phase_order, selection) for p, s in steps]
     if statuses and all(s == "complete" for s in statuses):
         return "complete"
     if any(s == "blocked" for s in statuses):
@@ -148,20 +152,24 @@ def _auth_build_link(state):
     return {"text": "Authenticator build", "url": f"{org}/_build/results?buildId={bid}&view=results"}
 
 
-def milestones(state, phase_order):
+def milestones(state, phase_order, selection=None):
     """The ordered partner milestone rows, each: {label, status, date, details:[{text,url?}]}."""
     rows = []
 
     # 1. Code Complete — the CCD; complete once CCD has passed (Phase 1 done).
-    cc_status = "complete" if _is_done(state, "ccd", "final_reminder") or _roll_up(
-        state, [("ccd", "final_reminder")], phase_order) == "complete" else _step_status(
-        state, "ccd", "final_reminder", phase_order)
+    cc_status = "complete" if _is_done(
+        state, "ccd", "final_reminder", selection
+    ) or _roll_up(
+        state, [("ccd", "final_reminder")], phase_order, selection
+    ) == "complete" else _step_status(
+        state, "ccd", "final_reminder", phase_order, selection)
     rows.append({"label": "Code Complete", "status": cc_status,
                  "date": _fmt_date(getattr(state, "ccd", None)), "details": []})
 
     # 2. Release Branches Created — orchestrator cut them (Phase-2 orchestrator_health).
     rows.append({"label": "Release Branches Created",
-                 "status": _roll_up(state, [("build_verify", "orchestrator_health")], phase_order),
+                 "status": _roll_up(state, [("build_verify", "orchestrator_health")],
+                                    phase_order, selection),
                  "date": "", "details": _release_branch_links(state)})
 
     # 3. Bug Bash Test Plan — the cloned bug-bash plans.
@@ -172,7 +180,8 @@ def milestones(state, phase_order):
         tp_details = [{"text": f"Broker test plan {plan_id}", "url": _TP.plan_web_url(plan_id)}]
     rows.append({"label": "Bug Bash Test Plan",
                  "status": _roll_up(state, [("bug_bash", "clone_plans_broker"),
-                                            ("bug_bash", "clone_plans_auth")], phase_order),
+                                            ("bug_bash", "clone_plans_auth")],
+                                     phase_order, selection),
                  "date": "", "details": tp_details})
 
     # 4. RC builds + automation run — the MRWP/auth RC pipelines (Phase 2). Surface the
@@ -185,7 +194,8 @@ def milestones(state, phase_order):
                  "status": _roll_up(state, [("build_verify", "mrwp_ecs"),
                                             ("build_verify", "mrwp_local"),
                                             ("build_verify", "auth_ecs"),
-                                            ("build_verify", "rc_report")], phase_order),
+                                            ("build_verify", "rc_report")],
+                                     phase_order, selection),
                  "date": "", "details": rc_details})
 
     # 4b. Authenticator app — built at Phase 2 (auth_ecs), version-tagged at Phase 4
@@ -196,36 +206,41 @@ def milestones(state, phase_order):
         auth_details.append(abl)
     rows.append({"label": "Authenticator app built & tagged",
                  "status": _roll_up(state, [("build_verify", "auth_ecs"),
-                                            ("finalize", "tag_authenticator")], phase_order),
+                                            ("finalize", "tag_authenticator")],
+                                     phase_order, selection),
                  "date": "", "details": auth_details})
 
     # 5. Manual Test Pass Scheduled — the bug bash invite (shows as Scheduled, not Complete).
     #    The date is RECOMPUTED deterministically from when send_invite ran (its persisted
     #    completed_at) via the same scheduling rule — no extra persisted field, no guess.
-    invite_done = _is_done(state, "bug_bash", "send_invite")
+    invite_done = _is_done(state, "bug_bash", "send_invite", selection)
     rows.append({"label": "Manual Test Pass Scheduled",
                  "status": "scheduled" if invite_done else _step_status(
-                     state, "bug_bash", "send_invite", phase_order),
+                     state, "bug_bash", "send_invite", phase_order, selection),
                  "date": _bugbash_date(state), "details": []})
 
     # 6. Manual Test Pass Complete — bug bash signed off.
     rows.append({"label": "Manual Test Pass Complete",
-                 "status": _roll_up(state, [("bug_bash", "bugbash_complete")], phase_order),
+                 "status": _roll_up(state, [("bug_bash", "bugbash_complete")],
+                                    phase_order, selection),
                  "date": "", "details": []})
 
     # 7. Final Release builds published — Maven Central + GitHub (Phase 4).
     rows.append({"label": "Final Release builds published",
-                 "status": _roll_up(state, [("finalize", "verify_pub")], phase_order),
+                 "status": _roll_up(state, [("finalize", "verify_pub")],
+                                    phase_order, selection),
                  "date": "", "details": []})
 
     # 8. Notification sent out to partners — the Teams announcement.
     rows.append({"label": "Notification sent out to partners",
-                 "status": _roll_up(state, [("finalize", "release_announcement")], phase_order),
+                 "status": _roll_up(state, [("finalize", "release_announcement")],
+                                    phase_order, selection),
                  "date": "", "details": []})
 
     # 9. Release Notes published — the GitHub release notes.
     rows.append({"label": "Release Notes published",
-                 "status": _roll_up(state, [("finalize", "verify_release_notes")], phase_order),
+                 "status": _roll_up(state, [("finalize", "verify_release_notes")],
+                                    phase_order, selection),
                  "date": "", "details": []})
     return rows
 
@@ -285,9 +300,10 @@ def current_status_line(state, phase_order, ms):
 
 # ---- window ---------------------------------------------------------------
 
-def in_window(state, phase_order):
+def in_window(state, phase_order, selection=None):
     """(bool, reason) — True while build_verify <= current phase < rollout_start."""
-    cur = getattr(state, "current_phase", None)
+    frontier = selection.frontier if selection else None
+    cur = frontier.id if frontier else None
     if not cur:
         return (False, "release hasn't entered a phase yet")
     ci = _phase_index(phase_order, cur)
@@ -424,12 +440,12 @@ def render_html(model) -> str:
         "</div></div>")
 
 
-def compose(state, phase_order, recipients, changes=None):
+def compose(state, phase_order, recipients, changes=None, selection=None):
     """Build the send descriptor. Returns {to, subject, html, skip, reason, model}."""
-    ok, reason = in_window(state, phase_order)
+    ok, reason = in_window(state, phase_order, selection)
     month_year = schedule.target_month_label(state) or str(getattr(state, "release_id", ""))
     subject = f"Auth Client Android SDKs {month_year} Release — Daily Status"
-    ms = milestones(state, phase_order)
+    ms = milestones(state, phase_order, selection)
     model = {
         "month_year": month_year,
         "status_line": current_status_line(state, phase_order, ms),

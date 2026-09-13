@@ -23,14 +23,70 @@ Mock knobs (mocks.local.yaml / tests):
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+import hashlib
+import json
+
 from orchestrator.outcomes import Done, Blocked
-from steps.lib.agent import legacy_run
-from steps.lib.mockctx import mock_input, MISSING
+from orchestrator.evidence import StepData
+from steps.lib.mockctx import MISSING
 from tools import testplans as T
 from tools import broker_plans as B
 
+from orchestrator.authority import OwnStepData, BrokerPlanEvidence, WriteOperation
+
+EVIDENCE = (OwnStepData(), BrokerPlanEvidence())
+WRITES = (WriteOperation.ENSURE_BROKER_PLAN,)
 ID = "clone_plans_broker"
 KIND = "agent"
+EFFECT_MODE = "transactional"
+EFFECT_RECOVERY = "frozen"
+
+
+def prepare_effect(context):
+    execution = context.evidence.step("bug_bash", ID).execution or {}
+    if isinstance(execution.get("effect_input"), dict):
+        return dict(execution["effect_input"])
+    fail = context.input("fail", MISSING)
+    if fail is not MISSING:
+        return Blocked(f"clone_plans_broker: {fail}")
+    dest = context.input("name", MISSING)
+    if dest is MISSING:
+        dest = T.broker_plan_name(context.release.release_id)
+    from steps.build_verify._common import latest_rc
+    rc = latest_rc(context)
+    record = context.evidence.resources.get(B.RESOURCE) or {}
+    injected = (
+        context.input("plan_id", MISSING) is not MISSING
+        or context.input("clone_id", MISSING) is not MISSING
+    )
+    source = record.get("source")
+    if source is None and not injected:
+        ok, source, detail = context.services.testplans.prepare_broker_source(rc=rc)
+        if not ok:
+            return Blocked(f"clone_plans_broker: {detail}")
+    evidence_sha256 = hashlib.sha256(
+        json.dumps(rc, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:16]
+    return {
+        "release": context.release.release_id,
+        "plan_name": dest,
+        "identity": B.identity(context.release.release_id, dest),
+        "rc": rc.get("rc"),
+        "ecs_run": (rc.get("ecs") or {}).get("run_id"),
+        "local_run": (rc.get("local") or {}).get("run_id"),
+        "evidence_sha256": evidence_sha256,
+        "source": source,
+    }
+
+
+def execute(context: StepContext):
+    return _build(context, thaw(context.effect.execution["effect_input"]))
+
+
+def reconcile(context: StepContext):
+    """Recover the durable plan intent; ensure_plan never repeats an unresolved create."""
+    return execute(context)
 
 MOCKABLE = {
     "name": {"kind": "input", "desc": "Override the destination plan name (e.g. a 'TEST ...' name for a safe live run)."},
@@ -44,52 +100,66 @@ def _links(plan_id):
     return [{"name": f"Broker test plan {plan_id}", "url": T.plan_web_url(plan_id)}]
 
 
-def record_plan(state, plan_id, name):
-    step = state.get_step("bug_bash", ID)
-    step.data = dict(step.data or {})
-    step.data.update(plan_id=plan_id, plan_name=name)
-    resource = state.resources.get(B.RESOURCE) or {}
-    step.data["ui_suite_id"] = resource.get("ui_suite_id")
-    state.set_step("bug_bash", ID, step)
+def record_plan(context, plan_id, name):
+    evidence = context.recovery()
+    return plan_binding(evidence.step("bug_bash", ID).data,
+                        evidence.resources.get(B.RESOURCE) or {}, plan_id, name)
 
 
-def build(state):
-    fail = mock_input("fail", MISSING)
+def plan_binding(existing, resource, plan_id, name):
+    data = thaw(existing or {})
+    data.update(plan_id=plan_id, plan_name=name)
+    data["ui_suite_id"] = resource.get("ui_suite_id")
+    return StepData(data)
+
+
+def build(context: StepContext):
+    if context.effect is None:
+        raise ValueError("Broker creation requires an authorized effect context")
+    return execute(context)
+
+
+def _build(context, effect_input=None):
+    fail = context.input("fail", MISSING)
     if fail is not MISSING:
         return Blocked(f"clone_plans_broker: {fail}")
 
-    dest = mock_input("name", MISSING)
+    effect_input = effect_input or {}
+    release_id = effect_input.get("release", context.release.release_id)
+    dest = effect_input.get("plan_name", MISSING)
     if dest is MISSING:
-        dest = T.broker_plan_name(state.release_id)
-    step = state.get_step("bug_bash", ID)
+        dest = context.input("name", MISSING)
+    if dest is MISSING:
+        dest = T.broker_plan_name(context.release.release_id)
+    step = context.evidence.step("bug_bash", ID)
 
     # Explicit offline mocks do not acquire resources or call external APIs.
-    injected = mock_input("plan_id", MISSING)
+    injected = context.input("plan_id", MISSING)
     if injected is not MISSING:
-        record_plan(state, injected, dest)
-        return Done(f"Broker test plan already built for {state.release_id}: "
-                    f"'{dest}' (plan {injected}).", links=_links(injected))
-    clone_id = mock_input("clone_id", MISSING)
+        return Done(f"Broker test plan already built for {context.release.release_id}: "
+                    f"'{dest}' (plan {injected}).", links=_links(injected),
+                    updates=(record_plan(context, injected, dest),))
+    clone_id = context.input("clone_id", MISSING)
     if clone_id is MISSING:
-        record = state.resources.setdefault(B.RESOURCE, {})
+        record = context.recovery().resources.get(B.RESOURCE, {})
         if not isinstance(record, dict):
             return Blocked("Invalid Broker resource record; owner recovery required")
         try:
             from steps.build_verify._common import latest_rc
-            ok, clone_id, detail = B.ensure_plan(
-                state.release_id, dest, record, state.checkpoint,
-                stored_id=(step.data or {}).get("plan_id", B.MISSING_ID), rc=latest_rc(state))
+            ok, clone_id, detail = context.effect.services.ensure_broker_plan(
+                release_id, dest, record=record,
+                stored_id=(step.data or {}).get("plan_id", B.MISSING_ID),
+                rc=latest_rc(context),
+                prepared_source=effect_input.get("source"),
+                expected_identity=effect_input.get("identity"),
+            )
         except ValueError as exc:
             return Blocked(f"clone_plans_broker: {exc}")
         if not ok:
             return Blocked(
                 f"clone_plans_broker: {detail}", links=_links(clone_id) if clone_id else [])
-    record_plan(state, clone_id, dest)
     return Done(
         f"Broker test plan ready: '{dest}' (plan {clone_id}) — three flat suites "
         f"('{T.BROKER_MANUAL_SUITE_NAME}', '{T.BROKER_NATIVE_AUTH_SUITE_NAME}', "
         f"'{T.BROKER_UI_SUITE_NAME}'), referencing existing test cases.",
-        links=_links(clone_id))
-
-
-run = legacy_run(build)
+        links=_links(clone_id), updates=(record_plan(context, clone_id, dest),))

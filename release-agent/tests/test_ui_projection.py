@@ -1,4 +1,5 @@
 """Phase 3 consumes Phase 2's exact evidence; all external mutations are stubbed."""
+from tests._context import context as _context, invoke as _invoke
 import copy
 import json
 
@@ -42,10 +43,11 @@ def point(cid, config=292, point_id=1):
 
 def plan_stub(monkeypatch, points):
     calls = []
-    monkeypatch.setattr(T, "_find_suite_by_name", lambda *a: (True, 901, ""))
+    monkeypatch.setattr(
+        T, "_find_suite_by_name", lambda *a, **k: (True, 901, ""))
     monkeypatch.setattr(P, "_ado_rest_get_all", lambda *a, **k: (True, points, ""))
     monkeypatch.setattr(T, "_set_points_outcome",
-                        lambda plan, suite, ids, verdict, *a:
+                        lambda plan, suite, ids, verdict, *a, **k:
                         (calls.append((list(ids), verdict)) or True, ""))
     return calls
 
@@ -58,7 +60,7 @@ def test_same_snapshot_report_and_plan_recovered_pass_persists_provenance(offlin
     st = state_for(rc)
     old = current_rc(ecs={PROD: [(title, "Failed")]}, rc=1)
     st.pipeline_runs["rcs"].insert(0, old)
-    model = R.rc_report_model(st)
+    model = R.rc_report_model(_context(st))
     assert R.rc_ui_gate(model)["ui_passed"] == 2
     assert not model["mrwp"]["ECS"]["failed_suites"]
     test = model["mrwp"]["ECS"]["tests"]["suites"][0]["test_results"][0]
@@ -67,7 +69,7 @@ def test_same_snapshot_report_and_plan_recovered_pass_persists_provenance(offlin
     assert len(test["attempts"]) == 3
     calls = plan_stub(monkeypatch, [point(1561125), point(1561125, 328, 2)])
     with mockctx.active({}):
-        assert U.build(st).kind == "done"
+        assert _invoke(U.build, st).kind == "done"
     assert calls == [([1, 2], "Passed")]
     data = st.get_step("bug_bash", U.ID).data
     assert data["broker"]["failed_case_ids"] == []
@@ -99,14 +101,18 @@ def test_distinct_parameters_and_api_failures_cannot_be_hidden_by_a_sibling_pass
         200: {("ECS", "prod_msal_rc_broker"): "Failed"},
         300: {("ECS", "prod_msal_rc_broker"): "NotApplicable"},
         400: {("ECS", "prod_msal_rc_broker"): "Passed"}}
-    assert R.rc_ui_gate(R.rc_report_model(st))["ui_failed"] == len(projection["failures"]) == 2
+    assert R.rc_ui_gate(R.rc_report_model(_context(st)))["ui_failed"] == len(projection["failures"]) == 2
     calls = plan_stub(monkeypatch, [point(100), point(100, 294, 2), point(100, 328, 3),
                                     point(200, point_id=4), point(300, point_id=5),
                                     point(400, point_id=6)])
     assignments = []
-    monkeypatch.setattr(D, "set_assigned_to", lambda cid, owner: (assignments.append(cid) or True, ""))
+    monkeypatch.setattr(
+        D,
+        "set_assigned_to",
+        lambda cid, owner, **_coordinates: (assignments.append(cid) or True, ""),
+    )
     with mockctx.active({}):
-        assert U.build(st).kind == "done"
+        assert _invoke(U.build, st).kind == "done"
     assert calls == [([2, 3, 6], "Passed"), ([1, 4], "Failed"), ([5], "NotApplicable")]
     assert assignments == [100, 200]
     note = st.get_step("bug_bash", "ui_failures").note
@@ -144,10 +150,9 @@ def test_invalid_evidence_blocks_before_any_external_mutation(offline, monkeypat
     before = copy.deepcopy(st)
     monkeypatch.setattr(T, "fill_ui_automation_results", forbidden)
     with mockctx.active({}):
-        result = U.build(st)
+        result = _invoke(U.build, st)
     assert result.kind == "blocked" and "refresh Phase-2" in result.reason
-    assert st.pipeline_runs == before.pipeline_runs
-    assert st.get_step("bug_bash", U.ID).data["result"]["status"] == "incomplete"
+    assert st == before
 
 
 def test_na_only_and_skipped_mapping_are_not_success_shaped_missing_evidence(offline, monkeypatch):
@@ -159,7 +164,7 @@ def test_na_only_and_skipped_mapping_are_not_success_shaped_missing_evidence(off
     calls = plan_stub(monkeypatch, [point(100), point(100, 328, 2), point(999, point_id=3),
                                     point(200, 999, 4)])
     with mockctx.active({}):
-        result = U.build(st)
+        result = _invoke(U.build, st)
     assert result.kind == "done" and "3 source test(s) skipped mapping" in result.note
     assert calls == [([1, 2], "NotApplicable")]
     data = st.get_step("bug_bash", U.ID).data
@@ -204,20 +209,20 @@ def test_duplicate_normalized_ids_and_cross_provider_build_reuse_block(offline):
 def test_rerun_clears_generated_failures_but_preserves_human_work(offline, monkeypatch):
     st = state_for(current_rc(ecs={PROD: [("test_100_X", "Failed")]}))
     plan_stub(monkeypatch, [point(100)])
-    monkeypatch.setattr(D, "set_assigned_to", lambda *a: (True, ""))
+    monkeypatch.setattr(D, "set_assigned_to", lambda *a, **kw: (True, ""))
     human_link = {"name": "Investigation", "url": "https://example.com/investigation"}
     st.set_step("bug_bash", "ui_failures",
                 StepState(status="done", note="Human sign-off", links=[human_link], data={"ticket": 12}))
     with mockctx.active({}):
-        U.build(st)
-        U.build(st)
+        _invoke(U.build, st)
+        _invoke(U.build, st)
     step = st.get_step("bug_bash", "ui_failures")
     assert step.note.count("UI failures to investigate") == 1
     assert step.note.endswith("Human sign-off") and step.status == "done"
     st.pipeline_runs["rcs"].append(current_rc(rc=3))
     monkeypatch.setattr(D, "set_assigned_to", forbidden)
     with mockctx.active({}):
-        U.build(st)
+        _invoke(U.build, st)
     step = st.get_step("bug_bash", "ui_failures")
     assert step.status == "done" and step.note == "Human sign-off"
     assert step.links == [human_link] and step.data == {"ticket": 12}
@@ -234,7 +239,7 @@ def test_unmarked_note_is_not_guessed_to_be_generated(offline, monkeypatch):
         data={"broker_failed_tests": 1, "auth_failed_cases": [100], "keep": True}))
     before = copy.deepcopy(st.get_step("bug_bash", "ui_failures"))
     with mockctx.active({}):
-        assert U.build(st).kind == "done"
+        assert _invoke(U.build, st).kind == "done"
     step = st.get_step("bug_bash", "ui_failures")
     assert step.note == before.note and step.status == "done"
     assert step.data == {"keep": True}
@@ -246,7 +251,7 @@ def test_current_auth_snapshot_replaces_earlier_auth_failure(offline, monkeypatc
     st.set_step("bug_bash", U.ID, StepState(data={"auth": {"failed_case_ids": [999]}}))
     plan_stub(monkeypatch, [point(100)])
     with mockctx.active({}):
-        assert U.build(st).kind == "done"
+        assert _invoke(U.build, st).kind == "done"
     assert st.get_step("bug_bash", U.ID).data["auth"]["failures"] == []
     assert not st.get_step("bug_bash", "ui_failures").note
 
@@ -255,17 +260,19 @@ def test_partial_fill_and_assignment_errors_are_explicit(offline, monkeypatch):
     st = state_for(current_rc(ecs={PROD: [("test_100_Pass", "Passed"), ("test_200_Fail", "Failed")]}))
     plan_stub(monkeypatch, [point(100), point(200, point_id=2)])
     monkeypatch.setattr(T, "_set_points_outcome",
-                        lambda plan, suite, ids, outcome, *a: (outcome == "Passed", "write failed"))
+                        lambda plan, suite, ids, outcome, *a, **k:
+                        (outcome == "Passed", "write failed"))
     with mockctx.active({}):
-        result = U.build(st)
+        result = _invoke(U.build, st)
     assert result.kind == "blocked" and "may already have changed" in result.reason
     data = st.get_step("bug_bash", U.ID).data
     assert data["fill_status"] == "incomplete" and data["summary"]["set_passed"] == 1
     assert data["summary"]["incomplete_outcome"] == "Failed" and data["provenance"]["rc"] == 2
     plan_stub(monkeypatch, [point(100), point(200, point_id=2)])
-    monkeypatch.setattr(D, "set_assigned_to", lambda *a: (False, "assignment rejected"))
+    monkeypatch.setattr(
+        D, "set_assigned_to", lambda *a, **kw: (False, "assignment rejected"))
     with mockctx.active({}):
-        result = U.build(st)
+        result = _invoke(U.build, st)
     assert "reassignment incomplete" in result.note
     assert st.get_step("bug_bash", U.ID).data["broker"]["assignment_errors"] == [
         {"case_id": 200, "detail": "assignment rejected"}]

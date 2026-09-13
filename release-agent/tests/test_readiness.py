@@ -1,4 +1,6 @@
 """Release-agent tests — readiness. Shared harness in tests/_harness.py."""
+import pytest
+
 from tests._harness import *  # noqa: F401,F403
 
 
@@ -10,7 +12,7 @@ def test_entry_gate_blocks_before_signing():
     st, orch = _orch(signed=False)
     actions = orch.run_until_gate()
     assert actions[-1].kind == "readiness"
-    assert st.status == "readiness_gate"
+    assert orch.status_report()["status"] == "readiness_gate"
     # nothing ran
     assert sum(1 for a in actions if a.kind == "ran") == 0
     assert not st.is_done("preflight", "notice")
@@ -21,17 +23,18 @@ def test_entry_gate_blocks_before_signing():
 def test_signing_clears_entry_gate():
     st, orch = _orch(signed=False)
     orch.run_until_gate()
-    assert st.status == "readiness_gate"
+    assert orch.status_report()["status"] == "readiness_gate"
     _pass_scout_checks(orch)
     orch.gate.sign()
-    assert st.readiness_signed
+    assert orch.gate.signed
     _clear_phase0_scout(orch)
     _clear_ccd_scout(orch)
     orch.run_until_gate()
+    report = orch.status_report()
     # Phases 0, 1 and 2 have no human gate (rc_report's 90% UI gate is auto); the first
     # hold is the Phase-3 'ui_failures' human reminder.
-    assert st.current_step == "ui_failures"
-    assert st.status == "awaiting_action"
+    assert report["current_step"] == "ui_failures"
+    assert report["status"] == "awaiting_action"
 
 
 
@@ -39,9 +42,9 @@ def test_signing_clears_entry_gate():
 def test_partial_sign_does_not_clear():
     st, orch = _orch(signed=False)
     orch.gate.sign(["yubikey"])          # only one attest item
-    assert not st.readiness_signed
+    assert not orch.gate.signed
     orch.run_until_gate()
-    assert st.status == "readiness_gate"
+    assert orch.status_report()["status"] == "readiness_gate"
 
 
 
@@ -52,7 +55,7 @@ def test_sign_records_evidence_note():
     _pass_scout_checks(orch)
     orch.gate.sign(["play_console_access", "oncall_window", "saw_ame", "yubikey"],
                    note="engineer confirmed all four")
-    assert st.readiness_signed
+    assert orch.gate.signed
     assert st.readiness_items["yubikey"].get("note") == "engineer confirmed all four"
 
 
@@ -83,8 +86,8 @@ def test_cli_sign_refuses_bare_and_has_no_all_flag():
         _C.save_state(st0, tmp, "t")
         rc = rcmd.cmd_sign(ns)
         assert rc != 0
-        st_after, _ = _C.load_orch(tmp, "t", CONFIG)
-        assert not st_after.readiness_signed
+        _, orch_after = _C.load_orch(tmp, "t", CONFIG)
+        assert not orch_after.gate.signed
 
 
 
@@ -93,12 +96,12 @@ def test_decline_any_item_blocks_gate():
     """Every item is required — declining ANY item blocks the gate."""
     st, orch = _orch(signed=False)
     orch.gate.decline(["yubikey"])
-    assert st.blocked
-    assert "yubikey" in st.blocked_items
+    assert orch.gate.blocked
+    assert "yubikey" in orch.gate.blocked_item_ids
     actions = orch.run_until_gate()
     assert actions[-1].kind == "blocked"
-    assert st.status == "blocked"
-    assert not st.readiness_signed
+    assert orch.status_report()["status"] == "blocked"
+    assert not orch.gate.signed
     assert not st.is_done("preflight", "notice")
 
 
@@ -108,8 +111,26 @@ def test_decline_nonhard_item_also_blocks():
     """No hard/soft distinction — declining on-call blocks just the same."""
     st, orch = _orch(signed=False)
     orch.gate.decline(["oncall_now"])
-    assert st.blocked
-    assert "oncall_now" in st.blocked_items
+    assert orch.gate.blocked
+    assert "oncall_now" in orch.gate.blocked_item_ids
+
+
+def test_readiness_failure_revokes_signature_and_recovery_clears_block():
+    st, orch = _orch()
+    assert orch.gate.signed
+    orch.gate.record_check("oncall_now", "fail", "now on-call")
+    assert not orch.gate.signed
+    assert orch.gate.signed_at is None
+
+    orch.gate.record_check("oncall_now", "pass", "not on-call")
+    assert orch.gate.signed
+
+    orch.gate.decline(["yubikey"])
+    assert orch.gate.blocked and not orch.gate.signed
+    orch.gate.sign(["yubikey"], note="replacement key acquired")
+    assert not orch.gate.blocked
+    assert orch.gate.blocked_item_ids == []
+    assert orch.gate.signed
 
 
 
@@ -134,10 +155,10 @@ def test_failing_auto_keeps_gate_closed():
     st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
     orch.gate.sign()  # attests humans, verifies auto (fails)
-    assert not st.readiness_signed
+    assert not orch.gate.signed
     assert st.readiness_items["build_access"]["status"] == "fail"
     orch.run_until_gate()
-    assert st.status == "readiness_gate"
+    assert orch.status_report()["status"] == "readiness_gate"
     _stub_build_defs("pass")  # restore
 
 
@@ -149,7 +170,7 @@ def test_passing_auto_plus_attest_clears_gate():
     orch = Orchestrator(CONFIG, st)
     _pass_scout_checks(orch)   # scout-assisted (ICM + Kusto)
     orch.gate.sign()
-    assert st.readiness_signed
+    assert orch.gate.signed
     assert st.readiness_items["build_access"]["status"] == "pass"
     assert st.readiness_items["oncall_now"]["status"] == "pass"   # verified, not attested
 
@@ -180,9 +201,9 @@ def test_record_check_pass_then_sign_clears_gate():
     orch.gate.record_check("teams_notify", "pass", "teams reachable")
     orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
     orch.gate.sign()                       # everything but oncall_now satisfied
-    assert not st.readiness_signed
+    assert not orch.gate.signed
     orch.gate.record_check("oncall_now", "pass", "not in roster")
-    assert st.readiness_signed             # last item satisfied -> gate clears
+    assert orch.gate.signed             # last item satisfied -> gate clears
 
 
 
@@ -194,7 +215,7 @@ def test_record_check_fail_keeps_gate_closed():
     orch = Orchestrator(CONFIG, st)
     orch.gate.sign()
     orch.gate.record_check("oncall_now", "fail", "you are on-call this rotation")
-    assert not st.readiness_signed
+    assert not orch.gate.signed
     chk = orch.gate.checklist()
     noc = next(i for i in chk["items"] if i["id"] == "oncall_now")
     assert noc["status"] == "fail" and not noc["satisfied"]
@@ -233,9 +254,9 @@ def test_silent_perms_is_required_scout_item():
     orch.gate.record_check("teams_notify", "pass", "teams reachable")
     orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
     orch.gate.sign()
-    assert not st.readiness_signed
+    assert not orch.gate.signed
     orch.gate.record_check("silent_perms", "pass", "all servers auto-approved")
-    assert st.readiness_signed
+    assert orch.gate.signed
 
 
 
@@ -269,7 +290,7 @@ def test_silent_perms_opt_out_degraded_satisfies_gate():
     sp = next(i for i in orch.gate.checklist()["items"] if i["id"] == "silent_perms")
     assert sp["status"] == "degraded" and sp["satisfied"]
     orch.gate.sign()
-    assert st.readiness_signed
+    assert orch.gate.signed
 
 
 
@@ -277,33 +298,111 @@ def test_silent_perms_opt_out_degraded_satisfies_gate():
 def test_gate_blocks_until_approved():
     st, orch = _orch()
     _advance_to_first_gate(orch)
-    assert st.status == "holding_gate"
+    assert orch.status_report()["status"] == "holding_gate"
     orch.run_until_gate()
-    assert st.status == "holding_gate"
+    assert orch.status_report()["status"] == "holding_gate"
     assert not st.is_done("bug_bash", "bugbash_complete")
 
 
 
 
-def test_skip_advances_past_gate():
+def test_skip_cannot_bypass_gate():
     st, orch = _orch()
     _advance_to_first_gate(orch)
-    orch.skip_step("bug_bash", "bugbash_complete", "n/a this release")
-    assert st.is_done("bug_bash", "bugbash_complete")            # skipped counts as done
-    rec = st.steps[st.key("bug_bash", "bugbash_complete")]
-    assert rec["status"] == "skipped"
+    act = orch.skip_step("bug_bash", "bugbash_complete", "n/a this release")
+    assert act.kind == "idle"
+    assert "gate steps require approve or deny" in act.message
+    assert not st.is_done("bug_bash", "bugbash_complete")
     orch.run_until_gate()
-    assert st.current_step == "gate_watch"                # advanced past the gate to the Phase-4 gate
+    assert orch.status_report()["current_step"] == "bugbash_complete"
 
 
+def test_done_cannot_bypass_gate():
+    st, orch = _orch()
+    _advance_to_first_gate(orch)
+    act = orch.complete_step("bug_bash", "bugbash_complete", "done")
+    assert act.kind == "idle"
+    assert "gate steps require approve or deny" in act.message
+    assert not st.is_done("bug_bash", "bugbash_complete")
+    assert st.gate_decisions == []
+
+
+def test_generic_record_and_reservation_cannot_bypass_gate():
+    from orchestrator.outcomes import NeedsSkill
+
+    st, orch = _orch()
+    _advance_to_first_gate(orch)
+    with pytest.raises(ValueError, match="record-step cannot complete a human gate"):
+        orch.record_scout_step("bug_bash", "bugbash_complete", "pass")
+    reserved = orch.reserve_step(
+        "bug_bash",
+        "bugbash_complete",
+        NeedsSkill(tool="workiq_send_email", record_as="bugbash_complete"),
+        "test-executor",
+    )
+    assert reserved.kind == "blocked"
+    assert "Gate steps cannot be reserved" in reserved.reason
+    assert not st.is_done("bug_bash", "bugbash_complete")
+    assert st.gate_decisions == []
+
+
+def test_terminal_gate_without_approval_is_projected_pending():
+    from orchestrator.state import StepState
+
+    st, orch = _orch()
+    _advance_to_first_gate(orch)
+    st.set_step(
+        "bug_bash",
+        "bugbash_complete",
+        StepState(status="skipped", completed_at="legacy", note="old override", by="human"),
+    )
+    reloaded = Orchestrator(CONFIG, st, mocks={})
+    record = st.get_step("bug_bash", "bugbash_complete")
+    assert record.status == "skipped"
+    assert record.note == "old override"
+    assert not reloaded._step_complete("bug_bash", "bugbash_complete")
+    assert reloaded.status_report()["status"] == "holding_gate"
+    assert reloaded.run_until_gate()[-1].kind == "gate"
+    assert reloaded.status_report()["current_step"] == "bugbash_complete"
+
+
+def test_skip_cannot_target_future_non_gate_step():
+    st, orch = _orch()
+    _advance_to_first_gate(orch)
+    act = orch.skip_step("finalize", "integ_prs", "done elsewhere")
+    assert act.kind == "idle"
+    assert "not currently eligible" in act.message
+    assert not st.is_done("finalize", "integ_prs")
+
+
+def test_cli_done_and_skip_fail_without_mutating_gate(tmp_path, capsys):
+    from orchestrator import cli
+
+    rid = "2026-08"
+    st, orch = _orch()
+    st.release_id = rid
+    _advance_to_first_gate(orch)
+    C.save_state(st, str(tmp_path), rid)
+    path = tmp_path / rid / "release-state.json"
+    before = path.read_bytes()
+    base = ["--runs-root", str(tmp_path)]
+    target = ["--release", rid, "--phase", "bug_bash", "--step", "bugbash_complete"]
+
+    assert cli.main(base + ["skip"] + target + ["--reason", "not needed"]) == 1
+    assert "gate steps require approve or deny" in capsys.readouterr().out
+    assert path.read_bytes() == before
+
+    assert cli.main(base + ["done"] + target + ["--note", "done"]) == 1
+    assert "gate steps require approve or deny" in capsys.readouterr().out
+    assert path.read_bytes() == before
 
 
 def test_reminder_is_not_a_gate():
     from orchestrator.engine import Orchestrator as _O
     st, orch = _orch()
     # ui_failures is a reminder; flag_freeze is a gate
-    assert _O._is_reminder({"owner": "human"}) is True
-    assert _O._is_reminder({"owner": "human", "gate": True}) is False
+    assert _O._is_reminder({"kind": "human_action"}) is True
+    assert _O._is_reminder({"kind": "approval_gate"}) is False
     assert _O._is_reminder({"owner": "agent"}) is False
 
 
@@ -340,7 +439,9 @@ def test_automation_prompt_delegates_to_step_module():
     from orchestrator import automations as A
     by = {a["slug"]: a for a in A.plan(CONFIG, "2026-09", "2026-09-09")["automations"]}
     # localization's module owns both bespoke prompts (delegated, not hardcoded here)
-    assert "trigger localization" in by["ccd-noon"]["prompt"]
+    assert "launch-localization" in by["ccd-noon"]["prompt"]
+    assert "--review-hash" in by["ccd-noon"]["prompt"]
+    assert "--approved-by" in by["ccd-noon"]["prompt"]
     assert "localization poller" in by["ccd-localization-poller"]["prompt"]
     # a plain multi-step reminder automation uses the generic default prompt
     assert "For EACH of these steps in order" in by["ccd-morning"]["prompt"]
@@ -348,12 +449,14 @@ def test_automation_prompt_delegates_to_step_module():
 
 
 
-def test_concurrent_record_check_both_persist():
+def test_concurrent_record_check_both_persist(monkeypatch):
     """Two record-check CLI invocations fired at the same instant must BOTH
     persist — the per-release lock prevents the last-writer-wins clobber that
     dropped `notice` in the live test (parallel state-write race)."""
     import threading
     from orchestrator import cli as _cli
+    from tools import checks
+    monkeypatch.setattr(checks, "read_pipeline_variable", lambda *a, **k: (False, None, "offline"))
     with tempfile.TemporaryDirectory() as rr:
         R = "2099-03"
         _cli.main(["--runs-root", rr, "init", "--release", R,
@@ -634,14 +737,10 @@ def test_timed_step_gated_until_fire_time():
     from orchestrator.state import StepState
     from orchestrator import schedule
     tz = schedule.get_tz()
-    cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
-    pf_steps = [s["id"] for p in cfg["phases"] if p["id"] == "preflight" for s in p["steps"]]
-
     def _ccd_active(now_dt):
-        st = ReleaseState(release_id="2026-08", ccd="2026-08-26",
-                          ccd_source="confirmed", readiness_signed=True)
-        for sid in pf_steps:                       # Phase 0 done ⇒ ccd is the active phase
-            st.set_step("preflight", sid, StepState(status="done"))
+        st = ReleaseState(
+            release_id="2026-08", ccd="2026-08-26", ccd_source="confirmed")
+        _active_phase(st, "ccd")
         return Orchestrator(CONFIG, st, now=now_dt, mocks={})
 
     # 08:00 on CCD day — phase is due, but the 09:00 comms are NOT yet runnable.
@@ -670,7 +769,7 @@ def test_local_mock_never_mocks_a_gate():
     _clear_ccd_scout(orch)             # clear Phase-1 scout comms (Phase 1 is gateless)
     _advance_to_first_gate(orch)       # Phases 0-2 gateless; clear ui_failures → hold at bugbash_complete
     assert not st.is_done("bug_bash", "bugbash_complete")
-    assert st.status == "holding_gate"
+    assert orch.status_report()["status"] == "holding_gate"
 
 
 
@@ -744,12 +843,15 @@ def test_approve_orchestrator_gate_command_submits_then_advances():
     from steps.finalize import gate_watch as gw
     st, orch = _orch()
     _advance_to_first_gate(orch); orch.approve_gate("ok"); orch.run_until_gate()
-    assert st.current_step == "gate_watch" and st.status == "holding_gate"
+    report = orch.status_report()
+    assert report["current_step"] == "gate_watch"
+    assert report["status"] == "holding_gate"
+    assert report["gate"]["approval_command"] == "approve-orchestrator-gate"
 
     calls = {}
 
-    def fake_submit(state, comment=""):
-        calls["comment"] = comment
+    def fake_submit(context):
+        calls["comment"] = context.parameters.comment
         return (True, "submitted the 'Remove RC Tags' approval on build 555")
 
     o = gw.submit_approval
@@ -769,6 +871,78 @@ def test_approve_orchestrator_gate_command_submits_then_advances():
     assert "Remove RC Tags" in (after.get_step("finalize", "gate_watch").note or "")
 
 
+def test_generic_approve_rejects_gate_with_external_approval_command():
+    import argparse
+    import tempfile
+    from orchestrator import cli_common as _C
+    from orchestrator.commands import release as release_cmd
+
+    st, orch = _orch()
+    _advance_to_first_gate(orch)
+    orch.approve_gate("ok")
+    orch.run_until_gate()
+    assert orch.status_report()["current_step"] == "gate_watch"
+
+    with tempfile.TemporaryDirectory() as directory:
+        _C.save_state(st, directory, "t")
+        args = argparse.Namespace(
+            runs_root=directory,
+            release="t",
+            config=CONFIG,
+            as_of=None,
+            comment="unsafe local approval",
+        )
+        assert release_cmd.cmd_approve(args) == 1
+        after = _C.load_state(directory, "t")
+    assert not after.is_done("finalize", "gate_watch")
+    assert not any(
+        decision.get("step") == "finalize.gate_watch"
+        for decision in after.gate_decisions
+    )
+
+
+def test_approve_orchestrator_gate_rejects_unapproved_terminal_gate_record():
+    import argparse
+    import tempfile
+    from orchestrator import cli_common as _C
+    from orchestrator.commands import gate_approve as GA
+    from orchestrator.state import StepState
+    from steps.finalize import gate_watch as gw
+
+    st, orch = _orch()
+    _advance_to_first_gate(orch)
+    orch.approve_gate("ok")
+    orch.run_until_gate()
+    st.set_step(
+        "finalize",
+        "gate_watch",
+        StepState(status="skipped", completed_at="legacy", note="old override"),
+    )
+    st.gate_decisions = [
+        decision
+        for decision in st.gate_decisions
+        if decision.get("step") != "finalize.gate_watch"
+    ]
+    original = gw.submit_approval
+    gw.submit_approval = lambda context: (True, "submitted build 555")
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            _C.save_state(st, directory, "t")
+            args = argparse.Namespace(
+                runs_root=directory,
+                release="t",
+                config=CONFIG,
+                as_of=None,
+                comment="recovered",
+            )
+            rc = GA.cmd_approve_orchestrator_gate(args)
+            after = _C.load_state(directory, "t")
+    finally:
+        gw.submit_approval = original
+    assert rc == 0
+    assert after.get_step("finalize", "gate_watch").status == "done"
+
+
 
 
 def test_approve_orchestrator_gate_command_holds_when_submit_fails():
@@ -780,10 +954,11 @@ def test_approve_orchestrator_gate_command_holds_when_submit_fails():
     from steps.finalize import gate_watch as gw
     st, orch = _orch()
     _advance_to_first_gate(orch); orch.approve_gate("ok"); orch.run_until_gate()
-    assert st.current_step == "gate_watch" and st.status == "holding_gate"
+    assert orch.status_report()["current_step"] == "gate_watch"
+    assert orch.status_report()["status"] == "holding_gate"
 
     o = gw.submit_approval
-    gw.submit_approval = lambda state, comment="": (False, "ADO approval submit FAILED (boom).")
+    gw.submit_approval = lambda context: (False, "ADO approval submit FAILED (boom).")
     try:
         with tempfile.TemporaryDirectory() as d:
             _C.save_state(st, d, "t")
@@ -795,7 +970,9 @@ def test_approve_orchestrator_gate_command_holds_when_submit_fails():
         gw.submit_approval = o
     assert rc == 1
     assert not after.is_done("finalize", "gate_watch")   # gate NOT recorded
-    assert after.status == "holding_gate" and after.current_step == "gate_watch"
+    after_orch = Orchestrator(CONFIG, after, mocks={})
+    assert after_orch.status_report()["status"] == "holding_gate"
+    assert after_orch.status_report()["current_step"] == "gate_watch"
 
 
 
@@ -808,7 +985,7 @@ def test_approve_orchestrator_gate_command_rejects_wrong_gate():
     from steps.finalize import gate_watch as gw
     st, orch = _orch()
     _advance_to_first_gate(orch)   # holding at bug_bash.bugbash_complete, NOT gate_watch
-    assert st.current_step == "bugbash_complete"
+    assert orch.status_report()["current_step"] == "bugbash_complete"
 
     o = gw.submit_approval
     called = {"n": 0}

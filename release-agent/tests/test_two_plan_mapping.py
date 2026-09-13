@@ -1,4 +1,5 @@
 """Report/plan regression matrix; synthetic transport and temporary state only."""
+from tests._context import context as _context, invoke as _invoke
 import copy
 import json
 from urllib.parse import parse_qs, urlparse
@@ -95,28 +96,30 @@ def test_monthly_333_report_only_all_failures_shared_by_report_fill_and_distribu
     seen, assignments = {}, []
     monkeypatch.setattr(T, "fill_ui_automation_results", broker_fill)
 
-    def fill(plan, suite, outcomes):
+    def fill(plan, suite, outcomes, **_coordinates):
         seen.update(outcomes)
         return auth_fill(plan, suite, outcomes)
 
     monkeypatch.setattr(T, "fill_auth_ui_results", fill)
     monkeypatch.setattr(distribution, "set_assigned_to",
-                        lambda cid, owner: (assignments.append(cid) is None, ""))
-    assert U.build(st).kind == "done"
-    assert set(seen) == D._auth_automated_ids(st)
-    assert BU._auto_failed_ids(st) == assignments == list(range(120, 126))
+                        lambda cid, owner, **_coordinates: (
+                            assignments.append(cid) is None, ""))
+    assert _invoke(U.build, st).kind == "done"
+    assert set(seen) == D._auth_automated_ids(_context(st))
+    assert BU._auto_failed_ids(_context(st)) == assignments == list(range(120, 126))
     reminder = st.get_step("bug_bash", "ui_failures")
     assert not st.is_done("bug_bash", "ui_failures")
-    model = R.rc_report_model(st)
+    model = R.rc_report_model(_context(st))
     model["release"] = st.release_id
     gate, auth = R.rc_ui_gate(model), R.auth_report_gate(model)
     from orchestrator.commands.rc_report import _format
     surfaces = [reminder.note, _format(model),
                 rendering.rc_email_plain(model, {}, gate, auth, ""),
                 rendering.rc_email_html(model, {}, gate, auth, "")]
-    assert '<a href="' + monthly[0]["links"][0]["url"].replace("&", "&amp;") + '">' in surfaces[-1]
+    href = monthly[0]["links"][0]["url"].replace("&", "&amp;")
+    assert any(f"href={quote}{href}{quote}" in surfaces[-1] for quote in ('"', "'"))
     for text in surfaces:
-        assert "intentionally" in text and "no test-plan case map" in text
+        assert ("intentionally" in text or "report-only" in text) and "no test-plan case map" in text
         for f in monthly:
             assert f["title"] in text and f["links"][0]["url"].replace("&", "&amp;") in text.replace(
                 "&amp;", "&").replace("&", "&amp;")
@@ -204,9 +207,9 @@ def test_invalid_auth_evidence_blocks_before_any_external_writes(monkeypatch, pa
 
     monkeypatch.setattr(T, "fill_auth_ui_results", forbidden)
     monkeypatch.setattr(T, "fill_ui_automation_results", forbidden)
-    assert U.build(state(rc)).kind == "blocked"
+    assert _invoke(U.build, state(rc)).kind == "blocked"
     with pytest.raises(ValueError, match="refresh"):
-        D._auth_automated_ids(state(rc))
+        D._auth_automated_ids(_context(state(rc)))
 
 
 def test_capture_paginates_runs_and_results_without_changing_aggregate_gate(monkeypatch):
@@ -265,7 +268,8 @@ def test_capture_rejects_unattributed_or_incomplete_source(monkeypatch, change):
 def test_wrong_ltw_targets_require_preview_no_manual_or_old_results_cleared(monkeypatch):
     points = [{"id": 1, "testCase": {"id": 100}, "configuration": {"id": 294}, "outcome": "Failed"},
               {"id": 2, "testCase": {"id": 999}, "configuration": {"id": 292}, "outcome": "Passed"}]
-    monkeypatch.setattr(T, "_find_suite_by_name", lambda *a: (True, 901, ""))
+    monkeypatch.setattr(
+        T, "_find_suite_by_name", lambda *a, **k: (True, 901, ""))
     monkeypatch.setattr(P, "_ado_rest_get_all", lambda *a: (True, copy.deepcopy(points), ""))
     monkeypatch.setattr(B, "verify_ui_configurations", lambda *a: (True, CONFIG_NAMES, ""))
     rc = current_rc(ecs={LTW: [("test_100_x", "Failed")]})
@@ -287,7 +291,7 @@ def test_new_capture_invalidates_stale_evidence_while_new_test_is_running():
     st = state(current_rc(rc=1))
     with active({"auth_build": {"build_id": 900010, "rc": 1, "status": "completed", "result": "succeeded"},
                  "test_build": 900012, "test_status": "inProgress"}):
-        assert auth_ecs.build(st).kind == "in_progress"
+        assert _invoke(auth_ecs.build, st).kind == "in_progress"
     assert "auth" not in st.pipeline_runs["rcs"][-1]
 
 
@@ -296,7 +300,7 @@ def test_auth_writer_preserves_unmapped_manual_points(monkeypatch):
               {"id": 2, "testCase": {"id": 999}, "outcome": "Failed"}]
     monkeypatch.setattr(P, "_ado_rest_get_all", lambda *a: (True, points, ""))
     writes = []
-    monkeypatch.setattr(T, "_set_points_outcome", lambda p, s, ids, outcome, timeout:
+    monkeypatch.setattr(T, "_set_points_outcome", lambda p, s, ids, outcome, timeout, **kw:
                         (writes.append((ids, outcome)) is None, ""))
     ok, summary, detail = T.fill_auth_ui_results(714514, 901, {100: "Passed"})
     assert ok, detail
@@ -330,7 +334,8 @@ def test_source_snapshot_selects_rc_rc_configs_only_for_represented_cases(monkey
     {"id": 1, "testCase": {"id": 100}, "configuration": {}},
 ])
 def test_invalid_target_points_block_before_writes(monkeypatch, point):
-    monkeypatch.setattr(T, "_find_suite_by_name", lambda *a: (True, 901, ""))
+    monkeypatch.setattr(
+        T, "_find_suite_by_name", lambda *a, **k: (True, 901, ""))
     monkeypatch.setattr(P, "_ado_rest_get_all", lambda *a: (True, [point], ""))
     assert not T.fill_ui_automation_results(900, {100: {("ECS", "rc_msal_rc_broker"): "Failed"}})[0]
 

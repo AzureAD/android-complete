@@ -10,14 +10,19 @@ Complete Day; investigate after); auth failures block with a `run az login` hint
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+
 from orchestrator.outcomes import Done, Blocked
-from steps.lib.agent import legacy_run
-from steps.lib.mockctx import mock_input, MISSING
+from steps.lib.mockctx import MISSING
 from steps.build_verify import _common as K
 from tools.pipelines import CHECKER_DEF
 
+from orchestrator.authority import PipelineScope, PipelineSlot
+
+EVIDENCE = (PipelineScope(PipelineSlot.CHECKER),)
 ID = "checker_fired"
 KIND = "agent"
+EFFECT_MODE = "read_only"
 
 CONFIG = {
     "org": K.ORG, "project": K.PROJECT, "def_id": CHECKER_DEF,
@@ -34,21 +39,21 @@ MOCKABLE = {
 }
 
 
-def build(state):
+def build(context: StepContext):
     cfg = CONFIG
-    month = state.release_id
+    month = context.release.release_id
     job = cfg["trigger_job"]
     from tools import pipelines as P
 
-    injected = mock_input("triggering", MISSING)
+    injected = context.input("triggering", MISSING)
     if injected is not MISSING:
         if not injected:
             return Blocked(
                 f"No Code Complete Checker run triggered the release in {month} "
                 f"(no run with a succeeded '{job}' job).")
-        return _verdict(state, injected.get("run") or {}, injected.get("result"), job)
+        return _verdict(context, injected.get("run") or {}, injected.get("result"), job)
 
-    ok, runs, detail = P.find_checker_runs(cfg["org"], cfg["project"], cfg["def_id"], month)
+    ok, runs, detail = context.services.pipelines.find_checker_runs(cfg["org"], cfg["project"], cfg["def_id"], month)
     if not ok:
         hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
         return Blocked(f"checker_fired: could not read checker runs ({detail}){hint}.")
@@ -61,13 +66,13 @@ def build(state):
     last = None
     read_err = None
     for run in runs[:cfg["max_scan"]]:
-        ok2, recs, detail2 = P.get_timeline(cfg["org"], cfg["project"], run.get("id"))
+        ok2, recs, detail2 = context.services.pipelines.get_timeline(cfg["org"], cfg["project"], run.get("id"))
         if not ok2:
             read_err = detail2            # remember why a read failed
             continue
         rec = P.named_record(recs, job)
         if rec is not None and rec.get("result") == "succeeded":
-            return _verdict(state, run, "succeeded", job)
+            return _verdict(context, run, "succeeded", job)
         last = run
     # If we matched nothing AND some timeline read failed, don't misdiagnose as
     # "not triggered" — surface the read failure (with the az-login hint on auth).
@@ -82,7 +87,7 @@ def build(state):
         f"hasn't arrived this is expected; otherwise investigate the checker.")
 
 
-def _verdict(state, run, result, job):
+def _verdict(context, run, result, job):
     bid = (run or {}).get("id")
     when = ((run or {}).get("queueTime") or "")[:16]
     links = K.links_for(bid, "Code Complete Checker run")
@@ -90,10 +95,6 @@ def _verdict(state, run, result, job):
         return Blocked(
             f"Code Complete Checker '{job}' did not succeed (result={result}) in run "
             f"{bid} ({when}) — the orchestrator was not launched.{K.UNBLOCK_HELP}", links=links)
-    K.stash_checker(state, bid, when)
     return Done(
         f"Code Complete Checker fired the release — run {bid} ({when}), '{job}' succeeded.",
-        links=links)
-
-
-run = legacy_run(build)
+        links=links, updates=(K.stash_checker(context, bid, when),))

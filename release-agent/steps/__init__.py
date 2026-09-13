@@ -8,12 +8,16 @@ adding a step can never "forget" to register it.
 
 Contract a step module exposes:
     ID: str                     # step id (matches config/phases.yaml)
-    KIND: str                   # 'agent' | 'scout' | 'attest'
-    def build(state) -> Outcome # returns one of orchestrator.outcomes.*
-    # optional: NAME, MOCKABLE, KNOWLEDGE, CONFIG; agent steps: run = legacy_run(build)
+    KIND: str                   # 'agent' | 'scout' | 'human' | 'attest' | 'gate'
+    def build(context: StepContext) -> Outcome # immutable inputs, typed evidence updates
+    # agent steps also declare EFFECT_MODE; effectful agents declare EFFECT_RECOVERY,
+    # prepare_effect and execute; transactional agents additionally declare reconcile.
+    # optional: NAME, MOCKABLE, KNOWLEDGE, CONFIG
+    # Auto build/execute/reconcile return Done, Blocked, or InProgress directly.
 
 `discover()` returns {"<phase>.<step>": module} for every step module found.
-`get_step(phase, step)` returns the module or None (a not-yet-migrated stub step).
+`get_step(phase, step)` returns the module or None; the handler catalog decides
+whether a configured step may use a built-in prompt or an explicit dummy.
 """
 from __future__ import annotations
 
@@ -27,7 +31,8 @@ _CACHE = None
 
 def discover(force: bool = False) -> dict:
     """Scan steps/<phase>/*.py and return {"<phase>.<ID>": module} for every module
-    that declares an `ID` and a `build`. Cached; pass force=True to rescan."""
+    that declares an `ID`. Invalid handlers fail loudly; helper modules without
+    an ID are ignored. Cached; pass force=True to rescan."""
     global _CACHE
     if _CACHE is not None and not force:
         return _CACHE
@@ -42,9 +47,14 @@ def discover(force: bool = False) -> dict:
             if not fn.endswith(".py") or fn.startswith("_"):
                 continue
             mod = import_module(f"{__name__}.{phase}.{fn[:-3]}")
-            sid = getattr(mod, "ID", None)
-            if sid is None or not hasattr(mod, "build"):
+            if not hasattr(mod, "ID"):
                 continue
+            sid = mod.ID
+            if not isinstance(sid, str) or not sid.strip():
+                raise RuntimeError(f"invalid step ID in module {mod.__name__}: {sid!r}")
+            if not callable(getattr(mod, "build", None)):
+                raise RuntimeError(
+                    f"step module {mod.__name__} ({phase}.{sid}) must define build(context)")
             key = f"{phase}.{sid}"
             if key in out:
                 raise RuntimeError(
@@ -57,5 +67,5 @@ def discover(force: bool = False) -> dict:
 
 def get_step(phase_id: str, step_id: str):
     """Return the co-located step module for <phase>.<step>, or None if that step
-    has no module yet (a stub step handled by the engine's generic path)."""
+    has no module. The handler catalog validates whether omission is allowed."""
     return discover().get(f"{phase_id}.{step_id}")

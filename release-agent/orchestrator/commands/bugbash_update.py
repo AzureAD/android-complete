@@ -43,6 +43,8 @@ def cmd_post_bugbash_update(args):
     now_naive = now.replace(tzinfo=None)
 
     st, orch = C.load_orch(args.runs_root, args.release, args.config, now)
+    parameters = orch.handler("bug_bash", "bugbash_updates").parse_parameters(
+        values={"members_file": getattr(args, "members_file", None)})
     if D.prune_progress(orch):
         C.save_state(st, args.runs_root, args.release)
     scope = {"kind": "phase", "phase": "bug_bash", "step": "bugbash_updates",
@@ -57,25 +59,26 @@ def cmd_post_bugbash_update(args):
                            "note": "outside 09:00–18:00 LA on a working day"}))
         return 0
 
-    chat_id = stored_chat_id(st)
+    context = orch.context("bug_bash", "bugbash_updates", parameters=parameters)
+    chat_id = stored_chat_id(context)
     if not chat_id:
         print(_json.dumps({"decision": "no_chat",
                            "note": "meeting chat binding missing/stale (run activate_chat against current invitation)"}))
         return 0
-    scope["state_matches"] = chat_state_matches(st)
+    scope["state_matches"] = chat_state_matches(context)
     try:
-        interval_hours = BU.poll_interval_hours(args.config)
+        interval_hours = BU.poll_interval_hours(context, args.config)
     except ValueError as exc:
         print(_json.dumps({"decision": "error", "detail": str(exc), "notifications": []}))
         return 1
 
-    ok, progress, detail = BU.gather(st)
+    ok, progress, detail = BU.gather(context)
     if not ok:
         print(_json.dumps({"decision": "error", "detail": detail}))
         return 0
 
     month_year = schedule.target_month_label(st) or "Bug Bash"
-    ok, payload, detail = BU.prepare_update(st, progress, getattr(args, "members_file", None))
+    ok, payload, detail = BU.prepare_update(context, progress, context.parameters.members_file)
     if not ok:
         print(_json.dumps({"decision": "error", "chatId": chat_id, "detail": detail, "notifications": []}))
         return 0

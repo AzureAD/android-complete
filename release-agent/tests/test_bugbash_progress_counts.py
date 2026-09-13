@@ -1,4 +1,5 @@
 """Progress counts human work, not automation passes owned by the same person."""
+from tests._context import invoke as _invoke
 import pytest
 
 from tools import bugbash as B
@@ -99,5 +100,5 @@ def test_no_human_work_after_filtering_does_not_start_a_zero_of_zero_poller(monk
     assert not B.all_complete({"total": 0, "remaining": 0})  # Empty reads alone still prove nothing.
     assert not B.all_complete({"total": 0, "auth_excluded_automated": 1})
     with mockctx.active({"progress": progress}):
-        outcome = U.build(_bb_updates_state())
+        outcome = _invoke(U.build, _bb_updates_state())
     assert outcome.kind == "done" and "No manual or triage" in outcome.note

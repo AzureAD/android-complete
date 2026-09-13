@@ -10,27 +10,33 @@ Deterministic; the skill only presents what this returns.
 """
 from __future__ import annotations
 import os
-import json
 from typing import Optional
 
 
-def _summarize(state_file: str) -> Optional[dict]:
+def _summarize(state_file: str, config_path: str = None) -> Optional[dict]:
     try:
-        with open(state_file, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
+        from orchestrator.state import ReleaseState
+        state = ReleaseState.load(state_file)
     except (OSError, ValueError):          # missing/unreadable file or bad JSON → skip it
         return None
+    status = phase = step = None
+    if config_path:
+        from orchestrator.engine import Orchestrator
+        report = Orchestrator(config_path, state).status_report()
+        status = report["status"]
+        phase = report["current_phase"]
+        step = report["current_step"]
     return {
-        "release_id": data.get("release_id"),
-        "status": data.get("status"),
-        "current_phase": data.get("current_phase"),
-        "current_step": data.get("current_step"),
-        "updated_at": data.get("updated_at"),
+        "release_id": state.release_id,
+        "status": status,
+        "current_phase": phase,
+        "current_step": step,
+        "updated_at": state.updated_at,
         "state_file": state_file,
     }
 
 
-def list_releases(runs_root: str) -> list:
+def list_releases(runs_root: str, config_path: str = None) -> list:
     """Return summaries of all releases found, newest-updated first."""
     out = []
     if not os.path.isdir(runs_root):
@@ -38,14 +44,16 @@ def list_releases(runs_root: str) -> list:
     for name in os.listdir(runs_root):
         sf = os.path.join(runs_root, name, "release-state.json")
         if os.path.isfile(sf):
-            s = _summarize(sf)
+            s = _summarize(sf, config_path)
             if s:
                 out.append(s)
     out.sort(key=lambda s: s.get("updated_at") or "", reverse=True)
     return out
 
 
-def resolve(runs_root: str, requested: Optional[str] = None) -> dict:
+def resolve(
+    runs_root: str, requested: Optional[str] = None, config_path: str = None
+) -> dict:
     """Decide which release to act on.
 
     Returns a dict:
@@ -59,7 +67,7 @@ def resolve(runs_root: str, requested: Optional[str] = None) -> dict:
     - ambiguous  : several exist and none named -> 'release' is the assumed
                    (most recently updated); caller should confirm.
     """
-    all_ = list_releases(runs_root)
+    all_ = list_releases(runs_root, config_path)
     if requested:
         match = next((r for r in all_ if r["release_id"] == requested), None)
         return {"resolution": "explicit" if match else "none",

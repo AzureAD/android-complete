@@ -4,8 +4,10 @@
 The step's logic lives in `steps/ccd/localization.py` (trigger + pure `decide`).
 These commands are the thin CLI seam the skill/poller calls:
 
-  * record-localization-run — after the pipeline is triggered, store the queued
-    build id + start time on the step (leaves it IN-FLIGHT, not done).
+  * launch-localization — review/reserve a concrete source/target/parameter plan;
+    fence a single trigger and verify its actual provider receipt before attachment.
+  * record-localization-run — recover only a receipt matching an already-started
+    launch review (leaves it IN-FLIGHT, not done).
   * check-localization — one poll: given the run or PR state, apply `decide()` and
     either wait, request a notification, or finish. Prints the decision JSON so the
     poller can claim and acknowledge each notification through the shared delivery protocol.
@@ -14,49 +16,156 @@ These commands are the thin CLI seam the skill/poller calls:
 """
 from __future__ import annotations
 import json as _json
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
-from orchestrator import cli_common as C, delivery as D
+from orchestrator import cli_common as C, delivery as D, revision, write_review as W
 from orchestrator import mocks as mocks_mod
+from orchestrator.outcomes import Blocked, Done, InProgress
+from orchestrator.transitions import TransitionIntent
 from steps.lib.context import SELF_CHAT_ID
 from steps.ccd import localization as L
+from tools import localization as provider
 
 
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
-def cmd_record_localization_run(args):
-    """Store the triggered build id + start time on the localization step. Leaves the
-    step in-flight so the poller can drive it to completion."""
-    st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
-    step = st.get_step("ccd", "localization")
-    if step.status in ("done", "skipped", "blocked"):
-        print(_json.dumps({"recorded": False, "reason": "localization is terminal"}))
-        return 0
-    reason = D.scope_reason(orch, {"kind": "step", "phase": "ccd", "step": "localization"})
-    if reason:
-        print(_json.dumps({"error": reason}))
-        return 1
-    if step.data.get("build_id"):
-        if str(step.data["build_id"]) != str(args.build_id):
-            print(_json.dumps({"error": "A different localization build is already recorded; owner review required"}))
-            return 1
+def _launch_config():
+    cfg = deepcopy(L.CONFIG)
+    inputs = mocks_mod.load_mocks().get("ccd.localization", {}) or {}
+    if "create_pr" in inputs:
+        value = str(inputs["create_pr"]).strip().lower()
+        if value not in ("true", "false", "1", "0", "yes", "no"):
+            raise ValueError("Localization create_pr override must explicitly be true or false")
+        cfg["variables"]["isCreatePrSelected"] = "true" if value in ("true", "1", "yes") else "false"
+    return cfg
+
+
+def plan_localization(args, orch):
+    step = orch.state.get_step("ccd", L.ID)
+    if step.data.get("build_id") and not (
+            step.invalidated_at and
+            (not step.execution or (step.status == "running" and step.execution.get("refresh")))):
+        raise ValueError("Localization already has a run; an explicit owner-reviewed reopen is required")
+    return provider.plan_launch(
+        orch, _launch_config(), source_branch=args.branch, source_version=args.source_version,
+        overrides=args.variable)
+
+
+def _receipt_owner(orch, execution_id):
+    revision.assert_current(orch)
+    step = orch.state.get_step("ccd", L.ID)
+    execution = step.execution or {}
+    if (not execution_id or execution.get("id") != execution_id
+            or step.status not in ("in_flight", "blocked")
+            or not revision.is_hash((execution.get("write_review") or {}).get("hash"))):
+        raise ValueError("Localization receipt requires the exact already-started reviewed execution")
+    return step
+
+
+def _attach_run(args, orch, build, *, authorization=None):
+    step = _receipt_owner(orch, args.execution_id)
+    plan = provider.receipt_plan(orch, _launch_config(), build)
+    if W.review_hash(orch, "ccd", L.ID, plan) != step.execution["write_review"]["hash"]:
+        raise ValueError("Localization build receipt does not match the stored launch review")
+    if authorization is not None and plan.as_dict() != authorization.plan.as_dict():
+        raise ValueError("Localization build receipt differs from the authorized launch")
+    started_at = provider.receipt_time(build, step)
+    target = plan.operations[0].target
+    build_id = str(build["id"])
+    run_url = f"{target['org']}/{target['project']}/_build?buildId={build_id}"
+    supplied_start = getattr(args, "started_at", None)
+    if supplied_start and datetime.fromisoformat(supplied_start.replace("Z", "+00:00")) != datetime.fromisoformat(started_at):
+        raise ValueError("--started-at does not match the provider queue time")
+    if getattr(args, "run_url", None) not in (None, run_url):
+        raise ValueError("--run-url does not match the verified provider build URL; omit it to use readback")
+    data = deepcopy(step.data)
+    if data.get("build_id") and str(data["build_id"]) == build_id:
         print(_json.dumps({"recorded": False, "reason": "build already recorded"}))
         return 0
-    step.data["build_id"] = args.build_id
-    step.data["started_at"] = args.started_at or _now_iso()
-    step.status = "in_flight"
-    step.note = "localization pipeline running — Scout is polling hourly"
-    if args.run_url:
-        step.data["run_url"] = args.run_url
-    st.set_step("ccd", "localization", step)
-    C.save_state(st, args.runs_root, args.release)
-    C.emit(args.runs_root, args.release,
-           f"[localization] pipeline triggered — build {args.build_id}; polling every "
-           f"{L.CONFIG['poll_interval_min']}m (timeout {L.CONFIG['timeout_hours']}h).",
-           kind="localization")
+    if data.get("build_id") and step.execution.get("refresh"):
+        try:
+            previous_start = datetime.fromisoformat(str(data.get("started_at", "")).replace("Z", "+00:00"))
+            execution_start = datetime.fromisoformat(step.execution["started_at"].replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("Previous localization run lacks valid ownership timing; owner review required") from exc
+        if previous_start.tzinfo is None or previous_start >= execution_start:
+            raise ValueError("A different localization build already belongs to this execution")
+        prior = {
+            key: data.get(key)
+            for key in (
+                "build_id", "started_at", "run_url", "pr_id", "pr_url",
+                "pr_status", "pipeline_complete",
+                "last_checked", "pr_discovered_at", "pr_announced_at",
+                "merge_deadline_alert_at", "timeout_notified_at",
+                "in_flight_since", "poll_in_min",
+            )
+            if data.get(key) is not None
+        }
+        if prior:
+            data.setdefault("previous_runs", []).append(prior)
+        for key in (
+            "build_id", "started_at", "run_url", "pr_id", "pr_url", "pr_status",
+            "pipeline_complete", "last_checked", "pr_discovered_at",
+            "pr_announced_at", "merge_deadline_alert_at", "timeout_notified_at",
+            "in_flight_since", "poll_in_min",
+        ):
+            data.pop(key, None)
+    if data.get("build_id"):
+        raise ValueError("A different localization build is already recorded; owner review required")
+    data.update(build_id=build_id, started_at=started_at, run_url=run_url)
+    orch.settle_execution(
+        "ccd", L.ID, args.execution_id,
+        InProgress("Verified localization launch; Scout is polling its outcome.",
+                   links=[{"name": "Localization run", "url": run_url}],
+                   poll_in_min=L.CONFIG["poll_interval_min"]), data=data)
+    C.save_state(orch.state, args.runs_root, args.release)
+    print(_json.dumps({"recorded": True, "build_id": build_id, "run_url": run_url}))
     return 0
+
+
+def cmd_launch_localization(args):
+    _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    try:
+        if args.dry_run and (args.execute or args.reserve):
+            raise ValueError("--dry-run cannot be combined with --execute/--reserve")
+        if not (args.execute or args.reserve):
+            print(_json.dumps(W.preview(orch, "ccd", L.ID, plan_localization(args, orch)), indent=2))
+            return 0
+        authorization = W.authorize(args, orch, "ccd", L.ID, lambda: plan_localization(args, orch))
+    except ValueError as exc:
+        print(_json.dumps({"error": str(exc), "permission_to_execute": False}))
+        return 1
+    if authorization.reserved_only:
+        W.print_reservation(authorization)
+        return 0
+    try:
+        authorization.validate()
+        build = provider.trigger(authorization.plan.operations[0])
+        authorization.validate()
+        return _attach_run(args, orch, build, authorization=authorization)
+    except Exception as exc:
+        note = (f"Localization launch uncertain: {exc}. Do not trigger again. Inspect ADO and use "
+                "record-localization-run for a matching receipt, or explicit owner resolution.")
+        orch.settle_execution("ccd", L.ID, authorization.execution_id, Blocked(note))
+        C.save_state(orch.state, args.runs_root, args.release)
+        print(_json.dumps({"error": note, "execution_id": authorization.execution_id}))
+        return 2
+
+
+def cmd_record_localization_run(args):
+    """Recover only a provider-verified receipt belonging to an already-reviewed launch."""
+    _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    try:
+        _receipt_owner(orch, args.execution_id)
+        cfg = _launch_config()
+        build = provider.read_build(cfg["org"], cfg["project"], args.build_id)
+        return _attach_run(args, orch, build)
+    except (ValueError, TypeError) as exc:
+        print(_json.dumps({"error": str(exc), "recorded": False}))
+        return 1
 
 
 def _truthy(v) -> bool:
@@ -82,6 +191,16 @@ def cmd_check_localization(args):
     if reason:
         print(_json.dumps({"decision": "stopped", "note": reason, "notifications": []}))
         return 0
+    execution = step.execution or {}
+    if (
+        not execution
+        or not getattr(args, "execution_id", None)
+        or execution.get("id") != args.execution_id
+    ):
+        print(_json.dumps({
+            "error": "Localization poll does not own the active execution."
+        }))
+        return 1
 
     # Guard: nothing to poll if it wasn't triggered, or it's already terminal.
     if not step.data.get("started_at"):
@@ -91,9 +210,17 @@ def cmd_check_localization(args):
     if step.status in ("done", "skipped", "blocked"):
         print(_json.dumps({"decision": "already_final", "status": step.status}))
         return 0
+    try:
+        permit = orch.authorize_outcome(
+            TransitionIntent.POLL, "ccd", "localization",
+            execution_id=args.execution_id,
+        )
+    except ValueError as exc:
+        print(_json.dumps({"error": str(exc)}))
+        return 1
 
     if getattr(args, "complete", None) is None and getattr(args, "pr_status", None) is None:
-        print(_json.dumps(L.poll_target(st)))
+        print(_json.dumps(L.poll_target(orch.context("ccd", "localization"))))
         return 0
 
     logs = args.logs
@@ -101,19 +228,22 @@ def cmd_check_localization(args):
         try:
             with open(args.logs_file, "r", encoding="utf-8") as fh:
                 logs = fh.read()
-        except OSError as e:
-            print(_json.dumps({"error": f"could not read --logs-file: {e}"}))
-            return 1
+        except (OSError, UnicodeError):
+            logs = None  # Missing evidence follows the same bounded timeout/owner review.
 
     try:
         decision = L.decide(
-            st, is_complete=_truthy(args.complete), logs=logs, now=now,
-            pr_status=getattr(args, "pr_status", None))
+            orch.context("ccd", "localization"), is_complete=_truthy(args.complete), logs=logs, now=now,
+            pr_status=getattr(args, "pr_status", None),
+            evidence=L.RunEvidence(
+                result=getattr(args, "run_result", None),
+                logs_complete=getattr(args, "logs_complete", False),
+                no_change_confirmation=getattr(args, "no_change_confirmation", None)))
     except ValueError as e:
         print(_json.dumps({"error": str(e)}))
         return 1
     d = decision["decision"]
-    # Completion evidence is monotonic: a delayed timeout receipt cannot undo recovery.
+    # Completed status is monotonic, but does not prove a successful result.
     step.data["pipeline_complete"] = bool(
         step.data.get("pipeline_complete") or _truthy(args.complete) or decision.get("pr_id"))
     if decision.get("pr_id"):
@@ -130,52 +260,57 @@ def cmd_check_localization(args):
             decision["chat"]["chatId"] = val
             decision["test_redirect"] = {"send_to": val}
 
-    if d in ("wait", "wait_for_merge"):
+    if d == "failed":
+        step.data["last_checked"] = now.isoformat()
+        orch.apply_outcome(
+            permit, Blocked(decision["note"], links=decision["links"], by="scout"),
+            data=step.data)
+        C.save_state(st, args.runs_root, args.release)
+        C.emit(args.runs_root, args.release, f"[attention] localization: {decision['note']}",
+               kind="localization")
+    elif d in ("wait", "wait_for_merge"):
         # Not terminal — keep in-flight, just record progress on the step.
         step.data["last_checked"] = now.isoformat() if now else _now_iso()
-        step.note = decision["note"]
-        st.set_step("ccd", "localization", step)
+        orch.apply_outcome(
+            permit, InProgress(decision["note"], links=decision.get("links", step.links),
+                               poll_in_min=L.CONFIG["poll_interval_min"]), data=step.data)
         C.save_state(st, args.runs_root, args.release)
         C.emit(args.runs_root, args.release, f"[localization] {decision['note']}", kind="localization")
     elif d == "timeout":
         # Keep the worker alive until its required escalation is acknowledged.
-        step.note = "localization timeout; required owner notification awaiting delivery"
-        st.set_step("ccd", "localization", step)
+        orch.apply_outcome(
+            permit, InProgress(
+                "localization timeout; required owner notification awaiting delivery",
+                links=decision.get("links", step.links),
+                poll_in_min=L.CONFIG["poll_interval_min"]), data=step.data)
     elif d == "announce_pr":
         step.data["pr_id"] = decision["pr_id"]
         step.data["pr_url"] = decision["pr_url"]
+        step.data["last_checked"] = now.isoformat()
         step.data.setdefault("pr_discovered_at", now.isoformat() if now else _now_iso())
-        step.links = decision.get("links", [])
-        step.note = decision["note"]
-        st.set_step("ccd", "localization", step)
+        orch.apply_outcome(
+            permit, InProgress(decision["note"], links=decision.get("links", []),
+                               poll_in_min=L.CONFIG["poll_interval_min"]), data=step.data)
         C.save_state(st, args.runs_root, args.release)
         C.emit(args.runs_root, args.release, f"[localization] {decision['note']}",
                kind="localization")
     elif d == "warn_unmerged":
         step.data["last_checked"] = now.isoformat() if now else _now_iso()
-        step.note = decision["note"]
-        st.set_step("ccd", "localization", step)
+        orch.apply_outcome(
+            permit, InProgress(decision["note"], links=step.links,
+                               poll_in_min=L.CONFIG["poll_interval_min"]), data=step.data)
         C.save_state(st, args.runs_root, args.release)
         C.emit(args.runs_root, args.release, f"[attention] localization: {decision['note']}",
                kind="localization")
     elif d == "omit_unmerged":
-        step.status = "skipped"
-        step.completed_at = now.isoformat() if now else _now_iso()
-        step.by = "scout"
-        step.note = decision["note"]
-        step.links = decision.get("links", step.links)
-        st.set_step("ccd", "localization", step)
+        orch.omit_execution(permit, decision["note"], links=decision.get("links", step.links))
         C.save_state(st, args.runs_root, args.release)
         C.emit(args.runs_root, args.release, f"[omitted] localization: {decision['note']}",
                kind="localization")
     elif d in ("merged", "complete_none"):
-        orch.record_scout_step("ccd", "localization", "pass", decision["note"])
-        done = orch.state.get_step("ccd", "localization")
-        done.by = "scout"
-        done.data = step.data                      # preserve build id / start time
-        if decision.get("links"):
-            done.links = decision["links"]         # the PR link
-        orch.state.set_step("ccd", "localization", done)
+        orch.apply_outcome(
+            permit, Done(decision["note"], by="scout", links=decision.get("links", step.links)),
+            data=step.data)
         C.save_state(orch.state, args.runs_root, args.release)
         C.emit(args.runs_root, args.release, f"[ok] localization: {decision['note']}",
                kind="localization")
@@ -184,10 +319,15 @@ def cmd_check_localization(args):
         return 1
 
     if d in ("timeout", "announce_pr", "warn_unmerged"):
+        step = st.get_step("ccd", "localization")
+        scope["generation"] = step.invalidated_at or "initial"
+        scope["statuses"] = ["in_flight"]
         scope["step_matches"] = {"build_id": step.data.get("build_id")}
         if d == "timeout":
             scope["step_matches"].update(
-                started_at=step.data["started_at"], pr_id=None, pipeline_complete=False)
+                started_at=step.data["started_at"], pr_id=step.data.get("pr_id"),
+                pipeline_complete=step.data["pipeline_complete"],
+                last_checked=step.data.get("last_checked"))
             started = datetime.fromisoformat(step.data["started_at"].replace("Z", "+00:00"))
             if started.tzinfo is None:
                 started = started.replace(tzinfo=timezone.utc)
@@ -195,10 +335,13 @@ def cmd_check_localization(args):
         else:
             scope["step_matches"]["pr_id"] = step.data.get("pr_id")
             deadline_cfg = {**L.CONFIG, "merge_deadline_local": L.CONFIG["omission_deadline_local"]}
-            scope["expires_at"] = L.merge_deadline(st, deadline_cfg).isoformat()
+            scope["expires_at"] = L.merge_deadline(
+                orch.context("ccd", "localization"), deadline_cfg).isoformat()
         scope["release_matches"] = {"owner_email": st.owner_email, "ccd": st.ccd}
         completion = ({"kind": "step_result", "status": "attention", "note": decision["note"],
-                       "stamp": ["timeout_notified_at"]} if d == "timeout" else
+                       "links": decision.get("links", step.links),
+                       "stamp": ["timeout_notified_at"],
+                       "execution_id": (step.execution or {}).get("id")} if d == "timeout" else
                       {"kind": "step_data", "stamp": [
                           "pr_announced_at" if d == "announce_pr" else "merge_deadline_alert_at"]})
         checkpoint = f"localization:{step.data.get('build_id')}:{decision.get('pr_id', '')}:{d}"
@@ -240,21 +383,44 @@ def cmd_record_localization_post(args):
 
 
 def register(sub):
+    launch = sub.add_parser("launch-localization", help="Preview/reserve/execute a checked localization launch")
+    launch.add_argument("--release", required=True)
+    launch.add_argument("--as-of", default=None)
+    launch.add_argument("--branch", default=None, help="Source branch; defaults to the pipeline's branch")
+    launch.add_argument("--source-version", default=None, help="Full commit; must match the reviewed branch head")
+    launch.add_argument("--variable", action="append", default=[], help="Queue variable NAME=VALUE")
+    launch.add_argument("--dry-run", action="store_true")
+    launch.add_argument("--execute", action="store_true")
+    launch.add_argument("--execution-id", default=None)
+    W.add_arguments(launch)
+    launch.set_defaults(func=cmd_launch_localization)
     rr = sub.add_parser("record-localization-run",
-                        help="Record the triggered localization build id + start time (leaves it in-flight)")
+                        help="Recover a provider-verified receipt for an already reviewed localization launch")
     rr.add_argument("--release", required=True)
     rr.add_argument("--as-of", default=None)
     rr.add_argument("--build-id", required=True, dest="build_id")
     rr.add_argument("--run-url", default=None, dest="run_url")
+    rr.add_argument("--execution-id", required=True, dest="execution_id",
+                    help="Active reserve-step execution id")
     rr.add_argument("--started-at", default=None, dest="started_at",
-                    help="ISO-8601 start time; defaults to now")
+                    help="Optional assertion of the provider's exact queue timestamp")
     rr.set_defaults(func=cmd_record_localization_run)
 
     cl = sub.add_parser("check-localization",
-                        help="One localization poll: pipeline status before PR discovery, PR status afterward")
+                        help="One localization poll: run status/result plus PR status after discovery")
     cl.add_argument("--release", required=True)
+    cl.add_argument("--execution-id", required=True, dest="execution_id",
+                    help="Active localization execution id")
     cl.add_argument("--complete", default=None,
-                    help="Whether the pipeline run has finished (true/false/succeeded)")
+                    choices=("true", "false"),
+                    help="Whether the pipeline run status is completed; not its result")
+    cl.add_argument("--run-result", default=None, dest="run_result",
+                    help="Exact ADO run result (succeeded/failed/canceled/etc.); missing is unknown")
+    cl.add_argument("--logs-complete", action="store_true", dest="logs_complete",
+                    help="The full OneLocBuild@3 task log was fetched, without paging/truncation")
+    cl.add_argument("--no-change-confirmation", default=None, dest="no_change_confirmation",
+                    help="Owner-reviewed explanation proving no changes from the full successful "
+                        "task output; never infer this from an absent PR line")
     cl.add_argument("--logs", default=None,
                     help="OneLocBuild@3 task log text (when complete) to scan for the PR id")
     cl.add_argument("--logs-file", default=None, dest="logs_file",

@@ -5,7 +5,8 @@ Engineering coordinates come from tools.pipelines; Authenticator uses msazure/On
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from orchestrator.evidence import PipelineEvidence
+from orchestrator.step_context import thaw
 
 from tools.coordinates import coords
 from tools.pipelines import ENGINEERING_ORG as ORG, ENGINEERING_PROJECT as PROJECT
@@ -33,39 +34,35 @@ def links_for(build_id, name="ADO run"):
     return [{"name": name, "url": build_url(build_id)}]
 
 
-def _now_iso():
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _pipeline_runs(state) -> dict:
+def _pipeline_runs(context) -> dict:
     """The nested pipeline_runs container on state."""
-    return getattr(state, "pipeline_runs", None) or {}
+    return thaw(context.evidence.pipeline_runs)
 
 
-def stash_checker(state, run_id, when=None):
+def stash_checker(context, run_id, when=None):
     """Record the (single) Code Complete Checker run that fired the release."""
-    pr = _pipeline_runs(state)
-    pr["checker"] = {"run_id": str(run_id), "when": when, "resolved_at": _now_iso()}
-    state.pipeline_runs = pr
+    pr = _pipeline_runs(context)
+    pr["checker"] = {"run_id": str(run_id), "when": when, "resolved_at": context.clock.iso()}
+    return PipelineEvidence(pr)
 
 
-def stash_orchestrator(state, run_id, parked=None):
+def stash_orchestrator(context, run_id, parked=None):
     """Record the (single) Release Orchestrator run + its parked flag. Versions are NOT stored
     here — state.versions is the single source of truth (populated by orchestrator_health)."""
-    pr = _pipeline_runs(state)
+    pr = _pipeline_runs(context)
     pr["orchestrator"] = {"run_id": str(run_id),
                           "parked": parked,
-                          "resolved_at": _now_iso()}
-    state.pipeline_runs = pr
+                          "resolved_at": context.clock.iso()}
+    return PipelineEvidence(pr)
 
 
-def latest_rc(state) -> dict:
+def latest_rc(context) -> dict:
     """The current RC iteration (the last entry in rcs), or {} when none resolved yet."""
-    rcs = _pipeline_runs(state).get("rcs") or []
+    rcs = _pipeline_runs(context).get("rcs") or []
     return rcs[-1] if rcs else {}
 
 
-def stash_mrwp(state, provider, snapshot, rc=None):
+def stash_mrwp(context, provider, snapshot, rc=None):
     """Record an MRWP provider run's FULL verification snapshot into an RC iteration.
     `provider` is 'ECS' or 'Local'; `snapshot` carries run_id + stage/test results (run_id,
     id_source, complete, ran, total, failed_stages, yellow_stages, never_ran, tests,
@@ -80,7 +77,7 @@ def stash_mrwp(state, provider, snapshot, rc=None):
     it falls back to run_id-change detection: a changed run_id for this provider means RC
     Testing was re-triggered → append the next local rc (last+1)."""
     key = provider.lower()                       # 'ecs' | 'local'
-    pr = _pipeline_runs(state)
+    pr = _pipeline_runs(context)
     rcs = pr.setdefault("rcs", [])
     if rc is not None:
         cur = next((e for e in rcs if e.get("rc") == rc), None)
@@ -95,30 +92,30 @@ def stash_mrwp(state, provider, snapshot, rc=None):
             rcs.append(cur)
     snap = dict(snapshot)
     snap["run_id"] = str(snapshot.get("run_id"))
-    snap["resolved_at"] = _now_iso()
+    snap["resolved_at"] = context.clock.iso()
     cur[key] = snap
-    cur["resolved_at"] = _now_iso()
-    state.pipeline_runs = pr
+    cur["resolved_at"] = context.clock.iso()
+    return PipelineEvidence(pr)
 
 
-def stash_auth(state, rc, snapshot):
+def stash_auth(context, rc, snapshot):
     """Record the Authenticator ECS build + UI-test snapshot into the RC iteration `rc`.
 
     The auth leg is a SEPARATE report section keyed off the SAME RC iteration as MRWP — it
     merges into the rcs entry with that number (created if the auth step resolves it before
     the MRWP steps do), so a release's ECS build, both MRWP runs, and the auth build/test
     all land in one rcs[<n>] record. `snapshot` = {build:{...}, test:{...}, verdict, ...}."""
-    pr = _pipeline_runs(state)
+    pr = _pipeline_runs(context)
     rcs = pr.setdefault("rcs", [])
     cur = next((e for e in rcs if e.get("rc") == rc), None)
     if cur is None:
         cur = {"rc": rc}
         rcs.append(cur)
     snap = dict(snapshot)
-    snap["resolved_at"] = _now_iso()
+    snap["resolved_at"] = context.clock.iso()
     cur["auth"] = snap
-    cur["resolved_at"] = _now_iso()
-    state.pipeline_runs = pr
+    cur["resolved_at"] = context.clock.iso()
+    return PipelineEvidence(pr)
 
 
 def valid_id(value):

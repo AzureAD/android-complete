@@ -11,7 +11,7 @@ on-call engineer (OCE), and people the owner explicitly says are OOF for this Bu
 The OCE team comes from readiness.yaml (the same source as the entry gate); the skill
 resolves its primary through ICM and supplies the verified UPN. Owner = state.owner_email.
 Resolve the OCE before showing availability candidates. OOF comes ONLY from the owner's
-answer, saved in step.data.oof (including an explicit empty list for nobody OOF).
+answer; repeat the reviewed selection flags on execute, or reuse existing step.data.oof.
 Never infer availability from calendars, presence or automatic OOF detection.
 
 The manual set combines the Broker 'Manual Tests (Android Broker)' subtree and the
@@ -29,7 +29,8 @@ automated-case set.
 
 build() is the engine entry point: Done only when live ADO is valid, otherwise Blocked.
 inspect_distribution() also returns the transient report for the CLI. After reviewing
-the exact corrections, use `distribute-tests --apply --review-hash <hash> --release <id>`.
+the exact corrections, use `distribute-tests --apply --review-hash <hash> --approved-by <reviewer>
+--release <id>` with the same availability flags. CLI previews never save evidence.
 Apply rereads ADO, uses native revision checks on changed cases, and validates read-back.
 Partial failures require inspecting the remaining live corrections, not replay/rollback.
 
@@ -53,18 +54,22 @@ stub apply writes. Tests must stub the writers explicitly and still confirm OOF 
 build(..., oof=[]), inspect_distribution(..., oof=[...]) or the CLI availability flags.
 """
 from __future__ import annotations
+from dataclasses import dataclass
 
-import hashlib
-import json
+from orchestrator.step_context import StepContext, thaw
 
 from orchestrator.outcomes import Done, Blocked
-from steps.lib.agent import legacy_run
-from steps.lib.mockctx import mock_input, MISSING
+from orchestrator.evidence import StepData
+from steps.lib.mockctx import MISSING
 from tools import distribution as D, testplans as T
 from steps.bug_bash.ui_results import completed_result
 
+from orchestrator.authority import OwnStepData
+
+EVIDENCE = (OwnStepData(),)
 ID = "distribute_tests"
-KIND = "agent"
+KIND = "scout"
+WRITE_COMMAND = "distribute-tests"
 
 MOCKABLE = {
     "oce": {"kind": "input", "desc": "Verified primary on-call UPN."},
@@ -79,56 +84,56 @@ MOCKABLE = {
 }
 
 
-def _broker_plan_id(state):
+def _broker_plan_id(context):
     """The release's cloned Broker plan ID, or None; never fall back to the master."""
-    return (state.get_step("bug_bash", "clone_plans_broker").data or {}).get("plan_id")
+    return (context.evidence.step("bug_bash", "clone_plans_broker").data or {}).get("plan_id")
 
 
-def _fill_input(state):
+def _fill_input(context):
     """Completed-fill owner API; missing/partial evidence is never an empty automated set."""
-    injected = mock_input("auth_automated", MISSING)
+    injected = context.input("auth_automated", MISSING)
     if injected is not MISSING:
         ids = sorted({int(i) for i in injected or []})
         return ids, {"offline_automated_ids": ids}
-    result = completed_result(state)
+    result = completed_result(context)
     return result["auth"]["automated_case_ids"], {"id": result["id"], "binding": result["binding"]}
 
 
-def _auth_automated_ids(state):
-    return set(_fill_input(state)[0])
+def _auth_automated_ids(context):
+    return set(_fill_input(context)[0])
 
 
-def _roster(cfg):
-    roster = mock_input("roster", MISSING)
+def _roster(context, cfg):
+    roster = context.input("roster", MISSING)
     if roster is MISSING:
-        ok, roster, detail = D.resolve_roster(cfg["roster_group"])
+        ok, roster, detail = context.services.identities.resolve_roster(cfg["roster_group"])
         if not ok:
             raise ValueError(f"Couldn't resolve roster '{cfg['roster_group']}' ({detail}).")
     return D.canonical_roster(roster)
 
 
-def _oce(data):
-    oce = data.get("oce", mock_input("oce", None))
+def _oce(context, data):
+    oce = data.get("oce", context.input("oce", None))
     if (not isinstance(oce, str) or oce.strip().count("@") != 1
             or any(c.isspace() for c in oce.strip()) or not all(oce.strip().split("@"))):
-        team_id, _ = D.oncall_team()
+        team_id, _ = context.services.assets.oncall_team()
         raise ValueError(f"Resolve the current primary on-call engineer (ICM team {team_id}) and pass "
                          "--oce <verified-upn> before showing availability choices or distributing tests.")
     return oce.strip().casefold()
 
 
-def _auth_cases():
-    cases = mock_input("auth_cases", MISSING)
+def _auth_cases(context):
+    cases = context.input("auth_cases", MISSING)
     if cases is MISSING:
-        ok, cases, detail = D.auth_bugbash_cases()
+        ok, cases, detail = context.services.testplans.auth_bugbash_cases()
         if not ok:
             raise ValueError(f"Couldn't read Authenticator bug-bash cases: {detail}")
     return cases
 
 
-def _owner_triage(state, cases, cfg):
-    failed = (mock_input("auth_failed", []) if mock_input("auth_automated", MISSING) is not MISSING
-              else completed_result(state)["auth"]["failed_case_ids"])
+def _owner_triage(context, cases, cfg):
+    failed = (context.input("auth_failed", []) if context.input("auth_automated", MISSING) is not MISSING
+              else completed_result(context)["auth"]["failed_case_ids"])
     blocked_tags = {t.casefold() for t in cfg["authenticator"]["triage_tags"]}
     triage = {}
     for case in cases:
@@ -139,114 +144,105 @@ def _owner_triage(state, cases, cfg):
             reasons.append("failed_automation")
         if reasons:
             triage[f"A:{case['id']}"] = {
-                "assignee": state.owner_email.strip().casefold(), "reasons": reasons}
+                "assignee": context.release.owner_email.strip().casefold(), "reasons": reasons}
     return dict(sorted(triage.items()))
 
 
-def _point_sets(state, selected, cfg):
-    injected = mock_input("point_sets", MISSING)
+def _point_sets(context, selected, cfg):
+    injected = context.input("point_sets", MISSING)
     if injected is not MISSING:
         return injected
-    bp = _broker_plan_id(state)
-    ok, root, detail = D.find_suite_id_by_name(bp, cfg["broker"]["suite_name"])
+    bp = _broker_plan_id(context)
+    ok, root, detail = context.services.testplans.find_suite_id_by_name(bp, cfg["broker"]["suite_name"])
     if not ok or not root:
         raise ValueError(detail or "Broker manual suite not found")
-    auth_suite = (state.get_step("bug_bash", "clone_plans_auth").data or {}).get("suite_id")
+    auth_suite = (context.evidence.step("bug_bash", "clone_plans_auth").data or {}).get("suite_id")
     if not auth_suite:
         raise ValueError("Authenticator release suite missing; refresh the owning clone step")
     groups = []
     for prefix, pid, sid in (("B", bp, root), ("A", T.AUTH_PLAN, auth_suite)):
         ids = [key[2:] for key in selected if key.startswith(prefix + ":")]
-        ok, rows, detail = D.read_point_testers(pid, sid, ids)
+        ok, rows, detail = context.services.testplans.read_point_testers(pid, sid, ids)
         if not ok:
             raise ValueError(detail)
         groups.extend({**row, "prefix": prefix} for row in rows)
     return groups
 
 
-def inspect_distribution(state, *, oof=None, oce=None):
+def inspect_distribution(context, *, oof=None, oce=None):
     """Return an outcome and a transient report; persist only availability/workflow data."""
-    record = state.get_step("bug_bash", ID)
-    was_done, completed_at = record.status == "done", record.completed_at
-    record.data = dict(record.data or {})
-    record.data.pop("plan", None)              # Retire legacy saved allocations; never consume them.
-    record.data.pop("oof_candidates", None)
+    data = thaw(context.evidence.step("bug_bash", ID).data or {})
+    data.pop("plan", None)
+    data.pop("oof_candidates", None)
     if oof is not None:
-        record.data.pop("oof", None)
+        data.pop("oof", None)
     if oce is not None:
-        record.data["oce"] = oce.strip()
-    record.status, record.completed_at = "blocked", None
-    record.note = "Live ADO distribution validation pending; no assignments changed."
-    state.set_step("bug_bash", ID, record)
+        data["oce"] = oce.strip()
     report = {}
     try:
-        _inspect(state, report, oof)
+        _inspect(context, report, oof, data)
         note = (f"Live ADO: {report['broker_total']} Broker + {report['auth_total']} Auth manual cases, "
                 f"{len(report['eligible'])} eligible testers; {len(report['owner_triage'])} owner-triage cases.")
         outcome = (Done(note + " Assignments and plan testers are valid.") if report["valid"] else
                    Blocked(note + f" {len(report['case_changes'])} case and {len(report['point_changes'])} "
                            "point-tester corrections need review. Run distribute-tests --json; "
-                           "apply only the reviewed corrections with --apply --review-hash <hash>."))
+                           "apply only the reviewed corrections with --apply --review-hash <hash> "
+                           "--approved-by <reviewer>, repeating the preview's availability flags."))
     except ValueError as exc:
         outcome = Blocked(f"distribute_tests: {exc}")
         report["error"] = outcome.reason
-    record = state.get_step("bug_bash", ID)
-    record.note = outcome.reason if isinstance(outcome, Blocked) else outcome.note
-    record.status = "blocked" if isinstance(outcome, Blocked) else ("done" if was_done else "pending")
-    record.completed_at = completed_at if record.status == "done" else None
-    state.set_step("bug_bash", ID, record)
+    outcome.updates = (StepData(data),)
     return outcome, report
 
 
-def _inspect(state, report, oof):
-    fail = mock_input("fail", MISSING)
+def _inspect(context, report, oof, data):
+    fail = context.input("fail", MISSING)
     if fail is not MISSING:
         raise ValueError(str(fail))
-    cfg = D.load_config()
-    owner = state.owner_email
+    cfg = context.services.assets.distribution_config()
+    owner = context.release.owner_email
     if not owner:
         raise ValueError("release owner missing; resolve the owner before showing availability choices.")
-    record = state.get_step("bug_bash", ID)
-    oce = _oce(record.data)
-    roster = _roster(cfg)
+    oce = _oce(context, data)
+    roster = _roster(context, cfg)
     candidates = set(D.eligible_testers(
         [m["upn"] for m in roster], cfg.get("always_excluded", []), owner=owner, oce=oce))
     report["candidates"] = [m for m in roster if m["upn"] in candidates]
     if not candidates:
         raise ValueError("no eligible testers after owner, on-call and configured exclusions.")
     if oof is not None:
-        record.data["oof"] = D.confirm_oof(oof, roster, owner, state.release_id)
-        state.set_step("bug_bash", ID, record)
-    confirmation = record.data.get("oof")
-    excluded = D.validate_oof(confirmation, roster, owner, state.release_id)
+        data["oof"] = D.confirm_oof(oof, roster, owner, context.release.release_id,
+                                  now=context.clock.utc())
+    confirmation = data.get("oof")
+    excluded = D.validate_oof(confirmation, roster, owner, context.release.release_id)
     eligible = D.eligible_testers(
         [m["upn"] for m in roster], cfg.get("always_excluded", []), owner=owner, oce=oce, oof=excluded)
     if not eligible:
         raise ValueError("no eligible testers after owner-confirmed OOF exclusions.")
-    automated, fill = _fill_input(state)
-    bcases = mock_input("broker_cases", MISSING)
+    automated, fill = _fill_input(context)
+    bcases = context.input("broker_cases", MISSING)
     if bcases is MISSING:
-        bp = _broker_plan_id(state)
+        bp = _broker_plan_id(context)
         if not bp:
             raise ValueError("the Broker test plan hasn't been cloned yet (clone_plans_broker).")
-        ok, sid, detail = D.find_suite_id_by_name(bp, cfg["broker"]["suite_name"])
+        ok, sid, detail = context.services.testplans.find_suite_id_by_name(bp, cfg["broker"]["suite_name"])
         if not ok or not sid:
             raise ValueError(detail or "Broker manual suite not found")
-        ok, bcases, detail = D.broker_manual_cases(bp, sid)
+        ok, bcases, detail = context.services.testplans.broker_manual_cases(bp, sid)
         if not ok:
             raise ValueError(f"couldn't read Broker manual tests: {detail}")
-    acases = _auth_cases()
-    triage = _owner_triage(state, acases, cfg)
+    acases = _auth_cases(context)
+    triage = _owner_triage(context, acases, cfg)
     manual_auth = [c for c in acases if int(c["id"]) not in automated and f"A:{c['id']}" not in triage]
-    keys = [f"B:{c['id']}" for c in bcases] + [f"A:{c['id']}" for c in manual_auth]
+    keys = sorted([f"B:{c['id']}" for c in bcases] + [f"A:{c['id']}" for c in manual_auth])
     if len(keys) != len(set(keys)):
         raise ValueError("Duplicate cases in ADO selection; resolve before distributing.")
     selected = sorted(set(keys) | set(triage))
     if len({key[2:] for key in selected}) != len(selected):
         raise ValueError("A shared case occurs in both distribution sets; resolve overlap before assigning.")
-    snapshot = mock_input("case_snapshot", MISSING)
+    snapshot = context.input("case_snapshot", MISSING)
     if snapshot is MISSING:
-        ok, snapshot, detail = D.case_assignment_snapshot(key[2:] for key in selected)
+        ok, snapshot, detail = context.services.testplans.case_assignment_snapshot(key[2:] for key in selected)
         if not ok:
             raise ValueError(f"Cannot read current ADO assignments: {detail}")
     if not {key[2:] for key in selected} <= set(snapshot):
@@ -261,7 +257,10 @@ def _inspect(state, report, oof):
                      "reason": ", ".join(triage[key]["reasons"]) if key in triage else "eligibility/workload balance"}
                     for key, target in targets.items()
                     if D._identity(current[key]["assignee"]) != D._identity(target)]
-    groups = _point_sets(state, selected, cfg)
+    groups = sorted(
+        [{**g, "points": sorted(g["points"], key=lambda p: str(p["id"]))}
+         for g in _point_sets(context, selected, cfg)],
+        key=lambda g: (g["prefix"], str(g["plan_id"]), str(g["suite_id"])))
     covered, point_changes = set(), []
     for group in groups:
         for point in group["points"]:
@@ -285,18 +284,31 @@ def _inspect(state, report, oof):
         proposed_counts=result["counts"], case_changes=case_changes, point_changes=point_changes,
         valid=not case_changes and not point_changes,
         _current=current, _targets=targets, _point_sets=groups)
-    # Only a digest crosses the approval boundary; no proposal or digest is stored in run-state.
-    review = {"release": state.release_id,
-              "inputs": D.review_inputs(roster, cfg.get("always_excluded"), owner, oce, confirmation),
-              "fill": fill, "current": {key: {"assignee": D._identity(row["assignee"]),
-                                             "identity_id": row["identity_id"]}
-                                        for key, row in current.items()},
-              "targets": targets, "points": groups}
-    report["review_hash"] = hashlib.sha256(json.dumps(review, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    # Semantic availability, not the observation clock, belongs in the write review.
+    inputs = D.review_inputs(roster, cfg.get("always_excluded"), owner, oce, confirmation)
+    inputs["oof"].pop("confirmed_at", None)
+    report["_review"] = {
+        "inputs": inputs, "configuration": cfg,
+        "provider": {"org": D.ORG, "project": D.PROJECT},
+        "broker_plan": _broker_plan_id(context), "auth_plan": T.AUTH_PLAN,
+        "auth_suite": context.evidence.step("bug_bash", "clone_plans_auth").data.get("suite_id"),
+        "fill": fill, "current": {
+            key: {"assignee": D._identity(row["assignee"]), "identity_id": row["identity_id"],
+                  "revision": row.get("revision")} for key, row in current.items()},
+        "targets": targets, "points": groups,
+    }
 
 
-def build(state, *, oof=None, oce=None):
-    return inspect_distribution(state, oof=oof, oce=oce)[0]
+@dataclass(frozen=True)
+class BuildParameters:
+    oof: tuple[str, ...] | None = None
+    oce: str | None = None
 
 
-run = legacy_run(build)
+PARAMETERS = {"build": BuildParameters}
+
+
+def build(context: StepContext[BuildParameters]):
+    oof = list(context.parameters.oof) if context.parameters.oof is not None else None
+    oce = context.parameters.oce
+    return inspect_distribution(context, oof=oof, oce=oce)[0]

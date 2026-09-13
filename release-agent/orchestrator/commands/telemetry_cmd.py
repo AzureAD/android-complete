@@ -9,6 +9,7 @@ import json as _json
 from datetime import datetime, timezone
 
 from orchestrator import cli_common as C
+from orchestrator.outcomes import Blocked, Done
 from tools.coordinates import coords
 from steps.build_verify import telemetry_verify as TV
 
@@ -23,7 +24,16 @@ def cmd_record_telemetry(args):
     if rows < 0:
         print(_json.dumps({"error": "--rows must be non-negative."}))
         return 1
-    expected = TV.build(orch.state)
+    if orch.state.get_step("build_verify", TV.ID).status == "skipped":
+        C.emit(args.runs_root, args.release,
+               "Already skipped: build_verify/telemetry_verify; no action required.",
+               kind="step")
+        return 0
+    permit = orch.authorize_outcome(
+        orch.step_action_intent("build_verify", TV.ID), "build_verify", TV.ID,
+    )
+    expected = orch.handler("build_verify", TV.ID).build(orch.context(
+        "build_verify", TV.ID, permit=permit))
     if expected.kind != "needs_skill":
         print(_json.dumps({"error": expected.reason}))
         return 1
@@ -45,19 +55,20 @@ def cmd_record_telemetry(args):
                   f"any tester device. Post a heads-up in the {chan.get('name', 'Android Core Team')} "
                   f"channel before declaring the bug bash complete, then re-run this check.")
 
-    act = orch.record_scout_step("build_verify", "telemetry_verify", status, detail, refresh=True)
-    if act.kind == "idle":
-        C.emit(args.runs_root, args.release, act.message, kind="step")
-        return 0
-    step = orch.state.get_step("build_verify", "telemetry_verify")
-    step.by = "scout"
-    step.data = {
-        "version": version, "rows": rows, "source": payload["source"],
-        "cluster_uri": payload["cluster_uri"], "database": payload["database"],
-        "query": payload["query"], "checked_at": datetime.now(timezone.utc).isoformat(),
-    }
-    step.links = payload["links"]
-    orch.state.set_step("build_verify", "telemetry_verify", step)
+    outcome = Done(detail, links=payload["links"], by="scout") if rows > 0 else Blocked(
+        detail, links=payload["links"], by="scout")
+    orch.apply_outcome(
+        permit, outcome,
+        data={
+            "version": version,
+            "rows": rows,
+            "source": payload["source"],
+            "cluster_uri": payload["cluster_uri"],
+            "database": payload["database"],
+            "query": payload["query"],
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
     C.save_state(orch.state, args.runs_root, args.release)
 
     C.emit(args.runs_root, args.release,

@@ -1,10 +1,11 @@
 """Unit + flow-replay tests for the Release Orchestrator (X4+X5).
 
 
-Run:  python tests/test_engine.py     (plain-run smoke)
- or:  python -m pytest tests -q
+Run from release-agent: python -m pytest -q tests/test_core.py
+See README.md for isolated temporary state/lock cleanup and full-suite usage.
 
 """
+from tests._context import context as _context, invoke as _invoke, pipeline as _pipeline
 
 import os
 
@@ -20,9 +21,9 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 
-from orchestrator.state import ReleaseState
+from orchestrator.state import ReleaseState, StepState
 
-from orchestrator.engine import Orchestrator
+from tests._context import fresh_orchestrator as Orchestrator
 
 from orchestrator import cli_common as C
 
@@ -31,6 +32,25 @@ from tests._auth_evidence import capture as _auth_capture, auth_test as _auth_te
 
 
 CONFIG = os.path.join(ROOT, "config", "phases.yaml")
+
+
+def _enable_memory_checkpoints(state):
+    """Unit-flow persistence seam; production effects require the real locked checkpoint."""
+    state._checkpoint = lambda: None
+    return state
+
+
+def _register_automation(registry, automation_id, name, **kwargs):
+    """Test helper for the required prepare -> observed-adopt lifecycle."""
+    from tests._automation import spec, observed
+    kwargs = dict(kwargs)
+    kwargs.setdefault("slug", automation_id)
+    kwargs.setdefault("schedule", "every 1 hour")
+    provider = spec(name, kwargs["schedule"])
+    entry = registry.prepare(name, spec=provider, **kwargs)
+    return registry.reconcile_create(
+        entry["key"], observed({"id": automation_id, "spec": provider}), spec=provider,
+    )["entry"]
 
 
 # Make tests hermetic: stub the AUTO verifier so it never hits az / the network.
@@ -64,7 +84,10 @@ def _recent_iso():
 
 _SAFE_AGENTS = {
     "preflight.cg": {"alerts": []},                                     # → 0 active → pass
-    "preflight.oneauth_access": {"alias": "tester", "access": "granted"},  # → write access → pass (no az)
+    "preflight.oneauth_access": {
+        "outcome": "done",
+        "note": "OneAuth write access confirmed (test)",
+    },
     "preflight.cron": {"run": {"queueTime": _recent_iso(), "result": "succeeded"}},  # fresh → pass
     "preflight.breaking": {"changelog": "vNext\n----\n- [MINOR] x (#1)\nVersion 1.0.0\n"},  # no [MAJOR] → pass
     # Phase-2 build_verify agent steps — injected offline inputs so they pass without az.
@@ -176,6 +199,24 @@ def _pass_scout_checks(orch):
     orch.gate.record_check("ccd_confirmed", "pass", "stubbed: CCD reconciled with pipeline")
 
 
+def _ready_state(st):
+    """Populate every readiness fact; readiness itself remains derived."""
+    orch = Orchestrator(CONFIG, st)
+    _pass_scout_checks(orch)
+    orch.gate.sign()
+    return st
+
+
+def _gate_decision(step, decision="approved", comment=None):
+    return {
+        "step": step,
+        "decision": decision,
+        "at": "2026-09-12T00:00:00Z",
+        "by": "human",
+        "comment": comment,
+    }
+
+
 
 def _clear_notice(orch):
     """Record the scout-assisted `notice` step as pass (skill sent the email)."""
@@ -205,9 +246,20 @@ def _clear_ccd_scout(orch):
     """Clear the Phase-1 scout comms/trigger holds (final_reminder + pr_reminder +
     localization) so the flow can advance out of the (gateless) Phase 1. Separate
     from Phase-0 clearing so a test can still target these steps individually."""
-    orch.record_scout_step("ccd", "final_reminder", "pass", "test: reminder emailed")
-    orch.record_scout_step("ccd", "pr_reminder", "pass", "test: PR reminder posted")
-    orch.record_scout_step("ccd", "localization", "pass", "test: localization triggered")
+    # This is fixture seeding, not a simulated command: Phase-0 auto work may still
+    # be pending, so the production eligibility guard must not be bypassed.
+    orch.state.set_step(
+        "ccd", "final_reminder",
+        StepState(status="done", note="test: reminder emailed", by="scout"),
+    )
+    orch.state.set_step(
+        "ccd", "pr_reminder",
+        StepState(status="done", note="test: PR reminder posted", by="scout"),
+    )
+    orch.state.set_step(
+        "ccd", "localization",
+        StepState(status="done", note="test: localization triggered", by="scout"),
+    )
 
 
 
@@ -235,7 +287,7 @@ def _orch(signed=True):
     """Fresh orchestrator. By default the readiness entry gate is pre-signed so
     tests can focus on the phase flow; readiness itself is tested separately."""
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="t")
+    st = _enable_memory_checkpoints(ReleaseState(release_id="t"))
     orch = Orchestrator(CONFIG, st)
     if signed:
         # scout-assisted checks (skill records them) + attest the rest + verify auto
@@ -251,6 +303,8 @@ def _advance_to_first_gate(orch):
     """Now that go_test is gone, the first real GATE is Phase-3 `bug_bash.bugbash_complete`,
     reached after the Phase-3 `ui_failures` human reminder. Drive to that reminder, clear
     it, then drive to the bugbash_complete gate."""
+    if orch.state._checkpoint is None:
+        _enable_memory_checkpoints(orch.state)
     orch.run_until_gate()                                     # holds at ui_failures (reminder)
     orch.complete_step("bug_bash", "ui_failures", "test: UI failures reviewed")
     orch.run_until_gate()                                     # holds at bugbash_complete (gate)
@@ -263,7 +317,9 @@ def _ccd_orch(as_of):
     """Signed orchestrator with CCD=2026-07-08 (Phase 0 opens 2026-07-01)."""
     from datetime import date
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
+    st = _enable_memory_checkpoints(
+        ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
+    )
     orch = Orchestrator(CONFIG, st, as_of=date(*[int(x) for x in as_of.split("-")]))
     _pass_scout_checks(orch)
     orch.gate.sign()
@@ -297,7 +353,8 @@ def _bv_state(mocks):
     from datetime import date
     _stub_build_defs("pass")
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26", ccd_source="confirmed")
-    orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 26), mocks=_safe(mocks))
+    _active_phase(st, "build_verify")
+    orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 27), mocks=_safe(mocks))
     return st, orch
 
 
@@ -315,7 +372,7 @@ def _bv_build(orch, st, sid):
             build=inputs["test_build"])
         inputs["suites"] = inputs["capture"]["suites"]
     with mockctx.active(inputs):
-        return as_dict(_steps.get_step("build_verify", sid).build(st))
+        return as_dict(_invoke(_steps.get_step("build_verify", sid).build, st))
 
 
 
@@ -325,8 +382,8 @@ def _seed_rc_pipeline(st, ecs_ui, local_ui, *, ecs_id="1678863", local_id="16788
     state (no live re-discovery). `ecs_ui`/`local_ui` are the UI category dicts the gate
     consumes ({total,passed,failed})."""
     from steps.build_verify import _common as K
-    K.stash_checker(st, "1678599", "2026-08-13T06:00")
-    K.stash_orchestrator(st, "1678611", parked=True)
+    _pipeline(K.stash_checker, st, "1678599", "2026-08-13T06:00")
+    _pipeline(K.stash_orchestrator, st, "1678611", parked=True)
     st.record_versions({"common": "24.6.0", "msal": "8.4.2", "broker": "16.5.0"})
 
     from tests._mrwp_evidence import snapshot, PROD
@@ -335,15 +392,15 @@ def _seed_rc_pipeline(st, ecs_ui, local_ui, *, ecs_id="1678863", local_id="16788
         return snapshot(run_id, {PROD: [
             (f"test_{1000 + i}_Scenario", "Passed" if i < ui["passed"] else "Failed")
             for i in range(ui["total"])]})
-    K.stash_mrwp(st, "ECS", snap(ecs_id, ecs_ui))
-    K.stash_mrwp(st, "Local", snap(local_id, local_ui))
+    _pipeline(K.stash_mrwp, st, "ECS", snap(ecs_id, ecs_ui))
+    _pipeline(K.stash_mrwp, st, "Local", snap(local_id, local_ui))
     _seed_auth(st)
 
 
 def _seed_auth(st):
     from steps.build_verify import _common as K
-    rc = K.latest_rc(st)["rc"]
-    K.stash_auth(st, rc, {
+    rc = K.latest_rc(_context(st))["rc"]
+    _pipeline(K.stash_auth, st, rc, {
         "build": {"run_id": "900010", "rc": rc, "complete": True, "result": "succeeded"},
         "test": _auth_test(_auth_suites(97), rc=rc),
         "verdict": "clean"})
@@ -352,7 +409,7 @@ def _seed_auth(st):
 def _ready_for_rc_report(st):
     """Position an isolated test at the report without running any external work."""
     from orchestrator.state import StepState
-    st.readiness_signed = True
+    _ready_state(st)
     orch = Orchestrator(CONFIG, st)
     for phase in orch.config["phases"]:
         for step in phase["steps"]:
@@ -402,8 +459,9 @@ def _bb_build(sid, mocks, release="2026-08", ccd="2026-08-13"):
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id=release, ccd=ccd)
+    _enable_memory_checkpoints(st)
     with mockctx.active(mocks):
-        return st, as_dict(_steps.get_step("bug_bash", sid).build(st))
+        return st, as_dict(_invoke(_steps.get_step("bug_bash", sid).build, st))
 
 
 
@@ -437,7 +495,9 @@ def _dist_build(mocks, owner="owner@microsoft.com", broker_plan="900", *, oof=No
         publish(st)
     from tests.test_distribution import observe
     with mockctx.active(observe(mocks)):
-        outcome, report = _steps.get_step("bug_bash", "distribute_tests").inspect_distribution(st, oof=oof)
+        from tests._context import inspect
+        outcome, report = inspect(
+            _steps.get_step("bug_bash", "distribute_tests").inspect_distribution, st, oof=oof)
         return st, {**as_dict(outcome), "report": report}
 
 
@@ -459,6 +519,7 @@ def _invite_state():
 def _na_state(release="2026-08", ccd="2026-08-13", broker_plan=3730001, owner="Pedro"):
     from orchestrator.state import StepState
     st = ReleaseState(release_id=release, ccd=ccd, owner_name=owner)
+    Orchestrator(CONFIG, st, mocks={})
     st.set_step("bug_bash", "clone_plans_broker", StepState(status="done",
                                                             data={"plan_id": broker_plan}))
     return st
@@ -519,7 +580,9 @@ def _mock_orch(mocks, as_of="2026-07-02"):
     any developer's mocks.local.yaml)."""
     from datetime import date
     _stub_build_defs("pass")
-    st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
+    st = _enable_memory_checkpoints(
+        ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
+    )
     orch = Orchestrator(CONFIG, st, as_of=date(*[int(x) for x in as_of.split("-")]), mocks=_safe(mocks))
     _pass_scout_checks(orch)
     orch.gate.sign()
@@ -551,12 +614,15 @@ def _integ_release(d, mocks):
     import argparse
     from orchestrator import cli_common as _C
     st = ReleaseState(release_id="2026-08")
-    st.current_phase, st.current_step, st.status = "finalize", "integ_prs", "awaiting_action"
+    _active_step(st, "finalize", "integ_prs")
+    orch = Orchestrator(CONFIG, st, mocks={})
     _C.save_state(st, d, "2026-08")
     o = _mocks_mod.load_mocks
     _mocks_mod.load_mocks = lambda *a, **k: {"finalize.integ_prs": dict(mocks)}
     ns = argparse.Namespace(runs_root=d, release="2026-08", config=CONFIG, as_of=None,
-                            execute=False, repos=None, pbi=None, pbi_title=None)
+                            execute=False, repos=None, pbi=None, pbi_title=None,
+                            execution_id=None, reserve=False, review_hash=None,
+                            approved_by="test-reviewer", executor="test-executor")
 
     def restore():
         _mocks_mod.load_mocks = o
@@ -619,7 +685,7 @@ def _status_state(phase="build_verify"):
     from orchestrator.state import ReleaseState, StepState
     st = ReleaseState(release_id="2026-08", ccd="2026-08-11", target_month="2026-09",
                       owner_name="Praveen", owner_email="praveen@microsoft.com")
-    st.current_phase = phase
+    _active_phase(st, phase)
     st.record_versions({"msal": "8.4.2", "common": "24.6.0", "broker": "16.5.0",
                         "authenticator": "release/2026/08/13"})
     st.set_step("ccd", "final_reminder", StepState(status="done"))
@@ -638,13 +704,33 @@ _PHASE_ORDER = ["preflight", "ccd", "build_verify", "bug_bash", "finalize", "rol
 def _active_phase(st, phase):
     """Make an isolated domain fixture satisfy the shared lifecycle prerequisites."""
     from orchestrator.state import StepState
-    st.readiness_signed = True
-    st.current_phase = phase
+    _ready_state(st)
     for p in Orchestrator(CONFIG, st, mocks={}).config["phases"]:
         if p["id"] == phase:
             break
         for s in p["steps"]:
             st.set_step(p["id"], s["id"], StepState(status="done"))
+            if s.get("kind") == "approval_gate":
+                st.gate_decisions.append(_gate_decision(
+                    f"{p['id']}.{s['id']}"))
+    return st
+
+
+def _active_step(st, phase_id, step_id):
+    """Seed a coherent frontier at one sequential step."""
+    _active_phase(st, phase_id)
+    phase = next(
+        phase
+        for phase in Orchestrator(CONFIG, st, mocks={}).config["phases"]
+        if phase["id"] == phase_id
+    )
+    for step in phase["steps"]:
+        if step["id"] == step_id:
+            break
+        st.set_step(phase_id, step["id"], StepState(status="done"))
+        if step.get("kind") == "approval_gate":
+            st.gate_decisions.append(_gate_decision(
+                f"{phase_id}.{step['id']}"))
     return st
 
 

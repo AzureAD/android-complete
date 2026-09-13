@@ -1,4 +1,5 @@
 """Sequential eligibility and complete RC evidence are separate requirements."""
+from tests._context import context as _context, invoke as _invoke, pipeline as _pipeline
 import copy
 import json
 from argparse import Namespace
@@ -9,9 +10,10 @@ import pytest
 from tests._harness import CONFIG, _seed_rc_pipeline, _ready_for_rc_report, _bv_state, _bv_build
 from orchestrator import cli, cli_common as C, mocks
 from orchestrator.commands import rc_report as RR, rc_poll as RP
-from orchestrator.engine import Orchestrator
+from tests._context import fresh_orchestrator as Orchestrator, adopt_test_revision
 from orchestrator.state import ReleaseState, StepState
-from steps.build_verify import _common as K, rc_report, _rc_report_rendering as rendering
+from orchestrator.workflow import WorkflowConfigError
+from steps.build_verify import _common as K, rc_report, mrwp_ecs, _rc_report_rendering as rendering
 from tools.pipelines import AUTH_UI_SUITES
 from tests._auth_evidence import auth_test
 
@@ -108,7 +110,7 @@ def test_rc_report_source_change_rejects_claim_or_suppresses_completion(
 def test_report_prominent_consolidated_recommendation(
         ready, mrwp_failed, auth_failed, incomplete, recommendation):
     from html import unescape
-    model = rc_report.rc_report_model(ready)
+    model = rc_report.rc_report_model(_context(ready))
     for run in model["mrwp"].values():
         run["tests"]["categories"]["ui"].update(
             total=100, passed=100 - mrwp_failed, failed=mrwp_failed)
@@ -132,7 +134,7 @@ def test_report_prominent_consolidated_recommendation(
 
 
 def test_report_auth_percentages_two_decimals_without_rounding_gate(ready):
-    model = rc_report.rc_report_model(ready)
+    model = rc_report.rc_report_model(_context(ready))
     suites = model["auth"]["test"]["suites"]
     suites[AUTH_UI_SUITES[0]].update(present=True, passed=23, failed=6, total=29)
     suites[AUTH_UI_SUITES[1]].update(present=True, passed=329, failed=4, total=333)
@@ -176,11 +178,11 @@ def test_report_auth_percentages_two_decimals_without_rounding_gate(ready):
     (("auth", "test", "run_id"), None), (("auth", "test", "suites"), None),
 ])
 def test_builder_and_recorder_refuse_missing_evidence(ready, tmp_path, path, value):
-    container = ready.pipeline_runs if path[0] in ("checker", "orchestrator") else K.latest_rc(ready)
+    container = ready.pipeline_runs if path[0] in ("checker", "orchestrator") else ready.pipeline_runs["rcs"][-1]
     for key in path[:-1]:
         container = container[key]
     container[path[-1]] = value
-    assert rc_report.build(ready).kind == "blocked"
+    assert _invoke(rc_report.build, ready).kind == "blocked"
     args = args_for(tmp_path, ready)
     before = stored_vars(C.load_state(str(tmp_path), ready.release_id))
     assert RR.cmd_record_rc_report(args) == 1
@@ -201,20 +203,20 @@ def test_missing_provider_and_zero_ui_never_gate_clean():
 def test_reconciled_counts_hold_at_84_5_and_missing_auth_still_prevents_report(ready, tmp_path):
     _seed_rc_pipeline(ready, {"passed": 168, "total": 204, "failed": 36},
                       {"passed": 137, "total": 157, "failed": 20})
-    current = K.latest_rc(ready)
-    assert rc_report.rc_ui_gate(rc_report.rc_report_model(ready))["pass_pct"] == 84.5
-    assert rc_report.build(ready).kind == "needs_skill"
+    current = ready.pipeline_runs["rcs"][-1]
+    assert rc_report.rc_ui_gate(rc_report.rc_report_model(_context(ready)))["pass_pct"] == 84.5
+    assert _invoke(rc_report.build, ready).kind == "needs_skill"
     from tests._harness import _ack_step
     args_for(tmp_path, ready)
     _ack_step(str(tmp_path), ready.release_id, "build_verify", "rc_report")
     assert C.load_state(str(tmp_path), ready.release_id).get_step("build_verify", "rc_report").status == "blocked"
     current.pop("auth")
-    assert rc_report.build(ready).kind == "blocked"
+    assert _invoke(rc_report.build, ready).kind == "blocked"
 
 
 @pytest.mark.parametrize("failure", ["build", "suite", "absent-suite", "empty-suite"])
 def test_evaluated_auth_failures_reportable_when_prerequisites_settled(ready, failure):
-    auth = K.latest_rc(ready)["auth"]
+    auth = ready.pipeline_runs["rcs"][-1]["auth"]
     suite = auth["test"]["suites"][AUTH_UI_SUITES[0]]
     if failure == "build":
         auth["build"]["result"], auth["test"] = "failed", None
@@ -227,10 +229,10 @@ def test_evaluated_auth_failures_reportable_when_prerequisites_settled(ready, fa
     if failure != "build":
         auth["test"] = auth_test(auth["test"]["suites"])
     auth["verdict"] = "clean"
-    model = rc_report.rc_report_model(ready)
+    model = rc_report.rc_report_model(_context(ready))
     assert rc_report.report_readiness(model)["ready"]
     assert rc_report.auth_report_gate(model)["blocking"]
-    out = rc_report.build(ready)
+    out = _invoke(rc_report.build, ready)
     assert out.kind == "needs_skill" and "HOLD" in out.payload["subject"]
     assert out.notification["completion"]["status"] in ("pass", "attention")
     assert "RC verified" not in out.payload["body"]
@@ -239,18 +241,18 @@ def test_evaluated_auth_failures_reportable_when_prerequisites_settled(ready, fa
 
 def test_gate_uses_unrounded_counts(ready):
     for key in ("ecs", "local"):
-        K.latest_rc(ready)[key]["tests"]["categories"]["ui"] = {
+        ready.pipeline_runs["rcs"][-1][key]["tests"]["categories"]["ui"] = {
             "total": 2000, "passed": 1799, "failed": 201}
-    assert rc_report.rc_ui_gate(rc_report.rc_report_model(ready))["blocking"]
+    assert rc_report.rc_ui_gate(rc_report.rc_report_model(_context(ready)))["blocking"]
     for key in ("ecs", "local"):
-        K.latest_rc(ready)[key]["tests"]["categories"]["ui"] = {
+        ready.pipeline_runs["rcs"][-1][key]["tests"]["categories"]["ui"] = {
             "total": 20000, "passed": 19999, "failed": 1}
-    assert rc_report.rc_ui_gate(rc_report.rc_report_model(ready))["verdict"] == "warn"
+    assert rc_report.rc_ui_gate(rc_report.rc_report_model(_context(ready)))["verdict"] == "warn"
 
 
 def test_cli_dispatch_and_recorder_cannot_bypass_predecessors(ready, tmp_path, capsys, monkeypatch):
     monkeypatch.setattr(mocks, "load_mocks", lambda *a, **k: {})
-    ready.steps.pop("build_verify.telemetry_verify")
+    ready.steps.pop("build_verify.auth_ecs")
     C.save_state(ready, str(tmp_path), ready.release_id)
     base = ["--config", CONFIG, "--runs-root", str(tmp_path)]
     before = copy.deepcopy(stored_vars(C.load_state(str(tmp_path), ready.release_id)))
@@ -264,10 +266,10 @@ def test_cli_dispatch_and_recorder_cannot_bypass_predecessors(ready, tmp_path, c
 
 def test_skipping_prerequisite_does_not_fabricate_evidence(ready, tmp_path):
     ready.set_step("build_verify", "auth_ecs", StepState(status="skipped", by="human"))
-    K.latest_rc(ready).pop("auth")
+    ready.pipeline_runs["rcs"][-1].pop("auth")
     orch = Orchestrator(CONFIG, ready, mocks={})
     assert orch.step_action_guard("build_verify", "rc_report") is None
-    assert rc_report.build(ready).kind == "blocked"
+    assert _invoke(rc_report.build, ready).kind == "blocked"
     assert RR.cmd_record_rc_report(args_for(tmp_path, ready)) == 1
 
 
@@ -283,11 +285,11 @@ def test_recorder_preserves_terminal_records(ready, tmp_path, status):
 
 
 def test_new_partial_rc_cannot_reuse_previous_complete_rc(ready):
-    old = copy.deepcopy(K.latest_rc(ready))
-    K.stash_mrwp(ready, "ECS", {**old["ecs"], "run_id": "99999"}, rc=2)
-    assert rc_report.rc_report_model(ready)["rc"] == 2
-    assert not rc_report.report_readiness(rc_report.rc_report_model(ready))["ready"]
-    assert rc_report.build(ready).kind == "blocked"
+    old = copy.deepcopy(K.latest_rc(_context(ready)))
+    _pipeline(K.stash_mrwp, ready, "ECS", {**old["ecs"], "run_id": "99999"}, rc=2)
+    assert rc_report.rc_report_model(_context(ready))["rc"] == 2
+    assert not rc_report.report_readiness(rc_report.rc_report_model(_context(ready)))["ready"]
+    assert _invoke(rc_report.build, ready).kind == "blocked"
 
 
 def test_auth_inflight_test_is_not_captured():
@@ -295,7 +297,7 @@ def test_auth_inflight_test_is_not_captured():
         "auth_build": {"build_id": 123, "rc": 1, "status": "completed", "result": "succeeded"},
         "test_build": 124, "test_status": "inProgress", "suites": {}}})
     assert _bv_build(orch, st, "auth_ecs")["kind"] == "in_progress"
-    assert not K.latest_rc(st).get("auth")
+    assert not K.latest_rc(_context(st)).get("auth")
 
 
 def test_mrwp_missing_summary_retries_instead_of_finishing():
@@ -317,13 +319,13 @@ def test_mrwp_failure_fetch_error_persists_and_prevents_complete_report(
     injected = {"mrwp_id": "1678863", "rc": 1,
                 "stages": [{"name": "UI", "state": "completed", "result": "failed"}]}
     with mockctx.active(injected):
-        outcome = _mrwp.verify_mrwp(ready, "ECS")
+        outcome = _invoke(mrwp_ecs.build, ready)
     assert outcome.kind == "blocked"
-    assert K.latest_rc(ready)["ecs"]["failed_suites"] is None
-    assert K.latest_rc(ready)["ecs"]["tests_error"] == "result page offline"
+    assert K.latest_rc(_context(ready))["ecs"]["failed_suites"] is None
+    assert K.latest_rc(_context(ready))["ecs"]["tests_error"] == "result page offline"
     args = args_for(tmp_path, ready)
     saved = C.load_state(str(tmp_path), ready.release_id)
-    model = rc_report.rc_report_model(saved)
+    model = rc_report.rc_report_model(_context(saved))
     assert not rc_report.report_readiness(model)["ready"]
     assert any("result page offline" in p for p in model["problems"])
     gate, auth = rc_report.rc_ui_gate(model), rc_report.auth_report_gate(model)
@@ -342,13 +344,13 @@ def test_mrwp_failure_fetch_error_persists_and_prevents_complete_report(
     suites = summary["failed_suites"]
     monkeypatch.setattr(P, "get_test_summary", lambda *a, **k: (True, summary, ""))
     with mockctx.active(injected):
-        assert _mrwp.verify_mrwp(ready, "ECS").kind == "done"
-    assert K.latest_rc(ready)["ecs"]["tests_error"] is None
-    assert rc_report.report_readiness(rc_report.rc_report_model(ready))["ready"]
+        assert _invoke(mrwp_ecs.build, ready).kind == "done"
+    assert K.latest_rc(_context(ready))["ecs"]["tests_error"] is None
+    assert rc_report.report_readiness(rc_report.rc_report_model(_context(ready)))["ready"]
     args_for(tmp_path, ready)
     saved = C.load_state(str(tmp_path), ready.release_id)
-    assert K.latest_rc(saved)["ecs"]["failed_suites"] == suites
-    assert K.latest_rc(saved)["ecs"]["tests"] == summary
+    assert K.latest_rc(_context(saved))["ecs"]["failed_suites"] == suites
+    assert K.latest_rc(_context(saved))["ecs"]["tests"] == summary
 
 
 def test_mrwp_summary_page_error_is_explicit(ready, monkeypatch):
@@ -358,16 +360,16 @@ def test_mrwp_summary_page_error_is_explicit(ready, monkeypatch):
     monkeypatch.setattr(P, "get_test_summary", lambda *a, **k: (False, None, "run page offline"))
     with mockctx.active({"mrwp_id": "1678863", "rc": 1,
                          "stages": [{"name": "UI", "state": "completed", "result": "failed"}]}):
-        outcome = _mrwp.verify_mrwp(ready, "ECS")
+        outcome = _invoke(mrwp_ecs.build, ready)
     assert outcome.kind == "blocked" and "run page offline" in outcome.reason
-    model = rc_report.rc_report_model(ready)
+    model = rc_report.rc_report_model(_context(ready))
     assert any("run page offline" in p for p in model["problems"])
     assert not rc_report.report_readiness(model)["ready"]
     assert "Test summary unavailable: run page offline" in RR._format(model)
 
 
 @pytest.mark.parametrize("error", ["run page offline", "result page offline"])
-def test_live_failure_fetch_error_is_explicit_and_survives_cli_persistence(
+def test_diagnostic_failure_is_explicit_without_replacing_verified_evidence(
         ready, tmp_path, monkeypatch, error):
     from tools import pipelines as P
     monkeypatch.setattr(P, "find_checker_runs", lambda *a, **k: (True, [{"id": 1}], ""))
@@ -385,22 +387,25 @@ def test_live_failure_fetch_error_is_explicit_and_survives_cli_persistence(
     model = P.release_report("O", "P", ready.release_id)
     assert model["mrwp"]["ECS"]["tests_error"] == error
     assert any("test summary unavailable" in p for p in model["problems"])
-    RR._persist(ready, model, args_for(tmp_path, ready))
+    args_for(tmp_path, ready)
+    before = copy.deepcopy(ready.pipeline_runs)
+    assert error in RR._format(model)
     saved = C.load_state(str(tmp_path), ready.release_id)
-    assert K.latest_rc(saved)["ecs"]["tests_error"] == error
-    assert not rc_report.report_readiness(rc_report.rc_report_model(saved))["ready"]
+    assert saved.pipeline_runs == before
+    assert rc_report.report_readiness(rc_report.rc_report_model(_context(saved)))["ready"]
 
 
 @pytest.mark.parametrize("sid,status,expected", [
     ("auth_ecs", "blocked", "blocked"), ("auth_ecs", "in_flight", "waiting"),
-    ("telemetry_verify", "blocked", "blocked"), ("telemetry_verify", "pending", "ready"),
+    ("telemetry_verify", "blocked", "blocked"), ("telemetry_verify", "pending", "waiting"),
     ("mrwp_local", "pending", "waiting"),
 ])
 def test_poll_does_not_resolve_premature_done_report(
         ready, tmp_path, monkeypatch, capsys, sid, status, expected):
     ready.set_step("build_verify", "rc_report", StepState(status="done", by="scout"))
     ready.set_step("build_verify", sid, StepState(status=status, note="not finished"))
-    monkeypatch.setattr(Orchestrator, "run_until_gate", lambda self: [])
+    from orchestrator.engine import Orchestrator as EngineOrchestrator
+    monkeypatch.setattr(EngineOrchestrator, "run_until_gate", lambda self: [])
     assert RP.cmd_poll_rc(args_for(tmp_path, ready)) == 0
     decision = json.loads(capsys.readouterr().out)
     assert decision["decision"] == expected
@@ -413,7 +418,8 @@ def test_poll_does_not_resolve_premature_done_report(
 def test_resolved_poll_and_prompt_distinguish_override(
         ready, tmp_path, monkeypatch, capsys, status, by, expected):
     ready.set_step("build_verify", "rc_report", StepState(status=status, by=by, note="Owner decision"))
-    monkeypatch.setattr(Orchestrator, "run_until_gate", lambda self: [])
+    from orchestrator.engine import Orchestrator as EngineOrchestrator
+    monkeypatch.setattr(EngineOrchestrator, "run_until_gate", lambda self: [])
     assert RP.cmd_poll_rc(args_for(tmp_path, ready)) == 0
     decision = json.loads(capsys.readouterr().out)
     assert decision["decision"] == "resolved" and decision["status"] == expected
@@ -422,14 +428,15 @@ def test_resolved_poll_and_prompt_distinguish_override(
     assert "never describe an override as PASSED" in prompt
 
 
-def test_sequential_discovery_and_dispatch_wait_for_predecessors(ready):
-    ready.steps.pop("build_verify.mrwp_local")
-    ready.steps.pop("build_verify.telemetry_verify")
+def test_capture_dependencies_hold_both_independent_children(ready):
     orch = Orchestrator(CONFIG, ready, mocks={})
+    assert orch.reopen("build_verify", "mrwp_local", "Recapture current RC").changed
     assert orch.scout_pending_steps() == []
     assert orch.step_action_guard("build_verify", "rc_report").kind == "blocked"
     orch.skip_step("build_verify", "mrwp_local", "Verified externally")
-    assert orch.scout_pending_steps() == ["telemetry_verify"]
+    assert orch.scout_pending_steps() == []
+    orch.skip_step("build_verify", "auth_ecs", "Verified externally")
+    assert orch.scout_pending_steps() == ["telemetry_verify", "rc_report"]
     assert orch.step_action_guard("build_verify", "telemetry_verify") is None
     orch.skip_step("build_verify", "telemetry_verify", "Owner override")
     assert orch.scout_pending_steps() == ["rc_report"]
@@ -441,7 +448,7 @@ def test_phase_zero_parallel_uses_only_explicit_dependencies(ready):
                         mocks={"preflight.flight_reminder": {"outcome": "done"}})
     phase = orch.config["phases"][0]
     assert phase["execution"] == "parallel"
-    assert "flight_reminder" in orch.scout_pending_steps()
+    assert "flight_reminder" not in orch.scout_pending_steps()
     assert orch.step_action_guard("preflight", "flight_reminder") is None
     orch.step_once()
     assert ready.is_done("preflight", "flight_reminder")
@@ -449,6 +456,7 @@ def test_phase_zero_parallel_uses_only_explicit_dependencies(ready):
     ready.set_step("preflight", "flight_reminder", StepState())
     step = next(s for s in phase["steps"] if s["id"] == "flight_reminder")
     step["depends_on"] = ["notice"]
+    adopt_test_revision(orch)
     assert "flight_reminder" not in orch.scout_pending_steps()
     assert orch.step_action_guard("preflight", "flight_reminder").kind == "blocked"
     orch.skip_step("preflight", "notice", "Owner override")
@@ -458,13 +466,18 @@ def test_phase_zero_parallel_uses_only_explicit_dependencies(ready):
 def test_sequential_engine_respects_explicit_dependencies_and_mocks(ready):
     ready.steps.pop("build_verify.telemetry_verify")
     orch = Orchestrator(CONFIG, ready, mocks={"build_verify.telemetry_verify": {"outcome": "done"}})
-    phase = orch._find_step("build_verify", "telemetry_verify")
+    phase = next(p for p in orch.config["phases"] if p["id"] == "build_verify")
+    phase["execution"] = "sequential"
     telemetry = next(s for s in phase["steps"] if s["id"] == "telemetry_verify")
     assert "rc_report" not in orch.scout_pending_steps()
     telemetry["depends_on"] = ["rc_report"]
-    assert orch.step_once().kind == "waiting"
+    with pytest.raises(WorkflowConfigError, match="cannot depend on later step"):
+        orch.step_once()
     assert not ready.is_done("build_verify", "telemetry_verify")
     telemetry.pop("depends_on")
+    seeded = dict(ready.steps)
+    adopt_test_revision(orch)
+    ready.steps = seeded
     orch.step_once()
     assert ready.is_done("build_verify", "telemetry_verify")
     assert orch.step_action_guard("build_verify", "rc_report") is None

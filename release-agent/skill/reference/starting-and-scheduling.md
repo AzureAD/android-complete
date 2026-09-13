@@ -22,6 +22,11 @@ Pick current → `init --release <id>` immediately. Pick different → follow-up
 1. Stop old runners. Review interrupted sends and existing legacy checkpoints with the
    owner; incomplete records are not permission to resend. Do not import/infer receipts.
 2. Install matching source and skill. A git pull does NOT update stored Scout prompts.
+   Schema-v3 releases are pinned to a workflow revision. On mismatch, stop dispatch
+   and use `workflow-adopt --release <id> --json` for an owner review; confirm the exact
+   hash with `--approve-hash`, `--by`, and `--reason`. Restore the pinned runtime first
+   if an execution, resource creation, delivery completion or automation claim needs
+   recovery. Never migrate old schemas or overwrite a release to bypass these checks.
 3. With the owner's explicit deployment authorization, replace stored worker prompts
    deliberately using this contract and the current `automation plan`. Do not silently
    migrate existing registrations or settings; preserve deliberate shared/manual workers.
@@ -34,13 +39,49 @@ Pick current → `init --release <id>` immediately. Pick different → follow-up
    ever-claimed payload automatically, even after a known-not-sent result. Investigate
    suppressed source-changed completion without re-sending.
 
-Right after `init`, make sure the **push-reminder automation** exists for THIS release so reminders reach the user even with Scout closed. Per-release: created at start, removed at close.
-1. `m_list_automations`. If **"`<YYYY-MM> · Release-wide — push reminders`"** exists AND `automation list --release <YYYY-MM> --json` scopes it to this release, do not duplicate it. Inspect its prompt; report outdated protocols for the deliberate deployment checklist above, do not auto-update live settings.
-2. If missing, `m_create_automation`:
-   - **name:** `<YYYY-MM> · Release-wide — push reminders`  (fill `<YYYY-MM>` with the release id — the standard `<release-id> · <scope> — <purpose>` title)
-   - **schedule:** `every hour`
-   - **teamsNotify:** `never`
-   - **prompt:** From `<AGENT_ROOT>` (**substitute the absolute confirmed release-agent path** — see SKILL.md → FIRST RUN — since this runs headless with no one to resolve a placeholder; e.g. run `paths --json` and paste the real `agent_root`), advance the active release **AUTONOMOUSLY** (no user is watching) and send the daily digest:
+For every automation below, use this **recoverable provisioning protocol**:
+1. Obtain the canonical `provider_spec` and `registration` from `automation plan --json`.
+   All seven workers, including push/daily email, are defined there; do not reconstruct
+   prompts from prose. A custom worker needs an explicit complete spec. Persist its
+   hash-bound identity first with `automation prepare --release <id>
+   --slug <slug> --name "<name>" --schedule "<schedule>" --cleanup-when "<rule>"
+   --purpose "<purpose>" [--step <phase.step> ...] --spec-json '<exact provider_spec>' --json`.
+   `--spec-file` may read an owner-supplied existing reviewed file instead; never write
+   a spec/prompt copy into release state, journal, or receipts.
+2. Call `m_list_automations` and obtain full details with `m_get_automation` as needed.
+   Losslessly normalize ALL rows to `{observed_at:"<UTC read time>",complete:true,
+   automations:[{id:"<id>",spec:{<complete tool-compatible kwargs>}}]}`.
+   Pass that envelope to `automation reconcile-create --release <id> --slug <slug>
+   --spec-json '<SAME exact spec>' --observed-json '<envelope>' --claim --executor <session> --json`.
+   Reads must be exhaustive, at most five minutes old, and after the latest operation.
+   Never guess defaults or omit unmatched workers when asserting a complete list.
+3. An exact complete-spec match is adoptable only without unresolved ownership.
+   Recorded ID OR reviewed name matches prevent renamed workers appearing absent.
+   Partial, mismatched, missing, duplicate, creating/uncertain/deleting/delete_uncertain
+   observations grant no create permission. Call `m_create_automation` only when
+   `permission_to_create:true`, passing **exactly** returned `spec`, no registry-only kwargs.
+4. Immediately record `automation create-result --release <id> --slug <slug>
+   --attempt-id <attempt> --outcome created --id <provider-id> --evidence
+   "<receipt identifying the exact authorized invocation>" --spec-json '<SAME exact spec>'`.
+   Never paste prompts or raw responses into evidence; only its digest is stored.
+   Record positive non-creation as `not_created`; timeouts or
+   unknown outcomes as `uncertain`. Never automatically retry an unresolved claim.
+5. Identical prepare preserves the entire existing entry, including owner/ID/status.
+   Changed specs cannot replace an existing intent, even active/prepared. Restore the
+   exact reviewed source/spec to acknowledge an old claim, or safely retire it with
+   the owner. Registry schema v3 rejects older schemas; no silent migration/rehash.
+   Provider defaults are explicit in the plan (including model, enabled, oneShot,
+   triggerType, conditionCheckInterval, browserHeadless and teamsNotify).
+
+Right after `init`, reconcile the **push-reminder automation** for THIS release so reminders reach the user even with Scout closed. Per-release: created at start, removed at close.
+Use `automation plan --release <id> --slug push-reminders --json` before the CCD gate.
+- **slug:** `push-reminders`
+- **name:** `<YYYY-MM> · Release-wide — push reminders`
+- **schedule:** `every hour`
+- **teamsNotify:** `never`
+- **cleanup_when:** `release_done`
+- **prompt:**
+  From `<AGENT_ROOT>` (**substitute the absolute confirmed release-agent path**), advance the active release **AUTONOMOUSLY**:
      1. Run `python -m orchestrator.cli status --release <YYYY-MM> --json`.
         Missing, unsigned, halted or complete means skip work, NOT cleanup.
      2. Loop `next --release <YYYY-MM> --json` and resolve `scout_pending` with
@@ -54,29 +95,30 @@ Right after `init`, make sure the **push-reminder automation** exists for THIS r
         message blocks. Core alerts are scoped to active preflight after 9 AM on the
         previous business day or CCD only. Inspect source pending for completion/provisioning
         recovery; never resend claimed/uncertain/sent records. Do not add courtesy copies.
-     4. ALWAYS, in a finally block (including silence/errors), run
-        `automation cleanup --release <YYYY-MM> --json`. Delete each live automation,
-        then deregister only after success. Failed deletions remain registered.
-3. **Register it** so it's torn down at close: `automation register --id <id> --name "<YYYY-MM> · Release-wide — push reminders" --release <YYYY-MM> --cleanup-when release_done --purpose "hourly autonomous advance (runs scout steps) + phase digest to owner (email + Teams)"` — no `--step`, so it's recorded as a **release-level** automation (it advances the whole release, owns no step).
+     4. ALWAYS run `automation cleanup --release <YYYY-MM> --json`, then the
+        claimed cleanup protocol below, in a finally block.
 
 Do it silently as part of start (the user already opted into push). **Why hourly, not once at 9am:** `tick` is idempotent (advancing no-ops once holding; digest de-dupes to one email/day), so a tick missed while the machine was off is picked up by the next. A single daily trigger would be skipped that day.
 
 ## Ensure the daily partner status email exists (per release — provisioned at start, closed at end of Phase 4)
 
-Alongside the push reminders, provision the **partner status email** — an **end-of-day** business-day email to the release DLs (`authsdkrelease@`, `androididentity@`) with the milestone dashboard, sent while the release is in flight (**Phase 2 build_verify through Phase 4 finalize**). EOD so it reports the day's SETTLED progress (matches the checklist's "📧 End-of-day: send status email").
-1. `m_list_automations`. If **"`<YYYY-MM> · Phases 2–4 — daily status email`"** is already scoped to this release, leave it.
-2. If missing, `m_create_automation`:
-   - **name:** `<YYYY-MM> · Phases 2–4 — daily status email`  (fill `<YYYY-MM>` with the release id — the standard `<release-id> · <scope> — <purpose>` title)
-   - **schedule:** `every weekday at 5pm`  (end of day; weekends are skipped natively; the command also skips US holidays and the window)
-   - **teamsNotify:** `never`
-   - **prompt:** From `<AGENT_ROOT>` (**substitute the absolute confirmed release-agent path** — see SKILL.md → FIRST RUN — since this runs headless; `paths --json` prints the real `agent_root`), send the daily partner status email if one is due:
+Alongside the push reminders, reconcile the **partner status email** through the same protocol.
+Use `automation plan --release <id> --slug daily-status-email --json`. The detailed
+flow below documents the canonical code, not an independently editable provider spec.
+- **slug:** `daily-status-email`
+- **name:** `<YYYY-MM> · Phases 2–4 — daily status email`
+- **schedule:** `every 1 hour`
+- **teamsNotify:** `never`
+- **cleanup_when:** `phase_done:finalize`
+- **prompt:** From `<AGENT_ROOT>`, send the daily partner status email if one is due:
      1. Run `notification prepare --release <YYYY-MM> --source status-email`.
+        The command gates on the stored owner's timezone, business day and 17:00.
+        Delivery occurs at the first eligible hourly tick at/after 17:00, not necessarily
+        exactly 17:00. Missing timezone fails clearly. Never use `--force` in this worker.
         For an isolated TEST release, add `--send-to <verified-test-address>`.
      2. For each eligible notification, use SKILL.md's exact prepare/claim/result protocol.
         Empty/stopped/claimed/uncertain/sent means no send, never an automatic retry.
-     3. ALWAYS run `automation cleanup --release <YYYY-MM> --json` in a finally block,
-        even when no email is due. Delete first, deregister only on success.
-3. **Register it** for teardown: `automation register --id <id> --name "<YYYY-MM> · Phases 2–4 — daily status email" --release <YYYY-MM> --cleanup-when phase_done:finalize --purpose "business-day partner status email (Phase 2-4)"`.
+     3. ALWAYS run the claimed cleanup protocol, even when no email is due.
 
 **Closing it (end of Phase 4).** `finalize.final_status_email` uses source step and the
 same claim/result protocol; only acknowledged delivery completes the step. Cleanup
@@ -88,23 +130,44 @@ scope is open; explicit owner skip or phase completion ends delivery eligibility
 
 Some steps must fire at a specific time of day (not just "on their date") — e.g. the CCD-day comms at 09:00 and the localization trigger at noon. These are declared as DATA in `config/automations.yaml`, which maps each automation to the exact steps it drives; the fire time is derived from each step module's `fire_at_local`. **Provision them only once the CCD is CONFIRMED** — the schedules are cron-pinned to the CCD date, so a wrong/unsettled CCD pins them to the wrong day. Concretely: wait until the CCD is settled (`status --json` shows no `ccd_conflict`, and — for a normal start — the entry gate's `ccd_confirmed` item has passed). Then:
 
-1. `python -m orchestrator.cli automation plan --release <YYYY-MM> --json` — returns **startup automations only**; `on_demand:true` pollers are intentionally excluded. It returns (`name`, `schedule`, `steps`, `slug`, `purpose`, `cleanup_when`, `prompt`, `registration`). If `problems` is non-empty, STOP and report — the config/step mapping drifted. If `ccd` is null, STOP — set the CCD first.
-2. For each automation in the result, skip if `automation list --release <YYYY-MM> --json` already has one with the same `slug` (don't duplicate). Otherwise `m_create_automation`:
-   - **name / schedule / prompt:** exactly the values from the plan (the schedule is a **cron pinned to the exact CCD date** — e.g. `cron: 0 9 26 8 *` for 09:00 on Aug 26 — NOT `every wednesday`, which fires the next weekday and would run the CCD-day comms a week early; set **oneShot:true** for the cron ones).
+1. `python -m orchestrator.cli automation plan --release <YYYY-MM> --json` — returns **startup automations only**, including push/daily workers; `on_demand:true` pollers are excluded. It returns metadata, `registration` and complete `provider_spec`. Non-empty `problems` is a stop, never a success-shaped schedule fallback.
+2. For each automation in the result, execute the recoverable provisioning protocol above:
+   - **Complete kwargs:** exactly `provider_spec`. The owner-local CCD/fire datetime
+     is converted to the scheduler host's IANA timezone before generating cron;
+     host and owner dates can differ. Keep **oneShot:true** (cron has no year).
+     Missing zones, ambiguous/nonexistent times, past targets and targets more than
+     a year ahead fail clearly. Never turn a missed target into next year's send.
    - **teamsNotify:** `never` (it emails/posts via the steps themselves).
-3. **Register it WITH its steps, slug, schedule, and cleanup rule** — copy the plan spec's `registration` fields, filling the real Scout id:
-   `automation register --id <scout-id> --name "<name>" --release <YYYY-MM> --slug <slug> --schedule "<schedule>" --cleanup-when "<rule>" [--cleanup-when "<OR-rule>"] --purpose "<purpose>" --step <phase.step> [--step …]`
 
 ### Provision an on-demand poller
 When a step/command asks for an on-demand poller, run `automation plan --release
-<YYYY-MM> --on-demand <slug> --json`; create exactly that returned automation and
-register all `registration` fields. Current slugs: `build-verify-rc-poller` after
+<YYYY-MM> --on-demand <slug> --json`; reconcile exactly that returned automation
+through prepare/list/reconcile-create/create-result. Current slugs: `build-verify-rc-poller` after
 `rc-retriggered`, `ccd-localization-poller` after the noon localization trigger,
 and `bug-bash-update-poller` after the first Bug Bash update.
 Never create these during release initialization.
+Include `--on-demand <slug>` on prepare/reconcile claims; the CLI rejects implicit
+on-demand creation. CCD one-shot preparation/claims require a passed `ccd_confirmed`
+readiness item and no conflict. Owning result acknowledgements do not re-evaluate a
+new plan: they must remain possible after time/source/CCD changes.
 
-The localization poller runs hourly. After the pipeline creates a PR, it posts the
-initial Code Reviews request once, monitors that PR until ADO reports it completed,
+The noon worker must preview `launch-localization` and obtain an explicit reviewed
+hash/reviewer before executing that checked command with the same selection flags.
+If no approval is available, hold and notify the owner—never call a raw trigger.
+An optional checked `--reserve` saves only approval; execution still replans before
+its one provider request. Interrupted/uncertain launches remain owned. Recover only
+a matching build with `record-localization-run`; do not launch another to repair a receipt.
+The approval hash binds the workflow revision; adoption never automatically drains work.
+
+The localization poller runs hourly, reading the exact recorded run's `status` AND
+`result` on every poll (including PR monitoring). `--complete true` alone is not success.
+Discovery requires `--run-result succeeded`, the full nonblank OneLocBuild task log,
+and `--logs-complete`. The supported proof is `Pull request created with ID '<number>'`.
+There is no checked-in authoritative no-change log syntax: no PR line is not proof
+of no strings. Only an owner who reviewed the full successful output may supply
+`--no-change-confirmation "<explanation>"`; the worker must not invent it.
+After verified PR discovery, it posts the initial Code Reviews request once and
+monitors that PR until ADO reports it completed (still requiring successful run evidence),
 and keeps Phase 1 open until merge or the omission cutoff. At 4:00 PM
 America/Los_Angeles on CCD, an unmerged
 PR causes one additional Code Reviews warning that the translated strings are at risk.
@@ -113,20 +176,45 @@ skipped/omitted so Phase 2 proceeds without those strings and the poller is clea
 Initial PR, deadline warning and timeout email are staged per-channel notifications.
 Use source pending and claim/result. Timeout does not block the step before required
 delivery is acknowledged. A merge, owner skip or closed phase cancels stale follow-ups.
+Confirmed merge with a successful run wins over the 6 PM cutoff. Missing/unknown
+results or absent/partial/unrecognized logs wait with an explanation, then escalate
+after the existing 3h timeout even when the pipeline finished. Failed/canceled runs
+block with a run link, never “no strings.” After failure or acknowledged timeout,
+the owner must inspect the old run and explicitly reopen before reserving another
+trigger; the new receipt archives prior run evidence in existing `previous_runs`.
+In-flight work only polls the original execution and never offers a duplicate trigger.
 
 **Traceability:** every timed step is owned by exactly one automation (a guardrail test enforces this). Each registry entry has a **kind** — `step-driving` (owns steps, e.g. the CCD automations) or `release-level` (whole-release, no steps, e.g. push reminders), auto-derived from whether you pass `--step`. To answer "which automation runs step X?" → `automation list --release <YYYY-MM> --step-filter <phase.step>`. To see "what does this automation drive?" → `automation list --release <YYYY-MM>` (each row shows its `[kind]` and `drives: …`, or `(release-level — no steps)`). At runtime each step-driving automation journals `<slug> ran <step>` into the release event log, so the whole chain (config → registered automation → step execution) is inspectable.
 
-### Any automation you provision MUST be registered (for teardown)
+### Any automation you provision MUST complete the registry lifecycle
 - **Per-release** (normal, e.g. push reminders, the CCD phase automations) → `--release <YYYY-MM>` (+ `--step` for step-driving ones). **Removed when that release closes.**
 - **Shared/persistent** (rare — genuinely meant to outlive every release) → `--shared`. Not torn down. Default per-release.
 
 At **release close** (status complete / Release Close phase / user asks to "clean up automations"):
 1. `automation list --release <YYYY-MM> --json` — the release's automations.
 2. Run `automation cleanup --release <YYYY-MM> --json`; for each removal in order,
-   `m_delete_automation` (id from entry), then `automation deregister --id <id>`.
-   The universal release-complete backstop includes explicitly release-scoped nonmanual entries.
+   claim with `automation claim-delete --id <id> --executor <session> --json`.
+   Call `m_delete_automation` only when `permission_to_delete:true`, then record
+   `automation delete-result --id <id> --attempt-id <attempt>
+   --outcome deleted|not_deleted|uncertain --evidence "<provider evidence>"`.
+   **Stop on a denied claim/barrier, error or uncertain result.** Ordering is not authority:
+   the registry lock bars release-level deletion while nonmanual child intents or
+   unresolved sibling operations remain; helpers precede the `push-reminders` recovery
+   worker. Reverse barriers prohibit new workers while release-level deletion is
+   unresolved. Owning receipts/absence recovery remain usable.
 3. Preserve shared/manual entries. Missing/invalid lifecycle metadata requires owner review,
    not inferred ownership or automatic migration. A halted release suspends, not deletes.
+4. ID-less terminal intents are not invisible cleanup successes. After proving the
+   original runner AND provider operation terminated, uncertain/missing/blocked entries
+   can use `automation confirm-absent --release <id> --slug <slug> --observed-json
+   '<fresh envelope with zero ID/name matches>' --reason "<owner evidence>"
+   --confirm-absent --confirm-no-inflight`. Live creating/deleting claims must first
+   record their owning result; absence alone cannot fence a running provider call.
+   Verified absence of delete_uncertain removes that entry; creation recovery returns
+   prepared. Then `automation abandon-prepared --release <id> --slug <slug>
+   --observed-json '<new fresh envelope>' --reason "<owner evidence>" --confirm-absent`
+   removes only an ID-less prepared intent in a complete/cancelled release. Manual/shared
+   intents are exempt. No tombstone, payload copy or direct deregister is created.
 
 ## Code Complete Date (CCD) & phase scheduling
 
@@ -144,9 +232,27 @@ Either resolution clears the conflict. Never pick for the user.
   to simulate the date. `notification claim/result/finalize` reject overrides and use the
   trusted current clock; tests patch clocks only in isolated fixtures.
 
+**Use the engine's shared scheduling result, not a second readiness rule in the skill.**
+`next`, status and `scout_pending` share the same frontier, dependencies and clock.
+A pending parallel gate is the presentation focus, but independent automatic/Scout
+work can still run. A denied gate, halt, cancellation or unsatisfied readiness gate
+stops dispatch; do not treat a displayed gate as permission to bypass any of those.
+Timed new work (including outcome mocks) waits for its fire time in both sequential
+and parallel phases. In-flight external work needs its declared poll path, not a
+new reservation. Existing engine-owned effects use their declared recovery path,
+at most once per drain, without relinquishing ownership or starting another write.
+Poll/refresh commands retain their own eligibility checks; absence from
+`scout_pending` is not evidence that an existing operation has finished.
+
 **Changing the CCD (real production change).** `set-ccd` **writes the pipeline override** — gated: run without `--confirm` first (preview) → present → explicit yes (a `--reason` is always required) → re-run with `--confirm`. Month-scoped (date must be in the release month). `--default` reverts to 2nd-Wednesday.
 
-**After ANY confirmed CCD change, re-sync the CCD-day automations.** Their cron schedules are pinned to the old CCD, so a moved CCD leaves them firing on the wrong day (`set-ccd` prints a ⚠ reminder when step-driving automations are registered). Run **`automation sync --release <YYYY-MM> --json`** → `{ccd, updates:[{id, name, slug, cleanup_when, current_schedule, desired_schedule, changed}]}`. For every entry with **`changed: true`**: call **`m_update_automation`** with `id` and `schedule: desired_schedule`, then **re-register** it so the stored schedule and lifecycle match: `automation register --id <id> --name "<name>" --release <YYYY-MM> --slug <slug> --schedule "<desired_schedule>" --cleanup-when "<cleanup_when>" --step <…>`. Entries with `changed:false` are already correct — skip them. (The interval poller never changes.) Do this silently as part of the CCD change.
+**After a confirmed CCD change, review automation drift.** `automation sync --release
+<id> --json` reports full-intent drift and `permission_to_update:false`. There is no
+crash-safe in-place update protocol: **never** call update then register. Have the
+owner review claimed delete/result and fresh prepare/list/reconcile/create-result,
+respecting all barriers. Unchanged workers stay untouched. Past targets must be
+handled as missed work, not pinned to next year. A source/prompt change also changes
+the hash; never silently replace it or overwrite old owner receipts.
 
 **Skipping/cancelling the release.** Same gated pattern: `skip-release` sets the pipeline `skipRelease` switch (preview → confirm, reason required); `--clear` re-enables. Suppresses the monthly trigger — confirm before `--confirm`.
 

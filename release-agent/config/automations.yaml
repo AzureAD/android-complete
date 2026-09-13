@@ -37,9 +37,36 @@
 #              Pending required delivery/completion defers step cleanup. Use phase_done
 #              for workers that outlive their initial trigger step.
 
-version: 1
+version: 2
+
+# Complete explicit defaults passed to m_create_automation (no implicit global model).
+provider_defaults:
+  model: gpt-5.4
+  enabled: true
+  triggerType: schedule
+  conditionCheckInterval: 15
+  browserHeadless: true
+  teamsNotify: never
 
 automations:
+  - slug: push-reminders
+    label: "push reminders"
+    scope: Release-wide
+    prompt_kind: push-reminders
+    every: "1 hour"
+    steps: []
+    cleanup_when: release_done
+    purpose: "Advance the pinned release, recover owned work and deliver the eligible owner digest"
+
+  - slug: daily-status-email
+    label: "daily status email"
+    scope: "Phases 2–4"
+    prompt_kind: daily-status-email
+    every: "1 hour"
+    steps: []
+    cleanup_when: phase_done:finalize
+    purpose: "Send the partner status email on the first eligible owner-local business-day tick at or after 17:00"
+
   - slug: ccd-morning
     label: "morning reminders"
     phase: ccd
@@ -53,12 +80,12 @@ automations:
     label: "noon localization"
     phase: ccd
     steps:
-      - ccd.localization        # trigger pipeline 405133 (isCreatePrSelected=true)
+      - ccd.localization        # launch-localization: preview, exact review, reserve/execute; never raw trigger
     cleanup_when:
       - step_flag:ccd.localization:started_at
       - steps_done
       - phase_done:ccd
-    purpose: "Trigger the localization pipeline at noon"
+    purpose: "Launch localization at noon through launch-localization with an approved exact review hash; record-localization-run is recovery only"
 
   - slug: ccd-localization-poller
     label: "localization poller"
@@ -70,7 +97,7 @@ automations:
     cleanup_when:
       - steps_settled
       - phase_done:ccd
-    purpose: "Poll localization hourly; warn at 4 PM Los Angeles time if unmerged, then omit localization at 6 PM so the release proceeds"
+    purpose: "Poll localization with positive run-result/task evidence; escalate unresolved evidence at 3h, warn on unmerged PRs at 4 PM Los Angeles and omit them at 6 PM"
 
   # ON-DEMAND (not provisioned at release start). Created only when Build & RC
   # Verification is holding on an in-flight re-triggered RC (the human ran

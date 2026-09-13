@@ -23,6 +23,7 @@ import json
 import subprocess
 import re
 from pathlib import Path
+from urllib.parse import quote
 
 # android-complete root = <root>/release-agent/tools/prs.py -> parents[2]
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -101,10 +102,19 @@ def merge_conflict_preview(dir_name: str, head: str, base: str, timeout=90):
 
     Uses the modern `git merge-tree --write-tree` form; if the git is too old it
     returns ok=False so the caller can degrade gracefully."""
-    rc, out, e = _run(
-        _GITC + ["merge-tree", "--write-tree", "--name-only",
-                 f"origin/{head}", f"origin/{base}"],
-        cwd=str(repo_dir(dir_name)), timeout=timeout)
+    from tools import git_review as G
+    try:
+        root = G.clean_repository(repo_dir(dir_name))
+        tips = [G.object_id(G._git(root, "rev-parse", f"refs/remotes/origin/{G.branch(name)}")
+                            .decode().strip()) for name in (head, base)]
+        with G.scratch(root) as (work, env):
+            result = subprocess.run(
+                _GITC + ["-c", "core.longpaths=true", "merge-tree", "--write-tree", "--name-only", *tips],
+                cwd=work, env=env, capture_output=True, timeout=timeout)
+            rc, out, e = (result.returncode, result.stdout.decode("utf-8"),
+                          result.stderr.decode("utf-8", "replace"))
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        return False, None, str(exc)
     # merge-tree exit: 0 = clean, 1 = conflicts (with a conflict list on stdout).
     if rc not in (0, 1):
         return (False, None, e.strip() or "merge-tree unsupported")
@@ -129,13 +139,17 @@ def gh_find_open_pr(gh_repo: str, head: str, base: str, timeout=60):
     'owner/repo' for github.com or 'host/owner/repo' for GHE)."""
     rc, out, e = _run(
         ["gh", "pr", "list", "--repo", gh_repo, "--head", head, "--base", base,
-         "--state", "open", "--json", "number,url,title"], timeout=timeout)
+         "--state", "open", "--json", "number,url,title,body,labels"], timeout=timeout)
     if rc != 0:
         return (False, None, e.strip() or "gh pr list failed")
     try:
         arr = json.loads(out or "[]")
     except json.JSONDecodeError:
         return (False, None, f"unparseable gh output: {out!r}")
+    if not isinstance(arr, list) or len(arr) > 1:
+        return (False, None, "Ambiguous open PR lookup")
+    if arr:
+        arr[0]["labels"] = sorted(x["name"] for x in arr[0].get("labels", []))
     return (True, (arr[0] if arr else None), "")
 
 
@@ -301,10 +315,69 @@ def az_find_open_pr(org, project, repo, head, base, timeout=60):
         return (False, None, f"unparseable az output: {out!r}")
     if not arr:
         return (True, None, "")
+    if not isinstance(arr, list) or len(arr) > 1:
+        return (False, None, "Ambiguous active PR lookup")
     p = arr[0]
     num = p.get("pullRequestId")
     url = (f"{org.rstrip('/')}/{project}/_git/{repo}/pullrequest/{num}" if num else None)
-    return (True, {"number": num, "url": url, "title": p.get("title")}, "")
+    return (True, {"number": num, "url": url, "title": p.get("title"),
+                   "body": p.get("description", "")}, "")
+
+
+def provider_repository_urls(repository, timeout=60):
+    """Resolve the reviewed hosting repository itself, not merely matching commit IDs."""
+    if repository["tool"] == "gh":
+        host, slug = _gh_repo_parts(repository["gh_repo"])
+        args = ["gh", "api", f"repos/{slug}"]
+        if host:
+            args += ["--hostname", host]
+        names = ("clone_url", "ssh_url")
+    else:
+        target = repository["ado"]
+        args = ["az", "repos", "show", "--org", target["org"], "--project", target["project"],
+                "--repository", target["repository"], "--output", "json"]
+        names = ("remoteUrl", "sshUrl")
+    rc, out, error = _run(args, timeout=timeout)
+    if rc:
+        raise ValueError(error.strip() or "Hosting repository identity lookup failed")
+    try:
+        value = json.loads(out)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("Hosting repository identity was unreadable") from exc
+    if not isinstance(value, dict):
+        raise ValueError("Hosting repository identity was not an object")
+    urls = [value[key] for key in names if isinstance(value.get(key), str) and value[key].strip()]
+    if not urls:
+        raise ValueError("Hosting repository did not provide a clone URI")
+    return urls
+
+
+def provider_branch_object_id(repository, name, timeout=60):
+    """Read a tip from the exact reviewed hosting target, not local tracking refs."""
+    from tools.git_review import object_id, branch
+    branch(name)
+    if repository["tool"] == "gh":
+        host, slug = _gh_repo_parts(repository["gh_repo"])
+        args = ["gh", "api", f"repos/{slug}/git/ref/heads/{quote(name, safe='')}",
+                "--jq", ".object.sha"]
+        if host:
+            args += ["--hostname", host]
+        rc, out, err = _run(args, timeout=timeout)
+        if rc:
+            raise ValueError(err.strip() or "Provider branch lookup failed")
+        return object_id(out.strip())
+    a = repository["ado"]
+    rc, out, err = _run(
+        ["az", "repos", "ref", "list", "--org", a["org"], "--project", a["project"],
+         "--repository", a["repository"], "--filter", "heads/" + name, "--output", "json"],
+        timeout=timeout)
+    if rc:
+        raise ValueError(err.strip() or "Provider branch lookup failed")
+    found = [r["objectId"] for r in json.loads(out)
+             if r.get("name") == "refs/heads/" + name]
+    if len(found) != 1:
+        raise ValueError("Missing or ambiguous provider branch: " + name)
+    return object_id(found[0])
 
 
 def az_create_pr(org, project, repo, head, base, title, body, work_items=None, timeout=120):
@@ -348,91 +421,17 @@ def create_pbi(org, project, title, area=None, iteration=None, timeout=90):
 
 # ------------------------------------------------------- RI editing (the careful part)
 def prepare_ri_branch(dir_name, ri, target, dry_run=True, timeout=240):
-    """Bring the release-integration branch up to date with `target` and revert build.gradle
-    so the target stays DYNAMIC, then push. Returns (ok, result, detail).
-
-    result = {behind, gradle_reverted:[...], human_conflicts:[...], pushed:bool, action:str}
-
-    SAFETY: all work happens in a throwaway `git worktree` — the user's checkout is never
-    touched. If ANY non-build.gradle conflict would remain, we do NOT write anything and
-    return it for a human. We NEVER force-push (the push must fast-forward the RI branch)."""
-    import tempfile, shutil, os
-
-    okf, fdetail = git_fetch(dir_name)
-    if not okf:
-        return (False, {}, f"fetch failed: {fdetail}")
-
-    okb, behind, _ = behind_count(dir_name, ri, target)
-    okg, gradle, _ = gradle_diff_files(dir_name, ri, target)
-    okm, conflicts, mdetail = merge_conflict_preview(dir_name, ri, target)
-    if not okm:
-        return (False, {}, f"could not preview the merge: {mdetail}")
-    gradle_set = set(gradle or [])
-    human = [c for c in conflicts if c not in gradle_set]
-    result = {"behind": behind if okb else None,
-              "gradle_reverted": sorted(gradle_set), "human_conflicts": human,
-              "pushed": False, "action": ""}
-
-    if human:
-        result["action"] = "HELD — non-build.gradle conflicts need a human before this PR can open"
-        return (True, result, "")   # not a failure: a legitimate human hold
-    if dry_run:
-        result["action"] = ("DRY-RUN — would merge target, revert "
-                             f"{len(gradle_set)} build.gradle file(s), and push")
-        return (True, result, "")
-
-    # ---- LIVE: do the edit in an isolated worktree ----
-    root = str(repo_dir(dir_name))
-    tmp = tempfile.mkdtemp(prefix="scout-ri-")
-    wtbranch = "scout/ri-edit"
+    """Compatibility read-only preview. Writes require the checked command's captured plan."""
+    from tools import git_review as G
+    if not dry_run:
+        return False, {}, "Use create-integration-prs --execute --review-hash --approved-by"
     try:
-        rc, _o, e = _run(_GITC + ["worktree", "add", "--force", "-B", wtbranch, tmp,
-                                  f"origin/{ri}"], cwd=root, timeout=timeout)
-        if rc != 0:
-            return (False, result, f"worktree add failed: {e.strip()}")
-
-        # merge target; build.gradle conflicts are expected and auto-resolved to target.
-        rc, _o, me = _run(_GITC + ["merge", "--no-ff", "--no-edit", f"origin/{target}"],
-                          cwd=tmp, timeout=timeout)
-        if rc != 0:
-            # only build.gradle should conflict (pre-checked); take target's side for those.
-            for f in gradle_set:
-                _run(_GITC + ["checkout", "--theirs", "--", f], cwd=tmp, timeout=60)
-                _run(_GITC + ["add", "--", f], cwd=tmp, timeout=60)
-            rc2, _o2, e2 = _run(_GITC + ["commit", "--no-edit"], cwd=tmp, timeout=60)
-            if rc2 != 0:
-                _run(_GITC + ["merge", "--abort"], cwd=tmp, timeout=60)
-                return (False, result, f"merge could not be auto-resolved: {e2.strip() or me.strip()}")
-
-        # force ALL build.gradle to the target's version (revert even non-conflicting diffs).
-        for f in gradle_set:
-            _run(_GITC + ["checkout", f"origin/{target}", "--", f], cwd=tmp, timeout=60)
-        _run(_GITC + ["add", "-A"], cwd=tmp, timeout=60)
-        # commit the reverts if anything is staged (no-op commit is skipped by --allow-empty guard)
-        rcs, so, _ = _run(_GITC + ["status", "--porcelain"], cwd=tmp, timeout=30)
-        if so.strip():
-            rcc, _o, ec = _run(
-                _GITC + ["commit", "-m",
-                         f"Scout: sync with {target}; revert build.gradle (keep {target} dynamic)"],
-                cwd=tmp, timeout=60)
-            if rcc != 0:
-                return (False, result, f"commit failed: {ec.strip()}")
-
-        # push RI (fast-forward only — never force).
-        rcp, _o, ep = _run(_GITC + ["push", "origin", f"HEAD:refs/heads/{ri}"],
-                           cwd=tmp, timeout=timeout)
-        if rcp != 0:
-            return (False, result, f"push failed (not force-pushing): {ep.strip()}")
-        result["pushed"] = True
-        result["action"] = (f"merged {target}, reverted {len(gradle_set)} build.gradle file(s), "
-                            f"pushed {ri}")
-        return (True, result, "")
-    finally:
-        _run(_GITC + ["worktree", "remove", "--force", tmp], cwd=root, timeout=60)
-        try:
-            if os.path.isdir(tmp):
-                shutil.rmtree(tmp, ignore_errors=True)
-        except Exception:  # noqa: BLE001
-            pass
-        _run(_GITC + ["branch", "-D", wtbranch], cwd=root, timeout=30)
-
+        root = G.clean_repository(repo_dir(dir_name))
+        remote = G.remote_url(root)
+        plan = G.plan_ri(root, G.remote_tip(root, remote, ri),
+                         G.remote_tip(root, remote, target), target)
+        return True, {"behind": plan["behind"], "gradle_reverted": plan["gradle_reverted"],
+                      "human_conflicts": [], "pushed": False, "action": "read-only exact preview",
+                      "plan": plan}, ""
+    except ValueError as exc:
+        return False, {}, str(exc)

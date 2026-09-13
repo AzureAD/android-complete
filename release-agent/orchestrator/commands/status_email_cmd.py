@@ -7,6 +7,7 @@ import yaml
 from orchestrator import cli_common as C
 from orchestrator import status_email as SE, delivery as D
 from orchestrator import notifications as notif
+from orchestrator import schedule
 from tools import bugbash as BB
 from tools import prs
 
@@ -43,7 +44,11 @@ def _broker_changes(state):
 
 
 def prepare_status_email(args, st, _orch):
-    today = _orch.now_local.date()
+    zone = schedule.get_tz(st.timezone) if st.timezone else None
+    if zone is None or _orch.now_local.tzinfo is None:
+        raise ValueError("Daily status email requires a valid stored owner timezone and aware clock")
+    now = _orch.now_local.astimezone(zone)
+    today = now.date()
     force = bool(getattr(args, "force", False))
     cfg = notif.load_config(args.config)
     phases = (cfg.get("status_email") or {}).get("phases")
@@ -52,6 +57,7 @@ def prepare_status_email(args, st, _orch):
     scope = {"kind": "window", "phases": phases,
              "until_steps": (cfg.get("status_email") or {}).get("until_steps", []),
              "date": today.isoformat(), "release_matches": {"owner_email": st.owner_email}}
+    scope["not_before"] = now.replace(hour=17, minute=0, second=0, microsecond=0).isoformat()
     reason = D.scope_reason(_orch, scope)
     if reason:
         return {"skip": True, "reason": reason, "release": args.release}
@@ -60,7 +66,13 @@ def prepare_status_email(args, st, _orch):
     if getattr(args, "send_to", None):                     # test redirect
         recipients = [x.strip() for x in str(args.send_to).split(",") if x.strip()]
 
-    res = SE.compose(st, _phase_order(args.config), recipients, changes=_broker_changes(st))
+    res = SE.compose(
+        st,
+        _phase_order(args.config),
+        recipients,
+        changes=_broker_changes(st),
+        selection=_orch.scheduling(),
+    )
 
     # 1) window (Phase 2 <= current < Phase 5)
     if res["skip"]:
@@ -109,7 +121,7 @@ def register(sub):
     se.add_argument("--release", required=True)
     se.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     se.add_argument("--force", action="store_true",
-                    help="Bypass business-day cadence only, never lifecycle or acknowledgement")
+                    help="Bypass business-day cadence only, never 17:00/lifecycle/acknowledgement guards")
     se.add_argument("--send-to", default=None,
                     help="Redirect recipients to these address(es) (comma-separated) for a test run")
     se.set_defaults(func=cmd_status_email)

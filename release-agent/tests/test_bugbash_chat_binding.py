@@ -1,32 +1,31 @@
 """Exact event-to-thread binding; no real Graph reads, sends or release state."""
+from tests._context import context as _context, invoke as _invoke
 from copy import deepcopy
 import json
 
 import pytest
 
 from orchestrator import cli, cli_common as C, delivery as D
-from orchestrator.engine import Orchestrator
+from tests._context import fresh_orchestrator as Orchestrator
 from orchestrator.state import ReleaseState, StepState
 from steps.bug_bash import activate_chat as A, bugbash_updates as BU, send_invite as S
 from tests._meeting import seed_invite, meeting
+from tests._harness import _active_step
 from tools import bugbash_meeting as M, distribution as G
 
 
 @pytest.fixture
 def state():
-    st = ReleaseState(release_id="2026-09", ccd="2026-09-09", readiness_signed=True,
+    st = ReleaseState(release_id="2026-09", ccd="2026-09-09",
                       owner_email="owner@example.test", timezone="America/Los_Angeles")
-    for phase in Orchestrator(C.DEFAULT_CONFIG, st, mocks={}).config["phases"]:
-        for spec in phase["steps"]:
-            if phase["id"] == "bug_bash" and spec["id"] == "activate_chat":
-                seed_invite(st)
-                return st
-            st.set_step(phase["id"], spec["id"], StepState(status="done"))
+    _active_step(st, "bug_bash", "activate_chat")
+    seed_invite(st)
+    return st
 
 
 @pytest.fixture
 def graph(state, monkeypatch):
-    invite = S.delivered_invite(state)
+    invite = S.delivered_invite(_context(state))
     url = "https://teams.microsoft.com/l/meetup-join/test?context=a&b=c"
     data = {
         "me": {"userPrincipalName": state.owner_email},
@@ -50,7 +49,7 @@ def graph(state, monkeypatch):
 
 
 def test_resolve_event_to_join_url_to_thread_without_title_search(state, graph):
-    out = M.resolve(S.delivered_invite(state))
+    out = M.resolve(S.delivered_invite(_context(state)))
     assert out["chat_id"] == graph[0]["chat"]["id"]
     assert len(graph[1]) == 4
     assert "/me/events/event-1?" in graph[1][1]
@@ -97,7 +96,7 @@ def test_resolver_rejects_wrong_or_ambiguous_meeting(state, graph, bad):
     else:
         data["chat"]["chatType"] = "group"
     with pytest.raises(ValueError):
-        M.resolve(S.delivered_invite(state))
+        M.resolve(S.delivered_invite(_context(state)))
 
 
 def test_recorder_binds_verified_thread_and_replay_cannot_replace_it(state, graph, tmp_path, capsys):
@@ -108,7 +107,7 @@ def test_recorder_binds_verified_thread_and_replay_cannot_replace_it(state, grap
     assert not ReleaseState.load(str(path)).is_done("bug_bash", "activate_chat")
     assert cli.main(args) == 0
     saved = ReleaseState.load(str(path))
-    assert A.stored_chat_id(saved) == "19:meeting_CURRENT@thread.v2"
+    assert A.stored_chat_id(_context(saved)) == "19:meeting_CURRENT@thread.v2"
     before = path.read_bytes()
     assert cli.main(args) == 0
     assert cli.main(args + ["--chat-id", "19:meeting_OLD@thread.v2"]) == 1
@@ -128,7 +127,9 @@ def test_stale_binding_blocks_initial_updates_before_progress_reads(state, monke
     elif change == "uncertain":
         record["status"] = "uncertain"
     elif change == "reopened_invite":
-        state.get_step("bug_bash", "send_invite").data["_execution"]["id"] = "new-execution"
+        invite = state.get_step("bug_bash", "send_invite")
+        invite.data["notification_execution_id"] = "new-execution"
+        state.set_step("bug_bash", "send_invite", invite)
     elif change == "other_event":
         record["attempts"][-1]["receipt"]["id"] = "new-event"
     elif change == "changed_owner":
@@ -141,8 +142,8 @@ def test_stale_binding_blocks_initial_updates_before_progress_reads(state, monke
     def forbidden(*args):
         pytest.fail("Progress must not be read for an unbound/stale destination")
     monkeypatch.setattr(BU, "gather", forbidden)
-    assert A.stored_chat_id(state) is None
-    assert BU.build(state).kind == "blocked"
+    assert A.stored_chat_id(_context(state)) is None
+    assert _invoke(BU.build, state).kind == "blocked"
 
 
 def test_recorder_enforces_predecessors_without_writing(state, tmp_path, monkeypatch):
@@ -159,13 +160,13 @@ def test_recorder_enforces_predecessors_without_writing(state, tmp_path, monkeyp
 def test_prepared_update_stops_if_invite_changes_even_when_chat_id_does_not(state):
     seed_invite(state, "19:meeting_CURRENT@thread.v2")
     scope = {"kind": "phase", "phase": "bug_bash", "step": "bugbash_updates",
-             "state_matches": A.chat_state_matches(state)}
+             "state_matches": A.chat_state_matches(_context(state))}
     orch = Orchestrator(C.DEFAULT_CONFIG, state, mocks={})
     item = D.descriptor(state, "update", scope, "workiq_send_chat_message",
-                        {"chatId": A.stored_chat_id(state), "content": "test"})
+                        {"chatId": A.stored_chat_id(_context(state)), "content": "test"})
     D.offer(orch, item)
-    record = state.notification_deliveries[state.get_step("bug_bash", "send_invite").data[
-        "_execution"]["notification_id"]]
+    record = state.notification_deliveries[
+        state.get_step("bug_bash", "send_invite").data["notification_id"]]
     record["attempts"][0]["receipt"]["id"] = "new-event"
     with pytest.raises(ValueError, match="source checkpoint changed"):
         D.claim(orch, item["id"], item["hash"], "worker")
@@ -173,7 +174,9 @@ def test_prepared_update_stops_if_invite_changes_even_when_chat_id_does_not(stat
 
 def test_poller_rejects_stale_chat_before_gather(state, tmp_path, monkeypatch, capsys):
     seed_invite(state, "19:meeting_CURRENT@thread.v2")
-    state.get_step("bug_bash", "activate_chat").data.pop("invite")
+    binding = state.get_step("bug_bash", "activate_chat")
+    binding.data.pop("invite")
+    state.set_step("bug_bash", "activate_chat", binding)
     state.save(str(tmp_path / state.release_id / "release-state.json"))
     monkeypatch.setattr(BU, "gather", lambda *_: pytest.fail("Stale chat gathered progress"))
     assert cli.main(["--runs-root", str(tmp_path), "post-bugbash-update", "--release", state.release_id,

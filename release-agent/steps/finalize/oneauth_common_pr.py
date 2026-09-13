@@ -4,16 +4,16 @@ After the release publishes and `verify_pub` confirms Common is live on Maven Ce
 OneAuth to ingest that final (non-RC) Common version and raise a PR into `dev`.
 
 The mechanic (see tools/oneauth.py):
-  1. MERGE `dev` into the standing `android/common-ingestion` branch (server-side, via a transient
-     PR — ADO does the merge; conflicts surface for a human, never forced).
+  1. Compute the exact merge of `dev` and `android/common-ingestion` in an isolated
+     Git object database. Conflicts require human resolution and a fresh review.
   2. On `android/common-ingestion`, bump the Common version in FOUR files (libs.versions.toml,
      cgmanifest.json, deps/README.md, CHANGELOG.md) in one commit.
   3. Open `android/common-ingestion -> dev` PR titled "Merge latest common <ver> to dev".
 
-PREVIEW-FIRST (like integ_prs): `build()` only READS — it resolves the versions, checks whether
-the ingestion branch is behind dev, computes the four edits, and detects an existing PR — then
-returns a NeedsSkill so the skill previews and the `create-oneauth-common-pr` command does the
-WRITES (`--dry-run` / `--execute`). Idempotent: an existing open PR is reused.
+PREVIEW-FIRST (like integ_prs): `build()` only READS an advisory candidate — it resolves the
+versions, checks ancestry, computes edits and detects an existing PR — then
+returns a NeedsSkill for the complete checked-command preview. Only
+`--execute --review-hash <hash> --approved-by <reviewer>` authorizes an attempt.
 
 Version source: `state.versions.common` (final non-RC Common) + `state.versions.msal` (for the
 changelog line), both populated at Phase 2.
@@ -25,13 +25,15 @@ Mock knobs (mocks.local.yaml / tests):
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+
 from orchestrator.outcomes import NeedsSkill, Blocked
-from steps.lib.agent import legacy_run
-from steps.lib.mockctx import mock_input, MISSING
+from steps.lib.mockctx import MISSING
 from tools import oneauth as OA
 
 ID = "oneauth_common_pr"
-KIND = "agent"
+KIND = "scout"
+WRITE_COMMAND = "create-oneauth-common-pr"
 
 MOCKABLE = {
     "common": {"kind": "input", "desc": "Inject the Common version (skip state.versions)."},
@@ -40,21 +42,21 @@ MOCKABLE = {
 }
 
 
-def _versions(state):
-    v = getattr(state, "versions", None) or {}
-    common = mock_input("common", MISSING)
-    msal = mock_input("msal", MISSING)
+def _versions(context):
+    v = getattr(context.release, "versions", None) or {}
+    common = context.input("common", MISSING)
+    msal = context.input("msal", MISSING)
     common = common if common is not MISSING else v.get("common")
     msal = msal if msal is not MISSING else v.get("msal")
     return common, msal
 
 
-def build(state):
-    fail = mock_input("fail", MISSING)
+def build(context: StepContext):
+    fail = context.input("fail", MISSING)
     if fail is not MISSING:
         return Blocked(f"oneauth_common_pr: {fail}")
 
-    common, msal = _versions(state)
+    common, msal = _versions(context)
     if not common or not msal:
         return Blocked(
             "oneauth_common_pr: need both the Common and MSAL versions on state.versions "
@@ -65,17 +67,17 @@ def build(state):
             "behind": None, "merge_needed": None, "changed_files": None, "existing_pr": None,
             "notes": []}
 
-    okab, ab, d = OA.ahead_behind(OA.TARGET_BRANCH, OA.INGEST_BRANCH)
+    okab, ab, d = context.services.repositories.oneauth_ahead_behind(OA.TARGET_BRANCH, OA.INGEST_BRANCH)
     if okab:
         plan["behind"] = ab.get("behind")
         plan["merge_needed"] = bool(ab.get("behind"))
     else:
         plan["notes"].append(f"ahead/behind check failed ({d})")
 
-    # compute the four edits against dev's current content (read-only)
+    # This advisory is not the checked command's commit-pinned write review.
     files, read_err = {}, None
     for key, path in OA.FILES.items():
-        okr, txt, dr = OA.read_text(path, OA.TARGET_BRANCH)
+        okr, txt, dr = context.services.repositories.oneauth_read_text(path, OA.INGEST_BRANCH)
         if not okr:
             read_err = dr
             break
@@ -90,7 +92,7 @@ def build(state):
                        f"({e}) — the OneAuth file layout may have changed; a human should check.")
     plan["changed_files"] = sorted(changed.keys())
 
-    oke, pr, de = OA.find_open_pr(OA.INGEST_BRANCH, OA.TARGET_BRANCH)
+    oke, pr, de = context.services.repositories.oneauth_find_open_pr(OA.INGEST_BRANCH, OA.TARGET_BRANCH)
     plan["existing_pr"] = pr if oke else None
     if not oke:
         plan["notes"].append(f"existing-PR lookup failed ({de})")
@@ -103,9 +105,16 @@ def build(state):
     return NeedsSkill(
         tool="create-oneauth-common-pr",
         payload={
-            "release": state.release_id,
+            "release": context.release.release_id,
             "plan": plan,
-            "followup_command": f"create-oneauth-common-pr --release {state.release_id} --dry-run",
+            "followup_command": f"create-oneauth-common-pr --release {context.release.release_id}",
+            "execution_instructions": (
+                "Review the complete checked-command preview, then execute that exact plan with "
+                "--execute --review-hash <review_hash> --approved-by <reviewer>. "
+                "Use --repo-dir <clean-OneAuth-checkout> if local path discovery is unavailable. "
+                "The planner calculates the merged tree and exact edits without changing your "
+                "checkout or refs. Missing objects, dirty work or conflicts require resolution "
+                "before another preview; no server-side merge is performed."),
         },
         record_as=ID,
         summary=summary,
@@ -114,6 +123,3 @@ def build(state):
               f"{len(plan['changed_files'])} file(s) to bump"),
         outbound=True,
     )
-
-
-run = legacy_run(build)

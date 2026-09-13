@@ -5,15 +5,15 @@ unreleased "vNext" section, and drafts the OneAuth comms. Read-only. Determinist
 (HTTP only) → an `agent` step the engine runs in-process.
 """
 from __future__ import annotations
+
+from orchestrator.step_context import StepContext, thaw
 import re
-from urllib import request as _request
 
 from orchestrator.outcomes import Done, Blocked
-from steps.lib.agent import legacy_run
-from steps.lib.mockctx import mock_input
 
 ID = "breaking"
 KIND = "agent"
+EFFECT_MODE = "read_only"
 
 # Step config (co-located). common-for-android records breaking changes as [MAJOR]
 # entries in changelog.txt; the unreleased "vNext" section holds THIS release's.
@@ -31,12 +31,6 @@ MOCKABLE = {
                  "on it — no network fetch."),
     },
 }
-
-
-def _fetch_text(url: str, timeout: int = 20) -> str:
-    req = _request.Request(url, headers={"User-Agent": "release-agent-preflight/1.0"})
-    with _request.urlopen(req, timeout=timeout) as resp:
-        return resp.read().decode("utf-8", "replace")
 
 
 def parse_breaking(changelog_text: str, section: str = "vNext",
@@ -63,8 +57,8 @@ def parse_breaking(changelog_text: str, section: str = "vNext",
     return entries
 
 
-def _draft_breaking_comms(entries: list, state=None) -> str:
-    release = getattr(state, "release_id", None) or "this release"
+def _draft_breaking_comms(entries: list, context=None) -> str:
+    release = getattr(context.release, "release_id", None) or "this release"
     bullets = "\n".join(f"- {e}" for e in entries)
     return (
         f"Subject: [Action] Breaking OneAuth changes in {release}\n\n"
@@ -76,30 +70,27 @@ def _draft_breaking_comms(entries: list, state=None) -> str:
     )
 
 
-def build(state):
+def build(context: StepContext):
     cfg = CONFIG
     url = cfg.get("changelog_url")
     section = cfg.get("section", "vNext")
     tag = cfg.get("breaking_tag", "[MAJOR]")
     # Injected changelog (mocks.local.yaml) → run the REAL parse/draft on your text.
-    injected = mock_input("changelog")
+    injected = context.input("changelog")
     if injected is not None:
         text = injected
     elif not url:
         return Blocked("breaking: no changelog_url configured")
     else:
         try:
-            text = _fetch_text(url)
+            text = context.services.assets.changelog(url)
         except Exception as e:  # noqa: BLE001 - network/parse errors -> hold for human
             return Blocked(f"breaking: could not fetch changelog ({e})")
     entries = parse_breaking(text, section, tag)
     if not entries:
         return Done(f"No breaking ({tag}) changes in '{section}' — no OneAuth comms needed.")
     listing = "\n".join(f"  - {e}" for e in entries)
-    draft = _draft_breaking_comms(entries, state)
+    draft = _draft_breaking_comms(entries, context)
     return Done(
         f"Detected {len(entries)} breaking ({tag}) change(s) in '{section}':\n{listing}\n\n"
         f"--- DRAFT COMMS (send to OneAuth) ---\n{draft}")
-
-
-run = legacy_run(build)

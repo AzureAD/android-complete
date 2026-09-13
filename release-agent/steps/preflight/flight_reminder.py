@@ -12,6 +12,8 @@ EXTERNAL-REFERENCES.md for the fixed links.
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+
 from orchestrator import schedule
 from orchestrator.outcomes import NeedsSkill, Blocked
 from steps.lib import templating as T
@@ -64,20 +66,20 @@ def _html(ctx: dict, links: dict) -> str:
 <p>Thanks,<br>{T.esc(ctx['owner'])}</p>"""
 
 
-def build(state):
+def build(context: StepContext):
     """Resolve the reminder into a NeedsSkill(workiq_send_chat_message), or Blocked
     if the release has no CCD."""
-    if not state.ccd:
+    if not context.release.ccd:
         return Blocked("no CCD set for this release")
 
     cfg = CONFIG
-    ctx = release_ctx(state)
-    ccd = schedule.parse_date(state.ccd)
+    ctx = release_ctx(context)
+    ccd = schedule.parse_date(context.release.ccd)
     ctx["ccd7_date"] = schedule.anchor_date(ccd, "CCD-7").strftime("%m/%d/%Y")
 
     html = _html(ctx, cfg.get("links", {}) or {})
     chat_id, target_note, prefix = resolve_chat_target(
-        state, cfg.get("live_chat_id"), cfg.get("live_chat_name", "the group chat"))
+        context, cfg.get("live_chat_id"), cfg.get("live_chat_name", "the group chat"))
 
     return NeedsSkill(
         tool="workiq_send_chat_message",

@@ -20,7 +20,8 @@ def test_sim_open_positions_at_target_entry():
     # nothing in the target phase has run
     assert not any(st.is_done("build_verify", s) for s in
                    ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local", "rc_report"))
-    assert st.current_phase == "build_verify"
+    from tests._context import fresh_orchestrator as Orchestrator
+    assert Orchestrator(CONFIG, st).current_phase_id() == "build_verify"
 
 
 
@@ -38,7 +39,7 @@ def test_sim_done_mode_completes_phase_and_advances():
     st = res.state
     assert all(st.is_done("build_verify", s) for s in
                ("checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local", "rc_report"))
-    from orchestrator.engine import Orchestrator
+    from tests._context import fresh_orchestrator as Orchestrator
     orch = Orchestrator(CONFIG, st)
     assert orch.current_phase_id() == "bug_bash"
 
@@ -65,11 +66,12 @@ def test_sim_surfaces_blocked_target_step():
 
 
 
-def test_sim_freeze_writes_fixture(tmp_path=None):
+def test_sim_freeze_writes_fixture(tmp_path, monkeypatch):
     """--freeze snapshots the engine-produced state to a fixture that reloads cleanly."""
     import tempfile, os
     from orchestrator import sim as SIM
     from orchestrator.state import ReleaseState
+    monkeypatch.setattr(SIM, "FIXTURE_DIR", str(tmp_path / "fixtures"))
     scenario = {"name": "t_freeze", "release_id": "2026-08", "ccd": "2026-08-26",
                 "as_of": "CCD+1", "data": "mock",
                 "target": {"phase": "build_verify", "at": "open"}}
@@ -117,10 +119,12 @@ def test_sim_backs_up_existing_state_before_seeding():
                 "target": {"phase": "build_verify", "at": "open"}}
     with tempfile.TemporaryDirectory() as tmp:
         # a pre-existing "real" state at this id
-        _C.save_state(ReleaseState(release_id="2026-08", current_phase="ccd"), tmp, "2026-08")
+        _C.save_state(
+            ReleaseState(release_id="2026-08", owner_email="old@example.test"),
+            tmp,
+            "2026-08",
+        )
         res = SIM.run_scenario(scenario, runs_root=tmp)
         assert res.backed_up_to and os.path.exists(res.backed_up_to)
-        # backup preserved the OLD cursor; the live state now reflects the seed
-        assert ReleaseState.load(res.backed_up_to).current_phase == "ccd"
-        assert _C.load_state(tmp, "2026-08").current_phase == "build_verify"
-
+        assert ReleaseState.load(res.backed_up_to).owner_email == "old@example.test"
+        assert _C.load_state(tmp, "2026-08").owner_email != "old@example.test"

@@ -108,10 +108,10 @@ def load_template(name="bug-bash-invite.html"):
         return fh.read()
 
 
-def render_invite(tokens, template_name="bug-bash-invite.html"):
+def render_invite(tokens, template):
     """Fill the HTML template by replacing {{TOKEN}} markers. Manual replace (NOT
     str.format) so the braces in the flags JSON are never treated as fields."""
-    html = load_template(template_name)
+    html = template
     for k, v in tokens.items():
         html = html.replace("{{" + k + "}}", str(v if v is not None else ""))
     return html

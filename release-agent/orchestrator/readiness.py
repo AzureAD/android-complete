@@ -46,7 +46,19 @@ class ReadinessGate:
     def checklist(self) -> dict:
         """The entry checklist as structured data (no formatting)."""
         if not self.config:
-            return {"items": [], "signed": True, "title": "", "instructions": ""}
+            return {
+                "items": [],
+                "auto_items": [],
+                "attest_items": [],
+                "signed": True,
+                "signed_at": None,
+                "blocked": False,
+                "blocked_items": [],
+                "all_satisfied": True,
+                "title": "",
+                "instructions": "",
+                "blocked_message": "",
+            }
         items = []
         for it in self.config.get("items", []):
             rec = self.state.readiness_items.get(it["id"], {}) or {}
@@ -83,20 +95,40 @@ class ReadinessGate:
             "items": items,
             "auto_items": [i for i in items if i["verify"] == "auto"],
             "attest_items": [i for i in items if i["verify"] == "attest"],
-            "signed": self.state.readiness_signed,
-            "signed_at": self.state.readiness_signed_at,
-            "blocked": self.state.blocked,
-            "blocked_items": list(self.state.blocked_items),
+            "signed": self.signed,
+            "signed_at": self.signed_at,
+            "blocked": self.blocked,
+            "blocked_items": self.blocked_item_ids,
             "all_satisfied": all(i["satisfied"] for i in items) if items else True,
         }
 
     @property
     def signed(self) -> bool:
-        return self.state.readiness_signed
+        items = self.config.get("items", []) if self.config else []
+        return all(self._item_satisfied(item) for item in items)
+
+    @property
+    def signed_at(self):
+        if not self.signed:
+            return None
+        times = [
+            (self.state.readiness_items.get(item["id"], {}) or {}).get("at")
+            for item in (self.config or {}).get("items", [])
+        ]
+        return max((value for value in times if value), default=None)
 
     @property
     def blocked(self) -> bool:
-        return self.state.blocked
+        return bool(self.blocked_item_ids)
+
+    @property
+    def blocked_item_ids(self) -> list:
+        return [
+            item["id"]
+            for item in (self.config or {}).get("items", [])
+            if (self.state.readiness_items.get(item["id"], {}) or {}).get("status")
+            == "unable"
+        ]
 
     # ---- mutations ----
     def verify(self) -> dict:
@@ -164,8 +196,6 @@ class ReadinessGate:
         they cannot be hand-waved through. `note` records the human's confirmation
         as evidence on each attested item. Signs when all items are satisfied."""
         if not self.config:
-            self.state.readiness_signed = True
-            self.state.readiness_signed_at = _now()
             return self.checklist()
         self.verify()  # auto items (pass/fail)
         all_items = self.config.get("items", [])
@@ -189,16 +219,12 @@ class ReadinessGate:
             if iid not in by_id:
                 continue
             self.state.readiness_items[iid] = {"status": "unable", "at": _now()}
-            self.state.blocked = True
-            if iid not in self.state.blocked_items:
-                self.state.blocked_items.append(iid)
-        self.state.readiness_signed = False
         return self.checklist()
 
     def blocked_labels(self) -> list:
         """Human labels for the currently-blocked item ids."""
         by_id = {it["id"]: it.get("label", it["id"]) for it in (self.config or {}).get("items", [])}
-        return [by_id.get(b, b) for b in self.state.blocked_items]
+        return [by_id.get(item_id, item_id) for item_id in self.blocked_item_ids]
 
     # ---- internals ----
     def _item_satisfied(self, item: dict) -> bool:
@@ -211,8 +237,4 @@ class ReadinessGate:
         return status == "attested"          # attest is human-confirmed
 
     def _refresh_signed(self) -> None:
-        items = self.config.get("items", []) if self.config else []
-        if items and all(self._item_satisfied(it) for it in items):
-            if not self.state.readiness_signed:
-                self.state.readiness_signed = True
-                self.state.readiness_signed_at = _now()
+        """Readiness is derived; retained as a semantic checkpoint for callers."""

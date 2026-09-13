@@ -14,6 +14,7 @@ from orchestrator import cli, cli_common as C, mocks
 from orchestrator.engine import Orchestrator
 from orchestrator.outcomes import NeedsSkill
 from orchestrator.state import ReleaseState, StepState
+from tests._harness import _active_step
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -22,11 +23,8 @@ ROOT = Path(__file__).resolve().parents[1]
 def run(tmp_path, monkeypatch):
     monkeypatch.setattr(mocks, "load_mocks", lambda: {})
     monkeypatch.setenv("RELEASE_AGENT_MOCKS", str(tmp_path / "absent.yaml"))
-    st = ReleaseState(release_id="2000-01", ccd="2000-01-12", readiness_signed=True,
-                      current_phase="ccd", current_step="final_reminder", timezone="UTC")
-    cfg = yaml.safe_load(Path(C.DEFAULT_CONFIG).read_text(encoding="utf-8"))
-    for step in cfg["phases"][0]["steps"]:
-        st.set_step("preflight", step["id"], StepState(status="done"))
+    st = ReleaseState(release_id="2000-01", ccd="2000-01-12", timezone="UTC")
+    _active_step(st, "ccd", "final_reminder")
     path = tmp_path / st.release_id / "release-state.json"
     st.save(str(path))
     return tmp_path, path
@@ -51,8 +49,17 @@ def reserve(run, capsys):
 
 
 def report_result(run, capsys, execution_id, outcome="sent", review=False):
+    state = ReleaseState.load(str(run[1]))
+    notification_id = next((
+        key
+        for key, record in state.notification_deliveries.items()
+        if any(
+            attempt.get("id") == execution_id
+            for attempt in record.get("attempts", [])
+        )
+    ), next(iter(state.notification_deliveries)))
     rc = cli.main(["--runs-root", str(run[0]), "notification", "result",
-                   "--release", "2000-01", "--id", "step:ccd.final_reminder:once:email",
+                   "--release", "2000-01", "--id", notification_id,
                    "--execution-id", execution_id, "--outcome", outcome,
                    "--evidence", "Test provider evidence", *(["--owner-review"] if review else [])])
     return rc, capsys.readouterr().out
@@ -77,10 +84,10 @@ def test_two_workers_only_one_receives_reserved_work(run, capsys):
     assert "payload" not in loser and "tool" not in loser
     winner = next(r for r in rows if r["permission_to_send"])
     st = ReleaseState.load(str(run[1]))
-    assert st.get_step("ccd", "final_reminder").data["_execution"]["id"] == winner["execution_id"]
+    assert st.get_step("ccd", "final_reminder").execution["id"] == winner["execution_id"]
 
 
-def test_only_owner_records_and_success_preserves_execution(run, capsys):
+def test_only_owner_records_and_success_closes_execution(run, capsys):
     execution_id = reserve(run, capsys)
     before = run[1].read_bytes()
     for token in ([], ["--execution-id", "wrong"]):
@@ -90,7 +97,7 @@ def test_only_owner_records_and_success_preserves_execution(run, capsys):
     assert report_result(run, capsys, execution_id)[0] == 0
     st = ReleaseState.load(str(run[1]))
     assert st.is_done("ccd", "final_reminder")
-    assert st.get_step("ccd", "final_reminder").data["_execution"]["id"] == execution_id
+    assert st.get_step("ccd", "final_reminder").execution is None
     before = run[1].read_bytes()
     assert report_result(run, capsys, execution_id)[0] == 0
     assert run[1].read_bytes() == before
@@ -100,7 +107,7 @@ def test_only_owner_records_and_success_preserves_execution(run, capsys):
 def test_interruption_stays_reserved_until_owner_review(run, capsys):
     execution_id = reserve(run, capsys)
     st = ReleaseState.load(str(run[1]))
-    st.steps["ccd.final_reminder"]["data"]["_execution"]["started_at"] = "2000-01-01"
+    st.steps["ccd.final_reminder"]["execution"]["started_at"] = "2000-01-01"
     st.save(str(run[1]))
     assert json.loads(invoke(run, capsys, "step-action")[1])["kind"] == "blocked"
     assert report_result(run, capsys, execution_id, "uncertain")[0] == 0
@@ -121,7 +128,7 @@ def test_owner_can_confirm_interrupted_work_done_without_repeating_it(run, capsy
     assert orch.complete_step("ccd", "final_reminder").kind == "idle"
     assert orch.complete_step("ccd", "final_reminder", "Owner found message; original runner stopped").kind == "ran"
     assert st.is_done("ccd", "final_reminder")
-    assert orch.step_execution("ccd", "final_reminder")["id"] == execution_id
+    assert orch.step_execution("ccd", "final_reminder") == {}
 
 
 def test_reservation_requires_executor_and_preserves_builder_block(run, capsys):
@@ -139,10 +146,12 @@ def test_reservation_requires_executor_and_preserves_builder_block(run, capsys):
 @pytest.mark.parametrize("change", ["halted", "blocked", "unsigned", "future", "previous-phase"])
 def test_reservation_rechecks_engine_eligibility(run, capsys, change):
     st = ReleaseState.load(str(run[1]))
-    if change in ("halted", "blocked"):
-        setattr(st, change, True)
+    if change == "halted":
+        st.halt = {"reason": "test", "at": "2026-09-12T00:00:00Z"}
+    elif change == "blocked":
+        st.readiness_items["yubikey"] = {"status": "unable"}
     elif change == "unsigned":
-        st.readiness_signed = False
+        st.readiness_items.pop("yubikey", None)
     elif change == "future":
         st.ccd = "2099-01-12"
     else:
@@ -154,14 +163,14 @@ def test_reservation_rechecks_engine_eligibility(run, capsys, change):
     assert run[1].read_bytes() == before
 
 
-def test_reservation_is_generic_and_specialized_followups_are_unchanged():
+def test_reservation_is_generic_for_every_outbound_action():
     simple = NeedsSkill(tool="workiq_send_email", payload={}, outbound=True)
     assert Orchestrator.supports_step_reservation(simple)
     for payload in ({"followup_command": "record-telemetry"}, {"_trigger": {"after": "poll"}},
                     {"followup_command": ""}, {"_trigger": {}}):
-        assert not Orchestrator.supports_step_reservation(
+        assert Orchestrator.supports_step_reservation(
             NeedsSkill(tool="workiq_send_email", payload=payload, outbound=True))
-    assert not Orchestrator.supports_step_reservation(
+    assert Orchestrator.supports_step_reservation(
         NeedsSkill(tool="create-payload-wiki", payload={}, outbound=True))
 
 
@@ -188,7 +197,7 @@ def test_direct_engine_reservation_enforces_ownership(run, sid):
     assert orch.reserve_step("ccd", sid, action, "B").kind == "blocked"
     with pytest.raises(ValueError, match="owning execution"):
         orch.record_scout_step("ccd", sid, "pass")
-    with pytest.raises(ValueError, match="refresh"):
+    with pytest.raises(ValueError, match="owning execution"):
         orch.record_scout_step("ccd", sid, "pass", refresh=True)
     assert st.steps == before
     assert sid not in orch.scout_pending_steps()

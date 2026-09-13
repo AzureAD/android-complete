@@ -7,14 +7,16 @@ engine runs in-process.
 """
 from __future__ import annotations
 
+from orchestrator.step_context import StepContext, thaw
+
 from orchestrator.outcomes import Done, Blocked
-from steps.lib.agent import legacy_run
-from steps.lib.mockctx import mock_input, MISSING
+from steps.lib.mockctx import MISSING
 from tools.pipelines import ENGINEERING_ORG, ENGINEERING_PROJECT
 from tools.coordinates import coords
 
 ID = "cron"
 KIND = "agent"
+EFFECT_MODE = "read_only"
 
 # Step config (co-located). Pipeline 3038's cron proves it's FIRING via a recent
 # schedule-reason run in its build history. It's the Engineering Calendar Checker.
@@ -36,7 +38,7 @@ MOCKABLE = {
 }
 
 
-def _iso_age_days(iso: str):
+def _iso_age_days(iso: str, now):
     """Whole days between an ISO-8601 timestamp and now (UTC), or None if unparseable."""
     from datetime import datetime, timezone
     if not iso:
@@ -46,30 +48,29 @@ def _iso_age_days(iso: str):
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - dt).days
+        return (now - dt).days
     except ValueError:
         return None
 
 
-def build(state):
+def build(context: StepContext):
     cfg = CONFIG
     name = cfg.get("name", "Calendar Checker")
     # Injected run (mocks.local.yaml) → run the REAL staleness logic on your data.
-    injected = mock_input("run", MISSING)
+    injected = context.input("run", MISSING)
     if injected is not MISSING:
         run_ = injected
     elif not all(cfg.get(k) for k in ("pipeline_id", "org", "project")):
         return Blocked("cron: incomplete configuration")
     else:
-        from tools.checks import latest_scheduled_build
-        ok, run_, detail = latest_scheduled_build(cfg["org"], cfg["project"], cfg["pipeline_id"])
+        ok, run_, detail = context.services.pipelines.latest_scheduled_build(cfg["org"], cfg["project"], cfg["pipeline_id"])
         if not ok:
             return Blocked(f"cron: could not read build history — {detail}")
     if not run_:
         return Blocked(
             f"{name}: no scheduled run found in recent history — the cron may be "
             f"disabled. Investigate, then rerun this step (or skip to override).")
-    age = _iso_age_days(run_.get("queueTime"))
+    age = _iso_age_days(run_.get("queueTime"), context.clock.utc())
     max_stale = cfg.get("max_staleness_days", 2)
     when = (run_.get("queueTime") or "")[:16]
     if age is not None and age > max_stale:
@@ -78,6 +79,3 @@ def build(state):
             f"The schedule may be broken. Fix + rerun this step, or skip to override.")
     return Done(
         f"{name} is scheduled and firing — last scheduled run {when} ({run_.get('result')}).")
-
-
-run = legacy_run(build)

@@ -18,33 +18,33 @@ def _id(value):
     return int(value)
 
 
-def current_binding(state):
+def current_binding(context):
     """The minimal current RC/build/target binding; no evidence-schema dependency."""
-    rc = latest_rc(state)
+    rc = latest_rc(context)
     auth = rc.get("auth") or {}
     build, test = auth.get("build") or {}, auth.get("test") or {}
-    broker = state.get_step("bug_bash", "clone_plans_broker").data or {}
-    suite = state.get_step("bug_bash", "clone_plans_auth").data or {}
+    broker = context.evidence.step("bug_bash", "clone_plans_broker").data or {}
+    suite = context.evidence.step("bug_bash", "clone_plans_auth").data or {}
     if (any((rc.get(slot) or {}).get("complete") is not True for slot in ("ecs", "local"))
             or build.get("complete") is not True or test.get("complete") is not True
             or build.get("result") not in ("succeeded", "partiallySucceeded")
             or _id(build.get("rc")) != _id(rc.get("rc"))):
         raise ValueError(f"UI result source is no longer current/completed; {REFRESH}")
-    return {"release": state.release_id, "rc": _id(rc.get("rc")),
+    return {"release": context.release.release_id, "rc": _id(rc.get("rc")),
             "ecs_build": _id(rc["ecs"].get("run_id")), "local_build": _id(rc["local"].get("run_id")),
             "auth_apk_build": _id(build.get("run_id")), "auth_test_build": _id(test.get("run_id")),
             "broker": {"plan_id": _id(broker.get("plan_id")), "suite_id": _id(broker.get("ui_suite_id"))},
             "auth": {"plan_id": _id(T.AUTH_PLAN), "suite_id": _id(suite.get("suite_id"))}}
 
 
-def completed_result(state):
+def completed_result(context):
     """Read a completed, still-current fill receipt or fail closed. Never infer empty work."""
-    result = (state.get_step("bug_bash", STEP).data or {}).get("result")
+    result = (context.evidence.step("bug_bash", STEP).data or {}).get("result")
     if (not isinstance(result, dict) or result.get("status") != "complete"
             or result.get("stage") != "complete" or not isinstance(result.get("id"), str)
             or not result["id"]):
         raise ValueError(f"Completed UI fill result unavailable (missing/partial/invalidated); {REFRESH}")
-    if result.get("binding") != current_binding(state):
+    if result.get("binding") != current_binding(context):
         raise ValueError(f"UI fill result RC/build/plan/suite binding changed; {REFRESH}")
     investigations = result.get("investigations")
     if not isinstance(investigations, dict) or any(not isinstance(investigations.get(key), list)

@@ -1,7 +1,7 @@
 """Step: `final_status_email` — send the CLOSING partner status email + close the channel
 (Phase 4, finalize; the LAST step).
 
-The daily status email (a skill-provisioned weekday automation running `status-email`) covers
+The daily status email (an hourly owner-local 17:00-guarded automation) covers
 Phase 2 through Phase 4. This terminal step guarantees the FINAL status email goes out when
 Phase 4 completes — even if Phase 4 and Phase 5 land on the same day, when the daily automation
 might not fire again — and signals the skill to tear the daily automation down so no status
@@ -9,7 +9,7 @@ emails leak into Phase 5+.
 
 Scout-assisted: `build()` composes the closing email (the Phase-4-complete snapshot) and returns
 NeedsSkill(workiq_send_email); the generic notification protocol completes it after delivery.
-After acknowledgement, cleanup deletes then deregisters the daily partner status-email automation
+After acknowledgement, claimed cleanup retires the daily partner status-email automation
 (`<release> · Phases 2–4 — daily status email`; see the finalize phase reference / knowledge).
 
 Mock knobs (mocks.local.yaml / tests):
@@ -17,20 +17,15 @@ Mock knobs (mocks.local.yaml / tests):
 """
 from __future__ import annotations
 
-import os
+from orchestrator.step_context import StepContext, thaw
 
 from orchestrator.outcomes import NeedsSkill, Blocked
-from orchestrator import status_email as SE
-from orchestrator import notifications as notif
-from steps.lib.mockctx import mock_input, MISSING
+from steps.lib.mockctx import MISSING
 
+STATUS_EMAIL = True
 ID = "final_status_email"
 KIND = "scout"
 NOTIFICATION = True
-
-_CONFIG_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "config")
-_PHASES = os.path.join(_CONFIG_DIR, "phases.yaml")
 
 MOCKABLE = {
     "send_to": {"kind": "input",
@@ -38,47 +33,28 @@ MOCKABLE = {
 }
 
 
-def _phase_order():
-    import yaml
-    try:
-        with open(_PHASES, "r", encoding="utf-8") as fh:
-            doc = yaml.safe_load(fh) or {}
-        return [p["id"] for p in (doc.get("phases") or [])]
-    except (OSError, yaml.YAMLError, KeyError, TypeError) as exc:
-        raise ValueError(f"Invalid phase configuration: {exc}") from exc
-
-
-def _recipients():
-    cfg = notif.load_config(_PHASES) or {}
-    recipients = (cfg.get("status_email") or {}).get("recipients")
-    if not isinstance(recipients, list) or not recipients:
-        raise ValueError("Configure status_email.recipients as a non-empty list")
-    return recipients
-
-
-def _broker_changes(state):
+def _broker_changes(context):
     try:
         from steps.finalize import integ_prs as IP
-        from tools import prs
         gh = (IP.CONFIG.get("broker") or {}).get("gh_repo")
-        bver = (getattr(state, "versions", None) or {}).get("broker")
+        bver = (getattr(context.release, "versions", None) or {}).get("broker")
         if not (gh and bver):
             return []
-        ok, ch, _d = prs.broker_change_list(gh, bver)
+        ok, ch, _d = context.services.repositories.broker_change_list(gh, bver)
         return ch if ok else []
     except Exception:  # noqa: BLE001
         return []
 
 
-def build(state):
-    to = mock_input("send_to", MISSING)
+def build(context: StepContext):
+    to = context.input("send_to", MISSING)
     recipients = ([x.strip() for x in str(to).split(",") if x.strip()]
-                  if to is not MISSING and to else _recipients())
+                  if to is not MISSING and to else context.services.assets.status_recipients())
     if not recipients:
         return Blocked("final_status_email: no status-email recipients configured "
                        "(config/notifications.yaml status_email.recipients).")
 
-    res = SE.compose(state, _phase_order(), recipients, changes=_broker_changes(state))
+    res = context.services.assets.status_email(recipients, changes=_broker_changes(context))
     subject = res["subject"].replace("Daily Status", "Final Status")
     month_year = res["model"].get("month_year", "")
     return NeedsSkill(
@@ -92,7 +68,7 @@ def build(state):
         record_as=ID,
         summary=f"Send the CLOSING {month_year} status email to "
                 f"{len(recipients)} recipient(s) + close the daily status automation",
-        note="final status email (Phase 4 complete); run automation cleanup, delete the daily status-email automation, then deregister it",
+        note="final status email (Phase 4 complete); run automation cleanup, claim-delete, then delete-result; stop on any barrier or uncertainty",
         outbound=True,
         notification={"completion": {"note": "Closing partner status email delivered; channel closed."}},
     )

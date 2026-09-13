@@ -1,18 +1,23 @@
 """Live ADO distribution, owner availability and transient correction previews."""
+from tests._context import context as _context, invoke as _invoke
 from copy import deepcopy
 import json
+import tempfile
+from argparse import Namespace
+from unittest.mock import patch
 
 import pytest
 
-from orchestrator import cli_common as C
+from orchestrator import cli_common as C, write_review as W
 from orchestrator.cli import build_parser
 from orchestrator.commands import distribute as command
-from orchestrator.engine import Orchestrator
+from tests._context import fresh_orchestrator as Orchestrator
 from orchestrator.outcomes import Done, Blocked
 from orchestrator.state import ReleaseState, StepState
 from steps.bug_bash import distribute_tests as step
 from steps.lib import mockctx
 from tools import distribution as D
+from tests._harness import _active_step
 
 
 def observe(inputs, *, automated=None, failed=None):
@@ -42,7 +47,8 @@ def observe(inputs, *, automated=None, failed=None):
 
 
 @pytest.fixture
-def inputs():
+def inputs(monkeypatch):
+    monkeypatch.setattr(D, "resolve_tester_identity", lambda upn, **kwargs: "id-" + upn)
     return observe({
         "roster": [{"name": name, "upn": upn} for name, upn in [
             ("Alice", "ALICE@example.com"), ("Bob", "bob@example.com"), ("Charlie", "charlie@example.com"),
@@ -58,13 +64,29 @@ def inputs():
 
 @pytest.fixture
 def state():
-    return ReleaseState(release_id="test-live-distribution", owner_email="owner@example.com", readiness_signed=True)
+    st = ReleaseState(
+        release_id="test-live-distribution",
+        owner_email="owner@example.com",
+    )
+    return _active_step(st, "bug_bash", step.ID)
 
 
 def inspect(state, inputs, **kwargs):
     observe(inputs)
     with mockctx.active(inputs):
-        return step.inspect_distribution(state, **kwargs)
+        from tests._context import inspect as invoke_inspection
+        outcome, report = invoke_inspection(step.inspect_distribution, state, **kwargs)
+    if "_review" in report:
+        report["review_hash"] = _review_hash(state, inputs)
+    return outcome, report
+
+
+def _review_hash(state, inputs):
+    orch = Orchestrator(C.DEFAULT_CONFIG, state, mocks={})
+    with patch.object(command.mocks_mod, "load_mocks",
+                      return_value={"bug_bash.distribute_tests": inputs}):
+        plan = command.plan_distribution(Namespace(no_oof=False, oof=None, oce=None), orch)
+    return W.review_hash(orch, "bug_bash", step.ID, plan)
 
 
 def data(state):
@@ -78,21 +100,30 @@ def cli(monkeypatch, state, inputs, *flags):
     monkeypatch.setattr(C, "save_state", lambda st, *_: saved.append(deepcopy(st)))
     monkeypatch.setattr(C, "load_orch", lambda *_: (state, Orchestrator(C.DEFAULT_CONFIG, state, mocks={})))
     monkeypatch.setattr(command.mocks_mod, "load_mocks", lambda: {"bug_bash.distribute_tests": inputs})
-    args = build_parser().parse_args(["distribute-tests", "--release", state.release_id, *flags])
-    return command.cmd_distribute_tests(args), saved
+    options = list(flags)
+    args = build_parser().parse_args([
+        "distribute-tests", "--release", state.release_id,
+        "--approved-by", "test-reviewer", "--executor", "test-executor", *options])
+    state._checkpoint = lambda: saved.append(deepcopy(state))
+    with tempfile.TemporaryDirectory() as root:
+        args.runs_root = root
+        with C.state_lock(root, state.release_id):
+            return command.cmd_distribute_tests(args), saved
 
 
 def fake_writes(monkeypatch, inputs):
     calls = []
     cases = {str(c["id"]): c for c in inputs["broker_cases"] + inputs["auth_cases"]}
-    def write(cid, upn, *, expected_revision):
+    def write(cid, upn, *, expected_revision, org, project):
         assert expected_revision == cases[cid].get("revision", 1)
         calls.append(("case", cid, upn))
         cases[cid]["assignee"] = upn
         cases[cid]["revision"] = expected_revision + 1
         observe(inputs)
         return True, ""
-    def sync(pid, sid, assignments, *, expected_testers):
+    def sync(pid, sid, assignments, *, expected_testers, org, project, validate,
+             expected_identities, reviewed_updates):
+        validate()
         assert {int(cid): cases[str(cid)]["tester_id"] for cid in assignments} == expected_testers
         for cid, upn in assignments.items():
             target = "id-" + upn
@@ -224,8 +255,8 @@ def test_live_corrections_apply_then_read_back_and_do_not_repeat(state, inputs, 
     result, saved = cli(monkeypatch, state, inputs, "--apply", "--review-hash", report["review_hash"])
     assert result == 0 and sum(c[0] == "case" for c in calls) == 9
     assert sum(c[0] == "point" for c in calls) == 9
-    assert all(set(data(s)) <= {"oof", "oce"} for s in saved)
-    assert cli(monkeypatch, state, inputs, "--apply")[0] == 0 and len(calls) == 18
+    assert all(set(data(s)) <= {"oof", "oce", "in_flight_since", "last_write_review"} for s in saved)
+    assert cli(monkeypatch, state, inputs, "--apply")[0] == 1 and len(calls) == 18
 
 
 @pytest.mark.parametrize("change", ["assignee", "point", "roster", "triage", "missing_hash"])
@@ -250,8 +281,9 @@ def test_changed_live_inputs_cannot_apply_unreviewed_corrections(state, inputs, 
 def test_legacy_saved_map_and_applied_flag_are_ignored(state, inputs, monkeypatch):
     state.set_step("bug_bash", step.ID, StepState(status="done", data={
         "plan": {"assignments": {"B:1": "wrong@example.com"}, "applied": True}}))
+    before = deepcopy(state)
     assert cli(monkeypatch, state, inputs, "--apply")[0] == 1
-    assert "plan" not in data(state) and not state.is_done("bug_bash", step.ID)
+    assert state == before  # Unapproved commands cannot rewrite legacy evidence.
 
 
 @pytest.mark.parametrize("change", ["owner", "source", "release", "time", "upn"])
@@ -267,12 +299,11 @@ def test_stored_availability_is_still_validated_before_corrections(state, inputs
     assert not calls
 
 
-def test_changed_identity_with_same_upn_changes_the_review(state, inputs):
-    _, before = inspect(state, inputs, oof=[])
+def test_conflicting_identity_with_same_upn_prevents_review(state, inputs):
+    inspect(state, inputs, oof=[])
     inputs["case_snapshot"]["1"]["identity_id"] = "replacement-identity"
-    with mockctx.active(inputs):
-        _, after = step.inspect_distribution(state)
-    assert before["review_hash"] != after["review_hash"]
+    with pytest.raises(ValueError, match="Conflicting ADO identities"):
+        _review_hash(state, inputs)
 
 
 @pytest.mark.parametrize("flags", [("--no-oof",), ("--oof", "Alice"), ("--oce", "bob@example.com")])
@@ -285,34 +316,37 @@ def test_apply_cannot_combine_new_availability_with_writes(state, inputs, monkey
 def test_validation_reports_mismatches_without_writes_or_saved_lists(state, inputs, monkeypatch, capsys):
     result, _ = cli(monkeypatch, state, inputs, "--no-oof", "--validate", "--json")
     report = json.loads(capsys.readouterr().out)
-    assert result == 1 and not report["valid"] and "case_changes" in report
+    assert result == 1 and not report["permission_to_execute"] and report["plan"]["operations"]
     assert all(not key.startswith("_") for key in report)
-    assert set(data(state)) == {"oof"}
+    assert data(state) == {}
 
 
-def test_preview_availability_survives_reload_without_an_assignment_cache(state, inputs, monkeypatch, tmp_path):
+def test_preview_availability_is_transient_until_reviewed_apply(state, inputs, monkeypatch, tmp_path):
     from orchestrator.cli import main
     monkeypatch.setattr(command.mocks_mod, "load_mocks", lambda: {"bug_bash.distribute_tests": inputs})
     C.save_state(state, str(tmp_path), state.release_id)
     argv = ["--runs-root", str(tmp_path), "distribute-tests", "--release", state.release_id]
     assert main([*argv, "--oof", "Alice"]) == 0
     stored = C.load_state(str(tmp_path), state.release_id)
-    assert set(data(stored)) == {"oof"}
-    assert main(argv) == 0 and data(C.load_state(str(tmp_path), state.release_id)) == data(stored)
+    assert data(stored) == {}
+    assert main(argv) == 1 and data(C.load_state(str(tmp_path), state.release_id)) == {}
 
 
 def test_engine_holds_until_actual_assignments_and_testers_are_valid(state, inputs):
     orch = Orchestrator(C.DEFAULT_CONFIG, state, mocks={"bug_bash.distribute_tests": inputs})
-    for phase in orch.config["phases"]:
-        for spec in phase["steps"]:
-            if phase["id"] == "bug_bash" and spec["id"] == step.ID:
-                break
-            state.set_step(phase["id"], spec["id"], StepState(status="done"))
-        if phase["id"] == "bug_bash":
-            break
     assert orch.step_once().kind == "reminder"
     _, report = inspect(state, inputs, oof=[])
     assert orch.step_once().kind != "ran"
     correct_ado(inputs, report)
-    assert orch.step_once().kind == "ran"
+    with mockctx.active(inputs):
+        outcome = _invoke(step.build, state, oof=[])
+    assert isinstance(outcome, Done)
+    assert orch._transition_kernel().reserve(
+        "bug_bash", step.ID, "test-executor",
+        write_review={"hash": _review_hash(state, inputs), "approved_by": "test-reviewer"}).changed
+    execution_id = orch.step_execution("bug_bash", step.ID)["id"]
+    orch._transition_kernel().begin_reviewed_write("bug_bash", step.ID, execution_id)
+    assert orch.record_scout_step(
+        "bug_bash", step.ID, "pass", outcome.note,
+        execution_id=execution_id).kind == "ran"
     assert state.is_done("bug_bash", step.ID) and "plan" not in data(state)

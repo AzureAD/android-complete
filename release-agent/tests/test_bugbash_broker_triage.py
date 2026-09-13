@@ -1,4 +1,5 @@
 """Both-plan failure triage counts cases, preserving the original failing configurations."""
+from tests._context import invoke as _invoke, command_inputs
 from copy import deepcopy
 
 import pytest
@@ -140,9 +141,9 @@ def test_initial_and_periodic_producers_both_include_live_broker_triage(monkeypa
     monkeypatch.setattr(U, "completed_result", lambda _: {
         "auth": {"failed_case_ids": [], "automated_case_ids": []}, "broker": evidence})
     stub(monkeypatch, [row(1, 100)], auth=[row(2, 200, outcome="Passed")])
-    with mockctx.active({"people": {OWNER: {
+    with command_inputs("bug_bash.bugbash_updates", {"people": {OWNER: {
             "name": "Owner", "id": "11111111-1111-1111-1111-111111111111"}}}):
-        initial = U.build(st)
+        initial = _invoke(U.build, st)
         assert initial.kind == "needs_skill"
         assert "1/2 tests done" in initial.payload["content"]
         assert "(Automation triage)" in initial.payload["content"] and "[Broker]" in initial.payload["content"]
