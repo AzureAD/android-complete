@@ -68,12 +68,18 @@ def test_phase0_scheduled_before_ccd_minus_7():
 
 
 def test_phase_map_marks_scheduled():
+    from orchestrator import render
+
     st, orch = _ccd_orch("2026-06-28")
     orch.run_until_gate()
     rpt = orch.status_report()
     p0 = next(p for p in rpt["phases"] if p["id"] == "preflight")
     assert p0["state"] == "scheduled"
     assert p0["opens"] == "2026-07-01"
+    view = render.status_view(rpt)
+    assert "📅 **Scheduled**" in view
+    assert "📅 Pre-flight & Code Complete" in view
+    assert "🗓" not in view
 
 
 

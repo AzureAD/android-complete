@@ -28,7 +28,7 @@ WINDOW_END = "rollout_start"          # exclusive — Phase 5 onward: stop.
 _PILL = {
     "complete":    ("✅ Complete",    "#d1fadf", "#027a48"),
     "in_progress": ("🟡 In Progress", "#fef0c7", "#b54708"),
-    "scheduled":   ("🗓 Scheduled",   "#d1e9ff", "#175cd3"),
+    "scheduled":   ("📅 Scheduled",   "#d1e9ff", "#175cd3"),
     "blocked":     ("🔴 Blocked",     "#fee4e2", "#b42318"),
     "not_started": ("⬜ Not Started", "#f2f4f7", "#475467"),
 }

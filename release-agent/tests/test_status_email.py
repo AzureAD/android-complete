@@ -34,6 +34,12 @@ def test_status_email_composes_milestone_dashboard():
     assert "Update common" in html                             # change list
 
 
+def test_status_email_uses_calendar_icon_for_scheduled_milestones():
+    from orchestrator import status_email as SE
+
+    assert SE._PILL["scheduled"][0] == "📅 Scheduled"
+
+
 
 
 def test_status_email_window_boundaries():

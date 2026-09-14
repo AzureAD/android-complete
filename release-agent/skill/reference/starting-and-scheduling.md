@@ -226,7 +226,7 @@ Phases are **anchored to the CCD**, not started on demand. **The CCD is the 2nd 
 
 Either resolution clears the conflict. Never pick for the user.
 
-- **Phase 0 opens at CCD‑7.** You can `init` anytime, but until CCD‑7 the release sits in **`scheduled`** — the engine runs nothing. Status says *"🗓 Scheduled — Pre‑flight opens `<date>` (in N days)."* Relay plainly; don't force it.
+- **Phase 0 opens at CCD‑7.** You can `init` anytime, but until CCD‑7 the release sits in **`scheduled`** — the engine runs nothing. Status says *"📅 Scheduled — Pre‑flight opens `<date>` (in N days)."* Relay plainly; don't force it.
 - At CCD‑7, `next` opens Phase 0 and runs to the first gate.
 - **Testing the clock:** read/advance previews and `notification prepare` accept `--as-of`
   to simulate the date. `notification claim/result/finalize` reject overrides and use the

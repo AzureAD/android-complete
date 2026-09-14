@@ -241,8 +241,8 @@ _STATE_LABEL = {
     "cancelled": "Cancelled",
     "complete": "Complete",
 }
-_PHASE_ICON = {"done": "✅", "current": "⏸", "pending": "⬜", "scheduled": "🗓"}
-_STEP_ICON = {"done": "✅", "gate": "⏸", "reminder": "📌", "scheduled": "🗓",
+_PHASE_ICON = {"done": "✅", "current": "⏸", "pending": "⬜", "scheduled": "📅"}
+_STEP_ICON = {"done": "✅", "gate": "⏸", "reminder": "📌", "scheduled": "📅",
               "pending": "⬜", "skipped": "⏭️", "scout": "🤖", "auto": "🤖", "blocked": "⛔",
               "in_flight": "⏳", "running": "⏳"}
 _STEP_STATE_WORD = {"done": "Done", "gate": "Awaiting your approval",
@@ -334,7 +334,7 @@ def status_view(r: dict) -> str:
     elif r.get("scheduled"):
         sc = r["scheduled"]
         when = _delta_phrase(sc.get("opens_in_days"))
-        lines.append(f"🗓 **Scheduled** — **{sc['phase_name']}** opens **{sc.get('opens','')}** "
+        lines.append(f"📅 **Scheduled** — **{sc['phase_name']}** opens **{sc.get('opens','')}** "
                      f"({when}). Nothing to do yet.")
     elif r.get("action"):
         a = r["action"]
@@ -381,7 +381,7 @@ def status_view(r: dict) -> str:
         # Blank line BEFORE the legend so markdown ends the table and renders the
         # legend as its own caption paragraph — otherwise it's absorbed as a row
         # (all glued into one column).
-        lines += ["", "_✅ done · ⏸ in progress · 🗓 scheduled · ⬜ not started_"]
+        lines += ["", "_✅ done · ⏸ in progress · 📅 scheduled · ⬜ not started_"]
 
     # 3) Current-phase detail (drill-down). Icon prefixed onto the Step name.
     # A third "Details" column captures each step's execution outcome (from its
