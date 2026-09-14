@@ -1,9 +1,9 @@
 """Step: `cron` — verify the Calendar Checker pipeline is scheduled (Phase 0, S10).
 
 Confirms pipeline 3038 is scheduled AND firing by finding a recent `schedule`-reason
-run within the staleness window. Passes if fresh; BLOCKS (fix + rerun, or skip) if
-there's no scheduled run or it's stale. Deterministic (az CLI) → an `agent` step the
-engine runs in-process.
+run within the staleness window. Live ADO evidence is aged against trusted wall-clock
+UTC, never a simulated release date. Injected mock evidence intentionally uses the
+simulation clock. Passes if fresh; BLOCKS if there's no scheduled run or it's stale.
 """
 from __future__ import annotations
 
@@ -33,9 +33,14 @@ MOCKABLE = {
     "run": {
         "kind": "input",
         "desc": ("Inject the latest scheduled-build dict (or null for 'none'); the "
-                 "REAL staleness logic runs on it — no build-history read."),
+                 "REAL staleness logic runs against the simulation clock — no build-history read."),
     },
 }
+
+
+def _trusted_utc_now():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc)
 
 
 def _iso_age_days(iso: str, now):
@@ -60,17 +65,21 @@ def build(context: StepContext):
     injected = context.input("run", MISSING)
     if injected is not MISSING:
         run_ = injected
+        observed_at = context.clock.utc()
     elif not all(cfg.get(k) for k in ("pipeline_id", "org", "project")):
         return Blocked("cron: incomplete configuration")
     else:
         ok, run_, detail = context.services.pipelines.latest_scheduled_build(cfg["org"], cfg["project"], cfg["pipeline_id"])
         if not ok:
             return Blocked(f"cron: could not read build history — {detail}")
+        # Provider freshness is a present-time fact. A test may advance the logical
+        # release date with --as-of, but that must not make today's live run look stale.
+        observed_at = _trusted_utc_now()
     if not run_:
         return Blocked(
             f"{name}: no scheduled run found in recent history — the cron may be "
             f"disabled. Investigate, then rerun this step (or skip to override).")
-    age = _iso_age_days(run_.get("queueTime"), context.clock.utc())
+    age = _iso_age_days(run_.get("queueTime"), observed_at)
     max_stale = cfg.get("max_staleness_days", 2)
     when = (run_.get("queueTime") or "")[:16]
     if age is not None and age > max_stale:

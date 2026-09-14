@@ -470,7 +470,9 @@ preflight.cron:
   what: >
     Pipeline 3038's cron lives in YAML (not exposed in its triggers), so the check
     proves it's actually firing by confirming a recent schedule-reason run in its
-    build history. Blocks if there's no recent scheduled run or it's stale.
+    build history. Live run freshness always uses the trusted current UTC clock,
+    not a simulated --as-of release date. Blocks if there's no recent scheduled
+    run or it's stale.
   how: "If blocked, investigate the pipeline's schedule (it may be disabled/broken), fix it, and rerun the step — or skip to override."
 
 # =============================== Phase 1 · ccd ===============================

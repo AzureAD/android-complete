@@ -682,6 +682,43 @@ def test_cron_check_blocks_when_no_scheduled_run():
         checks.latest_scheduled_build = orig
 
 
+def test_cron_live_freshness_ignores_simulated_release_date(monkeypatch):
+    """Live provider timestamps use trusted current UTC, not a future --as-of clock."""
+    from datetime import datetime, timezone
+    from steps.preflight import cron
+    from tools import checks
+
+    monkeypatch.setattr(checks, "latest_scheduled_build", lambda *a, **k: (True, {
+        "queueTime": "2026-09-14T06:00:00Z",
+        "result": "succeeded",
+        "status": "completed",
+    }, "ok"))
+    monkeypatch.setattr(
+        cron, "_trusted_utc_now",
+        lambda: datetime(2026, 9, 14, 21, 0, tzinfo=timezone.utc),
+    )
+    result = cron.build(_context(
+        None, now=datetime(2026, 10, 8, 23, 59, tzinfo=timezone.utc)))
+    assert isinstance(result, Done)
+    assert "2026-09-14T06:00" in result.note
+
+
+def test_cron_mock_freshness_uses_simulated_release_date():
+    """Injected historical evidence remains deterministic for offline simulations."""
+    from datetime import datetime, timezone
+    from steps.preflight import cron
+
+    result = cron.build(_context(
+        None,
+        inputs={"run": {
+            "queueTime": "2026-10-05T06:00:00Z",
+            "result": "succeeded",
+            "status": "completed",
+        }},
+        now=datetime(2026, 10, 8, 23, 59, tzinfo=timezone.utc),
+    ))
+    assert isinstance(result, Blocked)
+    assert "3d ago" in result.reason
 
 
 def test_vitals_is_attestation_hold():
