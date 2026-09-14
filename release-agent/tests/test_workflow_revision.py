@@ -215,6 +215,32 @@ def test_adoption_invalidates_earliest_change_and_later_preserving_evidence(tmp_
     assert asdict(state) == before
     assert plan["invalidation"]["step_keys"] == [
         "second.approve", "second.work", "third.approve", "third.work"]
+    assert plan["invalidation"]["completed_step_keys"] == [
+        "second.approve", "second.work", "third.approve", "third.work"]
+    assert plan["invalidation"]["blocked_step_keys"] == []
+    assert plan["invalidation"]["gate_decision_records"] == [
+        {
+            "index": 1,
+            "step": "second.approve",
+            "decision": "approved",
+            "at": "2026-07-01T00:00:00+00:00",
+            "by": "owner",
+        },
+        {
+            "index": 2,
+            "step": "third.approve",
+            "decision": "approved",
+            "at": "2026-07-01T00:00:00+00:00",
+            "by": "owner",
+        },
+    ]
+    assert plan["invalidation"]["summary"] == {
+        "affected": 4,
+        "completed_reset": 4,
+        "blocked_reset": 0,
+        "gate_decisions_removed": 2,
+        "notification_offers_removed": 0,
+    }
     saved = []
     state._checkpoint = lambda: saved.append(deepcopy(asdict(state)))
     adopt(orch, plan["hash"], by="owner", reason="Reviewed executable contract")
@@ -371,6 +397,40 @@ def test_cli_confirmation_runs_under_release_lock_and_persists_once(tmp_path, ca
     loaded = ReleaseState.load(str(root / state.release_id / "release-state.json"))
     assert revision_id(loaded.workflow_revision) == plan["new_revision"]
     assert loaded.workflow_revision["last_adoption"]["reason"] == "reviewed"
+    from orchestrator.eventlog import EventLog
+    events = EventLog(str(root), state.release_id).read()
+    event = next(item for item in events if item["event"] == "workflow_adopted")
+    assert event["old_revision"] == plan["old_revision"]
+    assert event["new_revision"] == plan["new_revision"]
+    assert event["reviewer"] == "owner" and event["reason"] == "reviewed"
+    assert event["affected_step_keys"] == plan["invalidation"]["step_keys"]
+    assert event["gate_decisions_removed"] == plan["invalidation"]["gate_decision_records"]
+
+
+def test_status_refresh_is_state_read_only(tmp_path, monkeypatch, capsys):
+    from argparse import Namespace
+    from orchestrator import cli_common as C
+    from orchestrator.commands import release
+
+    state, orch = _orch(tmp_path)
+    root = tmp_path / "runs"
+    path = root / state.release_id / "release-state.json"
+    state.save(str(path))
+    before = path.read_bytes()
+
+    def refresh(loaded):
+        loaded.ccd_conflict = "2026-07-09"
+        return True
+
+    monkeypatch.setattr(C, "refresh_conflict", refresh)
+    args = Namespace(
+        runs_root=str(root), release=state.release_id, config=orch.config_path,
+        as_of=None, no_pipeline_check=False, json=True,
+    )
+    assert release.cmd_status(args) == 0
+    rendered = json.loads(capsys.readouterr().out)
+    assert rendered["ccd_conflict"] == "2026-07-09"
+    assert path.read_bytes() == before
 
 
 def test_real_atomic_replace_failure_rolls_back_and_cleans_partial_file(tmp_path, monkeypatch):

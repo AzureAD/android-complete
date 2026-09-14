@@ -111,9 +111,10 @@ def cmd_list(args):
 def cmd_status(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
     from orchestrator.revision import mismatch_reason
-    if (not mismatch_reason(orch) and not getattr(args, "no_pipeline_check", False)
-            and C.refresh_conflict(st)):
-        C.save_state(st, args.runs_root, args.release)
+    if not mismatch_reason(orch) and not getattr(args, "no_pipeline_check", False):
+        # Status may refresh its in-memory view, but observation must never modify
+        # release-state. Explicit CCD reconciliation commands own persistence.
+        C.refresh_conflict(st)
     if getattr(args, "json", False):
         print(_json.dumps(orch.status_report(), indent=2))
         return 0

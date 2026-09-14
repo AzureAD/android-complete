@@ -34,6 +34,19 @@ Throughout this skill, **`<AGENT_ROOT>`** = that confirmed `release-agent` folde
 2. **Render CLI output as LIVE MARKDOWN — never fenced.** `checklist`, `status`, `next`, etc. print finished markdown tables. Reproduce their stdout **verbatim as normal message content** so Scout renders the table — do NOT wrap in a ``` code fence, and do NOT rebuild/re-order/re-type from memory (you'll introduce stale icons / broken URLs). A sentence before/after is fine; the block must match. Use `--json` only for your own branching. **Running the command is NOT the same as showing it** — the CLI auto-logs, but the user only sees what YOU paste into your reply. If you ran `checklist`/`status` and didn't paste its table, the user saw nothing.
 2b. **NEVER ask for a gate decision or attestation in a message that doesn't contain the freshly-rendered table.** Before any `m_ask_user` for attestations (entry gate) or Approve/Deny (a gate), the SAME assistant message must first show the current `checklist`/`status` table pasted verbatim. A bare list of items is not acceptable — the table is the context. If you're about to ask and haven't pasted the table in this message, run the command and paste it first.
 3. **The engine is the source of truth.** It owns sequencing and gate state. When unsure, `status --json`. Never hand-edit checklist/status output.
+3b. **Drain every eligible Scout step in a parallel phase.** After every `next --json`,
+    inspect and execute **all** entries in `scout_pending`, even when an independent
+    auto/human step is blocked. A block stops phase completion, not unrelated Scout
+    work. Repeat `next --json` after each completion until no eligible Scout work remains;
+    only then render the final status or ask for owner action. Never leave a `🤖 Scout runs
+    this — automatic` row pending merely because another row blocked.
+3c. **Workflow adoption is never implicit status handling.** A status request may diagnose
+    a revision mismatch, but must not adopt it. Before asking the owner, show the exact
+    `workflow-adopt --json` impact: old/new revision, `invalidation.summary`, every
+    entry in `completed_step_keys` and `blocked_step_keys` being reset, gate decisions/offers removed,
+    and all blockers. Ask whether to accept **that exact reset scope**; a generic “new
+    version” approval without the displayed impact is insufficient. Apply only the reviewed
+    hash/reviewer/reason, then show the resulting status.
 4. **Prompt, don't interrogate.** For any discrete choice (start? which release? approve/deny?) use the `m_ask_user` clickable prompt, not free-text. Reserve free-text for genuinely open values (an unusual month).
 5. **Never assume a human decision.** An `m_ask_user` result that merely echoes the offered options is NOT confirmation. Never attest, approve, sign, or mark done until the user explicitly said so. Attesting/approving on an assumption is a release-integrity violation.
 6. **Gates are human-decided.** Present and relay Approve/Deny; never authorize yourself.
@@ -117,7 +130,7 @@ See **reference/commands.md → External gate approval and recovery** for exact 
 A `done` outcome marked `no_delivery_required:true` can use `record-step --status pass`;
 the recorder revalidates it. This never acknowledges a send.
 
-Discover → (if no gate cleared, run the entry gate) → `next` to advance → **render the resulting `status`/`checklist` table** → relay what's outstanding → on a gate, `m_ask_user` Approve/Deny → repeat. Every phase rides this same loop; per-phase specifics are in the reference docs.
+Discover → (if no gate cleared, run the entry gate) → `next --json` to advance → drain every eligible `scout_pending` item (including beside independent blocks) → **render the resulting `status`/`checklist` table** → relay what's outstanding → on a gate, `m_ask_user` Approve/Deny → repeat. Every phase rides this same loop; per-phase specifics are in the reference docs.
 
 ## Behaviour dispatch
 - **"status" / "where are we":** discover. If the entry gate isn't cleared (`readiness_gate`/not signed, or `blocked`) → the useful answer IS the checklist: run `checklist --release <id> --verify` and show that table (don't ask permission). Otherwise show `status`. No release → say so, offer to start.

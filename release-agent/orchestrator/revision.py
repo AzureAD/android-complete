@@ -322,9 +322,33 @@ def adoption_preview(orch, *, registry_entries=()):
         "step_keys": sorted(affected),
         "new_step_keys": sorted(new_keys - {key for phase in old["phases"] for key in phase["step_keys"]}),
         "removed_step_keys": sorted({key for phase in old["phases"] for key in phase["step_keys"]} - new_keys),
+        "completed_step_keys": sorted(
+            key for key in affected
+            if orch.state.get_step(*key.split(".", 1)).status in ("done", "skipped")),
+        "blocked_step_keys": sorted(
+            key for key in affected
+            if orch.state.get_step(*key.split(".", 1)).status == "blocked"),
         "gate_decisions": [index for index, decision in enumerate(orch.state.gate_decisions)
                            if decision["step"] in affected],
+        "gate_decision_records": [
+            {
+                "index": index,
+                "step": decision["step"],
+                "decision": decision["decision"],
+                "at": decision["at"],
+                "by": decision.get("by"),
+            }
+            for index, decision in enumerate(orch.state.gate_decisions)
+            if decision["step"] in affected
+        ],
         "notification_offers": fenced,
+    }
+    invalidation["summary"] = {
+        "affected": len(invalidation["step_keys"]),
+        "completed_reset": len(invalidation["completed_step_keys"]),
+        "blocked_reset": len(invalidation["blocked_step_keys"]),
+        "gate_decisions_removed": len(invalidation["gate_decision_records"]),
+        "notification_offers_removed": len(invalidation["notification_offers"]),
     }
     plan = {
         "old_revision": revision_id(old), "new_revision": revision_id(new),

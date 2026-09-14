@@ -114,3 +114,12 @@ def test_guardrail_actually_sees_the_contract():
     # known contract members must be discovered by the scan
     assert {"record-bugbash-chat", "record-telemetry", "create-integration-prs"} <= seen_followups
     assert {"create-payload-wiki", "create-oneauth-common-pr", "check-lockdown"} <= seen_tools
+
+
+def test_skill_requires_parallel_scout_drain_and_adoption_impact_review():
+    skill = open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read()
+    assert "all** entries in `scout_pending`" in skill
+    assert "even when an independent" in skill and "step is blocked" in skill
+    assert "only then render the final status" in skill
+    assert "`invalidation.summary`" in skill
+    assert "generic “new" in skill and "approval" in skill and "insufficient" in skill

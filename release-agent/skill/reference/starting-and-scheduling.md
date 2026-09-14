@@ -23,8 +23,11 @@ Pick current → `init --release <id>` immediately. Pick different → follow-up
    owner; incomplete records are not permission to resend. Do not import/infer receipts.
 2. Install matching source and skill. A git pull does NOT update stored Scout prompts.
    Schema-v3 releases are pinned to a workflow revision. On mismatch, stop dispatch
-   and use `workflow-adopt --release <id> --json` for an owner review; confirm the exact
-   hash with `--approve-hash`, `--by`, and `--reason`. Restore the pinned runtime first
+   and use `workflow-adopt --release <id> --json` for an owner review. Show the exact
+   old/new revision plus `invalidation.summary`, every completed/blocked step that will
+   reset, removed gate decisions/offers, and blockers before asking. A status request or
+   generic approval of a “new version” is not consent to an undisclosed reset. Confirm the
+   exact hash with `--approve-hash`, `--by`, and `--reason`. Restore the pinned runtime first
    if an execution, resource creation, delivery completion or automation claim needs
    recovery. Never migrate old schemas or overwrite a release to bypass these checks.
 3. With the owner's explicit deployment authorization, replace stored worker prompts

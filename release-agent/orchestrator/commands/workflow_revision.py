@@ -22,6 +22,21 @@ def cmd_workflow_adopt(args):
                 )
             else:
                 result = adoption_preview(orch, registry_entries=entries)
+        if result.get("adopted"):
+            impact = result["invalidation"]
+            C.elog(args.runs_root, args.release).log(
+                "workflow_adopted",
+                source="engine",
+                old_revision=result["old_revision"],
+                new_revision=result["new_revision"],
+                reviewer=args.by,
+                reason=args.reason,
+                affected_step_keys=impact["step_keys"],
+                completed_step_keys_reset=impact["completed_step_keys"],
+                blocked_step_keys_reset=impact["blocked_step_keys"],
+                gate_decisions_removed=impact["gate_decision_records"],
+                notification_offers_removed=impact["notification_offers"],
+            )
         print(json.dumps(result, indent=2))
         return 0
     except (ValueError, OSError, RuntimeError) as exc:

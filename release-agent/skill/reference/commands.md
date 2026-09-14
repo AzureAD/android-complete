@@ -32,7 +32,7 @@ review. Parameters never authorize sending. Mock redirects and input knobs still
 | --- | --- |
 | Discover releases | `python -m orchestrator.cli list --json` |
 | Start a new release | `python -m orchestrator.cli init --release <YYYY-MM>` |
-| Preview workflow revision adoption | `python -m orchestrator.cli workflow-adopt --release <id> --json` — old/new identity, conservative invalidations and ownership blockers; no execution |
+| Preview workflow revision adoption | `python -m orchestrator.cli workflow-adopt --release <id> --json` — old/new identity, conservative invalidations and ownership blockers; no execution. Before asking for approval, show `invalidation.summary`, every completed/blocked step being reset, removed gate decisions/offers, and blockers. |
 | Confirm reviewed workflow adoption | `python -m orchestrator.cli workflow-adopt --release <id> --approve-hash <hash> --by <owner> --reason "<reviewed change>"` — recomputes under locks, rejects stale reviews/owned work, persists atomically without draining |
 | List what a step exposes to `mocks.local.yaml` | `python -m orchestrator.cli mock-spec` |
 | Show readiness entry checklist | `python -m orchestrator.cli checklist --release <YYYY-MM> [--verify] [--json]` |

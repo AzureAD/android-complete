@@ -1614,6 +1614,17 @@ def test_local_mock_input_feeds_real_logic():
     assert "preflight.cg" in orch.status_report()["pending_human"]
 
 
+def test_parallel_auto_block_keeps_independent_scout_work_eligible():
+    """A CG block must not hide unrelated browser/notification work from the skill."""
+    st, orch = _mock_orch({"preflight.cg": {"alerts": [
+        {"severity": "critical", "alertState": "active", "title": "CVE-2026-1"}]}},
+        as_of="2026-07-01")
+    orch.run_until_gate()
+    report = orch.status_report()
+    assert st.get_step("preflight", "cg").status == "blocked"
+    assert {"notice", "flight_reminder", "lockdown"} <= set(report["scout_pending"])
+
+
 
 
 def test_local_mock_input_variant_on_scout_step():
