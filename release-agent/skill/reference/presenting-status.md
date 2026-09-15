@@ -10,6 +10,19 @@ _Loaded on demand. How to render the CLI's `status` / `checklist` output._
 
 Alongside the table, tell the user exactly what each outstanding step needs (run the scout steps yourself; for `attest` steps spell out what to confirm). Do **not** replace the table with your own summarized list.
 
+When the status has a focused `action`/`needs_owner` step—or the user asks **“what’s
+next?”**—the response must be actionable, not informational only. Handle one item:
+
+- **Attestation/human action:** run `step-action` for the exact prompt, show the fresh
+  status table, then use `m_ask_user` choices **Completed**, **Not yet**, **Need help**.
+  Completed authorizes `done` with a specific confirmation note; Not yet leaves the
+  hold unchanged; Need help routes through `step-info` and then repeats the choices.
+- **Blocked check:** show the reason, then offer **Fixed — rerun**, **Override**,
+  **Keep blocked**. Override requires a separate free-text reason before `skip`.
+
+Never treat “what’s next?” as completion. After a confirmed action, advance, render the
+new status, and prompt for the next focused action. Process multiple holds one at a time.
+
 **Render once per advance pass — after the work, not before.** When a turn both advances the release (`next` + executing scout/agent steps) and shows status, do the work first and paste the `status` table **once**, at the end, reflecting the settled state. Don't paste a table before running the scout steps and then a second one after — the pre-work render is immediately stale and just duplicates the final one. One pass → one table.
 
 **Structured fields for branching** (`status --json`):

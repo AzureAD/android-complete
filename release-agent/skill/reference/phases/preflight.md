@@ -6,14 +6,16 @@ _Loaded on demand when advancing Phase 0. Phase 0 is `execution: parallel`._
 
 A single `next` attempts **every independent ready automated step in the same pass** (breaking, CG, cron — one after another, not concurrent provider calls) then surfaces **all the human/scout holds together** (e.g. *"4 item(s) need you: …"*). An in-flight step or effect-recovery hold does not stop its ready siblings; each handler is attempted at most once per pass. Waiting work keeps its dependencies blocked and is polled/reconciled on a later invocation. After `next`, read `status --json` → **`pending_human`** (and `active_phase.steps` with `status`/`needs_owner`) — the full outstanding set. Work through **all** of them this pass:
 - **`source: scout`** steps → notices use notification prepare/claim/result; lockdown keeps its browser + `check-lockdown` follow-up (below). Independent — do them all.
-- **`attest`** steps (confirm_reminders, vitals) → ask the owner to confirm, then `done --step <id>`.
+- **`attest`** steps (confirm_reminders, vitals) → obtain the exact `step-action`
+  prompt, show fresh status, and use `m_ask_user` choices **Completed / Not yet /
+  Need help**. Only Completed authorizes `done --step <id>` with a specific note.
 - **`blocked`** steps (cg/cron on a real problem) → show the note; fix + rerun, or skip.
 
 Dependencies still hold: `confirm_reminders` only appears **after** `flight_reminder` is sent. Call `next` again after clearing holds to surface newly-ready steps and advance.
 
 > **State writes are safe to parallelize.** The CLI serializes every state read-modify-write per release with an exclusive lock, so firing several `record-step`/`record-check`/`done` calls at once (or an hourly `tick` overlapping) can't clobber — a second invocation waits for the first to save.
 
-**Render the table ONCE per advance pass — at the END.** Within a single pass, do the work first: run `next`, execute every resulting scout step using its notification or domain protocol and clear the attest holds, THEN paste the `status` table once to show the settled state (see the presenting-status reference). Don't paste an interim table before/while you run the scout steps — that early render is stale the moment you act and just duplicates the final one. One pass → one table. (The only exception is the golden rule: if this pass ends by asking for an attestation/gate decision, that final table must be in the same message as the `m_ask_user`.) Never a bare prose list.
+**Render the table ONCE per advance pass — at the END.** Within a single pass, do the work first: run `next`, execute every resulting scout step using its notification or domain protocol, THEN paste the `status` table once to show the settled state (see the presenting-status reference). If the settled state focuses an attestation, put its exact prompt after that final table and call `m_ask_user` with **Completed / Not yet / Need help**; do not claim the hold is cleared until the owner selects Completed. Don't paste an interim table before/while you run the scout steps — that early render is stale the moment you act and just duplicates the final one. One pass → one table. Never a bare prose list.
 
 ## `notice` & `flight_reminder` — shared notification delivery
 

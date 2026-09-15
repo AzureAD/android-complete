@@ -123,3 +123,12 @@ def test_skill_requires_parallel_scout_drain_and_adoption_impact_review():
     assert "only then render the final status" in skill
     assert "`invalidation.summary`" in skill
     assert "generic “new" in skill and "approval" in skill and "insufficient" in skill
+
+
+def test_skill_requires_actionable_user_holds():
+    skill = open(os.path.join(ROOT, "skill", "SKILL.md"), encoding="utf-8").read()
+    assert "Every focused user action gets an actionable prompt" in skill
+    assert "**Completed**" in skill and "**Not yet**" in skill and "**Need help**" in skill
+    assert "**Fixed — rerun**" in skill and "**Override**" in skill and "**Keep blocked**" in skill
+    assert "Never infer completion from “what’s next,”" in skill
+    assert "Override first asks for a free-text reason" in skill
