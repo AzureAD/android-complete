@@ -1,6 +1,7 @@
 # Reference — Phase 0 (Pre-flight & Code Complete)
 
-_Loaded on demand when advancing Phase 0. Phase 0 is `execution: parallel`._
+_Loaded on demand when advancing Phase 0. Phase 0 is `execution: parallel`; its two
+human confirmation steps are ordered last, after every automated/Scout check._
 
 ## Parallel phases — process ALL the holds, not one at a time
 
@@ -12,6 +13,9 @@ A single `next` attempts **every independent ready automated step in the same pa
 - **`blocked`** steps (cg/cron on a real problem) → show the note; fix + rerun, or skip.
 
 Dependencies still hold: `confirm_reminders` only appears **after** `flight_reminder` is sent. Call `next` again after clearing holds to surface newly-ready steps and advance.
+
+The phase table intentionally orders `confirm_reminders` and `vitals` last. Complete all
+automatic checks first, then prompt for those two owner confirmations one at a time.
 
 > **State writes are safe to parallelize.** The CLI serializes every state read-modify-write per release with an exclusive lock, so firing several `record-step`/`record-check`/`done` calls at once (or an hourly `tick` overlapping) can't clobber — a second invocation waits for the first to save.
 

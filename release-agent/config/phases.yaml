@@ -34,13 +34,13 @@ phases:
     steps:
       - { id: notice,          name: "Send early release notice",              kind: external, owner: agent, source: scout, maps_to: [S0] }
       - { id: flight_reminder, name: "Send feature-owner reminders (flights · strings · flag-freeze)",  kind: external, owner: agent, source: scout, maps_to: [S3, S4, S5] }
-      - { id: confirm_reminders, name: "Confirm feature owners completed flight / string / flag-freeze work", kind: attestation, owner: human, attest: true, depends_on: [flight_reminder], maps_to: [S3, S4, S5, S6] }
       - { id: lockdown,        name: "Detect lockdown/holiday overlap",         kind: external, owner: agent, source: scout, maps_to: [S1] }
       - { id: breaking,        name: "Detect BREAKING-OneAuth + draft comms",   kind: auto, effect_mode: read_only, owner: agent, maps_to: [S2] }
       - { id: cg,              name: "Report critical CG alerts",               kind: auto, effect_mode: read_only, owner: agent, maps_to: [S8] }
       - { id: oneauth_access,  name: "Verify OneAuth write access (create a probe branch)", kind: auto, effect_mode: idempotent, effect_recovery: frozen, owner: agent, maps_to: [S8] }
-      - { id: vitals,          name: "Confirm Play Console vitals & policy status reviewed", kind: attestation, owner: human, attest: true, maps_to: [S9] }
       - { id: cron,            name: "Verify Calendar Checker scheduled",       kind: auto, effect_mode: read_only, owner: agent, maps_to: [S10] }
+      - { id: confirm_reminders, name: "Confirm feature owners completed flight / string / flag-freeze work", kind: attestation, owner: human, attest: true, depends_on: [flight_reminder], maps_to: [S3, S4, S5, S6] }
+      - { id: vitals,          name: "Confirm Play Console vitals & policy status reviewed", kind: attestation, owner: human, attest: true, maps_to: [S9] }
 
   - id: ccd
     name: "Code Complete Day"

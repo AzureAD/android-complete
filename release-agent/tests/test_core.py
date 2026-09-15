@@ -1625,6 +1625,16 @@ def test_parallel_auto_block_keeps_independent_scout_work_eligible():
     assert {"notice", "flight_reminder", "lockdown"} <= set(report["scout_pending"])
 
 
+def test_phase0_human_confirmations_are_ordered_last():
+    """Phase 0 settles automated evidence before presenting owner confirmations."""
+    _, orch = _orch()
+    preflight = next(phase for phase in orch.config["phases"] if phase["id"] == "preflight")
+    ids = [step["id"] for step in preflight["steps"]]
+    assert ids[-2:] == ["confirm_reminders", "vitals"]
+    assert ids.index("confirm_reminders") > ids.index("cron")
+    assert ids.index("vitals") > ids.index("cron")
+
+
 
 
 def test_local_mock_input_variant_on_scout_step():
