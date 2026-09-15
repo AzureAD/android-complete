@@ -1681,6 +1681,42 @@ def test_step_links_stored_on_state_and_rendered():
     assert "[CVE-X](https://ado/alert/1)" in view
 
 
+def test_step_details_expand_only_unresolved_work():
+    """Done rows stay summarized even when they retain links or multiline evidence."""
+    from datetime import date
+    from orchestrator import render
+
+    st = ReleaseState(
+        release_id="2026-09",
+        ccd="2026-09-09",
+        ccd_source="default",
+        owner_email="pedroro@microsoft.com",
+    )
+    mocks = _safe({
+        "preflight.breaking": {
+            "changelog": "vNext\n----\n- [MAJOR] breaking API (#1)\nVersion 1.0.0\n",
+        },
+        "preflight.cg": {"alerts": [{
+            "alertState": "active",
+            "severity": "high",
+            "title": "CVE-X",
+            "url": "https://ado/alert/1",
+        }]},
+    })
+    orch = Orchestrator(CONFIG, st, as_of=date(2026, 9, 2), mocks=mocks)
+    _pass_scout_checks(orch)
+    orch.gate.sign()
+    orch.run_until_gate()
+
+    view = render.status_view(orch.status_report())
+    assert view.count("Verify OneAuth write access (create a probe branch)") == 1
+    assert "Request OneAuth R/W" not in view
+    assert view.count("Detect BREAKING-OneAuth + draft comms") == 1
+    assert "DRAFT COMMS" not in view
+    assert view.count("Report critical CG alerts") == 3  # headline + table + expanded detail
+    assert "[CVE-X](https://ado/alert/1)" in view
+
+
 
 
 def test_step_knowledge_base_answers_step_questions():

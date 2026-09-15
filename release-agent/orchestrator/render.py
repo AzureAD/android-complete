@@ -403,16 +403,17 @@ def status_view(r: dict) -> str:
         if pl:
             lines += ["", f"**Pipelines:** {pl}"]
 
-        # 3b) Expanded detail — only for steps whose note has MORE than the one-line
-        # summary the column shows (e.g. the CG report's full High/Critical CVE list,
-        # or the breaking-change draft comms). Simple one-line notes (lockdown "no
-        # overlap", cron "firing") are already fully shown in the column, so they're
-        # not repeated here. Generic: any step with a multi-line note expands.
+        # 3b) Expanded detail is only for unresolved work. Completed/skipped rows
+        # already have their summary in the table and must not compete with the
+        # actual actions below it, even when they retain links or multiline evidence.
         def _multiline(note):
             return len([ln for ln in str(note).splitlines() if ln.strip()]) > 1
 
-        rich = [s for s in r["current_steps"]
-                if (s.get("note") and _multiline(s["note"])) or s.get("links")]
+        rich = [
+            s for s in r["current_steps"]
+            if s.get("state") not in ("done", "skipped")
+            and ((s.get("note") and _multiline(s["note"])) or s.get("links"))
+        ]
         if rich:
             lines += ["", "### Step details"]
             for s in rich:
