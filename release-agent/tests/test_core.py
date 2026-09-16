@@ -1847,15 +1847,18 @@ def test_find_orchestrator_pending_approval_and_submit():
 
 
 
-def test_orchestrator_stage_state_reads_named_stage(monkeypatch):
+def test_orchestrator_stage_state_reads_stable_identifier(monkeypatch):
     """orchestrator_stage_state returns the named Stage's timeline state/result."""
     from tools import pipelines as P
     monkeypatch.setattr(P, "find_orchestrator_run", lambda *a, **k: (True, {"id": 777}, ""))
     monkeypatch.setattr(P, "get_timeline", lambda *a, **k: (True, [
-        {"type": "Stage", "name": "Remove RC Tags", "state": "completed", "result": "succeeded"},
-        {"type": "Stage", "name": "Publish GitHub Release Notes", "state": "inProgress", "result": None},
+        {"type": "Stage", "identifier": "RemoveRCTags", "name": "Remove RC Tags",
+         "state": "completed", "result": "succeeded"},
+        {"type": "Stage", "identifier": "PublishGitHubReleaseNotes",
+         "name": "Renamed display text", "state": "inProgress", "result": None},
     ], ""))
-    ok, info, _ = P.orchestrator_stage_state("O", "P", "2026-08", "Publish GitHub Release Notes")
+    ok, info, _ = P.orchestrator_stage_state(
+        "O", "P", "2026-08", "PublishGitHubReleaseNotes")
     assert ok and info == {"state": "inProgress", "result": None, "build_id": 777}
 
 

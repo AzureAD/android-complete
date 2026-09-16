@@ -51,10 +51,9 @@ RELEASE_PREFIX = "release/"
 WORKING_PREFIX = "working/release/"
 INTEG_PREFIX = "release-integration/"
 
-# The orchestrator stage that CREATES the release-integration branches. integ_prs must not
-# run before this stage completes — the RI branches (and thus the integration PRs) don't
-# exist until it does. This is the authoritative trigger, NOT merely remove_rc_tags_gate passing.
-IR_STAGE = "Create PRs to Integrate Release Branches"
+# Bind monitoring to the immutable YAML stage id; the display name is presentation only.
+IR_STAGE_ID = "CreateReleaseIntegrationBranches"
+IR_STAGE_NAME = "Create Release Integration Branches"
 
 # The 4 release repos. `tool` selects the PR backend: 'gh' (github.com / GHE) or 'ado'.
 # `gh_repo` is what we pass to `gh --repo` (bare owner/repo = github.com; host/owner/repo = GHE).
@@ -261,7 +260,7 @@ def plan(context):
 
 # --------------------------------------------------------------------------- outcome
 def _ir_stage_status(context):
-    """('ready'|'wait'|'failed'|'unknown', detail) — has the orchestrator's IR_STAGE completed?
+    """('ready'|'wait'|'failed'|'unknown', detail) — has the orchestrator's RI stage completed?
     The release-integration branches don't exist until it does, so integ_prs must monitor it
     and only proceed on 'ready'. Mock-first via the `stage` knob; never raises."""
     inj = context.input("stage", MISSING)
@@ -274,7 +273,8 @@ def _ir_stage_status(context):
         return ("wait", f"injected stage={inj}")
     try:
         ok, st, detail = context.services.pipelines.orchestrator_stage_state(
-            PL.ENGINEERING_ORG, PL.ENGINEERING_PROJECT, getattr(context.release, "release_id", ""), IR_STAGE)
+            PL.ENGINEERING_ORG, PL.ENGINEERING_PROJECT,
+            getattr(context.release, "release_id", ""), IR_STAGE_ID)
     except Exception:  # noqa: BLE001 — never crash the engine on a network hiccup
         return ("unknown", "could not read the orchestrator stage")
     if not ok:
@@ -283,10 +283,10 @@ def _ir_stage_status(context):
         return ("wait", detail)                       # stage not present on the run yet
     stt, res = st.get("state"), st.get("result")
     if stt != "completed":
-        return ("wait", f"'{IR_STAGE}' is {stt or 'not started'}")
+        return ("wait", f"'{IR_STAGE_NAME}' is {stt or 'not started'}")
     if res in ("succeeded", "succeededWithIssues"):
-        return ("ready", f"'{IR_STAGE}' completed ({res})")
-    return ("failed", f"'{IR_STAGE}' completed with result={res}")
+        return ("ready", f"'{IR_STAGE_NAME}' completed ({res})")
+    return ("failed", f"'{IR_STAGE_NAME}' completed with result={res}")
 
 
 def build(context: StepContext):
@@ -300,12 +300,12 @@ def build(context: StepContext):
     status, detail = _ir_stage_status(context)
     if status == "failed":
         return Blocked(
-            f"integ_prs: the Release Orchestrator '{IR_STAGE}' stage FAILED ({detail}) — the "
+            f"integ_prs: the Release Orchestrator '{IR_STAGE_NAME}' stage FAILED ({detail}) — the "
             "release-integration branches were not created. Investigate the orchestrator run "
             "before opening integration PRs.")
     if status != "ready":
         return InProgress(
-            f"integ_prs: monitoring the Release Orchestrator — waiting for the '{IR_STAGE}' stage "
+            f"integ_prs: monitoring the Release Orchestrator — waiting for the '{IR_STAGE_NAME}' stage "
             f"to complete before the release-integration branches exist ({detail}).",
             poll_in_min=15)
 

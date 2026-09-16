@@ -19,7 +19,7 @@ manual gates, and the branch/PR model so those steps can't drift from reality.
 | 5 | Publish Internal | 4 | internal artifacts → ADO Maven feed. |
 | 6 | Publish to Maven Central | 5 | MSAL/Common → Maven Central. Verified by `verify_pub`. |
 | 7 | Update Pipeline Variables | 5 | MSAL-PROD-Version, MSAL-PROD-BRANCH, Broker-PROD-Version. |
-| 8 | Create Release Integration Branches | 5 | cuts `release-integration/*` (see branch model). |
+| 8 | Create Release Integration Branches | 5 | Stage id `CreateReleaseIntegrationBranches`; cuts `release-integration/*` (see branch model). |
 | 9 | **Publish GitHub Release Notes** 🚦 | 8 | **2nd manual gate** — approved by `publish_notes_gate`. Publishes `v<version>` GitHub releases for Common, MSAL, Broker. Verified by `verify_release_notes`. |
 
 Two manual approval gates: **Remove RC Tags** (stage 4) and **Publish GitHub Release Notes**

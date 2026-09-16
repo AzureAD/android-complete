@@ -395,6 +395,31 @@ def test_integ_prs_monitors_ir_stage():
         restore()
 
 
+def test_integ_prs_monitors_stable_stage_identifier(monkeypatch):
+    from steps.lib import mockctx
+    from steps.finalize import integ_prs as S
+    from tools import pipelines as P
+
+    calls = []
+
+    def stage_state(org, project, release, stage_ref):
+        calls.append((org, project, release, stage_ref))
+        return True, {"state": "inProgress", "result": None}, ""
+
+    monkeypatch.setattr(P, "orchestrator_stage_state", stage_state)
+    st = ReleaseState(release_id="2026-08")
+    with mockctx.active({
+        "versions": {"msal": "8.4.2"},
+        "repos": ["msal"],
+        "pbi": "skip",
+    }):
+        out = _invoke(S.build, st)
+
+    assert out.kind == "in_progress"
+    assert calls[-1][-1] == "CreateReleaseIntegrationBranches"
+    assert S.IR_STAGE_NAME == "Create Release Integration Branches"
+
+
 
 
 def test_integ_prs_blocked_without_versions():

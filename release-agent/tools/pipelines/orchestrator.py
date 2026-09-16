@@ -313,10 +313,12 @@ def find_orchestrator_pending_approval(org, project, release_month, timeout=90):
                    "build_url": build_url}, "")
 
 
-def orchestrator_stage_state(org, project, release_month, stage_name, timeout=90):
-    """(ok, info|None, detail) — the timeline state of a named Release Orchestrator Stage for the
-    release. info is {state, result, build_id}; None when the stage isn't in the timeline yet.
-    Used by publish_notes_gate to tell 'notes already published' from 'not reached yet'."""
+def orchestrator_stage_state(org, project, release_month, stage_ref, timeout=90):
+    """Return the timeline state of a Release Orchestrator stage.
+
+    Prefer the stable YAML stage identifier. Display-name matching remains supported
+    for existing callers, but a display-name change cannot break identifier-based callers.
+    """
     ok, run, detail = _pp.find_orchestrator_run(org, project, ORCHESTRATOR_DEF, release_month, timeout)
     if not ok:
         return (False, None, detail)
@@ -326,10 +328,11 @@ def orchestrator_stage_state(org, project, release_month, stage_name, timeout=90
     if not okt:
         return (False, None, dt)
     for r in recs:
-        if r.get("type") == "Stage" and r.get("name") == stage_name:
+        if (r.get("type") == "Stage"
+                and stage_ref in (r.get("identifier"), r.get("name"))):
             return (True, {"state": r.get("state"), "result": r.get("result"),
                            "build_id": run.get("id")}, "")
-    return (True, None, f"stage '{stage_name}' not in the orchestrator timeline")
+    return (True, None, f"stage '{stage_ref}' not in the orchestrator timeline")
 
 
 def get_pipeline_approval(org, project, approval_id, timeout=60):
