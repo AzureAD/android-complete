@@ -90,8 +90,8 @@ def verify(run_dir, expect=0):
              "missing — run: python scripts/shift.py ensure, then shift.py add <icm> per finding")
         failures += 1
 
-    findings = _find(run_dir, "findings/*.md", "msrc-investigations/*.md", "*.md")
-    findings = [f for f in findings if os.path.basename(f) != "_ROLLUP.md"]
+    findings = _find(run_dir, *FINDING_PATTERNS)
+    findings = [f for f in findings if os.path.basename(f) not in NON_FINDING_NAMES]
     if findings:
         _row(OK, f"per-finding report(s) — {len(findings)} found", findings)
     else:
@@ -159,6 +159,13 @@ REQUIRED_META = [
     ("icm severity", "IcM Severity tile"),
     ("bottom line", "the one-sentence TL;DR at the top of the HTML"),
 ]
+
+FINDING_PATTERNS = (
+    "findings/*.md",
+    "msrc-investigations/*.md",
+    "itd-investigations/*/README.md",
+)
+NON_FINDING_NAMES = {"_ROLLUP.md", "EXECUTION-TRACKER.md"}
 
 
 def _verify_parseable(findings, run_dir):

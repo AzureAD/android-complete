@@ -188,6 +188,28 @@ def slugify(text):
     return re.sub(r"[^a-z0-9]+", "-", (text or "").strip().lower()).strip("-")[:60]
 
 
+def validate_slug(slug):
+    """Return a safe filename slug, rejecting paths and empty values."""
+    if not slug or slug in (".", ".."):
+        raise ValueError("slug must not be empty")
+    if slug != os.path.basename(slug) or os.path.isabs(slug):
+        raise ValueError("slug must be a filename slug, not a path")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,119}", slug):
+        raise ValueError("slug may contain only lowercase letters, numbers, '.', '_' and '-'")
+    return slug
+
+
+def remove_previous_scaffold(findings_dir, previous_slug, new_path):
+    """Remove the previous manifest-linked scaffold when --force changes the slug."""
+    if not previous_slug:
+        return
+    previous_path = os.path.abspath(os.path.join(findings_dir, f"{previous_slug}.md"))
+    if previous_path == os.path.abspath(new_path) or not os.path.isfile(previous_path):
+        return
+    os.remove(previous_path)
+    print(f"- removed old scaffold: {previous_path}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -208,7 +230,11 @@ def main():
     findings_dir = os.path.join(run_dir, "findings")
     os.makedirs(findings_dir, exist_ok=True)
 
-    manifest = shift.load_manifest(s, e)
+    try:
+        manifest = shift.load_manifest(s, e)
+    except shift.ManifestError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
     existing = manifest.get(str(args.icm))
     if existing and not args.force:
         hits = [p for p in os.listdir(findings_dir)
@@ -220,11 +246,18 @@ def main():
         print("      Append to the existing report, or pass --force to re-scaffold it.")
         return 3
 
-    slug = args.slug or f"icm-{args.icm}-{slugify(args.title)}"
+    try:
+        slug = validate_slug(args.slug or f"icm-{args.icm}-{slugify(args.title)}")
+    except ValueError as exc:
+        print(f"ERROR: invalid --slug: {exc}", file=sys.stderr)
+        return 2
     path = os.path.join(findings_dir, f"{slug}.md")
     if os.path.exists(path) and not args.force:
         print(f"EXISTS: {path}\n        Pass --force to overwrite.")
         return 3
+
+    if existing and args.force:
+        remove_previous_scaffold(findings_dir, existing.get("slug", ""), path)
 
     with open(path, "w", encoding="utf-8") as f:
         f.write(SKELETON.format(tag=args.tag, icm=args.icm, title=args.title, component=args.component))

@@ -45,11 +45,15 @@ class TextExtractor(HTMLParser):
         self._row = []
         self._cell = []
         self._in_cell = False
+        self._text_tag = None
 
     def handle_starttag(self, tag, attrs):
         if tag in ("h1", "h2", "h3"):
             self._flush_text()
             self._tag = tag
+        elif tag in ("p", "li", "pre"):
+            self._flush_text()
+            self._text_tag = tag
         elif tag == "tr":
             self._row = []
         elif tag in ("td", "th"):
@@ -63,6 +67,12 @@ class TextExtractor(HTMLParser):
                 self.parts.append(("heading", tag, text))
             self._buf = []
             self._tag = None
+        elif tag in ("p", "li", "pre") and self._text_tag == tag:
+            text = " ".join("".join(self._buf).split())
+            if text:
+                self.parts.append(("text", tag, text))
+            self._buf = []
+            self._text_tag = None
         elif tag in ("td", "th"):
             self._row.append("".join(self._cell).strip())
             self._in_cell = False
@@ -72,7 +82,7 @@ class TextExtractor(HTMLParser):
             self._row = []
 
     def handle_data(self, data):
-        if self._tag:
+        if self._tag or self._text_tag:
             self._buf.append(data)
         elif self._in_cell:
             self._cell.append(data)
@@ -195,16 +205,26 @@ def main():
             role = row[-1] if row[-1] not in (path, lines) else ""
             print(f"| `{path}` | {lines} | {role.replace('|', ' ')[:120]} |")
 
-    # Suggested fix paragraph, if present
-    fix = None
+    fix_parts = []
     capture = False
     for kind, lvl, payload in rp.parts:
         if kind == "heading":
-            capture = "fix" in payload.lower() or "suggested fix" in payload.lower()
-    # The fix often lives in a <p> with bold 'Suggested Fix'; the extractor merged it into headings/rows
-    # only if structured. Leave a prompt for the agent to fill from the report if not auto-found.
+            if capture and "fix" not in payload.lower():
+                capture = False
+            else:
+                capture = "fix" in payload.lower() or "suggested fix" in payload.lower()
+            continue
+        if capture and kind == "text":
+            fix_parts.append(payload)
+        elif capture and kind == "row":
+            fix_parts.append(" | ".join(payload))
+
     print("\n## Suggested Fix (verbatim from report)\n")
-    print("_Copy the 'Suggested Fix' paragraph from report-content.html here._\n")
+    if fix_parts:
+        for paragraph in fix_parts:
+            print(f"{paragraph}\n")
+    else:
+        print("_Suggested Fix was not found in report-content.html; copy it manually from the saved report._\n")
 
     print("\n---\n")
     print("## OUR Classification (to be completed by codebase-researcher)\n")

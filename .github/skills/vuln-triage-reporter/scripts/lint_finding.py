@@ -47,6 +47,13 @@ FIX_CLAIMED = re.compile(
 
 MATRIX_CELLS = re.compile(r"flight\s*(?:=|:)?\s*(on|off)|\|\s*[ABCD]\s*\|", re.IGNORECASE)
 
+FINDING_PATTERNS = (
+    "findings/*.md",
+    "msrc-investigations/*.md",
+    "itd-investigations/*/README.md",
+)
+NON_FINDING_NAMES = {"_ROLLUP.md", "EXECUTION-TRACKER.md"}
+
 
 def has_heading(text, *names):
     for n in names:
@@ -102,9 +109,9 @@ def lint(path):
             issues.append((REQ, "Scope Contract has no 'OUT OF SCOPE' list — naming the co-resident "
                                 "subsystem you excluded is the whole point"))
         if not re.search(r"entry point", body, re.IGNORECASE):
-            issues.append((WARN, "Scope Contract does not name an entry point"))
+            issues.append((REQ, "Scope Contract does not name an entry point"))
         if not re.search(r"asset", body, re.IGNORECASE):
-            issues.append((WARN, "Scope Contract does not name the asset at risk"))
+            issues.append((REQ, "Scope Contract does not name the asset at risk"))
 
     # --- Claim Ledger -------------------------------------------------------
     if not has_heading(text, "Claim Ledger"):
@@ -223,10 +230,10 @@ def main():
 
     targets = list(args.files)
     if args.dir:
-        for pat in ("findings/*.md", "msrc-investigations/*.md", "*.md"):
+        for pat in FINDING_PATTERNS:
             targets.extend(glob.glob(os.path.join(args.dir, pat)))
     targets = sorted({os.path.abspath(t) for t in targets
-                      if os.path.basename(t) not in ("_ROLLUP.md",)})
+                      if os.path.basename(t) not in NON_FINDING_NAMES})
 
     if not targets:
         print("No finding markdown files found to lint.")

@@ -1362,8 +1362,8 @@ It scans the **staged + modified** skill files (and warns if any investigation o
 - Telemetry **sampling rates / coverage percentages** (the evasion map) — forbidden.
 - **Internal security-control logic** — flight constant names, bypass/skip conditions, and real
   `file:line` citations into private submodules — forbidden in docs/specs.
-- **PII / tenant GUIDs / UPNs / aliases / internal hostnames** (`*.azurefd.net`, `firewatch-pilot`,
-  `@microsoft.com`, `ame.gbl`) — forbidden.
+- **PII / tenant GUIDs / UPNs / aliases / internal hostnames** (internal-host and corp-UPN patterns) —
+  forbidden.
 - **Real long IcM numbers / FireWatch GUIDs paired with finding content** — forbidden in committed skill
   text (use placeholders like `NNNNNN` in examples).
 

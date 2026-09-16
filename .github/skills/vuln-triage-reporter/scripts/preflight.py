@@ -35,9 +35,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 # Modules that must be populated for a source-grep investigation to mean anything.
 REQUIRED_SUBMODULES = [
@@ -156,7 +158,7 @@ def check_remotes(root: Path, rep: Report, fix_mode: bool):
         if rc != 0:
             rep.add("FAIL", f"{module}: no origin remote", url)
             continue
-        if host in url and slug in url:
+        if _remote_matches(url, host, slug):
             rep.add("PASS", f"{module} remote OK ({host})")
         else:
             rep.add(
@@ -166,6 +168,35 @@ def check_remotes(root: Path, rep: Report, fix_mode: bool):
                 "Any 'already fixed?' answer from this checkout is unreliable.",
                 f'git -C "{mod}" remote set-url origin https://{host}/{slug}.git',
             )
+
+
+def _remote_matches(url: str, expected_host: str, expected_slug: str) -> bool:
+    """Compare a git remote URL by parsed host and normalized owner/repo path."""
+    host, slug = _parse_remote(url)
+    return host == expected_host.lower() and slug == _normalize_repo_slug(expected_slug)
+
+
+def _parse_remote(url: str) -> tuple[str, str]:
+    url = (url or "").strip()
+    if "://" in url:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        path = parsed.path
+    else:
+        # SCP-style remotes: git@host:owner/repo.git
+        m = re.match(r"^(?:[^@]+@)?([^:]+):(.+)$", url)
+        if not m:
+            return "", ""
+        host = m.group(1).lower()
+        path = "/" + m.group(2)
+    return host, _normalize_repo_slug(path)
+
+
+def _normalize_repo_slug(path: str) -> str:
+    slug = (path or "").strip().strip("/").lower()
+    if slug.endswith(".git"):
+        slug = slug[:-4]
+    return slug
 
 
 def check_freshness(root: Path, rep: Report):

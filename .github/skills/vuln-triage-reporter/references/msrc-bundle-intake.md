@@ -27,10 +27,14 @@ submission/msrcfs_poc_source_<id>.zip <- PoC source (often ALSO encrypted, same 
 - Inspect before extracting: `7z l -slt <bundle>.zip` shows `Encrypted = +` and the entry list.
 
 ```powershell
-& "C:\Program Files\7-Zip\7z.exe" l -slt <bundle>.zip                       # inspect
-& "C:\Program Files\7-Zip\7z.exe" x "-p<pw>" "-o<dest>" <bundle>.zip -y     # extract
-& "C:\Program Files\7-Zip\7z.exe" x "-p<pw>" "-o<dest>\src" <dest>\submission\*_poc_source_*.zip -y
+& "C:\Program Files\7-Zip\7z.exe" l -slt <bundle>.zip                     # inspect
+& "C:\Program Files\7-Zip\7z.exe" x -p "-o<dest>" <bundle>.zip -y         # enter password when prompted
+& "C:\Program Files\7-Zip\7z.exe" x -p "-o<dest>\src" <dest>\submission\*_poc_source_*.zip -y
 ```
+
+Do **not** pass the password inline as `-p<password>`: command-line arguments can be captured in
+process listings, terminal scrollback, and shell history. Use the interactive 7-Zip prompt or the 7-Zip
+GUI password dialog.
 
 > 🛑 **Handle the APK as untrusted.** Do **not** install or run it. Read the **source**; treat the compiled
 > APK as an artifact to reference, not execute. Extract to a scratch directory **outside** the repo tree

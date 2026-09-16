@@ -86,15 +86,27 @@ def scan_file(path):
     except OSError:
         return hits
     for n, line in enumerate(lines, 1):
-        if ALLOW_CONTEXT.search(line):
-            continue
         scan_line = line
         for g in ALLOW_GUIDS:
             scan_line = scan_line.replace(g, "<allowed-public-guid>")
         for label, rx, why in RULES:
-            if rx.search(scan_line):
+            for match in rx.finditer(scan_line):
+                if _allowed_context_match(label, line, match.group(0)):
+                    continue
                 hits.append((n, label, why, line.strip()[:160]))
     return hits
+
+
+def _allowed_context_match(label, line, matched_text):
+    """Allow only narrow, rule-specific examples; never exempt a whole line."""
+    if not ALLOW_CONTEXT.search(line):
+        return False
+    text = matched_text.lower()
+    if label == "private-file-citation":
+        return text.startswith("file.") or "<file>" in line.lower()
+    if label == "tenant-or-finding-guid-with-content":
+        return text in ALLOW_GUIDS
+    return False
 
 
 def check_tracked_outputs():

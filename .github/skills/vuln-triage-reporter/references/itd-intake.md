@@ -10,7 +10,9 @@ store under either service-tree ID (`8d0d308e` AuthN SDK - MSAL Android, `0b97f2
 > numbers, internal security-control logic, PII/tenant data, or finding-content paired with IcM IDs).
 
 ## What the agent does
-1. Scaffold one folder per finding under `.github/local-context/msrc/itd-investigations/` via
+1. Scaffold one folder per finding under the private shift workspace
+   (`%VULN_TRIAGE_WORKSPACE%\msrc\<shift>\itd-investigations\`, or
+   `~/vuln-triage-workspace/msrc/<shift>/itd-investigations/`) via
    `scripts/scaffold_itd.py` (folders named `<n>-<vulntype>-<component>`).
 2. Each folder gets a placeholder `README.md`.
 

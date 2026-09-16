@@ -94,10 +94,10 @@ IcM, and FireWatch are all corp-auth-gated, so a bare WI/IcM number is inert to 
 content paired with that ID* is what you must keep out of the public commit. Put the detail behind the link, not in the diff.
 
 ### Run the sweep before every push
-Before pushing a security fix, grep the **branch name + commit message + full diff** for: `MSRC`, `IcM`,
-the long IcM number prefix, `vulnerab`, `exploit`, `attacker`, `bypass`, `CWE`, `spoof`, `evil`, `PoC`,
-`firewatch`, `glasswing`, `@microsoft.com`, tenant GUIDs. A hit on anything but the approved WI number = stop
-and sanitize. (The unavoidable exception: the WI link in the commit body, which is allowed.)
+Before pushing a security fix, grep the **branch name + commit message + full diff** for security-program
+keywords, long IcM-number prefixes, exploitability terms, PoC terms, attacker-controlled naming, corp-UPN
+patterns, internal portal names, and tenant GUIDs. A hit on anything but the approved WI number = stop and
+sanitize. (The unavoidable exception: the WI link in the commit body, which is allowed.)
 
 ---
 

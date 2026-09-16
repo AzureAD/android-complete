@@ -43,6 +43,10 @@ MSRC_ROOT = os.path.join(WORKSPACE, "msrc")
 WEDNESDAY = 2  # Monday=0 .. Wednesday=2
 
 
+class ManifestError(RuntimeError):
+    """Raised when an existing shift manifest cannot be trusted."""
+
+
 def shift_window(today=None, start=None, end=None):
     """Return (start_date, end_date) for the Wed->Wed shift. Explicit start/end win; else the shift that
     CONTAINS `today` (most recent Wednesday on/before today .. +7 days)."""
@@ -75,8 +79,8 @@ def load_manifest(s, e):
     if os.path.isfile(p):
         try:
             return json.load(open(p, encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ManifestError(f"manifest is unreadable/corrupt: {p} ({exc})") from exc
     return {}
 
 
@@ -140,7 +144,11 @@ def main():
         return 0
 
     if args.cmd == "check":
-        m = load_manifest(s, e)
+        try:
+            m = load_manifest(s, e)
+        except ManifestError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
         entry = m.get(str(args.icm))
         if entry:
             print(f"SEEN: {args.icm} first_seen={entry.get('first_seen','?')} "
@@ -150,7 +158,11 @@ def main():
         return 0
 
     if args.cmd == "add":
-        m = load_manifest(s, e)
+        try:
+            m = load_manifest(s, e)
+        except ManifestError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
         if str(args.icm) in m:
             print(f"= already present: {args.icm}")
             return 0
@@ -164,7 +176,11 @@ def main():
         return 0
 
     if args.cmd == "list":
-        m = load_manifest(s, e)
+        try:
+            m = load_manifest(s, e)
+        except ManifestError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 2
         print(f"# Shift {slug_for(s, e)} — {len(m)} finding(s)")
         for icm, meta in sorted(m.items(), key=lambda kv: kv[1].get("first_seen", "")):
             print(f"  {icm} | {meta.get('tag','?'):4} | {meta.get('first_seen','?')} | {meta.get('slug','')}")

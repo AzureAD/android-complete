@@ -27,11 +27,19 @@ import glob
 import os
 import subprocess
 import sys
+import re
+from datetime import date
 
 import shift
 
 sys.stdout.reconfigure(encoding="utf-8")
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+FINDING_PATTERNS = (
+    "findings/*.md",
+    "msrc-investigations/*.md",
+    "itd-investigations/*/README.md",
+)
 
 
 def run(script, *cli_args):
@@ -55,9 +63,11 @@ def main():
                     help="Build even if the structure gate fails (NOT recommended)")
     args = ap.parse_args()
 
-    s, e = shift.shift_window(args.date, args.start, args.end)
-    run_dir = os.path.abspath(args.dir) if args.dir else shift.shift_dir(s, e)
-    findings = sorted(glob.glob(os.path.join(run_dir, "findings", "*.md")))
+    s, e, run_dir = _resolve_window(args)
+    findings = []
+    for pat in FINDING_PATTERNS:
+        findings.extend(glob.glob(os.path.join(run_dir, pat)))
+    findings = sorted(set(findings))
     findings = [f for f in findings if os.path.basename(f) != "_ROLLUP.md"]
 
     print(f"Shift:   {shift.label_for(s, e)}")
@@ -79,16 +89,16 @@ def main():
             print("Fix the items above (they are what cause blank tiles / wrong master rows), then re-run.")
             return 1
 
-    glob_arg = os.path.join(run_dir, "findings", "*.md")
+    glob_args = [os.path.join(run_dir, pat) for pat in FINDING_PATTERNS]
     research_dir = os.path.join(run_dir, "research")
     specs_dir = os.path.join(run_dir, "agent-specs")
 
     rc = 0
-    rc |= run("build_research_pages.py", glob_arg, "--out", research_dir,
+    rc |= run("build_research_pages.py", *glob_args, "--out", research_dir,
               "--index", "--agent-dir", "../agent-specs")
-    rc |= run("build_agent_spec.py", glob_arg, "--out", specs_dir)
+    rc |= run("build_agent_spec.py", *glob_args, "--out", specs_dir)
 
-    master = ["build_master_report.py", glob_arg, "--out", run_dir,
+    master = ["build_master_report.py", *glob_args, "--out", run_dir,
               "--research-dir", "research", "--agent-dir", "agent-specs",
               "--shift", shift.label_for(s, e),
               "--window", f"{s.isoformat()} -> {e.isoformat()}"]
@@ -111,6 +121,25 @@ def main():
     print(f"\nOK: {len(findings)} finding(s) built for {shift.label_for(s, e)}.")
     print(f"Open: file:///{run_dir.replace(os.sep, '/')}/wbr-security-report.html")
     return 0
+
+
+def _resolve_window(args):
+    if args.dir:
+        run_dir = os.path.abspath(args.dir)
+        if args.start and args.end:
+            s, e = shift.shift_window(start=args.start, end=args.end)
+        elif args.date:
+            s, e = shift.shift_window(today=args.date)
+        else:
+            m = re.search(r"(\d{4}-\d{2}-\d{2})_to_(\d{4}-\d{2}-\d{2})", os.path.basename(run_dir))
+            if not m:
+                print("ERROR: --dir requires --date or --start/--end unless the folder is named "
+                      "YYYY-MM-DD_to_YYYY-MM-DD.", file=sys.stderr)
+                sys.exit(2)
+            s, e = date.fromisoformat(m.group(1)), date.fromisoformat(m.group(2))
+        return s, e, run_dir
+    s, e = shift.shift_window(args.date, args.start, args.end)
+    return s, e, shift.shift_dir(s, e)
 
 
 if __name__ == "__main__":
