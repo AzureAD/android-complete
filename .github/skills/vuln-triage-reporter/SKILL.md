@@ -1,0 +1,1379 @@
+---
+name: vuln-triage-reporter
+description: Triage, classify, AND remediate MSRC/ITD security vulnerabilities filed against Android Authenticator & Broker. Right-sizes the security team's filed severity with evidence-based codebase analysis, produces on-call/WBR reports, and (when asked) executes the fix end-to-end — implementing the change, writing tests, and opening a public-repo-safe PR. Use this skill when an on-call engineer needs to process recent [MSRC]- or [ITD]-tagged IcMs, decide whether to agree with the filed severity or rebut it with code evidence, generate per-finding + aggregate reports, OR implement and ship the remediation for a kept finding. Triggers include "triage MSRC", "my MSRC", "I have an MSRC", "look at this MSRC/ITD", "classify these vulnerabilities", "investigate ITD findings", "on-call security report", "review FireWatch findings", "are these MSRCs really that severe", "should we fix this MSRC", "is this a real vulnerability", "can we mark this won't-fix", "what severity is this security bug", "security bug filed against us", "fix this finding", "remediate the MSRC", "execute the fix and open a PR", or any request to assess/right-size OR remediate a security vulnerability for Android Auth.
+---
+
+# Vulnerability Triage, Reporter & Remediation
+
+Right-size MSRC/ITD vulnerability severity for Android Authenticator & Broker using **deep,
+evidence-based codebase analysis**, produce on-call/WBR reports, and — when asked — **remediate kept
+findings end-to-end** (implement the fix, test it, open a public-repo-safe PR; see Step 4.6).
+
+> The skill name is `vuln-triage-reporter` for stable invocation, but its scope is **triage → report →
+> remediate**. The reporting half stops at a dispatch-ready spec; the remediation half (Step 4.6,
+> [references/remediation-execution.md](references/remediation-execution.md)) can ship the fix itself.
+
+This skill is for **on-call engineers during their on-call week**. Default scope is the **past 7 days**
+(the rotation length), parameterized so it can be widened.
+
+> ⚠️ **PUBLIC SKILL — DO NOT COMMIT SENSITIVE INFORMATION HERE.** This repo is mirrored to a public
+> GitHub repo. Apply this test to anything you add: *"could an outsider with **no** Microsoft access act
+> on this?"* If yes, it does **not** belong in this skill.
+>
+> **NEVER put here (genuinely sensitive — actionable without access):**
+> - **Telemetry sampling rates or per-product coverage percentages** (these are an evasion map).
+> - **Internal security-control logic** — exact flight names, the precise conditions under which a
+>   security check is bypassed/skipped, and `file:line` into private submodules describing such logic.
+> - **PII / customer data / tenant GUIDs / UPNs / aliases**, and **finding content paired with an IcM ID**.
+>
+> **OK to include (opaque — useless without corp access):** IcM numbers, IcM team-routing IDs,
+> service-tree GUIDs, team/service/codenames. These are inert to an outsider (IcM, ServiceTree, FireWatch,
+> S360 are all corp-auth-gated).
+>
+> **All investigation OUTPUTS are sensitive and live OUTSIDE the repo** in the private workspace
+> `$VULN_TRIAGE_WORKSPACE` (default `~/vuln-triage-workspace`) — never under the repo tree.
+> **Any future edit to this skill must preserve these rules.**
+>
+> 🔒 **MANDATORY before ANY commit that touches this skill: run the public-repo safety check**
+> (`scripts/safety_check.py`, see "Pre-Commit Safety Check" below). Never commit skill changes without it.
+> This is non-negotiable — sensitive information committed to a public repo cannot be un-leaked.
+
+> **Related skills.** This is the security-vulnerability counterpart to `incident-investigator` (which
+> handles auth-failure/log incidents). For all codebase exploration you **MUST** use `codebase-researcher`
+> — see the hard requirement in "Non-Negotiables" below.
+
+---
+
+## Requirements — verify BEFORE any work (HARD GATE)
+
+> 🛑 **Do NOT begin discovery, investigation, or reporting until every requirement below is satisfied.**
+> If any is missing, **stop and tell the user exactly what to fix** — partial or *stale* environments
+> produce **confidently wrong verdicts**, which are worse than no verdict. Run
+> `python scripts/preflight.py`, report PASS/FAIL per item, and only proceed on an all-PASS.
+>
+> **Order of operations:** run the **intake interview** (Step -1) *first* — it takes ~60 seconds and
+> tells you what the engineer actually wants — then run this environment gate **before launching any
+> agent**, and fold any FAILs into the plan echo. Don't make someone answer four questions only to be
+> told their checkout is unusable, and don't burn 30 minutes investigating the wrong thing in a
+> perfectly-configured environment.
+
+### One command runs the whole gate
+
+```powershell
+python .github/skills/vuln-triage-reporter/scripts/preflight.py
+#   --skip-fetch   offline / no network checks
+#   --ests <path>  identity-service checkout (default %ESTS_ROOT% or C:\src\ESTS-Main)
+#   --json         machine-readable
+```
+Exit **0** = safe to begin · Exit **1** = **stop and report**. Everything below is what it checks and why.
+
+> **If `python` opens the Microsoft Store** (or reports "Python was not found"), you have hit the Windows
+> App-Execution-Alias stub, not a real interpreter — every script in this skill will fail the same way.
+> Use the real install directly, e.g.
+> `& "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe" <script>`, or prepend that directory to
+> `$env:PATH` for the session.
+
+### 1. Full `android-complete` checkout WITH submodules
+The investigation greps **real source**. The app/broker code lives in **git-ignored submodules** that are
+**not** present in a bare clone or in a git **worktree**:
+- `authenticator/PhoneFactor/` — Microsoft Authenticator app + MSA SDK
+- `broker/AADAuthenticator/`, `broker/broker4j/` — broker app + library
+- `common`, `msal`, `adal` must also be populated.
+
+**Work from the main `android-complete` checkout (e.g. `C:\src\android-complete`), NOT a worktree** —
+worktrees created for skill edits typically lack the submodules. If those folders are missing/empty, the
+user must run `git droidSetup` / `git submodule update --init --recursive` **before** any triage.
+
+> **Why it's a hard gate:** a grep against a missing module returns nothing, and "no results" reads as
+> "the sink isn't there" — silently down-classifying a real finding.
+
+### 2. Identity-service (**ESTS**) source — REQUIRED, not optional
+Many broker/MSAL findings turn on **what the token service does with the request**: how a grant is
+validated, whether the caller/application identity is checked, what is required versus optional on a
+given endpoint. Without ESTS source those questions cannot be answered, and the finding either stalls at
+*"unverifiable server-side boundary"* or — far worse — gets **guessed**.
+
+**This is a real, repeated cost:** two findings in one shift sat at Medium confidence with an open
+server-side question purely because the repo wasn't checked out. With it, both resolved to High in under
+20 minutes, and the answer **changed the severity**.
+
+- Default location `C:\src\ESTS-Main`, or set `$env:ESTS_ROOT`, or pass `--ests <path>`.
+- Must be a **git checkout** (the skill runs history queries against it), and **current**.
+- If the engineer doesn't have it, **say so during intake** — cloning is slow, so surface it before they
+  start waiting on an investigation that cannot finish.
+
+### 3. Every repo CURRENT, and pointing at the RIGHT REMOTE
+Two separate checks, and the second one is the one that bites.
+
+**(a) Up to date.** Fetch and confirm 0 behind. A finding investigated against a stale checkout can
+report "no fix exists" for something that shipped weeks ago.
+
+**(b) Correct remote — a successful `git fetch` does NOT mean you are looking at the live repo.**
+When a repo migrates hosts, the retired location can keep resolving and keep serving a **frozen
+snapshot**. `git fetch` exits 0. `git pull` says *"Already up to date."* Nothing warns you. Meanwhile
+every `git log --all`, `git branch -a --contains` and Gate-0 "is this already covered?" query silently
+covers only history **up to the migration date**.
+
+> **Real failure this caused:** a broker checkout still pointed at the retired host, frozen ~3 weeks
+> earlier. Gate 0 reported *"fix exists but was never merged"* for a fix that had in fact landed **and
+> shipped**. Two findings were over-rated, and an escalation went out to leadership with the wrong
+> premise — twice, because the first correction was made from the same stale mirror.
+>
+> **The broker module has migrated** — see `docs/broker-remote-migration.md` in this repo for the
+> current host/slug and the one-line `git remote set-url` repair. `preflight.py` asserts the expected
+> remote per module and fails loudly on drift.
+
+### 4. MCP servers / tooling
+| Capability | Used for | Required? | If missing |
+|------------|----------|-----------|------------|
+| **IcM MCP** (`search_incidents`, `get_incident*`, `get_teams_by_name`) | Discover `[MSRC]`/`[ITD]` findings + pull incident detail | **Required** for discovery (Steps 0–1) | Stop — cannot scope the week. (User can still paste IcM IDs to triage a specific finding.) |
+| **`codebase-researcher` subagent** | The mandatory two-pass code investigation | **Required** | Stop — the skill's core (Non-Negotiable #2/#3) cannot run. |
+| **ADO MCP** (`mcp_ado_wit_*`) | Create PBIs (Step 6) | Optional | Fall back to the ADO **REST API** + `az` token (see Step 6). |
+| **`az` CLI, logged in** | Live status report (Step 7) + REST PBI fallback | Optional (only for Steps 6–7) | Status report still renders without live state; PBI creation needs it if no ADO MCP. |
+| **`gh` authenticated per host** | Reading private-repo history/PRs | **Required** when a module lives on a different host | `gh auth status --hostname <host>`; `gh` routes by host, so stay logged into both. Auth is **interactive** — surface it at intake, not mid-run. |
+| **FireWatch / Security MCP** | — | **N/A — not reachable** | ITD findings are intake **manually** (Step 2); do not wait on a Security MCP. |
+
+### 5. Private workspace
+`$VULN_TRIAGE_WORKSPACE` (default `~/vuln-triage-workspace`) must be writable — **all investigation
+outputs live there, OUTSIDE the repo** (they are sensitive). Never write findings under the repo tree.
+
+> IcM MCP / `codebase-researcher` availability is confirmed by the agent's own tool list — verify they are
+> present before Step 0. If the IcM MCP is down, the discovery step cannot run.
+
+---
+
+## Why This Skill Exists (read this first)
+
+The security team files MSRC/ITD vulnerabilities against us, each with a **pre-assigned classification**
+(e.g. FireWatch/Glasswing: `IMPORTANT`, `Tier 1 — Direct Exploit`). **That classification is an input,
+not a verdict.** Our job is to **agree with it or rebut it with documented code evidence**, so that
+engineering effort is allocated to what actually matters versus competing priorities.
+
+These findings are frequently **over-rated**: a real weakness exists, but the codebase already has
+**defense-in-depth** (flight gates, allow-lists, package/signature checks, non-exported components,
+root-only reachability) that prevents real-world mass exploitation.
+
+### ⚠️ The failure we are correcting
+
+**In past investigations, AI agents did NOT analyze deeply enough.** They read the vulnerable sink, saw a
+plausible exploit, and either rubber-stamped the filed severity OR claimed defense-in-depth existed
+without proving it. **Both are failures.** The recurring mistake: stopping at the first or second layer of
+analysis and missing mitigating (or aggravating) controls that exist **beyond** the obvious code path.
+
+**The rule: always look for coverage beyond.** For every finding, you must actively hunt for controls in
+*adjacent* layers — the caller, the manifest, the IPC boundary, sibling handlers, flight defaults, build
+config, and the runtime reachability conditions — before concluding anything. A shallow "no mitigation
+found" is the exact error this skill exists to prevent. If you cannot find a control, you must show the
+*searches you ran* that justify its absence (mirror `codebase-researcher`'s "Not Found" discipline).
+
+### Tell the defense-in-depth story — but only what you can prove
+
+Most findings filed against us are, in practice, **covered by some defense-in-depth mechanism**. When you
+have **sufficient evidence**, say so explicitly in a **"Defense-in-Depth: Why Likely Not Exploited"**
+section — the concrete reason real-world exploitation is unlikely (the gating flag, the server-validated
+number-match, the non-default path, the signature allow-list, etc.). This is what right-sizes severity.
+
+**Verification-boundary discipline (critical for honesty).** We own the **Authenticator client** and the
+**Broker/Common libraries** — we can prove things about *that* code. We do **not** own:
+- **Downstream consuming apps** (Outlook, Teams, OneAuth, other MSAL callers) — a caller may add its own
+  validation, pick the browser path, pass a nonce, etc. We cannot observe this.
+- **Server-side** (eSTS / MFA backend / issuance) — **but see below: this boundary is often crossable.**
+
+> **⚠️ Do not retreat to "server-side, cannot verify" before you have tried.** With the **ESTS source
+> checkout** required by the Requirements gate, questions about what the token service validates are
+> frequently **answerable in first-party source**. Two findings in one shift sat at Medium confidence on an
+> assumed server-side backstop; reading ESTS resolved both to High in under 20 minutes — and **changed the
+> severity**. Treat "unverifiable boundary" as a conclusion you must *earn*, not a default.
+>
+> When you do cross into ESTS, keep the same discipline as anywhere else: cite `file:line`, quote the code,
+> and separate **verified in source** from **inferred from protocol convention**. And note what remains
+> genuinely outside *any* repo — operational controls such as Conditional Access evaluation, risk/fraud
+> scoring, or per-tenant policy are not in the token-pipeline source, and should not be assumed in either
+> direction.
+
+For anything still outside our boundary after that effort, **do not assert it as fact**. Add a **"Scope &
+Verification Boundary"** disclaimer stating: it is possible downstream services apply additional checks,
+but we cannot conclude definitively, and it would be worth investigating. **Only confirm what you can.**
+This cuts both ways — never claim "safe" *or* "exploitable" about a boundary you couldn't verify.
+
+---
+
+## Non-Negotiables
+
+0. **Satisfy the Requirements hard gate FIRST.** Before any discovery/investigation/reporting, run
+   `python scripts/preflight.py` and verify the environment per the **"Requirements — verify BEFORE any
+   work"** section: full `android-complete` checkout **with submodules**, on the **main checkout not a
+   worktree**; **ESTS source present and current**; **every repo current AND on the correct remote**;
+   IcM MCP + `codebase-researcher` available; writable private workspace. If any item FAILs, **stop and
+   tell the user what to fix** — do not begin work in a partial or stale environment. A missing submodule
+   silently turns a real sink into a false "no sink"; a **stale or retired remote** silently turns a
+   shipped fix into "no fix exists," and a `git fetch` that exits 0 is **not** proof you are looking at
+   the live repository.
+1. **Run investigations in PARALLEL.** Each finding is independent. Dispatch one investigation per finding
+   concurrently (use the `codebase-researcher` subagent / `runSubagent`, or parallel `Explore` agents).
+   Do **not** process findings sequentially when more than one is in scope.
+2. **MUST use `codebase-researcher`** for every code-evidence step. Do not free-hand grep and call it
+   analysis. The classification's credibility rests on cited `file:line` evidence gathered systematically.
+3. **MANDATORY adversarial verification pass.** After the first investigation classifies a finding, dispatch
+   a **second, independent `codebase-researcher`** whose only job is to **break the conclusion** — challenge
+   every cited mitigation, hunt for a bypass, and try to reach the sink another way. Only after the
+   challenger reports do you finalize. Record the outcome and set a **Confidence** level (High/Medium/Low).
+   This is the core correction for the past failure — a single pass is not trustworthy. See
+   "The two-pass model" below.
+4. **Preserve the "Searches Run" audit trail VERBATIM.** Every investigation (both passes) must end with a
+   `## Searches Run (audit trail)` section listing the actual search patterns/paths run and what each
+   returned — especially the searches that returned **nothing** (the absence proofs behind every
+   "no mitigation found" / "not reachable" claim). This is non-optional: the subagent's granular tool
+   calls are not retained, so this section IS the audit trail. Copy it into the finding's report; do not
+   summarize it away.
+5. **Every severity call needs evidence.** Cite the sink AND every mitigating/aggravating control with
+   `file:line`. No control found? Show the searches that prove the absence.
+6. **Agree-or-rebut explicitly.** State FireWatch's filed classification, then state ours, then the delta
+   and the evidence that justifies any change.
+7. **Coverage gate FIRST, then solution the ones we keep.** Run **Gate 0**: if the cited sink is **already
+   neutralized by an existing control** (an upstream allow-list/validator, flight default, signature/package
+   check, non-exported component, server-side number-match…), cited with `file:line` on the **shipping
+   branch**, classify it **`Won't-Fix (Already-Covered)`** and **close it out — ship nothing** (the safest
+   outcome; a redundant fix in a >1B-user library is regression risk for zero security gain). We have been
+   getting a high volume of findings that are already covered — but **not all are**, so the gate requires a
+   cited control, never a hunch. Gate 0 has **six** outcomes, not two — see the table in Step 4. For every
+   **kept** finding, produce a **dispatch-ready Remediation Spec** (root cause, fix approach, files to
+   change, test plan, risks/rollout) — see [references/remediation-spec.md](references/remediation-spec.md).
+8. **No PoC payloads or PII** in committed artifacts. Keep detail at engineering-triage level.
+9. **Scripts, not one-liners.** Use the committed scripts in `scripts/` for discovery, scaffolding,
+   transcription, and roll-up so the weekly run is repeatable.
+10. **Generate the HTML evidence record per finding.** The master report's table is a summary; the real
+    proof lives in one HTML subpage per finding (sink + defense-in-depth sweep + remediation spec + the
+    verbatim "Searches Run" audit). Generate them with `scripts/build_research_pages.py` and link each
+    master-table row to its subpage. Reviewers must be able to verify every severity call without chat access.
+11. **Run the public-repo safety check before committing.** Any commit touching this skill MUST be preceded
+    by `scripts/safety_check.py` (see "Pre-Commit Safety Check"). A non-zero exit blocks the commit.
+12. **Map to an IcM Sev, conservatively.** Translate the analytical tier to the team's IcM severity
+    (Sev2/2.5/3/4) using the mapping in [references/severity-rubric.md](references/severity-rubric.md).
+    **Sev2.5+ is a rare, high bar** — only when High confidence + proven shipping reachability + proven
+    absence of any safeguard + not leaning on an unverifiable boundary. When in doubt, go lower.
+13. **Capture learnings back into the skill.** When a run surfaces a reusable insight — a new tier→Sev
+    calibration point, a recurring safeguard pattern, a codebase-search gotcha, an estimate heuristic —
+    record it in the right place (the **calibration log** in `references/severity-rubric.md`, the relevant
+    reference doc, or repo memory) and include it in the commit. The skill must get smarter every rotation.
+14. **NEVER create ADO work items without explicit user approval.** Creating PBIs/bugs from findings is an
+    **opt-in, separate step** (see "Step 6 — Create PBIs"). Always present the proposed items (titles,
+    tier, parent, area/iteration, assignee) and **wait for the user to confirm** before creating anything.
+    Never auto-create, never assume the parent or assignee. This is non-negotiable — unwanted work items
+    are noise the team has to clean up.
+15. **Run the intake interview FIRST — one message, four questions.** Before any discovery or agent
+    launch, ask what to look at (specific ids · this shift · a date range/week · an ITD report · the
+    engineer's own existing findings · just finalize), how deep (Fast/Standard/Deep), and what outcome
+    they want (verdict · +report · +options · +implement). Then **echo the resolved plan — scope, depth,
+    ETA, and the absolute output folder — and wait for a "go."** Ask everything at once; skip anything
+    already stated; accept "defaults". See [references/intake-interview.md](references/intake-interview.md).
+16. **PRESENT REMEDIATION OPTIONS BEFORE WRITING ANY FIX.** Never jump from "this is a real finding" to
+    editing code. For every kept finding, first present **2–3 candidate approaches** with tradeoffs
+    (blast radius · regression risk · flightability · effort · what each does and does not close), name a
+    **recommended** one and say why, and **wait for the engineer to choose.** An engineer who has not seen
+    the alternatives cannot trust the fix — and did not, when this was skipped. See Step 4.5 and
+    [references/remediation-spec.md](references/remediation-spec.md).
+17. **Every run WRITES ITS ARTIFACTS — a chat answer is not a deliverable.** Findings that end in
+    `Won't-Fix`, `Already-Covered`, or "out of scope (root-only)" get a written report **too** — those
+    are exactly the verdicts an engineer must justify back to the security team, and they are the ones
+    most often lost to chat. Close every run with
+    `python scripts/verify_outputs.py` and **tell the user the absolute folder path**. A non-zero exit
+    means the run is **not** done. (This is a real reported failure: a full session produced a verdict
+    and zero files.)
+18. **Write a SCOPE CONTRACT before investigating, and treat off-path evidence as INADMISSIBLE.** Name the
+    subsystem/channel the sink lives in, its entry point, the trust decision under attack, its consumers,
+    and — explicitly — the **co-resident subsystems that are OUT of scope**. A control counts as a
+    mitigation *or* a refutation only if you can name the **hop-by-hop call path** from the entry point to
+    it. "It's in the same app" is not a path. **This is a real reported failure:** an analysis pulled a
+    component from a different IPC subsystem into a finding, and a severity argument was retired on
+    evidence that had no relationship to the sink. See
+    [references/research-discipline.md](references/research-discipline.md).
+19. **Carry claims VERBATIM across passes, and strawman-check every refutation.** Every severity-relevant
+    assertion is a numbered claim in a **Claim Ledger**, tagged with its channel, quoted exactly. The
+    challenger prompt must contain the claim's **exact text** — never a paraphrase, never a "clarified"
+    version. Before accepting any refutation, verify it (a) quotes the claim verbatim, (b) names the same
+    channel, (c) targets the same asset/consumers, and (d) **introduces no component that isn't in the
+    claim or IN SCOPE**. If any check fails the refutation is **VOID** — restore the claim and re-issue.
+    Severity moves only on ledger status transitions, and **untested ≠ refuted**. (Same real failure as
+    #18: the reconciliation "killed" a claim that had been silently reworded between passes.)
+20. **A fix is not done until the flag ON/OFF matrix has evidence.** Prove all four cells: flight **OFF** +
+    exploit input = **still vulnerable** (this is what proves the test reproduces the finding and that the
+    *fix* is what blocks it), OFF + legit = works, **ON** + exploit = **blocked**, ON + legit = works.
+    Paired automated tests are the gate; an on-device toggle pass is the sign-off. Anything unverifiable
+    goes in **Not covered** — never implied as passing. See
+    [references/flight-verification.md](references/flight-verification.md).
+
+21. **SCAFFOLD every report — never hand-write one, and never hand-build the artifacts.** Create each
+    finding with `scripts/new_finding.py` (which also does the shift dedup + manifest entry), fill in the
+    TODOs, then run `scripts/rebuild_shift.py` — which lint-gates, regenerates **all** artifacts for the
+    shift, and closes with `verify_outputs.py`. The `**Label:**` fields and the `**Filed**`/`**Ours**`
+    rows are a **parser contract** driving the HTML stat tiles and the master row, not prose.
+    **Real failure:** a free-handed report read perfectly and shipped with Severity/Confidence/Verdict
+    tiles blank and an MSRC mislabelled "ITD" in the master table. A leftover `TODO` now **fails** the
+    closing gate — a scaffolded-but-unfilled report must never publish.
+22. **A second finding mid-shift APPENDS — same folder, full regeneration.** Never open a new folder for
+    the week's second IcM and never hand-edit the generated HTML. `new_finding.py` + `rebuild_shift.py`
+    handle dedup, appending, and rebuilding the master report across all findings.
+23. **Ask "could a control even exist here?" — not just "is there one?"** Codebase evidence answers whether a
+    control *is present*; it cannot answer whether one is *possible*. Some findings describe a genuine
+    weakness that **no client-side change can close** — most often because OAuth **public clients cannot be
+    authenticated** (RFC 6749 §2.1 / RFC 8252 / RFC 9700), so any local app may *assert* any client id.
+    That verdict is **`Not-Fixable (By-Design)`**, and it is neither "already covered" (nothing covers it)
+    nor "not covered" (which would send an engineer to build something that cannot work).
+    **Read [references/protocol-constraints.md](references/protocol-constraints.md) before finalizing any
+    verdict**, and pass it into every agent dispatch alongside the Scope Contract.
+    ⚠️ **Do not over-use it.** Before writing `Not-Fixable`, check whether a neighbouring mechanism closes
+    it anyway — on Android the `msauth://<pkg>/<sig-hash>` redirect is **recomputed from the caller's real
+    signing certificate**, which converts an unauthenticatable client-id assertion into a
+    signature-verifiable one. The stronger and more common finding is *"client-id assertion is unfixable,
+    therefore the design correctly stops depending on it and re-anchors on uid + signature."*
+24. **One IcM can need SEVERAL verdicts — split multi-part findings.** Filed reports routinely bundle two or
+    three *separable* claims that resolve differently: part 1 valid-and-fixed, part 2 valid-but-unshipped,
+    part 3 not-fixable-by-design. Answering with a single blended verdict either overstates our exposure or
+    quietly closes a live issue. Give **every sub-claim its own row and its own disposition** in the Claim
+    Ledger, then write a **Per-Part Disposition** block stating what we ask MSRC to do with each (accept,
+    re-file separately, withdraw). See [references/report-template.md](references/report-template.md).
+25. **"Fixed since filing" is its own verdict — and it triggers a release-exposure question.** MSRC scans and
+    filings lag our merges, so a finding can be **accurate when filed** and **fixed today**. Do not report
+    that as `Already-Covered`: that phrasing implies it was never a bug, and it skips the question that
+    actually matters — **were previously shipped releases vulnerable?** Determine the first release
+    containing the control and whether any *shipped* release lacks it, because that is what decides whether
+    a customer/SIR response is owed. Use **`Won't-Fix (Fixed-Since-Filed)`** and name both refs.
+26. **Assess the filed report's own evidence — separately from the code.** The submission is an argument, not
+    a finding of fact. Record what the PoC **demonstrated** vs. what is **asserted by analogy**, and check
+    every mechanism/key it names against the codebase (reports cite identifiers that do not exist in our
+    tree). Read the attached PoC source: it is usually the highest-signal artifact in the bundle. See
+    [references/msrc-bundle-intake.md](references/msrc-bundle-intake.md).
+    **But never let weak PoC evidence alone lower a verdict** — a researcher's missing test tenant says
+    nothing about reachability. Only *code* evidence moves the verdict; evidence quality shapes how we
+    describe **impact**.
+
+## The two-pass model (verify before you trust)
+
+A single investigation — however well-cited — is **not** sufficient, because the failure mode is *not knowing
+what you missed*. Every finding goes through two independent `codebase-researcher` passes:
+
+1. **Pass 1 — Investigator.** Finds the sink, runs the defense-in-depth sweep, proposes a classification with
+   cited evidence (the existing workflow).
+2. **Pass 2 — Challenger (adversarial).** A *separate* agent that receives Pass 1's conclusion and is
+   instructed to **disprove it**: if Pass 1 said "mitigated by X", the challenger tries to bypass X; if Pass 1
+   said "not reachable", the challenger hunts for another entry path; if Pass 1 down-classified, the challenger
+   builds the strongest case that it's still exploitable. The challenger must cite `file:line` too and append
+   its own "Searches Run" audit.
+
+**Set Confidence from the result:**
+
+| Confidence | When |
+|------------|------|
+| **High** | Challenger ran a genuine attempt and **could not** break Pass 1; both agree; mitigations independently re-confirmed. |
+| **Medium** | Challenger surfaced a caveat / partial gap, or a control holds only under conditions we can see but not fully prove. |
+| **Low** | Challenger found a plausible bypass, the two passes disagree, or the conclusion leans on an **unverifiable boundary** (downstream/server). Low-confidence findings need human review before action. |
+
+Run the challenger passes in **parallel** across findings, just like Pass 1. Both passes' evidence and audits
+go into the finding's report (Pass 2 under an `## Adversarial Verification` section).
+
+### Pass 1 is never a verdict (hard rule)
+
+**Do not report Pass 1's conclusion to the engineer as an answer.** Report it as *"Pass 1 says X —
+challenging it now."* This has already bitten us: **Pass 1 concluded "no fix needed"; Pass 2 challenged it
+and found the real root cause.** Had the engineer acted on Pass 1, a genuine vulnerability would have been
+closed as a non-issue.
+
+**When the two passes disagree** (challenger breaks Pass 1, or reaches a different root cause):
+
+0. **Run the strawman check FIRST — before granting the challenger anything.** A refutation only counts
+   if it (a) quotes the claim **verbatim**, (b) names the **same channel/subsystem**, (c) targets the same
+   asset and consumer set, and (d) introduces **no component** that appears neither in the claim nor in the
+   Scope Contract's IN SCOPE list. Any failure ⇒ the refutation is **VOID**: restore the claim's prior
+   status and re-issue the challenge against the exact claim text. **A challenger that wins on a strawman
+   is worse than no challenger** — it converts an open question into false confidence, with citations
+   attached. See [references/research-discipline.md](references/research-discipline.md).
+1. **The challenger's finding wins by default** — *once it survives step 0* — because it had strictly more
+   information (Pass 1's conclusion plus the code). Never average the two or pick the more convenient one.
+2. **Run one short reconciliation pass** scoped to the *specific* point of disagreement only (not a third
+   full investigation) — give it both conclusions and the one question that separates them. **Check that
+   question against the Scope Contract before sending it**: if it names a subsystem that isn't IN SCOPE,
+   you are about to reconcile a category error, not a disagreement.
+3. **Set Confidence = Low** and **say the passes disagreed, in the report**, with both conclusions
+   preserved. A disagreement is signal for the human reviewer, not noise to smooth over.
+4. If reconciliation cannot settle it, **surface it as a Decision Needed** rather than picking a side.
+
+> In **Fast mode** (single pass, by explicit engineer choice) there is no challenger — so the output is a
+> **direction, not a verdict**. Stamp Confidence = **Low**, label it `PRELIMINARY` in the report, and
+> recommend a Standard re-run before anyone acts on it or closes an IcM with it.
+
+
+## Timing & ETA (tell the user up front, and watch for hangs)
+
+Each `codebase-researcher` pass is a deep investigation. **Observed timings** (one finding, against a
+full local checkout):
+
+| Finding shape | Single pass |
+|---------------|-------------|
+| Contained Authenticator-app finding | ~4–8 min |
+| Cross-module `common`/`broker` finding with many sinks | **~10–15+ min** |
+| Gate-0 history sweep across all repos (`git log --all -S` × many symbols) | **~20–25 min** |
+
+> ⚠️ **Do not quote the optimistic number.** A real run took **>15 min per pass, ~35 min end-to-end** for
+> one finding. Quote the **range**, quote the **upper end** for anything touching `common`/`broker`, and
+> never promise a number you have not measured for that shape of finding.
+>
+> **Measured on a recent cross-module run** (one finding, 4 agents): Pass 1 ≈ 10 min and ≈ 14 min,
+> Gate 0 ≈ 24 min, Pass 2 ≈ 17 min — plus a **blocked** challenger that burned ~10 min and returned
+> nothing. Gate 0 was the long pole, not the investigation.
+
+Because Pass 1 and Pass 2 both run **in parallel across findings**, wall-clock time is roughly:
+
+> **ETA ≈ (longest Pass 1) + (longest Pass 2) + reporting ≈ 5 min** — i.e. **~15 min best case, ~35 min
+> for a cross-module finding**, largely independent of how *many* findings (parallelism), as long as the
+> agent fleet can run them concurrently.
+
+**Always give the user an ETA before launching** (e.g. *"Investigating N findings in two parallel passes —
+expect ~20–35 min for `common`/`broker`, ~15–20 min for an app-only finding"*), and **post a progress note
+at each pass boundary** ("Pass 1 done for both — challenger launched") so a long run never looks hung.
+
+> **Launch Gate 0 in the same wave as Pass 1, not after it.** Gate 0 is independent of the Pass 1 verdict
+> (it asks "does a control exist on any ref?", not "is the conclusion right?") and it is frequently the
+> longest-running agent. Running it concurrently removes ~20 minutes from the critical path. Do **not**
+> serialize it behind Pass 1.
+
+### Depth modes — let the engineer buy speed explicitly
+
+Duration is the top complaint. It is legitimate to trade rigor for speed, but only as an **informed,
+explicit choice** — never silently. Offer these at intake (Non-Negotiable #15):
+
+| Mode | Passes | ETA / finding | Use when | Verdict status |
+|------|--------|---------------|----------|----------------|
+| **Fast** | Pass 1 only | ~5–8 min | "Is this even worth my afternoon?" · obviously-out-of-scope triage · a first read before a meeting | **PRELIMINARY** — Confidence forced to **Low**, not safe to close an IcM with |
+| **Standard** *(default)* | Pass 1 + adversarial Pass 2 | ~15–25 min | Everything normal | Final |
+| **Deep** | + targeted follow-up sweeps | 30 min+ | Cross-module, Important+, or a Pass-1/Pass-2 disagreement | Final |
+
+### Keep each pass bounded (this is where the time goes)
+
+Runaway passes come from unscoped investigation, not from thinking too hard. Every
+`codebase-researcher` dispatch **must** carry:
+
+- **A scope allow-list** — the specific modules/paths to search, derived from the finding's component.
+  Never "search the repo"; the submodules are enormous and an unscoped ignored-file grep times out.
+- **A concrete question list** (the sink, reachability, the named controls to check) rather than
+  "investigate this vulnerability."
+- **A time budget + partial-results instruction:** *"If you are not converging by ~10 minutes, stop and
+  report what you have, explicitly listing what you did NOT get to."* A bounded partial answer plus a
+  known gap beats a 20-minute silence.
+- **Pass 2 is scoped to the claims, not the whole finding.** The challenger is not a second full
+  investigation: hand it Pass 1's specific claims ("mitigated by control X at `<file>`", "not reachable
+  because Y") and have it attack *those*. This is both faster and sharper than re-deriving everything.
+
+### Hang detection — important
+
+Background agents can occasionally stall or be cleared (e.g. a long idle gap between turns). Rules:
+- If a pass has not returned in **~20 minutes** (≈1.5× the worst-case single-pass time), treat it as hung.
+- Check status; if it is gone/stalled, **relaunch that specific pass** (the others' results are unaffected).
+- Do **not** silently wait indefinitely — surface the stall to the user and restart the affected pass.
+- Each pass is independent and idempotent, so relaunching one finding's pass does not disturb the others.
+
+## Searching the codebase (critical gotchas)
+
+The Authenticator app + MSA SDK live in **git-ignored submodules** (`authenticator/PhoneFactor/`, and
+broker app code under `broker/AADAuthenticator/`). Standard workspace search returns **zero** results for
+these unless you pass `includeIgnoredFiles: true`. Rules the subagents MUST follow:
+- Always set `includeIgnoredFiles: true` AND scope with `includePattern: authenticator/PhoneFactor/**`
+  (or narrower) — an unscoped ignored-file regex grep times out.
+- `file_search` does **not** see ignored files at all — use `grep_search` with an `includePattern` that
+  names the file to locate it, then `read_file`. In PowerShell, `Get-ChildItem -Recurse -Include` works
+  and is the reliable fallback; `grep` with an explicit `paths` argument also works.
+- **A `glob`/`file_search` miss is NOT an absence proof.** Re-verify with `Get-ChildItem` before writing
+  any "not found" claim. This is the single most common source of false "the control doesn't exist."
+- **Never search only `*.java`.** Much of broker/common is **Kotlin**. A `-Include '*.java'` sweep that
+  returns nothing for `CallingAppValidator`, `AppRegistry`, or an operation class means *you searched the
+  wrong extension*, not that the class is absent. Search both, or search by name without an extension
+  filter. A real run nearly recorded four absence proofs this way.
+- **Scope the grep to the whole tree, not one directory, when proving absence.** A negative result from
+  `app/src/main/java` says nothing about other modules, flavors, or source sets. A capping "this control
+  doesn't exist anywhere" claim must be tree-wide, both languages, all source sets.
+- For **binary Maven dependencies** (e.g. `com.microsoft:tokenshare`), the in-tree source doesn't exist —
+  verify the **actual shipped artifact** via `javap` on the cached `.aar` from the Gradle cache.
+- **Platform behavior can be verified too.** When a finding turns on what Android itself does (binder
+  permission enforcement, a framework contract), don't reason from memory: read **real AOSP source** — the
+  local SDK's `sources/android-NN/` component, or `android.googlesource.com/platform/frameworks/base/+/refs/tags/android-<ver>_r1/...?format=TEXT`
+  (base64). **Check the app's actual `minSdkVersion` and verify at that level**, not just the newest — a
+  guard introduced recently proves nothing about the oldest supported release, and vice versa (the
+  mechanism can change name across versions while the enforcement remains).
+- See repo memory `/memories/repo/security-triage-metadata.md` and `/memories/repo/authenticator-search.md`
+  for the verified path conventions and team/service-tree IDs.
+
+### Dispatching agents: keep prompts framed as defensive review
+
+Adversarial/challenger prompts that read like offensive-security requests can be **blocked by content
+filtering**, returning an empty result and silently costing you a pass. If that happens, **reframe rather
+than retry**: describe the task as *"an independent second-opinion code review of our own codebase"*, ask
+for *"which validations are or are not present"*, and explicitly instruct **not** to produce payloads or
+exploit steps. The analytical rigor is unchanged — only the framing. Keep the Scope Contract and the
+verbatim Claim Ledger; those are what make the challenge sharp, not aggressive phrasing.
+
+---
+
+## Workflow
+
+### Step -1 — Intake interview (ALWAYS FIRST, one message)
+
+**Do not run discovery, launch an agent, or open a file before this.** Ask the four intake questions in a
+**single** message — what to look at · how deep · what outcome · anything I should know — then **echo the
+resolved plan and wait for a "go."** Full menu, answer→mode mapping, and cold-start troubleshooting:
+[references/intake-interview.md](references/intake-interview.md).
+
+> **Run `scripts/preflight.py` immediately after the questions and BEFORE the plan echo**, then fold any
+> FAILs into the echo. Environment problems are cheap to fix *now* and expensive to discover mid-run —
+> and two of them (**a missing ESTS checkout**, **an interactive `gh` login for a repo on another host**)
+> block the engineer, not you. Surface those in the plan echo so they can start unblocking while you work
+> rather than discovering it 20 minutes in. **Never begin the investigation on a FAIL.**
+
+Skip any question already answered by the engineer's opening message (if they said *"triage IcM NNNNNN"*,
+Q1 is done). If they say *"defaults"* or *"just go"*, take **current shift → Standard → verdict + report**.
+
+The plan echo is short and **must** include the absolute output folder:
+
+```
+Plan:   <scope — which findings / which window>
+Depth:  <Fast | Standard | Deep>  (passes + what that means for the verdict)
+Env:    <preflight PASS | the specific FAILs + what the engineer must do>
+Code:   <each repo @ HEAD sha — proves you checked freshness, not just presence>
+ETA:    <range — quote the upper end for anything touching common/broker>
+Output: <absolute path to the shift folder>     <- your report lands here, on disk
+Then:   verdicts + a menu of next actions. Nothing auto-runs.
+
+Go?
+```
+
+> **Why the output path goes in the plan, up front:** an engineer once completed an entire session and
+> found **no report anywhere** on their machine. Naming the folder before the run makes a missing artifact
+> impossible to miss at the end — and Non-Negotiable #17 verifies it for real when the run closes.
+
+The intake **also** covers two entry points the rest of this workflow does not:
+
+- **"Here are findings I already investigated"** (a notes/markdown file). Do **not** start from scratch —
+  read their work, run the **adversarial pass against their conclusions first**, and only launch a full
+  Pass 1 if the challenge opens a gap. This is the cheapest useful run the skill offers; say so, and
+  credit their evidence rather than silently re-deriving it.
+- **"This week"/"Aug 3–10"** style windows. Convert to explicit dates and **echo them back** — never
+  silently guess a year or a boundary. Feed them to `shift.py` as `--date` or `--start/--end`.
+
+### On-call mode — pick an entry point first
+This skill runs during an **on-call rotation** (primary is **Wednesday → Wednesday**). The mode falls out
+of the Step -1 intake answer — this table is the mapping:
+
+| Mode | When to use | What it does |
+|------|-------------|--------------|
+| **(a) Triage one IcM now** | A new `[MSRC]`/`[ITD]` just landed | Research that single ID (two-pass) and **append** it to the current shift report. |
+| **(b) Sweep my shift window** *(default)* | Catching up / mid-shift | Query the 4 teams for findings in `[shift-start … now]`, **diff against the manifest**, triage only the **new** ones, append. |
+| **(c) Finalize / refresh roll-up** | End of shift, or after a hang | Re-render the master report + roll-up from existing findings — **no new research** (fast, safe). |
+| **(d) Re-run one finding** | A pass hung or evidence looks thin | Re-investigate a single finding and replace its record. |
+| **(e) Verify my own findings** | The engineer already investigated and has notes | Read their file, run the **adversarial pass against their conclusions first**, and only do a full Pass 1 if the challenge opens a gap. Fastest path to a defensible verdict. |
+
+> **Recommended default = (b)**. If the engineer is unsure, offer (b) and tell them it only researches
+> findings not already in the shift report.
+
+**Shift report = an append model, not a fresh run each time.** The report is keyed to the **Wed→Wed
+window** and findings accumulate into it as IcMs arrive. The window + folder + dedup are handled by
+[`scripts/shift.py`](scripts/shift.py) so this is deterministic — **do not hand-name folders**:
+
+- **Resolve the shift first:** `python scripts/shift.py window` prints the current Wed→Wed window
+  (`start`, `end`, `slug`, `label`, `dir`). It picks the shift **containing today** (a Wednesday starts a
+  fresh shift). Override with `--date YYYY-MM-DD`, or `--start/--end` for an explicit window.
+- **Folder = the shift slug:** `$VULN_TRIAGE_WORKSPACE/msrc/<YYYY-MM-DD_to_YYYY-MM-DD>/` (e.g.
+  `msrc/2026-06-17_to_2026-06-24/`). Create it with `python scripts/shift.py ensure`. Everything for that
+  shift lives under it: `itd-investigations/ findings/ research/ agent-specs/ manifest.json`,
+  `wbr-security-report.html`, `_ROLLUP.md`, `classifications.csv`, `work-item-map.json`.
+- **Dedup / append via the manifest:** before researching an IcM, run
+  `python scripts/shift.py check <icm>` — exit 0 = **NEW** (research it), exit 3 = **SEEN** (skip; already
+  triaged this shift). After a finding is written, record it with
+  `python scripts/shift.py add <icm> --slug <n-class-component> --tag <MSRC|ITD>`. Mode (c) re-renders over
+  whatever is already in the folder.
+- **Render with the shift label** so the report header is framed + stamped:
+  `build_master_report.py … --shift "<label from shift.py>" --owner "<on-call label>"` — header shows the
+  window, a **Generated <timestamp>** stamp (stale/hung runs are obvious), and a "findings appended" note.
+
+> ⚠️ **Owner label is workspace-only.** You may put a human name/alias in `--owner` because the report
+> lives in the **private** `$VULN_TRIAGE_WORKSPACE` — **never** commit an alias into the skill repo.
+
+#### A second finding lands mid-shift — the append loop (the normal case)
+
+On-call receives findings **one at a time** across the week. Each new one is **appended to the same shift
+folder**; the master report and roll-up are **regenerated from all findings**, never edited in place.
+
+```
+python scripts/shift.py check <new-icm>        # exit 0 = NEW, exit 3 = SEEN (already triaged this shift)
+python scripts/new_finding.py --icm <new-icm> --tag MSRC --component <repo> --title "<short title>"
+#   -> creates findings/<slug>.md AND records it in manifest.json (refuses a duplicate without --force)
+# ...investigate (Steps 3 / 3.5), fill in every TODO...
+python scripts/rebuild_shift.py                # rebuilds EVERY artifact for the shift, lint-gated
+```
+
+`rebuild_shift.py` is the only command needed after each finding: it lints (and **stops** on failure),
+regenerates research pages + agent specs + master report + roll-up across **all** findings in the shift,
+then runs the closing `verify_outputs.py`. The master table simply grows a row.
+
+> **Do not** start a new folder for the second finding, and do not hand-edit
+> `wbr-security-report.html` — it is generated. If a finding is abandoned, delete its markdown **and**
+> remove its IcM from `manifest.json`, then re-run `rebuild_shift.py`.
+
+#### Getting the content of a restricted `[MSRC]` IcM
+
+MSRC-tagged incidents are **access-restricted**: the IcM MCP may not be present, the IcM portal can be
+blocked by Conditional Access in an embedded browser, and the `android-dri-search` MCP `get_incident`
+returns `Access denied: incident is restricted`. **Do not burn the run trying to route around this.**
+The reliable path is the engineer-supplied case file:
+
+> **IcM → the MSRC tab → download the case** → hand the agent the `.zip` path. It contains the
+> researcher's write-up (e.g. `CAND-00N.md` + `README.txt`) with the sink citations and attacker model.
+
+Extract it into `<shift dir>/_intake/icm-<id>/` (private workspace, never the repo) and triage from there.
+Note the researcher's citations are **decompiled** line numbers — always relocate them in real source.
+
+### Step 0 — Scope the shift & resolve IDs
+**Resolve the shift folder first** (deterministic — don't hand-name it):
+`python scripts/shift.py window` → gives the Wed→Wed `start/end/slug/label/dir`; then
+`python scripts/shift.py ensure` creates `$VULN_TRIAGE_WORKSPACE/msrc/<slug>/`. Use `--date YYYY-MM-DD`
+if the engineer wants a shift other than the one containing today. **All this shift's outputs go in that
+folder.** Default window = the current Wed→Wed shift (≈ past 7 days). Query **all** of the IcM owning teams
+below (missing a queue drops findings):
+
+| Team ID | Name |
+|---------|------|
+| 65431 | Cloud Identity AuthN MSAL Android |
+| 65436 | Cloud Identity AuthN ADAL Android |
+| 78848 | Auth Client Android Shield |
+| 148914 | Android Microsoft Authenticator App |
+
+> These are routing integers (safe to list — inert without corp IcM access). **Refresh them at the start**
+> of each run via the IcM MCP `get_teams_by_name` in case team routing changed, and cache the result to
+> private repo memory (`/memories/repo/security-triage-metadata.md`). The fuller metadata (service-tree
+> IDs, the ITD↔FireWatch GUID map) also lives in that memory file.
+
+### Step 1 — Discover findings (scripted)
+Query IcM for `[MSRC]` / `[ITD]` incidents in the window for both teams. Use the IcM MCP
+(`search_incidents` with `owningTeamId` + `dateRange`, or `keywords`/`tags`), write results to the
+session resource files, then summarize with [`scripts/discover_findings.py`](scripts/discover_findings.py)
+to emit the inventory table (ID, tag, title, vuln class, component, sev, state, date).
+
+> **Dedup against the shift manifest.** For each candidate IcM, run `python scripts/shift.py check <icm>` —
+> **NEW** (exit 0) → triage it; **SEEN** (exit 3) → already done this shift, skip. In mode (a) (single IcM),
+> do the same check before researching. This is what makes re-runs **append** instead of re-investigate.
+
+### Step 1.5 — Check for prior / duplicate incidents (do BEFORE investigating)
+Before spending a two-pass investigation, check whether this finding (or one very like it) has been seen
+or **already resolved** before — it may be a duplicate, a regression, or have a known fix to cite:
+- **IcM similar incidents:** call the IcM MCP `get_similar_incidents` on the finding's IcM id.
+- **Past incidents + TSGs:** query the `android-dri-search` MCP (`get_incident` / `batch_search` /
+  `search_tsgs`) for the vuln class / component / key API names.
+- **Prior shifts on disk:** grep the workspace's earlier shift folders
+  (`$VULN_TRIAGE_WORKSPACE/msrc/*/`) for the vuln class and the sink's API names. Our own past triage is
+  the highest-signal prior art we have and it is *not* in any MCP.
+- **Record the result on the finding** in a `**Prior incidents:**` field (and the research-page tile):
+  *None found*, or a short list of IcM ids + one-line outcome (e.g. "AB#/IcM NNN — fixed in <area>, "
+  the same sink"). If a prior **resolved** incident clearly covers it, say so up front — the on-call can
+  short-circuit (link the prior fix / close as duplicate) instead of re-triaging. Cite, don't assume:
+  a *similar* title is a lead, not proof — still confirm against current code in Step 3.
+
+> #### Search the vulnerability CLASS, not just this finding's entry point
+>
+> **This is a known miss.** A prior MSRC with the *same root cause* was not surfaced because it came in
+> through a **different Android component type** — the past one was reached via an `Activity`, the new one
+> via a `Service`. Title/component matching found nothing; the two were the same bug.
+>
+> So run **at least three** query shapes, not one:
+>
+> | Shape | Example |
+> |-------|---------|
+> | **Vuln class alone** — no component, no ids | "unprotected exported component", "intent redirection", "PendingIntent mutability" |
+> | **Sink API / method name alone** | the actual method the finding lands on, searched bare across all prior findings |
+> | **Class × each component type** — deliberately swap the entry point | the same class re-queried against `Activity`, `Service`, `BroadcastReceiver`, `ContentProvider`, deep link, and IPC/bound-service entry |
+>
+> Also search **who else has triaged in this area** — a teammate's prior MSRC on the same class is prior
+> art even when the ids, titles, and components share nothing.
+>
+> **A near-miss is still a hit.** Record related-but-not-identical prior findings as
+> `**Related prior art:**` with the delta spelled out ("same root cause, different entry point:
+> `Service` here vs `Activity` there"). Then **feed them into the Pass 1 dispatch** — a challenger that
+> already knows how this class was exploited before is faster *and* sharper. Only report
+> *None found* after all three shapes came back empty, and say which shapes you ran.
+
+
+### Step 2 — ITD manual intake (FireWatch is not MCP-reachable)
+FireWatch/Glasswing findings are **not** available through the Security MCP server (confirmed). They must
+be retrieved manually:
+1. Agent scaffolds one folder per finding under the **shift folder's** `itd-investigations/`
+   (`$VULN_TRIAGE_WORKSPACE/msrc/<slug>/itd-investigations/`, out-of-repo) using
+   [`scripts/scaffold_itd.py`](scripts/scaffold_itd.py) with `--root <shift dir>/itd-investigations`.
+2. **Ask the user** to open each FireWatch finding and **Save Page As → "Web Page, Complete"** into the
+   matching folder. The saved `_files/report-content.html` holds the full report — it is required.
+3. Agent transcribes each saved report with
+   [`scripts/transcribe_finding.py`](scripts/transcribe_finding.py) into the folder's `README.md`.
+
+> See [references/itd-intake.md](references/itd-intake.md) for the exact user instructions and the saved
+> HTML structure.
+
+### Step 2.2 — MSRC evidence bundle intake (when a case bundle is supplied)
+
+MSRC cases often arrive as a **password-protected zip** holding the submission text, a compiled PoC APK, and
+the PoC source. **Read the PoC source before writing the Scope Contract** — it names the exact entry point
+and the exact attacker-controlled request keys, which is far more precise than the report's prose, and it
+tells you what was actually *demonstrated* versus asserted. Cross-check every key/mechanism the report names
+against the codebase: filed reports routinely cite identifiers that **do not exist in our tree**, and that
+mismatch is citable evidence.
+
+> 🛑 Never install or run the PoC APK; extract to a scratch dir outside the repo and workspace, and delete
+> it at the end of the run. Never copy bundle contents or payloads into the repo or a report.
+> Full procedure (including the ZipCrypto/`Expand-Archive` failure and the evidence-quality checklist):
+> [references/msrc-bundle-intake.md](references/msrc-bundle-intake.md).
+
+### Step 2.5 — Write the SCOPE CONTRACT (before any investigation agent launches)
+
+**Cheapest, highest-leverage step in the workflow.** Before Pass 1, write down the trust boundary the
+finding lives in — sink location, subsystem/**channel**, entry point, the trust decision under attack, the
+consumer set, the asset at risk, and an explicit **OUT OF SCOPE** list naming the co-resident subsystems
+you are deliberately excluding. Template + rules:
+[references/research-discipline.md](references/research-discipline.md).
+
+> **This exists because of a real, reported wrong verdict.** An analysis pulled a component from a
+> *different* IPC subsystem — same app, separate allow-list, separate consumers, **no data path to the
+> sink** — into the reasoning, then used its absence of cross-validation to retire a higher-severity
+> argument. Every citation resolved; only the *relevance* was wrong. A `file:line` citation cannot prove
+> relevance, which is why the boundary has to be written down first.
+
+Two rules follow from the contract, and they bind for the rest of the run:
+
+- **Admissibility.** A control counts as a mitigation **or** as a refutation only if you can name the
+  **hop-by-hop call path** from the entry point to it. "Same app", "same package", "similar name" are not
+  paths. Off-path evidence is **inadmissible** in both directions — it can neither lower nor raise severity.
+- **Always qualify the channel.** Never write "the allow-list" or "cross-app credential theft" bare —
+  always "the *&lt;channel&gt;* allow-list", "cross-app *&lt;account-type&gt;* credential theft via
+  *&lt;channel&gt;*". Unqualified prose is exactly where two disjoint subsystems silently merge into one
+  wrong idea, and no downstream step will catch it.
+
+**Pass the contract into every agent dispatch** (Pass 1, the challenger, and any reconciliation) as
+standing constraints. The contract may be **amended** — it is a hypothesis, not a fact — but only
+explicitly, with the call path that justifies it, and with **every claim that depended on the old boundary
+re-evaluated**. A mid-run amendment caps Confidence at **Medium**.
+
+### Step 3 — Investigate each finding IN PARALLEL (codebase-researcher)
+For each finding, dispatch a `codebase-researcher` investigation that returns:
+- **The sink** — the vulnerable code, cited `file:line`.
+- **Reachability** — is the sink reachable in a *shipping* configuration? What conditions gate it?
+- **Defense-in-depth sweep (look beyond!)** — actively search adjacent layers for mitigating controls:
+  - Caller / entry wiring (is the component exported? `AndroidManifest.xml`)
+  - Sibling handlers in the same file (do they enforce allow-lists this one skips?)
+  - Flight/feature-flag gates (`CommonFlight*`, ECS defaults)
+  - IPC boundary checks (package name, signature, caller UID)
+  - Build/config gating (debug-only, test-only, root-only reachability)
+  - Any validation upstream of the sink
+  - **Threat boundary / scope** — is the **only** way in root / physical / debug-build / `adb`? If so the
+    finding is **out of scope (Won't-Fix / Sev4)** — BUT first prove there is **no** non-root path (another
+    app via IPC/Intent/deep-link, network/zero-click, or off-device egress like a diagnostics/log upload).
+    See "Out-of-scope threat boundary" in [references/severity-rubric.md](references/severity-rubric.md).
+- **Aggravating factors** — anything that makes it *worse* than filed (unflighted, exported, no allow-list).
+- **A Claim Ledger** — every severity-relevant assertion as a numbered claim, **quoted verbatim** and
+  **tagged with its channel** from the Scope Contract. This is what Pass 2 attacks, so a vague claim is a
+  defect to fix *here*, not to "clarify" later inside the challenge prompt.
+
+**Every Pass 1 dispatch carries the Scope Contract** as a standing constraint, plus this instruction:
+*"Evidence is admissible only if you can name the hop-by-hop call path from the entry point to it. If a
+control looks relevant but sits outside the IN SCOPE list, report it as an out-of-scope observation — do
+not use it to raise or lower severity."*
+
+**Also pass the protocol constraints.** Add [references/protocol-constraints.md](references/protocol-constraints.md)
+to every dispatch and ask the agent to split its findings into **(a) genuinely fixable by us** — we trust a
+caller-supplied value the OS could tell us truthfully, or we skip a check we already have the means to
+perform — versus **(b) inherent to the protocol/platform**, with the standard named. Without that
+instruction the agent can only report "is there a control?", never "could a control exist?" — and the
+second question is what tells the security team a finding is not worth fixing.
+
+Use the severity rubric in [references/severity-rubric.md](references/severity-rubric.md).
+
+### Step 3.5 — Adversarial verification IN PARALLEL (codebase-researcher, second pass)
+For each finding, dispatch a **second, independent** `codebase-researcher` (the **Challenger**) that
+receives **the Scope Contract and the Claim Ledger's verbatim claim text**, and tries to **break it**:
+
+> 🛑 **Use the pre-vetted template — [references/challenger-prompt.md](references/challenger-prompt.md).**
+> An improvised adversarial prompt can be **blocked by content filtering**, which returns no content after
+> ~10 minutes and silently costs you the entire second pass. Frame it as *"an independent second-opinion
+> review of our own source"*, ask which validations *are and are not* present, and explicitly instruct
+> **not** to produce exploit steps. **Verify the challenger actually ran** — a result with no per-claim
+> verdicts and no "Searches Run" audit is a blocked pass, not a HELD one. Never record Confidence = High
+> on a run whose challenger did not execute.
+
+- If Pass 1 cited a mitigation, attempt to **bypass** it (find a path that skips the allow-list / flight /
+  package check; check whether the control is itself reachable/poisonable).
+- If Pass 1 said "not reachable", hunt for **another entry point** to the sink (other manifests, other
+  callers, exported aliases, intent filters).
+- If Pass 1 **down-classified**, build the strongest case that it is **still exploitable**.
+- The Challenger cites `file:line`, states **which claim ID** each result addresses, and appends its own
+  "Searches Run" audit. It must flag any claim it **did not reach** — those stay **OPEN**, not refuted.
+
+Then **reconcile**: run the **strawman check** on every refutation first (verbatim · same channel · same
+asset/consumers · no new out-of-scope nouns) and **VOID** any that fail — a voided refutation changes
+nothing and gets noted in the report. Only surviving refutations move a verdict. Update each ledger row's
+status, then keep/raise/lower the Pass 1 verdict and set **Confidence** (High/Medium/Low) per the table in
+"The two-pass model". Disagreement or an unverifiable boundary ⇒ at most **Medium**, usually **Low**.
+
+### Step 4 — Classify & assign (agree or rebut)
+For each finding, produce our final classification and the agree/rebut delta vs. FireWatch, with evidence,
+plus the **Confidence** from Step 3.5. Then set the **Disposition**.
+
+> **Show the SDL/MSRC bug bar factor-by-factor — reviewers specifically ask for this.** Don't just assert a
+> tier; walk the factors and show which way each one pushes. It is the artifact reviewers have called out
+> as the most useful part of the report, because it makes the call **auditable** rather than asserted — and
+> the factor that *blocks* a higher tier is usually the one under debate.
+
+| Factor | Reads as | Points to |
+|--------|----------|-----------|
+| **Vulnerability class** | <STRIDE class — tampering / info disclosure / EoP / spoofing> | <canonical tier for that class> |
+| **Attack vector** | <network `AV:N` · adjacent · local · physical> | ↑ / ↓ severity |
+| **Privileges / UI** | <`PR:N`/`PR:L` · `UI:N`/`UI:R`> | ↑ / ↓ severity |
+| **Prerequisites** | <what the attacker must already have defeated — TLS, an installed app, OS-version conditions> | ↓ severity (often **blocks Critical**) |
+| **Blast radius** | <what is compromised, for whom, and whether it persists beyond the attack window> | ↑ severity (often **blocks Moderate**) |
+| **CIA** | <`VC:` / `VI:` / `VA:`> | consistent with <tier> |
+
+Then state the landing: *"→ **&lt;tier&gt;**, IcM **Sev&lt;n&gt;** — not Sev&lt;n±0.5&gt;, because
+&lt;the specific factor that caps it&gt;."* Name the **blocking factor in both directions** (what stops it
+going higher *and* what stops it going lower) — that is what makes the rebuttal defensible when the
+security team pushes back. Full rubric: [references/severity-rubric.md](references/severity-rubric.md).
+
+> **🛑 GATE 0 — check defense-in-depth coverage FIRST.** We have been
+> receiving a high volume of MSRC/ITD findings that turn out to be **already covered by existing
+> defense-in-depth** (an upstream allow-list/validator, a flight default, a signature/package check, a
+> non-exported component, server-validated number-matching, etc.). So the **first** question for every
+> finding is: *"is the cited sink already neutralized by a control that exists today, traced with
+> `file:line`?"* If yes → classify it **`Won't-Fix (Already-Covered)`** and **close it out** — do **not**
+> proceed to remediation. This is the cheapest and safest outcome: **the change we don't ship can't cause a
+> regression.** These are shared libraries (Common/Broker/MSAL) consumed by >1B users; a redundant
+> "belt-and-suspenders" fix is *negative* value — it adds regression surface for no security gain.
+>
+> The bar to use this category is the **same as any down-classification**: cite the covering control with
+> `file:line` (or the searches proving the sink is unreachable). "I didn't find an exploit" is not coverage —
+> show the control. And stay conservative the *other* way too: **not everything is covered.** If you cannot
+> prove a control exists, treat the finding as live and solution it.
+
+#### Gate 0 has SIX outcomes, not two — and they need different actions
+
+Collapsing these is how a run produces the wrong recommendation. Each demands something different:
+
+| Outcome | What it means | Action |
+|---|---|---|
+| **Covered** | A control neutralizes the sink on the **shipping** branch | Close out, ship nothing |
+| **Not covered** | No control anywhere, on any ref | Solution it (Step 4.5) |
+| **Fix exists, not shipped** | Written on a branch, not on the release | Don't re-write it — **land it**. **Name the branch and commit** in Existing Work |
+| **Landed then reverted** | Merged, then backed out | **Find out WHY before re-landing.** Never blind-revert a revert |
+| **Fixed since filed** | Accurate when filed; the control shipped **after** the filing date | Close as `Won't-Fix (Fixed-Since-Filed)`. **Name the first release containing the control**, and answer the release-exposure question below |
+| **Not fixable by us** | A real weakness that **no client-side change can close** (protocol/platform constraint) | Close as `Not-Fixable (By-Design)`; ask MSRC to withdraw. Cite the standard — see [references/protocol-constraints.md](references/protocol-constraints.md) |
+
+> 🛑 **ALWAYS record the existing work, even when the verdict is "not covered."** "No control on the
+> shipping branch" and "the fix is written, reviewed and sitting on `dev` waiting for a train" are the
+> **same Gate-0 outcome but completely different asks** — one needs an engineer to design a fix, the other
+> needs a release decision. Losing that distinction wastes the most expensive resource in the loop.
+> Every finding whose fix is not shipped MUST fill in the **Existing Work** table (branch · commit · what
+> it covers · why it hasn't shipped). See [references/report-template.md](references/report-template.md).
+
+#### 🛑 Resolve WHICH ref actually ships — several will look plausible
+
+A release train commonly exposes **three** similarly-named refs, and they do **not** agree:
+
+| Ref shape | What it usually is |
+|---|---|
+| `release/<v>` | The branch the shipped artifact is cut from |
+| `working/test-release/<v>` | The RC lineage that feeds `release/<v>` |
+| `release-integration/<v>` | An integration branch that keeps taking **later merges from `dev`** |
+
+**Real failure, found in our own reports:** two findings concluded *"the escalation is gated in the shipping
+release"* by checking `release-integration/<v>` — which carried the control **only because an
+"Update common submodule to latest dev" merge landed roughly half an hour after `release/<v>` was cut**.
+`release/<v>` and its submodule pin both **lacked** the control, and the two branches had **diverged**
+(neither an ancestor of the other). The verdict was reported as covered when it was not.
+
+Do all three, every time:
+1. **Enumerate the candidate refs** (`git for-each-ref 'refs/remotes/origin/*release*'`) and check the
+   control on **each**, by content.
+2. **Compare the submodule pins**, not just the branch content — `git ls-tree <ref> <submodule>`, then read
+   that commit in the submodule's own repo. The pin is what the build actually compiles.
+3. **Test divergence** with `git merge-base --is-ancestor A B` **both ways**. If neither is an ancestor of
+   the other, they are parallel branches and you must say **which one ships** — a control present on only
+   the diverged one protects nobody.
+
+> **Real failure:** a run reported *"no fix exists"*, recommended writing one, and was wrong on both
+> counts — the fix had been written, merged, reverted for a release blocker, and then restored. Each of
+
+> **Real failure:** a run reported *"no fix exists"*, recommended writing one, and was wrong on both
+> counts — the fix had been written, merged, reverted for a release blocker, and then restored. Each of
+> those states needed a different answer, and "not covered" was none of them.
+
+#### Ask the question against the RIGHT REF, and against ALL refs
+
+Three rules, each from a real wrong answer:
+
+1. **Verify the remote before you trust the history** (see the Requirements gate). A retired remote can
+   keep serving a frozen snapshot while `git fetch` exits 0 — every history query then silently stops at
+   the migration date. **Check this first; nothing downstream is trustworthy without it.**
+2. **Search all refs, not just the base branch.** `git log --all -S'<symbol>'`, `git branch -a --contains
+   <sha>`, `git log --all --grep='<work-item>'`. A fix on an unmerged branch is a materially different
+   verdict from no fix.
+3. **Judge coverage on the SHIPPING branch, not `dev`.** What protects users is what ships. Resolve the
+   release/integration branch and check *that*. Beware the **revert-then-merge** pattern: a change
+   reverted from a release branch can be silently **restored** by a later merge from `dev` — so commit
+   ancestry alone will mislead you. **Read the file content at the release ref** and confirm the control
+   is actually present and wired.
+4. **Verify by CONTENT, not ancestry — release branches are often squashed.** `git branch --contains <sha>`
+   and `git merge-base --is-ancestor` both give the wrong answer when the release branch is a squash of an
+   integration branch. Use `git grep -n '<symbol>' <release-ref>` and read what is actually there.
+5. **Then ask the release-exposure question: was any SHIPPED release vulnerable?** Coverage on the *current*
+   shipping ref does not mean customers were never exposed. Walk back the previous release(s) and find the
+   **first release containing the control** and the **last shipped release without it**. Resolve each app
+   release's pinned library versions (`gradle.properties` / `git ls-tree`) rather than assuming.
+   This is what decides whether a customer/SIR response is owed, and it is the field that turns
+   `Fixed-Since-Filed` from a shrug into an answer. Record it in `**Shipped-release exposure:**`.
+
+#### Confirm the control is *effective*, not merely present
+
+Finding the code is not the same as proving it protects users:
+
+- **Resolve submodule pins properly.** `git show <ref>:<submodule>/<path>` returns a **gitlink**, not file
+  content. Get the pin with `git ls-tree <ref> <submodule>`, then read that commit **in the submodule's own
+  repo**. A control can be present in a library's `dev` and absent from the pin the shipping app builds.
+- **Check the flight/feature-gate default, and its polarity.** Do not assume `true` means "enforcing" —
+  some gates are permissive-when-true by design. Read the declaration and any comment explaining intent.
+  A control behind a default-off gate protects nobody.
+- **Check the control's scope against the finding's branch.** A gate can cover one code path and not the
+  neighbouring one. Confirm the *specific* sink you cited is the one gated — enumerate which methods the
+  guard actually wraps rather than inferring it from the field name.
+
+> Record the outcome in the finding's `**Prior incidents:**` field and the Gate-0 section, naming the ref
+> you checked. "Not covered on `dev`" and "not covered in the shipping release" are different claims.
+
+Then set the **Disposition** (only for findings that survive Gate 0):
+- **`Won't-Fix (Already-Covered)`** — Gate 0 hit: an existing, cited control already neutralizes the sink.
+  No remediation. Surfaced in the report's **Already Covered / Won't-Fix** section and recommended to the IcM
+  as Won't-Fix / down-classify (with the covering control cited).
+- **`Won't-Fix (Fixed-Since-Filed)`** — accurate when filed; the control shipped after the filing date. Name
+  the first release containing it **and** whether any shipped release lacked it (release-exposure question).
+- **`Not-Fixable (By-Design)`** — a real weakness no client-side change can close. Cite the standard and the
+  compensating control we implement instead; ask MSRC to withdraw the sub-claim.
+  See [references/protocol-constraints.md](references/protocol-constraints.md).
+- **`Keep`** — everything else. We own it and solution it (Step 4.5).
+
+> A single IcM can carry **different dispositions for different sub-claims** — that is the normal case for
+> multi-part MSRCs, not an edge case. Record one disposition **per sub-claim** in the Claim Ledger and
+> summarize them in the **Per-Part Disposition** block (Non-Negotiable #24).
+
+Use [references/report-template.md](references/report-template.md).
+
+### Step 4.5 — Solution the kept findings (remediation spec)
+For every **kept** finding, produce a **dispatch-ready Remediation Spec**:
+root cause, fix approach, exact files to change (`file:line`), test plan, and risks/rollout (flighting).
+Use [references/remediation-spec.md](references/remediation-spec.md). It must be detailed enough to hand to
+an engineer or the Copilot coding agent / `pbi-creator` without further investigation.
+
+#### 🛑 Gate: present OPTIONS before any code (Non-Negotiable #16)
+
+**Reported failure:** asked to help with a fix, the skill went **straight to writing one**. The engineer
+had to interrupt to ask *how* it planned to fix it — and did not trust the result. A fix the engineer
+didn't get to choose is a fix they can't defend in review.
+
+So: **the first thing you produce for a kept finding is an options table, not a diff.**
+
+```markdown
+### Fix Options — [MSRC|ITD] <id>
+
+**Root cause:** <1–2 sentences, cited>
+
+| # | Approach | Closes | Does NOT close | Blast radius | Regression risk | Flightable | Effort |
+|---|----------|--------|----------------|--------------|-----------------|-----------|--------|
+| 1 | <e.g. reuse the hardened sibling control at the same admission point> | … | … | <files/modules> | Low/Med/High | Yes (default-OFF) | <n>d |
+| 2 | <e.g. gate the component at the manifest boundary> | … | … | … | … | … | <n>d |
+| 3 | <e.g. validate at the sink> | … | … | … | … | … | <n>d |
+
+**Recommended: #<n>** — <why: usually smallest diff that fully closes the sink, reusing a proven
+sibling control, flightable to default-OFF>
+**Rejected #<n> because** — <the real reason, not a formality>
+**Open question for you:** <the judgment call that is genuinely the engineer's to make>
+
+Which do you want? (Or tell me what I've got wrong.)
+```
+
+Rules for the gate:
+
+- **Always at least 2 real options.** If you genuinely believe only one is viable, still present the
+  "do nothing / accept the risk" option and say why it loses — that is the comparison the engineer needs.
+  Options must be *materially* different, not three phrasings of one patch.
+- **Name a recommendation and defend it.** A neutral menu pushes the work back onto the engineer; the
+  point is an opinion they can challenge.
+- **Say what each option does NOT close.** This is the column engineers actually read, and the one an
+  eager fix silently omits.
+- **Wait for a choice.** Do not begin Step 4.6, do not touch a file, do not create a branch. Only after
+  the engineer picks (or amends) an option does the spec's **Fix Approach** get filled in with it.
+- **Applies to every kept finding** — a lighter, two-row version is fine for low-severity ones.
+- **If the engineer explicitly says "just fix it"**, still show the options table *as a single message*,
+  state your pick, and proceed unless they object. Cost: ~30 seconds. Value: they can catch the wrong
+  approach before the diff exists rather than after.
+
+
+### Step 4.6 — Execute the fix & open the PR (optional, public-repo-safe)
+When the user wants the skill to **implement** a kept finding (not just dispatch it), follow
+[references/remediation-execution.md](references/remediation-execution.md).
+
+> 🛑 **Entry condition: the engineer has picked an option from the Step 4.5 Fix Options table.** If they
+> have not, you are not in Step 4.6 yet — go back and present the options. "Fix it" is a request to start
+> the remediation *conversation*, not permission to skip it.
+
+**Pre-flight FIRST: re-verify the
+finding is still live on the current base-branch HEAD** — trace the untrusted input back to its
+admission/classifier point; if an upstream allow-list/validator already gates the sink, the finding is
+**already mitigated → STOP and re-triage (Won't-Fix/Low)** rather than shipping a redundant fix (findings are
+investigated on a snapshot; controls land in between). **Prime directive: regression-safety
+over everything** — `common`/`msal`/`adal`/broker ship to **>1 billion users**, so the *safest* change that
+closes the gap always beats the cleverer/more complete one: smallest diff, gate behind a **default-OFF ECS
+flight (flight-off = byte-for-byte legacy)**, reuse hardened sibling controls, don't widen scope on a guess,
+and prove both a rollback test and a legit-flow regression test. Ground every edit in `codebase-researcher`
+citations and follow the repo's custom instructions (`Logger`, multi-repo boundaries, match existing
+file language, flag `OneAuthSharedFunctions` changes to OneAuth). Because three of the four target repos are
+**public**, the **branch name, commit message, code comments, and test fixtures must not reveal the
+vulnerability** — only a corp-gated work-item link points to the sensitive context. **Present the diff and
+get explicit go/no-go before any push or PR**, and run the public-token sweep first.
+
+> **Per-repo PR platform & identity (critical):** common/msal → **public GitHub, non-EMU** (open the PR with
+> the **local** Git Credential Manager token; the MCP GitHub tool is EMU and **403s** on these public repos —
+> fall back to the REST API). broker → **GitHub Enterprise, EMU** (use the EMU/MCP identity). authenticator →
+> **Azure DevOps** (no GitHub PR — open it in ADO). Match the credential to the repo or the PR step fails. See
+> the full matrix in [references/remediation-execution.md](references/remediation-execution.md).
+
+> **Maintain the cross-session execution tracker.** Remediation often spans multiple sessions (one per MSRC).
+> Keep a single `EXECUTION-TRACKER.md` in the **workspace** (`$VULN_TRIAGE_WORKSPACE/msrc/<window>/`, NOT the
+> repo) that records, per finding, the real IcM↔WI↔branch↔commit↔PR linkage and an exec status
+> (`NOT STARTED` → `IN PROGRESS` → `IMPLEMENTED (local)` → `PUSHED` → `PR OPEN` → `MERGED`/`BLOCKED`/
+> `OUT OF SCOPE`). Create it on first execution, and **update it at every milestone** (branch, implement, test,
+> push, PR, merge) so a fresh session for any single MSRC can resume without re-deriving state. Because it
+> lives in the private workspace it may hold the real linkage — that is its purpose; the *repo* artifacts stay
+> sanitized, the tracker is the bridge.
+
+### Step 4.7 — Verify the fix with the flag ON **and** OFF (required before any PR)
+
+A fix is not done when it compiles or when the new test passes — it is done when **all four cells** of the
+flag matrix have evidence. Full procedure, test skeletons, on-device recipe, and the report template:
+[references/flight-verification.md](references/flight-verification.md).
+
+|  | **Exploit input** | **Legitimate input** |
+|--|-------------------|----------------------|
+| **Flight OFF** (shipped default) | **A. still succeeds** — the finding reproduces | **B. works** — legacy unchanged |
+| **Flight ON** (fix active) | **C. blocked** — the fix denies it | **D. works** — no regression |
+
+- **Cell A is the one people skip, and it is the most important.** If the exploit input *fails* with the
+  flight OFF, then either something else already blocked it — the finding is **Already-Covered**, so stop
+  and go back to Gate 0 — or your test doesn't reproduce the vulnerability, in which case **cell C proves
+  nothing**. A and C are the *same input* differing only by flight state; that pairing is the entire proof.
+- **Cells A + B are the rollback evidence.** They are what make "flight-off = byte-for-byte legacy" a
+  demonstrated fact rather than a design intention.
+- **Automated paired tests are the gate** (four tests, named for their cells, flight state as the only
+  variable, results confirmed in the JUnit XML — a method missing `@Test` silently never runs).
+  **An on-device toggle pass is the sign-off**: it proves the flight key is actually read at the sink in a
+  real build, which unit tests cannot show. Use a lightweight test host (BrokerHost) + the in-app
+  **Broker Flights** screen, and confirm the flight reads **OFF** on a fresh install before anything else.
+- **Anything you could not verify goes in "Not covered"** — other OEMs/API levels, server state,
+  downstream consumers. Never let an unstated gap read as a pass.
+- The completed matrix is the close-out evidence for the IcM. It stays in the **workspace** and the IcM —
+  the public PR gets a generic description plus a corp-gated work-item link.
+
+### Step 5 — Report (two coordinated artifacts per finding)
+
+> 🛑 **NEVER hand-write a finding report from memory. ALWAYS scaffold it.**
+>
+> ```
+> python scripts/new_finding.py --icm <id> --tag MSRC --component <Broker|Authenticator|Common|MSAL|ADAL> \
+>        --title "<short title>"          # -> findings/<slug>.md in the CURRENT shift, + manifest entry
+> # ...fill in every TODO...
+> python scripts/rebuild_shift.py         # lint-gated: lint -> research -> agent-specs -> master -> rollup -> verify
+> ```
+>
+> **This is not a style preference — it is a parser contract.** The `**Label:**` lines and the
+> `| **Filed** |` / `| **Ours** |` rows populate the HTML stat tiles and the master-report row.
+> **Real failure this prevents:** an agent free-handed a report that read perfectly as prose; it published
+> with Severity, Confidence and Verdict tiles all blank and the master table calling an MSRC an "ITD".
+> Scaffolding makes that impossible — you fill blanks instead of inventing structure.
+>
+> `rebuild_shift.py` runs `lint_finding.py` **first and refuses to build on failure**, then regenerates
+> **every** artifact for the whole shift and finishes with `verify_outputs.py`. Use it after *every*
+> finding — never call the individual builders by hand unless you are debugging one.
+
+> 🛑 **This step is NOT optional and NOT conditional on the verdict** (Non-Negotiable #17).
+>
+> **Every finding gets written to disk — including the ones that end in `Won't-Fix`,
+> `Already-Covered`, or "out of scope: root/physical access only".** Those feel like they need no
+> paperwork, which is exactly why they go missing — and they are the verdicts the engineer must later
+> **justify back to the security team** when closing the IcM. A rebuttal that exists only in a chat
+> window cannot be pasted into an IcM, reviewed by a peer, or found again next quarter.
+>
+> The same applies to a **single-IcM run** (mode (a)) and to **Fast mode**: one finding still produces a
+> finding report + a master report, and the Fast-mode report is stamped `PRELIMINARY`.
+>
+> **Never end a run with a verdict delivered only in chat.** Close with
+> `python scripts/verify_outputs.py` and hand the engineer the absolute folder path.
+
+Each finding yields a **human report** and a **machine-readable agent spec** — see
+[references/agent-spec-template.md](references/agent-spec-template.md) for the dual-output rationale + schema.
+
+- **Per-finding report (human source)** → the finding's folder `README.md` (or
+  `msrc-investigations/<n>-<id>-<slug>.md`), including a `**Bottom line:**` TL;DR field, the
+  **`## Scope Contract`** (near the top, before the analysis), the **`## Claim Ledger`** (every claim's
+  final status, channel tag, and any **VOID** refutations), the **SDL/MSRC bug bar factor table**, the
+  `## Adversarial Verification` section (Pass 2), `## Verification Gaps & What We Need to Confirm`,
+  `## Decisions Needed`, a **`## Fix Verification`** matrix if a fix was implemented, and ending with the
+  verbatim `## Searches Run (audit trail)` section.
+  > **Lint it before you ship it:** `python scripts/lint_finding.py --dir <run_dir>` checks these sections
+  > exist and flags claims with no channel tag. It only checks *structure* — it cannot tell you the
+  > reasoning is sound — but a missing scope contract or an untagged claim is exactly the shape of the
+  > errors that produced a confident wrong verdict, so a clean lint is required before the report goes out.
+- **Agent dispatch spec (machine-readable)** → run `scripts/build_agent_spec.py` over each README to emit a
+  `<slug>.agent.md`: YAML front-matter (`finding_id, our_tier, icm_sev, confidence, assignment,
+  target_repos, files_to_change, external_validation_needed, status, blocked_on`) + a Dispatch Block
+  (problem statement, acceptance criteria = the negative test, do-not-proceed-until gating, constraints).
+  This is what the Copilot coding agent / `pbi-creator` consumes to open a PR **without scraping prose**.
+  Generate the specs **first** so the HTML can link them.
+- **HTML evidence subpages (human, curated)** → run `scripts/build_research_pages.py` with
+  `--agent-dir ../agent-specs` to produce one self-contained, shareable HTML page each (CSS inlined;
+  `file:line` citations as visible evidence chips) plus an `index.html`. Each page opens with a band of
+  **colorful stat tiles** (Our Severity · **Component / Repo** · IcM Severity · Confidence · Verdict ·
+  Investigation Passes · **External Validation** · Disposition — each kept concise; tiles with a ↓ jump to
+  the matching detail section), a **Bottom line** TL;DR, then
+  **Description** and **How It Can Be Exploited** (high-level, no PoC/PII). The heavy **Searches Run** audit
+  is auto-collapsed into a `<details>` for readability, an **On this page** TOC links the major sections,
+  and a header **"Fix this with an AI agent"** button links
+  the `.agent.md`. A **Glossary** of the terms used is auto-appended from `references/glossary.md`.
+  > **Surface what you could NOT test.** Many real exploits require conditions an AI agent cannot reproduce —
+  > a runtime device repro, a specific tenant/server state, code in a downstream repo we don't own. The
+  > **Verification Gaps** table makes each explicit (open question · *why* untestable statically · what we
+  > confirmed instead · the concrete ask · severity effect) and the **Decisions Needed** box lists the
+  > judgment calls a human must make. So the user knows exactly where to supply info, and neither a human nor
+  > an agent stalls on a gap they can route around. Required whenever `External Validation = Yes`.
+- **Master HTML report (self-contained)** → run `scripts/build_master_report.py` over the same finding
+  markdown with `--out <run_dir> --research-dir research --agent-dir agent-specs` to emit
+  `wbr-security-report.html` in the run dir. It has summary stat cards (incl. a **Needs external validation**
+  count), the severity legend, and a master table: **IcM · Tag (MSRC/ITD) · Component · Filed · Ours · Conf ·
+  Verdict · Disposition · Eng-days · Vulnerability · Research**. A ⚗ **ext** badge marks rows whose
+  severity still hinges on a server/downstream control we can't statically verify, and an **Exports** strip
+  links the roll-up + CSV that ship in the same folder. For an on-call **shift report**, add
+  `--shift "Wed <start> -> Wed <end>" --owner "<label>"` — this re-frames the header, adds a **Generated
+  <timestamp>** stamp (so a hung/stale run is obvious), and a "findings appended" note. The research subpages'
+  "Back to WBR overview" link points here, so **the run folder is fully self-contained — never reuse a prior
+  run's overview.** Generate it AFTER the subpages + specs exist.
+- **Aggregate roll-up** → counts, severity breakdown (ours vs. filed), confidence + IcM-Sev breakdown, a
+  **disposition** split (Kept vs Already-Covered vs Fixed-Since-Filed vs Not-Fixable), estimated eng-days,
+  and at-risk commitments — generated with
+  `scripts/rollup.py classifications.csv --out <run_dir>/_ROLLUP.md`.
+  > ⚠️ **Always pass `--out`** so the markdown is written as UTF-8. Do **not** use PowerShell `>` redirection —
+  > it re-encodes through the console code page and corrupts the Unicode (`·` → `┬╖`, `—` → `ΓÇö`).
+  For on-call handoff and the bi-monthly WBR.
+
+### Step 6 — Create PBIs (OPTIONAL — only on request, ALWAYS with approval)
+
+Creating ADO work items is a **separate, opt-in step** the user must ask for — never a default part of a
+triage run. When asked to create PBIs/bugs from findings (see Non-Negotiable #14):
+
+1. **Propose first.** Present the proposed items as a table — title, our tier, IcM, eng-days, target
+   **parent**, area/iteration, assignee — and **wait for explicit approval.** Never assume the parent or
+   the assignee; ask.
+2. **Default parent = the team's standing "Keep the Lights On" (KTLO) feature** on the *Auth Client - Android*
+   board — that is where ongoing security-triage/bug work belongs. **Look it up at creation time** (IDs and
+   iterations rotate) and confirm the exact ID with the user.
+3. **Inherit area + iteration from the chosen parent** unless the user overrides. Leave **unassigned**
+   unless the user names an assignee.
+4. **One PBI per fix, not per IcM.** When two findings share a single root cause + fix (e.g. ITD 635330 +
+   635488 both being the `activateMfa` deep link), create **one combined PBI** and count the eng-days once.
+5. **Description = the report distilled** (NOT a copy): Summary, Security classification (filed vs. our
+   verdict/confidence/IcM Sev), How it can be exploited, Fix approach, Files to change (`file:line`),
+   Test plan, an Open-questions/external-validation call-out, and a **📎 Reports & spec (to be linked)**
+   placeholder (research HTML · agent spec · WBR master report) for the user to paste links into later.
+   Convert to **HTML** for `System.Description` (`"format": "Html"`).
+6. **Tooling.** Prefer the **ADO MCP** (`mcp_ado_wit_*`) when connected; this is the same flow the
+   `pbi-creator` skill uses, so hand off to it. If the MCP isn't connected, the ADO **REST API** with an
+   `az account get-access-token` bearer works (the `az` CLI is a `.cmd` shim that can't pass HTML cleanly
+   via `subprocess`, and `az boards` routes HTML through cmd.exe which corrupts `& < >`). Make creation
+   **idempotent** (query by exact title before creating) so a mid-run failure can be safely re-run.
+7. ADO citations + IcM IDs **are allowed** in work-item descriptions (corp Engineering project, not the
+   public skill repo). The public-repo safety rules apply to the **skill files**, not to ADO items.
+
+### Step 7 — Weekly status report (manager tracking — concise, email-ready)
+
+The on-call's manager tracks these findings weekly. This is a **separate, high-level artifact** — NOT the
+research report. It is a single compact table meant to paste into an email. Generate it with
+`scripts/build_status_report.py` (reads the same `classifications.csv` plus live ADO state) — see
+[references/status-report-template.md](references/status-report-template.md). Keep it minimal:
+
+- **Columns:** IcM · Bug (one-line) · Severity (our tier) · Status · **Code complete** · **Prod (100%)** ·
+  Work Item · Updated.
+- **Status** is read from the **execution tracker** (`EXECUTION-TRACKER.md` — what's actually been *done*:
+  branch/PR/merge state), falling back to live ADO work-item state, mapped to: *Not started · In progress ·
+  Blocked · In review · Complete · **Out of scope***.
+- **Code complete** = projected implement-&-test date (eng-days + a testing buffer, default +50%). **Prod
+  (100%)** = code-complete + a **component-based rollout window** from the Combined Android Release Checklist:
+  **~14d** for broker/common/MSAL/ADAL libraries (Phase 4 Maven Central publish) vs **~35d** for the
+  Authenticator app (Phase 5 gradual ramp 5%→10%→25%→50%→100% with 2-day bakes + flag-on after 100%). The
+  app is the longer pole — most fixes flip the feature flag only after Prod 100%. Tune with `--asof`,
+  `--test-buffer`, `--rollout-app-days`, `--rollout-lib-days`. See
+  [references/status-report-template.md](references/status-report-template.md) "Prod rollout basis".
+- **No research detail, and no owner column** — owner/assignee already lives on the linked work item.
+  Quick-glance only: no evidence, no file:line, no audit trail.
+- Group/sort by status or severity; include a one-line header (window + counts). Plain HTML table that
+  pastes cleanly into Outlook.
+
+**Source of truth = the execution tracker.** `build_status_report.py` **auto-discovers** `EXECUTION-TRACKER.md`
+next to the CSV (override with `--tracker`) and uses its per-finding exec status **in preference to** live ADO
+state — the tracker reflects real remediation progress (branch created → implemented → pushed → PR open →
+merged). Keep the tracker current (it's updated at
+every execution milestone — see [references/remediation-execution.md](references/remediation-execution.md))
+and the weekly report stays accurate with no extra bookkeeping.
+
+**One-command weekly run.** Persist the IcM→work-item map **once** in the workspace as
+`work-item-map.json` (next to `classifications.csv`) — `{ "<IcM id>": <AB#> }`, with both IcMs of a
+combined PBI pointing at the same id. The script **auto-discovers** it, so the weekly refresh is just:
+
+```
+python scripts/build_status_report.py <run>/classifications.csv --auto-token \
+    --out <run>/weekly-status.html --window "<Wed> -> <Wed>"
+```
+
+`--auto-token` pulls an ADO token via `az` (must be logged in) to read live work-item state; re-running
+just refreshes the statuses. The map lives in the **private workspace** (it pairs IcM ids with work
+items) — never in the repo.
+
+### Step 8 — After the report: confirm next actions (nothing auto-runs)
+
+**First, prove the run actually produced something:**
+
+```
+python .github/skills/vuln-triage-reporter/scripts/rebuild_shift.py     # does all of the below, in order
+```
+
+`rebuild_shift.py` is the single command: it runs `lint_finding.py` first (and **refuses to build** on a
+structural failure), regenerates research pages · agent specs · master report · roll-up across **every**
+finding in the shift, then runs `verify_outputs.py`. Run the pieces individually only when debugging:
+
+```
+python .github/skills/vuln-triage-reporter/scripts/verify_outputs.py
+python .github/skills/vuln-triage-reporter/scripts/lint_finding.py --dir <run_dir>
+```
+
+`verify_outputs.py` checks the shift folder for the required artifacts (manifest · per-finding report(s) ·
+master report) and warns on the recommended ones (research subpages · agent specs · roll-up · CSV). It also
+**fails** when a finding's `**Label:**` fields don't parse (which would publish blank stat tiles), when a
+rendered tile is blank, or when a scaffolded report still contains `TODO`.
+`lint_finding.py` checks each finding report's *structure* — scope contract, claim ledger with channel
+tags, verdict, audit trail, and the flag ON/OFF matrix if a fix was implemented. **A non-zero exit from
+either means the run is not finished** — fix what's flagged and re-run. Then **give the engineer the
+absolute folder path and the `file:///` link it prints.** Do not say "done" without that path: an
+engineer who is told a verdict but can't find a file has, from their side, received nothing.
+
+Generating the report is **not** the end — but the report is the **decision point**, and the engineer
+drives what happens next. Once the master report + research pages exist, **summarize the outcome and ask
+the engineer which follow-ups to run** (offer as a short menu — do **not** silently proceed):
+
+1. **Record findings in the manifest** *(automatic, safe)* — for each finding just written, run
+   `python scripts/shift.py add <icm> --slug <n-class-component> --tag <MSRC|ITD>` so re-runs append/dedup.
+   This is the one post-step you can do without asking.
+2. **Create PBIs / bugs?** *(opt-in, approval-gated — Step 6 + Non-Negotiable #14)* — offer to create work
+   items. If yes: **propose the table first** (title, tier, IcM, parent, area/iteration, assignee) and wait
+   for explicit approval; default parent = the current **KTLO** feature (look it up + confirm). After
+   creation, add each `IcM → AB#` to `work-item-map.json`.
+3. **Dispatch / execute a fix?** *(opt-in)* — each kept finding already has a machine-actionable
+   `.agent.md` dispatch spec. Offer to hand it to a coding agent (e.g. the `pbi-dispatcher` skill or the
+   Copilot coding agent) to draft a PR. **Execution only happens on the engineer's go-ahead, per finding**,
+   and **only after they have picked an approach from the Step 4.5 Fix Options table** — never go from
+   "yes, fix it" straight to a diff (Non-Negotiable #16). The spec's `blocked_on` /
+   "do-not-proceed-until" gates (the external-validation ⚗ items) must be
+   honored — a finding gated on an unverified server/runtime condition is **not** auto-dispatched; surface
+   it for the engineer to confirm first.
+4. **Weekly status report?** *(opt-in — Step 7)* — offer to (re)generate the manager email table.
+
+> **Order of trust:** manifest record (auto) → propose PBIs (approve) → dispatch fixes (approve, per
+> finding, gates honored) → status email (on request). The agent never creates work items or opens PRs
+> without an explicit yes.
+
+---
+
+## Severity Classification (summary)
+
+Full rubric + required evidence per tier: [references/severity-rubric.md](references/severity-rubric.md).
+
+| Our Tier | Meaning | IcM Sev | Required evidence |
+|----------|---------|---------|-------------------|
+| **CRITICAL (must fix)** | Reachable in prod, no mitigating control, real-world exploitable | **Sev2** (active/mass) or **Sev2.5** (not active) | Sink `file:line` + confirmed reachability + proven absence of any gate |
+| **Important** | Real weakness, but partial mitigation / elevated prerequisites | **Sev3** (Sev2.5 only at confirmed-reachable, no-safeguard top edge) | Sink + the specific mitigation limiting blast radius, cited |
+| **Moderate** | Defense-in-depth gap; needs unlikely (but non-root) preconditions — a narrow race, a non-default config, attacker already controlling a federated page | **Sev3 / Sev4** | Cited precondition that blocks mass exploitation |
+| **Low / Won't-Fix** | Not reachable in shipping config, already gated off, **or only exploitable past the OS boundary (root / physical / debug-build / `adb`) with no non-root path** | **Sev4** | Citation proving non-reachability or the sole-root precondition (and that no non-root path exists) |
+
+**A down-classification is only valid if the mitigating control is cited with `file:line`.** "I didn't find
+an exploit path" is not evidence — show the control, or show the searches proving its absence.
+
+> **Out-of-scope threat boundary:** a finding whose **only** exploitation path requires a rooted/jailbroken
+> device, physical/forensic access, a debuggable/test build, or `adb`/developer-mode is **out of scope →
+> Won't-Fix (Sev4)** — the OS boundary is already defeated, so no app control helps. **First prove there is
+> no non-root path** (another app via IPC/Intent/deep-link, network/zero-click, or off-device egress like a
+> diagnostics/log upload); if one exists, the finding is in scope and the non-root path governs the tier.
+> See "Out-of-scope threat boundary" in [references/severity-rubric.md](references/severity-rubric.md).
+
+> **IcM Sev = response urgency** (Sev2 = page on-call outside business hours · Sev2.5 = immediate, business
+> hours · Sev3 = soon · Sev4 = hygiene). **Assigning Sev2.5+ is a high, rare bar** — our stack almost always
+> has a safeguard. Only assign Sev2.5+ when **all** hold: High confidence (adversarial pass held) · reachable
+> in shipping (proven) · no mitigating control (proven absent) · **not** leaning on an unverifiable
+> downstream/server boundary (External Validation = Yes ⇒ cap at Sev3). When in doubt, go lower. Full gate +
+> the evolving **calibration log**: [references/severity-rubric.md](references/severity-rubric.md).
+
+### Confidence & Disposition (summary)
+
+- **Confidence** (High/Medium/Low) comes from the **adversarial pass** (Step 3.5) — see "The two-pass model".
+  It measures *how sure we are of the verdict*, independent of severity. Low-confidence findings get a human
+  review before action.
+- **Disposition** is decided by the **coverage gate (Gate 0)**, which has six outcomes:
+
+| Condition | Disposition | What we do |
+|-----------|-----------|------------|
+| **🛑 GATE 0: sink already neutralized by an existing control (cited `file:line` on the shipping ref)** | `Won't-Fix (Already-Covered)` | **Close it out — no fix.** The safest outcome; a redundant change only adds regression risk. Recommend Won't-Fix/down-classify to the IcM, citing the covering control. |
+| **Accurate when filed; control shipped after the filing date** | `Won't-Fix (Fixed-Since-Filed)` | Close, naming the first release containing the control — **and** answer whether any shipped release lacked it. |
+| **No client-side change can close it (protocol/platform constraint)** | `Not-Fixable (By-Design)` | Cite the standard + the compensating control we implement instead; ask MSRC to withdraw. |
+| **Fix exists on a branch but not on the release** | `Keep` | Don't re-write it — **land it**. |
+| **Landed then reverted** | `Keep` | Find out **why** before re-landing. |
+| **No control anywhere** | `Keep` | Produce a dispatch-ready Remediation Spec (Step 4.5). |
+
+> Always run **Gate 0 first.** A large share of filed findings are already covered by defense-in-depth — but
+> **not all**, so the gate requires a cited control, never a hunch. Be conservative both ways: don't ship a
+> redundant fix into a >1B-user library (regression risk for no gain), and don't wave a finding off as
+> "covered" without proving the control exists on the **shipping** ref.
+> A single IcM may carry **different dispositions for different sub-claims** — split them (Non-Negotiable #24).
+
+---
+
+## Pre-Commit Safety Check (MANDATORY)
+
+This skill lives in a **public** repo. **Before every commit that touches this skill**, run the scanner and
+review its output — no exceptions:
+
+```
+python .github/skills/vuln-triage-reporter/scripts/safety_check.py
+```
+
+It scans the **staged + modified** skill files (and warns if any investigation output under
+`local-context/` or the private workspace is accidentally tracked) for:
+- Telemetry **sampling rates / coverage percentages** (the evasion map) — forbidden.
+- **Internal security-control logic** — flight constant names, bypass/skip conditions, and real
+  `file:line` citations into private submodules — forbidden in docs/specs.
+- **PII / tenant GUIDs / UPNs / aliases / internal hostnames** (internal-host and corp-UPN patterns) —
+  forbidden.
+- **Real long IcM numbers / FireWatch GUIDs paired with finding content** — forbidden in committed skill
+  text (use placeholders like `NNNNNN` in examples).
+
+Opaque routing IDs (team IDs, service-tree GUIDs, codenames) are allowed and are NOT flagged. A **non-zero
+exit means do not commit** until the flagged content is removed or genericized. The agent must run this and
+report the result before staging any commit; if asked to commit without it, run it first anyway.
+
+---
+
+## Output
+
+Per-finding `README.md` + an aggregate roll-up. Both must make the **agree/rebut decision explicit** and
+cite code evidence for every severity call. Keep the aggregate short enough to drop into a shared WBR.
