@@ -506,14 +506,14 @@ are added to release storage.
 
 ### Approved external-gate lifecycle and recovery
 
-`finalize.gate_watch` approves **Remove RC Tags**, enabling the orchestrator's publish
+`finalize.remove_rc_tags_gate` approves **Remove RC Tags**, enabling the orchestrator's publish
 stages. `finalize.publish_notes_gate` separately approves **Publish GitHub Release Notes**
 after integration PRs merge. Neither plain `approve` nor generic `done`/`skip` may complete
 these externally backed gates.
 
 ```powershell
-python -m orchestrator.cli approve-orchestrator-gate --release <id> --phase finalize --step gate_watch --preview --comment "<reviewed comment>"
-python -m orchestrator.cli approve-orchestrator-gate --release <id> --phase finalize --step gate_watch --comment "<same comment>" --review-hash <hash> --approved-by <reviewer> --executor <session>
+python -m orchestrator.cli approve-orchestrator-gate --release <id> --phase finalize --step remove_rc_tags_gate --preview --comment "<reviewed comment>"
+python -m orchestrator.cli approve-orchestrator-gate --release <id> --phase finalize --step remove_rc_tags_gate --comment "<same comment>" --review-hash <hash> --approved-by <reviewer> --executor <session>
 ```
 
 `--phase`/`--step` may select an explicit eligible gate; otherwise the command resolves the
@@ -561,7 +561,7 @@ approvals block preparation; no provider id is fabricated.
 After an interrupted/uncertain attempt, recover the **same** owner:
 
 ```powershell
-python -m orchestrator.cli approve-orchestrator-gate --release <id> --phase finalize --step gate_watch --execution-id <owned-id>
+python -m orchestrator.cli approve-orchestrator-gate --release <id> --phase finalize --step remove_rc_tags_gate --execution-id <owned-id>
 ```
 
 An attempted execution only reads the frozen approval; it never resubmits. Success requires
@@ -943,6 +943,10 @@ try {
 This confines pytest fixtures and `TemporaryDirectory` state/locks to one cleaned
 directory without touching `.release-runs`. For a full-suite run when warranted,
 replace the selectors with `tests`; do not invoke live release commands as tests.
+Each test has a 180-second fail-fast guard that prints all Python thread stacks and
+terminates pytest with exit code 124 instead of hanging indefinitely. Override it
+with `--test-timeout=<seconds>` or use `@pytest.mark.timeout(<seconds>)` for an
+intentionally longer test; `0` disables the guard.
 
 ## Design constraints honored (from §7.1 of the stabilization plan)
 1. Real-by-default with a personal `mocks.local.yaml` (skip/redirect/inject per step) is the test method — never blast the real DL from a test (use a `send_to` redirect).

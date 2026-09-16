@@ -164,7 +164,7 @@ def test_approve_advances():
     assert st.is_done("bug_bash", "bugbash_complete")
     orch.run_until_gate()
     report = orch.status_report()
-    assert report["current_step"] == "gate_watch"
+    assert report["current_step"] == "remove_rc_tags_gate"
     assert report["status"] == "holding_gate"
 
 

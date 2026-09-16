@@ -15,11 +15,11 @@ from orchestrator.approvals import ApprovalRequest
 from orchestrator.outcomes import Blocked
 from orchestrator.parameters import NoParameters
 from orchestrator.step_context import ApprovalContext, Clock, EvidenceView, ReleaseView, StepContext
-from steps.finalize import gate_watch, publish_notes_gate
+from steps.finalize import publish_notes_gate, remove_rc_tags_gate
 from tools import pipelines as P
 
 
-GATES = (gate_watch, publish_notes_gate)
+GATES = (remove_rc_tags_gate, publish_notes_gate)
 ORG, PROJECT = "https://example.invalid/org", "project"
 APPROVAL = "approval-12"
 

@@ -2,7 +2,7 @@
 
 The finalize phase has TWO orchestrator gates, each a normal engine gate whose approval must ALSO
 submit the real ADO pipeline approval:
-  * `gate_watch`         → the 'Remove RC Tags' stage (publishes the release),
+  * `remove_rc_tags_gate` → the 'Remove RC Tags' stage (publishes the release),
   * `publish_notes_gate` → the 'Publish GitHub Release Notes' stage (after the integration PRs merge).
 
 Preview the exact provider target, then submit only its reviewed hash. The engine checkpoints
@@ -64,7 +64,7 @@ def cmd_approve_orchestrator_gate(args):
 def register(sub):
     sp = sub.add_parser(
         "approve-orchestrator-gate",
-        help="Approve a Phase-4 orchestrator gate (gate_watch 'Remove RC Tags' or "
+        help="Approve a Phase-4 orchestrator gate (remove_rc_tags_gate 'Remove RC Tags' or "
              "publish_notes_gate 'Publish GitHub Release Notes') AND submit the real ADO approval.")
     sp.add_argument("--release", required=True)
     sp.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")

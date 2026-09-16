@@ -251,7 +251,7 @@ def test_real_catalog_compiles_models_without_binding_any_provider(monkeypatch):
     assert catalog.get("preflight", "notice").parse_parameters(values={"variant": "update"}).variant == "update"
     assert catalog.get("bug_bash", "clone_plans_auth").parse_parameters(
         HookRole.RETRY, {"reason": "verified"}).reason == "verified"
-    assert catalog.get("finalize", "gate_watch").parse_parameters(
+    assert catalog.get("finalize", "remove_rc_tags_gate").parse_parameters(
         HookRole.APPROVAL_PREPARE, {"comment": "reviewed"}).comment == "reviewed"
     with pytest.raises(ParameterError, match="unknown parameter.*variant"):
         catalog.get("preflight", "flight_reminder").parse_parameters(values={"variant": "update"})

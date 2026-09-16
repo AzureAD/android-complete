@@ -3,10 +3,10 @@
 
 The Release Orchestrator parks at a SECOND manual approval — the "Publish GitHub Release Notes"
 stage — AFTER the integration PRs are merged (checklist Step 2). Approving it publishes the
-GitHub release notes for MSAL and Common. This is the sibling of `gate_watch` (which approves the
+GitHub release notes for MSAL and Common. This is the sibling of `remove_rc_tags_gate` (which approves the
 first gate, 'Remove RC Tags'), so it runs later in the phase.
 
-Like gate_watch, this gate is stage-SPECIFIC: it only ever prepares an approval for the
+Like remove_rc_tags_gate, this gate is stage-SPECIFIC: it only ever prepares an approval for the
 'Publish GitHub Release Notes' stage. It refuses other parked stages, so it cannot approve an
 earlier gate. Once core persists that approval identity, a newer run cannot replace it.
 

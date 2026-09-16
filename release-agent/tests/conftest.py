@@ -14,6 +14,8 @@ import sys
 
 import pytest
 
+pytest_plugins = ("tests._timeout",)
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # release-agent/
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)

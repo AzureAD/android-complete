@@ -125,14 +125,14 @@ owners require explicit review/repair, not an automatic reset or migration.
 
 ## External gate approval and recovery
 
-The two Phase-4 gates are independent: `finalize.gate_watch` authorizes **Remove RC Tags**
+The two Phase-4 gates are independent: `finalize.remove_rc_tags_gate` authorizes **Remove RC Tags**
 and the following publish stages; `finalize.publish_notes_gate` authorizes **Publish GitHub
 Release Notes** after integration PRs merge. An approval for one stage never substitutes
 for the other. Plain `approve`, generic `done`/`skip`, and outcome mocks cannot complete
 an external gate.
 
 1. Run `approve-orchestrator-gate --release <id> --preview --comment "<comment>"`,
-   optionally with `--phase finalize --step gate_watch` or `publish_notes_gate`.
+   optionally with `--phase finalize --step remove_rc_tags_gate` or `publish_notes_gate`.
    Preview is read-only and returns `{request, review_hash, ...}`. Review the exact
    organization, project, build id, stage, approval id and comment with the human,
    alongside freshly rendered status. Missing, wrong-stage or ambiguous identities

@@ -329,7 +329,7 @@ def test_ui_producer_preserves_human_content_and_checks_target_generation(tmp_pa
 
 @pytest.mark.parametrize("phase, step, role, values", [
     ("preflight", "notice", "build", {"variant": 1}),
-    ("finalize", "gate_watch", "prepare_approval", {"comment": None}),
+    ("finalize", "remove_rc_tags_gate", "prepare_approval", {"comment": None}),
     ("bug_bash", "distribute_tests", "build", {"oof": "not-a-list"}),
 ])
 def test_typed_parameters_validate_direct_and_parsed_construction(phase, step, role, values):

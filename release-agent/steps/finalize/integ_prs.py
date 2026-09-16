@@ -1,6 +1,6 @@
 """Step: `integ_prs` — auto-create the release integration/freeze PRs (Phase 4, finalize, F2).
 
-After `gate_watch` approves "Remove RC Tags", the orchestrator creates the
+After `remove_rc_tags_gate` approves "Remove RC Tags", the orchestrator creates the
 `release-integration/<v>` branches (and earlier cut `release/<v>` + `working/release/<v>`).
 Today the release owner opens EIGHT PRs by hand off the compare links the pipeline prints.
 This step opens them — 2 per repo across 4 repos / 3 hosts:
@@ -53,7 +53,7 @@ INTEG_PREFIX = "release-integration/"
 
 # The orchestrator stage that CREATES the release-integration branches. integ_prs must not
 # run before this stage completes — the RI branches (and thus the integration PRs) don't
-# exist until it does. This is the authoritative trigger, NOT merely gate_watch passing.
+# exist until it does. This is the authoritative trigger, NOT merely remove_rc_tags_gate passing.
 IR_STAGE = "Create PRs to Integrate Release Branches"
 
 # The 4 release repos. `tool` selects the PR backend: 'gh' (github.com / GHE) or 'ado'.
@@ -296,7 +296,7 @@ def build(context: StepContext):
             "(e.g. {msal: '8.4.2'}) for testing, or wait for orchestrator version discovery.")
 
     # Gate on the orchestrator stage that creates the release-integration branches — NOT merely
-    # on gate_watch passing. Monitor it and only proceed once it has completed successfully.
+    # on remove_rc_tags_gate passing. Monitor it and only proceed once it has completed successfully.
     status, detail = _ir_stage_status(context)
     if status == "failed":
         return Blocked(

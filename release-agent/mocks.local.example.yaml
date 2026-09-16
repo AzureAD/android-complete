@@ -91,7 +91,7 @@ preflight.cg:
 # bug_bash.bash_done:    🚦 gate — NOT mockable
 
 # ---- Phase 4 · finalize ----
-# finalize.gate_watch:  🚦 gate — NOT mockable
+# finalize.remove_rc_tags_gate:  🚦 gate — NOT mockable
 # finalize.integ_prs:   { outcome: done }   # agent
 # finalize.verify_pub:  { outcome: done }   # agent
 # finalize.verify_pub:  { results: {common4j: published, common: published, msal: published} }  # agent

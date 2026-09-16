@@ -6,15 +6,18 @@ from tests._harness import *  # noqa: F401,F403
 
 
 
-def test_gate_watch_build_shows_pending_brief():
+def test_remove_rc_tags_gate_build_shows_pending_brief():
     """build() with an injected pending approval → a needs_human brief naming the build, the
     stage, and the publish consequences."""
-    from steps.finalize import gate_watch as gw
+    from steps.finalize import remove_rc_tags_gate as gw
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08")
     info = {"approval_id": "A1", "build_id": 1681228, "stage": "Remove RC Tags", "build_url": "u"}
-    with mockctx.active({"approval": info}):
+    with mockctx.active({
+        "approval": info,
+        "stage_state": {"state": "pending", "result": None},
+    }):
         out = as_dict(_invoke(gw.build, st))
     assert out["kind"] == "needs_human"
     assert "1681228" in out["prompt"] and "Remove RC Tags" in out["prompt"]
@@ -23,22 +26,54 @@ def test_gate_watch_build_shows_pending_brief():
 
 
 
-def test_gate_watch_build_done_when_not_parked():
-    """build() when nothing is parked (injected approval=None) → Done, nothing to approve."""
-    from steps.finalize import gate_watch as gw
+def test_remove_rc_tags_gate_build_holds_when_not_parked():
+    """No approval and an incomplete stage must hold; absence never skips the gate."""
+    from steps.finalize import remove_rc_tags_gate as gw
     from steps.lib import mockctx
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08")
-    with mockctx.active({"approval": None}):
+    with mockctx.active({
+        "approval": None,
+        "stage_state": {"state": "notStarted", "result": None},
+    }):
         out = as_dict(_invoke(gw.build, st))
-    assert out["kind"] == "done" and "nothing to" in out["note"].lower()
+    assert out["kind"] == "needs_human"
+    assert "isn't parked yet" in out["prompt"] and "remains incomplete" in out["prompt"]
+
+
+def test_remove_rc_tags_gate_build_done_only_after_stage_succeeds():
+    from steps.finalize import remove_rc_tags_gate as gw
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+
+    st = ReleaseState(release_id="2026-08")
+    with mockctx.active({
+        "approval": None,
+        "stage_state": {"state": "completed", "result": "succeeded"},
+    }):
+        out = as_dict(_invoke(gw.build, st))
+    assert out["kind"] == "done" and "completed successfully" in out["note"]
+
+
+def test_remove_rc_tags_gate_build_blocks_failed_stage():
+    from steps.finalize import remove_rc_tags_gate as gw
+    from steps.lib import mockctx
+    from orchestrator.outcomes import as_dict
+
+    st = ReleaseState(release_id="2026-08")
+    with mockctx.active({
+        "approval": None,
+        "stage_state": {"state": "completed", "result": "failed"},
+    }):
+        out = as_dict(_invoke(gw.build, st))
+    assert out["kind"] == "blocked" and "result 'failed'" in out["reason"]
 
 
 
 
-def test_gate_watch_submit_approval_submits():
+def test_remove_rc_tags_gate_submit_approval_submits():
     """Preparation freezes the pending identity/comment; submission calls the injected writer."""
-    from steps.finalize import gate_watch as gw
+    from steps.finalize import remove_rc_tags_gate as gw
     from steps.lib import mockctx
     from tools import pipelines as P
     st = ReleaseState(release_id="2026-08")
@@ -64,8 +99,8 @@ def test_gate_watch_submit_approval_submits():
                     "id": "A1", "comment": "go"}
 
 
-def test_gate_watch_submit_approval_rejects_different_stage():
-    from steps.finalize import gate_watch as gw
+def test_remove_rc_tags_gate_submit_approval_rejects_different_stage():
+    from steps.finalize import remove_rc_tags_gate as gw
     from steps.lib import mockctx
     from tools import pipelines as P
 
@@ -92,8 +127,8 @@ def test_gate_watch_submit_approval_rejects_different_stage():
     assert "not 'Remove RC Tags'" in detail
 
 
-def test_gate_watch_submit_refuses_completed_stage_without_approval_identity():
-    from steps.finalize import gate_watch as gw
+def test_remove_rc_tags_gate_submit_refuses_completed_stage_without_approval_identity():
+    from steps.finalize import remove_rc_tags_gate as gw
     from steps.lib import mockctx
 
     st = ReleaseState(release_id="2026-08")
@@ -107,8 +142,8 @@ def test_gate_watch_submit_refuses_completed_stage_without_approval_identity():
     assert "Stage completion alone" in detail
 
 
-def test_gate_watch_refuses_later_gate_even_when_original_stage_completed():
-    from steps.finalize import gate_watch as gw
+def test_remove_rc_tags_gate_refuses_later_gate_even_when_original_stage_completed():
+    from steps.finalize import remove_rc_tags_gate as gw
     from steps.lib import mockctx
 
     st = ReleaseState(release_id="2026-08")
@@ -129,9 +164,9 @@ def test_gate_watch_refuses_later_gate_even_when_original_stage_completed():
 
 
 
-def test_gate_watch_submit_approval_skip_knob():
+def test_remove_rc_tags_gate_submit_approval_skip_knob():
     """Legacy submit: skip blocks preparation; it never fabricates provider success."""
-    from steps.finalize import gate_watch as gw
+    from steps.finalize import remove_rc_tags_gate as gw
     from steps.lib import mockctx
     st = ReleaseState(release_id="2026-08")
     with mockctx.active({"approval": {"approval_id": "A1", "build_id": 1, "stage": "x", "build_url": "u"},

@@ -202,6 +202,12 @@ def _fast_forward(orch: Orchestrator, config: dict, target_phase: str, mode: str
     tgt_idx = ids.index(target_phase)
     approved, problems = [], []
     forwarded = 0
+    target = _phase_by_id(config, target_phase)
+    if mode == "gate" and not any(
+            step.get("kind") == "approval_gate" for step in (target or {}).get("steps", [])):
+        problems.append(f"target '{target_phase}' has no gate")
+        return _stop("done", f"Target '{target_phase}' has no gate.",
+                     forwarded, approved, problems)
     attempted: set = set()      # threaded into step_once so a re-blocking PARALLEL step
                                 # can't be re-run every iteration (else it spins to the cap)
 
@@ -256,7 +262,11 @@ def _fast_forward(orch: Orchestrator, config: dict, target_phase: str, mode: str
             # Approve if allowed: earlier-phase gates always; target gate only in
             # 'done' mode or when explicitly listed.
             if (act.phase != target_phase) or mode == "done" or step_id in approve_gates:
-                orch.approve_gate("[sim] auto-approved")
+                transition = orch.approve_gate("[sim] auto-approved")
+                if transition.kind != "ran":
+                    problems.append(
+                        f"gate approval failed: {act.phase}.{step_id} - {transition.message}")
+                    return _stop("gate", transition.message, forwarded, approved, problems)
                 approved.append(f"{act.phase}.{step_id}")
                 forwarded += 1
                 continue

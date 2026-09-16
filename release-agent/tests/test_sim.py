@@ -53,7 +53,7 @@ def test_sim_surfaces_blocked_target_step():
     from orchestrator import sim as SIM
     scenario = {"name": "t_block", "release_id": "2026-08", "ccd": "2026-08-26",
                 "as_of": "CCD+2", "data": "mock",
-                "target": {"phase": "build_verify", "at": "gate"},
+                "target": {"phase": "build_verify", "at": "done"},
                 "mocks": {"build_verify.mrwp_ecs": {
                     "mrwp_id": "555",
                     "stages": [{"name": "Build", "state": "completed", "result": "succeeded"},
@@ -97,12 +97,58 @@ def test_sim_surfaces_blocked_step_in_parallel_phase():
     from orchestrator import sim as SIM
     scenario = {"name": "t_par_block", "release_id": "2026-08", "ccd": "2026-08-26",
                 "as_of": "CCD-6", "data": "mock",
-                "target": {"phase": "preflight", "at": "gate"},
+                "target": {"phase": "preflight", "at": "done"},
                 "mocks": {"preflight.cg": {"outcome": "blocked", "reason": "sim: CG alert"}}}
     with tempfile.TemporaryDirectory() as tmp:
         res = SIM.run_scenario(scenario, runs_root=tmp)
     assert res.stop_kind == "blocked" and res.steps_forwarded < 50
     assert any("preflight.cg" in p for p in res.problems)
+
+
+def test_sim_stops_when_external_gate_rejects_generic_approval():
+    from orchestrator import sim as SIM
+    from orchestrator.engine import NextAction
+
+    class ExternalGateOrchestrator:
+        def __init__(self):
+            self.approvals = 0
+
+        def current_phase_id(self):
+            return "first"
+
+        def step_once(self, attempted):
+            return NextAction(
+                kind="gate",
+                phase="first",
+                step="external",
+                message="holding external gate",
+            )
+
+        def approve_gate(self, comment):
+            self.approvals += 1
+            return NextAction(
+                kind="idle",
+                phase="first",
+                step="external",
+                message="External gate requires a durable provider receipt.",
+            )
+
+    config = {"phases": [
+        {"id": "first", "steps": [{
+            "id": "external",
+            "kind": "approval_gate",
+            "approval_command": "approve-orchestrator-gate",
+        }]},
+        {"id": "target", "steps": []},
+    ]}
+    orch = ExternalGateOrchestrator()
+
+    result = SIM._fast_forward(orch, config, "target", "open", set(), max_iter=5)
+
+    assert result["kind"] == "gate"
+    assert orch.approvals == 1
+    assert result["forwarded"] == 0
+    assert any("gate approval failed" in problem for problem in result["problems"])
 
 
 

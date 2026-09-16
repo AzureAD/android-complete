@@ -1,4 +1,6 @@
 """Release-agent tests — readiness. Shared harness in tests/_harness.py."""
+from unittest.mock import patch
+
 import pytest
 
 from tests._harness import *  # noqa: F401,F403
@@ -713,8 +715,7 @@ def test_auth_ui_projection_aggregates(monkeypatch):
 
 
 def test_sim_gate_mode_on_gateless_phase_reports_problem():
-    """`at: gate` on a phase with no gate step (partner) doesn't hang — it completes the
-    phase and reports that the gate was never reached (reached=False)."""
+    """`at: gate` on a gateless phase fails fast instead of traversing unrelated gates."""
     import tempfile
     from orchestrator import sim as SIM
     scenario = {"name": "t_nogate", "release_id": "2026-08", "ccd": "2026-08-26",
@@ -723,6 +724,7 @@ def test_sim_gate_mode_on_gateless_phase_reports_problem():
     with tempfile.TemporaryDirectory() as tmp:
         res = SIM.run_scenario(scenario, runs_root=tmp)
     assert not res.reached
+    assert res.steps_forwarded == 0
     assert any("no gate" in p for p in res.problems)
 
 
@@ -831,44 +833,67 @@ def test_gate_info_command_renders_and_handles_unknown():
     assert "No knowledge entry yet" in buf2.getvalue()
 
 
+def _run_remove_rc_tags_command(command_module, cli_common, args, submit):
+    from tools import pipelines as P
+
+    pending = {
+        "approval_id": "approval-555",
+        "build_id": 555,
+        "stage": "Remove RC Tags",
+        "build_url": "https://example.invalid/build/555",
+    }
+    with (
+        patch("orchestrator.mocks.load_mocks", return_value={}),
+        patch.object(P, "find_orchestrator_pending_approval",
+                     return_value=(True, pending, "")),
+        patch.object(P, "submit_pipeline_approval", side_effect=submit),
+        cli_common.state_lock(args.runs_root, args.release),
+    ):
+        _, preview_orch = cli_common.load_orch(
+            args.runs_root, args.release, args.config, None)
+        preview = preview_orch.preview_gate_approval(
+            "finalize", "remove_rc_tags_gate", comment=args.comment)
+        args.review_hash = preview["review_hash"]
+        args.approved_by = "test-reviewer"
+        args.executor = "test-executor"
+        args.execution_id = None
+        args.reserve = False
+        args.preview = False
+        return command_module.cmd_approve_orchestrator_gate(args)
 
 
 def test_approve_orchestrator_gate_command_submits_then_advances():
     """The `approve-orchestrator-gate` command submits the ADO approval (via
-    gate_watch.submit_approval) and, on success, records the finalize.gate_watch gate + advances.
+    remove_rc_tags_gate.submit_approval) and, on success, records the
+    finalize.remove_rc_tags_gate gate + advances.
     No engine hook is involved — the command composes submit + the normal approve."""
     import tempfile, argparse
     from orchestrator.commands import gate_approve as GA
     from orchestrator import cli_common as _C
-    from steps.finalize import gate_watch as gw
     st, orch = _orch()
     _advance_to_first_gate(orch); orch.approve_gate("ok"); orch.run_until_gate()
     report = orch.status_report()
-    assert report["current_step"] == "gate_watch"
+    assert report["current_step"] == "remove_rc_tags_gate"
     assert report["status"] == "holding_gate"
     assert report["gate"]["approval_command"] == "approve-orchestrator-gate"
 
     calls = {}
 
-    def fake_submit(context):
-        calls["comment"] = context.parameters.comment
+    def fake_submit(_org, _project, _approval_id, comment):
+        calls["comment"] = comment
         return (True, "submitted the 'Remove RC Tags' approval on build 555")
 
-    o = gw.submit_approval
-    gw.submit_approval = fake_submit
-    try:
-        with tempfile.TemporaryDirectory() as d:
-            _C.save_state(st, d, "t")
-            ns = argparse.Namespace(runs_root=d, release="t", config=CONFIG,
-                                    as_of=None, comment="ship it")
-            rc = GA.cmd_approve_orchestrator_gate(ns)
-            after = _C.load_state(d, "t")
-    finally:
-        gw.submit_approval = o
+    with tempfile.TemporaryDirectory() as d:
+        _C.save_state(st, d, "t")
+        ns = argparse.Namespace(runs_root=d, release="t", config=CONFIG,
+                                as_of=None, comment="ship it")
+        rc = _run_remove_rc_tags_command(GA, _C, ns, fake_submit)
+        after = _C.load_state(d, "t")
     assert rc == 0
     assert calls["comment"] == "ship it"                 # human's comment reaches the ADO submit
-    assert after.is_done("finalize", "gate_watch")       # gate recorded only after submit succeeded
-    assert "Remove RC Tags" in (after.get_step("finalize", "gate_watch").note or "")
+    assert after.is_done("finalize", "remove_rc_tags_gate")  # recorded only after provider success
+    note = after.get_step("finalize", "remove_rc_tags_gate").note or ""
+    assert "approval-555" in note and "build 555" in note
 
 
 def test_generic_approve_rejects_gate_with_external_approval_command():
@@ -881,7 +906,7 @@ def test_generic_approve_rejects_gate_with_external_approval_command():
     _advance_to_first_gate(orch)
     orch.approve_gate("ok")
     orch.run_until_gate()
-    assert orch.status_report()["current_step"] == "gate_watch"
+    assert orch.status_report()["current_step"] == "remove_rc_tags_gate"
 
     with tempfile.TemporaryDirectory() as directory:
         _C.save_state(st, directory, "t")
@@ -894,9 +919,9 @@ def test_generic_approve_rejects_gate_with_external_approval_command():
         )
         assert release_cmd.cmd_approve(args) == 1
         after = _C.load_state(directory, "t")
-    assert not after.is_done("finalize", "gate_watch")
+    assert not after.is_done("finalize", "remove_rc_tags_gate")
     assert not any(
-        decision.get("step") == "finalize.gate_watch"
+        decision.get("step") == "finalize.remove_rc_tags_gate"
         for decision in after.gate_decisions
     )
 
@@ -907,84 +932,75 @@ def test_approve_orchestrator_gate_rejects_unapproved_terminal_gate_record():
     from orchestrator import cli_common as _C
     from orchestrator.commands import gate_approve as GA
     from orchestrator.state import StepState
-    from steps.finalize import gate_watch as gw
-
     st, orch = _orch()
     _advance_to_first_gate(orch)
     orch.approve_gate("ok")
     orch.run_until_gate()
     st.set_step(
         "finalize",
-        "gate_watch",
+        "remove_rc_tags_gate",
         StepState(status="skipped", completed_at="legacy", note="old override"),
     )
     st.gate_decisions = [
         decision
         for decision in st.gate_decisions
-        if decision.get("step") != "finalize.gate_watch"
+        if decision.get("step") != "finalize.remove_rc_tags_gate"
     ]
-    original = gw.submit_approval
-    gw.submit_approval = lambda context: (True, "submitted build 555")
-    try:
-        with tempfile.TemporaryDirectory() as directory:
-            _C.save_state(st, directory, "t")
-            args = argparse.Namespace(
-                runs_root=directory,
-                release="t",
-                config=CONFIG,
-                as_of=None,
-                comment="recovered",
-            )
-            rc = GA.cmd_approve_orchestrator_gate(args)
-            after = _C.load_state(directory, "t")
-    finally:
-        gw.submit_approval = original
+    with tempfile.TemporaryDirectory() as directory:
+        _C.save_state(st, directory, "t")
+        args = argparse.Namespace(
+            runs_root=directory,
+            release="t",
+            config=CONFIG,
+            as_of=None,
+            comment="recovered",
+        )
+        rc = _run_remove_rc_tags_command(
+            GA, _C, args, lambda *_args: (True, "submitted build 555"))
+        after = _C.load_state(directory, "t")
     assert rc == 0
-    assert after.get_step("finalize", "gate_watch").status == "done"
+    assert after.get_step("finalize", "remove_rc_tags_gate").status == "done"
 
 
 
 
 def test_approve_orchestrator_gate_command_holds_when_submit_fails():
     """Safety property: if the ADO submit FAILS, the command returns non-zero and does NOT record
-    the gate — the release-agent stays holding at gate_watch so it can be retried."""
+    the gate — release-agent retains the exact execution for reconciliation."""
     import tempfile, argparse
     from orchestrator.commands import gate_approve as GA
     from orchestrator import cli_common as _C
-    from steps.finalize import gate_watch as gw
     st, orch = _orch()
     _advance_to_first_gate(orch); orch.approve_gate("ok"); orch.run_until_gate()
-    assert orch.status_report()["current_step"] == "gate_watch"
+    assert orch.status_report()["current_step"] == "remove_rc_tags_gate"
     assert orch.status_report()["status"] == "holding_gate"
 
-    o = gw.submit_approval
-    gw.submit_approval = lambda context: (False, "ADO approval submit FAILED (boom).")
-    try:
-        with tempfile.TemporaryDirectory() as d:
-            _C.save_state(st, d, "t")
-            ns = argparse.Namespace(runs_root=d, release="t", config=CONFIG,
-                                    as_of=None, comment="ship it")
-            rc = GA.cmd_approve_orchestrator_gate(ns)
-            after = _C.load_state(d, "t")
-    finally:
-        gw.submit_approval = o
+    with tempfile.TemporaryDirectory() as d:
+        _C.save_state(st, d, "t")
+        ns = argparse.Namespace(runs_root=d, release="t", config=CONFIG,
+                                as_of=None, comment="ship it")
+        rc = _run_remove_rc_tags_command(
+            GA, _C, ns, lambda *_args: (False, "ADO approval submit FAILED (boom)."))
+        after = _C.load_state(d, "t")
     assert rc == 1
-    assert not after.is_done("finalize", "gate_watch")   # gate NOT recorded
+    assert not after.is_done("finalize", "remove_rc_tags_gate")  # gate NOT recorded
+    execution = after.get_step("finalize", "remove_rc_tags_gate").execution
+    assert execution and execution["approval"]["receipt"] is None
     after_orch = Orchestrator(CONFIG, after, mocks={})
-    assert after_orch.status_report()["status"] == "holding_gate"
-    assert after_orch.status_report()["current_step"] == "gate_watch"
+    assert after_orch.status_report()["status"] == "awaiting_action"
+    assert after_orch.status_report()["current_step"] == "remove_rc_tags_gate"
 
 
 
 
 def test_approve_orchestrator_gate_command_rejects_wrong_gate():
-    """The command refuses to act unless the release is actually holding at finalize.gate_watch."""
+    """The command requires the release to hold at finalize.remove_rc_tags_gate."""
     import tempfile, argparse
     from orchestrator.commands import gate_approve as GA
     from orchestrator import cli_common as _C
-    from steps.finalize import gate_watch as gw
+    from steps.finalize import remove_rc_tags_gate as gw
     st, orch = _orch()
-    _advance_to_first_gate(orch)   # holding at bug_bash.bugbash_complete, NOT gate_watch
+    _advance_to_first_gate(orch)  # at bug_bash_complete, not remove_rc_tags_gate
     assert orch.status_report()["current_step"] == "bugbash_complete"
 
     o = gw.submit_approval
@@ -998,7 +1014,8 @@ def test_approve_orchestrator_gate_command_rejects_wrong_gate():
             _C.save_state(st, d, "t")
             ns = argparse.Namespace(runs_root=d, release="t", config=CONFIG,
                                     as_of=None, comment="")
-            rc = GA.cmd_approve_orchestrator_gate(ns)
+            with patch("orchestrator.mocks.load_mocks", return_value={}):
+                rc = GA.cmd_approve_orchestrator_gate(ns)
     finally:
         gw.submit_approval = o
     assert rc == 1 and called["n"] == 0                  # no ADO submit attempted on the wrong gate

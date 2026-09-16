@@ -140,6 +140,16 @@ _SAFE_AGENTS = {
     "bug_bash.activate_chat": {"outcome": "done", "note": "meeting chat activated (test)"},
     "bug_bash.bugbash_updates": {"outcome": "done", "note": "first bug-bash update posted (test)"},
     "bug_bash.native_auth_signoff": {"outcome": "done", "note": "native auth sign-off recorded (test)"},
+    # Phase-4 first gate — show the exact pending gate without a provider read.
+    "finalize.remove_rc_tags_gate": {
+        "approval": {
+            "approval_id": "remove-rc-tags-test",
+            "build_id": 900020,
+            "stage": "Remove RC Tags",
+            "build_url": "https://example.invalid/build/900020",
+        },
+        "stage_state": {"state": "pending", "result": None},
+    },
     # Phase-4 finalize scout post — short-circuit so flow tests never hit Teams.
     "finalize.release_announcement": {"outcome": "done", "note": "release announced (test)"},
     # Phase-4 verify_pub — real agent (Maven Central HEADs). Short-circuit for flow tests.
@@ -300,14 +310,18 @@ def _orch(signed=True):
 
 
 def _advance_to_first_gate(orch):
-    """Now that go_test is gone, the first real GATE is Phase-3 `bug_bash.bugbash_complete`,
-    reached after the Phase-3 `ui_failures` human reminder. Drive to that reminder, clear
-    it, then drive to the bugbash_complete gate."""
+    """Position a focused test at the first real gate without replaying the whole workflow."""
     if orch.state._checkpoint is None:
         _enable_memory_checkpoints(orch.state)
-    orch.run_until_gate()                                     # holds at ui_failures (reminder)
-    orch.complete_step("bug_bash", "ui_failures", "test: UI failures reviewed")
-    orch.run_until_gate()                                     # holds at bugbash_complete (gate)
+    for phase in orch.workflow.phases:
+        for step in phase.steps:
+            if (phase.id, step.id) == ("bug_bash", "bugbash_complete"):
+                orch.run_until_gate()
+                return
+            orch.state.set_step(phase.id, step.id, StepState(status="done", by="test"))
+            if step.is_gate:
+                orch.state.gate_decisions.append(_gate_decision(f"{phase.id}.{step.id}"))
+    raise AssertionError("bug_bash.bugbash_complete is missing from the test workflow")
 
 
 

@@ -1252,7 +1252,7 @@ bug_bash.bugbash_complete:
 
 # ============================= Phase 4 · finalize =============================
 
-finalize.gate_watch:
+finalize.remove_rc_tags_gate:
   summary: "1-click approve the Release Orchestrator's parked 'Remove RC Tags' gate — triggers publish."
   what: >
     After Phase 3, the Release Orchestrator (def 2828) runs and PARKS at a manual approval on its
@@ -1299,7 +1299,7 @@ finalize.integ_prs:
     to date with the target and REVERTS build.gradle so the target stays dynamic (only version +
     changelog transfer); if a non-build.gradle conflict remains it HOLDS that PR for a human.
   trigger: >
-    NOT merely 'gate_watch passed'. The step MONITORS the Release Orchestrator and only fires once
+    NOT merely 'remove_rc_tags_gate passed'. The step MONITORS the Release Orchestrator and only fires once
     the 'Create PRs to Integrate Release Branches' stage has COMPLETED — the release-integration
     branches don't exist until then. While that stage is still running it reports in-progress and
     re-checks; if that stage FAILS it blocks (the RI branches were never created).
@@ -1365,7 +1365,7 @@ finalize.publish_notes_gate:
     After the integration PRs merge, the Release Orchestrator (def 2828) parks at a SECOND manual
     approval — the 'Publish GitHub Release Notes' stage. This step is the human's 1-click approval
     of that gate: on approval Scout submits the real ADO pipeline approval, which publishes the
-    GitHub release notes for MSAL and Common. It is the sibling of gate_watch (the first gate,
+    GitHub release notes for MSAL and Common. It is the sibling of remove_rc_tags_gate (the first gate,
     'Remove RC Tags') and runs later in the phase.
   who: >
     The release owner decides (approve / deny). Scout runs the discovery and, on approval, submits
@@ -1373,7 +1373,7 @@ finalize.publish_notes_gate:
     Release Notes' stage — if the orchestrator is parked at any other stage the submit is refused,
     so it can't approve the wrong gate.
   how: >
-    Approve with `approve-orchestrator-gate --release <id>` — the same command as gate_watch; it
+    Approve with `approve-orchestrator-gate --release <id>` — the same command as remove_rc_tags_gate; it
     detects which gate is holding, submits the correct ADO approval, and records the release-agent
     gate in one step. Deny with `deny` to HOLD. Approving early is safe: the gate verifies the
     'Publish GitHub Release Notes' stage is the parked one before submitting, so it won't approve
@@ -1386,8 +1386,8 @@ finalize.publish_notes_gate:
     - name: "Release Orchestrator pipeline YAML"
       url: "https://identitydivision.visualstudio.com/Engineering/_git/AuthClientAndroidPipelines?path=/production/monthly-release/release-orchestrator.yml"
   faqs:
-    - q: "How is this different from gate_watch?"
-      a: "gate_watch approves the FIRST gate ('Remove RC Tags', which publishes to Maven Central + creates the integration branches). publish_notes_gate approves the SECOND gate ('Publish GitHub Release Notes'), which parks only after the integration PRs merge."
+    - q: "How is this different from remove_rc_tags_gate?"
+      a: "remove_rc_tags_gate approves the FIRST gate ('Remove RC Tags', which publishes to Maven Central + creates the integration branches). publish_notes_gate approves the SECOND gate ('Publish GitHub Release Notes'), which parks only after the integration PRs merge."
     - q: "What if I approve before the orchestrator reaches the notes gate?"
       a: "Safe — the gate verifies the 'Publish GitHub Release Notes' stage is the parked one before submitting the ADO approval. If a different stage is parked (or none), it refuses to submit and stays holding."
     - q: "Nothing is parked — is that an error?"

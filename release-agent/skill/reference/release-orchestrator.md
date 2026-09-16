@@ -15,7 +15,7 @@ manual gates, and the branch/PR model so those steps can't drift from reality.
 | 1 | Validate Branch and Versions availability | — | |
 | 2 | Create Release Branches | 1 | `create-branches.yml`; creates release/ + working-release/ for common/msal/broker AND the Authenticator (unless `debugSkipAuthenticatorBranch`). |
 | 3 | Trigger RC Testing | 2 | fires MRWP (def 2519) twice (ECS + Local). Verified by Phase-2 `mrwp_ecs`/`mrwp_local`. |
-| 4 | **Remove RC Tags** 🚦 | 3 | **1st manual gate** — approved by `gate_watch`. On approval the publish stages run. |
+| 4 | **Remove RC Tags** 🚦 | 3 | **1st manual gate** — approved by `remove_rc_tags_gate`. On approval the publish stages run. |
 | 5 | Publish Internal | 4 | internal artifacts → ADO Maven feed. |
 | 6 | Publish to Maven Central | 5 | MSAL/Common → Maven Central. Verified by `verify_pub`. |
 | 7 | Update Pipeline Variables | 5 | MSAL-PROD-Version, MSAL-PROD-BRANCH, Broker-PROD-Version. |
@@ -77,7 +77,7 @@ branch is missing from a run that hasn't advanced past its gate.
 ## Checklist mapping (combined-release-checklist Phase 4)
 | Checklist Step | Orchestrator / release-agent |
 |----------------|------------------------------|
-| 1 Remove RC Tags gate | stage 4 · `gate_watch` |
+| 1 Remove RC Tags gate | stage 4 · `remove_rc_tags_gate` |
 | 2 integration PRs | stage 8 (branches) · `integ_prs` (opens PRs) |
 | 3 OneAuth Common ingestion | `oneauth_common_pr` |
 | 4 Publish GitHub Release Notes gate | stage 9 · `publish_notes_gate` |

@@ -86,7 +86,7 @@ phases:
     name: "Finalize & Publish"
     checklist_phase: 4
     steps:
-      - { id: gate_watch,      name: "Watch orchestrator gates (1-click approve)", kind: approval_gate, approval_command: approve-orchestrator-gate, owner: human, gate: true, maps_to: [F1] }
+      - { id: remove_rc_tags_gate, name: "Approve 'Remove RC Tags' gate", kind: approval_gate, approval_command: approve-orchestrator-gate, owner: human, gate: true, maps_to: [F1] }
       - { id: integ_prs,       name: "Auto-create integration PRs", kind: external, pollable: true, write_command: create-integration-prs, owner: agent, source: scout, maps_to: [F2] }
       - { id: publish_notes_gate, name: "Approve 'Publish GitHub Release Notes' gate", kind: approval_gate, approval_command: approve-orchestrator-gate, owner: human, gate: true, maps_to: [F4] }
       - { id: verify_pub,      name: "Verify Maven Central + GitHub publication", kind: auto, effect_mode: read_only, owner: agent, maps_to: [F3] }
