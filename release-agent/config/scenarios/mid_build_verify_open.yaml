@@ -1,0 +1,13 @@
+# Drop in at the START of Phase 2 (build_verify) with Phases 0-1 done, entry gate
+# signed, clock one day past CCD. The four verification steps are NOT run — you
+# validate them yourself LIVE against the real 2026-08 pipeline runs from here.
+#
+#   release-agent sim run --scenario mid_build_verify_open
+#
+name: mid_build_verify_open
+release_id: 2026-08
+ccd: 2026-08-26
+ccd_source: confirmed
+as_of: CCD+1
+target: { phase: build_verify, at: open }
+data: live          # target phase reads real az; earlier phases are fast-forwarded

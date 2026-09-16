@@ -1,0 +1,35 @@
+# Release-announcement cc groups — maintained manually.
+#
+# WHY THIS FILE EXISTS: the "General" channel release announcement cc's four Teams TAGS
+# (CP/Intune, LTW, OneAuth, Native Auth). The microsoft_teams MCP CANNOT @-mention a Teams
+# tag (it maps the id to an unknown user), and fetching tag membership via Graph needs
+# TeamworkTag.Read (interactive-only, which breaks silent runs). So we maintain the tag
+# MEMBERS here and @-mention the individuals instead (user mentions render correctly).
+#
+# Each member: {name, email}. `email` is the UPN used as the mention id; `name` is the
+# @chip text. Keep in sync by hand when a tag's membership changes.
+groups:
+  CP/Intune:
+    - { name: "Bing Xia",             email: bingxi@microsoft.com }
+    - { name: "Boyu Zhang",           email: boyzhang@microsoft.com }
+    - { name: "Connor Fitzsimons",    email: cofitz@microsoft.com }
+    - { name: "Dave Gonthier",        email: dagonthi@microsoft.com }
+    - { name: "Evan Vescovilin",      email: evanve@microsoft.com }
+    - { name: "Grace Michnovicz",     email: grmichno@microsoft.com }
+    - { name: "James Matthews",       email: jamatth@microsoft.com }
+    - { name: "Jeff Stong",           email: jestong@microsoft.com }
+    - { name: "Julia Kollin Zomback", email: jukollin@microsoft.com }
+    - { name: "Katie Fairbrother",    email: kagillig@microsoft.com }
+    - { name: "Ozge Yavuz",           email: ozy@microsoft.com }
+    - { name: "Phil Huge",            email: philhuge@microsoft.com }
+    - { name: "Ryan Gormley",         email: rygo@microsoft.com }
+    - { name: "Samsil Arefin",        email: saarefin@microsoft.com }
+    - { name: "Steve Morin",          email: stmorin@microsoft.com }
+  LTW:
+    - { name: "Fengxian Ren",         email: feren@microsoft.com }
+    - { name: "Nathan Bu",            email: shbu@microsoft.com }
+    - { name: "Yanlei Hou",           email: yanleihou@microsoft.com }
+  OneAuth:
+    - { name: "Nick Bopp",            email: nichbop@microsoft.com }
+  Native Auth:
+    - { name: "Yu Xin",               email: yuxin@microsoft.com }

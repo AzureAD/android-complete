@@ -186,8 +186,8 @@ project(':labapi').projectDir = new File('common/labapi')
 include(":keyvault")
 project(':keyvault').projectDir = new File('common/keyvault')
 
-include(":AcaPlugin")
-project(':AcaPlugin').projectDir = new File('plugins/buildsystem')
+//include(":AcaPlugin")
+//project(':AcaPlugin').projectDir = new File('plugins/buildsystem')
 
 include(":broker4j")
 project(':broker4j').projectDir = new File('broker/broker4j')
@@ -210,8 +210,8 @@ project(':mockltw').projectDir = new File('broker/mockbrokers/mockltw')
 include(":mockbrokerapplib")
 project(':mockbrokerapplib').projectDir = new File('broker/mockbrokers/mockbrokerapplib')
 
-include(":NativeAuthSample")
-project(':NativeAuthSample').projectDir = new File('nativeauthsample/app')
+//include(":NativeAuthSample")
+//project(':NativeAuthSample').projectDir = new File('nativeauthsample/app')
 
 // Authenticator App Projects — only included when the opt-in flag is set.
 if (includeAuthenticatorApp) {
