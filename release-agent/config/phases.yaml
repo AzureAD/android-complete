@@ -103,7 +103,6 @@ phases:
     checklist_phase: 5
     steps:
       - { id: notice,          name: "Send initial Auth App release notice", kind: external, owner: agent, source: scout, maps_to: [R1] }
-      - { id: artifact,        name: "Verify final non-RC artifact is used", kind: auto, implementation: dummy, owner: agent, maps_to: [R2] }
       - { id: signoff_start,   name: "Start Release Sign Off (1-click)", kind: approval_gate, owner: human, gate: true, maps_to: [R3] }
 
   - id: monitor

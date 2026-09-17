@@ -245,9 +245,9 @@ def test_real_catalog_compiles_models_without_binding_any_provider(monkeypatch):
         WorkflowDefinition.compile(yaml.safe_load(config.read_text(encoding="utf-8"))),
         steps.get_step,
     )
-    assert len(catalog.handler_by_key) == 65
+    assert len(catalog.handler_by_key) == 64
     assert sum(handler.definition.implementation.value == "dummy"
-               for handler in catalog.handler_by_key.values()) == 15
+               for handler in catalog.handler_by_key.values()) == 14
     assert catalog.get("preflight", "notice").parse_parameters(values={"variant": "update"}).variant == "update"
     assert catalog.get("bug_bash", "clone_plans_auth").parse_parameters(
         HookRole.RETRY, {"reason": "verified"}).reason == "verified"
