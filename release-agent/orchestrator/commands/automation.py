@@ -7,34 +7,50 @@ from orchestrator import automations as auto_plan
 from orchestrator import cli_common as C
 
 
+def _json_file(path):
+    with open(path, "rb") as fh:
+        data = fh.read()
+    encoding = (
+        "utf-8-sig"
+        if data.startswith(b"\xef\xbb\xbf")
+        else "utf-16"
+        if data.startswith((b"\xff\xfe", b"\xfe\xff"))
+        else "utf-8"
+    )
+    return _json.loads(data.decode(encoding))
+
+
 def _cleanup_args(value) -> str:
     rules = value if isinstance(value, list) else [value]
     return " ".join(f'--cleanup-when "{rule}"' for rule in rules if rule)
 
 
 def _observations(args):
-    if not args.observed_json:
-        raise ValueError(
-            "--observed-json from a fresh exhaustive provider list/detail read is required"
-        )
     try:
-        rows = _json.loads(args.observed_json)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("--observed-json must be a complete observation envelope") from exc
+        if getattr(args, "observed_file", None):
+            rows = _json_file(args.observed_file)
+        elif getattr(args, "observed_json", None):
+            rows = _json.loads(args.observed_json)
+        else:
+            raise ValueError
+    except (OSError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "A complete observation envelope is required via --observed-file "
+            "or --observed-json"
+        ) from exc
     return rows
 
 
 def _spec(args):
     try:
         if args.spec_file:
-            with open(args.spec_file, encoding="utf-8") as fh:
-                value = _json.load(fh)
+            value = _json_file(args.spec_file)
         elif args.spec_json:
             value = _json.loads(args.spec_json)
         else:
-            raise ValueError("An explicit complete --spec-json or --spec-file is required")
+            raise ValueError("An explicit complete --spec-file or --spec-json is required")
     except (OSError, ValueError) as exc:
-        raise ValueError("Cannot read complete provider spec; supply --spec-json or --spec-file") from exc
+        raise ValueError("Cannot read complete provider spec; supply --spec-file or --spec-json") from exc
     return provider_spec(value)
 
 
@@ -280,7 +296,7 @@ def _cmd_plan(args):
         print(f"    prepare: automation prepare --name \"{a['name']}\" "
               f"--release {args.release} --purpose \"{a['purpose']}\" "
               f"--slug \"{a['slug']}\" --schedule \"{sched}\" "
-              f"{_cleanup_args(a['cleanup_when'])} --spec-json '<exact provider_spec from --json>' "
+              f"{_cleanup_args(a['cleanup_when'])} --spec-file <temporary exact provider_spec.json> "
               + " ".join(f"--step {s}" for s in a["steps"]))
     return 0 if not result["problems"] else 1
 
@@ -397,11 +413,20 @@ def register(sub):
     au.add_argument("--on-demand", default=None, metavar="SLUG",
                     help="Select or explicitly authorize the named on-demand worker")
     au.add_argument("--json", action="store_true")
-    au.add_argument("--observed-json", default=None,
-                    help="Fresh {observed_at,complete:true,automations:[{id,spec}]} full observations")
+    observations = au.add_mutually_exclusive_group()
+    observations.add_argument(
+        "--observed-file", default=None,
+        help="Read fresh complete automation observations from a temporary JSON file")
+    observations.add_argument(
+        "--observed-json", default=None,
+        help="Inline fresh complete automation observations (small/manual inputs only)")
     specs = au.add_mutually_exclusive_group()
-    specs.add_argument("--spec-json", default=None, help="Complete exact m_create_automation kwargs")
-    specs.add_argument("--spec-file", default=None, help="Read the exact reviewed provider kwargs (never copied into state)")
+    specs.add_argument(
+        "--spec-file", default=None,
+        help="Read exact reviewed provider kwargs from a temporary JSON file (preferred)")
+    specs.add_argument(
+        "--spec-json", default=None,
+        help="Inline complete provider kwargs (small/manual inputs only)")
     au.add_argument("--executor", default=None,
                     help="Worker/session claiming create or delete")
     au.add_argument("--claim", action="store_true",

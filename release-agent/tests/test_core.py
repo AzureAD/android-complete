@@ -240,6 +240,9 @@ def test_full_flow_replay_completes():
     done = sum(1 for p in orch.config["phases"] if not p.get("conditional")
                for s in p["steps"] if st.is_done(p["id"], s["id"]))
     assert done == total
+    assert all(not st.is_done(p["id"], s["id"])
+               for p in orch.config["phases"] if p.get("conditional")
+               for s in p["steps"])
 
 
 
@@ -270,15 +273,9 @@ def test_persistence_roundtrip():
 
 def test_conditional_hotfix_excluded_by_default():
     st, orch = _orch()
-    guard = 0
-    while orch.status_report()["status"] != "complete" and guard < 100:
-        orch.run_until_gate()
-        status = orch.status_report()["status"]
-        if status == "holding_gate":
-            orch.approve_gate("ok")
-        elif status == "awaiting_action":
-            orch.complete_step(note="done")
-        guard += 1
+    selection = orch.scheduling()
+    assert not selection.phase("hotfix").included
+    assert all(candidate.step.phase_id != "hotfix" for candidate in selection.runnable)
     assert not st.is_done("hotfix", "cherry")
 
 

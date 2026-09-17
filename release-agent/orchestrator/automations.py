@@ -241,18 +241,20 @@ def _prompt_for(spec: dict, release: str) -> str:
     protocol = delivery.PROTOCOL.replace("<release>", release)
     provisioning = (
         "\nProvision workers only through `automation plan` and the exact complete "
-        "provider_spec/registration it returns. Call `automation prepare` with "
-        "--spec-json <exact-spec>, then obtain a fresh exhaustive provider list and "
-        "full details. Losslessly normalize to {observed_at:<UTC>,complete:true,"
-        "automations:[{id:<id>,spec:<complete-provider-kwargs>}]} and call "
-        "`automation reconcile-create` with the SAME --spec-json, --observed-json, "
+        "provider_spec/registration it returns. Write the exact provider_spec once to "
+        "a fresh temporary JSON file outside release state, then call `automation prepare` "
+        "with --spec-file <path>. Obtain a fresh exhaustive provider list and full details; "
+        "losslessly write {observed_at:<UTC>,complete:true,automations:[{id:<id>,"
+        "spec:<complete-provider-kwargs>}]} to a second temporary JSON file. Call "
+        "`automation reconcile-create` with the SAME --spec-file, --observed-file, "
         "--claim and --executor. Only permission_to_create:true permits "
         "m_create_automation with exactly returned spec. Immediately acknowledge "
-        "create-result with owning --attempt-id, SAME --spec-json and receipt evidence "
+        "create-result with owning --attempt-id, the SAME --spec-file and receipt evidence "
         "of that exact invocation. Unknown outcomes are uncertain, never retry them. "
         "Pass --on-demand <slug> for on-demand provisioning. Never register directly "
-        "or update in place; review delete/recreate. Do not persist prompts/specs "
-        "or raw provider responses in registry, journals, or evidence text."
+        "or update in place; review delete/recreate. Delete both temporary files only "
+        "after the owning result is durably recorded. Do not persist prompts/specs or "
+        "raw provider responses in release state, registry, journals, or evidence text."
     )
 
     if spec.get("prompt_kind") == "push-reminders":

@@ -847,8 +847,12 @@ records and use the matching original runtime for recovery, never reinitialize t
 **Automation registry (schema v3, distinct from release-state schema).** All seven
 workers are canonical data/code in `config/automations.yaml` and `automations.py`.
 `plan` returns registry metadata and complete tool-compatible `provider_spec` kwargs.
-Pass the exact reviewed spec via `--spec-json` (or read-only `--spec-file`) to
-`prepare`, `reconcile-create`, and the owning `create-result`. The existing
+Write the exact reviewed spec once to a temporary JSON file and pass the same
+`--spec-file` to `prepare`, `reconcile-create`, and the owning `create-result`.
+Write fresh exhaustive provider observations to a second file and pass
+`--observed-file`; inline JSON remains available only for small/manual inputs because
+large generated prompts are fragile under Windows command-line quoting. Delete both
+temporary files only after the owning result is durably recorded. The existing
 `intent_hash` binds metadata plus **all** provider kwargs; no prompt, spec payload,
 or raw receipt is persisted. Existing evidence strings contain only SHA-256 digests.
 Old registry schemas are rejected, never rehashed or stamped automatically.
@@ -919,9 +923,41 @@ Events captured include: `release_started`, `readiness_verified/signed/declined`
 
 ## Tests
 
-Run from `release-agent/`. Select the existing tests that cover the change; the
-example below exercises handler contracts and the adapter boundary. Test provider
-calls are blocked unless explicitly replaced with fakes.
+Run from `release-agent/`. **Directory/default runs now select the daily core suite**,
+capped at 1,086 cases (half the previous 2,172-case suite). The reviewed selection in
+`tests/_suite.py` keeps engine/lifecycle, ownership and write fences, approvals,
+workflow revisions, handler/parameter contracts, scheduling, and UI result ownership,
+plus named phase smoke cases and one complete release replay.
+
+Broad phase/provider matrices, renderer variants, overlapping legacy flows, and
+real-Git integration cases remain in the **extended** suite; they are not deleted.
+This deliberately trades exhaustive per-change coverage for a smaller daily run.
+No random sampling or every-Nth-case filtering is used. New unclassified tests enter
+the core by default, and a regression guard enforces its size budget and critical
+selectors. Output always identifies the selected suite and deferred case count.
+
+**Per-change rule: validate every completed change within 15 minutes total.**
+Use the core suite and relevant targeted regressions, not repeated full-suite passes.
+If validation exceeds that budget, profile the slow cases and reduce/consolidate
+overlapping coverage in the daily set while retaining critical safety regressions.
+Do not increase/disable the timeout or split routine validation into repeated
+15-minute runs to evade the budget. Moving more cases to extended coverage is an
+explicit, reviewed change; a timed-out or incomplete run is never reported as passing.
+
+| Scope | Arguments after `python -m pytest` |
+| --- | --- |
+| Daily default | `-q tests` (also the default with no path or a directory path) |
+| Affected file or case | `-q tests\test_finalize.py` or a `file.py::test_name` selector |
+| Extended regressions only | `-vv tests --validation-suite=extended` |
+| Complete suite, only when warranted | `-vv tests --validation-suite=full` |
+| Real Git only | `-vv tests -m git_integration` |
+
+Explicit file/node, `-k`, and `-m` selectors run **all matching requested cases**,
+including extended cases, so a targeted regression is never silently filtered out.
+`--validation-suite=core` can explicitly combine the core with additional filters.
+For Git planning/transport changes, run the affected Git cases; for phase/provider
+changes, run the affected module even if much of it is extended. Test provider calls
+are blocked unless explicitly replaced with fakes.
 
 ```powershell
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("release-agent-tests-" + [guid]::NewGuid())
@@ -930,9 +966,7 @@ New-Item -ItemType Directory -Path $tempRoot | Out-Null
 try {
     $env:TEMP = $env:TMP = $tempRoot
     $env:PYTHONDONTWRITEBYTECODE = "1"
-    python -m pytest -q -p no:cacheprovider --basetemp "$tempRoot\pytest" `
-        tests\test_handlers.py `
-        tests\test_lifecycle_boundaries.py::test_adapters_cannot_bypass_the_lifecycle_facade
+    python -m pytest -q -p no:cacheprovider --basetemp "$tempRoot\pytest" --durations=10 tests
     if ($LASTEXITCODE -ne 0) { throw "Release-agent tests failed ($LASTEXITCODE)" }
 } finally {
     $env:TEMP, $env:TMP, $env:PYTHONDONTWRITEBYTECODE = $oldTemp, $oldTmp, $oldBytecode
@@ -941,15 +975,33 @@ try {
 ```
 
 This confines pytest fixtures and `TemporaryDirectory` state/locks to one cleaned
-directory without touching `.release-runs`. For a full-suite run when warranted,
-replace the selectors with `tests`; do not invoke live release commands as tests.
+directory without touching `.release-runs`. Replace `tests` with relevant file/node
+selectors for small changes. Add `--validation-suite=full` only for a deliberate
+complete run; `tests` alone no longer means the full regression suite. Do not invoke
+live release commands as tests. Real-Git cases build repositories and exercise merges,
+pushes and write-fence rechecks; their many Windows subprocess launches are expensive.
+Use `-vv` for extended/full runs to show the current case instead of buffered dots.
+Do not repeatedly launch full suites for small edits or overlap validation runs.
+Finish the edits and review first; use targeted cases for review fixes instead of
+waiting for an obsolete full run and then starting another. Reserve one complete
+run for changes whose scope genuinely requires it. When a run is backgrounded,
+retain its process/session ID and retrieve its result; an incomplete log without
+a running process is not a reason to keep waiting.
+Coordinator hash/payload/ownership tests use in-memory Git ports and reject actual
+subprocesses; real tree construction and a full coordinator-plan case retain Git coverage.
 Ordinary tests use one captured immutable runtime identity per pytest worker so unit
 coverage does not repeatedly hash the repository. Tests of runtime drift and workflow
 adoption use the `real_revision` marker and retain content-based filesystem validation.
 Each test has a 180-second fail-fast guard that prints all Python thread stacks and
 terminates pytest with exit code 124 instead of hanging indefinitely. Override it
 with `--test-timeout=<seconds>` or use `@pytest.mark.timeout(<seconds>)` for an
-intentionally longer test; `0` disables the guard.
+intentionally longer test; `0` disables that guard. There is also a **15-minute total
+suite budget**, including collection, because thousands of tests can each stay below
+180 seconds while adding up to hours. `--suite-timeout=<seconds>` explicitly overrides
+that budget (`0` disables it); a timeout reports the active test/collection and thread
+stacks and is a failure, never a pass or a reason to silently skip remaining cases.
+Overrides are for explicitly requested diagnostic runs, not ordinary per-change
+validation. If the default run times out, reduce its cost rather than its protection.
 
 ## Design constraints honored (from §7.1 of the stabilization plan)
 1. Real-by-default with a personal `mocks.local.yaml` (skip/redirect/inject per step) is the test method — never blast the real DL from a test (use a `send_to` redirect).

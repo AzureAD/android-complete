@@ -1,4 +1,4 @@
-"""Offline checked Git writer tests; all real Git repositories are local fixtures."""
+"""Checked Git writer contracts, plus explicit local-Git integration coverage."""
 from copy import deepcopy
 from datetime import date
 import base64
@@ -82,7 +82,47 @@ class Permit:
 
 
 @pytest.fixture
-def integration(checkout, monkeypatch):
+def integration(request, tmp_path, monkeypatch):
+    if getattr(request, "param", "memory") == "git":
+        checkout = request.getfixturevalue("checkout")
+        content = None
+    else:
+        checkout = SimpleNamespace(root=tmp_path / "checkout",
+                                   head="a" * 40, base="b" * 40, initial="c" * 40)
+        content = {
+            "tree": "d" * 40, "parents": [checkout.head, checkout.base],
+            "behind": 1, "merge": "merge-tree", "resolved_gradle_conflicts": [],
+            "gradle_reverted": ["build.gradle"], "edits": {},
+            "commit": "reviewed commit bytes\n", "commit_id": "e" * 40,
+        }
+        branch_tips = {
+            "dev": checkout.base, "release-integration/1": checkout.head,
+            "working/release/1": checkout.head, "release/1": checkout.initial,
+        }
+
+        def remote_tip(root, remote, name):
+            assert Path(root) == checkout.root and remote == str(checkout.root)
+            if name not in branch_tips:
+                raise ValueError("Missing remote branch: " + name)
+            return branch_tips[name]
+
+        def plan_ri(root, head, base, target):
+            assert Path(root) == checkout.root
+            assert (head, base, target) == (checkout.head, checkout.base, "dev")
+            return deepcopy(content)
+
+        def no_process(*args, **kwargs):
+            pytest.fail("Coordinator unit tests must use Git ports, not subprocesses")
+
+        # Git's tree/transport behavior is covered by checkout and oneauth tests.
+        # These cases exercise the coordinator, hashes and write fences instead.
+        monkeypatch.setattr(subprocess, "Popen", no_process)
+        monkeypatch.setattr(G, "branch", lambda name: name)
+        monkeypatch.setattr(G, "clean_repository", lambda root: Path(root))
+        monkeypatch.setattr(G, "remote_url", lambda root: str(checkout.root))
+        monkeypatch.setattr(G, "remote_tip", remote_tip)
+        monkeypatch.setattr(G, "plan_ri", plan_ri)
+
     cfg = dict(I.CONFIG["common"], dir=str(checkout.root), gh_repo="offline/review")
     monkeypatch.setitem(I.CONFIG, "common", cfg)
     states, tips, calls = {}, {}, []
@@ -129,7 +169,8 @@ def integration(checkout, monkeypatch):
     monkeypatch.setattr(PR, "create_pbi", pbi)
     monkeypatch.setattr(G, "push_reviewed", push)
     return SimpleNamespace(context=context(repos=["common"]), args=arguments(), calls=calls,
-                           states=states, tips=tips, checkout=checkout)
+                           states=states, tips=tips, checkout=checkout, content=content,
+                           branch_tips=branch_tips if content is not None else None)
 
 
 @pytest.fixture
@@ -261,6 +302,9 @@ def test_transport_preserves_credential_configuration_but_tree_planning_is_isola
     assert env["GIT_TERMINAL_PROMPT"] == isolated["GIT_TERMINAL_PROMPT"] == "0"
 
 
+@pytest.mark.parametrize("integration", [
+    "memory", pytest.param("git", marks=pytest.mark.git_integration),
+], indirect=True)
 def test_integration_plan_full_normalized_inputs_and_exact_payloads(integration):
     s = integration
     plan = P.integration_plan(s.context, s.args)
@@ -308,8 +352,7 @@ def test_integration_review_hash_changes_for_every_write_input(integration, monk
         s.states[("offline/review", "working/release/1", "release/1")] = {
             "number": 4, "url": "https://example.test/4", "title": "existing", "body": "old", "labels": []}
     else:
-        (s.checkout.root / "upstream.txt").write_text("changed\n", encoding="utf-8")
-        commit(s.checkout.root, "content drift")
+        s.content["tree"] = "f" * 40
     assert revision.digest(P.integration_plan(s.context, s.args).as_dict()) != original
     assert s.calls == []
 
@@ -324,7 +367,7 @@ def test_integration_incomplete_preview_cannot_receive_a_hash(integration, monke
     elif problem == "lookup-error":
         monkeypatch.setattr(PR, "gh_find_open_pr", lambda *args: (False, None, "unknown"))
     else:
-        git(s.checkout.root, "branch", "-D", "release/1")
+        del s.branch_tips["release/1"]
     with pytest.raises(ValueError):
         P.integration_plan(s.context, s.args)
     assert s.calls == []

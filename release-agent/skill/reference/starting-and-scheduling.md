@@ -46,16 +46,20 @@ For every automation below, use this **recoverable provisioning protocol**:
 1. Obtain the canonical `provider_spec` and `registration` from `automation plan --json`.
    All seven workers, including push/daily email, are defined there; do not reconstruct
    prompts from prose. A custom worker needs an explicit complete spec. Persist its
-   hash-bound identity first with `automation prepare --release <id>
+   Write the exact `provider_spec` once to a fresh temporary JSON file outside the
+   release run directory, then persist its hash-bound identity with `automation prepare --release <id>
    --slug <slug> --name "<name>" --schedule "<schedule>" --cleanup-when "<rule>"
-   --purpose "<purpose>" [--step <phase.step> ...] --spec-json '<exact provider_spec>' --json`.
-   `--spec-file` may read an owner-supplied existing reviewed file instead; never write
-   a spec/prompt copy into release state, journal, or receipts.
+   --purpose "<purpose>" [--step <phase.step> ...] --spec-file <temporary-spec.json> --json`.
+   Use inline `--spec-json` only for small manual inputs; large generated prompts are not
+   safe to quote on Windows. Never write a spec/prompt copy into release state, journal,
+   registry, or receipts.
 2. Call `m_list_automations` and obtain full details with `m_get_automation` as needed.
    Losslessly normalize ALL rows to `{observed_at:"<UTC read time>",complete:true,
    automations:[{id:"<id>",spec:{<complete tool-compatible kwargs>}}]}`.
-   Pass that envelope to `automation reconcile-create --release <id> --slug <slug>
-   --spec-json '<SAME exact spec>' --observed-json '<envelope>' --claim --executor <session> --json`.
+   Write that envelope to a second temporary JSON file. Pass both files to
+   `automation reconcile-create --release <id> --slug <slug>
+   --spec-file <SAME temporary-spec.json> --observed-file <temporary-observations.json>
+   --claim --executor <session> --json`.
    Reads must be exhaustive, at most five minutes old, and after the latest operation.
    Never guess defaults or omit unmatched workers when asserting a complete list.
 3. An exact complete-spec match is adoptable only without unresolved ownership.
@@ -65,7 +69,9 @@ For every automation below, use this **recoverable provisioning protocol**:
    `permission_to_create:true`, passing **exactly** returned `spec`, no registry-only kwargs.
 4. Immediately record `automation create-result --release <id> --slug <slug>
    --attempt-id <attempt> --outcome created --id <provider-id> --evidence
-   "<receipt identifying the exact authorized invocation>" --spec-json '<SAME exact spec>'`.
+   "<receipt identifying the exact authorized invocation>"
+   --spec-file <SAME temporary-spec.json>`. Delete both temporary files only after this
+   owning result is durably recorded.
    Never paste prompts or raw responses into evidence; only its digest is stored.
    Record positive non-creation as `not_created`; timeouts or
    unknown outcomes as `uncertain`. Never automatically retry an unresolved claim.
@@ -209,13 +215,13 @@ At **release close** (status complete / Release Close phase / user asks to "clea
    not inferred ownership or automatic migration. A halted release suspends, not deletes.
 4. ID-less terminal intents are not invisible cleanup successes. After proving the
    original runner AND provider operation terminated, uncertain/missing/blocked entries
-   can use `automation confirm-absent --release <id> --slug <slug> --observed-json
-   '<fresh envelope with zero ID/name matches>' --reason "<owner evidence>"
+   can use `automation confirm-absent --release <id> --slug <slug> --observed-file
+   <fresh-observations.json> --reason "<owner evidence>"
    --confirm-absent --confirm-no-inflight`. Live creating/deleting claims must first
    record their owning result; absence alone cannot fence a running provider call.
    Verified absence of delete_uncertain removes that entry; creation recovery returns
    prepared. Then `automation abandon-prepared --release <id> --slug <slug>
-   --observed-json '<new fresh envelope>' --reason "<owner evidence>" --confirm-absent`
+   --observed-file <new-fresh-observations.json> --reason "<owner evidence>" --confirm-absent`
    removes only an ID-less prepared intent in a complete/cancelled release. Manual/shared
    intents are exempt. No tombstone, payload copy or direct deregister is created.
 

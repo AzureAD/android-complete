@@ -21,7 +21,7 @@ if ROOT not in sys.path:
 
 from orchestrator.revision import StaticRevisionProvider, use_revision_provider
 
-pytest_plugins = ("tests._timeout",)
+pytest_plugins = ("tests._timeout", "tests._suite")
 _STATIC_REVISION_PROVIDER = StaticRevisionProvider.capture()
 
 
@@ -29,6 +29,10 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "real_revision: use content-based runtime identity instead of the static unit-test provider",
+    )
+    config.addinivalue_line(
+        "markers",
+        "git_integration: builds real local Git repositories and exercises Git subprocesses",
     )
 
 

@@ -396,13 +396,14 @@ def test_cli_abandon_requires_actual_terminal_state(tmp_path, capsys):
     assert reg.list() == []
 
 
-def test_cli_spec_file_is_read_only_and_not_copied(tmp_path, capsys):
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig", "utf-16"])
+def test_cli_spec_file_is_read_only_and_not_copied(tmp_path, capsys, encoding):
     from tests._context import fresh_orchestrator
     state = ReleaseState(release_id="2026-09")
     fresh_orchestrator(C.DEFAULT_CONFIG, state, mocks={})
     C.save_state(state, str(tmp_path), state.release_id)
     reviewed = tmp_path / "owner-reviewed.json"
-    reviewed.write_text(json.dumps(spec()), encoding="utf-8")
+    reviewed.write_text(json.dumps(spec()), encoding=encoding)
     original = reviewed.read_bytes()
     base = ["--runs-root", str(tmp_path), "automation", "prepare",
             "--release", "2026-09", "--slug", "custom", "--json",
@@ -410,5 +411,22 @@ def test_cli_spec_file_is_read_only_and_not_copied(tmp_path, capsys):
             "--spec-file", str(reviewed)]
     assert cli.main(base) == 0
     capsys.readouterr()
+    observations = tmp_path / "fresh-observations.json"
+    observations.write_text(json.dumps(observed()), encoding=encoding)
+    observed_original = observations.read_bytes()
+    claim = ["--runs-root", str(tmp_path), "automation", "reconcile-create",
+             "--release", "2026-09", "--slug", "custom", "--json",
+             "--spec-file", str(reviewed), "--observed-file", str(observations),
+             "--claim", "--executor", "owner"]
+    assert cli.main(claim) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["permission_to_create"]
+    acknowledge = ["--runs-root", str(tmp_path), "automation", "create-result",
+                   "--release", "2026-09", "--slug", "custom", "--json",
+                   "--spec-file", str(reviewed), "--attempt-id", result["attempt_id"],
+                   "--outcome", "not_created", "--evidence", "provider did not create"]
+    assert cli.main(acknowledge) == 0
+    capsys.readouterr()
     assert reviewed.read_bytes() == original
+    assert observations.read_bytes() == observed_original
     assert spec()["prompt"] not in (tmp_path / "2026-09" / "_automations.json").read_text()
