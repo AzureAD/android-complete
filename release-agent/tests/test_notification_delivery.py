@@ -319,6 +319,7 @@ def test_stale_claims_stop_even_if_prepared(orch, state):
         D.claim(orch, item["id"], item["hash"], "A")
 
 
+@pytest.mark.real_revision
 def test_two_processes_only_one_send_permission(orch, tmp_path):
     item = D.descriptor(orch.state, "concurrent-example", {"kind": "release"},
                         "workiq_send_email", {"to": ["owner@example.com"], "body": "test"})

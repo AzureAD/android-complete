@@ -1288,23 +1288,41 @@ finalize.remove_rc_tags_gate:
     - q: "Nothing is parked — is that an error?"
       a: "No. If the orchestrator already passed the gate (or isn't waiting), the step reports there's nothing to approve and moves on."
 
+finalize.orchestrator_finalization:
+  summary: "Monitor final orchestration until the Publish GitHub Release Notes gate."
+  what: >
+    After 'Remove RC Tags', this read-only step follows the Release Orchestrator through final MRWP
+    generation and release-integration branch creation until it parks at 'Publish GitHub Release
+    Notes'. It then resolves Final1 from the orchestrator tags and AuthenticatorBuild plus
+    Authenticator from that final MRWP's tags.
+  trigger: >
+    Runs after `remove_rc_tags_gate`. The dedicated Release Orchestrator poller checks every 2 hours
+    and binds to the stable YAML stage identifier `PublishGitHubReleaseNotes`, whose display name is
+    'Publish GitHub Release Notes'.
+  who: "The release-agent performs the read-only Azure Pipelines checks automatically."
+  how: >
+    While the target gate or required tags are not ready, the step remains in progress. After 8
+    hours it escalates once to the release owner and continues polling. A failed orchestrator stage
+    or final MRWP blocks Phase 4 for investigation.
+  consequences: >
+    It stores state.pipeline_runs.final with orchestrator_run_id, mrwp_run_id,
+    authenticator_build_id, authenticator_version, and resolved_at. It cannot approve the pipeline,
+    create branches, modify repositories or open PRs.
+
 finalize.integ_prs:
   summary: "Auto-open the 8 release integration/freeze PRs across the 4 repos (2 per repo)."
   what: >
-    After 'Remove RC Tags', the orchestrator creates the release-integration/<v> branches and the
-    release/<v> + working/release/<v> branches, then only PRINTS compare links — a human opens the
-    PRs by hand. This step opens them: 2 PRs per repo for common, msal, broker, authenticator —
+    Once `orchestrator_finalization` succeeds, this step opens 2 PRs per repo for common, msal,
+    broker, and authenticator —
     (A) FREEZE working/release/<v> -> release/<v>, and (B) INTEGRATION release-integration/<v> ->
     dev (or 'working' for authenticator). For the integration PRs it also brings the RI branch up
     to date with the target and REVERTS build.gradle so the target stays dynamic (only version +
     changelog transfer); if a non-build.gradle conflict remains it HOLDS that PR for a human.
   trigger: >
-    NOT merely 'remove_rc_tags_gate passed'. The step MONITORS the Release Orchestrator and only fires once
-    the 'Create Release Integration Branches' stage has COMPLETED — the release-integration
-    branches don't exist until then. Monitoring uses the stable YAML identifier
-    `CreateReleaseIntegrationBranches`, so changing the display name does not break the step.
-    While that stage is still running it reports in-progress and re-checks; if it FAILS, the step
-    blocks because the RI branches were never created.
+    Runs only after `orchestrator_finalization` verifies that the Release Orchestrator reached the
+    GitHub release-notes gate and captured the final build outputs.
+    It independently confirms every required source and target branch exists before offering the
+    checked write preview.
   who: >
     Scout does the work (an agent step). The release owner reviews the preview and triggers the
     write. One shared PBI is created and referenced (AB#<id>) in every PR body.

@@ -526,6 +526,41 @@ def test_find_auth_release_build_none_when_no_build(monkeypatch):
     assert ok and info is None and "no succeeded release-app build" in detail
 
 
+def test_find_auth_release_build_reads_exact_captured_build(monkeypatch):
+    from tools import pipelines as P
+
+    seen = []
+
+    def fake_get(url, timeout):
+        seen.append(url)
+        if "/builds/177976153/tags" in url:
+            return True, {"value": ["6.2608.5658"]}, ""
+        if "/builds/177976153?" in url:
+            return True, {
+                "id": 177976153,
+                "definition": {"id": P.AUTH_RELEASE_APP_DEF},
+                "sourceBranch": "refs/heads/release/2026/08/13",
+                "sourceVersion": _TA_COMMIT,
+                "result": "succeeded",
+                "buildNumber": "Authenticator-6.2608.5658",
+            }, ""
+        return False, None, "unexpected url"
+
+    monkeypatch.setattr(P, "_ado_rest_get", fake_get)
+    ok, info, detail = P.find_auth_release_build(
+        "release/2026/08/13", build_id="177976153"
+    )
+
+    assert ok and detail == ""
+    assert info == {
+        "build_id": 177976153,
+        "version": "6.2608.5658",
+        "commit": _TA_COMMIT,
+        "build_number": "Authenticator-6.2608.5658",
+    }
+    assert not any("_apis/build/builds?" in url for url in seen)
+
+
 
 
 def test_merged_release_prs_merges_working_and_release_dedupes():

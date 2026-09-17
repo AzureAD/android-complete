@@ -19,8 +19,8 @@ manual gates, and the branch/PR model so those steps can't drift from reality.
 | 5 | Publish Internal | 4 | internal artifacts → ADO Maven feed. |
 | 6 | Publish to Maven Central | 5 | MSAL/Common → Maven Central. Verified by `verify_pub`. |
 | 7 | Update Pipeline Variables | 5 | MSAL-PROD-Version, MSAL-PROD-BRANCH, Broker-PROD-Version. |
-| 8 | Create Release Integration Branches | 5 | Stage id `CreateReleaseIntegrationBranches`; cuts `release-integration/*` (see branch model). |
-| 9 | **Publish GitHub Release Notes** 🚦 | 8 | **2nd manual gate** — approved by `publish_notes_gate`. Publishes `v<version>` GitHub releases for Common, MSAL, Broker. Verified by `verify_release_notes`. |
+| 8 | Create Release Integration Branches | 5 | Stage id `CreateReleaseIntegrationBranches`; `integ_prs` opens the checked PR set after the finalization monitor reaches stage 9. |
+| 9 | **Publish GitHub Release Notes** 🚦 | 8 | **2nd manual gate** — `orchestrator_finalization` polls to this gate, captures `Final1` plus the final Authenticator build/version, then `publish_notes_gate` approves it. |
 
 Two manual approval gates: **Remove RC Tags** (stage 4) and **Publish GitHub Release Notes**
 (stage 9). `approve-orchestrator-gate` dispatches to whichever gate step is holding.
@@ -65,8 +65,9 @@ For each repo the engineer (or `integ_prs`) opens:
 
 The auth **INTEGRATION** PR (`release-integration/YYYY/MM/DD → working`) is what reflects the
 release's final version bumps + cherry-picks back into the auth mainline — i.e. the automated
-equivalent of the old manual checklist "Phase 4 Step 9" (merge Auth App release into working). It is
-NOT a separate release-agent step; the orchestrator cuts the branch and `integ_prs` opens the PR.
+equivalent of the old manual checklist "Phase 4 Step 9" (merge Auth App release into working).
+`orchestrator_finalization` verifies the orchestrator reached the release-notes gate and captures the
+final MRWP/Auth outputs; `integ_prs` separately opens the PRs.
 
 ## Gotcha — stage timing when observing a live run
 The release-integration branches (and thus the auth `release-integration/…` branch) do NOT exist
@@ -78,7 +79,7 @@ branch is missing from a run that hasn't advanced past its gate.
 | Checklist Step | Orchestrator / release-agent |
 |----------------|------------------------------|
 | 1 Remove RC Tags gate | stage 4 · `remove_rc_tags_gate` |
-| 2 integration PRs | stage 8 (branches) · `integ_prs` (opens PRs) |
+| 2 integration PRs | stages 8–9 · `orchestrator_finalization` (monitors + captures final outputs) · `integ_prs` (opens PRs) |
 | 3 OneAuth Common ingestion | `oneauth_common_pr` |
 | 4 Publish GitHub Release Notes gate | stage 9 · `publish_notes_gate` |
 | 5 verify Maven Central + GitHub | `verify_pub` (Maven) + `verify_release_notes` (GitHub) |

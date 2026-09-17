@@ -1,5 +1,10 @@
 """Release-agent tests — finalize. Shared harness in tests/_harness.py."""
-from tests._context import context as _context, invoke as _invoke, invoke_effect as _invoke_effect
+from tests._context import (
+    context as _context,
+    fresh_orchestrator,
+    invoke as _invoke,
+    invoke_effect as _invoke_effect,
+)
 from tests._context import approval as _approval
 from tests._harness import *  # noqa: F401,F403
 
@@ -281,14 +286,20 @@ def test_publish_notes_gate_submit_verifies_stage():
 
 
 def test_publish_notes_gate_config_is_gate_after_integ_prs():
-    """phases.yaml: publish_notes_gate is a human gate placed after integ_prs and before verify_pub."""
+    """Phase 4 separates branch monitoring, PR creation, and the publication gate."""
     import yaml as _yaml
     cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
     fin = next(p for p in cfg["phases"] if p["id"] == "finalize")
+    monitor = next(x for x in fin["steps"] if x["id"] == "orchestrator_finalization")
+    prs = next(x for x in fin["steps"] if x["id"] == "integ_prs")
     s = next(x for x in fin["steps"] if x["id"] == "publish_notes_gate")
+    assert monitor.get("kind") == "auto" and monitor.get("effect_mode") == "read_only"
+    assert monitor["name"] == "Monitor Release Orchestrator to 'Publish GitHub Release Notes'"
+    assert prs.get("depends_on") == ["orchestrator_finalization"]
     assert s.get("owner") == "human" and s.get("gate") is True
     ids = [x["id"] for x in fin["steps"]]
-    assert ids.index("integ_prs") < ids.index("publish_notes_gate") < ids.index("verify_pub")
+    assert (ids.index("orchestrator_finalization") < ids.index("integ_prs")
+            < ids.index("publish_notes_gate") < ids.index("verify_pub"))
 
 
 
@@ -362,8 +373,9 @@ def test_integ_prs_in_progress_when_branch_missing():
     restore = _patch_pr_reads(P, exists=False)
     st = ReleaseState(release_id="2026-08")
     try:
-        with mockctx.active({"versions": {"msal": "8.4.2"}, "repos": ["msal"], "pbi": "skip",
-                             "stage": "ready"}):
+        with mockctx.active({
+            "versions": {"msal": "8.4.2"}, "repos": ["msal"], "pbi": "skip",
+        }):
             out = _invoke(S.build, st)
     finally:
         restore()
@@ -372,52 +384,213 @@ def test_integ_prs_in_progress_when_branch_missing():
 
 
 
-def test_integ_prs_monitors_ir_stage():
-    """integ_prs gates on the orchestrator IR stage: not-done -> InProgress, failed -> Blocked,
-    done + branches present -> the NeedsSkill action."""
+def test_orchestrator_finalization_monitors_stage_states():
     from steps.lib import mockctx
-    from steps.finalize import integ_prs as S
-    from tools import prs as P
+    from steps.finalize import orchestrator_finalization as S
+
     st = ReleaseState(release_id="2026-08")
-    base = {"versions": {"msal": "8.4.2"}, "repos": ["msal"], "pbi": "skip"}
-    # stage still running -> wait
-    with mockctx.active({**base, "stage": "wait"}):
-        assert _invoke(S.build, st).kind == "in_progress"
-    # stage failed -> blocked (RI branches never created)
-    with mockctx.active({**base, "stage": "failed"}):
+    with mockctx.active({"stage": "wait"}):
+        out = _invoke(S.build, st)
+        assert out.kind == "in_progress" and out.poll_in_min == 120
+    with mockctx.active({"stage": "failed"}):
         assert _invoke(S.build, st).kind == "blocked"
-    # stage ready + branches exist -> needs_skill (the action)
-    restore = _patch_pr_reads(P, exists=True, existing_pr=None, behind=0, gradle=[], conflicts=[])
-    try:
-        with mockctx.active({**base, "stage": "ready"}):
-            assert _invoke(S.build, st).kind == "needs_skill"
-    finally:
-        restore()
+    with mockctx.active({"stage": "ready", "final": {
+        "orchestrator_run_id": 1690355,
+        "mrwp_run_id": 1692575,
+        "authenticator_build_id": 181239508,
+        "authenticator_version": "6.2609.6188",
+    }}):
+        assert _invoke(S.build, st).kind == "done"
+    assert st.pipeline_runs["final"] == {
+        "orchestrator_run_id": "1690355",
+        "mrwp_run_id": "1692575",
+        "authenticator_build_id": "181239508",
+        "authenticator_version": "6.2609.6188",
+        "resolved_at": st.pipeline_runs["final"]["resolved_at"],
+    }
 
 
-def test_integ_prs_monitors_stable_stage_identifier(monkeypatch):
-    from steps.lib import mockctx
-    from steps.finalize import integ_prs as S
+def test_orchestrator_finalization_monitors_stable_stage_identifier(monkeypatch):
+    from steps.finalize import orchestrator_finalization as S
     from tools import pipelines as P
 
     calls = []
 
-    def stage_state(org, project, release, stage_ref):
+    def finalization_state(org, project, release, stage_ref):
         calls.append((org, project, release, stage_ref))
-        return True, {"state": "inProgress", "result": None}, ""
+        return True, {"status": "waiting", "stage_state": "inProgress"}, ""
 
-    monkeypatch.setattr(P, "orchestrator_stage_state", stage_state)
+    monkeypatch.setattr(P, "orchestrator_finalization_status", finalization_state)
     st = ReleaseState(release_id="2026-08")
-    with mockctx.active({
-        "versions": {"msal": "8.4.2"},
-        "repos": ["msal"],
-        "pbi": "skip",
-    }):
-        out = _invoke(S.build, st)
+    out = _invoke(S.build, st)
 
     assert out.kind == "in_progress"
-    assert calls[-1][-1] == "CreateReleaseIntegrationBranches"
-    assert S.IR_STAGE_NAME == "Create Release Integration Branches"
+    assert calls[-1][-1] == "PublishGitHubReleaseNotes"
+    assert S.STAGE_NAME == "Publish GitHub Release Notes"
+
+
+def test_orchestrator_finalization_poller_escalates_once_after_eight_hours(
+        monkeypatch, capsys):
+    import json
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    from orchestrator.commands import finalize_poll
+    from orchestrator.state import StepState
+
+    now = datetime(2026, 9, 16, 16, 0, tzinfo=timezone.utc)
+    st = ReleaseState(
+        release_id="2026-09", ccd="2026-09-09",
+        owner_email="owner@microsoft.com", timezone="UTC")
+    _active_step(st, "finalize", "orchestrator_finalization")
+    st.pipeline_runs["orchestrator"] = {"run_id": "1690355"}
+    st.set_step("finalize", "orchestrator_finalization", StepState(
+        status="in_flight",
+        data={
+            "in_flight_since": (now - timedelta(hours=9)).isoformat(),
+            "last_polled_at": (now - timedelta(hours=2)).isoformat(),
+            "poll_in_min": 120,
+        },
+    ))
+    orch = fresh_orchestrator(
+        CONFIG, st, mocks={"finalize.orchestrator_finalization": {"stage": "wait"}},
+        now=now)
+    monkeypatch.setattr(finalize_poll.C, "load_orch", lambda *_: (st, orch))
+    monkeypatch.setattr(finalize_poll.C, "save_state", lambda *_: None)
+    args = SimpleNamespace(
+        runs_root="", release="2026-09", config=CONFIG, now=now.isoformat(), as_of=None)
+
+    assert finalize_poll.cmd_poll_orchestrator_finalization(args) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["decision"] == "escalate"
+    assert len(result["notifications"]) == 2
+    assert result["escalation"]["email"]["to"] == ["owner@microsoft.com"]
+    assert "every 2 hours" in result["escalation"]["teams"]["message"]
+
+    step = st.get_step("finalize", "orchestrator_finalization")
+    step.data["escalated_at"] = now.isoformat()
+    step.data["last_polled_at"] = (now - timedelta(hours=2)).isoformat()
+    st.set_step("finalize", "orchestrator_finalization", step)
+    assert finalize_poll.cmd_poll_orchestrator_finalization(args) == 0
+    assert json.loads(capsys.readouterr().out)["decision"] == "waiting"
+
+
+def test_orchestrator_finalization_missing_owner_does_not_crash_or_offer_delivery(
+        monkeypatch, capsys):
+    import json
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    from orchestrator.commands import finalize_poll
+    from orchestrator.state import StepState
+
+    now = datetime(2026, 9, 16, 16, 0, tzinfo=timezone.utc)
+    st = ReleaseState(
+        release_id="2026-09", ccd="2026-09-09", owner_email=None, timezone="UTC")
+    _active_step(st, "finalize", "orchestrator_finalization")
+    st.set_step("finalize", "orchestrator_finalization", StepState(
+        status="in_flight",
+        data={
+            "in_flight_since": (now - timedelta(hours=9)).isoformat(),
+            "last_polled_at": (now - timedelta(hours=2)).isoformat(),
+            "poll_in_min": 120,
+        },
+    ))
+    orch = fresh_orchestrator(
+        CONFIG, st, mocks={"finalize.orchestrator_finalization": {"stage": "wait"}},
+        now=now)
+    monkeypatch.setattr(finalize_poll.C, "load_orch", lambda *_: (st, orch))
+    monkeypatch.setattr(finalize_poll.C, "save_state", lambda *_: None)
+    args = SimpleNamespace(
+        runs_root="", release="2026-09", config=CONFIG, now=now.isoformat(), as_of=None)
+
+    assert finalize_poll.cmd_poll_orchestrator_finalization(args) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["decision"] == "waiting"
+    assert result["notifications"] == []
+    assert "owner email is unresolved" in result["escalation_blocked"].lower()
+
+
+def test_orchestrator_finalization_ado_reads_respect_two_hour_cadence(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from orchestrator.state import StepState
+    from steps.finalize import orchestrator_finalization as S
+    from tools import pipelines as P
+
+    started = datetime(2026, 9, 16, 8, 0, tzinfo=timezone.utc)
+    st = ReleaseState(release_id="2026-09", ccd="2026-09-09", timezone="UTC")
+    st.set_step("finalize", "orchestrator_finalization", StepState(
+        status="in_flight",
+        note="Still running",
+        data={
+            "in_flight_since": started.isoformat(),
+            "last_polled_at": started.isoformat(),
+            "poll_in_min": 120,
+        },
+    ))
+    calls = []
+    monkeypatch.setattr(P, "orchestrator_finalization_status", lambda *args: (
+        calls.append(args) or True, {"status": "waiting"}, "still running"))
+
+    assert S.build(_context(st, now=started + timedelta(minutes=119))).kind == "in_progress"
+    assert calls == []
+    assert S.build(_context(st, now=started + timedelta(minutes=120))).kind == "in_progress"
+    assert len(calls) == 1
+
+
+def test_orchestrator_finalization_does_not_escalate_at_exactly_eight_hours(
+        monkeypatch, capsys):
+    import json
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    from orchestrator.commands import finalize_poll
+    from orchestrator.state import StepState
+
+    now = datetime(2026, 9, 16, 16, 0, tzinfo=timezone.utc)
+    st = ReleaseState(
+        release_id="2026-09", ccd="2026-09-09",
+        owner_email="owner@microsoft.com", timezone="UTC")
+    _active_step(st, "finalize", "orchestrator_finalization")
+    st.set_step("finalize", "orchestrator_finalization", StepState(
+        status="in_flight",
+        data={
+            "in_flight_since": (now - timedelta(hours=8)).isoformat(),
+            "last_polled_at": (now - timedelta(hours=2)).isoformat(),
+            "poll_in_min": 120,
+        },
+    ))
+    orch = fresh_orchestrator(
+        CONFIG, st, mocks={"finalize.orchestrator_finalization": {"stage": "wait"}},
+        now=now)
+    monkeypatch.setattr(finalize_poll.C, "load_orch", lambda *_: (st, orch))
+    monkeypatch.setattr(finalize_poll.C, "save_state", lambda *_: None)
+    args = SimpleNamespace(
+        runs_root="", release="2026-09", config=CONFIG, now=now.isoformat(), as_of=None)
+
+    assert finalize_poll.cmd_poll_orchestrator_finalization(args) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["decision"] == "waiting"
+    assert result["notifications"] == []
+
+
+def test_integ_prs_build_only_prepares_pr_action():
+    from steps.lib import mockctx
+    from steps.finalize import integ_prs as S
+    from tools import prs as P
+
+    restore = _patch_pr_reads(
+        P, exists=True, existing_pr=None, behind=0, gradle=[], conflicts=[])
+    st = ReleaseState(release_id="2026-08")
+    try:
+        with mockctx.active({
+            "versions": {"msal": "8.4.2"},
+            "repos": ["msal"],
+            "pbi": "skip",
+        }):
+            out = _invoke(S.build, st)
+    finally:
+        restore()
+
+    assert out.kind == "needs_skill"
+    assert out.tool == "create-integration-prs"
 
 
 
@@ -898,8 +1071,9 @@ def test_tag_authenticator_creates_tag():
     from tools import pipelines as P
     seen = {}
 
-    def fake_find(branch, timeout=90):
+    def fake_find(branch, timeout=90, *, build_id=None):
         seen["branch"] = branch
+        seen["build_id"] = build_id
         return (True, {"build_id": 177976153, "version": "6.2608.5658", "commit": _TA_COMMIT}, "")
 
     def fake_create(org, project, repo, tag, commit, timeout=60):
@@ -915,6 +1089,7 @@ def test_tag_authenticator_creates_tag():
         P.find_auth_release_build, P.create_lightweight_tag = of, oc
     assert out.kind == "done" and "6.2608.5658" in out.note and _TA_COMMIT[:8] in out.note
     assert seen["branch"] == "release/2026/08/13"
+    assert seen["build_id"] == "177976153"
     # tags the built commit with the bare version (NO 'v' prefix) in the auth repo
     assert seen["create"] == ("AD-MFA-phonefactor-phoneApp-android", "6.2608.5658", _TA_COMMIT)
     assert TA.KIND == "agent"
@@ -928,7 +1103,8 @@ def test_tag_authenticator_idempotent_same_commit():
     from steps.finalize import tag_authenticator as TA
     from tools import pipelines as P
     of, oc = P.find_auth_release_build, P.create_lightweight_tag
-    P.find_auth_release_build = lambda b, timeout=90: (True, {"version": "6.2608.5658", "commit": _TA_COMMIT}, "")
+    P.find_auth_release_build = lambda b, timeout=90, *, build_id=None: (
+        True, {"build_id": build_id, "version": "6.2608.5658", "commit": _TA_COMMIT}, "")
     P.create_lightweight_tag = lambda o, pj, r, t, c, timeout=60: (True, {"created": False, "objectId": _TA_COMMIT}, "")
     try:
         with mockctx.active({}):
@@ -936,6 +1112,29 @@ def test_tag_authenticator_idempotent_same_commit():
     finally:
         P.find_auth_release_build, P.create_lightweight_tag = of, oc
     assert out.kind == "done" and "idempotent" in out.note.lower()
+
+
+def test_tag_authenticator_blocks_when_captured_version_disagrees_with_build():
+    from steps.lib import mockctx
+    from steps.finalize import tag_authenticator as TA
+    from tools import pipelines as P
+
+    original = P.find_auth_release_build
+    P.find_auth_release_build = lambda b, timeout=90, *, build_id=None: (
+        True, {
+            "build_id": build_id,
+            "version": "6.2608.9999",
+            "commit": _TA_COMMIT,
+        }, "")
+    try:
+        with mockctx.active({}):
+            out = _invoke(TA.build, _ta_state())
+    finally:
+        P.find_auth_release_build = original
+
+    assert out.kind == "blocked"
+    assert "captured final version 6.2608.5658" in out.reason
+    assert "build 177976153 tag 6.2608.9999" in out.reason
 
 
 def test_tag_authenticator_recovery_uses_frozen_target():
@@ -999,7 +1198,8 @@ def test_tag_authenticator_conflict_different_commit_blocks():
     from steps.finalize import tag_authenticator as TA
     from tools import pipelines as P
     of, oc = P.find_auth_release_build, P.create_lightweight_tag
-    P.find_auth_release_build = lambda b, timeout=90: (True, {"version": "6.2608.5658", "commit": _TA_COMMIT}, "")
+    P.find_auth_release_build = lambda b, timeout=90, *, build_id=None: (
+        True, {"build_id": build_id, "version": "6.2608.5658", "commit": _TA_COMMIT}, "")
     P.create_lightweight_tag = lambda o, pj, r, t, c, timeout=60: (True, {"created": False, "objectId": "dead" * 10}, "")
     try:
         with mockctx.active({}):
@@ -1018,7 +1218,8 @@ def test_tag_authenticator_dry_run_does_not_write():
     from tools import pipelines as P
     called = {"create": False}
     of, oc = P.find_auth_release_build, P.create_lightweight_tag
-    P.find_auth_release_build = lambda b, timeout=90: (True, {"version": "6.2608.5658", "commit": _TA_COMMIT}, "")
+    P.find_auth_release_build = lambda b, timeout=90, *, build_id=None: (
+        True, {"build_id": build_id, "version": "6.2608.5658", "commit": _TA_COMMIT}, "")
 
     def _boom(*a, **k):
         called["create"] = True
@@ -1072,7 +1273,8 @@ def test_tag_authenticator_blocks_when_build_not_run():
     from steps.finalize import tag_authenticator as TA
     from tools import pipelines as P
     of = P.find_auth_release_build
-    P.find_auth_release_build = lambda b, timeout=90: (True, None, "no succeeded release-app build on refs/heads/release/2026/08/13")
+    P.find_auth_release_build = lambda b, timeout=90, *, build_id=None: (
+        True, None, "no succeeded release-app build on refs/heads/release/2026/08/13")
     try:
         with mockctx.active({}):
             out = _invoke(TA.build, _ta_state())
@@ -1235,6 +1437,26 @@ def test_wiki_payload_build_reports_create_or_update():
     assert out.payload["plan"]["action"] == "update"
     assert "#App Version" in out.payload["plan"]["content"]
     assert out.payload["followup_command"].startswith("create-payload-wiki --release 2026-08 --dry-run")
+
+
+def test_wiki_payload_requires_captured_final_authenticator_build(monkeypatch):
+    from steps.lib import mockctx
+    from steps.finalize import wiki_payload as W
+    from tools import pipelines as P
+
+    st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
+    st.versions = {"authenticator": "release/2026/08/13"}
+    monkeypatch.setattr(
+        P,
+        "find_auth_release_build",
+        lambda *_args, **_kwargs: pytest.fail("must not select the newest build"),
+    )
+
+    with mockctx.active({}):
+        version, build_number, build_url, detail = W._auth_build(_context(st))
+
+    assert version is build_number is build_url is None
+    assert "final Authenticator build evidence is missing" in detail
 
 
 

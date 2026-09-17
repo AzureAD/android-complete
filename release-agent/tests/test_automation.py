@@ -178,6 +178,12 @@ def test_automation_plan_derives_specs_from_ccd():
     assert by["ccd-noon"]["registration"]["steps"] == ["ccd.localization"]
     # the poller stays an interval automation (not date-pinned)
     assert by["ccd-localization-poller"]["schedule"] == "every 1 hour"
+    assert by["finalize-orchestrator-poller"]["schedule"] == "every 2 hours"
+    assert by["finalize-orchestrator-poller"]["steps"] == [
+        "finalize.orchestrator_finalization"]
+    assert "poll-orchestrator-finalization --release 2026-09" in \
+        by["finalize-orchestrator-poller"]["prompt"]
+    assert "8 hours" in by["finalize-orchestrator-poller"]["prompt"]
     assert by["bug-bash-update-poller"]["schedule"] == "every 3 hours"
     assert by["bug-bash-update-poller"]["registration"]["schedule"] == "every 3 hours"
     assert "every 3 hours" in by["bug-bash-update-poller"]["prompt"]
@@ -199,6 +205,8 @@ def test_automation_names_follow_standard_format():
     assert by["ccd-morning"]["name"] == "2026-09 · Code Complete Day — morning reminders"
     assert by["ccd-noon"]["name"] == "2026-09 · Code Complete Day — noon localization"
     assert by["build-verify-rc-poller"]["name"] == "2026-09 · Build & Lib Verification — RC verification poller"
+    assert by["finalize-orchestrator-poller"]["name"] == \
+        "2026-09 · Finalize & Publish — Release Orchestrator poller"
     assert by["bug-bash-update-poller"]["name"] == "2026-09 · Test / Bug Bash — bug-bash update poller"
     # the registration name matches the display name (so the registry row is the standard title)
     assert by["ccd-morning"]["registration"]["name"] == by["ccd-morning"]["name"]
@@ -233,7 +241,8 @@ def test_cli_plan_separates_startup_and_on_demand_automations(capsys):
         startup = json.loads(capsys.readouterr().out)["automations"]
         assert startup and all(not a["on_demand"] for a in startup)
         assert {a["slug"] for a in startup} == {
-            "ccd-morning", "ccd-noon", "push-reminders", "daily-status-email"}
+            "ccd-morning", "ccd-noon", "push-reminders", "daily-status-email",
+            "finalize-orchestrator-poller"}
 
         assert cli.main(base[:-1] + ["--on-demand", "build-verify-rc-poller", "--json"]) == 0
         on_demand = json.loads(capsys.readouterr().out)["automations"]

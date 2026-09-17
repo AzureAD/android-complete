@@ -87,7 +87,8 @@ phases:
     checklist_phase: 4
     steps:
       - { id: remove_rc_tags_gate, name: "Approve 'Remove RC Tags' gate", kind: approval_gate, approval_command: approve-orchestrator-gate, owner: human, gate: true, maps_to: [F1] }
-      - { id: integ_prs,       name: "Auto-create integration PRs", kind: external, pollable: true, write_command: create-integration-prs, owner: agent, source: scout, maps_to: [F2] }
+      - { id: orchestrator_finalization, name: "Monitor Release Orchestrator to 'Publish GitHub Release Notes'", kind: auto, effect_mode: read_only, owner: agent, maps_to: [F2] }
+      - { id: integ_prs,       name: "Auto-create integration PRs", kind: external, pollable: true, write_command: create-integration-prs, owner: agent, source: scout, depends_on: [orchestrator_finalization], maps_to: [F2] }
       - { id: publish_notes_gate, name: "Approve 'Publish GitHub Release Notes' gate", kind: approval_gate, approval_command: approve-orchestrator-gate, owner: human, gate: true, maps_to: [F4] }
       - { id: verify_pub,      name: "Verify Maven Central + GitHub publication", kind: auto, effect_mode: read_only, owner: agent, maps_to: [F3] }
       - { id: verify_release_notes, name: "Verify GitHub release notes (Broker + MSAL + Common)", kind: auto, effect_mode: read_only, owner: agent, maps_to: [F5] }

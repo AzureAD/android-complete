@@ -91,10 +91,10 @@ def cmd_poll_rc(args):
         return 0
 
     inflight = next(
-        ((item.step, st.get_step(item.step.phase_id, item.step.id))
-         for item in selection.runnable
-         if item.step.phase_id == "build_verify"
-         and selection.step(item.step.phase_id, item.step.id).status == "in_flight"),
+        ((item.definition, st.get_step(item.definition.phase_id, item.definition.id))
+         for item in selection.steps
+         if item.definition.phase_id == "build_verify"
+         and item.status == "in_flight" and item.prerequisites_met),
         None) if not reason else None
 
     if inflight:

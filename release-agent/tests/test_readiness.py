@@ -451,6 +451,7 @@ def test_automation_prompt_delegates_to_step_module():
 
 
 
+@pytest.mark.real_revision
 def test_concurrent_record_check_both_persist(monkeypatch):
     """Two record-check CLI invocations fired at the same instant must BOTH
     persist — the per-release lock prevents the last-writer-wins clobber that
@@ -846,6 +847,8 @@ def _run_remove_rc_tags_command(command_module, cli_common, args, submit):
         patch("orchestrator.mocks.load_mocks", return_value={}),
         patch.object(P, "find_orchestrator_pending_approval",
                      return_value=(True, pending, "")),
+        patch.object(P, "orchestrator_finalization_status",
+                     return_value=(True, {"status": "waiting"}, "test monitor")),
         patch.object(P, "submit_pipeline_approval", side_effect=submit),
         cli_common.state_lock(args.runs_root, args.release),
     ):

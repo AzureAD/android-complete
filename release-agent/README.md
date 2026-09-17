@@ -943,6 +943,9 @@ try {
 This confines pytest fixtures and `TemporaryDirectory` state/locks to one cleaned
 directory without touching `.release-runs`. For a full-suite run when warranted,
 replace the selectors with `tests`; do not invoke live release commands as tests.
+Ordinary tests use one captured immutable runtime identity per pytest worker so unit
+coverage does not repeatedly hash the repository. Tests of runtime drift and workflow
+adoption use the `real_revision` marker and retain content-based filesystem validation.
 Each test has a 180-second fail-fast guard that prints all Python thread stacks and
 terminates pytest with exit code 124 instead of hanging indefinitely. Override it
 with `--test-timeout=<seconds>` or use `@pytest.mark.timeout(<seconds>)` for an

@@ -7,9 +7,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
-from dataclasses import MISSING, fields, is_dataclass
+from dataclasses import MISSING, dataclass, fields, is_dataclass
 from enum import Enum
+from functools import wraps
 import hashlib
 from importlib import metadata
 import json
@@ -22,6 +25,8 @@ from typing import get_args, get_origin
 ROOT = Path(__file__).resolve().parent.parent
 _HASH = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _ID = re.compile(r"[\w-]+\Z")
+_REVISION_CHECK_SCOPES = ContextVar("revision_check_scopes", default=())
+_REVISION_PROVIDER = ContextVar("revision_provider", default=None)
 
 
 def is_hash(value):
@@ -147,6 +152,47 @@ def runtime_hash(root=None, *, config_path=None, readiness_path=None):
         root, config_path=config_path, readiness_path=readiness_path)[0]
 
 
+class FilesystemRevisionProvider:
+    """Read every runtime identity input on each operation boundary."""
+
+    def identity(self, *, config_path=None, readiness_path=None):
+        return _runtime_identity(
+            config_path=config_path, readiness_path=readiness_path)
+
+
+@dataclass(frozen=True)
+class StaticRevisionProvider:
+    """Explicit immutable identity for tests that do not exercise runtime drift."""
+
+    runtime_hash: str
+    imported_source_hash: str
+
+    @classmethod
+    def capture(cls):
+        return cls(*_runtime_identity())
+
+    def identity(self, *, config_path=None, readiness_path=None):
+        return self.runtime_hash, self.imported_source_hash
+
+
+_FILESYSTEM_REVISION_PROVIDER = FilesystemRevisionProvider()
+
+
+def active_revision_provider():
+    return _REVISION_PROVIDER.get() or _FILESYSTEM_REVISION_PROVIDER
+
+
+@contextmanager
+def use_revision_provider(provider):
+    if not callable(getattr(provider, "identity", None)):
+        raise TypeError("Revision provider must define identity()")
+    token = _REVISION_PROVIDER.set(provider)
+    try:
+        yield
+    finally:
+        _REVISION_PROVIDER.reset(token)
+
+
 # This pins imported code, not filesystem reads: every comparison hashes afresh.
 _IMPORTED_SOURCE_HASH = _runtime_identity()[1]
 
@@ -207,7 +253,8 @@ def phase_manifest(workflow, handlers):
 
 def _current_revision(orch):
     workflow = orch._workflow_definition()
-    runtime, sources = _runtime_identity(
+    provider = getattr(orch, "_revision_provider", active_revision_provider())
+    runtime, sources = provider.identity(
         config_path=orch.config_path, readiness_path=orch.readiness_path)
     return {
         "runtime_hash": runtime,
@@ -220,6 +267,28 @@ def current_revision(orch):
     return _current_revision(orch)[0]
 
 
+def revision_checked(operation):
+    """Reuse one fresh revision check within a single engine operation."""
+    @wraps(operation)
+    def wrapped(orch, *args, **kwargs):
+        scopes = _REVISION_CHECK_SCOPES.get()
+        if any(scoped_orch is orch for scoped_orch, _ in scopes):
+            return operation(orch, *args, **kwargs)
+        token = _REVISION_CHECK_SCOPES.set((*scopes, (orch, {})))
+        try:
+            return operation(orch, *args, **kwargs)
+        finally:
+            _REVISION_CHECK_SCOPES.reset(token)
+    return wrapped
+
+
+def operation_cache(orch):
+    for scoped_orch, cache in reversed(_REVISION_CHECK_SCOPES.get()):
+        if scoped_orch is orch:
+            return cache
+    return None
+
+
 def bind_initial(orch):
     """Explicit fresh-state binding; never call this while loading existing state."""
     if orch.state.workflow_revision is not None or getattr(orch.state, "_loaded_from_disk", False):
@@ -229,15 +298,23 @@ def bind_initial(orch):
 
 
 def mismatch_reason(orch):
+    cache = operation_cache(orch)
+    if cache is not None and "mismatch_reason" in cache:
+        return cache["mismatch_reason"]
     if orch.state.workflow_revision is None:
-        return "Workflow revision is unbound; only diagnostics are permitted."
-    current, imported_sources_match = _current_revision(orch)
-    if revision_id(orch.state.workflow_revision) != revision_id(current):
-        return ("Workflow revision mismatch; preview workflow-adopt. Existing owned work "
-                "requires restoring its pinned runtime before recovery.")
-    if not imported_sources_match or current["runtime_hash"] != orch._loaded_runtime_hash:
-        return "Runtime files changed during this process; restart on the pinned runtime before executing."
-    return ""
+        reason = "Workflow revision is unbound; only diagnostics are permitted."
+    else:
+        current, imported_sources_match = _current_revision(orch)
+        if revision_id(orch.state.workflow_revision) != revision_id(current):
+            reason = ("Workflow revision mismatch; preview workflow-adopt. Existing owned work "
+                      "requires restoring its pinned runtime before recovery.")
+        elif not imported_sources_match or current["runtime_hash"] != orch._loaded_runtime_hash:
+            reason = "Runtime files changed during this process; restart on the pinned runtime before executing."
+        else:
+            reason = ""
+    if cache is not None:
+        cache["mismatch_reason"] = reason
+    return reason
 
 
 def assert_current(orch):

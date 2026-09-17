@@ -19,6 +19,7 @@ class PipelineReads:
     collect_auth_ui_evidence: Callable[..., tuple]
     discover_versions: Callable[..., tuple]
     orchestrator_stage_state: Callable[..., tuple]
+    orchestrator_finalization_status: Callable[..., tuple]
     find_orchestrator_pending_approval: Callable[..., tuple]
     find_auth_release_build: Callable[..., tuple]
     merged_release_prs: Callable[..., tuple]

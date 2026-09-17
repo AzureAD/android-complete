@@ -256,7 +256,7 @@ def test_failed_auth_capture_delivers_frozen_hold_despite_blocked_telemetry(
     assert orch.current_phase_id() == "build_verify"
     assert st.get_step("bug_bash", "clone_plans_broker").status == "pending"
     from steps import discover
-    assert len(discover()) == 38
+    assert len(discover()) == 39
     assert set(discover()) <= orch.handlers.handler_by_key.keys()
 
 

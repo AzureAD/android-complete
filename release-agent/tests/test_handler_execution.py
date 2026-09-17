@@ -295,5 +295,5 @@ def test_auto_result_cannot_complete_reconfigured_human_step(tmp_path):
     modules = {"check": _auto(build)}
     orch = _orch(tmp_path, lambda _p, s: modules.get(s))
     action = orch.step_once()
-    assert action.kind == "idle" and "Workflow revision mismatch" in action.message
+    assert action.kind == "idle" and "Workflow generation changed" in action.message
     assert not orch.state.is_done("phase", "check")

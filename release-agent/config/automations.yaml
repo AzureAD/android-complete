@@ -67,6 +67,15 @@ automations:
     cleanup_when: phase_done:finalize
     purpose: "Send the partner status email on the first eligible owner-local business-day tick at or after 17:00"
 
+  - slug: finalize-orchestrator-poller
+    label: "Release Orchestrator poller"
+    phase: finalize
+    every: "2 hours"
+    steps:
+      - finalize.orchestrator_finalization
+    cleanup_when: steps_done
+    purpose: "Poll final release orchestration every 2 hours until the GitHub release-notes gate, capture final build identities, and escalate once after 8 hours"
+
   - slug: ccd-morning
     label: "morning reminders"
     phase: ccd

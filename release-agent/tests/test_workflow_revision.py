@@ -8,9 +8,11 @@ import os
 import pytest
 import yaml
 
+pytestmark = pytest.mark.real_revision
+
 from orchestrator.engine import Orchestrator
 from orchestrator.state import ReleaseState, StepState
-from orchestrator import delivery
+from orchestrator import delivery, revision
 from orchestrator.revision import (
     adopt, adoption_preview, assert_current, bind_initial, current_revision,
     digest, phase_manifest, revision_id, runtime_hash,
@@ -184,6 +186,50 @@ def test_disk_phase_change_stops_dispatch_without_restart_or_stale_cache(tmp_pat
     assert orch.step_once().kind == "blocked"
     assert not orch.scheduling().runnable
     assert orch.status_report()["workflow_revision_problem"]
+
+
+def test_unchanged_disk_config_is_not_reparsed(tmp_path, monkeypatch):
+    from orchestrator import engine as engine_module
+
+    state, orch = _orch(tmp_path)
+    calls = 0
+    safe_load = engine_module.yaml.safe_load
+
+    def counted_safe_load(value):
+        nonlocal calls
+        calls += 1
+        return safe_load(value)
+
+    monkeypatch.setattr(engine_module.yaml, "safe_load", counted_safe_load)
+    orch.status_report()
+    orch.status_report()
+    assert calls == 0
+
+    config = deepcopy(orch.config)
+    config["phases"][0]["execution"] = "parallel"
+    with open(orch.config_path, "w", encoding="utf-8") as stream:
+        yaml.safe_dump(config, stream)
+    assert orch.status_report()["workflow_revision_problem"]
+    assert calls == 1
+
+
+def test_revision_check_is_reused_only_within_each_engine_operation(tmp_path, monkeypatch):
+    state, orch = _orch(tmp_path)
+    calls = 0
+    identity = revision._runtime_identity
+
+    def counted_identity(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return identity(*args, **kwargs)
+
+    monkeypatch.setattr(revision, "_runtime_identity", counted_identity)
+    orch.status_report()
+    assert calls == 1
+    orch.complete_step("first", "work", "done")
+    assert calls == 2
+    orch.approve_gate("reviewed")
+    assert calls == 3
 
 
 def test_new_orchestrator_cannot_adopt_code_imported_before_a_runtime_edit(tmp_path, monkeypatch):

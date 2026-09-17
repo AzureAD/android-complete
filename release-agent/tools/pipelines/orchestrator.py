@@ -335,6 +335,90 @@ def orchestrator_stage_state(org, project, release_month, stage_ref, timeout=90)
     return (True, None, f"stage '{stage_ref}' not in the orchestrator timeline")
 
 
+def orchestrator_finalization_status(org, project, release_month, stage_ref, timeout=90):
+    """Resolve the final publication-gate state and its final MRWP/Auth outputs.
+
+    `Final1=<mrwp id>` is emitted on the orchestrator run. The final MRWP emits
+    `AuthenticatorBuild=<msazure build id>` and `Authenticator=<apk version>`.
+    """
+    ok, run, detail = _pp.find_orchestrator_run(
+        org, project, ORCHESTRATOR_DEF, release_month, timeout)
+    if not ok:
+        return (False, None, detail)
+    if not run:
+        return (True, {"status": "waiting"}, detail)
+    build_id = _numeric_build_id(run.get("id"))
+    if build_id is None:
+        return (False, None, "orchestrator run has no valid build id")
+
+    okt, records, timeline_detail = _pp.get_timeline(org, project, build_id, timeout)
+    if not okt:
+        return (False, None, timeline_detail)
+    target = next((
+        record for record in records
+        if record.get("type") == "Stage"
+        and stage_ref in (record.get("identifier"), record.get("name"))
+    ), None)
+    checked, checkpoint, checkpoint_detail = _pending_checkpoint(records)
+    if not checked:
+        return (False, None, checkpoint_detail)
+
+    info = {
+        "status": "waiting",
+        "orchestrator_run_id": str(build_id),
+        "stage_state": target.get("state") if target else None,
+        "stage_result": target.get("result") if target else None,
+    }
+    if target and target.get("state") == "completed":
+        if target.get("result") not in ("succeeded", "succeededWithIssues"):
+            return (True, {**info, "status": "failed"},
+                    f"stage '{target.get('name')}' completed with result={target.get('result')}")
+        reached_target = True
+        info["already_advanced"] = True
+    else:
+        reached_target = bool(
+            checkpoint and target and checkpoint[1] == target.get("id"))
+        if reached_target:
+            info["parked"] = True
+
+    if not reached_target:
+        if run.get("status") == "completed":
+            return (True, {**info, "status": "failed"},
+                    f"orchestrator build {build_id} completed before reaching '{stage_ref}'")
+        return (True, info, f"orchestrator build {build_id} has not reached '{stage_ref}'")
+
+    final_mrwp = _pp._tag_value(run.get("tags") or [], "Final1")
+    if _numeric_build_id(final_mrwp) is None:
+        return (True, info, f"orchestrator build {build_id} has no valid Final1 tag yet")
+    final_mrwp = str(_numeric_build_id(final_mrwp))
+    info["mrwp_run_id"] = final_mrwp
+    okf, final_run, final_detail = _pp._az_json(
+        ["pipelines", "build", "show", "--org", org, "--project", project,
+         "--id", final_mrwp,
+         "--query", "{id:id,status:status,result:result,tags:tags}"], timeout)
+    if not okf:
+        return (False, None, final_detail)
+    final_run = final_run or {}
+    if final_run.get("status") != "completed":
+        return (True, info, f"final MRWP {final_mrwp} is {final_run.get('status') or 'not started'}")
+    if final_run.get("result") not in ("succeeded", "partiallySucceeded"):
+        return (True, {**info, "status": "failed"},
+                f"final MRWP {final_mrwp} completed with result={final_run.get('result')}")
+
+    tags = final_run.get("tags") or []
+    auth_build = _pp._tag_value(tags, "AuthenticatorBuild")
+    auth_version = _pp._tag_value(tags, "Authenticator")
+    if _numeric_build_id(auth_build) is None or not auth_version:
+        return (True, info,
+                f"final MRWP {final_mrwp} has not published AuthenticatorBuild/Authenticator tags")
+    info.update(
+        status="ready",
+        authenticator_build_id=str(_numeric_build_id(auth_build)),
+        authenticator_version=str(auth_version),
+    )
+    return (True, info, "")
+
+
 def get_pipeline_approval(org, project, approval_id, timeout=60):
     """Read one frozen approval id, never the newest run or a stage-completion proxy.
 
@@ -444,4 +528,4 @@ def stage_completion(stages):
     return {"total": total, "ran": total - len(never), "never_ran": never,
             "failed": failed, "yellow": yellow, "complete": not never and total > 0}
 
-__all__ = ['CHECKER_DEF', 'ENGINEERING_ORG', 'ENGINEERING_PROJECT', 'IDENTITYDIVISION', 'MRWP_DEF', 'MSAZURE', 'ORCHESTRATOR_DEF', 'ORCH_PARK_STAGE', 'ORCH_REQUIRED_STAGES', 'TRIGGER_JOB', '_pending_approval_for_build', 'approval_owner_build_id', 'discover_versions', 'find_checker_runs', 'find_orchestrator_pending_approval', 'find_orchestrator_run', 'get_build_status', 'get_pipeline_approval', 'get_stages', 'get_timeline', 'mrwp_run_ids', 'named_record', 'orchestrator_stage_state', 'stage_completion', 'submit_pipeline_approval']
+__all__ = ['CHECKER_DEF', 'ENGINEERING_ORG', 'ENGINEERING_PROJECT', 'IDENTITYDIVISION', 'MRWP_DEF', 'MSAZURE', 'ORCHESTRATOR_DEF', 'ORCH_PARK_STAGE', 'ORCH_REQUIRED_STAGES', 'TRIGGER_JOB', '_pending_approval_for_build', 'approval_owner_build_id', 'discover_versions', 'find_checker_runs', 'find_orchestrator_pending_approval', 'find_orchestrator_run', 'get_build_status', 'get_pipeline_approval', 'get_stages', 'get_timeline', 'mrwp_run_ids', 'named_record', 'orchestrator_finalization_status', 'orchestrator_stage_state', 'stage_completion', 'submit_pipeline_approval']

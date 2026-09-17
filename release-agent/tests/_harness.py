@@ -150,6 +150,15 @@ _SAFE_AGENTS = {
         },
         "stage_state": {"state": "pending", "result": None},
     },
+    "finalize.orchestrator_finalization": {
+        "stage": "ready",
+        "final": {
+            "orchestrator_run_id": 1690355,
+            "mrwp_run_id": 1692575,
+            "authenticator_build_id": 181239508,
+            "authenticator_version": "6.2609.6188",
+        },
+    },
     # Phase-4 finalize scout post — short-circuit so flow tests never hit Teams.
     "finalize.release_announcement": {"outcome": "done", "note": "release announced (test)"},
     # Phase-4 verify_pub — real agent (Maven Central HEADs). Short-circuit for flow tests.
@@ -662,6 +671,10 @@ _TA_COMMIT = "87b921ccf73c322a1907936e74c8d1a984e27102"
 def _ta_state():
     st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
     st.record_versions({"authenticator": "release/2026/08/13"})
+    st.pipeline_runs["final"] = {
+        "authenticator_build_id": "177976153",
+        "authenticator_version": "6.2608.5658",
+    }
     return st
 
 

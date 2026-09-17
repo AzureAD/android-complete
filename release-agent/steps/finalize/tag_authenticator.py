@@ -8,10 +8,10 @@ reached.
 WHAT it tags:
   * repo   — the Authenticator app repo (config/coordinates.yaml repos.authenticator; msazure/One,
              AD-MFA-phonefactor-phoneApp-android).
-  * commit — the EXACT commit the release-app build (AndroidBuild-1ES) was built from
-             (build.sourceVersion) on the release branch — not merely the branch head.
-  * name   — the Auth App version, read from that build's numeric ADO build-tag (e.g.
-             '6.2608.5658'). The auth app does NOT use a 'v' prefix.
+  * build  — the exact final Authenticator build captured by orchestrator_finalization.
+  * commit — that build's sourceVersion on the release branch, not merely the branch head.
+  * name   — the captured Auth App version, verified against that build's numeric ADO
+             build-tag (e.g. '6.2608.5658'). The auth app does NOT use a 'v' prefix.
 
 The release branch is `state.versions.authenticator` ('release/YYYY/MM/DD', set at Phase 2 by
 build_verify.orchestrator_health from the AuthenticatorBranch tag). The tag is LIGHTWEIGHT,
@@ -101,17 +101,37 @@ def build(context: StepContext):
 
 
 def _resolve_target(context, branch):
-    # 1) resolve the version + commit (injected, or discovered from the release-app build)
+    # 1) resolve the version + commit (injected, or from the captured final release build)
     version = context.input("version", MISSING)
     commit = context.input("commit", MISSING)
     if version is MISSING or commit is MISSING:
-        ok, info, detail = context.services.pipelines.find_auth_release_build(branch)
+        final = (context.evidence.pipeline_runs or {}).get("final") or {}
+        build_id = final.get("authenticator_build_id")
+        expected_version = final.get("authenticator_version")
+        if not build_id or not expected_version:
+            return Blocked(
+                "tag_authenticator: final Authenticator build evidence is missing — "
+                "run finalize.orchestrator_finalization first."
+            )
+        ok, info, detail = context.services.pipelines.find_auth_release_build(
+            branch, build_id=build_id
+        )
         if not ok:
             hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
             return Blocked(f"tag_authenticator: couldn't resolve the Auth App version "
                            f"({detail}){hint}.")
         if not info:
             return Blocked(f"tag_authenticator: {detail} — the release-app build hasn't run yet.")
+        if str(info.get("build_id")) != str(build_id):
+            return Blocked(
+                f"tag_authenticator: resolved build {info.get('build_id')} does not match "
+                f"captured final build {build_id}."
+            )
+        if str(info.get("version")) != str(expected_version):
+            return Blocked(
+                f"tag_authenticator: captured final version {expected_version} does not match "
+                f"build {build_id} tag {info.get('version')}."
+            )
         version = info["version"] if version is MISSING else version
         commit = info["commit"] if commit is MISSING else commit
 

@@ -1,9 +1,9 @@
 """Step: `integ_prs` — auto-create the release integration/freeze PRs (Phase 4, finalize, F2).
 
-After `remove_rc_tags_gate` approves "Remove RC Tags", the orchestrator creates the
-`release-integration/<v>` branches (and earlier cut `release/<v>` + `working/release/<v>`).
-Today the release owner opens EIGHT PRs by hand off the compare links the pipeline prints.
-This step opens them — 2 per repo across 4 repos / 3 hosts:
+After `orchestrator_finalization` verifies that the orchestrator reached the
+GitHub release-notes gate and captured the final build outputs, this step opens
+the EIGHT PRs that the release owner previously opened by hand — 2 per repo
+across 4 repos / 3 hosts:
 
   A. FREEZE      working/release/<v> -> release/<v>          (clean direct merge)
   B. INTEGRATION release-integration/<v> -> dev | working    (curated: see below)
@@ -19,9 +19,6 @@ review. The actual writes (create PBI, edit RI, open PRs, add labels) happen in 
 `create-integration-prs` command. Its complete default preview must be approved with
 `--execute --review-hash <hash> --approved-by <reviewer>`. Existing PRs are reused;
 an uncertain attempt remains owned and must not be automatically retried.
-
-Gating: if the branches aren't all present yet (orchestrator still finishing the
-Remove-RC-Tags stage), the step reports in-progress and is re-checked later.
 
 Mock knobs (mocks.local.yaml / tests):
   versions : dict repo->version, e.g. {msal: "8.4.2"} — override state.versions for testing.
@@ -50,10 +47,6 @@ _AUTH_REPO = coords.repo("authenticator")
 RELEASE_PREFIX = "release/"
 WORKING_PREFIX = "working/release/"
 INTEG_PREFIX = "release-integration/"
-
-# Bind monitoring to the immutable YAML stage id; the display name is presentation only.
-IR_STAGE_ID = "CreateReleaseIntegrationBranches"
-IR_STAGE_NAME = "Create Release Integration Branches"
 
 # The 4 release repos. `tool` selects the PR backend: 'gh' (github.com / GHE) or 'ado'.
 # `gh_repo` is what we pass to `gh --repo` (bare owner/repo = github.com; host/owner/repo = GHE).
@@ -89,8 +82,6 @@ MOCKABLE = {
     "branches": {"kind": "input", "desc": "dict repo->{wr,r,ri,target} to override branch names."},
     "repos": {"kind": "input", "desc": "list of repo keys to include (default all)."},
     "pbi": {"kind": "input", "desc": "PBI id to reference (skip create); 'skip' = no AB# line."},
-    "stage": {"kind": "input", "desc": "inject the IR stage state: 'ready'|'wait'|'failed' "
-                                       "(skip the live orchestrator monitor)."},
 }
 
 
@@ -258,61 +249,16 @@ def plan(context):
             "repos": repos, "missing": missing, "ready": not missing}
 
 
-# --------------------------------------------------------------------------- outcome
-def _ir_stage_status(context):
-    """('ready'|'wait'|'failed'|'unknown', detail) — has the orchestrator's RI stage completed?
-    The release-integration branches don't exist until it does, so integ_prs must monitor it
-    and only proceed on 'ready'. Mock-first via the `stage` knob; never raises."""
-    inj = context.input("stage", MISSING)
-    if inj is not MISSING:
-        s = str(inj).lower()
-        if s in ("ready", "completed", "succeeded", "true"):
-            return ("ready", f"injected stage={inj}")
-        if s in ("failed", "canceled", "cancelled"):
-            return ("failed", f"injected stage={inj}")
-        return ("wait", f"injected stage={inj}")
-    try:
-        ok, st, detail = context.services.pipelines.orchestrator_stage_state(
-            PL.ENGINEERING_ORG, PL.ENGINEERING_PROJECT,
-            getattr(context.release, "release_id", ""), IR_STAGE_ID)
-    except Exception:  # noqa: BLE001 — never crash the engine on a network hiccup
-        return ("unknown", "could not read the orchestrator stage")
-    if not ok:
-        return ("unknown", detail)
-    if not st:
-        return ("wait", detail)                       # stage not present on the run yet
-    stt, res = st.get("state"), st.get("result")
-    if stt != "completed":
-        return ("wait", f"'{IR_STAGE_NAME}' is {stt or 'not started'}")
-    if res in ("succeeded", "succeededWithIssues"):
-        return ("ready", f"'{IR_STAGE_NAME}' completed ({res})")
-    return ("failed", f"'{IR_STAGE_NAME}' completed with result={res}")
-
-
 def build(context: StepContext):
     if not _versions(context):
         return Blocked(
             "integ_prs: no release versions resolved. Provide them via the `versions` mock "
             "(e.g. {msal: '8.4.2'}) for testing, or wait for orchestrator version discovery.")
 
-    # Gate on the orchestrator stage that creates the release-integration branches — NOT merely
-    # on remove_rc_tags_gate passing. Monitor it and only proceed once it has completed successfully.
-    status, detail = _ir_stage_status(context)
-    if status == "failed":
-        return Blocked(
-            f"integ_prs: the Release Orchestrator '{IR_STAGE_NAME}' stage FAILED ({detail}) — the "
-            "release-integration branches were not created. Investigate the orchestrator run "
-            "before opening integration PRs.")
-    if status != "ready":
-        return InProgress(
-            f"integ_prs: monitoring the Release Orchestrator — waiting for the '{IR_STAGE_NAME}' stage "
-            f"to complete before the release-integration branches exist ({detail}).",
-            poll_in_min=15)
-
     p = plan(context)
     if not p["ready"]:
         return InProgress(
-            "integ_prs: the orchestrator IR stage is done but not all branches are visible yet — "
+            "integ_prs: not all required branches are visible yet — "
             f"missing: {', '.join(p['missing'])}. Re-checking on the next poll.", poll_in_min=15)
 
     n_new = sum(1 for r in p["repos"] for pr in r["prs"] if not pr.get("existing"))

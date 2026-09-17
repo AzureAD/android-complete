@@ -529,6 +529,14 @@ def test_handler_contracts_validate_kind_and_approval_capability():
         def submit_approval(context=""):
             return True, "ok"
 
+        @staticmethod
+        def prepare_approval(context=""):
+            return None
+
+        @staticmethod
+        def reconcile_approval(context=""):
+            return False, "pending"
+
     with pytest.raises(WorkflowConfigError, match="does not match handler capability"):
         HandlerCatalog.compile(gate_workflow, lambda *_: GateHandler)
 

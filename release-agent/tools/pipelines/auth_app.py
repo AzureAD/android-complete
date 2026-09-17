@@ -153,9 +153,11 @@ def _release_ref(release_branch):
     return b if b.startswith("refs/heads/") else f"refs/heads/{b}"
 
 
-def find_auth_release_build(release_branch, timeout=90):
-    """Discover the Auth App release build (def AUTH_RELEASE_APP_DEF = AndroidBuild-1ES) on the
-    release branch and read the version it produced. Returns (ok, info, detail) where info is
+def find_auth_release_build(release_branch, timeout=90, *, build_id=None):
+    """Read an Auth App release build (def AUTH_RELEASE_APP_DEF = AndroidBuild-1ES).
+
+    When build_id is supplied, require that exact successful build on the release branch.
+    Otherwise discover the newest successful build. Returns (ok, info, detail) where info is
       {build_id, version, commit}   (or None when no succeeded build exists on the branch yet).
 
     The release-app build carries the final Auth App version as an ADO build TAG matching
@@ -165,17 +167,38 @@ def find_auth_release_build(release_branch, timeout=90):
     ref = _pp._release_ref(release_branch)
     if not ref:
         return (False, None, "no authenticator release branch known (run orchestrator_health first)")
-    url = (f"{AUTH_ORG}/{AUTH_PROJECT}/_apis/build/builds"
-           f"?definitions={AUTH_RELEASE_APP_DEF}&branchName={quote(ref, safe='')}"
-           f"&resultFilter=succeeded&queryOrder=finishTimeDescending&$top=20&api-version=7.1")
-    ok, data, detail = _pp._ado_rest_get(url, timeout)
-    if not ok:
-        hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
-        return (False, None, f"{detail}{hint}")
-    builds = (data or {}).get("value") or []
-    if not builds:
-        return (True, None, f"no succeeded release-app build (def {AUTH_RELEASE_APP_DEF}) on {ref}")
-    b = builds[0]                                    # newest succeeded
+    if build_id is not None:
+        url = (
+            f"{AUTH_ORG}/{AUTH_PROJECT}/_apis/build/builds/"
+            f"{quote(str(build_id), safe='')}?api-version=7.1"
+        )
+        ok, b, detail = _pp._ado_rest_get(url, timeout)
+        if not ok:
+            hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
+            return (False, None, f"{detail}{hint}")
+        b = b or {}
+        if str(b.get("id")) != str(build_id):
+            return (False, None, f"release-app build response did not match build {build_id}")
+        if str((b.get("definition") or {}).get("id")) != str(AUTH_RELEASE_APP_DEF):
+            return (False, None, f"build {build_id} is not release-app definition {AUTH_RELEASE_APP_DEF}")
+        if b.get("sourceBranch") != ref:
+            return (False, None, f"release-app build {build_id} belongs to "
+                    f"{b.get('sourceBranch') or 'an unknown branch'}, not {ref}")
+        if str(b.get("result") or "").lower() != "succeeded":
+            return (False, None, f"release-app build {build_id} is not successful "
+                    f"(result {b.get('result')!r})")
+    else:
+        url = (f"{AUTH_ORG}/{AUTH_PROJECT}/_apis/build/builds"
+               f"?definitions={AUTH_RELEASE_APP_DEF}&branchName={quote(ref, safe='')}"
+               f"&resultFilter=succeeded&queryOrder=finishTimeDescending&$top=20&api-version=7.1")
+        ok, data, detail = _pp._ado_rest_get(url, timeout)
+        if not ok:
+            hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
+            return (False, None, f"{detail}{hint}")
+        builds = (data or {}).get("value") or []
+        if not builds:
+            return (True, None, f"no succeeded release-app build (def {AUTH_RELEASE_APP_DEF}) on {ref}")
+        b = builds[0]                                # newest succeeded
     commit = b.get("sourceVersion")
     if not commit:
         return (False, None, f"release-app build {b.get('id')} has no sourceVersion (built commit)")

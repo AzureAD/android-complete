@@ -31,6 +31,7 @@ COMMAND_MODULES = (
     CommandModule("bugbash_chat"),
     CommandModule("bugbash_update"),
     CommandModule("gate_approve", approvals=("approve-orchestrator-gate",)),
+    CommandModule("finalize_poll"),
     CommandModule("integ_prs_cmd", external_writes=("create-integration-prs",)),
     CommandModule("oneauth_pr_cmd", external_writes=("create-oneauth-common-pr",)),
     CommandModule("payload_wiki_cmd", external_writes=("create-payload-wiki",)),

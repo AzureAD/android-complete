@@ -14,6 +14,7 @@ class OwnStepData:
 class PipelineSlot(str, Enum):
     CHECKER = "checker"
     ORCHESTRATOR = "orchestrator"
+    FINAL = "final"
     ECS = "ecs"
     LOCAL = "local"
     AUTH = "auth"

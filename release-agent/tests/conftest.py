@@ -10,21 +10,42 @@ the guard for the duration of that test.
 from __future__ import annotations
 
 import os
+import shlex
 import sys
 
 import pytest
-
-pytest_plugins = ("tests._timeout",)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # release-agent/
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from orchestrator.revision import StaticRevisionProvider, use_revision_provider
+
+pytest_plugins = ("tests._timeout",)
+_STATIC_REVISION_PROVIDER = StaticRevisionProvider.capture()
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "real_revision: use content-based runtime identity instead of the static unit-test provider",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _unit_revision_provider(request):
+    if request.node.get_closest_marker("real_revision"):
+        yield
+        return
+    with use_revision_provider(_STATIC_REVISION_PROVIDER):
+        yield
+
 
 def _offline_process(run, command, *args, **kwargs):
-    if not isinstance(command, (list, tuple)) or not command:
+    tokens = shlex.split(command, posix=False) if isinstance(command, str) else list(command or ())
+    if not tokens:
         raise RuntimeError("test attempted a REAL shell command; mock the provider")
-    executable = os.path.basename(str(command[0])).lower()
+    executable = os.path.basename(str(tokens[0]).strip('"')).lower()
     if executable in ("az", "az.cmd", "az.exe", "gh", "gh.exe",
                       "workiq", "workiq.cmd", "workiq.exe", "curl", "curl.exe"):
         raise RuntimeError("test attempted a REAL provider CLI; mock the provider")

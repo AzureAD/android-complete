@@ -65,6 +65,7 @@ def report_result(run, capsys, execution_id, outcome="sent", review=False):
     return rc, capsys.readouterr().out
 
 
+@pytest.mark.real_revision
 def test_two_workers_only_one_receives_reserved_work(run, capsys):
     base = ["--runs-root", str(run[0]), "notification", "prepare", "--release", "2000-01",
             "--source", "step", "--phase", "ccd", "--step", "final_reminder"]

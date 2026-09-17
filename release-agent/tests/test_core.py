@@ -181,6 +181,49 @@ def test_deny_blocks():
 
 
 
+def _approve_replay_gate(orch):
+    """Approve local gates directly and external gates through a fake provider."""
+    from importlib import import_module
+    from types import SimpleNamespace
+    from orchestrator.services import EffectServices
+
+    report = orch.status_report()
+    phase_id, step_id = report["current_phase"], report["current_step"]
+    step = orch.workflow.step(phase_id, step_id)
+    if not step.approval_command:
+        orch.approve_gate("auto-approve (replay)")
+        return
+
+    stage = import_module(f"steps.{phase_id}.{step_id}").STAGE
+    pending = {
+        "approval_id": f"replay-{step_id}",
+        "build_id": 900099,
+        "stage": stage,
+        "build_url": "https://example.invalid/build/900099",
+    }
+    orch.mocks.pop(step.key, None)
+    orch._services = SimpleNamespace(
+        pipelines=SimpleNamespace(
+            find_orchestrator_pending_approval=lambda *_: (True, pending, ""),
+        ),
+    )
+    orch._effect_services = lambda *_: EffectServices(
+        submit_pipeline_approval=lambda *_: (True, "approved by replay provider"),
+    )
+    preview = orch.preview_gate_approval(
+        phase_id, step_id, comment="auto-approve (replay)",
+    )
+    result = orch.execute_gate_approval(
+        phase_id,
+        step_id,
+        comment="auto-approve (replay)",
+        review_hash=preview["review_hash"],
+        approved_by="replay-reviewer",
+        executor="replay-executor",
+    )
+    assert result["status"] == "approved"
+
+
 def test_full_flow_replay_completes():
     st, orch = _orch()
     guard = 0
@@ -188,7 +231,7 @@ def test_full_flow_replay_completes():
         orch.run_until_gate()
         status = orch.status_report()["status"]
         if status == "holding_gate":
-            orch.approve_gate("auto-approve (replay)")
+            _approve_replay_gate(orch)
         elif status == "awaiting_action":
             orch.complete_step(note="done (replay)")
         guard += 1
@@ -1860,6 +1903,38 @@ def test_orchestrator_stage_state_reads_stable_identifier(monkeypatch):
     ok, info, _ = P.orchestrator_stage_state(
         "O", "P", "2026-08", "PublishGitHubReleaseNotes")
     assert ok and info == {"state": "inProgress", "result": None, "build_id": 777}
+
+
+def test_orchestrator_finalization_resolves_final_mrwp_and_auth_tags(monkeypatch):
+    from tools import pipelines as P
+
+    monkeypatch.setattr(P, "find_orchestrator_run", lambda *a, **k: (True, {
+        "id": 1690355, "status": "inProgress", "tags": ["Final1=1692575"],
+    }, ""))
+    monkeypatch.setattr(P, "get_timeline", lambda *a, **k: (True, [
+        {"id": "stage", "type": "Stage", "identifier": "PublishGitHubReleaseNotes",
+         "name": "Publish GitHub Release Notes", "state": "inProgress", "result": None},
+        {"id": "approval", "parentId": "stage", "type": "Checkpoint.Approval",
+         "state": "inProgress"},
+    ], ""))
+    monkeypatch.setattr(P, "_az_json", lambda *a, **k: (True, {
+        "id": 1692575, "status": "completed", "result": "succeeded",
+        "tags": ["AuthenticatorBuild=181239508", "Authenticator=6.2609.6188"],
+    }, ""))
+
+    ok, info, detail = P.orchestrator_finalization_status(
+        "O", "P", "2026-09", "PublishGitHubReleaseNotes")
+    assert ok and detail == ""
+    assert info == {
+        "status": "ready",
+        "orchestrator_run_id": "1690355",
+        "stage_state": "inProgress",
+        "stage_result": None,
+        "parked": True,
+        "mrwp_run_id": "1692575",
+        "authenticator_build_id": "181239508",
+        "authenticator_version": "6.2609.6188",
+    }
 
 
 

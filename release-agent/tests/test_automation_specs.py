@@ -1,4 +1,4 @@
-"""Canonical seven-worker specs, permission policy and owner/host clock boundaries."""
+"""Canonical worker specs, permission policy and owner/host clock boundaries."""
 import json
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
@@ -22,9 +22,19 @@ def plan(**kwargs):
                   owner_timezone="America/Los_Angeles", scheduler_timezone="UTC", now=NOW, **kwargs)
 
 
-def test_all_seven_specs_are_complete_and_exact_tool_kwargs(tmp_path):
+def test_all_specs_are_complete_and_exact_tool_kwargs(tmp_path):
     result = plan()
-    assert not result["problems"] and len(result["automations"]) == 7
+    assert not result["problems"]
+    assert {worker["slug"] for worker in result["automations"]} == {
+        "push-reminders",
+        "daily-status-email",
+        "finalize-orchestrator-poller",
+        "ccd-morning",
+        "ccd-noon",
+        "ccd-localization-poller",
+        "build-verify-rc-poller",
+        "bug-bash-update-poller",
+    }
     reg = AutomationRegistry(str(tmp_path))
     for worker in result["automations"]:
         assert not worker["problems"]

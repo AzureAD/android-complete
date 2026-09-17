@@ -98,9 +98,38 @@ def _auth_build(context):
     if not branch:
         return (None, None, None, "no Authenticator release branch on record (state.versions.authenticator)")
     from tools.pipelines import auth_build_url
-    ok, info, detail = context.services.pipelines.find_auth_release_build(branch)
+    final = (context.evidence.pipeline_runs or {}).get("final") or {}
+    build_id = final.get("authenticator_build_id")
+    expected_version = final.get("authenticator_version")
+    if not build_id or not expected_version:
+        return (
+            None,
+            None,
+            None,
+            "final Authenticator build evidence is missing "
+            "(run finalize.orchestrator_finalization first)",
+        )
+    ok, info, detail = context.services.pipelines.find_auth_release_build(
+        branch, build_id=build_id
+    )
     if not ok or not info:
         return (None, None, None, detail or "no succeeded Authenticator release-app build yet")
+    if str(info.get("build_id")) != str(build_id):
+        return (
+            None,
+            None,
+            None,
+            f"resolved Authenticator build {info.get('build_id')} does not match "
+            f"captured final build {build_id}",
+        )
+    if str(info.get("version")) != str(expected_version):
+        return (
+            None,
+            None,
+            None,
+            f"captured final Authenticator version {expected_version} does not match "
+            f"build {build_id} tag {info.get('version')}",
+        )
     return (info.get("version"), info.get("build_number"), auth_build_url(info.get("build_id")), "")
 
 

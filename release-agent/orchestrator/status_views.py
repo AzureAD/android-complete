@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 from orchestrator import schedule
+from orchestrator.revision import revision_checked
 
 
 class StatusViewMixin:
@@ -239,6 +240,7 @@ class StatusViewMixin:
             "opens_in_days": (opens - self.as_of).days if opens else None,
         }
 
+    @revision_checked
     def status_report(self) -> dict:
         """Structured status — presentation layer (render.py) turns this into a view.
         Deterministic; no formatting baked in. Assembled from focused builders:

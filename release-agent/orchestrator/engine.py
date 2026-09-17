@@ -10,6 +10,7 @@ The engine is the BRAIN: it decides what's next. The skill is only the mouth/ear
 No LLM logic here — this is fully unit-testable and replayable.
 """
 from __future__ import annotations
+import hashlib
 import os
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time
@@ -29,6 +30,7 @@ from .effects import EffectMode, EffectRecovery
 from .handlers import HandlerCatalog, HandlerResolver, StepHandler
 from .projection import SchedulingResult, StateProjection
 from .readiness import ReadinessGate
+from .revision import active_revision_provider, operation_cache, revision_checked
 from . import schedule
 from . import mocks as mocks_mod
 from .status_views import StatusViewMixin
@@ -60,10 +62,12 @@ class Orchestrator(StatusViewMixin):
     def __init__(self, config_path: str, state: ReleaseState, readiness_path: str = None,
                  as_of: date = None, mocks: dict = None, tz=None, now: datetime = None,
                  *, handler_resolver: HandlerResolver | None = None, services=None,
-                 effect_services=None, clock=None, new_id=None):
+                 effect_services=None, clock=None, new_id=None, revision_provider=None):
         self.config_path = os.path.abspath(config_path)
-        with open(config_path, "r", encoding="utf-8") as fh:
-            self.config = yaml.safe_load(fh)
+        with open(config_path, "rb") as fh:
+            config_bytes = fh.read()
+        self._config_file_hash = hashlib.sha256(config_bytes).digest()
+        self.config = yaml.safe_load(config_bytes)
         self._config_file_fingerprint = workflow_fingerprint(self.config)
         self.workflow = WorkflowDefinition.compile(self.config)
         self._handler_resolver = handler_resolver if handler_resolver is not None else steps.get_step
@@ -75,8 +79,13 @@ class Orchestrator(StatusViewMixin):
             with open(readiness_path, "r", encoding="utf-8") as fh:
                 readiness_cfg = yaml.safe_load(fh)
         self.readiness_path = os.path.abspath(readiness_path)
-        from .revision import runtime_hash
-        self._loaded_runtime_hash = runtime_hash(
+        self._revision_provider = (
+            revision_provider if revision_provider is not None
+            else active_revision_provider()
+        )
+        if not callable(getattr(self._revision_provider, "identity", None)):
+            raise TypeError("Revision provider must define identity()")
+        self._loaded_runtime_hash, _ = self._revision_provider.identity(
             config_path=self.config_path, readiness_path=self.readiness_path)
         self.state = state
         self._services = services
@@ -119,17 +128,28 @@ class Orchestrator(StatusViewMixin):
                 self.as_of = self.now_local.date()
 
     def _workflow_definition(self) -> WorkflowDefinition:
-        """Recompile after disk or in-memory changes without caching source identity."""
-        with open(self.config_path, encoding="utf-8") as fh:
-            disk_config = yaml.safe_load(fh)
-        disk_fingerprint = workflow_fingerprint(disk_config)
-        if disk_fingerprint != self._config_file_fingerprint:
-            self.config = disk_config
-            self._config_file_fingerprint = disk_fingerprint
+        """Read once per operation and recompile only when config content changes."""
+        cache = operation_cache(self)
+        if cache is not None and "workflow" in cache:
+            cached = cache["workflow"]
+            if workflow_fingerprint(self.config) == cached.fingerprint:
+                return cached
+        with open(self.config_path, "rb") as fh:
+            config_bytes = fh.read()
+        config_hash = hashlib.sha256(config_bytes).digest()
+        if config_hash != self._config_file_hash:
+            disk_config = yaml.safe_load(config_bytes)
+            disk_fingerprint = workflow_fingerprint(disk_config)
+            if disk_fingerprint != self._config_file_fingerprint:
+                self.config = disk_config
+                self._config_file_fingerprint = disk_fingerprint
+            self._config_file_hash = config_hash
         if workflow_fingerprint(self.config) != self.workflow.fingerprint:
             workflow = WorkflowDefinition.compile(self.config)
             handlers = HandlerCatalog.compile(workflow, self._handler_resolver)
             self.workflow, self.handlers = workflow, handlers
+        if cache is not None:
+            cache["workflow"] = self.workflow
         return self.workflow
 
     def handler(self, phase_id: str, step_id: str) -> StepHandler:
@@ -261,10 +281,12 @@ class Orchestrator(StatusViewMixin):
                 raise ValueError("Evidence requires an invocation context")
             session.apply(updates, checkpoint=checkpoint)
 
+    @revision_checked
     def preview_gate_approval(self, phase_id, step_id, *, comment=""):
         from .approvals import preview
         return preview(self, phase_id, step_id, comment=comment)
 
+    @revision_checked
     def execute_gate_approval(self, phase_id, step_id, **authorization):
         from .approvals import execute
         return execute(self, phase_id, step_id, **authorization)
@@ -292,6 +314,7 @@ class Orchestrator(StatusViewMixin):
             self._kernel = TransitionKernel(self.state, workflow, self._projection, _now)
         return self._kernel
 
+    @revision_checked
     def scheduling(self, attempted: Iterable[str] = ()) -> SchedulingResult:
         """Public, pure scheduling query shared by dispatch and presentation."""
         return self._projection().scheduling(attempted=attempted)
@@ -371,6 +394,7 @@ class Orchestrator(StatusViewMixin):
         # A conditional phase (e.g. hotfix) is activated by an explicit note flag.
         return self._projection().activated_conditionals()
 
+    @revision_checked
     def activate_conditional(self, phase_id: str) -> NextAction:
         return self._next_from_transition(
             self._transition_kernel().activate(phase_id)
@@ -383,6 +407,7 @@ class Orchestrator(StatusViewMixin):
         phase = self.scheduling().frontier
         return phase.raw if phase else None
 
+    @revision_checked
     def current_phase_id(self) -> Optional[str]:
         """Public: id of the first included phase with incomplete steps, or None when
         the release is complete. The engine's authoritative 'where are we' — derived
@@ -420,6 +445,7 @@ class Orchestrator(StatusViewMixin):
             and self._projection().prerequisites_met(phase_def, step_def)
         )
 
+    @revision_checked
     def step_once(self, attempted: set[str] | None = None) -> NextAction:
         """Advance exactly one step (or hold). For a sequential phase this is the
         classic first-incomplete-step logic. For a parallel phase it runs one ready
@@ -739,6 +765,7 @@ class Orchestrator(StatusViewMixin):
         value = self.state.get_step(phase_id, step_id).execution
         return dict(value) if isinstance(value, dict) else {}
 
+    @revision_checked
     def authorize_outcome(
         self, intent: TransitionIntent, phase_id: str, step_id: str, *,
         execution_id: str | None = None,
@@ -753,6 +780,7 @@ class Orchestrator(StatusViewMixin):
             raise ValueError(result.message)
         return result
 
+    @revision_checked
     def apply_outcome(
         self, permit: OutcomePermit, outcome: AutoOutcome, *, data: dict | None = None,
     ) -> NextAction:
@@ -770,6 +798,7 @@ class Orchestrator(StatusViewMixin):
         self._evidence_sessions.pop(permit, None)
         return self._next_from_transition(result)
 
+    @revision_checked
     def validate_outcome_application(
         self, permit: OutcomePermit, outcome: AutoOutcome, *, data: dict | None = None,
     ) -> None:
@@ -778,6 +807,7 @@ class Orchestrator(StatusViewMixin):
         if rejected:
             raise ValueError(rejected.message)
 
+    @revision_checked
     def validate_outcome_permit(self, permit: OutcomePermit) -> None:
         """Revalidate a prepared action before offering or invoking further work."""
         from .revision import assert_current
@@ -786,6 +816,7 @@ class Orchestrator(StatusViewMixin):
         if rejected:
             raise ValueError(rejected.message)
 
+    @revision_checked
     def validate_evidence_permit(self, permit: OutcomePermit) -> None:
         from .revision import assert_current
         assert_current(self)
@@ -793,6 +824,7 @@ class Orchestrator(StatusViewMixin):
         if rejected:
             raise ValueError(rejected.message)
 
+    @revision_checked
     def settle_execution(
         self, phase_id: str, step_id: str, execution_id: str, outcome: AutoOutcome,
         *, data: dict | None = None,
@@ -807,6 +839,7 @@ class Orchestrator(StatusViewMixin):
             raise ValueError(result.message)
         return self._next_from_transition(result)
 
+    @revision_checked
     def step_action_intent(self, phase_id: str, step_id: str) -> TransitionIntent:
         if rejected := self._transition_kernel()._invalid():
             raise ValueError(rejected.message)
@@ -818,6 +851,7 @@ class Orchestrator(StatusViewMixin):
             return TransitionIntent.REFRESH
         return TransitionIntent.PREPARE
 
+    @revision_checked
     def omit_execution(
         self, permit: OutcomePermit, reason: str, *, links: list | None = None,
     ) -> NextAction:
@@ -826,6 +860,7 @@ class Orchestrator(StatusViewMixin):
             raise ValueError(result.message)
         return self._next_from_transition(result)
 
+    @revision_checked
     def step_action_guard(self, phase_id: str, step_id: str):
         if rejected := self._transition_kernel()._invalid():
             return Blocked(rejected.message)
@@ -854,6 +889,7 @@ class Orchestrator(StatusViewMixin):
         """Every non-notification outbound action requires a durable reservation."""
         return isinstance(outcome, NeedsSkill) and outcome.outbound
 
+    @revision_checked
     def reserve_step(self, phase_id: str, step_id: str, outcome, executor: str):
         from .revision import assert_current
         assert_current(self)
@@ -869,26 +905,32 @@ class Orchestrator(StatusViewMixin):
         result = self._transition_kernel().reserve(phase_id, step_id, executor)
         return outcome if result.changed else Blocked(result.message)
 
+    @revision_checked
     def reserve_execution(self, phase_id: str, step_id: str, executor: str) -> TransitionResult:
         from .revision import assert_current
         assert_current(self)
         return self._transition_kernel().reserve(phase_id, step_id, executor)
 
+    @revision_checked
     def annotate_step(self, phase_id: str, step_id: str, *, data: dict | None = None,
                       links: list | None = None, note: str | None = None,
                       by: str | None = None) -> TransitionResult:
         return self._transition_kernel().annotate_step(
             phase_id, step_id, data=data, links=links, note=note, by=by)
 
+    @revision_checked
     def reopen(self, phase_id: str, step_id: str, reason: str = "") -> TransitionResult:
         return self._transition_kernel().reopen(phase_id, step_id, reason)
 
+    @revision_checked
     def cancel(self, reason: str) -> TransitionResult:
         return self._transition_kernel().cancel(reason)
 
+    @revision_checked
     def reactivate(self, reason: str) -> TransitionResult:
         return self._transition_kernel().reactivate(reason)
 
+    @revision_checked
     def retry_effect(self, phase_id: str, step_id: str, execution_id: str, reason: str,
                      *, confirm_absent: bool = False) -> TransitionResult:
         kernel = self._transition_kernel()
@@ -915,6 +957,7 @@ class Orchestrator(StatusViewMixin):
         return kernel._apply_effect_recovery(
             phase_id, step_id, execution_id, reason, generation, retry=True)
 
+    @revision_checked
     def supersede_effect(self, phase_id: str, step_id: str, execution_id: str, reason: str,
                          *, confirm_idempotent: bool = False) -> TransitionResult:
         kernel = self._transition_kernel()
@@ -926,6 +969,7 @@ class Orchestrator(StatusViewMixin):
         return kernel._apply_effect_recovery(
             phase_id, step_id, execution_id, reason, generation, retry=False)
 
+    @revision_checked
     def claim_notification_step(self, notification_id: str, approved_hash: str, executor: str) -> TransitionResult:
         from orchestrator import delivery
 
@@ -945,6 +989,7 @@ class Orchestrator(StatusViewMixin):
             return self._transition_kernel()._reject(reason)
         return self._transition_kernel()._claim_notification_step(notification_id, approved_hash, executor)
 
+    @revision_checked
     def release_notification_step(self, notification_id: str, execution_id: str) -> TransitionResult:
         if not isinstance(self.state.notification_deliveries, dict):
             return self._transition_kernel()._reject("Notification ledger must be a mapping.")
@@ -953,6 +998,7 @@ class Orchestrator(StatusViewMixin):
         except ValueError as exc:
             return self._transition_kernel()._reject(str(exc))
 
+    @revision_checked
     def record_notification_evidence(self, notification_id: str) -> TransitionResult:
         from orchestrator import delivery
 
@@ -983,10 +1029,12 @@ class Orchestrator(StatusViewMixin):
             return self._transition_kernel()._reject(reason)
         return self._transition_kernel().record_notification_evidence(notification_id)
 
+    @revision_checked
     def scout_pending_steps(self) -> list:
         return list(self.scheduling().scout_pending)
 
     # ---- manual overrides (human-driven transitions, §7.1 constraint #5) ----
+    @revision_checked
     def completed_step_outcome(self, phase_id: str, step_id: str) -> Optional[Done]:
         """Terminal steps stay terminal until explicitly reopened."""
         if not self._step_complete(phase_id, step_id):
@@ -1000,6 +1048,7 @@ class Orchestrator(StatusViewMixin):
         phase = workflow.phase(phase_id)
         return phase.raw if phase and workflow.step(phase_id, step_id) else None
 
+    @revision_checked
     def skip_step(self, phase_id: str, step_id: str, reason: str) -> NextAction:
         """Mark a step skipped (counts as done for progression) without running it.
         A reason is REQUIRED (audit). For 'doesn't apply' or 'done manually outside the tool'."""
@@ -1007,6 +1056,7 @@ class Orchestrator(StatusViewMixin):
             self._transition_kernel().skip(phase_id, step_id, reason)
         )
 
+    @revision_checked
     def complete_step(self, phase_id: str = None, step_id: str = None, note: str = "") -> NextAction:
         """Mark a reminder (human, non-gate) step done. Defaults to the step the
         conductor is currently holding on. This is how a person clears an
@@ -1023,6 +1073,7 @@ class Orchestrator(StatusViewMixin):
             self._transition_kernel().complete(phase_id, step_id, note)
         )
 
+    @revision_checked
     def record_scout_step(self, phase_id: str, step_id: str, status: str,
                           detail: str = "", *, execution_id: str = None,
                           refresh: bool = False) -> NextAction:
@@ -1063,16 +1114,19 @@ class Orchestrator(StatusViewMixin):
         )
         return self.apply_outcome(permit, outcome)
 
+    @revision_checked
     def reopen_step(self, phase_id: str, step_id: str, reason: str = "") -> NextAction:
         """Undo a done/skipped step so the conductor runs it again. Reason optional."""
         return self._next_from_transition(
             self.reopen(phase_id, step_id, reason)
         )
 
+    @revision_checked
     def halt(self, reason: str) -> NextAction:
         """Emergency hold — nothing advances until resume(). Reason REQUIRED (audit)."""
         return self._next_from_transition(self._transition_kernel().halt(reason))
 
+    @revision_checked
     def resume(self, reason: str = "") -> NextAction:
         """Clear an emergency halt. Reason optional."""
         return self._next_from_transition(self._transition_kernel().resume(reason))
@@ -1086,12 +1140,14 @@ class Orchestrator(StatusViewMixin):
             and self._projection().gate_approved(definition)
         )
 
+    @revision_checked
     def approve_gate(self, comment: str = "") -> NextAction:
         """Record approval for the current holding gate and continue."""
         return self._next_from_transition(
             self._transition_kernel().approve_gate(comment)
         )
 
+    @revision_checked
     def deny_gate(self, comment: str = "") -> NextAction:
         return self._next_from_transition(
             self._transition_kernel().deny_gate(comment)
