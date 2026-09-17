@@ -193,6 +193,7 @@ Discover → (if no gate cleared, run the entry gate) → `next --json` to advan
 | Advancing **Phase 0 (Pre-flight)** — notice, flight reminders, lockdown, confirm, vitals | `reference/phases/preflight.md` |
 | Advancing **Phase 2 (Build & RC Verification)** — verification chain, RC report email + three-tier 90% UI gate (no separate gate) | `reference/phases/build_verify.md` |
 | **Phase 3 — distribute manual tests / owner OOF confirmation** | `reference/commands.md` → Bug Bash availability |
+| Advancing **Phase 5 (Rollout Start)** — Authenticator rollout notice and source-only payload rules | `reference/phases/rollout_start.md` |
 | Rendering `status`/`checklist` output | `reference/presenting-status.md` |
 | Looking up a command / manual override / event-logging detail | `reference/commands.md` |
 | Building a NEW phase's guidance | `reference/phases/_TEMPLATE.md` |

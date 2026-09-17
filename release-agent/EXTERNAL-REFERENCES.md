@@ -25,6 +25,8 @@ Legend for **Access**: `anon` = no auth · `az` = Azure CLI signed-in user ·
 | ADO pipeline **405133** | Localization build (org msazure / project One) | Phase-1 `localization` | MCP (ADO) / az | triggered at noon on CCD with `isCreatePrSelected=true`; polled every 10 min (3h timeout → email engineer); its **OneLocBuild@3** task logs `Pull request created with ID '<n>'` — that PR (`…/pullrequest/<n>`) is posted to the Code reviews chat for review |
 | ADO build def **2828** | Auth Client Android build (org identitydivision / project Engineering) | readiness `build_access` | az | access check only |
 | ADO build def **397224** | Android Build Release (org msazure / project One) | readiness `build_access` | az | access check only |
+| ADO build def **475778** | AndroidBuildBroker1ES Authenticator RC build | Phase-2 Authenticator evidence + Phase-5 rollout-notice release-build link | az | Phase 5 links the exact latest RC run recorded in `state.pipeline_runs`; definition page: https://msazure.visualstudio.com/One/_build?definitionId=475778 |
+| ADO build def **355246** | AndroidBuild-1ES final Authenticator release-app build | Phase-4 payload/tag + Phase-5 app-version/source selection | az | Successful build on `release/YYYY/MM/DD`; exact built commit plus numeric `N.N.N` build tag is the only app-version source, but the Phase-5 visible release-build link comes from recorded def 475778 state |
 | ADO wiki **IdentityWiki.wiki** page **59148** | "Monthly Releases Payloads History" (parent) | Phase-0 `wiki` agent | az (`az devops wiki`) | child page `<Month> <Year> Release`; dup-safe numbering |
 | **ICM team 78848** | "Auth Client Android Shield" on-call roster | readiness `oncall_now` | MCP (ICM) | primary = index 0 of currentOnCallContacts |
 | **ADX cluster** idsharedeus2.eastus2 / db d496be22d62a46b0a3cf67ea2e736fd8 | release telemetry | readiness `adx_access` | MCP (Kusto) | `print 1` access probe |
@@ -57,6 +59,7 @@ Legend for **Access**: `anon` = no auth · `az` = Azure CLI signed-in user ·
 |---|---|---|
 | Phase-0 `notice` (early code-complete) | androididentity@microsoft.com ("Azure Identity Android SDK") | provided by release owner 2026-07-29 |
 | Phase-1 `final_reminder` (CCD-day code-complete) | androididentity@microsoft.com ("Azure Identity Android SDK") | same DL as `notice`; CCD-day "update" variant |
+| Phase-5 `rollout_start.notice` | MAuthenticatorRel@microsoft.com | CC windevxeng@microsoft.com (Intune AOSP); `send_to` test redirect clears the real CC |
 
 ## Tooling / infra (provisioned by bootstrap)
 

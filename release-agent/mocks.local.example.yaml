@@ -102,7 +102,10 @@ preflight.cg:
 # finalize.wiki_payload:      { outcome: done }   # agent (preview-first) — or { version: {...}, prs: [...] }
 
 # ---- Phase 5 · rollout_start ----
-# rollout_start.notice:        { outcome: done }   # agent
+# rollout_start.notice:
+#   send_to: you@microsoft.com  # real test email to you; clears the real CC
+#   build: { build_id: 123, version: 6.2609.6000, commit: 0123456789abcdef0123456789abcdef01234567, build_number: 20260910.5 }
+#   manifest: { version: 1, branch: release/2026/09/10, target_commit: 0123456789abcdef0123456789abcdef01234567, general: [], did: [], generated_omitted: [], flight_changes: { added: [], default_changed: [] } }
 # rollout_start.artifact:      { outcome: done }   # agent
 # rollout_start.signoff_start: 🚦 gate — NOT mockable
 

@@ -508,7 +508,10 @@ def test_find_auth_release_build_extracts_version_and_commit(monkeypatch):
         if "/builds/177976153/tags" in url:
             return (True, {"value": ["1ES.PT.Official", "6.2608.5658", "1ES.PT.Build"]}, "")
         if "_apis/build/builds?" in url:
-            return (True, {"value": [{"id": 177976153, "sourceVersion": _TA_COMMIT}]}, "")
+            return (True, {"value": [{
+                "id": 177976153, "sourceVersion": _TA_COMMIT,
+                "status": "completed", "result": "succeeded",
+            }]}, "")
         return (False, None, "unexpected url")
     monkeypatch.setattr(P, "_ado_rest_get", fake_get)
     ok, info, _ = P.find_auth_release_build("release/2026/08/13")
@@ -523,7 +526,42 @@ def test_find_auth_release_build_none_when_no_build(monkeypatch):
     from tools import pipelines as P
     monkeypatch.setattr(P, "_ado_rest_get", lambda url, t: (True, {"value": []}, ""))
     ok, info, detail = P.find_auth_release_build("release/2026/08/13")
-    assert ok and info is None and "no succeeded release-app build" in detail
+    assert ok and info is None and "no release-app build" in detail
+
+
+def test_find_auth_release_build_rejects_newer_failed_run(monkeypatch):
+    from tools import pipelines as P
+
+    monkeypatch.setattr(P, "_ado_rest_get", lambda url, t: (True, {"value": [
+        {"id": 20, "sourceVersion": "2" * 40, "status": "completed", "result": "failed"},
+        {"id": 10, "sourceVersion": "1" * 40, "status": "completed", "result": "succeeded"},
+    ]}, ""))
+    ok, info, detail = P.find_auth_release_build("release/2026/09/10")
+    assert ok and info is None
+    assert "latest release-app build 20 did not succeed" in detail
+
+
+def test_find_auth_release_build_sorts_by_id_not_finish_order_and_filters_baseline(monkeypatch):
+    from tools import pipelines as P
+
+    calls = []
+    def fake_get(url, timeout):
+        calls.append(url)
+        if "/builds/30/tags" in url:
+            return (True, {"value": ["6.2608.3"]}, "")
+        return (True, {"value": [
+            {"id": 20, "sourceVersion": "2" * 40,
+             "status": "completed", "result": "succeeded"},
+            {"id": 30, "sourceVersion": "3" * 40,
+             "status": "completed", "result": "succeeded"},
+        ]}, "")
+    monkeypatch.setattr(P, "_ado_rest_get", fake_get)
+    ok, info, detail = P.find_auth_release_build(
+        "release/2026/08/13", require_latest=False)
+    assert ok, detail
+    assert info["build_id"] == 30
+    assert "resultFilter=succeeded" in calls[0]
+    assert "queueTimeDescending" in calls[0] and "$top=100" in calls[0]
 
 
 def test_find_auth_release_build_reads_exact_captured_build(monkeypatch):
@@ -596,3 +634,155 @@ def test_merged_release_prs_merges_working_and_release_dedupes():
     assert ids == [200, 101, 100]                      # newest-first, 101 de-duped
     # the working window used the previous release branch date as the lower bound
     assert "2026-07-10T00:00:00Z" in calls["working"]
+
+
+def test_auth_release_manifest_uses_only_reachable_commits_and_canonical_paths(monkeypatch):
+    from tools import pipelines as P
+    from tools.pipelines import auth_app as A
+
+    target, baseline, common = "a" * 40, "b" * 40, "c" * 40
+    commits = [
+        {"commitId": "1" * 40, "comment": "Merged PR 101: General",
+         "author": {"date": "2026-09-01T00:00:00Z"}},
+        {"commitId": "2" * 40, "comment": "Merged PR 102: DID only",
+         "author": {"date": "2026-09-02T00:00:00Z"}},
+        {"commitId": "3" * 40, "comment": "Merged PR 103: Shared",
+         "author": {"date": "2026-09-03T00:00:00Z"}},
+        {"commitId": "4" * 40, "comment": "Merged PR 104: LEGO generated",
+         "author": {"date": "2026-09-04T00:00:00Z"}},
+    ]
+    refs = [
+        {"name": "refs/heads/release/2026/08/13", "objectId": baseline},
+        {"name": "refs/heads/release/2026/09/10", "objectId": target},
+    ]
+
+    def get_all(url, timeout):
+        return (True, refs, "") if "/refs?" in url else (True, commits, "")
+
+    monkeypatch.setattr(P, "_ado_rest_get_all", get_all)
+    monkeypatch.setattr(P, "_ado_rest_get", lambda url, timeout: (True, {
+        "allChangesIncluded": True, "commonCommit": common, "aheadCount": 4,
+    }, ""))
+    monkeypatch.setattr(A, "find_auth_release_build", lambda branch, timeout=90, **kwargs: (
+        True, {"commit": baseline, "build_id": 1, "version": "6.2608.1"}, ""))
+    monkeypatch.setattr(A, "_pull_request_titles", lambda base, rows, timeout: (
+        True, {
+            101: "Canonical general title",
+            102: "Canonical DID title",
+            103: "Canonical shared title",
+            104: "Canonical generated title",
+        }, ""))
+    paths = {
+        "1" * 40: ["/PhoneFactor/app/src/Main.kt"],
+        "2" * 40: ["/PhoneFactor/WalletLibrary"],
+        "3" * 40: ["/PhoneFactor/app/src/Main.kt",
+                   "/PhoneFactor/VerifiableCredential-Wallet/src/Did.kt"],
+        "4" * 40: ["/Localization/values-fr.xml"],
+    }
+    monkeypatch.setattr(A, "_commit_changes",
+                        lambda base, sha, timeout: (True, paths[sha], ""))
+    before = 'Old("Old", false),\n'
+    after = 'Old("Old", true),\nNew("New", false),\n'
+    monkeypatch.setattr(A, "_auth_file_text", lambda base, path, sha, timeout: (
+        True, before if sha == baseline else after, ""))
+
+    ok, manifest, detail = P.release_change_manifest(
+        "release/2026/09/10", target)
+    assert ok, detail
+    assert [item["id"] for item in manifest["general"]] == [101]
+    assert [item["id"] for item in manifest["did"]] == [103, 102]
+    assert manifest["general"][0]["title"] == "Canonical general title"
+    assert manifest["did"][0]["title"] == "Canonical shared title"
+    assert manifest["did"][0]["mixed"]
+    assert not set(item["id"] for item in manifest["general"]) & \
+        set(item["id"] for item in manifest["did"])
+    assert [item["id"] for item in manifest["generated_omitted"]] == [104]
+    assert manifest["flight_changes"] == {
+        "added": [{"name": "New", "key": "New", "default": "false"}],
+        "default_changed": [{
+            "name": "Old", "key": "Old", "default": "true",
+            "previous_default": "false",
+        }],
+    }
+
+
+def test_ecs_flight_parser_preserves_literal_defaults():
+    from tools.pipelines.auth_app import ecs_flight_changes
+
+    changes = ecs_flight_changes(
+        'A("A", false),\nListFlag("ListFlag", emptyList()),\n',
+        'A("A", true),\nListFlag("ListFlag", emptyList()),\n'
+        'Host("Host", "https://example.test"),\n',
+    )
+    assert changes["added"] == [{
+        "name": "Host", "key": "Host", "default": '"https://example.test"',
+    }]
+    assert changes["default_changed"][0]["previous_default"] == "false"
+    assert changes["default_changed"][0]["default"] == "true"
+
+
+def test_localization_title_is_omitted_even_when_generated_files_touch_did_paths():
+    from tools.pipelines.auth_app import classify_release_commits
+
+    commit = "7" * 40
+    result = classify_release_commits(
+        [{
+            "commitId": commit,
+            "comment": "Merged PR 700: Localized file check-in by OneLocBuild Task: Build 1",
+            "author": {"date": "2026-09-10T00:00:00Z"},
+        }],
+        {commit: [
+            "/Localization/values-fr.xml",
+            "/PhoneFactor/VerifiableCredential-Wallet/src/main/res/values-fr/strings.xml",
+        ]},
+    )
+    assert result["general"] == [] and result["did"] == []
+    assert result["generated_omitted"][0]["id"] == 700
+
+
+def test_commit_rename_classifies_both_original_and_destination_paths(monkeypatch):
+    from tools.pipelines import auth_app as A
+
+    monkeypatch.setattr(A._pp, "_ado_rest_get_h", lambda url, timeout: (True, {
+        "changes": [{
+            "changeType": "rename",
+            "originalPath": "/PhoneFactor/app/src/Old.kt",
+            "item": {
+                "path": "/PhoneFactor/VerifiableCredential-Wallet/src/New.kt",
+                "isFolder": False,
+            },
+        }],
+    }, {}, ""))
+    ok, paths, detail = A._commit_changes("https://ado/repo", "8" * 40, 30)
+    assert ok, detail
+    classified = A.classify_release_commits([{
+        "commitId": "8" * 40,
+        "comment": "Merged PR 800: Move shared implementation",
+        "author": {"date": "2026-09-10T00:00:00Z"},
+    }], {"8" * 40: paths})
+    assert classified["general"] == []
+    assert classified["did"][0]["mixed"]
+
+
+def test_auth_branch_url_opens_repo_contents_at_exact_branch():
+    from tools.pipelines.auth_app import auth_branch_url
+
+    assert auth_branch_url("release/2026/09/10").endswith(
+        "?path=%2F&version=GBrelease%2F2026%2F09%2F10&_a=contents"
+    )
+
+
+def test_release_commit_classification_prefers_canonical_pr_title():
+    from tools.pipelines.auth_app import classify_release_commits
+
+    commit = "9" * 40
+    result = classify_release_commits(
+        [{
+            "commitId": commit,
+            "comment": "Merged PR 17099302: Users/fadidurah/e2e deeplink investigation",
+            "author": {"date": "2026-09-09T19:17:47Z"},
+        }],
+        {commit: ["/PhoneFactor/uiautomator-tests/Test.kt"]},
+        {17099302: "Fix Ui navigation in authapp automation"},
+    )
+    assert result["general"][0]["title"] == "Fix Ui navigation in authapp automation"

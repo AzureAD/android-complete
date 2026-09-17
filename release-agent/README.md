@@ -72,11 +72,13 @@ release-agent/                     COMMITTED (distributed with android-complete)
 ├─ steps/                          THE STEP HOME — one self-contained module per step (auto-discovered)
 │  ├─ __init__.py                  discover()/get_step(): scans steps/<phase>/*.py — NO hand-maintained registry
 │  ├─ lib/                         shared step helpers (context views, templating, mock inputs)
-│  └─ preflight/                   Phase-0 step modules — each declares ID/KIND/build + optional MOCKABLE/KNOWLEDGE/CONFIG
+│  ├─ preflight/                   Phase-0 step modules — each declares ID/KIND/build + optional MOCKABLE/KNOWLEDGE/CONFIG
 │     ├─ notice.py  flight_reminder.py  lockdown.py   (scout)
 │     ├─ breaking.py  cg.py  cron.py                  (read-only auto)
 │     ├─ oneauth_access.py                           (idempotent auto effect)
 │     └─ confirm_reminders.py  vitals.py               (attest)
+│  └─ rollout_start/
+│     └─ notice.py                                   (source-bound Authenticator rollout email)
 ├─ phases/
 │  ├─ stub_runner.py               [DUMMY] no-op used only for explicitly configured read-only placeholders
 │  └─ readiness_verifiers.py       auto verifiers for the entry gate (pass/fail)

@@ -54,7 +54,8 @@ def production_services(*, status_email=None, status_recipients=None):
             P.discover_versions, P.orchestrator_stage_state,
             P.orchestrator_finalization_status, P.find_orchestrator_pending_approval,
             P.find_auth_release_build,
-            P.merged_release_prs, C.latest_scheduled_build, I.local_flights,
+            P.merged_release_prs, P.release_change_manifest,
+            C.latest_scheduled_build, I.local_flights,
             P.get_pipeline_approval,
         ),
         RepositoryReads(

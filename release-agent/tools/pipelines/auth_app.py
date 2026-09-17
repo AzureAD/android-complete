@@ -3,7 +3,10 @@ from __future__ import annotations
 
 from tools.coordinates import coords
 from tools import pipelines as _pp
+from concurrent.futures import ThreadPoolExecutor
+import json as _json
 import re as _re_mod
+from urllib.parse import quote, urlencode
 
 
 # ============================================================ Authenticator ECS RC
@@ -29,6 +32,31 @@ AUTH_UI_PASS_THRESHOLD = coords.gate("auth_ui_pass_pct")
 # (ECS) or '16.6.0-RC1-local-flights' (Local). This is the deterministic key that
 # says which RC/flavor an auth build is — no branch/date parsing needed.
 _AUTH_RC_VERSION = _re_mod.compile(r"-RC(\d+)-(ecs|local-flights)$", _re_mod.I)
+_DATED_RELEASE = _re_mod.compile(r"^release/(\d{4})/(\d{2})/(\d{2})$")
+_COMMIT = _re_mod.compile(r"^[0-9a-f]{40}$", _re_mod.I)
+_PR_COMMIT = _re_mod.compile(
+    r"^(?:Merged PR|Merge pull request)\s+(\d+)(?::\s*(.*))?",
+    _re_mod.I,
+)
+_DID_PATHS = (
+    "/PhoneFactor/VerifiableCredential-Wallet/",
+    "/PhoneFactor/VerifiableCredential-SDK",
+    "/PhoneFactor/WalletLibrary",
+    "/PhoneFactor/WalletLibrary-FaceCheck-Extension",
+)
+_GENERATED_PATHS = ("/Localization/",)
+_GENERATED_TITLES = (
+    "Localized file check-in by OneLocBuild Task",
+    "LEGO: check in to working",
+)
+_ECS_FLIGHT_PATH = (
+    "/PhoneFactor/ExperimentationLibrary/src/main/java/com/microsoft/authenticator/"
+    "experimentation/ecs/entities/EcsFlight.kt"
+)
+_FLIGHT_LINE = _re_mod.compile(
+    r'^\s*([A-Za-z_]\w*)\(\s*"([^"]+)"\s*,\s*(.+)\),\s*$',
+    _re_mod.M,
+)
 
 
 def _auth_build_ref(auth_branch):
@@ -153,7 +181,12 @@ def _release_ref(release_branch):
     return b if b.startswith("refs/heads/") else f"refs/heads/{b}"
 
 
-def find_auth_release_build(release_branch, timeout=90, *, build_id=None):
+def _positive_build_id(value):
+    return (not isinstance(value, bool) and isinstance(value, (int, str))
+            and str(value).isdigit() and int(value) > 0)
+
+
+def find_auth_release_build(release_branch, timeout=90, *, build_id=None, require_latest=True):
     """Read an Auth App release build (def AUTH_RELEASE_APP_DEF = AndroidBuild-1ES).
 
     When build_id is supplied, require that exact successful build on the release branch.
@@ -168,6 +201,8 @@ def find_auth_release_build(release_branch, timeout=90, *, build_id=None):
     if not ref:
         return (False, None, "no authenticator release branch known (run orchestrator_health first)")
     if build_id is not None:
+        if not _positive_build_id(build_id):
+            return (False, None, f"invalid release-app build id: {build_id!r}")
         url = (
             f"{AUTH_ORG}/{AUTH_PROJECT}/_apis/build/builds/"
             f"{quote(str(build_id), safe='')}?api-version=7.1"
@@ -188,17 +223,36 @@ def find_auth_release_build(release_branch, timeout=90, *, build_id=None):
             return (False, None, f"release-app build {build_id} is not successful "
                     f"(result {b.get('result')!r})")
     else:
+        result_filter = "" if require_latest else "&resultFilter=succeeded"
         url = (f"{AUTH_ORG}/{AUTH_PROJECT}/_apis/build/builds"
                f"?definitions={AUTH_RELEASE_APP_DEF}&branchName={quote(ref, safe='')}"
-               f"&resultFilter=succeeded&queryOrder=finishTimeDescending&$top=20&api-version=7.1")
+               f"{result_filter}&queryOrder=queueTimeDescending&$top=100&api-version=7.1")
         ok, data, detail = _pp._ado_rest_get(url, timeout)
         if not ok:
             hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
             return (False, None, f"{detail}{hint}")
         builds = (data or {}).get("value") or []
         if not builds:
-            return (True, None, f"no succeeded release-app build (def {AUTH_RELEASE_APP_DEF}) on {ref}")
-        b = builds[0]                                # newest succeeded
+            noun = "succeeded release-app build" if not require_latest else "release-app build"
+            return (True, None, f"no {noun} (def {AUTH_RELEASE_APP_DEF}) on {ref}")
+        valid_builds = [item for item in builds if _positive_build_id(item.get("id"))]
+        if not valid_builds:
+            return (False, None, f"release-app build collection on {ref} has no valid build ids")
+        ordered = sorted(valid_builds, key=lambda item: int(item["id"]), reverse=True)
+        if require_latest:
+            b = ordered[0]
+            if b.get("status") != "completed":
+                return (True, None, f"latest release-app build {b.get('id')} is still "
+                        f"{b.get('status') or 'in progress'} on {ref}")
+            if b.get("result") != "succeeded":
+                return (True, None, f"latest release-app build {b.get('id')} did not succeed "
+                        f"(result: {b.get('result') or 'unknown'}) on {ref}")
+        else:
+            b = next((item for item in ordered
+                      if item.get("status") == "completed" and item.get("result") == "succeeded"), None)
+            if b is None:
+                return (True, None, f"no succeeded release-app build "
+                        f"(def {AUTH_RELEASE_APP_DEF}) on {ref}")
     commit = b.get("sourceVersion")
     if not commit:
         return (False, None, f"release-app build {b.get('id')} has no sourceVersion (built commit)")
@@ -218,6 +272,328 @@ def find_auth_release_build(release_branch, timeout=90, *, build_id=None):
 def auth_build_url(build_id) -> str:
     """Browser URL for an Authenticator (msazure/One) build results page."""
     return f"{AUTH_ORG}/{AUTH_PROJECT}/_build/results?buildId={build_id}&view=results" if build_id else ""
+
+
+def auth_branch_url(branch, commit=None) -> str:
+    """Browser URL for an Authenticator branch or the exact built commit."""
+    repo = coords.repo("authenticator")
+    base = f"{repo['org'].rstrip('/')}/{repo['project']}/_git/{repo['name']}"
+    if commit:
+        return f"{base}/commit/{commit}"
+    return (
+        f"{base}?path=%2F&version=GB{quote(str(branch or ''), safe='')}"
+        "&_a=contents"
+    )
+
+
+def _release_branch(value):
+    branch = str(value or "").strip()
+    if branch.startswith("refs/heads/"):
+        branch = branch[len("refs/heads/"):]
+    return branch if _DATED_RELEASE.fullmatch(branch) else None
+
+
+def _repo_base():
+    repo = coords.repo("authenticator")
+    return (
+        repo,
+        f"{repo['org'].rstrip('/')}/{repo['project']}/_apis/git/"
+        f"repositories/{repo['name']}",
+    )
+
+
+def _auth_file_text(base, path, commit, timeout):
+    url = base + "/items?" + urlencode({
+        "path": path,
+        "includeContent": "true",
+        "versionDescriptor.versionType": "commit",
+        "versionDescriptor.version": commit,
+        "api-version": "7.1",
+        "$format": "json",
+    })
+    ok, raw, detail = _pp._ado_rest_get_text(url, timeout)
+    if not ok:
+        return (False, None, detail)
+    try:
+        item = _json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        return (False, None, f"invalid item response for {path}@{commit}: {exc}")
+    content = item.get("content") if isinstance(item, dict) else None
+    if not isinstance(content, str):
+        return (False, None, f"missing text content for {path}@{commit}")
+    return (True, content, "")
+
+
+def parse_ecs_flights(source):
+    """Exact enum name/key/default triples from EcsFlight.kt; no rollout inference."""
+    flights = {}
+    for match in _FLIGHT_LINE.finditer(str(source or "")):
+        name, key, default = (part.strip() for part in match.groups())
+        if key in flights and flights[key] != {"name": name, "key": key, "default": default}:
+            raise ValueError(f"duplicate EcsFlight key with different definitions: {key}")
+        flights[key] = {"name": name, "key": key, "default": default}
+    if not flights:
+        raise ValueError("no EcsFlight declarations parsed")
+    return flights
+
+
+def ecs_flight_changes(before, after):
+    old, new = parse_ecs_flights(before), parse_ecs_flights(after)
+    added = [new[key] for key in sorted(new.keys() - old.keys())]
+    changed = [
+        {**new[key], "previous_default": old[key]["default"]}
+        for key in sorted(new.keys() & old.keys())
+        if old[key]["default"] != new[key]["default"]
+    ]
+    return {"added": added, "default_changed": changed}
+
+
+def _commit_pr(comment):
+    first = str(comment or "").splitlines()[0].strip()
+    match = _PR_COMMIT.match(first)
+    if not match:
+        return (None, first or "(no commit title)")
+    title = (match.group(2) or first).strip()
+    return (int(match.group(1)), title)
+
+
+def classify_release_commits(commits, changes_by_commit, pr_titles=None):
+    """Classify exact reachable commits and use canonical PR titles when supplied."""
+    repo = coords.repo("authenticator")
+    web = f"{repo['org'].rstrip('/')}/{repo['project']}/_git/{repo['name']}"
+    entries = {}
+    omitted = []
+    for commit in commits or []:
+        sha = str(commit.get("commitId") or "").lower()
+        if not _COMMIT.fullmatch(sha):
+            raise ValueError("release commit collection contains an invalid commit id")
+        paths = sorted(set(changes_by_commit.get(sha) or []))
+        if not paths:
+            raise ValueError(f"release commit {sha} has no complete changed-path evidence")
+        pr_id, title = _commit_pr(commit.get("comment"))
+        if pr_id is not None and pr_titles is not None:
+            canonical = pr_titles.get(pr_id)
+            if not isinstance(canonical, str) or not canonical.strip():
+                raise ValueError(f"release PR {pr_id} has no canonical title")
+            title = canonical.strip()
+        generated = (
+            any(title.startswith(prefix) for prefix in _GENERATED_TITLES)
+            or all(any(path.startswith(prefix) for prefix in _GENERATED_PATHS) for path in paths)
+        )
+        key = f"pr:{pr_id}" if pr_id else f"commit:{sha}"
+        url = f"{web}/pullrequest/{pr_id}" if pr_id else f"{web}/commit/{sha}"
+        did = any(any(path == prefix or path.startswith(prefix) for prefix in _DID_PATHS)
+                  for path in paths)
+        general = any(
+            not any(path.startswith(prefix) for prefix in _GENERATED_PATHS)
+            and not any(path == prefix or path.startswith(prefix) for prefix in _DID_PATHS)
+            for path in paths
+        )
+        if generated:
+            omitted.append({"commit": sha, "id": pr_id, "title": title})
+            continue
+        existing = entries.get(key)
+        if existing:
+            paths = sorted(set(existing["paths"]) | set(paths))
+            did = did or "DID" in existing["components"]
+            general = general or "Authenticator" in existing["components"]
+        components = [
+            component for component, present in (("Authenticator", general), ("DID", did))
+            if present
+        ]
+        entries[key] = {
+            "id": pr_id,
+            "commit": sha,
+            "title": title,
+            "url": url,
+            "date": ((commit.get("author") or {}).get("date")
+                     or (commit.get("committer") or {}).get("date")),
+            "paths": paths,
+            "components": components or ["Authenticator"],
+            "mixed": general and did,
+        }
+    ordered = sorted(
+        entries.values(),
+        key=lambda item: (item.get("date") or "", item.get("id") or 0, item["commit"]),
+        reverse=True,
+    )
+    return {
+        "general": [
+            item for item in ordered
+            if "Authenticator" in item["components"] and "DID" not in item["components"]
+        ],
+        "did": [item for item in ordered if "DID" in item["components"]],
+        "generated_omitted": omitted,
+    }
+
+
+def _pull_request_titles(base, commits, timeout):
+    pr_ids = sorted({
+        pr_id
+        for commit in commits
+        for pr_id, _ in [_commit_pr(commit.get("comment"))]
+        if pr_id is not None
+    })
+    titles = {}
+    with ThreadPoolExecutor(max_workers=8) as workers:
+        futures = {
+            pr_id: workers.submit(
+                _pp._ado_rest_get,
+                f"{base}/pullRequests/{pr_id}?api-version=7.1",
+                timeout,
+            )
+            for pr_id in pr_ids
+        }
+        for pr_id, future in futures.items():
+            ok, data, detail = future.result()
+            title = (data or {}).get("title") if isinstance(data, dict) else None
+            if not ok or not isinstance(title, str) or not title.strip():
+                return (False, None, f"could not read canonical title for PR {pr_id} "
+                        f"({detail or 'missing title'})")
+            titles[pr_id] = title.strip()
+    return (True, titles, "")
+
+
+def _commit_changes(base, commit, timeout):
+    items, token, seen = [], None, set()
+    for _ in range(60):
+        url = f"{base}/commits/{commit}/changes?$top=2000&api-version=7.1"
+        if token:
+            url += f"&continuationToken={quote(str(token), safe='')}"
+        ok, data, headers, detail = _pp._ado_rest_get_h(url, timeout)
+        if not ok:
+            return (False, None, detail)
+        page = (data or {}).get("changes")
+        if not isinstance(page, list):
+            return (False, None, "malformed Authenticator commit changes page")
+        items.extend(page)
+        token = headers.get("x-ms-continuationtoken")
+        if not token:
+            paths = []
+            for change in items:
+                item = change.get("item") or {}
+                if not item.get("isFolder"):
+                    paths.append(item.get("path"))
+                if "rename" in str(change.get("changeType") or "").lower():
+                    paths.extend((
+                        change.get("originalPath"),
+                        change.get("sourceServerItem"),
+                        item.get("originalPath"),
+                    ))
+            paths = [path for path in paths if path is not None]
+            if any(not isinstance(path, str) or not path.startswith("/") for path in paths):
+                return (False, None, "invalid Authenticator changed path")
+            return (True, sorted(set(paths)), "")
+        if token in seen:
+            return (False, None, "repeated Authenticator changes continuation token")
+        seen.add(token)
+    return (False, None, "Authenticator commit changes exceeded page limit")
+
+
+def release_change_manifest(release_branch, target_commit, timeout=90):
+    """Exact source manifest for Phase-5 Authenticator/DID release communication."""
+    branch = _release_branch(release_branch)
+    if not branch:
+        return (False, None, f"not a dated Authenticator release branch: {release_branch!r}")
+    target = str(target_commit or "").lower()
+    if not _COMMIT.fullmatch(target):
+        return (False, None, "final Authenticator build has no valid 40-character commit")
+    repo, base = _repo_base()
+    refs_url = f"{base}/refs?filter=heads/release/20&$top=100&api-version=7.1"
+    ok, refs, detail = _pp._ado_rest_get_all(refs_url, timeout)
+    if not ok:
+        return (False, None, f"could not list Authenticator release refs ({detail})")
+    dated = []
+    for ref in refs:
+        name = str(ref.get("name") or "")
+        short = name[len("refs/heads/"):] if name.startswith("refs/heads/") else name
+        if _DATED_RELEASE.fullmatch(short):
+            dated.append((short, ref.get("objectId")))
+    earlier = sorted((name, sha) for name, sha in dated if name < branch)
+    if not earlier:
+        return (False, None, f"no previous dated release branch before {branch}")
+    previous_branch = previous_build = None
+    build_detail = ""
+    for candidate, _ in reversed(earlier):
+        ok_build, info, build_detail = find_auth_release_build(
+            candidate, timeout, require_latest=False)
+        if not ok_build:
+            return (False, None, f"could not resolve previous Authenticator build ({build_detail})")
+        if info:
+            previous_branch, previous_build = candidate, info
+            break
+    if not previous_build:
+        return (False, None, f"no previous successful Authenticator release build ({build_detail})")
+    baseline = str(previous_build.get("commit") or "").lower()
+    if not _COMMIT.fullmatch(baseline):
+        return (False, None, "previous Authenticator release build has no valid commit")
+    diff_url = (
+        f"{base}/diffs/commits?baseVersion={baseline}&baseVersionType=commit"
+        f"&targetVersion={target}&targetVersionType=commit&$top=2000"
+        f"&api-version=7.1-preview.1"
+    )
+    ok_diff, diff, diff_detail = _pp._ado_rest_get(diff_url, timeout)
+    if not ok_diff:
+        return (False, None, f"could not compare Authenticator release commits ({diff_detail})")
+    if (not isinstance(diff, dict) or diff.get("allChangesIncluded") is not True
+            or not _COMMIT.fullmatch(str(diff.get("commonCommit") or ""))):
+        return (False, None, "Authenticator release diff is incomplete or has no merge-base")
+    common = diff["commonCommit"]
+    ahead = diff.get("aheadCount")
+    if type(ahead) is not int or ahead < 0:
+        return (False, None, "Authenticator release diff has invalid aheadCount")
+    commits_url = (
+        f"{base}/commits?searchCriteria.itemVersion.version={common}"
+        f"&searchCriteria.itemVersion.versionType=commit"
+        f"&searchCriteria.compareVersion.version={target}"
+        f"&searchCriteria.compareVersion.versionType=commit&$top=200&api-version=7.1"
+    )
+    ok_commits, commits, commit_detail = _pp._ado_rest_get_all(commits_url, timeout)
+    if not ok_commits:
+        return (False, None, f"could not enumerate reachable Authenticator commits ({commit_detail})")
+    if len(commits) != ahead:
+        return (False, None, f"reachable Authenticator commit count mismatch ({len(commits)} != {ahead})")
+    changes = {}
+    with ThreadPoolExecutor(max_workers=8) as workers:
+        futures = {
+            str(commit.get("commitId") or "").lower():
+            workers.submit(_commit_changes, base, commit.get("commitId"), timeout)
+            for commit in commits
+        }
+        for sha, future in futures.items():
+            ok_changes, paths, changed_detail = future.result()
+            if not ok_changes:
+                return (False, None, f"could not read changes for {sha} ({changed_detail})")
+            changes[sha] = paths
+    ok_titles, pr_titles, title_detail = _pull_request_titles(base, commits, timeout)
+    if not ok_titles:
+        return (False, None, title_detail)
+    try:
+        classified = classify_release_commits(commits, changes, pr_titles)
+    except ValueError as exc:
+        return (False, None, str(exc))
+    ok_old, old_flights, old_detail = _auth_file_text(
+        base, _ECS_FLIGHT_PATH, baseline, timeout)
+    ok_new, new_flights, new_detail = _auth_file_text(
+        base, _ECS_FLIGHT_PATH, target, timeout)
+    if not ok_old or not ok_new:
+        return (False, None, "could not read EcsFlight.kt at exact release commits "
+                f"({old_detail or new_detail})")
+    try:
+        flight_changes = ecs_flight_changes(old_flights, new_flights)
+    except ValueError as exc:
+        return (False, None, f"could not compare EcsFlight.kt ({exc})")
+    return (True, {
+        "version": 1,
+        "branch": branch,
+        "target_commit": target,
+        "baseline_branch": previous_branch,
+        "baseline_commit": baseline,
+        "merge_base": common,
+        "reachable_commit_count": len(commits),
+        **classified,
+        "flight_changes": flight_changes,
+    }, "")
 
 
 def merged_release_prs(release_branch, timeout=90):
@@ -308,4 +684,4 @@ def create_lightweight_tag(org, project, repo, tag_name, commit, timeout=60):
     why = entry.get("customMessage") or d or "tag ref create rejected"
     return (False, None, why)
 
-__all__ = ['AUTH_BUILD_DEF', 'AUTH_ORG', 'AUTH_PROJECT', 'AUTH_RELEASE_APP_DEF', 'AUTH_TEST_DEF', 'AUTH_UI_PASS_THRESHOLD', 'AUTH_UI_SUITES', '_AUTH_RC_VERSION', '_AUTH_RELEASE_VERSION', '_ZERO_SHA', '_auth_build_ref', '_auth_test_source_build_id', '_release_ref', 'auth_build_url', 'auth_ui_suite_rates', 'create_lightweight_tag', 'find_auth_ecs_build', 'find_auth_release_build', 'find_auth_ui_test_build', 'merged_release_prs']
+__all__ = ['AUTH_BUILD_DEF', 'AUTH_ORG', 'AUTH_PROJECT', 'AUTH_RELEASE_APP_DEF', 'AUTH_TEST_DEF', 'AUTH_UI_PASS_THRESHOLD', 'AUTH_UI_SUITES', '_AUTH_RC_VERSION', '_AUTH_RELEASE_VERSION', '_ZERO_SHA', '_auth_build_ref', '_auth_test_source_build_id', '_release_ref', 'auth_branch_url', 'auth_build_url', 'auth_ui_suite_rates', 'classify_release_commits', 'create_lightweight_tag', 'ecs_flight_changes', 'find_auth_ecs_build', 'find_auth_release_build', 'find_auth_ui_test_build', 'merged_release_prs', 'parse_ecs_flights', 'release_change_manifest']
