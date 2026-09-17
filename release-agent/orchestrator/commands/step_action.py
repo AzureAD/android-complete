@@ -30,6 +30,13 @@ from orchestrator.transitions import TransitionIntent
 from orchestrator.workflow import WorkflowDefinition
 import steps
 
+AUTO_APPROVED_WRITE_COMMANDS = {
+    "launch-localization",
+    "create-integration-prs",
+    "create-oneauth-common-pr",
+    "create-payload-wiki",
+}
+
 
 def _apply_overrides(out: dict, mockable: dict, spec: dict) -> None:
     """Apply local-test payload overrides a step DECLARES via its MOCKABLE spec.
@@ -172,11 +179,23 @@ def prepare_step(args, st, orch):
             if definition.write_command:
                 out["reservable"] = False
                 out["review_command"] = definition.write_command
-                out["note"] = (
-                    out.get("note", "") + " Preview the checked write command and approve its exact "
-                    "--review-hash with --approved-by. A generic reservation cannot authorize writes."
-                ).strip()
+                if definition.write_command in AUTO_APPROVED_WRITE_COMMANDS:
+                    out["note"] = (
+                        out.get("note", "") + " Run the checked write command with "
+                        "--execute --auto-approve --executor <automation-id>. It checkpoints "
+                        "the current plan hash before the fenced provider write. A generic "
+                        "reservation cannot authorize writes."
+                    ).strip()
+                else:
+                    out["note"] = (
+                        out.get("note", "") + " Preview the checked write command and approve its exact "
+                        "--review-hash with --approved-by. A generic reservation cannot authorize writes."
+                    ).strip()
                 if getattr(args, "reserve", False):
+                    if definition.write_command in AUTO_APPROVED_WRITE_COMMANDS:
+                        raise ValueError(
+                            f"Use {definition.write_command} --execute --auto-approve --executor <automation-id>; "
+                            "step-action --reserve cannot authorize provider writes")
                     raise ValueError(f"Use {definition.write_command} --reserve with its exact reviewed hash")
                 return out
             if getattr(args, "reserve", False):
@@ -209,6 +228,10 @@ def cmd_reserve_step(args):
         st, orch = C.load_orch(args.runs_root, args.release, args.config)
         definition = orch.handler(args.phase, args.step).definition
         if definition.write_command:
+            if definition.write_command in AUTO_APPROVED_WRITE_COMMANDS:
+                raise ValueError(
+                    f"Use {definition.write_command} --execute --auto-approve --executor <automation-id>; "
+                    "reserve-step cannot authorize provider writes.")
             raise ValueError(
                 f"Use {definition.write_command} --reserve --review-hash <hash> --approved-by <reviewer> "
                 "with the reviewed command parameters; reserve-step cannot authorize provider writes.")

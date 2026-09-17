@@ -353,6 +353,12 @@ def status_view(r: dict) -> str:
                         if g.get("approval_command") else "approve")
             lines.append(f"⏸ **Next: your decision** — {approval} or deny **{g['step_name']}** "
                          f"(Phase {_phase_num(r, g['phase'])} · {g['phase_name']}).")
+    elif r.get("scout_pending"):
+        pending = set(r.get("scout_pending") or [])
+        step = next((s for s in r.get("current_steps", []) if s.get("id") in pending), None)
+        name = step["name"] if step else next(iter(pending), "Scout work")
+        lines.append(f"🤖 **Scout action pending** — Scout needs to run: **{name}** "
+                     f"({r.get('current_phase_name') or 'current phase'}).")
     elif r["status"] == "complete":
         lines.append("✔ **Release complete.** All phases done.")
     elif r["status"] == "not_started":
@@ -533,10 +539,8 @@ def _digest_model(r: dict):
     ap = r.get("active_phase")
     if not ap or not ap.get("due"):
         return None                            # nothing open yet (scheduled) — no push
-    # Scout still owes automatic steps on the open phase (notice / reminders / lockdown
-    # not yet run). The digest reports the *settled* "here's what needs YOU" picture, so
-    # sending it now would be premature and half-run — stay silent until Scout drains its
-    # own steps (a blocked scout step is status 'blocked', not 'scout', so it still pushes).
+    # Scout still owes automatic steps on the open phase. The digest reports the settled
+    # "here's what needs YOU" picture, so stay silent until Scout drains its own work.
     if r.get("scout_pending"):
         return None
 

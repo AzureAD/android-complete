@@ -1436,7 +1436,7 @@ def test_wiki_payload_build_reports_create_or_update():
     assert out.kind == "needs_skill" and out.tool == "create-payload-wiki"
     assert out.payload["plan"]["action"] == "update"
     assert "#App Version" in out.payload["plan"]["content"]
-    assert out.payload["followup_command"].startswith("create-payload-wiki --release 2026-08 --dry-run")
+    assert "--execute --auto-approve" in out.payload["followup_command"]
 
 
 def test_wiki_payload_requires_captured_final_authenticator_build(monkeypatch):

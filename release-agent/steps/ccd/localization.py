@@ -532,19 +532,21 @@ def build(context: StepContext):
         tool=WRITE_COMMAND,
         payload={
             "release": context.release.release_id,
-            "followup_command": f"launch-localization --release {context.release.release_id} --dry-run",
+            "followup_command": (
+                f"launch-localization --release {context.release.release_id} "
+                "--execute --auto-approve --executor localization-automation"),
             "after": (
-                "Review the exact plan, then run launch-localization with --execute, "
-                "--review-hash and --approved-by (repeat the preview's selection flags). "
-                "The command durably reserves and fences the launch before its single trigger. "
+                "Run launch-localization with --execute --auto-approve. The command computes "
+                "the current reviewed plan, checkpoints its hash, and fences the launch before "
+                "its single trigger. "
                 "Never use a raw pipeline tool or treat step-action as launch approval. "
                 "record-localization-run may only recover a matching provider receipt. "
                 "Poll the verified recorded build using check-localization."),
             "links": _links(cfg),
         },
         record_as=ID,
-        summary=f"Review a checked launch for localization pipeline {cfg['pipeline_id']} ({var_str})",
-        note="Localization launch requires an exact reviewed plan; nothing has been triggered.",
+        summary=f"Automatically launch localization pipeline {cfg['pipeline_id']} ({var_str})",
+        note="Localization launch is automatic; launch-localization records a checked plan before queuing.",
         outbound=True,
     )
 
@@ -596,22 +598,18 @@ def automation_prompt(release: str, spec: dict) -> str:
     # One-shot (noon) trigger — trigger then hand off to the poller.
     return (
         f"Release {release} — checked localization launch.\n"
-        f"1. run `launch-localization --release {release} --dry-run`; review its exact "
-        f"provider/source/variable plan. A preview is not permission to execute.\n"
-        f"2. obtain explicit approval of that hash and use `launch-localization --release "
-        f"{release} --reserve --review-hash <hash> --approved-by <reviewer> --executor "
-        f"<automation-id>`; repeat any preview selection flags.\n"
-        f"3. execute the same checked command with --execute --execution-id <execution-id>, "
-        f"the same --review-hash/--approved-by and selections, omitting --reserve. "
-        f"Never invoke a raw pipeline trigger or generic record-step. The command queues "
-        f"once and verifies provider identity before attaching a run. If uncertain, keep "
-        f"the execution owned; record-localization-run only recovers a matching receipt "
-        f"and cannot authorize a new launch.\n"
-        f"4. provision its poller with `automation plan --release {release} --on-demand "
+        f"1. run `launch-localization --release {release} --execute --auto-approve "
+        f"--executor localization-automation`. This is localization-specific: it computes "
+        f"the current provider/source/variable plan, checkpoints that review hash, fences "
+        f"one provider write, queues once, and verifies the actual provider receipt before "
+        f"attaching a run. Never invoke a raw pipeline trigger, a generic reservation, or "
+        f"record-step. If uncertain, keep the execution owned; record-localization-run only "
+        f"recovers a matching receipt and cannot authorize a new launch.\n"
+        f"2. provision its poller with `automation plan --release {release} --on-demand "
         f"ccd-localization-poller --json`; follow the complete-spec prepare, fresh "
         f"reconcile-create and owning create-result protocol, including "
         f"--on-demand ccd-localization-poller. Never directly create/register;\n"
-        f"5. silently journal: `journal --release {release} --source scout --kind "
+        f"3. silently journal: `journal --release {release} --source scout --kind "
         f"automation --text \"ccd-noon: <actual checked-launch result>\"`.")
 
 

@@ -119,9 +119,12 @@ Source bindings are rechecked before completion. A source change during a send p
 the receipt but suppresses stale completion; it never applies an obsolete quality-gate pass.
 Configured non-notification writers require their checked command's full transient plan:
 `distribute-tests`, `create-integration-prs`, `create-oneauth-common-pr`,
-`create-payload-wiki`, `launch-localization`. Obtain explicit approval of the exact hash
-and reviewer, then repeat the actual selection flags with `--execute` (distribution:
-`--apply`), `--review-hash`, `--approved-by`. Optional `--reserve` only saves authorization;
+`create-payload-wiki`, `launch-localization`. `distribute-tests` still needs explicit
+owner approval of the exact hash because it changes live ADO assignments. The scheduled
+release writers (`launch-localization`, `create-integration-prs`, `create-oneauth-common-pr`,
+`create-payload-wiki`) run with `--execute --auto-approve --executor <automation-id>`;
+each command recomputes and checkpoints the current plan hash before its single fenced
+provider request. Optional `--reserve` only saves authorization for human-reviewed writers;
 execution additionally needs the returned `--execution-id`, with `--reserve` omitted.
 Never replace this with generic reserve-step, raw provider calls or record-step.
 Changed plans need fresh approval. Interrupted/uncertain attempts stay owned: inspect

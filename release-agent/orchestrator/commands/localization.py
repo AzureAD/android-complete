@@ -134,6 +134,10 @@ def cmd_launch_localization(args):
         if not (args.execute or args.reserve):
             print(_json.dumps(W.preview(orch, "ccd", L.ID, plan_localization(args, orch)), indent=2))
             return 0
+        W.apply_auto_approval(
+            args, orch, "ccd", L.ID,
+            lambda: plan_localization(args, orch),
+            approved_by="localization-automation")
         authorization = W.authorize(args, orch, "ccd", L.ID, lambda: plan_localization(args, orch))
     except ValueError as exc:
         print(_json.dumps({"error": str(exc), "permission_to_execute": False}))
@@ -392,6 +396,10 @@ def register(sub):
     launch.add_argument("--dry-run", action="store_true")
     launch.add_argument("--execute", action="store_true")
     launch.add_argument("--execution-id", default=None)
+    W.add_auto_approve_argument(
+        launch,
+        help_text="Localization-only: compute and checkpoint the current reviewed plan "
+                  "without human approval, then execute through the normal fenced write path")
     W.add_arguments(launch)
     launch.set_defaults(func=cmd_launch_localization)
     rr = sub.add_parser("record-localization-run",

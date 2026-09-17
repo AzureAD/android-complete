@@ -752,6 +752,36 @@ def test_integration_checked_command_success_checkpoint_and_stale_hash(integrati
     assert ReleaseState.load(str(path)).get_step("finalize", "integ_prs").status == "done"
 
 
+def test_integration_auto_approve_executes_checked_command(integration, tmp_path, monkeypatch):
+    _, args, orch, path = bound_command(tmp_path, monkeypatch, "integ_prs")
+    args.pbi = "42"
+    args.execute = True
+    args.auto_approve = True
+    args.approved_by = None
+    args.executor = "integration-pr-automation"
+    with C.state_lock(args.runs_root, args.release):
+        assert IC.cmd_create_integration_prs(args) == 0
+    record = ReleaseState.load(str(path)).get_step("finalize", "integ_prs")
+    assert record.status == "done"
+    assert record.data["last_write_review"]["approved_by"] == "integration-pr-automation"
+    assert args.review_hash == record.data["last_write_review"]["hash"]
+
+
+def test_oneauth_auto_approve_executes_checked_command(oneauth, tmp_path, monkeypatch):
+    _, args, orch, path = bound_command(tmp_path, monkeypatch, "oneauth_common_pr")
+    args.repo_dir = str(oneauth.root)
+    args.execute = True
+    args.auto_approve = True
+    args.approved_by = None
+    args.executor = "oneauth-common-automation"
+    with C.state_lock(args.runs_root, args.release):
+        assert OC.cmd_create_oneauth_common_pr(args) == 0
+    record = ReleaseState.load(str(path)).get_step("finalize", "oneauth_common_pr")
+    assert record.status == "done"
+    assert record.data["last_write_review"]["approved_by"] == "oneauth-common-automation"
+    assert args.review_hash == record.data["last_write_review"]["hash"]
+
+
 def test_commands_preview_never_save_or_write(oneauth, tmp_path, monkeypatch, capsys):
     _, args, orch, path = bound_command(tmp_path, monkeypatch, "oneauth_common_pr")
     args.repo_dir = str(oneauth.root)

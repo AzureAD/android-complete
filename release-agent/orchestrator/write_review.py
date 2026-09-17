@@ -99,6 +99,47 @@ def add_arguments(parser):
                         help="Approve and reserve only; do not start provider operations")
 
 
+def add_auto_approve_argument(parser, *, help_text=None):
+    parser.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help=help_text
+        or "Compute and checkpoint the current reviewed plan without human approval, "
+        "then execute through the normal fenced write path",
+    )
+
+
+def apply_auto_approval(
+    args,
+    orch,
+    phase: str,
+    step: str,
+    planner: Callable[[], WritePlan],
+    *,
+    approved_by: str,
+) -> None:
+    """Populate review arguments for allowlisted scheduled agent-owned writers.
+
+    The command still uses authorize(), so the write is revision-bound, hash-bound,
+    checkpointed, fenced, and single-attempt. This only removes the human prompt for
+    specific release-owned automation work.
+    """
+    if not getattr(args, "auto_approve", False):
+        return
+    if not getattr(args, "execute", False) or getattr(args, "reserve", False):
+        raise ValueError("--auto-approve requires a fresh --execute and cannot be combined with --reserve")
+    if getattr(args, "dry_run", False) or getattr(args, "execution_id", None):
+        raise ValueError("--auto-approve cannot be combined with --dry-run or --execution-id")
+    if getattr(args, "review_hash", None) or getattr(args, "approved_by", None):
+        raise ValueError("--auto-approve cannot be combined with --review-hash or --approved-by")
+    reviewer = approved_by.strip()
+    if not reviewer:
+        raise ValueError("Auto-approved writes require a fixed approver identity")
+    args.review_hash = review_hash(orch, phase, step, planner())
+    args.approved_by = reviewer
+    args.executor = getattr(args, "executor", None) or reviewer
+
+
 def _checkpoint(orch, before):
     try:
         orch.state.checkpoint()

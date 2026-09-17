@@ -442,11 +442,87 @@ def test_automation_prompt_delegates_to_step_module():
     by = {a["slug"]: a for a in A.plan(CONFIG, "2026-09", "2026-09-09")["automations"]}
     # localization's module owns both bespoke prompts (delegated, not hardcoded here)
     assert "launch-localization" in by["ccd-noon"]["prompt"]
-    assert "--review-hash" in by["ccd-noon"]["prompt"]
-    assert "--approved-by" in by["ccd-noon"]["prompt"]
+    assert "--auto-approve" in by["ccd-noon"]["prompt"]
+    assert "--review-hash" not in by["ccd-noon"]["prompt"]
+    assert "--approved-by" not in by["ccd-noon"]["prompt"]
     assert "localization poller" in by["ccd-localization-poller"]["prompt"]
     # a plain multi-step reminder automation uses the generic default prompt
     assert "For EACH of these steps in order" in by["ccd-morning"]["prompt"]
+
+
+def test_digest_uses_distinct_same_day_hold_ids():
+    from orchestrator.commands.notify import digest_logical_id
+    base = {"current_phase": "ccd", "pending_human": []}
+    assert digest_logical_id(base, "2026-09-17") == "digest:2026-09-17:phase:ccd"
+    action = {**base, "action": {"phase": "ccd", "step": "localization", "reason": "approval"}}
+    gate = {**base, "gate": {"phase": "finalize", "step": "publish_notes_gate", "kind": "gate"}}
+    assert digest_logical_id(action, "2026-09-17") != digest_logical_id(base, "2026-09-17")
+    assert digest_logical_id(gate, "2026-09-17") != digest_logical_id(base, "2026-09-17")
+
+
+def test_digest_contacts_owner_for_human_hold_after_scout_work_is_drained():
+    from orchestrator import render
+    report = {
+        "release_id": "r",
+        "status": "awaiting_action",
+        "readiness_signed": True,
+        "halted": False,
+        "blocked": False,
+        "gate": None,
+        "action": {"step_name": "Approve thing"},
+        "pending_human": ["phase.approve"],
+        "scout_pending": [],
+        "pipeline_runs": {},
+        "active_phase": {
+            "num": 1,
+            "name": "Phase",
+            "due": True,
+            "started": True,
+            "done": 1,
+            "total": 2,
+            "completed": [],
+            "outstanding": [],
+            "steps": [],
+        },
+    }
+    assert "Action needed now: Approve thing" in render.notification(report)
+
+
+def test_status_headline_prefers_gate_over_scout_pending():
+    from orchestrator import render
+    report = {
+        "release_id": "r",
+        "done": 1,
+        "total": 2,
+        "percent": 50,
+        "status": "holding_gate",
+        "ccd": "2026-09-17",
+        "ccd_source": "manual",
+        "as_of": "2026-09-17",
+        "owner_email": "owner@example.com",
+        "invariant_violations": [],
+        "halted": False,
+        "blocked": False,
+        "readiness_signed": True,
+        "scheduled": None,
+        "action": None,
+        "gate": {"phase": "finalize", "phase_name": "Finalize", "step": "publish", "step_name": "Publish gate"},
+        "scout_pending": ["wiki_payload"],
+        "phases": [],
+        "current_steps": [{
+            "id": "wiki_payload",
+            "name": "Create wiki",
+            "state": "scout",
+            "note": None,
+            "gate": False,
+            "reminder": False,
+            "links": [],
+            "execution": {},
+        }],
+    }
+    view = render.status_view(report)
+    assert "Next: your decision" in view
+    assert "Scout action pending" not in view
 
 
 

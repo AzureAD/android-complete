@@ -424,7 +424,7 @@ def prepare_ri_branch(dir_name, ri, target, dry_run=True, timeout=240):
     """Compatibility read-only preview. Writes require the checked command's captured plan."""
     from tools import git_review as G
     if not dry_run:
-        return False, {}, "Use create-integration-prs --execute --review-hash --approved-by"
+        return False, {}, "Use create-integration-prs --execute --auto-approve --executor integration-pr-automation"
     try:
         root = G.clean_repository(repo_dir(dir_name))
         remote = G.remote_url(root)

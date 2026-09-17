@@ -10,10 +10,11 @@ The mechanic (see tools/oneauth.py):
      cgmanifest.json, deps/README.md, CHANGELOG.md) in one commit.
   3. Open `android/common-ingestion -> dev` PR titled "Merge latest common <ver> to dev".
 
-PREVIEW-FIRST (like integ_prs): `build()` only READS an advisory candidate — it resolves the
+CHECKED-AUTO (like integ_prs): `build()` only READS an advisory candidate — it resolves the
 versions, checks ancestry, computes edits and detects an existing PR — then
-returns a NeedsSkill for the complete checked-command preview. Only
-`--execute --review-hash <hash> --approved-by <reviewer>` authorizes an attempt.
+returns a NeedsSkill for the checked command. Automation executes with
+`--auto-approve`, which checkpoints the current plan hash before the single fenced
+write attempt.
 
 Version source: `state.versions.common` (final non-RC Common) + `state.versions.msal` (for the
 changelog line), both populated at Phase 2.
@@ -107,10 +108,12 @@ def build(context: StepContext):
         payload={
             "release": context.release.release_id,
             "plan": plan,
-            "followup_command": f"create-oneauth-common-pr --release {context.release.release_id}",
+            "followup_command": (
+                f"create-oneauth-common-pr --release {context.release.release_id} "
+                "--execute --auto-approve --executor oneauth-common-automation"),
             "execution_instructions": (
-                "Review the complete checked-command preview, then execute that exact plan with "
-                "--execute --review-hash <review_hash> --approved-by <reviewer>. "
+                "Run the checked command with --execute --auto-approve. It recomputes the "
+                "current plan, checkpoints its hash, and fences one provider write. "
                 "Use --repo-dir <clean-OneAuth-checkout> if local path discovery is unavailable. "
                 "The planner calculates the merged tree and exact edits without changing your "
                 "checkout or refs. Missing objects, dirty work or conflicts require resolution "

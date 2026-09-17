@@ -34,6 +34,9 @@ def cmd_create_oneauth_common_pr(args):
         if not args.execute and not getattr(args, "reserve", False):
             print(json.dumps(W.preview(orch, "finalize", S.ID, planner()), indent=2))
             return 0
+        W.apply_auto_approval(
+            args, orch, "finalize", S.ID, planner,
+            approved_by="oneauth-common-automation")
         authorization = W.authorize(args, orch, "finalize", S.ID, planner)
         if authorization.reserved_only:
             W.print_reservation(authorization)
@@ -61,6 +64,10 @@ def register(sub):
     p.add_argument("--as-of", default=None, help="Simulated clock (YYYY-MM-DD); default today")
     p.add_argument("--execute", action="store_true", help="Execute the approved, checked write plan")
     p.add_argument("--execution-id", help="Active reviewed reservation execution id")
+    W.add_auto_approve_argument(
+        p,
+        help_text="OneAuth Common automation only: compute/checkpoint the current plan "
+                  "without human approval, then execute through the normal fenced write path")
     W.add_arguments(p)
     OA.add_review_arguments(p)
     p.set_defaults(func=cmd_create_oneauth_common_pr)

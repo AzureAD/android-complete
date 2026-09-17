@@ -160,13 +160,18 @@ on-demand creation. CCD one-shot preparation/claims require a passed `ccd_confir
 readiness item and no conflict. Owning result acknowledgements do not re-evaluate a
 new plan: they must remain possible after time/source/CCD changes.
 
-The noon worker must preview `launch-localization` and obtain an explicit reviewed
-hash/reviewer before executing that checked command with the same selection flags.
-If no approval is available, hold and notify the owner—never call a raw trigger.
-An optional checked `--reserve` saves only approval; execution still replans before
-its one provider request. Interrupted/uncertain launches remain owned. Recover only
-a matching build with `record-localization-run`; do not launch another to repair a receipt.
-The approval hash binds the workflow revision; adoption never automatically drains work.
+The noon worker runs `launch-localization --execute --auto-approve --executor
+localization-automation`. This localization-specific path computes the current
+provider/source/variable plan, checkpoints its review hash, fences exactly one
+provider request, and verifies the actual build receipt before attaching a run.
+It must not wait for human approval or call a raw trigger. Interrupted/uncertain
+launches remain owned. Recover only a matching build with `record-localization-run`;
+do not launch another to repair a receipt. The auto-approved hash binds the workflow
+revision; adoption never automatically drains work.
+
+The same auto-approved checked-write contract applies to the scheduled finalize
+writers `create-integration-prs`, `create-oneauth-common-pr`, and `create-payload-wiki`.
+`distribute-tests` remains human-reviewed because it applies live ADO assignment changes.
 
 The localization poller runs hourly, reading the exact recorded run's `status` AND
 `result` on every poll (including PR monitoring). `--complete true` alone is not success.

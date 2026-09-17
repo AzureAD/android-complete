@@ -1554,16 +1554,18 @@ finalize.wiki_payload:
     every version/commit/tag is final. It REPLACES the old Phase-0 'wiki' step (no more empty
     placeholder page created early).
   who: >
-    Scout composes it (an agent step) and PREVIEWS the page before writing — the release owner
-    reviews the derived App Version + PR list, then approves the write.
+    Scout composes and writes it as scheduled release automation. The checked command still
+    recomputes the exact page content, checkpoints the current plan hash, and uses an
+    ETag-guarded write; the release owner edits the placeholder sections afterward if needed.
   where:
     - "wiki: IdentityWiki / IdentityWiki.wiki, parent 'Monthly Releases Payloads History'"
     - "page: '<Ship Month> <Year> Release' (the release's display name, e.g. 'September 2026 Release')"
     - "version + PR list: the Authenticator release-app build + tools.merged_release_prs"
   how: >
-    Runs via step-action → returns a preview; run `create-payload-wiki --release <id> --dry-run`
-    to show the full composed markdown + target page (create vs update), then `--execute` to
-    write. Create-or-update: an existing page is updated ETag-guarded; otherwise it's created.
+    Runs via step-action → returns a checked follow-up; run
+    `create-payload-wiki --release <id> --execute --auto-approve --executor payload-wiki-automation`
+    to recompute and checkpoint the full composed markdown + target page (create vs update),
+    then write. Create-or-update: an existing page is updated ETag-guarded; otherwise it's created.
     Test with the `version` / `prs` / `page_name` inject mocks or `fail`.
   consequences: >
     A real WRITE to the IdentityWiki payload page (create or content overwrite). The email
@@ -1572,7 +1574,7 @@ finalize.wiki_payload:
     - q: "Why did this move from Phase 0 to Phase 4?"
       a: "The old Phase-0 step only created an empty placeholder page and relied on a later manual fill. Doing it once at the end — when the version, commit, tag and SDK versions are all final — is simpler and avoids the empty-note step."
     - q: "Is the whole page auto-filled?"
-      a: "No. App Version + build link, the merged-PR list, and the SDK versions are derived; the release-notes email title, sign-offs, and expected feature-flag rollouts are hand-curated placeholders. You review everything in the preview before it writes."
+      a: "No. App Version + build link, the merged-PR list, and the SDK versions are derived; the release-notes email title, sign-offs, and expected feature-flag rollouts are hand-curated placeholders for the owner to fill or adjust after creation."
     - q: "Why does the App Version link a different pipeline than older payload pages?"
       a: "The auth build pipeline changed — the version now comes from the AndroidBuild-1ES release-app build (def 355246). Older payload pages link the previous pipeline; this step links the new one via find_auth_release_build."
 

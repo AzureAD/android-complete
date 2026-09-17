@@ -25,6 +25,9 @@ def cmd_create_integration_prs(args):
         if not args.execute and not getattr(args, "reserve", False):
             print(json.dumps(W.preview(orch, "finalize", S.ID, planner()), indent=2))
             return 0
+        W.apply_auto_approval(
+            args, orch, "finalize", S.ID, planner,
+            approved_by="integration-pr-automation")
         authorization = W.authorize(args, orch, "finalize", S.ID, planner)
         if authorization.reserved_only:
             W.print_reservation(authorization)
@@ -61,5 +64,9 @@ def register(sub):
     p.add_argument("--pbi", default=None, help="Reuse this PBI id instead of creating one")
     p.add_argument("--pbi-title", default=None, help="Title for the created PBI")
     p.add_argument("--execution-id", help="Active reviewed reservation execution id")
+    W.add_auto_approve_argument(
+        p,
+        help_text="Integration-PR automation only: compute/checkpoint the current plan "
+                  "without human approval, then execute through the normal fenced write path")
     W.add_arguments(p)
     p.set_defaults(func=cmd_create_integration_prs)

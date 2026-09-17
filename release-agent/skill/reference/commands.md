@@ -41,7 +41,7 @@ review. Parameters never authorize sending. Mock redirects and input knobs still
 | Record a scout-assisted check (e.g. ICM on-call) | `python -m orchestrator.cli record-check --release <YYYY-MM> --item <id> --status pass\|fail\|degraded --detail "..."` |
 | Decide CCOA lockdown overlap | `python -m orchestrator.cli check-lockdown --release <YYYY-MM> --periods-json '[{"name","environment","start","end"}]'` |
 | Resolve a migrated step → outcome JSON (done\|blocked\|in_progress\|needs_human\|needs_skill) | `python -m orchestrator.cli step-action --release <YYYY-MM> --step <id> [--phase <p>] [--param k=v …] [--execution-id <id>]` — preparation/poll/refresh requires current readiness, prerequisites, frontier and time permission; owned polling requires its exact ID. Notification outputs are previews; use the shared protocol below. Non-notification reservable actions retain `--reserve --executor <session>` |
-| Review/execute a configured external write | Run `distribute-tests`, `create-integration-prs`, `create-oneauth-common-pr`, `create-payload-wiki` or `launch-localization` without execution flags; approve its full plan/hash, then repeat selections with `--execute --review-hash <hash> --approved-by <reviewer>` (distribution also accepts `--apply`). Optional `--reserve` saves approval only; later execute with its `--execution-id`. Generic reserve-step cannot authorize these writers. |
+| Review/execute a configured external write | `distribute-tests` previews live ADO assignment corrections and still requires explicit owner approval: repeat selections with `--apply --review-hash <hash> --approved-by <reviewer>`. Scheduled release writers (`launch-localization`, `create-integration-prs`, `create-oneauth-common-pr`, `create-payload-wiki`) use `--execute --auto-approve --executor <automation-id>`; each recomputes/checkpoints its current plan hash, fences one provider request and verifies/read-backs before completion. Generic reserve-step cannot authorize these writers. |
 | Answer a STEP question (knowledge) | `python -m orchestrator.cli step-info --step <id> [--phase <p>]` |
 | **Phase 2 — RC pipeline + test report** (read-only) | `python -m orchestrator.cli rc-report --release <YYYY-MM> [--json]` → the checker→orchestrator→ECS/Local-MRWP chain + per-run test breakdown |
 | **Phase 2 — RC report and verdict** | `notification prepare --release <YYYY-MM> --source step --phase build_verify --step rc_report` → claim/result applies the approved report's independent MRWP/Auth verdict and links after confirmed delivery. Legacy `record-rc-report` cannot acknowledge new work. |
@@ -72,7 +72,8 @@ review. Parameters never authorize sending. Mock redirects and input knobs still
 | Show / analyze this release's log | `python -m orchestrator.cli log --release <YYYY-MM> [--analyze] [--json]` |
 | Journal interaction (silent) | `python -m orchestrator.cli journal --release <YYYY-MM> --source scout\|user --text "..."` |
 | Journal a step Q&A (silent) | `python -m orchestrator.cli journal --release <YYYY-MM> --kind qa --phase <p> --step <id> --question "..." --answer "..."` |
-| Localization: checked launch | `python -m orchestrator.cli launch-localization --release <id> [--branch <branch>] [--source-version <full-sha>] [--variable NAME=VALUE …]` previews exact provider/source/variables; repeat selection flags with `--execute --review-hash <hash> --approved-by <reviewer>`. The adapter reserves, fences one launch and verifies its build receipt. |
+| Localization: checked launch | `python -m orchestrator.cli launch-localization --release <id> [--branch <branch>] [--source-version <full-sha>] [--variable NAME=VALUE …]` previews exact provider/source/variables. The CCD noon worker runs `--execute --auto-approve --executor localization-automation`, which recomputes the current plan, checkpoints its hash, fences one launch and verifies its build receipt without waiting for human approval. Manual/recovery execution can still use `--execute --review-hash <hash> --approved-by <reviewer>`. |
+| Finalize auto-writers | `create-integration-prs`, `create-oneauth-common-pr`, and `create-payload-wiki` are scheduled release automation, not owner approval gates. Their workers run with `--execute --auto-approve --executor integration-pr-automation|oneauth-common-automation|payload-wiki-automation`. If a provider result is uncertain, stop and recover the owned execution; do not retry. |
 | Localization: recover trigger receipt | `python -m orchestrator.cli record-localization-run --release <YYYY-MM> --execution-id <id> --build-id <buildId>` — reads and verifies provider pipeline/revision/repository/source/parameters and launch-window identity against the already-started review. Never authorizes a trigger or replaces an attached run. Recovery requires the pinned runtime. |
 | Localization: one poll | `python -m orchestrator.cli check-localization --release <YYYY-MM> --execution-id <id> [--complete <true\|false> --run-result <ADO-result>] [--logs-file <OneLocBuild-task-log> --logs-complete] [--pr-status <active\|completed\|abandoned>]` — only the active execution with current readiness/frontier/time permission may poll. Read the exact recorded run's status AND result on every poll, plus PR status after discovery. Full logs and the documented PR-created line prove PR creation; missing/partial/unrecognized logs never mean no strings. No-change completion additionally requires `--no-change-confirmation "<owner-reviewed explanation>"`, never inferred from an absent PR line. Failed/canceled runs block with a run link; unresolved evidence escalates after 3h even for a finished run. In-flight step-action polls the same execution; a blocked recorded run requires owner-reviewed reopen before a new reserved trigger |
 | Localization: deliver staged follow-up | `notification prepare --release <YYYY-MM> --source pending` then claim/result for the initial PR, deadline warning or timeout email. A PR ID alone is not delivery evidence. |
@@ -353,7 +354,8 @@ do not reuse another meeting's member list or hand-author identities.
 ## Checked finalization writes
 
 Use the full JSON plan from the corresponding command, not a step-action summary.
-Repeat every selection flag when executing the reviewed hash:
+The scheduled finalize writers run with auto-approval, so they recompute and checkpoint
+the current plan hash at execution time:
 
 - `create-integration-prs --release <id> [--repos common msal broker authenticator]
   [--pbi <existing-id>] [--pbi-title "<new PBI title>"]` binds selected repositories,
@@ -362,11 +364,12 @@ Repeat every selection flag when executing the reviewed hash:
   calculates the exact merge and version/changelog edits using existing local objects.
   It does not fetch, check out branches, or merge through an unreviewed server PR.
   Missing objects/dirty work/conflicts require separate resolution and another preview.
-- `create-payload-wiki --release <id> --dry-run` includes exact page content, target
-  and existing-page ETag. Omit `--dry-run` when using `--execute`.
+- `create-payload-wiki --release <id>` includes exact page content, target and
+  existing-page ETag.
 
-Execution uses `--execute --review-hash <hash> --approved-by <reviewer>`.
-`--reserve` only saves approval and returns the execution ID. An uncertain or partial
+Execution uses `--execute --auto-approve --executor integration-pr-automation`,
+`--execute --auto-approve --executor oneauth-common-automation`, or
+`--execute --auto-approve --executor payload-wiki-automation` respectively. An uncertain or partial
 attempt keeps that owner; inspect provider evidence and explicitly resolve with
 `done --note`, `skip --reason` or `reopen --reason` as appropriate. Never simply
 retry a compound create. The latest `last_write_review` is retained authorization

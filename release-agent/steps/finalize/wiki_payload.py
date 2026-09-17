@@ -218,7 +218,12 @@ def build(context: StepContext):
             "plan": {"page_name": plan["page_name"], "page_path": plan["page_path"],
                      "url": plan["url"], "version": plan["version"], "pr_count": plan["pr_count"],
                      "action": verb, "content": plan["content"]},
-            "followup_command": f"create-payload-wiki --release {context.release.release_id} --dry-run",
+            "followup_command": (
+                f"create-payload-wiki --release {context.release.release_id} "
+                "--execute --auto-approve --executor payload-wiki-automation"),
+            "execution_instructions": (
+                "Run the checked command with --execute --auto-approve. It recomputes the "
+                "current page plan, checkpoints its hash, and fences one ETag-guarded wiki write."),
         },
         record_as=ID,
         summary=summary,

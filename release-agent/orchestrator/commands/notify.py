@@ -20,6 +20,21 @@ def _empty_payload(rid, config_path=None):
             "core_alert": None, "notifications": [], "permission_to_send": False}
 
 
+def digest_logical_id(report, today):
+    """One owner digest per distinct same-day hold, not merely one per date."""
+    if report.get("gate"):
+        gate = report["gate"]
+        return f"digest:{today}:gate:{gate.get('phase')}.{gate.get('step')}:{gate.get('kind', 'gate')}"
+    if report.get("action"):
+        action = report["action"]
+        reason = action.get("reason") or "action"
+        return f"digest:{today}:action:{action.get('phase')}.{action.get('step')}:{reason}"
+    pending = report.get("pending_human") or []
+    if pending:
+        return f"digest:{today}:human:{','.join(sorted(pending))}"
+    return f"digest:{today}:phase:{report.get('current_phase') or 'none'}"
+
+
 def cmd_set_owner(args):
     """Set/change the release owner (who reminders are emailed to)."""
     st = C.load_state(args.runs_root, args.release)
@@ -89,7 +104,7 @@ def _notify_payload(args, rid, advance):
     md = render.notification_markdown(report)
     subject = render.notification_subject(report)
     today = orch.now_local.date().isoformat()
-    fresh = bool(msg) and st.last_notified_date != today
+    fresh = bool(msg)
     # Fan-out channels (config/notifications.yaml). Email is the existing path; when
     # Teams is on and a digest is actually due, attach a delivery descriptor (Scout
     # bot by default, or an explicit chat).
@@ -97,17 +112,18 @@ def _notify_payload(args, rid, advance):
     ch = notif.channels(ncfg)
     teams = notif.teams_delivery(ncfg, html, msg, md) if (fresh and msg and ch.get("teams")) else None
     items = []
+    logical_id = digest_logical_id(report, today)
     scope = {"kind": "phase", "phase": orch.current_phase_id(), "date": today,
              "release_matches": {"owner_email": st.owner_email}}
     if fresh and ch.get("email"):
-        items.append(D.descriptor(st, f"digest:{today}", scope, "workiq_send_email",
+        items.append(D.descriptor(st, logical_id, scope, "workiq_send_email",
                                   {"to": [st.owner_email] if st.owner_email else [],
                                    "subject": subject, "body": html or msg, "isHtml": bool(html)}))
     if teams:
         tool = "m_send_teams_message" if teams["via"] == "scout_bot" else "workiq_send_chat_message"
         payload = ({"message": teams["text"]} if teams["via"] == "scout_bot" else
                    {k: v for k, v in teams.items() if k != "via"})
-        items.append(D.descriptor(st, f"digest:{today}", scope, tool, payload))
+        items.append(D.descriptor(st, logical_id, scope, tool, payload))
     if core_alert:
         items.append(D.descriptor(
             st, f"core-alert:{alert_model['key']}",

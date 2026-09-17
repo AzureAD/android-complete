@@ -280,6 +280,33 @@ def test_wiki_stale_etag_zero_writes(wiki_inputs, memory, monkeypatch):
     assert not orch.state.get_step("finalize", wiki.S.ID).execution
 
 
+def test_wiki_auto_approve_executes_checked_write(wiki_inputs, memory, monkeypatch):
+    orch = make_orch("finalize", "wiki_payload")
+    memory[0](orch)
+    args = arguments(
+        "create-payload-wiki",
+        "--execute",
+        "--auto-approve",
+        "--executor",
+        "payload-wiki-automation",
+    )
+    writes = []
+
+    def write(**kw):
+        writes.append(kw)
+        wiki_inputs["content"] = kw["content"]
+        return type("Result", (), {"ok": True, "detail": ""})()
+
+    monkeypatch.setattr(wiki.checks, "update_wiki_page", write)
+    monkeypatch.setattr(wiki.checks, "create_wiki_page", write)
+    assert wiki.cmd_create_payload_wiki(args) == 0
+    step = orch.state.get_step("finalize", wiki.S.ID)
+    assert step.status == "done"
+    assert step.data["last_write_review"]["approved_by"] == "payload-wiki-automation"
+    assert args.review_hash == step.data["last_write_review"]["hash"]
+    assert len(writes) == 1
+
+
 def test_distribution_final_validation_persists_only_availability(distribution_inputs, monkeypatch):
     orch = make_orch("bug_bash", "distribute_tests")
     args = arguments("distribute-tests", "--apply", "--no-oof")
@@ -469,10 +496,64 @@ def test_launch_routes_to_checked_command():
     orch = make_orch("ccd", "localization")
     action = L.build(context(orch.state))
     assert action.tool == "launch-localization"
+    assert "--auto-approve" in action.payload["followup_command"]
     assert "azure_devops-pipelines_run_pipeline" not in json.dumps(action.payload)
     prompt = L.automation_prompt("checked-ado", {})
-    assert "--review-hash" in prompt and "--approved-by" in prompt
+    assert "--auto-approve" in prompt
+    assert "--review-hash" not in prompt and "--approved-by" not in prompt
     assert "step-action" not in prompt
+
+
+def test_localization_auto_approve_launches_without_human_hash(launch_provider, memory, monkeypatch):
+    orch = make_orch("ccd", "localization")
+    _, snapshots = memory
+    memory[0](orch)
+    args = arguments(
+        "launch-localization",
+        "--execute",
+        "--auto-approve",
+        "--executor",
+        "localization-automation",
+    )
+    plan = localization.plan_localization(args, orch)
+    calls = []
+
+    def trigger(operation):
+        durable = snapshots[-1]["steps"]["ccd.localization"]
+        assert durable["status"] == "in_flight"
+        assert durable["execution"]["write_review"] == {
+            "hash": W.review_hash(orch, "ccd", L.ID, plan),
+            "approved_by": "localization-automation",
+        }
+        calls.append(operation)
+        return build_receipt(plan)
+
+    monkeypatch.setattr(provider, "trigger", trigger)
+    assert localization.cmd_launch_localization(args) == 0
+    step = orch.state.get_step("ccd", L.ID)
+    assert step.status == "in_flight"
+    assert step.data["build_id"] == "123"
+    assert args.review_hash == W.review_hash(orch, "ccd", L.ID, plan)
+    assert args.approved_by == "localization-automation"
+    assert len(calls) == 1
+
+
+def test_auto_approve_uses_fixed_approver_not_executor(launch_provider, memory, monkeypatch):
+    orch = make_orch("ccd", "localization")
+    memory[0](orch)
+    args = arguments(
+        "launch-localization",
+        "--execute",
+        "--auto-approve",
+        "--executor",
+        "runner-session",
+    )
+    plan = localization.plan_localization(args, orch)
+    monkeypatch.setattr(provider, "trigger", lambda operation: build_receipt(plan))
+    assert localization.cmd_launch_localization(args) == 0
+    step = orch.state.get_step("ccd", L.ID)
+    assert step.execution["owner"] == "runner-session"
+    assert step.execution["write_review"]["approved_by"] == "localization-automation"
 
 
 def test_launch_checkpoints_before_only_trigger_and_recovers_no_payload(launch_provider, memory, monkeypatch):

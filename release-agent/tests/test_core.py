@@ -1371,6 +1371,8 @@ def test_current_steps_label_scout_not_user_action():
     assert r["scout_pending"] == ["final_reminder"]
     # the rendered current-phase table says 'Scout runs this', never 'Do this'
     view = render.status_view(r)
+    assert "Scout action pending" in view
+    assert "Action needed from you" not in view
     assert "Scout runs this" in view
     assert "Do this — then mark done" not in view
 

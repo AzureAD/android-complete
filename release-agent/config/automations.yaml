@@ -89,12 +89,12 @@ automations:
     label: "noon localization"
     phase: ccd
     steps:
-      - ccd.localization        # launch-localization: preview, exact review, reserve/execute; never raw trigger
+      - ccd.localization        # launch-localization: auto-approve, fence one trigger, verify receipt; never raw trigger
     cleanup_when:
       - step_flag:ccd.localization:started_at
       - steps_done
       - phase_done:ccd
-    purpose: "Launch localization at noon through launch-localization with an approved exact review hash; record-localization-run is recovery only"
+    purpose: "Launch localization at noon through launch-localization auto-approval; record-localization-run is recovery only"
 
   - slug: ccd-localization-poller
     label: "localization poller"

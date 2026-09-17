@@ -119,11 +119,12 @@ def test_ccd_pr_reminder_build_targets_code_reviews_with_deadlines():
 
 
 def test_ccd_localization_build_triggers_pipeline_405133():
-    """Localization routes through checked launch, never a raw provider trigger."""
+    """Localization routes through its checked auto-approved launch, never a raw provider trigger."""
     from steps.ccd import localization
     out = _invoke(localization.build, _ccd_state())
     assert out.kind == "needs_skill" and out.tool == "launch-localization"
     assert "launch-localization --release 2026-09" in out.payload["followup_command"]
+    assert "--execute --auto-approve" in out.payload["followup_command"]
     assert localization.CONFIG["pipeline_id"] == 405133
     assert localization.CONFIG["variables"] == {"isCreatePrSelected": "true"}
     assert "_trigger" not in out.payload
@@ -741,7 +742,7 @@ def test_localization_block_requires_reopen_and_preserves_run_history(
     assert refused["kind"] == "blocked" and not refused.get("permission_to_execute")
     assert st.get_step("ccd", "localization").data == old_data
     assert orch.reopen("ccd", "localization", "Owner inspected old run; rerun approved").changed
-    with pytest.raises(ValueError, match="launch-localization --reserve"):
+    with pytest.raises(ValueError, match="launch-localization --execute --auto-approve"):
         prepare_step(action, st, orch)
     cfg = lc._launch_config()
     target = {"org": lc.provider.organization(cfg["org"]),

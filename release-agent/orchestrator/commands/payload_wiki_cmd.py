@@ -67,6 +67,10 @@ def cmd_create_payload_wiki(args):
         if not (args.execute or args.reserve):
             print(json.dumps(W.preview(orch, "finalize", S.ID, plan_payload_wiki(orch)), indent=2))
             return 0
+        W.apply_auto_approval(
+            args, orch, "finalize", S.ID,
+            lambda: plan_payload_wiki(orch),
+            approved_by="payload-wiki-automation")
         authorization = W.authorize(args, orch, "finalize", S.ID, lambda: plan_payload_wiki(orch))
     except ValueError as exc:
         print(json.dumps({"error": str(exc), "permission_to_execute": False}))
@@ -113,5 +117,9 @@ def register(sub):
     p.add_argument("--execute", action="store_true",
                    help="Perform the create-or-update write. Default is dry-run.")
     p.add_argument("--execution-id", help="Active reserve-step execution id")
+    W.add_auto_approve_argument(
+        p,
+        help_text="Payload-wiki automation only: compute/checkpoint the current plan "
+                  "without human approval, then execute through the normal fenced write path")
     W.add_arguments(p)
     p.set_defaults(func=cmd_create_payload_wiki)

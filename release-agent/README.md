@@ -454,12 +454,20 @@ protocol before resuming their schedules; adoption does not update old worker pr
 The five checked commands are `distribute-tests`, `create-integration-prs`,
 `create-oneauth-common-pr`, `create-payload-wiki` and `launch-localization`.
 Their default read-only preview prints a versioned transient operation plan and
-`review_hash`. Repeat its selection flags with `--execute` (`--apply` for distribution),
-`--review-hash <approved hash>` and `--approved-by <reviewer>`. `--executor <session>`
-optionally identifies the claiming runner. `--reserve` accepts the review without
-executing; subsequently repeat the same command/flags/hash/reviewer with `--execute`
-and its `--execution-id`, omitting `--reserve`. Generic `reserve-step`, `step-action
---reserve`, raw provider tools and `record-step` are not alternatives.
+`review_hash`. `distribute-tests` remains human-reviewed because it applies live ADO assignment changes:
+repeat selection flags with `--apply --review-hash <approved hash> --approved-by
+<reviewer>`. `--executor <session>` optionally identifies the claiming runner.
+`--reserve` accepts the review without executing; subsequently repeat the same
+command/flags/hash/reviewer with `--execute` and its `--execution-id`, omitting
+`--reserve`.
+
+The scheduled release writers `launch-localization`, `create-integration-prs`,
+`create-oneauth-common-pr`, and `create-payload-wiki` run with
+`--execute --auto-approve --executor <automation-id>`. The command recomputes the
+current provider/source/content plan, checkpoints its hash, fences exactly one provider
+write, then verifies/read-backs the receipt before attaching completion. Generic
+`reserve-step`, `step-action --reserve`, raw provider tools and `record-step` are not
+alternatives.
 
 The envelope binds release, qualified step, generation, workflow revision, command,
 normalized actual parameters, exact targets/content/ordered operations and concurrency
