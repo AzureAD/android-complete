@@ -1,0 +1,196 @@
+# Per-Finding Report Template
+
+Write one of these into each finding's folder `README.md`. Keep it engineering-triage level — **no PoC
+payloads, no PII**.
+
+```markdown
+# [MSRC|ITD] [<id or finding GUID>] — <short vuln title>
+
+**Component:** Authenticator | Broker | MSAL | Common | ADAL  _(the canonical repo — drives the Component/Repo tile AND the intern-eligibility cutoff; use one of these exact names so it parses)_
+**Linked IcM:** <icm id / link>  ·  **FireWatch finding:** <guid> (if ITD)
+
+## Classification
+
+| | Source | Tier | Class / CWE |
+|---|--------|------|-------------|
+| **Filed** | <MSRC / Glasswing / Codealorian> | <IMPORTANT / Tier 1 / …> | <CWE-xxx> |
+| **Ours** | this investigation | <CRITICAL / Important / Moderate / Low> | <CWE-xxx> |
+
+**Verdict:** AGREE | DOWN-CLASSIFY | UP-CLASSIFY | RE-ROOTED  _(RE-ROOTED = the filed tier stands but the filed **root cause** was refuted and a different real weakness was kept from the same report — common when a report bundles a wrong headline with a correct aside. Do not render this as AGREE; it hides the point.)_
+**Confidence:** High | Medium | Low  _(set by the adversarial pass — see below)_
+**IcM Severity:** Sev2 | Sev2.5 | Sev3 | Sev4  _(team response-urgency mapping — see severity-rubric.md; Sev2.5+ is a rare, high bar)_
+**Disposition:** Keep | Won't-Fix (Already-Covered) | Won't-Fix (Fixed-Since-Filed) | Not-Fixable (By-Design)  _(GATE 0 — see severity-rubric.md. **Already-Covered**: the cited sink is already neutralized by an existing control, cited `file:line` on the **shipping** ref. **Fixed-Since-Filed**: accurate when filed, control shipped later — fill in Shipped-release exposure below. **Not-Fixable (By-Design)**: no client-side change can close it; you MUST cite the standard (see protocol-constraints.md). **Keep**: we own it and solution it.)_
+**Shipped-release exposure:** _Required when Disposition = Fixed-Since-Filed; otherwise "N/A". Name the first release containing the control and the last shipped release without it. This is what decides whether a customer/SIR response is owed — "fixed on dev" is not an answer._
+**External validation:** Yes | No — _one line: do we need facts outside the code we own (downstream consumers / server-side eSTS) to be sure? If the verdict leans on a server/downstream safeguard we can only infer, say "Yes" and name it — the impact is partly theoretical until confirmed._
+**Prior incidents:** None found | _IcM NNN — outcome (e.g. "fixed in <area>, same sink"); IcM NNN — duplicate._ — _from IcM `get_similar_incidents` + the `android-dri-search` MCP (Step 1.5). A prior **resolved** match means the on-call may short-circuit (link the fix / close as duplicate) instead of re-triaging. A similar title is a lead, not proof — still confirm against current code._
+**Bottom line:** _one plain-English sentence (the TL;DR rendered at the top of the HTML): what it is, what to do now, and the one thing still open. A human skimming should get the whole story from this line._
+**Justification:** <1–3 sentences, anchored to the evidence below>
+
+> These `**Label:**` fields drive the colorful **stat tiles** at the top of the generated HTML page
+> (Severity, Confidence, Verdict, Passes, External-Validation, Disposition). Keep each on its own line so
+> the generator can parse them.
+
+## Per-Part Disposition
+_Filed reports routinely bundle two or three **separable** claims that resolve differently — e.g. part 1
+valid-and-fixed, part 2 valid-but-unshipped, part 3 not-fixable-by-design. A single blended verdict either
+overstates our exposure or quietly closes a live issue. Delete this section only if the report genuinely
+makes one claim._
+
+| Part | Sub-claim (short) | Our disposition | What we ask the security team to do |
+|---|---|---|---|
+| 1 | <short restatement> | <disposition> | Accept / Re-file separately / Withdraw |
+
+## Existing Work (branches / commits that already cover this)
+**Required whenever any part of the finding is NOT covered on the shipping ref.** A fix that is already
+written, reviewed and merged to `dev` is a *release decision*, not an engineering one — and reporting it as
+"not covered" sends someone to rebuild work that already exists. Say what exists, where, and why it hasn't
+shipped. Write "None — no fix exists on any ref" only after the all-refs sweep proves it.
+
+| Part | Branch / ref | Commit(s) | What it covers | Why it hasn't shipped | Ask |
+|---|---|---|---|---|---|
+| <n> | `<branch>` | `<sha>` | <the control it adds> | <reverted for X / unmerged / dev-only> | Land on `<train>` / decide / N/A |
+
+> Also record the **ref you judged coverage against** and the other candidate refs you checked
+> (`release/<v>` vs `working/test-release/<v>` vs `release-integration/<v>` — they diverge, and the
+> integration branch often carries later `dev` merges that the shipped artifact does not).
+
+## Scope Contract
+**Required** (enforced by `lint_finding.py`). Write this BEFORE analysis — it is what makes off-path
+evidence inadmissible. Must literally contain the words **IN SCOPE** and **OUT OF SCOPE**.
+- **IN SCOPE:** <the subsystem/channel the sink lives in>
+- **Entry point:** <how an attacker reaches it>
+- **Asset at risk:** <what is actually protected — credential, PII, device registration, …>
+- **Trust decision under attack:** <the question the code is answering about the caller>
+- **Consumers:** <who legitimately calls this>
+- **OUT OF SCOPE (inadmissible either way):** <co-resident subsystems you excluded>. A control there
+  counts only with a named hop-by-hop path from this entry point — "same app" is not a path.
+
+## Description
+Plain-English: what the component is and what the weakness is. 2–4 sentences. Name the acronyms/concepts
+(they get auto-linked into the page Glossary).
+
+## How It Can Be Exploited
+Numbered, high-level attack narrative (preconditions → steps → outcome). **No literal PoC payloads or PII.**
+If the finding is refuted/by-design, state "Not exploitable as filed" and the reason.
+
+## The Vulnerability
+Plain-English: what the weakness is and what an attacker could do. 2–4 sentences.
+
+## Sink (cited)
+- **<file>**:<lines> — the vulnerable code. 1–2 sentence description.
+
+## Reachability
+- Reachable in shipping config? YES / NO / CONDITIONAL — and the conditions.
+- Entry point → sink call path (cite `file:line` at each hop).
+
+## Defense-in-Depth Sweep (look beyond)
+For each layer: what was found, or the search that proves absence.
+
+| Layer | Finding | Evidence |
+|-------|---------|----------|
+| Component export | <exported? permission?> | `AndroidManifest.xml#Lxx` |
+| IPC boundary | <package/sig check?> | `<file>#Lxx` |
+| Sibling handlers | <allow-list this sink skips?> | `<file>#Lxx` |
+| Flight gates | <flighted? default?> | `<file>#Lxx` |
+| Upstream validation | <scheme/host allow-list?> | `<file>#Lxx` |
+| Build/config gating | <debug/test/root-only?> | `<file>#Lxx` |
+
+## Aggravating Factors
+- <anything that makes it worse than filed — unflighted, exported, no allow-list>
+
+## Defense-in-Depth: Why Likely Not Exploited
+Include this ONLY when you have sufficient evidence. State the concrete control(s) that make real-world
+exploitation unlikely, cited. If a control is partial, title it "Defense-in-Depth: partial — do NOT treat
+as safe" and say what is NOT covered. If there is no sufficient DiD evidence (a genuine Important finding),
+OMIT this section rather than inventing a reason.
+
+## Scope & Verification Boundary
+What we own and verified (Authenticator client / Broker / Common) vs. what we **cannot** confirm:
+- **Downstream consumers** (Outlook/Teams/OneAuth/other MSAL callers) may add their own checks — unverifiable.
+- **Server-side** (eSTS / MFA backend) enforcement may only be inferred from the protocol.
+State plainly: it is possible there are downstream/server checks but we cannot conclude definitively — worth
+investigating. Only confirm what you can; do not assert "safe" or "exploitable" about an unverified boundary.
+
+## Adversarial Verification
+The second, independent `codebase-researcher` (Challenger) pass that tried to **break** the Pass 1 verdict.
+- **What the Challenger attempted:** <bypass of the cited mitigation / alternate entry path / case for still-exploitable>
+- **Result:** HELD (could not break it) | WEAKENED (found a caveat/partial gap) | OVERTURNED (verdict changed)
+- **What changed (if anything):** <new evidence, with `file:line`>
+- **Confidence set:** High | Medium | Low — <one line: why this level>
+
+> Append the Challenger's own "Searches Run" lines into the audit-trail section below (label them `[challenger]`).
+
+## Claim Ledger
+**Required** (enforced by `lint_finding.py`). Every severity-relevant assertion from the filed report,
+quoted **verbatim**, tagged with its channel, carried across both passes. Severity moves only on status
+transitions here — and **untested ≠ refuted**.
+
+| # | Claim (verbatim from the filed report) | Channel | Status | Evidence |
+|---|---|---|---|---|
+| 1 | "<exact text>" | <subsystem> | TRUE / REFUTED / NOT ASSESSED / VOID | `<file>#Lxx` |
+
+## Verification Gaps & What We Need to Confirm
+**Required whenever any part of the verdict could not be settled by static code analysis.** Some conditions
+an AI agent *cannot* test — they need a runtime repro, a specific device/tenant state, server-side
+visibility, or code in a repo we don't own. Surface each as an explicit, actionable row so the engineer
+knows exactly what to confirm and how it moves the severity. **Be honest: never imply a runtime/server claim
+was verified when it was only reasoned about.**
+
+| # | Open question (unverified) | Why it can't be statically verified | What we checked instead | What we need (who/how) | If confirmed → effect |
+|---|----------------------------|--------------------------------------|--------------------------|------------------------|-----------------------|
+| 1 | <the precise claim we could not settle> | <runtime / server-side / downstream-repo / device-state / rooted / timing — name it> | <the static fact we DID establish, cited> | <the person, repro, or data that would close it> | <Sev/verdict change if confirmed> |
+
+> **Can proceed now vs. blocked:** one line — which parts of the fix an engineer/intern can start immediately
+> on the confirmed-in-code facts, and which decisions must wait for the answers above. Never stall on a gap
+> you can route around; never over-claim a gap you can't.
+
+## Decisions Needed
+Judgment calls a human must make — the agent should **not** decide these alone (severity acceptance vs.
+escalation, flight default, won't-fix sign-off, backport scope, cross-team coordination). Each as a bullet
+with a recommendation. Omit the section only if there are genuinely none.
+- **<decision>** — <options> · recommend <X> because <reason>.
+
+## Remediation
+Pick ONE based on Disposition:
+
+### If Keep — Dispatch-ready Remediation Spec
+Fill out the full spec from [remediation-spec.md](remediation-spec.md): Root Cause · Fix Approach ·
+Files to Change (`file:line`) · Test Plan · Risks & Rollout (flighting). Must be detailed enough to hand to
+an engineer or the Copilot coding agent / `pbi-creator` without further investigation.
+
+### If closed out (Already-Covered / Fixed-Since-Filed / Not-Fixable) — Close-out Notes
+- The covering control (or the constraint), cited `file:line` — or the standard, for Not-Fixable.
+- The **reply to the security team**: what we ask them to do with each part (accept / re-file / withdraw).
+- Any residual hardening worth tracking separately, so it isn't lost in the closure.
+
+## Estimated Eng-Days
+<n> (ESTIMATE — on-call to adjust). Basis: <tier + fix complexity>.
+
+## Searches Run (audit trail)
+Verbatim list of the searches BOTH passes actually ran — ESPECIALLY the ones that returned nothing
+(the absence proofs behind every "no mitigation found" / "not reachable" claim). Required, non-optional.
+Label challenger (Pass 2) searches so the adversarial coverage is visible.
+- `<pattern>` in `<path/scope>` → <what it returned, or "0 matches → proves X absent">
+- `[challenger] <pattern>` in `<path/scope>` → <result of the bypass/alternate-path attempt>
+- ...
+```
+
+> A **Glossary** section is appended automatically by `build_research_pages.py` — it lists only the
+> acronyms/concepts that actually appear on the page, sourced from `references/glossary.md`. Add new
+> terms there (format `- **TERM** — definition`) rather than writing per-finding glossaries.
+
+## Before you generate the HTML — validate the structure
+
+The `**Label:**` fields and the `| **Filed** |` / `| **Ours** |` table rows are a **parser contract**, not
+decoration: they populate the stat tiles and the master-report row. A typo silently yields an empty tile
+(`—`) or a wrong value, and nobody notices until a reviewer asks why the severity is blank.
+
+```
+python scripts/lint_finding.py <finding.md>      # structure gate — must PASS
+python scripts/build_research_pages.py ... --index
+python scripts/build_master_report.py ...
+```
+
+Then **spot-check the rendered tiles** (Our Severity, Confidence, Verdict, IcM Sev, Assignment). If any
+shows `—`, the corresponding `**Label:**` line is missing or misspelled — fix the markdown, don't hand-edit
+the HTML. Use file citations in the form `` `<ClassName>.kt#L<start>-<end>` `` so they render as evidence chips.
