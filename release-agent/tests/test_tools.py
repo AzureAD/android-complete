@@ -137,6 +137,63 @@ def test_get_failed_tests_and_summary_page_all_runs(monkeypatch):
     assert any("buildUri" in url and "$skip=1000" in url for url in calls)
 
 
+def test_find_auth_signoff_run_prefers_final_auth_resource_link(monkeypatch):
+    from tools import pipelines as P
+
+    def rest_get(url, timeout):
+        if "_apis/build/builds?" in url:
+            return True, {"value": [
+                {"id": 300, "buildNumber": "newer", "sourceBranch": "refs/heads/release/2026/09/10",
+                 "sourceVersion": "a" * 40, "status": "completed", "result": "succeeded"},
+                {"id": 299, "buildNumber": "linked", "sourceBranch": "refs/heads/release/2026/09/10",
+                 "sourceVersion": "b" * 40, "status": "completed", "result": "succeeded"},
+            ]}, ""
+        if "/_apis/pipelines/397224/runs/300" in url:
+            return True, {"resources": {"pipelines": {
+                "AndroidBuildBroker1ES": {"pipeline": {"id": 180500001}}}}}, ""
+        if "/_apis/pipelines/397224/runs/299" in url:
+            return True, {"resources": {"pipelines": {
+                "AndroidBuildBroker1ES": {"pipeline": {"id": 180500000}}}}}, ""
+        raise AssertionError(f"unexpected url {url}")
+
+    def timeline(org, project, build_id, timeout):
+        return True, [{"type": "Stage", "id": f"stage-{build_id}", "name": "Release Sign Off",
+                       "identifier": "ReleaseSignOff", "state": "notStarted", "result": None}], ""
+
+    monkeypatch.setattr(P, "_ado_rest_get", rest_get)
+    monkeypatch.setattr(P, "get_timeline", timeline)
+    ok, info, detail = P.find_auth_signoff_run(
+        "release/2026/09/10", final_auth_build_id=180500000)
+    assert ok and not detail
+    assert info["build_id"] == 299
+    assert info["match_basis"] == "pipeline_resource"
+    assert info["linked_auth_build_ids"] == ["180500000"]
+
+
+def test_find_auth_signoff_run_uses_branch_fallback_without_resources(monkeypatch):
+    from tools import pipelines as P
+
+    def rest_get(url, timeout):
+        if "_apis/build/builds?" in url:
+            return True, {"value": [
+                {"id": 300, "buildNumber": "newer", "sourceBranch": "refs/heads/release/2026/09/10",
+                 "sourceVersion": "a" * 40, "status": "completed", "result": "succeeded"},
+            ]}, ""
+        if "/_apis/pipelines/397224/runs/300" in url:
+            return True, {"resources": {"pipelines": {}}}, ""
+        raise AssertionError(f"unexpected url {url}")
+
+    monkeypatch.setattr(P, "_ado_rest_get", rest_get)
+    monkeypatch.setattr(P, "get_timeline", lambda *a: (
+        True, [{"type": "Stage", "id": "stage-300", "name": "Release Sign Off",
+                "identifier": "ReleaseSignOff", "state": "skipped", "result": "skipped"}], ""))
+    ok, info, detail = P.find_auth_signoff_run(
+        "release/2026/09/10", final_auth_build_id=180500000)
+    assert ok and not detail
+    assert info["build_id"] == 300
+    assert info["match_basis"] == "release_branch"
+
+
 def test_get_failed_tests_all_categories_apply_same_retry_rule(monkeypatch):
     from tools import pipelines as P
     titles = [f"unit_parameter[{i:03}]" for i in range(45)]

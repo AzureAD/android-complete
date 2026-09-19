@@ -35,6 +35,7 @@ COMMAND_MODULES = (
     CommandModule("integ_prs_cmd", external_writes=("create-integration-prs",)),
     CommandModule("oneauth_pr_cmd", external_writes=("create-oneauth-common-pr",)),
     CommandModule("payload_wiki_cmd", external_writes=("create-payload-wiki",)),
+    CommandModule("signoff_cmd", external_writes=("start-release-signoff",)),
     CommandModule("status_email_cmd"),
     CommandModule("sim"),
     CommandModule("logs"),

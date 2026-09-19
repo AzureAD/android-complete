@@ -35,6 +35,7 @@ AUTO_APPROVED_WRITE_COMMANDS = {
     "create-integration-prs",
     "create-oneauth-common-pr",
     "create-payload-wiki",
+    "start-release-signoff",
 }
 
 

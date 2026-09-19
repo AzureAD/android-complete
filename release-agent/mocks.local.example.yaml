@@ -108,7 +108,7 @@ preflight.cg:
 #   send_to: you@microsoft.com  # real test email to you; clears the real CC
 #   build: { build_id: 123, version: 6.2609.6000, commit: 0123456789abcdef0123456789abcdef01234567, build_number: 20260910.5 }
 #   manifest: { version: 1, branch: release/2026/09/10, target_commit: 0123456789abcdef0123456789abcdef01234567, general: [], did: [], generated_omitted: [], flight_changes: { added: [], default_changed: [] } }
-# rollout_start.signoff_start: 🚦 gate — NOT mockable
+# rollout_start.signoff_start: { outcome: done }   # agent (checked pipeline-397224 stage start) — or { run: {...} }
 
 # ---- Phase 6 · monitor ----
 # monitor.health_report:  { outcome: done }   # agent

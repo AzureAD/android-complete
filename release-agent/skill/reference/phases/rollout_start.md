@@ -44,3 +44,23 @@ separate structured source.
 Missing a successful final build/version from `final_auth`, exact manifest,
 Authenticator suite, payload-page link, or SDK version blocks the step. A failed final
 build, branch date, or arbitrary pipeline build number is never an app-version source.
+
+## `signoff_start` — start Release Sign Off on pipeline 397224
+
+`rollout_start.signoff_start` is a checked external write, not a human gate. It locates
+the Android Build Release run in msazure/One pipeline 397224 for
+`state.versions.authenticator` and starts the stage named `Release Sign Off`.
+
+Selection is deterministic:
+
+- When pipeline 397224 exposes a pipeline-resource link to AndroidBuildBroker1ES, Scout
+  matches that resource to `state.pipeline_runs.final_auth.authenticator_build_id`.
+- Until that resource link exists, Scout falls back to the newest pipeline-397224 run on
+  the Authenticator release branch.
+- The checked command binds the selected build id, stage identity and current stage
+  state in the review hash before it sends ADO's Run-stage request.
+
+Run the follow-up with
+`start-release-signoff --release <id> --execute --auto-approve --executor release-signoff-automation`.
+If the run or stage cannot be found, the step blocks for release-owner investigation
+instead of starting a different run.

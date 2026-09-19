@@ -10,7 +10,7 @@ from orchestrator.commands.step_action import prepare_step
 from orchestrator.engine import Orchestrator
 from orchestrator.outcomes import Blocked, NeedsSkill
 from orchestrator.state import ReleaseState, StepState
-from steps.rollout_start import notice
+from steps.rollout_start import notice, signoff_start
 from tests._context import context, fresh_orchestrator
 from tests._harness import CONFIG, _active_phase
 
@@ -187,6 +187,57 @@ def test_identify_auth_build_blocks_when_no_run_found():
     assert isinstance(result, Blocked)
     assert "no final Authenticator build found" in result.reason
     assert "email and Scout" in result.reason
+
+
+def _signoff_run(**extra):
+    return {
+        "build_id": 397224001,
+        "build_number": "signoff.1",
+        "source_branch": "refs/heads/release/2026/09/10",
+        "source_version": COMMIT,
+        "status": "completed",
+        "result": "succeeded",
+        "stage_name": "Release Sign Off",
+        "stage_ref": "ReleaseSignOff",
+        "stage_id": "stage-1",
+        "stage_state": "notStarted",
+        "stage_result": None,
+        "match_basis": "release_branch",
+        "url": "https://msazure.visualstudio.com/One/_build/results?buildId=397224001",
+        **extra,
+    }
+
+
+def test_signoff_start_prepares_checked_stage_start():
+    ctx = _production_context(_state())
+    pipelines = replace(
+        ctx.services.pipelines,
+        find_auth_signoff_run=lambda branch, **kwargs: (True, _signoff_run(), ""),
+    )
+    result = signoff_start.build(replace(ctx, services=replace(ctx.services, pipelines=pipelines)))
+    assert isinstance(result, NeedsSkill)
+    assert result.tool == "start-release-signoff"
+    assert "--auto-approve" in result.payload["followup_command"]
+    assert result.payload["plan"]["build_id"] == 397224001
+    assert result.payload["plan"]["stage"] == "Release Sign Off"
+
+
+def test_signoff_start_is_done_when_stage_already_started():
+    result = signoff_start.build(context(_state(), inputs={
+        "run": _signoff_run(stage_state="inProgress", stage_result=None),
+    }))
+    assert result.kind == "done"
+
+
+def test_signoff_start_blocks_when_no_release_build_found():
+    ctx = _production_context(_state())
+    pipelines = replace(
+        ctx.services.pipelines,
+        find_auth_signoff_run=lambda branch, **kwargs: (True, None, "no Android Build Release run"),
+    )
+    result = signoff_start.build(replace(ctx, services=replace(ctx.services, pipelines=pipelines)))
+    assert isinstance(result, Blocked)
+    assert "pipeline 397224" in result.reason
 
 
 def test_injected_source_evidence_cannot_target_production_recipients():

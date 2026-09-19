@@ -10,7 +10,7 @@ import pytest
 
 from orchestrator import cli_common as C, revision, write_review as W
 from orchestrator.cli import build_parser
-from orchestrator.commands import distribute, localization, payload_wiki_cmd as wiki
+from orchestrator.commands import distribute, localization, payload_wiki_cmd as wiki, signoff_cmd as signoff
 from orchestrator.engine import Orchestrator
 from orchestrator.state import ReleaseState
 from steps.ccd import localization as L
@@ -305,6 +305,71 @@ def test_wiki_auto_approve_executes_checked_write(wiki_inputs, memory, monkeypat
     assert step.data["last_write_review"]["approved_by"] == "payload-wiki-automation"
     assert args.review_hash == step.data["last_write_review"]["hash"]
     assert len(writes) == 1
+
+
+def _signoff_info(**extra):
+    return {
+        "build_id": "397224001",
+        "build_number": "signoff.1",
+        "source_branch": "refs/heads/release/2026/09/10",
+        "source_version": "a" * 40,
+        "status": "completed",
+        "result": "succeeded",
+        "stage_id": "stage-1",
+        "stage_name": "Release Sign Off",
+        "stage_ref": "ReleaseSignOff",
+        "stage_state": "notStarted",
+        "stage_result": None,
+        "match_basis": "release_branch",
+        "linked_auth_build_ids": [],
+        "url": "https://msazure.visualstudio.com/One/_build/results?buildId=397224001",
+        **extra,
+    }
+
+
+def test_signoff_plan_binds_build_stage_and_state(monkeypatch):
+    orch = make_orch("rollout_start", "signoff_start")
+    monkeypatch.setattr(signoff.S, "resolve_target", lambda ctx: (True, _signoff_info(), ""))
+    plan = signoff.plan_signoff_start(orch)
+    operation = plan.operations[0]
+    assert operation.kind == "run_build_stage"
+    assert operation.target["definition_id"] == signoff.P.AUTH_SIGNOFF_DEF
+    assert operation.target["build_id"] == "397224001"
+    assert operation.target["stage_ref"] == "ReleaseSignOff"
+    assert operation.preconditions["stage_state"] == "notStarted"
+    digest = W.review_hash(orch, "rollout_start", "signoff_start", plan)
+    monkeypatch.setattr(signoff.S, "resolve_target", lambda ctx: (
+        True, _signoff_info(stage_state="skipped", stage_result="skipped"), ""))
+    assert W.review_hash(orch, "rollout_start", "signoff_start",
+                         signoff.plan_signoff_start(orch)) != digest
+
+
+def test_signoff_auto_approve_starts_stage_once(memory, monkeypatch):
+    orch = make_orch("rollout_start", "signoff_start")
+    memory[0](orch)
+    monkeypatch.setattr(signoff.S, "resolve_target", lambda ctx: (True, _signoff_info(), ""))
+    calls = []
+
+    def start(build_id, stage_ref):
+        calls.append((build_id, stage_ref))
+        return True, "started"
+
+    monkeypatch.setattr(signoff.P, "start_auth_signoff_stage", start)
+    monkeypatch.setattr(signoff.P, "read_auth_signoff_run", lambda build_id: (
+        True, _signoff_info(stage_state="pending", build_id=build_id), ""))
+    args = arguments(
+        "start-release-signoff",
+        "--execute",
+        "--auto-approve",
+        "--executor",
+        "release-signoff-automation",
+    )
+    assert signoff.cmd_start_release_signoff(args) == 0
+    step = orch.state.get_step("rollout_start", signoff.S.ID)
+    assert step.status == "done"
+    assert step.data["last_write_review"]["approved_by"] == "release-signoff-automation"
+    assert args.review_hash == step.data["last_write_review"]["hash"]
+    assert calls == [("397224001", "ReleaseSignOff")]
 
 
 def test_distribution_final_validation_persists_only_availability(distribution_inputs, monkeypatch):

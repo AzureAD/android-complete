@@ -169,8 +169,9 @@ launches remain owned. Recover only a matching build with `record-localization-r
 do not launch another to repair a receipt. The auto-approved hash binds the workflow
 revision; adoption never automatically drains work.
 
-The same auto-approved checked-write contract applies to the scheduled finalize
-writers `create-integration-prs`, `create-oneauth-common-pr`, and `create-payload-wiki`.
+The same auto-approved checked-write contract applies to the scheduled finalize/rollout
+writers `create-integration-prs`, `create-oneauth-common-pr`, `create-payload-wiki`, and
+`start-release-signoff`.
 `distribute-tests` remains human-reviewed because it applies live ADO assignment changes.
 
 The localization poller runs hourly, reading the exact recorded run's `status` AND

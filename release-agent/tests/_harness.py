@@ -189,6 +189,7 @@ _SAFE_AGENTS = {
     # Phase-5 wiki_payload — real agent (ADO wiki create/update). Short-circuit so flow tests never
     # hit the network; dedicated wiki_payload tests exercise its compose logic offline.
     "rollout_start.wiki_payload": {"outcome": "done", "note": "payload wiki page updated (test)"},
+    "rollout_start.signoff_start": {"outcome": "done", "note": "Release Sign Off started (test)"},
     # Phase-4 final_status_email — scout send (workiq). Short-circuit so flow tests never hit email.
     "finalize.final_status_email": {"outcome": "done", "note": "closing status email sent (test)"},
 

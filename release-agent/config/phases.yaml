@@ -104,7 +104,7 @@ phases:
       - { id: tag_authenticator, name: "Tag the Authenticator release commit", kind: auto, effect_mode: idempotent, effect_recovery: frozen, owner: agent, depends_on: [identify_auth_build], maps_to: [F6] }
       - { id: wiki_payload,      name: "Create/update the release payload wiki page", kind: external, write_command: create-payload-wiki, owner: agent, source: scout, depends_on: [tag_authenticator], maps_to: [S0, F6] }
       - { id: notice,          name: "Send initial Auth App release notice", kind: external, owner: agent, source: scout, depends_on: [wiki_payload], maps_to: [R1] }
-      - { id: signoff_start,   name: "Start Release Sign Off (1-click)", kind: approval_gate, owner: human, gate: true, maps_to: [R3] }
+      - { id: signoff_start,   name: "Start Release Sign Off", kind: external, write_command: start-release-signoff, owner: agent, source: scout, depends_on: [notice], maps_to: [R3] }
 
   - id: monitor
     name: "Monitoring & Ring Advancement"

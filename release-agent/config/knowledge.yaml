@@ -1546,7 +1546,7 @@ rollout_start.identify_auth_build:
   what: >
     Finds the latest completed successful AndroidBuildBroker1ES run (pipeline 475778) on
     `state.versions.authenticator` (`release/YYYY/MM/DD`) and records its build id, numeric
-    app version, build number and built commit into `state.pipeline_runs.final`.
+    app version, build number and built commit into `state.pipeline_runs.final_auth`.
   who: >
     Scout runs it automatically at the start of Phase 5. If no build is found, the step blocks
     for release-owner investigation; the release digest contacts the owner by email and Scout.
@@ -1646,7 +1646,7 @@ rollout_start.notice:
     redirects all delivery to the supplied address and clears the real CC.
   where:
     - "final app build: msazure/One AndroidBuildBroker1ES definition 475778"
-    - "release-build link: state.pipeline_runs latest Authenticator RC build (definition 475778)"
+    - "release-build link: state.pipeline_runs.final_auth (definition 475778)"
     - "Authenticator repo: msazure/One AD-MFA-phonefactor-phoneApp-android"
     - "recipients: MAuthenticatorRel@microsoft.com; CC windevxeng@microsoft.com"
     - "payload/plans: completed Phase 3-4 release evidence"
@@ -1663,3 +1663,35 @@ rollout_start.notice:
       a: "No. It reports exact EcsFlight additions and code-default changes. Rollout intent is not derivable from code defaults and is explicitly labelled as requiring owner review."
     - q: "What happens when the release branch has no successful final build?"
       a: "The step blocks. It never derives an app version from the branch date or build number."
+
+rollout_start.signoff_start:
+  summary: "Start the Authenticator Release Sign Off stage in pipeline 397224."
+  what: >
+    Locates the Android Build Release run for this Authenticator release in msazure/One
+    pipeline 397224 and starts the stage named 'Release Sign Off'. Today the matching
+    run is selected by the Authenticator release branch; when pipeline 397224 is
+    resource-linked to AndroidBuildBroker1ES, Scout prefers the run whose pipeline
+    resource matches `state.pipeline_runs.final_auth.authenticator_build_id`.
+  who: >
+    Scout performs the checked ADO stage-start write. It is not a human approval gate:
+    the stage start runs through `start-release-signoff`, which recomputes the target,
+    checkpoints the current plan hash and sends one Run-stage request.
+  where:
+    - "signoff pipeline: msazure/One Android Build Release definition 397224"
+    - "stage: Release Sign Off"
+    - "release branch: state.versions.authenticator ('release/YYYY/MM/DD')"
+    - "future resource match: state.pipeline_runs.final_auth.authenticator_build_id"
+  how: >
+    Run step-action for rollout_start.signoff_start. If it returns the checked follow-up,
+    run `start-release-signoff --release <id> --execute --auto-approve --executor
+    release-signoff-automation`. The command binds the selected build id, stage identity
+    and current stage state before setting the stage state to `pending` (ADO's Run-stage
+    operation), then verifies the stage is queued/running. If no matching run or stage is
+    found, the step blocks for release-owner investigation instead of starting a different run.
+  consequences: >
+    A real WRITE to Azure DevOps: it starts the Release Sign Off stage on the selected
+    pipeline-397224 run. An uncertain provider response is recorded as attention and must
+    be inspected before retrying.
+  faqs:
+    - q: "Why is pipeline 397224 involved if the final Authenticator build came from 475778?"
+      a: "Pipeline 475778 supplies the app build/version evidence. Pipeline 397224 is the Release Sign Off pipeline/stage. Once 397224 links to AndroidBuildBroker1ES as a resource, Scout matches the 397224 run back to the captured 475778 build id."
