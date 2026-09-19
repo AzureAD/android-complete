@@ -24,7 +24,6 @@ class PipelineReads:
     find_auth_release_build: Callable[..., tuple]
     find_final_auth_build: Callable[..., tuple]
     find_auth_signoff_run: Callable[..., tuple]
-    read_auth_signoff_run: Callable[..., tuple]
     merged_release_prs: Callable[..., tuple]
     release_change_manifest: Callable[..., tuple]
     latest_scheduled_build: Callable[..., tuple]

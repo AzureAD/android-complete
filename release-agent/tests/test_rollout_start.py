@@ -222,41 +222,11 @@ def test_signoff_start_prepares_checked_stage_start():
     assert result.payload["plan"]["stage"] == "Release Sign Off"
 
 
-def test_signoff_start_is_in_progress_when_stage_is_running():
+def test_signoff_start_is_done_when_stage_already_started():
     result = signoff_start.build(context(_state(), inputs={
         "run": _signoff_run(stage_state="inProgress", stage_result=None),
     }))
-    assert result.kind == "in_progress"
-    assert result.poll_in_min == 30
-
-
-def test_signoff_start_completes_only_after_stage_succeeds():
-    result = signoff_start.build(context(_state(), inputs={
-        "run": _signoff_run(stage_state="completed", stage_result="succeeded"),
-    }))
     assert result.kind == "done"
-
-
-def test_signoff_start_polls_exact_started_run_from_state():
-    state = _state()
-    state.set_step("rollout_start", "signoff_start", StepState(
-        status="in_flight",
-        data={"build_id": "397224001", "stage_ref": "ReleaseSignOff"},
-        execution={"id": "owned", "owner": "worker", "started_at": "2026-09-15T00:00:00+00:00"},
-    ))
-    ctx = _production_context(state)
-    calls = []
-    pipelines = replace(
-        ctx.services.pipelines,
-        read_auth_signoff_run=lambda build_id: (
-            calls.append(build_id) or True,
-            _signoff_run(stage_state="completed", stage_result="succeeded"),
-            "",
-        ),
-    )
-    result = signoff_start.build(replace(ctx, services=replace(ctx.services, pipelines=pipelines)))
-    assert result.kind == "done"
-    assert calls == ["397224001"]
 
 
 def test_signoff_start_blocks_when_no_release_build_found():

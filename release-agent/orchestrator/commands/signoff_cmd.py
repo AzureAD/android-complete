@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 
 from orchestrator import cli_common as C, write_review as W
-from orchestrator.outcomes import Blocked, Done, InProgress
 from orchestrator.step_context import thaw
 from steps.rollout_start import signoff_start as S
 from tools import pipelines as P
@@ -17,17 +15,14 @@ def _step_mocks(orch):
     return (getattr(orch, "mocks", {}) or {}).get(f"{PHASE}.{S.ID}", {}) or {}
 
 
-def _run_data(info, *, checked_at=None):
-    return {
-        key: info.get(key)
-        for key in (
-            "build_id", "build_number", "source_branch", "source_version",
-            "stage_id", "stage_name", "stage_ref", "stage_state", "stage_result",
-            "match_basis", "linked_auth_build_ids", "url",
-        )
-        if info.get(key) is not None
-    } | {"last_checked": checked_at or datetime.now(timezone.utc).isoformat(),
-         "poll_in_min": S.CONFIG["poll_interval_min"]}
+def _record(orch, args, status, summary, *, url=None):
+    orch.record_scout_step(
+        PHASE, S.ID, status, summary,
+        execution_id=getattr(args, "execution_id", None))
+    if url:
+        orch.annotate_step(PHASE, S.ID, links=[{"name": "Release Sign Off run", "url": url}], by="scout")
+    C.save_state(orch.state, args.runs_root, args.release)
+    C.emit(args.runs_root, args.release, f"[{S.ID}] {summary}", kind="step", log_text=summary)
 
 
 def plan_signoff_start(orch):
@@ -99,7 +94,7 @@ def _apply(operation):
         raise ValueError(
             "Release Sign Off started but has already failed "
             f"(result {current.get('stage_result')!r})")
-    if not (S.stage_running(current) or S.stage_succeeded(current)):
+    if not S.stage_started(current):
         raise ValueError(
             "Release Sign Off did not enter a started state after PATCH "
             f"(state {current.get('stage_state')!r}, result {current.get('stage_result')!r})")
@@ -126,26 +121,18 @@ def cmd_start_release_signoff(args):
         args.execution_id = authorization.execution_id
         authorization.validate()
         current = _apply(authorization.plan.operations[0])
+        authorization.validate()
     except Exception as exc:
         message = f"signoff_start: {exc}"
         print(json.dumps({"error": message, "permission_to_execute": False}))
         if authorization is None or authorization.reserved_only:
             return 1
-        orch.settle_execution(PHASE, S.ID, authorization.execution_id, Blocked(
-            message + " Earlier operations may have succeeded; inspect the run before retrying."))
-        C.save_state(orch.state, args.runs_root, args.release)
+        _record(orch, args, "attention",
+                message + " Earlier operations may have succeeded; inspect the run before retrying.")
         return 2
-    links = [{"name": "Release Sign Off run", "url": current.get("url")}] if current.get("url") else []
-    if S.stage_succeeded(current):
-        summary = f"signoff_start: Release Sign Off completed on build {current.get('build_id')}."
-        outcome = Done(summary, by="scout", links=links)
-    else:
-        summary = (f"signoff_start: Release Sign Off started on build {current.get('build_id')} "
-                   f"({current.get('stage_state') or 'pending'}); Scout will poll until it finishes.")
-        outcome = InProgress(summary, links=links, poll_in_min=S.CONFIG["poll_interval_min"])
-    orch.settle_execution(PHASE, S.ID, authorization.execution_id, outcome, data=_run_data(current))
-    C.save_state(orch.state, args.runs_root, args.release)
-    C.emit(args.runs_root, args.release, f"[{S.ID}] {summary}", kind="step", log_text=summary)
+    summary = (f"signoff_start: started Release Sign Off on build {current.get('build_id')} "
+               f"({current.get('stage_state') or 'queued'}).")
+    _record(orch, args, "pass", summary, url=current.get("url"))
     print(summary)
     return 0
 
