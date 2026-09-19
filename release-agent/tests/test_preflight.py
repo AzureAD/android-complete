@@ -751,12 +751,12 @@ def test_create_payload_wiki_dry_run_and_execute(capsys):
         st = ReleaseState(release_id=rid, ccd="2026-08-13", owner_email="dev@microsoft.com")
         st.versions = {"authenticator": "release/2026/08/13", "broker": "16.5.0",
                        "common": "24.6.0", "msal": "8.4.2"}
-        _active_step(st, "finalize", "wiki_payload")
+        _active_step(st, "rollout_start", "wiki_payload")
         orch = Orchestrator(CONFIG, st)
         C = __import__("orchestrator.cli_common", fromlist=["x"])
         C.save_state(st, d, rid)
         # the step's version/prs mocks so compose_payload runs offline (no ADO)
-        orch_mocks = {"finalize.wiki_payload": {
+        orch_mocks = {"rollout_start.wiki_payload": {
             "version": {"version": "6.2608.5658", "build_url": "https://x/y"},
             "prs": [{"id": 1, "title": "Feature"}]}}
 
@@ -799,8 +799,8 @@ def test_create_payload_wiki_dry_run_and_execute(capsys):
                 assert PW.cmd_create_payload_wiki(A) == 0
             assert created["path"].endswith("September 2026 Release")
             s2 = C.load_state(d, rid)
-            assert s2.is_done("finalize", "wiki_payload")
-            step = s2.get_step("finalize", "wiki_payload")
+            assert s2.is_done("rollout_start", "wiki_payload")
+            step = s2.get_step("rollout_start", "wiki_payload")
             assert step.links and "pagePath=" in step.links[0]["url"]
         finally:
             _CC.load_orch = real_load

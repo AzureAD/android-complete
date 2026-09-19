@@ -94,14 +94,14 @@ phases:
       - { id: verify_release_notes, name: "Verify GitHub release notes (Broker + MSAL + Common)", kind: auto, effect_mode: read_only, owner: agent, maps_to: [F5] }
       - { id: oneauth_common_pr, name: "Ingest published Common into OneAuth (PR to dev)", kind: external, write_command: create-oneauth-common-pr, owner: agent, source: scout, maps_to: [F5] }
       - { id: release_announcement, name: "Announce the release in the 'General' Teams channel", kind: external, owner: agent, source: scout, maps_to: [F4] }
-      - { id: tag_authenticator, name: "Tag the Authenticator release commit", kind: auto, effect_mode: idempotent, effect_recovery: frozen, owner: agent, maps_to: [F6] }
-      - { id: wiki_payload,      name: "Create/update the release payload wiki page", kind: external, write_command: create-payload-wiki, owner: agent, source: scout, maps_to: [S0, F6] }
       - { id: final_status_email, name: "Send the closing partner status email + close the daily automation", kind: external, owner: agent, source: scout, maps_to: [F4] }
 
   - id: rollout_start
     name: "Rollout Start"
     checklist_phase: 5
     steps:
+      - { id: tag_authenticator, name: "Tag the Authenticator release commit", kind: auto, effect_mode: idempotent, effect_recovery: frozen, owner: agent, maps_to: [F6] }
+      - { id: wiki_payload,      name: "Create/update the release payload wiki page", kind: external, write_command: create-payload-wiki, owner: agent, source: scout, maps_to: [S0, F6] }
       - { id: notice,          name: "Send initial Auth App release notice", kind: external, owner: agent, source: scout, maps_to: [R1] }
       - { id: signoff_start,   name: "Start Release Sign Off (1-click)", kind: approval_gate, owner: human, gate: true, maps_to: [R3] }
 

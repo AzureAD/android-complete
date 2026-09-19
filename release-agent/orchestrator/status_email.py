@@ -206,7 +206,7 @@ def milestones(state, phase_order, selection=None):
         auth_details.append(abl)
     rows.append({"label": "Authenticator app built & tagged",
                  "status": _roll_up(state, [("build_verify", "auth_ecs"),
-                                            ("finalize", "tag_authenticator")],
+                                            ("rollout_start", "tag_authenticator")],
                                      phase_order, selection),
                  "date": "", "details": auth_details})
 

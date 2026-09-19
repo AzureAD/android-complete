@@ -158,7 +158,7 @@ def _recorded_release_build(context):
 
 
 def _payload_url(context):
-    step = context.evidence.step("finalize", "wiki_payload")
+    step = context.evidence.step("rollout_start", "wiki_payload")
     if step.status != "done":
         return None
     return next(
@@ -390,7 +390,7 @@ def _state_matches(context):
     matches = [(["versions"], context.release.versions)]
     for key in (
         "bug_bash.clone_plans_auth",
-        "finalize.wiki_payload",
+        "rollout_start.wiki_payload",
     ):
         matches.append((["steps", key], thaw(asdict(context.evidence.steps[key]))))
     runs = thaw(context.evidence.pipeline_runs).get("rcs") or []

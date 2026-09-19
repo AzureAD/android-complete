@@ -49,7 +49,7 @@ def _state():
         status="done", completed_at="2026-09-12T18:00:00+00:00"))
     state.set_step("bug_bash", "bugbash_complete", StepState(
         status="done", completed_at="2026-09-12T19:00:00+00:00"))
-    state.set_step("finalize", "wiki_payload", StepState(
+    state.set_step("rollout_start", "wiki_payload", StepState(
         status="done",
         links=[{"name": "Release payload page", "url": "https://wiki/payload"}]))
     return state
@@ -165,7 +165,7 @@ def test_notice_blocks_incomplete_or_unbound_evidence():
             build={"build_id": 1, "version": "not-a-version", "commit": COMMIT})))
     assert isinstance(bad_build, Blocked) and "build identity" in bad_build.reason
 
-    state.set_step("finalize", "wiki_payload", StepState(status="done"))
+    state.set_step("rollout_start", "wiki_payload", StepState(status="done"))
     no_payload = notice.build(context(
         state, inputs=_inputs(send_to="pedroro@microsoft.com")))
     assert isinstance(no_payload, Blocked) and "payload page link" in no_payload.reason
@@ -216,10 +216,11 @@ def test_notice_preparation_binds_exact_state_and_rejects_drift(tmp_path, monkey
     sourced = _state()
     for key in (
         "bug_bash.clone_plans_auth",
-        "finalize.wiki_payload",
+        "rollout_start.wiki_payload",
     ):
         phase, step = key.split(".", 1)
         state.set_step(phase, step, sourced.get_step(phase, step))
+    state.set_step("rollout_start", "tag_authenticator", StepState(status="done"))
     spec = _inputs(send_to="pedroro@microsoft.com")
     orch = fresh_orchestrator(
         CONFIG, state, mocks={"rollout_start.notice": spec})

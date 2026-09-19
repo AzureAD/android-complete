@@ -166,9 +166,9 @@ _SAFE_AGENTS = {
     # Phase-4 finalize integ_prs — real agent (gh/az/git). Short-circuit so flow tests
     # never hit the network; dedicated integ_prs tests exercise its real logic offline.
     "finalize.integ_prs": {"outcome": "done", "note": "integration PRs opened (test)"},
-    # Phase-4 tag_authenticator — real agent (msazure/One git write). Short-circuit for flow
+    # Phase-5 tag_authenticator — real agent (msazure/One git write). Short-circuit for flow
     # tests; dedicated tag_authenticator tests exercise its logic offline.
-    "finalize.tag_authenticator": {"outcome": "done", "note": "auth release tagged (test)"},
+    "rollout_start.tag_authenticator": {"outcome": "done", "note": "auth release tagged (test)"},
     # Phase-4 oneauth_common_pr — real agent (OneAuth REST reads/merge/PR). Short-circuit so flow
     # tests never hit the network; dedicated tests exercise its logic offline.
     "finalize.oneauth_common_pr": {"outcome": "done", "note": "OneAuth common ingested (test)"},
@@ -178,9 +178,9 @@ _SAFE_AGENTS = {
     # Phase-4 verify_release_notes — real agent (gh release view). Short-circuit for flow tests;
     # dedicated tests exercise its logic offline.
     "finalize.verify_release_notes": {"outcome": "done", "note": "github release notes verified (test)"},
-    # Phase-4 wiki_payload — real agent (ADO wiki create/update). Short-circuit so flow tests never
+    # Phase-5 wiki_payload — real agent (ADO wiki create/update). Short-circuit so flow tests never
     # hit the network; dedicated wiki_payload tests exercise its compose logic offline.
-    "finalize.wiki_payload": {"outcome": "done", "note": "payload wiki page updated (test)"},
+    "rollout_start.wiki_payload": {"outcome": "done", "note": "payload wiki page updated (test)"},
     # Phase-4 final_status_email — scout send (workiq). Short-circuit so flow tests never hit email.
     "finalize.final_status_email": {"outcome": "done", "note": "closing status email sent (test)"},
 
@@ -670,7 +670,7 @@ def _vrn_state():
 
 
 
-# ---- Phase 4: tag_authenticator ----
+# ---- Phase 5: tag_authenticator ----
 
 _TA_COMMIT = "87b921ccf73c322a1907936e74c8d1a984e27102"
 

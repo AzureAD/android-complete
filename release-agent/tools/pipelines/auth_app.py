@@ -195,7 +195,7 @@ def find_auth_release_build(release_branch, timeout=90, *, build_id=None, requir
 
     The release-app build carries the final Auth App version as an ADO build TAG matching
     _AUTH_RELEASE_VERSION (e.g. '6.2608.5658'); `commit` is the exact commit it was built from
-    (build.sourceVersion) — the commit Phase-4 `tag_authenticator` tags with that version."""
+    (build.sourceVersion) — the commit Phase-5 `tag_authenticator` tags with that version."""
     from urllib.parse import quote
     ref = _pp._release_ref(release_branch)
     if not ref:

@@ -18,7 +18,7 @@ from orchestrator.state import ReleaseState
 def reviewed(tmp_path):
     config = tmp_path / "phases.yaml"
     config.write_text(yaml.safe_dump({"phases": [{
-        "id": "finalize", "name": "Finalize", "steps": [{
+        "id": "rollout_start", "name": "Rollout Start", "steps": [{
             "id": "wiki_payload", "name": "Payload", "kind": "external",
             "write_command": "create-payload-wiki",
         }],
@@ -39,13 +39,13 @@ def reviewed(tmp_path):
             W.WriteOperation("wiki.update", {"wiki": "reviewed", "path": "/payload"},
                              {"body": "exact reviewed content"}, {"etag": "v1"}),
         ), {"version": "1.0.0"})
-        args.review_hash = W.review_hash(orch, "finalize", "wiki_payload", plan)
+        args.review_hash = W.review_hash(orch, "rollout_start", "wiki_payload", plan)
         yield args, orch, plan, path
 
 
 def authorize(fixture, planner=None):
     args, orch, plan, _ = fixture
-    return W.authorize(args, orch, "finalize", "wiki_payload", planner or (lambda: plan))
+    return W.authorize(args, orch, "rollout_start", "wiki_payload", planner or (lambda: plan))
 
 
 def test_plan_is_deeply_immutable_and_hashes_all_semantics(reviewed):
@@ -55,7 +55,7 @@ def test_plan_is_deeply_immutable_and_hashes_all_semantics(reviewed):
     assert plan.operations[0].content["body"] == "exact reviewed content"
     with pytest.raises(TypeError):
         plan.operations[0].target["wiki"] = "another"
-    base = W.envelope(orch, "finalize", "wiki_payload", plan)
+    base = W.envelope(orch, "rollout_start", "wiki_payload", plan)
     assert base["version"] == 1
     for field, replacement in (
             ("release", "another"), ("step", "other.step"), ("generation", "next"),
@@ -88,9 +88,9 @@ def test_absent_stale_or_mismatched_approval_is_mutation_free(reviewed, field, v
 
 def test_generic_reservation_cannot_bypass_review(reviewed):
     _, orch, _, _ = reviewed
-    result = orch.reserve_execution("finalize", "wiki_payload", "session")
+    result = orch.reserve_execution("rollout_start", "wiki_payload", "session")
     assert not result.changed and "--review-hash" in result.message
-    assert not orch.step_execution("finalize", "wiki_payload")
+    assert not orch.step_execution("rollout_start", "wiki_payload")
 
 
 @pytest.mark.parametrize("failure_checkpoint", [1, 2])
@@ -108,9 +108,9 @@ def test_failed_persistence_never_returns_write_permission(reviewed, failure_che
     orch.state._checkpoint = checkpoint
     with pytest.raises(OSError, match="disk unavailable"):
         authorize(reviewed)
-    saved = ReleaseState.load(path).get_step("finalize", "wiki_payload")
+    saved = ReleaseState.load(path).get_step("rollout_start", "wiki_payload")
     assert saved.status == ("pending" if failure_checkpoint == 1 else "running")
-    assert orch.state.get_step("finalize", "wiki_payload") == saved
+    assert orch.state.get_step("rollout_start", "wiki_payload") == saved
     assert not orch._transition_kernel()._outcome_permits
 
 
@@ -118,7 +118,7 @@ def test_reservation_and_attempt_are_separate_durable_boundaries(reviewed):
     args, orch, plan, path = reviewed
     args.reserve = True
     reserved = authorize(reviewed)
-    record = ReleaseState.load(path).get_step("finalize", "wiki_payload")
+    record = ReleaseState.load(path).get_step("rollout_start", "wiki_payload")
     assert record.status == "running"
     assert record.execution["write_review"] == {
         "hash": args.review_hash, "approved_by": "reviewer",
@@ -132,7 +132,7 @@ def test_reservation_and_attempt_are_separate_durable_boundaries(reviewed):
     args.reserve = False
     live = authorize(reviewed)
     assert live.execution_id == reserved.execution_id
-    assert ReleaseState.load(path).get_step("finalize", "wiki_payload").status == "in_flight"
+    assert ReleaseState.load(path).get_step("rollout_start", "wiki_payload").status == "in_flight"
     live.validate()
     assert live.plan == plan
     with pytest.raises(ValueError, match="already started"):
@@ -147,22 +147,22 @@ def test_replan_after_reservation_prevents_provider_mutation(reviewed):
     calls = iter([plan, second])
     with pytest.raises(ValueError, match="changed after reservation"):
         authorize(reviewed, lambda: next(calls))
-    assert ReleaseState.load(path).get_step("finalize", "wiki_payload").status == "running"
-    assert orch.state.get_step("finalize", "wiki_payload").execution["write_review"]
+    assert ReleaseState.load(path).get_step("rollout_start", "wiki_payload").status == "running"
+    assert orch.state.get_step("rollout_start", "wiki_payload").execution["write_review"]
 
 
 def test_partial_uncertain_write_keeps_owner_until_explicit_resolution(reviewed):
     args, orch, _, path = reviewed
     live = authorize(reviewed)
-    orch.settle_execution("finalize", "wiki_payload", live.execution_id,
+    orch.settle_execution("rollout_start", "wiki_payload", live.execution_id,
                           Blocked("Provider timeout; page may have been updated"))
     orch.state.checkpoint()
-    failed = ReleaseState.load(path).get_step("finalize", "wiki_payload")
+    failed = ReleaseState.load(path).get_step("rollout_start", "wiki_payload")
     assert failed.status == "blocked" and failed.execution["id"] == live.execution_id
     assert "last_write_review" not in failed.data
-    assert not orch.reopen("finalize", "wiki_payload").changed
-    assert orch.reopen("finalize", "wiki_payload", "Inspected provider: original page unchanged").changed
-    closed = orch.state.get_step("finalize", "wiki_payload")
+    assert not orch.reopen("rollout_start", "wiki_payload").changed
+    assert orch.reopen("rollout_start", "wiki_payload", "Inspected provider: original page unchanged").changed
+    closed = orch.state.get_step("rollout_start", "wiki_payload")
     assert closed.status == "pending" and closed.execution is None
     assert closed.data["last_write_review"] == {
         "execution_id": live.execution_id, "hash": args.review_hash, "approved_by": "reviewer",
@@ -178,15 +178,15 @@ def test_partial_uncertain_write_keeps_owner_until_explicit_resolution(reviewed)
 def test_closed_review_survives_result_data_replacement_and_invalidation(reviewed):
     args, orch, _, _ = reviewed
     live = authorize(reviewed)
-    orch.settle_execution("finalize", "wiki_payload", live.execution_id,
+    orch.settle_execution("rollout_start", "wiki_payload", live.execution_id,
                           Done("Page verified"), data={"provider_note": "verified"})
-    closed = orch.state.get_step("finalize", "wiki_payload").data["last_write_review"]
+    closed = orch.state.get_step("rollout_start", "wiki_payload").data["last_write_review"]
     assert closed["hash"] == args.review_hash
     assert closed["execution_id"] == live.execution_id
     assert not orch.annotate_step(
-        "finalize", "wiki_payload", data={"last_write_review": {"hash": "forged"}}).changed
-    assert orch.reopen("finalize", "wiki_payload", "Owner requested new page review").changed
-    assert orch.state.get_step("finalize", "wiki_payload").data["last_write_review"] == closed
+        "rollout_start", "wiki_payload", data={"last_write_review": {"hash": "forged"}}).changed
+    assert orch.reopen("rollout_start", "wiki_payload", "Owner requested new page review").changed
+    assert orch.state.get_step("rollout_start", "wiki_payload").data["last_write_review"] == closed
     with pytest.raises(ValueError):
         live.validate()
 
@@ -194,15 +194,15 @@ def test_closed_review_survives_result_data_replacement_and_invalidation(reviewe
 def test_latest_receipt_changes_only_when_next_reviewed_execution_closes(reviewed):
     args, orch, plan, _ = reviewed
     first = authorize(reviewed)
-    orch.settle_execution("finalize", "wiki_payload", first.execution_id, Done("First verified"))
-    previous = deepcopy(orch.state.get_step("finalize", "wiki_payload").data["last_write_review"])
-    assert orch.reopen("finalize", "wiki_payload", "Review another exact update").changed
+    orch.settle_execution("rollout_start", "wiki_payload", first.execution_id, Done("First verified"))
+    previous = deepcopy(orch.state.get_step("rollout_start", "wiki_payload").data["last_write_review"])
+    assert orch.reopen("rollout_start", "wiki_payload", "Review another exact update").changed
     args.execution_id = None
-    args.review_hash = W.review_hash(orch, "finalize", "wiki_payload", plan)
+    args.review_hash = W.review_hash(orch, "rollout_start", "wiki_payload", plan)
     second = authorize(reviewed)
-    assert orch.state.get_step("finalize", "wiki_payload").data["last_write_review"] == previous
-    orch.settle_execution("finalize", "wiki_payload", second.execution_id, Done("Second verified"))
-    latest = orch.state.get_step("finalize", "wiki_payload").data["last_write_review"]
+    assert orch.state.get_step("rollout_start", "wiki_payload").data["last_write_review"] == previous
+    orch.settle_execution("rollout_start", "wiki_payload", second.execution_id, Done("Second verified"))
+    latest = orch.state.get_step("rollout_start", "wiki_payload").data["last_write_review"]
     assert latest["execution_id"] == second.execution_id != previous["execution_id"]
     assert latest["hash"] == args.review_hash != previous["hash"]
 
@@ -212,13 +212,13 @@ def test_explicit_owner_closure_retains_authorization_not_provider_success(revie
     _, orch, _, _ = reviewed
     live = authorize(reviewed)
     if resolution == "done":
-        result = orch.complete_step("finalize", "wiki_payload", "Owner verified provider page and content")
+        result = orch.complete_step("rollout_start", "wiki_payload", "Owner verified provider page and content")
     else:
         result = orch._transition_kernel().skip(
-            "finalize", "wiki_payload", "Owner verified no further writes needed",
+            "rollout_start", "wiki_payload", "Owner verified no further writes needed",
             execution_id=live.execution_id)
     assert result.kind == "ran"
-    record = orch.state.get_step("finalize", "wiki_payload")
+    record = orch.state.get_step("rollout_start", "wiki_payload")
     assert record.execution is None
     assert record.data["last_write_review"]["execution_id"] == live.execution_id
 
@@ -226,7 +226,7 @@ def test_explicit_owner_closure_retains_authorization_not_provider_success(revie
 def test_generic_record_cannot_certify_a_reviewed_write(reviewed):
     args, orch, _, _ = reviewed
     authorize(reviewed)
-    args.phase, args.step, args.status, args.detail = "finalize", "wiki_payload", "pass", "pretend"
+    args.phase, args.step, args.status, args.detail = "rollout_start", "wiki_payload", "pass", "pretend"
     before = deepcopy(asdict(orch.state))
     assert notice.cmd_record_step(args) == 1
     assert asdict(orch.state) == before
@@ -235,9 +235,9 @@ def test_generic_record_cannot_certify_a_reviewed_write(reviewed):
 def test_permit_detects_owner_or_generation_change(reviewed):
     _, orch, _, _ = reviewed
     live = authorize(reviewed)
-    record = orch.state.get_step("finalize", "wiki_payload")
+    record = orch.state.get_step("rollout_start", "wiki_payload")
     record.execution["owner"] = "another-session"
-    orch.state.set_step("finalize", "wiki_payload", record)
+    orch.state.set_step("rollout_start", "wiki_payload", record)
     with pytest.raises(ValueError, match="generation changed"):
         live.validate()
 
@@ -245,9 +245,9 @@ def test_permit_detects_owner_or_generation_change(reviewed):
 def test_closed_review_requires_evidence_to_reopen(reviewed):
     _, orch, _, _ = reviewed
     live = authorize(reviewed)
-    orch.settle_execution("finalize", "wiki_payload", live.execution_id, Done("Verified provider"))
+    orch.settle_execution("rollout_start", "wiki_payload", live.execution_id, Done("Verified provider"))
     before = deepcopy(asdict(orch.state))
-    assert not orch.reopen("finalize", "wiki_payload").changed
+    assert not orch.reopen("rollout_start", "wiki_payload").changed
     assert asdict(orch.state) == before
 
 
@@ -258,17 +258,17 @@ def test_typed_step_evidence_cannot_drop_or_forge_closed_authorization(reviewed)
 
     args, orch, plan, _ = reviewed
     live = authorize(reviewed)
-    orch.settle_execution("finalize", "wiki_payload", live.execution_id, Done("First verified"))
-    receipt = deepcopy(orch.state.get_step("finalize", "wiki_payload").data["last_write_review"])
-    assert orch.reopen("finalize", "wiki_payload", "Owner reviewed another update").changed
+    orch.settle_execution("rollout_start", "wiki_payload", live.execution_id, Done("First verified"))
+    receipt = deepcopy(orch.state.get_step("rollout_start", "wiki_payload").data["last_write_review"])
+    assert orch.reopen("rollout_start", "wiki_payload", "Owner reviewed another update").changed
     args.execution_id = None
-    args.review_hash = W.review_hash(orch, "finalize", "wiki_payload", plan)
+    args.review_hash = W.review_hash(orch, "rollout_start", "wiki_payload", plan)
     live = authorize(reviewed)
     session = EvidenceSession(
         orch.state, live._permit, orch.validate_evidence_permit,
         authority=EvidenceAuthority((OwnStepData(),)), durable=False)
     session.apply((StepData({"domain": "observed"}),))
-    assert orch.state.get_step("finalize", "wiki_payload").data["last_write_review"] == receipt
+    assert orch.state.get_step("rollout_start", "wiki_payload").data["last_write_review"] == receipt
     before = deepcopy(asdict(orch.state))
     with pytest.raises(ValueError, match="authorization"):
         session.apply((StepData({"last_write_review": {**receipt, "approved_by": "forged"}}),))

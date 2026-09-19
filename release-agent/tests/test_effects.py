@@ -999,7 +999,7 @@ def test_every_implemented_auto_handler_declares_effect_policy():
         "bug_bash.clone_plans_broker",
         "bug_bash.clone_plans_auth",
         "bug_bash.ui_test_status",
-        "finalize.tag_authenticator",
+        "rollout_start.tag_authenticator",
     }
     HandlerCatalog.compile(workflow, steps.get_step)
 

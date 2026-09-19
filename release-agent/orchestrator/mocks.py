@@ -12,7 +12,7 @@ File format (top-level map of "<phase>.<step>" → behavior):
     preflight.cg:
       outcome: done               # done | blocked
       note: "mocked: CG clean"
-    finalize.wiki_payload:
+    rollout_start.wiki_payload:
       outcome: blocked
       reason: "mocked: pretend the payload-wiki write failed"
 

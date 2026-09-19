@@ -1,33 +1,35 @@
-"""`create-payload-wiki` — create/update the monthly release PAYLOAD wiki subpage (Phase-4).
+"""`create-payload-wiki` — create/update the monthly release PAYLOAD wiki subpage (Phase-5).
 
 Preview-first, mirroring `create-oneauth-common-pr`: with `--dry-run` (the default the step's
 follow-up names) it re-composes the page from live data and PRINTS the full markdown, writing
 NOTHING. With `--execute` it create-or-updates the page (ETag-guarded update if it already
-exists, else create) and records the `finalize.wiki_payload` step (pass, or attention on a
+exists, else create) and records the `rollout_start.wiki_payload` step (pass, or attention on a
 write failure).
 
-Honors the release's `finalize.wiki_payload` mocks (version / prs / page_name) for offline tests.
+Honors the release's `rollout_start.wiki_payload` mocks (version / prs / page_name) for offline tests.
 """
 from __future__ import annotations
 
 import json
 
 from orchestrator import cli_common as C, write_review as W
-from steps.finalize import wiki_payload as S
+from steps.rollout_start import wiki_payload as S
 from tools import checks
+
+PHASE = "rollout_start"
 
 
 def _step_mocks(orch):
-    return (getattr(orch, "mocks", {}) or {}).get("finalize.wiki_payload", {}) or {}
+    return (getattr(orch, "mocks", {}) or {}).get(f"{PHASE}.wiki_payload", {}) or {}
 
 
 def _record(orch, args, status, summary, url=None):
     orch.record_scout_step(
-        "finalize", "wiki_payload", status, summary,
+        PHASE, "wiki_payload", status, summary,
         execution_id=args.execution_id)
     if url:
         orch.annotate_step(
-            "finalize", "wiki_payload",
+            PHASE, "wiki_payload",
             links=[{"name": "Release payload page", "url": url}],
             by="scout")
     C.save_state(orch.state, args.runs_root, args.release)
@@ -36,7 +38,7 @@ def _record(orch, args, status, summary, url=None):
 
 def plan_payload_wiki(orch):
     ok, plan, detail = S.compose_payload(
-        orch.context("finalize", S.ID, inputs=_step_mocks(orch)))
+        orch.context(PHASE, S.ID, inputs=_step_mocks(orch)))
     if not ok:
         raise ValueError(f"Could not compose the payload page: {detail}")
     org, project, wiki = S.CONFIG["org"], S.CONFIG["project"], S.CONFIG["wiki"]
@@ -65,13 +67,13 @@ def cmd_create_payload_wiki(args):
         if args.dry_run and (args.execute or args.reserve):
             raise ValueError("--dry-run cannot be combined with --execute/--reserve.")
         if not (args.execute or args.reserve):
-            print(json.dumps(W.preview(orch, "finalize", S.ID, plan_payload_wiki(orch)), indent=2))
+            print(json.dumps(W.preview(orch, PHASE, S.ID, plan_payload_wiki(orch)), indent=2))
             return 0
         W.apply_auto_approval(
-            args, orch, "finalize", S.ID,
+            args, orch, PHASE, S.ID,
             lambda: plan_payload_wiki(orch),
             approved_by="payload-wiki-automation")
-        authorization = W.authorize(args, orch, "finalize", S.ID, lambda: plan_payload_wiki(orch))
+        authorization = W.authorize(args, orch, PHASE, S.ID, lambda: plan_payload_wiki(orch))
     except ValueError as exc:
         print(json.dumps({"error": str(exc), "permission_to_execute": False}))
         return 1

@@ -1,4 +1,4 @@
-"""Step: `tag_authenticator` — tag the Auth App release commit (Phase 4, finalize; F6).
+"""Step: `tag_authenticator` — tag the Auth App release commit (Phase 5, rollout_start; F6).
 
 Once the release has published, permanently mark the Authenticator app's released build by
 creating a git tag on its release commit. Deterministic + idempotent, so it's an `agent` step
@@ -44,7 +44,7 @@ EFFECT_RECOVERY = "frozen"
 
 
 def prepare_effect(context):
-    execution = context.evidence.step("finalize", ID).execution or {}
+    execution = context.evidence.step("rollout_start", ID).execution or {}
     if isinstance(execution.get("effect_input"), dict):
         return dict(execution["effect_input"])
     fail = context.input("fail", MISSING)

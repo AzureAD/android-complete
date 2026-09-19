@@ -1,6 +1,6 @@
-"""Step: `wiki_payload` — create/update the monthly release PAYLOAD wiki subpage (Phase 4,
-finalize, after `tag_authenticator`; checklist Phase 2.2 Step 6, relocated to the end of the
-release once every version/commit/tag is final).
+"""Step: `wiki_payload` — create/update the monthly release PAYLOAD wiki subpage (Phase 5,
+rollout_start, after `tag_authenticator` and before `notice`; checklist Phase 2.2 Step 6,
+relocated to the rollout-start boundary once every version/commit/tag is final).
 
 This REPLACES the old Phase-0 `wiki` step (which only seeded an empty placeholder page). By the
 time we reach here the Authenticator build + all SDK versions are final, so we fill the page in

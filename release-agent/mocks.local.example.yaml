@@ -98,10 +98,10 @@ preflight.cg:
 # finalize.verify_pub:  { outcome: done }   # agent
 # finalize.verify_pub:  { results: {common4j: published, common: published, msal: published} }  # agent
 # finalize.release_announcement: 🛰️ scout — { post_to: {...}, cc_mode: self, self_email: <you> }
-# finalize.tag_authenticator: { outcome: done }   # agent
-# finalize.wiki_payload:      { outcome: done }   # agent (preview-first) — or { version: {...}, prs: [...] }
 
 # ---- Phase 5 · rollout_start ----
+# rollout_start.tag_authenticator: { outcome: done }   # agent
+# rollout_start.wiki_payload:      { outcome: done }   # agent (preview-first) — or { version: {...}, prs: [...] }
 # rollout_start.notice:
 #   send_to: you@microsoft.com  # real test email to you; clears the real CC
 #   build: { build_id: 123, version: 6.2609.6000, commit: 0123456789abcdef0123456789abcdef01234567, build_number: 20260910.5 }

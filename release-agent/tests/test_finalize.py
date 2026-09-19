@@ -1067,7 +1067,7 @@ def test_tag_authenticator_creates_tag():
     """Discovers the version+commit from the release-app build and creates a lightweight tag
     (no 'v' prefix) at the built commit."""
     from steps.lib import mockctx
-    from steps.finalize import tag_authenticator as TA
+    from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
     seen = {}
 
@@ -1100,7 +1100,7 @@ def test_tag_authenticator_creates_tag():
 def test_tag_authenticator_idempotent_same_commit():
     """An existing tag AT the same commit → Done (idempotent), no error."""
     from steps.lib import mockctx
-    from steps.finalize import tag_authenticator as TA
+    from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
     of, oc = P.find_auth_release_build, P.create_lightweight_tag
     P.find_auth_release_build = lambda b, timeout=90, *, build_id=None: (
@@ -1116,7 +1116,7 @@ def test_tag_authenticator_idempotent_same_commit():
 
 def test_tag_authenticator_blocks_when_captured_version_disagrees_with_build():
     from steps.lib import mockctx
-    from steps.finalize import tag_authenticator as TA
+    from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
 
     original = P.find_auth_release_build
@@ -1139,7 +1139,7 @@ def test_tag_authenticator_blocks_when_captured_version_disagrees_with_build():
 
 def test_tag_authenticator_recovery_uses_frozen_target():
     from steps.lib import mockctx
-    from steps.finalize import tag_authenticator as TA
+    from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
     from orchestrator import effects
     from orchestrator.state import ReleaseState, StepState
@@ -1166,7 +1166,7 @@ def test_tag_authenticator_recovery_uses_frozen_target():
         "effect_input": prepared["input"],
     }
     state.set_step(
-        "finalize", TA.ID, StepState(status="running", execution=execution)
+        "rollout_start", TA.ID, StepState(status="running", execution=execution)
     )
     seen = {}
     original = P.create_lightweight_tag
@@ -1195,7 +1195,7 @@ def test_tag_authenticator_recovery_uses_frozen_target():
 def test_tag_authenticator_conflict_different_commit_blocks():
     """An existing tag pointing at a DIFFERENT commit → Blocked (human must reconcile)."""
     from steps.lib import mockctx
-    from steps.finalize import tag_authenticator as TA
+    from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
     of, oc = P.find_auth_release_build, P.create_lightweight_tag
     P.find_auth_release_build = lambda b, timeout=90, *, build_id=None: (
@@ -1214,7 +1214,7 @@ def test_tag_authenticator_conflict_different_commit_blocks():
 def test_tag_authenticator_dry_run_does_not_write():
     """dry_run composes the tag but never calls create."""
     from steps.lib import mockctx
-    from steps.finalize import tag_authenticator as TA
+    from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
     called = {"create": False}
     of, oc = P.find_auth_release_build, P.create_lightweight_tag
@@ -1238,7 +1238,7 @@ def test_tag_authenticator_dry_run_does_not_write():
 def test_tag_authenticator_injected_version_commit_skips_lookup():
     """version+commit mocks bypass the build lookup entirely (offline)."""
     from steps.lib import mockctx
-    from steps.finalize import tag_authenticator as TA
+    from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
     of, oc = P.find_auth_release_build, P.create_lightweight_tag
 
@@ -1259,7 +1259,7 @@ def test_tag_authenticator_injected_version_commit_skips_lookup():
 def test_tag_authenticator_blocks_without_branch():
     """No authenticator release branch on state.versions → Blocked."""
     from steps.lib import mockctx
-    from steps.finalize import tag_authenticator as TA
+    from steps.rollout_start import tag_authenticator as TA
     with mockctx.active({}):
         out = _invoke(TA.build, ReleaseState(release_id="2026-08"))
     assert out.kind == "blocked" and "release branch" in out.reason
@@ -1270,7 +1270,7 @@ def test_tag_authenticator_blocks_without_branch():
 def test_tag_authenticator_blocks_when_build_not_run():
     """Release-app build hasn't run on the branch yet (info=None) → Blocked."""
     from steps.lib import mockctx
-    from steps.finalize import tag_authenticator as TA
+    from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
     of = P.find_auth_release_build
     P.find_auth_release_build = lambda b, timeout=90, *, build_id=None: (
@@ -1286,11 +1286,11 @@ def test_tag_authenticator_blocks_when_build_not_run():
 
 
 def test_tag_authenticator_config_is_agent():
-    """phases.yaml classifies tag_authenticator as an agent step in finalize (F6)."""
+    """phases.yaml classifies tag_authenticator as an agent step in rollout_start (F6)."""
     import yaml as _yaml
     cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
-    fin = next(p for p in cfg["phases"] if p["id"] == "finalize")
-    s = next(x for x in fin["steps"] if x["id"] == "tag_authenticator")
+    phase = next(p for p in cfg["phases"] if p["id"] == "rollout_start")
+    s = next(x for x in phase["steps"] if x["id"] == "tag_authenticator")
     assert s.get("owner") == "agent" and s.get("source") != "scout" and s.get("maps_to") == ["F6"]
 
 
@@ -1392,7 +1392,7 @@ def test_wiki_payload_composes_page_and_filters_noise():
     """compose_payload renders the App Version line, the merged-PR list (LEGO noise dropped),
     the SDK versions, and the hand-curated placeholders."""
     from steps.lib import mockctx
-    from steps.finalize import wiki_payload as W
+    from steps.rollout_start import wiki_payload as W
     st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
     st.versions = {"authenticator": "release/2026/08/13", "broker": "16.5.0",
                    "common": "24.6.0", "msal": "8.4.2"}
@@ -1419,7 +1419,7 @@ def test_wiki_payload_build_reports_create_or_update():
     """build() is preview-first: it checks whether the page exists and names create vs update
     in a NeedsSkill(create-payload-wiki) with the composed content in the payload."""
     from steps.lib import mockctx
-    from steps.finalize import wiki_payload as W
+    from steps.rollout_start import wiki_payload as W
     from tools import checks
     st = ReleaseState(release_id="2026-08", ccd="2026-08-13")
     st.versions = {"authenticator": "release/2026/08/13", "broker": "16.5.0",
@@ -1441,7 +1441,7 @@ def test_wiki_payload_build_reports_create_or_update():
 
 def test_wiki_payload_requires_captured_final_authenticator_build(monkeypatch):
     from steps.lib import mockctx
-    from steps.finalize import wiki_payload as W
+    from steps.rollout_start import wiki_payload as W
     from tools import pipelines as P
 
     st = ReleaseState(release_id="2026-08", ccd="2026-08-13")

@@ -210,25 +210,25 @@ def wiki_inputs(monkeypatch):
 
 
 def test_wiki_plan_binds_content_target_and_etag(wiki_inputs, monkeypatch):
-    orch = make_orch("finalize", "wiki_payload")
+    orch = make_orch("rollout_start", "wiki_payload")
     # StepContext inputs come from the orchestrator, not an ambient write payload.
-    orch.mocks = {"finalize.wiki_payload": wiki._step_mocks(orch)}
+    orch.mocks = {"rollout_start.wiki_payload": wiki._step_mocks(orch)}
     plan = wiki.plan_payload_wiki(orch)
     operation = plan.operations[0]
     assert operation.preconditions == {"exists": True, "content": "owner's existing page", "etag": '"etag-7"'}
     assert operation.content["content"].startswith("#App Version\n6.0.0")
-    digest = W.review_hash(orch, "finalize", "wiki_payload", plan)
+    digest = W.review_hash(orch, "rollout_start", "wiki_payload", plan)
     wiki_inputs["etag"] = '"etag-8"'
-    assert W.review_hash(orch, "finalize", "wiki_payload", wiki.plan_payload_wiki(orch)) != digest
+    assert W.review_hash(orch, "rollout_start", "wiki_payload", wiki.plan_payload_wiki(orch)) != digest
     wiki_inputs["etag"] = '"etag-7"'
     monkeypatch.setitem(wiki.S.CONFIG, "wiki", "different.wiki")
-    assert W.review_hash(orch, "finalize", "wiki_payload", wiki.plan_payload_wiki(orch)) != digest
+    assert W.review_hash(orch, "rollout_start", "wiki_payload", wiki.plan_payload_wiki(orch)) != digest
 
 
 @pytest.mark.parametrize("etag,exists", [("", True), ('""', True), ("*", True), ('"x"', None)])
 def test_wiki_unknown_existence_and_unconditional_update_reject(wiki_inputs, etag, exists):
-    orch = make_orch("finalize", "wiki_payload")
-    orch.mocks = {"finalize.wiki_payload": wiki._step_mocks(orch)}
+    orch = make_orch("rollout_start", "wiki_payload")
+    orch.mocks = {"rollout_start.wiki_payload": wiki._step_mocks(orch)}
     wiki_inputs.update(etag=etag, exists=exists)
     with pytest.raises(ValueError):
         wiki.plan_payload_wiki(orch)
@@ -236,7 +236,7 @@ def test_wiki_unknown_existence_and_unconditional_update_reject(wiki_inputs, eta
 
 @pytest.mark.parametrize("exists", [True, False])
 def test_wiki_executor_never_rereads_etag_for_write(wiki_inputs, monkeypatch, exists):
-    orch = make_orch("finalize", "wiki_payload")
+    orch = make_orch("rollout_start", "wiki_payload")
     wiki_inputs["exists"] = exists
     plan = wiki.plan_payload_wiki(orch)
     calls, validations = [], []
@@ -270,18 +270,18 @@ def test_wiki_executor_never_rereads_etag_for_write(wiki_inputs, monkeypatch, ex
 
 
 def test_wiki_stale_etag_zero_writes(wiki_inputs, memory, monkeypatch):
-    orch = make_orch("finalize", "wiki_payload")
+    orch = make_orch("rollout_start", "wiki_payload")
     memory[0](orch)
     args = arguments("create-payload-wiki", "--execute", "--approved-by", "reviewer")
-    args.review_hash = W.review_hash(orch, "finalize", wiki.S.ID, wiki.plan_payload_wiki(orch))
+    args.review_hash = W.review_hash(orch, "rollout_start", wiki.S.ID, wiki.plan_payload_wiki(orch))
     wiki_inputs["etag"] = "stale"
     monkeypatch.setattr(wiki.checks, "update_wiki_page", lambda **kw: pytest.fail("stale update"))
     assert wiki.cmd_create_payload_wiki(args) == 1
-    assert not orch.state.get_step("finalize", wiki.S.ID).execution
+    assert not orch.state.get_step("rollout_start", wiki.S.ID).execution
 
 
 def test_wiki_auto_approve_executes_checked_write(wiki_inputs, memory, monkeypatch):
-    orch = make_orch("finalize", "wiki_payload")
+    orch = make_orch("rollout_start", "wiki_payload")
     memory[0](orch)
     args = arguments(
         "create-payload-wiki",
@@ -300,7 +300,7 @@ def test_wiki_auto_approve_executes_checked_write(wiki_inputs, memory, monkeypat
     monkeypatch.setattr(wiki.checks, "update_wiki_page", write)
     monkeypatch.setattr(wiki.checks, "create_wiki_page", write)
     assert wiki.cmd_create_payload_wiki(args) == 0
-    step = orch.state.get_step("finalize", wiki.S.ID)
+    step = orch.state.get_step("rollout_start", wiki.S.ID)
     assert step.status == "done"
     assert step.data["last_write_review"]["approved_by"] == "payload-wiki-automation"
     assert args.review_hash == step.data["last_write_review"]["hash"]
