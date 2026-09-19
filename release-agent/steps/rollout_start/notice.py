@@ -74,9 +74,16 @@ def _build_info(context):
         branch = context.release.versions.get("authenticator")
         if not branch:
             return (None, "no Authenticator release branch on state.versions")
-        ok, info, detail = context.services.pipelines.find_auth_release_build(branch)
+        final_auth = (context.evidence.pipeline_runs or {}).get("final_auth") or {}
+        build_id = final_auth.get("authenticator_build_id")
+        if not build_id:
+            return (None, "final Authenticator build evidence is missing (run rollout_start.identify_auth_build first)")
+        ok, info, detail = context.services.pipelines.find_final_auth_build(branch, build_id=build_id)
         if not ok or not info:
             return (None, detail or "no successful final Authenticator release build")
+        if str(info.get("version")) != str(final_auth.get("authenticator_version")):
+            return (None, f"captured final Authenticator version {final_auth.get('authenticator_version')} "
+                          f"does not match build {build_id} version {info.get('version')}")
     if (not isinstance(info, dict) or not _positive_id(info.get("build_id"))
             or not _VERSION.fullmatch(str(info.get("version") or ""))
             or not _COMMIT.fullmatch(str(info.get("commit") or ""))):

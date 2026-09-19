@@ -1293,8 +1293,8 @@ finalize.orchestrator_finalization:
   what: >
     After 'Remove RC Tags', this read-only step follows the Release Orchestrator through final MRWP
     generation and release-integration branch creation until it parks at 'Publish GitHub Release
-    Notes'. It then resolves Final1 from the orchestrator tags and AuthenticatorBuild plus
-    Authenticator from that final MRWP's tags.
+    Notes'. It resolves Final1 from the orchestrator tags. Authenticator build/version capture
+    happens later in rollout_start.identify_auth_build.
   trigger: >
     Runs after `remove_rc_tags_gate`. The dedicated Release Orchestrator poller checks every 2 hours
     and binds to the stable YAML stage identifier `PublishGitHubReleaseNotes`, whose display name is
@@ -1305,9 +1305,9 @@ finalize.orchestrator_finalization:
     hours it escalates once to the release owner and continues polling. A failed orchestrator stage
     or final MRWP blocks Phase 4 for investigation.
   consequences: >
-    It stores state.pipeline_runs.final with orchestrator_run_id, mrwp_run_id,
-    authenticator_build_id, authenticator_version, and resolved_at. It cannot approve the pipeline,
-    create branches, modify repositories or open PRs.
+    It stores state.pipeline_runs.final with orchestrator_run_id, mrwp_run_id, and resolved_at.
+    Authenticator build/version capture happens later in Phase 5 (`rollout_start.identify_auth_build`).
+    It cannot approve the pipeline, create branches, modify repositories or open PRs.
 
 finalize.integ_prs:
   summary: "Auto-open the 8 release integration/freeze PRs across the 4 repos (2 per repo)."
@@ -1512,8 +1512,8 @@ rollout_start.tag_authenticator:
     Once the release has published, mark the Authenticator app's released build by creating a
     lightweight git tag on its release commit. The tag NAME is the Auth App version (e.g.
     '6.2608.5658' — the auth app does NOT use a 'v' prefix). It tags the EXACT commit the
-    release-app build (AndroidBuild-1ES, def 355246) was built from — build.sourceVersion — on
-    the release branch, not merely the branch head.
+    final Authenticator build (AndroidBuildBroker1ES, def 475778) was built from —
+    build.sourceVersion — on the release branch, not merely the branch head.
   who: >
     Scout does it (an agent step). There is NO preview/execute — the tag is created when the
     step is reached. It writes to the Authenticator repo (msazure/One,
@@ -1521,13 +1521,13 @@ rollout_start.tag_authenticator:
   where:
     - "repo: msazure/One AD-MFA-phonefactor-phoneApp-android (config/coordinates.yaml repos.authenticator)"
     - "release branch: state.versions.authenticator ('release/YYYY/MM/DD', set at Phase 2 by orchestrator_health)"
-    - "version source: the numeric (\\d+.\\d+.\\d+) ADO build-tag on the release-app build (AndroidBuild-1ES, def 355246)"
+    - "version source: the numeric (\\d+.\\d+.\\d+) version parsed from the final Authenticator build number (pipeline 475778)"
   how: >
     Runs automatically. It reads the release branch from state.versions.authenticator, finds the
-    newest succeeded release-app build on that branch, reads its version build-tag + the commit it
-    was built from, and creates a lightweight git tag <version> at that commit. Idempotent: if the
+    final pipeline-475778 build captured by identify_auth_build, verifies its version + commit,
+    and creates a lightweight git tag <version> at that commit. Idempotent: if the
     tag already exists AT that commit it passes (no-op); if it exists at a DIFFERENT commit it
-    BLOCKS for a human to reconcile. If the release-app build hasn't run yet, it blocks. Test with
+    BLOCKS for a human to reconcile. If the final Authenticator build hasn't been identified yet, it blocks. Test with
     the `version`/`commit` inject mocks, `dry_run` (compose without writing), or `fail`.
   consequences: >
     A real WRITE to the Authenticator repo: it creates the git tag ref. It never force-updates an
@@ -1537,16 +1537,33 @@ rollout_start.tag_authenticator:
     - q: "Does the tag use a 'v' prefix?"
       a: "No. The auth app tags with the bare version (e.g. '6.2608.5658'). Older 'v6.YYMM.xxxx' tags in the repo are a different/legacy scheme and don't map to the release-branch heads."
     - q: "Which commit gets tagged — the branch head or the built commit?"
-      a: "The exact commit the release-app build was built from (build.sourceVersion). Usually that equals the release-branch head, but tagging the built commit is deterministic even if commits land afterward."
+      a: "The exact commit the final pipeline-475778 build was built from (build.sourceVersion). Usually that equals the release-branch head, but tagging the built commit is deterministic even if commits land afterward."
     - q: "Where does the version come from?"
-      a: "The release-app build (AndroidBuild-1ES) carries the final version as a numeric ADO build-tag; Scout reads it — it doesn't compute or guess the version."
+      a: "The final pipeline-475778 run carries the app version in its build number; Scout parses that exact run — it doesn't compute or guess the version."
+
+rollout_start.identify_auth_build:
+  summary: "Capture the final Authenticator build/version from pipeline 475778 on the release branch."
+  what: >
+    Finds the latest completed successful AndroidBuildBroker1ES run (pipeline 475778) on
+    `state.versions.authenticator` (`release/YYYY/MM/DD`) and records its build id, numeric
+    app version, build number and built commit into `state.pipeline_runs.final`.
+  who: >
+    Scout runs it automatically at the start of Phase 5. If no build is found, the step blocks
+    for release-owner investigation; the release digest contacts the owner by email and Scout.
+  where:
+    - "pipeline: msazure/One AndroidBuildBroker1ES definition 475778"
+    - "branch: state.versions.authenticator ('release/YYYY/MM/DD')"
+  how: >
+    Runs automatically. It never uses the Release Orchestrator's old AuthenticatorBuild tags.
+    It reads the latest run on the release branch, parses the numeric app version from the run's
+    build number, and stores it for tag_authenticator, wiki_payload and rollout_start.notice.
 
 rollout_start.wiki_payload:
   summary: "Create/update the monthly release payload wiki page (preview-first)."
   what: >
     Fills the release PAYLOAD wiki subpage under IdentityWiki / 'Monthly Releases Payloads
     History'. Auto-fills the deterministic parts — the '#App Version' line (the Authenticator
-    version + its AndroidBuild-1ES run link, the NEW release pipeline), the merged-PR list for
+    version + its pipeline-475778 build link), the merged-PR list for
     this release (derived from the auth working branch + release-branch bumps), and the SDK
     versions (Broker/Common/MSAL) — and leaves the hand-curated sections (release-notes email
     title, sign-offs, expected feature-flag rollouts) as clearly-marked placeholders. This now
@@ -1560,7 +1577,7 @@ rollout_start.wiki_payload:
   where:
     - "wiki: IdentityWiki / IdentityWiki.wiki, parent 'Monthly Releases Payloads History'"
     - "page: '<Ship Month> <Year> Release' (the release's display name, e.g. 'September 2026 Release')"
-    - "version + PR list: the Authenticator release-app build + tools.merged_release_prs"
+    - "version + PR list: state.pipeline_runs.final_auth + tools.merged_release_prs"
   how: >
     Runs via step-action → returns a checked follow-up; run
     `create-payload-wiki --release <id> --execute --auto-approve --executor payload-wiki-automation`
@@ -1576,7 +1593,7 @@ rollout_start.wiki_payload:
     - q: "Is the whole page auto-filled?"
       a: "No. App Version + build link, the merged-PR list, and the SDK versions are derived; the release-notes email title, sign-offs, and expected feature-flag rollouts are hand-curated placeholders for the owner to fill or adjust after creation."
     - q: "Why does the App Version link a different pipeline than older payload pages?"
-      a: "The auth build pipeline changed — the version now comes from the AndroidBuild-1ES release-app build (def 355246). Older payload pages link the previous pipeline; this step links the new one via find_auth_release_build."
+      a: "The auth build source changed — the version now comes from the final Authenticator build found by rollout_start.identify_auth_build in pipeline 475778. Older payload pages may link a different pipeline."
 
 finalize.final_status_email:
   summary: "Send the closing partner status email and shut down the daily status automation."
@@ -1613,8 +1630,8 @@ rollout_start.notice:
   what: >
     Builds the Android Authenticator rollout-intent email for MAuthenticatorRel@microsoft.com,
     with windevxeng@microsoft.com CC'd for the Intune AOSP partner team. It binds the final
-    successful AndroidBuild-1ES build's numeric app-version tag and exact commit, the exact
-    definition-475778 Authenticator RC build recorded in release state, the Authenticator test
+    successful pipeline-475778 Authenticator build's numeric app-version and exact commit, the
+    final Authenticator build recorded in release state, the Authenticator test
     suite, the release payload page and SDK versions. Authenticator
     and DID payload bullets come only from commits reachable from that exact build commit after
     the previous successful release build; each PR bullet uses the canonical ADO PR-record title
@@ -1628,7 +1645,7 @@ rollout_start.notice:
     The release owner reviews the exact recipients and body before claim. A send_to test mock
     redirects all delivery to the supplied address and clears the real CC.
   where:
-    - "final app build: msazure/One AndroidBuild-1ES definition 355246"
+    - "final app build: msazure/One AndroidBuildBroker1ES definition 475778"
     - "release-build link: state.pipeline_runs latest Authenticator RC build (definition 475778)"
     - "Authenticator repo: msazure/One AD-MFA-phonefactor-phoneApp-android"
     - "recipients: MAuthenticatorRel@microsoft.com; CC windevxeng@microsoft.com"

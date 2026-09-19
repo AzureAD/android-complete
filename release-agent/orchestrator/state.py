@@ -88,8 +88,9 @@ class ReleaseState:
     # Nested schema:
     #   { checker:      {run_id, when, resolved_at},
     #     orchestrator: {run_id, versions:{Common,Msal,Broker}, parked, resolved_at},
-    #     final:        {orchestrator_run_id, mrwp_run_id, authenticator_build_id,
-    #                    authenticator_version, resolved_at},
+    #     final:        {orchestrator_run_id, mrwp_run_id, resolved_at},
+    #     final_auth:   {authenticator_build_id, authenticator_version, authenticator_commit,
+    #                    authenticator_build_number, authenticator_resolved_at},
     #     rcs: [ {rc, ecs:{run_id,id_source,complete,ran,total,failed_stages,
     #                       yellow_stages,never_ran,tests,failed_suites,resolved_at},
     #            local:{...same...}, resolved_at} ] }

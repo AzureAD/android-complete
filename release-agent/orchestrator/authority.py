@@ -15,6 +15,7 @@ class PipelineSlot(str, Enum):
     CHECKER = "checker"
     ORCHESTRATOR = "orchestrator"
     FINAL = "final"
+    FINAL_AUTH = "final_auth"
     ECS = "ecs"
     LOCAL = "local"
     AUTH = "auth"

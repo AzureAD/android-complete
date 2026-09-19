@@ -75,6 +75,23 @@ def _auth_build_ref(auth_branch):
     return f"refs/heads/{b}"
 
 
+def _auth_release_ref(auth_branch):
+    """The release branch ref used by final Authenticator builds."""
+    if not auth_branch:
+        return None
+    b = str(auth_branch).strip()
+    if b.startswith("refs/heads/"):
+        return b
+    if not b.startswith("release/"):
+        b = "release/" + b.strip("/")
+    return f"refs/heads/{b}"
+
+
+def _build_number_version(build_number):
+    match = _re_mod.search(r"\d+\.\d+\.\d+", str(build_number or ""))
+    return match.group(0) if match else None
+
+
 def find_auth_ecs_build(auth_branch, timeout=90):
     """Discover the CURRENT-RC Authenticator ECS build (def 475778) on the release's auth
     working-branch. Returns (ok, info, detail) where info is
@@ -110,6 +127,53 @@ def find_auth_ecs_build(auth_branch, timeout=90):
     return (True, {"build_id": newest["id"], "rc": n, "version": newest["version"],
                    "build_number": newest["build_number"],
                    "status": newest["status"], "result": newest["result"]}, "")
+
+
+def find_final_auth_build(auth_branch, timeout=90, *, build_id=None):
+    """Find/read the final Authenticator build from def 475778 on the release branch.
+
+    This is Phase-5 evidence: the latest run on refs/heads/release/YYYY/MM/DD supplies the
+    Authenticator build id, numeric app version (from buildNumber), and built commit.
+    """
+    ref = _auth_release_ref(auth_branch)
+    if not ref:
+        return (False, None, "no authenticator release branch known (run orchestrator_health first)")
+    if build_id is not None:
+        if not _positive_build_id(build_id):
+            return (False, None, f"invalid final Authenticator build id: {build_id!r}")
+        ok, build, detail = _pp._ado_rest_get(
+            f"{AUTH_ORG}/{AUTH_PROJECT}/_apis/build/builds/{build_id}?api-version=7.1",
+            timeout,
+        )
+        if not ok:
+            hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
+            return (False, None, f"{detail}{hint}")
+        builds = [build or {}]
+    else:
+        ok, builds, detail = _pp._az_json(
+            ["pipelines", "build", "list", "--definition-ids", str(AUTH_BUILD_DEF),
+             "--org", AUTH_ORG, "--project", AUTH_PROJECT, "--branch", ref, "--top", "60"], timeout)
+        if not ok:
+            return (False, None, detail)
+    valid = [b for b in (builds or []) if _positive_build_id(b.get("id"))]
+    if not valid:
+        return (True, None, f"no final Authenticator build found on {ref} in def {AUTH_BUILD_DEF}")
+    newest = max(valid, key=lambda item: int(item["id"]))
+    if str(newest.get("sourceBranch") or ref) != ref:
+        return (False, None, f"final Authenticator build {newest.get('id')} belongs to "
+                f"{newest.get('sourceBranch') or 'an unknown branch'}, not {ref}")
+    version = _build_number_version(newest.get("buildNumber"))
+    if not version:
+        return (False, None, f"final Authenticator build {newest.get('id')} has no numeric app "
+                             f"version in buildNumber {newest.get('buildNumber')!r}")
+    return (True, {
+        "build_id": newest.get("id"),
+        "version": version,
+        "commit": newest.get("sourceVersion"),
+        "build_number": newest.get("buildNumber"),
+        "status": newest.get("status"),
+        "result": newest.get("result"),
+    }, "")
 
 
 def _auth_test_source_build_id(build_id, timeout=60):
@@ -684,4 +748,4 @@ def create_lightweight_tag(org, project, repo, tag_name, commit, timeout=60):
     why = entry.get("customMessage") or d or "tag ref create rejected"
     return (False, None, why)
 
-__all__ = ['AUTH_BUILD_DEF', 'AUTH_ORG', 'AUTH_PROJECT', 'AUTH_RELEASE_APP_DEF', 'AUTH_TEST_DEF', 'AUTH_UI_PASS_THRESHOLD', 'AUTH_UI_SUITES', '_AUTH_RC_VERSION', '_AUTH_RELEASE_VERSION', '_ZERO_SHA', '_auth_build_ref', '_auth_test_source_build_id', '_release_ref', 'auth_branch_url', 'auth_build_url', 'auth_ui_suite_rates', 'classify_release_commits', 'create_lightweight_tag', 'ecs_flight_changes', 'find_auth_ecs_build', 'find_auth_release_build', 'find_auth_ui_test_build', 'merged_release_prs', 'parse_ecs_flights', 'release_change_manifest']
+__all__ = ['AUTH_BUILD_DEF', 'AUTH_ORG', 'AUTH_PROJECT', 'AUTH_RELEASE_APP_DEF', 'AUTH_TEST_DEF', 'AUTH_UI_PASS_THRESHOLD', 'AUTH_UI_SUITES', '_AUTH_RC_VERSION', '_AUTH_RELEASE_VERSION', '_ZERO_SHA', '_auth_build_ref', '_auth_test_source_build_id', '_release_ref', 'auth_branch_url', 'auth_build_url', 'auth_ui_suite_rates', 'classify_release_commits', 'create_lightweight_tag', 'ecs_flight_changes', 'find_auth_ecs_build', 'find_auth_release_build', 'find_final_auth_build', 'find_auth_ui_test_build', 'merged_release_prs', 'parse_ecs_flights', 'release_change_manifest']

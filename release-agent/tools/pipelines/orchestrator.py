@@ -338,8 +338,8 @@ def orchestrator_stage_state(org, project, release_month, stage_ref, timeout=90)
 def orchestrator_finalization_status(org, project, release_month, stage_ref, timeout=90):
     """Resolve the final publication-gate state and its final MRWP/Auth outputs.
 
-    `Final1=<mrwp id>` is emitted on the orchestrator run. The final MRWP emits
-    `AuthenticatorBuild=<msazure build id>` and `Authenticator=<apk version>`.
+    `Final1=<mrwp id>` is emitted on the orchestrator run. Authenticator build/version
+    evidence is captured later by rollout_start.identify_auth_build from pipeline 475778.
     """
     ok, run, detail = _pp.find_orchestrator_run(
         org, project, ORCHESTRATOR_DEF, release_month, timeout)
@@ -405,17 +405,7 @@ def orchestrator_finalization_status(org, project, release_month, stage_ref, tim
         return (True, {**info, "status": "failed"},
                 f"final MRWP {final_mrwp} completed with result={final_run.get('result')}")
 
-    tags = final_run.get("tags") or []
-    auth_build = _pp._tag_value(tags, "AuthenticatorBuild")
-    auth_version = _pp._tag_value(tags, "Authenticator")
-    if _numeric_build_id(auth_build) is None or not auth_version:
-        return (True, info,
-                f"final MRWP {final_mrwp} has not published AuthenticatorBuild/Authenticator tags")
-    info.update(
-        status="ready",
-        authenticator_build_id=str(_numeric_build_id(auth_build)),
-        authenticator_version=str(auth_version),
-    )
+    info["status"] = "ready"
     return (True, info, "")
 
 

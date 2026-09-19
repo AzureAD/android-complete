@@ -1,5 +1,15 @@
 # Reference — Phase 5 (Rollout Start)
 
+## `identify_auth_build` — final Authenticator build/version capture
+
+`rollout_start.identify_auth_build` is the first Phase-5 step. It reads pipeline
+475778 (`AndroidBuildBroker1ES`) on `state.versions.authenticator` (`release/YYYY/MM/DD`)
+and records the latest completed successful run into `state.pipeline_runs.final_auth`.
+
+If no run is found, the step blocks for release-owner investigation; the release digest
+contacts the owner by email and Scout. This step is the single source for the build id,
+app version, build number and built commit used by tag, payload and rollout notice.
+
 ## `notice` — initial Authenticator rollout email
 
 `rollout_start.notice` is a real Scout notification, not a dummy. It sends to
@@ -10,11 +20,9 @@ clears the production CC.
 
 The model is deterministic and source-only:
 
-- App version/commit source: newest successful AndroidBuild-1ES definition 355246 run
-  on `state.versions.authenticator`, with its numeric `N.N.N` build tag.
-- Release-build link: the exact Authenticator RC build from
-  `state.pipeline_runs.rcs[-1].auth.build.run_id` (definition 475778), never the
-  separately queried definition-355246 run.
+- App version/commit source: `state.pipeline_runs.final_auth`, captured by
+  `rollout_start.identify_auth_build` from pipeline 475778.
+- Release-build link: the exact `state.pipeline_runs.final_auth.authenticator_build_id`.
 - Release-branch link: the Authenticator repository contents view pinned to the exact
   `state.versions.authenticator` branch.
 - Authenticator and DID payload: commits reachable from that exact built commit since
@@ -33,6 +41,6 @@ Never infer Major/Minor classifications, expected rollout intent, Safe Fly appro
 or future progression dates. The email states when these have no
 separate structured source.
 
-Missing a successful final build/version, recorded definition-475778 RC build, exact
-manifest, Authenticator suite, payload-page link, or SDK version blocks the step. An RC build,
-failed final build, branch date, or pipeline build number is never an app-version source.
+Missing a successful final build/version from `final_auth`, exact manifest,
+Authenticator suite, payload-page link, or SDK version blocks the step. A failed final
+build, branch date, or arbitrary pipeline build number is never an app-version source.

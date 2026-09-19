@@ -65,8 +65,6 @@ def cmd_poll_orchestrator_finalization(args):
         decision = {
             "decision": "resolved",
             "mrwp_run_id": final.get("mrwp_run_id"),
-            "authenticator_build_id": final.get("authenticator_build_id"),
-            "authenticator_version": final.get("authenticator_version"),
             "notifications": [],
         }
     elif step.status == "blocked":

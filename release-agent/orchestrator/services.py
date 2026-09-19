@@ -22,6 +22,7 @@ class PipelineReads:
     orchestrator_finalization_status: Callable[..., tuple]
     find_orchestrator_pending_approval: Callable[..., tuple]
     find_auth_release_build: Callable[..., tuple]
+    find_final_auth_build: Callable[..., tuple]
     merged_release_prs: Callable[..., tuple]
     release_change_manifest: Callable[..., tuple]
     latest_scheduled_build: Callable[..., tuple]

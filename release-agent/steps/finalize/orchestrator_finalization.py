@@ -1,4 +1,4 @@
-"""Monitor final orchestration and capture the final MRWP/Auth build identities."""
+"""Monitor final orchestration and capture the final MRWP identity."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -28,7 +28,7 @@ MOCKABLE = {
     },
     "final": {
         "kind": "input",
-        "desc": "Inject {mrwp_run_id, authenticator_build_id, authenticator_version}.",
+        "desc": "Inject {mrwp_run_id}.",
     },
 }
 
@@ -41,7 +41,7 @@ def _stage_status(context):
             final = context.input("final", MISSING)
             if not isinstance(final, dict):
                 return "wait", "injected ready stage has no final output tags", {}
-            required = ("mrwp_run_id", "authenticator_build_id", "authenticator_version")
+            required = ("mrwp_run_id",)
             missing = [key for key in required if not final.get(key)]
             if missing:
                 return "wait", f"injected final output is missing {', '.join(missing)}", {}
@@ -110,14 +110,11 @@ def build(context: StepContext):
     runs["final"] = {
         "orchestrator_run_id": final["orchestrator_run_id"],
         "mrwp_run_id": final["mrwp_run_id"],
-        "authenticator_build_id": final["authenticator_build_id"],
-        "authenticator_version": final["authenticator_version"],
         "resolved_at": context.clock.iso(),
     }
     return Done(
         f"Release Orchestrator is parked at '{STAGE_NAME}'; captured final MRWP "
-        f"{final['mrwp_run_id']}, Authenticator build {final['authenticator_build_id']}, "
-        f"version {final['authenticator_version']}.",
+        f"{final['mrwp_run_id']}.",
         updates=(step_update, PipelineEvidence(runs)),
     )
 
@@ -132,7 +129,7 @@ def automation_prompt(release: str, spec: dict) -> str:
         "  • idle / waiting → send nothing.\n"
         "  • escalate → use source pending and the shared claim/result protocol for every "
         "offered owner notification; never send raw escalation payloads.\n"
-        "  • resolved → report the captured final MRWP, Authenticator build and version; "
+        "  • resolved → report the captured final MRWP; "
         "the cleanup planner removes this worker.\n"
         "  • blocked → surface the pipeline failure to the owner and retain the evidence.\n"
         f"Silently journal: `journal --release {release} --source scout --kind automation "

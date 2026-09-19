@@ -937,6 +937,7 @@ def test_telemetry_uses_captured_ecs_apk_not_release_app(monkeypatch):
         raise AssertionError("Telemetry must reuse the captured APK, not rediscover a build")
 
     monkeypatch.setattr(P, "find_auth_release_build", unexpected_lookup)
+    monkeypatch.setattr(P, "find_final_auth_build", unexpected_lookup)
     monkeypatch.setattr(P, "find_auth_ecs_build", unexpected_lookup)
     st, orch = _bv_state({"build_verify.auth_ecs": {
         "auth_build": {"build_id": 180481190, "rc": 1, "version": "16.6.0-RC1-ecs",

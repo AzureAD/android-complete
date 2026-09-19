@@ -397,15 +397,11 @@ def test_orchestrator_finalization_monitors_stage_states():
     with mockctx.active({"stage": "ready", "final": {
         "orchestrator_run_id": 1690355,
         "mrwp_run_id": 1692575,
-        "authenticator_build_id": 181239508,
-        "authenticator_version": "6.2609.6188",
     }}):
         assert _invoke(S.build, st).kind == "done"
     assert st.pipeline_runs["final"] == {
         "orchestrator_run_id": "1690355",
         "mrwp_run_id": "1692575",
-        "authenticator_build_id": "181239508",
-        "authenticator_version": "6.2609.6188",
         "resolved_at": st.pipeline_runs["final"]["resolved_at"],
     }
 
@@ -1080,13 +1076,13 @@ def test_tag_authenticator_creates_tag():
         seen["create"] = (repo, tag, commit)
         return (True, {"created": True, "objectId": commit}, "")
 
-    of, oc = P.find_auth_release_build, P.create_lightweight_tag
-    P.find_auth_release_build, P.create_lightweight_tag = fake_find, fake_create
+    of, oc = P.find_final_auth_build, P.create_lightweight_tag
+    P.find_final_auth_build, P.create_lightweight_tag = fake_find, fake_create
     try:
         with mockctx.active({}):
             out = _invoke(TA.build, _ta_state())
     finally:
-        P.find_auth_release_build, P.create_lightweight_tag = of, oc
+        P.find_final_auth_build, P.create_lightweight_tag = of, oc
     assert out.kind == "done" and "6.2608.5658" in out.note and _TA_COMMIT[:8] in out.note
     assert seen["branch"] == "release/2026/08/13"
     assert seen["build_id"] == "177976153"
@@ -1102,15 +1098,15 @@ def test_tag_authenticator_idempotent_same_commit():
     from steps.lib import mockctx
     from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
-    of, oc = P.find_auth_release_build, P.create_lightweight_tag
-    P.find_auth_release_build = lambda b, timeout=90, *, build_id=None: (
+    of, oc = P.find_final_auth_build, P.create_lightweight_tag
+    P.find_final_auth_build = lambda b, timeout=90, *, build_id=None: (
         True, {"build_id": build_id, "version": "6.2608.5658", "commit": _TA_COMMIT}, "")
     P.create_lightweight_tag = lambda o, pj, r, t, c, timeout=60: (True, {"created": False, "objectId": _TA_COMMIT}, "")
     try:
         with mockctx.active({}):
             out = _invoke(TA.build, _ta_state())
     finally:
-        P.find_auth_release_build, P.create_lightweight_tag = of, oc
+        P.find_final_auth_build, P.create_lightweight_tag = of, oc
     assert out.kind == "done" and "idempotent" in out.note.lower()
 
 
@@ -1119,8 +1115,8 @@ def test_tag_authenticator_blocks_when_captured_version_disagrees_with_build():
     from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
 
-    original = P.find_auth_release_build
-    P.find_auth_release_build = lambda b, timeout=90, *, build_id=None: (
+    original = P.find_final_auth_build
+    P.find_final_auth_build = lambda b, timeout=90, *, build_id=None: (
         True, {
             "build_id": build_id,
             "version": "6.2608.9999",
@@ -1130,7 +1126,7 @@ def test_tag_authenticator_blocks_when_captured_version_disagrees_with_build():
         with mockctx.active({}):
             out = _invoke(TA.build, _ta_state())
     finally:
-        P.find_auth_release_build = original
+        P.find_final_auth_build = original
 
     assert out.kind == "blocked"
     assert "captured final version 6.2608.5658" in out.reason
@@ -1197,15 +1193,15 @@ def test_tag_authenticator_conflict_different_commit_blocks():
     from steps.lib import mockctx
     from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
-    of, oc = P.find_auth_release_build, P.create_lightweight_tag
-    P.find_auth_release_build = lambda b, timeout=90, *, build_id=None: (
+    of, oc = P.find_final_auth_build, P.create_lightweight_tag
+    P.find_final_auth_build = lambda b, timeout=90, *, build_id=None: (
         True, {"build_id": build_id, "version": "6.2608.5658", "commit": _TA_COMMIT}, "")
     P.create_lightweight_tag = lambda o, pj, r, t, c, timeout=60: (True, {"created": False, "objectId": "dead" * 10}, "")
     try:
         with mockctx.active({}):
             out = _invoke(TA.build, _ta_state())
     finally:
-        P.find_auth_release_build, P.create_lightweight_tag = of, oc
+        P.find_final_auth_build, P.create_lightweight_tag = of, oc
     assert out.kind == "blocked" and "already exists" in out.reason and "reconcile" in out.reason
 
 
@@ -1217,8 +1213,8 @@ def test_tag_authenticator_dry_run_does_not_write():
     from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
     called = {"create": False}
-    of, oc = P.find_auth_release_build, P.create_lightweight_tag
-    P.find_auth_release_build = lambda b, timeout=90, *, build_id=None: (
+    of, oc = P.find_final_auth_build, P.create_lightweight_tag
+    P.find_final_auth_build = lambda b, timeout=90, *, build_id=None: (
         True, {"build_id": build_id, "version": "6.2608.5658", "commit": _TA_COMMIT}, "")
 
     def _boom(*a, **k):
@@ -1229,7 +1225,7 @@ def test_tag_authenticator_dry_run_does_not_write():
         with mockctx.active({"dry_run": "true"}):
             out = _invoke(TA.build, _ta_state())
     finally:
-        P.find_auth_release_build, P.create_lightweight_tag = of, oc
+        P.find_final_auth_build, P.create_lightweight_tag = of, oc
     assert out.kind == "done" and "dry-run" in out.note.lower() and called["create"] is False
 
 
@@ -1240,17 +1236,17 @@ def test_tag_authenticator_injected_version_commit_skips_lookup():
     from steps.lib import mockctx
     from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
-    of, oc = P.find_auth_release_build, P.create_lightweight_tag
+    of, oc = P.find_final_auth_build, P.create_lightweight_tag
 
     def _nolookup(*a, **k):
-        raise AssertionError("find_auth_release_build must not be called when both are injected")
-    P.find_auth_release_build = _nolookup
+        raise AssertionError("find_final_auth_build must not be called when both are injected")
+    P.find_final_auth_build = _nolookup
     P.create_lightweight_tag = lambda o, pj, r, t, c, timeout=60: (True, {"created": True, "objectId": c}, "")
     try:
         with mockctx.active({"version": "6.2608.9999", "commit": "abc123"}):
             out = _invoke(TA.build, _ta_state())
     finally:
-        P.find_auth_release_build, P.create_lightweight_tag = of, oc
+        P.find_final_auth_build, P.create_lightweight_tag = of, oc
     assert out.kind == "done" and "6.2608.9999" in out.note
 
 
@@ -1272,15 +1268,15 @@ def test_tag_authenticator_blocks_when_build_not_run():
     from steps.lib import mockctx
     from steps.rollout_start import tag_authenticator as TA
     from tools import pipelines as P
-    of = P.find_auth_release_build
-    P.find_auth_release_build = lambda b, timeout=90, *, build_id=None: (
+    of = P.find_final_auth_build
+    P.find_final_auth_build = lambda b, timeout=90, *, build_id=None: (
         True, None, "no succeeded release-app build on refs/heads/release/2026/08/13")
     try:
         with mockctx.active({}):
             out = _invoke(TA.build, _ta_state())
     finally:
-        P.find_auth_release_build = of
-    assert out.kind == "blocked" and "hasn't run yet" in out.reason
+        P.find_final_auth_build = of
+    assert out.kind == "blocked" and "final Authenticator build is not ready" in out.reason
 
 
 
@@ -1448,7 +1444,7 @@ def test_wiki_payload_requires_captured_final_authenticator_build(monkeypatch):
     st.versions = {"authenticator": "release/2026/08/13"}
     monkeypatch.setattr(
         P,
-        "find_auth_release_build",
+        "find_final_auth_build",
         lambda *_args, **_kwargs: pytest.fail("must not select the newest build"),
     )
 

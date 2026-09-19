@@ -599,6 +599,67 @@ def test_find_auth_release_build_reads_exact_captured_build(monkeypatch):
     assert not any("_apis/build/builds?" in url for url in seen)
 
 
+def test_find_final_auth_build_reads_latest_release_branch_build(monkeypatch):
+    from tools import pipelines as P
+
+    seen = []
+
+    def fake_json(args, timeout):
+        seen.extend(args)
+        return True, [
+            {
+                "id": 100,
+                "sourceBranch": "refs/heads/release/2026/09/10",
+                "sourceVersion": "1" * 40,
+                "buildNumber": "6.2609.5000",
+                "status": "completed",
+                "result": "succeeded",
+            },
+            {
+                "id": 200,
+                "sourceBranch": "refs/heads/release/2026/09/10",
+                "sourceVersion": "2" * 40,
+                "buildNumber": "Authenticator-6.2609.6000",
+                "status": "completed",
+                "result": "succeeded",
+            },
+        ], ""
+
+    monkeypatch.setattr(P, "_az_json", fake_json)
+    ok, info, detail = P.find_final_auth_build("release/2026/09/10")
+    assert ok and detail == ""
+    assert info == {
+        "build_id": 200,
+        "version": "6.2609.6000",
+        "commit": "2" * 40,
+        "build_number": "Authenticator-6.2609.6000",
+        "status": "completed",
+        "result": "succeeded",
+    }
+    assert "--definition-ids" in seen and str(P.AUTH_BUILD_DEF) in seen
+    assert "refs/heads/release/2026/09/10" in seen
+
+
+def test_find_final_auth_build_reads_exact_build_and_rejects_wrong_branch(monkeypatch):
+    from tools import pipelines as P
+
+    def fake_get(url, timeout):
+        assert "/builds/200?" in url
+        return True, {
+            "id": 200,
+            "sourceBranch": "refs/heads/working-release/2026/09/10",
+            "sourceVersion": "2" * 40,
+            "buildNumber": "6.2609.6000",
+            "status": "completed",
+            "result": "succeeded",
+        }, ""
+
+    monkeypatch.setattr(P, "_ado_rest_get", fake_get)
+    ok, info, detail = P.find_final_auth_build("release/2026/09/10", build_id=200)
+    assert not ok and info is None
+    assert "not refs/heads/release/2026/09/10" in detail
+
+
 
 
 def test_merged_release_prs_merges_working_and_release_dedupes():

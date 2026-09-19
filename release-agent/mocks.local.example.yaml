@@ -93,13 +93,15 @@ preflight.cg:
 # ---- Phase 4 · finalize ----
 # finalize.remove_rc_tags_gate:  🚦 gate — NOT mockable
 # finalize.orchestrator_finalization:
-#   { stage: ready, final: { mrwp_run_id: 1692575, authenticator_build_id: 181239508, authenticator_version: "6.2609.6188" } }
+#   { stage: ready, final: { mrwp_run_id: 1692575 } }
 # finalize.integ_prs:   { outcome: done }   # agent
 # finalize.verify_pub:  { outcome: done }   # agent
 # finalize.verify_pub:  { results: {common4j: published, common: published, msal: published} }  # agent
 # finalize.release_announcement: 🛰️ scout — { post_to: {...}, cc_mode: self, self_email: <you> }
 
 # ---- Phase 5 · rollout_start ----
+# rollout_start.identify_auth_build:
+#   build: { build_id: 181239508, version: "6.2609.6188", commit: 0123456789abcdef0123456789abcdef01234567, build_number: "6.2609.6188", status: completed, result: succeeded }
 # rollout_start.tag_authenticator: { outcome: done }   # agent
 # rollout_start.wiki_payload:      { outcome: done }   # agent (preview-first) — or { version: {...}, prs: [...] }
 # rollout_start.notice:

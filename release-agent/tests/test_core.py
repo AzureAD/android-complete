@@ -229,9 +229,14 @@ def test_full_flow_replay_completes():
     guard = 0
     while orch.status_report()["status"] != "complete" and guard < 100:
         orch.run_until_gate()
-        status = orch.status_report()["status"]
+        report = orch.status_report()
+        status = report["status"]
         if status == "holding_gate":
             _approve_replay_gate(orch)
+        elif report.get("scout_pending"):
+            phase = report["current_phase"]
+            for step in list(report["scout_pending"]):
+                orch.record_scout_step(phase, step, "pass", f"{step} done (replay)")
         elif status == "awaiting_action":
             orch.complete_step(note="done (replay)")
         guard += 1
@@ -1931,8 +1936,6 @@ def test_orchestrator_finalization_resolves_final_mrwp_and_auth_tags(monkeypatch
         "stage_result": None,
         "parked": True,
         "mrwp_run_id": "1692575",
-        "authenticator_build_id": "181239508",
-        "authenticator_version": "6.2609.6188",
     }
 
 

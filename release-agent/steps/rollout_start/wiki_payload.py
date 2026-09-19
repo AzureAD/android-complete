@@ -7,8 +7,8 @@ time we reach here the Authenticator build + all SDK versions are final, so we f
 one shot rather than creating an empty note early and updating it later.
 
 The page mirrors the real payload pages under IdentityWiki / "Monthly Releases Payloads History":
-  #App Version            → the bug-bash/Authenticator version + its release-app build run link
-                            (the NEW AndroidBuild-1ES pipeline — find_auth_release_build)
+  #App Version            → the final Authenticator version + its pipeline-475778 build run link
+                            (the pipeline-475778 final Authenticator build captured by identify_auth_build)
   Authenticator + DID     → the merged-PR list for this release (auto-derived, tools.merged_release_prs)
   Auth Client Android SDKs→ Broker / Common / MSAL versions (state.versions)
   Email / Sign-offs /     → clearly-marked placeholders the owner fills (hand-curated, not derivable)
@@ -88,8 +88,8 @@ def wiki_url(path: str) -> str:
 
 
 def _auth_build(context):
-    """(version, build_number, build_url, detail) — from a `version` mock, else the live
-    Authenticator release-app build. version is None on failure."""
+    """(version, build_number, build_url, detail) — from a `version` mock, else the
+    captured final Authenticator build. version is None on failure."""
     ov = context.input("version", MISSING)
     if ov is not MISSING and ov:
         d = ov if isinstance(ov, dict) else {"version": ov}
@@ -98,7 +98,7 @@ def _auth_build(context):
     if not branch:
         return (None, None, None, "no Authenticator release branch on record (state.versions.authenticator)")
     from tools.pipelines import auth_build_url
-    final = (context.evidence.pipeline_runs or {}).get("final") or {}
+    final = (context.evidence.pipeline_runs or {}).get("final_auth") or {}
     build_id = final.get("authenticator_build_id")
     expected_version = final.get("authenticator_version")
     if not build_id or not expected_version:
@@ -107,13 +107,13 @@ def _auth_build(context):
             None,
             None,
             "final Authenticator build evidence is missing "
-            "(run finalize.orchestrator_finalization first)",
+            "(run rollout_start.identify_auth_build first)",
         )
-    ok, info, detail = context.services.pipelines.find_auth_release_build(
+    ok, info, detail = context.services.pipelines.find_final_auth_build(
         branch, build_id=build_id
     )
     if not ok or not info:
-        return (None, None, None, detail or "no succeeded Authenticator release-app build yet")
+        return (None, None, None, detail or "no succeeded final Authenticator build yet")
     if str(info.get("build_id")) != str(build_id):
         return (
             None,

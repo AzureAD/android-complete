@@ -42,6 +42,12 @@ def _state():
                 },
             },
         }],
+        "final_auth": {
+            "authenticator_build_id": "180500000",
+            "authenticator_version": "6.2609.6000",
+            "authenticator_commit": COMMIT,
+            "authenticator_build_number": "20260910.5",
+        },
     }
     state.set_step("bug_bash", "clone_plans_auth", StepState(
         status="done", data={"suite_id": 3752749, "suite_name": "October Authenticator"}))
@@ -102,7 +108,7 @@ def _production_context(state, *, now=None):
     ctx = context(state, now=now)
     pipelines = replace(
         ctx.services.pipelines,
-        find_auth_release_build=lambda branch: (True, _inputs()["build"], ""),
+        find_final_auth_build=lambda branch, **kwargs: (True, _inputs()["build"], ""),
         release_change_manifest=lambda branch, commit: (True, _manifest(), ""),
     )
     return replace(ctx, services=replace(ctx.services, pipelines=pipelines))
@@ -149,6 +155,38 @@ def test_notice_test_redirect_clears_real_cc_and_tags_subject():
     assert result.payload["to"] == ["pedroro@microsoft.com"]
     assert result.payload["cc"] == []
     assert result.payload["subject"].startswith("[TEST → me] ")
+
+
+def test_identify_auth_build_records_final_pipeline_evidence():
+    from steps.rollout_start import identify_auth_build as S
+    build = {
+        "build_id": 180500000,
+        "version": "6.2609.6000",
+        "commit": COMMIT,
+        "build_number": "6.2609.6000",
+        "status": "completed",
+        "result": "succeeded",
+    }
+    state = _state()
+    result = S.build(context(state, inputs={"build": build}))
+    assert result.kind == "done"
+    evidence = result.updates[0].values["final_auth"]
+    assert evidence["authenticator_build_id"] == "180500000"
+    assert evidence["authenticator_version"] == "6.2609.6000"
+    assert evidence["authenticator_commit"] == COMMIT
+
+
+def test_identify_auth_build_blocks_when_no_run_found():
+    from steps.rollout_start import identify_auth_build as S
+    ctx = _production_context(_state())
+    pipelines = replace(
+        ctx.services.pipelines,
+        find_final_auth_build=lambda branch: (True, None, "no run on release branch"),
+    )
+    result = S.build(replace(ctx, services=replace(ctx.services, pipelines=pipelines)))
+    assert isinstance(result, Blocked)
+    assert "no final Authenticator build found" in result.reason
+    assert "email and Scout" in result.reason
 
 
 def test_injected_source_evidence_cannot_target_production_recipients():
@@ -221,6 +259,7 @@ def test_notice_preparation_binds_exact_state_and_rejects_drift(tmp_path, monkey
         phase, step = key.split(".", 1)
         state.set_step(phase, step, sourced.get_step(phase, step))
     state.set_step("rollout_start", "tag_authenticator", StepState(status="done"))
+    state.set_step("rollout_start", "identify_auth_build", StepState(status="done"))
     spec = _inputs(send_to="pedroro@microsoft.com")
     orch = fresh_orchestrator(
         CONFIG, state, mocks={"rollout_start.notice": spec})
