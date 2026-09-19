@@ -265,6 +265,18 @@ def signoff_stage_started(info):
     return state in {"pending", "inprogress", "completed"} and result not in {"skipped", "canceled"}
 
 
+def signoff_stage_running(info):
+    state = str((info or {}).get("stage_state") or "").lower()
+    result = str((info or {}).get("stage_result") or "").lower()
+    return state in {"pending", "inprogress"} and result not in {"failed", "skipped", "canceled"}
+
+
+def signoff_stage_succeeded(info):
+    state = str((info or {}).get("stage_state") or "").lower()
+    result = str((info or {}).get("stage_result") or "").lower()
+    return state == "completed" and result in {"succeeded", "succeededwithissues"}
+
+
 def signoff_stage_failed(info):
     state = str((info or {}).get("stage_state") or "").lower()
     result = str((info or {}).get("stage_result") or "").lower()
@@ -949,4 +961,4 @@ def create_lightweight_tag(org, project, repo, tag_name, commit, timeout=60):
     why = entry.get("customMessage") or d or "tag ref create rejected"
     return (False, None, why)
 
-__all__ = ['AUTH_BUILD_DEF', 'AUTH_ORG', 'AUTH_PROJECT', 'AUTH_RELEASE_APP_DEF', 'AUTH_SIGNOFF_DEF', 'AUTH_SIGNOFF_STAGE_NAME', 'AUTH_TEST_DEF', 'AUTH_UI_PASS_THRESHOLD', 'AUTH_UI_SUITES', '_AUTH_RC_VERSION', '_AUTH_RELEASE_VERSION', '_ZERO_SHA', '_auth_build_ref', '_auth_test_source_build_id', '_release_ref', 'auth_branch_url', 'auth_build_url', 'auth_ui_suite_rates', 'classify_release_commits', 'create_lightweight_tag', 'ecs_flight_changes', 'find_auth_ecs_build', 'find_auth_release_build', 'find_final_auth_build', 'find_auth_signoff_run', 'find_auth_ui_test_build', 'merged_release_prs', 'parse_ecs_flights', 'read_auth_signoff_run', 'release_change_manifest', 'signoff_stage_failed', 'signoff_stage_started', 'start_auth_signoff_stage']
+__all__ = ['AUTH_BUILD_DEF', 'AUTH_ORG', 'AUTH_PROJECT', 'AUTH_RELEASE_APP_DEF', 'AUTH_SIGNOFF_DEF', 'AUTH_SIGNOFF_STAGE_NAME', 'AUTH_TEST_DEF', 'AUTH_UI_PASS_THRESHOLD', 'AUTH_UI_SUITES', '_AUTH_RC_VERSION', '_AUTH_RELEASE_VERSION', '_ZERO_SHA', '_auth_build_ref', '_auth_test_source_build_id', '_release_ref', 'auth_branch_url', 'auth_build_url', 'auth_ui_suite_rates', 'classify_release_commits', 'create_lightweight_tag', 'ecs_flight_changes', 'find_auth_ecs_build', 'find_auth_release_build', 'find_final_auth_build', 'find_auth_signoff_run', 'find_auth_ui_test_build', 'merged_release_prs', 'parse_ecs_flights', 'read_auth_signoff_run', 'release_change_manifest', 'signoff_stage_failed', 'signoff_stage_running', 'signoff_stage_started', 'signoff_stage_succeeded', 'start_auth_signoff_stage']

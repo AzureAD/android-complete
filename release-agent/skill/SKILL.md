@@ -124,8 +124,9 @@ owner approval of the exact hash because it changes live ADO assignments. The sc
 release writers (`launch-localization`, `create-integration-prs`, `create-oneauth-common-pr`,
 `create-payload-wiki`, `start-release-signoff`) run with `--execute --auto-approve --executor <automation-id>`;
 each command recomputes and checkpoints the current plan hash before its single fenced
-provider request. Optional `--reserve` only saves authorization for human-reviewed writers;
-execution additionally needs the returned `--execution-id`, with `--reserve` omitted.
+provider request. `start-release-signoff` records an in-flight stage and completes only
+after a later poll sees the stage finish. Optional `--reserve` only saves authorization
+for human-reviewed writers; execution additionally needs the returned `--execution-id`, with `--reserve` omitted.
 Never replace this with generic reserve-step, raw provider calls or record-step.
 Changed plans need fresh approval. Interrupted/uncertain attempts stay owned: inspect
 provider evidence and resolve explicitly before another attempt. `last_write_review`

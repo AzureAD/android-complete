@@ -368,7 +368,9 @@ the current plan hash at execution time:
   existing-page ETag.
 - `start-release-signoff --release <id>` binds the matching pipeline-397224 run,
   the `Release Sign Off` stage identity and the current stage state before setting
-  that stage to `pending` (ADO's Run-stage operation).
+  that stage to `pending` (ADO's Run-stage operation). A successful start records
+  the step in-flight; later `step-action --phase rollout_start --step signoff_start`
+  polls the stored build/stage and marks done only after the stage succeeds.
 
 Execution uses `--execute --auto-approve --executor integration-pr-automation`,
 `--execute --auto-approve --executor oneauth-common-automation`, or

@@ -49,7 +49,8 @@ build, branch date, or arbitrary pipeline build number is never an app-version s
 
 `rollout_start.signoff_start` is a checked external write, not a human gate. It locates
 the Android Build Release run in msazure/One pipeline 397224 for
-`state.versions.authenticator` and starts the stage named `Release Sign Off`.
+`state.versions.authenticator`, starts the stage named `Release Sign Off`, then keeps
+the step in-flight until ADO reports that stage has finished.
 
 Selection is deterministic:
 
@@ -59,6 +60,11 @@ Selection is deterministic:
   the Authenticator release branch.
 - The checked command binds the selected build id, stage identity and current stage
   state in the review hash before it sends ADO's Run-stage request.
+- After the Run-stage request is accepted, the step is recorded as in-flight/pending
+  with the exact build/stage in step data. It is not marked done at launch time.
+- Subsequent `step-action --phase rollout_start --step signoff_start` polls the same
+  stored run. Only a completed successful stage marks the step done; failed, skipped
+  or canceled results block for owner investigation.
 
 Run the follow-up with
 `start-release-signoff --release <id> --execute --auto-approve --executor release-signoff-automation`.

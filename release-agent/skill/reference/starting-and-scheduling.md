@@ -171,7 +171,9 @@ revision; adoption never automatically drains work.
 
 The same auto-approved checked-write contract applies to the scheduled finalize/rollout
 writers `create-integration-prs`, `create-oneauth-common-pr`, `create-payload-wiki`, and
-`start-release-signoff`.
+`start-release-signoff`. The signoff writer is long-running: after the stage is started
+it leaves `rollout_start.signoff_start` in-flight, and normal step polling marks it done
+only when ADO reports `Release Sign Off` completed successfully.
 `distribute-tests` remains human-reviewed because it applies live ADO assignment changes.
 
 The localization poller runs hourly, reading the exact recorded run's `status` AND

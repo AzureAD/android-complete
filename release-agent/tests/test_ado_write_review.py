@@ -11,6 +11,7 @@ import pytest
 from orchestrator import cli_common as C, revision, write_review as W
 from orchestrator.cli import build_parser
 from orchestrator.commands import distribute, localization, payload_wiki_cmd as wiki, signoff_cmd as signoff
+from orchestrator.commands.step_action import prepare_step
 from orchestrator.engine import Orchestrator
 from orchestrator.state import ReleaseState
 from steps.ccd import localization as L
@@ -347,6 +348,7 @@ def test_signoff_plan_binds_build_stage_and_state(monkeypatch):
 def test_signoff_auto_approve_starts_stage_once(memory, monkeypatch):
     orch = make_orch("rollout_start", "signoff_start")
     memory[0](orch)
+    original_resolve = signoff.S.resolve_target
     monkeypatch.setattr(signoff.S, "resolve_target", lambda ctx: (True, _signoff_info(), ""))
     calls = []
 
@@ -366,10 +368,24 @@ def test_signoff_auto_approve_starts_stage_once(memory, monkeypatch):
     )
     assert signoff.cmd_start_release_signoff(args) == 0
     step = orch.state.get_step("rollout_start", signoff.S.ID)
+    assert step.status == "in_flight"
+    assert step.execution["write_review"]["approved_by"] == "release-signoff-automation"
+    assert args.review_hash == step.execution["write_review"]["hash"]
+    assert step.data["build_id"] == "397224001"
+    assert step.data["stage_state"] == "pending"
+    assert step.data["poll_in_min"] == signoff.S.CONFIG["poll_interval_min"]
+    assert calls == [("397224001", "ReleaseSignOff")]
+
+    monkeypatch.setattr(signoff.P, "read_auth_signoff_run", lambda build_id: (
+        True, _signoff_info(stage_state="completed", stage_result="succeeded", build_id=build_id), ""))
+    monkeypatch.setattr(signoff.S, "resolve_target", original_resolve)
+    out = prepare_step(arguments(
+        "step-action", "--phase", "rollout_start", "--step", "signoff_start",
+        "--execution-id", step.execution["id"]), orch.state, orch)
+    assert out["kind"] == "done"
+    step = orch.state.get_step("rollout_start", signoff.S.ID)
     assert step.status == "done"
     assert step.data["last_write_review"]["approved_by"] == "release-signoff-automation"
-    assert args.review_hash == step.data["last_write_review"]["hash"]
-    assert calls == [("397224001", "ReleaseSignOff")]
 
 
 def test_distribution_final_validation_persists_only_availability(distribution_inputs, monkeypatch):

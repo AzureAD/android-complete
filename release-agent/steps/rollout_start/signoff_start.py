@@ -1,7 +1,7 @@
 """Step: `signoff_start` — start Authenticator Release Sign Off from pipeline 397224."""
 from __future__ import annotations
 
-from orchestrator.outcomes import Blocked, Done, NeedsSkill
+from orchestrator.outcomes import Blocked, Done, InProgress, NeedsSkill
 from orchestrator.step_context import StepContext
 from steps.lib.mockctx import MISSING
 from tools import pipelines as P
@@ -16,6 +16,8 @@ MOCKABLE = {
     "fail": {"kind": "input", "desc": "Force a Blocked with this detail."},
 }
 
+CONFIG = {"poll_interval_min": 30}
+
 
 def _final_auth_build_id(context: StepContext):
     final = (context.evidence.pipeline_runs or {}).get("final_auth") or {}
@@ -26,6 +28,9 @@ def resolve_target(context: StepContext):
     injected = context.input("run", MISSING)
     if injected is not MISSING and injected:
         return (True, dict(injected), "")
+    record = context.evidence.step("rollout_start", ID)
+    if record.status == "in_flight" and record.data.get("build_id"):
+        return context.services.pipelines.read_auth_signoff_run(record.data["build_id"])
     branch = (getattr(context.release, "versions", None) or {}).get("authenticator")
     if not branch:
         return (False, None, "no Authenticator release branch on record (state.versions.authenticator)")
@@ -37,6 +42,14 @@ def resolve_target(context: StepContext):
 
 def stage_started(info: dict) -> bool:
     return P.signoff_stage_started(info)
+
+
+def stage_running(info: dict) -> bool:
+    return P.signoff_stage_running(info)
+
+
+def stage_succeeded(info: dict) -> bool:
+    return P.signoff_stage_succeeded(info)
 
 
 def stage_failed(info: dict) -> bool:
@@ -56,13 +69,27 @@ def build(context: StepContext):
         return Blocked(
             "signoff_start: couldn't locate the Android Build Release run for this "
             f"release ({detail}). The release owner must investigate pipeline 397224.")
+    if stage_succeeded(info):
+        return Done(
+            note=f"Release Sign Off completed on Authenticator signoff build {info.get('build_id')}.",
+            by="scout",
+            links=[{"name": "Release Sign Off run", "url": info.get("url")}] if info.get("url") else [],
+        )
     if stage_failed(info):
         return Blocked(
             "signoff_start: Release Sign Off already ran but did not pass "
             f"(result {info.get('stage_result') or 'unknown'}) on build {info.get('build_id')}.")
-    if stage_started(info):
-        return Done(
-            note=f"Release Sign Off already started on Authenticator signoff build {info.get('build_id')}.")
+    if stage_running(info):
+        return InProgress(
+            f"Release Sign Off is {info.get('stage_state') or 'pending'} on "
+            f"Authenticator signoff build {info.get('build_id')}; Scout is polling until it finishes.",
+            links=[{"name": "Release Sign Off run", "url": info.get("url")}] if info.get("url") else [],
+            poll_in_min=CONFIG["poll_interval_min"],
+        )
+    if str(info.get("stage_state") or "").lower() == "completed":
+        return Blocked(
+            "signoff_start: Release Sign Off finished without a successful result "
+            f"(result {info.get('stage_result') or 'unknown'}) on build {info.get('build_id')}.")
 
     build_id = info.get("build_id")
     stage = info.get("stage_name") or P.AUTH_SIGNOFF_STAGE_NAME
@@ -85,7 +112,7 @@ def build(context: StepContext):
             "execution_instructions": (
                 "Run the checked command with --execute --auto-approve. It recomputes the "
                 "pipeline-397224 target, checkpoints the current plan hash, starts exactly the "
-                "Release Sign Off stage, then verifies the stage is queued/running."),
+                "Release Sign Off stage, records the step in-flight, and polls until the stage finishes."),
         },
         record_as=ID,
         summary=summary,

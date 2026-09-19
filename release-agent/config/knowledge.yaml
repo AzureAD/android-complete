@@ -1675,7 +1675,9 @@ rollout_start.signoff_start:
   who: >
     Scout performs the checked ADO stage-start write. It is not a human approval gate:
     the stage start runs through `start-release-signoff`, which recomputes the target,
-    checkpoints the current plan hash and sends one Run-stage request.
+    checkpoints the current plan hash and sends one Run-stage request. A successful
+    start records the step as in-flight/pending, not done; Scout keeps polling the
+    same stored run until the stage finishes.
   where:
     - "signoff pipeline: msazure/One Android Build Release definition 397224"
     - "stage: Release Sign Off"
@@ -1686,12 +1688,16 @@ rollout_start.signoff_start:
     run `start-release-signoff --release <id> --execute --auto-approve --executor
     release-signoff-automation`. The command binds the selected build id, stage identity
     and current stage state before setting the stage state to `pending` (ADO's Run-stage
-    operation), then verifies the stage is queued/running. If no matching run or stage is
-    found, the step blocks for release-owner investigation instead of starting a different run.
+    operation), then records the step in-flight with that build/stage. Subsequent
+    `step-action --phase rollout_start --step signoff_start` polls the same run; only a
+    completed successful Release Sign Off stage marks the step done. If no matching run
+    or stage is found, the step blocks for release-owner investigation instead of starting
+    a different run.
   consequences: >
     A real WRITE to Azure DevOps: it starts the Release Sign Off stage on the selected
-    pipeline-397224 run. An uncertain provider response is recorded as attention and must
-    be inspected before retrying.
+    pipeline-397224 run. The write stores the selected build/stage in this step's data
+    so later polls cannot drift to another run. An uncertain provider response is recorded
+    as attention and must be inspected before retrying.
   faqs:
     - q: "Why is pipeline 397224 involved if the final Authenticator build came from 475778?"
       a: "Pipeline 475778 supplies the app build/version evidence. Pipeline 397224 is the Release Sign Off pipeline/stage. Once 397224 links to AndroidBuildBroker1ES as a resource, Scout matches the 397224 run back to the captured 475778 build id."

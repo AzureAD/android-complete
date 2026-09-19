@@ -56,6 +56,7 @@ def production_services(*, status_email=None, status_recipients=None):
             P.find_auth_release_build,
             P.find_final_auth_build,
             P.find_auth_signoff_run,
+            P.read_auth_signoff_run,
             P.merged_release_prs, P.release_change_manifest,
             C.latest_scheduled_build, I.local_flights,
             P.get_pipeline_approval,
