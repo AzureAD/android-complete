@@ -14,11 +14,13 @@ per-release poller automation + this deterministic decider):
                   * still running & within `timeout_hours` (3h) → wait, poll again.
                   * still running past 3h → EMAIL the release engineer to check it /
                     do the manual steps (localization doc), and hold the step.
-                  * succeeded with a complete OneLocBuild@3 task log → read for
+                  * succeeded with a complete OneLocBuild@3 task log → verify PR
+                    creation was enabled, then read for
                     `Pull request created with ID '<n>'`:
                       - PR id found → POST that PR to the Code reviews chat, then
                         keep polling its ADO status until it is merged.
-                      - no PR      → require explicit owner-reviewed no-change proof.
+                      - no PR      → POST "no strings to localize" to Code reviews,
+                        then mark done.
                   * failed/canceled → block with the exact run link for owner review.
                   * unknown result or missing/incomplete/unrecognized logs → wait for
                     evidence, escalating to the owner after the same 3h timeout.
@@ -104,18 +106,12 @@ CONFIG = {
     },
 }
 
-# Mock knobs (mocks.local.yaml). `create_pr` overrides the trigger variable
-# (set false to run the pipeline WITHOUT creating a PR); `send_to` redirects the
-# PR posts to your own chat ('me'). `send_to` is applied by
-# check-localization (the post happens in the poll decider, not build()).
+# Mock knobs (mocks.local.yaml). `send_to` redirects localization follow-up
+# posts to your own chat ('me'). `send_to` is applied by check-localization
+# (the post happens in the poll decider, not build()).
 from steps.lib.context import SELF_CHAT_ID as _SELF_CHAT_ID   # noqa: E402
 
 MOCKABLE = {
-    "create_pr": {
-        "kind": "input",
-        "desc": "Override isCreatePrSelected on the trigger (true/false). Set false to "
-                "run the pipeline without creating a PR.",
-    },
     "send_to": {
         "kind": "post", "sets": "chatId", "aliases": {"me": _SELF_CHAT_ID, "self": _SELF_CHAT_ID},
         "desc": "Redirect localization PR posts to this chat ('me' = your own chat). "
@@ -174,6 +170,14 @@ def extract_pr(logs: str, cfg: dict = None) -> tuple:
     pr_id = m.group(1)
     url = (m.group(2) if m.lastindex and m.lastindex >= 2 else None) or pr_url(pr_id, cfg)
     return pr_id, url
+
+
+def extract_create_pr_enabled(logs: str) -> "bool | None":
+    """Return the OneLoc task's create-PR flag when the complete task log exposes it."""
+    m = re.search(r"/createpr:\s*(true|false)", logs or "", re.IGNORECASE)
+    if not m:
+        return None
+    return m.group(1).lower() == "true"
 
 
 def pr_url(pr_id: str, cfg: dict = None) -> str:
@@ -283,6 +287,21 @@ def _deadline_post(context, cfg: dict, pr_id: str, url: str) -> dict:
     return _chat_payload(context, cfg, content)
 
 
+def _no_strings_post(context, cfg: dict) -> dict:
+    """Code reviews notice for a successful createPR=true run that produced no PR."""
+    who, _ = _owner_mention(context)
+    run = _run_link(context, cfg) or {}
+    run_url = run.get("url", "#")
+    content = (
+        f"<p><b>No strings to localize — {context.release.release_id}</b></p>"
+        f"<p>The OneLoc-1ES localization pipeline completed successfully with PR "
+        f"creation enabled, and no localization PR was generated. This means there "
+        f"are no strings to localize for this release.</p>"
+        f"<p>{who} — no localization PR action is needed. Run evidence: "
+        f"<a href=\"{escape(run_url, quote=True)}\">localization pipeline run</a>.</p>")
+    return _chat_payload(context, cfg, content)
+
+
 def _run_link(context, cfg: dict) -> dict | None:
     """A proof link to the triggered pipeline RUN itself — always available once the
     build is recorded, whether or not a PR was created. Prefers the exact run_url
@@ -303,10 +322,10 @@ def _run_link(context, cfg: dict) -> dict | None:
 class RunEvidence:
     """Transient poll input, never persisted as new release-state fields.
 
-    Only the documented PR-created line has a verified log format. No-change
-    completion instead needs an owner's explicit review of the full task output;
-    absence of that line (including the synthetic "no strings changed" fixture)
-    is not a supported no-change pattern.
+    Only the documented PR-created line has a verified PR format. A successful
+    complete log with /createpr: True and no PR line is the supported no-strings
+    path; logs that do not expose the create-PR flag still need owner-reviewed
+    no-change proof.
     """
     result: str | None = None
     logs_complete: bool = False
@@ -335,7 +354,8 @@ def decide(context, is_complete: bool, logs: str = None, now=None, cfg: dict = N
       warn_unmerged  -> {decision, chat:{...}, note}
       omit_unmerged  -> {decision, pr_id, pr_url, links, note}    (skipped)
       merged        -> {decision, pr_id, pr_url, links, note}      (done)
-      complete_none -> {decision, links, note}                (done, no strings)
+      announce_none -> {decision, chat:{...}, links, note}    (post no strings, then done)
+      complete_none -> {decision, links, note}                (done, owner-reviewed no strings)
 
     Both terminal branches ALWAYS carry a proof `links` entry so the
     step's Details box has evidence: the PR link when a PR was created, plus the
@@ -407,7 +427,17 @@ def decide(context, is_complete: bool, logs: str = None, now=None, cfg: dict = N
     proven_run = (is_complete and result == "succeeded" and evidence.logs_complete
                   and bool(logs and logs.strip()))
     pr_id, url = extract_pr(logs, cfg) if proven_run else (None, None)
-    if not proven_run or not (pr_id or evidence.no_change_confirmation):
+    create_pr_enabled = extract_create_pr_enabled(logs) if proven_run else None
+    if proven_run and not pr_id and create_pr_enabled is False:
+        return {
+            "decision": "failed",
+            "links": run_links,
+            "note": "localization pipeline succeeded but PR creation was disabled; "
+                    "this is not proof of no strings and requires owner-reviewed rerun",
+        }
+    if not proven_run or (
+        not pr_id and create_pr_enabled is None and not evidence.no_change_confirmation
+    ):
         detail = (
             "pipeline still running" if not is_complete else
             "successful run result not confirmed" if result != "succeeded" else
@@ -442,6 +472,12 @@ def decide(context, is_complete: bool, logs: str = None, now=None, cfg: dict = N
                 "links": links,
                 "note": f"localization pipeline complete — translations PR #{pr_id} "
                         f"created; monitoring until merged"}
+    if create_pr_enabled is True:
+        return {"decision": "announce_none",
+                "chat": _no_strings_post(context, cfg),
+                "links": run_links,
+                "note": "localization complete — no strings to localize "
+                        "(OneLoc-1ES succeeded with PR creation enabled and produced no PR)"}
     return {"decision": "complete_none",
             "links": [run_link] if run_link else [],
             "note": "localization complete — no new strings this release "
@@ -520,12 +556,6 @@ def build(context: StepContext):
         return Blocked("localization: incomplete pipeline configuration")
 
     variables = dict(cfg.get("variables", {}) or {})
-    # mocks.local.yaml `create_pr` overrides isCreatePrSelected (e.g. false = run
-    # the pipeline without creating a PR).
-    from steps.lib.mockctx import MISSING
-    cp = context.input("create_pr", MISSING)
-    if cp is not MISSING:
-        variables["isCreatePrSelected"] = "true" if str(cp).lower() in ("true", "1", "yes") else "false"
     var_str = ", ".join(f"{k}={v}" for k, v in variables.items())
 
     return NeedsSkill(
@@ -572,24 +602,27 @@ def automation_prompt(release: str, spec: dict) -> str:
             f"Pass --logs-complete ONLY after retrieving the entire OneLocBuild@3 task log, "
             f"not a truncated response/excerpt. Missing result is unknown, not success. "
             f"Only a succeeded run and the documented PR-created line prove a new PR. "
-            f"There is NO verified no-change log pattern: an absent PR line does not prove "
-            f"no strings. Do not supply --no-change-confirmation unless the owner explicitly "
-            f"reviewed that run's complete task output and supplied a no-change explanation; "
-            f"otherwise keep polling/escalate for owner review.\n"
+            f"If the complete task log says `/createpr: True` and no PR line appears, "
+            f"post the no-strings Code reviews notice and mark localization done. "
+            f"If the log says `/createpr: False`, block as a misconfigured run. "
+            f"If the log does not expose the create-PR flag, do not infer no strings; "
+            f"keep polling/escalate for owner review unless the owner explicitly supplies "
+            f"`--no-change-confirmation`.\n"
             f"3. for `poll_pr`, run both az status (PR) and run_status commands and pass "
             f"the returned states to "
             f"`check-localization --release {release} --execution-id <execution-id> "
             f"--pr-status <status> --complete <true|false> --run-result <exact-ADO-result>`. "
             f"A merged PR requires positive run success too; pipeline_complete alone "
             f"is not saved proof of success.\n"
-            f"4. `timeout`, `announce_pr`, and `warn_unmerged` stage notifications. "
+            f"4. `timeout`, `announce_pr`, `announce_none`, and `warn_unmerged` stage notifications. "
             f"Use notification prepare --release {release} --source pending and the shared "
             f"claim/result protocol; never send raw decision.email/chat or call legacy post recorders. "
             f"`wait`/`wait_for_merge`/`omit_unmerged`/`merged`/`complete_none`/`not_started`/"
             f"`already_final`/`stopped` → nothing to send. `failed` is a blocked owner-review "
             f"task with the run link, never no strings. Missing outcome evidence also escalates "
             f"after 3h, even when the pipeline finished. The command marks the step done only "
-            f"for `merged` or `complete_none`, or skipped/omitted at the 6 PM cutoff.\n"
+            f"for `merged`, `complete_none`, or after the `announce_none` send is acknowledged, "
+            f"or skipped/omitted at the 6 PM cutoff.\n"
             f"5. silently journal: `journal --release {release} --source scout --kind "
             f"automation --text \"localization-poller: <decision>\"`. Stay silent if "
             f"there is nothing to do. Never re-trigger a recorded blocked run: require "
@@ -629,8 +662,10 @@ KNOWLEDGE = {
         "4:00 PM Los Angeles time, Scout posts one Code reviews warning that translated "
         "strings are at risk. At 6:00 PM Los Angeles time, Scout marks localization "
         "omitted so the scheduled release continues to Phase 2 without those strings. "
-        "No PR line is NOT no-change proof: completion without a PR requires an explicit "
-        "owner-reviewed explanation from the full successful task output. Confirmed merge "
+        "If the successful full log says PR creation was enabled and no PR was generated, "
+        "Scout posts a no-strings notice to Code reviews and then marks localization done. "
+        "A log showing PR creation disabled blocks as a misconfigured run; a missing create-PR "
+        "flag still needs owner-reviewed no-change proof. Confirmed merge "
         "and positive run success win even "
         "if the initial post was not acknowledged; never omit a confirmed merged PR."),
     "who": (
@@ -643,6 +678,7 @@ KNOWLEDGE = {
         "Pipeline run: https://dev.azure.com/msazure/One/_build?definitionId=405133 (open the OneLocBuild@3 task log).",
         "The PR id appears in that log as: Pull request created with ID '<n>'.",
         "Resulting PR: https://msazure.visualstudio.com/DefaultCollection/One/_git/AD-MFA-phonefactor-phoneApp-android/pullrequests",
+        "If createPR was enabled and no PR appears in the complete log, Scout posts the no-strings result to Code reviews.",
         "Reads use az (the ADO MCP is bound to identitydivision/Engineering and can't reach msazure/One): az pipelines build show for status; az devops invoke --area build --resource timeline to find the OneLocBuild@3 log id; then --resource logs to read it.",
     ],
     "how": (
@@ -651,6 +687,7 @@ KNOWLEDGE = {
         "or follow the manual localization steps in the doc below. Old run evidence is "
         "preserved in previous_runs when the new receipt is recorded. Once the "
         "PR is posted to Code reviews, review and merge it into the release branch. "
+        "If the no-strings notice is posted, no PR action is needed and Scout completes the step. "
         "Notifications use prepare/claim/result with persisted progress bindings. "
         "Verified recovery cancels a stale timeout; a delayed receipt "
         "is retained without blocking recovered work. A confirmed merge completes the "
@@ -665,9 +702,9 @@ KNOWLEDGE = {
         {"q": "What happens if the pipeline hangs?",
          "a": "After 3 hours Scout emails the release engineer to check the run or do the manual localization steps (see the doc link)."},
         {"q": "How does Scout find the PR to post?",
-         "a": "After confirming the run succeeded, it reads the full OneLocBuild@3 task log (via az devops invoke against msazure/One) for the line \"Pull request created with ID '<n>'\" and uses the PR URL printed there. An absent line does not prove no strings; it requires owner review."},
+         "a": "After confirming the run succeeded, it reads the full OneLocBuild@3 task log (via az devops invoke against msazure/One) for the line \"Pull request created with ID '<n>'\" and uses the PR URL printed there. If the same complete log shows /createpr: True and no PR line, Scout posts a no-strings notice to Code reviews and completes the step."},
         {"q": "When does the localization step finish?",
-         "a": "Done requires positive run success plus a confirmed merged PR or owner-reviewed no-change proof from full successful task output. Missing results/logs or unrecognized output escalate after 3 hours; failed/canceled runs block. A known unmerged PR warns Code reviews at 4 PM Los Angeles and is skipped/omitted at 6 PM. Confirmed merge takes precedence over omission."},
+         "a": "Done requires positive run success plus a confirmed merged PR, a successful complete createPR=true run whose log generated no PR, or owner-reviewed no-change proof when the log does not expose createPR. Missing results/logs or unrecognized output escalate after 3 hours; failed/canceled or createPR=false runs block. A known unmerged PR warns Code reviews at 4 PM Los Angeles and is skipped/omitted at 6 PM. Confirmed merge takes precedence over omission."},
         {"q": "Why not the ADO MCP?",
          "a": "The ADO MCP is bound to identitydivision/Engineering; msazure/One returns TF200016 (project not found). The az CLI reaches msazure/One as the signed-in user, so the poller reads via az."},
     ],

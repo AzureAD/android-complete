@@ -33,14 +33,7 @@ def _now_iso():
 
 
 def _launch_config():
-    cfg = deepcopy(L.CONFIG)
-    inputs = mocks_mod.load_mocks().get("ccd.localization", {}) or {}
-    if "create_pr" in inputs:
-        value = str(inputs["create_pr"]).strip().lower()
-        if value not in ("true", "false", "1", "0", "yes", "no"):
-            raise ValueError("Localization create_pr override must explicitly be true or false")
-        cfg["variables"]["isCreatePrSelected"] = "true" if value in ("true", "1", "yes") else "false"
-    return cfg
+    return deepcopy(L.CONFIG)
 
 
 def plan_localization(args, orch):
@@ -255,8 +248,8 @@ def cmd_check_localization(args):
     if getattr(args, "pr_status", None) is not None:
         step.data["pr_status"] = str(args.pr_status).strip().lower()
 
-    # mocks.local.yaml send_to → redirect localization PR posts to your own chat.
-    if d in ("announce_pr", "warn_unmerged") and decision.get("chat"):
+    # mocks.local.yaml send_to → redirect localization follow-up posts to your own chat.
+    if d in ("announce_pr", "announce_none", "warn_unmerged") and decision.get("chat"):
         spec = mocks_mod.load_mocks().get("ccd.localization") or {}
         if "send_to" in spec:
             val = spec["send_to"]
@@ -306,6 +299,16 @@ def cmd_check_localization(args):
         C.save_state(st, args.runs_root, args.release)
         C.emit(args.runs_root, args.release, f"[attention] localization: {decision['note']}",
                kind="localization")
+    elif d == "announce_none":
+        step.data["last_checked"] = now.isoformat() if now else _now_iso()
+        orch.apply_outcome(
+            permit, InProgress(
+                "localization no-strings Code reviews notice awaiting delivery",
+                links=decision.get("links", step.links),
+                poll_in_min=L.CONFIG["poll_interval_min"]), data=step.data)
+        C.save_state(st, args.runs_root, args.release)
+        C.emit(args.runs_root, args.release, f"[localization] {decision['note']}",
+               kind="localization")
     elif d == "omit_unmerged":
         orch.omit_execution(permit, decision["note"], links=decision.get("links", step.links))
         C.save_state(st, args.runs_root, args.release)
@@ -322,7 +325,7 @@ def cmd_check_localization(args):
         print(_json.dumps({"error": f"unsupported localization decision: {d}"}))
         return 1
 
-    if d in ("timeout", "announce_pr", "warn_unmerged"):
+    if d in ("timeout", "announce_pr", "announce_none", "warn_unmerged"):
         step = st.get_step("ccd", "localization")
         scope["generation"] = step.invalidated_at or "initial"
         scope["statuses"] = ["in_flight"]
@@ -336,18 +339,29 @@ def cmd_check_localization(args):
             if started.tzinfo is None:
                 started = started.replace(tzinfo=timezone.utc)
             scope["not_before"] = (started + timedelta(hours=L.CONFIG["timeout_hours"])).isoformat()
-        else:
+        elif d in ("announce_pr", "warn_unmerged"):
             scope["step_matches"]["pr_id"] = step.data.get("pr_id")
             deadline_cfg = {**L.CONFIG, "merge_deadline_local": L.CONFIG["omission_deadline_local"]}
             scope["expires_at"] = L.merge_deadline(
                 orch.context("ccd", "localization"), deadline_cfg).isoformat()
+        else:
+            scope["step_matches"].update(
+                pipeline_complete=step.data["pipeline_complete"],
+                last_checked=step.data.get("last_checked"))
         scope["release_matches"] = {"owner_email": st.owner_email, "ccd": st.ccd}
-        completion = ({"kind": "step_result", "status": "attention", "note": decision["note"],
-                       "links": decision.get("links", step.links),
-                       "stamp": ["timeout_notified_at"],
-                       "execution_id": (step.execution or {}).get("id")} if d == "timeout" else
-                      {"kind": "step_data", "stamp": [
-                          "pr_announced_at" if d == "announce_pr" else "merge_deadline_alert_at"]})
+        if d == "timeout":
+            completion = {"kind": "step_result", "status": "attention", "note": decision["note"],
+                          "links": decision.get("links", step.links),
+                          "stamp": ["timeout_notified_at"],
+                          "execution_id": (step.execution or {}).get("id")}
+        elif d == "announce_none":
+            completion = {"kind": "step_result", "status": "pass", "note": decision["note"],
+                          "links": decision.get("links", step.links),
+                          "stamp": ["no_strings_announced_at"],
+                          "execution_id": (step.execution or {}).get("id")}
+        else:
+            completion = {"kind": "step_data", "stamp": [
+                "pr_announced_at" if d == "announce_pr" else "merge_deadline_alert_at"]}
         checkpoint = f"localization:{step.data.get('build_id')}:{decision.get('pr_id', '')}:{d}"
         item = D.descriptor(st, checkpoint, scope,
                             "workiq_send_email" if d == "timeout" else "workiq_send_chat_message",

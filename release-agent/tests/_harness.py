@@ -595,6 +595,14 @@ _PR_LOG_WITH_URL = ("OneLocBuildClient.exe Information: 0 : Pull request created
                     "'16790317': https://msazure.visualstudio.com/DefaultCollection/One/"
                     "_git/AD-MFA-phonefactor-phoneApp-android/pullrequest/16790317")
 
+_NO_PR_CREATE_TRUE_LOG = (
+    "OneLocBuildClient.exe Information: 0 : /createpr: True\n"
+    "OneLocBuildClient.exe Information: 0 : Localization build complete\n")
+
+_NO_PR_CREATE_FALSE_LOG = (
+    "OneLocBuildClient.exe Information: 0 : /createpr: False\n"
+    "OneLocBuildClient.exe Information: 0 : Localization build complete\n")
+
 
 
 # ---- local step mocks (personal mocks.local.yaml, injected as mocks=) --------

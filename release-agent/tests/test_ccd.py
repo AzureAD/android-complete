@@ -173,6 +173,9 @@ def test_localization_poll_helpers():
     assert L.poll_status(True, started, now, 3) == "complete"
     assert L.extract_pr_id(_PR_LOG) == "16790317"
     assert L.extract_pr_id("no pr line here") is None
+    assert L.extract_create_pr_enabled(_NO_PR_CREATE_TRUE_LOG) is True
+    assert L.extract_create_pr_enabled(_NO_PR_CREATE_FALSE_LOG) is False
+    assert L.extract_create_pr_enabled("no create flag") is None
     assert L.pr_url("16790317").endswith("/pullrequest/16790317")
     # extract_pr: no URL in log → fall back to the template
     pid, url = L.extract_pr(_PR_LOG)
@@ -233,6 +236,18 @@ def test_localization_decide_branches(monkeypatch):
     assert "4:00 PM Los Angeles time" in dpr["chat"]["content"]
     m = dpr["chat"]["mentions"][0]
     assert m["mentioned"]["user"]["id"] == "pedroro@microsoft.com"
+
+    none = L.decide(_context(st3), True, _NO_PR_CREATE_TRUE_LOG, now,
+                    evidence=L.RunEvidence("succeeded", True))
+    assert none["decision"] == "announce_none"
+    assert none["chat"]["chatId"] == L.CONFIG["code_reviews_chat_id"]
+    assert "No strings to localize" in none["chat"]["content"]
+    assert any("buildId=177219192" in l["url"] for l in none["links"])
+
+    disabled = L.decide(_context(st3), True, _NO_PR_CREATE_FALSE_LOG, now,
+                        evidence=L.RunEvidence("succeeded", True))
+    assert disabled["decision"] == "failed"
+    assert "PR creation was disabled" in disabled["note"]
 
     dn = L.decide(_context(st3), True, "no strings changed", now,
                   evidence=L.RunEvidence("succeeded", True, "Owner reviewed the complete task output: no changes"))
@@ -658,6 +673,8 @@ def test_ccd_phase_not_due_before_ccd_and_no_scout_pending():
 
 @pytest.mark.parametrize("result,logs,complete_log,confirmation,expected", [
     ("succeeded", _PR_LOG_WITH_URL, True, None, "announce_pr"),
+    ("succeeded", _NO_PR_CREATE_TRUE_LOG, True, None, "announce_none"),
+    ("succeeded", _NO_PR_CREATE_FALSE_LOG, True, None, "failed"),
     ("succeeded", "reviewed task output", True, "Owner confirms no changes", "complete_none"),
     ("failed", "", True, "Owner confirms no changes", "failed"),
     ("canceled", "", True, None, "failed"),
@@ -688,7 +705,7 @@ def test_localization_positive_evidence_matrix(result, logs, complete_log, confi
     if expected == "wait":
         late = datetime.fromisoformat("2026-09-10T02:00:00+00:00")
         timed_out = L.decide(_context(st, now=late), True, logs, evidence=evidence)
-        assert timed_out["decision"] == "timeout"  # Never silently omit a missing outcome.
+        assert timed_out["decision"] == "timeout"  # Never silently omit unsupported missing evidence.
         assert "buildId=177219192" in timed_out["email"]["body"]
 
 
@@ -808,7 +825,7 @@ def test_localization_stale_poll_cannot_mutate_evidence(tmp_path):
         "ccd", "localization")
 
 
-@pytest.mark.parametrize("log_kind", ["missing", "invalid_utf8", "truncated", "unrecognized", "pr"])
+@pytest.mark.parametrize("log_kind", ["missing", "invalid_utf8", "truncated", "unrecognized", "pr", "no_pr"])
 def test_localization_cli_log_proof_and_timeout(tmp_path, monkeypatch, capsys, log_kind):
     import argparse
     import json
@@ -825,7 +842,10 @@ def test_localization_cli_log_proof_and_timeout(tmp_path, monkeypatch, capsys, l
     if log_kind == "invalid_utf8":
         log_file.write_bytes(b"\xff\xfe")
     elif log_kind != "missing":
-        log_file.write_text("unrecognized output" if log_kind == "unrecognized" else _PR_LOG,
+        log_file.write_text(
+            "unrecognized output" if log_kind == "unrecognized"
+            else _NO_PR_CREATE_TRUE_LOG if log_kind == "no_pr"
+            else _PR_LOG,
                             encoding="utf-8")
     parser = argparse.ArgumentParser()
     lc.register(parser.add_subparsers())
@@ -839,8 +859,10 @@ def test_localization_cli_log_proof_and_timeout(tmp_path, monkeypatch, capsys, l
     args.runs_root, args.config = str(tmp_path), CONFIG
     assert args.func(args) == 0
     result = json.loads(capsys.readouterr().out.splitlines()[-1])
-    assert result["decision"] == ("announce_pr" if log_kind == "pr" else "timeout")
+    expected_decision = {"pr": "announce_pr", "no_pr": "announce_none"}.get(log_kind, "timeout")
+    assert result["decision"] == expected_decision
     _ack_notifications(str(tmp_path), st.release_id, args.now)
     stored = C.load_state(str(tmp_path), st.release_id).get_step("ccd", "localization")
-    assert stored.status == ("in_flight" if log_kind == "pr" else "blocked")
+    expected_status = {"pr": "in_flight", "no_pr": "done"}.get(log_kind, "blocked")
+    assert stored.status == expected_status
     assert not ({"run_result", "logs_complete", "no_change_confirmation"} & stored.data.keys())

@@ -177,9 +177,13 @@ The localization poller runs hourly, reading the exact recorded run's `status` A
 `result` on every poll (including PR monitoring). `--complete true` alone is not success.
 Discovery requires `--run-result succeeded`, the full nonblank OneLocBuild task log,
 and `--logs-complete`. The supported proof is `Pull request created with ID '<number>'`.
-There is no checked-in authoritative no-change log syntax: no PR line is not proof
-of no strings. Only an owner who reviewed the full successful output may supply
-`--no-change-confirmation "<explanation>"`; the worker must not invent it.
+A successful complete task log with `/createpr: True` and no PR line is the
+supported no-strings outcome: Scout stages a Code Reviews notice that there are
+no strings to localize, and the notification finalizer marks localization done.
+Missing/partial/unrecognized logs still never mean no strings, and logs with
+`/createpr: False` block as a misconfigured/test run. Only an owner who reviewed
+an unsupported full successful output may supply `--no-change-confirmation
+"<explanation>"`; the worker must not invent it.
 After verified PR discovery, it posts the initial Code Reviews request once and
 monitors that PR until ADO reports it completed (still requiring successful run evidence),
 and keeps Phase 1 open until merge or the omission cutoff. At 4:00 PM
@@ -193,7 +197,7 @@ delivery is acknowledged. A merge, owner skip or closed phase cancels stale foll
 Confirmed merge with a successful run wins over the 6 PM cutoff. Missing/unknown
 results or absent/partial/unrecognized logs wait with an explanation, then escalate
 after the existing 3h timeout even when the pipeline finished. Failed/canceled runs
-block with a run link, never “no strings.” After failure or acknowledged timeout,
+and `/createpr: False` runs block with a run link, never “no strings.” After failure or acknowledged timeout,
 the owner must inspect the old run and explicitly reopen before reserving another
 trigger; the new receipt archives prior run evidence in existing `previous_runs`.
 In-flight work only polls the original execution and never offers a duplicate trigger.
