@@ -148,9 +148,17 @@ def validate(config_path: str) -> list:
         slugs.add(slug)
         if set(d) - {
             "slug", "label", "phase", "scope", "steps", "every", "on_demand",
-            "cleanup_when", "purpose", "prompt_kind",
+            "provision_when", "cleanup_when", "purpose", "prompt_kind",
         }:
             problems.append(f"automation '{slug}' has unknown settings")
+        provision_when = d.get("provision_when")
+        if provision_when is not None and (
+            not d.get("on_demand")
+            or not isinstance(provision_when, str)
+            or not provision_when.startswith(("step_status:", "step_flag:"))
+        ):
+            problems.append(
+                f"automation '{slug}' has invalid provision_when")
         rules = _cleanup_rules(d.get("cleanup_when"))
         if not rules or not all(_valid_cleanup_rule(rule) for rule in rules):
             problems.append(f"automation '{slug}' has invalid/missing cleanup_when")
@@ -266,7 +274,12 @@ def _prompt_for(spec: dict, release: str) -> str:
             f"`step-action --release {release} --phase <phase> --step <step>`. "
             "Non-notification gather/trigger actions retain domain follow-ups and "
             "owning effect recovery; never blind-record pass or start another write.\n"
-            f"3. Run `tick --release {release} --json`, then `notification prepare "
+            f"3. Run `automation obligations --release {release} --json` after the drain "
+            "and on every later run, even when scout_pending is empty. Provision every "
+            "required on-demand worker through its exact plan; reconcile any listed "
+            "recovery instead of creating a duplicate. This durable check is mandatory "
+            "when another worker won a trigger race. Stop on problems.\n"
+            f"4. Run `tick --release {release} --json`, then `notification prepare "
             f"--release {release} --source digest`. Independently deliver eligible "
             "owner email, owner Teams and Core alerts through claim/result, not raw "
             "message blocks. Core alerts are scoped to active preflight after 9 AM on "
@@ -371,6 +384,7 @@ def plan(config_path: str, release: str, ccd: str, *, owner_timezone=None,
             # start — the skill creates them only when their trigger condition arises
             # (an in-flight re-triggered RC) and tears them down when it clears.
             "on_demand": bool(d.get("on_demand")),
+            "provision_when": d.get("provision_when"),
             "cleanup_when": d.get("cleanup_when"),
         }
         spec["prompt"] = _prompt_for(spec, release)
@@ -402,6 +416,60 @@ def plan(config_path: str, release: str, ccd: str, *, owner_timezone=None,
         out.append(spec)
     return {"release": release, "ccd": ccd, "problems": problems, "automations": out,
             "owner_timezone": owner_timezone, "scheduler_timezone": scheduler_timezone}
+
+
+def _provision_rule_matches(state, rule: str) -> bool:
+    """Evaluate a declarative on-demand provisioning condition from live release state."""
+    kind, sep, remainder = str(rule or "").partition(":")
+    step_key, sep2, expected = remainder.rpartition(":")
+    if not sep or not sep2 or "." not in step_key or not expected:
+        return False
+    phase, step_id = step_key.split(".", 1)
+    step = state.get_step(phase, step_id)
+    if kind == "step_status":
+        return step.status == expected
+    if kind == "step_flag":
+        return bool(step.data.get(expected))
+    return False
+
+
+def provisioning_obligations(state, entries: list[dict], config_path: str) -> dict:
+    """Return missing or unresolved on-demand workers required by current state.
+
+    This is computed from durable release state plus the automation registry, so the
+    obligation survives whichever scheduled worker wins the triggering action.
+    """
+    planned = plan(
+        config_path, state.release_id, state.ccd, owner_timezone=state.timezone)
+    by_slug = {entry.get("slug"): entry for entry in entries}
+    required = []
+    recoveries = []
+    active = []
+    problems = list(planned["problems"])
+    for spec in planned["automations"]:
+        rule = spec.get("provision_when")
+        if not spec["on_demand"] or not rule or not _provision_rule_matches(state, rule):
+            continue
+        problems.extend(f"{spec['slug']}: {problem}" for problem in spec["problems"])
+        existing = by_slug.get(spec["slug"])
+        if existing is None:
+            required.append(spec)
+        elif existing.get("status") == "active":
+            active.append(spec["slug"])
+        else:
+            recoveries.append({
+                "slug": spec["slug"],
+                "key": existing.get("key"),
+                "id": existing.get("id"),
+                "status": existing.get("status"),
+            })
+    return {
+        "release": state.release_id,
+        "required": required,
+        "recoveries": recoveries,
+        "active": active,
+        "problems": problems,
+    }
 
 
 def cleanup_plan(state, entries: list, config_path: str) -> dict:

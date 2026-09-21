@@ -65,7 +65,8 @@ def main(argv=None):
         pending_deliveries = (
             args.cmd == "notification" and args.operation == "prepare" and args.source == "pending")
         automation_inspection = (
-            args.cmd == "automation" and args.action in ("list", "plan", "sync", "cleanup"))
+            args.cmd == "automation"
+            and args.action in ("list", "plan", "sync", "obligations", "cleanup"))
         checklist_inspection = args.cmd == "checklist" and not getattr(args, "verify", False)
         if (release and (os.path.isfile(C.state_path(runs_root, release)) or args.cmd == "automation")
                 and args.cmd not in diagnostics

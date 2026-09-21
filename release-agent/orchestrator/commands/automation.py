@@ -114,6 +114,8 @@ def _dispatch_automation(args):
         return _cmd_plan(args)
     if args.action == "sync":
         return _cmd_sync(args)
+    if args.action == "obligations":
+        return _cmd_obligations(args)
     if args.action == "cleanup":
         return _cmd_cleanup(args)
     if args.action == "prepare":
@@ -355,6 +357,27 @@ def _cmd_sync(args):
     return 0
 
 
+def _cmd_obligations(args):
+    """Report state-required on-demand workers without claiming or creating them."""
+    config_path = getattr(args, "config", None) or C.DEFAULT_CONFIG
+    st = C.load_state(args.runs_root, args.release)
+    entries = AutomationRegistry(args.runs_root, args.release).list(
+        release=args.release)
+    result = auto_plan.provisioning_obligations(st, entries, config_path)
+    if args.json:
+        print(_json.dumps(result, indent=2))
+    else:
+        for spec in result["required"]:
+            print(f"CREATE {spec['slug']} — {spec['purpose']}")
+        for entry in result["recoveries"]:
+            print(f"RECOVER {entry['slug']} — lifecycle is {entry['status']}")
+        for problem in result["problems"]:
+            print(f"PROBLEM: {problem}")
+        if not result["required"] and not result["recoveries"] and not result["problems"]:
+            print("No on-demand automation obligations.")
+    return 1 if result["problems"] else 0
+
+
 def _cmd_cleanup(args):
     """Return registered automations whose declared objective is finished."""
     st = C.load_state(args.runs_root, args.release)
@@ -389,7 +412,7 @@ def register(sub):
     au.add_argument("action", choices=[
         "plan", "prepare", "reconcile-create", "create-result",
         "confirm-absent", "abandon-prepared", "claim-delete", "delete-result",
-        "register", "list", "deregister", "sync", "cleanup",
+        "register", "list", "deregister", "sync", "obligations", "cleanup",
     ])
     au.add_argument("--id", default=None, help="Scout automation id")
     au.add_argument("--name", default="", help="Reviewed automation name (for prepare)")

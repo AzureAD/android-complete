@@ -178,6 +178,8 @@ def test_automation_plan_derives_specs_from_ccd():
     assert by["ccd-noon"]["registration"]["steps"] == ["ccd.localization"]
     # the poller stays an interval automation (not date-pinned)
     assert by["ccd-localization-poller"]["schedule"] == "every 1 hour"
+    assert by["ccd-localization-poller"]["provision_when"] == \
+        "step_status:ccd.localization:in_flight"
     assert by["finalize-orchestrator-poller"]["schedule"] == "every 2 hours"
     assert by["finalize-orchestrator-poller"]["steps"] == [
         "finalize.orchestrator_finalization"]
@@ -193,6 +195,57 @@ def test_automation_plan_derives_specs_from_ccd():
     assert by["ccd-morning"]["registration"]["schedule"] == "cron: 0 9 9 9 *"
     assert by["ccd-morning"]["registration"]["cleanup_when"] == "steps_done"
     assert by["build-verify-rc-poller"]["cleanup_when"] == "phase_done:build_verify"
+    assert by["build-verify-rc-poller"]["provision_when"] == \
+        "step_status:build_verify.rc_report:in_flight"
+
+
+def test_on_demand_obligation_survives_trigger_worker_race():
+    """Any worker can launch localization; durable state must still require its poller."""
+    from orchestrator import automations as A
+    from orchestrator.state import StepState
+
+    st = ReleaseState(
+        release_id="2026-09", ccd="2026-09-09",
+        timezone="America/Los_Angeles")
+    Orchestrator(CONFIG, st, mocks={})
+    st.set_step(
+        "ccd", "localization",
+        StepState(
+            status="in_flight",
+            data={"started_at": "2026-09-09T19:00:00Z", "build_id": "42"}))
+
+    missing = A.provisioning_obligations(st, [], CONFIG)
+    assert [item["slug"] for item in missing["required"]] == [
+        "ccd-localization-poller"]
+    assert missing["recoveries"] == []
+
+    planned = {item["slug"]: item for item in A.plan(
+        CONFIG, st.release_id, st.ccd,
+        owner_timezone=st.timezone)["automations"]}
+    active = [{
+        **planned["ccd-localization-poller"]["registration"],
+        "key": "release:2026-09:ccd-localization-poller",
+        "id": "poller-id",
+        "status": "active",
+    }]
+    satisfied = A.provisioning_obligations(st, active, CONFIG)
+    assert satisfied["required"] == []
+    assert satisfied["active"] == ["ccd-localization-poller"]
+
+    st.set_step("ccd", "localization", StepState(status="done"))
+    settled = A.provisioning_obligations(st, [], CONFIG)
+    assert settled["required"] == []
+
+
+def test_push_worker_recovers_on_demand_obligations():
+    from orchestrator import automations as A
+
+    by = {item["slug"]: item for item in A.plan(
+        CONFIG, "2026-09", "2026-09-09",
+        owner_timezone="America/Los_Angeles")["automations"]}
+    prompt = by["push-reminders"]["prompt"]
+    assert "automation obligations --release 2026-09 --json" in prompt
+    assert "even when scout_pending is empty" in prompt
 
 
 def test_automation_names_follow_standard_format():
@@ -247,6 +300,18 @@ def test_cli_plan_separates_startup_and_on_demand_automations(capsys):
         assert cli.main(base[:-1] + ["--on-demand", "build-verify-rc-poller", "--json"]) == 0
         on_demand = json.loads(capsys.readouterr().out)["automations"]
         assert [a["slug"] for a in on_demand] == ["build-verify-rc-poller"]
+
+        from orchestrator.state import StepState
+        state.set_step(
+            "ccd", "localization",
+            StepState(status="in_flight", data={"started_at": "now"}))
+        C.save_state(state, d, rid)
+        obligations = [
+            "--runs-root", d, "automation", "obligations",
+            "--release", rid, "--json"]
+        assert cli.main(obligations) == 0
+        required = json.loads(capsys.readouterr().out)["required"]
+        assert [a["slug"] for a in required] == ["ccd-localization-poller"]
 
 
 def test_cleanup_plan_applies_declared_lifecycle_rules():

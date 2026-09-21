@@ -149,7 +149,11 @@ Some steps must fire at a specific time of day (not just "on their date") — e.
    - **teamsNotify:** `never` (it emails/posts via the steps themselves).
 
 ### Provision an on-demand poller
-When a step/command asks for an on-demand poller, run `automation plan --release
+After every advancement drain and on every scheduled worker run, first run
+`automation obligations --release <YYYY-MM> --json`. It derives required pollers
+from durable release state, even if a different worker won the triggering write.
+Provision every `required` slug, reconcile (never duplicate) every `recovery`, and
+stop on `problems`. For a required poller, run `automation plan --release
 <YYYY-MM> --on-demand <slug> --json`; reconcile exactly that returned automation
 through prepare/list/reconcile-create/create-result. Current slugs: `build-verify-rc-poller` after
 `rc-retriggered`, `ccd-localization-poller` after the noon localization trigger,

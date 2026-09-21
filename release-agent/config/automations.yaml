@@ -28,6 +28,10 @@
 #              fire_at_local. Interval automations may share a step with a
 #              time-of-day one (e.g. noon triggers localization, a poller watches it)
 #              and their steps need not declare fire_at_local.
+#   provision_when : OPTIONAL for on-demand workers. A durable release-state
+#              condition (`step_status:<phase.step>:<status>` or
+#              `step_flag:<phase.step>:<data-key>`) that makes `automation
+#              obligations` require the worker until it is registered.
 #   purpose  : one-line description (stored in the registry)
 #   cleanup_when : REQUIRED lifecycle rule for the central cleanup planner:
 #              steps_done | steps_settled | phase_done:<phase> |
@@ -101,6 +105,7 @@ automations:
     phase: ccd
     every: "1 hour"
     on_demand: true
+    provision_when: step_status:ccd.localization:in_flight
     steps:
       - ccd.localization        # poll the triggered run (check-localization)
     cleanup_when:
@@ -117,6 +122,7 @@ automations:
     phase: build_verify
     every: "30 minutes"
     on_demand: true
+    provision_when: step_status:build_verify.rc_report:in_flight
     steps:
       - build_verify.rc_report  # poll the in-flight RC (poll-rc): re-gate on completion, nudge at 6h
     cleanup_when: phase_done:build_verify
