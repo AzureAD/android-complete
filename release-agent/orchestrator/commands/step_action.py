@@ -36,6 +36,8 @@ AUTO_APPROVED_WRITE_COMMANDS = {
     "create-oneauth-common-pr",
     "create-payload-wiki",
     "start-release-signoff",
+    "start-upload-whats-new",
+    "start-upload-alpha",
 }
 
 

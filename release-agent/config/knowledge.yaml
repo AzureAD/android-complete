@@ -1695,3 +1695,83 @@ rollout_start.signoff_start:
   faqs:
     - q: "Why is pipeline 397224 involved if the final Authenticator build came from 475778?"
       a: "Pipeline 475778 supplies the app build/version evidence. Pipeline 397224 is the Release Sign Off pipeline/stage. Once 397224 links to AndroidBuildBroker1ES as a resource, Scout matches the 397224 run back to the captured 475778 build id."
+
+rollout_start.upload_whats_new:
+  summary: "Start the Authenticator Upload What's New stage in pipeline 397224."
+  what: >
+    Locates the exact Android Build Release run recorded by Release Sign Off and starts
+    the stage named 'Upload What's New'. Today the matching run is selected by the
+    Authenticator release branch; when pipeline 397224 is resource-linked to
+    AndroidBuildBroker1ES, Scout prefers the run whose pipeline resource matches
+    `state.pipeline_runs.final_auth.authenticator_build_id`.
+  who: >
+    Scout performs the checked ADO stage-start write. It is not a human approval gate:
+    `start-upload-whats-new` recomputes the target, checkpoints the current plan hash
+    and sends one Run-stage request.
+  where:
+    - "pipeline: msazure/One Android Build Release definition 397224"
+    - "stage: Upload What's New"
+    - "release branch: state.versions.authenticator ('release/YYYY/MM/DD')"
+  how: >
+    Run step-action for rollout_start.upload_whats_new. If it returns the checked
+    follow-up, run `start-upload-whats-new --release <id> --execute --auto-approve
+    --executor upload-whats-new-automation`. The command binds the selected build id,
+    stage identity and current stage state before setting the stage state to `pending`
+    (ADO's Run-stage operation), then verifies the stage is queued/running.
+
+rollout_start.upload_alpha:
+  summary: "Start the Authenticator Upload Alpha stage in pipeline 397224."
+  what: >
+    Locates the exact Android Build Release run recorded by Upload What's New and starts
+    the stage named 'Upload Alpha'. Today the matching run is selected by the
+    Authenticator release branch; when pipeline 397224 is resource-linked to
+    AndroidBuildBroker1ES, Scout prefers the run whose pipeline resource matches
+    `state.pipeline_runs.final_auth.authenticator_build_id`.
+  who: >
+    Scout performs the checked ADO stage-start write. It is not a human approval gate:
+    `start-upload-alpha` recomputes the target, checkpoints the current plan hash
+    and sends one Run-stage request.
+  where:
+    - "pipeline: msazure/One Android Build Release definition 397224"
+    - "stage: Upload Alpha"
+    - "release branch: state.versions.authenticator ('release/YYYY/MM/DD')"
+  how: >
+    Run step-action for rollout_start.upload_alpha. If it returns the checked follow-up,
+    run `start-upload-alpha --release <id> --execute --auto-approve --executor
+    upload-alpha-automation`. The command binds the selected build id, stage identity
+    and current stage state before setting the stage state to `pending` (ADO's Run-stage
+    operation), then verifies the stage is queued/running.
+
+rollout_start.beta_play_store:
+  summary: "Start 100% Beta - Play Store with release-owner approval."
+  what: >
+    Locates the matching Android Build Release run in msazure/One pipeline 397224
+    and prepares the exact `100% Beta - Play Store` stage start. Unlike the earlier
+    Phase-5 stage starts, this write is never automation-approved: the release owner
+    must review and approve its exact build, stage and review hash.
+  who: >
+    The release owner approves the exact checked write. Scout may execute it only when
+    `--approved-by` exactly matches `state.owner_email` and that owner is the account
+    currently signed in to Azure CLI. On Friday, the release must remain held unless
+    a manager has explicitly approved the Friday override and the authenticated release
+    owner attests who approved it. Manager identity is not independently authenticated.
+  where:
+    - "pipeline: msazure/One Android Build Release definition 397224"
+    - "stage: 100% Beta - Play Store"
+    - "release branch: state.versions.authenticator ('release/YYYY/MM/DD')"
+  how: >
+    Run step-action for rollout_start.beta_play_store. On Monday through Thursday,
+    preview `start-beta-play-store --release <id>`, show the exact request and hash to
+    the release owner, and execute only after approval with the same hash and
+    `--approved-by <owner-email>`. On Friday, tell the owner that releases cannot start
+    on Friday. If they have manager approval, record the manager identity through
+    `--param manager_approved_by=<manager>` and repeat it as
+    `--manager-approved-by <manager>` in both preview and execution. Never use
+    `--auto-approve` or `--as-of` for execution. The target is pinned to the exact
+    pipeline-397224 build recorded by the completed Upload Alpha step.
+  consequences: >
+    A real WRITE to Azure DevOps starts the 100% Beta - Play Store stage. The reviewed
+    plan binds the owner-local start date and any Friday manager override evidence.
+  faqs:
+    - q: "Can I start this stage on Friday?"
+      a: "Not by default. Keep the release held; only proceed after explicit manager approval, with the manager identity bound into the reviewed request."

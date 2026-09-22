@@ -11,6 +11,7 @@ _SUMMARY = pytest.StashKey()
 # Keep the complete engine/ownership/contract suites in the daily run. Move broad
 # phase/provider matrices, renderer variants and older overlapping flows out.
 EXTENDED_MODULES = frozenset({
+    "test_ado_write_review.py",
     "test_automation.py",
     "test_bug_bash.py",
     "test_bugbash_broker_triage.py",
@@ -46,6 +47,27 @@ EXTENDED_MODULES = frozenset({
 # Retain full parameter sets for these named regressions, never every-Nth tests
 # or arbitrary samples. The complete release replay still covers all phases.
 CORE_CASES = {
+    "test_ado_write_review.py": frozenset({
+        "test_distribution_preview_is_read_only_and_normalizes_inputs",
+        "test_distribution_hash_binds_live_review",
+        "test_distribution_invalid_selection_and_revision_reject",
+        "test_distribution_executor_uses_captured_targets",
+        "test_distribution_identity_resolution_requires_exact_unique_account",
+        "test_distribution_partial_write_never_claims_completion",
+        "test_distribution_stale_hash_zero_writes",
+        "test_wiki_plan_binds_content_target_and_etag",
+        "test_wiki_unknown_existence_and_unconditional_update_reject",
+        "test_wiki_stale_etag_zero_writes",
+        "test_wiki_auto_approve_executes_checked_write",
+        "test_signoff_plan_binds_build_stage_and_state",
+        "test_stage_start_commands_bind_their_stage",
+        "test_beta_stage_start_requires_exact_release_owner_approval",
+        "test_beta_stage_friday_plan_requires_manager_approval",
+        "test_signoff_auto_approve_starts_stage_once",
+        "test_localization_trigger_reads_actual_receipt_and_uses_frozen_plan",
+        "test_recovery_refuses_unreviewed_execution_before_provider_read",
+        "test_launch_checkpoints_before_only_trigger_and_recovers_no_payload",
+    }),
     "test_core.py": frozenset({
         "test_full_flow_replay_completes",
         "test_persistence_roundtrip",

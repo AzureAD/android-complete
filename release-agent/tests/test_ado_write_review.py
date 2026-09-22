@@ -14,6 +14,7 @@ from orchestrator.commands import distribute, localization, payload_wiki_cmd as 
 from orchestrator.engine import Orchestrator
 from orchestrator.state import ReleaseState
 from steps.ccd import localization as L
+from steps.rollout_start import beta_play_store
 from tools import distribution as D, localization as provider
 from tests._harness import _active_step
 
@@ -344,6 +345,294 @@ def test_signoff_plan_binds_build_stage_and_state(monkeypatch):
                          signoff.plan_signoff_start(orch)) != digest
 
 
+@pytest.mark.parametrize("step,stage,command,approver", [
+    (signoff.signoff_start, "Release Sign Off", "start-release-signoff", "release-signoff-automation"),
+    (signoff.upload_whats_new, "Upload What's New", "start-upload-whats-new", "upload-whats-new-automation"),
+    (signoff.upload_alpha, "Upload Alpha", "start-upload-alpha", "upload-alpha-automation"),
+])
+def test_stage_start_commands_bind_their_stage(step, stage, command, approver, memory, monkeypatch):
+    orch = make_orch("rollout_start", step.ID)
+    memory[0](orch)
+    stage_ref = stage.replace(" ", "").replace("'", "")
+    monkeypatch.setattr(step, "resolve_target", lambda ctx: (
+        True, _signoff_info(stage_name=stage, stage_ref=stage_ref), ""))
+    plan = signoff._plan_stage_start(orch, step)
+    assert plan.command == command
+    assert plan.operations[0].content["stage"] == stage
+    assert plan.operations[0].target["stage_ref"] == stage_ref
+    assert W.review_hash(orch, "rollout_start", step.ID, plan)
+
+    monkeypatch.setattr(signoff.P, "start_auth_signoff_stage", lambda build_id, ref: (True, "started"))
+    monkeypatch.setattr(signoff.P, "read_auth_signoff_run", lambda build_id, **kw: (
+        True, _signoff_info(stage_name=kw["stage_name"], stage_ref=stage_ref,
+                            stage_state="pending", build_id=build_id), ""))
+    args = arguments(command, "--execute", "--auto-approve", "--executor", approver)
+    assert signoff._cmd_start_stage(args, step) == 0
+    record = orch.state.get_step("rollout_start", step.ID)
+    assert record.status == "done"
+    assert record.data["last_write_review"]["approved_by"] == approver
+    assert args.review_hash == record.data["last_write_review"]["hash"]
+
+
+def test_beta_stage_start_requires_exact_release_owner_approval(memory, monkeypatch, capsys):
+    orch = make_orch("rollout_start", beta_play_store.ID)
+    memory[0](orch)
+    monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
+        True,
+        _signoff_info(
+            stage_name=beta_play_store.STAGE_NAME,
+            stage_ref="BetaPlayStore"),
+        "",
+    ))
+    monkeypatch.setattr(
+        signoff.P, "start_auth_signoff_stage",
+        lambda build_id, ref: (True, "started"))
+    monkeypatch.setattr(signoff.P, "read_auth_signoff_run", lambda build_id, **kw: (
+        True,
+        _signoff_info(
+            stage_name=kw["stage_name"],
+            stage_ref="BetaPlayStore",
+            stage_state="pending",
+            build_id=build_id),
+        "",
+    ))
+    monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
+    monkeypatch.setattr(
+        signoff.schedule, "now_local",
+        lambda tz=None: datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc))
+
+    preview_args = arguments("start-beta-play-store")
+    assert signoff._cmd_start_stage(preview_args, beta_play_store) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    wrong_owner = arguments(
+        "start-beta-play-store",
+        "--execute",
+        "--review-hash", preview["review_hash"],
+        "--approved-by", "someone@example.com",
+    )
+    assert signoff._cmd_start_stage(wrong_owner, beta_play_store) == 1
+    assert "release owner" in json.loads(capsys.readouterr().out)["error"]
+
+    monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "someone@example.com")
+    wrong_identity = arguments(
+        "start-beta-play-store",
+        "--execute",
+        "--review-hash", preview["review_hash"],
+        "--approved-by", "owner@example.com",
+    )
+    assert signoff._cmd_start_stage(wrong_identity, beta_play_store) == 1
+    assert "signed in to Azure CLI" in json.loads(capsys.readouterr().out)["error"]
+
+    monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
+    approved = arguments(
+        "start-beta-play-store",
+        "--execute",
+        "--review-hash", preview["review_hash"],
+        "--approved-by", "owner@example.com",
+    )
+    assert signoff._cmd_start_stage(approved, beta_play_store) == 0
+    assert orch.state.get_step("rollout_start", beta_play_store.ID).status == "done"
+
+
+def test_beta_stage_execution_rejects_simulated_clock(memory, monkeypatch, capsys):
+    orch = make_orch("rollout_start", beta_play_store.ID)
+    memory[0](orch)
+    monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
+    args = arguments(
+        "start-beta-play-store",
+        "--as-of", "2026-09-17",
+        "--execute",
+        "--review-hash", "sha256:" + "a" * 64,
+        "--approved-by", "owner@example.com",
+    )
+    assert signoff._cmd_start_stage(args, beta_play_store) == 1
+    shown = json.loads(capsys.readouterr().out)
+    assert "--as-of is preview-only" in shown["error"]
+
+
+def test_beta_stage_rechecks_trusted_date_immediately_before_write(
+        memory, monkeypatch, capsys):
+    orch = make_orch("rollout_start", beta_play_store.ID)
+    memory[0](orch)
+    monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
+        True,
+        _signoff_info(
+            stage_name=beta_play_store.STAGE_NAME,
+            stage_ref="BetaPlayStore"),
+        "",
+    ))
+    monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
+    preview_args = arguments("start-beta-play-store")
+    assert signoff._cmd_start_stage(preview_args, beta_play_store) == 0
+    preview = json.loads(capsys.readouterr().out)
+
+    monkeypatch.setattr(
+        signoff.schedule, "now_local",
+        lambda tz=None: datetime(2026, 9, 22, 0, 1, tzinfo=timezone.utc))
+    execute = arguments(
+        "start-beta-play-store",
+        "--execute",
+        "--review-hash", preview["review_hash"],
+        "--approved-by", "owner@example.com",
+    )
+    assert signoff._cmd_start_stage(execute, beta_play_store) == 1
+    assert "review hash is stale" in json.loads(capsys.readouterr().out)["error"]
+    assert orch.state.get_step("rollout_start", beta_play_store.ID).execution is None
+
+
+def test_beta_stage_definitive_pre_request_failure_is_not_uncertain(
+        memory, monkeypatch, capsys):
+    orch = make_orch("rollout_start", beta_play_store.ID)
+    memory[0](orch)
+    monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
+        True,
+        _signoff_info(
+            stage_name=beta_play_store.STAGE_NAME,
+            stage_ref="BetaPlayStore"),
+        "",
+    ))
+    monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
+    monkeypatch.setattr(
+        signoff.schedule, "now_local",
+        lambda tz=None: datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc))
+    preview_args = arguments("start-beta-play-store")
+    assert signoff._cmd_start_stage(preview_args, beta_play_store) == 0
+    preview = json.loads(capsys.readouterr().out)
+    monkeypatch.setattr(
+        signoff.P,
+        "start_auth_signoff_stage",
+        lambda *_: (False, "AUTH: could not get an ADO token", False),
+    )
+    execute = arguments(
+        "start-beta-play-store",
+        "--execute",
+        "--review-hash", preview["review_hash"],
+        "--approved-by", "owner@example.com",
+    )
+    assert signoff._cmd_start_stage(execute, beta_play_store) == 1
+    record = orch.state.get_step("rollout_start", beta_play_store.ID)
+    assert record.status == "blocked"
+    assert "No provider write was attempted" in record.note
+
+
+def test_beta_stage_uncertain_failure_keeps_exact_run_link(
+        memory, monkeypatch, capsys):
+    orch = make_orch("rollout_start", beta_play_store.ID)
+    memory[0](orch)
+    monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
+        True,
+        _signoff_info(
+            stage_name=beta_play_store.STAGE_NAME,
+            stage_ref="BetaPlayStore"),
+        "",
+    ))
+    monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
+    monkeypatch.setattr(
+        signoff.schedule, "now_local",
+        lambda tz=None: datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc))
+    preview_args = arguments("start-beta-play-store")
+    assert signoff._cmd_start_stage(preview_args, beta_play_store) == 0
+    preview = json.loads(capsys.readouterr().out)
+    monkeypatch.setattr(
+        signoff.P,
+        "start_auth_signoff_stage",
+        lambda *_: (False, "REST PATCH failed: timeout", True),
+    )
+    execute = arguments(
+        "start-beta-play-store",
+        "--execute",
+        "--review-hash", preview["review_hash"],
+        "--approved-by", "owner@example.com",
+    )
+    assert signoff._cmd_start_stage(execute, beta_play_store) == 2
+    record = orch.state.get_step("rollout_start", beta_play_store.ID)
+    assert record.links == [{
+        "name": f"{beta_play_store.STAGE_NAME} run",
+        "url": "https://msazure.visualstudio.com/One/_build/results?buildId=397224001",
+    }]
+
+
+def test_beta_stage_verified_failure_is_blocked_not_uncertain(
+        memory, monkeypatch, capsys):
+    orch = make_orch("rollout_start", beta_play_store.ID)
+    memory[0](orch)
+    monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
+        True,
+        _signoff_info(
+            stage_name=beta_play_store.STAGE_NAME,
+            stage_ref="BetaPlayStore"),
+        "",
+    ))
+    monkeypatch.setattr(signoff.checks, "current_az_user", lambda: "owner@example.com")
+    monkeypatch.setattr(
+        signoff.schedule, "now_local",
+        lambda tz=None: datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc))
+    monkeypatch.setattr(
+        signoff.P,
+        "start_auth_signoff_stage",
+        lambda *_: (True, "started", True),
+    )
+    monkeypatch.setattr(signoff.P, "read_auth_signoff_run", lambda build_id, **kw: (
+        True,
+        _signoff_info(
+            stage_name=kw["stage_name"],
+            stage_ref="BetaPlayStore",
+            stage_state="completed",
+            stage_result="failed",
+            build_id=build_id),
+        "",
+    ))
+    preview_args = arguments("start-beta-play-store")
+    assert signoff._cmd_start_stage(preview_args, beta_play_store) == 0
+    preview = json.loads(capsys.readouterr().out)
+    execute = arguments(
+        "start-beta-play-store",
+        "--execute",
+        "--review-hash", preview["review_hash"],
+        "--approved-by", "owner@example.com",
+    )
+    assert signoff._cmd_start_stage(execute, beta_play_store) == 1
+    record = orch.state.get_step("rollout_start", beta_play_store.ID)
+    assert record.status == "blocked"
+    assert "already failed" in record.note
+    assert "Earlier operations may have succeeded" not in record.note
+    assert record.links
+
+
+def test_beta_stage_friday_plan_requires_manager_approval(monkeypatch):
+    state = _active_step(
+        ReleaseState(
+            release_id="checked-ado",
+            owner_email="owner@example.com",
+            ccd="2026-09-09"),
+        "rollout_start",
+        beta_play_store.ID,
+    )
+    orch = Orchestrator(
+        C.DEFAULT_CONFIG,
+        state,
+        mocks={},
+        now=datetime(2026, 9, 18, 17, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(beta_play_store, "resolve_target", lambda ctx: (
+        True,
+        _signoff_info(
+            stage_name=beta_play_store.STAGE_NAME,
+            stage_ref="BetaPlayStore"),
+        "",
+    ))
+    with pytest.raises(ValueError, match="cannot start on Friday"):
+        signoff._plan_stage_start(orch, beta_play_store)
+    plan = signoff._plan_stage_start(
+        orch,
+        beta_play_store,
+        manager_approved_by="manager@example.com",
+    )
+    assert plan.parameters["manager_approved_by"] == "manager@example.com"
+    assert plan.parameters["start_date"] == "2026-09-18"
+
+
 def test_signoff_auto_approve_starts_stage_once(memory, monkeypatch):
     orch = make_orch("rollout_start", "signoff_start")
     memory[0](orch)
@@ -355,7 +644,7 @@ def test_signoff_auto_approve_starts_stage_once(memory, monkeypatch):
         return True, "started"
 
     monkeypatch.setattr(signoff.P, "start_auth_signoff_stage", start)
-    monkeypatch.setattr(signoff.P, "read_auth_signoff_run", lambda build_id: (
+    monkeypatch.setattr(signoff.P, "read_auth_signoff_run", lambda build_id, **kw: (
         True, _signoff_info(stage_state="pending", build_id=build_id), ""))
     args = arguments(
         "start-release-signoff",

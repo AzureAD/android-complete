@@ -105,6 +105,9 @@ phases:
       - { id: wiki_payload,      name: "Create/update the release payload wiki page", kind: external, write_command: create-payload-wiki, owner: agent, source: scout, depends_on: [tag_authenticator], maps_to: [S0, F6] }
       - { id: notice,          name: "Send initial Auth App release notice", kind: external, owner: agent, source: scout, depends_on: [wiki_payload], maps_to: [R1] }
       - { id: signoff_start,   name: "Start Release Sign Off", kind: external, write_command: start-release-signoff, owner: agent, source: scout, depends_on: [notice], maps_to: [R3] }
+      - { id: upload_whats_new, name: "Start Upload What's New", kind: external, write_command: start-upload-whats-new, owner: agent, source: scout, depends_on: [signoff_start], maps_to: [R3] }
+      - { id: upload_alpha,    name: "Start Upload Alpha", kind: external, write_command: start-upload-alpha, owner: agent, source: scout, depends_on: [upload_whats_new], maps_to: [R3] }
+      - { id: beta_play_store, name: "Start 100% Beta - Play Store (release-owner approval)", kind: external, write_command: start-beta-play-store, owner: agent, source: scout, depends_on: [upload_alpha], maps_to: [R3] }
 
   - id: monitor
     name: "Monitoring & Ring Advancement"

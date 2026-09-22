@@ -10,7 +10,8 @@ from orchestrator.commands.step_action import prepare_step
 from orchestrator.engine import Orchestrator
 from orchestrator.outcomes import Blocked, NeedsSkill
 from orchestrator.state import ReleaseState, StepState
-from steps.rollout_start import notice, signoff_start
+from steps.rollout_start import (
+    beta_play_store, notice, signoff_start, upload_alpha, upload_whats_new)
 from tests._context import context, fresh_orchestrator
 from tests._harness import CONFIG, _active_phase
 
@@ -222,11 +223,136 @@ def test_signoff_start_prepares_checked_stage_start():
     assert result.payload["plan"]["stage"] == "Release Sign Off"
 
 
+@pytest.mark.parametrize("module,stage,command", [
+    (upload_whats_new, "Upload What's New", "start-upload-whats-new"),
+    (upload_alpha, "Upload Alpha", "start-upload-alpha"),
+])
+def test_release_upload_stage_prepares_checked_stage_start(module, stage, command):
+    state = _state()
+    previous = (
+        "signoff_start"
+        if module is upload_whats_new
+        else "upload_whats_new"
+    )
+    state.set_step("rollout_start", previous, StepState(
+        status="done",
+        links=[{
+            "name": "prior stage run",
+            "url": "https://msazure.visualstudio.com/One/_build/results?buildId=397224001",
+        }],
+    ))
+    ctx = _production_context(state)
+    calls = []
+    pipelines = replace(
+        ctx.services.pipelines,
+        find_auth_signoff_run=lambda branch, **kwargs: (
+            calls.append(kwargs) or True,
+            _signoff_run(stage_name=stage, stage_ref=stage.replace(" ", "")),
+            ""),
+    )
+    result = module.build(replace(ctx, services=replace(ctx.services, pipelines=pipelines)))
+    assert isinstance(result, NeedsSkill)
+    assert result.tool == command
+    assert "--auto-approve" in result.payload["followup_command"]
+    assert result.payload["plan"]["build_id"] == 397224001
+    assert result.payload["plan"]["stage"] == stage
+    assert calls[0]["stage_name"] == stage
+    assert calls[0]["build_id"] == "397224001"
+
+
+@pytest.mark.extended
+@pytest.mark.parametrize("module,previous,label", [
+    (upload_whats_new, "signoff_start", "Release Sign Off"),
+    (upload_alpha, "upload_whats_new", "Upload What's New"),
+])
+def test_release_upload_stage_blocks_without_prior_build_identity(module, previous, label):
+    result = module.build(context(_state()))
+    assert isinstance(result, Blocked)
+    assert f"completed {label} evidence has no pipeline-397224 build identity" in result.reason
+
+
+def test_beta_stage_requires_owner_review_and_binds_exact_stage():
+    state = _state()
+    state.set_step("rollout_start", "upload_alpha", StepState(
+        status="done",
+        links=[{
+            "name": "Upload Alpha run",
+            "url": "https://msazure.visualstudio.com/One/_build/results?buildId=397224001",
+        }],
+    ))
+    ctx = _production_context(state, now=datetime(
+        2026, 9, 21, 17, 0, tzinfo=timezone.utc))
+    calls = []
+    pipelines = replace(
+        ctx.services.pipelines,
+        find_auth_signoff_run=lambda branch, **kwargs: (
+            calls.append(kwargs) or True,
+            _signoff_run(
+                stage_name="100% Beta - Play Store",
+                stage_ref="BetaPlayStore"),
+            ""),
+    )
+    result = beta_play_store.build(replace(
+        ctx,
+        services=replace(ctx.services, pipelines=pipelines),
+        parameters=beta_play_store.BuildParameters(),
+    ))
+    assert isinstance(result, NeedsSkill)
+    assert result.tool == "start-beta-play-store"
+    assert "--auto-approve" not in result.payload["followup_command"]
+    assert result.payload["plan"]["stage"] == "100% Beta - Play Store"
+    assert result.payload["plan"]["release_owner_approval_required"] is True
+    assert result.payload["plan"]["start_date"] == "2026-09-21"
+    assert result.payload["plan"]["manager_approved_by"] is None
+    assert calls[0]["stage_name"] == "100% Beta - Play Store"
+    assert calls[0]["build_id"] == "397224001"
+    assert "release owner" in result.payload["execution_instructions"]
+
+
+def test_beta_stage_blocks_friday_without_manager_approval():
+    friday = datetime(2026, 9, 18, 17, 0, tzinfo=timezone.utc)
+    blocked = beta_play_store.build(context(
+        _state(),
+        now=friday,
+        model=beta_play_store.BuildParameters,
+    ))
+    assert isinstance(blocked, Blocked)
+    assert "cannot start on Friday" in blocked.reason
+    assert "manager approval" in blocked.reason
+
+    approved = beta_play_store.build(context(
+        _state(),
+        now=friday,
+        parameters={"manager_approved_by": "manager@microsoft.com"},
+        model=beta_play_store.BuildParameters,
+        inputs={"run": _signoff_run(
+            stage_name="100% Beta - Play Store",
+            stage_ref="BetaPlayStore")},
+    ))
+    assert isinstance(approved, NeedsSkill)
+    assert '--manager-approved-by "manager@microsoft.com"' in \
+        approved.payload["followup_command"]
+
+
+def test_beta_stage_blocks_without_prior_stage_build_identity():
+    result = beta_play_store.build(context(
+        _state(),
+        now=datetime(2026, 9, 21, 17, 0, tzinfo=timezone.utc),
+        model=beta_play_store.BuildParameters,
+    ))
+    assert isinstance(result, Blocked)
+    assert "Upload Alpha evidence has no pipeline-397224 build identity" in result.reason
+
+
 def test_signoff_start_is_done_when_stage_already_started():
     result = signoff_start.build(context(_state(), inputs={
         "run": _signoff_run(stage_state="inProgress", stage_result=None),
     }))
     assert result.kind == "done"
+    assert result.links == [{
+        "name": "Release Sign Off run",
+        "url": "https://msazure.visualstudio.com/One/_build/results?buildId=397224001",
+    }]
 
 
 def test_signoff_start_blocks_when_no_release_build_found():

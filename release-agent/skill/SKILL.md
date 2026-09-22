@@ -125,10 +125,12 @@ Source bindings are rechecked before completion. A source change during a send p
 the receipt but suppresses stale completion; it never applies an obsolete quality-gate pass.
 Configured non-notification writers require their checked command's full transient plan:
 `distribute-tests`, `create-integration-prs`, `create-oneauth-common-pr`,
-`create-payload-wiki`, `start-release-signoff`, `launch-localization`. `distribute-tests` still needs explicit
+`create-payload-wiki`, `start-release-signoff`, `start-upload-whats-new`,
+`start-upload-alpha`, `launch-localization`. `distribute-tests` still needs explicit
 owner approval of the exact hash because it changes live ADO assignments. The scheduled
 release writers (`launch-localization`, `create-integration-prs`, `create-oneauth-common-pr`,
-`create-payload-wiki`, `start-release-signoff`) run with `--execute --auto-approve --executor <automation-id>`;
+`create-payload-wiki`, `start-release-signoff`, `start-upload-whats-new`,
+`start-upload-alpha`) run with `--execute --auto-approve --executor <automation-id>`;
 each command recomputes and checkpoints the current plan hash before its single fenced
 provider request. Optional `--reserve` only saves authorization for human-reviewed writers;
 execution additionally needs the returned `--execution-id`, with `--reserve` omitted.
@@ -170,6 +172,18 @@ Discover → (if no gate cleared, run the entry gate) → `next --json` to advan
 - **Bug Bash rendering:** always show every workload case, including completed cases and finished owners' full lists. The leading outcome icon and single report legend replace repeated trailing status text; Passed and N/A use distinct icons. Keep unresolved work first and mention only owners with remaining work. Label each row Broker/Authenticator from the source plan; retain only a short Automation triage context note. The final wrap-up includes the full completed list.
 - **Two-plan routing:** No Phase-3 result refetch or invented attribution. Broker routing uses the complete MSAL/Broker/flight combination: LTW RC/RC targets existing 293/330, not 294/344. Use `broker-plan --preview-ui-repair` for read-only old/new point evidence; applying a repair requires later exact approval. Never clear historical/manual outcomes without ownership receipts and match-before-write.
 - **Authenticator Monthly policy:** `Firebase Test Lab - Monthly UI Tests` intentionally has **NO test-plan case map**. Do not create cases, force mappings or block merely because it is unmapped. Keep every failure by exact name and source link in the standard report and existing release-owner `ui_failures` investigation reminder. Preserve owner notes/attestation. The independent Firebase aggregate gate is unchanged; Monthly never contributes to Broker's pass rate.
+- **Phase 5 Beta Play Store start requires the release owner.** For
+  `rollout_start.beta_play_store`, preview `start-beta-play-store` and show the exact
+  target/hash with fresh status; use `m_ask_user` Approve/Deny. Execute only with the
+  same hash and `--approved-by <owner_email>`; `--auto-approve` is forbidden. If Friday
+  in the release owner's timezone, tell the user a release cannot start on Friday and
+  keep the step held. Offer **I have manager approval** vs **Keep held**—never generic
+  skip. The authenticated release owner is attesting to the approval; the manager is
+  not independently authenticated. Ask who approved, rerun step-action with
+  `--param manager_approved_by=<manager>`, and bind the same value through
+  `--manager-approved-by` in preview and execution. Execution also requires that owner
+  to be the Azure CLI signed-in identity and rejects `--as-of`; Beta remains pinned to
+  the pipeline run recorded by Upload Alpha.
 - **Scout steps pending** are Scout's work: resolve each with `step-action --release <id> --phase <p> --step <step>`. Notifications MUST use the universal prepare/claim/result protocol; legacy record commands are not send evidence. For a configured non-notification writer, use the exact checked-command review contract above; every poll/receipt needs its execution ID. Localization must launch through `launch-localization`, never a raw pipeline tool. Re-run `next --release <id>` after acknowledged completion.
 - **On-demand automation recovery:** private notification `_automation` is never a transport argument and remains gated on applied notification completion. Independently, `automation obligations --release <id> --json` derives non-notification poller requirements from durable release state, so a generic worker winning the trigger race cannot strand an in-flight effect. On every worker run process both source-pending completion directives and engine obligations. For each required slug, use its canonical `automation plan --on-demand <slug>` metadata/provider_spec. Write the exact spec once to a temporary JSON file and pass the SAME `--spec-file` to prepare/reconcile-create/owning create-result, including `--on-demand <slug>` on preparation/claims. Write fresh exhaustive list/detail observations as `{observed_at:<UTC>,complete:true,automations:[{id,spec}]}` to a second temporary file and pass `--observed-file`; inline JSON is only for small manual inputs because Windows quoting can corrupt large prompts. Delete the temporary files only after the owning result is durably recorded. Incomplete or inexact equivalence holds, never fuzzy adoption. Only `permission_to_create:true` authorizes the exact returned provider kwargs. Never provision from suppressed notification completion or recreate an uncertain worker.
 - **Automation lifecycle (registry v3):** ALWAYS run cleanup in a finally block. Claim deletion, delete only with permission, then acknowledge the owning result. STOP on barriers/errors/uncertainty; the lock protects children/unresolved siblings and keeps push-reminders until helpers retire. New workers are barred during release-level deletion. Reads and identical prepare never take ownership or reactivate deleting/uncertain entries; late owning receipts stay valid. Terminal ID-less intents need fresh verified absence plus explicit owner `abandon-prepared`; live claims must first settle. Shared/manual entries survive. Direct register/deregister and automatic in-place updates are forbidden; `sync` only reports reviewed delete/recreate needs. All seven canonical specs have explicit defaults; only metadata/hash and evidence digests persist, never prompts/payloads/raw responses. Old schemas or source/spec hash drift require owner recovery, not silent rehash. CCD confirmation and owner-to-host timezone conversion precede one-shot claims; daily status uses hourly owner-local business-day/17:00 gating. See starting-and-scheduling for exact commands.

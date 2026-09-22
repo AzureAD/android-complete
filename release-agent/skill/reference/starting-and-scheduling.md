@@ -175,7 +175,8 @@ revision; adoption never automatically drains work.
 
 The same auto-approved checked-write contract applies to the scheduled finalize/rollout
 writers `create-integration-prs`, `create-oneauth-common-pr`, `create-payload-wiki`, and
-`start-release-signoff`.
+the pipeline-397224 stage starters (`start-release-signoff`, `start-upload-whats-new`,
+`start-upload-alpha`).
 `distribute-tests` remains human-reviewed because it applies live ADO assignment changes.
 
 The localization poller runs hourly, reading the exact recorded run's `status` AND

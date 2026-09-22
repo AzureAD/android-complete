@@ -23,6 +23,9 @@ AUTH_TEST_DEF = coords.pipeline_def("auth_test")     # Authenticator Post-Build 
 AUTH_RELEASE_APP_DEF = coords.pipeline_def("auth_release_app")  # AndroidBuild-1ES — release-branch app build
 AUTH_SIGNOFF_DEF = coords.pipeline_def("auth_signoff")  # Android Build Release — Release Sign Off
 AUTH_SIGNOFF_STAGE_NAME = "Release Sign Off"
+AUTH_WHATS_NEW_STAGE_NAME = "Upload What's New"
+AUTH_ALPHA_STAGE_NAME = "Upload Alpha"
+AUTH_BETA_STAGE_NAME = "100% Beta - Play Store"
 # The final Auth App version tag format on the release-app build, e.g. '6.2608.5658'.
 _AUTH_RELEASE_VERSION = _re_mod.compile(r"^\d+\.\d+\.\d+$")
 _ZERO_SHA = "0" * 40                                 # ADO "create ref" sentinel (no old object)
@@ -236,8 +239,9 @@ def _signoff_build_url(build_id) -> str:
     return f"{AUTH_ORG.rstrip('/')}/{AUTH_PROJECT}/_build/results?buildId={build_id}&view=results"
 
 
-def _signoff_info(build, records, *, match_basis, linked_build_ids=None):
-    record = _stage_record(records)
+def _signoff_info(build, records, *, match_basis, stage_name=AUTH_SIGNOFF_STAGE_NAME,
+                  linked_build_ids=None):
+    record = _stage_record(records, stage_name)
     if record is None:
         return None
     return {
@@ -271,7 +275,7 @@ def signoff_stage_failed(info):
     return state == "canceled" or result in {"failed", "canceled"}
 
 
-def read_auth_signoff_run(build_id, timeout=60):
+def read_auth_signoff_run(build_id, timeout=60, *, stage_name=AUTH_SIGNOFF_STAGE_NAME):
     """Read pipeline-397224 signoff run state for a known build/run id."""
     if not _positive_build_id(build_id):
         return (False, None, f"invalid signoff build id: {build_id!r}")
@@ -286,13 +290,21 @@ def read_auth_signoff_run(build_id, timeout=60):
     okt, records, timeline_detail = _pp.get_timeline(AUTH_ORG, AUTH_PROJECT, build_id, timeout)
     if not okt:
         return (False, None, timeline_detail)
-    info = _signoff_info(build or {}, records, match_basis="build_id")
+    info = _signoff_info(build or {}, records, match_basis="build_id", stage_name=stage_name)
     if info is None:
-        return (True, None, f"Release Sign Off stage not found on build {build_id}")
+        return (True, None, f"{stage_name} stage not found on build {build_id}")
     return (True, info, "")
 
 
-def find_auth_signoff_run(auth_branch, timeout=90, *, final_auth_build_id=None, scan=100):
+def find_auth_signoff_run(
+    auth_branch,
+    timeout=90,
+    *,
+    final_auth_build_id=None,
+    build_id=None,
+    scan=100,
+    stage_name=AUTH_SIGNOFF_STAGE_NAME,
+):
     """Find the pipeline-397224 run that owns the release's Release Sign Off stage.
 
     Current pipeline 397224 is a legacy Android Build Release run on the release branch.
@@ -303,20 +315,42 @@ def find_auth_signoff_run(auth_branch, timeout=90, *, final_auth_build_id=None, 
     ref = _auth_release_ref(auth_branch)
     if not ref:
         return (False, None, "no authenticator release branch known (run orchestrator_health first)")
-    url = (f"{AUTH_ORG.rstrip('/')}/{AUTH_PROJECT}/_apis/build/builds"
-           f"?definitions={AUTH_SIGNOFF_DEF}&branchName={quote(ref, safe='')}"
-           f"&queryOrder=queueTimeDescending&$top={int(scan)}&api-version=7.1")
-    ok, data, detail = _pp._ado_rest_get(url, timeout)
-    if not ok:
-        hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
-        return (False, None, f"{detail}{hint}")
-    builds = [b for b in ((data or {}).get("value") or []) if _positive_build_id(b.get("id"))]
+    if build_id is not None:
+        if not _positive_build_id(build_id):
+            return (False, None, f"invalid pinned Android Build Release id: {build_id!r}")
+        url = (
+            f"{AUTH_ORG.rstrip('/')}/{AUTH_PROJECT}/_apis/build/builds/"
+            f"{quote(str(build_id), safe='')}?api-version=7.1")
+        ok, build, detail = _pp._ado_rest_get(url, timeout)
+        if not ok:
+            hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
+            return (False, None, f"{detail}{hint}")
+        definition_id = str(((build or {}).get("definition") or {}).get("id") or "")
+        if definition_id != str(AUTH_SIGNOFF_DEF):
+            return (False, None, f"pinned build {build_id} is not pipeline {AUTH_SIGNOFF_DEF}")
+        if str((build or {}).get("sourceBranch") or "") != ref:
+            return (False, None, f"pinned build {build_id} is not on {ref}")
+        builds = [build]
+    else:
+        url = (f"{AUTH_ORG.rstrip('/')}/{AUTH_PROJECT}/_apis/build/builds"
+               f"?definitions={AUTH_SIGNOFF_DEF}&branchName={quote(ref, safe='')}"
+               f"&queryOrder=queueTimeDescending&$top={int(scan)}&api-version=7.1")
+        ok, data, detail = _pp._ado_rest_get(url, timeout)
+        if not ok:
+            hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
+            return (False, None, f"{detail}{hint}")
+        builds = [b for b in ((data or {}).get("value") or [])
+                  if _positive_build_id(b.get("id"))]
     if not builds:
         return (True, None, f"no Android Build Release run (def {AUTH_SIGNOFF_DEF}) on {ref}")
     ordered = sorted(builds, key=lambda item: int(item["id"]), reverse=True)
 
     resource_reads, resource_matches, resource_mismatches = 0, [], []
-    expected = str(int(str(final_auth_build_id))) if _positive_build_id(final_auth_build_id) else None
+    expected = (
+        str(int(str(final_auth_build_id)))
+        if build_id is None and _positive_build_id(final_auth_build_id)
+        else None
+    )
     if expected:
         for build in ordered:
             okr, linked_ids, resource_detail = _resource_build_ids(AUTH_SIGNOFF_DEF, build.get("id"), timeout)
@@ -336,9 +370,10 @@ def find_auth_signoff_run(auth_branch, timeout=90, *, final_auth_build_id=None, 
             if not okt:
                 return (False, None, timeline_detail)
             info = _signoff_info(build, records, match_basis="pipeline_resource",
+                                 stage_name=stage_name,
                                  linked_build_ids=linked_ids)
             if info is None:
-                return (True, None, f"Release Sign Off stage not found on signoff build {build.get('id')}")
+                return (True, None, f"{stage_name} stage not found on signoff build {build.get('id')}")
             return (True, info, "")
         if resource_reads:
             sample = ", ".join(f"{bid}->{ids}" for bid, ids in resource_mismatches[:5])
@@ -349,9 +384,12 @@ def find_auth_signoff_run(auth_branch, timeout=90, *, final_auth_build_id=None, 
     okt, records, timeline_detail = _pp.get_timeline(AUTH_ORG, AUTH_PROJECT, build.get("id"), timeout)
     if not okt:
         return (False, None, timeline_detail)
-    info = _signoff_info(build, records, match_basis="release_branch")
+    info = _signoff_info(
+        build, records,
+        match_basis="pinned_prior_stage" if build_id is not None else "release_branch",
+        stage_name=stage_name)
     if info is None:
-        return (True, None, f"Release Sign Off stage not found on latest signoff build {build.get('id')}")
+        return (True, None, f"{stage_name} stage not found on latest signoff build {build.get('id')}")
     return (True, info, "")
 
 
@@ -362,10 +400,10 @@ def start_auth_signoff_stage(build_id, stage_ref, timeout=60):
     state to `pending` is the documented "Run" operation used by the UI.
     """
     if not _positive_build_id(build_id):
-        return (False, f"invalid signoff build id: {build_id!r}")
+        return (False, f"invalid signoff build id: {build_id!r}", False)
     stage = str(stage_ref or "").strip()
     if not stage:
-        return (False, "missing Release Sign Off stage reference")
+        return (False, "missing Release Sign Off stage reference", False)
     url = (
         f"{AUTH_ORG.rstrip('/')}/{AUTH_PROJECT}/_apis/build/builds/"
         f"{quote(str(build_id), safe='')}/stages/{quote(stage, safe='')}"
@@ -373,8 +411,18 @@ def start_auth_signoff_stage(build_id, stage_ref, timeout=60):
     )
     ok, _response, detail = _pp._ado_rest_send(url, "PATCH", {"state": "pending"}, timeout)
     if not ok:
-        return (False, detail)
-    return (True, f"started stage {stage} on build {build_id}")
+        no_request_or_definitive_rejection = (
+            detail == "az CLI not found"
+            or detail.startswith("failed to get token:")
+            or detail.startswith("AUTH:")
+            or any(
+                detail.startswith(f"HTTP {code}")
+                for code in range(400, 500)
+                if code != 408
+            )
+        )
+        return (False, detail, not no_request_or_definitive_rejection)
+    return (True, f"started stage {stage} on build {build_id}", True)
 
 
 def _auth_test_source_build_id(build_id, timeout=60):
@@ -949,4 +997,4 @@ def create_lightweight_tag(org, project, repo, tag_name, commit, timeout=60):
     why = entry.get("customMessage") or d or "tag ref create rejected"
     return (False, None, why)
 
-__all__ = ['AUTH_BUILD_DEF', 'AUTH_ORG', 'AUTH_PROJECT', 'AUTH_RELEASE_APP_DEF', 'AUTH_SIGNOFF_DEF', 'AUTH_SIGNOFF_STAGE_NAME', 'AUTH_TEST_DEF', 'AUTH_UI_PASS_THRESHOLD', 'AUTH_UI_SUITES', '_AUTH_RC_VERSION', '_AUTH_RELEASE_VERSION', '_ZERO_SHA', '_auth_build_ref', '_auth_test_source_build_id', '_release_ref', 'auth_branch_url', 'auth_build_url', 'auth_ui_suite_rates', 'classify_release_commits', 'create_lightweight_tag', 'ecs_flight_changes', 'find_auth_ecs_build', 'find_auth_release_build', 'find_final_auth_build', 'find_auth_signoff_run', 'find_auth_ui_test_build', 'merged_release_prs', 'parse_ecs_flights', 'read_auth_signoff_run', 'release_change_manifest', 'signoff_stage_failed', 'signoff_stage_started', 'start_auth_signoff_stage']
+__all__ = ['AUTH_ALPHA_STAGE_NAME', 'AUTH_BETA_STAGE_NAME', 'AUTH_BUILD_DEF', 'AUTH_ORG', 'AUTH_PROJECT', 'AUTH_RELEASE_APP_DEF', 'AUTH_SIGNOFF_DEF', 'AUTH_SIGNOFF_STAGE_NAME', 'AUTH_TEST_DEF', 'AUTH_UI_PASS_THRESHOLD', 'AUTH_UI_SUITES', 'AUTH_WHATS_NEW_STAGE_NAME', '_AUTH_RC_VERSION', '_AUTH_RELEASE_VERSION', '_ZERO_SHA', '_auth_build_ref', '_auth_test_source_build_id', '_release_ref', 'auth_branch_url', 'auth_build_url', 'auth_ui_suite_rates', 'classify_release_commits', 'create_lightweight_tag', 'ecs_flight_changes', 'find_auth_ecs_build', 'find_auth_release_build', 'find_final_auth_build', 'find_auth_signoff_run', 'find_auth_ui_test_build', 'merged_release_prs', 'parse_ecs_flights', 'read_auth_signoff_run', 'release_change_manifest', 'signoff_stage_failed', 'signoff_stage_started', 'start_auth_signoff_stage']

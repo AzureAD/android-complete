@@ -194,6 +194,53 @@ def test_find_auth_signoff_run_uses_branch_fallback_without_resources(monkeypatc
     assert info["match_basis"] == "release_branch"
 
 
+def test_find_auth_signoff_run_honors_pinned_prior_stage_build(monkeypatch):
+    from tools import pipelines as P
+
+    def rest_get(url, timeout):
+        assert "/builds/299?" in url
+        return True, {
+            "id": 299,
+            "definition": {"id": P.AUTH_SIGNOFF_DEF},
+            "sourceBranch": "refs/heads/release/2026/09/10",
+            "sourceVersion": "a" * 40,
+            "buildNumber": "signoff.299",
+            "status": "completed",
+            "result": "succeeded",
+            "_links": {"web": {"href": "https://build/299"}},
+        }, ""
+
+    monkeypatch.setattr(P, "_ado_rest_get", rest_get)
+    monkeypatch.setattr(P, "get_timeline", lambda *a: (
+        True, [{
+            "type": "Stage",
+            "id": "stage-beta",
+            "name": "100% Beta - Play Store",
+            "identifier": "BetaPlayStore",
+            "state": "notStarted",
+            "result": None,
+        }], ""))
+    ok, info, detail = P.find_auth_signoff_run(
+        "release/2026/09/10",
+        final_auth_build_id=180500000,
+        build_id=299,
+        stage_name="100% Beta - Play Store",
+    )
+    assert ok and not detail
+    assert info["build_id"] == 299
+    assert info["match_basis"] == "pinned_prior_stage"
+
+
+def test_stage_start_http_408_remains_uncertain(monkeypatch):
+    from tools import pipelines as P
+
+    monkeypatch.setattr(
+        P, "_ado_rest_send",
+        lambda *args: (False, None, "HTTP 408: request timeout"))
+    assert P.start_auth_signoff_stage(299, "BetaPlayStore") == (
+        False, "HTTP 408: request timeout", True)
+
+
 def test_get_failed_tests_all_categories_apply_same_retry_rule(monkeypatch):
     from tools import pipelines as P
     titles = [f"unit_parameter[{i:03}]" for i in range(45)]
