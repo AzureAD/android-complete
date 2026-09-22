@@ -47,6 +47,7 @@ def test_attest_prompt_is_separate_render_never_in_table():
     assert "still pending" in ap_early
     # resolve all auto items
     orch.gate.verify()
+    orch.gate.record_check("mail_fallback_live", "pass", "Mail fallback loaded")
     orch.gate.record_check("silent_perms", "pass", "auto-approved")
     orch.gate.record_check("oncall_now", "pass", "not on roster")
     orch.gate.record_check("adx_access", "pass", "print 1 ok")
@@ -79,6 +80,7 @@ def test_attest_prompt_payload_is_deterministic_card():
     assert p0["ready"] is False and "pending" in p0["reason"]
     # Resolve auto items
     orch.gate.verify()
+    orch.gate.record_check("mail_fallback_live", "pass", "Mail fallback loaded")
     orch.gate.record_check("silent_perms", "pass", "auto-approved")
     orch.gate.record_check("oncall_now", "pass", "not on roster")
     orch.gate.record_check("adx_access", "pass", "print 1 ok")

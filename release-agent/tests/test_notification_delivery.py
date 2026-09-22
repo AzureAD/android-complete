@@ -78,12 +78,83 @@ def test_email_descriptor_has_exact_mail_mcp_fallback(orch):
     D.offer(orch, item)
     claim = D.claim(orch, item["id"], item["hash"], "worker")
     assert claim["fallback"] == item["fallback"]
+    assert claim["authorized_transport"] == {
+        "mode": "primary_with_guarded_fallback",
+        "tool": "workiq_send_email",
+        "payload": item["payload"],
+    }
 
     tampered = email(orch, logical="tampered")
     tampered["fallback"]["payload"]["to"] = ["other@example.com"]
     tampered["hash"] = D.fingerprint({k: v for k, v in tampered.items() if k != "hash"})
     with pytest.raises(ValueError, match="fallback"):
         D.offer(orch, tampered)
+
+    recovery = email(orch, logical="structured-recovery")
+    D.offer(orch, recovery)
+    first = D.claim(orch, recovery["id"], recovery["hash"], "worker")
+    receipt = D.email_fallback_failure_receipt()
+    D.result(
+        orch, recovery["id"], first["execution_id"], "not_sent",
+        "WorkIQ proved nothing sent; Mail tool unavailable", receipt,
+    )
+    retry = D.claim(orch, recovery["id"], recovery["hash"], "worker-after-restart")
+    assert retry["authorized_transport"] == {
+        "mode": "fallback_only",
+        "tool": recovery["fallback"]["tool"],
+        "payload": recovery["fallback"]["payload"],
+    }
+    assert retry["authorized_transport"]["tool"] != recovery["tool"]
+    assert retry["tool"] == recovery["fallback"]["tool"]
+    assert retry["payload"] == recovery["fallback"]["payload"]
+
+    legacy = email(orch, logical="legacy-recovery")
+    D.offer(orch, legacy)
+    first = D.claim(orch, legacy["id"], legacy["hash"], "worker")
+    D.result(
+        orch, legacy["id"], first["execution_id"], "not_sent",
+        "workiq_send_email failed before submission: "
+        "email_sensitivity_label_unavailable; nothing was sent or saved; "
+        "fallback tool microsoft_mail-SendEmailWithAttachments is unavailable in this session",
+    )
+    retry = D.claim(orch, legacy["id"], legacy["hash"], "worker-after-restart")
+    assert retry["authorized_transport"]["mode"] == "fallback_only"
+    assert retry["authorized_transport"]["tool"] == "microsoft_mail-SendEmailWithAttachments"
+    D.result(orch, legacy["id"], retry["execution_id"], "not_sent",
+             "fallback failure without a structured receipt")
+    with pytest.raises(ValueError, match="ambiguous"):
+        D.claim(orch, legacy["id"], legacy["hash"], "unsafe-retry")
+
+    unrelated = email(orch, logical="unrelated-failure")
+    D.offer(orch, unrelated)
+    first = D.claim(orch, unrelated["id"], unrelated["hash"], "worker")
+    D.result(orch, unrelated["id"], first["execution_id"], "not_sent",
+             "provider explicitly rejected before submission")
+    retry = D.claim(orch, unrelated["id"], unrelated["hash"], "worker-retry")
+    assert retry["authorized_transport"]["mode"] == "primary_with_guarded_fallback"
+    assert retry["authorized_transport"]["tool"] == "workiq_send_email"
+
+    contradictory = email(orch, logical="contradictory-receipt")
+    D.offer(orch, contradictory)
+    first = D.claim(orch, contradictory["id"], contradictory["hash"], "worker")
+    D.result(
+        orch, contradictory["id"], first["execution_id"], "not_sent",
+        "email_sensitivity_label_unavailable; nothing was sent or saved; "
+        "microsoft_mail-SendEmailWithAttachments unavailable",
+        {
+            "primary": {
+                "tool": "workiq_send_email",
+                "error_code": "email_sensitivity_label_unavailable",
+                "nothing_sent_or_saved": False,
+            },
+            "fallback": {
+                "tool": "microsoft_mail-SendEmailWithAttachments",
+                "outcome": "sent",
+            },
+        },
+    )
+    with pytest.raises(ValueError, match="ambiguous"):
+        D.claim(orch, contradictory["id"], contradictory["hash"], "unsafe-retry")
 
 
 def test_ambiguous_and_lost_ack_never_replay(orch):

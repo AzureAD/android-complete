@@ -70,6 +70,15 @@ items:
     verify: auto
     verifier: mcp_servers
 
+  - id: mail_fallback_live
+    label: "Mail fallback loaded"
+    text: "The exact Microsoft Mail fallback tool is loaded in this Scout session"
+    detail: "Scout verifies microsoft_mail-SendEmailWithAttachments is present in the current session. A config entry or enabled permission is not enough: if the MCP was just registered, restart Scout before the release can start."
+    verify: auto
+    source: scout
+    verifier: mail_fallback_live
+    required_tools: [microsoft_mail-SendEmailWithAttachments]
+
   - id: silent_perms
     label: "Silent-run permissions"
     text: "Permissions allow fully unattended runs — shell, WorkIQ, browser, ICM, Kusto/ADX, and the Mail fallback are auto-approved so scheduled work never stalls on a prompt"

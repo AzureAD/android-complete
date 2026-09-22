@@ -33,6 +33,7 @@ def test_teams_notify_is_scout_optout_item():
     # gate stays closed until it's recorded
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")
+    orch.gate.record_check("mail_fallback_live", "pass", "Mail fallback loaded")
     orch.gate.record_check("silent_perms", "pass", "auto-approved")
     orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
     orch.gate.sign()
@@ -390,6 +391,11 @@ def test_generated_prompts_run_central_cleanup():
         assert "m_delete_automation" in spec["prompt"]
         assert "permission_to_delete" in spec["prompt"]
         assert "delete-result" in spec["prompt"]
+        prompt = spec["prompt"]
+        assert "authorized_transport.tool/payload" in prompt
+        assert "mode fallback_only" in prompt
+        assert "do not reclaim and do not retry WorkIQ" in prompt
+        assert "microsoft_mail-SendEmailWithAttachments" in prompt
 
 
 def test_cleanup_command_returns_registered_ids_without_mutating_registry(capsys):

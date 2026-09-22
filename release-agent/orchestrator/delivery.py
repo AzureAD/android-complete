@@ -67,6 +67,86 @@ def email_fallback(payload):
     }
 
 
+def email_fallback_failure_receipt(fallback_outcome="unavailable"):
+    if fallback_outcome not in ("unavailable", "not_sent"):
+        raise ValueError("Fallback failure outcome must be unavailable or not_sent")
+    return {
+        "primary": {
+            "tool": "workiq_send_email",
+            "error_code": EMAIL_FALLBACK_ERROR,
+            "nothing_sent_or_saved": True,
+        },
+        "fallback": {
+            "tool": EMAIL_FALLBACK_TOOL,
+            "outcome": fallback_outcome,
+        },
+    }
+
+
+def _fallback_trigger_state(attempt):
+    expected = email_fallback_failure_receipt()
+    receipt = attempt.get("receipt")
+    evidence = str(attempt.get("evidence") or "").lower()
+    if receipt is not None:
+        if not isinstance(receipt, dict):
+            return "malformed" if EMAIL_FALLBACK_ERROR in evidence else "none"
+        primary = receipt.get("primary")
+        fallback = receipt.get("fallback")
+        if (isinstance(primary, dict) and isinstance(fallback, dict)
+                and all(primary.get(k) == v for k, v in expected["primary"].items())
+                and primary.get("nothing_sent_or_saved") is True
+                and fallback.get("tool") == EMAIL_FALLBACK_TOOL
+                and fallback.get("outcome") in ("unavailable", "not_sent")):
+            return "triggered"
+        if {"primary", "fallback"}.intersection(receipt) or EMAIL_FALLBACK_ERROR in evidence:
+            return "malformed"
+        return "none"
+    return "triggered" if (
+        EMAIL_FALLBACK_ERROR in evidence
+        and "nothing was sent or saved" in evidence
+        and EMAIL_FALLBACK_TOOL.lower() in evidence
+        and "unavailable" in evidence
+    ) else "none"
+
+
+def _fallback_retry_mode(record, item):
+    if record.get("status") != "not_sent" or not item.get("fallback"):
+        return "primary"
+    newer_attempts = []
+    for attempt in reversed(record.get("attempts", [])):
+        trigger_state = (_fallback_trigger_state(attempt)
+                         if attempt.get("status") == "not_sent" else "none")
+        if trigger_state == "malformed":
+            return "blocked"
+        if trigger_state == "triggered":
+            if all("no provider send attempted" in str(a.get("evidence") or "").lower()
+                   for a in newer_attempts):
+                return "fallback_only"
+            return "blocked"
+        newer_attempts.append(attempt)
+    return "primary"
+
+
+def authorized_transport(record, item):
+    retry_mode = _fallback_retry_mode(record, item)
+    if retry_mode == "blocked":
+        raise ValueError(
+            "Email retry transport is ambiguous after a confirmed primary failure; "
+            "owner review required and WorkIQ must not be retried"
+        )
+    if retry_mode == "fallback_only":
+        return {
+            "mode": "fallback_only",
+            "tool": item["fallback"]["tool"],
+            "payload": deepcopy(item["fallback"]["payload"]),
+        }
+    return {
+        "mode": "primary_with_guarded_fallback" if item.get("fallback") else "primary",
+        "tool": item["tool"],
+        "payload": deepcopy(item["payload"]),
+    }
+
+
 def phase_done(orch, phase_id):
     phase = next((p for p in orch.scheduling().phases if p.definition.id == phase_id), None)
     return bool(phase and phase.definition.steps and phase.complete)
@@ -347,6 +427,7 @@ def claim(orch, notification_id, approved_hash, executor):
         raise ValueError(reason)
     if not isinstance(executor, str) or not executor.strip():
         raise ValueError("executor/session identifier is required")
+    transport = authorized_transport(record, item)
     scope = item["scope"]
     execution = {"id": uuid.uuid4().hex, "owner": executor.strip(), "started_at": now_iso()}
     if item["completion"].get("kind") == "step":
@@ -357,7 +438,15 @@ def claim(orch, notification_id, approved_hash, executor):
     else:
         record["status"] = "claimed"
         record["attempts"].append({**execution, "status": "claimed", "hash": item["hash"]})
-    return {**deepcopy(item), "execution_id": execution["id"], "permission_to_send": True}
+    claimed = deepcopy(item)
+    claimed["tool"] = transport["tool"]
+    claimed["payload"] = deepcopy(transport["payload"])
+    return {
+        **claimed,
+        "execution_id": execution["id"],
+        "permission_to_send": True,
+        "authorized_transport": transport,
+    }
 
 
 def result(orch, notification_id, execution_id, outcome, evidence, receipt=None, review=False):
@@ -425,7 +514,19 @@ PROTOCOL = (
     "(step source also takes --phase/--step and the same --param inputs), review the exact "
     "target/payload, then `notification claim --release <release> --id <id> --hash <hash> "
     "--executor <session-id>`. Send ONLY when permission_to_send is true, using exactly "
-    "the returned tool/payload, with no extra courtesy copies. Claims and acknowledgements use "
+    "the returned authorized_transport.tool/payload, with no extra courtesy copies. "
+    "For mode primary_with_guarded_fallback, call WorkIQ exactly once. Only when it returns "
+    "email_sensitivity_label_unavailable AND explicitly proves nothing was sent or saved may "
+    "the same execution call the frozen microsoft_mail-SendEmailWithAttachments fallback. "
+    "If that fallback tool is unavailable, do not reclaim and do not retry WorkIQ. Record "
+    "not_sent once with a receipt file shaped as "
+    "{\"primary\":{\"tool\":\"workiq_send_email\",\"error_code\":"
+    "\"email_sensitivity_label_unavailable\",\"nothing_sent_or_saved\":true},"
+    "\"fallback\":{\"tool\":\"microsoft_mail-SendEmailWithAttachments\","
+    "\"outcome\":\"unavailable\"}}, then stop for restart/recovery. A later claim returns "
+    "mode fallback_only and authorizes ONLY its frozen fallback transport; never call the "
+    "primary again. Timeouts or unknown provider outcomes are uncertain, never fallback. "
+    "Claims and acknowledgements use "
     "the trusted current clock, never --as-of. A changed preparation can replace only "
     "never-claimed work; review its new hash. Immediately run "
     "`notification result --release <release> --id <id> --execution-id <id> "

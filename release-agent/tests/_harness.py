@@ -225,6 +225,7 @@ def _pass_scout_checks(orch):
     skill running the ICM + Kusto + settings + Teams checks and recording results."""
     orch.gate.record_check("oncall_now", "pass", "stubbed: not on-call")
     orch.gate.record_check("adx_access", "pass", "stubbed: can query cluster")
+    orch.gate.record_check("mail_fallback_live", "pass", "stubbed: Mail fallback loaded")
     orch.gate.record_check("silent_perms", "pass", "stubbed: all servers auto-approved")
     orch.gate.record_check("teams_notify", "pass", "stubbed: Scout Teams bot reachable")
     orch.gate.record_check("ccd_confirmed", "pass", "stubbed: CCD reconciled with pipeline")

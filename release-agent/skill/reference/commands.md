@@ -26,6 +26,20 @@ through review/preparation; changed payloads have different hashes and require a
 review. Parameters never authorize sending. Mock redirects and input knobs still use
 `mocks.local.yaml`/`mock-spec`, not undeclared `--param` overrides.
 
+For every claim, invoke only `authorized_transport.tool` with
+`authorized_transport.payload`. `primary_with_guarded_fallback` permits one WorkIQ call;
+`fallback_only` permits only the frozen Mail fallback and must never call WorkIQ again.
+When WorkIQ proves `email_sensitivity_label_unavailable` before submission but the Mail
+tool is unavailable, write this receipt to a temporary JSON file and record `not_sent`
+once, then stop until Scout restarts:
+
+```json
+{"primary":{"tool":"workiq_send_email","error_code":"email_sensitivity_label_unavailable","nothing_sent_or_saved":true},"fallback":{"tool":"microsoft_mail-SendEmailWithAttachments","outcome":"unavailable"}}
+```
+
+Do not reclaim while the fallback is unavailable. A later claim routes directly to
+`fallback_only`. Delete the temporary receipt only after `notification result` persists.
+
 ### Command index
 
 | Intent | Command |

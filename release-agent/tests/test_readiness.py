@@ -199,6 +199,7 @@ def test_record_check_pass_then_sign_clears_gate():
     st = ReleaseState(release_id="t")
     orch = Orchestrator(CONFIG, st)
     orch.gate.record_check("adx_access", "pass", "can query")
+    orch.gate.record_check("mail_fallback_live", "pass", "Mail fallback loaded")
     orch.gate.record_check("silent_perms", "pass", "servers auto-approved")
     orch.gate.record_check("teams_notify", "pass", "teams reachable")
     orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
@@ -250,6 +251,10 @@ def test_silent_perms_is_required_scout_item():
     sp = next(i for i in orch.gate.checklist()["items"] if i["id"] == "silent_perms")
     assert sp["verify"] == "auto" and sp["source"] == "scout"
     assert sp["required_servers"] == ["shell", "workiq", "playwright", "kusto", "icm", "mail"]
+    mail = next(i for i in orch.gate.checklist()["items"]
+                if i["id"] == "mail_fallback_live")
+    assert mail["verify"] == "auto" and mail["source"] == "scout"
+    assert mail["required_tools"] == ["microsoft_mail-SendEmailWithAttachments"]
     # everything else satisfied but silent_perms → gate still closed
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")
@@ -257,10 +262,10 @@ def test_silent_perms_is_required_scout_item():
     orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
     orch.gate.sign()
     assert not orch.gate.signed
+    orch.gate.record_check("mail_fallback_live", "pass", "exact tool loaded")
+    assert not orch.gate.signed
     orch.gate.record_check("silent_perms", "pass", "all servers auto-approved")
     assert orch.gate.signed
-
-
 
 
 def test_mcp_servers_is_python_auto_item():
@@ -272,10 +277,6 @@ def test_mcp_servers_is_python_auto_item():
     assert st.readiness_items["mcp_servers"]["status"] == "pass"
     m = next(i for i in orch.gate.checklist()["items"] if i["id"] == "mcp_servers")
     assert m["verify"] == "auto" and not m["source"]   # python, not scout
-
-
-
-
 def test_silent_perms_opt_out_degraded_satisfies_gate():
     """silent_perms is soft/opt-out: recording 'degraded' (user proceeds without
     silent runs) SATISFIES the gate, unlike a normal auto item where only pass counts."""
@@ -284,6 +285,7 @@ def test_silent_perms_opt_out_degraded_satisfies_gate():
     orch = Orchestrator(CONFIG, st)
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")
+    orch.gate.record_check("mail_fallback_live", "pass", "Mail fallback loaded")
     orch.gate.record_check("teams_notify", "pass", "teams reachable")
     orch.gate.record_check("ccd_confirmed", "pass", "CCD reconciled")
     # user opts out of silent runs -> degraded, but the gate still clears on sign
@@ -859,7 +861,8 @@ def test_readiness_mock_clears_auto_gate_offline():
     from datetime import date
     st = ReleaseState(release_id="2026-07", ccd="2026-07-08", ccd_source="default")
     mocks = {f"readiness.{i}": {"outcome": "pass"} for i in
-             ("build_access", "mcp_servers", "silent_perms", "adx_access", "oncall_now", "teams_notify")}
+             ("build_access", "mcp_servers", "mail_fallback_live", "silent_perms",
+              "adx_access", "oncall_now", "teams_notify")}
     orch = Orchestrator(CONFIG, st, as_of=date(2026, 7, 2), mocks=mocks)
     orch.gate.verify()                        # no _stub_build_defs → real verifier bypassed
     items = st.readiness_items

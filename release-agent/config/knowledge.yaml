@@ -115,14 +115,32 @@ readiness.mcp_servers:
     - q: "What's the empty-tools gotcha?"
       a: "Command servers must ship a populated `tools` allowlist; an empty one makes Scout silently drop the server. Our requirements.yaml ships icm/kusto/teams/mail with populated lists."
 
+readiness.mail_fallback_live:
+  summary: "The exact Microsoft Mail fallback tool is loaded in the current Scout session."
+  what: >
+    Confirms microsoft_mail-SendEmailWithAttachments is actually available to this
+    session. Registration and permission settings are static configuration; they do
+    not prove a server added after Scout startup has been loaded.
+  who: "Scout verifies this from its current tool set. It is not an attestation."
+  where:
+    - "Scout MCP configuration: ~/.scout/m-mcp-servers.json"
+    - "Required tool: microsoft_mail-SendEmailWithAttachments"
+  how: >
+    If the tool is absent but Mail is configured, restart Scout, reload /release-agent,
+    and rerun readiness. This item is fail-closed and has no proceed-without option.
+  faqs:
+    - q: "Why did registered and auto-approved still fail?"
+      a: "Those checks read configuration. Command MCP servers load at Scout startup, so a newly registered Mail server is unusable until Scout restarts."
+
 readiness.silent_perms:
   summary: "Scout's permissions allow fully unattended (silent) runs."
   what: >
     Confirms shell, WorkIQ (email + Teams), the browser (Playwright), and the ICM +
-    Kusto MCP servers are all auto-approved in Scout settings — so scheduled /
+    Kusto + Mail MCP servers are all auto-approved in Scout settings — so scheduled /
     background work (the daily digest, Teams reminders, CCOA-lockdown browser checks,
-    the on-call & telemetry checks) runs WITHOUT stalling on a permission prompt when
-    Scout isn't focused.
+    release-email fallback, and the on-call & telemetry checks) runs WITHOUT stalling
+    on a permission prompt when Scout isn't focused. Live Mail tool availability is
+    checked separately by mail_fallback_live and cannot be waived.
   who: >
     The skill checks it (reads m_get_settings — the engine can't see Scout's own
     settings). Enabling requires the user to flip one master toggle (only the user

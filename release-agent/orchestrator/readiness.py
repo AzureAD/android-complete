@@ -81,6 +81,7 @@ class ReadinessGate:
                 "cluster_uri": it.get("cluster_uri"),    # for scout-assisted Kusto checks
                 "database": it.get("database"),
                 "required_servers": it.get("required_servers"),  # for scout-assisted silent-perms check
+                "required_tools": it.get("required_tools"),      # exact live tools required in this session
                 "opt_out": it.get("opt_out", False),      # soft item: may be waived ("degraded") and still satisfy
                 "window": self._window(it),              # {start,end} for windowed attest items
                 "status": rec.get("status", "pending"),  # pending | pass | fail | attested | unable
