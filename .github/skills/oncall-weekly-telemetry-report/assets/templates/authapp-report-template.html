@@ -352,8 +352,10 @@
     font-family: -apple-system, "Segoe UI", sans-serif;
     text-transform: lowercase; letter-spacing: 0.3px;
   }
+  /* ---- Novelty presentation --------------------------------------------------
+     The sparkline IS the argument. A reader cannot judge "+25% WoW" without
      seeing whether the series was flat for seven weeks or bouncing all along,
-     so every attention row carries its own 9-week shape inline. Charts live
+     so every attention row carries its own 8-week shape inline. Charts live
      WITH the finding, not in a separate browsable catalog. */
   .item-spark {
     display: inline-flex; align-items: center; line-height: 0;
@@ -395,6 +397,15 @@
     border-radius: 6px; padding: 12px 14px; margin: 12px 0; font-size: 13px;
   }
   .quiet-banner strong { color: #1a7f37; }
+  /* Deliberately muted: a reconciliation note is a DISMISSAL, not a finding. If it
+     competes visually with .callout it re-creates the noise the noise gate removes. */
+  .reconcile-note {
+    border-left: 3px solid #d0d7de; background: #f6f8fa; color: #57606a;
+    border-radius: 0 6px 6px 0; padding: 9px 12px; margin: 10px 0; font-size: 12.5px;
+    line-height: 1.55;
+  }
+  .reconcile-note strong { color: #424a53; font-weight: 600; }
+  .reconcile-note .mono { color: #24292f; }
   .metric {
     display: inline-flex; align-items: baseline; gap: 4px;
     font-size: 12px; color: #1f2328; font-variant-numeric: tabular-nums;
@@ -443,7 +454,7 @@
     <h1>Microsoft Authenticator (Android) · On-Call Report</h1>
     <div class="meta">
       <strong>Last 7 days: Thu Jul 23 → Thu Jul 30, 2026</strong> &nbsp;vs&nbsp; <strong>Thu Jul 16 → Thu Jul 23</strong> &nbsp;·&nbsp;
-      60-day trend: <strong>Sun May 31 → Wed Jul 29, 2026</strong> (last 60 days; final bar in progress) &nbsp;·&nbsp;
+      60-day trend: <strong>Sun May 31 → Wed Jul 29, 2026</strong> (last 60 days; rolling 7-day buckets) &nbsp;·&nbsp;
       Source: <code>Authenticator scenario materialized views</code> &nbsp;·&nbsp;
       Generated <strong>2026-07-30</strong>
     </div>
@@ -459,8 +470,8 @@
 <nav class="toc">
   <ul>
     <li><a href="#health">📊 Top-line health</a></li>
-    <li><a href="#scoreboard">Scenario scoreboard</a></li>
     <li><a href="#attention">🚨 Needs attention</a></li>
+    <li><a href="#scoreboard">Scenario scoreboard</a></li>
     <li><a href="#trend60d">📈 60-day trend</a></li>
     <li><a href="#attribution">🔎 Error attribution</a></li>
     <li><a href="#unknown">Unknown analysis</a></li>
@@ -483,27 +494,6 @@
   <div class="kpi"><div class="label">Crash rate per 1k devices</div><div class="value">0.42</div><div class="delta delta-up">+0.05 WoW</div><div class="spark" data-spark='[0.31,0.32,0.29,0.34,0.33,0.36,0.35,0.37,0.42]' data-color="#cf222e"></div></div>
 </div>
 
-<!-- ================ SCENARIO SCOREBOARD ================ -->
-<h2 id="scoreboard">Scenario scoreboard <span class="count">— one row per Authenticator scenario family</span></h2>
-<div class="table-card"><table>
-  <thead><tr><th>Scenario</th><th class="num">Initiated</th><th class="num">Success rate</th><th class="num">Δ success rate (pts)</th><th class="num">Failure rate</th><th class="num">Unknown rate</th><th class="num">Δ unknown (pts)</th><th class="num">Devices</th><th>8-week sparkline</th><th>Status</th></tr></thead>
-  <tbody>
-<tr><td class="code-cell">Passkey WebAuthN Registration</td><td class="num">48,320</td><td class="num good">91.8%</td><td class="num good">+0.6</td><td class="num">4.7%</td><td class="num ">3.5%</td><td class="num muted">-0.3</td><td class="num">38,940</td><td class="spark-cell"><div class="trend" data-trend='[89.7,90.1,90.6,91,91.3,91.5,91.2,91.8]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">healthy</span></td></tr>
-<tr><td class="code-cell">Passkey InApp Registration</td><td class="num">22,410</td><td class="num ">88.2%</td><td class="num muted">-0.4</td><td class="num">6.9%</td><td class="num ">4.9%</td><td class="num muted">+0.2</td><td class="num">19,120</td><td class="spark-cell"><div class="trend" data-trend='[87.9,88,88.4,88.8,88.5,88.7,88.6,88.2]' data-color="#bf8700" data-w="160" data-h="28"></div></td><td><span class="tag tag-warn">watch</span></td></tr>
-<tr><td class="code-cell">Passkey WebAuthN Authentication</td><td class="num">612,900</td><td class="num bad">94.1%</td><td class="num bad">-1.4</td><td class="num">3.2%</td><td class="num bad">2.7%</td><td class="num bad">+0.8</td><td class="num">402,100</td><td class="spark-cell"><div class="trend" data-trend='[96.4,96.2,95.8,95.5,95.3,95.1,95.5,94.1]' data-color="#cf222e" data-w="160" data-h="28"></div></td><td><span class="tag tag-bad">regressed</span></td></tr>
-<tr><td class="code-cell">Entra MFA Registration (QR)</td><td class="num">1,245,000</td><td class="num ">97.6%</td><td class="num muted">+0.3</td><td class="num">1.2%</td><td class="num ">1.2%</td><td class="num muted">-0.2</td><td class="num">902,400</td><td class="spark-cell"><div class="trend" data-trend='[97.1,97,97.2,97.3,97.4,97.5,97.3,97.6]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">healthy</span></td></tr>
-<tr><td class="code-cell">Entra MFA Registration (No-QR)</td><td class="num">336,200</td><td class="num ">95.0%</td><td class="num muted">-0.1</td><td class="num">2.8%</td><td class="num ">2.2%</td><td class="num muted">0.0</td><td class="num">248,900</td><td class="spark-cell"><div class="trend" data-trend='[95.1,95.4,95.2,95.3,95,95.2,95.1,95]' data-color="#656d76" data-w="160" data-h="28"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
-<tr><td class="code-cell">Entra MFA PN+CFA</td><td class="num">42,800,000</td><td class="num bad">98.4%</td><td class="num bad">-0.9</td><td class="num">0.7%</td><td class="num bad">0.9%</td><td class="num muted">+0.5</td><td class="num">18,700,000</td><td class="spark-cell"><div class="trend" data-trend='[99.1,99,98.9,98.8,98.6,98.5,99,98.4]' data-color="#cf222e" data-w="160" data-h="28"></div></td><td><span class="tag tag-bad">regressed</span></td></tr>
-<tr><td class="code-cell">Entra PSI Registration</td><td class="num">188,500</td><td class="num good">93.6%</td><td class="num good">+1.2</td><td class="num">4.4%</td><td class="num good">2.0%</td><td class="num good">-0.6</td><td class="num">131,800</td><td class="spark-cell"><div class="trend" data-trend='[91.9,92.2,92.6,92.8,93,93.2,92.4,93.6]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">win</span></td></tr>
-<tr><td class="code-cell">Entra PSI PN Registration</td><td class="num">74,900</td><td class="num ">92.1%</td><td class="num muted">+0.4</td><td class="num">5.1%</td><td class="num ">2.8%</td><td class="num muted">-0.2</td><td class="num">58,600</td><td class="spark-cell"><div class="trend" data-trend='[91.2,91.5,91.4,91.8,91.7,92,91.8,92.1]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">healthy</span></td></tr>
-<tr><td class="code-cell">Entra PSI PN+CFA</td><td class="num">4,920,000</td><td class="num bad">96.8%</td><td class="num bad">-0.6</td><td class="num">1.4%</td><td class="num bad">1.8%</td><td class="num muted">+0.4</td><td class="num">2,860,000</td><td class="spark-cell"><div class="trend" data-trend='[97.4,97.3,97.2,97.1,97,97,97.4,96.8]' data-color="#bf8700" data-w="160" data-h="28"></div></td><td><span class="tag tag-warn">watch</span></td></tr>
-<tr><td class="code-cell">MSA NGC Registration</td><td class="num">91,300</td><td class="num good">89.5%</td><td class="num good">+0.8</td><td class="num">7.2%</td><td class="num good">3.3%</td><td class="num muted">-0.4</td><td class="num">72,100</td><td class="spark-cell"><div class="trend" data-trend='[88.1,88.4,88.9,89,88.7,89.2,88.9,89.5]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">healthy</span></td></tr>
-<tr><td class="code-cell">MSA SA Registration</td><td class="num">19,800</td><td class="num ">86.4%</td><td class="num muted">+0.2</td><td class="num">8.4%</td><td class="num ">5.2%</td><td class="num muted">-0.1</td><td class="num">16,400</td><td class="spark-cell"><div class="trend" data-trend='[85.8,86,85.9,86.2,86.1,86.4,86.2,86.4]' data-color="#656d76" data-w="160" data-h="28"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
-<tr><td class="code-cell">MSA NGC PN+CFA</td><td class="num">3,760,000</td><td class="num ">97.2%</td><td class="num muted">+0.5</td><td class="num">1.1%</td><td class="num good">1.7%</td><td class="num muted">-0.4</td><td class="num">1,940,000</td><td class="spark-cell"><div class="trend" data-trend='[96.2,96.4,96.6,96.8,96.9,97,96.8,97.2]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">win</span></td></tr>
-<tr><td class="code-cell">MSA SA PN+CFA</td><td class="num">1,185,000</td><td class="num ">95.4%</td><td class="num muted">-0.2</td><td class="num">2.2%</td><td class="num ">2.4%</td><td class="num muted">+0.1</td><td class="num">764,000</td><td class="spark-cell"><div class="trend" data-trend='[95.3,95.5,95.2,95.6,95.4,95.5,95.6,95.4]' data-color="#656d76" data-w="160" data-h="28"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
-  </tbody>
-</table></div>
-
 <!-- ================ NEEDS ATTENTION ================ -->
 <!--
   ORDERING IS BY NOVELTY, NOT BY VOLUME OR BY SEVERITY OF THE DELTA.
@@ -511,7 +501,7 @@
   the top level. ONGOING scenarios go inside the collapsed fold below. Budget: <= 8
   visible rows -- validate-report.ps1 check 17 warns above that.
 
-  MANDATORY: every visible row carries an inline .item-spark holding its 9-week success-rate
+  MANDATORY: every visible row carries an inline .item-spark holding its 8-week success-rate
   series. Check 16 hard-fails a visible row without one. The shape is what separates a real
   step change from ordinary week-to-week wobble, and it has to sit next to the claim.
 -->
@@ -530,6 +520,39 @@
   </div>
 -->
 
+<!--
+  ⚠️ MANDATORY: RECONCILE EVERY RED/AMBER SCOREBOARD PILL.
+  The scoreboard pill is computed from the row's own WoW delta. This section is populated
+  from classify-novelty.js's novelty verdict. Those answer DIFFERENT questions, so a row can
+  legitimately be `tag-bad` up there and absent from here -- but the reader cannot know that,
+  and a red pill sitting above the words "Quiet week" reads as a broken report.
+
+  Real case that motivated this rule (2026-08-01): `Passkey WebAuthN Registration` carried
+  tag-bad (-1.27 pts, worst delta in the table) while this section said "Quiet week -- 0 NEW or
+  ACCELERATING". Both statements were correct. The scenario peaks at ~732 bad-outcome devices,
+  UNDER the 1,000 peak-floor, so it is structurally excluded from classification and can never
+  appear here no matter how it moves.
+
+  RULE: every scoreboard row carrying `tag-bad` or `tag-warn` must be accounted for in this
+  section -- either promoted as a real item, or named in the reconciliation note below with the
+  reason it is not being escalated. validate-report.ps1 hard-fails an unreconciled red pill.
+
+  Reasons, in the order you should test them:
+    1. below the classification floor  -> "moved X -> Y devices; under the N-device floor, too
+                                           small to classify -- watch, do not page"
+    2. within its own normal band      -> "swings +/- N pts routinely; this week is inside that band"
+    3. not novel (ONGOING)             -> "elevated for K weeks and flat; tracked in the fold below"
+
+  Render it as a plain reconciliation line, NOT a callout -- it must read as a dismissal, not a
+  finding, or it re-creates the noise this skill exists to remove:
+
+  <div class="reconcile-note">
+    <strong>Scoreboard reds not escalated:</strong>
+    <span class="mono">EXAMPLE_scenario</span> — 565 → 732 bad-outcome devices, under the
+    1,000-device classification floor; too small to separate signal from noise. Watching.
+  </div>
+-->
+
 <div class="callout urgent">
   <div class="callout-title"><span class="icon">🔴</span> New this week <span class="count">— clean step change off a flat baseline</span></div>
   <div class="item-list">
@@ -537,7 +560,7 @@
       <div class="item-head">
         <span class="item-name">EXAMPLE_scenario_name</span>
         <span class="item-spark trend" data-trend="[96.4,96.2,96.3,96.4,96.1,96.3,96.2,94.1]" data-w="120" data-h="22" data-color="#cf222e"></span>
-        <span class="spark-cap">9 wk</span>
+        <span class="spark-cap">8 wk</span>
         <span class="metric up"><span class="m-label">success Δ</span><span class="m-value">EXAMPLE −2.1 pts</span></span>
         <span class="metric"><span class="m-label">initiated</span><span class="m-value">EXAMPLE 42.8 M</span></span>
         <span class="item-tags"><span class="tag tag-new">NEW</span><span class="tag tag-warn">high volume</span></span>
@@ -562,7 +585,7 @@
       <div class="item-head">
         <span class="item-name">EXAMPLE_accelerating_scenario</span>
         <span class="item-spark trend" data-trend="[97.4,97.3,97.2,97.0,96.6,96.1,95.4,94.6]" data-w="120" data-h="22" data-color="#bc4c00"></span>
-        <span class="spark-cap">9 wk</span>
+        <span class="spark-cap">8 wk</span>
         <span class="metric up"><span class="m-label">success Δ</span><span class="m-value">EXAMPLE −0.8 pts</span></span>
         <span class="metric"><span class="m-label">vs 60d median</span><span class="m-value">EXAMPLE −2.4 pts</span></span>
         <span class="item-tags"><span class="tag tag-accel">ACCELERATING</span><span class="tag tag-ongoing">elevated 5w</span></span>
@@ -602,7 +625,7 @@
       <div class="item-head">
         <span class="item-name">EXAMPLE_recovered_scenario</span>
         <span class="item-spark trend" data-trend="[91.9,92.2,92.6,92.8,93.0,93.2,92.4,93.6]" data-w="120" data-h="22" data-color="#1a7f37"></span>
-        <span class="spark-cap">9 wk</span>
+        <span class="spark-cap">8 wk</span>
         <span class="metric down"><span class="m-label">success Δ</span><span class="m-value">EXAMPLE +1.2 pts</span></span>
         <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 132 K</span></span>
         <span class="item-tags"><span class="tag" style="background:#dafbe1;color:#1a7f37;">recovered</span></span>
@@ -619,8 +642,29 @@
   devices is noise, and promoting it here is exactly what trains an on-call engineer to skim.
 -->
 
+<!-- ================ SCENARIO SCOREBOARD ================ -->
+<h2 id="scoreboard">Scenario scoreboard <span class="count">— one row per Authenticator scenario family</span></h2>
+<div class="table-card"><table>
+  <thead><tr><th>Scenario</th><th class="num">Initiated</th><th class="num">Success rate</th><th class="num">Δ success rate (pts)</th><th class="num">Failure rate</th><th class="num">Unknown rate</th><th class="num">Δ unknown (pts)</th><th class="num">Devices</th><th>8-week sparkline</th><th>Status</th></tr></thead>
+  <tbody>
+<tr><td class="code-cell">Passkey WebAuthN Registration</td><td class="num">48,320</td><td class="num good">91.8%</td><td class="num good">+0.6</td><td class="num">4.7%</td><td class="num ">3.5%</td><td class="num muted">-0.3</td><td class="num">38,940</td><td class="spark-cell"><div class="trend" data-trend='[89.7,90.1,90.6,91,91.3,91.5,91.2,91.8]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">healthy</span></td></tr>
+<tr><td class="code-cell">Passkey InApp Registration</td><td class="num">22,410</td><td class="num ">88.2%</td><td class="num muted">-0.4</td><td class="num">6.9%</td><td class="num ">4.9%</td><td class="num muted">+0.2</td><td class="num">19,120</td><td class="spark-cell"><div class="trend" data-trend='[87.9,88,88.4,88.8,88.5,88.7,88.6,88.2]' data-color="#bf8700" data-w="160" data-h="28"></div></td><td><span class="tag tag-warn">watch</span></td></tr>
+<tr><td class="code-cell">Passkey WebAuthN Authentication</td><td class="num">612,900</td><td class="num bad">94.1%</td><td class="num bad">-1.4</td><td class="num">3.2%</td><td class="num bad">2.7%</td><td class="num bad">+0.8</td><td class="num">402,100</td><td class="spark-cell"><div class="trend" data-trend='[96.4,96.2,95.8,95.5,95.3,95.1,95.5,94.1]' data-color="#cf222e" data-w="160" data-h="28"></div></td><td><span class="tag tag-bad">regressed</span></td></tr>
+<tr><td class="code-cell">Entra MFA Registration (QR)</td><td class="num">1,245,000</td><td class="num ">97.6%</td><td class="num muted">+0.3</td><td class="num">1.2%</td><td class="num ">1.2%</td><td class="num muted">-0.2</td><td class="num">902,400</td><td class="spark-cell"><div class="trend" data-trend='[97.1,97,97.2,97.3,97.4,97.5,97.3,97.6]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">healthy</span></td></tr>
+<tr><td class="code-cell">Entra MFA Registration (No-QR)</td><td class="num">336,200</td><td class="num ">95.0%</td><td class="num muted">-0.1</td><td class="num">2.8%</td><td class="num ">2.2%</td><td class="num muted">0.0</td><td class="num">248,900</td><td class="spark-cell"><div class="trend" data-trend='[95.1,95.4,95.2,95.3,95,95.2,95.1,95]' data-color="#656d76" data-w="160" data-h="28"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
+<tr><td class="code-cell">Entra MFA PN+CFA</td><td class="num">42,800,000</td><td class="num bad">98.4%</td><td class="num bad">-0.9</td><td class="num">0.7%</td><td class="num bad">0.9%</td><td class="num muted">+0.5</td><td class="num">18,700,000</td><td class="spark-cell"><div class="trend" data-trend='[99.1,99,98.9,98.8,98.6,98.5,99,98.4]' data-color="#cf222e" data-w="160" data-h="28"></div></td><td><span class="tag tag-bad">regressed</span></td></tr>
+<tr><td class="code-cell">Entra PSI Registration</td><td class="num">188,500</td><td class="num good">93.6%</td><td class="num good">+1.2</td><td class="num">4.4%</td><td class="num good">2.0%</td><td class="num good">-0.6</td><td class="num">131,800</td><td class="spark-cell"><div class="trend" data-trend='[91.9,92.2,92.6,92.8,93,93.2,92.4,93.6]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">win</span></td></tr>
+<tr><td class="code-cell">Entra PSI PN Registration</td><td class="num">74,900</td><td class="num ">92.1%</td><td class="num muted">+0.4</td><td class="num">5.1%</td><td class="num ">2.8%</td><td class="num muted">-0.2</td><td class="num">58,600</td><td class="spark-cell"><div class="trend" data-trend='[91.2,91.5,91.4,91.8,91.7,92,91.8,92.1]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">healthy</span></td></tr>
+<tr><td class="code-cell">Entra PSI PN+CFA</td><td class="num">4,920,000</td><td class="num bad">96.8%</td><td class="num bad">-0.6</td><td class="num">1.4%</td><td class="num bad">1.8%</td><td class="num muted">+0.4</td><td class="num">2,860,000</td><td class="spark-cell"><div class="trend" data-trend='[97.4,97.3,97.2,97.1,97,97,97.4,96.8]' data-color="#bf8700" data-w="160" data-h="28"></div></td><td><span class="tag tag-warn">watch</span></td></tr>
+<tr><td class="code-cell">MSA NGC Registration</td><td class="num">91,300</td><td class="num good">89.5%</td><td class="num good">+0.8</td><td class="num">7.2%</td><td class="num good">3.3%</td><td class="num muted">-0.4</td><td class="num">72,100</td><td class="spark-cell"><div class="trend" data-trend='[88.1,88.4,88.9,89,88.7,89.2,88.9,89.5]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">healthy</span></td></tr>
+<tr><td class="code-cell">MSA SA Registration</td><td class="num">19,800</td><td class="num ">86.4%</td><td class="num muted">+0.2</td><td class="num">8.4%</td><td class="num ">5.2%</td><td class="num muted">-0.1</td><td class="num">16,400</td><td class="spark-cell"><div class="trend" data-trend='[85.8,86,85.9,86.2,86.1,86.4,86.2,86.4]' data-color="#656d76" data-w="160" data-h="28"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
+<tr><td class="code-cell">MSA NGC PN+CFA</td><td class="num">3,760,000</td><td class="num ">97.2%</td><td class="num muted">+0.5</td><td class="num">1.1%</td><td class="num good">1.7%</td><td class="num muted">-0.4</td><td class="num">1,940,000</td><td class="spark-cell"><div class="trend" data-trend='[96.2,96.4,96.6,96.8,96.9,97,96.8,97.2]' data-color="#1a7f37" data-w="160" data-h="28"></div></td><td><span class="tag" style="background:#dafbe1;color:#1a7f37;">win</span></td></tr>
+<tr><td class="code-cell">MSA SA PN+CFA</td><td class="num">1,185,000</td><td class="num ">95.4%</td><td class="num muted">-0.2</td><td class="num">2.2%</td><td class="num ">2.4%</td><td class="num muted">+0.1</td><td class="num">764,000</td><td class="spark-cell"><div class="trend" data-trend='[95.3,95.5,95.2,95.6,95.4,95.5,95.6,95.4]' data-color="#656d76" data-w="160" data-h="28"></div></td><td><span class="tag tag-muted">flat</span></td></tr>
+  </tbody>
+</table></div>
+
 <!-- ================ 60-DAY TREND ================ -->
-<h2 id="trend60d">📈 60-day per-scenario trend <span class="count">— weekly buckets; final bar in progress</span></h2>
+<h2 id="trend60d">📈 60-day per-scenario trend <span class="count">— rolling 7-day buckets; final bar = this week's window</span></h2>
 <div class="table-card"><table>
   <thead><tr><th>Scenario</th><th class="num">First week</th><th class="num">Last week</th><th class="num">First → last delta</th><th>Weekly sparkline</th><th>Classification</th></tr></thead>
   <tbody>
