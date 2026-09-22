@@ -516,6 +516,13 @@ All commands below require an explicit release and use the existing OS-held stat
 | Retry domain completion, never sending again | `notification finalize --release <id> --id <id>` |
 
 Send ONLY a successful claim's exact returned payload (`permission_to_send:true`).
+Email claims may also contain a hash-bound `fallback`. Always attempt the primary
+`workiq_send_email` first. The exact Mail MCP fallback is authorized only when the primary
+returns `email_sensitivity_label_unavailable` and explicitly says nothing was sent or saved.
+Never fall back after a timeout, ambiguous response, or any unlisted error. Both attempts
+belong to the same execution and receive one final `notification result`.
+Existing claimed descriptors without a fallback remain hash-frozen; do not migrate or
+rehash them. They require the normal owner-reviewed recovery path.
 `not_sent` requires proof nothing was sent; timeout, interruption or unknown outcome is
 uncertain. Claims never expire. After successful send plus failed acknowledgement, retry
 the acknowledgement only. Owner-reviewed recovery requires the original runner stopped.
@@ -529,8 +536,8 @@ and preparation/replacement timestamps remain in `superseded`, and the new hash 
 After the first claim the snapshot is frozen, even for known-not-sent outcomes. An expired
 claimed invitation requires owner recovery; it is never automatically replaced by another event.
 The descriptor contains release, scope (release,
-phase, window or step), semantic checkpoint, target, tool, exact payload, completion
-metadata and hash. Attempts preserve execution ID, runner, timestamps, outcome,
+phase, window or step), semantic checkpoint, target, tool, exact payload, optional
+hash-bound fallback, completion metadata and hash. Attempts preserve execution ID, runner, timestamps, outcome,
 evidence and raw provider receipt (null if none). Successful result replay preserves
 evidence. Step-owned sends share the engine's `_execution` ID. Legacy date-only stamps
 are conservative stop evidence, never converted into provider receipts; incomplete

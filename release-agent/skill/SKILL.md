@@ -101,6 +101,16 @@ Review the exact destination and payload, then `notification claim --release <id
 --hash <approved-hash> --executor <session-id>`. Send exactly the returned tool/payload ONLY
 when `permission_to_send:true`. No extra courtesy copies. For the Scout bot transport,
 verify the signed-in runner is the descriptor's owner target before claiming.
+For an email claim with a `fallback`, try the primary `workiq_send_email` first. Invoke the
+exact fallback tool/payload only when WorkIQ returns a listed `primary_error_codes` value
+AND explicitly proves nothing was sent or saved. Today the sole trigger is
+`email_sensitivity_label_unavailable`, and the fallback is
+`microsoft_mail-SendEmailWithAttachments`. A timeout, unknown result, or any other error
+is `uncertain` and MUST NOT fall back. Acknowledge the same execution once: fallback success
+is `sent` with both provider results in evidence/receipt; confirmed fallback non-delivery is
+`not_sent`; an unknown fallback outcome is `uncertain`.
+Fallback is never retrofitted into an already-claimed descriptor: its hash remains frozen,
+and legacy claimed/not-sent work still follows deliberate owner recovery.
 Only preparation accepts `--as-of`; claim/result/finalize use the trusted current clock.
 Changed never-claimed preparations may refresh with a new hash: review again.
 After any claim, the snapshot is frozen (including known-not-sent attempts); source or

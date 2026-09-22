@@ -60,6 +60,32 @@ def test_partial_delivery_only_failed_channel_retries(orch):
     assert retry["payload"] == b["payload"]
 
 
+def test_email_descriptor_has_exact_mail_mcp_fallback(orch):
+    item = email(orch)
+    assert item["fallback"] == {
+        "tool": "microsoft_mail-SendEmailWithAttachments",
+        "payload": {
+            "to": ["owner@example.com"],
+            "subject": "Subject",
+            "body": "Payload",
+            "contentType": "Text",
+        },
+        "when": {
+            "primary_error_codes": ["email_sensitivity_label_unavailable"],
+            "requires_explicit_not_sent": True,
+        },
+    }
+    D.offer(orch, item)
+    claim = D.claim(orch, item["id"], item["hash"], "worker")
+    assert claim["fallback"] == item["fallback"]
+
+    tampered = email(orch, logical="tampered")
+    tampered["fallback"]["payload"]["to"] = ["other@example.com"]
+    tampered["hash"] = D.fingerprint({k: v for k, v in tampered.items() if k != "hash"})
+    with pytest.raises(ValueError, match="fallback"):
+        D.offer(orch, tampered)
+
+
 def test_ambiguous_and_lost_ack_never_replay(orch):
     item = email(orch)
     D.offer(orch, item)
@@ -82,6 +108,7 @@ def test_claim_uses_approved_snapshot_not_later_preparation(orch):
     D.claim(orch, item["id"], item["hash"], "first")
     changed = copy.deepcopy(item)
     changed["payload"]["body"] = "changed"
+    changed["fallback"] = D.email_fallback(changed["payload"])
     changed["hash"] = D.fingerprint({k: v for k, v in changed.items() if k != "hash"})
     assert D.offer(orch, changed)["payload"] == item["payload"]
     with pytest.raises(ValueError, match="hash"):
@@ -228,6 +255,7 @@ def test_cli_claim_rechecks_real_step_fire_time(orch, tmp_path, monkeypatch, cap
     assert not C.load_state(str(tmp_path), orch.state.release_id).notification_deliveries[item["id"]]["attempts"]
 
 
+@pytest.mark.extended
 def test_cli_receipt_after_midnight_needs_no_clock_override(orch, tmp_path, monkeypatch, capsys):
     item = D.descriptor(orch.state, "midnight", email(orch)["scope"], "workiq_send_email",
                         email(orch)["payload"],

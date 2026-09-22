@@ -90,9 +90,9 @@ readiness.mcp_servers:
   what: >
     Confirms the command-based MCP servers this release depends on are registered in
     your Scout config — ICM (on-call / incident lookups), Kusto/ADX (telemetry + the
-    adx_access check), and Teams (comms gaps WorkIQ can't fill: group chats, channel
-    posts). Auto-verified read-only against config/requirements.yaml; passes only if
-    ALL are present.
+    adx_access check), Teams (comms gaps WorkIQ can't fill: group chats, channel
+    posts), and Mail (the guarded release-email fallback). Auto-verified read-only
+    against config/requirements.yaml; passes only if ALL are present.
   who: >
     Scout verifies it automatically (a Python verifier). Fixing a missing server is a
     one-time bootstrap step (register + restart Scout), not something the release does.
@@ -102,7 +102,7 @@ readiness.mcp_servers:
   how: >
     If it fails: run `python -m orchestrator.cli infra` (or setup/bootstrap.ps1) to
     auto-register the missing server(s), then RESTART Scout so it loads them, and
-    re-run the gate. These are provided by the Agency CLI (agency mcp icm|kusto|teams);
+    re-run the gate. These are provided by the Agency CLI (agency mcp icm|kusto|teams|mail);
     if Agency isn't installed, install it first. infra won't register a server whose
     launcher is missing.
   faqs:
@@ -110,8 +110,10 @@ readiness.mcp_servers:
       a: "infra registers it (backing up your config first) and tells you to restart Scout. It refuses to register a server whose launcher isn't installed."
     - q: "Why is the Teams MCP required now?"
       a: "To cover Teams gaps WorkIQ can't (group-chat creation, adding members, rich channel messaging) — WorkIQ is 1:1-only."
+    - q: "Why is the Mail MCP required?"
+      a: "It is the exact-payload fallback for release email when WorkIQ explicitly reports email_sensitivity_label_unavailable and confirms nothing was submitted."
     - q: "What's the empty-tools gotcha?"
-      a: "Command servers must ship a populated `tools` allowlist; an empty one makes Scout silently drop the server. Our requirements.yaml ships icm/kusto/teams with populated lists."
+      a: "Command servers must ship a populated `tools` allowlist; an empty one makes Scout silently drop the server. Our requirements.yaml ships icm/kusto/teams/mail with populated lists."
 
 readiness.silent_perms:
   summary: "Scout's permissions allow fully unattended (silent) runs."

@@ -20,12 +20,16 @@ from orchestrator.delivery_retention import (
 
 TRANSPORTS = {
     "workiq_send_email": ("email", ("to",)),
+    "microsoft_mail-SendEmailWithAttachments": ("email", ("to",)),
     "workiq_send_chat_message": ("teams", ("chatId",)),
     "m_send_teams_message": ("teams", ("owner",)),
     "microsoft_teams-SendMessageToChannel": ("teams", ("teamId", "channelId")),
     "microsoft_teams-SendMessageToUser": ("teams", ("userIdOrUpn",)),
     "workiq_create_event": ("calendar", ("attendees",)),
 }
+
+EMAIL_FALLBACK_ERROR = "email_sensitivity_label_unavailable"
+EMAIL_FALLBACK_TOOL = "microsoft_mail-SendEmailWithAttachments"
 
 
 def now_iso():
@@ -41,6 +45,26 @@ def chat_mentions(mentions):
 def fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
                                      ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def email_fallback(payload):
+    fallback_payload = {
+        "to": deepcopy(payload.get("to", [])),
+        "subject": payload.get("subject", ""),
+        "body": payload.get("body", ""),
+        "contentType": "HTML" if payload.get("isHtml") else "Text",
+    }
+    for key in ("cc", "bcc"):
+        if key in payload:
+            fallback_payload[key] = deepcopy(payload[key])
+    return {
+        "tool": EMAIL_FALLBACK_TOOL,
+        "payload": fallback_payload,
+        "when": {
+            "primary_error_codes": [EMAIL_FALLBACK_ERROR],
+            "requires_explicit_not_sent": True,
+        },
+    }
 
 
 def phase_done(orch, phase_id):
@@ -175,6 +199,8 @@ def descriptor(st, logical_id, scope, tool, payload, completion=None):
         "scope": deepcopy(scope), "channel": channel, "target": target,
         "tool": tool, "payload": payload, "completion": deepcopy(completion or {}),
     }
+    if tool == "workiq_send_email":
+        value["fallback"] = email_fallback(payload)
     value["hash"] = fingerprint(value)
     return value
 
@@ -201,6 +227,11 @@ def validate_record_state(state, record):
         raise ValueError("Prepared notification belongs to another release")
     if item["hash"] != fingerprint({k: v for k, v in item.items() if k != "hash"}):
         raise ValueError("Prepared snapshot hash is corrupt; owner recovery required")
+    fallback = item.get("fallback")
+    if fallback is not None:
+        if item["tool"] != "workiq_send_email" or fallback != email_fallback(item["payload"]):
+            raise ValueError("Malformed notification fallback; owner recovery required")
+    # Claimed legacy snapshots stay hash-frozen; only newly prepared email work gains fallback.
     completion, scope = item["completion"], item["scope"]
     if (completion.get("kind") not in (None, "step", "step_result", "step_data")
             or not isinstance(completion.get("data", {}), dict)

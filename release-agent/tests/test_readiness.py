@@ -249,7 +249,7 @@ def test_silent_perms_is_required_scout_item():
     # required_servers is exposed as data for the skill (m_get_settings check)
     sp = next(i for i in orch.gate.checklist()["items"] if i["id"] == "silent_perms")
     assert sp["verify"] == "auto" and sp["source"] == "scout"
-    assert sp["required_servers"] == ["shell", "workiq", "playwright", "kusto", "icm"]
+    assert sp["required_servers"] == ["shell", "workiq", "playwright", "kusto", "icm", "mail"]
     # everything else satisfied but silent_perms → gate still closed
     orch.gate.record_check("oncall_now", "pass", "not on-call")
     orch.gate.record_check("adx_access", "pass", "can query")

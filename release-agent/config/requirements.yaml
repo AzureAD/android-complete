@@ -224,6 +224,17 @@ mcp_servers:
       - SearchTeamMessagesQueryParameters
     note: "Provided by the Agency CLI (agency mcp teams). Fills Teams gaps WorkIQ lacks (group-chat creation, add members, channel posts). After registering, RESTART Scout. NOT auto-approved — Teams writes prompt for confirmation; see docs/teams-mcp-setup.md."
 
+  - id: mail
+    name: "Microsoft Mail MCP server (Agency — release email fallback)"
+    scout_key: mail
+    provider: "cmd /c \"%APPDATA%\\agency\\CurrentVersion\\agency.exe --version\""
+    command: "%APPDATA%\\agency\\CurrentVersion\\agency.exe"
+    args: ["mcp", "mail"]
+    required_by: [release email fallback, readiness.mcp_servers]
+    tools:
+      - SendEmailWithAttachments
+    note: "Policy-compliant fallback when WorkIQ explicitly reports email_sensitivity_label_unavailable and proves nothing was sent. After registering, RESTART Scout so microsoft_mail-SendEmailWithAttachments loads."
+
   - id: ecs
     name: "ECS MCP server (Experimentation & Configuration Service)"
     scout_key: ecs
@@ -310,5 +321,4 @@ kusto_clusters:
   - service_uri: "https://idsharedeus2.eastus2.kusto.windows.net"
     default_database: "d496be22d62a46b0a3cf67ea2e736fd8"
     description: "ID shared EastUS2 (idsharedeus2) — Android release telemetry"
-
 

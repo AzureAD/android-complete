@@ -723,6 +723,15 @@ def test_requirements_declares_teams_mcp_with_tools():
     assert "CreateChat" in teams.get("tools", []) and len(teams["tools"]) >= 30
 
 
+def test_requirements_declares_mail_mcp_fallback_tool():
+    from orchestrator import infra
+    root = os.path.dirname(os.path.abspath(__file__))
+    req = infra.load_requirements(os.path.join(os.path.dirname(root), "config", "requirements.yaml"))
+    mail = next((m for m in req.get("mcp_servers", []) if m.get("scout_key") == "mail"), None)
+    assert mail is not None, "Mail MCP missing from requirements.yaml"
+    assert mail.get("tools") == ["SendEmailWithAttachments"]
+
+
 
 
 def test_all_command_mcps_ship_nonempty_tool_allowlists():
