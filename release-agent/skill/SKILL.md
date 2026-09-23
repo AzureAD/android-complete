@@ -97,8 +97,10 @@ surface claimed/uncertain work for evidence-based owner recovery.
 `step-action`, `notify`, `tick`, `status-email`, and polling output are previews, never send
 permission. Run `notification prepare --release <id> --source step|digest|status-email|pending`
 (step source needs the same `--phase`, `--step`, `--param` inputs).
-Review the exact destination and payload, then `notification claim --release <id> --id <notification-id>
---hash <approved-hash> --executor <session-id>`. Send exactly the returned tool/payload ONLY
+Review the exact destination and payload yourself, then `notification claim --release <id> --id <notification-id>
+--hash <approved-hash> --executor <session-id>`. This review is a Scout/engine safety check,
+not an owner approval prompt: do NOT call `m_ask_user` or pause for send approval unless the
+engine returned an explicit human gate/review. Send exactly the returned tool/payload ONLY
 when `permission_to_send:true`. No extra courtesy copies. For the Scout bot transport,
 verify the signed-in runner is the descriptor's owner target before claiming.
 Only preparation accepts `--as-of`; claim/result/finalize use the trusted current clock.

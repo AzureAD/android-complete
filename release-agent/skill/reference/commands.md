@@ -511,10 +511,12 @@ All commands below require an explicit release and use the existing OS-held stat
 | Operation | Command |
 | --- | --- |
 | Persist exact preparation, without send permission | `notification prepare --release <id> --source step\|digest\|status-email\|pending [--phase <phase> --step <step> --param k=v]` |
-| Approve and reserve that exact target/payload | `notification claim --release <id> --id <logical-id:channel> --hash <hash> --executor <session>` |
+| Scout-reviewed reservation for that exact target/payload | `notification claim --release <id> --id <logical-id:channel> --hash <hash> --executor <session>` |
 | Acknowledge one channel | `notification result --release <id> --id <id> --execution-id <execution> --outcome sent\|not_sent\|uncertain --evidence "<proof>" [--receipt-file <JSON>] [--owner-review]` |
 | Retry domain completion, never sending again | `notification finalize --release <id> --id <id>` |
 
+For normal notification delivery, the Scout runner reviews the descriptor and claims it silently;
+do not ask the owner to approve sending unless the engine explicitly surfaces a human gate/review.
 Send ONLY a successful claim's exact returned payload (`permission_to_send:true`).
 `not_sent` requires proof nothing was sent; timeout, interruption or unknown outcome is
 uncertain. Claims never expire. After successful send plus failed acknowledgement, retry

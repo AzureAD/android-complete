@@ -842,9 +842,11 @@ python -m orchestrator.cli notify --release 2026-08 --json # read-only; no send 
 ```
 
 A **Scout automation** runs **`tick --release <id> --json` hourly**. Its output is only
-a preview: `notification prepare --release <id> --source digest`, review, then
-`notification claim` with the approved hash/executor. Send only the returned payload
-when `permission_to_send:true`, then acknowledge that channel with `notification result`.
+a preview: `notification prepare --release <id> --source digest`, Scout reviews the
+descriptor, then `notification claim` stores the hash/executor. This is not an owner
+approval prompt unless the engine explicitly surfaces a human gate/review. Send only the
+returned payload when `permission_to_send:true`, then acknowledge that channel with
+`notification result`.
 Email and Teams deduplicate independently using the owner's day. `notify` is read-only.
 `--force` changes cadence, never lifecycle or acknowledged identities. Unknown transport
 outcomes require owner review, not automatic retries; there is no exactly-once guarantee.

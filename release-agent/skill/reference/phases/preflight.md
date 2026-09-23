@@ -33,9 +33,12 @@ python -m orchestrator.cli notification prepare --release <id> --source step --p
 Only `notice` accepts optional `--param variant=update`; `flight_reminder` accepts no
 public parameters. Mock redirects remain separate.
 
-1. Review each eligible descriptor's exact destination/payload. `notice` targets the configured
-   DL; `flight_reminder` targets the configured Android Core Team chat. Local test redirects
-   (`send_to`) apply before hashing. A wording variant never authorizes a second acknowledged send.
+1. Review each eligible descriptor's exact destination/payload as the Scout runner. This is not
+   an owner approval step: do not call `m_ask_user`, do not paste the payload for approval, and do
+   not pause the phase unless the engine explicitly reports a human gate/review. `notice` targets
+   the configured DL; `flight_reminder` targets the configured Android Core Team chat. Local test
+   redirects (`send_to`) apply before hashing. A wording variant never authorizes a second
+   acknowledged send.
 2. **Claim:** `notification claim --release <id> --id <notification-id> --hash <approved-hash> --executor <session-id>`.
 3. Only when the claim returns **`permission_to_send:true`**, execute its returned `tool`/`payload`
    verbatim. Never send raw `step-action` output or override recipients.
