@@ -33,10 +33,9 @@ def test_signing_clears_entry_gate():
     _clear_ccd_scout(orch)
     orch.run_until_gate()
     report = orch.status_report()
-    # Phases 0, 1 and 2 have no human gate (rc_report's 90% UI gate is auto); the first
-    # hold is the Phase-3 'ui_failures' human reminder.
-    assert report["current_step"] == "ui_failures"
-    assert report["status"] == "awaiting_action"
+    # Phase 2 now stops at the human RC quality decision gate after report delivery.
+    assert report["current_step"] == "rc_report_gate"
+    assert report["status"] == "holding_gate"
 
 
 
@@ -326,7 +325,7 @@ def test_done_cannot_bypass_gate():
     assert act.kind == "idle"
     assert "gate steps require approve or deny" in act.message
     assert not st.is_done("bug_bash", "bugbash_complete")
-    assert st.gate_decisions == []
+    assert not any(d["step"] == "bug_bash.bugbash_complete" for d in st.gate_decisions)
 
 
 def test_generic_record_and_reservation_cannot_bypass_gate():
@@ -345,7 +344,7 @@ def test_generic_record_and_reservation_cannot_bypass_gate():
     assert reserved.kind == "blocked"
     assert "Gate steps cannot be reserved" in reserved.reason
     assert not st.is_done("bug_bash", "bugbash_complete")
-    assert st.gate_decisions == []
+    assert not any(d["step"] == "bug_bash.bugbash_complete" for d in st.gate_decisions)
 
 
 def test_terminal_gate_without_approval_is_projected_pending():
@@ -425,11 +424,11 @@ def test_notify_unsigned_readiness_is_silent():
 def test_notify_digest_reports_gate_and_progress():
     from orchestrator import render
     st, orch = _orch()                   # signed, no CCD → phase due immediately
-    orch.run_until_gate()                # Phases 0-2 gateless; holds at the Phase-3 ui_failures action
+    orch.run_until_gate()                # Holds at the Phase-2 RC quality decision gate
     msg = render.notification(orch.status_report())
     assert "Progress:" in msg
-    assert "Action needed now" in msg    # ui_failures is the live hold
-    assert "your approval" in msg        # the bugbash_complete gate is listed among the human touchpoints
+    assert "your approval" in msg
+    assert "Decide RC quality gate" in msg
 
 
 
@@ -669,22 +668,24 @@ def test_auth_gate_blocks_when_a_suite_missing():
 
 
 def test_build_verify_phase_shape():
-    """Phase 2 has the 4 verification agent steps + the rc_report scout step (which emails
-    the RC report AND applies the 90% UI gate). rc_report is the terminal step — there is
-    NO separate human gate (the gate IS the decision). CCD+1 anchored."""
+    """Phase 2 captures evidence, publishes the HTML report, emails a lightweight link,
+    then stops at a human RC quality decision gate. CCD+1 anchored."""
     import yaml as _yaml
     cfg = _yaml.safe_load(open(CONFIG, encoding="utf-8"))
     bv = next(p for p in cfg["phases"] if p["id"] == "build_verify")
     ids = [s["id"] for s in bv["steps"]]
     assert ids == ["checker_fired", "orchestrator_health", "mrwp_ecs", "mrwp_local",
-                   "auth_ecs", "telemetry_verify", "rc_report"]
+                   "auth_ecs", "telemetry_verify", "rc_report_publish",
+                   "rc_report_notify", "rc_report_gate"]
     assert bv.get("anchor") == "CCD+1"
     tv = next(s for s in bv["steps"] if s["id"] == "telemetry_verify")
     assert tv.get("source") == "scout" and tv.get("owner") == "agent"
-    rc = next(s for s in bv["steps"] if s["id"] == "rc_report")
-    assert rc.get("source") == "scout" and rc.get("owner") == "agent"
-    assert bv["steps"][-1]["id"] == "rc_report"          # terminal Phase-2 step
-    assert not any(s.get("gate") for s in bv["steps"])   # no human gate in Phase 2
+    pub = next(s for s in bv["steps"] if s["id"] == "rc_report_publish")
+    notify = next(s for s in bv["steps"] if s["id"] == "rc_report_notify")
+    gate = next(s for s in bv["steps"] if s["id"] == "rc_report_gate")
+    assert pub.get("write_command") == "publish-rc-report"
+    assert notify.get("source") == "scout" and notify.get("owner") == "agent"
+    assert gate.get("gate") and gate.get("owner") == "human"
 
 
 

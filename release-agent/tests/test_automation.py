@@ -196,7 +196,7 @@ def test_automation_plan_derives_specs_from_ccd():
     assert by["ccd-morning"]["registration"]["cleanup_when"] == "steps_done"
     assert by["build-verify-rc-poller"]["cleanup_when"] == "phase_done:build_verify"
     assert by["build-verify-rc-poller"]["provision_when"] == \
-        "step_status:build_verify.rc_report:in_flight"
+        "step_status:build_verify.mrwp_ecs:in_flight"
 
 
 def test_on_demand_obligation_survives_trigger_worker_race():
@@ -322,14 +322,16 @@ def test_cleanup_plan_applies_declared_lifecycle_rules():
     Orchestrator(CONFIG, st, mocks={})
     for sid in ("final_reminder", "pr_reminder", "localization"):
         st.set_step("ccd", sid, StepState(status="done"))
-    st.set_step("build_verify", "rc_report", StepState(status="blocked"))
+    st.set_step("build_verify", "rc_report_publish", StepState(status="done"))
+    st.set_step("build_verify", "rc_report_notify", StepState(status="done"))
     st.set_step("bug_bash", "bugbash_updates",
                 StepState(status="done", data={"poll_complete": True}))
     entries = [
         {"id": "morning", "name": "Morning", "kind": "step-driving",
          "steps": ["ccd.final_reminder", "ccd.pr_reminder"], "cleanup_when": "steps_done"},
         {"id": "rc", "name": "RC poller", "kind": "step-driving",
-         "steps": ["build_verify.rc_report"], "cleanup_when": "steps_settled"},
+         "steps": ["build_verify.rc_report_publish", "build_verify.rc_report_notify"],
+         "cleanup_when": "steps_settled"},
         {"id": "bug", "name": "Bug poller", "kind": "step-driving",
          "steps": ["bug_bash.bugbash_updates"],
          "cleanup_when": ["step_flag:bug_bash.bugbash_updates:poll_complete",

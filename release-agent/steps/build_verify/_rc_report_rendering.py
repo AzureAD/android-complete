@@ -25,6 +25,114 @@ def _link_urls_html(text: str) -> str:
     return "".join(parts)
 
 
+def _next_detail(model):
+    from steps.build_verify import rc_report as R
+    return R.rc_next_action_detail(model)
+
+
+def _next_html(model):
+    detail = _next_detail(model)
+    intro = (f"<p style='margin:6px 0;color:#475467;'>{_link_urls_html(detail.get('intro', ''))}</p>"
+             if detail.get("intro") else "")
+    sections = []
+    for section in detail.get("sections", []):
+        items = "".join(
+            f"<li style='margin:4px 0;'>{_link_urls_html(item)}</li>"
+            for item in section.get("items", []))
+        sections.append(
+            f"<div style='margin-top:10px;'><div style='font-weight:700;color:#1d2939;'>"
+            f"{T.esc(section['title'])}</div>"
+            f"<ol style='margin:4px 0 0 20px;padding:0;color:#475467;'>{items}</ol></div>")
+    return f"<strong>Next:</strong> {T.esc(detail['headline'])}{intro}{''.join(sections)}"
+
+
+def _next_plain(model):
+    detail = _next_detail(model)
+    lines = ["NEXT: " + detail["headline"]]
+    if detail.get("intro"):
+        lines.append(detail["intro"])
+    for section in detail.get("sections", []):
+        lines.append(section["title"] + ":")
+        lines.extend(f"  {index}. {item}" for index, item in enumerate(section.get("items", []), 1))
+    return lines
+
+
+_NEXT_SECTION_TITLES = (
+    "Evidence action",
+    "MRWP UI action",
+    "Authenticator ECS action",
+    "Release-owner follow-up",
+)
+
+
+def _split_numbered_items(text: str) -> list[str]:
+    matches = list(re.finditer(r"(?:^|\s)(\d+)\)\s+", text or ""))
+    if not matches:
+        return [text.strip()] if str(text or "").strip() else []
+    items = []
+    for index, match in enumerate(matches):
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        item = text[start:end].strip()
+        if item:
+            items.append(item)
+    return items
+
+
+def _parse_next_action(next_action: str) -> dict:
+    text = str(next_action or "").strip()
+    positions = sorted(
+        (text.find(title + ": "), title)
+        for title in _NEXT_SECTION_TITLES
+        if (title + ": ") in text
+    )
+    positions = [(pos, title) for pos, title in positions if pos >= 0]
+    if not positions:
+        return {"headline": text, "intro": "", "sections": []}
+    first, _title = positions[0]
+    prefix = text[:first].strip()
+    headline, intro = prefix, ""
+    split_at = prefix.find(". ")
+    if split_at >= 0:
+        headline = prefix[:split_at + 1].strip()
+        intro = prefix[split_at + 2:].strip()
+    sections = []
+    for index, (pos, title) in enumerate(positions):
+        start = pos + len(title) + 2
+        end = positions[index + 1][0] if index + 1 < len(positions) else len(text)
+        sections.append({"title": title, "items": _split_numbered_items(text[start:end].strip())})
+    return {"headline": headline, "intro": intro, "sections": sections}
+
+
+def _next_html(next_action: str):
+    detail = _parse_next_action(next_action)
+    intro = f"<p style='margin:6px 0;color:#475467;'>{_link_urls_html(detail.get('intro', ''))}</p>" if detail.get("intro") else ""
+    sections = []
+    for section in detail.get("sections", []):
+        items = "".join(
+            f"<li style='margin:4px 0;'>{_link_urls_html(item)}</li>"
+            for item in section.get("items", []))
+        sections.append(
+            f"<div style='margin-top:10px;'><div style='font-weight:700;color:#1d2939;'>"
+            f"{T.esc(section['title'])}</div>"
+            f"<ol style='margin:4px 0 0 20px;padding:0;color:#475467;'>{items}</ol></div>")
+    return (
+        f"<strong>Next:</strong> {T.esc(detail['headline'])}"
+        f"{intro}{''.join(sections)}"
+    )
+
+
+def _next_plain(next_action: str):
+    detail = _parse_next_action(next_action)
+    lines = ["NEXT: " + detail["headline"]]
+    if detail.get("intro"):
+        lines.append(detail["intro"])
+    for section in detail.get("sections", []):
+        lines.append(section["title"] + ":")
+        lines.extend(f"  {index}. {item}" for index, item in enumerate(section.get("items", []), 1))
+    return lines
+
+
 def recovered_tests(model) -> list:
     """Complete successful retry list, retaining suite and provider identity."""
     out = []
@@ -295,7 +403,7 @@ def rc_email_plain(model, ctx, gate, auth, next_action) -> str:
     L.append(f"Hi {ctx.get('owner', 'there')},")
     L.append("")
     L.append(f"Captured RC verification results for {rid}.")
-    L.append("RECOMMENDATION: " + next_action)
+    L.extend(_next_plain(next_action))
     L.append("")
     _g = gate
     _mpct = _g.get("pass_pct")
@@ -382,8 +490,6 @@ def rc_email_plain(model, ctx, gate, auth, next_action) -> str:
                  f"(at least one Passed and Failed attempt, in any order; counted once as passed):")
         L += [f"  - {t}" for t in recovered]
         L.append("")
-    L.append("NEXT: " + next_action)
-    L.append("")
     L.append("— Release Orchestrator (Scout)")
     return "\n".join(L)
 
@@ -610,9 +716,6 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
       <div style="font-size:13px;opacity:.92;margin-top:2px;">Release {T.esc(rid)} &middot; Phase 2 &mdash; Build &amp; RC testing</div>
     </td></tr>
   </table>
-  <div style="margin:12px 0;padding:12px 16px;border:1px solid #d0d5dd;border-radius:8px;background:#f9fafb;">
-    <strong>Recommendation:</strong> {T.esc(next_action)}
-  </div>
   {_gates_banner()}
 
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:12px 0;border:1px solid #e4e7ec;border-radius:10px;">
@@ -648,7 +751,7 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
 
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0;border-radius:8px;background:#f9fafb;border:1px solid #eef0f3;">
     <tr><td style="padding:12px 16px;">
-      <strong>Next:</strong> {_link_urls_html(next_action)}
+      {_next_html(next_action)}
     </td></tr>
   </table>
   <p style="color:#98a2b3;font-size:12px;">&mdash; Release Orchestrator (Scout)</p>

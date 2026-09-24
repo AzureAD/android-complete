@@ -64,7 +64,9 @@ phases:
       - { id: mrwp_local,          name: "Verify MRWP (Local) ran to completion + tests", depends_on: [mrwp_ecs], kind: auto, effect_mode: read_only, owner: agent, maps_to: [B3] }
       - { id: auth_ecs,            name: "Verify Authenticator ECS build + UI tests", depends_on: [mrwp_local], kind: auto, effect_mode: read_only, owner: agent, maps_to: [B3] }
       - { id: telemetry_verify,    name: "Verify bug-bash telemetry in Kusto", depends_on: [auth_ecs], kind: external, repeatable: true, owner: agent, source: scout, maps_to: [B3] }
-      - { id: rc_report,           name: "Email RC verification report + apply the 90% UI gate", depends_on: [auth_ecs], kind: external, owner: agent, source: scout, maps_to: [B4] }
+      - { id: rc_report_publish,   name: "Publish RC verification report to SharePoint", depends_on: [auth_ecs], kind: external, write_command: publish-rc-report, owner: agent, source: scout, maps_to: [B4] }
+      - { id: rc_report_notify,    name: "Post RC verification report link to Scout bot", depends_on: [rc_report_publish], kind: external, owner: agent, source: scout, maps_to: [B4] }
+      - { id: rc_report_gate,      name: "Decide RC quality gate after reviewing report", depends_on: [telemetry_verify, rc_report_notify], kind: approval_gate, owner: human, gate: true, maps_to: [B4] }
 
   - id: bug_bash
     name: "Test / Bug Bash"

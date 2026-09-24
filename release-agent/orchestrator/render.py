@@ -326,6 +326,10 @@ def status_view(r: dict) -> str:
     elif r.get("halted"):
         rsn = f" — {r['halt_reason']}" if r.get("halt_reason") else ""
         lines.append(f"⛔ **HALTED**{rsn}. Nothing advances until you resume.")
+    elif r.get("workflow_revision_problem"):
+        lines.append("⛔ **Workflow update needs review.** Release progress is preserved below, "
+                     "but new work is blocked until workflow adoption is reviewed.")
+        lines.append(_cell(r["workflow_revision_problem"]))
     elif r["blocked"]:
         lines.append(f"⛔ **Blocked** — cannot start: {', '.join(r['blocked_items'])}. "
                      "Resolve it, or hand the release to someone who can.")

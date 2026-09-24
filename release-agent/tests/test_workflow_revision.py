@@ -327,6 +327,24 @@ def test_runtime_only_change_adopts_without_resetting_release_progress(tmp_path)
     assert state.get_step("removed", "old").data == {"proof": 12}
 
 
+def test_status_preserves_bound_progress_during_runtime_mismatch(tmp_path):
+    state, orch = _orch(tmp_path)
+    _complete(state)
+    state.set_step("third", "approve", StepState(status="pending", note="still waiting"))
+    state.workflow_revision["runtime_hash"] = digest("old runtime")
+
+    report = orch.status_report()
+
+    assert report["workflow_revision_problem"]
+    assert report["status"] == "blocked"
+    assert report["done"] == 5 and report["total"] == 6
+    assert report["current_phase"] == "third"
+    assert report["phases"][0]["state"] == "done"
+    assert report["phases"][1]["state"] == "done"
+    assert report["phases"][2]["state"] == "current"
+    assert not orch.scheduling().runnable
+
+
 def test_reordering_and_removed_steps_have_conservative_invalidations(tmp_path):
     state, orch = _orch(tmp_path)
     _complete(state)

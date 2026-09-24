@@ -24,6 +24,7 @@ COMMAND_MODULES = (
     CommandModule("notice"),
     CommandModule("localization", external_writes=("launch-localization",)),
     CommandModule("rc_report"),
+    CommandModule("rc_report_publish", external_writes=("publish-rc-report",)),
     CommandModule("rc_poll"),
     CommandModule("telemetry_cmd"),
     CommandModule("distribute", external_writes=("distribute-tests",)),

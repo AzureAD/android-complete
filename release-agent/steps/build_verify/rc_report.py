@@ -327,17 +327,20 @@ def auth_report_gate(model) -> dict:
 
 def _mrwp_next_steps(model) -> str:
     release = model.get("release") or "<id>"
-    return (
-        "MRWP UI action: 1) Use the MRWP ECS/Local suite cards above to identify the "
-        "failing suite(s), exact failing titles, and source run/result links. "
-        f"2) If the owner judges these failures flaky, re-run the failed RC test run(s), "
-        f"then signal `rc-retriggered --release {release} --reason \"...\"` so Scout tracks "
-        "the newest RC and re-applies the gate. "
-        "3) If this is a product bug, patch/cherry-pick through the broker release process; "
-        f"after the orchestrator creates a fresh RC, run `rc-retriggered --release {release}`. "
-        "4) Override only as a last resort after team discussion: "
-        "`skip --release <id> --phase build_verify --step rc_report --reason \"...\"`."
-    )
+    return {
+        "title": "MRWP UI action",
+        "items": [
+            "Use the MRWP ECS/Local suite cards above to identify the failing suite(s), "
+            "exact failing titles, and source run/result links.",
+            "If the owner judges these failures flaky, re-run the failed RC test run(s), "
+            f"then signal `rc-retriggered --release {release} --reason \"...\"` so Scout tracks "
+            "the newest RC and re-applies the gate.",
+            "If this is a product bug, patch/cherry-pick through the broker release process; "
+            f"after the orchestrator creates a fresh RC, run `rc-retriggered --release {release}`.",
+            "Override only as a last resort after team discussion: "
+            "`skip --release <id> --phase build_verify --step rc_report_gate --reason \"...\"`.",
+        ],
+    }
 
 
 def _auth_next_steps(model) -> str:
@@ -364,33 +367,45 @@ def _auth_next_steps(model) -> str:
     build_url = A.auth_build_url(build_id) if valid_id(build_id) else ""
     test_ref = f"{test_id}" + (f" ({test_url})" if test_url else "")
     build_ref = f"{build_id}" + (f" ({build_url})" if build_url else "")
-    return (
-        "Authenticator ECS action: 1) Open the Authenticator ECS UI-test run "
-        f"{test_ref} and start with {focus}; use the failing-title/source links in the "
-        "Authenticator ECS card. Monthly UI failures are not mapped to ADO test-plan cases "
-        "today, so do not create or force mappings for them; still investigate the source "
-        "failures by name and source link. "
-        f"2) If this is test flake or infrastructure, re-run the post-build Firebase UI tests "
-        f"for Authenticator build {build_ref}; after the rerun completes, run "
-        f"`reopen --release {release} --phase build_verify --step auth_ecs "
-        "--reason \"Auth ECS UI tests reran\"`, then `next --release "
-        f"{release}`. When `auth_ecs` is recaptured, resend the report with "
-        f"`notification prepare --release {release} --source step --phase build_verify "
-        "--step rc_report`, then claim/send/acknowledge that exact payload. "
-        "3) If this is a real Authenticator product bug, follow the Android Authenticator "
-        f"cherry-pick instructions ({AUTH_CHERRY_PICK_TSG}). After the cherry-pick produces "
-        "a new Authenticator ECS build + UI-test run, use the same reopen/next/report "
-        "commands above to re-evaluate. "
-        "4) Override only as a last resort after team discussion: "
-        "`skip --release <id> --phase build_verify --step rc_report --reason \"...\"`."
-    )
+    return {
+        "title": "Authenticator ECS action",
+        "items": [
+            "Open the Authenticator ECS UI-test run "
+            f"{test_ref} and start with {focus}; use the failing-title/source links in the "
+            "Authenticator ECS card.",
+            "Monthly UI failures are not mapped to ADO test-plan cases today, so do not "
+            "create or force mappings for them; still investigate the source failures by "
+            "name and source link.",
+            "If this is test flake or infrastructure, re-run the post-build Firebase UI "
+            f"tests for Authenticator build {build_ref}. After the rerun completes, run "
+            f"`reopen --release {release} --phase build_verify --step auth_ecs "
+            "--reason \"Auth ECS UI tests reran\"`, then `next --release "
+            f"{release}`.",
+            "When `auth_ecs` is recaptured, publish and send the report again with "
+            f"`publish-rc-report --release {release} --execute --auto-approve "
+            "--executor rc-report-publish-automation`, then "
+            f"`notification prepare --release {release} --source step --phase build_verify "
+            "--step rc_report_notify` and follow claim/send/acknowledge.",
+            "If this is a real Authenticator product bug, follow the Android Authenticator "
+            f"cherry-pick instructions ({AUTH_CHERRY_PICK_TSG}). After the cherry-pick "
+            "produces a new Authenticator ECS build + UI-test run, use the same "
+            "reopen/next/report commands above to re-evaluate.",
+            "Override only as a last resort after team discussion: "
+            "`skip --release <id> --phase build_verify --step rc_report_gate --reason \"...\"`.",
+        ],
+    }
 
 
-def rc_next_action(model):
+def rc_next_action_detail(model):
     readiness = report_readiness(model)
     if not readiness["ready"]:
-        return ("WAIT — current RC evidence is incomplete. " + readiness["detail"]
-                + " Refresh verification before deciding whether to proceed. No automatic advance.")
+        return {
+            "headline": "WAIT — current RC evidence is incomplete.",
+            "sections": [{"title": "Evidence action", "items": [
+                readiness["detail"],
+                "Refresh verification before deciding whether to proceed. No automatic advance.",
+            ]}],
+        }
     gate, auth = rc_ui_gate(model), auth_report_gate(model)
     holding = [name for name, result in (("MRWP UI", gate), ("Authenticator ECS", auth))
                if result["blocking"]]
@@ -400,14 +415,37 @@ def rc_next_action(model):
             actions.append(_mrwp_next_steps(model))
         if auth["blocking"]:
             actions.append(_auth_next_steps(model))
-        return (f"STOP / HOLD — {' and '.join(holding)} did not clear the quality gate. "
-                "Do not proceed to Bug Bash. " + " ".join(actions) + " No automatic advance.")
+        return {
+            "headline": f"STOP / HOLD — {' and '.join(holding)} did not clear the quality gate.",
+            "intro": "Do not proceed to Bug Bash. No automatic advance.",
+            "sections": actions,
+        }
     if gate["verdict"] == "warn":
-        return ("CONTINUE WITH WARNINGS — both quality gates clear. Proceed to Bug Bash after "
-                "recording this report and completing all prerequisites; investigate remaining "
-                "MRWP UI failures in parallel. No separate RC approval is needed.")
-    return ("PROCEED — both quality gates are clean. Proceed to Bug Bash after recording this "
-            "report and completing all prerequisites. No separate RC approval is needed.")
+        return {
+            "headline": "CONTINUE WITH WARNINGS — both quality gates clear.",
+            "sections": [{"title": "Release-owner follow-up", "items": [
+                "Proceed to Bug Bash after recording this report and completing all prerequisites.",
+                "Investigate remaining MRWP UI failures in parallel. No separate RC approval is needed.",
+            ]}],
+        }
+    return {
+        "headline": "PROCEED — both quality gates are clean.",
+        "sections": [{"title": "Release-owner follow-up", "items": [
+            "Proceed to Bug Bash after recording this report and completing all prerequisites.",
+            "No separate RC approval is needed.",
+        ]}],
+    }
+
+
+def rc_next_action(model):
+    detail = rc_next_action_detail(model)
+    parts = [detail["headline"]]
+    if detail.get("intro"):
+        parts.append(detail["intro"])
+    for section in detail.get("sections", []):
+        parts.append(section["title"] + ": " + " ".join(
+            f"{index}) {item}" for index, item in enumerate(section.get("items", []), 1)))
+    return " ".join(parts)
 
 
 def rc_email(context):

@@ -122,7 +122,7 @@ def cmd_poll_rc(args):
             decision["permission_to_send"] = False
             C.save_state(st, args.runs_root, args.release)
     else:
-        rc = st.get_step("build_verify", "rc_report")
+        gate = st.get_step("build_verify", "rc_report_gate")
         outstanding = [item.definition.id for item in selection.steps
                        if item.definition.phase_id == "build_verify" and not item.complete]
         blocked = next((sid for sid in outstanding
@@ -136,9 +136,15 @@ def cmd_poll_rc(args):
             decision = {"decision": "blocked", "step": blocked,
                         "note": st.get_step("build_verify", blocked).note}
         elif not outstanding:
+            approved = any(
+                item.get("step") == "build_verify.rc_report_gate"
+                and item.get("decision") == "approved"
+                for item in st.gate_decisions
+            )
             decision = {"decision": "resolved",
-                        "status": "overridden" if rc.status == "skipped" or rc.by == "human" else "passed",
-                        "note": rc.note}
+                        "status": "overridden" if gate.status == "skipped" else
+                                  "passed" if approved else "settled",
+                        "note": gate.note}
         elif orch.current_phase_id() == "build_verify":
             decision = {"decision": "waiting", "steps": outstanding,
                         "note": "Phase 2 prerequisites are not complete.", "poll_in_min": POLL_INTERVAL_MIN}

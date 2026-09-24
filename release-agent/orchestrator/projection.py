@@ -133,7 +133,7 @@ class StateProjection:
         return bool(decision and decision.get("decision") == "approved")
 
     def step_complete(self, step: StepDefinition) -> bool:
-        if self.revision_problem:
+        if self.revision_problem and self.state.workflow_revision is None:
             return False
         record = self.state.get_step(step.phase_id, step.id)
         if step.is_gate:

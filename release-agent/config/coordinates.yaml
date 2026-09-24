@@ -35,6 +35,13 @@ hosts:
 links:
   test_accounts: "https://labusermanagerapi.azurewebsites.net/api/WebApp"
 
+# SharePoint locations used for release-owned report artifacts.
+sharepoint:
+  rc_reports:
+    site_url: "https://microsoft.sharepoint-df.com/teams/MsalAndroidRelease"
+    library: "Documents"
+    folder: "ReleaseAgentReports"
+
 # Pipeline definition ids, each tagged with the org it lives in.
 pipelines:
   checker:      { org: engineering, def: 3038 }     # Code Complete Calendar Checker (fires the release on the CCD)

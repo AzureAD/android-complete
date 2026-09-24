@@ -38,6 +38,7 @@ AUTO_APPROVED_WRITE_COMMANDS = {
     "start-release-signoff",
     "start-upload-whats-new",
     "start-upload-alpha",
+    "publish-rc-report",
 }
 
 

@@ -60,6 +60,10 @@ class _Coords:
         """A user-facing portal URL, including its application path."""
         return self._get("links", key)
 
+    def sharepoint(self, key) -> dict:
+        """A SharePoint report/artifact target."""
+        return dict(self._get("sharepoint", key))
+
     # -- pipelines --
     def pipeline_def(self, key) -> int:
         """A pipeline's definition id (e.g. 'checker' -> 3038)."""

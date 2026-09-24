@@ -46,58 +46,24 @@ def args_for(tmp_path, st):
      {"present": True, "total": 100, "passed": 10, "failed": 90}),
     (["pipeline_runs", "rcs", -1, "ecs", "tests", "categories", "ui"],
      {"total": 100, "passed": 10, "failed": 90}),
-    (["pipeline_runs", "rcs", -1, "ecs", "resolved_at"], "2026-09-10T20:00:00Z"),
 ])
-@pytest.mark.parametrize("in_flight", [False, True])
-def test_rc_report_source_change_rejects_claim_or_suppresses_completion(
-        ready, tmp_path, monkeypatch, capsys, path, value, in_flight):
-    from orchestrator import delivery as D, schedule
-    from orchestrator.commands.step_action import prepare_step
-    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+def test_rc_report_publish_review_hash_tracks_source_evidence(ready, path, value):
+    from orchestrator import write_review as W
+    from orchestrator.commands.rc_report_publish import plan_rc_report_publish
+
     orch = Orchestrator(CONFIG, ready, mocks={}, as_of=date(2026, 9, 10))
-    monkeypatch.setattr(schedule, "now_local", lambda zone: orch.now_local.astimezone(zone))
-    args = Namespace(phase="build_verify", step="rc_report", release=ready.release_id)
-    item = prepare_step(args, ready, orch)["notifications"][0]
-    assert item["completion"]["status"] == "pass"
-    D.offer(orch, item)
-    if in_flight:
-        claim = D.claim(orch, item["id"], item["hash"], "test-worker")
+    before = W.review_hash(orch, "build_verify", "rc_report_publish", plan_rc_report_publish(orch))
     container = vars(ready)
     for key in path[:-1]:
         container = container[key]
     container[path[-1]] = value
 
-    if not in_flight:
-        with pytest.raises(ValueError, match="source checkpoint changed"):
-            D.claim(orch, item["id"], item["hash"], "test-worker")
-        prepared = prepare_step(args, ready, orch)
-        if path[:4] == ["pipeline_runs", "rcs", -1, "auth"] or "categories" in path:
-            assert prepared["kind"] == "blocked"
-            return
-        fresh = prepared["notifications"][0]
-        assert fresh["hash"] != item["hash"]
-        D.offer(orch, fresh)
-        assert D.claim(orch, fresh["id"], fresh["hash"], "test-worker")["permission_to_send"]
-        return
-
-    C.save_state(ready, str(tmp_path), ready.release_id)
-    receipt = D.exact_payload_receipt(item, {"provider": "test fixture", "response": {"accepted": True}})
-    receipt_path = tmp_path / "receipt.json"
-    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
-    base = ["--config", CONFIG, "--runs-root", str(tmp_path), "notification"]
-    scope = ["--release", ready.release_id, "--id", item["id"]]
-    assert cli.main(base + ["result"] + scope + [
-        "--execution-id", claim["execution_id"], "--outcome", "sent",
-        "--evidence", "Simulated provider accepted", "--receipt-file", str(receipt_path)]) == 0
-    saved = C.load_state(str(tmp_path), ready.release_id)
-    record = saved.notification_deliveries[item["id"]]
-    assert record["status"] == "sent" and record["attempts"][-1]["receipt"] == receipt
-    assert record["completion"]["status"] == "suppressed"
-    assert record["completion"]["reason"] == "source checkpoint changed"
-    assert saved.get_step("build_verify", "rc_report").status == "running"
-    before = copy.deepcopy(stored_vars(saved))
-    assert cli.main(base + ["finalize"] + scope) == 0
-    assert stored_vars(C.load_state(str(tmp_path), ready.release_id)) == before
+    if path[:4] == ["pipeline_runs", "rcs", -1, "auth"] or "categories" in path:
+        with pytest.raises(ValueError):
+            plan_rc_report_publish(orch)
+    else:
+        after = W.review_hash(orch, "build_verify", "rc_report_publish", plan_rc_report_publish(orch))
+        assert after != before
 
 
 @pytest.mark.parametrize("mrwp_failed,auth_failed,incomplete,recommendation", [
@@ -125,9 +91,12 @@ def test_report_prominent_consolidated_recommendation(
     gate, auth = rc_report.rc_ui_gate(model), rc_report.auth_report_gate(model)
     html = rendering.rc_email_html(model, {}, gate, auth, action)
     plain = rendering.rc_email_plain(model, {}, gate, auth, action)
-    assert action in unescape(html) and action in plain
-    assert html.index("Recommendation:") < html.index("UI-automation results")
-    assert plain.index("RECOMMENDATION:") < plain.index("GATES")
+    rendered_html = unescape(html)
+    assert action.split(". ", 1)[0] in rendered_html and action.split(". ", 1)[0] in plain
+    assert "NEXT:" in plain and "<strong>Next:</strong>" in html
+    assert "Recommendation:" not in html and "RECOMMENDATION:" not in plain
+    assert html.count("<strong>Next:</strong>") == 1 and plain.count("NEXT:") == 1
+    assert html.index("<strong>Next:</strong>") > html.index("Authenticator ECS")
     if auth_failed:
         assert "Authenticator ECS did not clear" in action
         assert not gate["blocking"] and auth["blocking"]
@@ -219,10 +188,7 @@ def test_reconciled_counts_hold_at_84_5_and_missing_auth_still_prevents_report(r
     current = ready.pipeline_runs["rcs"][-1]
     assert rc_report.rc_ui_gate(rc_report.rc_report_model(_context(ready)))["pass_pct"] == 84.5
     assert _invoke(rc_report.build, ready).kind == "needs_skill"
-    from tests._harness import _ack_step
-    args_for(tmp_path, ready)
-    _ack_step(str(tmp_path), ready.release_id, "build_verify", "rc_report")
-    assert C.load_state(str(tmp_path), ready.release_id).get_step("build_verify", "rc_report").status == "blocked"
+    assert rc_report.rc_ui_gate(rc_report.rc_report_model(_context(ready)))["blocking"]
     current.pop("auth")
     assert _invoke(rc_report.build, ready).kind == "blocked"
 
@@ -270,7 +236,7 @@ def test_cli_dispatch_and_recorder_cannot_bypass_predecessors(ready, tmp_path, c
     base = ["--config", CONFIG, "--runs-root", str(tmp_path)]
     before = copy.deepcopy(stored_vars(C.load_state(str(tmp_path), ready.release_id)))
     assert cli.main(base + ["step-action", "--release", ready.release_id,
-                            "--phase", "build_verify", "--step", "rc_report"]) == 0
+                            "--phase", "build_verify", "--step", "rc_report_publish"]) == 0
     assert json.loads(capsys.readouterr().out)["kind"] == "blocked"
     assert cli.main(base + ["record-rc-report", "--release", ready.release_id]) == 1
     assert "notification claim/result" in json.loads(capsys.readouterr().out)["error"]
@@ -281,19 +247,19 @@ def test_skipping_prerequisite_does_not_fabricate_evidence(ready, tmp_path):
     ready.set_step("build_verify", "auth_ecs", StepState(status="skipped", by="human"))
     ready.pipeline_runs["rcs"][-1].pop("auth")
     orch = Orchestrator(CONFIG, ready, mocks={})
-    assert orch.step_action_guard("build_verify", "rc_report") is None
+    assert orch.step_action_guard("build_verify", "rc_report_publish") is None
     assert _invoke(rc_report.build, ready).kind == "blocked"
     assert RR.cmd_record_rc_report(args_for(tmp_path, ready)) == 1
 
 
 @pytest.mark.parametrize("status", ["done", "skipped"])
 def test_recorder_preserves_terminal_records(ready, tmp_path, status):
-    ready.set_step("build_verify", "rc_report", StepState(
+    ready.set_step("build_verify", "rc_report_gate", StepState(
         status=status, by="human", note="Owner reviewed", data={"review": "retained"}))
     ready.pipeline_runs = {}
     args = args_for(tmp_path, ready)
     before = stored_vars(C.load_state(str(tmp_path), ready.release_id))
-    assert RR.cmd_record_rc_report(args) == 0
+    assert RR.cmd_record_rc_report(args) == 1
     assert stored_vars(C.load_state(str(tmp_path), ready.release_id)) == before
 
 
@@ -415,7 +381,9 @@ def test_diagnostic_failure_is_explicit_without_replacing_verified_evidence(
 ])
 def test_poll_does_not_resolve_premature_done_report(
         ready, tmp_path, monkeypatch, capsys, sid, status, expected):
-    ready.set_step("build_verify", "rc_report", StepState(status="done", by="scout"))
+    ready.set_step("build_verify", "rc_report_gate", StepState(status="done", by="human"))
+    ready.gate_decisions.append({"step": "build_verify.rc_report_gate", "decision": "approved",
+                                 "at": "now", "by": "owner", "comment": None})
     ready.set_step("build_verify", sid, StepState(status=status, note="not finished"))
     from orchestrator.engine import Orchestrator as EngineOrchestrator
     monkeypatch.setattr(EngineOrchestrator, "run_until_gate", lambda self: [])
@@ -426,16 +394,18 @@ def test_poll_does_not_resolve_premature_done_report(
         assert decision["steps"] == ["telemetry_verify"]
 
 
-@pytest.mark.parametrize("status,by,expected", [
-    ("skipped", "human", "overridden"), ("done", "human", "overridden"), ("done", "scout", "passed")])
-def test_resolved_poll_and_prompt_distinguish_override(
-        ready, tmp_path, monkeypatch, capsys, status, by, expected):
-    ready.set_step("build_verify", "rc_report", StepState(status=status, by=by, note="Owner decision"))
+def test_resolved_poll_reports_passed_after_rc_gate_approval(
+        ready, tmp_path, monkeypatch, capsys):
+    ready.set_step("build_verify", "rc_report_gate", StepState(status="done", by="human", note="Owner decision"))
+    ready.set_step("build_verify", "rc_report_publish", StepState(status="done"))
+    ready.set_step("build_verify", "rc_report_notify", StepState(status="done"))
+    ready.gate_decisions.append({"step": "build_verify.rc_report_gate", "decision": "approved",
+                                 "at": "now", "by": "owner", "comment": None})
     from orchestrator.engine import Orchestrator as EngineOrchestrator
     monkeypatch.setattr(EngineOrchestrator, "run_until_gate", lambda self: [])
     assert RP.cmd_poll_rc(args_for(tmp_path, ready)) == 0
     decision = json.loads(capsys.readouterr().out)
-    assert decision["decision"] == "resolved" and decision["status"] == expected
+    assert decision["decision"] == "resolved" and decision["status"] == "passed"
     prompt = rc_report.automation_prompt(ready.release_id, {"interval": True})
     assert "inspect decision.status" in prompt
     assert "never describe an override as PASSED" in prompt
@@ -445,14 +415,14 @@ def test_capture_dependencies_hold_both_independent_children(ready):
     orch = Orchestrator(CONFIG, ready, mocks={})
     assert orch.reopen("build_verify", "mrwp_local", "Recapture current RC").changed
     assert orch.scout_pending_steps() == []
-    assert orch.step_action_guard("build_verify", "rc_report").kind == "blocked"
+    assert orch.step_action_guard("build_verify", "rc_report_publish").kind == "blocked"
     orch.skip_step("build_verify", "mrwp_local", "Verified externally")
     assert orch.scout_pending_steps() == []
     orch.skip_step("build_verify", "auth_ecs", "Verified externally")
-    assert orch.scout_pending_steps() == ["telemetry_verify", "rc_report"]
+    assert orch.scout_pending_steps() == ["telemetry_verify", "rc_report_publish"]
     assert orch.step_action_guard("build_verify", "telemetry_verify") is None
     orch.skip_step("build_verify", "telemetry_verify", "Owner override")
-    assert orch.scout_pending_steps() == ["rc_report"]
+    assert orch.scout_pending_steps() == ["rc_report_publish"]
 
 
 def test_phase_zero_parallel_uses_only_explicit_dependencies(ready):
@@ -482,8 +452,8 @@ def test_sequential_engine_respects_explicit_dependencies_and_mocks(ready):
     phase = next(p for p in orch.config["phases"] if p["id"] == "build_verify")
     phase["execution"] = "sequential"
     telemetry = next(s for s in phase["steps"] if s["id"] == "telemetry_verify")
-    assert "rc_report" not in orch.scout_pending_steps()
-    telemetry["depends_on"] = ["rc_report"]
+    assert "rc_report_publish" not in orch.scout_pending_steps()
+    telemetry["depends_on"] = ["rc_report_publish"]
     with pytest.raises(WorkflowConfigError, match="cannot depend on later step"):
         orch.step_once()
     assert not ready.is_done("build_verify", "telemetry_verify")
@@ -493,4 +463,4 @@ def test_sequential_engine_respects_explicit_dependencies_and_mocks(ready):
     ready.steps = seeded
     orch.step_once()
     assert ready.is_done("build_verify", "telemetry_verify")
-    assert orch.step_action_guard("build_verify", "rc_report") is None
+    assert orch.step_action_guard("build_verify", "rc_report_publish") is None

@@ -127,7 +127,8 @@ _SAFE_AGENTS = {
                 {"present": True, "passed": 96, "failed": 4, "total": 100, "pct": 96.0},
             "Firebase Test Lab - Monthly UI Tests":
                 {"present": True, "passed": 306, "failed": 0, "total": 306, "pct": 100.0}}},
-    "build_verify.rc_report": {"outcome": "done", "note": "RC report emailed (test)"},  # skip live az + send
+    "build_verify.rc_report_publish": {"outcome": "done", "note": "RC report published (test)"},
+    "build_verify.rc_report_notify": {"outcome": "done", "note": "RC report link posted to Scout bot (test)"},
     # Phase-2 telemetry_verify — scout Kusto check; short-circuit so flow tests never hit the MCP.
     "build_verify.telemetry_verify": {"outcome": "done", "note": "bug-bash telemetry verified (test)"},
     # Phase-3 bug_bash clone steps — real agents; keep flow tests offline.
@@ -448,7 +449,7 @@ def _ready_for_rc_report(st):
     orch = Orchestrator(CONFIG, st)
     for phase in orch.config["phases"]:
         for step in phase["steps"]:
-            if (phase["id"], step["id"]) == ("build_verify", "rc_report"):
+            if (phase["id"], step["id"]) == ("build_verify", "rc_report_publish"):
                 return
             st.set_step(phase["id"], step["id"], StepState(status="done"))
 
@@ -793,7 +794,8 @@ def _ack_notifications(root, rid, as_of, items=None):
     for item in items:
         D.offer(orch, item)
         claim = D.claim(orch, item["id"], item["hash"], "test-worker")
-        D.result(orch, item["id"], claim["execution_id"], "sent", "Simulated provider success")
+        D.result(orch, item["id"], claim["execution_id"], "sent", "Simulated provider success",
+                 D.exact_payload_receipt(item, {"accepted": True}) if item["tool"] == "workiq_send_email" else None)
         finish(orch, item["id"])
     C.save_state(st, root, rid)
 
