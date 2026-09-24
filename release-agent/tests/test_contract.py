@@ -123,6 +123,11 @@ def test_skill_requires_parallel_scout_drain_and_adoption_impact_review():
     assert "only then render the final status" in skill
     assert "`invalidation.summary`" in skill
     assert "generic “new" in skill and "approval" in skill and "insufficient" in skill
+    assert "direct MCP mail tool" in skill and "never" in skill
+    assert "browser/OWA/Outlook/manual" in skill
+    assert "provider_receipt.transport" in skill
+    assert "Validation copies" in skill and "renderer-produced HTML/plain payload" in skill
+    assert "Never hand-compose a shortened" in skill and "validation email" in skill
 
 
 def test_skill_requires_actionable_user_holds():

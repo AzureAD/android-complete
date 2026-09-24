@@ -436,12 +436,20 @@ python -m orchestrator.cli workflow-adopt --release <id> --approve-hash <reviewe
 
 The preview lists old/new revision IDs, exact conservative invalidations and ownership
 blockers. Confirmation recomputes the review under the release lock, then the automation
-registry lock, and rejects stale hashes. Runtime changes invalidate all workflow
-results; phase changes/reordering invalidate the earliest changed phase and all later
-phases. New steps are pending and removed-step history, evidence, resources and terminal
-write-review receipts are retained. Affected gate decisions are cleared. Never-claimed
-notification offers (including release-scoped offers) are removed without fabricating
-`not_sent` receipts; previously attempted offers retain their revision scope fence.
+registry lock, and rejects stale hashes. Runtime-only changes update the reviewed binding
+without resetting release progress; phase changes/reordering invalidate the earliest
+changed phase and all later phases. New steps are pending and removed-step history,
+evidence, resources and terminal write-review receipts are retained. Affected gate
+decisions are cleared. Never-claimed notification offers (including release-scoped offers)
+are removed without fabricating `not_sent` receipts; previously attempted offers retain
+their revision scope fence.
+
+Email notification results require exact-payload receipts: `notification result
+--outcome sent` for `workiq_send_email` must include a receipt file whose tool,
+descriptor hash, payload hash, target and `provider_receipt.transport` match the claimed
+notification. Email notifications must be sent through the direct MCP mail transport,
+not browser/OWA/Outlook/manual compose. This prevents recording a
+fallback/plaintext/manual email as if the templated claimed payload was sent.
 
 Any stored execution—even under a removed step—unresolved resource creation, active or
 uncertain delivery/automation claim, or unfinished sent-notification completion blocks

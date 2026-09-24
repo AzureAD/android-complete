@@ -130,6 +130,9 @@ def cmd_notification(args):
             if args.receipt_file:
                 with open(args.receipt_file, encoding="utf-8") as fh:
                     receipt = json.load(fh)
+            record = st.notification_deliveries.get(args.id)
+            if args.outcome == "sent" and record and record.get("status") != "sent":
+                D.require_exact_payload_receipt(D.validate_record(orch, record), receipt)
             changed = D.result(orch, args.id, args.execution_id, args.outcome,
                                args.evidence, receipt, args.owner_review)
             if changed:

@@ -175,7 +175,7 @@ def test_rc_email_includes_separate_auth_section():
     _pipeline(K.stash_auth, st, rc["rc"], {
         "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
                   "complete": True, "result": "succeeded"},
-        "test": _auth_test(_auth_suites(82.76, 100.0), rc=rc["rc"]),
+        "test": _auth_test(_auth_suites(82.76, 97.0), rc=rc["rc"]),
         "verdict": "attention"})
     model = report.rc_report_model(_context(st))
     assert (model.get("auth") or {}).get("verdict") == "attention"
@@ -183,8 +183,13 @@ def test_rc_email_includes_separate_auth_section():
     next_action = report.rc_next_action(model)
     html = rendering.rc_email_html(model, {"owner": "pedro"}, gate, auth, next_action)
     assert "Authenticator ECS" in html and "UIAutomator E2E" in html
+    assert "UIAutomator E2E Tests" in html and "Monthly UI Tests" in html
+    assert "test_1083_Scenario" in html and "monthly_scenario_97" in html
+    assert "Source 1/84" in html and "Source 2/98" in html
     plain = rendering.rc_email_plain(model, {"owner": "pedro"}, gate, auth, next_action)
     assert "AUTHENTICATOR ECS" in plain and "does NOT affect" in plain
+    assert "UIAutomator E2E Tests" in plain and "Monthly UI Tests" in plain
+    assert "test_1083_Scenario" in plain and "monthly_scenario_97" in plain
 
 
 

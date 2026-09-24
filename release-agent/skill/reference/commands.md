@@ -512,12 +512,22 @@ All commands below require an explicit release and use the existing OS-held stat
 | --- | --- |
 | Persist exact preparation, without send permission | `notification prepare --release <id> --source step\|digest\|status-email\|pending [--phase <phase> --step <step> --param k=v]` |
 | Scout-reviewed reservation for that exact target/payload | `notification claim --release <id> --id <logical-id:channel> --hash <hash> --executor <session>` |
-| Acknowledge one channel | `notification result --release <id> --id <id> --execution-id <execution> --outcome sent\|not_sent\|uncertain --evidence "<proof>" [--receipt-file <JSON>] [--owner-review]` |
+| Acknowledge one channel | `notification result --release <id> --id <id> --execution-id <execution> --outcome sent\|not_sent\|uncertain --evidence "<proof>" [--receipt-file <JSON>] [--owner-review]`; `workiq_send_email` sent results require a receipt file with matching `tool`, `descriptor_hash`, `payload_hash`, `target`, and `provider_receipt.transport: "workiq_send_email"` |
 | Retry domain completion, never sending again | `notification finalize --release <id> --id <id>` |
 
 For normal notification delivery, the Scout runner reviews the descriptor and claims it silently;
 do not ask the owner to approve sending unless the engine explicitly surfaces a human gate/review.
-Send ONLY a successful claim's exact returned payload (`permission_to_send:true`).
+Send ONLY a successful claim's exact returned payload (`permission_to_send:true`) through
+the claimed MCP transport; for `workiq_send_email`, use the direct MCP mail tool, never
+browser/OWA/Outlook/manual compose.
+For email, the receipt file must bind the actual send acknowledgement to the claimed
+descriptor and payload hashes; a plaintext/manual/fallback email with different body,
+HTML flag, subject, recipients or non-MCP transport must be recorded as
+`not_sent`/`uncertain`, not `sent`.
+Validation copies must also use the renderer-produced HTML/plain payload verbatim through
+the MCP mail tool. Do not hand-compose shortened report emails that summarize or omit
+sections; a failed MCP send is a failed validation send, not permission to switch to
+browser/manual formatting.
 `not_sent` requires proof nothing was sent; timeout, interruption or unknown outcome is
 uncertain. Claims never expire. After successful send plus failed acknowledgement, retry
 the acknowledgement only. Owner-reviewed recovery requires the original runner stopped.

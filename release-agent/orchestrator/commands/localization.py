@@ -169,6 +169,32 @@ def _truthy(v) -> bool:
     return str(v).strip().lower() in ("1", "true", "yes", "y", "complete", "completed", "succeeded")
 
 
+def _owner_label(st) -> str:
+    return st.owner_name or (st.owner_email or "release owner").split("@", 1)[0]
+
+
+def _owner_scout_message(st, decision: dict, decision_kind: str) -> str:
+    pr_id = decision["pr_id"]
+    pr_url = decision["pr_url"]
+    owner = _owner_label(st)
+    if decision_kind == "announce_pr":
+        return (
+            f"**Localization PR ready for review — {st.release_id}**\n\n"
+            f"{owner} — the localization pipeline created translations PR {pr_url}. "
+            f"Please review and merge it by {L.CONFIG.get('merge_deadline_label', '4:00 PM Los Angeles time')}. "
+            f"If it is still unmerged at {L.CONFIG.get('omission_deadline_label', '6:00 PM Los Angeles time')}, "
+            "localization will be omitted and the release will continue without these translated strings."
+        )
+    return (
+        f"**Localization PR still unmerged — translated strings at risk**\n\n"
+        f"PR #{pr_id} for {st.release_id} was not merged by "
+        f"{L.CONFIG.get('merge_deadline_label', '4:00 PM Los Angeles time')}. "
+        f"The release remains on schedule. {owner} — please merge it by "
+        f"{L.CONFIG.get('omission_deadline_label', '6:00 PM Los Angeles time')}; "
+        "otherwise localization will be omitted and these translated strings will not be included in this release."
+    )
+
+
 def cmd_check_localization(args):
     """One poll of the localization run. Reads the stored start time, applies the
     deterministic decision, records terminal state, and prints the decision JSON."""
@@ -363,11 +389,17 @@ def cmd_check_localization(args):
             completion = {"kind": "step_data", "stamp": [
                 "pr_announced_at" if d == "announce_pr" else "merge_deadline_alert_at"]}
         checkpoint = f"localization:{step.data.get('build_id')}:{decision.get('pr_id', '')}:{d}"
-        item = D.descriptor(st, checkpoint, scope,
-                            "workiq_send_email" if d == "timeout" else "workiq_send_chat_message",
-                            decision.get("email") if d == "timeout" else decision["chat"],
-                            completion)
-        decision["notifications"] = [D.offer(orch, item)]
+        items = [
+            D.descriptor(st, checkpoint, scope,
+                         "workiq_send_email" if d == "timeout" else "workiq_send_chat_message",
+                         decision.get("email") if d == "timeout" else decision["chat"],
+                         completion)
+        ]
+        if d in ("announce_pr", "warn_unmerged"):
+            items.append(D.descriptor(
+                st, f"{checkpoint}:owner", scope, "m_send_teams_message",
+                {"message": _owner_scout_message(st, decision, d)}, {}))
+        decision["notifications"] = [D.offer(orch, item) for item in items]
         decision["permission_to_send"] = False
         C.save_state(st, args.runs_root, args.release)
     print(_json.dumps(decision))

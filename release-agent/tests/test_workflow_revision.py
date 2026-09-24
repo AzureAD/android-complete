@@ -304,17 +304,26 @@ def test_adoption_invalidates_earliest_change_and_later_preserving_evidence(tmp_
     assert revision_id(state.workflow_revision) == identity
 
 
-def test_runtime_change_invalidates_all_including_removed_history(tmp_path):
+def test_runtime_only_change_adopts_without_resetting_release_progress(tmp_path):
     state, orch = _orch(tmp_path)
     _complete(state)
     state.set_step("removed", "old", StepState(status="done", data={"proof": 12}))
     state.workflow_revision["runtime_hash"] = digest("old runtime")
     plan = adoption_preview(orch)
     assert plan["runtime_changed"]
-    assert "removed.old" in plan["invalidation"]["step_keys"]
+    assert plan["invalidation"]["step_keys"] == []
+    assert plan["invalidation"]["summary"] == {
+        "affected": 0,
+        "completed_reset": 0,
+        "blocked_reset": 0,
+        "gate_decisions_removed": 0,
+        "notification_offers_removed": 0,
+    }
     state._checkpoint = lambda: None
     adopt(orch, plan["hash"], by="owner", reason="Reviewed runtime")
-    assert all(raw["status"] == "pending" for raw in state.steps.values())
+    assert state.get_step("first", "work").status == "done"
+    assert state.get_step("second", "approve").status == "done"
+    assert state.get_step("removed", "old").status == "done"
     assert state.get_step("removed", "old").data == {"proof": 12}
 
 

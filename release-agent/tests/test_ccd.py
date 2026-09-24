@@ -389,6 +389,93 @@ def test_localization_command_lifecycle_wait_announce_escalate_then_merge():
         assert done.status == "done" and done.data["build_id"] == "176407869"
 
 
+def test_localization_pr_ready_also_notifies_owner_scout_bot(tmp_path, capsys, monkeypatch):
+    from argparse import Namespace
+    import json
+    from orchestrator import mocks
+    from orchestrator.commands import localization as lc
+    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    rid = "2026-09"
+    st = ReleaseState(release_id=rid, ccd="2026-09-09",
+                      owner_email="pedroro@microsoft.com")
+    _active_step(st, "ccd", "localization")
+    st.set_step("ccd", "localization", StepState(
+        status="in_flight", execution=_localization_execution(),
+        data={"build_id": "176407869", "started_at": "2026-09-09T19:00:00Z"}))
+    C.save_state(st, str(tmp_path), rid)
+
+    args = Namespace(runs_root=str(tmp_path), release=rid, config=CONFIG, as_of=None,
+                     now="2026-09-09T20:00:00Z", complete="true", logs=_PR_LOG,
+                     logs_file=None, run_result="succeeded", logs_complete=True,
+                     pr_status=None, execution_id=_localization_execution()["id"])
+    assert lc.cmd_check_localization(args) == 0
+    out = json.loads(capsys.readouterr().out.splitlines()[-1])
+
+    notifications = out["notifications"]
+    assert [n["tool"] for n in notifications] == [
+        "workiq_send_chat_message", "m_send_teams_message"]
+    assert notifications[0]["completion"]["stamp"] == ["pr_announced_at"]
+    owner_copy = notifications[1]
+    assert owner_copy["target"] == {"owner": "pedroro@microsoft.com"}
+    assert owner_copy["completion"] == {}
+    assert "Localization PR ready for review — 2026-09" in owner_copy["payload"]["message"]
+    assert (
+        "https://msazure.visualstudio.com/DefaultCollection/One/_git/"
+        "AD-MFA-phonefactor-phoneApp-android/pullrequest/16790317"
+    ) in owner_copy["payload"]["message"]
+    assert "4:00 PM Los Angeles time" in owner_copy["payload"]["message"]
+    assert "6:00 PM Los Angeles time" in owner_copy["payload"]["message"]
+
+    _ack_notifications(str(tmp_path), rid, args.now, notifications)
+    announced = C.load_state(str(tmp_path), rid).get_step("ccd", "localization")
+    assert announced.data["pr_announced_at"]
+
+
+def test_localization_unmerged_warning_also_notifies_owner_scout_bot(
+        tmp_path, capsys, monkeypatch):
+    from argparse import Namespace
+    import json
+    from orchestrator import mocks
+    from orchestrator.commands import localization as lc
+    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    rid = "2026-09"
+    st = ReleaseState(release_id=rid, ccd="2026-09-09",
+                      owner_email="pedroro@microsoft.com")
+    _active_step(st, "ccd", "localization")
+    st.set_step("ccd", "localization", StepState(
+        status="in_flight", execution=_localization_execution(), data={
+            "build_id": "176407869",
+            "started_at": "2026-09-09T19:00:00Z",
+            "pr_id": "16790317",
+            "pr_url": ("https://msazure.visualstudio.com/DefaultCollection/One/_git/"
+                       "AD-MFA-phonefactor-phoneApp-android/pullrequest/16790317"),
+            "pipeline_complete": True,
+            "pr_announced_at": "2026-09-09T20:00:00Z",
+        }))
+    C.save_state(st, str(tmp_path), rid)
+
+    args = Namespace(runs_root=str(tmp_path), release=rid, config=CONFIG, as_of=None,
+                     now="2026-09-09T23:00:00Z", complete="true", logs=None,
+                     logs_file=None, run_result="succeeded", logs_complete=True,
+                     pr_status="active", execution_id=_localization_execution()["id"])
+    assert lc.cmd_check_localization(args) == 0
+    out = json.loads(capsys.readouterr().out.splitlines()[-1])
+
+    notifications = out["notifications"]
+    assert [n["tool"] for n in notifications] == [
+        "workiq_send_chat_message", "m_send_teams_message"]
+    assert notifications[0]["completion"]["stamp"] == ["merge_deadline_alert_at"]
+    owner_copy = notifications[1]
+    assert owner_copy["target"] == {"owner": "pedroro@microsoft.com"}
+    assert owner_copy["completion"] == {}
+    assert "Localization PR still unmerged" in owner_copy["payload"]["message"]
+    assert "6:00 PM Los Angeles time" in owner_copy["payload"]["message"]
+
+    _ack_notifications(str(tmp_path), rid, args.now, notifications)
+    warned = C.load_state(str(tmp_path), rid).get_step("ccd", "localization")
+    assert warned.data["merge_deadline_alert_at"]
+
+
 
 
 def test_localization_command_timeout_holds():

@@ -191,10 +191,12 @@ Missing/partial/unrecognized logs still never mean no strings, and logs with
 an unsupported full successful output may supply `--no-change-confirmation
 "<explanation>"`; the worker must not invent it.
 After verified PR discovery, it posts the initial Code Reviews request once and
-monitors that PR until ADO reports it completed (still requiring successful run evidence),
-and keeps Phase 1 open until merge or the omission cutoff. At 4:00 PM
-America/Los_Angeles on CCD, an unmerged
-PR causes one additional Code Reviews warning that the translated strings are at risk.
+also stages a tracked Scout-bot copy to the release owner, so the owner sees the PR
+even if they miss the Code Reviews channel. It monitors that PR until ADO reports it
+completed (still requiring successful run evidence), and keeps Phase 1 open until
+merge or the omission cutoff. At 4:00 PM America/Los_Angeles on CCD, an unmerged
+PR causes one additional Code Reviews warning plus the same tracked Scout-bot owner
+copy that the translated strings are at risk.
 If the PR is still unmerged at 6:00 PM America/Los_Angeles, the command marks localization
 skipped/omitted so Phase 2 proceeds without those strings and the poller is cleaned up.
 Initial PR, deadline warning and timeout email are staged per-channel notifications.

@@ -349,20 +349,17 @@ def adoption_preview(orch, *, registry_entries=()):
         raise ValueError("Unbound release state cannot adopt; explicit fresh initialization is required")
     validate_binding(old)
     runtime_changed = old["runtime_hash"] != new["runtime_hash"]
-    first = 0 if runtime_changed else None
-    if first is None:
-        for index in range(max(len(old["phases"]), len(new["phases"]))):
-            before = old["phases"][index] if index < len(old["phases"]) else None
-            after = new["phases"][index] if index < len(new["phases"]) else None
-            if before != after:
-                first = index
-                break
+    first = None
+    for index in range(max(len(old["phases"]), len(new["phases"]))):
+        before = old["phases"][index] if index < len(old["phases"]) else None
+        after = new["phases"][index] if index < len(new["phases"]) else None
+        if before != after:
+            first = index
+            break
     affected = set()
     if first is not None:
         for phase in old["phases"][first:] + new["phases"][first:]:
             affected.update(phase["step_keys"])
-        if runtime_changed:
-            affected.update(orch.state.steps)
     blockers = [f"steps.{key}: owned execution" for key, record in sorted(orch.state.steps.items())
                 if record.get("execution") is not None]
     blockers.extend(_resource_blockers(orch.state.resources))

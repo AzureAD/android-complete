@@ -68,6 +68,15 @@ Throughout this skill, **`<AGENT_ROOT>`** = that confirmed `release-agent` folde
     and all blockers. Ask whether to accept **that exact reset scope**; a generic “new
     version” approval without the displayed impact is insufficient. Apply only the reviewed
     hash/reviewer/reason, then show the resulting status.
+3e. **Email notification acknowledgement requires exact payload proof.** Send only the
+    claimed tool/payload through the direct MCP mail tool (`workiq_send_email`), never
+    browser/OWA/Outlook/manual compose. For `workiq_send_email`, generate a receipt file
+    whose `descriptor_hash`, `payload_hash`, and `provider_receipt.transport` match the
+    claimed notification before running `notification result --outcome sent`; never
+    acknowledge a fallback/plaintext/manual/browser email as a successful notification.
+    Validation copies use the same rule: send the renderer-produced HTML/plain payload
+    verbatim through the MCP mail tool, or do not send. Never hand-compose a shortened
+    validation email that preserves one section while summarizing or dropping another.
 4. **Prompt, don't interrogate.** For any discrete choice (start? which release? approve/deny?) use the `m_ask_user` clickable prompt, not free-text. Reserve free-text for genuinely open values (an unusual month).
 5. **Never assume a human decision.** An `m_ask_user` result that merely echoes the offered options is NOT confirmation. Never attest, approve, sign, or mark done until the user explicitly said so. Attesting/approving on an assumption is a release-integrity violation.
 6. **Gates are human-decided.** Present and relay Approve/Deny; never authorize yourself.

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from orchestrator import cli, cli_common as C, mocks
+from orchestrator import cli, cli_common as C, delivery as D, mocks
 from orchestrator.engine import Orchestrator
 from orchestrator.outcomes import NeedsSkill
 from orchestrator.state import ReleaseState, StepState
@@ -58,10 +58,18 @@ def report_result(run, capsys, execution_id, outcome="sent", review=False):
             for attempt in record.get("attempts", [])
         )
     ), next(iter(state.notification_deliveries)))
+    receipt = []
+    if outcome == "sent":
+        receipt_path = run[0] / f"receipt-{execution_id}.json"
+        item = state.notification_deliveries[notification_id]["descriptor"]
+        receipt_path.write_text(json.dumps(D.exact_payload_receipt(item, {"accepted": True})),
+                                encoding="utf-8")
+        receipt = ["--receipt-file", str(receipt_path)]
     rc = cli.main(["--runs-root", str(run[0]), "notification", "result",
                    "--release", "2000-01", "--id", notification_id,
                    "--execution-id", execution_id, "--outcome", outcome,
-                   "--evidence", "Test provider evidence", *(["--owner-review"] if review else [])])
+                   "--evidence", "Test provider evidence", *receipt,
+                   *(["--owner-review"] if review else [])])
     return rc, capsys.readouterr().out
 
 

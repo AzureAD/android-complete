@@ -81,7 +81,7 @@ def test_rc_report_source_change_rejects_claim_or_suppresses_completion(
         return
 
     C.save_state(ready, str(tmp_path), ready.release_id)
-    receipt = {"provider": "test fixture", "response": {"accepted": True}}
+    receipt = D.exact_payload_receipt(item, {"provider": "test fixture", "response": {"accepted": True}})
     receipt_path = tmp_path / "receipt.json"
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
     base = ["--config", CONFIG, "--runs-root", str(tmp_path), "notification"]

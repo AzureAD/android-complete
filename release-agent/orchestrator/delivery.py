@@ -43,6 +43,40 @@ def fingerprint(value):
                                      ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
+EXACT_PAYLOAD_RECEIPT_TOOLS = {"workiq_send_email"}
+
+
+def exact_payload_receipt(item, provider_receipt=None):
+    """Receipt shape for transports where losing formatting changes the product result."""
+    provider = deepcopy(provider_receipt or {})
+    provider.setdefault("transport", item["tool"])
+    return {
+        "tool": item["tool"],
+        "descriptor_hash": item["hash"],
+        "payload_hash": fingerprint(item["payload"]),
+        "target": deepcopy(item["target"]),
+        "provider_receipt": provider,
+    }
+
+
+def require_exact_payload_receipt(item, receipt):
+    if item["tool"] not in EXACT_PAYLOAD_RECEIPT_TOOLS:
+        return
+    expected = exact_payload_receipt(item)
+    if not isinstance(receipt, dict):
+        raise ValueError("Email sent acknowledgement requires an exact-payload receipt file")
+    problems = []
+    for key in ("tool", "descriptor_hash", "payload_hash", "target"):
+        if receipt.get(key) != expected[key]:
+            problems.append(key)
+    if (not isinstance(receipt.get("provider_receipt"), dict)
+            or receipt["provider_receipt"].get("transport") != item["tool"]):
+        problems.append("provider_receipt.transport")
+    if problems:
+        raise ValueError("Email sent acknowledgement receipt does not match claimed "
+                         + ", ".join(problems))
+
+
 def phase_done(orch, phase_id):
     phase = next((p for p in orch.scheduling().phases if p.definition.id == phase_id), None)
     return bool(phase and phase.definition.steps and phase.complete)
@@ -399,6 +433,9 @@ PROTOCOL = (
     "never-claimed work; review its new hash. Immediately run "
     "`notification result --release <release> --id <id> --execution-id <id> "
     "--outcome sent --evidence <provider-confirmed-success> [--receipt-file <json>]`. "
+    "Email sends require --receipt-file whose descriptor_hash and payload_hash match the "
+    "claimed notification; do not acknowledge email delivery after fallback/plaintext/manual "
+    "content that differs from the claimed payload. "
     "Use not_sent ONLY for positive proof nothing was sent; timeouts/unknown outcomes "
     "are uncertain. Never retry a claimed/uncertain send, including success followed "
     "by failed acknowledgement: retry the acknowledgement only. Owner-reviewed "

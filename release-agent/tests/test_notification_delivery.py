@@ -49,6 +49,13 @@ def acknowledge(orch, item, outcome="sent"):
     return claim
 
 
+def exact_receipt_file(tmp_path, item, provider=None):
+    path = tmp_path / f"{D.fingerprint(item)[:12]}-receipt.json"
+    path.write_text(json.dumps(D.exact_payload_receipt(item, provider or {"accepted": True})),
+                    encoding="utf-8")
+    return str(path)
+
+
 def test_partial_delivery_only_failed_channel_retries(orch):
     a, b = email(orch), email(orch, "teams")
     acknowledge(orch, a)
@@ -213,6 +220,33 @@ def test_cli_claim_cannot_rewind_expired_work(orch, tmp_path, monkeypatch, capsy
     assert not C.load_state(str(tmp_path), orch.state.release_id).notification_deliveries[item["id"]]["attempts"]
 
 
+def test_cli_email_sent_acknowledgement_requires_exact_payload_receipt(
+        orch, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(schedule, "now_local", lambda _tz: orch.now_local)
+    item = email(orch)
+    D.offer(orch, item)
+    claim = D.claim(orch, item["id"], item["hash"], "worker")
+    C.save_state(orch.state, str(tmp_path), orch.state.release_id)
+    command = ["--runs-root", str(tmp_path), "notification", "result",
+               "--release", orch.state.release_id, "--id", item["id"],
+               "--execution-id", claim["execution_id"], "--outcome", "sent",
+               "--evidence", "provider-confirmed receipt"]
+    assert cli.main(command) == 1
+    assert "exact-payload receipt" in json.loads(capsys.readouterr().out)["error"]
+    bad = D.exact_payload_receipt(item)
+    bad["payload_hash"] = D.fingerprint({**item["payload"], "body": "fallback plaintext"})
+    bad_path = tmp_path / "bad-receipt.json"
+    bad_path.write_text(json.dumps(bad), encoding="utf-8")
+    assert cli.main(command + ["--receipt-file", str(bad_path)]) == 1
+    assert "payload_hash" in json.loads(capsys.readouterr().out)["error"]
+    browser = D.exact_payload_receipt(item, {"transport": "browser", "accepted": True})
+    browser_path = tmp_path / "browser-receipt.json"
+    browser_path.write_text(json.dumps(browser), encoding="utf-8")
+    assert cli.main(command + ["--receipt-file", str(browser_path)]) == 1
+    assert "provider_receipt.transport" in json.loads(capsys.readouterr().out)["error"]
+    assert cli.main(command + ["--receipt-file", exact_receipt_file(tmp_path, item)]) == 0
+
+
 def test_cli_claim_rechecks_real_step_fire_time(orch, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(schedule, "now_local", lambda _tz:
                         datetime.fromisoformat("2026-09-09T08:45:00-07:00"))
@@ -240,7 +274,8 @@ def test_cli_receipt_after_midnight_needs_no_clock_override(orch, tmp_path, monk
     assert cli.main(["--runs-root", str(tmp_path), "notification", "result",
                     "--release", orch.state.release_id, "--id", item["id"],
                     "--execution-id", claim["execution_id"], "--outcome", "sent",
-                    "--evidence", "provider receipt"]) == 0
+                    "--evidence", "provider receipt",
+                    "--receipt-file", exact_receipt_file(tmp_path, item)]) == 0
     capsys.readouterr()
     assert C.load_state(str(tmp_path), orch.state.release_id).last_status_email_date == "2026-09-09"
 
@@ -467,7 +502,8 @@ def test_send_success_persistence_failure_never_grants_resend(orch, tmp_path, mo
     monkeypatch.setattr(C, "save_state", fail_save)
     result = base + ["result"] + scope + [
         "--id", item["id"], "--execution-id", claim["execution_id"],
-        "--outcome", "sent", "--evidence", "provider-confirmed receipt"]
+        "--outcome", "sent", "--evidence", "provider-confirmed receipt",
+        "--receipt-file", exact_receipt_file(tmp_path, item)]
     assert cli.main(result) == 1
     capsys.readouterr()
     persisted, current = C.load_orch(str(tmp_path), orch.state.release_id, C.DEFAULT_CONFIG,
