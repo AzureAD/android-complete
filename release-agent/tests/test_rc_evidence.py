@@ -131,6 +131,19 @@ def test_report_prominent_consolidated_recommendation(
     if auth_failed:
         assert "Authenticator ECS did not clear" in action
         assert not gate["blocking"] and auth["blocking"]
+        assert "Open the Authenticator ECS UI-test run" in action
+        assert "https://msazure.visualstudio.com/One/_build/results?buildId=" in action
+        assert "Monthly UI failures are not mapped to ADO test-plan cases" in action
+        assert "reopen --release" in action and "--step auth_ecs" in action
+        assert "notification prepare --release" in action and "--step rc_report" in action
+        assert "Cherry%252DPick-to-Android-Release-Instructions.md" in action
+        assert "href='https://msazure.visualstudio.com/One/_build/results?buildId=" in html
+    if mrwp_failed >= 20:
+        assert "MRWP UI action" in action
+        assert "rc-retriggered --release" in action
+        assert "broker release process" in action
+    if auth_failed or mrwp_failed >= 20:
+        assert "skip --release <id> --phase build_verify --step rc_report" in action
 
 
 def test_report_auth_percentages_two_decimals_without_rounding_gate(ready):

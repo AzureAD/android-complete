@@ -22,7 +22,7 @@ def model(rows, broker_rows=None):
 
 def auth_section(m):
     html = H.rc_email_html(m, {}, R.rc_ui_gate(m), R.auth_report_gate(m), R.rc_next_action(m))
-    return html.split("Authenticator ECS <span", 1)[1].split("UI tests ", 1)[0]
+    return html.split("Authenticator ECS <span", 1)[1].split("<strong>Next:</strong>", 1)[0]
 
 
 def test_auth_card_contains_every_failure_under_its_own_suite_with_source_links():
@@ -60,7 +60,7 @@ def test_recovered_titles_are_not_mislabeled_as_unresolved_and_gate_rates_stay_e
     assert "test_100_retry" not in card and "test_200_failure" in card
     assert "1</strong> unresolved failing titles" in card
     assert "monthly_retry" not in card
-    assert "no unresolved failing titles after same-title retry reconciliation" in card
+    assert "no unresolved failing titles after same-title retry reconciliation" in card.lower()
     assert "33.33%" in card and "50.00%" in card
     assert R.auth_report_gate(m)["blocking"]
 

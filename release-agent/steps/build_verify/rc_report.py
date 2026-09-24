@@ -58,6 +58,11 @@ CHERRY_PICK_TSG = ("https://eng.ms/docs/microsoft-security/identity/"
                    "entra-developer-application-platform/auth-client/"
                    "authn-sdk-msal-android/android-auth-libraries/releases/"
                    "internal-release-checklist/cherry-pick-process-for-broker-libraries")
+AUTH_CHERRY_PICK_TSG = ("https://identitydivision.visualstudio.com/IdentityWiki/_git/"
+                        "IdentityWiki.wiki?path=/IdentityWiki/Services/"
+                        "Microsoft-Authenticator/Release/Android/"
+                        "Cherry%252DPick-to-Android-Release-Instructions.md"
+                        "&version=GBwikiMaster&line=1&_a=preview")
 
 # Map canonical state.versions (lowercase) to the RC report's SDK display shape.
 _VMAP = {"common": "Common", "msal": "Msal", "broker": "Broker"}
@@ -320,6 +325,67 @@ def auth_report_gate(model) -> dict:
     return {"present": True, "verdict": v, "blocking": v == "attention", "detail": detail}
 
 
+def _mrwp_next_steps(model) -> str:
+    release = model.get("release") or "<id>"
+    return (
+        "MRWP UI action: 1) Use the MRWP ECS/Local suite cards above to identify the "
+        "failing suite(s), exact failing titles, and source run/result links. "
+        f"2) If the owner judges these failures flaky, re-run the failed RC test run(s), "
+        f"then signal `rc-retriggered --release {release} --reason \"...\"` so Scout tracks "
+        "the newest RC and re-applies the gate. "
+        "3) If this is a product bug, patch/cherry-pick through the broker release process; "
+        f"after the orchestrator creates a fresh RC, run `rc-retriggered --release {release}`. "
+        "4) Override only as a last resort after team discussion: "
+        "`skip --release <id> --phase build_verify --step rc_report --reason \"...\"`."
+    )
+
+
+def _auth_next_steps(model) -> str:
+    release = model.get("release") or "<id>"
+    auth = model.get("auth") or {}
+    build = auth.get("build") or {}
+    test = auth.get("test") or {}
+    suites = test.get("suites") or {}
+    failing = []
+    missing = []
+    for name in A.AUTH_UI_SUITES:
+        suite = suites.get(name) or {}
+        label = name.replace("Firebase Test Lab - ", "")
+        pct = A.auth_pass_pct(suite) if isinstance(suite, dict) else None
+        if not suite.get("present") or pct is None:
+            missing.append(label)
+        elif pct < A.AUTH_UI_PASS_THRESHOLD:
+            failing.append(f"{label} {pct:.2f}%")
+    focus = "; ".join(failing + [f"{name}: no result" for name in missing])
+    focus = focus or "the Firebase suite(s) called out in the Authenticator ECS card"
+    test_id = test.get("run_id") or "<UI-test run>"
+    build_id = build.get("run_id") or "<auth build>"
+    test_url = A.auth_build_url(test_id) if valid_id(test_id) else ""
+    build_url = A.auth_build_url(build_id) if valid_id(build_id) else ""
+    test_ref = f"{test_id}" + (f" ({test_url})" if test_url else "")
+    build_ref = f"{build_id}" + (f" ({build_url})" if build_url else "")
+    return (
+        "Authenticator ECS action: 1) Open the Authenticator ECS UI-test run "
+        f"{test_ref} and start with {focus}; use the failing-title/source links in the "
+        "Authenticator ECS card. Monthly UI failures are not mapped to ADO test-plan cases "
+        "today, so do not create or force mappings for them; still investigate the source "
+        "failures by name and source link. "
+        f"2) If this is test flake or infrastructure, re-run the post-build Firebase UI tests "
+        f"for Authenticator build {build_ref}; after the rerun completes, run "
+        f"`reopen --release {release} --phase build_verify --step auth_ecs "
+        "--reason \"Auth ECS UI tests reran\"`, then `next --release "
+        f"{release}`. When `auth_ecs` is recaptured, resend the report with "
+        f"`notification prepare --release {release} --source step --phase build_verify "
+        "--step rc_report`, then claim/send/acknowledge that exact payload. "
+        "3) If this is a real Authenticator product bug, follow the Android Authenticator "
+        f"cherry-pick instructions ({AUTH_CHERRY_PICK_TSG}). After the cherry-pick produces "
+        "a new Authenticator ECS build + UI-test run, use the same reopen/next/report "
+        "commands above to re-evaluate. "
+        "4) Override only as a last resort after team discussion: "
+        "`skip --release <id> --phase build_verify --step rc_report --reason \"...\"`."
+    )
+
+
 def rc_next_action(model):
     readiness = report_readiness(model)
     if not readiness["ready"]:
@@ -329,9 +395,13 @@ def rc_next_action(model):
     holding = [name for name, result in (("MRWP UI", gate), ("Authenticator ECS", auth))
                if result["blocking"]]
     if holding:
+        actions = []
+        if gate["blocking"]:
+            actions.append(_mrwp_next_steps(model))
+        if auth["blocking"]:
+            actions.append(_auth_next_steps(model))
         return (f"STOP / HOLD — {' and '.join(holding)} did not clear the quality gate. "
-                "Do not proceed to Bug Bash; investigate and re-evaluate, or use an explicit "
-                "owner-reviewed skip with a reason. No automatic advance.")
+                "Do not proceed to Bug Bash. " + " ".join(actions) + " No automatic advance.")
     if gate["verdict"] == "warn":
         return ("CONTINUE WITH WARNINGS — both quality gates clear. Proceed to Bug Bash after "
                 "recording this report and completing all prerequisites; investigate remaining "

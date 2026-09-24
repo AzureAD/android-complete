@@ -216,6 +216,25 @@ display exactly two decimals; gate calculations still use unrounded ratios.
     Missing evidence → hold without sending or recording a pass. A completed
     Authenticator build failure or explicitly absent suite in a completed test run
     is a reportable quality failure, not clean success.
+  - **Authenticator ECS HOLD** — handle independently from the MRWP rate:
+    1. Open the linked Authenticator ECS UI-test run and inspect the failing Firebase
+       suite(s), failing titles and source links shown in the Authenticator ECS card.
+       UIAutomator E2E below 90% is the usual gate hold. Monthly UI failures are not
+       mapped to ADO test-plan cases today, so do not create or force mappings for them;
+       still investigate the source failures by name and source link.
+    2. If the owner judges the failures flaky or infrastructure-related, re-run the
+       post-build Firebase UI tests for the captured Authenticator build. After the
+       rerun completes, run `reopen --release <id> --phase build_verify --step auth_ecs
+       --reason "Auth ECS UI tests reran"`, then `next --release <id>`. When `auth_ecs`
+       is recaptured, resend the report with `notification prepare --release <id>
+       --source step --phase build_verify --step rc_report`, then claim/send/acknowledge
+       that exact payload.
+    3. If this is a real Authenticator product bug, follow the
+       [Android Authenticator cherry-pick instructions](https://identitydivision.visualstudio.com/IdentityWiki/_git/IdentityWiki.wiki?path=/IdentityWiki/Services/Microsoft-Authenticator/Release/Android/Cherry%252DPick-to-Android-Release-Instructions.md&version=GBwikiMaster&line=1&_a=preview).
+       After the cherry-pick produces a new Authenticator ECS build + UI-test run, use
+       the same reopen/next/report commands above to re-evaluate.
+    4. Override only as a last resort after team discussion:
+       `skip --release <id> --phase build_verify --step rc_report --reason "<why>"`.
   It records the failing-suite summary + stashes the checker/orchestrator/ECS/Local/Auth run
   links on the step.
 - The command prints `{verdict, blocking, pass_pct, ui_total, detail, links}` for your

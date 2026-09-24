@@ -1,5 +1,6 @@
 """RC report presentation. Gate decisions are supplied by the owning rc_report step."""
 from __future__ import annotations
+import re
 
 from steps.build_verify._common import build_url, valid_id, valid_counts
 from steps.build_verify.auth_ecs import auth_build_url, auth_pass_pct
@@ -8,6 +9,20 @@ from tools.pipelines import (
     format_versions, AUTH_UI_SUITES, AUTH_UI_PASS_THRESHOLD, MRWP_COUNT_BASIS,
     MONTHLY_REPORT_ONLY,
 )
+
+
+_URL_RE = re.compile(r"https://[^\s)]+")
+
+
+def _link_urls_html(text: str) -> str:
+    parts, last = [], 0
+    for match in _URL_RE.finditer(text or ""):
+        parts.append(T.esc(text[last:match.start()]))
+        url = match.group(0)
+        parts.append(f"<a href='{T.esc(url)}' style='color:#0b5cad;'>{T.esc(url)}</a>")
+        last = match.end()
+    parts.append(T.esc((text or "")[last:]))
+    return "".join(parts)
 
 
 def recovered_tests(model) -> list:
@@ -74,19 +89,22 @@ def auth_failure_details_plain(model):
         return ["  Detailed Authenticator failure evidence unavailable; refresh Phase-2 Authenticator verification."]
     suites = ((model.get("auth") or {}).get("test") or {}).get("suites") or {}
     lines = []
-    for name in AUTH_UI_SUITES:
+    names = [*AUTH_UI_SUITES, *sorted(name for name in groups if name not in AUTH_UI_SUITES)]
+    for name in names:
         suite = suites.get(name) or {}
         label = _auth_suite_label(name)
-        if not suite.get("present"):
+        failures = sorted(groups.get(name, []), key=lambda f: f["title"])
+        if not suite.get("present") and not failures:
             lines.append(f"  {label}: no result")
             continue
         passed, failed = suite.get("passed", 0) or 0, suite.get("failed", 0) or 0
+        if not failed and not failures:
+            continue
         denom = passed + failed
         pct = auth_pass_pct(suite)
         lines.append(
             f"  {label}: {passed}/{denom} passed"
             f" ({'n/a' if pct is None else f'{pct:.2f}%'})")
-        failures = sorted(groups.get(name, []), key=lambda f: f["title"])
         if not failures:
             if failed:
                 lines.append("      no unresolved failing titles after same-title retry reconciliation")
@@ -109,19 +127,22 @@ def auth_failure_details_html(model):
         return "<p>Detailed Authenticator failure evidence unavailable; refresh Phase-2 Authenticator verification.</p>"
     suites = ((model.get("auth") or {}).get("test") or {}).get("suites") or {}
     sections = []
-    for name in AUTH_UI_SUITES:
+    names = [*AUTH_UI_SUITES, *sorted(name for name in groups if name not in AUTH_UI_SUITES)]
+    for name in names:
         suite = suites.get(name) or {}
         label = _auth_suite_label(name)
-        if not suite.get("present"):
+        failures = sorted(groups.get(name, []), key=lambda f: f["title"])
+        if not suite.get("present") and not failures:
             sections.append(
                 f"<div style='margin:9px 0 0;font-size:12px;color:#667085;'>"
                 f"{T.esc(label)}: no result.</div>")
             continue
         passed, failed = suite.get("passed", 0) or 0, suite.get("failed", 0) or 0
+        if not failed and not failures:
+            continue
         denom = passed + failed
         pct = auth_pass_pct(suite)
         fail_pct = _fail_rate(failed, denom)
-        failures = sorted(groups.get(name, []), key=lambda f: f["title"])
         items = []
         for failure in failures:
             links = source_result_links_html(failure["links"])
@@ -132,12 +153,12 @@ def auth_failure_details_html(model):
         report_only = name == MONTHLY_REPORT_ONLY
         tag = (" <span style='font-size:12px;color:#0b5cad;'>(report-only; no test-plan case map)</span>"
                if report_only else "")
-        note = (
-            f"All {len(failures)} unresolved failing titles. "
+        note_html = (
+            f"All <strong>{len(failures)}</strong> unresolved failing titles. "
             "Auth gate counts use source executions, not distinct titles."
             if failures else
-            ("No unresolved failing titles after same-title retry reconciliation. "
-             "The source-execution failure count and gate percentage above are unchanged."
+            (T.esc("No unresolved failing titles after same-title retry reconciliation. "
+                   "The source-execution failure count and gate percentage above are unchanged.")
              if failed else "No unresolved failing titles.")
         )
         item_list = (
@@ -152,7 +173,7 @@ def auth_failure_details_html(model):
             f"<span style='color:#98a2b3;'>/{denom}</span> "
             f"<span style='color:#b42318;font-weight:600;'>&middot; {fail_pct}%</span>"
             f" failed source executions</td></tr></table>"
-            f"<div style='font-size:12px;color:#667085;'>{T.esc(note)}</div>"
+            f"<div style='font-size:12px;color:#667085;'>{note_html}</div>"
             f"{item_list}</div>")
     return "".join(sections)
 
@@ -627,7 +648,7 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
 
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:14px 0;border-radius:8px;background:#f9fafb;border:1px solid #eef0f3;">
     <tr><td style="padding:12px 16px;">
-      <strong>Next:</strong> {T.esc(next_action)}
+      <strong>Next:</strong> {_link_urls_html(next_action)}
     </td></tr>
   </table>
   <p style="color:#98a2b3;font-size:12px;">&mdash; Release Orchestrator (Scout)</p>
