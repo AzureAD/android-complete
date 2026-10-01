@@ -366,11 +366,23 @@ def test_rc_report_notify_uses_published_sharepoint_link():
     out = as_dict(_invoke(_steps.get_step("build_verify", "rc_report_notify").build, st))
 
     assert out["kind"] == "needs_skill" and out["tool"] == "m_send_teams_message"
-    assert "https://sharepoint/report.html" in out["payload"]["message"]
+    message = out["payload"]["message"]
+    assert "https://sharepoint/report.html" in message
+    assert "Summary: MRWP UI: pass with warning (95.0%); Authenticator ECS: pass." in message
+    assert "Open the report for failure details and next steps." in message
+    assert "Next:" not in message
+    assert "Fallback file URL" not in message
     assert "Scout bot" in out["summary"]
     assert out["record_as"] == "rc_report_notify" and out["outbound"] is True
 
 
+def test_rc_report_notify_has_step_knowledge():
+    from orchestrator import knowledge as kb
+
+    k = kb.get_knowledge("build_verify", "rc_report_notify")
+
+    assert k and "Scout bot" in k["summary"]
+    assert "report link" in k["what"]
 
 
 def test_rc_report_email_shows_retry_warning():

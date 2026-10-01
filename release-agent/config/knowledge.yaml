@@ -753,6 +753,33 @@ build_verify.rc_report:
     - q: "What does the report recommend?"
       a: "A prominent Recommendation combines both gates: WAIT for incomplete evidence; STOP / HOLD if either gate blocks; CONTINUE WITH WARNINGS if MRWP passes with warnings and Authenticator clears; PROCEED when both gates are clean. These are recommendations, not actions that stop ADO pipelines. Authenticator percentages display two decimals, but gate decisions use the unrounded ratio."
 
+build_verify.rc_report_notify:
+  summary: "Share the published RC verification report link with the release owner through the Scout bot."
+  what: >
+    This step sends a lightweight Scout-bot message to the release owner with the
+    SharePoint RC verification report link and a short gate summary. It deliberately
+    does NOT repeat failure lists, investigation commands, fallback URLs or long
+    remediation text; the report is the source of detail.
+  who: >
+    Scout sends it to the release owner recorded in state.owner_email using the
+    Scout bot transport. It is a personal owner notification, not a broad team post.
+  where:
+    - "The SharePoint report link recorded by build_verify.rc_report_publish."
+    - "The release owner's Scout bot chat."
+  how: >
+    It requires build_verify.rc_report_publish to be done with a report_link or web_url.
+    Use the shared notification lifecycle: prepare the step notification, review/claim
+    the exact descriptor, send the authorized m_send_teams_message payload, then record
+    notification result and finalize. If the report is republished or source state changes,
+    prepare a fresh descriptor instead of reusing an old one.
+  faqs:
+    - q: "Why is the Scout-bot message short?"
+      a: "The bot message is only a pointer and high-level status. Long failure details and next actions belong in the SharePoint report so the chat stays readable."
+    - q: "Who receives it?"
+      a: "The release owner on record, via the Scout bot. Do not add extra recipients or repost it to a channel unless a separate notification descriptor authorizes that."
+    - q: "Does posting the link approve the RC quality gate?"
+      a: "No. It only confirms delivery of the report link. The next step, build_verify.rc_report_gate, remains a separate owner decision."
+
 # =============================== Phase 3 · bug_bash ===============================
 
 bug_bash.clone_plans_broker:

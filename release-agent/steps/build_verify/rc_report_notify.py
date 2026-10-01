@@ -17,6 +17,22 @@ def _report_link(context: StepContext):
     return data.get("report_link") or data.get("web_url"), data
 
 
+def _mrwp_summary(gate: dict) -> str:
+    labels = {
+        "clean": "pass",
+        "warn": "pass with warning",
+        "attention": "hold",
+        "unavailable": "unavailable",
+    }
+    label = labels.get(gate.get("verdict"), str(gate.get("verdict") or "unknown"))
+    pct = gate.get("pass_pct")
+    return f"{label} ({pct}%)" if pct is not None else label
+
+
+def _auth_summary(auth: dict) -> str:
+    return "pass" if auth.get("verdict") == "clean" else "hold"
+
+
 def build(context: StepContext):
     to = context.release.owner_email
     if not to:
@@ -27,18 +43,14 @@ def build(context: StepContext):
     try:
         model = R.rc_report_model(context)
         gate, auth = R.rc_ui_gate(model), R.auth_report_gate(model)
-        action = R.rc_next_action(model)
     except Exception as exc:  # noqa: BLE001
         return Blocked(f"rc_report_notify: could not summarize the RC report ({exc}).")
-    auth_text = "PASS" if auth.get("verdict") == "clean" else "HOLD"
-    mrwp_pct = f" {gate.get('pass_pct')}%" if gate.get("pass_pct") is not None else ""
-    web_url = published.get("web_url")
-    extra = f"\nFallback file URL: {web_url}" if web_url and web_url != link else ""
     message = (
-        f"**Release {context.release.release_id} — RC verification report**\n\n"
-        f"Report: {link}{extra}\n\n"
-        f"Summary: MRWP UI {gate.get('verdict')}{mrwp_pct} · Authenticator ECS {auth_text}\n\n"
-        f"Next: {action}"
+        f"**Release {context.release.release_id} - RC verification report**\n\n"
+        f"Report: {link}\n\n"
+        f"Summary: MRWP UI: {_mrwp_summary(gate)}; "
+        f"Authenticator ECS: {_auth_summary(auth)}.\n\n"
+        "Open the report for failure details and next steps."
     )
     completion = {
         "kind": "step",
