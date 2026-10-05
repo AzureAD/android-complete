@@ -58,5 +58,8 @@ ehthumbs_vista.db
 [Dd]esktop.ini
 
 out/
+.kotlin/errors/
 
 plugins/buildsystem/bin
+
+.github/local-context/

@@ -49,15 +49,18 @@
     .\run-kql.ps1 -Query 'print x=1' -Out test.json
 
 .EXAMPLE
-    # Pull the 60-day per-error-code trend
+    # Pull the 60-day per-error-code trend.
+    # NOTE the bucketing: bin_at(..., 7d, <TREND_END>) walks backwards from curEnd in exact
+    # 7-day steps, so the final bucket IS the report's headline WoW window. Do NOT substitute
+    # startofweek() here -- Sunday alignment lags the report by up to a week and re-creates the
+    # classifier/report mismatch this pipeline exists to eliminate. See queries/60d-trend-codes.kql.
     $q = @"
 materialized_view('ErrorStatsMetrics')
-| where EventInfo_Time between (datetime(2026-04-12) .. datetime(2026-06-07))
+| where EventInfo_Time >= datetime(2026-06-23) and EventInfo_Time < datetime(2026-08-22)
 | where isnotempty(error_code) and error_code != 'success'
 | summarize errs = sum(countOverall),
             devs = dcount_hll(hll_merge(countDevicesHll))
-     by week = startofweek(EventInfo_Time), error_code
-| where week < datetime(2026-06-07)
+     by week = bin_at(EventInfo_Time, 7d, datetime(2026-08-22)), error_code
 | order by error_code asc, week asc
 "@
     .\run-kql.ps1 -Query $q -Out 60d-codes.json

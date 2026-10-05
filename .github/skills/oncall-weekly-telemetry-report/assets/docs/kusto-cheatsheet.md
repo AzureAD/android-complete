@@ -40,7 +40,7 @@ Time filter on materialized views is always **`EventInfo_Time`**. Use `PipelineI
 
 ## 3. Rolling 7-day WoW window (PRIMARY / attribution / latency)
 
-**The report's primary window is a **rolling 7-day window** ending at start-of-day UTC on `-EndDate` (default: today), NOT a Sun→Sat calendar week.** Only the 60-day trend section (§ 7 below) still uses `startofweek()` bucketing.
+**The report's primary window is a **rolling 7-day window** ending at start-of-day UTC on `-EndDate` (default: today), NOT a Sun→Sat calendar week.** The 60-day trend and sparkline sections use the same `curEnd` anchor with `bin_at(..., 7d, datetime(<TREND_END>))`, so classifier WoW and displayed WoW are aligned by construction.
 
 Canonical template — two rows per key (`week` in `{prevStart, curStart}`):
 
@@ -69,11 +69,10 @@ Compute the placeholder values via `bootstrap-report.ps1` (which prints them to 
 | `<CUR_END>` | `-EndDate` | `2026-07-09` |
 | `<CUR_START>` | `<CUR_END> - 7d` | `2026-07-02` |
 | `<PREV_START>` | `<CUR_END> - 14d` | `2026-06-25` |
-| `<TREND_END>` | `<CUR_END>` (today) — literal 60d trend upper bound, exclusive | `2026-07-09` |
 | `<TREND_START>` | `<CUR_END> - 60d` | `2026-05-10` |
-| `<TREND_CLASS_END>` | `startofweek(<CUR_END>)` — delta cutoff, `bucket-trends.js --end` | `2026-07-05` |
-| `<SPARK_END>` | `startofweek(<CUR_END>)` — WoW-sparkline upper bound (8 complete weeks) | `2026-07-05` |
-| `<SPARK_START>` | `<SPARK_END> - 56d` | `2026-05-10` |
+| `<TREND_END>` | `<CUR_END>` (today) — literal 60d trend upper bound, exclusive, and the `bin_at` anchor | `2026-07-09` |
+| `<SPARK_START>` | `<CUR_END> - 56d` — first label for the 8 rolling-week sparkline window | `2026-05-14` |
+| `<SPARK_END>` | `<CUR_END>` — exclusive upper bound and `bin_at` anchor for sparklines | `2026-07-09` |
 
 ---
 
@@ -113,14 +112,16 @@ The 7-dimension attribution slicing is **fully achievable from `ErrorStatsMetric
 Latency is stored as a TDigest sketch. **Percentiles are not additive** — averaging p95 across rows is meaningless. Always merge first:
 
 ```kql
+let _startTime = datetime(<START>);
+let _endTime = datetime(<END>);
 materialized_view('PerfStatsUpdated')
-| where EventInfo_Time between ((_startTime) .. (_endTime))
+| where EventInfo_Time >= _startTime and EventInfo_Time < _endTime
 | where span_name in ('AcquireTokenSilent','GetAccounts','RemoveAccount','ProcessWebsiteRequest')
 | where span_status == 'OK'
 | summarize p50 = percentile_tdigest(tdigest_merge(responseTimeTDigest), 50, typeof(long)),
             p95 = percentile_tdigest(tdigest_merge(responseTimeTDigest), 95, typeof(long)),
             p99 = percentile_tdigest(tdigest_merge(responseTimeTDigest), 99, typeof(long))
-        by week=startofweek(EventInfo_Time), span_name
+        by week = bin_at(EventInfo_Time, 7d, _endTime), span_name
 ```
 
 **Note:** there is also a `PerfStatsMetrics` view, but it does **not** expose per-percentile columns directly — it has the merged TDigest. Use `PerfStatsUpdated` (preferred by the dashboard) and `percentile_tdigest(tdigest_merge(...), N, typeof(long))`.
@@ -138,16 +139,18 @@ materialized_view('PerfStatsUpdated')
 
 ---
 
-## 7. Week alignment — Kusto `startofweek()` is **Sunday-aligned**
+## 7. Week alignment — use `bin_at()` anchored at `curEnd`
 
-> **Scope:** only the 60-day trend section (§ 3 of the report / `bucket-trends.js` pipeline) still uses `startofweek()` weekly buckets. The primary/WoW section uses a rolling 7-day window — see § 3 of this cheatsheet.
+All weekly-bucketed trend queries use `bin_at(EventInfo_Time, 7d, datetime(<TREND_END>))` (or the equivalent time column for the view) where `<TREND_END> = <CUR_END>`. The buckets step backward from `curEnd` in exact 7-day increments, so the newest bucket is `[curEnd - 7d, curEnd)` — exactly the same window as the report's headline WoW numbers.
 
-If a user says "the week of May 2 → May 9", Kusto buckets it as `startofweek('2026-05-09') == 2026-05-03T00:00:00Z`. When writing weekly-bucketed queries (60-day trend, `wow-table-sparkline-series.kql`), **always confirm**: print the distinct `startofweek(EventInfo_Time)` values from your first query and verify the bucket labels match your intended range. Off-by-one-week is the #1 silent error in weekly-bucket queries.
+For the literal-60-day trend window ending today (say `<CUR_END> = 2026-07-09`, so `<TREND_START> = 2026-05-10`), `bin_at(..., 7d, datetime(<TREND_END>))` produces labels:
+`2026-05-07, 05-14, 05-21, 05-28, 06-04, 06-11, 06-18, 06-25, 07-02`. Because 60 is not a multiple of 7, the **oldest** bucket (`05-07`) only overlaps 4 days of the filtered window; pass `bucket-trends.js --start=<TREND_START>` to drop it, leaving 8 complete rolling weeks. The newest bucket (`07-02`) is complete and must stay in both the chart and the classifier.
 
-For the literal-60-day trend window ending today (say `<CUR_END> = 2026-07-09`, so `<TREND_START> = 2026-05-10`), `startofweek()` produces buckets:
-`2026-05-03, 05-10, 05-17, 05-24, 05-31, 06-07, 06-14, 06-21, 06-28, 07-05` — the first (`05-03`) is a partial start (window opens mid-week `05-10`) and is dropped by `bucket-trends.js --start`; the last (`07-05`) is the **partial current week** — it is charted as the final bar but excluded from delta classification via `--end=<TREND_CLASS_END>` (= `startofweek(today)` = `2026-07-05`) `--include-partial-end`.
+Always invoke the bucketer with **both** `--start=<TREND_START> --end=<TREND_END>`. `--end` filters no rows because every bucket label is `< curEnd` by construction; its purpose is to disable the script's legacy partial-end auto-drop heuristic, which is wrong under rolling alignment.
 
-The `wow-table-sparkline-series.kql` per-row sparklines are different: they stay on the last **8 complete** weeks (`<SPARK_END> = startofweek(today)`, exclusive, partial week filtered at the source) so no WoW row ends on a misleading partial dip.
+The `wow-table-sparkline-series.kql` per-row sparklines use the same curEnd-anchored model: `<SPARK_START> = curEnd - 56d`, `<SPARK_END> = curEnd`, and 8 complete rolling weeks. There is no calendar-week alignment to reason about.
+
+> **⚠️ Historical note:** these queries used to rely on `startofweek()` calendar buckets. That lagged the rolling report window by up to a full week and made late-week regressions invisible to the noise gate. Do not reintroduce `startofweek()` here.
 
 ---
 
@@ -156,16 +159,18 @@ The `wow-table-sparkline-series.kql` per-row sparklines are different: they stay
 ### 8a. Reliability (auth-only denominator)
 
 ```kql
+let tEnd = datetime(<TREND_END>);
+let tStart = tEnd - 56d;
 let all = materialized_view('SilentAuthStatsAllRequestsMetrics')
-  | where EventInfo_Time > ago(70d)
+  | where EventInfo_Time >= tStart and EventInfo_Time < tEnd
   | summarize allReq = sum(countRequests),
               allDev = dcount_hll(hll_merge(countDevicesHll))
-       by week = startofweek(EventInfo_Time);
+       by week = bin_at(EventInfo_Time, 7d, tEnd);
 let ok  = materialized_view('SilentAuthStatsRequestsWithoutExpectedErrorMetrics')
-  | where EventInfo_Time > ago(70d)
+  | where EventInfo_Time >= tStart and EventInfo_Time < tEnd
   | summarize okReq = sum(countRequests),
               okDev = dcount_hll(hll_merge(countDevicesHll))
-       by week = startofweek(EventInfo_Time);
+       by week = bin_at(EventInfo_Time, 7d, tEnd);
 all | join kind=inner ok on week
     | project week,
               reqRel = round(100.0 * okReq / allReq, 3),
@@ -176,22 +181,23 @@ all | join kind=inner ok on week
 **Auth-only device union** (Silent ∪ Interactive — what the report uses for the "real fleet" KPI). The natural reach for `hll_merge_array` to combine two pre-merged HLL sketches **does not exist in Kusto** (`SEM0260: Unknown function`). Instead, project the raw `countDevicesHll` rows from both views, `union` them, and `hll_merge` once at the end:
 
 ```kql
+let tStart = datetime(<START>);
+let tEnd = datetime(<END>);
 let s = materialized_view('SilentAuthStatsAllRequestsMetrics')
-  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | where EventInfo_Time >= tStart and EventInfo_Time < tEnd
   | project EventInfo_Time, countDevicesHll;
 let i = materialized_view('InteractiveAuthStatsAllRequestsMetrics')
-  | where EventInfo_Time between (datetime(<START>) .. datetime(<END>))
+  | where EventInfo_Time >= tStart and EventInfo_Time < tEnd
   | project EventInfo_Time, countDevicesHll;
 union s, i
 | summarize authDev = dcount_hll(hll_merge(countDevicesHll))
-     by week = startofweek(EventInfo_Time)
-| where week < datetime(<END>)
+     by week = bin_at(EventInfo_Time, 7d, tEnd)
 | order by week asc
 ```
 
 ### 8b. 60-day error trend (feeds `bucket-trends.js`)
 
-Literal last 60 days ending today (`<TREND_START> = CUR_END - 60d`, `<TREND_END> = CUR_END`). Do NOT drop the partial current week here — it's the chart's final bar. Exclude it from deltas in the bucketer instead: `bucket-trends.js --end=<TREND_CLASS_END> --include-partial-end` where `<TREND_CLASS_END> = startofweek(today)`.
+Literal last 60 days ending today (`<TREND_START> = CUR_END - 60d`, `<TREND_END> = CUR_END`). Bucket with `bin_at(EventInfo_Time, 7d, datetime(<TREND_END>))`, not calendar weeks. The newest bucket is `[CUR_END - 7d, CUR_END)` and is the same complete window used by the headline WoW numbers. Because the oldest bucket is the only short bucket, invoke the bucketer as `bucket-trends.js --start=<TREND_START> --end=<TREND_END>`.
 
 ```kql
 materialized_view('ErrorStatsMetrics')
@@ -199,7 +205,7 @@ materialized_view('ErrorStatsMetrics')
 | where isnotempty(error_code) and error_code != 'success'
 | summarize errs = sum(countOverall),
             devs = dcount_hll(hll_merge(countDevicesHll))
-     by week = startofweek(EventInfo_Time), error_code
+     by week = bin_at(EventInfo_Time, 7d, datetime(<TREND_END>)), error_code
 | order by error_code asc, week asc
 ```
 
@@ -231,17 +237,19 @@ Run once each with the trailing dim set to: `span_name`, `calling_package_name`,
 ### 8e. Broker version share
 
 ```kql
+let tEnd = datetime(<CUR_END>);
+let tStart = tEnd - 21d;
 materialized_view('BrokerAdoptionStatsUpdated')
-| where EventInfo_Time > ago(21d)
+| where EventInfo_Time >= tStart and EventInfo_Time < tEnd
 | summarize req = sum(countRequests),
             dev = dcount_hll(hll_merge(countDevicesHll))
-     by week = startofweek(EventInfo_Time), broker_version
+     by week = bin_at(EventInfo_Time, 7d, tEnd), broker_version
 | order by week asc, req desc
 ```
 
 > **⚠️ Share/snapshot views are window-parameterized — don't assume 60-day coverage.** The share queries — `BrokerAdoptionStatsUpdated` (version share, 8e), `AppStatsUpdated` (calling-app share), `SkuStatsUpdated` (SKU share), and the [`broker-version-share-wow.kql`](../queries/broker-version-share-wow.kql) / [`app-share.kql`](../queries/app-share.kql) templates — all take an explicit `<START>..<END>` (or `ago(Nd)`) window. They return **exactly the weeks you ask for, nothing more.** The adoption / app-share sections of the report typically only need a short **2–3 week** WoW window, so that's what these templates default to (`ago(21d)` above).
 >
-> The trap: if you then try to draw a **9-week sparkline** for version/app/SKU adoption from that same short pull, you'll only have 2–3 real points and the rest will look flat or fabricated (the validator's low-peak `data-trend` heuristic may flag it). If you genuinely need a multi-week adoption sparkline, **re-run the share query with the full 60-day window** (`<START>` = reporting-Sunday − 56d) — don't pad a short result. If you don't need the sparkline, don't build one from a 2–3 week pull and pretend it's a trend.
+> The trap: if you then try to draw an **8-week sparkline** for version/app/SKU adoption from that same short pull, you'll only have 2–3 real points and the rest will look flat or fabricated (the validator's low-peak `data-trend` heuristic may flag it). If you genuinely need a multi-week adoption sparkline, **re-run the share query with the full rolling sparkline window** (`<START>` = `curEnd - 56d`, `<END>` = `curEnd`) — don't pad a short result. If you don't need the sparkline, don't build one from a 2–3 week pull and pretend it's a trend.
 
 ---
 
@@ -249,7 +257,7 @@ materialized_view('BrokerAdoptionStatsUpdated')
 
 | Script | Purpose |
 |---|---|
-| [`bucket-trends.js`](bucket-trends.js) | Bucket every error code into regression / spike / improvement / flat across an N-week window. Pass `--end=YYYY-MM-DD` (= `startofweek(today)`, exclusive) to exclude the partial in-progress week from delta classification, plus `--include-partial-end` to still chart it as the final bar. |
+| [`bucket-trends.js`](bucket-trends.js) | Bucket every error code into regression / spike / improvement / flat across the 8 complete rolling weeks ending at `curEnd`. Pass **both** `--start=<TREND_START> --end=<TREND_END>`; `--start` drops the 4-day oldest bucket, and `--end` disables the legacy partial-end auto-drop heuristic without filtering rows. |
 | [`agg.js`](agg.js) | Per-error per-dim top-N rollup with WoW deltas. Feeds spike-attribution dim blocks. |
 | [`summarize-attribution.js`](summarize-attribution.js) | Roll up 7-dim attribution slices per (error_code, week) — feeds the spike-attribution cards |
 | [`queries/`](queries/) | Canonical KQL templates, one per query — see [`queries/README.md`](queries/README.md) |

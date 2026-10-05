@@ -59,8 +59,20 @@ If the user is investigating an IcM titled "Aria detected an incident in `<proje
 | `span_id` | Unique identifier for the span |
 | `parent_span_id` | Parent span ID for hierarchical relationships |
 | `trace_id` | Trace ID linking related spans |
-| `correlation_id` | Correlation ID for request tracking (use for eSTS correlation) |
+| `correlation_id_v2` | **Primary correlation ID — use this for eSTS correlation and incident lookups.** |
+| `correlation_id` | Legacy column. Unpopulated in practice (0% of rows). |
 | `span_name` | Operation name (e.g., "AcquireTokenInteractive") |
+
+> ⚠️ **Correlation column gotcha:** Across the common calling packages, `correlation_id` is effectively unpopulated while `correlation_id_v2` is populated for the large majority of rows. **Always query `correlation_id_v2` first** for any incident lookup. Querying only `correlation_id` will give a false-negative zero-row result. When confirming "the broker never saw this CID," check `correlation_id_v2` as the primary signal and `correlation_id` only as a completeness check.
+>
+> Caveat: a few packages have low `correlation_id_v2` coverage — for those, telemetry alone may not be sufficient to confirm presence/absence.
+
+> ⚠️ **`android_spans` head-sampling caveat (CRITICAL for absence-as-evidence claims):** The Android broker emits telemetry via head-based per-trace sampling, so only a fraction of traces are recorded. Implications:
+>
+> - **A single missing CID is more likely a sampling drop than a real absence**, and two missing CIDs from the same incident are quite likely to both have been sampled out even if the broker DID handle both.
+> - **Never** conclude "the broker was not invoked" from a zero-row CID lookup alone. Always combine with the Zero-Row Guard checks (reference healthy trace + same-tenant/same-window cross-check) AND state the sampling caveat explicitly in any IcM update.
+> - Sampling is keyed by trace ID (not correlation_id, device, or tenant) and has no awareness of correlation_id_v2 — it cannot "systematically" drop a specific CID, but for any single CID the sampling prior strongly favors "absent."
+> - The customer **broker client log bundle** is the authoritative ground truth for whether the broker received a request. Cluster telemetry is suggestive at best for any single-correlation-id question.
 
 ### Error Information
 | Field | Description |
@@ -130,7 +142,7 @@ android_spans
 ```kql
 android_spans
 | where EventInfo_Time >= ago(7d)
-| summarize 
+| summarize
     total_devices = dcount(DeviceInfo_Id),
     error_count = count()
     by error_code
@@ -142,10 +154,10 @@ android_spans
 android_spans
 | where EventInfo_Time >= ago(7d)
 | extend has_cp = iff(
-    active_broker_package_name contains "companyportal" or 
-    calling_package_name contains "companyportal", 
+    active_broker_package_name contains "companyportal" or
+    calling_package_name contains "companyportal",
     1, 0)
-| summarize 
+| summarize
     total = count(),
     with_cp = countif(has_cp == 1)
 | extend cp_percentage = round(100.0 * with_cp / total, 2)
@@ -180,7 +192,7 @@ When investigating latency increases (e.g., AcquireTokenSilent), follow these st
 android_spans
 | where EventInfo_Time >= ago(7d)
 | where span_name == "AcquireTokenSilent"
-| summarize 
+| summarize
     p50 = percentile(elapsed_time, 50),
     p90 = percentile(elapsed_time, 90),
     p95 = percentile(elapsed_time, 95),
@@ -195,7 +207,7 @@ android_spans
 android_spans
 | where EventInfo_Time >= ago(3d)
 | where span_name == "AcquireTokenSilent"
-| summarize 
+| summarize
     count = count(),
     p90_latency = percentile(elapsed_time, 90)
     by active_broker_package_name, current_broker_package_name
@@ -208,7 +220,7 @@ android_spans
 android_spans
 | where EventInfo_Time >= ago(7d)
 | where span_name == "AcquireTokenSilent"
-| summarize 
+| summarize
     total = count(),
     errors = countif(isnotempty(error_code)),
     avg_latency = avg(elapsed_time)
@@ -224,7 +236,7 @@ android_spans
 | where EventInfo_Time >= ago(3d)
 | where span_name == "AcquireTokenSilent"
 | where isnotempty(elapsed_time_cache_load) or isnotempty(elapsed_time_network_acquire_at)
-| summarize 
+| summarize
     avg_cache = avg(elapsed_time_cache_load),
     avg_network = avg(elapsed_time_network_acquire_at),
     avg_total = avg(elapsed_time)
@@ -267,7 +279,7 @@ AllPerRequestTable
 
 | Category | Field | Description |
 |----------|-------|-------------|
-| **Request ID** | `CorrelationId` | Links to Android `correlation_id` |
+| **Request ID** | `CorrelationId` | **Links to Android `correlation_id_v2`** (round-trip verified). The `correlation_id` column on Android side is empty and does NOT carry the value eSTS receives. |
 | | `RequestId` | Unique eSTS request ID |
 | | `env_time` | Request timestamp |
 | **Request Type** | `Call` | Auth call type (e.g., "token") |
@@ -282,6 +294,18 @@ AllPerRequestTable
 | **User** | `TenantId` | Tenant ID |
 | | `UserPrincipalObjectID` | User's Entra ID object ID |
 | | `AccountType` | AAD, MSA, etc. |
+| | `DevicePlatformForUI` | `"Android"`, `"iOS"`, etc. — **authoritative source for platform attribution**, more reliable than IcM title/custom fields. |
+
+> ⚠️ **Required cross-cluster validation step.** Before relying on any "CID present in eSTS but absent in `android_spans`" conclusion (or the inverse), perform this round-trip sanity check at the start of the investigation:
+>
+> 1. Pick any healthy `android_spans` row for the same calling-app family in the last hour: `android_spans | take 1 | project correlation_id_v2`.
+> 2. Look up that GUID in eSTS: `AllPerRequestTable | where CorrelationId == '<guid>'` — confirm a hit.
+> 3. Conversely, pick any recent eSTS `CorrelationId` for the same platform: `AllPerRequestTable | where DevicePlatformForUI == 'Android' | take 1 | project CorrelationId`.
+> 4. Confirm the GUID appears in `android_spans.correlation_id_v2` (allowing for the head-sampling caveat — may need a few tries).
+>
+> Verified empirically: `correlation_id_v2` IS the same identifier as `CorrelationId`. But re-validate quickly per investigation in case the field semantics change in a future broker release. Without this check, an outdated assumption about which column carries the cross-cluster identifier can invalidate the entire conclusion.
+>
+> Also: do NOT trust the IcM title or `Impacted Users` custom field as proof of platform. Use eSTS `DevicePlatformForUI` for the same CIDs as the authoritative source.
 
 ---
 
@@ -297,7 +321,7 @@ android_spans
 | where EventInfo_Time >= ago(7d)
 | where span_name == "AcquireTokenInteractive"
 | where error_code == "some_error"
-| project correlation_id, span_id, EventInfo_Time, error_code
+| project correlation_id_v2, span_id, EventInfo_Time, error_code
 | take 100
 ```
 
@@ -329,7 +353,7 @@ AllPerRequestTable
 | where env_time >= ago(7d)
 | where DevicePlatformForUI == "Android"
 | extend HasPRT = isnotempty(PrtData)
-| summarize 
+| summarize
     total_requests = count(),
     prt_requests = countif(HasPRT),
     success_rate = round(100.0 * countif(Result == "Success") / count(), 2)

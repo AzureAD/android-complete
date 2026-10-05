@@ -13,23 +13,23 @@
 // the codes filter, once with the types filter -- and feed the result into the
 // WoW-table generator so every row has a real-data trend.
 //
-// NOTE ON WEEK ALIGNMENT: even though the primary WoW section uses a rolling
-// 7-day window AND the big 60-day trend chart now ends today (with a partial
-// final bar), these per-ROW sparklines deliberately keep 8 COMPLETE Sun-Sat
-// weeks. A partial final point in every WoW row would render as a misleading
-// dip across the whole table; the decorative per-row trajectory reads cleaner
-// on complete weeks. (The big 60d chart can afford one honest partial bar; 30+
-// table rows each ending on a partial point cannot.)
+// NOTE ON WEEK ALIGNMENT: these sparklines use the SAME rolling 7-day buckets as
+// the 60-day trend and the headline WoW numbers -- `bin_at(t, 7d, <SPARK_END>)`
+// with <SPARK_END> = curEnd. That makes the LAST sparkline point identical to the
+// row's own "current" value, so a row reading +63% no longer draws a falling
+// trajectory. All 8 buckets are complete 7-day windows, so the old "keep complete
+// Sun-Sat weeks to avoid a misleading partial dip in every row" workaround is no
+// longer needed -- the partial-point problem cannot occur under rolling alignment.
+// Do not reintroduce startofweek() here: it would desynchronise the sparkline from
+// the number printed beside it.
 //
-// Inputs (distinct from the trend-codes/types <TREND_*> tokens, which now mean
-// the LITERAL last 60 days ending today -- these SPARK_* tokens still mean the
-// last 8 COMPLETE weeks):
-//   <SPARK_START>  Sunday of week-0 = startofweek(today) - 56d
-//                  (e.g. 2026-05-10 for an 8-week window ending 2026-07-05)
-//   <SPARK_END>    Sunday that OPENS the current in-progress week, EXCLUSIVE.
-//                  Compute as startofweek(today). For a report run on 2026-07-09
-//                  (a Thu), use 2026-07-05. The `where week < datetime(<SPARK_END>)`
-//                  drops the partial in-progress bucket at the source.
+// Inputs (distinct from the trend-codes/types <TREND_*> tokens, which cover
+// the LITERAL last 60 days ending today -- these SPARK_* tokens cover the
+// last 8 rolling weeks):
+//   <SPARK_START>  = curEnd - 56d  (8 rolling 7-day buckets)
+//   <SPARK_END>    = curEnd (today), EXCLUSIVE, and the bin_at anchor. No
+//                    Sunday-alignment requirement -- any date works, because the
+//                    buckets are defined by 7-day steps back from this anchor.
 //   <CODES>        Dynamic list of error_code values whose sparklines we need.
 //                  Build this from the union of:
 //                    * wow-movers-codes.json results
@@ -39,10 +39,9 @@
 
 let codes = dynamic([<CODES>]);
 materialized_view('ErrorStatsMetrics')
-| where EventInfo_Time between (datetime(<SPARK_START>) .. datetime(<SPARK_END>))
+| where EventInfo_Time >= datetime(<SPARK_START>) and EventInfo_Time < datetime(<SPARK_END>)
 | where error_code in (codes)
 | summarize devs = dcount_hll(hll_merge(countDevicesHll)),
             errs = sum(countOverall)
-     by week = startofweek(EventInfo_Time), error_code
-| where week < datetime(<SPARK_END>)
+     by week = bin_at(EventInfo_Time, 7d, datetime(<SPARK_END>)), error_code
 | order by error_code asc, week asc

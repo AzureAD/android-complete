@@ -1,21 +1,20 @@
-// Authenticator — 8-COMPLETE-WEEK series per scenario, for the per-row table sparklines.
+// Authenticator — 8-ROLLING-WEEK series per scenario, for the per-row table sparklines.
 //
-// Deliberately distinct from scenario-60d-trend.kql:
-//   * 60d trend  = literal last 60 days ending TODAY, partial final week INCLUDED (chart bar).
-//   * this query = last 8 COMPLETE Sun-Sat weeks, partial week FILTERED AT THE SOURCE.
-// Row sparklines must not end on a partial week or every row shows a fake final-week cliff.
+// Same rolling 7-day bucketing as scenario-60d-trend.kql, just a shorter span:
+//   * 60d trend  = literal last 60 days ending curEnd -> 8 complete rolling weeks (+ dropped stub).
+//   * this query = last 8 rolling weeks ending curEnd -> 8 complete rolling weeks, no stub.
+// The LAST bucket is [curEnd-7d, curEnd) — identical to the scoreboard's current window — so a
+// row reading -1.27 pts no longer draws a sparkline that disagrees with its own number.
 //
-// <SPARK_END> = startofweek(curEnd), EXCLUSIVE.   <SPARK_START> = <SPARK_END> - 56d.
+// <SPARK_END> = curEnd, EXCLUSIVE, and the bin_at anchor.   <SPARK_START> = <SPARK_END> - 56d.
 //
-// ⚠️ <SPARK_START> MUST land exactly on a Sunday (a startofweek boundary). Because <SPARK_END> is
-//    itself startofweek(curEnd), subtracting exactly 56d always lands on one — so use that formula
-//    and nothing else. If <SPARK_START> is off by even one day, this query does NOT error: the
-//    first bucket silently becomes partial and its rate is subtly wrong. Verified live —
-//    a one-day-late start moved week 1 of Entra MFA Registration (No-QR) from 45.56% to 45.87%,
-//    which is exactly the kind of phantom "improvement" that would get written up as a finding.
-//
-// ✅ Verified live: with correct boundaries this returns exactly 8 buckets per scenario and the
-//    last bucket is a complete week (no trailing cliff).
+// ✅ The old "⚠️ <SPARK_START> MUST land exactly on a Sunday" trap is GONE. Under startofweek()
+//    a one-day-late start silently made bucket 1 partial and subtly wrong (verified live: it moved
+//    week 1 of Entra MFA Registration (No-QR) from 45.56% to 45.87% — a phantom "improvement"
+//    that could have been written up as a finding). bin_at() defines buckets by 7-day steps back
+//    from the anchor, so ANY <SPARK_END> works and every bucket is complete by construction.
+//    Do not reintroduce startofweek(): it would desynchronise the sparkline from the number
+//    printed beside it AND resurrect the silent-partial-bucket trap.
 //
 // Emits one row per (scenario, week) with both the success-rate series (what the scoreboard
 // sparkline draws) and the bad-outcome volume series (what the regression rows draw).
@@ -32,7 +31,7 @@ let outcome = (T:(EventDate:datetime, Ini:long, Suc:long, Fai:long, IniD:long, S
     | where EventDate >= sStart and EventDate < sEnd
     | summarize Initiated = sum(Ini), Succeeded = sum(Suc), Failed = sum(Fai),
                 InitiatedD = sum(IniD), SucceededD = sum(SucD), FailedD = sum(FaiD)
-        by week = startofweek(EventDate)
+        by week = bin_at(EventDate, 7d, sEnd)
     | extend scenario = label
 };
 let P = (T:(EventDate:datetime, Initiated:long, Succeeded:long, Failed:long, InitiatedDCount:long, SucceededDCount:long, FailedDCount:long)) {

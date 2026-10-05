@@ -2,11 +2,23 @@
 /**
  * bucket-trends.js -- Bucket every error code into 60-day trend categories.
  *
- * This tool operates ONLY on the 60-day trend section, which still uses Sun-Sat
- * weekly buckets (Kusto startofweek()-aligned). The primary/WoW section uses a
- * rolling 7-day window and does NOT go through this script -- it consumes the
- * two-bucket outputs of reliability-auth-only.kql / wow-movers.kql / etc.
- * directly.
+ * This tool operates ONLY on the 60-day trend section. Its buckets are ROLLING
+ * 7-day windows anchored at curEnd (Kusto `bin_at(t, 7d, datetime(curEnd))`), NOT
+ * Sun-Sat calendar weeks. Consequently the FINAL bucket is [curEnd-7d, curEnd) --
+ * exactly the same window the primary/WoW section reports on -- so a key's WoW here
+ * equals its WoW in the headline table by construction.
+ *
+ * ⚠️ HISTORY -- DO NOT REVERT TO startofweek(). Buckets used to be Sun-Sat calendar
+ * weeks cut off at startofweek(curEnd). That basis LAGGED the report's rolling window
+ * by up to a full week, so anything that turned in the last ~6 days was invisible to
+ * the novelty gate downstream. Real case (2026-08-01 run, classifier week 07/19-07/26
+ * vs report window 07/25-08/01, ONE day of overlap):
+ *     authorization_pending   report +63.2%   classifier -37.1%   -> filed "ONGOING"
+ *     expired_token           report +26.7%   classifier -51.0%   -> filed "ONGOING"
+ * Both were real risers the OCE had already spotted by hand. Re-bucketing on bin_at
+ * promoted both to ACCELERATING and simultaneously DEMOTED access_denied (a former
+ * false positive, actually -53.2%). Alignment adds real signal and removes phantom
+ * signal; it is not merely "more alerts".
  *
  * Input: a Kusto MCP JSON result file from a query of the form:
  *
@@ -15,39 +27,38 @@
  *   | where isnotempty(error_code) and error_code != 'success'
  *   | summarize errs=sum(countOverall),
  *               devs=dcount_hll(hll_merge(countDevicesHll))
- *       by week=startofweek(EventInfo_Time), error_code
+ *       by week=bin_at(EventInfo_Time, 7d, datetime(<trend_end>)), error_code
  *   | order by error_code asc, week asc
  *
  * (Use dcount_hll on countDevicesHll, NOT sum(countDevices) -- see ../docs/kusto-cheatsheet.md.)
  *
- * LITERAL 60-day window ending today:
- *   The 60d trend now spans [today-60d, today), so the query no longer filters the
- *   partial in-progress week at the source -- the CHART wants it as the final bar.
- *   Instead this script splits two week sets:
- *     * classification weeks (complete Sun-Sat only) drive first/last/delta/spike/
- *       peak-floor -- a partial week as "last" would read as a fake -99% improvement.
- *     * display weeks (adds the partial current week) drive the emitted `series`
- *       arrays and the JSON sidecar, so the sparkline/chart ends today.
- *   Pass `--end=<startofweek(today)> --include-partial-end` for this behavior.
- *   Without --include-partial-end the script behaves as before (display == classify).
+ * WHICH BUCKET IS PARTIAL:
+ *   60 is not a multiple of 7, so stepping back from curEnd in 7-day strides leaves
+ *   the OLDEST bucket (curEnd-63d) covering only 4 days. That is the safe end to be
+ *   partial on. Pass `--start=<curEnd-60d>` to drop it, leaving 8 complete rolling
+ *   weeks. The NEWEST bucket is always complete, so classify == display and there is
+ *   no fake -99%-improvement failure mode to guard against.
  *
- * <end> convention: startofweek(today) -- i.e. the Sunday that OPENS the currently
- * in-progress week. Every complete week strictly before that Sunday is classified;
- * with --include-partial-end the in-progress week (bucket == <end>) is still charted.
- * See assets/scripts/bootstrap-report.ps1 for how this is computed ($trendClassEnd).
+ * ⚠️ ALWAYS PASS --end=<curEnd>, NOT JUST --start.
+ *   The partial-end auto-drop heuristic below is guarded by `if (!endArg ...)`. Under
+ *   rolling alignment the last bucket is genuinely complete, so leaving --end off would
+ *   let a REAL 70% collapse be silently discarded as "looks partial". Passing
+ *   --end=<curEnd> disables the heuristic; it filters nothing, because every bucket
+ *   label is < curEnd by construction.
+ *
+ * LEGACY FLAGS (no-ops under rolling alignment, retained so old invocations don't crash):
+ *   --include-partial-end   There is no partial end bucket any more. classifyWeeks
+ *                           always equals weeks. Safe to omit; safe to pass.
  *
  * Usage:
  *   node bucket-trends.js <mcp-output.json>
- *       [--start=YYYY-MM-DD] [--end=YYYY-MM-DD]    # inclusive start, EXCLUSIVE end (week-bucket)
- *       [--include-partial-end] [--peak-floor=N] [--metric=devs|reqs]
+ *       --start=YYYY-MM-DD --end=YYYY-MM-DD        # inclusive start, EXCLUSIVE end (bucket label)
+ *       [--peak-floor=N] [--metric=devs|reqs]
  *
- * --start defaults to the second-earliest week in the data (drops partial start week).
- * --end   defaults to the most recent week, but the script will WARN-AND-DROP any week
- *         where (latest EventInfo_Time in the bucket - week-start) < 6 days, because that
- *         is a partial in-progress week and will turn every error into a fake -99% improvement.
- * --include-partial-end  keep the partial current week (bucket >= --end) in the emitted
- *         `series` arrays / JSON sidecar for charting, while still EXCLUDING it from the
- *         delta/spike/first/last classification. No-op without --end.
+ * --start  drops the 4-day partial oldest bucket. Defaults to the second-earliest
+ *          bucket in the data, which achieves the same thing -- but pass it explicitly.
+ * --end    should be curEnd. See the warning above; omitting it re-enables a heuristic
+ *          that is actively wrong for this bucketing scheme.
  *
  * --metric=devs  (default) buckets on weekly device counts (catches errors hitting more users)
  * --metric=reqs  buckets on weekly request counts        (catches per-device retry storms)
@@ -70,9 +81,9 @@
  *                           sparkline-data-generator script). The sidecar shape is:
  *                             {
  *                               "metric": "devs" | "reqs",
- *                               "weeks": [iso, ...],          // DISPLAY weeks (incl. partial end)
- *                               "classifyWeeks": [iso, ...],  // complete weeks used for deltas
- *                               "includePartialEnd": bool,
+ *                               "weeks": [iso, ...],          // rolling 7d bucket starts
+ *                               "classifyWeeks": [iso, ...],  // == weeks under rolling alignment
+ *                               "includePartialEnd": bool,    // legacy; no effect
  *                               "buckets": {
  *                                 "regression": [ { code, first, last, peak, delta, series: [N,N,...] }, ... ],
  *                                 "spike":       [...],
@@ -140,12 +151,12 @@ const startISO = startArg ? `${startArg}T00:00:00Z` : weeks[1]; // drop partial 
 const endISO   = endArg   ? `${endArg}T00:00:00Z`   : null;     // exclusive cutoff
 
 // --- Partial end-week detection ---------------------------------------------
-// Compute the total devices/requests per bucket as a proxy for completeness.
-// If the most recent bucket is < 30% of the median of the prior 3 buckets, it's
-// almost certainly partial — drop it and warn. This catches the common case of
-// running the report at 09:00 UTC Sunday and getting 9 hours of data in the
-// "last week" bucket. (Caveat: real fleet collapses also look like this; warn,
-// don't crash.)
+// LEGACY GUARD. Under rolling bin_at(t, 7d, curEnd) bucketing the newest bucket is
+// always a complete 7 days, so this heuristic should never fire in the normal skill
+// workflow -- and it MUST NOT, because a real 70% fleet collapse looks identical to
+// a partial bucket and would be silently discarded. It stays only to protect ad-hoc
+// invocations that omit --end. Passing --end=<curEnd> disables it (see the warning
+// emitted just below).
 function bucketTotal(w) {
   let t = 0;
   for (const wd of Object.values(series)) {
@@ -157,21 +168,25 @@ function bucketTotal(w) {
 const totals = weeks.map(w => ({ w, t: bucketTotal(w) }));
 const medianOf = arr => { const s = [...arr].sort((a,b)=>a-b); return s[Math.floor(s.length/2)] || 0; };
 let droppedPartial = null;
+if (!endArg) {
+  console.warn('[bucket-trends] WARN: no --end given. Buckets are rolling 7-day windows anchored at curEnd, so the newest bucket is COMPLETE; the partial-end auto-drop heuristic below can therefore discard a genuine collapse. Pass --end=<curEnd> (it filters nothing) for the standard skill workflow.');
+}
 if (!endArg && weeks.length >= 4) {
   const last = totals[totals.length - 1];
   const prevMedian = medianOf(totals.slice(-4, -1).map(x => x.t));
   if (prevMedian > 0 && last.t < prevMedian * 0.3) {
     droppedPartial = last.w;
-    console.warn(`[bucket-trends] WARN: dropping likely-partial end bucket ${last.w} (total=${last.t.toLocaleString()} vs median-of-prior-3=${prevMedian.toLocaleString()}). Pass --end=YYYY-MM-DD to override or filter in KQL.`);
+    console.warn(`[bucket-trends] WARN: dropping likely-partial end bucket ${last.w} (total=${last.t.toLocaleString()} vs median-of-prior-3=${prevMedian.toLocaleString()}). If this is a REAL collapse, re-run with --end=<curEnd> to keep it.`);
   }
 }
 
-// classKeep = complete Sun-Sat weeks used for delta/spike/first/last classification.
-// A partial week here would produce a fake -99% improvement, so it is always excluded.
+// classKeep = buckets used for delta/spike/first/last classification.
+// Under rolling alignment every kept bucket is a complete 7 days; --start drops the
+// 4-day partial OLDEST bucket (curEnd-63d).
 const classKeep = weeks.filter(w => w >= startISO && (endISO ? w < endISO : true) && w !== droppedPartial);
-// displayKeep = weeks emitted in `series` / the JSON sidecar (what the chart draws).
-// With --include-partial-end it adds the partial current week (bucket >= endISO up to
-// endISO inclusive) so the chart ends today; otherwise it mirrors classKeep.
+// displayKeep = buckets emitted in `series` / the JSON sidecar (what the chart draws).
+// --include-partial-end is a legacy no-op under rolling alignment (there is no partial
+// end bucket), so this normally mirrors classKeep exactly.
 const displayKeep = (includePartialEnd && endISO)
   ? weeks.filter(w => w >= startISO && w <= endISO)
   : classKeep;
