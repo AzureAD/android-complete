@@ -6,7 +6,7 @@ this script distills it into a compact `<name>.agent.md` that an AI coding agent
 `pbi-creator`) can parse and act on to open a PR — WITHOUT scraping prose.
 
 Output = YAML front-matter (structured fields) + a Dispatch Block (problem statement + acceptance criteria)
-+ files-to-change + constraints + "do-not-proceed-until" gating pulled from the Verification Gaps section.
++ files-to-change + constraints + approval and verification gates. Missing approval blocks dispatch.
 
 Repeatable: run it over the per-finding markdown after the reports are written.
 
@@ -154,8 +154,8 @@ def acceptance(md):
     out = []
     for line in body.splitlines():
         s = line.strip().lstrip("-* ").strip()
-        if re.match(r'\*\*?(Negative test|Unit|Regression)', s, re.IGNORECASE):
-            out.append(clean(s))
+        if re.match(r'(Negative tests?|Unit(?: tests?)?|Regression(?: tests?)?)\b', s, re.IGNORECASE):
+            out.append(light_clean(s))
     return out
 
 
@@ -219,6 +219,11 @@ def main():
         repos = infer_repos(files_change)
         gaps = parse_gaps(md)
         accept = acceptance(md)
+        risk_decision = clean(field(md, "Risk decision"))
+        remediation_approval = clean(field(md, "Remediation approval"))
+        existing_work_approval = clean(field(md, "Existing work approval"))
+        candidate_work = re.search(r"\b(unmerged|reverted)\b", find_section(md, "Existing Work"),
+                                   re.IGNORECASE)
 
         root_cause = first_para(find_section(md, "Root Cause") or find_section(md, "The Vulnerability")
                                 or section(md, "Description"))
@@ -229,10 +234,27 @@ def main():
                      or "wont" in a_l or "not-fixable" in a_l or "not fixable" in a_l)
         if is_closed:
             status = "closed-out (no fix)"
-        elif ext_yes and gaps:
-            status = "ready-to-fix (severity pending external confirmation)"
+            blockers = []
         else:
-            status = "ready-to-fix"
+            blockers = list(gaps)
+            if a_l != "keep":
+                blockers.append("Record a valid Keep disposition before dispatch.")
+            if risk_decision.lower() not in ("must fix", "optional hardening"):
+                blockers.append("Record the evidence-backed risk decision before remediation.")
+            if remediation_approval.lower() != "approved":
+                blockers.append("The engineer must approve remediation and select an approach.")
+            if (existing_work_approval.lower() not in ("approved", "not applicable")
+                    or (candidate_work and existing_work_approval.lower() != "approved")):
+                blockers.append("Confirm existing work with its owner, or explicitly record that none applies.")
+            if confidence.lower() not in ("high", "medium"):
+                blockers.append("Complete independent verification and human review of the confidence.")
+            if ext_yes and not gaps:
+                blockers.append("Resolve the external validation needed before dispatch.")
+            if not files_change or not accept:
+                blockers.append("Complete the files-to-change and test acceptance criteria.")
+            status = "blocked (decision or verification pending)" if blockers else "ready-to-fix"
+            if blockers:
+                print(f"  BLOCKED: {os.path.basename(f)} — {len(blockers)} dispatch gate(s) remain.")
 
         # ---- build front-matter ----
         fm = ["---"]
@@ -247,25 +269,28 @@ def main():
         fm.append(f"confidence: {yaml_val(confidence)}")
         fm.append(f"verdict: {yaml_val(verdict)}")
         fm.append(f"disposition: {yaml_val(assignment)}")
+        fm.append(f"risk_decision: {yaml_val(risk_decision)}")
+        fm.append(f"remediation_approval: {yaml_val(remediation_approval)}")
+        fm.append(f"existing_work_approval: {yaml_val(existing_work_approval)}")
         fm.append(f"external_validation_needed: {'true' if ext_yes else 'false'}")
         fm.append(f"status: {yaml_val(status)}")
         fm.append("target_repos: [" + ", ".join(repos) + "]")
         if fw:
             fm.append(f"firewatch_id: {yaml_val(fw)}")
-        fm.append("files_to_change:")
+        fm.append("files_to_change:" if files_change else "files_to_change: []")
         for path, change in files_change:
             fm.append(f"  - path: {yaml_val(path)}")
             fm.append(f"    change: {yaml_val(change)}")
-        fm.append("blocked_on:")
-        for g in gaps:
+        fm.append("blocked_on:" if blockers else "blocked_on: []")
+        for g in blockers:
             fm.append(f"  - {yaml_val(g)}")
         fm.append("---")
 
         # ---- build body ----
         b = [f"# Agent Dispatch Spec — {title}", ""]
         b.append("> Machine-actionable distillation of the investigation. Full human evidence + audit trail "
-                 "live in the finding README. **No PoC payloads / PII** — implement the fix, do not reproduce "
-                 "the exploit.")
+                 "live in the finding README. **No PoC payloads / PII**. Generation is not authorization: "
+                 "implement only when status is ready-to-fix and the engineer has approved execution.")
         b.append("")
         b.append(f"**Status:** {status}  ·  **Our severity:** {our_tier} ({icm_sev})  ·  "
                  f"**Confidence:** {confidence}  ·  **Disposition:** {assignment}")
@@ -291,14 +316,14 @@ def main():
         b.append("- [ ] The previously-exploitable case is now blocked (add the negative test as the contract).")
         b.append("- [ ] Legitimate path still works (regression).")
         b.append("")
-        if ext_yes or gaps:
+        if blockers:
             b.append("## ⚠️ Do NOT proceed past these without human/owner confirmation")
-            b.append("These are unverifiable from code and may change the severity or the fix decision:")
-            for g in gaps:
+            b.append("These decision, approval, or evidence gaps block automated implementation:")
+            for g in blockers:
                 b.append(f"- {g}")
             b.append("")
-            b.append("> The **code fix** is generally safe to implement now (it is correct hardening); what is "
-                     "gated is the **severity/priority decision**. Confirm the above before closing the IcM.")
+            b.append("> Stop before editing code or dispatching a fix. Resolve these gates in the source "
+                     "report and regenerate this spec; never infer approval from its existence.")
             b.append("")
         b.append("## Constraints")
         b.append("- Public-repo-safe: no exploit detail, PoC, or PII in code, tests, or PR text.")

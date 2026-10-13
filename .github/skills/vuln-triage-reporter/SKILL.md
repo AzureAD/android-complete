@@ -1,6 +1,6 @@
 ---
 name: vuln-triage-reporter
-description: Triage and remediate MSRC/ITD security vulnerabilities for Android Authenticator and Broker. Use evidence-based codebase analysis to right-size filed severity, identify defense-in-depth, and produce per-finding/on-call/WBR reports. When explicitly asked, execute remediation end-to-end, implement the fix, add tests, and open a public-repo-safe PR. Use during on-call for [MSRC]/[ITD] IcMs, FireWatch findings, severity disputes, won't-fix decisions, or remediation requests. Triggers include triage MSRC, investigate ITD findings, classify vulnerabilities, review FireWatch, on-call security report, is this a real vulnerability, what severity is this security bug, fix/remediate this finding, or execute the fix and open a PR. Public-repo safety rules and required preflight, codebase-researcher investigation, adversarial verification, and private-workspace output requirements are defined in this skill.
+description: Triage and remediate MSRC/ITD security vulnerabilities for Android Authenticator and Broker. Use code evidence and independent verification to assess risk, right-size severity, and produce finding/on-call/WBR reports. Execute fixes only after explicit approval. Also analyze post-shift feedback and report skill adoption, usefulness, and improvement progress without re-triaging findings. Triggers include triage MSRC, investigate ITD findings, classify vulnerabilities, review FireWatch, on-call security report, severity dispute, fix/remediate a finding, OCE skill feedback, or weekly skill impact report. Public-repo safety, triage preflight, evidence, approval, and private-output requirements are defined here.
 ---
 
 # Vulnerability Triage, Reporter & Remediation
@@ -10,11 +10,17 @@ evidence-based codebase analysis**, produce on-call/WBR reports, and — when as
 findings end-to-end** (implement the fix, test it, open a public-repo-safe PR; see Step 4.6).
 
 > The skill name is `vuln-triage-reporter` for stable invocation, but its scope is **triage → report →
-> remediate**. The reporting half stops at a dispatch-ready spec; the remediation half (Step 4.6,
+> remediate**. Assessment stops at the verdict/report; requested planning adds a gated spec. The remediation half (Step 4.6,
 > [references/remediation-execution.md](references/remediation-execution.md)) can ship the fix itself.
 
 This skill is for **on-call engineers during their on-call week**. Default scope is the **past 7 days**
 (the rotation length), parameterized so it can be widened.
+
+**Feedback-only entry point:** for adoption/usefulness reporting or skill improvement, read
+[references/feedback-loop.md](references/feedback-loop.md) first. Analyze the supplied feedback and
+approved tracking sources; do not discover findings, classify risk, or execute product remediation.
+Full source/ESTS preflight applies to vulnerability investigation, not this feedback-only mode.
+Private-output and public-repository safety rules below still apply.
 
 > ⚠️ **PUBLIC SKILL — DO NOT COMMIT SENSITIVE INFORMATION HERE.** This repo is mirrored to a public
 > GitHub repo. Apply this test to anything you add: *"could an outsider with **no** Microsoft access act
@@ -45,6 +51,9 @@ This skill is for **on-call engineers during their on-call week**. Default scope
 ---
 
 ## Requirements — verify BEFORE any work (HARD GATE)
+
+This gate covers finding discovery, investigation and security-verdict reporting. The feedback-only
+entry point above does not produce a verdict and uses its own input/privacy checks instead.
 
 > 🛑 **Do NOT begin discovery, investigation, or reporting until every requirement below is satisfied.**
 > If any is missing, **stop and tell the user exactly what to fix** — partial or *stale* environments
@@ -237,8 +246,11 @@ This cuts both ways — never claim "safe" *or* "exploitable" about a boundary y
    outcome; a redundant fix in a >1B-user library is regression risk for zero security gain). We have been
    getting a high volume of findings that are already covered — but **not all are**, so the gate requires a
    cited control, never a hunch. Gate 0 has **six** outcomes, not two — see the table in Step 4. For every
-   **kept** finding, produce a **dispatch-ready Remediation Spec** (root cause, fix approach, files to
-   change, test plan, risks/rollout) — see [references/remediation-spec.md](references/remediation-spec.md).
+   **kept** finding, first state **Must fix / Optional hardening / No fix / Needs review**, explaining
+   reachability, impact, controls, prior decisions and open facts. `Keep` is not approval to remediate.
+   Assessment-only intake stops at the verdict + report; produce remediation options/specs only when
+   requested, and keep generated agent specs blocked until the engineer approves the approach.
+   See [references/remediation-spec.md](references/remediation-spec.md).
 8. **No PoC payloads or PII** in committed artifacts. Keep detail at engineering-triage level.
 9. **Scripts, not one-liners.** Use the committed scripts in `scripts/` for discovery, scaffolding,
    transcription, and roll-up so the weekly run is repeatable.
@@ -268,7 +280,7 @@ This cuts both ways — never claim "safe" *or* "exploitable" about a boundary y
     ETA, and the absolute output folder — and wait for a "go."** Ask everything at once; skip anything
     already stated; accept "defaults". See [references/intake-interview.md](references/intake-interview.md).
 16. **PRESENT REMEDIATION OPTIONS BEFORE WRITING ANY FIX.** Never jump from "this is a real finding" to
-    editing code. For every kept finding, first present **2–3 candidate approaches** with tradeoffs
+    editing code. When remediation planning is requested for a kept finding, present **2–3 candidate approaches** with tradeoffs
     (blast radius · regression risk · flightability · effort · what each does and does not close), name a
     **recommended** one and say why, and **wait for the engineer to choose.** An engineer who has not seen
     the alternatives cannot trust the fix — and did not, when this was skipped. See Step 4.5 and
@@ -424,9 +436,10 @@ full local checkout):
 
 Because Pass 1 and Pass 2 both run **in parallel across findings**, wall-clock time is roughly:
 
-> **ETA ≈ (longest Pass 1) + (longest Pass 2) + reporting ≈ 5 min** — i.e. **~15 min best case, ~35 min
-> for a cross-module finding**, largely independent of how *many* findings (parallelism), as long as the
-> agent fleet can run them concurrently.
+> **ETA ≈ max(Gate 0, longest Pass 1) + longest Pass 2 + reconciliation + reporting + queue/tool time.**
+> Parallelism helps only within available concurrency. More findings can add queue time; broad history
+> searches or unresolved contracts can push a complete run beyond an hour. These are planning ranges,
+> not guarantees. Record actual timings instead of repeatedly quoting an optimistic range.
 
 **Always give the user an ETA before launching** (e.g. *"Investigating N findings in two parallel passes —
 expect ~20–35 min for `common`/`broker`, ~15–20 min for an app-only finding"*), and **post a progress note
@@ -445,8 +458,20 @@ explicit choice** — never silently. Offer these at intake (Non-Negotiable #15)
 | Mode | Passes | ETA / finding | Use when | Verdict status |
 |------|--------|---------------|----------|----------------|
 | **Fast** | Pass 1 only | ~5–8 min | "Is this even worth my afternoon?" · obviously-out-of-scope triage · a first read before a meeting | **PRELIMINARY** — Confidence forced to **Low**, not safe to close an IcM with |
-| **Standard** *(default)* | Pass 1 + adversarial Pass 2 | ~15–25 min | Everything normal | Final |
-| **Deep** | + targeted follow-up sweeps | 30 min+ | Cross-module, Important+, or a Pass-1/Pass-2 disagreement | Final |
+| **Standard** *(default)* | Pass 1 + adversarial Pass 2 | ~15–35 min planning range; complex runs can exceed it | Normal scoped review | Final only after both passes complete |
+| **Deep** | + targeted follow-up sweeps | ~35–60+ min planning range; revise for history/contract gaps | Cross-module, Important+, or disagreement | Final only after required verification completes |
+
+**Budget checkpoints:** write the agreed end-to-end budget and start time in the private report.
+Record elapsed time for intake/preflight, prior-art/Gate 0, Pass 1, Pass 2, reconciliation and rendering.
+At a pass boundary, or when the agreed upper bound is reached, surface the remaining question and a
+revised ETA; let the engineer choose targeted continuation or a partial report. Never silently extend
+the run, skip Pass 2, or label untested claims final to meet a budget. Do not schedule extra agents
+just to report time: use existing pass completion/status signals.
+
+For a busy shift, prioritize the highest-risk findings first, reuse evidence only for the same
+component/ref/contract, and bound history and documentation searches to the claims being evaluated.
+Report queue time separately from research time. A documentation follow-up is cheaper than an
+unbounded sweep, but a missing severity-critical contract remains an explicit verification gap.
 
 ### Keep each pass bounded (this is where the time goes)
 
@@ -557,6 +582,10 @@ The intake **also** covers two entry points the rest of this workflow does not:
   credit their evidence rather than silently re-deriving it.
 - **"This week"/"Aug 3–10"** style windows. Convert to explicit dates and **echo them back** — never
   silently guess a year or a boundary. Feed them to `shift.py` as `--date` or `--start/--end`.
+
+The **default is assessment, not remediation**. Options/planning require the corresponding intake
+choice; implementation requires the engineer-selected approach and execution approval. Echo this
+stop point in the plan and preserve it when new evidence or candidate fix work appears.
 
 ### On-call mode — pick an entry point first
 This skill runs during an **on-call rotation** (primary is **Wednesday → Wednesday**). The mode falls out
@@ -674,6 +703,9 @@ or **already resolved** before — it may be a duplicate, a regression, or have 
   the same sink"). If a prior **resolved** incident clearly covers it, say so up front — the on-call can
   short-circuit (link the prior fix / close as duplicate) instead of re-triaging. Cite, don't assume:
   a *similar* title is a lead, not proof — still confirm against current code in Step 3.
+- **Carry forward decisions, not just IDs:** record the cited prior rationale and whether its asset,
+  caller contract, prerequisites and shipping controls still match. Feed that comparison into the risk
+  assessment and both passes; a prior won't-fix is not permission to dismiss a changed risk.
 
 > #### Search the vulnerability CLASS, not just this finding's entry point
 >
@@ -775,6 +807,11 @@ For each finding, dispatch a `codebase-researcher` investigation that returns:
 - **A Claim Ledger** — every severity-relevant assertion as a numbered claim, **quoted verbatim** and
   **tagged with its channel** from the Scope Contract. This is what Pass 2 attacks, so a vague claim is a
   defect to fix *here*, not to "clarify" later inside the challenge prompt.
+- **Documented contracts when relevant** — for MSAL/Authenticator caller-responsibility or supported-use
+  claims, retrieve the specific canonical Microsoft documentation page. Record its URL, retrieval date,
+  platform/version and exact requirement; reconcile it with the code. Documentation proves a contract,
+  not runtime enforcement. If unavailable or outside the agreed time budget, name the targeted follow-up;
+  a severity-critical missing contract stays OPEN and blocks automated dispatch.
 
 **Every Pass 1 dispatch carries the Scope Contract** as a standing constraint, plus this instruction:
 *"Evidence is admissible only if you can name the hop-by-hop call path from the entry point to it. If a
@@ -862,7 +899,7 @@ Collapsing these is how a run produces the wrong recommendation. Each demands so
 |---|---|---|
 | **Covered** | A control neutralizes the sink on the **shipping** branch | Close out, ship nothing |
 | **Not covered** | No control anywhere, on any ref | Solution it (Step 4.5) |
-| **Fix exists, not shipped** | Written on a branch, not on the release | Don't re-write it — **land it**. **Name the branch and commit** in Existing Work |
+| **Fix exists, not shipped** | Written on a branch, not on the release | Name branch, commit and live PR state. Unmerged work is a **candidate**: consult its owner on scope, completeness and blockers before recommending it. Merged work needs a verified release decision, not a new fix. |
 | **Landed then reverted** | Merged, then backed out | **Find out WHY before re-landing.** Never blind-revert a revert |
 | **Fixed since filed** | Accurate when filed; the control shipped **after** the filing date | Close as `Won't-Fix (Fixed-Since-Filed)`. **Name the first release containing the control**, and answer the release-exposure question below |
 | **Not fixable by us** | A real weakness that **no client-side change can close** (protocol/platform constraint) | Close as `Not-Fixable (By-Design)`; ask MSRC to withdraw. Cite the standard — see [references/protocol-constraints.md](references/protocol-constraints.md) |
@@ -873,6 +910,11 @@ Collapsing these is how a run produces the wrong recommendation. Each demands so
 > needs a release decision. Losing that distinction wastes the most expensive resource in the loop.
 > Every finding whose fix is not shipped MUST fill in the **Existing Work** table (branch · commit · what
 > it covers · why it hasn't shipped). See [references/report-template.md](references/report-template.md).
+
+**Owner-confirmation gate:** label unmerged/reverted work clearly in Existing Work and the bottom line.
+Do not treat it as shipping protection or an accepted solution. Record the owner's confirmation source
+and the engineer's chosen approach. If unavailable, leave **Existing work approval: Pending** and make
+the follow-up explicit; never turn "a branch exists" into "land this fix."
 
 #### 🛑 Resolve WHICH ref actually ships — several will look plausible
 
@@ -957,7 +999,8 @@ Then set the **Disposition** (only for findings that survive Gate 0):
 - **`Not-Fixable (By-Design)`** — a real weakness no client-side change can close. Cite the standard and the
   compensating control we implement instead; ask MSRC to withdraw the sub-claim.
   See [references/protocol-constraints.md](references/protocol-constraints.md).
-- **`Keep`** — everything else. We own it and solution it (Step 4.5).
+- **`Keep`** — assess the remaining risk and record the decision; enter Step 4.5 only when remediation
+  planning was requested. An open finding is not automatic permission to write a fix.
 
 > A single IcM can carry **different dispositions for different sub-claims** — that is the normal case for
 > multi-part MSRCs, not an edge case. Record one disposition **per sub-claim** in the Claim Ledger and
@@ -966,7 +1009,10 @@ Then set the **Disposition** (only for findings that survive Gate 0):
 Use [references/report-template.md](references/report-template.md).
 
 ### Step 4.5 — Solution the kept findings (remediation spec)
-For every **kept** finding, produce a **dispatch-ready Remediation Spec**:
+**Enter only when remediation planning was requested.** First present the evidence-backed risk decision
+and prior-decision comparison from Step 4; unresolved material claims are **Needs review**, not a must-fix
+assertion. For assessment-only intake, stop at the written verdict/report and mark remediation
+**Not requested**. For requested planning of a **kept** finding, produce a Remediation Spec:
 root cause, fix approach, exact files to change (`file:line`), test plan, and risks/rollout (flighting).
 Use [references/remediation-spec.md](references/remediation-spec.md). It must be detailed enough to hand to
 an engineer or the Copilot coding agent / `pbi-creator` without further investigation.
@@ -977,7 +1023,7 @@ an engineer or the Copilot coding agent / `pbi-creator` without further investig
 had to interrupt to ask *how* it planned to fix it — and did not trust the result. A fix the engineer
 didn't get to choose is a fix they can't defend in review.
 
-So: **the first thing you produce for a kept finding is an options table, not a diff.**
+After the risk decision, **the first remediation-planning output is an options table, not a diff.**
 
 ```markdown
 ### Fix Options — [MSRC|ITD] <id>
@@ -1009,10 +1055,9 @@ Rules for the gate:
   eager fix silently omits.
 - **Wait for a choice.** Do not begin Step 4.6, do not touch a file, do not create a branch. Only after
   the engineer picks (or amends) an option does the spec's **Fix Approach** get filled in with it.
-- **Applies to every kept finding** — a lighter, two-row version is fine for low-severity ones.
+- **Applies to every kept finding with requested remediation planning** — a lighter, two-row version is fine for low-severity ones.
 - **If the engineer explicitly says "just fix it"**, still show the options table *as a single message*,
-  state your pick, and proceed unless they object. Cost: ~30 seconds. Value: they can catch the wrong
-  approach before the diff exists rather than after.
+  state your pick, and wait for approach approval before editing. Do not treat silence as approval.
 
 
 ### Step 4.6 — Execute the fix & open the PR (optional, public-repo-safe)
@@ -1289,6 +1334,9 @@ the engineer which follow-ups to run** (offer as a short menu — do **not** sil
    honored — a finding gated on an unverified server/runtime condition is **not** auto-dispatched; surface
    it for the engineer to confirm first.
 4. **Weekly status report?** *(opt-in — Step 7)* — offer to (re)generate the manager email table.
+5. **Post-shift skill feedback?** *(opt-in)* — follow
+   [references/feedback-loop.md](references/feedback-loop.md) to report adoption/usefulness and prioritize
+   improvements. This is separate from finding-remediation status; it does not re-run investigations.
 
 > **Order of trust:** manifest record (auto) → propose PBIs (approve) → dispatch fixes (approve, per
 > finding, gates honored) → status email (on request). The agent never creates work items or opens PRs
@@ -1336,9 +1384,9 @@ an exploit path" is not evidence — show the control, or show the searches prov
 | **🛑 GATE 0: sink already neutralized by an existing control (cited `file:line` on the shipping ref)** | `Won't-Fix (Already-Covered)` | **Close it out — no fix.** The safest outcome; a redundant change only adds regression risk. Recommend Won't-Fix/down-classify to the IcM, citing the covering control. |
 | **Accurate when filed; control shipped after the filing date** | `Won't-Fix (Fixed-Since-Filed)` | Close, naming the first release containing the control — **and** answer whether any shipped release lacked it. |
 | **No client-side change can close it (protocol/platform constraint)** | `Not-Fixable (By-Design)` | Cite the standard + the compensating control we implement instead; ask MSRC to withdraw. |
-| **Fix exists on a branch but not on the release** | `Keep` | Don't re-write it — **land it**. |
+| **Fix exists on a branch but not on the release** | `Keep` | Verify live PR/ref state and owner intent first. Unmerged work is a candidate, not an accepted solution; record approval before recommending reuse/landing. |
 | **Landed then reverted** | `Keep` | Find out **why** before re-landing. |
-| **No control anywhere** | `Keep` | Produce a dispatch-ready Remediation Spec (Step 4.5). |
+| **No control anywhere** | `Keep` | Record the risk decision; produce a gated Remediation Spec only when planning is requested (Step 4.5). |
 
 > Always run **Gate 0 first.** A large share of filed findings are already covered by defense-in-depth — but
 > **not all**, so the gate requires a cited control, never a hunch. Be conservative both ways: don't ship a
