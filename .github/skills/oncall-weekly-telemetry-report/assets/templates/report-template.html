@@ -393,7 +393,7 @@
   /* ---- Novelty presentation --------------------------------------------------
      The sparkline IS the argument. A reader cannot judge "+25% WoW" without
      seeing whether the series was flat for seven weeks or bouncing all along,
-     so every attention row carries its own 9-week shape inline. Charts live
+     so every attention row carries its own 8-week shape inline. Charts live
      WITH the finding, not in a separate browsable catalog. */
   .item-spark {
     display: inline-flex; align-items: center; line-height: 0;
@@ -435,6 +435,15 @@
     border-radius: 6px; padding: 12px 14px; margin: 12px 0; font-size: 13px;
   }
   .quiet-banner strong { color: #1a7f37; }
+  /* Deliberately muted: a reconciliation note is a DISMISSAL, not a finding. If it
+     competes visually with .callout it re-creates the noise the noise gate removes. */
+  .reconcile-note {
+    border-left: 3px solid #d0d7de; background: #f6f8fa; color: #57606a;
+    border-radius: 0 6px 6px 0; padding: 9px 12px; margin: 10px 0; font-size: 12.5px;
+    line-height: 1.55;
+  }
+  .reconcile-note strong { color: #424a53; font-weight: 600; }
+  .reconcile-note .mono { color: #24292f; }
 </style>
 </head>
 <body>
@@ -534,6 +543,34 @@
 </div>
 -->
 
+<!--
+  ⚠️ MANDATORY: RECONCILE EVERY RED/AMBER PILL IN THE WoW TABLES.
+  The WoW / error-code tables colour rows from their own rolling delta. This section is
+  populated from classify-novelty.js's novelty verdict. Both are correct, but they answer
+  DIFFERENT questions -- so a code can be red down there and legitimately absent from here.
+  A reader who spots that mismatch and is given no explanation concludes the report is broken.
+
+  Since the trend buckets were realigned to the report's rolling window, the two bases agree on
+  DIRECTION and MAGNITUDE. What can still diverge is CLASSIFIABILITY: any code whose peak stays
+  under the peak-floor (10,000 devices) is excluded from classification entirely and can never
+  appear here, however sharply it moves.
+
+  RULE: every `tag-bad` / `tag-warn` row in the WoW tables must be either promoted here or named
+  in a reconciliation note with the reason it is not escalated. validate-report.ps1 hard-fails an
+  unreconciled red pill. Test the reasons in this order:
+    1. below the classification floor -> "moved X -> Y devices; under the 10,000-device floor"
+    2. within its own normal band     -> "swings +/- N% routinely; this week is inside that band"
+    3. not novel (ONGOING)            -> "elevated for K weeks and flat; tracked in the fold below"
+
+  Render as a muted dismissal line, NOT a callout:
+
+  <div class="reconcile-note">
+    <strong>Table reds not escalated:</strong>
+    <span class="mono">EXAMPLE_code</span> — 6,100 → 8,400 devices, under the 10,000-device
+    classification floor; too small to separate signal from noise. Watching.
+  </div>
+-->
+
 <div class="callout watch">
   <div class="callout-title"><span class="icon">ℹ️</span> Denominator caveat — read this first</div>
   <p>The headline <code>BrokerAdoptionStats</code> device count dropped <strong>−18.6% WoW</strong> (1.52 B → 1.24 B), but this <strong>is not a real fleet shrink</strong>. The drop is fully explained by three low-value spans deflating as the 16.0.1 rollout completes:</p>
@@ -551,14 +588,14 @@
   <div class="item-list">
 
     <!-- EXAMPLE ITEM ROW — one per NEW key, ordered by classifier rank (NOT by volume).
-         MANDATORY: every attention row carries an inline .item-spark with its 9-week series.
+         MANDATORY: every attention row carries an inline .item-spark with its 8-week series.
          data-trend is the weekly series from the bucket-trends sidecar, oldest -> newest.
          Colors: #cf222e NEW/regression, #bc4c00 accelerating, #1a7f37 recovery. -->
     <div class="item">
         <div class="item-head">
           <span class="item-name">EXAMPLE_error_code</span>
-          <span class="item-spark trend" data-trend="[41000,41200,40800,41500,41100,41400,52129]" data-w="120" data-h="22" data-color="#cf222e"></span>
-          <span class="spark-cap">9 wk</span>
+          <span class="item-spark trend" data-trend="[40700,41000,41200,40800,41500,41100,41400,52129]" data-w="120" data-h="22" data-color="#cf222e"></span>
+          <span class="spark-cap">8 wk</span>
           <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 52.1 K</span></span>
           <span class="metric up"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE +25.7%</span></span>
           <span class="metric up"><span class="m-label">vs own median</span><span class="m-value">EXAMPLE +19.4%</span></span>
@@ -584,8 +621,8 @@
     <div class="item">
         <div class="item-head">
           <span class="item-name">EXAMPLE_accelerating_code</span>
-          <span class="item-spark trend" data-trend="[38000,41000,39000,52000,63000,67500,86798]" data-w="120" data-h="22" data-color="#bc4c00"></span>
-          <span class="spark-cap">9 wk</span>
+          <span class="item-spark trend" data-trend="[37500,38000,41000,39000,52000,63000,67500,86798]" data-w="120" data-h="22" data-color="#bc4c00"></span>
+          <span class="spark-cap">8 wk</span>
           <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 86.8 K</span></span>
           <span class="metric up"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE +28.5%</span></span>
           <span class="metric up"><span class="m-label">vs own median</span><span class="m-value">EXAMPLE +108.7%</span></span>
@@ -612,7 +649,7 @@
       <div class="item">
         <div class="item-head">
           <span class="item-name">EXAMPLE_ongoing_code</span>
-          <span class="item-spark trend" data-trend="[1700000,1750000,1780000,1760000,1790000,1770000,1786017]" data-w="100" data-h="20" data-color="#656d76"></span>
+          <span class="item-spark trend" data-trend="[1690000,1700000,1750000,1780000,1760000,1790000,1770000,1786017]" data-w="100" data-h="20" data-color="#656d76"></span>
           <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 1.79 M</span></span>
           <span class="metric"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE −3.2%</span></span>
           <span class="item-tags"><span class="tag tag-ongoing">ONGOING · 3 wk</span></span>
@@ -629,8 +666,8 @@
     <div class="item">
         <div class="item-head">
           <span class="item-name">EXAMPLE_recovered_code</span>
-          <span class="item-spark trend" data-trend="[834000,820000,790000,610000,340000,180000,117000]" data-w="120" data-h="22" data-color="#1a7f37"></span>
-          <span class="spark-cap">9 wk</span>
+          <span class="item-spark trend" data-trend="[845000,834000,820000,790000,610000,340000,180000,117000]" data-w="120" data-h="22" data-color="#1a7f37"></span>
+          <span class="spark-cap">8 wk</span>
           <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 834 K</span></span>
           <span class="metric down"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE −86%</span></span>
           <span class="metric down"><span class="m-label">Δ requests</span><span class="m-value">EXAMPLE −78%</span></span>
@@ -661,7 +698,9 @@
   series that actually changed. So: anything the 60-day pass flags that is <em>also</em> in the
   attention section above is <strong>not repeated here</strong>, and anything flat is collapsed.
   <br><br>
-  <strong>Method:</strong> weekly device counts over the last 9 weeks; drop the partial start week;
+  <strong>Method:</strong> device counts bucketed into rolling 7-day windows anchored at the report's
+  window end, over the last 60 days; the oldest bucket spans only 4 days and is dropped, leaving 8
+  complete weeks;
   keep codes with peak weekly devices ≥ 10&nbsp;K; classify by <code>delta = (last − first) / first</code>
   — <strong>regression</strong> &gt; +15&nbsp;% and monotonic-ish, <strong>ephemeral spike</strong> if peak ≥ 3× surrounding
   mean, <strong>improvement</strong> &lt; −15&nbsp;%, else <strong>flat</strong>. Delta math uses complete weeks only.
@@ -678,8 +717,8 @@
     <div class="item">
       <div class="item-head">
         <span class="item-name">EXAMPLE_slow_burn_code</span>
-        <span class="item-spark trend" data-trend="[7,40,180,520,1100,2050,3461]" data-w="120" data-h="22" data-color="#cf222e"></span>
-        <span class="spark-cap">9 wk</span>
+        <span class="item-spark trend" data-trend="[3,7,40,180,520,1100,2050,3461]" data-w="120" data-h="22" data-color="#cf222e"></span>
+        <span class="spark-cap">8 wk</span>
         <span class="metric"><span class="m-label">devices</span><span class="m-value">EXAMPLE 3,461</span></span>
         <span class="metric"><span class="m-label">Δ WoW</span><span class="m-value">EXAMPLE +8.4%</span></span>
         <span class="metric up"><span class="m-label">Δ 60d</span><span class="m-value">EXAMPLE +49,000%</span></span>
@@ -1210,11 +1249,11 @@ let ok = SilentAuthStatsRequestsWithoutExpectedError | where EventInfo_Time &gt;
 all | join kind=inner ok on week
   | project week, reqRel=round(100.0*okReq/allReq,3), devRel=round(100.0*okDev/allDev,3)
   | order by week asc</pre>
-    <p><strong>2. 60-day error trend (bucketed in post-processing):</strong></p>
-    <pre style="background:#f6f8fa;padding:10px;border-radius:6px;font-size:11.5px;overflow-x:auto;">ErrorStats | where EventInfo_Time &gt; ago(70d)
+    <p><strong>2. 60-day error trend (rolling 7-day buckets; bucketed in post-processing):</strong></p>
+    <pre style="background:#f6f8fa;padding:10px;border-radius:6px;font-size:11.5px;overflow-x:auto;">ErrorStats | where EventInfo_Time &gt;= datetime(&lt;TREND_START&gt;) and EventInfo_Time &lt; datetime(&lt;TREND_END&gt;)
   | where isnotempty(error_code) and error_code != 'success'
-  | summarize errs=sum(countOverall), devs=sum(countDevices)
-       by week=startofweek(EventInfo_Time), error_code
+  | summarize errs=sum(countOverall), devs=dcount_hll(hll_merge(countDevicesHll))
+       by week=bin_at(EventInfo_Time, 7d, datetime(&lt;TREND_END&gt;)), error_code
   | order by error_code asc, week asc</pre>
     <p><strong>3. Spike attribution (per error, per dimension):</strong></p>
     <pre style="background:#f6f8fa;padding:10px;border-radius:6px;font-size:11.5px;overflow-x:auto;">let codes = dynamic(['no_tokens_found','unauthorized_client','Code:-6',

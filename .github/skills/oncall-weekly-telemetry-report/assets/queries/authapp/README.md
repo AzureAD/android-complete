@@ -21,8 +21,8 @@ All files use angle-bracket tokens, replaced before execution.
 | `<CUR_START>` | `curEnd − 7d` — start of the reporting window |
 | `<CUR_END>` | `curEnd` — **exclusive** upper bound |
 | `<PREV_START>` | `curEnd − 14d` — start of the baseline window (its end is always `<CUR_START>`) |
-| `<TREND_START>` / `<TREND_END>` | literal last 60 days ending today — partial final week **included** |
-| `<SPARK_START>` / `<SPARK_END>` | last 8 **complete** Sun-Sat weeks — `<SPARK_END>` = `startofweek(curEnd)`, partial week **excluded at the source** |
+| `<TREND_START>` / `<TREND_END>` | literal last 60 days ending today; `<TREND_END>` is also the `bin_at` anchor, so the newest bucket is the displayed WoW window |
+| `<SPARK_START>` / `<SPARK_END>` | 8 complete rolling weeks ending at `curEnd` (`<SPARK_START> = curEnd - 56d`, `<SPARK_END> = curEnd`) |
 | `<ERRORS_MV>` | a `*_Errors_MV_V1` view name |
 | `<REASON_FILTER>` | optional `\| where Error in (...)` line, or blank |
 
@@ -44,7 +44,7 @@ All files use angle-bracket tokens, replaced before execution.
 1. `version-share-wow.kql` **first**. If the version mix moved materially, every downstream rate
    change has to be read against that. Running it last means re-reading every verdict.
 2. `scenario-outcomes-wow.kql` + `pn-completion-wow.kql` — the scoreboard.
-3. `scenario-60d-trend.kql` → `bucket-trends.js --key=scenario --end=<startofweek(curEnd)> --include-partial-end --peak-floor=1000`.
+3. `scenario-60d-trend.kql` → `bucket-trends.js --key=scenario --start=<TREND_START> --end=<TREND_END> --peak-floor=1000`.
 4. `scenario-sparkline-series.kql` — one pass, feeds every sparkline in the report.
 5. For each scenario that regressed **and cleared the volume floor**: `scenario-errors-wow.kql`,
    then `scenario-errors-by-dim.kql` filtered to the reasons that actually moved.
