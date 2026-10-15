@@ -77,6 +77,13 @@ establish the absence.
 **P1-B**: "<...>"
 <one per severity-relevant claim>
 
+## CONTRACT AND HISTORY EVIDENCE
+- Canonical documentation: <relevant URL, retrieved requirement and supported platform/version, or OPEN>.
+- Applicable prior decisions: <cited rationale and differences in scope/prerequisites/current controls>.
+- Candidate existing work: <live PR/ref state and owner confirmation, or Pending>.
+Verify that a documented caller responsibility was not confused with runtime enforcement, a prior
+decision was not applied to a changed risk, and unmerged work was not used as shipping protection.
+
 ## COVERAGE QUESTIONS THE FIRST REVIEW MAY HAVE UNDER-EXAMINED
 Please answer each explicitly, with citations:
 1. **Path enumeration.** Enumerate every dispatch branch of <entry points> (<variants: legacy vs modern,
@@ -99,6 +106,7 @@ Please answer each explicitly, with citations:
   searches.
 - `## Residual concerns` — ranked, with what would resolve each.
 - `## Confidence recommendation` — High / Medium / Low, with reasoning.
+- `## Timing` — elapsed review time and claims not reached within the agreed budget. Keep those OPEN.
 - `## Searches Run (audit trail)` — VERBATIM every search/command run and its result, **including those
   returning nothing**. Mandatory; do not summarize.
 ```
