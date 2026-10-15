@@ -473,6 +473,13 @@ component/ref/contract, and bound history and documentation searches to the clai
 Report queue time separately from research time. A documentation follow-up is cheaper than an
 unbounded sweep, but a missing severity-critical contract remains an explicit verification gap.
 
+**Avoid duplicate work:** build a per-run evidence index keyed by component, ref and contract; pass
+matching prior-art/history results to both reviewers rather than rediscovering them. The challenger
+must still independently verify every control it relies on. Start with the named sink and relevant
+symbols, widening history searches only to resolve a specific gap; retain the all-ref/shipping-content
+checks before declaring no fix exists. Preserve the team-facing report and independent review when
+reducing repeated searches, not their evidentiary coverage.
+
 ### Keep each pass bounded (this is where the time goes)
 
 Runaway passes come from unscoped investigation, not from thinking too hard. Every
@@ -812,6 +819,9 @@ For each finding, dispatch a `codebase-researcher` investigation that returns:
   platform/version and exact requirement; reconcile it with the code. Documentation proves a contract,
   not runtime enforcement. If unavailable or outside the agreed time budget, name the targeted follow-up;
   a severity-critical missing contract stays OPEN and blocks automated dispatch.
+  For MSAL/Authenticator findings without a contract-dependent claim, offer a targeted documentation
+  follow-up instead of adding a broad documentation sweep. Decide relevance before dispatch so the
+  same documentation search is not repeated in both passes.
 
 **Every Pass 1 dispatch carries the Scope Contract** as a standing constraint, plus this instruction:
 *"Evidence is admissible only if you can name the hop-by-hop call path from the entry point to it. If a
@@ -889,7 +899,7 @@ security team pushes back. Full rubric: [references/severity-rubric.md](referenc
 > The bar to use this category is the **same as any down-classification**: cite the covering control with
 > `file:line` (or the searches proving the sink is unreachable). "I didn't find an exploit" is not coverage —
 > show the control. And stay conservative the *other* way too: **not everything is covered.** If you cannot
-> prove a control exists, treat the finding as live and solution it.
+> prove a control exists, keep the finding open for risk assessment; planning still requires a request.
 
 #### Gate 0 has SIX outcomes, not two — and they need different actions
 
@@ -898,7 +908,7 @@ Collapsing these is how a run produces the wrong recommendation. Each demands so
 | Outcome | What it means | Action |
 |---|---|---|
 | **Covered** | A control neutralizes the sink on the **shipping** branch | Close out, ship nothing |
-| **Not covered** | No control anywhere, on any ref | Solution it (Step 4.5) |
+| **Not covered** | No control anywhere, on any ref | Record the risk decision; enter Step 4.5 only when planning was requested. |
 | **Fix exists, not shipped** | Written on a branch, not on the release | Name branch, commit and live PR state. Unmerged work is a **candidate**: consult its owner on scope, completeness and blockers before recommending it. Merged work needs a verified release decision, not a new fix. |
 | **Landed then reverted** | Merged, then backed out | **Find out WHY before re-landing.** Never blind-revert a revert |
 | **Fixed since filed** | Accurate when filed; the control shipped **after** the filing date | Close as `Won't-Fix (Fixed-Since-Filed)`. **Name the first release containing the control**, and answer the release-exposure question below |

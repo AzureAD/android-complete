@@ -2,6 +2,7 @@
 """Synthetic CLI regression tests for agent-spec approval and evidence gates."""
 
 from pathlib import Path
+import os
 import subprocess
 import sys
 import tempfile
@@ -114,6 +115,32 @@ class AgentSpecTests(unittest.TestCase):
                                                      f"Disposition:** {disposition}"))
                 self.assertIn('status: "closed-out (no fix)"', output)
                 self.assertIn("blocked_on: []", output)
+
+    def test_new_report_scaffold_preserves_assessment_and_evidence_gates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ, VULN_TRIAGE_WORKSPACE=directory)
+            for tag in ("MSRC", "ITD"):
+                with self.subTest(tag=tag):
+                    slug = f"synthetic-{tag.lower()}"
+                    subprocess.run(
+                        [sys.executable, str(Path(__file__).with_name("new_finding.py")),
+                         "--icm", slug, "--tag", tag, "--component", "MSAL",
+                         "--title", "Synthetic validation", "--slug", slug, "--date", "2026-10-15"],
+                        env=env, capture_output=True, text=True, encoding="utf-8", check=True,
+                    )
+                    source = (Path(directory) / "msrc" / "2026-10-14_to_2026-10-21"
+                              / "findings" / f"{slug}.md")
+                    report = source.read_text(encoding="utf-8")
+                    self.assertIn("**Risk decision:** TODO", report)
+                    self.assertIn("**Remediation approval:** Not requested", report)
+                    self.assertIn("**Existing work approval:** Pending", report)
+                    self.assertIn("Remediation not requested; risk decision above is the deliverable.", report)
+                    self.assertIn("| Owner confirmation |", report)
+                    self.assertIn("## Documented Contract & Prior Decisions", report)
+                    self.assertIn("Documentation proves a contract, not runtime enforcement.", report)
+                    self.assertIn("## Timing", report)
+                    self.assertIn("**Actual elapsed by stage:**", report)
+                    self.assertIn("**Queue/tool time and overruns:**", report)
 
 
 if __name__ == "__main__":

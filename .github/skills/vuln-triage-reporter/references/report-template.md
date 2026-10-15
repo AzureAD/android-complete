@@ -19,7 +19,7 @@ payloads, no PII**.
 **Verdict:** AGREE | DOWN-CLASSIFY | UP-CLASSIFY | RE-ROOTED  _(RE-ROOTED = the filed tier stands but the filed **root cause** was refuted and a different real weakness was kept from the same report — common when a report bundles a wrong headline with a correct aside. Do not render this as AGREE; it hides the point.)_
 **Confidence:** High | Medium | Low  _(set by the adversarial pass — see below)_
 **IcM Severity:** Sev2 | Sev2.5 | Sev3 | Sev4  _(team response-urgency mapping — see severity-rubric.md; Sev2.5+ is a rare, high bar)_
-**Disposition:** Keep | Won't-Fix (Already-Covered) | Won't-Fix (Fixed-Since-Filed) | Not-Fixable (By-Design)  _(GATE 0 — see severity-rubric.md. **Already-Covered**: the cited sink is already neutralized by an existing control, cited `file:line` on the **shipping** ref. **Fixed-Since-Filed**: accurate when filed, control shipped later — fill in Shipped-release exposure below. **Not-Fixable (By-Design)**: no client-side change can close it; you MUST cite the standard (see protocol-constraints.md). **Keep**: we own it and solution it.)_
+**Disposition:** Keep | Won't-Fix (Already-Covered) | Won't-Fix (Fixed-Since-Filed) | Not-Fixable (By-Design)  _(GATE 0 — see severity-rubric.md. **Already-Covered**: the cited sink is already neutralized by an existing control, cited `file:line` on the **shipping** ref. **Fixed-Since-Filed**: accurate when filed, control shipped later — fill in Shipped-release exposure below. **Not-Fixable (By-Design)**: no client-side change can close it; you MUST cite the standard (see protocol-constraints.md). **Keep**: assess remaining risk; planning and execution require separate approval.)_
 **Shipped-release exposure:** _Required when Disposition = Fixed-Since-Filed; otherwise "N/A". Name the first release containing the control and the last shipped release without it. This is what decides whether a customer/SIR response is owed — "fixed on dev" is not an answer._
 **External validation:** Yes | No — _one line: do we need facts outside the code we own (downstream consumers / server-side eSTS) to be sure? If the verdict leans on a server/downstream safeguard we can only infer, say "Yes" and name it — the impact is partly theoretical until confirmed._
 **Prior incidents:** None found | _IcM NNN — outcome (e.g. "fixed in <area>, same sink"); IcM NNN — duplicate._ — _from IcM `get_similar_incidents` + the `android-dri-search` MCP (Step 1.5). A prior **resolved** match means the on-call may short-circuit (link the fix / close as duplicate) instead of re-triaging. A similar title is a lead, not proof — still confirm against current code._
@@ -190,6 +190,11 @@ an engineer or the Copilot coding agent / `pbi-creator` without further investig
 
 ## Estimated Eng-Days
 <n> (ESTIMATE — on-call to adjust). Basis: <tier + fix complexity>.
+
+## Timing
+- **Depth / start time / agreed end-to-end budget:** <mode, timestamp and budget>.
+- **Actual elapsed by stage:** <intake/preflight, Gate 0/history, Pass 1, Pass 2, reconciliation, rendering>.
+- **Queue/tool time and overruns:** <waiting vs research; revised ETA and continuation decision, or none>.
 
 ## Searches Run (audit trail)
 Verbatim list of the searches BOTH passes actually ran — ESPECIALLY the ones that returned nothing
