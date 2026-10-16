@@ -61,6 +61,7 @@ def main(argv=None):
         diagnostics = {
             "status", "list", "workflow-adopt", "mock-spec",
             "step-info", "gate-info", "log", "journal", "paths", "preview-release",
+            "bugbash-progress",
         }
         pending_deliveries = (
             args.cmd == "notification" and args.operation == "prepare" and args.source == "pending")
@@ -71,10 +72,16 @@ def main(argv=None):
         if (release and (os.path.isfile(C.state_path(runs_root, release)) or args.cmd == "automation")
                 and args.cmd not in diagnostics
                 and not pending_deliveries and not automation_inspection and not checklist_inspection):
-            from orchestrator.revision import assert_current
+            from orchestrator.revision import assert_current, assert_automation_recovery_compatible
             try:
                 _, orch = C.load_orch(runs_root, release, args.config)
-                assert_current(orch)
+                if args.cmd == "automation" and args.action in (
+                        "create-result", "delete-result", "confirm-absent"):
+                    # Registry methods still enforce exact attempt/spec or explicit
+                    # absence proof. No creation/deletion claim is permitted here.
+                    assert_automation_recovery_compatible(orch)
+                else:
+                    assert_current(orch)
             except (ValueError, OSError) as exc:
                 import json
                 print(json.dumps({"error": str(exc), "permission_to_execute": False}))

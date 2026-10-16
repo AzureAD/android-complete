@@ -63,7 +63,12 @@ def build(context: StepContext):
         "join URL to onlineMeeting.chatInfo.threadId, verifies the chat and stores the binding. "
         "Never search by topic or accept a pasted ID as proof. If Teams has not exposed the "
         "thread, use Playwright to open THAT exact event's Chat pane, or ask the owner via "
-        "m_ask_user to do so, then retry. Permission errors must remain blocked. "
+        "m_ask_user to do so, then retry. HTTP 403 is a permission problem, not an "
+        "uninitialized thread; waiting or opening Chat is not a permission fix. "
+        "Permission errors must remain blocked unless the owner explicitly chooses a "
+        "manual-posting override. For an already-approved manual path, use "
+        f"`bugbash-progress --release {context.release.release_id}` without reopening chat "
+        "or replaying notifications. The report never acknowledges delivery or human review. "
         "A supplied --chat-id is only an assertion to compare against the resolved thread."
     )
     return NeedsSkill(

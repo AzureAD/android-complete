@@ -359,13 +359,15 @@ def resolve_mention_people(chat_id, owners, timeout=90, *, member_observation=No
     return True, people, ""
 
 
-def render_update(progress, month_year, plan_links, people=None):
+def render_update(progress, month_year, plan_links, people=None, *, mention_pending=True):
     """(html, mentions) for the Teams chat update.
 
     Returns canonical Graph mentions bound to matching <at> IDs/display names.
     Pending owners require verified people[upn] = {id: AAD GUID, name: display name}.
     Show every case (including resolved work), with its product and live status.
     Completed owners retain their full case list without being tagged.
+    A private/manual preview can explicitly omit mentions; outbound callers keep
+    the default verified-identity requirement.
     """
     people = people or {}
 
@@ -385,6 +387,9 @@ def render_update(progress, month_year, plan_links, people=None):
         if o["remaining"] == 0:
             heading = (f'<b>{escape(who)}</b> — {o["done"]}/{o["total"]} done, <b>0 remaining</b> '
                        f'<span style="color:#107c10;">(all {o["total"]} tests completed ✅)</span>')
+        elif not mention_pending:
+            heading = (f'<b>{escape(who)}</b> — '
+                       f'{o["done"]}/{o["total"]} done, <b>{o["remaining"]} remaining</b>')
         else:
             mi = len(mentions)
             person = people.get(upn) or {}

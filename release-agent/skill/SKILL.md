@@ -68,6 +68,11 @@ Throughout this skill, **`<AGENT_ROOT>`** = that confirmed `release-agent` folde
     and all blockers. Ask whether to accept **that exact reset scope**; a generic “new
     version” approval without the displayed impact is insufficient. Apply only the reviewed
     hash/reviewer/reason, then show the resulting status.
+    For a runtime-only patch blocked by unfinished automation attempts, follow
+    **reference/commands.md → Runtime-only patch recovery** on the release owner's machine.
+    Exact registry receipts can be reconciled before adoption; this does not authorize
+    provider operations or clear step/delivery ownership. Never use another machine's
+    automation list to resolve a copied registry.
 3e. **Email notification acknowledgement requires exact payload proof.** Send only the
     claimed tool/payload through the direct MCP mail tool (`workiq_send_email`), never
     browser/OWA/Outlook/manual compose. For `workiq_send_email`, generate a receipt file
@@ -179,6 +184,15 @@ Discover → (if no gate cleared, run the entry gate) → `next --json` to advan
 - **Distribution source of truth:** ADO owns assignments and plan testers; never store/replay an internal allocation map. `distribute-tests --json` reads live ADO and shows exact corrections, separately for manual work and owner triage. After explicit approval repeat the preview's OOF/OCE flags with `--apply --review-hash <hash> --approved-by <reviewer>`. Previews do not save availability. The command rereads ADO, rejects changed review inputs, corrects mismatches and reads back. Valid ADO needs no redistribution. Partial failures retain ownership: inspect live results and resolve explicitly before another review. Keep only availability decisions, authorization digest and workflow status internally; progress reads live ADO.
 - **Bug Bash chat identity:** preserve the actual created event response with `notification result --receipt-file`. `record-bugbash-chat` resolves that exact event's join URL to its Teams thread, as the organizer; topic search or a pasted chat ID is not proof. Missing receipts/permissions and stale bindings block. See reference/commands.md → Bug Bash invite and exact chat identity. Never create another invite to repair a chat association.
 - **Bug Bash mentions:** send the prepared display-name tags and canonical `mentions` unchanged; never substitute UPNs or ADO identity IDs. If CLI Graph cannot read members, use the exact chat's fresh `workiq_get_chat` response with `members_file` / `--members-file` as documented in reference/commands.md, then re-prepare. Unresolved pending owners block, not silently lose their tags.
+- **Bug Bash manual progress:** when the owner has explicitly chosen manual posting or
+  asks for progress without a working chat binding, run `bugbash-progress --release <id>`.
+  Show its full private/manual report and relevant frozen investigation evidence; it is
+  read-only and has no mentions or send permission. Preserve skipped chat/progress steps
+  and already-sent Native Auth notifications. Do not reopen them just to get a report.
+  `ui_failures`, `native_auth_signoff`, and `bugbash_complete` still require the owner's
+  explicit response through the normal focused-action flow; neither a report nor a
+  skipped notification proves review, sign-off, or delivery. Graph 403 remains an access
+  problem, not evidence that waiting or opening the meeting will repair permissions.
 - **Bug Bash progress counts:** count human manual/triage work from BOTH plans, including Broker UI failures outside the Broker manual subtree. Use the completed fill's classification to exclude automation-only Auth cases, retain applied failures for both apps, and preserve real manual completions. Broker triage matches the original failed point/case/config IDs; count each case once and require all its tracked failures to resolve. Owners/outcomes remain live ADO; no assignment cache.
 - **Bug Bash rendering:** always show every workload case, including completed cases and finished owners' full lists. The leading outcome icon and single report legend replace repeated trailing status text; Passed and N/A use distinct icons. Keep unresolved work first and mention only owners with remaining work. Label each row Broker/Authenticator from the source plan; retain only a short Automation triage context note. The final wrap-up includes the full completed list.
 - **Two-plan routing:** No Phase-3 result refetch or invented attribution. Broker routing uses the complete MSAL/Broker/flight combination: LTW RC/RC targets existing 293/330, not 294/344. Use `broker-plan --preview-ui-repair` for read-only old/new point evidence; applying a repair requires later exact approval. Never clear historical/manual outcomes without ownership receipts and match-before-write.

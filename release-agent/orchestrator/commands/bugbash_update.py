@@ -25,8 +25,37 @@ from orchestrator import schedule, delivery as D
 from tools import bugbash as BB
 from steps.bug_bash.activate_chat import stored_chat_id, chat_state_matches
 from steps.bug_bash import bugbash_updates as BU
+from steps.bug_bash.ui_results import completed_result
 
 _LA = ZoneInfo("America/Los_Angeles")
+
+
+def cmd_bugbash_progress(args):
+    """Private/manual report only: no chat lookup, offers, completion or pruning."""
+    try:
+        st, orch = C.load_orch(args.runs_root, args.release, args.config)
+        context = orch.context("bug_bash", "bugbash_updates")
+        result = completed_result(context)
+        ok, progress, detail = BU.gather(context)
+        if not ok:
+            raise ValueError(f"Could not read Bug Bash progress: {detail}")
+        content, _ = BB.render_update(
+            progress, schedule.target_month_label(st) or "Bug Bash",
+            BU.plan_links(context), mention_pending=False)
+    except (ValueError, OSError) as exc:
+        print(_json.dumps({"decision": "error", "detail": str(exc),
+                           "notifications": [], "permission_to_send": False}))
+        return 1
+    print(_json.dumps({
+        "decision": "preview_only",
+        "note": "Private/manual preview; nothing sent or completed. Mentions are not included. "
+                "UI-failure review, Native Auth sign-off and Bug Bash completion still require the owner.",
+        "content": content, "contentType": "html",
+        "done": progress["done"], "total": progress["total"], "remaining": progress["remaining"],
+        "investigations": result["investigations"],
+        "notifications": [], "permission_to_send": False,
+    }))
+    return 0
 
 
 def cmd_post_bugbash_update(args):
@@ -63,7 +92,8 @@ def cmd_post_bugbash_update(args):
     chat_id = stored_chat_id(context)
     if not chat_id:
         print(_json.dumps({"decision": "no_chat",
-                           "note": "meeting chat binding missing/stale (run activate_chat against current invitation)"}))
+                           "note": "meeting chat binding missing/stale (run activate_chat against current invitation)",
+                           "manual_preview_command": f"bugbash-progress --release {args.release}"}))
         return 0
     scope["state_matches"] = chat_state_matches(context)
     try:
@@ -117,6 +147,10 @@ def cmd_post_bugbash_update(args):
 
 
 def register(sub):
+    preview = sub.add_parser(
+        "bugbash-progress", help="Read-only private/manual Bug Bash progress and UI investigation evidence; no chat required")
+    preview.add_argument("--release", required=True)
+    preview.set_defaults(func=cmd_bugbash_progress)
     p = sub.add_parser("post-bugbash-update",
                        help="One tick of the bug-bash update poller: gate the window, read "
                             "progress, print a post/complete/off_hours decision")

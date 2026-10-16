@@ -82,6 +82,7 @@ review. Parameters never authorize sending. Mock redirects and input knobs still
 | **Phase 2 — one RC poll** | `python -m orchestrator.cli poll-rc --release <YYYY-MM>` — `waiting` / `nudge` / `ready` / `resolved` / `blocked` / `idle`. `ready` lists eligible Scout work: execute it and its follow-up, then re-poll. `resolved` requires all Phase-2 steps settled as done/skipped; distinguish `status: overridden` from `status: passed`. The worker lives until its owning phase completes, not merely an old RC report. |
 | **Phase 3 — bind the invitation's meeting chat** | `python -m orchestrator.cli record-bugbash-chat --release <id> [--chat-id <expected-thread>]` — resolves the exact sent event's join URL/thread; enforces prerequisites; never chooses by title |
 | **Phase 3 — one bug-bash update** | `python -m orchestrator.cli post-bugbash-update --release <YYYY-MM> [--force]` — `off_hours` / `no_chat` / `error` / `post` / `complete`. Missing/stale invite-chat bindings return no_chat, including with force. The final message's successful claim/result records `poll_complete`; central claimed cleanup retires the on-demand poller. |
+| **Phase 3 — private/manual progress** | `python -m orchestrator.cli bugbash-progress --release <id>` — read-only JSON report, live ADO progress and current fill investigation evidence; no chat/Graph identity lookup, mentions, delivery permission, state save or completion. Works with owner-skipped chat/progress steps and during patch diagnosis. |
 | **Phase 3 — OOF candidates / manual distribution preview** | `python -m orchestrator.cli distribute-tests --release <id> --oce <verified-primary-upn> [--json]` — owner/OCE/configured exclusions removed before listing candidates; missing OCE blocks without candidates; subsequent runs reuse the recorded OCE and availability |
 | **Phase 3 — preview owner availability and corrections** | `python -m orchestrator.cli distribute-tests --release <id> --no-oof` OR `… --oof <verified-upn> [--oof <verified-upn> …] [--oce <upn>]` — only after explicit owner input; saves nothing. Repeat the same selections on execution. |
 | **Phase 3 — validate current distribution** | `python -m orchestrator.cli distribute-tests --release <id> --validate --json` — read live ADO; report eligibility, balance, triage and tester mismatches without writes |
@@ -250,6 +251,46 @@ Authenticator's Monthly UI Tests intentionally has no case map. All failures rem
 the standard report and release-owner `ui_failures` reminder, by exact title and source
 link. No case creation, forced mapping, new notification lifecycle, or automatic attestation.
 
+## Runtime-only patch recovery
+
+Keep the owner's canonical run directory and stop competing release runners before
+installing a patch. Never copy a diagnostic run back over their live progress.
+Preview `workflow-adopt --release <id> --json`: a runtime-only patch has unchanged
+phase definitions and zero step/gate resets. Unresolved automation attempts still block
+adoption; do not delete registry entries, change hashes by hand, reinitialize, or claim a
+second provider operation to clear them.
+
+For unchanged phase definitions, three existing **local registry recovery** commands
+remain available before adoption: `automation create-result`, `automation delete-result`,
+and `automation confirm-absent`. They do not call Scout's create/delete APIs or update
+release-state. Missing/unbound state, changed phase definitions, wrong attempt IDs,
+changed create specs and incomplete/stale absence evidence still reject.
+
+On the original machine, inspect `automation list --release <id> --json` and the actual
+Scout provider evidence. For a creating/uncertain entry, recover the original exact
+provider spec and owning attempt ID; acknowledge only its proven result using
+`create-result --slug <slug> --attempt-id <id> --spec-file <original-spec.json>
+--outcome created|not_created|uncertain --evidence "<proof>" [--id <provider-id>]`.
+For a deleting/delete_uncertain entry, use its stored provider ID and owning attempt:
+`delete-result --id <provider-id> --attempt-id <id>
+--outcome deleted|not_deleted|uncertain --evidence "<proof>"`.
+Include `--release <id>` in each command. Do not infer deletion from the local registry
+or a missing result receipt. A different machine's provider list proves nothing.
+
+If the result remains unknown, record `uncertain` on the owning attempt, not success.
+Only after the owner confirms the original runner AND provider operation have stopped,
+and a fresh exhaustive provider list proves absence, use `confirm-absent --release <id>
+--slug <slug> --observed-file <observations.json> --confirm-absent --confirm-no-inflight
+--reason "<owner-reviewed proof>"`. Preserve the existing observation envelope contract.
+If an automation exists but its exact original create spec cannot be recovered, stop for
+owner recovery; never adopt by name alone or rewrite its intent hash.
+
+After settling every blocker, preview adoption again (the old hash is stale), show its
+exact impact and obtain owner approval. Apply that hash without advancing the release.
+Only then resume normal operation. New prepares, create claims and delete claims still
+require the current runtime. Step effects, external approvals and notification ownership
+retain their existing pinned-runtime recovery rules.
+
 ## Bug Bash invite and exact chat identity
 
 The invitation template's **Auth pipeline** link opens the current RC's Authenticator
@@ -306,6 +347,19 @@ then verifies that thread. Do not use `workiq_search_chats` or a matching title 
 `--chat-id` only asserts that a user-provided candidate equals the resolved thread.
 If the thread is unavailable, open the exact event's Chat pane and retry; API permission
 failures remain blocked, not a reason to accept an unverified chat.
+In particular, HTTP 403 is an access failure, not an uninitialized chat; repeatedly
+opening the event or waiting does not establish permission.
+
+If the owner explicitly keeps chat/progress skipped and posts manually, leave those
+decisions intact. `bugbash-progress --release <id>` returns the complete progress HTML
+without mentions plus frozen `investigations` from the current completed UI fill,
+including report-only/unmapped evidence. It reads live ADO owners/outcomes but never
+reads Graph, offers a notification, writes a receipt, starts a poller, or attests work.
+Show it privately for review/manual use; it is not a payload to send automatically.
+Missing/stale fill evidence and failed reads remain errors, not zero outstanding tests.
+Keep all three human decisions explicit: UI-failure review, Native Auth sign-off and
+Bug Bash completion. Do not reopen chat or resend a manually delivered Native Auth ping
+to obtain this report.
 
 The same completed binding is a no-op. To replace a stale/completed binding, the owner must
 first review and reopen **activate_chat**, never recreate the meeting. Older runs missing

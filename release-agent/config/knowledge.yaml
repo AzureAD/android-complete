@@ -1103,6 +1103,9 @@ bug_bash.activate_chat:
     replacement invitation or hand-editing state. Progress only consumes a current binding;
     prepared messages bind the invite receipt and chat so changed sources cannot authorize
     delivery or completion. Previously prepared legacy messages require owner review at deployment.
+    HTTP 403 requires correcting access, not waiting for a thread. If the owner explicitly
+    chooses manual posting, preserve the reviewed skips and use bugbash-progress --release <id>
+    for a private read-only report. Do not reopen chat or resend notifications just to read progress.
   faqs:
     - q: "Why can't it just post to the meeting chat directly?"
       a: "A topic is not unique and can identify an older release. The destination must be the thread returned for the exact calendar event that send_invite created. If the thread is unavailable, activate that event's Chat pane and retry."
@@ -1245,6 +1248,10 @@ bug_bash.ui_failures:
     lines also carry their flight + suite context. The owner follows the run links, rules on each
     failure, and manually runs the affected tests. Once the owner tells Scout every failure has been
     investigated and executed, Scout closes the step with `done --step ui_failures`.
+    If a chat retry replaced the generated Details with an invalidation note, read the
+    completed fill's investigation evidence via bugbash-progress --release <id>; do not
+    rerun plan creation or result filling merely to reconstruct the review list. Missing
+    source evidence is an error, never evidence that there are no failures.
   faqs:
     - q: "Does this include the Authenticator app failures?"
       a: "Yes. Every unresolved Broker MRWP UI and Authenticator ECS failure is included, including intentional Monthly report-only coverage and unmapped tests. Only cases actually written Failed are submitted for owner reassignment; check fill details for assignment errors."

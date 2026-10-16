@@ -592,3 +592,100 @@ def test_automation_delete_uses_stored_release_even_with_shared_flag(
         "automation", "claim-delete", "--id", "worker", "--executor", "runner", "--shared", "--json",
     ]) == 1
     assert json.loads(capsys.readouterr().out)["permission_to_execute"] is False
+
+
+def _pending_automation_recovery(tmp_path, action):
+    from orchestrator.registry import AutomationRegistry
+    from tests._automation import spec, observed
+    state, orch = _orch(tmp_path)
+    _complete(state)
+    state.set_step("third", "work", StepState(status="skipped", note="Already sent manually"))
+    state.set_step("third", "approve", StepState(status="pending", note="Human review remains"))
+    state.workflow_revision["runtime_hash"] = digest("old runtime")
+    root = tmp_path / "runs"
+    path = root / state.release_id / "release-state.json"
+    state.save(str(path))
+    reg = AutomationRegistry(str(root), state.release_id)
+    wanted = spec()
+    spec_file = tmp_path / "spec.json"
+    spec_file.write_text(json.dumps(wanted), encoding="utf-8")
+    entry = reg.prepare("Worker", slug="worker", spec=wanted,
+                        schedule=wanted["schedule"], cleanup_when="release_done")
+    claim = reg.reconcile_create(entry["key"], observed(), spec=wanted, executor="original", claim=True)
+    if action == "delete-result":
+        reg.create_result(entry["key"], claim["attempt_id"], "created",
+                          "original provider receipt", automation_id="worker-id", spec=wanted)
+        claim = reg.claim_delete("worker-id", "original")
+        args = ["--id", "worker-id", "--outcome", "deleted",
+                "--attempt-id", claim["attempt_id"], "--evidence", "exact deletion receipt"]
+    elif action == "confirm-absent":
+        reg.create_result(entry["key"], claim["attempt_id"], "uncertain", "timeout", spec=wanted)
+        observation_file = tmp_path / "observed.json"
+        observation_file.write_text(json.dumps(observed()), encoding="utf-8")
+        args = ["--slug", "worker", "--observed-file", str(observation_file),
+                "--confirm-absent", "--confirm-no-inflight", "--reason", "Owner verified stopped and absent"]
+    else:
+        args = ["--slug", "worker", "--spec-file", str(spec_file), "--id", "worker-id",
+                "--outcome", "created", "--attempt-id", claim["attempt_id"],
+                "--evidence", "exact creation receipt"]
+    base = ["--config", orch.config_path, "--runs-root", str(root)]
+    return state, orch, path, reg, entry, base, args
+
+
+@pytest.mark.parametrize("action", ["create-result", "delete-result", "confirm-absent"])
+def test_runtime_patch_can_recover_registry_then_adopt_without_reset(tmp_path, capsys, action):
+    from orchestrator.cli import main
+    state, orch, path, reg, entry, base, args = _pending_automation_recovery(tmp_path, action)
+    before = path.read_bytes()
+    preview_args = base + ["workflow-adopt", "--release", state.release_id, "--json"]
+    assert main(preview_args) == 0
+    blocked = json.loads(capsys.readouterr().out)
+    assert blocked["blockers"] and blocked["invalidation"]["step_keys"] == []
+    assert main(base + ["automation", action, "--release", state.release_id, "--json", *args]) == 0
+    capsys.readouterr()
+    assert path.read_bytes() == before  # Receipt recovery never adopts or advances.
+    assert main(preview_args) == 0
+    reviewed = json.loads(capsys.readouterr().out)
+    assert reviewed["blockers"] == [] and reviewed["invalidation"]["step_keys"] == []
+    assert main(preview_args + ["--approve-hash", reviewed["hash"], "--by", "owner",
+                               "--reason", "Reviewed runtime-only patch"]) == 0
+    capsys.readouterr()
+    loaded = ReleaseState.load(str(path))
+    for field, value in asdict(state).items():
+        if field not in ("workflow_revision", "updated_at"):
+            assert getattr(loaded, field) == value
+    assert loaded.workflow_revision["last_adoption"]["from_revision"] == reviewed["old_revision"]
+
+
+@pytest.mark.parametrize("action", ["create-result", "delete-result", "confirm-absent"])
+@pytest.mark.parametrize("change", ["unbound", "workflow", "wrong_proof"])
+def test_patch_recovery_still_requires_compatible_binding_and_owning_proof(
+        tmp_path, capsys, action, change):
+    from orchestrator.cli import main
+    state, orch, path, reg, entry, base, args = _pending_automation_recovery(tmp_path, action)
+    if change == "unbound":
+        state.workflow_revision = None
+        state.save(str(path))
+    elif change == "workflow":
+        config = deepcopy(orch.config)
+        config["phases"][0]["execution"] = "parallel"
+        with open(orch.config_path, "w", encoding="utf-8") as stream:
+            yaml.safe_dump(config, stream)
+    elif action == "confirm-absent":
+        args.remove("--confirm-no-inflight")
+    else:
+        args[args.index("--attempt-id") + 1] = "not-the-owner"
+    before, registry = path.read_bytes(), reg.get(key=entry["key"])
+    assert main(base + ["automation", action, "--release", state.release_id, "--json", *args]) == 1
+    assert "error" in json.loads(capsys.readouterr().out)
+    assert path.read_bytes() == before and reg.get(key=entry["key"]) == registry
+
+
+def test_runtime_patch_recovery_does_not_authorize_new_provider_work(tmp_path, capsys):
+    from orchestrator.cli import main
+    state, orch, path, reg, entry, base, args = _pending_automation_recovery(tmp_path, "create-result")
+    before = reg.get(key=entry["key"])
+    for action in ("prepare", "reconcile-create", "claim-delete"):
+        assert main(base + ["automation", action, "--release", state.release_id, "--json"]) == 1
+        assert json.loads(capsys.readouterr().out)["permission_to_execute"] is False
+    assert reg.get(key=entry["key"]) == before

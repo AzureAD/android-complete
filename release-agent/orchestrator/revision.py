@@ -324,6 +324,19 @@ def assert_current(orch):
     return revision_id(orch.state.workflow_revision)
 
 
+def assert_automation_recovery_compatible(orch):
+    """Permit registry receipts, never provider work, across a runtime-only patch."""
+    old = orch.state.workflow_revision
+    if old is None:
+        raise ValueError("Workflow revision is unbound; only diagnostics are permitted.")
+    validate_binding(old)
+    current, imported_sources_match = _current_revision(orch)
+    if old["phases"] != current["phases"]:
+        raise ValueError("Workflow definition changed; restore the pinned runtime for automation recovery.")
+    if not imported_sources_match or current["runtime_hash"] != orch._loaded_runtime_hash:
+        raise ValueError("Runtime files changed during this process; restart before automation recovery.")
+
+
 def _resource_blockers(value, path="resources"):
     blockers = []
     if isinstance(value, dict):
