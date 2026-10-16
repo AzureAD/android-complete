@@ -760,6 +760,50 @@ def test_localization_plan_normalizes_args_and_reconstructs_receipt(launch_provi
     assert provider.receipt_plan(orch, L.CONFIG, receipt) == plan
 
 
+@pytest.mark.parametrize("values", [None, {}, [None], ["not a ref"]])
+def test_localization_launch_rejects_malformed_source_ref_collection(launch_provider, values):
+    orch = make_orch("ccd", "localization")
+    _, refs, _, _ = launch_provider
+    refs["value"] = values
+    with pytest.raises(ValueError, match="refs must be a complete array"):
+        localization.plan_localization(arguments("launch-localization"), orch)
+
+
+def test_localization_launch_rejects_incomplete_source_refs(launch_provider):
+    orch = make_orch("ccd", "localization")
+    launch_provider[1]["continuationToken"] = "more"
+    with pytest.raises(ValueError, match="refs are incomplete"):
+        localization.plan_localization(arguments("launch-localization"), orch)
+
+
+def test_localization_new_run_does_not_inherit_no_strings_stamp(launch_provider, monkeypatch):
+    orch = make_orch("ccd", "localization")
+    args = arguments("record-localization-run", "--execution-id", "owned", "--build-id", "123")
+    plan = localization.plan_localization(arguments("launch-localization"), orch)
+    now = datetime.now(timezone.utc).isoformat()
+    step = orch.state.get_step("ccd", L.ID)
+    step.status = "in_flight"
+    step.invalidated_at = now
+    step.execution = {
+        "id": "owned", "started_at": now, "refresh": True,
+        "write_review": {"hash": W.review_hash(orch, "ccd", L.ID, plan), "approved_by": "owner"},
+    }
+    step.data = {
+        "build_id": "122", "started_at": "2026-01-01T00:00:00+00:00",
+        "no_strings_announced_at": "2026-01-01T01:00:00+00:00",
+    }
+    orch.state.set_step("ccd", L.ID, step)
+    step.execution["write_review"]["hash"] = W.review_hash(orch, "ccd", L.ID, plan)
+    orch.state.set_step("ccd", L.ID, step)
+    settlements = []
+    monkeypatch.setattr(orch, "settle_execution", lambda *a, **kw: settlements.append(kw["data"]))
+    monkeypatch.setattr(C, "save_state", lambda *a: None)
+    assert localization._attach_run(args, orch, build_receipt(plan, queue_time=now)) == 0
+    data, = settlements
+    assert "no_strings_announced_at" not in data
+    assert data["previous_runs"][-1]["no_strings_announced_at"] == "2026-01-01T01:00:00+00:00"
+
+
 @pytest.mark.parametrize("changed", ["revision", "branch", "version", "variables", "repository", "project", "definition", "url"])
 def test_localization_receipt_identity_drift_rejected_or_changes_hash(launch_provider, changed):
     orch = make_orch("ccd", "localization")

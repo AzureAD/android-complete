@@ -1573,7 +1573,7 @@ def test_oneauth_write_access_probe():
 
     def fake_get(url, timeout):
         if "filter=heads/master" in url:
-            return (True, {"value": [{"objectId": tip}]}, "")
+            return (True, {"value": [{"name": "refs/heads/master", "objectId": tip}]}, "")
         return (True, {"value": []}, "")           # no stale probe branch
 
     og, os_ = P._ado_rest_get, P._ado_rest_send
@@ -1582,7 +1582,8 @@ def test_oneauth_write_access_probe():
 
     def fake_send_ok(url, method, body, timeout):
         calls.append(body[0])
-        return (True, {"value": [{"success": True, "updateStatus": "succeeded"}]}, "")
+        return (True, {"value": [{"name": body[0]["name"], "success": True,
+                                  "updateStatus": "succeeded"}]}, "")
 
     P._ado_rest_get, P._ado_rest_send = fake_get, fake_send_ok
     try:

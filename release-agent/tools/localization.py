@@ -7,6 +7,7 @@ import re
 from urllib.parse import quote, urlparse
 
 from orchestrator import write_review as W
+from orchestrator import schedule
 from orchestrator.step_context import thaw
 from tools import pipelines as P
 
@@ -106,8 +107,8 @@ def _launch_plan(orch, target, repository, revision, source_branch, source_versi
 
 
 def plan_launch(orch, cfg, *, source_branch=None, source_version=None, overrides=()):
-    if not orch.state.ccd:
-        raise ValueError("Localization launch requires a CCD")
+    if schedule.parse_date(orch.state.ccd) is None:
+        raise ValueError("Localization launch requires a valid CCD")
     org = organization(cfg["org"])
     definition_id = _positive(cfg["pipeline_id"], "definition id")
     definition = _read(f"{_project_url(org, cfg['project'])}/_apis/build/definitions/{definition_id}?api-version=7.1")
@@ -125,7 +126,12 @@ def plan_launch(orch, cfg, *, source_branch=None, source_version=None, overrides
         raise ValueError("Localization checked launch requires Azure Repos Git")
     repo_url = f"{_project_url(org, project_id)}/_apis/git/repositories/{quote(repository['id'], safe='')}"
     refs = _read(f"{repo_url}/refs?filter={quote(selected_branch[5:], safe='')}&api-version=7.1")
-    matches = [row for row in refs.get("value", []) if row.get("name") == selected_branch]
+    rows = refs.get("value")
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise ValueError("Localization source refs must be a complete array of objects")
+    if refs.get("continuationToken"):
+        raise ValueError("Localization source refs are incomplete; inspect the exact branch")
+    matches = [row for row in rows if row.get("name") == selected_branch]
     if len(matches) != 1:
         raise ValueError("Localization source branch could not be resolved exactly")
     head = _sha(matches[0].get("objectId"))

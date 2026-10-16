@@ -62,15 +62,19 @@ Sending is fire-and-forget — it doesn't prove the work got done. `confirm_remi
 A **two-hop scout step**: you scrape an AAD-gated source, the engine decides overlap deterministically. When `lockdown` is a pending hold — handle silently unless there's an overlap:
 1. **Get the gather directive.** `step-action --release <id> --step lockdown` → `needs_skill` with `payload._gather` (`url`, `window` = CCD‑7…CCD+14, `instructions`) and `payload.followup_command`.
 2. **Scrape.** Navigate (Playwright) to `payload._gather.url`. On the AAD picker, click the user's own account (Windows-SSO, no password). Wait for "CCOA Periods".
-3. **Extract.** From **"Upcoming CCOA periods"** and the current-year **"Past NoFly Zones"** table, read each row's Name, Environment, Start (UTC), End (UTC). Build `[{"name","environment","start":"YYYY-MM-DD","end":"YYYY-MM-DD"}, …]`.
+3. **Extract.** From **"Upcoming CCOA periods"** and **"Past NoFly Zones"** tables for every calendar year covered by the release window, read each row's Name, Environment, Start (UTC), End (UTC). Build `[{"name","environment","start":"YYYY-MM-DD","end":"YYYY-MM-DD"}, …]`. Verify the required tables are readable and complete; use `[]` only after confirming there are genuinely no periods, never as a fallback for missing tables, failed SSO, or extraction errors.
 4. **Let the engine decide + record.** Run the follow-up: `check-lockdown --release <id> --periods-json '<json>'` — computes the window, keeps **Production**-env periods, checks overlap, and records: **pass** (no overlap → done) or **attention** (overlap → holds). *(The decision is deterministic — never decide overlap yourself.)*
 5. **Relay.** Pass → continue (`next`). Attention → name the overlapping lockdown(s) + window; tell them to **shift CCD** past it (`set-ccd`) if they want to proceed (no partners to notify here).
 
-Can't reach browser/SSO? Leave the step held — don't mark it done without running the check.
+Can't reach browser/SSO or verify all required tables? Leave the step held — don't mark it done without running the check. A malformed array/row, missing required field, invalid date or reversed date range makes `check-lockdown` fail without recording a pass; correct the evidence and rerun.
 
 ## `vitals` — Play Console attestation
 
 Play Console has no API for Policy issues/warnings (Reporting API covers only technical vitals; the Console UI is behind a Google login Scout can't automate). When current step `vitals`, run `step-action --release <id> --step vitals` → `needs_human` with the `prompt` (review **Android vitals** crash/ANR + **Policy status** issues/warnings). Put that `prompt` in front of the owner via `m_ask_user`. On confirmation: `done --release <id> --step vitals --note "<what they saw>"`. Unresolved policy issue / vitals regression → leave holding.
 
 ## Automated Phase-0 steps (real agents, no scout action)
-`breaking` (BREAKING-OneAuth scan + draft comms), `cg` (Component Governance alerts — blocks on High/Critical), `cron` (Calendar Checker pipeline scheduled). These run inside `next`; you just relay their results from the `status` table. The live `cron` freshness check uses trusted current UTC rather than a simulated `--as-of` release date; injected mock runs still use the simulation clock. `cg`/`cron` may **block** — see the core "blocked step" handling.
+`breaking` (BREAKING-OneAuth scan + draft comms), `cg` (Component Governance alerts — blocks on High/Critical), `oneauth_access` (engine-owned create/delete access probe), and `cron` (Calendar Checker pipeline scheduled) run inside `next`; relay their results from the `status` table. Missing/invalid changelog sections and incomplete or unrecognized CG evidence hold rather than proving a clean release. Breaking comms remain a draft, not a sent notification.
+
+The OneAuth probe passes only after acknowledged creation **and cleanup** of the exact reserved probe ref. A denied or uncertain cleanup stays incomplete; an existing probe with a different commit needs owner review, not blind deletion or clearing execution metadata. Recovery preserves the engine's frozen alias/repository input.
+
+The live `cron` freshness check uses trusted current UTC rather than a simulated `--as-of` release date; injected mock runs use the simulation clock. The two-day limit uses actual elapsed time. Missing, malformed or future timestamps hold. This verifies that scheduling fires, not that every pipeline run succeeded. For blocked steps, follow the normal fix/rerun or explicitly reviewed override handling.

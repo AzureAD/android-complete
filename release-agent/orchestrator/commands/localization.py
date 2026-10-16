@@ -92,7 +92,7 @@ def _attach_run(args, orch, build, *, authorization=None):
                 "build_id", "started_at", "run_url", "pr_id", "pr_url",
                 "pr_status", "pipeline_complete",
                 "last_checked", "pr_discovered_at", "pr_announced_at",
-                "merge_deadline_alert_at", "timeout_notified_at",
+                "merge_deadline_alert_at", "timeout_notified_at", "no_strings_announced_at",
                 "in_flight_since", "poll_in_min",
             )
             if data.get(key) is not None
@@ -103,7 +103,7 @@ def _attach_run(args, orch, build, *, authorization=None):
             "build_id", "started_at", "run_url", "pr_id", "pr_url", "pr_status",
             "pipeline_complete", "last_checked", "pr_discovered_at",
             "pr_announced_at", "merge_deadline_alert_at", "timeout_notified_at",
-            "in_flight_since", "poll_in_min",
+            "no_strings_announced_at", "in_flight_since", "poll_in_min",
         ):
             data.pop(key, None)
     if data.get("build_id"):
@@ -202,6 +202,8 @@ def cmd_check_localization(args):
     if args.now:
         try:
             now = datetime.fromisoformat(args.now.replace("Z", "+00:00"))
+            if now.tzinfo is None:
+                raise ValueError("timezone is required")
         except ValueError:
             print(_json.dumps({"error": f"bad --now: {args.now!r}"}))
             return 1
@@ -336,6 +338,8 @@ def cmd_check_localization(args):
         C.emit(args.runs_root, args.release, f"[localization] {decision['note']}",
                kind="localization")
     elif d == "omit_unmerged":
+        step.data["last_checked"] = now.isoformat()
+        orch.annotate_step("ccd", L.ID, data=step.data)
         orch.omit_execution(permit, decision["note"], links=decision.get("links", step.links))
         C.save_state(st, args.runs_root, args.release)
         C.emit(args.runs_root, args.release, f"[omitted] localization: {decision['note']}",

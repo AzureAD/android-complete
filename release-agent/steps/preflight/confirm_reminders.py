@@ -13,14 +13,14 @@ from __future__ import annotations
 from orchestrator.step_context import StepContext, thaw
 
 from orchestrator.outcomes import NeedsHuman
-from steps.lib.context import release_ctx
+from orchestrator import schedule
 
 ID = "confirm_reminders"
 KIND = "attest"
 
 
 def build(context: StepContext):
-    month = release_ctx(context)["month"] if context.release.ccd else "this"
+    month = schedule.target_month_label(context.release, with_year=False) or "this"
     return NeedsHuman(
         prompt=(
             f"Confirm feature owners completed the {month}-release pre-code-complete work "
@@ -29,7 +29,7 @@ def build(context: StepContext):
             f"  • [Broker & Auth App] every default-true flight has a flight pre-mortem doc\n"
             f"  • [Auth App] all user-facing-string PRs merged by CCD-7 (late strings called out)\n"
             f"  • [Auth App] features default-OFF (any default-ON approved in the release wiki)\n"
-            f"If confirmed, I'll mark it done (`done --step confirm_reminders`). "
+            f"If confirmed, I'll mark it done. "
             f"If they can't confirm, it stays holding."),
         attest=True,
     )

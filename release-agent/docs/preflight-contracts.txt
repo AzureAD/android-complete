@@ -1,0 +1,197 @@
+PHASE 0: PREFLIGHT BUILDING-BLOCK CONTRACTS
+==========================================
+Updated: 2026-10-16. Source baseline a1390093aa6ce1b84686906fa68197c651aa31be
+plus the local, uncommitted corrections recorded in release-audit.txt.
+Scope: all NINE configured preflight steps, audited and corrected offline.
+This does not assert real provider access, a completed live release, or resolved
+readiness owner/date invalidation. No new release-state schema fields.
+
+SHARED RULES
+------------
+Phase 0 is parallel, opens CCD-7, and requires satisfied entry readiness.
+confirm_reminders additionally depends on flight_reminder.
+All steps retain the existing steps["preflight.<id>"] envelope:
+  status, completed_at, invalidated_at, invalidation_reason, note, by, links,
+  execution, data.
+Engine owns lifecycle/execution, not the handler. Auto read-only handlers return
+Done/Blocked; notification/human builders do not complete their own work.
+Each normal save also updates root updated_at; events.jsonl is separate history.
+Missing/unknown evidence is not a pass. An explicit owner override is not a pass.
+Status/holds/progress/frontier are derived rather than duplicated root facts.
+
+1. notice / external notification
+---------------------------------
+INPUT STATE: ccd; target_month or release_id-derived display month; owner_name,
+owner_email. Own lifecycle/generation, workflow revision and delivery records
+are coordination inputs.
+INPUT CONFIG/PARAMETERS: recipients, template; optional variant (initial default,
+update supported). send_to is a test-only dispatch override.
+GENERATED: NeedsSkill(workiq_send_email), {to, subject, body, isHtml} plus
+private text-preview metadata. Invalid CCD/template/variant evidence blocks.
+STORED: notification_deliveries[N] owns exact HTML payload/target/hash/scope,
+claim/attempt/receipt/completion; steps["preflight.notice"] becomes done only
+after acknowledged eligible delivery and retains N/execution-ID pointers in data.
+No email payload is copied into step.data. Active execution clears on completion.
+EXTERNAL RESULT: actual provider-accepted email if sent, never mere preparation.
+CONSUMERS/LIFETIME: engine uses completion; delivery/recovery uses frozen
+snapshot/receipt/ownership to avoid resends. One-time payload retention currently
+has no generic compaction. No later business step needs a second HTML copy.
+PROOF: actual notice builder/redirect, exact HTML receipt, persisted CLI
+acknowledgement interruption/reload/finalize with one fake provider invocation.
+
+2. flight_reminder / external notification
+------------------------------------------
+INPUT STATE: ccd, target_month/release_id, owner_name/owner_email.
+INPUT CONFIG: Android Core chat ID/name and four reference links. No public
+build parameters; send_to is a test-only dispatch override.
+GENERATED: CCD-7 deadline and NeedsSkill(workiq_send_chat_message),
+{chatId, content, contentType: html}. Four reminders, not proof of feature work.
+The date is explicit, never incorrectly relabeled today on catch-up.
+STORED: same notification lifecycle as notice under this step's own N and
+steps["preflight.flight_reminder"].data notification/execution pointers.
+EXTERNAL RESULT: one confirmed Teams post, not completion of the requested work.
+CONSUMERS/LIFETIME: delivery recovery plus phase completion; confirm_reminders
+uses this step's completion as its dependency. Uncertain claims remain owned;
+one-time full payload/receipt retention remains unchanged.
+PROOF: real builder and persisted CLI/fake-provider flow, uncertainty versus
+proven not_sent, interrupted finalization, duplicate denial and unchanged siblings.
+
+3. lockdown / external gather plus local checked decision
+---------------------------------------------------------
+INPUT STATE: ccd, release_id and shared eligibility.
+INPUT CONFIG: URL, Production environment match, CCD-7/CCD+14 anchors.
+INPUT EXTERNAL: complete calendar observations across every covered year:
+[{name, environment, start, end}]. Required text, canonical valid dates,
+start <= end. Explicit [] is allowed only after Scout verifies genuine emptiness.
+GENERATED: gather directive and normalized periods; deterministic inclusive
+overlap returns pass/attention. Invalid evidence errors instead of defaulting [].
+STORED: steps["preflight.lockdown"] = done or blocked, note with window/count/
+overlaps, by=scout, completion timestamp only when done. data={}, no ledger.
+EXTERNAL RESULT: no write, message or CCD change. Browser is read-only.
+CONSUMERS/LIFETIME: engine and owner view. Raw rows/provenance are not retained.
+Completion is not continuous calendar monitoring; source completeness and
+owner/CCD invalidation remain explicit limitations, not newly invented fields.
+PROOF: actual CLI gather, overlap hold, invalid retry preserving state bytes,
+valid correction, persisted reload/replay, boundary and cross-year scenarios.
+
+4. breaking / read-only auto
+-----------------------------
+INPUT STATE: target_month/release_id only for draft naming.
+INPUT CONFIG/EXTERNAL: changelog URL, section=vNext, tag=[MAJOR]; returned text
+or explicit injected changelog fixture. Null fixture does not trigger live IO.
+GENERATED: validated current section, breaking entries, optional plain draft.
+Missing/empty/non-text/missing-section evidence blocks. A present valid section
+with no breaking entries legitimately returns Done with no comms.
+STORED: steps["preflight.breaking"] note holds the result/list/draft, status,
+by=agent and completion timestamp; data stays {}, no notification ledger.
+EXTERNAL RESULT: none. The OneAuth message is drafted, NOT automatically sent.
+CONSUMERS/LIFETIME: owner review and engine phase completion. Full changelog is
+not retained; a completed one-time check is not an ongoing changelog monitor.
+PROOF: real parse/draft/error cases plus full phase CLI with a fake asset port.
+Draft names the display/ship month, not an unrelated internal work-month label.
+
+5. cg / read-only auto
+-----------------------
+INPUT CONFIG/EXTERNAL: governance resource/host/project/repository/branch and
+high-severity list; provider must return an explicit value array.
+Each alert needs a recognized state; active alerts need recognized severity.
+Malformed optional component/action/link fields hold rather than crash.
+Recognized state forms: active, fixed, dismissed, autoDismissed, resolved, closed
+(case/outer whitespace normalized). Severity forms: critical, high, medium,
+moderate, low, informational, none. Unknown forms require review.
+GENERATED: active counts, High/Critical decision, report (up to 15 high items)
+and available per-alert/repo links. Advertised incomplete pages hold; no guessed
+empty collection or silent pagination truncation is accepted.
+STORED: steps["preflight.cg"] status, note, by=agent, links and completion
+timestamp when done. data={}, no raw alert cache or shared assignment changes.
+EXTERNAL RESULT: no write. High/Critical holds for remediation or the existing
+explicit manager-approved override policy; this is not automatic authorization.
+CONSUMERS/LIFETIME: owner/status and phase eligibility. Provider evidence is
+read fresh on a blocked rerun; raw snapshots are not persisted.
+PROOF: malformed provider/alert cases, whitespace severity, blocked -> fixed
+live-logic simulation in the persisted parallel phase; independent work drains.
+
+6. oneauth_access / idempotent auto effect, frozen input
+--------------------------------------------------------
+PREPARATION INPUT: current az identity (or explicit test alias), repository
+coordinates and existing engine execution. Invalid branch aliases block.
+GENERATED/FROZEN: {alias, org, project, repo}, operation key and execution
+ownership are checkpointed BEFORE external writes. They are recovery data,
+not reusable permission or a completed business artifact.
+PROVIDER WORK: read exact refs/heads/master and reserved probe ref. Prefix
+neighbors are not master/probe identities. Use oldObjectId CAS on updates.
+Only a stale exact probe still matching master may be cleaned automatically.
+Different content, unreadable refs or unconfirmed writes hold; do not delete
+unknown content. Both creation and deletion acknowledgements are required.
+STORED: steps["preflight.oneauth_access"].execution retains id/engine owner/
+started_at/effect mode/recovery/operation_key/effect_input while owned/blocked.
+On Done execution clears and status/note/by/links/completed_at remain.
+data remains {} for this handler; no branch resource or full REST payload cache
+is added. Existing recovery fences are preserved, not cleared to force retries.
+EXTERNAL RESULT: a reserved probe branch is temporarily created and cleaned.
+It is NOT a release PR or a permanent authorization grant.
+CONSUMERS/LIFETIME: engine effect recovery uses frozen input; owner uses repo/
+access-package links and precise error. Later real PR writes still need access.
+PROOF: exact-ref fake REST create/delete/cleanup-failure/stale-content cases;
+full phase verifies persisted engine ownership before each fake REST write,
+successful cleanup and no re-probe after completed phase/repeated next.
+
+7. cron / read-only auto
+-------------------------
+INPUT CONFIG/EXTERNAL: Calendar Checker pipeline 3038, org/project, maximum
+staleness=2 days; latest schedule-reason build from valid history.
+INPUT CLOCK: trusted real UTC for provider observations; invocation clock for
+explicit mock run input. A simulated release date cannot age real evidence.
+GENERATED: parsed queueTime and fractional elapsed age. Missing/malformed/future
+timestamps block. Exactly 48 hours is allowed; any older timestamp is stale.
+No scheduled run or invalid history shape also holds.
+STORED: steps["preflight.cron"] status/note/by/completed_at; data={}, no mutation
+of root pipeline_runs (that belongs to later build-verification producers).
+EXTERNAL RESULT: no scheduling write. This proves schedule firing/freshness,
+NOT that the pipeline's quality gates or every scheduled run succeeded.
+CONSUMERS/LIFETIME: owner/status and phase completion; no automatic TTL or
+post-completion polling is introduced by this one-time check.
+PROOF: trusted versus mock clocks, exact threshold boundary, malformed/future
+evidence and actual read-adapter collection failures, plus real phase flow.
+
+8. confirm_reminders / human attestation
+----------------------------------------
+INPUT: completed flight_reminder prerequisite, display month, explicit owner's
+confirmation of local flights, pre-mortems, strings and default-OFF/approval work.
+GENERATED: NeedsHuman(prompt, attest=true), no handler writes and no provider IO.
+Prompt describes the owner action, not engine commands.
+STORED ONLY AFTER EXPLICIT DECISION: engine done writes this step's status,
+completed_at, note/by and existing envelope. data={}, no gate_decisions entry:
+an attestation is NOT an approval_gate.
+EXTERNAL RESULT: none; reminder delivery alone cannot attest feature completion.
+CONSUMERS/LIFETIME: engine/owner view; record is the current confirmation, not
+machine-verified feature evidence. Owner/CCD binding gap is tracked separately.
+PROOF: dependency hold, real prompt, still incomplete after sends, then explicit
+simulated owner done through CLI in full persisted phase scenario.
+
+9. vitals / human attestation
+------------------------------
+INPUT: explicit owner review of the correct app's Play Console Android vitals
+(crash/ANR health) AND policy status. No automated thresholds/API are invented.
+GENERATED: NeedsHuman(prompt, attest=true), no provider read/write by the handler.
+STORED ONLY AFTER EXPLICIT DECISION: steps["preflight.vitals"] status, note/by,
+completed_at and common envelope. data={}, no separate approval decision.
+EXTERNAL RESULT: none. A prompt or engine run is not proof of portal health.
+CONSUMERS/LIFETIME: engine and owner view; unresolved problems must stay held.
+Existing ownership/freshness limitations are not silently fixed by an attestation.
+PROOF: real prompt remains pending, explicit simulated owner done, persisted
+phase completion; no real user's attestation was recorded.
+
+PHASE EXIT / EVIDENCE LIMIT
+----------------------------
+Two actual-engine/CLI scenarios exercise all nine handlers, with controlled
+provider ports, temporary state and explicit simulated human decisions.
+CG starts blocked while siblings run; notice/Teams use real payload builders,
+claims and fake provider receipts; interrupted notice acknowledgement recovers
+without sending twice; OneAuth raw REST is fake but engine ownership is real.
+Only after both human decisions and CG remediation do all nine steps become
+done. The next phase is CCD, scheduled and NOT executed.
+No target outcome:done shortcuts seed Phase 0. Readiness alone is pre-seeded.
+No live cloud calls, canonical runs, actual messages, branch probes or runtime
+adoption were performed. Remaining readiness owner/CCD gaps and the daily-core
+case-budget failure are separate open project issues in release-audit.txt.

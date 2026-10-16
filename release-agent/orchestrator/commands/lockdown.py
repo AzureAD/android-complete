@@ -24,12 +24,17 @@ def cmd_check_lockdown(args):
         print("No CCD set for this release — cannot compute the release window.")
         return 1
     try:
-        raw = _json.loads(args.periods_json or "[]")
-    except ValueError:
+        raw = _json.loads(args.periods_json)
+    except (TypeError, ValueError):
         print("Could not parse --periods-json (expected a JSON array).")
         return 1
 
     _, orch = C.load_orch(args.runs_root, args.release, args.config, C.parse_as_of(args))
+    try:
+        status, detail = decide(orch.context("preflight", "lockdown"), raw)
+    except ValueError as exc:
+        print(f"Cannot check lockdown: {exc}")
+        return 1
     completed = orch.completed_step_outcome("preflight", "lockdown")
     if completed:
         C.emit(args.runs_root, args.release, completed.note, kind="lockdown")
@@ -37,7 +42,6 @@ def cmd_check_lockdown(args):
     permit = orch.authorize_outcome(
         orch.step_action_intent("preflight", "lockdown"), "preflight", "lockdown",
     )
-    status, detail = decide(orch.context("preflight", "lockdown", permit=permit), raw)
     outcome = Done(detail, by="scout") if status == "pass" else Blocked(detail, by="scout")
     orch.apply_outcome(permit, outcome)
     C.save_state(orch.state, args.runs_root, args.release)

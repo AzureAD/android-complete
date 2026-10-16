@@ -116,6 +116,81 @@ def test_decline_nonhard_item_also_blocks():
     assert "oncall_now" in orch.gate.blocked_item_ids
 
 
+@pytest.mark.parametrize("items", [
+    ["yubkikey"],
+    ["yubikey", "yubkikey"],
+    ["yubkikey", "yubikey"],
+])
+def test_decline_rejects_unknown_items_without_mutation(tmp_path, capsys, items):
+    from copy import deepcopy
+    from orchestrator import cli
+    from orchestrator.readiness import ReadinessGate
+
+    st, orch = _orch()
+    before = deepcopy(st.readiness_items)
+    result = orch.gate.decline(items)
+    assert "error" in result and "yubkikey" in result["error"]
+    assert st.readiness_items == before
+    assert orch.gate.signed and not orch.gate.blocked
+
+    for config in (None, {}, {"items": []}):
+        assert "error" in ReadinessGate(config, st).decline(items)
+        assert st.readiness_items == before
+
+    C.save_state(st, str(tmp_path), st.release_id)
+    state_path = tmp_path / st.release_id / "release-state.json"
+    events_path = tmp_path / st.release_id / "events.jsonl"
+    saved = state_path.read_bytes()
+    command = ["--runs-root", str(tmp_path), "decline", "--release", st.release_id]
+    for item in items:
+        command.extend(["--item", item])
+    assert cli.main(command) == 2
+    output = capsys.readouterr().out
+    assert "No such readiness item(s): yubkikey" in output
+    assert "Recorded as unable" not in output
+    assert state_path.read_bytes() == saved
+    assert not events_path.exists()
+    reloaded, loaded_orch = C.load_orch(str(tmp_path), st.release_id, CONFIG)
+    assert reloaded.readiness_items == before
+    assert loaded_orch.gate.signed and not loaded_orch.gate.blocked
+
+
+def test_cli_decline_valid_items_only_changes_requested_facts(tmp_path, capsys):
+    import json
+    from orchestrator import cli
+
+    st, _ = _orch()
+    C.save_state(st, str(tmp_path), st.release_id)
+    state_path = tmp_path / st.release_id / "release-state.json"
+    before = json.loads(state_path.read_text(encoding="utf-8"))
+    items = ["yubikey", "saw_ame"]
+    assert cli.main([
+        "--runs-root", str(tmp_path), "decline", "--release", st.release_id,
+        "--item", items[0], "--item", items[1], "--reason", "fixture cannot proceed",
+    ]) == 0
+    assert "BLOCKED" in capsys.readouterr().out
+    after = json.loads(state_path.read_text(encoding="utf-8"))
+    for key, value in before.items():
+        if key not in ("readiness_items", "updated_at"):
+            assert after[key] == value
+    for item, previous in before["readiness_items"].items():
+        if item in items:
+            record = after["readiness_items"][item]
+            assert set(record) == {"status", "at"}
+            assert record["status"] == "unable" and record["at"]
+        else:
+            assert after["readiness_items"][item] == previous
+    _, orch = C.load_orch(str(tmp_path), st.release_id, CONFIG)
+    assert not orch.gate.signed
+    assert set(orch.gate.blocked_item_ids) == set(items)
+    events_path = tmp_path / st.release_id / "events.jsonl"
+    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+    declined = [event for event in events if event["event"] == "readiness_declined"]
+    assert len(declined) == 1
+    assert declined[0]["items"] == items and declined[0]["blocked"]
+    assert declined[0]["driver"] == "fixture cannot proceed"
+
+
 def test_readiness_failure_revokes_signature_and_recovery_clears_block():
     st, orch = _orch()
     assert orch.gate.signed

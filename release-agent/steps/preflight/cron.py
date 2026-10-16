@@ -44,16 +44,16 @@ def _trusted_utc_now():
 
 
 def _iso_age_days(iso: str, now):
-    """Whole days between an ISO-8601 timestamp and now (UTC), or None if unparseable."""
+    """Elapsed days, including fractions, or None if the timestamp is unparseable."""
     from datetime import datetime, timezone
-    if not iso:
+    if not isinstance(iso, str) or not iso:
         return None
     try:
         s = iso.replace("Z", "+00:00")
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        return (now - dt).days
+        return (now - dt).total_seconds() / 86400
     except ValueError:
         return None
 
@@ -79,12 +79,18 @@ def build(context: StepContext):
         return Blocked(
             f"{name}: no scheduled run found in recent history — the cron may be "
             f"disabled. Investigate, then rerun this step (or skip to override).")
+    if not isinstance(run_, dict):
+        return Blocked(f"{name}: invalid scheduled-run evidence — expected an object.")
     age = _iso_age_days(run_.get("queueTime"), observed_at)
+    if age is None:
+        return Blocked(f"{name}: scheduled run has no valid queueTime — freshness cannot be verified.")
+    if age < 0:
+        return Blocked(f"{name}: scheduled run queueTime is in the future — verify the source clock.")
     max_stale = cfg.get("max_staleness_days", 2)
     when = (run_.get("queueTime") or "")[:16]
     if age is not None and age > max_stale:
         return Blocked(
-            f"{name}: last scheduled run was {when} ({age}d ago) — stale (> {max_stale}d). "
+            f"{name}: last scheduled run was {when} ({int(age)}d ago) — stale (> {max_stale}d). "
             f"The schedule may be broken. Fix + rerun this step, or skip to override.")
     return Done(
         f"{name} is scheduled and firing — last scheduled run {when} ({run_.get('result')}).")

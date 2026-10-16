@@ -943,6 +943,21 @@ Events captured include: `release_started`, `readiness_verified/signed/declined`
 
 ## Tests
 
+Phase 0's field-level input/output, ownership and retention contracts are in
+`docs/preflight-contracts.txt` (shared state details: `docs/release-state-data.txt`).
+Run `python -m pytest -q tests\test_preflight.py` for its affected coverage,
+including the actual-handler, persisted-CLI phase scenarios with fake providers.
+These do not send real messages, probe live repositories or prove live access.
+
+Phase 1's contracts and immediate, no-wait replay recipe are in
+`docs/ccd-contracts.txt`. Run
+`python -m pytest -q tests\test_ccd.py::test_ccd_phase_replay_without_waiting_or_running_preflight`
+to exercise seven scenarios with seeded prerequisites, real target handlers/CLI,
+temporary persisted state, controlled time and fake providers. This does not
+reschedule CCD, run preflight, queue a real build or send a real message.
+The proposed generic interactive and controlled-live rehearsal design is in
+`docs/phase-rehearsal-proposal.txt`; those runtime commands are not implemented.
+
 Run from `release-agent/`. **Directory/default runs now select the daily core suite**,
 capped at 1,086 cases (half the previous 2,172-case suite). The reviewed selection in
 `tests/_suite.py` keeps engine/lifecycle, ownership and write fences, approvals,

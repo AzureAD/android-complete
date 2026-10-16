@@ -82,6 +82,9 @@ def cmd_sign(args):
 def cmd_decline(args):
     st, orch = C.load_orch(args.runs_root, args.release, args.config)
     chk = orch.gate.decline(args.item or [])
+    if "error" in chk:
+        print(chk["error"])
+        return 2
     C.save_state(st, args.runs_root, args.release)
     C.elog(args.runs_root, args.release).log(
         "readiness_declined", items=args.item or [], blocked=chk["blocked"], driver=args.reason or None)

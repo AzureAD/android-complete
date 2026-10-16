@@ -24,7 +24,7 @@ def build(context: StepContext):
             "crash rate & ANR rate within acceptable bounds (no regression)\n"
             "  • Policy status — left panel → Monitor and improve → Policy and programs → Policy "
             "status: no open policy issues or warnings\n"
-            "If both look acceptable, I'll mark it done (`done --step vitals`). "
+            "If both look acceptable, I'll mark it done. "
             "An unresolved policy issue or a vitals regression → leave it holding."),
         attest=True,
     )

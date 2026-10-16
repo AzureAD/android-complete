@@ -1,6 +1,6 @@
 """Step: `flight_reminder` — combined feature-owner reminders (Phase 0, S3/S4/S5).
 
-Three checklist reminders (local flights · flight pre-mortems · user-facing
+Four checklist reminders (local flights · flight pre-mortems · user-facing
 strings by CCD-7 · feature-flag freeze / default-OFF review) folded into ONE
 Teams message to the Android Core Team. Posting to Teams needs the WorkIQ MCP the
 engine can't reach, so this is a `scout` step: `build()` resolves the message +
@@ -60,7 +60,7 @@ def _html(ctx: dict, links: dict) -> str:
 <ol>
   <li><b>[Broker] Update local flights.</b> Feature owners — please update your local flights in the <code>release</code> variable group. The release engineer will <b>not</b> update these directly; verify your values are current before we proceed. (<a href="{vg}">Variable group</a>)</li>
   <li><b>[Broker &amp; Auth App] Flight pre-mortem docs.</b> It is each Feature Owner's <b>sole responsibility</b> to ensure every flight shipping with a default value of <code>true</code> has a flight pre-mortem doc — explaining the change's purpose and how we plan to monitor it after the release hits PROD. (<a href="{pm}">Example pre-mortem doc</a>)</li>
-  <li><b>[Auth App] Merge user-facing strings by today (CCD−7).</b> It is each Feature Owner's <b>sole responsibility</b> to ensure every Authenticator PR with a new or modified user-facing string is <b>merged by today ({T.esc(ctx['ccd7_date'])})</b>. Strings landing inside the 1-week window are <b>not guaranteed</b> to be localized — call out any late strings and escalate to the team lead if not resolved by end of day. (<a href="{loc}">Localization Instructions</a>)</li>
+  <li><b>[Auth App] Merge user-facing strings by CCD−7.</b> It is each Feature Owner's <b>sole responsibility</b> to ensure every Authenticator PR with a new or modified user-facing string is <b>merged by {T.esc(ctx['ccd7_date'])} (CCD−7)</b>. Strings landing inside the 1-week window are <b>not guaranteed</b> to be localized — call out any late strings and escalate to the team lead if not resolved by end of day. (<a href="{loc}">Localization Instructions</a>)</li>
   <li><b>[Auth App] Feature-flag freeze &amp; default-OFF review.</b> Review all features added since the last release and ensure they are <b>default OFF</b>; any feature rolling out <b>default ON</b> requires explicit <b>Team Lead / Engineering Manager approval documented in the release wiki</b>, and the release should be <b>blocked</b> if such approval is missing. <b>No feature work is allowed after Code Complete (CCD)</b> — all feature-flag changes must land before CCD, and any flag changes after CCD require the same cherry-pick approval process as code changes. Review <code>EcsFlight.kt</code> history since the last Code Complete to verify compliance. (<a href="{ecs}">EcsFlight.kt history</a>)</li>
 </ol>
 <p>Thanks,<br>{T.esc(ctx['owner'])}</p>"""
@@ -71,6 +71,8 @@ def build(context: StepContext):
     if the release has no CCD."""
     if not context.release.ccd:
         return Blocked("no CCD set for this release")
+    if schedule.parse_date(context.release.ccd) is None:
+        return Blocked("invalid CCD for this release")
 
     cfg = CONFIG
     ctx = release_ctx(context)

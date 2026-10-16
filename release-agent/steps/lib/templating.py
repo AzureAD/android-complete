@@ -33,8 +33,10 @@ def parse_template(text: str, variant: str):
 
 def select_template(text, variant: str):
     """Select fields from fetched template text, preserving an IO error if supplied."""
-    if isinstance(text, dict):
+    if isinstance(text, dict) and "error" in text:
         return text
+    if not isinstance(text, str):
+        return {"error": "template content must be text"}
     parsed = parse_template(text, variant)
     if not parsed:
         return {"error": f"variant '{variant}' not in template"}

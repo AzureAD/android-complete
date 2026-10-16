@@ -1,13 +1,13 @@
-"""Step: `oneauth_access` — verify write access to the OneAuth repo (Phase 0, after `cg`).
+"""Step: `oneauth_access` — verify write access to the OneAuth repo (Phase 0).
 
 A later phase pushes a PR to the OneAuth repo (https://office.visualstudio.com/OneAuth/_git/
 OneAuth), whose branch policy requires branches named 'user/<alias>/<branch-name>'. The only
 reliable proof that we can do that is to actually CREATE such a branch — so this step creates a
 throwaway 'user/<alias>/scout-oneauth-access-check' branch off master and immediately deletes it.
 
-  * create succeeds  -> we have write access -> DONE (the probe branch is cleaned up);
+  * create AND cleanup acknowledged -> DONE (the probe branch is cleaned up);
   * create rejected / 403 -> no access -> BLOCKED, pointing the owner at the myaccess package to
-    request OneAuth R/W. The owner requests access, then RERUNS this step once it's granted.
+    request OneAuth R/W. Cleanup failure instead requires review of the leftover probe.
 
 Deterministic (same access => same verdict) and self-cleaning, so it's an `agent` step the
 engine runs in-process.
@@ -24,6 +24,7 @@ from orchestrator.step_context import StepContext, thaw
 from orchestrator.outcomes import Done, Blocked
 from steps.lib.mockctx import MISSING
 from tools import checks
+import re
 
 from orchestrator.authority import WriteOperation
 
@@ -45,6 +46,8 @@ def prepare_effect(context):
     if not alias:
         return Blocked("oneauth_access: couldn't resolve your alias (az account) to build the "
                        "'user/<alias>/…' probe branch — run `az login`.", links=_links())
+    if not isinstance(alias, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", alias) or ".." in alias:
+        return Blocked("oneauth_access: invalid alias for the probe branch.", links=_links())
     return {
         "alias": alias,
         "org": checks.ONEAUTH_ORG,
@@ -116,7 +119,7 @@ def _check_access(context,
             f"'user/{alias}/…' probe branch, so the release PR branch can be created later.",
             links=_links())
     return Blocked(
-        f"oneauth_access: no write access to the OneAuth repo for '{alias}' ({detail}). "
-        f"Request R/W via the access package (link below), then RERUN this step once access is "
-        f"granted — the release can't push its OneAuth PR without it.",
+        f"oneauth_access: no write access confirmed for '{alias}' ({detail}). "
+        f"Resolve the probe error or leftover probe branch before rerunning; request R/W "
+        f"via the access package if access was denied. RERUN only after resolving the issue.",
         links=_links())

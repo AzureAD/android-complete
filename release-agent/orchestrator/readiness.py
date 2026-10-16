@@ -211,13 +211,14 @@ class ReadinessGate:
 
     def decline(self, item_ids: list) -> dict:
         """The engineer declares they CANNOT satisfy one or more items. Every item
-        is required, so any declined item blocks the gate until resolved / handed off."""
-        if not self.config:
-            return self.checklist()
-        by_id = {it["id"]: it for it in self.config.get("items", [])}
-        for iid in item_ids or []:
-            if iid not in by_id:
-                continue
+        is required, so any declined item blocks the gate until resolved / handed off.
+        Unknown IDs reject the whole request without changing readiness facts."""
+        by_id = {it["id"]: it for it in (self.config or {}).get("items", [])}
+        targets = item_ids or []
+        unknown = [iid for iid in targets if iid not in by_id]
+        if unknown:
+            return {"error": f"No such readiness item(s): {', '.join(unknown)}"}
+        for iid in targets:
             self.state.readiness_items[iid] = {"status": "unable", "at": _now()}
         return self.checklist()
 

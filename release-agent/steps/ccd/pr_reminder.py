@@ -17,6 +17,7 @@ from __future__ import annotations
 from orchestrator.step_context import StepContext, thaw
 
 from orchestrator.outcomes import NeedsSkill, Blocked
+from orchestrator import schedule
 from steps.lib import templating as T
 from steps.lib.context import release_ctx, resolve_chat_target, SELF_CHAT_ID
 from tools.coordinates import coords
@@ -59,11 +60,11 @@ def _html(ctx: dict, cfg: dict) -> str:
     approver_ref = (f'{approver} (<a href="mailto:{approver_email}">{T.esc(approver_email)}</a>)'
                     if approver_email else approver)
     return f"""\
-<p><b>Code Complete is TODAY — {T.esc(ctx['month'])} Release ({T.esc(ctx['ccd_long'])})</b></p>
-<p>Hi all, a few time-sensitive reminders for today:</p>
+<p><b>Code Complete — {T.esc(ctx['month'])} Release ({T.esc(ctx['ccd_long'])})</b></p>
+<p>Hi all, these deadlines apply on <b>{T.esc(ctx['ccd_date'])}</b>:</p>
 <ol>
   <li><b>Merge every required PR by {cut}.</b> The release branch is cut
-      <b>automatically at {cut}</b> tonight — any required PR not merged by then will
+      <b>automatically at {cut} on {T.esc(ctx['ccd_date'])}</b> — any required PR not merged by then will
       <b>not</b> be in this release.</li>
   <li><b>If a required PR won't make the {cut} cut,</b> and it must ship, take one of
       these — <b>both require {approver_ref}'s approval</b>:
@@ -73,7 +74,7 @@ def _html(ctx: dict, cfg: dict) -> str:
             cherry-pick into the release branch after the cut).</li>
       </ul></li>
   <li><b>Localization runs at {loc}.</b> The localization pipeline is triggered at
-      <b>{loc} today</b> — if your PR adds or changes <b>user-facing strings</b>,
+      <b>{loc} on {T.esc(ctx['ccd_date'])}</b> — if your PR adds or changes <b>user-facing strings</b>,
       <b>merge it before {loc}</b> so those strings are picked up for translation.
       Strings merged after {loc} are <b>not guaranteed</b> to be localized this release.</li>
 </ol>
@@ -85,6 +86,8 @@ def build(context: StepContext):
     if the release has no CCD."""
     if not context.release.ccd:
         return Blocked("no CCD set for this release")
+    if schedule.parse_date(context.release.ccd) is None:
+        return Blocked("invalid CCD for this release")
 
     cfg = CONFIG
     ctx = release_ctx(context)

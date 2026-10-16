@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from orchestrator.step_context import StepContext, thaw
 
 from orchestrator.outcomes import NeedsSkill, Blocked
+from orchestrator import schedule
 from steps.lib import templating as T
 from steps.lib.context import release_ctx, resolve_recipients
 
@@ -96,9 +97,13 @@ def build(context: StepContext[BuildParameters]):
     variant = context.parameters.variant
     if not context.release.ccd:
         return Blocked("no CCD set for this release")
+    if schedule.parse_date(context.release.ccd) is None:
+        return Blocked("invalid CCD for this release")
 
     cfg = CONFIG
     variant = variant or context.input("variant") or cfg.get("variant", "initial")
+    if not isinstance(variant, str):
+        return Blocked("notice variant must be text")
     tpl_rel = cfg.get("template", "templates/early-code-complete-notice.md")
     parsed = T.select_template(context.services.assets.template(tpl_rel), variant)
     if isinstance(parsed, dict) and "error" in parsed:
@@ -120,7 +125,7 @@ def build(context: StepContext[BuildParameters]):
             "subject": subject_out,
             "body": html,          # HTML body (has the rendered table + hotfix link)
             "isHtml": True,
-            # plain-text fallback the skill may use if isHtml is dropped
+            # Preview metadata only; never replace the exact claimed HTML payload.
             "_plain_body": body,
         },
         record_as=ID,

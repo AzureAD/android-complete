@@ -1,0 +1,1100 @@
+RELEASE-AGENT: STAGED AUDIT AND RESUME RECORD
+==========================================
+Updated: 2026-10-16 (America/Los_Angeles)
+Project: C:\repos\android-complete\release-agent
+Baseline commit: a1390093aa6ce1b84686906fa68197c651aa31be
+config\phases.yaml SHA256:
+b3933becdbb9b92f673ff179fc304fab1be81a4630ceda035b8edf6292bf565f
+
+PURPOSE AND OWNER REQUEST
+-------------------------
+Audit this project phase by phase and step by step in bounded stages.
+Each step needs clear inputs, outputs, and a realistic way to prove it works.
+Keep decisions, findings, evidence, and the next starting point in this repo,
+so a new session does not have to reconstruct the full conversation.
+Owner clarification: each step is a DATA building block. Map exactly what it
+reads, generates and stores; why each field matters; who consumes it; and its
+lifetime. This includes shared release-state paths, not just handler actions.
+Field-level companion: docs\release-state-data.txt. It is audit documentation,
+not a new persisted runtime schema.
+
+CURRENT CHECKPOINT
+------------------
+OWNER CLARIFICATION (2026-10-16): the current local release state is only test
+data, not production release history. Do not treat preserving that history as a
+development blocker. This statement alone requests no reset/adoption operation
+and does not identify connected pipelines, repositories or recipients as test
+targets; scope external actions separately.
+
+Stages 0-1 COMPLETE: inventory/testing foundation and readiness contract audit.
+Readiness: all 11 item contracts mapped; NOT certified correct or live-verified.
+Confirmed open defects: owner/date changes reuse old readiness facts, and a
+new CCD conflict leaves the old CCD pass intact (A007-A009).
+Additional open readiness gap: empty MCP registrations pass (A010).
+A011 locally FIXED: unknown decline IDs now reject atomically without saving
+state or successful-decline events. Readiness as a whole is not finished.
+PHASE 0 PREFLIGHT AUDIT/FIX PASS COMPLETE for all nine steps, offline.
+Contracts: docs\preflight-contracts.txt (all nine); shared state/delivery detail:
+docs\release-state-data.txt.
+All nine actual handlers/real CLI execute in two isolated persisted scenarios,
+including notice interruption, partial CG failure/recovery, checked OneAuth
+create/delete and explicit simulated human confirmations. No Phase 1 execution.
+No target success-outcome mocks were used to clear preflight in those scenarios.
+PHASE 1 CCD AUDIT/FIX PASS COMPLETE for all three steps, offline.
+Contracts: docs\ccd-contracts.txt. Seven immediate phase replays seed only
+prerequisites and execute actual CCD handlers/CLI/receipts with fake providers.
+No waiting, shared CCD reschedule or preflight execution is necessary.
+Remaining 58 workflow-step contracts are unaudited.
+No provider end-to-end success has been established.
+One existing simulator regression failed in the bounded offline baseline.
+Runtime code now has local, uncommitted A011 and A013-A026 corrections. Local mocks, live
+release runs, provider configuration, pipelines and automations were not changed.
+This file is audit documentation, NOT executable configuration or release state.
+
+CURRENT USER FOCUS: Phase 1 corrections plus easier reproducible phase/step
+testing without predecessor execution or waiting for CCD. Owner accepts real
+test pipelines/artifacts in principle; no exact real target/send was authorized
+or used here.
+IMPLEMENTED NOW: immediate offline CCD replay, all seven named outcomes, runnable
+by Scout using repo skill guidance. Details/recipe: docs\ccd-contracts.txt.
+PROPOSED NEXT: review docs\phase-rehearsal-proposal.txt before implementing the
+generic persistent phase/step runner and controlled-live clock/target/cleanup
+boundary. These are NOT existing runtime commands. Do not claim --as-of or old
+sim already provides a safe full solution.
+OWNER REQUIREMENT (2026-10-16): the runner must be a reusable foundation for ALL
+Phases 0, 1, 2, 3 and 4, not a CCD/localization one-off. One core owns entry,
+clock, scoped execution, recovery and cleanup; registered phase profiles and
+provider adapters supply data/scenarios/targets. Generic lifecycle acceptance
+must cover all five phase targets before claiming the base reusable. Phase 2-4
+actual data/profile coverage remains pending audit, not silently assumed ready.
+After that decision, next release phase audit is build_verify (Phase 2).
+Repair backlog A007-A010 remains open, not silently cleared by this review.
+When resuming A007, first define owner-sensitive invalidation; preserve active
+execution/notification ownership and receipts rather than blindly clearing state.
+Use contract -> correction -> focused offline proof -> record for actual repairs.
+Existing runs need explicit runtime-adoption review before using changed source;
+do not adopt, reset or mutate live runs as a side effect of a code correction.
+Read only the relevant record sections when restoring context.
+
+WORKING METHOD
+--------------
+Owner requirements:
+- Work in stages rather than attempting the entire project in one context.
+- Explain the input and output of every step.
+- Include field-level state inputs/outputs, generated versus stored data,
+  producer/consumer ownership, relevance, retention and invalidation.
+- Persist useful decisions and summaries inside the repository.
+- Do not audit every phase before correcting anything: rework the current phase
+  and step incrementally, establishing a repeatable working method.
+
+Initial audit approach (not an authorization for later live actions):
+- Keep each subsequent stage to one prerequisite or 1-3 related steps.
+- For one building block: define inputs/outputs and invariants, correct it,
+  exercise its real logic with isolated persistence/provider boundaries, then
+  record the outcome before moving to the next block. Keep proposals distinct
+  from implemented fixes; do not require a whole-project audit first.
+- Follow workflow order, but include readiness before Phase 0.
+- Reuse the existing engine, injected services, pytest, and scenarios.
+- Do not build a second release state machine just for tests.
+- Use a dedicated temporary runs-root for all audit rehearsals.
+- Never modify the canonical .release-runs tree or mocks.local.yaml for an audit.
+- No external sends, writes, approvals, pipeline starts, or automation changes
+  without the required explicit review and authorization.
+- Outcome mocks and dummy completions prove traversal, not provider behavior.
+- Preserve the existing 15-minute validation budget. Use affected selectors,
+  not repeated broad suites; do not reduce safety coverage merely to get green.
+- Save no credentials, private message bodies, or raw sensitive provider data here.
+- Refresh the source baseline and recheck changed contracts when resuming.
+
+PER-STEP AUDIT CONTRACT
+-----------------------
+For each phase.step, record:
+1. Purpose, handler, workflow kind, execution mode, and implementation status.
+2. Entry conditions: readiness, date window, predecessors, human authorization.
+3. Inputs: exact JSON paths/types, producer and freshness for release/upstream
+   data; public parameters, provider responses, time, config and test-only inputs.
+4. Work: exact reads, transformations, external writes, and their owning surface.
+5. Outputs: separate generated/transient results from external artifacts and
+   stored evidence. List exact state paths/key shapes, writer, persist boundary,
+   and whether each mutation creates/replaces/merges/appends.
+6. Success oracle: independently observable evidence that proves the intended
+   operation happened; distinguish override/skip from success.
+7. Failure/hold behavior: missing, malformed, stale, partial, unavailable,
+   denied, or uncertain evidence; describe what must remain incomplete.
+8. Resume/retry: checkpoint before write, interruption boundaries, receipt
+   reconciliation, idempotency/deduplication, stale-input rejection. Explain each
+   field's consumers, retention/invalidation and recovery/audit relevance.
+9. Test recipe: fixed clock, isolated state, deterministic provider fixtures,
+   explicit before/after data and unchanged-path assertions, exact provider
+   calls and test selectors/results.
+10. Coverage gaps, proposed fixes, owner decisions, and next checkpoint.
+
+EVIDENCE LEVELS (DO NOT CONFLATE)
+-------------------------------
+L0 inventory: configured presence, kind and dependency only.
+L1 handler: real logic over explicit inputs; exact outputs asserted.
+L2 lifecycle: real engine/CLI with persisted isolated state; fake provider boundary;
+   real target handler and completion/recovery protocol, not outcome: done.
+L3 provider contract: real adapter parses representative provider responses and
+   emits the correct requests through a fake transport; covers errors/paging.
+L4 controlled live rehearsal: real provider, explicitly reviewed test targets,
+   bounded permissions and cleanup, with independently observed artifacts.
+An L2/L3 pass is valuable but is not proof of L4 delivery or publication.
+A step is not audit-complete until its contract, recovery matrix, existing
+coverage, and remaining evidence gaps are all recorded.
+
+WORKFLOW INVENTORY: 10 PHASES, 70 STEPS
+--------------------------------------
+Source: config\phases.yaml. Status for all phases: INVENTORIED ONLY.
+There are 14 explicitly configured dummy steps, all in Phases 6-9.
+Phase 5 has 8 handler-configured steps and NO configured dummies; their behavior
+has not been certified by this inventory.
+
+Prerequisite: readiness gate, 11 items (7 auto, 4 attest).
+Python auto: build_access, mcp_servers.
+Scout-mediated auto: ccd_confirmed, silent_perms, teams_notify, adx_access,
+oncall_now. silent_perms and teams_notify explicitly allow opt-out/degraded.
+Human attest: play_console_access, oncall_window, saw_ame, yubikey.
+Source: config\readiness.yaml:30-151. Detailed contract audit: Stage 1 below.
+The mcp_servers verifier actually checks all four manifest entries:
+icm, kusto, teams, ecs (not just the three named in the checklist description).
+
+Phase 0 / preflight / 9 / parallel / opens CCD-7:
+  notice, flight_reminder, lockdown, breaking, cg, oneauth_access, cron,
+  confirm_reminders, vitals.
+  Explicit dependency: confirm_reminders requires flight_reminder.
+  notice contract traced below; all step-level E2E certification remains pending.
+
+Phase 1 / ccd / 3 / sequential / opens CCD:
+  final_reminder, pr_reminder, localization.
+
+Phase 2 / build_verify / 9 / parallel / opens CCD+1:
+  checker_fired, orchestrator_health, mrwp_ecs, mrwp_local, auth_ecs,
+  telemetry_verify, rc_report_publish, rc_report_notify, rc_report_gate.
+  Capture chain is dependency-ordered; report publication/notification and
+  telemetry converge at the approval gate. No current step named rc_report.
+
+Phase 3 / bug_bash / 11 / sequential:
+  clone_plans_broker, clone_plans_auth, ui_test_status, distribute_tests,
+  send_invite, activate_chat, notify_native_auth, bugbash_updates,
+  ui_failures, native_auth_signoff, bugbash_complete.
+  Suggested audit batches: plan creation; result fill; distribution;
+  invitation/chat binding; progress/triage/sign-offs.
+
+Phase 4 / finalize / 9 / sequential:
+  remove_rc_tags_gate, orchestrator_finalization, integ_prs, publish_notes_gate,
+  verify_pub, verify_release_notes, oneauth_common_pr, release_announcement,
+  final_status_email.
+
+Phase 5 / rollout_start / 8 / sequential:
+  identify_auth_build, tag_authenticator, wiki_payload, notice, signoff_start,
+  upload_whats_new, upload_alpha, beta_play_store.
+
+Phase 6 / monitor / 8 / sequential:
+  health_report [DUMMY], adoption [DUMMY], guards [DUMMY], advance,
+  progress_email [DUMMY], dashboard [DUMMY], crash_annot, hotfix_eval.
+
+Phase 7 / partner / 6 / sequential:
+  china, samsung, ngms [DUMMY], teams_dev [DUMMY], approvals [DUMMY],
+  review_times [DUMMY].
+
+Phase 8 / hotfix / 5 / sequential / conditional, not included by default:
+  cherry [DUMMY], rebuild [DUMMY], smoke, expedite [DUMMY],
+  alpha_orgs [DUMMY].
+  Must audit explicit activation separately; a default release replay skips it.
+
+Phase 9 / close / 2 / sequential:
+  closeout [DUMMY], done.
+
+INITIAL FINDINGS
+----------------
+A001 / CONFIRMED failing regression / OPEN:
+  tests\test_sim.py::test_sim_done_mode_completes_phase_and_advances fails at
+  lines 40-41. It still asserts completion of build_verify.rc_report, which
+  config\phases.yaml:61-69 no longer defines.
+  Its docstring also says Phase 2 has no gate, although rc_report_gate exists.
+  Evidence: existing test executed offline, not merely inferred from comments.
+  Next repair must assert the current step set and gate behavior, not just
+  delete the stale assertion or accept any simulator exit.
+  No repair has been applied.
+
+A002 / CONFIRMED coverage-selection limitation / OPEN:
+  tests\_suite.py:13-45 classifies test_sim.py as extended, and CORE_CASES has
+  no simulator inclusion. The default daily core does not exercise A001.
+  Explicit file/node selectors include extended cases; this audit used them.
+  This is not permission to expand the reviewed daily suite arbitrarily:
+  identify a small, meaningful simulator contract after its assertions are fixed.
+
+A003 / CONFIRMED simulator fidelity limitation / OPEN:
+  orchestrator\sim.py:117-152 fills earlier non-gate steps with outcome: done.
+  With data: mock it ALSO fills unspecified non-gate steps in the target phase
+  with outcome: done. A reached target is therefore not proof those handlers,
+  provider requests, receipts, or artifacts were exercised.
+  The three checked-in scenarios all target Phase 2, not every phase:
+  at_rc_gate (mock/done), build_verify_live (live/done),
+  mid_build_verify_open (live/open).
+  A contract-level rehearsal must explicitly fake the provider boundary of the
+  target step and assert its outputs instead of using a success outcome mock.
+
+A004 / CONFIRMED operational hazard, intentional current default / OPEN:
+  orchestrator\sim.py:56-60,327-339 defaults to the canonical real runs-root.
+  Lines 390-409 back up and replace an existing release state when save=True,
+  even when the requested target was not reached. A backup does not make that
+  non-destructive to the active release.
+  data: mock means mocked inputs/outcomes, NOT isolated state storage.
+  Audit policy: explicit throwaway runs-root; no live sim command was run here.
+  Whether to change the simulator's default needs a separate product decision.
+
+A005 / CONFIRMED documentation drift / OPEN:
+  README.md:7-14 says Phases 5-9 retain dummy automatic operations.
+  Current config\phases.yaml:101-112 instead gives Phase 5 eight real handler
+  entries; configured dummy automatic operations now begin at Phase 6.
+  Do not use that README sentence as implementation evidence.
+
+A006 / CONFIRMED replay-evidence limitation / OPEN:
+  tests\test_core.py:227-250 proves workflow traversal, not a real release E2E.
+  Its _orch() fixture pre-clears Phase 0 Scout/human holds and Phase 1 work
+  (tests\_harness.py:253-294,318-330), installs broad success mocks
+  (tests\_harness.py:85-200), and uses an in-memory checkpoint seam
+  (tests\_harness.py:37-40). Later Scout work is recorded directly.
+  It deliberately omits the conditional hotfix phase and can complete dummies.
+  Keep this useful lifecycle smoke test, but do not count it as artifact proof.
+
+REFERENCE CONTRACT: preflight.notice
+------------------------------------
+Status: CONTRACT TRACED; provider E2E NOT PROVEN; complete phase audit pending.
+Sources:
+  config\phases.yaml:29-43
+  steps\preflight\notice.py:19-53,93-130
+  steps\lib\context.py:16-37
+  steps\lib\templating.py:19-41
+  templates\early-code-complete-notice.md:19-50
+  orchestrator\commands\step_action.py:94-180
+  orchestrator\delivery.py:49-77,187-213,331-399
+  orchestrator\commands\delivery_cmd.py:9-80,83-155
+
+Purpose and entry:
+  Prepare and deliver the early code-complete email.
+  Workflow kind external; module KIND scout; NOTIFICATION=True.
+  Phase 0 must be active/due, readiness cleared, lifecycle eligible.
+  No same-phase predecessor is configured. Parallel-phase independence applies.
+  Directly calling build() does NOT exercise these outer lifecycle guards.
+
+Inputs:
+  Release identity and CCD; owner email/name for date/owner rendering.
+  BuildParameters.variant: optional string, default None.
+  Variant resolution: public parameter, then injected input, then CONFIG
+  (initial). Template supports initial/update; unknown selection blocks.
+  CONFIG supplies the local template and configured real distribution list.
+  An injected asset service reads the template.
+  Test-only send_to payload override is applied by step_action, NOT by build.
+  A redirect still sends real mail if its returned transport is executed.
+
+Builder output:
+  Missing CCD -> Blocked("no CCD set for this release").
+  Template service/selector error mapping -> Blocked(error).
+  Success -> NeedsSkill, NOT Done:
+    tool = workiq_send_email
+    record_as = notice
+    outbound = True
+    payload.to = resolved configured recipients
+    payload.subject = rendered selected subject
+    payload.body = rendered HTML including month, CCD, owner and hotfix link
+    payload.isHtml = True
+    payload._plain_body = rendered text preview/fallback metadata
+  No mail is sent by the builder. Its success-shaped "sent to ..." note is
+  proposed completion text, not delivery evidence.
+  The transport descriptor strips private "_" keys, including _plain_body;
+  it must send the exact claimed public payload, not a hand-written fallback.
+
+Delivery and durable output:
+  Preparation creates a hashed descriptor bound to release, CCD, owner,
+  workflow revision, owning step and invalidation generation; no send permission.
+  Claim rechecks eligibility/hash and persists execution ownership before CLI
+  returns permission_to_send=True.
+  Execute only the claimed transport/payload after required user authorization.
+  Email sent acknowledgement needs the same execution ID, explicit provider
+  evidence, and exact-payload receipt: tool, descriptor_hash, payload_hash,
+  target, provider_receipt.transport.
+  The command persists delivery first, then finalizes the owning step.
+  Successful eligible finalization records preflight.notice as done and marks
+  notification completion applied. A stale scope may instead suppress completion.
+  The current notification record lives in state.notification_deliveries;
+  step status/execution are separate release-state facts.
+  Receipt matching binds the claimed payload; it is not independent proof that
+  a real mailbox received it. Provider evidence still has to be genuine.
+
+Failure/recovery oracle:
+  Preparation alone must leave the step incomplete and grant no send permission.
+  Wrong hash/target/owner binding, wrong receipt, wrong execution ID, or
+  ineligible scope must not produce a successful step completion.
+  Claimed/uncertain delivery cannot be blindly reclaimed or resent.
+  not_sent permits another claim only with positive evidence nothing was sent.
+  If mail was sent but completion failed, retry acknowledgement/finalization,
+  never the transport. Do not claim exactly-once delivery.
+
+Existing evidence observed:
+  PASS tests\test_preflight.py::test_notice_build_real_recipients_and_html:
+    invokes the real builder and asserts HTML content plus default recipients.
+    Despite its "Real send" docstring, it does NOT execute a mail transport.
+  PASS generic notification ownership, ambiguity/lost-ack, and exact-payload
+    CLI receipt cases listed in the Stage 0 execution record below.
+    Those use synthetic email or ccd.final_reminder, not the entire notice path.
+  Additional relevant test inspected, not run in this stage:
+    tests\test_step_context.py::
+    test_external_payload_uses_injected_asset_read_and_typed_parameters.
+
+Remaining proof for this step:
+  One persisted isolated lifecycle recipe starting before Phase 0, using a
+  fixed clock, the real notice builder and mock-free target completion logic,
+  recipient redirection through prepare_step, a fake transport, exact payload
+  receipt acknowledgement, reload, finalization and replay/dedup assertions.
+  Include unsatisfied readiness, early window, missing CCD/template, changed
+  owner/CCD/hash, failed transport, uncertainty, and interruption boundaries.
+  Map existing cases before adding overlapping tests.
+  A separately authorized live rehearsal would need a verified test recipient,
+  exact content review, and independently observed message evidence.
+
+STAGE 0 EXECUTION RECORD
+------------------------
+Date: 2026-10-16. Existing pytest only; no new tests/tools/dependencies.
+12 targeted cases: 11 passed, 1 failed, 5.39 seconds pytest-reported duration.
+This is NOT a full-suite result or a declaration of project health.
+Invocation from release-agent (selectors wrapped here for readability):
+  python -m pytest -q -p no:cacheprovider --basetemp <temporary-root>\pytest
+    --tb=short --durations=5
+    tests\test_sim.py
+    tests\test_core.py::test_full_flow_replay_completes
+    tests\test_preflight.py::test_notice_build_real_recipients_and_html
+    tests\test_notification_delivery.py::test_ambiguous_and_lost_ack_never_replay
+    tests\test_notification_delivery.py::
+      test_claim_and_finalization_validate_captured_step_owner
+    tests\test_notification_delivery.py::
+      test_cli_email_sent_acknowledgement_requires_exact_payload_receipt
+  The last two wrapped node IDs were each a single argument.
+  TEMP/TMP redirected to a unique temporary directory; bytecode/cache output
+  disabled; existing pytest provider guards active; temporary directory removed.
+  Failed: test_sim_done_mode_completes_phase_and_advances (A001).
+  Passed: the other six test_sim cases and the five explicit node selectors.
+  Full output retained as session artifact files\audit-stage-0-pytest.txt
+  in session 0ad485a3-34ea-491b-9381-5f0bab6a3ab0.
+
+DECISIONS AND CHANGES LOG
+------------------------
+2026-10-16:
+  Owner requested the staged audit and repo-persisted context.
+  Stage 0 established the inventory, evidence vocabulary, reference notice
+  contract, findings A001-A006 and next readiness checkpoint.
+  Only docs\release-audit.txt was added to the project.
+  No fixes, production-flow changes, schema changes, commits, or external
+  operations were performed. Proposed safety/testing changes remain proposals.
+2026-10-16 / Stage 1:
+  Mapped all 11 readiness item contracts and shared gate/persistence semantics.
+  Recorded A007-A011 from isolated reproductions; runtime repairs remain open.
+  Existing focused coverage passed; no live readiness success was inferred.
+  Next audit narrowed to Phase 0 notice + flight_reminder.
+  The project change remains this audit record only.
+2026-10-16 / data-contract clarification:
+  Owner explicitly required generated/relevant data and per-step input/output
+  ownership as first-class building blocks, before proceeding to more steps.
+  Added docs\release-state-data.txt: all 25 central root fields grouped by
+  responsibility; shared step/readiness record shapes; exact data contracts for
+  all 11 readiness items and preflight.notice, including delivery storage.
+  Distinguished transient payloads, durable business facts, recovery receipts,
+  projections and unexplained data; no actual live state was read or measured.
+  Remaining step data ownership is untraced, not assumed unnecessary.
+  No splitting/deletion/new runtime schema was approved or implemented.
+2026-10-16 / repair-first pivot:
+  Owner requested reworking the current phase/step instead of auditing all
+  phases before making corrections. Adopted the bounded repair loop above.
+  Started with readiness-decline input integrity (A011); A007 owner handoff is
+  next, before moving to Phase 0.
+
+STAGE 1: READINESS ENTRY-GATE CONTRACT AUDIT
+--------------------------------------------
+Completed: 2026-10-16. Same source baseline as Stage 0; audit-only.
+Scope: all 11 configured readiness items, engine gate, CLI persistence, Scout
+instructions, attestation presentation, and directly coupled owner/CCD updates.
+No real readiness checks, user settings reads/changes, on-call lookups, Kusto
+queries, Teams handshakes, or pipeline requests were performed.
+
+SHARED INPUT, OUTPUT, AND LIFECYCLE CONTRACT
+  Sources: orchestrator\readiness.py:22-240;
+  orchestrator\commands\readiness.py:9-154;
+  orchestrator\render.py:179-227; orchestrator\cli.py:46-89;
+  orchestrator\engine.py:294-308; orchestrator\projection.py:220-225.
+  Input = readiness.yaml + release.readiness_items, CCD for display windows,
+  and external checks/explicit engineer decisions.
+  Stored fact = {status, at, message? or note?, source?, checks?}.
+  signed is derived, not a persisted boolean: every required auto item needs
+  pass; the two opt-out items also accept degraded; every attest item needs
+  attested. signed_at is the latest stored item timestamp.
+  Status fail/pending => gate unsigned, engine suspension readiness_gate.
+  Status unable => gate blocked, engine suspension blocked.
+  No phase step should execute while either suspension applies.
+  verify runs Python verifiers and skips Scout-assisted items; sign runs
+  verify again, then attests only CLI-validated human item IDs.
+  CLI sign rejects no IDs, unknown IDs, and auto IDs; the library's sign(None)
+  convenience still attests every human item and is used by fixtures/sim.
+  record-check accepts only source:scout auto items; only opt-out items may
+  record degraded. It validates status/type, not the actual provider proof.
+  CLI commands save the state; cli.main serializes them with the release lock
+  and enforces runtime revision compatibility for mutations.
+  verify exits 0 even when checks fail: callers must inspect item statuses,
+  not use the process exit code as a readiness-success oracle.
+  Plain checklist reads state; checklist --verify and verify mutate evidence.
+  check-ccd is provider-read-only but can persist local ccd_conflict metadata.
+  The attestation prompt is not ready until auto items are satisfied. It returns
+  ready, release, question, answers with action/item, confirm_items and a
+  recommended index. The current four attestations fit the five-card limit.
+  The user must explicitly confirm before sign; decline is not an override.
+  Existing item records have no enforced owner/date binding or expiration.
+  verify does not refresh old Scout statuses; it rechecks only Python items.
+  Provider/permission interpretation remains a Scout instruction boundary,
+  not a deterministic provider adapter in ReadinessGate.
+
+ITEM CONTRACTS
+  Common persisted outputs and CLI clearing rules are described above.
+
+  build_access / Python auto / required:
+    Input: config\readiness.yaml:36-53, two ADO build definitions:
+    Engineering #2828 and One #397224; signed-in az identity.
+    Work: verify_build_defs calls tools.checks.check_ado_build_def for BOTH.
+    Provider command reads definition name; exit 0 plus nonempty stdout proves
+    that command's access. Missing CLI, timeout, failed auth or empty response
+    fail. No definitions configured also fails.
+    Output: pass only if both succeed, otherwise fail; checks[] retains
+    {name, url, ok, detail}. Does not prove pipeline execution/write permissions.
+    Evidence: gate status tests use a stub REGISTRY, not the real verifier.
+    Gap: both real-verifier aggregation and adapter failure/request contracts
+    need explicit fixtures; no direct tests of these functions were located.
+    Source: phases\readiness_verifiers.py:26-43; tools\checks.py:24-56.
+
+  mcp_servers / Python auto / required:
+    Input: config\requirements.yaml mcp_servers and Scout registration file.
+    Actual manifest set: icm, kusto, teams, ecs.
+    Work: verify_mcp_servers -> ensure_mcp_servers(register=False).
+    Read-only registration verification; a missing entry may probe launcher/
+    provider availability but does not register it or restart Scout.
+    Output: pass if every result is present; otherwise fail plus per-server
+    details. Presence currently means only dictionary-key membership (A010).
+    Does not prove enabled/loaded tools, valid launch config, or working auth.
+    Evidence: existing gate test stubs this verifier; two isolated infra tests
+    exercise registration/idempotency and allowlist writing to temporary files.
+    Source: phases\readiness_verifiers.py:46-77; orchestrator\infra.py:80-153.
+
+  ccd_confirmed / Scout auto / required, no degraded:
+    Input: stored CCD/release month, pipeline 3038 overrideCodeCompleteDate,
+    clock and explicit owner decision when reconciliation is needed.
+    Work: check-ccd returns unset, past, conflict, unreadable or match.
+    Past/conflict require resolution; match may pass. A same-day CCD is
+    compressed, not past. Compressed runway warns, rather than blocking.
+    Override comparison is month-scoped. check-ccd does not itself record pass.
+    On unreadable provider evidence, the reference permits explicit manual CCD
+    confirmation followed by a pass with a manual-fallback note. Thus this
+    "auto" item has a documented human fallback; do not call it verified IO.
+    Output: Scout records pass/fail and explanatory message; live set-ccd is
+    a separately confirmed pipeline write, not a harmless readiness read.
+    Evidence: existing tests cover status classification and required/non-opt-
+    out semantics. Freshness/invalidations fail the audit probes (A008-A009).
+    Source: orchestrator\commands\pipeline.py:13-155;
+    skill\reference\readiness-gate.md:55-61.
+
+  silent_perms / Scout auto / opt-out:
+    Input: fresh Scout settings for required_servers =
+    shell, workiq, playwright, kusto, icm and explicit user consent if changed.
+    Work: the reference checks autoApprove flags; missing approval prompts for
+    enable versus proceed-with-prompts. Enabling requires the permission API's
+    consent and a fresh settings read; no direct config-file permission edits.
+    Output: pass if approved; degraded after explicit opt-out, with downside
+    recorded. Pending/fail remains unsatisfied until a disposition is recorded.
+    Evidence: gate semantics/degraded acceptance covered; no deterministic
+    end-to-end settings interpretation/consent/receipt fixture was located.
+    Gap: prove enabled capability and effective per-tool permission behavior;
+    five autoApprove flags alone are not an end-to-end unattended-run proof.
+    Source: config\readiness.yaml:73-90; reference:28-43.
+
+  teams_notify / Scout auto / opt-out:
+    Input: channels.teams from config\notifications.yaml and current relay/
+    bot transport outcome. Current config enables Teams with target scout.
+    Work: disabled channel -> pass, email-only/no Teams requested.
+    Enabled -> relay status/connect plus one setup handshake.
+    Output: pass only after connected plus successful handshake; unreachable
+    relay/bot -> degraded with email-only explanation. No email send is tested
+    by this handshake; it does not independently prove the email fallback.
+    Evidence: stored-status gate behavior is shared; actual relay transport
+    and handshake response interpretation are not exercised by these tests.
+    This is an interactive setup diagnostic, never a scheduled fallback send.
+    Any future live probe still requires the applicable outbound review.
+    Source: config\readiness.yaml:92-102; reference:62-71.
+
+  adx_access / Scout auto / required:
+    Input: item's exact Kusto cluster URI/database and caller identity.
+    Work: Kusto MCP runs print 1 against that target.
+    Output: success -> record-check pass; error/unavailable -> fail, not attest
+    or degraded. A successful constant query does not prove telemetry tables,
+    expected telemetry content, or later dashboard/monitoring correctness.
+    Evidence: tests manually record the result; no raw Kusto response is parsed
+    by the Python gate. Need success, auth/transport failure and malformed
+    response fixtures at the Scout/provider contract boundary.
+    Source: config\readiness.yaml:107-115; reference:51-54.
+
+  oncall_now / Scout auto / required:
+    Input: fresh current schedule for team 78848 and resolved release-driver
+    identity. Reference uses get_my_icm_context or owner-email local part.
+    Work: determine role in currentOnCallContacts. First-listed primary fails;
+    backup/secondary or absent passes. Ambiguous ordering requires clarification;
+    missing/incomplete roster is not independent evidence that owner is absent.
+    Output: record-check pass/fail with primary/backup evidence; no degraded.
+    Evidence: tests record "not on-call" directly; they do not execute roster/
+    identity/primary-role interpretation. Owner/caller mismatch needs a contract.
+    Source: config\readiness.yaml:117-125; reference:45-50.
+
+  play_console_access / human attestation / required:
+    Input: owner explicitly confirms signed-in access to the configured app's
+    Play Console dashboard. HTTP reachability/login page is not proof.
+    Output: attested after explicit confirmation; unable on refusal/inability,
+    which blocks. Stored note is optional in current CLI, not enforced proof.
+    Evidence: sign/partial-sign/note/decline tests exercise shared engine rules,
+    not actual portal access.
+    Source: config\readiness.yaml:127-131; knowledge.yaml:210-230.
+
+  oncall_window / human attestation / required:
+    Input: explicit owner confirmation for CCD-7 through CCD+14, inclusive
+    displayed date bounds. This is distinct from the current-primary check.
+    Output: attested for confirmed window or unable/block if unavailable.
+    Window is recomputed from current CCD; the stored attestation contains no
+    bound original dates. Moving CCD changes the displayed claim (A008).
+    Evidence: existing test asserts computed dates, not stale-window rejection.
+    Source: config\readiness.yaml:133-139; orchestrator\readiness.py:31-43.
+
+  saw_ame / human attestation / required:
+    Input: owner explicitly confirms SAW desktop and AME-account access.
+    Output: attested or unable/block. Do not request or retain credentials.
+    Evidence: shared attestation/decline tests, no real login verification.
+    Source: config\readiness.yaml:141-145.
+
+  yubikey / human attestation / required:
+    Input: owner explicitly confirms physical security key availability.
+    Output: attested or unable/block. A replacement confirmation can restore
+    readiness after decline. This cannot be proven by a provider fake.
+    Evidence: partial sign, evidence note, decline and recovery tests.
+    Source: config\readiness.yaml:147-151.
+
+STAGE 1 FINDINGS (ORIGINAL OBSERVATIONS; DISPOSITIONS UPDATED BELOW)
+  A007 / HIGH / confirmed owner-handoff integrity defect:
+    set-owner changes owner_email/name but leaves every readiness fact intact.
+    A signed release stays signed for a new owner using the old owner's portal,
+    SAW/key and availability confirmations; no fresh confirmation is required.
+    Source: commands\notify.py:38-51; readiness.py:105-108,230-237.
+    Offline real-CLI probe: original-owner@example.test -> replacement owner,
+    reload; signed=true and all original readiness facts unchanged.
+    Repair candidate: define owner/runner-sensitive invalidation and obtain
+    new owner evidence. Do not simply clear or replay release steps/effects.
+
+  A008 / HIGH / confirmed CCD-attestation scope defect:
+    set-ccd changes CCD but preserves ccd_confirmed and oncall_window evidence.
+    The same old attestation is presented for a different computed window.
+    Source: commands\pipeline.py:128-135; readiness.py:31-43,230-237.
+    Offline real-CLI probe with a fake pipeline writer: CCD 2026-10-21 -> 28;
+    attested window 2026-10-14..2026-11-04 becomes 2026-10-21..2026-11-11;
+    all readiness facts unchanged and signed remains true after reload.
+    Repair candidate: exact, reviewed invalidation for date-sensitive evidence
+    and confirmation of the new window. Downstream work needs separate analysis.
+
+  A009 / HIGH / confirmed newly-discovered-conflict handling defect:
+    check-ccd returns conflict and saves ccd_conflict but leaves a previous
+    ccd_confirmed pass unchanged. ReadinessGate derives signed from statuses,
+    so the entry gate stays cleared despite newly known contradictory evidence.
+    Source: commands\pipeline.py:43-71; readiness.py:105-108,230-237.
+    Offline real-CLI probe returned conflict for a new in-month override;
+    after reload ccd_confirmed=pass and signed=true.
+    Repair candidate: ensure known conflict revokes the affected readiness
+    result through a coherent command/gate contract, not a presentation warning.
+
+  A010 / MEDIUM / confirmed registration false-positive:
+    Four empty objects under required MCP keys cause verify_mcp_servers to
+    return pass, although they define no runnable server/tools.
+    Source: orchestrator\infra.py:96-102; readiness_verifiers.py:60-77.
+    Probe replaced only registration-file input with empty synthetic entries;
+    called the real verifier and observed pass for icm/kusto/teams/ecs.
+    Repair candidate: distinguish valid registration, enabled/loaded capability
+    and authenticated access; define the actual readiness requirement first.
+
+  A011 / MEDIUM / LOCALLY FIXED by Repair 1 below:
+    Original defect: decline ignored unknown IDs; its CLI returned 0 and printed "Recorded as
+    unable" for a typo without changing evidence or blocking a signed gate.
+    Source: readiness.py:212-222; commands\readiness.py:82-96.
+    Offline real-CLI probe with --item yubkikey: success-shaped output,
+    unchanged facts and signed=true. Mixed valid/invalid IDs also need atomic
+    validation, not partial application.
+    Implemented: validate the complete input set before any mutation and
+    reject unknown IDs with error output and CLI exit 2, without state/event writes.
+
+STAGE 1 COVERAGE AND REPRODUCTION RECORD
+  Existing targeted pytest: 28 passed, 0 failed; 4.41 seconds pytest duration.
+  These passes do NOT contradict A007-A011: none of these existing cases asserts
+  the missing invalidation/invalid-registration/invalid-decline behaviors.
+  No new repository tests, runtime helpers, dependencies or settings were added.
+  Run: python -m pytest -q -p no:cacheprovider --basetemp <temporary-root>\pytest
+    --tb=short --durations=5 <the following 28 exact node selectors>.
+  tests\test_readiness.py (20):
+    test_entry_gate_blocks_before_signing
+    test_signing_clears_entry_gate
+    test_partial_sign_does_not_clear
+    test_sign_records_evidence_note
+    test_cli_sign_refuses_bare_and_has_no_all_flag
+    test_decline_any_item_blocks_gate
+    test_decline_nonhard_item_also_blocks
+    test_readiness_failure_revokes_signature_and_recovery_clears_block
+    test_oncall_window_shows_computed_dates
+    test_failing_auto_keeps_gate_closed
+    test_passing_auto_plus_attest_clears_gate
+    test_verify_skips_scout_assisted_item
+    test_record_check_pass_then_sign_clears_gate
+    test_record_check_fail_keeps_gate_closed
+    test_record_check_rejects_non_scout_item
+    test_silent_perms_is_required_scout_item
+    test_mcp_servers_is_python_auto_item
+    test_silent_perms_opt_out_degraded_satisfies_gate
+    test_notify_unsigned_readiness_is_silent
+    test_concurrent_record_check_both_persist
+  tests\test_core.py (5):
+    test_attest_prompt_is_separate_render_never_in_table
+    test_attest_prompt_payload_is_deterministic_card
+    test_degraded_rejected_for_non_opt_out_item
+    test_infra_registers_missing_mcp
+    test_infra_registers_declared_tools_allowlist
+  tests\test_ccd.py (2):
+    test_ccd_confirmed_is_required_scout_item
+    test_ccd_viability_past_compressed_healthy
+  tests\test_schedule_state.py (1):
+    test_check_ccd_classifies_pipeline_reconciliation
+  All selectors were file::function, with no daily-core filtering.
+  Existing pytest guards blocked live IO; TEMP/TMP redirected and cleaned.
+  The gate tests' shared harness replaces REGISTRY and records Scout success;
+  they prove state semantics, not real build-access/MCP/provider readiness.
+
+  Five separate diagnostic reproductions exercised actual CLI/gate/infra code
+  with isolated persisted state and fake external boundaries. Assertions
+  describe CURRENT undesirable behavior, not desired passing requirements.
+  The diagnostic explicitly rejected sockets and subprocesses, disabled local
+  mocks, froze the readiness clock, used synthetic owner identities, and cleaned
+  temporary runs. The CCD writer was fake; the real pipeline was never touched.
+  Session artifacts in 0ad485a3-34ea-491b-9381-5f0bab6a3ab0\files:
+    audit-stage-1-pytest.txt
+    audit-stage-1-probes.txt
+    audit_readiness_probes.py
+  The probes are audit evidence only, not committed regression coverage.
+  Before a fix is complete, convert the relevant reproduction into a desired-
+  behavior repository regression with the approved invalidation semantics.
+
+STAGE 1 EXIT AND SUBSEQUENT REPAIR DECISIONS
+  All item inputs/outputs/clearing rules are documented; no live readiness
+  success is claimed. Five findings were open at Stage 1 exit; A011 is now
+  locally corrected by Repair 1. A007-A010 remain open.
+  Reuse existing readiness_items unless an explicit persistence design is
+  reviewed. This audit authorizes no new schema fields, expiry policy, blanket
+  invalidation, permission escalation, or production command changes.
+  Owner identity binding, CCD/window invalidation, Scout-proof interpretation,
+  missing-provider behavior and recovery are mandatory proof gaps before live E2E.
+  The later owner-approved repair-first pivot supersedes the original plan to
+  audit Phase 0 next; CURRENT CHECKPOINT is the authoritative next task.
+  Data contract details and current storage relevance are now in the companion
+  docs\release-state-data.txt; extend that register during each later stage.
+
+REPAIR 1: READINESS DECLINE INPUT INTEGRITY (A011)
+-------------------------------------------------
+Completed locally: 2026-10-16. Not committed or adopted into a live release.
+Scope: one readiness command/gate building block, not the whole phase.
+
+Input contract:
+  The requested readiness item-ID list and configured checklist ID set.
+  Validate EVERY requested ID before writing any result.
+  Unknown-only and mixed known/unknown lists both reject as one atomic request,
+  regardless of which ID comes first. Missing/empty readiness config does not
+  turn an arbitrary item name into a successful decline.
+
+Output contract:
+  Invalid input -> gate returns {error: text}; CLI prints that error and exits 2.
+  No release-state save, updated_at change or successful-decline event.
+  Existing signed/blocked state and every readiness fact remain unchanged.
+  The CLI's ordinary transaction lock is still allowed.
+  Valid input -> requested readiness_items[I] become {status: unable, at: UTC};
+  other readiness facts and all unrelated state stay unchanged, except the
+  normal save timestamp. The gate blocks; events record items/reason/outcome.
+  No new persisted field, artifact, provider call or schema version is introduced.
+
+Implementation:
+  orchestrator\readiness.py: ReadinessGate.decline validates the whole ID set.
+  orchestrator\commands\readiness.py: cmd_decline rejects error before save/log.
+  tests\test_readiness.py:
+    test_decline_rejects_unknown_items_without_mutation (3 input order cases;
+      gate + actual CLI + persisted reload; also absent/empty gate config).
+    test_cli_decline_valid_items_only_changes_requested_facts (valid multi-item
+      request; exact state-delta checks and successful event evidence).
+  Preserves the existing error-mapping convention used by record_check and the
+  invalid-input exit-code convention used by sign.
+
+Proof:
+  Initial affected behavior selectors: 10 passed.
+  The combined run's coverage-size guard failed: daily core contained 1,114
+  cases against the existing cap of 1,086 (A012 below).
+  After tightening missing-config handling, all four new regression cases
+  passed in 1.60 seconds. No repeated full-suite run or timeout override.
+  Separate collection excluding the four new cases confirmed the prior core
+  already contained 1,110 cases; collection only, not a baseline full test run.
+  All commands used isolated TEMP/TMP, existing provider guards and cleaned
+  temporary state; live .release-runs and local mocks were untouched.
+  Session artifacts: readiness-decline-fix-pytest.txt,
+  readiness-decline-final-pytest.txt, readiness-baseline-core-collection.txt.
+  Earlier audit_readiness_probes.py captures PRE-FIX behavior; its A011 assertion
+  is historical reproduction evidence, not a current passing regression.
+
+  A012 / OPEN / pre-existing daily coverage-size guard failure:
+    1,110 core cases before this patch (four new cases excluded), cap 1,086.
+    The four new safety cases bring it to 1,114.
+    Source: tests\test_validation_scope.py:41-63; tests\_suite.py:7-8.
+    No budget increase, silent deselection or unrelated coverage reshuffle was
+    performed. This remains a separate project limitation, not a claim that all
+    validation is green or the readiness phase is complete.
+
+Next: A007 owner-sensitive readiness invalidation, using the same explicit data
+contract and focused persisted-state proof was the previous plan; the owner's
+later Phase 0 direction supersedes it. The backlog remains open.
+
+REPAIR 2: preflight.flight_reminder (A013)
+------------------------------------------
+Completed locally: 2026-10-16. No live message, commit or workflow adoption.
+Owner clarified that continuing means auditing and fixing the step, not only
+showing its input/output contract.
+
+  A013 / MEDIUM / LOCALLY FIXED / catch-up deadline is falsely called "today":
+    The handler always told feature owners to merge strings "by today (CCD-7)",
+    including when a worker ran several days after the actual CCD-7 deadline.
+    With CCD 2026-10-21 and delivery 2026-10-16, it mislabeled 2026-10-14 today.
+    Fixed by rendering the explicit CCD-7 deadline without relative "today".
+    No new clock rules, state fields, approval policy or release sequencing.
+    Corrected the handler's "three reminders" docstring to match its four items.
+
+Contract and audit scope:
+  Inputs: CCD, display month/owner, configured chat and links; optional
+  dispatch-only send_to redirect. No public parameters or new provider reads.
+  Output remains one Teams HTML reminder; actual completion needs confirmed
+  delivery through the existing notification lifecycle.
+  No handler domain-state updates; only notification coordination and final
+  steps["preflight.flight_reminder"] records are generated by the engine.
+  Confirming actual feature work remains preflight.confirm_reminders.
+  Detailed input/output ownership and retention: docs\release-state-data.txt,
+  section 6. No schema changes or payload/receipt deletion.
+
+Implementation and proof:
+  steps\preflight\flight_reminder.py: explicit deadline wording.
+  Added six cases to the existing tests\test_preflight.py module:
+    test_flight_reminder_keeps_original_deadline_on_late_delivery (2 clocks)
+    test_flight_reminder_without_ccd_blocks_without_state_changes
+    test_flight_reminder_cli_recovers_sent_post_without_duplicate
+    test_flight_reminder_cli_retry_requires_proven_not_sent (2 outcomes)
+  These invoke the real handler; no target outcome mocks or direct target
+  completion. Readiness is seeded solely as the isolated prerequisite.
+  Real CLI prepare/claim/result/finalize runs under temporary persisted state.
+  Fake Teams transport accepts the exact claimed payload once; interruption
+  after receipt persistence leaves the step incomplete but delivery sent.
+  Reload cannot authorize another send; finalize applies the saved outcome and
+  retry-finalize is idempotent. Exact N/E pointers and unrelated-state invariants
+  are asserted. The human confirmation step remains incomplete.
+  Uncertain and proven-not-sent outcomes have distinct retry/ownership assertions.
+
+Execution:
+  11 selected cases passed in 6.07 seconds: six new cases above, both existing
+  confirm_reminders dependency cases, generic ambiguous/lost-ack case, and both
+  existing send-success/persistence-failure cases.
+  Used existing pytest/provider guards, unique cleaned TEMP/TMP/basetemp,
+  disabled bytecode/cache output; no dependencies installed.
+  Session output: files\flight-reminder-repair-pytest.txt.
+  Existing preflight module classification is unchanged; explicit node
+  selection ran the new cases without daily-core filtering.
+  A012 (pre-existing daily-size guard failure) remains open and was not
+  silently reclassified, increased or bypassed.
+  This proves isolated lifecycle behavior, NOT real Teams API delivery.
+
+Next actual building block: preflight.lockdown. Preserve earlier local repairs.
+
+REPAIR 3: preflight.lockdown (A014-A015)
+----------------------------------------
+Completed locally: 2026-10-16. No live browser/SSO, provider requests, date changes,
+commit, schema change or runtime adoption.
+
+  A014 / HIGH / LOCALLY FIXED / malformed evidence can produce a false clear:
+    decide previously coerced a non-array root to []; missing/invalid period
+    dates were skipped and missing environments silently excluded records.
+    Empty --periods-json also became [] in the recorder. Invalid row types could
+    instead crash. This could record done when the evidence was not usable.
+    Now requires an array of objects, all four required non-empty text fields,
+    canonical valid dates and start <= end. Invalid data raises ValueError;
+    command prints the reason and exits 1 before saving any pass/state/event.
+    Evidence is validated before cached-completion handling as well.
+    Missing/invalid CCD or reversed configured window yields a builder hold,
+    not an unhandled date-computation failure.
+
+  A015 / MEDIUM / LOCALLY CORRECTED GATHER CONTRACT / missing calendar-year scope:
+    Instructions only requested current-year Past NoFly Zones even though a
+    CCD-relative window can span two years.
+    Builder directive, per-step knowledge and Scout phase reference now require
+    every calendar year covered by the window and explicitly forbid using []
+    for missing tables, auth failures or incomplete extraction.
+    This aligns the required extraction, not proof that the live UI was scraped.
+
+Data contract:
+  Inputs: CCD/config anchors, blocking environment and externally gathered
+  {name, environment, start, end} rows.
+  Transient outputs: gather directive, normalized dates, overlap decision/detail.
+  Persisted outputs: only steps["preflight.lockdown"] lifecycle/note/by fields
+  and normal updated_at/events. .data stays {}, no raw calendar snapshot is added.
+  Production overlap uses inclusive endpoints; Banner-only notices remain
+  nonblocking. A held overlap remains held when a malformed retry is rejected.
+  The command never writes CCD, pipeline state, communications or other steps.
+  Full field map and current retention/trust limits: release-state-data.txt,
+  section 7.
+
+Implementation:
+  steps\preflight\lockdown.py: validate CCD/window and every input row; no
+  false empty-list fallback; gather all relevant calendar years.
+  orchestrator\commands\lockdown.py: JSON/data errors surface nonzero before
+  recording; pure decision is evaluated from a read-only context.
+  config\knowledge.yaml and skill\reference\phases\preflight.md aligned.
+
+Proof:
+  Initial focused run: 31 cases passed in 6.87 seconds.
+  Additional reversed-window case and strengthened blocked-retry lifecycle:
+  2 cases passed in 1.24 seconds.
+  The 32 distinct covered cases consist of 29 new cases and 3 existing cases.
+  Covers malformed roots/rows, missing/invalid/noncanonical/reversed dates,
+  incomplete mixed arrays, real CLI errors with byte-identical persisted state,
+  inclusive boundary periods, case-insensitive Production and Banner decisions,
+  cross-year source directive and invalid release/window holds.
+  Actual CLI step-action returns the real gather directive. Fixture periods
+  produce blocked, then invalid evidence preserves that hold, then valid clear
+  evidence produces done. Reload/replay preserves state; every other root field
+  is unchanged except updated_at, and no target completion mock is installed.
+  Uses existing pytest/provider guards and cleaned temporary runs only; no new
+  dependencies or validation-limit changes.
+  Session artifacts: files\lockdown-repair-pytest.txt and
+  files\lockdown-final-proof-pytest.txt.
+  Updated knowledge/YAML loader guard: 1 passed in 0.66 seconds; output in
+  files\lockdown-knowledge-pytest.txt.
+  Existing preflight test classification unchanged; targeted nodes include all
+  requested regressions. A012 remains open.
+
+Still not claimed:
+  Real CCOA availability/authenticated extraction, independent proof of source
+  completeness, post-completion monitoring, or owner/CCD evidence invalidation.
+  Explicit [] is accepted only under the caller's source-verification contract;
+  no structured provenance or new frozen-source storage was approved or added.
+  These limits are explicit rather than represented as a verified live pass.
+
+Next actual building block: preflight.breaking. Preserve all local repairs.
+
+PHASE 0 COMPLETION: ALL NINE PREFLIGHT STEPS (A016-A021)
+-------------------------------------------------------
+Completed locally: 2026-10-16. User requested finishing the complete preflight
+phase instead of stopping after individual steps.
+All nine contracts are in docs\preflight-contracts.txt; central state schema v3
+is unchanged. No canonical release-state, credentials, local mocks, provider
+settings, automations or real cloud artifacts were changed.
+
+  A016 / HIGH / LOCALLY FIXED / absent changelog section means false clean:
+    breaking now requires usable text and the configured vNext section.
+    Explicit null injected data holds without falling through to live IO.
+    A verified empty section remains valid. Breaking entries generate a draft
+    using display/ship month; no actual OneAuth communication is sent.
+
+  A017 / HIGH / LOCALLY FIXED / malformed CG evidence can appear clean:
+    Builder validates collection, recognized state/severity and optional
+    metadata, normalizes surrounding whitespace and holds unknown evidence.
+    Adapter requires explicit value[]; malformed or advertised incomplete
+    collections cannot silently become zero alerts. Incomplete-page handling
+    is a hold requiring review, not automatic unverified pagination.
+    Active High/Critical still blocks; corrected source can rerun and clear.
+
+  A018 / HIGH / LOCALLY FIXED / unverifiable timestamp and rounded-day freshness:
+    cron now rejects malformed/non-object evidence, missing/invalid/future
+    queueTime. Uses elapsed fractional days for the configured two-day limit,
+    not floor rounding that allowed almost three days. Exactly 48h passes;
+    48h plus one second holds. Live UTC versus injected simulation clocks remain
+    distinct. Pipeline result failure is not confused with lack of scheduling.
+
+  A019 / HIGH / LOCALLY FIXED / OneAuth cleanup was assumed successful:
+    Probe reads exact master/probe identities (not first prefix matches),
+    requires readable probe state, checks create AND delete acknowledgements
+    and applies CAS updates only to the reserved exact probe ref.
+    A stale probe with a different commit blocks without deleting unknown
+    content. Same-master stale cleanup must be acknowledged before creation.
+    Wrong/malformed update receipts or failed cleanup never produce Done.
+    Invalid aliases block during preparation. Existing frozen effect input
+    and engine-owned checkpoints/recovery remain intact; no new schema fields.
+    Error messaging distinguishes incomplete probe from inferred lack of access.
+
+  A020 / MEDIUM / LOCALLY FIXED / malformed notification inputs crash building:
+    notice/flight_reminder explicitly block invalid CCD.
+    notice rejects malformed variant types, shared template selector rejects
+    non-text assets, and text-preview metadata cannot replace claimed HTML.
+    Existing valid rendering behavior is unchanged; downstream CCD template
+    consumers and typed injected assets were included in affected validation.
+
+  A021 / LOW / LOCALLY FIXED / human prompts expose engine commands:
+    confirm_reminders/vitals keep explicit NeedsHuman(attest=true) decisions,
+    but prompts describe the owner action rather than raw done commands.
+    Confirmation prompt derives display month without unnecessary CCD parsing.
+    Neither a prompt, send, next call nor fake provider can attest human work.
+
+Full-phase proof:
+  tests\test_preflight.py::test_complete_preflight_real_handlers_and_persisted_cli
+  has normal and interrupted-notice variants. Both use fresh temporary schema-v3
+  state, frozen clocks and real engine/commands/handlers; readiness alone is
+  seeded as a prerequisite. No preflight target is marked done by a seed/outcome.
+  Changelog/CG/schedule ports are fake; OneAuth goes through its actual adapter
+  to fake raw Git REST. Before every ref write the fake asserts persisted engine
+  ownership and frozen alias. It observes actual create/delete and no leftover.
+  A blocked CG result does not prevent ready sibling work. Real notice/Teams
+  builders produce redirected exact payloads; fake provider calls return
+  synthetic receipts through actual claim/result/finalize.
+  Interrupted notice completion saves delivery first; reload denies resend and
+  finalizes the owning step with no second provider call.
+  Both human steps remain incomplete until explicit simulated done decisions.
+  CG remediation/rerun then completes all nine rows and stops at CCD scheduled,
+  not executed. Repeated next does not re-probe OneAuth or resend notifications.
+  resources, pipeline_runs and versions remain untouched by Phase 0.
+
+Execution and scope:
+  Initial combined affected run: 151 passed in 23.06 seconds (full preflight
+  file plus OneAuth adapter legacy regression, effect policies/ownership,
+  notification receipt/interruption and parallel-drain cases).
+  Final touched-code/boundary/shared-consumer run: 29 passed in 19.26 seconds,
+  including full-phase scenarios after the final fixes, exact freshness limit,
+  CG metadata checks, CCD template, typed asset and knowledge loader cases.
+  Aggregate pytest-reported duration 42.32 seconds; no timeout overrides,
+  suite reshuffling, dependencies or repeated full-suite runs.
+  Session artifacts: files\preflight-phase-pytest.txt and
+  files\preflight-phase-final-pytest.txt.
+  New phase cases use the existing preflight module classification; explicit
+  affected selectors include them. Existing daily-core size guard A012 remains
+  open; no claim that the whole project's default suite is green.
+
+Remaining boundaries, not hidden completion claims:
+  Real provider permissions/response variants, CCOA authenticated extraction,
+  source completeness/provenance and real transport delivery were NOT verified.
+  Readiness owner/CCD invalidation A007-A010, simulator A001-A003 and daily-core
+  budget A012 remain separate open work. Frozen-source retention/schema redesign
+  and continuous post-completion freshness are not invented by this phase pass.
+  Existing live runs need reviewed runtime adoption; none was attempted here.
+
+Next scope: Phase 1 ccd only if requested. Preserve all local repairs.
+
+PHASE 1 COMPLETION AND IMMEDIATE REPLAY (A022-A026)
+---------------------------------------------------
+Completed locally: 2026-10-16. All three CCD step data contracts are in
+docs\ccd-contracts.txt. No new release-state schema fields, live writes, shared
+CCD moves, actual emails/Teams posts, recurring workers or runtime adoption.
+Generic interactive phase/step execution remains an explicit design proposal,
+not misrepresented as an implemented sim feature.
+
+  A022 / MEDIUM / LOCALLY FIXED / incorrect catch-up date and variant:
+    final_reminder used Today unconditionally in HTML, even when initial variant
+    or delayed to another day. Now Today appears only for update variant on CCD;
+    dated subject/plain/HTML agree otherwise. PR reminder explicitly dates the
+    branch-cut/localization cutoff instead of moving them with today/tonight.
+    Invalid CCD/variant values hold before outbound preparation.
+
+  A023 / MEDIUM / LOCALLY FIXED / omission loses freshly observed PR evidence:
+    When a PR was first discovered after cutoff, the command updated a detached
+    step.data then omitted without applying it. Current PR/run completion/status
+    and last_checked now reach the owning record before terminal omission in
+    the same normal save. No new field or lifecycle bypass.
+
+  A024 / MEDIUM / LOCALLY FIXED / malformed poll/source inputs crash or mislead:
+    Completion/log/PR-status inputs are validated; --now requires timezone.
+    Fresh launch needs valid CCD and complete object-array source-ref evidence,
+    never prefix/malformed/incomplete success. Owner mention HTML escapes display
+    text while canonical mentions preserve their true display name.
+
+  A025 / MEDIUM / LOCALLY FIXED / stale no-strings stamp inherited on relaunch:
+    An explicitly reopened launch now archives and clears no_strings_announced_at
+    together with other previous-run stamps, rather than mixing old send proof
+    into the new build. Previous receipt/review ownership is retained.
+
+  A026 / HIGH / LOCALLY FIXED / cached or missing PR status at cutoff:
+    Stored status no longer substitutes for a fresh merge observation.
+    At 18:00 a missing PR status waits for exact current evidence instead of
+    skipping localization as unmerged. Fresh completed wins; a fresh known
+    unmerged status still follows the existing omission policy.
+    Replay covers unknown first discovery at cutoff followed by confirmed merge;
+    unit case covers a cached completed status without a current observation.
+
+Immediate offline reproduction delivered:
+  tests\test_ccd.py::test_ccd_phase_replay_without_waiting_or_running_preflight
+  Parameters: no_strings, merged, failed, timeout, omit_at_cutoff,
+  unknown_at_cutoff, uncertain_launch.
+  Fixture seeds only entry readiness and completed preflight facts, clearly
+  synthetic. It never runs preflight or success-mocks any CCD target.
+  Actual CLI/parser/lock/handler/checked review/queue readback/poll/notification
+  protocols run against temporary schema-v3 state and fake raw provider ports.
+  Clock jumps from 08:00 to 09:00/noon/13:00/15:01/16:00/18:00 without sleep.
+  Early morning/noon eligibility is asserted, not bypassed by direct completion.
+  A fake ADO queue checks durable owned attempt before it runs; its exact build
+  receipt binds source/definition/parameters and launch window. Uncertain queue
+  outcome cannot queue again; actual matching readback recovers the one attempt.
+  Emails and chats use redirected real builders, exact claim/payload/receipt
+  handling and fake send responses. Sent-before-finalize interruption denies
+  a second send, then finalizes the saved proof.
+  No-PR with createPR=true needs actual notification acknowledgement; failed
+  pipeline and timeout hold; known unmerged PR is skipped at cutoff; unavailable
+  status is not presumed unmerged; confirmed merge closes owned execution.
+  Readiness, CCD and every preflight record remain unchanged. Source maps
+  resources/pipeline_runs/versions remain untouched; build_verify is not run.
+  Execution completion retains the existing closed write review receipt.
+  Replays clean their temporary roots and do NOT leave an interactive test run.
+
+Validation record:
+  Initial affected run: 102 passed, 11 failed, 38 deselected in 28.81 seconds.
+  Test-harness defects were corrected: missing Blocked import, multiline CLI
+  JSON parsing, missing fake status CCD read. No real IO escaped pytest guards.
+  Two legacy CCD-focused tests also traversed old preflight with current-time
+  cron fixture evidence against historical dates; now explicitly seed their
+  prerequisite phase instead of unintentionally retesting preflight.
+  Focused rerun: 5 passed plus 6 replay failures from missing fake status read,
+  in 17.89 seconds. Corrected that fake provider boundary.
+  Replay/source-ref/archival run: 12 passed in 18.50 seconds.
+  After A026: 105 localization/replay/checked-provider/knowledge cases passed,
+  55 deselected in 47.29 seconds. Reminder and date cases passed in the preceding
+  affected runs; no incomplete run is reported as passing.
+  Aggregate pytest-reported validation time: 112.49 seconds, under the existing
+  15-minute budget. No tools/dependencies installed or test limits weakened.
+  Artifacts in session files: ccd-phase-pytest.txt,
+  ccd-phase-replay-pytest.txt, ccd-phase-final-pytest.txt,
+  ccd-phase-evidence-final-pytest.txt.
+  New cases stay in existing reviewed module classifications. A012 remains open;
+  no full-project daily-suite-green claim.
+
+Reproduction proposal, not implemented runtime behavior:
+  docs\phase-rehearsal-proposal.txt separates target selection, validated
+  prerequisite data, logical clock and provider profile.
+  Recommends isolated run identity; scoped target execution; no target success
+  shortcuts; logical-time advance for schedule versus real UTC ownership/
+  receipts; exact test-target allowlists, artifact IDs and reviewed cleanup.
+  Offline -> real-read -> controlled-live are explicit tiers, not dummy
+  variables magically making production endpoints safe.
+  Current sim uses canonical state by default, can auto-pass target steps, and
+  does not persist logical time for normal follow-ups; generic gate/receipt
+  restrictions remain intentional. Its known A001-A004 limitations are not
+  silently claimed fixed.
+  New persistent rehearsal metadata/clock architecture and real target sets
+  require explicit review before implementation or live execution.
+
+HOW TO UPDATE THIS RECORD
+-------------------------
+Replace CURRENT CHECKPOINT with the latest completed bounded stage and exact
+next task. Keep one concise contract per audited step; do not dump source/logs.
+For each finding, record status, source evidence, disposition, fix location
+if implemented, and the smallest relevant test result. Never silently mark a
+proposal approved or a live rehearsal passed.

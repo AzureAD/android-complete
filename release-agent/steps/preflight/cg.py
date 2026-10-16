@@ -11,6 +11,7 @@ from orchestrator.step_context import StepContext, thaw
 
 from orchestrator.outcomes import Done, Blocked
 from tools.coordinates import coords
+from steps.lib.mockctx import MISSING
 
 ID = "cg"
 KIND = "agent"
@@ -48,15 +49,42 @@ MOCKABLE = {
 def _cg_summary(alerts: list, high_sev: list):
     """Return (active, high) lists from raw alerts. `high` = active alerts whose
     severity is in high_sev (critical/high)."""
-    active = [a for a in alerts if (a.get("alertState") or "").lower() == "active"]
-    high = [a for a in active if (a.get("severity") or "").lower() in
+    if not isinstance(alerts, list):
+        raise ValueError("alerts must be an array")
+    severities = {"critical", "high", "medium", "moderate", "low", "informational", "none"}
+    for index, alert in enumerate(alerts, 1):
+        if not isinstance(alert, dict):
+            raise ValueError(f"alert {index} must be an object")
+        state = alert.get("alertState")
+        if not isinstance(state, str) or state.strip().lower() not in {
+                "active", "fixed", "dismissed", "autodismissed", "resolved", "closed"}:
+            raise ValueError(f"alert {index} has missing or unknown state")
+        if state.strip().lower() == "active":
+            severity = alert.get("severity")
+            if not isinstance(severity, str) or severity.strip().lower() not in severities:
+                raise ValueError(f"active alert {index} has missing or unknown severity")
+            if alert.get("component") is not None and not isinstance(alert["component"], dict):
+                raise ValueError(f"active alert {index} has invalid component data")
+            if alert.get("actionItems") is not None and not isinstance(alert["actionItems"], str):
+                raise ValueError(f"active alert {index} has invalid action items")
+            if alert.get("url") is not None and not isinstance(alert["url"], str):
+                raise ValueError(f"active alert {index} has an invalid alert URL")
+            links = alert.get("_links")
+            if links is not None:
+                if not isinstance(links, dict):
+                    raise ValueError(f"active alert {index} has invalid links")
+                web = links.get("web")
+                if web is not None and not isinstance(web, dict):
+                    raise ValueError(f"active alert {index} has an invalid web link")
+    active = [a for a in alerts if a["alertState"].strip().lower() == "active"]
+    high = [a for a in active if a["severity"].strip().lower() in
             [s.lower() for s in high_sev]]
     return active, high
 
 
 def _cg_report(active: list, high: list) -> str:
     from collections import Counter
-    by_sev = Counter((a.get("severity") or "unknown").lower() for a in active)
+    by_sev = Counter((a.get("severity") or "unknown").strip().lower() for a in active)
     counts = ", ".join(f"{n} {s}" for s, n in sorted(by_sev.items(),
                        key=lambda kv: (-kv[1], kv[0]))) or "none"
     lines = [f"Component Governance: {len(active)} active alert(s) — {counts}."]
@@ -67,7 +95,7 @@ def _cg_report(active: list, high: list) -> str:
             ver = (a.get("component") or {}).get("displayVersion") or ""
             rec = (a.get("actionItems") or "").strip().split("\n")[0]
             title = a.get("title") or a.get("summary") or "?"
-            sev = (a.get("severity") or "").capitalize()
+            sev = (a.get("severity") or "").strip().capitalize()
             comp_str = f" — {comp} {ver}".rstrip() if comp else ""
             lines.append(f"  • [{sev}] {title}{comp_str}" + (f" — {rec}" if rec else ""))
     else:
@@ -102,8 +130,8 @@ def build(context: StepContext):
     cfg = CONFIG
     # Injected `alerts` (mocks.local.yaml) → run the REAL report/block logic on your
     # data, skipping the live az call.
-    injected = context.input("alerts")
-    if injected is not None:
+    injected = context.input("alerts", MISSING)
+    if injected is not MISSING:
         alerts = injected
     else:
         required = ("resource", "governance_host", "project_id", "governed_repo_id", "branch")
@@ -114,7 +142,10 @@ def build(context: StepContext):
             cfg["governed_repo_id"], cfg["branch"])
         if not ok:
             return Blocked(f"cg: could not read alerts — {detail}")
-    active, high = _cg_summary(alerts, cfg.get("high_severities", ["critical", "high"]))
+    try:
+        active, high = _cg_summary(alerts, cfg.get("high_severities", ["critical", "high"]))
+    except ValueError as exc:
+        return Blocked(f"cg: invalid alerts — {exc}", links=_cg_links(cfg, []))
     report = _cg_report(active, high)
     links = _cg_links(cfg, high)
     if high:

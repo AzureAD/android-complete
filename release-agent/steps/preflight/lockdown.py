@@ -41,8 +41,12 @@ def release_window(context, cfg: dict | None = None):
     """(win_start, win_end) dates for the release window (CCD-7 .. CCD+14 by default)."""
     cfg = cfg or _cfg()
     ccd = schedule.parse_date(context.release.ccd)
+    if ccd is None:
+        raise ValueError("invalid CCD for the lockdown release window")
     ws = schedule.anchor_date(ccd, cfg.get("window_start_anchor", "CCD-7"))
     we = schedule.anchor_date(ccd, cfg.get("window_end_anchor", "CCD+14"))
+    if ws > we:
+        raise ValueError("lockdown release window starts after it ends")
     return ws, we
 
 
@@ -65,16 +69,32 @@ def overlapping_periods(win_start, win_end, periods, blocking_env="Production"):
 
 def decide(context, raw_periods, cfg: dict | None = None):
     """Deterministic overlap decision from scraped periods. Returns (status, detail)
-    where status is 'pass' (no Production overlap) or 'attention' (holds for owner)."""
+    where status is 'pass' (no Production overlap) or 'attention' (holds for owner).
+    Invalid or incomplete evidence raises ValueError instead of implying no overlap."""
     cfg = cfg or _cfg()
     blocking_env = cfg.get("blocking_environment", "Production")
     win_start, win_end = release_window(context, cfg)
 
+    if not isinstance(raw_periods, list):
+        raise ValueError("CCOA periods must be a JSON array")
     periods = []
-    for p in (raw_periods if isinstance(raw_periods, list) else []):
-        s, e = schedule.parse_date(p.get("start")), schedule.parse_date(p.get("end"))
-        periods.append({"name": p.get("name", "?"),
-                        "environment": p.get("environment", ""), "start": s, "end": e})
+    for index, p in enumerate(raw_periods, 1):
+        if not isinstance(p, dict):
+            raise ValueError(f"CCOA period {index} must be an object")
+        for field in ("name", "environment", "start", "end"):
+            if not isinstance(p.get(field), str) or not p[field].strip():
+                raise ValueError(f"CCOA period {index}: '{field}' must be non-empty text")
+        dates = {}
+        for field in ("start", "end"):
+            value = schedule.parse_date(p[field])
+            if value is None or value.isoformat() != p[field].strip():
+                raise ValueError(f"CCOA period {index}: '{field}' must be a YYYY-MM-DD date")
+            dates[field] = value
+        s, e = dates["start"], dates["end"]
+        if s > e:
+            raise ValueError(f"CCOA period {index}: start is after end")
+        periods.append({"name": p["name"].strip(),
+                        "environment": p["environment"].strip(), "start": s, "end": e})
 
     hits = overlapping_periods(win_start, win_end, periods, blocking_env)
     window = f"{win_start.isoformat()}..{win_end.isoformat()}"
@@ -97,7 +117,10 @@ def build(context: StepContext):
         return Blocked("no CCD set for this release — cannot compute the release window")
 
     cfg = _cfg()
-    win_start, win_end = release_window(context, cfg)
+    try:
+        win_start, win_end = release_window(context, cfg)
+    except ValueError as exc:
+        return Blocked(str(exc))
     window = f"{win_start.isoformat()}..{win_end.isoformat()}"
     blocking_env = cfg.get("blocking_environment", "Production")
 
@@ -114,11 +137,14 @@ def build(context: StepContext):
                 "window": window,
                 "blocking_environment": blocking_env,
                 "instructions": (
-                    "Browser-scrape the 'Upcoming CCOA periods' and current-year "
-                    "'Past NoFly Zones' tables (AAD SSO, no password). Build a JSON "
+                    "Browser-scrape the 'Upcoming CCOA periods' and "
+                    "'Past NoFly Zones' tables for every calendar year covered by "
+                    "the release window (AAD SSO, no password). Build a JSON "
                     "array of {name, environment, start:YYYY-MM-DD, end:YYYY-MM-DD} "
                     "(UTC) — the engine keeps only Production-env periods and decides "
-                    "overlap deterministically."),
+                    "overlap deterministically. If the page or any required table "
+                    "cannot be verified, keep the step held; do not substitute an "
+                    "empty array for missing evidence."),
             },
         },
         record_as=ID,

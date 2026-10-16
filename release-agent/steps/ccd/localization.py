@@ -45,6 +45,7 @@ from datetime import date, datetime, time, timezone
 
 from orchestrator.outcomes import NeedsSkill, Blocked
 from orchestrator.schedule import get_tz
+from orchestrator import schedule
 from tools.coordinates import coords
 
 ID = "localization"
@@ -123,7 +124,7 @@ MOCKABLE = {
 # ----------------------------- pure helpers (testable) -----------------------------
 
 def _parse_iso(s: str):
-    if not s:
+    if not isinstance(s, str) or not s:
         return None
     try:
         return datetime.fromisoformat(s.replace("Z", "+00:00"))
@@ -238,14 +239,14 @@ def _owner_mention(context) -> tuple:
     display = context.release.owner_name or (owner_email.split("@")[0] if owner_email else "") or "release engineer"
     mentions = None
     if owner_email:
-        who = f'<at id="0">{display}</at>'
+        who = f'<at id="0">{escape(display)}</at>'
         mentions = [{
             "id": 0, "mentionText": display,
             "mentioned": {"user": {"id": owner_email, "displayName": display,
                                    "userIdentityType": "aadUser"}},
         }]
     else:
-        who = display
+        who = escape(display)
     return who, mentions
 
 
@@ -342,6 +343,15 @@ class RunEvidence:
             raise ValueError("no-change confirmation requires an owner-reviewed explanation")
 
 
+def _wait_for_pr_status(pr_id, url, links, cfg):
+    return {
+        "decision": "wait_for_merge", "pr_id": pr_id, "pr_url": url,
+        "poll_in_min": cfg.get("poll_interval_min", 60), "links": links,
+        "note": f"localization PR #{pr_id}: current merge status is unavailable; "
+                "read the exact PR before deciding merge or omission",
+    }
+
+
 def decide(context, is_complete: bool, logs: str = None, now=None, cfg: dict = None,
            pr_status: str = None, *, evidence: RunEvidence = RunEvidence()) -> dict:
     """Pure poll decision. Returns a dict with a `decision` and the payload the poller
@@ -362,6 +372,14 @@ def decide(context, is_complete: bool, logs: str = None, now=None, cfg: dict = N
     pipeline RUN link in every case (the run is the proof it fired even with no PR).
     """
     cfg = cfg or CONFIG
+    if type(is_complete) is not bool:
+        raise ValueError("localization completion must be boolean")
+    if logs is not None and not isinstance(logs, str):
+        raise ValueError("localization logs must be text")
+    if pr_status is not None and (
+            not isinstance(pr_status, str) or pr_status.strip().lower() not in (
+                "active", "completed", "abandoned")):
+        raise ValueError("localization PR status must be active, completed or abandoned")
     step = context.evidence.step("ccd", "localization")
     data = step.data or {}
     now = now or context.clock.utc()
@@ -383,12 +401,14 @@ def decide(context, is_complete: bool, logs: str = None, now=None, cfg: dict = N
         run_link = _run_link(context, cfg)
         if run_link:
             links.append(run_link)
-        normalized = str(pr_status or data.get("pr_status") or "").strip().lower()
+        normalized = str(pr_status or "").strip().lower()
         if normalized == "completed":
             return {"decision": "merged", "pr_id": stored_pr_id,
                     "pr_url": stored_pr_url, "links": links,
                     "note": f"localization PR #{stored_pr_id} merged"}
         if omission_deadline_passed(context, now, cfg):
+            if not normalized:
+                return _wait_for_pr_status(stored_pr_id, stored_pr_url, links, cfg)
             return {
                 "decision": "omit_unmerged", "pr_id": stored_pr_id,
                 "pr_url": stored_pr_url, "links": links,
@@ -465,6 +485,8 @@ def decide(context, is_complete: bool, logs: str = None, now=None, cfg: dict = N
             return {"decision": "merged", "pr_id": pr_id, "pr_url": url, "links": links,
                     "note": f"localization PR #{pr_id} merged"}
         if omission_deadline_passed(context, now, cfg):
+            if pr_status is None:
+                return _wait_for_pr_status(pr_id, url, links, cfg)
             return {"decision": "omit_unmerged", "pr_id": pr_id, "pr_url": url, "links": links,
                     "note": "localization omitted — PR discovered after the 6 PM omission deadline"}
         return {"decision": "announce_pr", "pr_id": pr_id, "pr_url": url,
@@ -550,6 +572,8 @@ def build(context: StepContext):
             links=[link] if (link := _run_link(context, CONFIG)) else [])
     if not context.release.ccd:
         return Blocked("no CCD set for this release")
+    if schedule.parse_date(context.release.ccd) is None:
+        return Blocked("invalid CCD for this release")
 
     cfg = CONFIG
     if not all(cfg.get(k) for k in ("org", "project", "pipeline_id")):

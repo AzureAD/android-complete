@@ -1,0 +1,495 @@
+RELEASE STATE: DATA OWNERSHIP AND STEP BUILDING BLOCKS
+=====================================================
+Updated: 2026-10-16. Baseline: a1390093aa6ce1b84686906fa68197c651aa31be.
+Documentation only: this is not a replacement state schema or runtime input.
+Scope: central state structure, 11 readiness items, all nine preflight steps
+and all three CCD steps.
+Complete Phase 0 register: docs\preflight-contracts.txt. This file keeps the
+shared data model and detailed notification/lockdown lifecycle references.
+Phase 1 register: docs\ccd-contracts.txt. Generic phase replay proposal:
+docs\phase-rehearsal-proposal.txt; seven offline CCD replays are implemented,
+generic interactive/live rehearsal commands are NOT.
+Local correction: readiness decline now rejects unknown IDs atomically (A011).
+Flight reminder correction: strings deadline is explicitly dated, not "today"
+on a catch-up run (A013). Offline delivery/recovery proof is recorded below.
+Lockdown corrections: reject malformed evidence; gather all covered years
+(A014-A015). No new persisted fields or automatic CCD changes.
+Remaining preflight corrections and offline phase proof: A016-A021 in the main
+audit record. Phase 1 corrections are A022-A026. The other 58 workflow-step
+data contracts are NOT YET AUDITED.
+Progress/findings/next stage: docs\release-audit.txt.
+
+OWNER REQUIREMENT
+-----------------
+Treat each step as a building block with explicit DATA inputs and outputs.
+For every field it creates, explain its owner, meaning, consumers, required
+lifetime, and why it belongs in persistent release state (or why it does not).
+Do not confuse readable summaries, raw provider evidence, business results,
+authorization, active recovery, and temporary generated payloads.
+Map current behavior before proposing a new schema or removing data.
+
+1. WHAT THE CENTRAL FILE CURRENTLY CONTAINS
+--------------------------------------------
+Default: <repo>\.release-runs\<release>\release-state.json.
+One serialized ReleaseState, schema_version 3, with 25 top-level fields.
+Source: orchestrator\state.py:44-106,249-261.
+It currently combines these LOGICAL responsibilities in one physical file:
+
+Group                 Actual root keys
+Identity/runtime      schema_version, workflow_revision, release_id
+Bookkeeping           created_at, updated_at
+Owner                 owner_email, owner_name, timezone
+Release schedule      ccd, ccd_source, ccd_conflict, target_month
+Control               cancellation, halt, active_conditionals
+Entry prerequisites   readiness_items
+Per-step records      steps
+Human gate decisions  gate_decisions
+Delivery coordination notification_deliveries, last_notified_date,
+                      last_status_email_date, escalation_checkpoints
+External identities   resources
+Captured build facts  pipeline_runs
+Shared payload facts  versions
+
+workflow_revision includes runtime_hash, phase identity/capabilities and
+last_adoption metadata. It is execution compatibility, not a release artifact.
+pipeline_runs/resources/versions have domain-specific producers; their complete
+field ownership and consumers must be traced in the relevant phase audits.
+Do not infer their detailed contracts from the group labels above.
+
+NOT stored as independent release facts:
+  current phase, runnable work, pending owner actions, overall progress, gate
+  signed/blocked booleans, readiness display windows, formatted checklist.
+These are computed projections. Invocation StepContext/immutable views, clock,
+services, parameter models and typed EvidenceUpdate objects are also not stored
+as such; selected VALUES may later be persisted by authorized code.
+
+Other generated storage is separate:
+  events.jsonl: best-effort command/interaction/event history.
+  _automations.json: automation lifecycle registry, separate audit scope.
+  Temporary previews and receipt-file arguments are not themselves top-level
+  release-state fields; accepted notification receipts ARE copied into state.
+Every state save updates updated_at and atomically replaces the JSON file.
+This mapping did not read, measure, or modify an actual live release-state file.
+
+2. SHARED STEP ENVELOPE: NOT EVERY FIELD IS A BUSINESS RESULT
+-------------------------------------------------------------
+Location: steps["<phase>.<step>"] (the key contains a literal dot).
+Engine-owned lifecycle:
+  status: pending/running/in_flight/blocked/done/skipped.
+  completed_at: terminal completion timestamp, not provider artifact time.
+  invalidated_at, invalidation_reason: stale-evidence generation and reason.
+  execution: active ownership/recovery; null when successfully settled.
+Human-readable evidence:
+  note, by, links: explanation, attribution and references.
+Domain/recovery evidence:
+  data: exact keys depend on the owning step; NOT a free-for-all result bag.
+Source: state.py:20-31; transitions.py:1619-1707.
+
+Actual execution shapes vary by capability:
+  External reservation: id, owner, started_at, refresh, previous_status;
+  notification claims additionally bind notification_id.
+  Automatic writes: effect_mode, effect_recovery, operation_key, effect_input
+  join the execution identity; these freeze input for safe recovery.
+  Checked command writes/approvals have their own reviewed authorization fields.
+These are relevant safety data, not interchangeable duplicates of step status.
+
+Handlers consume immutable release/evidence views and explicit parameters,
+inputs and services. Declared EVIDENCE scopes control allowed mutations:
+  StepData -> owning step.data
+  PipelineEvidence -> authorized pipeline_runs lane
+  ReleaseVersions -> versions
+  BrokerResource -> resources.broker_test_plan
+  UIFailureReminder -> declared downstream review-step contribution
+StepData replaces the owning data mapping (protected closed receipts survive);
+annotate_step merges selected data keys. Each contract must identify which
+mechanism applies, so a replacement is not mistaken for an additive update.
+Sources: step_context.py:55-98,153-176; authority.py:9-80;
+context_boundary.py:103-177.
+
+3. READINESS RECORD SHAPES
+--------------------------
+For item I, R(I) means readiness_items["I"], NOT steps["readiness.I"].
+All 11 results are gate prerequisites; they are not extra workflow steps.
+
+P / Python verifier:
+  R(I) = {status: pass|fail, message: text, at: UTC timestamp, checks?: list}
+  checks[] = {name, url, ok, detail}; present when verifier returns details.
+S / Scout-mediated result:
+  R(I) = {status: pass|fail, message: text, at: UTC timestamp, source: scout}
+  silent_perms and teams_notify additionally permit status degraded.
+H / Explicit human attestation:
+  R(I) = {status: attested, at: UTC timestamp, note?: text}
+D / Decline:
+  R(I) = {status: unable, at: UTC timestamp}
+  Decline reason is logged in events.jsonl, not stored in this result record.
+  The complete requested ID set is validated before any mutation. An unknown
+  ID (alone or mixed with known IDs) returns {error: text}; CLI exits 2 without
+  saving release state or logging a successful decline. Missing checklist
+  config has no valid IDs and does not silently accept arbitrary item names.
+  Valid declines replace only the requested records; gate blocking is derived.
+
+Each write REPLACES R(I), not appends history or merges the prior proof.
+verify refreshes Python items; record-check replaces one Scout result;
+sign can also refresh BOTH Python results before writing selected human items.
+Thus a command for one human item has additional shared-verifier output.
+Readiness mocks can replace auto results with {status, message, at}; fixtures
+using this path are not equivalent evidence to a real P/S result.
+
+Common consumers:
+  ReadinessGate -> checklist/signed/blocked projections -> engine eligibility
+  and presentation. These derived outputs are NOT separate stored fields.
+  No downstream handler receives the raw readiness map in its StepContext.
+Current lifetime:
+  Persist until overwritten; no automatic TTL, per-owner binding or bound CCD.
+  A timestamp is not an enforced freshness rule. A007-A009 describe the defects.
+Source: readiness.py:46-108,134-237; context_boundary.py:11-30.
+
+4. FIELD-LEVEL READINESS INPUT/OUTPUT REGISTER
+-----------------------------------------------
+The intended subject is the release owner/driver. Actual interpretation and
+missing identity binding are documented in the main audit.
+Every P/S/H/D output below also updates root updated_at when saved.
+
+build_access
+  INPUT: readiness config checks[{org, project, id, name, url}]; az caller
+  credentials/access; provider command exit/stdout/stderr or timeout.
+  GENERATES: two access decisions plus aggregate result and per-definition text.
+  STORED OUTPUT: R(build_access) using P, checks[] for configured definitions.
+  NOT STORED: full CLI response, credentials, actual caller identity binding.
+  USED BY: common gate consumers; no provider write artifact is created.
+
+mcp_servers
+  INPUT: requirements.mcp_servers; Scout registration-file entries; launcher/
+  provider availability where entries are missing.
+  GENERATES: present/missing diagnoses for icm, kusto, teams, ecs.
+  STORED OUTPUT: R(mcp_servers) using P, per-server checks[].
+  NOT STORED: full Scout configuration or enabled/loaded capability proof.
+  USED BY: common gate consumers. Presence-only limitation: A010.
+
+ccd_confirmed
+  INPUT: release_id, ccd, ccd_source; pipeline override and clock; explicit
+  human date decision where required.
+  GENERATES: reconciliation status, override/conflict, runway/compression info.
+  STORED OUTPUT: R(ccd_confirmed) using S AFTER Scout records the disposition.
+  ADDITIONAL OUTPUT: successful check-ccd provider read can replace/clear root
+  ccd_conflict. It does NOT update R(ccd_confirmed) itself.
+  CONFIRMED RESCHEDULE ONLY: set-ccd writes pipeline variable and replaces root
+  ccd, ccd_source, ccd_conflict. These are shared schedule facts, not item proof.
+  NOT STORED IN R: structured compared dates, provider response or reviewed hash.
+  USED BY: gate consumers; timed automation setup also reads this status and
+  ccd_conflict directly. Current stale-date/conflict behavior: A008-A009.
+
+silent_perms
+  INPUT: required_servers; fresh Scout effective settings; explicit consent/
+  opt-out decision. Permission-change API output is an external side effect.
+  GENERATES: capability assessment and an explanation of unattended-run limits.
+  STORED OUTPUT: R(silent_perms) using S, including degraded when opted out.
+  NOT STORED: raw settings, consent receipt, structured permission baseline.
+  USED BY: common gate consumers; provider settings remain external authority.
+
+teams_notify
+  INPUT: channels.teams/teams.target; relay status; handshake transport outcome.
+  GENERATES: reachable, not-requested or email-only-fallback disposition.
+  STORED OUTPUT: R(teams_notify) using S; degraded permits email-only operation.
+  NOT STORED: structured handshake receipt, relay session or actual email proof.
+  USED BY: common gate consumers. Future digest delivery is a separate contract.
+
+adx_access
+  INPUT: configured cluster_uri/database; Kusto caller; print 1 response/error.
+  GENERATES: probe success/failure and explanation.
+  STORED OUTPUT: R(adx_access) using S.
+  NOT STORED: query response, caller identity binding or telemetry snapshot.
+  USED BY: common gate consumers; no business telemetry is produced by this probe.
+
+oncall_now
+  INPUT: team_id; resolved owner/runner identity; current roster/primary order.
+  GENERATES: primary versus backup/absent classification and summary.
+  STORED OUTPUT: R(oncall_now) using S.
+  NOT STORED: structured roster, its time window or bound checked identity.
+  USED BY: common gate consumers. New owner currently inherits old pass (A007).
+
+play_console_access
+  INPUT: explicit owner's confirmation for the configured app/dashboard.
+  GENERATES: attestation or inability decision.
+  STORED OUTPUT: R(play_console_access) using H or D.
+  NOT STORED: login credentials, portal response or checked-owner binding.
+  USED BY: common gate consumers, not publication/access proof for later steps.
+
+oncall_window
+  INPUT: ccd; window anchors CCD-7/CCD+14; explicit owner availability decision.
+  GENERATES: displayed start/end dates plus attestation/inability.
+  STORED OUTPUT: R(oncall_window) using H or D.
+  NOT STORED: original confirmed start/end dates or checked-owner binding.
+  USED BY: common gate consumers; recomputed display can outlive old proof (A008).
+
+saw_ame
+  INPUT: explicit owner confirmation of SAW desktop and AME access.
+  GENERATES: attestation/inability, not an authenticated session artifact.
+  STORED OUTPUT: R(saw_ame) using H or D.
+  NOT STORED: credentials, tokens or checked-owner binding.
+  USED BY: common gate consumers.
+
+yubikey
+  INPUT: explicit owner confirmation that the physical security key is available.
+  GENERATES: attestation/inability, not a provider verification.
+  STORED OUTPUT: R(yubikey) using H or D.
+  NOT STORED: key secrets/device serials or checked-owner binding.
+  USED BY: common gate consumers; new explicit confirmation replaces unable.
+
+5. FIELD-LEVEL STEP CONTRACT: preflight.notice
+-----------------------------------------------
+Aliases: K = "preflight.notice"; N = its generated notification ID;
+E = claiming execution ID. IDs below are symbolic, not real provider evidence.
+
+BUSINESS INPUT
+  root ccd, target_month (or release_id fallback), owner_name, owner_email.
+  Typed public variant; injected variant; CONFIG/template asset.
+  CONFIG recipients; test-only send_to is applied at the dispatch boundary.
+COORDINATION INPUT (not business content)
+  Readiness/lifecycle eligibility; workflow_revision; steps[K].status,
+  invalidated_at/execution; any prior notification delivery record.
+
+GENERATED, NOT DIRECTLY STORED BY THE BUILDER
+  Rendered subject, HTML body, text fallback and recipient list.
+  NeedsSkill {tool, payload, record_as, summary, note, outbound}.
+  Its "sent to" note is proposed completion text, NOT proof of a send.
+  The builder declares no evidence updates and writes no domain state.
+
+PERSISTED BY NOTIFICATION PREPARATION
+  notification_deliveries[N] = {descriptor, status: prepared, prepared_at,
+                               attempts: [], superseded?: [...]}
+  descriptor = {id, release, scope, channel, target, tool, payload, completion, hash}
+  payload = {to, subject, body, isHtml}; rendered HTML IS persisted here.
+  _plain_body remains preview metadata; it is stripped from this descriptor.
+  scope binds phase/step, invalidation generation, ccd/owner_email and revision.
+  completion describes the owning step and proposed completion note.
+  A changed, never-claimed non-routine preparation can retain older full
+  descriptors in superseded[].
+
+PERSISTED BEFORE SEND PERMISSION
+  steps[K].status = running
+  steps[K].execution = {id: E, owner, started_at, refresh, previous_status,
+                        notification_id: N}
+  notification_deliveries[N].status = claimed
+  notification_deliveries[N].attempts[] appends that identity plus status/hash.
+  permission_to_send is returned to the caller, NOT saved in the descriptor.
+  Provider send receives only the exact claimed public payload.
+
+PERSISTED AFTER TRANSPORT ACKNOWLEDGEMENT
+  notification_deliveries[N].status = sent|not_sent|uncertain
+  attempts[-1] stores status, acknowledged_at, evidence, receipt, owner_review.
+  Email receipt contains tool, descriptor_hash, payload_hash, target and
+  provider_receipt, including provider_receipt.transport.
+  These bind evidence to the exact claim; they do not themselves prove a mailbox
+  received a message. Actual provider response/evidence must support that claim.
+
+PERSISTED AFTER SUCCESSFUL, ELIGIBLE FINALIZATION
+  steps[K].status = done; completed_at set; note/by/links recorded.
+  steps[K].execution = null.
+  steps[K].data.notification_id = N
+  steps[K].data.notification_execution_id = E
+  notification_deliveries[N].completion = {status: applied, at: timestamp}.
+  Rebinding an existing completed notification identity can preserve the old
+  ID pair in steps[K].data.previous_notifications[]; not a normal first send.
+  Sent-but-stale scope may have completion suppressed, NOT a done owning step.
+  Proven not_sent can instead release active step ownership back to pending.
+  Uncertain/claimed evidence must retain ownership for recovery, not be deleted.
+
+EXTERNAL OUTPUT
+  Actual provider-accepted email, supported by a genuine receipt if sent.
+  Provider response is an input to acknowledgement; generated payload is not
+  the same output as successful delivery.
+
+CONSUMERS AND RELEVANCE
+  Engine consumes step lifecycle to complete Phase 0, not the email HTML.
+  Notification claim/result/finalize consumes descriptor, attempts and receipt
+  for stale-input rejection, recovery and duplicate-send prevention.
+  Engine and retention logic consume the step's N/E pointer back to the ledger.
+  Rendering consumes note/status; no later business handler has been identified
+  as needing a copy of this notice's HTML.
+  Thus status, ID pointer and payload snapshot have different purposes; they
+  are not automatically redundant just because they describe one operation.
+
+RETENTION / SIZE QUESTIONS, NOT AUTHORIZED CLEANUP
+  Current routine-progress compaction is scoped to Bug Bash messages.
+  This notice retains its full descriptor/HTML, attempts and applicable
+  superseded previews; no generic notice compaction is implemented here.
+  Review retention of settled payload/history after proving every consumer and
+  recovery fence can work without it. Never delete uncertain/unfinalized proof.
+  No live file-size measurements were made, so this is a growth mechanism,
+  not a claim about which field dominates the user's actual state file.
+Sources: notice.py:93-130; commands\step_action.py:94-180;
+delivery.py:187-213,291-399; commands\delivery_cmd.py:9-80,116-149;
+transitions.py:919-970,1052-1100,1619-1707,1832-1848;
+delivery_retention.py:35-46,95-140.
+
+6. FIELD-LEVEL STEP CONTRACT: preflight.flight_reminder
+-------------------------------------------------------
+Status: source-traced and locally corrected; real-handler/CLI isolated lifecycle
+exercised with a fake Teams provider. Real Teams delivery remains unproven.
+Purpose: one Teams message containing four feature-owner reminders: Broker
+local flights, flight pre-mortems, Authenticator strings, and feature-flag freeze.
+
+INPUT STATE:
+  ccd, target_month (or release_id fallback), owner_name/owner_email.
+  Lifecycle readiness, own step status/generation and workflow revision are
+  coordination inputs shared with other notification steps.
+INPUT CONFIG:
+  CONFIG.live_chat_id/live_chat_name from coordinates.team("android_core");
+  CONFIG.links for variable group, pre-mortem example, localization and ECS
+  flight history. No public build parameters or external template file.
+  Test-only send_to can redirect chatId at the dispatch boundary.
+GENERATED:
+  CCD-7 date, release display month/owner and rendered HTML content.
+  Always states the actual CCD-7 date; never relabels an earlier deadline as
+  "today" merely because a delayed worker is preparing the reminder now.
+  NeedsSkill {tool: workiq_send_chat_message,
+    payload: {chatId, content, contentType: html},
+    record_as: flight_reminder, summary, note, outbound: true}.
+  No feature roster, per-feature status or actual completion proof is collected.
+STORED:
+  Shared notification preparation/claim/result/finalization contract from
+  preflight.notice above, with K = "preflight.flight_reminder".
+  Its descriptor payload is {chatId, content, contentType}, not email fields.
+  Exact-payload email receipt-file enforcement is email-specific; do not claim
+  this Teams operation uses that email-only requirement.
+  Successful eligible finalization sets steps[K].status = done, completed_at,
+  note/by/links, clears execution, and retains notification_id and
+  notification_execution_id in steps[K].data.
+  Delivery status/attempt evidence/receipt stay in notification_deliveries[N].
+EXTERNAL OUTPUT:
+  One provider-confirmed Teams post to the configured chat (or reviewed test
+  redirect). Prepared HTML alone is not evidence that the post was delivered.
+CONSUMERS:
+  Delivery/recovery code uses ownership, descriptor and receipt; renderers use
+  status/note. preflight.confirm_reminders depends on completion of this step,
+  but human confirmation of completed feature work is a DIFFERENT step.
+FAILURE/LIFETIME:
+  Missing CCD -> Blocked("no CCD set for this release").
+  Failed/uncertain delivery cannot be treated as completed feature work.
+  Reuse shared no-blind-resend recovery rules; current generic routine-progress
+  compaction does not apply to this one-time reminder.
+  No handler-owned domain data updates are declared.
+OFFLINE PROOF:
+  Real builder: initial-day and delayed-day fixed clocks; all four reminders,
+  configured links, display month and escaped owner; no state mutation.
+  Missing CCD: Blocked, no builder state updates.
+  Actual notification CLI: real target dispatch, recipient redirect, prepare,
+  durable claim, fake provider response, saved receipt, interrupted completion,
+  reload, denied duplicate send, and successful finalization/repeated finalize.
+  Verifies final notification pointers and that unrelated root fields/steps
+  remain unchanged; confirm_reminders is NOT automatically completed.
+  Separate actual-CLI cases prove uncertain blocks retry while proven not_sent
+  releases ownership and permits a new claim of the same frozen payload.
+  Readiness alone is seeded as the fixture prerequisite; no target outcome:done,
+  direct success recording, real message or real provider call is used.
+  Tests: tests\test_preflight.py::test_flight_reminder_*.
+Sources: steps\preflight\flight_reminder.py:23-91;
+config\phases.yaml:35-43; shared notification implementation cited above.
+
+7. FIELD-LEVEL STEP CONTRACT: preflight.lockdown
+-------------------------------------------------
+Status: locally corrected; real handler/CLI/persisted overlap decision exercised
+offline. Live CCOA browser extraction and source completeness remain unproven.
+Purpose: determine whether a Production CCOA period intersects CCD-7..CCD+14.
+This is a read/gather and local-record operation, NOT a notification or CCD write.
+
+INPUT STATE:
+  release_id identifies the callback target; ccd anchors the release window.
+  Readiness, owning phase/date eligibility, workflow revision and existing step
+  state are coordination inputs; no same-phase step dependency is configured.
+INPUT CONFIG:
+  CONFIG.url; blocking_environment (currently case-insensitive Production
+  substring match); window_start_anchor/window_end_anchor.
+INPUT EXTERNAL:
+  Scout reads Upcoming CCOA periods and Past NoFly Zones for every calendar
+  year touched by the window, then supplies --periods-json.
+  Array of {name, environment, start, end}; every field must be non-empty text;
+  dates are canonical YYYY-MM-DD and start <= end.
+  Explicit [] is a valid empty observation, but only after source completeness
+  has been verified by Scout. Engine cannot independently prove that provenance.
+
+GENERATED, NOT PERSISTED AS DOMAIN DATA:
+  release_window start/end dates; gather URL/instructions/window/environment;
+  NeedsSkill {tool: check-lockdown, record_as: lockdown, outbound: false,
+    payload: {release, periods_json: null, followup_command, _gather}}.
+  Date-normalized period rows, overlapping rows, decision and explanation.
+  decide returns (pass|attention, detail); invalid evidence raises ValueError.
+  Inclusive overlap: start <= window_end AND end >= window_start.
+  Banner-only periods do not block. No evidence error is converted to [].
+
+STORED OUTPUT:
+  check-lockdown with valid evidence applies the existing engine outcome:
+    steps["preflight.lockdown"].status = done (pass) or blocked (attention)
+    .completed_at = completion time only for done
+    .note = deterministic window/count/overlap explanation
+    .by = scout; .links = []; .execution = null; .data = {}
+  Normal root updated_at and local events.jsonl are updated on recorded results.
+  No notification_deliveries, pipeline_runs, resources, versions or CCD changes.
+  Invalid JSON/type/row/date -> command exits 1 with explanation, without saving
+  release state or a successful result event; pending/blocked evidence is unchanged.
+  Validation also precedes reuse of an already-completed result.
+  The builder returns Blocked for missing/invalid CCD or reversed release window.
+
+CONSUMERS:
+  Engine consumes step lifecycle for Phase 0 completion; owner/status view
+  consumes the note and holds; it does not ingest raw CCOA rows.
+  A valid Production overlap can resolve to done after corrected valid evidence
+  while this step remains eligible, without changing unrelated release facts.
+  Any actual set-ccd operation requires its separate confirmation; this command
+  only suggests it in the owner explanation.
+
+LIFETIME AND CURRENT LIMITATIONS:
+  Only current status/note are stored; raw rows, source URL, compared dates as
+  structured proof and extraction completeness receipts are NOT stored.
+  Current completion replay remains cached/non-repeatable; it is not a fresh
+  post-completion calendar monitor. Owner/CCD invalidation remains open in the
+  shared readiness/schedule backlog; no new persistence policy was invented here.
+  Structured provenance/frozen row retention needs separate design review before
+  adding data; a readable summary is not an independent source snapshot.
+
+OFFLINE PROOF:
+  Malformed source matrix, inclusive boundaries, Production/Banner behavior,
+  cross-year gather and missing/invalid CCD/window cases use the real functions.
+  Actual CLI gather -> fixture CCOA rows -> recorded blocked -> malformed retry
+  preserving the hold -> valid no-overlap -> done -> persisted reload/replay.
+  Only this step and updated_at may change; no fake success outcome for the step.
+  Invalid requests preserve release-state bytes/events, including after a prior
+  successful completion. No browser/provider or canonical run is touched.
+  Tests: tests\test_preflight.py::test_lockdown_* plus
+  test_check_lockdown_pass_and_attention and existing Scout-hold case.
+Sources: steps\preflight\lockdown.py; orchestrator\commands\lockdown.py;
+config\knowledge.yaml preflight.lockdown; skill\reference\phases\preflight.md.
+
+8. MANDATORY DATA CONTRACT FOR EVERY REMAINING STEP
+----------------------------------------------------
+Name:
+  Business purpose; producer/owner; audit status and source.
+INPUT STATE:
+  Exact paths; producer step; required/optional; identity/version/freshness rule.
+INPUT EXTERNAL:
+  Config/parameters/provider fields; expected type; synthetic example/fixture.
+OUTPUT GENERATED:
+  Return shape, display/report/payload/derived values; explicitly transient.
+OUTPUT STORED:
+  Exact paths and key shapes; new/replace/merge/append; writer; persist boundary.
+OUTPUT EXTERNAL:
+  Artifact/delivery IDs and independent proof, or explicitly none.
+CONSUMERS:
+  Next steps AND infrastructure/recovery/report consumers for each stored field.
+LIFETIME:
+  Current retention; required recovery/audit lifetime; invalidation on input
+  change; what is obsolete and what must never be replayed or discarded.
+RELEVANCE:
+  Required durable fact vs necessary frozen evidence vs UI-only/derived data
+  vs unexplained duplicate. Unknown is "untraced", not "safe to remove".
+BEFORE/AFTER ORACLE:
+  Small synthetic input fixture, expected output and exact changed paths,
+  plus paths that must stay untouched; cover failure/partial/restart behavior.
+
+This is an audit requirement, not permission to split files, delete snapshots,
+introduce persisted fields, or change schema v3. Frozen provider evidence may
+be necessary for reproducible decisions even if some display data is derived.
+Current working method: apply this contract to one building block, correct it,
+prove its exact data changes/recovery behavior, record the result, then move on.
+Do not wait for all remaining phases to be audited before making corrections.

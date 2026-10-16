@@ -2,6 +2,336 @@
 from tests._context import context as _context, invoke as _invoke
 from tests._harness import *  # noqa: F401,F403
 import pytest
+from orchestrator.outcomes import Blocked
+
+
+@pytest.mark.parametrize("day,variant,today", [
+    ("2026-09-09", "update", True),
+    ("2026-09-10", "update", False),
+    ("2026-09-09", "initial", False),
+])
+def test_ccd_reminder_dates_and_variant_stay_consistent(day, variant, today):
+    from datetime import datetime
+    from steps.ccd import final_reminder, pr_reminder
+
+    state = _ccd_state()
+    instant = datetime.fromisoformat(f"{day}T09:00:00-07:00")
+    email = final_reminder.build(_context(
+        state, parameters={"variant": variant}, model=final_reminder.BuildParameters, now=instant))
+    assert email.kind == "needs_skill"
+    assert ("(Today)" in email.payload["subject"]) == today
+    assert (">Today<" in email.payload["body"]) == today
+    assert ("**Today**" in email.payload["_plain_body"]) == today
+    assert "09/09/2026" in email.payload["body"]
+    chat = pr_reminder.build(_context(state, now=instant))
+    assert chat.kind == "needs_skill"
+    assert "09/09/2026" in chat.payload["content"]
+    assert "today" not in chat.payload["content"].lower()
+    assert "tonight" not in chat.payload["content"].lower()
+
+
+@pytest.mark.parametrize("module", ["final_reminder", "pr_reminder", "localization"])
+def test_ccd_invalid_date_blocks_before_outbound_action(module):
+    import steps
+
+    result = _invoke(steps.get_step("ccd", module).build,
+                     ReleaseState(release_id="2026-09", ccd="invalid"))
+    assert isinstance(result, Blocked) and "CCD" in result.reason
+
+
+@pytest.mark.parametrize("complete,logs,pr_status", [
+    ("true", None, None), (True, [], None), (True, None, "unknown"),
+])
+def test_localization_invalid_poll_inputs_fail_closed(complete, logs, pr_status):
+    from steps.ccd import localization as L
+
+    with pytest.raises(ValueError, match="localization"):
+        L.decide(_context(_loc_state(started_min_ago=5)), complete, logs, pr_status=pr_status)
+
+
+def test_localization_owner_name_is_escaped_in_html_mention():
+    from steps.ccd import localization as L
+
+    state = _loc_state(started_min_ago=10)
+    state.owner_name = "<Owner & Reviewer>"
+    post = L._no_strings_post(_context(state), L.CONFIG)
+    assert '<at id="0">&lt;Owner &amp; Reviewer&gt;</at>' in post["content"]
+    assert post["mentions"][0]["mentionText"] == state.owner_name
+
+
+@pytest.fixture
+def ccd_replay(tmp_path, monkeypatch, capsys):
+    from copy import deepcopy
+    from datetime import datetime, timezone
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from orchestrator import cli, delivery, engine, mocks, schedule
+    from orchestrator.commands import localization as command
+    from steps.ccd import localization as L
+    from tools import checks, localization as provider, pipelines as P
+
+    rid, root = "2026-09", str(tmp_path)
+    clock = {"now": datetime.fromisoformat("2026-09-09T08:00:00-07:00")}
+    control = {"uncertain_launch": False, "writes": [], "receipts": {}}
+    monkeypatch.setattr(schedule, "now_local", lambda _tz=None: clock["now"])
+    monkeypatch.setattr(engine, "_now", lambda: clock["now"].astimezone(timezone.utc).isoformat())
+    monkeypatch.setattr(delivery, "now_iso", lambda: clock["now"].astimezone(timezone.utc).isoformat())
+    redirects = {
+        "ccd.final_reminder": {"send_to": ["owner@example.test"]},
+        "ccd.pr_reminder": {"send_to": "19:ccd-replay@thread.v2"},
+        "ccd.localization": {"send_to": "19:ccd-replay@thread.v2"},
+    }
+    monkeypatch.setattr(mocks, "load_mocks", lambda: deepcopy(redirects))
+    monkeypatch.setattr(checks, "read_pipeline_variable",
+                        lambda *args: (True, "2026-09-09", "synthetic pipeline CCD"))
+    definition = {
+        "id": L.CONFIG["pipeline_id"], "revision": 3,
+        "project": {"id": "fixture-project", "name": L.CONFIG["project"]},
+        "repository": {"id": "fixture-repo", "type": "TfsGit",
+                       "defaultBranch": "refs/heads/main"},
+    }
+
+    def read(url, timeout):
+        if "/definitions/" in url:
+            return True, deepcopy(definition), ""
+        if "/refs?" in url:
+            return True, {"value": [{"name": "refs/heads/main", "objectId": "a" * 40}]}, ""
+        if "/builds/123" in url:
+            return True, deepcopy(control["receipts"][123]), ""
+        raise AssertionError(f"Unexpected fixture read: {url}")
+
+    def queue(url, method, content, timeout):
+        assert method == "POST" and "/_apis/build/builds?" in url
+        execution = C.load_state(root, rid).get_step("ccd", "localization")
+        assert execution.status == "in_flight"
+        assert execution.execution["write_review"]["hash"].startswith("sha256:")
+        control["writes"].append(deepcopy(content))
+        control["receipts"][123] = {
+            **deepcopy(content), "id": 123, "project": definition["project"],
+            "queueTime": clock["now"].isoformat(),
+            "url": "https://dev.azure.com/msazure/fixture-project/_apis/build/builds/123",
+        }
+        if control["uncertain_launch"]:
+            return False, None, "synthetic timeout after accepted queue"
+        return True, {"id": 123}, ""
+
+    monkeypatch.setattr(P, "_ado_rest_get", read)
+    monkeypatch.setattr(P, "_ado_rest_send", queue)
+    real_receipt_time = provider.receipt_time
+    monkeypatch.setattr(provider, "receipt_time",
+                        lambda build, step: real_receipt_time(build, step, now=clock["now"]))
+    state = ReleaseState(
+        release_id=rid, ccd="2026-09-09", ccd_source="confirmed", target_month="2026-10",
+        timezone="America/Los_Angeles", owner_name="Fixture Owner", owner_email="owner@example.test",
+    )
+    _active_phase(state, "ccd")
+    C.save_state(state, root, rid)
+    initial = deepcopy(state)
+
+    def at(value):
+        clock["now"] = datetime.fromisoformat(value)
+
+    def call(*args, expected=0):
+        code = cli.main(["--runs-root", root, *args, "--release", rid])
+        output = capsys.readouterr().out
+        assert code == expected, output
+        return output
+
+    def result(*args, **kwargs):
+        output = call(*args, **kwargs).strip()
+        return json.loads(output if output.startswith("{") else output.splitlines()[-1])
+
+    transports = {
+        "workiq_send_email": Mock(return_value={"accepted": True}),
+        "workiq_send_chat_message": Mock(return_value={"id": "synthetic-chat-receipt"}),
+        "m_send_teams_message": Mock(return_value={"accepted": True}),
+    }
+
+    def deliver(item, interrupt=False):
+        claim = result("notification", "claim", "--id", item["id"], "--hash", item["hash"],
+                       "--executor", "ccd-replay")
+        assert claim["permission_to_send"]
+        provider_result = transports[claim["tool"]](**claim["payload"])
+        receipt = (delivery.exact_payload_receipt(item, provider_result)
+                   if claim["tool"] == "workiq_send_email" else provider_result)
+        receipt_path = tmp_path / "delivery-receipt.json"
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+        args = ("notification", "result", "--id", item["id"],
+                "--execution-id", claim["execution_id"], "--outcome", "sent",
+                "--evidence", "synthetic provider accepted exact payload",
+                "--receipt-file", str(receipt_path))
+        if interrupt:
+            from orchestrator.commands import delivery_cmd
+
+            def fail_finish(*_args):
+                raise OSError("synthetic crash after receipt was saved")
+
+            with monkeypatch.context() as interrupted:
+                interrupted.setattr(delivery_cmd, "finish", fail_finish)
+                result(*args, expected=1)
+            assert C.load_state(root, rid).notification_deliveries[item["id"]]["status"] == "sent"
+            duplicate = result("notification", "claim", "--id", item["id"],
+                               "--hash", item["hash"], "--executor", "replacement-runner")
+            assert not duplicate["permission_to_send"]
+            result("notification", "finalize", "--id", item["id"])
+        else:
+            result(*args)
+        return claim
+
+    return SimpleNamespace(
+        root=root, rid=rid, initial=initial, clock=clock, control=control,
+        at=at, call=call, result=result, deliver=deliver, transports=transports,
+        load=lambda: C.load_state(root, rid), tmp=tmp_path, command=command,
+    )
+
+
+@pytest.mark.parametrize("scenario", [
+    "no_strings", "merged", "failed", "timeout", "omit_at_cutoff", "unknown_at_cutoff",
+    "uncertain_launch",
+])
+def test_ccd_phase_replay_without_waiting_or_running_preflight(ccd_replay, scenario):
+    client = ccd_replay
+    output = client.result("next", "--json")
+    assert output["status"] == "scheduled" and output["scout_pending"] == []
+    assert all(not client.load().is_done("ccd", sid)
+               for sid in ("final_reminder", "pr_reminder", "localization"))
+    client.at("2026-09-09T09:00:00-07:00")
+    for sid in ("final_reminder", "pr_reminder"):
+        item, = client.result(
+            "notification", "prepare", "--source", "step", "--phase", "ccd", "--step", sid,
+        )["notifications"]
+        assert item["target"] in (
+            {"to": ["owner@example.test"]}, {"chatId": "19:ccd-replay@thread.v2"})
+        client.deliver(item, interrupt=sid == "final_reminder" and scenario == "no_strings")
+        assert client.load().is_done("ccd", sid)
+    assert client.result("next", "--json")["status"] == "scheduled"
+    assert not client.load().get_step("ccd", "localization").execution
+
+    client.at("2026-09-09T12:00:00-07:00")
+    action = client.result("step-action", "--phase", "ccd", "--step", "localization")
+    assert action["tool"] == "launch-localization"
+    client.control["uncertain_launch"] = scenario == "uncertain_launch"
+    launch = client.result(
+        "launch-localization", "--execute", "--auto-approve", "--executor", "ccd-replay",
+        expected=2 if scenario == "uncertain_launch" else 0,
+    )
+    step = client.load().get_step("ccd", "localization")
+    execution_id = step.execution["id"]
+    assert len(client.control["writes"]) == 1
+    if scenario == "uncertain_launch":
+        assert "uncertain" in launch["error"].lower()
+        assert not step.data.get("build_id")
+        client.result("launch-localization", "--execute", "--auto-approve",
+                      "--executor", "replacement-runner", expected=1)
+        assert len(client.control["writes"]) == 1
+        client.result("record-localization-run", "--execution-id", execution_id, "--build-id", "123")
+        step = client.load().get_step("ccd", "localization")
+    assert step.status == "in_flight" and step.data["build_id"] == "123"
+    assert step.data["run_url"].endswith("buildId=123")
+    target = client.result("check-localization", "--execution-id", execution_id)
+    assert target["decision"] == "poll_pipeline" and target["build_id"] == "123"
+    if scenario == "failed":
+        client.result("check-localization", "--execution-id", execution_id,
+                      "--complete", "true", "--run-result", "failed")
+        step = client.load().get_step("ccd", "localization")
+        assert step.status == "blocked" and step.execution["id"] == execution_id
+    elif scenario == "timeout":
+        client.at("2026-09-09T15:01:00-07:00")
+        decision = client.result("check-localization", "--execution-id", execution_id,
+                                 "--complete", "false")
+        assert decision["decision"] == "timeout"
+        assert client.load().get_step("ccd", "localization").status == "in_flight"
+        client.deliver(decision["notifications"][0])
+        assert client.load().get_step("ccd", "localization").status == "blocked"
+    elif scenario in ("omit_at_cutoff", "unknown_at_cutoff"):
+        client.at("2026-09-09T18:00:00-07:00")
+        decision = client.result(
+            "check-localization", "--execution-id", execution_id, "--complete", "true",
+            "--run-result", "succeeded", "--logs-complete", "--logs", _PR_LOG,
+            *(("--pr-status", "active") if scenario == "omit_at_cutoff" else ()))
+        step = client.load().get_step("ccd", "localization")
+        if scenario == "omit_at_cutoff":
+            assert decision["decision"] == "omit_unmerged"
+            assert step.status == "skipped" and step.execution is None
+            assert step.data["pr_status"] == "active"
+        else:
+            assert decision["decision"] == "wait_for_merge" and step.status == "in_flight"
+            current = client.result(
+                "check-localization", "--execution-id", execution_id, "--complete", "true",
+                "--run-result", "succeeded", "--pr-status", "completed")
+            assert current["decision"] == "merged"
+            step = client.load().get_step("ccd", "localization")
+            assert step.status == "done"
+        assert step.data["pr_id"] == "16790317"
+        assert step.data["pipeline_complete"] is True
+        assert step.data["last_checked"]
+    else:
+        client.at("2026-09-09T13:00:00-07:00")
+        decision = client.result(
+            "check-localization", "--execution-id", execution_id, "--complete", "true",
+            "--run-result", "succeeded", "--logs-complete",
+            "--logs", _PR_LOG if scenario == "merged" else _NO_PR_CREATE_TRUE_LOG)
+        assert decision["decision"] == ("announce_pr" if scenario == "merged" else "announce_none")
+        assert client.load().get_step("ccd", "localization").status == "in_flight"
+        for notification in decision["notifications"]:
+            client.deliver(notification, interrupt=scenario == "no_strings")
+        if scenario == "merged":
+            client.at("2026-09-09T16:00:00-07:00")
+            warning = client.result(
+                "check-localization", "--execution-id", execution_id, "--complete", "true",
+                "--run-result", "succeeded", "--pr-status", "active")
+            assert warning["decision"] == "warn_unmerged"
+            for notification in warning["notifications"]:
+                client.deliver(notification)
+            client.at("2026-09-09T16:30:00-07:00")
+            merged = client.result(
+                "check-localization", "--execution-id", execution_id, "--complete", "true",
+                "--run-result", "succeeded", "--pr-status", "completed")
+            assert merged["decision"] == "merged"
+        step = client.load().get_step("ccd", "localization")
+        assert step.status == "done" and step.execution is None
+        assert step.data["last_write_review"]["execution_id"] == execution_id
+
+    saved = client.load()
+    assert {key: value for key, value in saved.steps.items() if key.startswith("preflight.")} == {
+        key: value for key, value in client.initial.steps.items() if key.startswith("preflight.")}
+    assert saved.ccd == client.initial.ccd and saved.readiness_items == client.initial.readiness_items
+    assert saved.pipeline_runs == saved.resources == saved.versions == {}
+    assert len(client.control["writes"]) == 1
+    assert all(len(record["attempts"]) == 1 for record in saved.notification_deliveries.values())
+    client.transports["workiq_send_email"].assert_any_call(
+        **next(record["descriptor"]["payload"] for record in saved.notification_deliveries.values()
+               if record["descriptor"]["scope"].get("step") == "final_reminder"))
+    report = client.result("status", "--json")
+    assert report["current_phase"] == (
+        "ccd" if scenario in ("failed", "timeout") else "build_verify")
+    assert not any(key.startswith("build_verify.") for key in saved.steps)
+
+
+def test_localization_naive_override_rejects_without_state_changes(ccd_replay):
+    client = ccd_replay
+    path = client.tmp / client.rid / "release-state.json"
+    before = path.read_bytes()
+    result = client.result("check-localization", "--execution-id", "not-owned",
+                           "--now", "2026-09-09T13:00:00", expected=1)
+    assert "bad --now" in result["error"]
+    assert path.read_bytes() == before
+
+
+def test_localization_cached_pr_status_does_not_prove_current_merge_or_omission():
+    from datetime import datetime
+    from steps.ccd import localization as L
+
+    state = _loc_state(started_min_ago=10)
+    step = state.get_step("ccd", "localization")
+    step.data.update(pr_id="42", pr_url=L.pr_url("42"), pr_status="completed")
+    state.set_step("ccd", "localization", step)
+    decision = L.decide(
+        _context(state), True, now=datetime.fromisoformat("2026-09-09T18:00:00-07:00"),
+        evidence=L.RunEvidence("succeeded", True))
+    assert decision["decision"] == "wait_for_merge"
+    assert "current merge status is unavailable" in decision["note"]
 
 
 def _localization_execution():
@@ -90,7 +420,10 @@ def test_ccd_final_reminder_build_is_ccd_day_email():
     """final_reminder resolves to a real workiq_send_email with the CCD-day 'update'
     variant (subject says 'Today'), the real DL, and a rendered table."""
     from steps.ccd import final_reminder
-    out = _invoke(final_reminder.build, _ccd_state())
+    from datetime import datetime
+    out = final_reminder.build(_context(
+        _ccd_state(), model=final_reminder.BuildParameters,
+        now=datetime.fromisoformat("2026-09-09T09:00:00-07:00")))
     assert out.kind == "needs_skill" and out.tool == "workiq_send_email"
     assert out.record_as == "final_reminder"
     assert "androididentity@microsoft.com" in out.payload["to"]      # real DL
@@ -695,13 +1028,8 @@ def test_localization_inflight_is_not_retriggered_by_release_worker():
     from datetime import date
     _stub_build_defs("pass")
     st = ReleaseState(release_id="2026-09", ccd="2026-09-09", ccd_source="confirmed")
+    _active_step(st, "ccd", "localization")
     orch = Orchestrator(CONFIG, st, as_of=date(2026, 9, 9))
-    _pass_scout_checks(orch)
-    orch.gate.sign()
-    _clear_phase0_scout(orch)
-    orch.run_until_gate()
-    orch.record_scout_step("ccd", "final_reminder", "pass", "sent")
-    orch.record_scout_step("ccd", "pr_reminder", "pass", "sent")
     step = st.get_step("ccd", "localization")
     step.status = "in_flight"
     step.execution = _localization_execution()
@@ -741,9 +1069,8 @@ def test_ccd_phase_not_due_before_ccd_and_no_scout_pending():
     from datetime import date
     _stub_build_defs("pass")
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26", ccd_source="confirmed")
+    _active_phase(st, "ccd")
     orch = Orchestrator(CONFIG, st, as_of=date(2026, 8, 19))   # CCD-7: Phase 0 open, Phase 1 NOT
-    _pass_scout_checks(orch); orch.gate.sign()
-    _clear_phase0_scout(orch)                                   # finish Phase 0
     orch.run_until_gate()
     r = orch.status_report()
     # Phase 1 holds scheduled (opens on the CCD), nothing drained

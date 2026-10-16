@@ -1,0 +1,155 @@
+PHASE 1: CODE COMPLETE DAY DATA CONTRACTS AND REPLAY
+===================================================
+Updated: 2026-10-16. Baseline a1390093aa6ce1b84686906fa68197c651aa31be
+plus local uncommitted repairs. No new release-state schema fields.
+All three steps audited/corrected offline; no live pipeline/message or runtime
+adoption. Readiness owner/CCD defects remain a separate open backlog.
+
+SHARED ENTRY
+-------------
+Phase ccd is sequential and opens CCD. final_reminder and pr_reminder have
+09:00 owner-local fire times; localization has 12:00.
+Readiness and previous-phase completion are prerequisite facts. A logical date
+preview does not automatically authorize real sends; notification claim/result
+still require the trusted current clock and exact owned execution.
+Overall phase/frontier/progress are derived; the CCD pipeline override is not
+changed by these steps. The external branch cut is not performed here.
+
+1. ccd.final_reminder / notification
+------------------------------------
+INPUT STATE: ccd, target_month or release_id fallback, owner_name/owner_email;
+eligibility, workflow_revision, step generation and notification history.
+CONFIG/PARAMETERS: template, recipients, optional variant update (default) or
+initial; send_to is a test-only dispatch payload override.
+GENERATED: NeedsSkill(workiq_send_email), {to, subject, body, isHtml}; private
+_plain_body is preview metadata, not a replacement for the claimed HTML.
+Update variant says Today only when invocation's local date equals CCD.
+Catch-up/initial output consistently dates subject/HTML/plain text; invalid CCD
+or malformed variant/template blocks before a send is offered.
+STORED: notification_deliveries[N] exact descriptor/payload/hash/scope and
+claim/attempt/receipt/completion. Finalization writes
+steps["ccd.final_reminder"].status=done, note/by/links/completed_at, clears active
+execution and stores data.notification_id/notification_execution_id.
+CONSUMERS: engine sequencing, delivery recovery/deduplication, owner display.
+EXTERNAL OUTPUT: one actual accepted email only after the claimed transport
+runs. Email result requires exact-payload receipt and real supporting evidence.
+LIFETIME: same one-time notification retention as preflight.notice; do not drop
+owned/uncertain/sent-unfinalized evidence. No second copy in domain data.
+
+2. ccd.pr_reminder / notification
+----------------------------------
+INPUT STATE: ccd, target_month/release_id, owner_name/owner_email plus shared
+notification/lifecycle inputs. Earlier final_reminder must be complete.
+CONFIG: Code reviews chat, branch_cut_local, localization_local, approving
+manager identity/contact. No public build parameters; send_to for test dispatch.
+GENERATED: NeedsSkill(workiq_send_chat_message),
+{chatId, content, contentType: html}. Branch-cut and localization deadlines are
+dated to CCD, not reinterpreted as tonight/today on a delayed send.
+STORED: own notification ledger and steps["ccd.pr_reminder"] completion with
+notification ID/execution pointers. No PR objects or branch-cut evidence.
+CONSUMERS: sequential engine, notification recovery and owner view.
+EXTERNAL OUTPUT: one confirmed chat message, not a merged PR or performed cut.
+LIFETIME: shared one-time notification rules; actual feature/PR completion is
+not established by sending this reminder.
+
+3. ccd.localization / checked writer, observation and notification
+------------------------------------------------------------------
+PREPARE INPUT STATE: valid ccd, owner_email, workflow revision, own generation/
+status/data/execution; prior reminders and phase/time eligibility.
+PREPARE INPUT PROVIDER: definition 405133 configured org/project; definition
+revision/project/repository; exact source-branch ref/head; queue variables and
+template parameters. Current default is isCreatePrSelected=true.
+Malformed/incomplete ref collections hold; exact branch and full commit are
+required. No implicit PR creation success and no raw pipeline bypass.
+GENERATED PLAN: WritePlan with concrete target/content/parameters/preconditions
+and review_hash. Full queue payload is transient, not persisted in state.
+PERSIST BEFORE QUEUE: steps["ccd.localization"].execution carries
+id/owner/started_at/refresh plus write_review {hash, approved_by}; engine records
+attempt start/in_flight_since before the single provider request.
+EXTERNAL OUTPUT: one build queue request and readback of the actual build.
+RECEIPT INPUT: actual build identity/project/definition+revision/repo/source
+branch+commit/parameters/provider URL/queueTime matching that exact owned plan.
+PERSIST AFTER VERIFIED RECEIPT: .data.build_id, started_at, run_url,
+in_flight_since, poll_in_min; .status=in_flight and execution remains owned.
+Queue uncertainty retains execution/review without invented build ID. It can
+recover only a matching actual receipt, not submit another queue request.
+
+POLL INPUT: exact execution ID and stored run/PR coordinates; transient complete
+boolean, exact run result, complete task logs (or missing evidence), live PR
+status and current clock. --now must include a timezone.
+Unknown/malformed values are not success. PR status, if supplied, must be
+active/completed/abandoned. HTML owner labels are escaped while canonical
+mention displayName/identity remain unmodified data.
+TRANSIENT DECISIONS:
+  wait/poll_pipeline/poll_pr: keep observing exact stored identities.
+  failed: block with source link; no fake no-strings completion.
+  timeout: require owner email delivery after 3h; step stays in-flight until
+    required notification is acknowledged, then records the attention outcome.
+  announce_pr: prepare Code reviews plus owner-bot notices, keep monitoring.
+  warn_unmerged: prepare one warning at 16:00 Los Angeles.
+  omit_unmerged: policy cutoff at 18:00 Los Angeles, skipped not passed.
+  merged: succeeded run plus confirmed merged PR yields Done.
+  announce_none: succeeded full task log with createPR=true and no PR prepares
+    Code reviews no-strings notice; only acknowledged delivery completes.
+  complete_none: succeeded complete task output plus explicit owner-reviewed
+    no-change confirmation when createPR flag is unavailable.
+createPR=false blocks; absence of a PR line alone is not no-change proof.
+At cutoff a fresh PR status is required before merge/omission; missing status
+keeps polling rather than treating unavailable evidence or cached status as
+proof the PR is still unmerged (or has now merged).
+
+STORED POLL OUTPUT: same owning step .data can contain
+  build_id, started_at, run_url,
+  pipeline_complete, pr_id, pr_url, pr_status,
+  last_checked, pr_discovered_at,
+  pr_announced_at, merge_deadline_alert_at, timeout_notified_at,
+  no_strings_announced_at, in_flight_since, poll_in_min,
+  previous_runs, engine-owned last_write_review.
+Fields are conditional; not every outcome generates every key.
+pipeline_complete is observation, NOT independently persisted run-success proof.
+PR/source evidence first discovered at omission is retained before the terminal
+skip, not lost with a detached record. Existing stamp fields receive new evidence;
+no new schema key was introduced by these fixes.
+On an explicitly reopened rerun, prior run/stamp metadata is archived in
+previous_runs, including no_strings_announced_at, and removed from the new
+current run. Never inherit a prior build's no-strings send stamp.
+TERMINAL: successful done or configured omission closes execution and retains
+engine last_write_review authorization receipt. Failed/uncertain attempts retain
+ownership for recovery; an authorization receipt alone is not provider success.
+
+NOTIFICATION OUTPUT: notification_deliveries owns exact timeout/email, initial/
+deadline chat and owner-bot descriptors, claims, receipts and completion stamps.
+These are source-bound to run/PR/owner/CCD/generation/clock windows. Stale sends
+cannot apply obsolete completion. Raw task logs and full queue content are not
+copied into release-state; links, IDs and required decision checkpoints remain.
+CONSUMERS: this poller/step builder; shared notification completion; automation
+obligations deriving required localization poller; status/owner reports.
+LIFETIME: run IDs, review ownership and delivery receipts support restart and
+deduplication. Previous run history is retained, not silently migrated/cleared.
+No report/storage cleanup policy or new persistence schema is inferred here.
+
+IMPLEMENTED IMMEDIATE OFFLINE REPLAY
+-------------------------------------
+From release-agent:
+  python -m pytest -q tests\test_ccd.py::test_ccd_phase_replay_without_waiting_or_running_preflight
+One variant:
+  python -m pytest -q "tests\test_ccd.py::test_ccd_phase_replay_without_waiting_or_running_preflight[no_strings]"
+Scout can run this on request; the owner does not need to drive engine commands.
+Variants: no_strings, merged, failed, timeout, omit_at_cutoff, unknown_at_cutoff,
+uncertain_launch.
+All prerequisites are seeded explicitly; NO preflight handler executes.
+All Phase 1 target handlers/commands, review hashes, locks and persisted
+checkpoints are real. Only provider reads/queue/send responses and clocks are
+fixtures. There is no target outcome:done shortcut.
+Clock advances immediately through 08:00/09:00/noon/13:00/15:01/16:00/18:00;
+no sleep or wall-clock date change, no CCD pipeline override update.
+Tests assert no early dispatch, correct routing, one queue attempt, recovered
+uncertain queue using receipt readback, actual PR merge/no-PR/failed/timeout/
+omission behavior, exact saved evidence and closed review, and unchanged
+readiness/preflight/source fields. Interruptions between sent receipt and
+completion deny duplicate sends and recover via finalize.
+The unknown-at-cutoff case holds until a fresh merge observation arrives.
+Fixtures use temporary roots, reject unmocked external IO and do not leave a
+persistent interactive rehearsal after pytest cleanup.
+This provides repeatable execution now, but is NOT live provider E2E.
+Proposed generic interactive/live replay design: docs\phase-rehearsal-proposal.txt.

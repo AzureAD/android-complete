@@ -2,6 +2,331 @@
 from tests._context import context as _context, invoke as _invoke, invoke_effect as _invoke_effect
 from tests._harness import *  # noqa: F401,F403
 from orchestrator.outcomes import Done, Blocked
+import pytest
+
+
+@pytest.mark.parametrize("text", [None, "", "   ", {}, "<html>Sign in</html>",
+                                "Version 1.0.0\n- [MAJOR] historical change"])
+def test_breaking_incomplete_source_is_not_a_clean_release(text):
+    from steps.preflight import breaking
+
+    out = breaking.build(_context(ReleaseState(release_id="2026-10"), inputs={"changelog": text}))
+    assert isinstance(out, Blocked) and "invalid changelog" in out.reason
+
+
+def test_breaking_draft_uses_release_display_month():
+    from steps.preflight import breaking
+
+    out = breaking.build(_context(
+        ReleaseState(release_id="2026-10", target_month="2026-11"),
+        inputs={"changelog": "vNext\n---\n- [MAJOR] Fixture change\nVersion 1.0\n"},
+    ))
+    assert isinstance(out, Done) and "November 2026" in out.note
+    assert "2026-10" not in out.note
+
+
+@pytest.mark.parametrize("alerts", [
+    None, {}, [None], [{}], [{"alertState": "mystery"}],
+    [{"alertState": "active"}],
+    [{"alertState": "active", "severity": "unknown"}],
+    [{"alertState": "active", "severity": "high", "component": []}],
+    [{"alertState": "active", "severity": "high", "_links": []}],
+    [{"alertState": "active", "severity": "high", "_links": {"web": []}}],
+    [{"alertState": "active", "severity": "high", "url": []}],
+])
+def test_cg_incomplete_source_cannot_clear_the_step(alerts):
+    from steps.preflight import cg
+
+    out = cg.build(_context(ReleaseState(), inputs={"alerts": alerts}))
+    assert isinstance(out, Blocked) and "invalid alerts" in out.reason
+
+
+def test_cg_normalizes_active_severity_without_hiding_high_alerts():
+    from steps.preflight import cg
+
+    out = cg.build(_context(ReleaseState(), inputs={"alerts": [{
+        "alertState": " Active ", "severity": " HIGH ", "title": "Fixture issue",
+        "component": None, "actionItems": None,
+    }]}))
+    assert isinstance(out, Blocked) and "1 high" in out.reason
+
+
+@pytest.mark.parametrize("run", [
+    "not a run", {"result": "succeeded"}, {"queueTime": "unknown"},
+    {"queueTime": 123}, {"queueTime": "2026-10-17T12:00:00Z"},
+])
+def test_cron_unverifiable_or_future_timestamps_hold(run):
+    from datetime import datetime, timezone
+    from steps.preflight import cron
+
+    out = cron.build(_context(
+        ReleaseState(), inputs={"run": run},
+        now=datetime(2026, 10, 16, 12, tzinfo=timezone.utc),
+    ))
+    assert isinstance(out, Blocked)
+
+
+@pytest.mark.parametrize("queued,blocked", [
+    ("2026-10-14T12:00:00Z", False),
+    ("2026-10-14T11:59:59Z", True),
+])
+def test_cron_staleness_limit_uses_elapsed_time_not_rounded_days(queued, blocked):
+    from datetime import datetime, timezone
+    from steps.preflight import cron
+
+    out = cron.build(_context(
+        ReleaseState(), inputs={"run": {"queueTime": queued, "result": "succeeded"}},
+        now=datetime(2026, 10, 16, 12, tzinfo=timezone.utc),
+    ))
+    assert isinstance(out, Blocked) == blocked
+
+
+@pytest.mark.parametrize("source", ["cg", "cron"])
+@pytest.mark.parametrize("response", [{}, None, [None], {"value": None}])
+def test_preflight_read_adapters_reject_missing_collections(monkeypatch, source, response):
+    import json
+    from types import SimpleNamespace
+    from tools import checks
+
+    monkeypatch.setattr(checks.shutil, "which", lambda _: "az")
+    monkeypatch.setattr(checks.subprocess, "run", lambda *a, **k: SimpleNamespace(
+        returncode=0, stdout=json.dumps(response), stderr=""))
+    if source == "cg":
+        ok, _, detail = checks.fetch_cg_alerts("resource", "https://fixture.invalid", "p", 1, "working")
+    else:
+        ok, _, detail = checks.latest_scheduled_build("https://fixture.invalid", "p", 1)
+    assert not ok and "invalid" in detail
+
+
+def test_cg_partial_collection_is_not_a_clean_result(monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from tools import checks
+
+    monkeypatch.setattr(checks.shutil, "which", lambda _: "az")
+    monkeypatch.setattr(checks.subprocess, "run", lambda *a, **k: SimpleNamespace(
+        returncode=0, stdout=json.dumps({"value": [], "continuationToken": "next"}), stderr=""))
+    ok, _, detail = checks.fetch_cg_alerts("resource", "https://fixture.invalid", "p", 1, "working")
+    assert not ok and "incomplete" in detail
+
+
+@pytest.mark.parametrize("mode", [
+    "clean", "cleanup_transport_failure", "cleanup_rejected", "stale_same_tip",
+    "stale_changed_tip", "prefix_master", "probe_read_failed", "wrong_create_receipt",
+    "prefix_probe",
+])
+def test_oneauth_probe_verifies_exact_refs_and_cleanup(monkeypatch, mode):
+    from tools import checks, pipelines as P
+
+    tip = "a" * 40
+    ref = "refs/heads/user/fixture/scout-oneauth-access-check"
+    writes = []
+
+    def get(url, timeout):
+        if "filter=heads/master" in url:
+            name = "refs/heads/master-old" if mode == "prefix_master" else "refs/heads/master"
+            return True, {"value": [{"name": name, "objectId": tip}]}, ""
+        if mode == "probe_read_failed":
+            return False, None, "fixture read denied"
+        if mode.startswith("stale_"):
+            return True, {"value": [{
+                "name": ref, "objectId": tip if mode == "stale_same_tip" else "b" * 40,
+            }]}, ""
+        if mode == "prefix_probe":
+            return True, {"value": [{"name": ref + "-other", "objectId": "b" * 40}]}, ""
+        return True, {"value": []}, ""
+
+    def send(url, method, body, timeout):
+        change, = body
+        writes.append(change)
+        assert change["name"] == ref and method == "POST"
+        removing = change["newObjectId"] == "0" * 40
+        if removing and mode == "cleanup_transport_failure":
+            return False, None, "fixture cleanup unavailable"
+        name = ref + "-wrong" if mode == "wrong_create_receipt" else ref
+        return True, {"value": [{
+            "name": name, "success": not (removing and mode == "cleanup_rejected"),
+        }]}, ""
+
+    monkeypatch.setattr(P, "_ado_rest_get", get)
+    monkeypatch.setattr(P, "_ado_rest_send", send)
+    ok, detail = checks.oneauth_write_access("fixture")
+    assert ok == (mode in ("clean", "stale_same_tip", "prefix_probe")), detail
+    if mode in ("stale_changed_tip", "prefix_master", "probe_read_failed"):
+        assert writes == []
+    if ok:
+        assert "created and deleted" in detail
+        assert writes[-1]["oldObjectId"] == tip and writes[-1]["newObjectId"] == "0" * 40
+    if mode.startswith("cleanup_"):
+        assert "cleanup failed" in detail
+
+
+@pytest.mark.parametrize("alias", ["../owner", "owner/other", "owner@tenant", 1])
+def test_oneauth_rejects_invalid_probe_alias_before_any_write(alias):
+    from steps.preflight import oneauth_access
+
+    out = oneauth_access.prepare_effect(_context(ReleaseState(), inputs={"alias": alias}))
+    assert isinstance(out, Blocked) and "invalid alias" in out.reason
+
+
+@pytest.mark.parametrize("step", ["notice", "flight_reminder"])
+def test_preflight_notifications_block_invalid_ccd_without_mutating(step):
+    from steps.preflight import notice, flight_reminder
+
+    state = ReleaseState(release_id="2026-10", ccd="not-a-date")
+    if step == "notice":
+        out = notice.build(_context(state, model=notice.BuildParameters))
+    else:
+        out = flight_reminder.build(_context(state))
+    assert isinstance(out, Blocked) and "CCD" in out.reason
+    assert state.steps == {} and out.updates == ()
+
+
+@pytest.mark.parametrize("asset", [None, [], {}, {"subject": "wrong", "body": "wrong"}])
+def test_notice_blocks_invalid_template_assets(asset):
+    from dataclasses import replace
+    from steps.preflight import notice
+
+    ctx = _context(ReleaseState(release_id="2026-10", ccd="2026-10-21"), model=notice.BuildParameters)
+    ctx = replace(ctx, services=replace(ctx.services, assets=replace(
+        ctx.services.assets, template=lambda _: asset)))
+    out = notice.build(ctx)
+    assert isinstance(out, Blocked) and "template" in out.reason
+
+
+@pytest.mark.parametrize("interrupt_notice", [False, True])
+def test_complete_preflight_real_handlers_and_persisted_cli(
+        tmp_path, monkeypatch, capsys, interrupt_notice):
+    from datetime import datetime, timezone
+    import json
+    from unittest.mock import Mock
+    from orchestrator import cli, delivery, mocks, schedule, service_adapters
+    from steps.preflight import cron
+    from tools import checks, pipelines as P
+
+    root, rid = str(tmp_path), "2026-10"
+    now = datetime(2026, 10, 16, 21, tzinfo=timezone.utc)
+    controls = {"alerts": [{"alertState": "active", "severity": "high", "title": "Fixture CG"}]}
+    monkeypatch.setattr(schedule, "now_local", lambda _tz=None: now)
+    monkeypatch.setattr(cron, "_trusted_utc_now", lambda: now)
+    monkeypatch.setattr(delivery, "now_iso", lambda: now.isoformat())
+    monkeypatch.setattr(mocks, "load_mocks", lambda: {
+        "preflight.notice": {"send_to": ["owner@example.test"]},
+        "preflight.flight_reminder": {"send_to": "19:phase-fixture@thread.v2"},
+    })
+    monkeypatch.setattr(service_adapters, "_changelog",
+                        lambda _: "vNext\n---\n- [MAJOR] Fixture API change\nVersion 1.0\n")
+    monkeypatch.setattr(checks, "fetch_cg_alerts", lambda *a: (True, controls["alerts"], "fixture"))
+    monkeypatch.setattr(checks, "latest_scheduled_build", lambda *a: (
+        True, {"queueTime": now.isoformat(), "result": "succeeded"}, "fixture"))
+    monkeypatch.setattr(checks, "current_az_user", lambda: "owner@example.test")
+    refs = {"refs/heads/master": "a" * 40}
+    writes = []
+
+    def read_refs(url, timeout):
+        return True, {"value": [{"name": name, "objectId": value} for name, value in refs.items()
+                                if name == "refs/heads/master" or "scout-oneauth" in name]}, ""
+
+    def write_ref(url, method, body, timeout):
+        change, = body
+        record = C.load_state(root, rid).get_step("preflight", "oneauth_access")
+        assert record.status == "running" and record.execution["effect_input"]["alias"] == "owner"
+        assert record.execution["owner"] == "engine"
+        old = refs.get(change["name"], "0" * 40)
+        assert old == change["oldObjectId"]
+        writes.append(change)
+        if change["newObjectId"] == "0" * 40:
+            refs.pop(change["name"])
+        else:
+            refs[change["name"]] = change["newObjectId"]
+        return True, {"value": [{"name": change["name"], "success": True}]}, ""
+
+    monkeypatch.setattr(P, "_ado_rest_get", read_refs)
+    monkeypatch.setattr(P, "_ado_rest_send", write_ref)
+    state = ReleaseState(
+        release_id=rid, target_month="2026-11", ccd="2026-10-21",
+        ccd_source="confirmed", owner_name="Fixture owner", owner_email="owner@example.test",
+        timezone="America/Los_Angeles",
+    )
+    _active_phase(state, "preflight")
+    C.save_state(state, root, rid)
+
+    def call(*args, expected=0):
+        code = cli.main(["--runs-root", root, *args, "--release", rid])
+        output = capsys.readouterr().out
+        assert code == expected, output
+        return output
+
+    report = json.loads(call("next", "--json"))
+    saved = C.load_state(root, rid)
+    assert saved.get_step("preflight", "cg").status == "blocked"
+    for sid in ("breaking", "oneauth_access", "cron"):
+        assert saved.is_done("preflight", sid)
+    assert "DRAFT COMMS" in saved.get_step("preflight", "breaking").note
+    assert len(writes) == 2 and refs == {"refs/heads/master": "a" * 40}
+    assert set(report["scout_pending"]) == {"notice", "flight_reminder", "lockdown"}
+    email_provider, teams_provider = Mock(return_value={"accepted": True}), Mock(return_value={"id": "fixture"})
+    for sid, provider in (("notice", email_provider), ("flight_reminder", teams_provider)):
+        item, = json.loads(call(
+            "notification", "prepare", "--source", "step", "--phase", "preflight", "--step", sid,
+        ))["notifications"]
+        claim = json.loads(call("notification", "claim", "--id", item["id"],
+                                "--hash", item["hash"], "--executor", "fixture-worker"))
+        assert claim["permission_to_send"] and not C.load_state(root, rid).is_done("preflight", sid)
+        receipt = provider(**claim["payload"])
+        if sid == "notice":
+            assert claim["payload"]["isHtml"] and "<table" in claim["payload"]["body"]
+            receipt = delivery.exact_payload_receipt(item, receipt)
+        receipt_path = tmp_path / f"{sid}-receipt.json"
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+        args = ("notification", "result", "--id", item["id"], "--execution-id", claim["execution_id"],
+                "--outcome", "sent", "--evidence", "synthetic provider accepted exact payload",
+                "--receipt-file", str(receipt_path))
+        if sid == "notice" and interrupt_notice:
+            save, count = C.save_state, 0
+
+            def interrupted_save(*a, **k):
+                nonlocal count
+                count += 1
+                if count == 2:
+                    raise OSError("fixture interruption after notice receipt")
+                return save(*a, **k)
+
+            with monkeypatch.context() as interrupted:
+                interrupted.setattr(C, "save_state", interrupted_save)
+                call(*args, expected=1)
+            assert not C.load_state(root, rid).is_done("preflight", sid)
+            duplicate = json.loads(call("notification", "claim", "--id", item["id"],
+                                        "--hash", item["hash"], "--executor", "recovery-worker"))
+            assert not duplicate["permission_to_send"]
+            call("notification", "finalize", "--id", item["id"])
+        else:
+            call(*args)
+        assert C.load_state(root, rid).is_done("preflight", sid)
+        provider.assert_called_once_with(**claim["payload"])
+    call("check-lockdown", "--periods-json", "[]")
+    for sid in ("confirm_reminders", "vitals"):
+        prompt = json.loads(call("step-action", "--phase", "preflight", "--step", sid))
+        assert prompt["kind"] == "needs_human" and prompt["attest"]
+        assert "done --step" not in prompt["prompt"]
+        assert not C.load_state(root, rid).is_done("preflight", sid)
+        call("done", "--phase", "preflight", "--step", sid,
+             "--note", f"Explicit simulated owner confirmation for {sid}")
+    assert not C.load_state(root, rid).is_done("preflight", "cg")
+    controls["alerts"] = []
+    report = json.loads(call("next", "--json"))
+    completed = C.load_state(root, rid)
+    phase = next(p for p in Orchestrator(CONFIG, completed, mocks={}).config["phases"]
+                 if p["id"] == "preflight")
+    assert all(completed.is_done("preflight", item["id"]) for item in phase["steps"])
+    assert report["current_phase"] == "ccd" and report["status"] == "scheduled"
+    assert not completed.is_done("ccd", "final_reminder")
+    assert all(record["status"] == "sent" and len(record["attempts"]) == 1
+               for record in completed.notification_deliveries.values())
+    assert completed.resources == {} and completed.pipeline_runs == {} and completed.versions == {}
+    assert len(writes) == 2
+    call("next", "--json")
+    assert len(writes) == 2
 
 
 
@@ -341,6 +666,189 @@ def test_check_lockdown_pass_and_attention():
 
 
 
+def _ccoa_period(**changes):
+    return {
+        "name": "Fixture CCOA", "environment": "Production",
+        "start": "2026-10-20", "end": "2026-10-22", **changes,
+    }
+
+
+@pytest.fixture
+def lockdown_cli(tmp_path, monkeypatch, capsys):
+    from copy import deepcopy
+    from datetime import datetime
+    from types import SimpleNamespace
+    from orchestrator import cli, mocks, schedule
+
+    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    now = datetime.fromisoformat("2026-10-16T14:00:00-07:00")
+    monkeypatch.setattr(schedule, "now_local", lambda _tz=None: now)
+    st = ReleaseState(
+        release_id="2026-10", ccd="2026-10-21", ccd_source="confirmed",
+        timezone="America/Los_Angeles", owner_email="owner@example.test",
+    )
+    _active_phase(st, "preflight")
+    C.save_state(st, str(tmp_path), st.release_id)
+    base = ["--runs-root", str(tmp_path)]
+
+    def call(raw_json, *, expected=0):
+        code = cli.main(base + [
+            "check-lockdown", "--release", st.release_id, "--periods-json", raw_json,
+        ])
+        output = capsys.readouterr().out
+        assert code == expected, output
+        return output
+
+    return SimpleNamespace(
+        call=call, load=lambda: C.load_state(str(tmp_path), st.release_id),
+        root=tmp_path, release=st.release_id, base=base, before=deepcopy(st),
+    )
+
+
+@pytest.mark.parametrize("raw", [
+    None, {}, "not an array", [None],
+    [_ccoa_period(start=None)],
+    [_ccoa_period(start="not-a-date")],
+    [_ccoa_period(end="2026-02-30")],
+    [_ccoa_period(start="2026-10-22", end="2026-10-20")],
+    [_ccoa_period(environment=None)],
+    [_ccoa_period(environment=["Production"])],
+    [_ccoa_period(name="")],
+    [_ccoa_period(start="2026-1-01")],
+    [_ccoa_period(), _ccoa_period(end="")],
+])
+def test_lockdown_rejects_incomplete_evidence_without_recording_pass(lockdown_cli, raw):
+    from copy import deepcopy
+    import json
+    from steps.preflight import lockdown
+
+    client = lockdown_cli
+    before = deepcopy(client.before)
+    with pytest.raises(ValueError, match="CCOA"):
+        lockdown.decide(_context(before), raw)
+    assert before == client.before
+    state_path = client.root / client.release / "release-state.json"
+    saved = state_path.read_bytes()
+    output = client.call(json.dumps(raw), expected=1)
+    assert "Cannot check lockdown:" in output
+    assert state_path.read_bytes() == saved
+    assert not (client.root / client.release / "events.jsonl").exists()
+    assert not client.load().is_done("preflight", "lockdown")
+
+
+@pytest.mark.parametrize("raw_json", ["", "   ", "["])
+def test_lockdown_rejects_invalid_json_without_empty_array_fallback(lockdown_cli, raw_json):
+    client = lockdown_cli
+    state_path = client.root / client.release / "release-state.json"
+    before = state_path.read_bytes()
+    assert "Could not parse --periods-json" in client.call(raw_json, expected=1)
+    assert state_path.read_bytes() == before
+    assert not (client.root / client.release / "events.jsonl").exists()
+
+
+@pytest.mark.parametrize("period,expected", [
+    (_ccoa_period(start="2026-10-13", end="2026-10-14"), "attention"),
+    (_ccoa_period(start="2026-11-04", end="2026-11-05"), "attention"),
+    (_ccoa_period(start="2026-10-13", end="2026-10-13"), "pass"),
+    (_ccoa_period(start="2026-11-05", end="2026-11-06"), "pass"),
+    (_ccoa_period(environment="Banner"), "pass"),
+    (_ccoa_period(environment="production, Banner"), "attention"),
+])
+def test_lockdown_decision_preserves_inclusive_window_and_environment(period, expected):
+    from steps.preflight import lockdown
+
+    st = ReleaseState(release_id="2026-10", ccd="2026-10-21")
+    status, detail = lockdown.decide(_context(st), [period])
+    assert status == expected
+    assert "2026-10-14..2026-11-04" in detail
+
+
+@pytest.mark.parametrize("ccd", [None, "not-a-date", "2026-02-30"])
+def test_lockdown_builder_blocks_invalid_release_date(ccd):
+    from steps.preflight import lockdown
+
+    st = ReleaseState(release_id="2026-10", ccd=ccd)
+    out = lockdown.build(_context(st))
+    assert isinstance(out, Blocked) and "CCD" in out.reason
+    assert out.updates == () and st.steps == {}
+
+
+def test_lockdown_gather_covers_cross_year_window_without_missing_evidence_fallback():
+    from steps.preflight import lockdown
+
+    st = ReleaseState(release_id="2027-01", ccd="2027-01-03")
+    out = lockdown.build(_context(st))
+    gather = out.payload["_gather"]
+    assert gather["window"] == "2026-12-27..2027-01-17"
+    assert "every calendar year" in gather["instructions"]
+    assert "do not substitute an empty array" in gather["instructions"]
+    assert out.tool == "check-lockdown" and not out.outbound
+    assert out.updates == () and st.steps == {}
+
+
+def test_lockdown_builder_blocks_reversed_configured_window(monkeypatch):
+    from steps.preflight import lockdown
+
+    monkeypatch.setitem(lockdown.CONFIG, "window_start_anchor", "CCD+15")
+    st = ReleaseState(release_id="2026-10", ccd="2026-10-21")
+    out = lockdown.build(_context(st))
+    assert isinstance(out, Blocked) and "starts after it ends" in out.reason
+    assert out.updates == () and st.steps == {}
+
+
+def test_lockdown_cli_records_overlap_then_resolves_without_other_state_changes(
+        lockdown_cli, capsys):
+    from dataclasses import fields
+    import json
+    from orchestrator import cli
+
+    client = lockdown_cli
+    assert cli.main(client.base + [
+        "step-action", "--release", client.release, "--phase", "preflight", "--step", "lockdown",
+    ]) == 0
+    directive = json.loads(capsys.readouterr().out)
+    assert directive["tool"] == "check-lockdown"
+    assert directive["payload"]["periods_json"] is None
+    assert directive["payload"]["_gather"]["window"] == "2026-10-14..2026-11-04"
+    assert client.load().steps == client.before.steps
+    raw = [_ccoa_period(), _ccoa_period(name="Banner notice", environment="Banner")]
+    assert "[attention]" in client.call(json.dumps(raw))
+    held = client.load().get_step("preflight", "lockdown")
+    assert held.status == "blocked" and held.by == "scout" and held.execution is None
+    assert "Fixture CCOA" in held.note and "2026-10-14..2026-11-04" in held.note
+    assert held.data == {} and held.links == []
+    path = client.root / client.release / "release-state.json"
+    held_before = path.read_bytes()
+    client.call(json.dumps([_ccoa_period(start="unknown")]), expected=1)
+    assert path.read_bytes() == held_before
+    assert "[ok]" in client.call(json.dumps([raw[1]]))
+    settled = client.load()
+    step = settled.get_step("preflight", "lockdown")
+    assert step.status == "done" and step.completed_at and step.by == "scout"
+    assert step.execution is None and step.data == {} and step.links == []
+    assert set(settled.steps) == set(client.before.steps) | {"preflight.lockdown"}
+    for field in fields(ReleaseState):
+        if field.name not in ("steps", "updated_at"):
+            assert getattr(settled, field.name) == getattr(client.before, field.name)
+    path = client.root / client.release / "release-state.json"
+    before_replay = path.read_bytes()
+    client.call(json.dumps([raw[1]]))
+    assert path.read_bytes() == before_replay
+
+
+def test_lockdown_completed_result_does_not_hide_malformed_new_input(lockdown_cli):
+    import json
+
+    client = lockdown_cli
+    client.call("[]")
+    state_path = client.root / client.release / "release-state.json"
+    events_path = client.root / client.release / "events.jsonl"
+    state_before, events_before = state_path.read_bytes(), events_path.read_bytes()
+    client.call(json.dumps([_ccoa_period(start="unknown")]), expected=1)
+    assert state_path.read_bytes() == state_before
+    assert events_path.read_bytes() == events_before
+
+
 def test_notice_build_real_recipients_and_html():
     """Real send: notice.build targets the REAL DL and renders a proper <table> +
     clean hotfix anchor. (Redirect to yourself is the send_to mock knob, not automatic.)"""
@@ -358,6 +866,182 @@ def test_notice_build_real_recipients_and_html():
     assert T.ordinal(12) == "12th" and T.ordinal(21) == "21st"
 
 
+
+
+@pytest.mark.parametrize("sent_at", ["2026-10-14T09:00:00-07:00", "2026-10-16T14:00:00-07:00"])
+def test_flight_reminder_keeps_original_deadline_on_late_delivery(sent_at):
+    from copy import deepcopy
+    from datetime import datetime
+    from steps.preflight import flight_reminder
+
+    st = ReleaseState(
+        release_id="2026-10", target_month="2026-11", ccd="2026-10-21",
+        owner_name="<Owner & reviewer>", owner_email="owner@example.test",
+    )
+    before = deepcopy(st)
+    out = flight_reminder.build(_context(st, now=datetime.fromisoformat(sent_at)))
+    assert out.kind == "needs_skill" and out.tool == "workiq_send_chat_message"
+    assert out.record_as == "flight_reminder" and out.outbound
+    assert set(out.payload) == {"chatId", "content", "contentType"}
+    assert out.payload["chatId"] == flight_reminder.CONFIG["live_chat_id"]
+    assert out.payload["contentType"] == "html"
+    html = out.payload["content"]
+    assert "November" in html and "10/14/2026" in html
+    assert "today" not in html.lower()
+    assert "&lt;Owner &amp; reviewer&gt;" in html
+    assert html.count("<li>") == 4
+    for reminder in ("Update local flights", "Flight pre-mortem docs",
+                     "Merge user-facing strings", "Feature-flag freeze"):
+        assert reminder in html
+    for url in flight_reminder.CONFIG["links"].values():
+        assert url in html
+    assert st == before and out.updates == ()
+
+
+def test_flight_reminder_without_ccd_blocks_without_state_changes():
+    from copy import deepcopy
+    from steps.preflight import flight_reminder
+
+    st = ReleaseState(release_id="2026-10")
+    before = deepcopy(st)
+    out = flight_reminder.build(_context(st))
+    assert isinstance(out, Blocked) and out.reason == "no CCD set for this release"
+    assert st == before and out.updates == ()
+
+
+@pytest.fixture
+def flight_reminder_cli(tmp_path, monkeypatch, capsys):
+    from copy import deepcopy
+    from datetime import datetime, timezone
+    import json
+    from types import SimpleNamespace
+    from orchestrator import cli, delivery, mocks, schedule
+
+    now = datetime.fromisoformat("2026-10-16T14:00:00-07:00")
+    chat = "19:flight-reminder-fixture@thread.v2"
+    monkeypatch.setattr(schedule, "now_local", lambda _tz=None: now)
+    monkeypatch.setattr(delivery, "now_iso", lambda: now.astimezone(timezone.utc).isoformat())
+    monkeypatch.setattr(mocks, "load_mocks",
+                        lambda: {"preflight.flight_reminder": {"send_to": chat}})
+    st = ReleaseState(
+        release_id="2026-10", target_month="2026-11", ccd="2026-10-21",
+        ccd_source="confirmed", timezone="America/Los_Angeles",
+        owner_name="Fixture owner", owner_email="owner@example.test",
+    )
+    _active_phase(st, "preflight")
+    C.save_state(st, str(tmp_path), st.release_id)
+
+    def call(operation, *arguments, expected=0):
+        code = cli.main([
+            "--runs-root", str(tmp_path), "notification", operation,
+            "--release", st.release_id, *arguments,
+        ])
+        result = json.loads(capsys.readouterr().out)
+        assert code == expected, result
+        return result
+
+    return SimpleNamespace(
+        call=call, load=lambda: C.load_state(str(tmp_path), st.release_id),
+        before=deepcopy(st), root=tmp_path, chat=chat,
+    )
+
+
+def test_flight_reminder_cli_recovers_sent_post_without_duplicate(
+        flight_reminder_cli, monkeypatch):
+    from dataclasses import fields
+    import json
+    from unittest.mock import Mock
+    from orchestrator.commands import delivery_cmd
+
+    client = flight_reminder_cli
+    key = "preflight.flight_reminder"
+    prepared = client.call("prepare", "--source", "step", "--phase", "preflight",
+                           "--step", "flight_reminder")
+    item, = prepared["notifications"]
+    assert item["tool"] == "workiq_send_chat_message"
+    assert item["payload"]["chatId"] == client.chat
+    assert item["payload"]["contentType"] == "html"
+    assert "10/14/2026" in item["payload"]["content"]
+    assert not item["permission_to_send"]
+    assert client.load().steps == client.before.steps
+    assert not client.load().is_done("preflight", "flight_reminder")
+
+    claim = client.call("claim", "--id", item["id"], "--hash", item["hash"],
+                        "--executor", "fixture-worker")
+    assert claim["permission_to_send"] and claim["payload"] == item["payload"]
+    claimed = client.load()
+    step = claimed.get_step("preflight", "flight_reminder")
+    assert step.status == "running"
+    assert step.execution["id"] == claim["execution_id"]
+    assert step.execution["notification_id"] == item["id"]
+    transport = Mock(return_value={"id": "synthetic-teams-receipt", "chatId": client.chat})
+    receipt = transport(**claim["payload"])
+    receipt_file = client.root / "teams-receipt.json"
+    receipt_file.write_text(json.dumps(receipt), encoding="utf-8")
+
+    def interrupted_finalization(*_args):
+        raise OSError("synthetic interruption after receipt persistence")
+
+    with monkeypatch.context() as interrupted:
+        interrupted.setattr(delivery_cmd, "finish", interrupted_finalization)
+        error = client.call(
+            "result", "--id", item["id"], "--execution-id", claim["execution_id"],
+            "--outcome", "sent", "--evidence", "synthetic Teams provider accepted post",
+            "--receipt-file", str(receipt_file), expected=1,
+        )
+        assert "synthetic interruption" in error["error"]
+    saved = client.load()
+    assert saved.notification_deliveries[item["id"]]["status"] == "sent"
+    assert not saved.is_done("preflight", "flight_reminder")
+    assert saved.get_step("preflight", "flight_reminder").execution["id"] == claim["execution_id"]
+    repeated = client.call("claim", "--id", item["id"], "--hash", item["hash"],
+                           "--executor", "replacement-worker")
+    assert repeated["status"] == "already_sent" and not repeated["permission_to_send"]
+    assert client.call("finalize", "--id", item["id"])["finalized"]
+    settled = client.load()
+    step = settled.get_step("preflight", "flight_reminder")
+    assert step.status == "done" and step.completed_at and step.execution is None
+    assert step.data == {
+        "notification_id": item["id"], "notification_execution_id": claim["execution_id"],
+    }
+    record = settled.notification_deliveries[item["id"]]
+    assert record["completion"]["status"] == "applied"
+    assert len(record["attempts"]) == 1 and record["attempts"][0]["receipt"] == receipt
+    assert not settled.is_done("preflight", "confirm_reminders")
+    assert set(settled.steps) == set(client.before.steps) | {key}
+    for field in fields(ReleaseState):
+        if field.name not in ("updated_at", "steps", "notification_deliveries"):
+            assert getattr(settled, field.name) == getattr(client.before, field.name)
+    assert client.call("prepare", "--source", "step", "--phase", "preflight",
+                       "--step", "flight_reminder")["notifications"] == []
+    assert not client.call("finalize", "--id", item["id"])["finalized"]
+    transport.assert_called_once_with(**item["payload"])
+
+
+@pytest.mark.parametrize("outcome", ["not_sent", "uncertain"])
+def test_flight_reminder_cli_retry_requires_proven_not_sent(flight_reminder_cli, outcome):
+    client = flight_reminder_cli
+    item, = client.call("prepare", "--source", "step", "--phase", "preflight",
+                        "--step", "flight_reminder")["notifications"]
+    claim = client.call("claim", "--id", item["id"], "--hash", item["hash"],
+                        "--executor", "fixture-worker")
+    client.call("result", "--id", item["id"], "--execution-id", claim["execution_id"],
+                "--outcome", outcome, "--evidence", f"synthetic transport outcome: {outcome}")
+    saved = client.load()
+    assert saved.notification_deliveries[item["id"]]["status"] == outcome
+    assert not saved.is_done("preflight", "flight_reminder")
+    assert not saved.is_done("preflight", "confirm_reminders")
+    retry = client.call("claim", "--id", item["id"], "--hash", item["hash"],
+                        "--executor", "replacement-worker",
+                        expected=0 if outcome == "not_sent" else 1)
+    if outcome == "not_sent":
+        assert retry["permission_to_send"]
+        assert retry["execution_id"] != claim["execution_id"]
+        assert retry["payload"] == claim["payload"]
+    else:
+        assert not retry["permission_to_send"]
+        assert "uncertain" in retry["error"]
+        assert len(client.load().notification_deliveries[item["id"]]["attempts"]) == 1
 
 
 def test_confirm_reminders_is_attestation_hold():

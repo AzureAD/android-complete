@@ -1,0 +1,246 @@
+PROPOSAL: REPRODUCE ANY RELEASE PHASE WITHOUT WAITING OR RUNNING ITS PREFIX
+=========================================================================
+Requested by owner: 2026-10-16.
+STATUS: design proposal for generic interactive/offline/live rehearsal.
+IMPLEMENTED NOW: seven immediate offline CCD phase replays in tests\test_ccd.py,
+with the invocation recorded in repo skill guidance for Scout to run internally.
+NOT IMPLEMENTED: generic Scout rehearsal start/resume/clock/cleanup commands
+or a new persisted rehearsal manifest. No schema change is approved by this file.
+
+OWNER SCOPE CLARIFICATION: SHARED FOUNDATION FOR PHASES 0-4
+----------------------------------------------------------
+The owner explicitly requires one reusable base for preflight, ccd,
+build_verify, bug_bash and finalize. Do not implement a localization-only live
+runner and later copy it for other phases.
+The existing CCD pytest replay is evidence/example coverage, NOT the generic
+runtime foundation. Reuse its scenarios when developing the shared runner.
+Phases 2-4 are first-class architectural requirements even though their
+field-level audits and actual rehearsal provider profiles are not complete.
+Do not present an unimplemented profile or a placeholder as passing coverage.
+
+ONE CORE, PHASE PROFILES AND PROVIDER ADAPTERS
+---------------------------------------------
+Shared core owns:
+  target resolution against compiled workflow (phase or individual step);
+  isolated run lifecycle and revision-bound scenario identity;
+  prerequisite closure/materialization with validated producer data;
+  scheduling-clock versus real receipt/ownership-clock boundaries;
+  bounded execution of ONLY selected target scope;
+  existing checked actions, human gates, polling and notification protocols;
+  pause/resume/replay and interrupted-effect reconciliation;
+  exact input/output state deltas and provider evidence reporting;
+  test-owned artifact receipt tracking and reviewed cleanup.
+Phase profiles own:
+  required source/evidence contracts, checkpoint fixtures or captured IDs;
+  named scenarios and local scheduling milestones;
+  expected provider operations/output invariants and cleanup capabilities.
+Provider adapters own:
+  fake, real-read or controlled-live implementations of the SAME ports;
+  reviewed target translation/allowlists and actual receipt interpretation.
+Scout owns:
+  human-facing selection, decision prompts and progress, invoking this common
+  core internally. It does not hand-edit state to implement phase-specific flow.
+
+Core must not contain a growing if-phase==ccd/bug_bash/... execution switch.
+Phase-specific knowledge belongs in registered profiles/adapters, not copied
+entry/clock/receipt/cleanup code. Reuse existing engine capabilities rather than
+duplicating their state machine. Do not add one scheduler/ledger per phase.
+
+PHASE SUPPORT MATRIX (DESIGN REQUIREMENTS, NOT LIVE COVERAGE CLAIMS)
+------------------------------------------------------------------
+0 / preflight:
+  Entry: readiness fixture, owner and CCD-7 clock.
+  Adapters: changelog, CG, scheduled builds, owned OneAuth probe, notifications.
+  Scenarios: missing access/evidence, clean checks, parallel block/recovery,
+  sent-before-finalize and explicit feature/vitals attestations.
+
+1 / ccd:
+  Entry: completed preflight fixture plus CCD time, not executed preflight.
+  Adapters: email/Teams, localization queue/readback, logs/PR observations.
+  Scenarios: the seven implemented offline replays, ported to shared profiles
+  without keeping a second CCD-only implementation of the runtime.
+
+2 / build_verify:
+  Entry: validated completed CCD outputs and exact checker/orchestrator/RC/APK/
+  test-build identities, synthetic or reviewed captured provider observations.
+  Adapters: build/timeline/test results, Kusto, report publication/notification.
+  Scenarios: running/failed/partial/new RC, missing telemetry, report receipt
+  recovery and explicit RC decision. Never replace missing producer data with
+  a blanket completion of all earlier phases.
+
+3 / bug_bash:
+  Entry: validated selected RC/test evidence and required prior decision facts.
+  Adapters: test plans/suites/points/Testers, roster/availability, invite/chat,
+  notifications and live progress, with test-owned targets for writes.
+  Scenarios: partial creation, uncertain writes, result fill, distribution,
+  exact chat binding, triage, progress and explicit team sign-offs.
+  Captured prerequisite resources are read-only and never cleanup targets.
+
+4 / finalize:
+  Entry: validated Bug Bash completion, source pipeline/run/gate identities,
+  versions and evidence needed by publication/integration work.
+  Adapters: real or fake approval readback, Git/PR operations, Maven/GitHub
+  evidence and final communications.
+  Scenarios: gate refusal/approval, uncertain submission recovery, partial
+  publication, PR creation and sent-before-finalize.
+  A test gate decision is never submitted as a fabricated production approval;
+  actual publication cannot be made harmless merely by setting a dummy value.
+
+Every phase supports whole-phase and individual-step targeting through the same
+interface; the fixture describes dependency/data scope, not a command that runs
+the prefix. Clock steps and scenarios compose without a new runner implementation.
+
+PROBLEM
+--------
+Moving the shared CCD to tomorrow is slow and changes scheduling/source inputs
+just to reach a phase. Replaying every predecessor also mixes the target defect
+with unrelated access problems, messages, pipelines, gates and work.
+The existing sim is not a complete solution:
+  - defaults to the canonical real runs-root, even for mocked data;
+  - mock mode can success-shortcut unspecified steps in the TARGET phase;
+  - only three checked-in scenarios, all Phase 2, with stale traversal assertions;
+  - sim as_of is a scheduling date, not persisted across ordinary follow-up calls;
+  - generic gate/write/notification bypasses are deliberately refused;
+  - completed prefix rows alone do not supply real plan/build/PR/result evidence.
+Do not recommend sim run + next as if it already implements the design below.
+
+RECOMMENDED USER EXPERIENCE (SCOUT, NOT RAW ENGINE MECHANICS)
+------------------------------------------------------------
+Owner: "Rehearse Phase 1 now, no strings."
+Scout: creates isolated rehearsal, seeds its exact prerequisites, opens Phase 1
+at CCD 09:00, reports real target inputs/outputs and executes the target via
+normal handlers and lifecycle protocols. No earlier step is run.
+Owner: "Jump to noon." / "Continue." / "Replay with a PR that misses cutoff."
+Scout: advances only this rehearsal's logical clock or starts a fresh instance;
+it never moves the shared CCD pipeline variable.
+Owner: "Rehearse only localization with a real test pipeline."
+Scout: previews exact test targets/branch/variables/recipients, obtains required
+authorization, runs that step, and records actual IDs for review and cleanup.
+Owner: "Clean up this rehearsal."
+Scout: previews ONLY recorded test-owned artifacts for reviewed cleanup; it
+never guesses ownership from a name or deletes pre-existing resources.
+
+FOUR SEPARATE INPUTS
+--------------------
+1. Target: phase plus optional step. Examples ccd or ccd.localization.
+2. Entry checkpoint: reviewed, version-bound prerequisite facts and source
+   identities. Synthetic and real captured evidence must be clearly labelled.
+3. Logical clock: CCD-7, CCD 09:00, CCD noon, CCD+1 etc., with owner timezone.
+4. Provider profile: offline fake, real read-only evidence, or controlled live.
+Do not conflate mocked completion, provider simulation, seeded dependencies,
+date scheduling or authorization to perform external writes.
+
+REUSABLE BUILDING BLOCK
+------------------------
+Each phase profile specifies:
+  - actual workflow phase/step key and allowed target scope;
+  - minimum prerequisite completion facts AND required data contracts;
+  - deterministic producer-output fixtures or reviewed captured-source IDs;
+  - logical starting instant and named clock checkpoints;
+  - provider ports plus explicit target mappings;
+  - expected before/after state paths and provider artifacts;
+  - replay/recovery and cleanup recipe.
+Use the existing workflow compiler, handler catalog, immutable StepContext,
+state locks, checked write reviews, ownership, notifications and projections.
+Do not create a second release state machine or hand-patch lifecycle booleans.
+Synthetic predecessor approvals are fixture facts, never real external gate
+approvals. Never send them to a provider or present them as human decisions.
+For a single target step, seed only its dependency closure; independent parallel
+siblings must not execute merely because the normal phase would drain them.
+If a phase needs real RC/build/plan evidence, validate those fixtures against
+the current producing contract. Missing evidence is a setup error, not success.
+
+ISOLATION AND REPEATABILITY
+---------------------------
+Create unique rehearsal roots separate from canonical .release-runs and from
+each other. Same production ReleaseState schema can live there; no new root
+fields are necessary merely to locate a rehearsal.
+PROPOSED separate test-run metadata (requires implementation review):
+  identity, target, scenario/profile version and runtime revision,
+  logical clock, source bindings, provider profile and target allowlist,
+  created artifact receipts/ownership and cleanup disposition.
+This metadata describes the rehearsal, not a second mutable copy of release
+facts. Resolve the control directory/provider/version semantics before coding.
+Reset/replay creates a new isolated instance; resume retains uncertain effects
+and original receipts. Never erase ownership to force a fresh create.
+Do not create real recurring Scout automations by default; manual replay drives
+the same steps, with derived automation obligations visible for optional tests.
+
+CLOCK DESIGN: ACCELERATE SCHEDULING, NOT PROVIDER HISTORY
+-------------------------------------------------------
+Offline: one injected timezone-aware clock across scheduling, polls and fake
+provider observations. Advance immediately; no sleep or OS clock change.
+Controlled live: logical release scheduling/deadlines may move, but provider
+queue times, ownership timestamps, lock/recovery identity and actual receipts
+must use real UTC. A synthetic deadline must not make a real receipt impossible.
+Current notification claim/result/finalize intentionally reject --as-of, and
+using --as-of on a preview does NOT grant live send permission.
+The live design therefore needs an explicit rehearsal execution boundary:
+  - valid isolated rehearsal identity and reviewed target/provider profile;
+  - separate scheduling-clock port from trusted ownership/receipt clock;
+  - recheck profile/target/hash at every external write;
+  - keep normal execution fencing/receipts/human gates;
+  - no global force-ready switch or production clock-policy weakening.
+This is a design change, not permission to feed an arbitrary simulated date
+into today's production claim path. Review it before implementing.
+
+PROVIDER MODES
+---------------
+Offline (implemented CCD replay uses this):
+  Real handlers/CLI/state; deterministic fake provider boundary; network/CLI
+  guard rejects accidental real requests. Covers success, partial results,
+  timeout, omission, changed evidence, interruption and replay.
+Real-read:
+  Reviewed exact historical build/PR/result IDs, provider reads allowed,
+  all writes remain fake. Proves actual evidence interpretation more closely.
+Controlled live:
+  Exact approved test pipeline definitions, scratch branches/repositories,
+  personal/test recipient chats and designated report folders.
+  Dummy values alone do not make a production pipeline harmless. Inspect every
+  side effect (PRs, releases, notifications, tags, artifacts) before queuing.
+  No production DL fallback, unexpected pipeline or unlisted write target.
+  Keep normal provider result/error handling, checked launch and exact receipts.
+  Real pipelines still take their real execution time; only scheduling waits
+  and predecessor execution disappear.
+Do not disable createPR merely to get a pass: the production localization
+contract expects createPR=true; exercise that against a scratch target, or
+honestly test the deliberate misconfiguration block.
+
+ARTIFACTS AND CLEANUP
+---------------------
+Before a live write, checkpoint intent; after it, retain actual provider IDs.
+Tag/name test artifacts where supported, without claiming naming proves ownership.
+Keep creation receipt, target, execution ID and cleanup eligibility.
+Unknown write outcome needs reconciliation; no cleanup by fuzzy name search.
+Some artifacts are not deletable or cannot be undone (delivered messages,
+retained audit records, pipeline runs under retention policies). State that
+before execution and mark cleanup unavailable/retained, not silently "clean".
+Preview removals with exact IDs; clean only artifacts created by this rehearsal,
+never captured/pre-existing prerequisite resources. Do not delete uncertain
+evidence or active work needed for recovery.
+
+INCREMENTAL DELIVERY PLAN
+--------------------------
+1. DONE for CCD: repeatable offline scenario cases with logical time and actual
+   target lifecycle, seeded prefix, fake adapters, byte/state/receipt assertions.
+   Exact command: see docs\ccd-contracts.txt.
+2. Implement the common core/profile contract for phase and step targets,
+   scoped execution, isolated persistent roots, clock advance, resume/reset and
+   fixture validation. Prove generic lifecycle/entry behavior against all five
+   configured Phase 0-4 targets before calling the base reusable. CCD is the
+   first complete adapter profile, not a hard-coded core or one-off deliverable.
+   Complete each remaining phase's real data/adapters alongside its audit.
+3. Real-read captured evidence profile: exact IDs, freshness/identity checks,
+   no writes. Reuse the same runner, do not add a parallel simulation engine.
+4. Controlled-live execution boundary and artifact/cleanup receipts, after
+   agreeing exact targets and proposed metadata/clock semantics.
+Acceptance:
+  Open every Phase 0-4 target through the SAME core/profile API without
+  modifying the CCD pipeline variable; missing profile/evidence fails explicitly;
+  no prefix provider calls; no automatic target success mocks;
+  execute normal phase/step methods and real receipt protocol;
+  failure/restart resumes the owned attempt without duplicate external writes;
+  same scenario repeatable under fixed clock; profile drift fails explicitly;
+  contract/lifecycle coverage spans all five phase kinds, including parallel,
+  sequential, external gate, transactional, idempotent and human-action cases;
+  adding a scenario/profile needs no core execution, clock or cleanup rewrite.

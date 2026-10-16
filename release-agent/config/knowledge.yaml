@@ -349,11 +349,12 @@ preflight.lockdown:
     advisories don't block; a Production overlap holds the step so the owner can
     shift the CCD past it.
   where:
-    - "CCOA periods page: the change-manager site — 'Upcoming CCOA periods' and the current-year 'Past NoFly Zones' table."
+    - "CCOA periods page: the change-manager site — 'Upcoming CCOA periods' and 'Past NoFly Zones' tables for every calendar year covered by CCD-7..CCD+14."
   how: >
     Scout scrapes the page (AAD SSO), the engine decides overlap deterministically.
     On an overlap it names the clashing lockdown(s); shift the CCD with set-ccd if
-    you want to proceed. On no overlap it passes.
+    you want to proceed. On no overlap it passes. Missing or malformed period
+    evidence must be corrected and checked again, never treated as no overlap.
   links:
     - name: "CCOA periods (change-manager)"
       url: "https://prod.change-manager.msidentity.com/ccoa-periods"
@@ -369,7 +370,7 @@ preflight.breaking:
     consumers must handle — and drafts the notification comms. Read-only.
   where:
     - "Source: the common-for-android changelog.txt (dev branch), 'vNext' section."
-  how: "Review any detected [MAJOR] entries and send the drafted comms to the OneAuth team. No breaking changes → nothing to do."
+  how: "Review any detected [MAJOR] entries and send the drafted comms to the OneAuth team. A valid vNext section with no breaking entries needs no comms; missing, empty or unreadable changelog evidence holds instead of proving no changes."
   links:
     - name: "common-for-android changelog"
       url: "https://raw.githubusercontent.com/AzureAD/microsoft-authentication-library-common-for-android/dev/changelog.txt"
@@ -401,7 +402,9 @@ preflight.cg:
     approving manager and why (audited), e.g.
     `skip --release <id> --phase preflight --step cg --reason "High CG alert X — ship
     as-is approved by <manager alias> on <date>; fix tracked in <work item>"`.
-    Never override on your own authority.
+    Never override on your own authority. Missing or unknown alert states/severities,
+    malformed responses and explicitly incomplete collections hold for corrected
+    evidence; they are not clean alert reports.
   faqs:
     - q: "Who fixes the alert / creates the PR?"
       a: "The release engineer (release owner). Remediating CG alerts — including authoring and landing the fix PR — is a release-owner responsibility, not the component owner's."
@@ -419,8 +422,8 @@ preflight.oneauth_access:
     A later phase pushes a PR to the OneAuth repo (office.visualstudio.com/OneAuth/_git/OneAuth),
     whose branch policy requires branches named 'user/<alias>/<branch-name>'. This step proves you
     can do that NOW by actually creating a throwaway 'user/<alias>/scout-oneauth-access-check'
-    branch off master and immediately deleting it. If the create succeeds you have write access and
-    the step passes; if it's rejected (no permission) the step BLOCKS so the missing access is
+    branch off the exact master ref and immediately deleting it. Only acknowledged creation
+    AND cleanup let the step pass; if either is rejected or uncertain the step BLOCKS so the missing access is
     caught at pre-flight rather than when the release needs to open its PR.
   who: >
     The RELEASE ENGINEER (release owner) needs OneAuth R/W. If you don't have it, request the
@@ -431,12 +434,13 @@ preflight.oneauth_access:
     branch via the Git refs API. If BLOCKED: request 'R/W (repo) external contributors' via the
     myaccess package (link below), wait for approval, then RERUN this step to re-check. Access
     grants can take time to propagate; re-evaluate once you can see the repo in the browser.
-    Self-cleaning and idempotent — the probe branch never lingers.
+    Cleanup is checked, not assumed. A failed cleanup or existing probe with a
+    different commit requires owner review; do not blindly delete unknown content.
   faqs:
     - q: "Why create a branch instead of just checking a permission?"
       a: "Creating the exact 'user/<alias>/…' branch the policy requires is the only reliable proof — a permissions read can lie about effective access. The probe branch is deleted immediately."
     - q: "It blocked — what do I do?"
-      a: "Request OneAuth R/W via the access package, then rerun this step once the grant lands. The release cannot push its OneAuth PR without it, so this must be resolved before proceeding."
+      a: "Read the exact error first. For denied access, request OneAuth R/W and rerun once granted. A cleanup failure or existing probe with unverified content needs owner review before retry; it is not proof that create permission is missing."
   links:
     - name: "OneAuth repo"
       url: "https://office.visualstudio.com/OneAuth/_git/OneAuth"
@@ -472,7 +476,8 @@ preflight.cron:
     proves it's actually firing by confirming a recent schedule-reason run in its
     build history. Live run freshness always uses the trusted current UTC clock,
     not a simulated --as-of release date. Blocks if there's no recent scheduled
-    run or it's stale.
+    run or it's stale. The configured two-day limit uses actual elapsed time;
+    missing, malformed or future queue timestamps cannot prove freshness.
   how: "If blocked, investigate the pipeline's schedule (it may be disabled/broken), fix it, and rerun the step — or skip to override."
 
 # =============================== Phase 1 · ccd ===============================
@@ -483,7 +488,8 @@ ccd.final_reminder:
     The CCD-day final code-complete reminder email — the 'update' variant of the
     same notice template Phase 0 sends a week earlier at CCD-7. Tells everyone code
     complete is today and that any check-ins after it need the hotfix cherry-pick
-    process + EM approval.
+    process + EM approval. Catch-up sends show the actual CCD instead of
+    incorrectly calling a past date Today; the initial variant uses the date too.
   who: >
     Scout sends it automatically (a scout step) on the morning of CCD, driven by the
     per-release CCD-morning automation. The release owner owns the content/recipients.
@@ -502,7 +508,8 @@ ccd.pr_reminder:
     merged today before the release branch is cut automatically at 11:00 PM; if a
     required PR won't make it, request a CCD delay or a post-CCD cherry-pick; and
     merge any PR with user-facing strings before the localization pipeline runs at
-    noon.
+    noon. Every deadline is explicitly dated to CCD so delayed delivery does not
+    silently move the branch-cut or localization cutoff to the delivery day.
   who: >
     Scout posts it automatically (a scout step) on CCD morning. CCD-delay and
     cherry-pick requests must be approved by Moumita Ghosh (moghosh@microsoft.com).

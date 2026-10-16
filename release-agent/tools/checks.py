@@ -101,9 +101,8 @@ def oneauth_write_access(
 ):
     """Probe write access to the OneAuth repo by CREATING (then deleting) a
     'user/<alias>/scout-oneauth-access-check' branch off master. Returns (granted, detail):
-    granted is True only when the branch create succeeds (it is then cleaned up); on any
-    create rejection / permission error it is False. Self-cleaning and idempotent — a stale
-    probe branch from a crashed run is removed before the create."""
+    granted is True only after acknowledged creation AND cleanup. A stale exact
+    probe ref is removable only if it still matches the current master tip."""
     from tools import pipelines as P
     base = f"{org}/{project}/_apis/git/repositories/{repo}"
     ref = f"refs/heads/user/{alias}/scout-oneauth-access-check"
@@ -112,27 +111,45 @@ def oneauth_write_access(
     ok, refs, d = P._ado_rest_get(f"{base}/refs?filter=heads/master&api-version=7.1", timeout)
     if not ok:
         return (False, f"could not reach the OneAuth repo ({d})")
-    vals = (refs or {}).get("value") or []
-    tip = vals[0].get("objectId") if vals else None
-    if not tip:
+    vals = refs.get("value") if isinstance(refs, dict) else None
+    if not isinstance(vals, list) or any(
+            not isinstance(row, dict) or not isinstance(row.get("name"), str) for row in vals):
+        return (False, "invalid OneAuth master-ref response")
+    masters = [row for row in vals if row.get("name") == "refs/heads/master"]
+    tip = masters[0].get("objectId") if len(masters) == 1 else None
+    if not isinstance(tip, str) or not tip:
         return (False, "could not resolve the OneAuth master branch tip")
 
     def _update(old, new):
-        return P._ado_rest_send(f"{base}/refs?api-version=7.1", "POST",
-                                [{"name": ref, "oldObjectId": old, "newObjectId": new}], timeout)
+        ok, response, detail = P._ado_rest_send(
+            f"{base}/refs?api-version=7.1", "POST",
+            [{"name": ref, "oldObjectId": old, "newObjectId": new}], timeout)
+        rows = response.get("value") if isinstance(response, dict) else response
+        entry = rows[0] if isinstance(rows, list) and len(rows) == 1 and isinstance(rows[0], dict) else {}
+        if ok and entry.get("name") == ref and entry.get("success") is True:
+            return True, ""
+        return False, entry.get("customMessage") or detail or "ref update was not confirmed"
 
-    # remove a stale probe branch left by a crashed prior run (best-effort)
-    okx, ex, _dx = P._ado_rest_get(f"{base}/refs?filter={ref_filter}&api-version=7.1", timeout)
-    if okx and (ex or {}).get("value"):
-        _update((ex["value"][0] or {}).get("objectId"), _ZERO_SHA)
+    okx, ex, dx = P._ado_rest_get(f"{base}/refs?filter={ref_filter}&api-version=7.1", timeout)
+    rows = ex.get("value") if isinstance(ex, dict) else None
+    if not okx or not isinstance(rows, list) or any(
+            not isinstance(row, dict) or not isinstance(row.get("name"), str) for row in rows):
+        return False, f"could not inspect the existing probe branch ({dx})"
+    existing = [row for row in rows if row.get("name") == ref]
+    if len(existing) > 1 or existing and existing[0].get("objectId") != tip:
+        return False, f"existing probe branch '{ref}' has unverified content; owner review required"
+    if existing:
+        removed, detail = _update(tip, _ZERO_SHA)
+        if not removed:
+            return False, f"could not clean the existing probe branch ({detail})"
 
-    okc, res, dc = _update(_ZERO_SHA, tip)
-    entry = ((res or {}).get("value") or [{}])[0] if isinstance(res, dict) else {}
-    if okc and entry.get("success"):
-        _update(tip, _ZERO_SHA)                # cleanup
-        return (True, f"created and deleted '{ref}'")
-    why = entry.get("customMessage") or dc or "branch create rejected"
-    return (False, f"cannot create a branch in OneAuth ({why})")
+    created, detail = _update(_ZERO_SHA, tip)
+    if not created:
+        return False, f"cannot create a branch in OneAuth ({detail})"
+    removed, detail = _update(tip, _ZERO_SHA)
+    if not removed:
+        return False, f"probe branch '{ref}' was created but cleanup failed ({detail}); owner review required"
+    return True, f"created and deleted '{ref}'"
 
 
 # ---- CCD pipeline variables (the source of record for Code Complete Date) ----
@@ -371,7 +388,11 @@ def fetch_cg_alerts(resource: str, host: str, project_id: str, repo_id: int,
         data = _json.loads(out.stdout or "{}")
     except ValueError:
         return (False, [], "could not parse az output")
-    return (True, data.get("value", []) or [], "ok")
+    if not isinstance(data, dict) or not isinstance(data.get("value"), list):
+        return (False, [], "invalid Component Governance response: expected value array")
+    if data.get("continuationToken"):
+        return (False, [], "incomplete Component Governance response: additional pages require review")
+    return (True, data["value"], "ok")
 
 
 # ---- scheduled-pipeline verification (Calendar Checker) ---------------------
@@ -404,6 +425,8 @@ def latest_scheduled_build(org: str, project: str, def_id: int, timeout: int = 6
         builds = _json.loads(out.stdout or "[]")
     except ValueError:
         return (False, None, "could not parse az output")
+    if not isinstance(builds, list) or any(not isinstance(build, dict) for build in builds):
+        return (False, None, "invalid build history: expected an array of build objects")
     sched = [b for b in builds if b.get("reason") == "schedule"]
     if not sched:
         return (True, None, "no scheduled runs in recent history")

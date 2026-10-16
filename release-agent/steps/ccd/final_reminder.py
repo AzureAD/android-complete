@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from orchestrator.step_context import StepContext, thaw
 
 from orchestrator.outcomes import NeedsSkill, Blocked
+from orchestrator import schedule
 from steps.lib import templating as T
 from steps.lib.context import release_ctx, resolve_recipients
 
@@ -34,7 +35,7 @@ PARAMETERS = {"build": BuildParameters}
 # Step config (co-located). CCD-day "update" variant of the notice template, to the
 # real Android DL (redirect for tests via send_to). fire_at_local is the intended
 # send time on CCD day — the per-release CCD-morning automation reads it (the engine
-# itself is date-based, not clock-based).
+# also enforces the phase and local fire-time eligibility).
 CONFIG = {
     "template": "templates/early-code-complete-notice.md",
     "variant": "update",                     # CCD-day reminder ("Today")
@@ -62,13 +63,14 @@ HOTFIX_GUIDE_URL = ("https://eng.ms/docs/microsoft-security/identity/"
                     "cherry-pick-to-hotfix-guidelines")
 
 
-def _html(ctx: dict) -> str:
-    """Email-safe HTML: 'code complete is TODAY' + hotfix note + owner table."""
+def _html(ctx: dict, *, today: bool = True) -> str:
+    """Email-safe HTML with a date that stays accurate for catch-up delivery."""
+    when = "Today" if today else T.esc(ctx["ccd_long"])
     return f"""\
 <div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:#101828;line-height:1.5;max-width:680px;">
   <p>Hi everyone,</p>
   <p>This is a reminder that the Microsoft Android Authenticator app and Broker
-     libraries code complete date for the {T.esc(ctx['month'])} release is <strong>Today</strong>.</p>
+     libraries code complete date for the {T.esc(ctx['month'])} release is <strong>{when}</strong>.</p>
   <p>Any check-ins made after code complete will require following
      <a href="{HOTFIX_GUIDE_URL}" style="color:#0b5cad;">the hotfix cherry-pick guide</a>
      and EM approval.</p>
@@ -97,9 +99,14 @@ def build(context: StepContext[BuildParameters]):
     variant = context.parameters.variant
     if not context.release.ccd:
         return Blocked("no CCD set for this release")
+    ccd = schedule.parse_date(context.release.ccd)
+    if ccd is None:
+        return Blocked("invalid CCD for this release")
 
     cfg = CONFIG
     variant = variant or context.input("variant") or cfg.get("variant", "update")
+    if not isinstance(variant, str):
+        return Blocked("final reminder variant must be text")
     parsed = T.select_template(context.services.assets.template(cfg.get("template")), variant)
     if isinstance(parsed, dict) and "error" in parsed:
         return Blocked(parsed["error"])
@@ -108,7 +115,11 @@ def build(context: StepContext[BuildParameters]):
     ctx = release_ctx(context)
     subject = T.fill(subject_tpl, ctx)
     body = T.fill(body_tpl, ctx)
-    html = _html(ctx)
+    today = variant.casefold() == "update" and context.clock.now().date() == ccd
+    if not today:
+        subject = subject.replace(" (Today)", "")
+        body = body.replace("**Today**", f"**{ctx['ccd_long']}**")
+    html = _html(ctx, today=today)
 
     recipients, rnote, prefix = resolve_recipients(context, cfg.get("recipients", []))
     subject_out = f"{prefix}{subject}"

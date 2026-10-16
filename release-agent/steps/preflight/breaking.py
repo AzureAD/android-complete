@@ -10,6 +10,8 @@ from orchestrator.step_context import StepContext, thaw
 import re
 
 from orchestrator.outcomes import Done, Blocked
+from orchestrator import schedule
+from steps.lib.mockctx import MISSING
 
 ID = "breaking"
 KIND = "agent"
@@ -43,22 +45,28 @@ def parse_breaking(changelog_text: str, section: str = "vNext",
     entry is normalized: the leading bullet marker (`- ` / `* `) is stripped so
     callers can add their own bullet without doubling it.
     """
+    if not isinstance(changelog_text, str) or not changelog_text.strip():
+        raise ValueError("changelog must contain non-empty text")
     entries, in_section = [], False
     for raw in changelog_text.splitlines():
         s = raw.strip()
         if not in_section:
-            if s == section:
+            if s.casefold() == section.casefold():
                 in_section = True
             continue
         if s.startswith("Version "):
             break
         if tag in raw:
             entries.append(re.sub(r"^[-*]\s+", "", s))   # drop leading bullet marker
+    if not in_section:
+        raise ValueError(f"changelog section '{section}' was not found")
     return entries
 
 
 def _draft_breaking_comms(entries: list, context=None) -> str:
-    release = getattr(context.release, "release_id", None) or "this release"
+    release = "this release"
+    if context is not None:
+        release = schedule.target_month_label(context.release) or context.release.release_id or release
     bullets = "\n".join(f"- {e}" for e in entries)
     return (
         f"Subject: [Action] Breaking OneAuth changes in {release}\n\n"
@@ -76,8 +84,8 @@ def build(context: StepContext):
     section = cfg.get("section", "vNext")
     tag = cfg.get("breaking_tag", "[MAJOR]")
     # Injected changelog (mocks.local.yaml) → run the REAL parse/draft on your text.
-    injected = context.input("changelog")
-    if injected is not None:
+    injected = context.input("changelog", MISSING)
+    if injected is not MISSING:
         text = injected
     elif not url:
         return Blocked("breaking: no changelog_url configured")
@@ -86,7 +94,10 @@ def build(context: StepContext):
             text = context.services.assets.changelog(url)
         except Exception as e:  # noqa: BLE001 - network/parse errors -> hold for human
             return Blocked(f"breaking: could not fetch changelog ({e})")
-    entries = parse_breaking(text, section, tag)
+    try:
+        entries = parse_breaking(text, section, tag)
+    except ValueError as exc:
+        return Blocked(f"breaking: invalid changelog ({exc})")
     if not entries:
         return Done(f"No breaking ({tag}) changes in '{section}' — no OneAuth comms needed.")
     listing = "\n".join(f"  - {e}" for e in entries)
