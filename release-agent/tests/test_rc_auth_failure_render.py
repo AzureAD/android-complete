@@ -2,6 +2,9 @@
 from tests._context import context as _context
 from copy import deepcopy
 from html import unescape
+import re
+
+import pytest
 
 from orchestrator.state import ReleaseState
 from steps.build_verify import rc_report as R, _rc_report_rendering as H
@@ -118,3 +121,170 @@ def test_html_has_product_specific_header_and_no_duplicate_evidence_panel():
         product_section = html.split("Authenticator ECS <span", 1)[failure["product"] == "Authenticator"]
         for link in failure["links"]:
             assert link["url"] in unescape(product_section)
+
+
+def _result_cell(html, leg):
+    return html.split(f"data-result='{leg}'", 1)[1].split("</td>", 1)[0]
+
+
+def test_header_keeps_all_three_legs_separate_without_averaging():
+    m = model({
+        E2E: [("test_100_pass", "Passed"), ("test_200_fail", "Failed")],
+        MONTHLY: [(f"monthly_{i}", "Passed" if i < 9 else "Failed") for i in range(10)],
+    }, broker_rows={PROD: [(f"test_{500+i}_broker", "Passed" if i < 3 else "Failed")
+                          for i in range(4)]})
+    before = deepcopy(m)
+    gate, auth = R.rc_ui_gate(m), R.auth_report_gate(m)
+    html = H.rc_email_html(m, {}, gate, auth, R.rc_next_action(m))
+    ecs, local, auth_cell = (_result_cell(html, leg) for leg in ("mrwp-ecs", "mrwp-local", "auth-ecs"))
+    assert "MRWP ECS" in ecs and ">75.0%</div>" in ecs and "1 failed / 4" in ecs
+    assert "MRWP Local" in local and ">100.0%</div>" in local and "0 failed / 1" in local
+    assert "Authenticator ECS" in auth_cell and ">50.0%</div>" in auth_cell
+    assert "Worst suite: UIAutomator E2E Tests" in auth_cell
+    assert "Checker" not in ecs + local + auth_cell
+    assert "MRWP UI:" not in html
+    subject = H.rc_email_subject(m, gate, auth)
+    assert "MRWP ECS: 75.0% pass" in subject
+    assert "MRWP Local: 100.0% pass" in subject
+    assert "Auth ECS: HOLD (50.0% lowest-suite pass)" in subject
+    plain = H.rc_email_plain(m, {}, gate, auth, R.rc_next_action(m))
+    summary = plain.split("RESULTS (shown separately)", 1)[1].split("NEXT:", 1)[0]
+    assert "MRWP ECS: 75.0% pass; 25.0% fail" in summary
+    assert "MRWP Local: 100.0% pass; 0.0% fail" in summary
+    assert "Authenticator ECS: HOLD" in summary
+    assert m == before
+    assert (R.rc_ui_gate(m), R.auth_report_gate(m)) == (gate, auth)
+
+
+def test_auth_card_has_a_success_headline_and_both_suite_percentages():
+    m = model({
+        E2E: [("test_100_pass", "Passed"), ("test_200_fail", "Failed")],
+        MONTHLY: [(f"monthly_{i}", "Passed" if i < 9 else "Failed") for i in range(10)],
+    })
+    card = auth_section(m)
+    assert "data-auth-success-rate" in card
+    assert ">50.0%</span>" in card
+    assert "worst gated suite: UIAutomator E2E Tests" in card
+    assert "50.00% pass &middot; 50.0% fail" in card
+    assert "90.00% pass &middot; 10.0% fail" in card
+    assert "not combined with MRWP or averaged across suites" in card
+    assert "1/2" in card and "9/10" in card
+
+
+@pytest.mark.parametrize("damage", ["missing", "zero", "invalid", "stale"])
+def test_missing_provider_percent_is_unavailable_not_a_zero_failure_pass(damage):
+    m = model({E2E: [("test_100_pass", "Passed")], MONTHLY: [("monthly_pass", "Passed")]})
+    tests = m["mrwp"]["ECS"]["tests"]
+    if damage == "missing":
+        tests["categories"].pop("ui")
+    elif damage == "zero":
+        tests["categories"]["ui"] = {"total": 0, "passed": 0, "failed": 0}
+    elif damage == "invalid":
+        tests["categories"]["ui"]["passed"] = True
+    else:
+        tests["count_basis"] = "result_entries"
+    gate, auth = R.rc_ui_gate(m), R.auth_report_gate(m)
+    html = H.rc_email_html(m, {}, gate, auth, R.rc_next_action(m))
+    cell = _result_cell(html, "mrwp-ecs")
+    assert "unavailable" in cell and ">0.0%" not in cell
+    assert "MRWP Local: 100.0% pass" in html
+    assert "MRWP ECS: evidence unavailable" in H.rc_email_subject(m, gate, auth)
+
+
+@pytest.mark.parametrize("damage", ["missing", "empty", "failed_build"])
+def test_auth_percent_is_unavailable_when_a_required_suite_has_no_executed_results(damage):
+    m = model({E2E: [("test_100_pass", "Passed")], MONTHLY: [("monthly_pass", "Passed")]})
+    suite = m["auth"]["test"]["suites"][MONTHLY]
+    if damage == "missing":
+        suite["present"] = False
+    elif damage == "empty":
+        suite.update(passed=0, failed=0, total=0)
+    else:
+        m["auth"]["build"]["result"] = "failed"
+        m["auth"]["test"] = None
+    gate, auth = R.rc_ui_gate(m), R.auth_report_gate(m)
+    html = H.rc_email_html(m, {}, gate, auth, R.rc_next_action(m))
+    cell = _result_cell(html, "auth-ecs")
+    assert "unavailable" in cell
+    assert ">0.0%" not in cell
+    assert "UI-automation success rate unavailable" in auth_section(m)
+
+
+def test_all_passing_auth_has_a_green_full_success_headline():
+    m = model({E2E: [("test_100_pass", "Passed")], MONTHLY: [("monthly_pass", "Passed")]})
+    html = H.rc_email_html(m, {}, R.rc_ui_gate(m), R.auth_report_gate(m), R.rc_next_action(m))
+    cell = _result_cell(html, "auth-ecs")
+    assert "color:#067647;'>100.0%" in cell
+    card = auth_section(m)
+    assert "color:#067647;'>100.0%" in card
+    assert card.count("100.00% pass &middot; 0.0% fail") == 2
+
+
+def test_absent_auth_still_has_an_explicit_unavailable_third_result():
+    m = model({E2E: [("test_100_pass", "Passed")], MONTHLY: [("monthly_pass", "Passed")]})
+    m.pop("auth")
+    gate, auth = R.rc_ui_gate(m), R.auth_report_gate(m)
+    html = H.rc_email_html(m, {}, gate, auth, R.rc_next_action(m))
+    assert "unavailable" in _result_cell(html, "auth-ecs")
+    assert "Auth ECS: unavailable" in H.rc_email_subject(m, gate, auth)
+    assert "Authenticator ECS: unavailable" in H.rc_email_plain(
+        m, {}, gate, auth, R.rc_next_action(m))
+
+
+def test_report_metadata_has_three_ordered_rows_with_links_on_the_correct_row():
+    m = model({E2E: [("test_100_pass", "Passed")], MONTHLY: [("monthly_pass", "Passed")]})
+    m["checker"]["run_id"] = "101"
+    m["orchestrator"].update(
+        run_id="102", parked=True,
+        versions={"Common": "25.0.0", "Msal": "8.6.0", "Broker": "16.7.0"})
+    gate, auth = R.rc_ui_gate(m), R.auth_report_gate(m)
+    html = H.rc_email_html(m, {}, gate, auth, R.rc_next_action(m))
+    metadata = html.split("data-report-metadata", 1)[1].split("</table>", 1)[0]
+    rows = re.findall(r'<tr data-metadata="([^"]+)">(.*?)</tr>', metadata, re.DOTALL)
+    assert [key for key, _ in rows] == ["checker", "orchestrator", "versions"]
+    checker, orchestrator, versions = [text for _, text in rows]
+    assert "Fired" in checker and "buildId=101" in checker and "buildId=102" not in checker
+    assert "Healthy" in orchestrator and "Remove RC Tags" in orchestrator
+    assert "buildId=102" in orchestrator and "buildId=101" not in orchestrator
+    assert "Common 25.0.0, Msal 8.6.0, Broker 16.7.0" in versions and "<a " not in versions
+    plain = H.rc_email_plain(m, {}, gate, auth, R.rc_next_action(m))
+    lines = plain.split("PIPELINE HEALTH\n", 1)[1].split("\n\n", 1)[0].splitlines()
+    assert len(lines) == 3
+    assert lines[0].startswith("  - Checker:") and "buildId=101" in lines[0]
+    assert lines[1].startswith("  - Orchestrator:") and "buildId=102" in lines[1]
+    assert lines[2] == "  - Versions: Common 25.0.0, Msal 8.6.0, Broker 16.7.0"
+
+
+def test_success_headlines_and_all_mrwp_categories_use_pass_then_fail_rates():
+    m = model({
+        E2E: [(f"test_{100+i}_e2e", "Passed" if i < 22 else "Failed") for i in range(29)],
+        MONTHLY: [("monthly_pass", "Passed")],
+    })
+    counts = {
+        "unit": {"passed": 4, "failed": 1, "total": 5},
+        "instrumented": {"passed": 2, "failed": 1, "total": 3},
+        "ui": {"passed": 22, "failed": 7, "total": 29},
+    }
+    for provider in ("ECS", "Local"):
+        m["mrwp"][provider]["tests"]["categories"] = deepcopy(counts)
+    before = deepcopy(m)
+    gate, auth = R.rc_ui_gate(m), R.auth_report_gate(m)
+    html = H.rc_email_html(m, {}, gate, auth, R.rc_next_action(m))
+    for leg in ("mrwp-ecs", "mrwp-local", "auth-ecs"):
+        cell = _result_cell(html, leg)
+        assert ">75.9%</div>" in cell and "UI-automation success rate" in cell
+    assert "UI-automation failure rate" not in html
+    for provider, end in (("ECS", "MRWP Local"), ("Local", "Authenticator ECS <span")):
+        card = html.split(f">MRWP {provider}<span", 1)[1].split(end, 1)[0]
+        assert ">75.9%</span>" in card
+        for text in ("80.00% pass &middot; 20.0% fail",
+                     "66.67% pass &middot; 33.3% fail",
+                     "75.86% pass &middot; 24.1% fail"):
+            assert text in card
+    assert ">75.9%</span>" in auth_section(m)
+    plain = H.rc_email_plain(m, {}, gate, auth, R.rc_next_action(m))
+    for text in ("80.00% pass · 20.0% fail", "66.67% pass · 33.3% fail",
+                 "75.86% pass · 24.1% fail"):
+        assert text in plain
+    assert m == before
+    assert (R.rc_ui_gate(m), R.auth_report_gate(m)) == (gate, auth)

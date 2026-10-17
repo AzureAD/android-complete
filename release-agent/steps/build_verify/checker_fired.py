@@ -51,12 +51,17 @@ def build(context: StepContext):
             return Blocked(
                 f"No Code Complete Checker run triggered the release in {month} "
                 f"(no run with a succeeded '{job}' job).")
+        if not isinstance(injected, dict):
+            return Blocked("checker_fired: invalid trigger evidence — expected an object")
         return _verdict(context, injected.get("run") or {}, injected.get("result"), job)
 
     ok, runs, detail = context.services.pipelines.find_checker_runs(cfg["org"], cfg["project"], cfg["def_id"], month)
     if not ok:
         hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
         return Blocked(f"checker_fired: could not read checker runs ({detail}){hint}.")
+    if not isinstance(runs, list) or any(
+            not isinstance(run, dict) or not K.valid_id(run.get("id")) for run in runs):
+        return Blocked("checker_fired: malformed checker run collection or missing run identity")
     if not runs:
         return Blocked(
             f"Code Complete Checker (def {cfg['def_id']}) has no run in {month} — the "
@@ -70,13 +75,16 @@ def build(context: StepContext):
         if not ok2:
             read_err = detail2            # remember why a read failed
             continue
+        if not isinstance(recs, list) or any(not isinstance(row, dict) for row in recs):
+            read_err = f"malformed timeline for checker run {run['id']}"
+            continue
         rec = P.named_record(recs, job)
         if rec is not None and rec.get("result") == "succeeded":
             return _verdict(context, run, "succeeded", job)
         last = run
     # If we matched nothing AND some timeline read failed, don't misdiagnose as
     # "not triggered" — surface the read failure (with the az-login hint on auth).
-    if last is None and read_err is not None:
+    if read_err is not None:
         hint = " — run `az login`" if str(read_err).startswith("AUTH") else ""
         return Blocked(f"checker_fired: could not read checker run timelines ({read_err}){hint}.")
     ref = (f" (latest checked: run {last.get('id')} "
@@ -88,8 +96,13 @@ def build(context: StepContext):
 
 
 def _verdict(context, run, result, job):
-    bid = (run or {}).get("id")
-    when = ((run or {}).get("queueTime") or "")[:16]
+    if not isinstance(run, dict) or not K.valid_id(run.get("id")):
+        return Blocked("checker_fired: trigger evidence has no valid run identity")
+    bid = run["id"]
+    queued = run.get("queueTime")
+    if queued is not None and not isinstance(queued, str):
+        return Blocked("checker_fired: trigger evidence has invalid queueTime")
+    when = (queued or "")[:16]
     links = K.links_for(bid, "Code Complete Checker run")
     if result != "succeeded":
         return Blocked(

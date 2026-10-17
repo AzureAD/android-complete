@@ -1,29 +1,13 @@
-"""Step: `rc_report` — consolidate the RC data, email the report, and make the Phase-2
-go/hold decision (Phase 2, build_verify). This is a terminal Phase-2 child alongside telemetry
-verification — the verification steps CAPTURE data; this step decides quality. No separate
-human approval gate.
+"""Compose the Phase-2 report from captured evidence, without live discovery.
 
-When the explicit verification capture chain resolves, this step composes the
-Phase-2 RC report (checker → orchestrator → ECS/Local MRWP + reconciled test failures)
-from complete current-RC snapshots and emails it to the release owner. Once evidence is
-ready, the report is sent even for failures (the owner gets the dashboard of
-failures + links either way). The step's OUTCOME is then decided by TWO independent gates:
-(1) the three-tier MRWP UI gate on the combined UI-automation pass rate across both MRWP
-runs (100% clean; >= RC_UI_PASS_THRESHOLD (90%) but < 100% warn — proceed + investigate in
-parallel; < 90% hold); and (2) the Authenticator ECS gate (both Firebase suites >= 90% and
-the auth build succeeded). The release AUTO-ADVANCES into Phase 3 only when BOTH gates AND
-the independent telemetry prerequisite clear;
-if EITHER holds, the step records `attention` and BLOCKS (the release WAITS for human
-attestation).
-
-Sending email needs the WorkIQ MCP the engine can't reach, so this is a `scout`
-step: `build()` composes the email deterministically and returns a
-NeedsSkill(workiq_send_email); notification completion carries BOTH evaluated gate verdicts
-and run links. Confirmed delivery applies that exact snapshot; retries never invent a pass.
-Redirect for tests with the `send_to`
-payload knob (keeps the send real, points it at you).
+Publication and notification preserve exact source/content lineage. Quality verdicts
+are recommendations: the separate HUMAN rc_report_gate decides approve/deny after
+delivery and the independent telemetry prerequisite. The legacy email builder remains
+available for diagnostic callers, not as a replacement for that gate.
 """
 from __future__ import annotations
+
+from hashlib import sha256
 
 from orchestrator.step_context import StepContext, thaw
 
@@ -47,9 +31,7 @@ MOCKABLE = {
     },
 }
 
-# The Phase-2 quality bar: at least this % of UI-automation tests must pass for RC to
-# clear to bug bash. Below it, the rc_report step blocks for owner investigation
-# (a large UI failure usually means a real regression → fix + re-run MRWP).
+# The Phase-2 recommendation threshold; it never replaces the human approval gate.
 RC_UI_PASS_THRESHOLD = coords.gate("rc_ui_pass_pct")
 
 # The broker-libraries cherry-pick process — the exit for a REAL product bug behind the
@@ -66,6 +48,27 @@ AUTH_CHERRY_PICK_TSG = ("https://identitydivision.visualstudio.com/IdentityWiki/
 
 # Map canonical state.versions (lowercase) to the RC report's SDK display shape.
 _VMAP = {"common": "Common", "msal": "Msal", "broker": "Broker"}
+
+
+def report_source_matches(context) -> list[dict]:
+    """Bind raw captured inputs, including metadata omitted by the renderer."""
+    return [
+        {"path": ["pipeline_runs"], "hash": fingerprint(context.evidence.pipeline_runs)},
+        *[
+            {"path": [name], "hash": fingerprint(getattr(context.release, name))}
+            for name in ("release_id", "ccd", "target_month", "owner_email",
+                         "owner_name", "timezone", "versions")
+        ],
+    ]
+
+
+def report_lineage(context, html: str) -> dict:
+    matches = report_source_matches(context)
+    return {
+        "source_matches": matches,
+        "source_digest": fingerprint(matches),
+        "content_sha256": sha256(html.encode("utf-8")).hexdigest(),
+    }
 
 
 def _caps_versions(context) -> dict:
@@ -284,8 +287,8 @@ def rc_ui_gate(model) -> dict:
                            f"so bug bash is not blocked)." + _ui_failing_suites_summary(model))}
     return {**base, "pass_pct": pass_pct, "verdict": "attention", "blocking": True,
             "detail": (
-                f"{head} \u2014 BELOW the {thr:.0f}% gate. The RC report was emailed; the "
-                f"autonomous tick then halted here (it will NOT auto-advance while blocked). "
+                f"{head} \u2014 BELOW the {thr:.0f}% recommendation threshold. "
+                f"Publish and deliver this report for the separate HUMAN rc_report_gate; "
                 f"First decide whether this is automation flakiness or a real product bug, "
                 f"then take ONE of three exits:\n"
                 f"1) Re-trigger (flaky) \u2014 if these are flaky suites, re-run the failed RC "
@@ -296,10 +299,10 @@ def rc_ui_gate(model) -> dict:
                 f"it via the broker cherry-pick process ({CHERRY_PICK_TSG}); the orchestrator "
                 f"then triggers a fresh RC. Signal `rc-retriggered --release <id>` so Scout "
                 f"tracks the newest RC to completion.\n"
-                f"3) Override (LAST RESORT) \u2014 `skip --release <id> --phase build_verify "
-                f"--step rc_report --reason \"<why>\"`. Only after discussing with the team: "
-                f"proceeding to Bug Bash with this many UI failures is a team decision, not a "
-                f"default. The reason is recorded for audit."
+                f"3) Owner decision \u2014 after team discussion, use `approve --release <id> "
+                f"--comment \"<why>\"` at rc_report_gate to accept the risk, or "
+                f"`deny --release <id> --comment \"<why>\"` to hold. Telemetry verification "
+                f"is also required before approval; never skip the approval gate."
                 + _ui_failing_suites_summary(model))}
 
 
@@ -337,8 +340,9 @@ def _mrwp_next_steps(model) -> str:
             "the newest RC and re-applies the gate.",
             "If this is a product bug, patch/cherry-pick through the broker release process; "
             f"after the orchestrator creates a fresh RC, run `rc-retriggered --release {release}`.",
-            "Override only as a last resort after team discussion: "
-            "`skip --release <id> --phase build_verify --step rc_report_gate --reason \"...\"`.",
+            "After reviewing the delivered report and telemetry verification, the owner "
+            "must approve or deny the separate HUMAN rc_report_gate with an audited comment. "
+            "Approval can accept known quality risks; never skip the gate.",
         ],
     }
 
@@ -390,8 +394,9 @@ def _auth_next_steps(model) -> str:
             f"cherry-pick instructions ({AUTH_CHERRY_PICK_TSG}). After the cherry-pick "
             "produces a new Authenticator ECS build + UI-test run, use the same "
             "reopen/next/report commands above to re-evaluate.",
-            "Override only as a last resort after team discussion: "
-            "`skip --release <id> --phase build_verify --step rc_report_gate --reason \"...\"`.",
+            "After reviewing the delivered report and telemetry verification, the owner "
+            "must approve or deny the separate HUMAN rc_report_gate with an audited comment. "
+            "Approval can accept known quality risks; never skip the gate.",
         ],
     }
 
@@ -417,7 +422,9 @@ def rc_next_action_detail(model):
             actions.append(_auth_next_steps(model))
         return {
             "headline": f"STOP / HOLD — {' and '.join(holding)} did not clear the quality gate.",
-            "intro": "Do not proceed to Bug Bash. No automatic advance.",
+            "intro": "Recommend holding for investigation. No automatic advance; the owner "
+                     "must approve or deny the separate HUMAN rc_report_gate after report "
+                     "delivery and telemetry verification.",
             "sections": actions,
         }
     if gate["verdict"] == "warn":
@@ -425,14 +432,16 @@ def rc_next_action_detail(model):
             "headline": "CONTINUE WITH WARNINGS — both quality gates clear.",
             "sections": [{"title": "Release-owner follow-up", "items": [
                 "Proceed to Bug Bash after recording this report and completing all prerequisites.",
-                "Investigate remaining MRWP UI failures in parallel. No separate RC approval is needed.",
+                "Investigate remaining MRWP UI failures in parallel. The separate HUMAN "
+                "rc_report_gate still requires approve/deny after report delivery and telemetry verification.",
             ]}],
         }
     return {
         "headline": "PROCEED — both quality gates are clean.",
         "sections": [{"title": "Release-owner follow-up", "items": [
             "Proceed to Bug Bash after recording this report and completing all prerequisites.",
-            "No separate RC approval is needed.",
+            "The separate HUMAN rc_report_gate requires approve/deny after report delivery "
+            "and telemetry verification; clean quality recommendations do not grant approval.",
         ]}],
     }
 
@@ -464,10 +473,7 @@ def rc_email(context):
 
 
 def build(context: StepContext):
-    """Compose the RC verification email → NeedsSkill(workiq_send_email). Blocks if the
-    owner email is unknown (nowhere to send) — set it with `set-owner`. The email is
-    sent only with complete evidence; the gate verdict (recorded by the follow-up) then
-    decides whether the step passes or blocks."""
+    """Legacy diagnostic email; the configured flow uses publish, notify, HUMAN gate."""
     to = context.release.owner_email
     if not to:
         return Blocked(
@@ -510,13 +516,7 @@ def build(context: StepContext):
         outbound=True,
         notification={
             "checkpoint": "rc:" + ":".join(str(link["url"]) for link in rc_run_links(model)),
-            "state_matches": [
-                {"path": ["pipeline_runs", key], "hash": fingerprint(context.evidence.pipeline_runs[key])}
-                for key in ("checker", "orchestrator")
-            ] + [
-                {"path": ["pipeline_runs", "rcs", -1], "hash": fingerprint(latest_rc(context))},
-                {"path": ["versions"], "hash": fingerprint(context.release.versions)},
-            ],
+            "state_matches": report_source_matches(context),
             "completion": {"status": "attention" if gate["blocking"] or auth["blocking"] else "pass",
                            "note": note, "links": rc_run_links(model)},
         },

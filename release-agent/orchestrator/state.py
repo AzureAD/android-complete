@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Callable, ClassVar, Optional
 
 from orchestrator.effects import execution_input_is_valid
+from orchestrator import evidence_store
 
 
 SCHEMA_VERSION = 3
@@ -85,7 +86,8 @@ class ReleaseState:
     # Phase-2 release-pipeline runs — the RECORD of what verification resolved, reused by
     # the RC report + gate (no re-discovery). Because a re-triggered 'Trigger RC Testing'
     # stage spawns NEW MRWP runs, these are re-resolved (newest wins) — not a fixed cache.
-    # Nested schema:
+    # Logical in-memory schema (save externalizes ECS/Local/Auth detail to immutable
+    # evidence files; load verifies/hydrates it without changing handler inputs):
     #   { checker:      {run_id, when, resolved_at},
     #     orchestrator: {run_id, versions:{Common,Msal,Broker}, parked, resolved_at},
     #     final:        {orchestrator_run_id, mrwp_run_id, resolved_at},
@@ -244,15 +246,22 @@ class ReleaseState:
             raise ValueError("Invalid resource registry; owner recovery required")
         if not isinstance(obj.pipeline_runs, dict) or not isinstance(obj.versions, dict):
             raise ValueError("Invalid release evidence maps")
+        obj.pipeline_runs = evidence_store.hydrate(
+            obj.pipeline_runs, obj.release_id, os.path.dirname(os.path.abspath(path)))
         return obj
 
     def save(self, path: str) -> None:
+        path = os.path.abspath(path)
+        data = asdict(self)
+        data["pipeline_runs"] = evidence_store.externalize(
+            self.pipeline_runs, self.release_id, os.path.dirname(path))
         self.updated_at = _now()
+        data["updated_at"] = self.updated_at
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = path + ".tmp"
         try:
             with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(asdict(self), fh, indent=2)
+                json.dump(data, fh, indent=2)
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(tmp, path)

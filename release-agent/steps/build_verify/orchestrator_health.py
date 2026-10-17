@@ -7,15 +7,16 @@ Finds the orchestrator run (def 2828) for the release via its self-tag
 PARKED at "Remove RC Tags" (a manual approval the owner clears in a LATER phase — this
 step never approves it). Reports the RC versions. Read-only (`az`) → `agent` step.
 
-Blocks if the run isn't found, a required stage failed, or (defensively) it already
-advanced PAST the Remove RC Tags gate. A pending Remove RC Tags = the healthy expected
-state.
+Blocks if run/stage/version evidence is missing, malformed or failed. Pending
+Remove RC Tags is expected; an already completed successful park stage is
+reported explicitly without claiming that it is still awaiting approval.
 """
 from __future__ import annotations
 
 from orchestrator.step_context import StepContext, thaw
 
 from orchestrator.outcomes import Done, Blocked
+from orchestrator import schedule
 from orchestrator.evidence import ReleaseVersions
 from steps.lib.mockctx import MISSING
 from steps.build_verify import _common as K
@@ -59,8 +60,12 @@ def build(context: StepContext):
             f"AuthenticatorBranch=release-{month}-*). The release may not have started, "
             f"or the run isn't tagged. Check def {cfg['def_id']}.")
 
-    bid = run.get("id")
+    if not isinstance(run, dict) or not K.valid_id(run.get("id")):
+        return Blocked("orchestrator_health: run evidence has no valid build identity")
+    bid = run["id"]
     tags = run.get("tags") or []
+    if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
+        return Blocked("orchestrator_health: run tags must be an array of text")
     links = K.links_for(bid, "Release Orchestrator run")
     versions = {k: P._tag_value(tags, f"Next{k}Version")
                 for k in ("Common", "Msal", "Broker")}
@@ -77,7 +82,16 @@ def build(context: StepContext):
         if not ok:
             hint = " — run `az login`" if str(detail).startswith("AUTH") else ""
             return Blocked(f"orchestrator_health: could not read orchestrator stages ({detail}){hint}.", links=links)
-    by_name = {s.get("name"): s for s in (stages or [])}
+    if not isinstance(stages, list) or any(
+            not isinstance(stage, dict) or not isinstance(stage.get("name"), str) for stage in stages):
+        return Blocked("orchestrator_health: malformed stage evidence", links=links)
+    by_name = {}
+    relevant = set(cfg["required_stages"]) | {cfg["park_stage"]}
+    for stage in stages:
+        name = stage["name"]
+        if name in relevant and name in by_name:
+            return Blocked(f"orchestrator_health: ambiguous duplicate stage '{name}'", links=links)
+        by_name[name] = stage
 
     # Required pre-gate stages must all be green.
     for name in cfg["required_stages"]:
@@ -86,7 +100,7 @@ def build(context: StepContext):
             return Blocked(
                 f"Release Orchestrator run {bid} is missing the '{name}' stage — "
                 f"the run may have aborted early.{K.UNBLOCK_HELP}", links=links)
-        if st.get("result") != "succeeded":
+        if st.get("state") != "completed" or st.get("result") != "succeeded":
             return Blocked(
                 f"Release Orchestrator stage '{name}' did not succeed "
                 f"(state={st.get('state')}, result={st.get('result')}) in run {bid}. "
@@ -95,7 +109,30 @@ def build(context: StepContext):
     # The park stage should be PENDING (waiting for the owner). If it already ran, the
     # gate was approved — surface it (out of the expected Phase-2 state), don't hard-fail.
     park = by_name.get(cfg["park_stage"])
+    if park is None:
+        return Blocked(
+            f"Release Orchestrator run {bid} is missing the '{cfg['park_stage']}' stage; "
+            "cannot verify that it is parked.", links=links)
+    if park.get("state") not in ("pending", "completed"):
+        return Blocked(
+            f"Release Orchestrator '{cfg['park_stage']}' has unverified park state "
+            f"{park.get('state')!r}.", links=links)
+    if park.get("state") == "pending" and park.get("result") is not None:
+        return Blocked("orchestrator_health: pending park stage has contradictory result evidence",
+                       links=links)
     park_done = bool(park is not None and park.get("state") == "completed")
+    if park_done and park.get("result") not in ("succeeded", "succeededWithIssues"):
+        return Blocked(
+            f"Release Orchestrator '{cfg['park_stage']}' completed with result "
+            f"{park.get('result')!r}; inspect the run.", links=links)
+    required_tags = ("NextCommonVersion", "NextMsalVersion", "NextBrokerVersion", "AuthenticatorBranch")
+    for key in required_tags:
+        values = [tag[len(key) + 1:] for tag in tags if tag.startswith(key + "=")]
+        if len(values) != 1 or not values[0].strip() or values[0] != values[0].strip():
+            return Blocked(f"orchestrator_health: missing or ambiguous '{key}' tag", links=links)
+    branch_date = schedule.parse_date(auth_tag[len("release-"):]) if auth_tag.startswith("release-") else None
+    if branch_date is None or auth_tag != f"release-{branch_date.isoformat()}":
+        return Blocked("orchestrator_health: invalid Authenticator release branch tag", links=links)
     pipeline_update = K.stash_orchestrator(context, bid, parked=not park_done)
     # Canonical release payload versions (lowercase keys) — the earliest authoritative point.
     # Later steps (e.g. release_announcement) read state.versions instead of re-discovering.

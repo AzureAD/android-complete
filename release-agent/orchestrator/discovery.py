@@ -14,9 +14,16 @@ from typing import Optional
 
 
 def _summarize(state_file: str, config_path: str = None) -> Optional[dict]:
+    from orchestrator.evidence_store import EvidenceError
     try:
         from orchestrator.state import ReleaseState
         state = ReleaseState.load(state_file)
+    except EvidenceError as exc:
+        return {
+            "release_id": os.path.basename(os.path.dirname(state_file)),
+            "status": "blocked", "current_phase": None, "current_step": None,
+            "updated_at": None, "state_file": state_file, "error": str(exc),
+        }
     except (OSError, ValueError):          # missing/unreadable file or bad JSON → skip it
         return None
     status = phase = step = None

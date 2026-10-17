@@ -152,4 +152,5 @@ The unknown-at-cutoff case holds until a fresh merge observation arrives.
 Fixtures use temporary roots, reject unmocked external IO and do not leave a
 persistent interactive rehearsal after pytest cleanup.
 This provides repeatable execution now, but is NOT live provider E2E.
-Proposed generic interactive/live replay design: docs\phase-rehearsal-proposal.txt.
+The separate runner/proposal was rejected and removed. These retained cases
+are ordinary focused pytest coverage, not a persistent stage execution feature.

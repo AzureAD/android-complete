@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 import shutil
 import subprocess
 from urllib.parse import quote, urlparse
@@ -65,16 +66,32 @@ def _drive_for_site(site_url: str, library: str, token: str) -> dict:
     return drive
 
 
+def _validated_receipt(evidence, content):
+    if not isinstance(evidence, dict) or not all(
+            isinstance(evidence.get(key), str) and evidence[key].strip()
+            for key in ("drive_id", "item_id", "web_url", "report_link")):
+        raise ValueError("Uploaded report requires provider identity and access URL")
+    for key in ("web_url", "report_link"):
+        parsed = urlparse(evidence[key])
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise ValueError("Uploaded report requires an HTTPS provider URL")
+    if (type(evidence.get("size")) is not int
+            or evidence["size"] != len(content["html"].encode("utf-8"))):
+        raise ValueError("Uploaded report size does not match expected HTML size")
+    return dict(evidence)
+
+
 def publish_report(target, content):
-    """Upload the HTML report and return provider evidence."""
-    token = _graph_token()
-    drive = _drive_for_site(target["site_url"], target["library"], token)
+    """Upload immutable HTML; use its existing site access, without widening sharing."""
     folder = str(target["folder"]).strip("/")
     file_name = str(target["file_name"]).strip("/\\")
-    if not file_name.endswith(".html") or "/" in file_name or "\\" in file_name:
-        raise ValueError("Report file name must be a single .html file")
-    path = quote(f"{folder}/{file_name}", safe="/")
     html = content["html"].encode("utf-8")
+    digest = sha256(html).hexdigest()
+    if not file_name.endswith(f"-{digest}.html") or "/" in file_name or "\\" in file_name:
+        raise ValueError("Report file name must be a single content-addressed .html file")
+    path = quote(f"{folder}/{file_name}", safe="/")
+    token = _graph_token()
+    drive = _drive_for_site(target["site_url"], target["library"], token)
     item = _graph_json(
         "PUT",
         f"https://graph.microsoft.com/v1.0/drives/{quote(drive['id'], safe='')}/root:/{path}:/content",
@@ -82,27 +99,24 @@ def publish_report(target, content):
         content_type="text/html; charset=utf-8",
         token=token,
     )
-    if int(item.get("size") or -1) != len(html):
-        raise ValueError("Uploaded report size does not match expected HTML size")
-    link = _graph_json(
-        "POST",
-        f"https://graph.microsoft.com/v1.0/drives/{quote(drive['id'], safe='')}/items/{quote(item['id'], safe='')}/createLink",
-        body={"type": "view", "scope": "organization"},
-        token=token,
-    )
-    return {
+    if not isinstance(item, dict):
+        raise ValueError("SharePoint upload did not return an item receipt")
+    return _validated_receipt({
         "drive_id": drive["id"],
-        "item_id": item["id"],
+        "item_id": item.get("id"),
         "web_url": item.get("webUrl"),
-        "report_link": ((link.get("link") or {}).get("webUrl") or item.get("webUrl")),
+        "report_link": item.get("webUrl"),
+        "e_tag": item.get("eTag"),
         "size": item.get("size"),
-    }
+    }, content)
 
 
 def plan_rc_report_publish(orch):
-    subject, html, plain, model = R.rc_email(orch.context(PHASE, S.ID))
+    context = orch.context(PHASE, S.ID)
+    subject, html, plain, model = R.rc_email(context)
+    lineage = R.report_lineage(context, html)
     target = S.target_config()
-    file_name = S.report_file_name(orch.context(PHASE, S.ID), model)
+    file_name = S.report_file_name(context, model, content_sha256=lineage["content_sha256"])
     return W.WritePlan(
         S.WRITE_COMMAND,
         {
@@ -117,21 +131,33 @@ def plan_rc_report_publish(orch):
             {**target, "file_name": file_name},
             {"html": html, "plain": plain, "subject": subject},
         ),),
+        preconditions=lineage,
     )
 
 
-def _record(orch, args, authorization, status, summary, evidence=None):
-    orch.record_scout_step(PHASE, S.ID, status, summary, execution_id=authorization.execution_id)
-    if evidence:
-        orch.annotate_step(
-            PHASE,
-            S.ID,
-            data=evidence,
-            links=[{"name": "RC verification report", "url": evidence["report_link"]}],
-            by="scout",
-        )
+def _save_receipt(orch, args, evidence):
+    result = orch.annotate_step(
+        PHASE, S.ID, data=evidence,
+        links=[{"name": "RC verification report", "url": evidence["report_link"]}],
+        by="scout",
+    )
+    if not result.changed:
+        raise ValueError(result.message)
+    C.save_state(orch.state, args.runs_root, args.release)
+
+
+def _record(orch, args, authorization, status, summary):
+    result = orch.record_scout_step(
+        PHASE, S.ID, status, summary, execution_id=authorization.execution_id)
+    if result.kind not in ("ran", "reminder"):
+        raise ValueError(result.message)
     C.save_state(orch.state, args.runs_root, args.release)
     C.emit(args.runs_root, args.release, f"[rc_report_publish] {summary}", kind="step", log_text=summary)
+
+
+def _require_current_plan(orch, authorization):
+    if plan_rc_report_publish(orch).as_dict() != authorization.plan.as_dict():
+        raise ValueError("RC report source/content changed; publish the current report")
 
 
 def cmd_publish_rc_report(args):
@@ -139,7 +165,7 @@ def cmd_publish_rc_report(args):
     authorization = None
     try:
         if not args.execute and not getattr(args, "reserve", False):
-            print(json.dumps(W.preview(orch, PHASE, S.ID, lambda: plan_rc_report_publish(orch)), indent=2))
+            print(json.dumps(W.preview(orch, PHASE, S.ID, plan_rc_report_publish(orch)), indent=2))
             return 0
         W.apply_auto_approval(
             args,
@@ -155,9 +181,15 @@ def cmd_publish_rc_report(args):
             return 0
         operation = authorization.plan.operations[0]
         authorization.validate()
-        evidence = publish_report(operation.target, operation.content)
+        _require_current_plan(orch, authorization)
+        receipt = _validated_receipt(publish_report(operation.target, operation.content), operation.content)
+        lineage = dict(authorization.plan.preconditions)
+        evidence = S.publication_data(receipt, lineage, operation.target["file_name"])
+        # Retain exact provider evidence before any later fence/completion can fail.
+        _save_receipt(orch, args, evidence)
         authorization.validate()
-    except Exception as exc:  # noqa: BLE001
+        _require_current_plan(orch, authorization)
+    except (ValueError, TypeError, KeyError, OSError, subprocess.SubprocessError) as exc:
         summary = f"rc_report_publish: {exc}"
         if authorization is not None and not authorization.reserved_only:
             summary += " Inspect SharePoint before retrying this owned execution."
@@ -167,7 +199,7 @@ def cmd_publish_rc_report(args):
         print(json.dumps({"error": summary, "permission_to_execute": False}))
         return 1
     summary = f"Published RC verification report: {evidence['report_link']}"
-    _record(orch, args, authorization, "pass", summary, evidence)
+    _record(orch, args, authorization, "pass", summary)
     print(json.dumps({"published": True, **evidence}, indent=2))
     return 0
 

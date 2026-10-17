@@ -52,6 +52,7 @@ release-agent/                     COMMITTED (distributed with android-complete)
 │  ├─ infra.py                     infra preflight: check CLIs + register/verify MCP servers into Scout config
 │  ├─ render.py                    presentation only: structured data → text/markdown (swap for other UIs)
 │  ├─ state.py                     schema-v3 Release State Record: facts, evidence, execution ownership
+│  ├─ evidence_store.py            immutable RC evidence files, compact summaries and verified hydration
 │  ├─ revision.py                  compact runtime/phase identity and reviewed workflow adoption
 │  ├─ discovery.py                 find releases (none / one / many)
 │  ├─ registry.py                  automation registry (track provisioned automations for teardown)
@@ -90,6 +91,7 @@ release-agent/                     COMMITTED (distributed with android-complete)
 
 .release-runs/<YYYY-MM>/           GENERATED, gitignored (per-release working state)
 ├─ release-state.json              the per-release metadata + run-state (owner, CCD, steps, gates, …)
+├─ evidence/rc<N>/                 content-addressed MRWP ECS/Local and Authenticator snapshots
 ├─ events.jsonl                    the per-release event/interaction log
 └─ _automations.json               registry of THIS release's provisioned Scout automations (owned by the release; removed at close)
 .release-runs/_automations.json    GENERATED, gitignored — registry of SHARED (machine-wide) automations only
@@ -355,6 +357,14 @@ records each title's verdict, outcome counts and run/result IDs for every attemp
 show all unresolved failures and all recovered successes, with provider/suite context.
 Historical failure attempts are informational, not extra gate failures. The UI threshold
 remains 90%; the separate Authenticator Firebase gate retains its existing count/build policy.
+Report headers, subjects, plain-text summaries and bot notices show MRWP ECS, MRWP Local
+and Authenticator as three separate results, never one combined headline percentage.
+Authenticator's headline uses the worst gated suite (explicitly labeled), not an average;
+all large percentages show success rates. Unit, Instrumented, UI and Firebase rows show
+`75.86% pass · 24.1% fail` (two decimals for pass, one for fail). Checker, Orchestrator
+and Versions occupy three separate metadata rows, with links on their respective run rows.
+Existing release-gate
+policy and count denominators are unchanged by these presentation summaries.
 Unreadable, missing or invalid result pages are unavailable evidence, never aggregate
 fallback or zero failures. Stale raw-count snapshots must be refreshed before gating/reporting:
 there is no relabeling, migration or backwards-compatibility interpretation.
@@ -372,9 +382,24 @@ Recovered tests disappear from that reminder on rerun without changing human com
 or unrelated notes. Authenticator's separate selected-run best-effort fill and Firebase
 gate are unchanged.
 
-**Two homes for data (by lifetime):**
+**Data homes (by lifetime):**
 - **Release metadata + run-state** → `.release-runs/<id>/release-state.json` (per-release; the `ReleaseState` record). Holds `owner_email`/`owner_name` (the release owner, resolved from the signed-in `az` user at `init`; reminders email this person), `ccd`/`ccd_source`/`ccd_conflict`, step completion, gate decisions, `last_notified_date`, etc. Add release-scoped fields here.
+- **Frozen RC evidence** → `.release-runs/<id>/evidence/rc<N>/`: immutable `mrwp-ecs-<sha256>.json`, `mrwp-local-<sha256>.json`, and `auth-ecs-<sha256>.json`. The corresponding `pipeline_runs.rcs[]` lanes in the main JSON contain compact counts/identities and `evidence_ref` (relative path, SHA-256, artifact schema version), not test attempts. Status JSON is compact too. Save writes/flushed evidence before replacing state; load verifies hash, schema, release/RC/lane identity and summary, then hydrates the original logical inputs for reports, telemetry and Phase 3. ADO is not silently refetched. Identical MRWP failure structures are stored once and reconstructed losslessly.
 - **Tool config** → `release-agent/config/*.yaml` (not release-specific; committed): `phases.yaml`, `readiness.yaml`, `schedule.yaml`, `requirements.yaml`.
+
+Existing schema-v3 inline RC snapshots migrate on the next normal state save, without
+rerunning capture, changing step/gate decisions, upgrading count policies or invalidating
+source/delivery fingerprints. Reads do not rewrite state. Incomplete historical observations
+without a valid RC number use `evidence/unresolved/`; their RC stays unchanged and normal
+consumers still reject missing/invalid source identities. No evidence is fabricated.
+The Python in-memory record remains hydrated; this separates persisted/presented data,
+not a new lazy-loading engine or runner.
+
+Back up/copy the **whole release directory**, including evidence, not just the main JSON.
+Missing/corrupt evidence fails closed with a recovery error; discovery keeps that release
+visible as blocked. Restore the original file rather than replacing it with fresh ADO
+results under the old checkpoint. Changed captures create new files; historical and orphaned
+files are retained (no automatic cleanup), including after failed state replacement.
 
 ## Architecture — three layers (so it adapts to other interfaces)
 
@@ -390,11 +415,12 @@ IO lives in `tools/` and `phases/` (pluggable). Config is data in `config/`.
 - **Derived** — recomputed from workflow + persisted facts (frontier, lifecycle status, current hold, pending owner actions) and from external systems of record (ADO/Git/Play Console/ADX). Derived lifecycle projections are never authoritative state.
 - **Persisted** — decisions/intent, readiness facts, step outcomes, evidence, execution
   reservations, invalidation history, delivery receipts, external resource identities,
-  cancellation, and emergency halt. Stored in `release-state.json`.
+  cancellation, and emergency halt. Stored in `release-state.json`; detailed RC capture
+  snapshots are separate verified files referenced by that record.
 
 The conductor is **stateless**: on each invocation it loads the record, (later) reconciles against live systems, decides, acts, writes back. That's what lets a release resume across days/sessions.
 
-`release-state.json` is **schema v3** and intentionally breaking. Older records are
+`release-state.json` is **schema v3** and intentionally breaking. Older schema versions are
 rejected, never migrated or reinitialized to bypass ownership. Preserve the record
 and recover old work with its original supported runtime.
 
@@ -955,8 +981,10 @@ Phase 1's contracts and immediate, no-wait replay recipe are in
 to exercise seven scenarios with seeded prerequisites, real target handlers/CLI,
 temporary persisted state, controlled time and fake providers. This does not
 reschedule CCD, run preflight, queue a real build or send a real message.
-The proposed generic interactive and controlled-live rehearsal design is in
-`docs/phase-rehearsal-proposal.txt`; those runtime commands are not implemented.
+These are focused offline tests, not an interactive or live stage runner.
+Phase 2's first audited source-capture contracts (`checker_fired` and
+`orchestrator_health`) are in `docs/build-verify-contracts.txt`; remaining Phase 2
+steps are still being audited. The separate rehearsal framework was removed.
 
 Run from `release-agent/`. **Directory/default runs now select the daily core suite**,
 capped at 1,086 cases (half the previous 2,172-case suite). The reviewed selection in

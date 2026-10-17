@@ -1,0 +1,206 @@
+PHASE 2 DIRECT AUDIT: SOURCE-CAPTURE BUILDING BLOCKS
+===================================================
+Updated: 2026-10-16. Based on snapshot 6bcafa5cb plus local Phase 2 corrections.
+Scope completed so far: checker_fired and orchestrator_health ONLY.
+Remaining seven Phase 2 steps are not certified by this first batch.
+Additional implemented storage contract: all three detailed RC capture lanes
+are externalized as described below. This does not certify their capture logic.
+The rejected rehearsal runner/proposal/sessions were removed; no replacement
+framework, live provider operation or release advancement was performed.
+
+SHARED ENTRY AND DATA OWNERSHIP
+--------------------------------
+Phase build_verify opens CCD+1. Entry readiness and prior phase completion must
+be satisfied. The five source captures follow explicit dependencies even though
+the phase is parallel.
+Handlers receive immutable context, provider read ports, optional explicit test
+inputs and an invocation clock. Engine applies authorized evidence/lifecycle;
+the handler does not hand-edit release state.
+Main state schema remains 3. Checker/orchestrator stay inline; the three detailed
+RC lanes use separate versioned files at the state persistence boundary.
+
+1. build_verify.checker_fired
+------------------------------
+PURPOSE:
+  Prove a Code Complete Calendar Checker run actually succeeded at the
+  Trigger Monthly Release job. Merely seeing a daily scheduled run is insufficient.
+
+INPUT STATE:
+  release_id selects the work month. No previous Phase 2 evidence is needed.
+  Eligibility still requires the entry gate, phase date and predecessor phases.
+INPUT CONFIG:
+  Engineering organization/project, checker definition 3038, trigger job name
+  and max_scan (25).
+INPUT PROVIDER:
+  Month-filtered run list [{id, queueTime, ...}], newest first; exact per-run
+  timeline records. An explicit triggering test input can replace the read,
+  but it is not an outcome-success shortcut.
+  Run IDs must be positive numeric identities, not None/bool/zero.
+  Collections/timeline rows must have valid object/array shapes.
+
+GENERATED:
+  A read verdict, run link and explanation. A matching succeeded trigger is
+  positive evidence; otherwise hold. A partial timeline access failure is
+  reported as unavailable evidence, not falsely diagnosed as never triggered.
+  A valid success found during the scan remains sufficient even if another
+  unrelated timeline was unreadable.
+
+STORED OUTPUT AFTER VALID SUCCESS:
+  pipeline_runs.checker =
+    {run_id: string, when: queue-time display text, resolved_at: UTC timestamp}
+  steps["build_verify.checker_fired"] common lifecycle =
+    done, completed_at, note, by=agent, run links; no handler-owned data keys.
+  The snapshot replaces only the checker lane. Other pipeline lanes, versions,
+  resources, notifications and readiness facts remain untouched.
+FAILURE:
+  Blocked has no evidence updates; it must not publish run_id="None" or replace
+  an older source snapshot with malformed data. Engine records the block.
+
+CONSUMERS:
+  orchestrator_health eligibility; RC report/source links and status views use
+  the captured checker identity. Evidence is not a queued orchestrator artifact.
+LIFETIME:
+  Current source fact persists until explicitly refreshed/invalidated. This is
+  not a new continuous scheduler monitor or a cache of all scanned runs/logs.
+EXTERNAL OUTPUT:
+  None. Read-only; no trigger, approval, message or pipeline variable update.
+
+2. build_verify.orchestrator_health
+-------------------------------------
+PURPOSE:
+  Verify the release orchestrator's required pre-gate stages completed
+  successfully and identify its actual Remove RC Tags park/advance state.
+ENTRY:
+  checker_fired complete; no external approval is submitted here.
+INPUT STATE:
+  release_id selects the tagged orchestrator run. Existing versions are not
+  permission to silently fill missing evidence on a newly observed run.
+INPUT CONFIG:
+  Engineering org/project, definition 2828, required stage names and park name.
+INPUT PROVIDER:
+  Exact valid run ID, text build tags, current stage list.
+  Require unique nonblank NextCommonVersion, NextMsalVersion,
+  NextBrokerVersion and AuthenticatorBranch tags. The Authenticator tag must
+  be a canonical valid release-YYYY-MM-DD branch.
+  Required pre-gate stages must exist once, state=completed/result=succeeded.
+  Park stage must exist once. pending requires no contradictory result.
+  completed is accepted only with succeeded/succeededWithIssues and reported
+  as already advanced, never still awaiting approval.
+  Missing/duplicate/malformed/failed/unknown evidence holds.
+
+GENERATED:
+  Validated component versions, Authenticator branch, run link and actual
+  parked-versus-successfully-advanced explanation.
+STORED OUTPUT AFTER VALID SUCCESS:
+  pipeline_runs.orchestrator =
+    {run_id: string, parked: boolean, resolved_at: UTC timestamp}
+  versions.common, versions.msal, versions.broker = validated run-tag values
+  versions.authenticator = release/YYYY/MM/DD branch (NOT the APK app version)
+  steps["build_verify.orchestrator_health"] common completion/note/by/links.
+  No raw tags/timeline copy or handler-owned step.data is added.
+  Authorized updates preserve checker/RC/final lanes and unrelated version keys.
+FAILURE:
+  No pipeline/versions evidence updates. Existing evidence remains historical,
+  but the current step blocks instead of claiming a healthy new source.
+
+CONSUMERS:
+  mrwp_ecs eligibility; later RC collection/reporting uses orchestrator identity
+  and release versions; later Authenticator discovery uses the captured branch.
+  A parked flag is not an approval identity or permission to publish.
+LIFETIME:
+  Current source snapshot and version fields persist under normal invalidation.
+  No new freshness/automatic replay/owner adoption policy was introduced.
+EXTERNAL OUTPUT:
+  None. This step never approves Remove RC Tags or starts publication.
+
+READ ADAPTER CORRECTIONS
+-------------------------
+find_checker_runs and find_orchestrator_run now reject malformed collections/
+identities instead of producing crashes or empty-success defaults.
+Optional untagged runs remain allowable; month filtering/newest selection stays.
+get_timeline requires an actual records array of objects. Missing records is
+unavailable evidence, not an empty timeline silently accepted by consumers.
+These are existing provider functions, not a new testing abstraction.
+
+FOCUSED PROOF
+---------------
+Ordinary existing pytest runner and injected read responses; no new runtime.
+Direct handler tests verify malformed identity/source/stage/tag failures emit
+no evidence, partial timeline auth errors are accurate, and successful advance
+sets parked=false.
+Two actual CLI next/persisted reload cases exercise checker -> orchestrator
+with valid sources or a missing park stage. Earlier facts are fixture prerequisites.
+The next MRWP source is deliberately unavailable so unaudited work cannot pass.
+Assertions cover exact source IDs/timestamps, complete version replacement,
+no stale-version success, no resource/notification writes and unchanged prefix/
+readiness. Source-adapter tests retain valid filtering/sorting behavior.
+Affected selection including existing provider-approval/evidence guards:
+181 passed in 3.49 seconds. No full-project-green or live-provider claim.
+
+NEXT:
+  Audit mrwp_ecs and mrwp_local, recording their inputs, captured data, consumers,
+  failure/retry semantics and directly coupled corrections. No rehearsal runner.
+
+RC EVIDENCE STORAGE: MRWP ECS / MRWP LOCAL / AUTHENTICATOR
+---------------------------------------------------------
+Owner decision: 2026-10-16. Preserve frozen decision evidence, not an ADO mirror in
+release-state. Capture handlers still emit the same authorized PipelineEvidence;
+orchestrator\evidence_store.py owns the physical layout, not provider discovery.
+
+LOGICAL INPUT/CONSUMER PATHS (unchanged after load):
+  pipeline_runs.rcs[RC entry].ecs / .local:
+    stage snapshot plus tests.runs/suites/test_results/attempts and failed_suites.
+  pipeline_runs.rcs[RC entry].auth:
+    build + test.suites + test.evidence + informational verdict.
+  Report renderer/lineage and Phase-3 projection use exactly these hydrated values.
+  Telemetry and later build-link consumers retain the same build/version metadata.
+
+PERSISTED MAIN-FILE OUTPUT:
+  Each of the three lanes keeps a small summary and evidence_ref:
+    {schema_version:1, path:<relative>, sha256:<64 hex>}
+  ECS/Local: run_id, complete, ran/total, timestamps/errors, stage-list counts;
+    tests totals/count_basis/build_id/result_entries and category counts.
+  Auth: build metadata/verdict/timestamp; test run/complete and suite counts/rates.
+  No test titles, individual attempts, full suites or Auth test.evidence in these
+  main-file lanes or the pipeline_runs portion of normal status output.
+
+EXTERNAL FILE OUTPUT (local only, no ADO/Graph write):
+  <release-dir>\evidence\rc<N>\mrwp-ecs-<sha256>.json
+  <release-dir>\evidence\rc<N>\mrwp-local-<sha256>.json
+  <release-dir>\evidence\rc<N>\auth-ecs-<sha256>.json
+  Envelope {schema_version:1,release_id,rc,lane,snapshot,aliases}.
+  Matching MRWP failed-suite copies are exact-JSON aliases into the full suites
+  array; nonmatching legacy structures are preserved, never silently repaired.
+  Missing/invalid legacy RC uses evidence\unresolved without changing its value.
+
+WRITE/READ AND LIFETIME:
+  Save writes/fsyncs temp evidence and atomically publishes create-only; verifies
+  any existing same-name file instead of replacing it. Only then replace state.
+  Failed state replacement can leave an unreferenced file, never a dangling new
+  reference. Previous files/state remain recoverable; temps are removed.
+  Load verifies SHA, envelope schema/identity, compact summary and path containment.
+  Missing/corrupt/wrong-release/wrong-lane evidence explicitly blocks, with no
+  provider fallback. Discovery still shows the release and CLI surfaces the error.
+  Legacy inline snapshots remain readable; next normal save extracts them without
+  rerunning prior steps or changing lifecycle, approvals, report or delivery bindings.
+  File relocation is lossless storage migration, not old-policy count migration.
+  Do not delete old/historical/orphaned evidence automatically. Back up/copy the
+  entire release directory with its evidence. Python views hydrate full detail;
+  lazy loading, automatic cleanup and a new runner are intentionally not introduced.
+
+REPORT PRESENTATION CORRECTION (A033, 2026-10-16)
+------------------------------------------------
+The report's header/subject/plain summary and bot notice keep MRWP ECS, MRWP Local,
+and Authenticator as three separate result legs. Per-provider UI counts/rates are
+derived from the frozen provider snapshot, never combined for the headline.
+Owner refinement: all prominent percentages now show SUCCESS rates. Authenticator's
+success rate is the worst gated Firebase suite, labeled
+as such, not a cross-suite average. Its card also shows each suite's own pass and
+failure percentages against Passed+Failed source executions. Missing/empty/stale
+evidence is unavailable, never fabricated 0% failure or a green bar.
+Unit/Instrumented/UI/Firebase rows consistently display two-decimal pass percentage
+and one-decimal failure percentage (75.86% pass / 24.1% fail). Checker, Orchestrator,
+Versions are three separate metadata rows, each run link on its own source row.
+Presentation helpers do no acquisition/projection or source mutation. Existing
+MRWP release recommendation policy, Auth per-suite thresholds, retry math,
+source denominators and human gate semantics are unchanged.

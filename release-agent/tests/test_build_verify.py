@@ -2,6 +2,204 @@
 from tests._context import context as _context, invoke as _invoke, pipeline as _pipeline
 from tests._harness import *  # noqa: F401,F403
 from steps.build_verify import rc_report as report, _rc_report_rendering as rendering
+import pytest
+
+
+def _healthy_orchestrator():
+    from steps.build_verify import orchestrator_health as OH
+
+    return (
+        {"id": 202, "tags": ["AuthenticatorBranch=release-2026-10-16",
+                             "NextCommonVersion=1.0.0", "NextMsalVersion=2.0.0",
+                             "NextBrokerVersion=3.0.0"]},
+        [{"name": name, "state": "completed", "result": "succeeded"}
+         for name in OH.CONFIG["required_stages"]]
+        + [{"name": OH.CONFIG["park_stage"], "state": "pending", "result": None}],
+    )
+
+
+@pytest.mark.parametrize("triggering", [
+    "malformed", {"result": "succeeded"},
+    {"run": {"id": None}, "result": "succeeded"},
+    {"run": {"id": True}, "result": "succeeded"},
+    {"run": {"id": 0}, "result": "succeeded"},
+    {"run": {"id": 101, "queueTime": 123}, "result": "succeeded"},
+])
+def test_checker_invalid_identity_or_payload_never_publishes_evidence(triggering):
+    from copy import deepcopy
+    from steps.build_verify import checker_fired as checker
+
+    state = ReleaseState(release_id="2026-10", pipeline_runs={"checker": {"run_id": "old"}})
+    before = deepcopy(state)
+    result = checker.build(_context(state, inputs={"triggering": triggering}))
+    assert result.kind == "blocked" and result.updates == ()
+    assert state == before
+
+
+@pytest.mark.parametrize("failed_first", [True, False])
+def test_checker_partial_timeline_failure_is_not_misreported_as_not_triggered(failed_first):
+    from dataclasses import replace
+    from steps.build_verify import checker_fired as checker
+
+    state = ReleaseState(release_id="2026-10")
+    ctx = _context(state, inputs={})
+    runs = [{"id": 101}, {"id": 102}]
+    failed_id = 101 if failed_first else 102
+    def timeline(_org, _project, run_id):
+        return ((False, None, "AUTH: fixture denied") if run_id == failed_id
+                else (True, [{"name": "Trigger Monthly Release", "type": "Job",
+                              "result": "skipped"}], ""))
+    ctx = replace(ctx, services=replace(ctx.services, pipelines=replace(
+        ctx.services.pipelines, find_checker_runs=lambda *args: (True, runs, ""),
+        get_timeline=timeline)))
+    result = checker.build(ctx)
+    assert result.kind == "blocked"
+    assert "could not read checker run timelines" in result.reason
+    assert "az login" in result.reason
+    assert "doesn't appear to have been triggered" not in result.reason
+    assert state.pipeline_runs == {}
+
+
+@pytest.mark.parametrize("problem", [
+    "missing_park", "duplicate_stage", "incomplete_required", "failed_park",
+    "unknown_park", "pending_result", "missing_version", "duplicate_version", "bad_branch",
+    "bad_id", "bad_tags", "bad_stages",
+])
+def test_orchestrator_invalid_evidence_cannot_reuse_old_versions_or_claim_park(problem):
+    from copy import deepcopy
+    from steps.build_verify import orchestrator_health as OH
+
+    run, stages = _healthy_orchestrator()
+    if problem == "missing_park":
+        stages.pop()
+    elif problem == "duplicate_stage":
+        stages.append(deepcopy(stages[0]))
+    elif problem == "incomplete_required":
+        stages[0]["state"] = "inProgress"
+    elif problem == "failed_park":
+        stages[-1].update(state="completed", result="failed")
+    elif problem == "unknown_park":
+        stages[-1]["state"] = "inProgress"
+    elif problem == "pending_result":
+        stages[-1]["result"] = "failed"
+    elif problem == "missing_version":
+        run["tags"] = [tag for tag in run["tags"] if not tag.startswith("NextCommonVersion")]
+    elif problem == "duplicate_version":
+        run["tags"].append("NextCommonVersion=9.0.0")
+    elif problem == "bad_branch":
+        run["tags"][0] = "AuthenticatorBranch=release-2026-99-99"
+    elif problem == "bad_id":
+        run["id"] = None
+    elif problem == "bad_tags":
+        run["tags"] = [None]
+    else:
+        stages = [None]
+    state = ReleaseState(release_id="2026-10", versions={"common": "old"},
+                         pipeline_runs={"orchestrator": {"run_id": "old", "parked": True}})
+    before = deepcopy(state)
+    result = OH.build(_context(state, inputs={"run": run, "stages": stages}))
+    assert result.kind == "blocked" and result.updates == ()
+    assert state == before
+
+
+@pytest.mark.parametrize("result", ["succeeded", "succeededWithIssues"])
+def test_orchestrator_successfully_advanced_gate_is_not_claimed_still_parked(result):
+    from steps.build_verify import orchestrator_health as OH
+    from steps.lib import mockctx
+
+    run, stages = _healthy_orchestrator()
+    stages[-1].update(state="completed", result=result)
+    state = ReleaseState(release_id="2026-10")
+    with mockctx.active({"run": run, "stages": stages}):
+        out = _invoke(OH.build, state)
+    assert out.kind == "done" and "already ran" in out.note
+    assert state.pipeline_runs["orchestrator"]["parked"] is False
+    assert state.versions["authenticator"] == "release/2026/10/16"
+
+
+@pytest.mark.parametrize("function,payload", [
+    ("find_checker_runs", None), ("find_checker_runs", {}),
+    ("find_checker_runs", [{"id": 101, "queueTime": None}]),
+    ("find_orchestrator_run", {}), ("find_orchestrator_run", [None]),
+    ("find_orchestrator_run", [{"id": 202, "tags": [None]}]),
+    ("get_timeline", {}), ("get_timeline", {"records": None}),
+    ("get_timeline", {"records": [None]}),
+])
+def test_release_chain_provider_rejects_malformed_collections(monkeypatch, function, payload):
+    from tools import pipelines as P
+
+    monkeypatch.setattr(P, "_az_json", lambda *args: (True, payload, ""))
+    method = getattr(P, function)
+    args = ("ORG", "PROJ", 101) if function == "get_timeline" else ("ORG", "PROJ", 3038, "2026-10")
+    ok, value, detail = method(*args)
+    assert not ok and value is None and "malformed" in detail
+
+
+def test_release_chain_discovery_keeps_month_filtering_and_newest_selection(monkeypatch):
+    from tools import pipelines as P
+
+    builds = [
+        {"id": 101, "queueTime": "2026-10-16T08:00:00Z",
+         "tags": ["AuthenticatorBranch=release-2026-10-16"]},
+        {"id": 102, "queueTime": "2026-10-17T08:00:00Z",
+         "tags": ["AuthenticatorBranch=release-2026-10-17"]},
+        {"id": 103, "queueTime": "2026-11-01T08:00:00Z", "tags": None},
+    ]
+    monkeypatch.setattr(P, "_az_json", lambda *args: (True, builds, ""))
+    ok, found, _ = P.find_orchestrator_run("ORG", "PROJ", 2828, "2026-10")
+    assert ok and found["id"] == 102
+    ok, found, _ = P.find_checker_runs("ORG", "PROJ", 3038, "2026-10")
+    assert ok and [row["id"] for row in found] == [102, 101]
+
+
+@pytest.mark.parametrize("missing_park", [False, True])
+def test_phase2_audited_chain_persists_exact_source_outputs_without_framework(
+        tmp_path, monkeypatch, capsys, missing_park):
+    from copy import deepcopy
+    from orchestrator import cli, mocks
+    from tools import pipelines as P
+
+    run, stages = _healthy_orchestrator()
+    if missing_park:
+        stages.pop()
+    monkeypatch.setattr(mocks, "load_mocks", lambda: {})
+    monkeypatch.setattr(P, "find_checker_runs", lambda *args: (
+        True, [{"id": 101, "queueTime": "2026-10-16T08:00:00Z"}], ""))
+    monkeypatch.setattr(P, "get_timeline", lambda *args: (
+        True, [{"name": "Trigger Monthly Release", "type": "Job", "result": "succeeded"}], ""))
+    monkeypatch.setattr(P, "find_orchestrator_run", lambda *args: (True, run, ""))
+    monkeypatch.setattr(P, "get_stages", lambda *args: (True, stages, ""))
+    monkeypatch.setattr(P, "mrwp_run_ids", lambda *args: (
+        False, None, "MRWP evidence deliberately unavailable in this focused audit", "fixture"))
+    state = ReleaseState(release_id="2026-10", ccd="2026-10-16",
+                         owner_email="owner@example.test", versions={"common": "old"})
+    _active_phase(state, "build_verify")
+    before = deepcopy(state)
+    C.save_state(state, str(tmp_path), state.release_id)
+    assert cli.main(["--runs-root", str(tmp_path), "next", "--release", state.release_id,
+                     "--as-of", "2026-10-17", "--json"]) == 0
+    capsys.readouterr()
+    saved = C.load_state(str(tmp_path), state.release_id)
+    assert saved.is_done("build_verify", "checker_fired")
+    assert saved.pipeline_runs["checker"]["run_id"] == "101"
+    assert saved.pipeline_runs["checker"]["when"] == "2026-10-16T08:00"
+    assert saved.pipeline_runs["checker"]["resolved_at"]
+    assert {key: value for key, value in saved.steps.items() if not key.startswith("build_verify.")} == before.steps
+    assert saved.readiness_items == before.readiness_items
+    assert saved.resources == saved.notification_deliveries == {}
+    assert not saved.is_done("build_verify", "mrwp_ecs")
+    if missing_park:
+        assert saved.get_step("build_verify", "orchestrator_health").status == "blocked"
+        assert "orchestrator" not in saved.pipeline_runs
+        assert saved.versions == before.versions
+    else:
+        assert saved.is_done("build_verify", "orchestrator_health")
+        assert saved.pipeline_runs["orchestrator"]["run_id"] == "202"
+        assert saved.pipeline_runs["orchestrator"]["parked"] is True
+        assert saved.versions == {
+            "common": "1.0.0", "msal": "2.0.0", "broker": "3.0.0",
+            "authenticator": "release/2026/10/16",
+        }
 
 
 
@@ -189,16 +387,15 @@ def test_rc_email_includes_separate_auth_section():
     assert "test_1083_Scenario" in html and "monthly_scenario_97" in html
     assert "Source 1/84" in html and "Source 2/98" in html
     plain = rendering.rc_email_plain(model, {"owner": "pedro"}, gate, auth, next_action)
-    assert "AUTHENTICATOR ECS" in plain and "does NOT affect" in plain
+    assert "AUTHENTICATOR ECS" in plain and "each Firebase suite evaluated separately" in plain
     assert "UIAutomator E2E Tests" in plain and "Monthly UI Tests" in plain
     assert "test_1083_Scenario" in plain and "monthly_scenario_97" in plain
 
 
 
 
-def test_rc_report_contemplates_both_gates_at_a_glance():
-    """The subject, HTML gates banner, and plain-text GATES block all reflect BOTH the MRWP
-    UI gate and the SEPARATE Authenticator-ECS gate — without merging them."""
+def test_rc_report_shows_three_result_legs_at_a_glance():
+    """Subject, HTML and plain text keep ECS, Local and Authenticator results separate."""
     from steps.build_verify import _common as K
     st, _ = _bv_state({})
     # MRWP warn (94%), auth ECS below (E2E 82.76%) — two independent verdicts.
@@ -214,12 +411,15 @@ def test_rc_report_contemplates_both_gates_at_a_glance():
     gate, auth = report.rc_ui_gate(model), report.auth_report_gate(model)
     next_action = report.rc_next_action(model)
     subj = rendering.rc_email_subject(model, gate, auth)
-    assert "MRWP UI:" in subj and "Auth ECS: HOLD" in subj
+    assert "MRWP ECS: 94.0% pass" in subj and "MRWP Local: 100.0% pass" in subj
+    assert "Auth ECS: HOLD" in subj and "MRWP UI:" not in subj
     html = rendering.rc_email_html(model, {"owner": "pedro"}, gate, auth, next_action)
-    assert "MRWP UI:" in html and "Auth ECS:" in html          # gates banner has both
+    assert "MRWP ECS: 94.0% pass" in html and "MRWP Local: 100.0% pass" in html
+    assert "Auth ECS: HOLD" in html and "MRWP UI:" not in html
     plain = rendering.rc_email_plain(model, {"owner": "pedro"}, gate, auth, next_action)
-    assert "GATES (evaluated independently)" in plain
-    assert "MRWP UI:" in plain and "Authenticator ECS: HOLD" in plain
+    assert "RESULTS (shown separately)" in plain
+    assert "MRWP ECS: 94.0% pass" in plain and "MRWP Local: 100.0% pass" in plain
+    assert "Authenticator ECS: HOLD" in plain
     # a clean auth leg flips only the auth surfaces, not the MRWP verdict
     _pipeline(K.stash_auth, st, rc["rc"], {
         "build": {"run_id": "900010", "rc": rc["rc"], "version": "0.0.02468-rc-RC1-ecs",
@@ -256,11 +456,13 @@ def test_build_verify_rc_report_publish_builds_renderer_payload():
 
     out = as_dict(_invoke(_steps.get_step("build_verify", "rc_report_publish").build, st))
     assert out["kind"] == "needs_skill" and out["tool"] == "publish-rc-report"
-    assert out["payload"]["file_name"] == "rc-verification-report-2026-08-rc1.html"
+    from hashlib import sha256
+    digest = sha256(out["payload"]["html"].encode("utf-8")).hexdigest()
+    assert out["payload"]["file_name"] == f"rc-verification-report-2026-08-rc1-{digest}.html"
     assert out["payload"]["site_url"] == "https://microsoft.sharepoint-df.com/teams/MsalAndroidRelease"
     body = out["payload"]["html"]
     assert "1678863" in body                          # run id present
-    assert "UI-automation failure rate" in body       # per-category headline metric
+    assert "UI-automation success rate" in body
     assert "61.8%" in body                            # 102/165 UI failures — the real UI rate
     assert "Unit" in body and "Instrumented" in body and "UI automation" in body
     assert "test_1_Foo" in body                       # failing test names still listed
@@ -307,10 +509,11 @@ def test_rc_ui_gate_and_run_links():
     g2 = report.rc_ui_gate(fail_model)
     assert g2["verdict"] == "attention" and g2["blocking"] is True and g2["pass_pct"] == 80.0
     assert "BELOW" in g2["detail"] and "PROD MSAL - RC Broker (API 32)" in g2["detail"]
-    # the three exits are spelled out: re-trigger (flaky) / cherry-pick (bug) / override
+    # The third exit is an audited human decision, not skipping the report gate.
     assert "rc-retriggered" in g2["detail"]
     assert "cherry-pick-process-for-broker-libraries" in g2["detail"]
-    assert "LAST RESORT" in g2["detail"] and "skip" in g2["detail"]
+    assert "Owner decision" in g2["detail"] and "rc_report_gate" in g2["detail"]
+    assert "never skip the approval gate" in g2["detail"]
 
     # No UI tests anywhere is unavailable evidence, never a clean pass.
     g3 = report.rc_ui_gate({"mrwp": {"ECS": {"tests": {"categories": {}}},
@@ -329,17 +532,14 @@ def test_rc_ui_gate_and_run_links():
 
 
 def test_rc_report_split_publishes_notifies_then_holds_for_human_gate():
-    from orchestrator.state import StepState
+    from tests.test_rc_report_delivery import published, delivered_notify
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26", owner_email="dev@microsoft.com")
     _ready_for_rc_report(st)
     _seed_rc_pipeline(st, {"total": 100, "passed": 95, "failed": 5},
                       {"total": 100, "passed": 95, "failed": 5})
-    st.set_step("build_verify", "rc_report_publish", StepState(
-        status="done", note="published", data={"report_link": "https://sharepoint/report.html"},
-        links=[{"name": "RC verification report", "url": "https://sharepoint/report.html"}]))
-    st.set_step("build_verify", "rc_report_notify", StepState(status="done", note="link emailed"))
-
+    published(st)
     orch = Orchestrator(CONFIG, st)
+    delivered_notify(st, orch)
     report = orch.status_report()
 
     assert report["current_phase"] == "build_verify"
@@ -352,7 +552,7 @@ def test_rc_report_split_publishes_notifies_then_holds_for_human_gate():
 
 
 def test_rc_report_notify_uses_published_sharepoint_link():
-    from orchestrator.state import StepState
+    from tests.test_rc_report_delivery import published
     import steps as _steps
     from orchestrator.outcomes import as_dict
     st = ReleaseState(release_id="2026-08", ccd="2026-08-26",
@@ -360,15 +560,15 @@ def test_rc_report_notify_uses_published_sharepoint_link():
     _ready_for_rc_report(st)
     _seed_rc_pipeline(st, {"total": 100, "passed": 95, "failed": 5},
                       {"total": 100, "passed": 95, "failed": 5})
-    st.set_step("build_verify", "rc_report_publish", StepState(
-        status="done", note="published", data={"report_link": "https://sharepoint/report.html"}))
+    published(st)
 
     out = as_dict(_invoke(_steps.get_step("build_verify", "rc_report_notify").build, st))
 
     assert out["kind"] == "needs_skill" and out["tool"] == "m_send_teams_message"
     message = out["payload"]["message"]
     assert "https://sharepoint/report.html" in message
-    assert "Summary: MRWP UI: pass with warning (95.0%); Authenticator ECS: pass." in message
+    assert ("Summary: MRWP ECS: 95.0% pass; MRWP Local: 95.0% pass; "
+            "Authenticator ECS: pass (97.0% lowest-suite pass).") in message
     assert "Open the report for failure details and next steps." in message
     assert "Next:" not in message
     assert "Fallback file URL" not in message

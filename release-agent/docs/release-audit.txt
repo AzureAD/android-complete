@@ -20,6 +20,27 @@ not a new persisted runtime schema.
 
 CURRENT CHECKPOINT
 ------------------
+LATEST OWNER DIRECTION (2026-10-16, 19:51 PT):
+  Save the completed Phase2 checkpoint LOCALLY on feature/release-agent-phase2-audit,
+  then move to Phase3 audit/fixes one step at a time, beginning clone_plans_broker.
+  origin AzureAD/android-complete is PUBLIC; owner chose "Commit locally first".
+  Do not push this checkpoint's internal live-release audit details to that remote.
+  Include only intended release-agent source/tests/docs; exclude .kotlin and all
+  generated release/session evidence. Snapshot6bcafa5cb remains the parent.
+  Isolated checker1705624 exercise is COMPLETE9/9, including real approved report
+  publication, Teams/HTML email deliveries and explicit test-only human approval.
+  Existing release state and production pipeline gates were not changed.
+  Remaining Phase2 malformed-input/RC-discovery and status-label audit findings
+  are deferred, not silently certified by this one live case. Resume them separately.
+  The earlier checkpoint/next instructions below are historical; this paragraph
+  governs the current work. No replacement runner is requested.
+
+LATEST OWNER DECISION: reject/remove the rehearsal runner and return to the
+direct phase-by-phase audit and fixes. No replacement framework is requested.
+Removed all uncommitted runner code/hooks/tests/docs, its proposal, and all
+three generated sessions. Snapshot 6bcafa5cb and committed Phase 0-1 fixes remain.
+No branch/history reset, live pipeline operation or canonical run-state edit.
+
 OWNER CLARIFICATION (2026-10-16): the current local release state is only test
 data, not production release history. Do not treat preserving that history as a
 development blocker. This statement alone requests no reset/adoption operation
@@ -44,30 +65,114 @@ PHASE 1 CCD AUDIT/FIX PASS COMPLETE for all three steps, offline.
 Contracts: docs\ccd-contracts.txt. Seven immediate phase replays seed only
 prerequisites and execute actual CCD handlers/CLI/receipts with fake providers.
 No waiting, shared CCD reschedule or preflight execution is necessary.
-Remaining 58 workflow-step contracts are unaudited.
+PHASE 2 FIRST BATCH COMPLETE: checker_fired and orchestrator_health audited/
+corrected directly. Contracts: docs\build-verify-contracts.txt.
+The other seven Phase 2 steps remain pending; 56 workflow-step contracts remain
+unaudited overall.
 No provider end-to-end success has been established.
 One existing simulator regression failed in the bounded offline baseline.
-Runtime code now has local, uncommitted A011 and A013-A026 corrections. Local mocks, live
-release runs, provider configuration, pipelines and automations were not changed.
+Phase 0-1 corrections A011/A013-A026 are preserved in snapshot 6bcafa5cb.
+Current local code changes are direct Phase 2 corrections A028-A030 plus
+runner/proposal-removal documentation, report-lineage work pending the complete
+Phase 2 audit, and the owner-approved RC evidence storage split (A031 below).
+Local mocks, live release runs,
+provider configuration, pipelines and automations were not changed.
 This file is audit documentation, NOT executable configuration or release state.
 
-CURRENT USER FOCUS: Phase 1 corrections plus easier reproducible phase/step
-testing without predecessor execution or waiting for CCD. Owner accepts real
-test pipelines/artifacts in principle; no exact real target/send was authorized
-or used here.
-IMPLEMENTED NOW: immediate offline CCD replay, all seven named outcomes, runnable
-by Scout using repo skill guidance. Details/recipe: docs\ccd-contracts.txt.
-PROPOSED NEXT: review docs\phase-rehearsal-proposal.txt before implementing the
-generic persistent phase/step runner and controlled-live clock/target/cleanup
-boundary. These are NOT existing runtime commands. Do not claim --as-of or old
-sim already provides a safe full solution.
-OWNER REQUIREMENT (2026-10-16): the runner must be a reusable foundation for ALL
-Phases 0, 1, 2, 3 and 4, not a CCD/localization one-off. One core owns entry,
-clock, scoped execution, recovery and cleanup; registered phase profiles and
-provider adapters supply data/scenarios/targets. Generic lifecycle acceptance
-must cover all five phase targets before claiming the base reusable. Phase 2-4
-actual data/profile coverage remains pending audit, not silently assumed ready.
-After that decision, next release phase audit is build_verify (Phase 2).
+LATEST STORAGE DECISION / COMPLETED CHANGE (2026-10-16):
+  Detailed MRWP ECS, MRWP Local and Authenticator snapshots now live in separate
+  immutable per-release evidence files. Main state/status keep compact summaries
+  and verified references. Existing inline captures migrate on the next normal
+  save without a provider rerun or decision/source-binding changes.
+  Complete storage contract: docs\build-verify-contracts.txt, final section;
+  shared field register: docs\release-state-data.txt, section 1.
+  This is NOT a new runner and does not finish the remaining capture-step audits.
+  No canonical release was rewritten/adopted just to demonstrate the change.
+
+LATEST LIVE READ-ONLY PHASE-2 EXERCISE (owner-supplied checker 1705624):
+  Executed the existing Phase-2 engine and all five capture handlers with real
+  production read adapters, no target outcome/data mocks, no provider writes.
+  A one-off session-local invocation/config selects only the unchanged Phase-2
+  definition, with readiness/Phases 0-1 explicitly OUT OF SCOPE, not fake-completed.
+  This is not a shipped one-input phase-entry feature or a new repository runner.
+  The normal code still needs durable source-selection support for that UX.
+  Checker trigger task log29 proves downstream orchestrator1705640; same source
+  commit. Pinned that exact run and its RC2 tag pair ECS1705757 / Local1705758.
+  CCD from the actual checker: 2026-10-14 Pacific. No shared-date changes/waiting.
+  Checker/orchestrator passed; Remove RC Tags remains pending and was not approved.
+  ECS:24/24 stages executed (3 red/1 yellow),6942/6949 distinct tests passed.
+  Local:23/23 stages executed (1 red/2 yellow),6892/6894 distinct tests passed.
+  Combined MRWP UI:266/273 passed,97.4%,7 failures (report warning, not a clean pass).
+  Authenticator APK186032363/UI186078476 captured. APK6.2610.6911-rc186032363.
+  Firebase E2E22/29=75.9% (below90%); Monthly359/376=95.5%. Collection done,
+  recommendation HOLD; no human quality approval inferred.
+  Real generated Kusto query for AppInfo_Version6.2610.6911 returned Count610.
+  Normal record-telemetry persisted the checked build/version/count in isolated state.
+  Six of nine steps complete. Exact normal HTML report generated locally, NOT
+  uploaded. Publication, notification and human quality gate remain pending.
+  Main state10710 bytes; detailed evidence6262146 bytes in three separate files.
+  Canonical .release-runs\2026-10 record was not edited/adopted; no real pipeline,
+  approval, test plan, automation, SharePoint item or message was changed.
+  Session evidence:
+    C:\Users\pedroro\.scout\copilot\session-state\
+    0ad485a3-34ea-491b-9381-5f0bab6a3ab0\files\phase2_checker_1705624\
+    config\phases.yaml + source-pin.yaml; runs\2026-10\release-state.json;
+    runs\2026-10\evidence; source-chain.json; result.json;
+    rc-verification-preview.html.
+  Report SHA256:d6f3294eecaa4bfaf80c353f0df0d1bbd0930e67e9b147e2b6910d4979397e1b.
+  Live-read proof does not certify retries, new pipeline creation or publication.
+  Session-only presentation issues (pending-step shape/Windows stdout) were
+  corrected and resumed from persisted captures without repeating their reads.
+  A032 observed UX defect: current status renders not-yet-eligible notification
+  and HUMAN rc_report_gate rows as "Scout runs this -- automatic". Do not interpret
+  that label as permission to auto-approve; fix in the ongoing Phase-2 audit.
+
+LATEST REPORT DISPLAY CORRECTION: A033 (2026-10-16)
+  Owner requested three separate header results (MRWP ECS / MRWP Local /
+  Authenticator), and Authenticator percentages as prominent as MRWP's.
+  Corrected existing email-safe renderer, not a standalone replacement report:
+  three header cells/chips; separate provider rates in subject/plain/bot notice;
+  checker/orchestrator health retained below the result cells.
+  Authenticator gets a large worst-gated-suite failure percentage with an explicit
+  suite label and each suite's own pass/failure percentages beside counts/bars.
+  No cross-suite average, no mixing with MRWP. Missing/empty/stale evidence remains
+  unavailable; a completed failed APK does not gain a fictitious UI percentage.
+  Full passing Auth shows green0% failure. Existing quality gates/retry math/count
+  denominators/source data remain unchanged.
+  Focused existing/new render/delivery/source/storage/ownership selectors:
+  282 passed in70.84s, then two extra missing-Auth/unequal-provider message cases
+  passed in0.90s. Total71.74s; no full suite or new tooling.
+  Regenerated the SAME session rc-verification-preview.html from frozen evidence
+  with pipeline provider ports disabled; exact state bytes/source digest unchanged.
+  New header: ECS3.7% failure(6/164), Local0.9%(1/109), Auth24.1% worst-suite
+  failure(E2E22/29passed). Auth rows75.86%pass/24.1%fail and95.48%pass/4.5%fail.
+  New preview SHA256:9d5158d1d22df6e58457123512cf79708c5e9eb04f8f37350d8eceb9eb7601f0
+  supersedes the earlier preview hash; result.json publication preview updated too.
+  Browser local-file protocol was blocked; no browser screenshot/visual QA claimed.
+  No live reads, state adoption, publication, notification or decision changes.
+
+LATEST REPORT OWNER REFINEMENT: A034 (supersedes A033 failure-rate headlines)
+  Checker, Orchestrator and Versions now occupy three distinct rows in HTML and
+  plain text. Run links belong to the Checker/Orchestrator row, not Versions.
+  All prominent header/card percentages now show SUCCESS, not failure. ECS/Local
+  stay separate; Auth stays the explicitly labeled worst gated suite, not average.
+  Unit/Instrumented/UI rows match Firebase's "75.86% pass / 24.1% fail" display,
+  two decimals for pass, one decimal for fail. Existing detailed failure lists,
+  counts, recommendation policy and human gate are unchanged.
+  Metadata correction selectors:50 passed13.72s. Success-rate/category/layout/
+  delivery/ownership selectors:52 passed14.62s. Offline, no new testing tooling.
+  Same session HTML/plain/result preview regenerated from frozen evidence with
+  pipeline reads prohibited. State bytes/source digest unchanged; no runtime
+  adoption, pipeline operations, publication or notification.
+  Final headline: MRWP ECS96.3%, MRWP Local99.1%, Auth75.9% success (worst suite).
+  Final preview SHA256:77fb2a7d90137311edfc5d3284a9683e5fc214e166e0978fd44a4b602b9fcf84.
+
+CURRENT USER FOCUS: continue the audit AND FIX the actual steps with clear data
+contracts, using normal focused tests. The proposed/implemented rehearsal
+framework was rejected and removed; do not revive it as the next task.
+NEXT: mrwp_ecs and mrwp_local in build_verify (Phase 2), using their actual
+source-capture implementations, exact state outputs/consumers and bounded
+ordinary pytest scenarios. No new simulator/runner or live actions implied.
 Repair backlog A007-A010 remains open, not silently cleared by this review.
 When resuming A007, first define owner-sensitive invalidation; preserve active
 execution/notification ownership and receipts rather than blindly clearing state.
@@ -75,6 +180,133 @@ Use contract -> correction -> focused offline proof -> record for actual repairs
 Existing runs need explicit runtime-adoption review before using changed source;
 do not adopt, reset or mutate live runs as a side effect of a code correction.
 Read only the relevant record sections when restoring context.
+
+DELIVERY EXERCISE CHECKPOINT (2026-10-16, after report refinements)
+  Owner requested real Teams/email/decision surfaces for the isolated checker test.
+  Clarified Phase2 config is publish -> Teams link -> human gate; a full HTML email
+  is an additional test copy, not a configured Phase2 step.
+  Owner explicitly approved the exact zero-reset runtime adoption from
+  3997503c9a7eace408962b9c4fb2ad16c62218aa0cc1c1ddabcafdc4d26d630c to
+  535d230b1cfb79b3186a4561cd07eff2f0f7868e003460d37d0ea48185e6e62b;
+  applied only to the isolated state. Six completed steps preserved, no resets,
+  gate/notification removals or canonical state edits.
+  A035: publication CLI's default preview passed a planner function to W.preview,
+  which expects a WritePlan; actual preparation crashed before showing any review.
+  Fixed to pass plan_rc_report_publish(orch); new exact CLI regression proves no
+  state/provider write and a content-bound file/review hash. All27 report-delivery
+  module cases passed15.46s. No provider write occurred on the failed preview.
+  Fix requires another explicit isolated-only zero-reset adoption:
+  old535d230b1cfb79b3186a4561cd07eff2f0f7868e003460d37d0ea48185e6e62b,
+  newee9963a2afff0bf0887e786627c4aed6330dca12cb5c2c919c9b676381375364,
+  approve-hash sha256:8ef733608a9885e3c06a4bf11ebc54d0cb3b4fe94535242836bd4f2253436b3f.
+  Prepared proposed post-adoption publication review WITHOUT changing persisted
+  revision or granting write authority; permission_to_execute remains false.
+  Review hash sha256:5a9be57bca43be46b9762396805b6810761ee8d04184e0d3fcbe5449070abbe6.
+  Exact report bytes remain reviewed SHA77fb2a7d90137311edfc5d3284a9683e5fc214e166e0978fd44a4b602b9fcf84.
+  Configured destination: MsalAndroidRelease SharePoint Documents/ReleaseAgentReports,
+  file rc-verification-report-2026-10-rc2-<contentSHA>.html. Existing site permissions,
+  not private-to-owner; user must confirm actual publication before execution.
+  Saved session publication-review.json contains both exact proposed plans.
+  Teams/email sending and gate decision remain unexecuted; preview actual content
+  to owner and confirm separately. Do not invent a SharePoint receipt/link or mark
+  notification/gate complete to demonstrate its UI.
+  Owner then explicitly confirmed "Publish reviewed report". Applied the exact
+  second zero-reset adoption and executed reviewed publish-rc-report with the
+  approved hash/reviewer (not auto-approve). Remote upload succeeded and metadata
+  was independently read back: item01WB7PYWF26G7RWREPG5FL6MXGQOXJQNJD,
+  drive b!9By6HkMrmka_YGxMT-MpqgXVXSad2slJgC27IA22jT-IeKIYVfPhT7rgeCI_WmJg,
+  size40944B, contentSHA77fb2a7d90137311edfc5d3284a9683e5fc214e166e0978fd44a4b602b9fcf84.
+  SharePoint returned webUrl under Shared%20Documents/ReleaseAgentReports with
+  the reviewed content-addressed filename. No sharing permissions were widened.
+  Publication receipt persisted by the checked command;7/9 steps now done.
+  Normal notification prepare offered the exact rc_report_notify Teams payload.
+  Additional requested HTML email is a release-scoped diagnostic delivery with
+  no step completion, using the same renderer bytes and normal descriptor ledger.
+  Both target owner pedroro@microsoft.com only; both PREPARED, not claimed/sent.
+  Teams hash5bb5280c7f57411ca31c5f780551e072f9dfc5bf3d4a4dd4de82a2f15ca4fe1a;
+  email hashf31b3ce3d6092c81c05bea96f1074cc04eb3828fc1725c2df0d80e86d8963ccf.
+  Session teams-message-review.json/email-message-review.json preserve exact offers.
+  Await explicit message-content confirmation; gate remains unapproved.
+  Owner explicitly chose "Send Teams and email" at19:40PT. Reconfirmed signed-in
+  owner matches pedroro@microsoft.com and Scout relay connected. Claimed both exact
+  offered hashes under the release lock; persisted claims before sending.
+  Direct m_send_teams_message and workiq_send_email each returned success.
+  Email was full reviewed HTML (not a rewritten summary/link-only substitute);
+  Sent Items lookup found exactly one matching message addressed to owner.
+  D.exact_payload_receipt retained both transport responses/payload identities;
+  recorded sent before separately finalizing. Normal Teams step now done; extra
+  release-scoped email delivery completes no workflow step.
+  Claim IDs: Teams8f036b97ac054558ba27187896861cc6,
+  email02aa163c8d4b454a9b009cc9f1de6698. Receipt files alongside message reviews.
+  Isolated test8/9 done, current rc_report_gate; gate_decisions remains empty.
+  Fresh real CLI status and step-action show human gate "Decide RC quality gate
+  after reviewing report". Present to owner with recommendation HOLD due AuthE2E
+  75.86% versus90%, explicitly isolated-only. No automatic decision or Phase3 work.
+  Shared orchestrator Remove RC Tags remains unapproved. Canonical run untouched.
+  FINAL OWNER DECISION: "Approve test gate" at19:46PT. Normal approve command
+  recorded exactly one HUMAN approved decision for build_verify.rc_report_gate,
+  with test-only acceptance of captured AuthE2E75.86% quality risk. The isolated
+  Phase2-only definition is now COMPLETE9/9. No fake predecessor completions.
+  Approval timestamp2026-10-17T02:47:35.171346+00:00. Actual CLI output preserved
+  in session approved-test-status.txt; result.json has final status/decision.
+  Canonical2026-10 state SHA unchanged across approval. Phase3 absent from this
+  test definition, so no plans/distribution/provider work could advance there.
+  Real live exercise now covers all9 existing Phase2 steps with real ADO reads,
+  Kusto count, checked SharePoint publication, Scout delivery and explicit owner
+  quality decision, plus the requested extra full-HTML email to owner.
+  This demonstrates that specific captured RC2 path, not every failure/retry path,
+  new pipeline creation, a shipped one-input entry feature or completed all-phase audit.
+
+LATEST COMPLETED CORRECTION: A031 / EXTERNAL RC EVIDENCE
+--------------------------------------------------------
+Problem: pipeline_runs.rcs[].ecs/local/auth embedded complete suites, titles,
+attempts and duplicate failure structures in the central JSON and status output.
+ADO links alone cannot freeze the release's exact report/Phase-3 decision input.
+
+Implementation:
+  orchestrator\evidence_store.py owns version-1 envelope serialization, SHA-256
+  references, lossless MRWP alias deduplication and compact summaries.
+  state.save writes/fsyncs immutable per-lane files atomically before state replacement.
+  state.load verifies file path/hash/schema/identity/summary before restoring the
+  original logical snapshots. Contexts, capture authorities, report/source hashes,
+  write plans and Phase-3 inputs remain unchanged. Main schema stays 3.
+  status_views exposes only compact pipeline summaries; no detail file I/O there.
+  discovery keeps releases with broken evidence visible as blocked; CLI returns
+  an explicit recovery error and no execution permission, never refetching ADO.
+  Legacy/incomplete observations are preserved; missing RC is stored under
+  evidence\unresolved, never silently converted to a valid RC.
+  Existing same-content files are not rewritten. Corrupt existing files fail
+  rather than being overwritten. Historical/orphaned files remain; no automatic GC.
+  Normal save migrates existing inline schema-v3 data; read-only inspection does not.
+
+Focused proof (all isolated temp roots; no providers/canonical state):
+  New tests\test_rc_evidence_storage.py: 68 passed in 8.19s after integration.
+  Includes actual three capture handlers, exact all-lane roundtrip, main-state
+  size <12KB with 300 synthetic results per provider, status <5KB and bounded
+  growth, Unicode data, lossless aliases with JSON-distinct int/float/bool values,
+  missing/invalid RC migration, unchanged report HTML/source/write/delivery hashes,
+  Phase-3 projections/effect bindings, changed capture/history retention,
+  idempotent file timestamps, SHA/schema/release/RC/lane/summary corruption,
+  traversal/symlink rejection, write/fsync/replace/serialization interruption,
+  no temporary residue, movable bundles and CLI/discovery errors.
+  Existing affected selection: initially 291 passed/3 failed in 90.29s. One
+  exposed the storage-layer rejection of incomplete RC identity (fixed above).
+  Two were stale assertions/fixtures from the preceding report-lineage edits:
+  human decision replaces the unsafe skip suggestion; publication fixture now
+  includes the genuine receipt/lineage. The immutable filename assertion was
+  also aligned with that already-present report change.
+  Follow-up failed selectors plus lifecycle/delivery/persisted capture coverage:
+  158 passed in 34.22s. The new module's initial agent run was 52 passed/2 fixture
+  failures in 3.95s; those fixtures were corrected before the final 68-case pass.
+  Aggregate pytest elapsed: 136.65s, below the existing 15-minute budget.
+  No repeated broad/full suite, new testing tool or silent deselection.
+
+Limitations:
+  Full Python snapshots are hydrated in-memory; this is persisted/presentation
+  separation, not lazy loading. Back up the entire release folder with evidence.
+  No provider E2E, hardware/power-loss proof, canonical state migration or runtime
+  adoption was performed. Remaining MRWP/Auth/telemetry capture-validation audit
+  defects are still open; this correction does not certify the entire Phase 2.
 
 WORKING METHOD
 --------------
@@ -1076,20 +1308,63 @@ Validation record:
   New cases stay in existing reviewed module classifications. A012 remains open;
   no full-project daily-suite-green claim.
 
-Reproduction proposal, not implemented runtime behavior:
-  docs\phase-rehearsal-proposal.txt separates target selection, validated
-  prerequisite data, logical clock and provider profile.
-  Recommends isolated run identity; scoped target execution; no target success
-  shortcuts; logical-time advance for schedule versus real UTC ownership/
-  receipts; exact test-target allowlists, artifact IDs and reviewed cleanup.
-  Offline -> real-read -> controlled-live are explicit tiers, not dummy
-  variables magically making production endpoints safe.
-  Current sim uses canonical state by default, can auto-pass target steps, and
-  does not persist logical time for normal follow-ups; generic gate/receipt
-  restrictions remain intentional. Its known A001-A004 limitations are not
-  silently claimed fixed.
-  New persistent rehearsal metadata/clock architecture and real target sets
-  require explicit review before implementation or live execution.
+Subsequent disposition: the separate rehearsal proposal/implementation was
+rejected and removed at the owner's request. Retained CCD tests are ordinary
+focused regressions, not a stage-execution product. The next work is direct audit.
+
+RUNNER REMOVAL AND PHASE 2 FIRST DIRECT AUDIT BATCH
+---------------------------------------------------
+2026-10-16: owner said this was not the requested solution, asked to remove it
+all and continue the audit. Restored the 17 runner-modified tracked files to
+snapshot 6bcafa5cb, removed all added runner modules/tests/invocation hooks and
+foundation documentation, deleted the proposal and removed active references.
+Removed generated sessions foundation-demo-6f5eb318, foundation-ready-e5b26bbc,
+phase2-demo-d92437cc and their session root. The prior audit commit and branch
+history were preserved; nothing was pushed or adopted into a live release.
+
+  A028 / HIGH / LOCALLY FIXED / checker source identity and partial-read handling:
+    Succeeded trigger evidence could publish run_id="None"; malformed run/
+    timeline shapes could crash. A failed timeline mixed with skipped valid
+    timelines was incorrectly diagnosed as no trigger rather than unreadable
+    evidence. Now validates IDs/shapes and reports partial read errors accurately.
+    A separately proven succeeded trigger remains sufficient.
+
+  A029 / HIGH / LOCALLY FIXED / orchestrator false healthy/parked evidence:
+    Missing Remove RC Tags was treated as parked=true; duplicate stage names
+    silently overwrote one another; required stages only checked result and
+    could still be inProgress; a failed completed park stage returned Done.
+    Missing/duplicate release tags could also merge an incomplete new payload
+    into old versions. These cases now hold without publishing updates.
+    A valid pending park needs no contradictory result. An already completed
+    successful park is explicitly reported as advanced with parked=false.
+    Complete unique version tags/canonical valid Authenticator branch are required.
+    No approval or publication operation was introduced.
+
+  A030 / MEDIUM / LOCALLY FIXED / malformed source collections:
+    Existing checker/orchestrator discovery and timeline reads now reject
+    malformed object/array/identity shapes instead of crashes or empty-success
+    defaults. Optional untagged runs still work and normal filtering/order is
+    preserved. This is a source-provider correction, not a new runtime adapter.
+
+Data contracts:
+  docs\build-verify-contracts.txt lists exact inputs, generated results, persisted
+  pipeline_runs.checker/orchestrator fields, versions ownership, consumers,
+  failure behavior and lifetime. No new persisted fields/caches/schema versions.
+  Blocked outcomes publish no evidence, so old values are not success proof for
+  a new invalid source. Engine lifecycle still records actual holds.
+
+Proof:
+  New direct handler/source-shape cases plus two existing-CLI persisted-state
+  scenarios cover checker -> orchestrator success or missing park. The next
+  MRWP source is deliberately unavailable; unaudited downstream work stays held.
+  Exact IDs, timestamps, version fields, unchanged readiness/prefix and no
+  resources/communications are asserted. Earlier facts are ordinary fixtures.
+  Affected selection including existing evidence and gate-provider guards:
+  181 passed in 3.49s; no new testing framework/dependencies or budget changes.
+  Session output: files\phase2-chain-audit-pytest.txt.
+  No full Phase 2 completion, real provider query, report send or pipeline launch.
+
+Next: direct mrwp_ecs/mrwp_local audit and fixes. Preserve Phase 0-1 commit.
 
 HOW TO UPDATE THIS RECORD
 -------------------------

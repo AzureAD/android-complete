@@ -42,6 +42,15 @@ def find_orchestrator_run(org, project, def_id, release_month, timeout=60):
          "--org", org, "--project", project, "--top", "50"], timeout)
     if not ok:
         return (False, None, detail)
+    if not isinstance(builds, list) or any(
+            not isinstance(build, Mapping)
+            or _numeric_build_id(build.get("id")) is None
+            or (build.get("tags") is not None and (
+                not isinstance(build["tags"], list)
+                or any(not isinstance(tag, str) for tag in build["tags"])))
+            or build.get("queueTime") is not None and not isinstance(build["queueTime"], str)
+            for build in builds):
+        return False, None, "malformed orchestrator run collection"
     prefix = f"AuthenticatorBranch=release-{release_month}-"     # release-2026-08-
     matches = [b for b in (builds or [])
                if any((t or "").startswith(prefix) for t in (b.get("tags") or []))]
@@ -81,6 +90,10 @@ def find_checker_runs(org, project, def_id, release_month, timeout=60):
          "--org", org, "--project", project, "--top", "60"], timeout)
     if not ok:
         return (False, None, detail)
+    if not isinstance(builds, list) or any(
+            not isinstance(build, Mapping) or _numeric_build_id(build.get("id")) is None
+            or not isinstance(build.get("queueTime"), str) for build in builds):
+        return False, None, "malformed checker run collection"
     inmonth = [b for b in (builds or [])
                if (b.get("queueTime") or "").startswith(release_month)]
     inmonth.sort(key=lambda b: b.get("queueTime") or "", reverse=True)
@@ -156,7 +169,10 @@ def get_timeline(org, project, build_id, timeout=60):
          "--api-version", "7.1"], timeout)
     if not ok:
         return (False, None, detail)
-    return (True, (tl or {}).get("records", []) or [], "")
+    if (not isinstance(tl, Mapping) or not isinstance(tl.get("records"), list)
+            or any(not isinstance(record, Mapping) for record in tl["records"])):
+        return False, None, "malformed build timeline: expected records array"
+    return (True, tl["records"], "")
 
 
 def named_record(records, name, types=("Job", "Phase", "Stage")):

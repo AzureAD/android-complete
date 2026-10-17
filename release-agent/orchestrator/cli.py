@@ -27,6 +27,7 @@ sys.path.insert(0, ROOT)
 
 from orchestrator import cli_common as C
 from orchestrator.command_catalog import register_commands
+from orchestrator.evidence_store import EvidenceError
 
 
 def build_parser():
@@ -86,7 +87,12 @@ def main(argv=None):
                 import json
                 print(json.dumps({"error": str(exc), "permission_to_execute": False}))
                 return 1
-        return args.func(args)
+        try:
+            return args.func(args)
+        except EvidenceError as exc:
+            import json
+            print(json.dumps({"error": str(exc), "permission_to_execute": False}))
+            return 1
 
 
 if __name__ == "__main__":

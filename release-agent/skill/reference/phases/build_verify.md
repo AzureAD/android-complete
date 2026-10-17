@@ -69,18 +69,42 @@ The denominator is **passed + failed**, excluding NA-only titles (`NotExecuted`,
 `NotApplicable`, `None`/null, `Inconclusive`, `Warning`). The UI threshold stays 90%.
 Authenticator Firebase retains its separate existing count/build/suite-selection policy.
 
+Report summaries must show **MRWP ECS, MRWP Local and Authenticator ECS separately**.
+Do not combine ECS/Local into a headline rate or blend Authenticator into Broker counts.
+All large percentages show **success rates**, including the Authenticator card's
+**worst gated suite** (labeled explicitly). Unit, Instrumented, UI and Firebase rows show
+`75.86% pass · 24.1% fail`. Checker, Orchestrator and Versions each get their own row,
+with run links beside Checker/Orchestrator rather than beside Versions. Never average
+Firebase suites to hide a failing suite. Missing/empty evidence is unavailable, not 0% failure.
+These are presentation rules; the owning step's release recommendation policy is unchanged.
+
 HTML, plain text and CLI show **every unresolved failing title and every recovered
 success**, with suite/provider context; never shorten these lists with "and N more."
 Historical failed attempts are informational audit evidence, not extra gate failures.
 
 One tools-level paged read of all Test Runs/Results, including successful reruns, feeds
-both counts and details. `pipeline_runs.rcs[].ecs/local.tests` stores
+both counts and details. The hydrated `pipeline_runs.rcs[].ecs/local.tests` contains
 `count_basis: distinct_tests_pass_any`, `build_id`, `categories`, `suites` and
 `failed_suites`. Each suite has `run_ids`, `result_entries`, and `test_results` with
 exact title, verdict, outcome counts and every attempt's run/result IDs.
 Unreadable, missing or invalid result pages mean unavailable evidence, not aggregate
 fallback or zero failures. Refresh stale execution-count snapshots before reporting
 or gating; never relabel old counts, migrate them, or invent missing evidence.
+
+### Separate evidence files
+
+The main release-state JSON and normal status output keep compact summaries and
+`evidence_ref` (relative path, SHA-256, artifact schema version) for ECS, Local and Auth.
+Detailed snapshots live under the release directory's `evidence\rc<N>\` in immutable
+`mrwp-ecs-<hash>.json`, `mrwp-local-<hash>.json` and `auth-ecs-<hash>.json` files.
+State loading verifies each reference and restores the same logical inputs for reports,
+telemetry and Phase 3; do not manually splice files or replace missing evidence with a
+fresh ADO read. Surface the recovery error and restore the original bundle.
+Legacy inline schema-v3 captures are extracted on the next normal save without step
+reruns or changing decisions/source fingerprints; this is not a count-policy upgrade.
+Preserve the whole release directory when copying test inputs or backups. Historical
+and unreferenced files are not automatically deleted. This is storage separation, not
+another rehearsal runner.
 
 ### Authenticator detailed capture and intentional report-only coverage
 

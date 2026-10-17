@@ -286,6 +286,22 @@ def auth_failure_details_html(model):
     return "".join(sections)
 
 
+def mrwp_leg_summary(model, provider) -> dict:
+    """Provider-only display metrics; the owning step's release gate policy is unchanged."""
+    tests = ((model.get("mrwp") or {}).get(provider) or {}).get("tests") or {}
+    ui = (tests.get("categories") or {}).get("ui")
+    if (tests.get("count_basis") != MRWP_COUNT_BASIS or not valid_counts(ui)
+            or ui["total"] != ui["passed"] + ui["failed"]):
+        return {"available": False, "pass_pct": None, "fail_pct": None,
+                "headline": "evidence unavailable", "detail": "Refresh UI verification"}
+    passed, failed, total = ui["passed"], ui["failed"], ui["total"]
+    pct = round(passed * 100.0 / total, 1)
+    return {"available": True, "passed": passed, "failed": failed, "total": total,
+            "pass_pct": pct, "fail_pct": _fail_rate(failed, total),
+            "headline": f"{pct}% pass",
+            "detail": f"{failed} failed / {total} distinct UI tests"}
+
+
 def auth_leg_summary(model, auth) -> dict:
     """Compact Authenticator-ECS verdict for the RC report's at-a-glance surfaces (email
     subject + the gates banner). Reads the stored auth section (model['auth']) and the
@@ -294,17 +310,22 @@ def auth_leg_summary(model, auth) -> dict:
     if not a:
         return {"present": False, "verdict": "unavailable", "blocking": True,
                 "headline": "not evaluated", "worst": None}
+    result = (a.get("build") or {}).get("result")
+    if result in ("failed", "canceled") or auth["verdict"] == "unavailable":
+        return {"present": True, "verdict": auth["verdict"], "blocking": True,
+                "headline": f"build {result}" if result in ("failed", "canceled") else
+                           "evidence unavailable", "worst": None}
     suites = (a.get("test") or {}).get("suites") or {}
     verdict = auth["verdict"]
     worst = None                                  # (short_name, pct|None) — missing or lowest
     for name in AUTH_UI_SUITES:
         s = suites.get(name) or {}
         short = name.split(" - ")[-1]
-        if not s.get("present"):
+        pct = auth_pass_pct(s)
+        if not s.get("present") or pct is None:
             worst = (short, None)
             break
-        pct = auth_pass_pct(s)
-        if worst is None or (pct is not None and (worst[1] is None or pct < worst[1])):
+        if worst is None or pct < worst[1]:
             worst = (short, pct)
     if verdict == "clean":
         headline = f"both suites >= {AUTH_UI_PASS_THRESHOLD:.0f}%"
@@ -320,15 +341,15 @@ def auth_leg_summary(model, auth) -> dict:
 
 def rc_email_subject(model, gate, auth) -> str:
     rid = model.get("release", "?")
-    v = gate["verdict"]
-    action = {"clean": "clean",
-              "warn": "pass with warning — investigate failing UI tests in parallel",
-              "attention": "investigate UI failures before proceeding",
-              "unavailable": "evidence unavailable — hold"}[v]
-    subject = f"Release {rid} — RC verification report (Phase 2) · MRWP UI: {action}"
-    auth = auth_leg_summary(model, auth)
-    if auth["present"]:
-        subject += f" · Auth ECS: {'pass' if auth['verdict'] == 'clean' else 'HOLD'}"
+    subject = f"Release {rid} — RC verification report (Phase 2)"
+    for provider in ("ECS", "Local"):
+        subject += f" · MRWP {provider}: {mrwp_leg_summary(model, provider)['headline']}"
+    summary = auth_leg_summary(model, auth)
+    verdict = ("pass" if summary["verdict"] == "clean" else
+               "unavailable" if summary["verdict"] == "unavailable" else "HOLD")
+    worst = summary["worst"]
+    rate = f"{worst[1]:.1f}% lowest-suite pass" if worst and worst[1] is not None else summary["headline"]
+    subject += f" · Auth ECS: {verdict} ({rate})"
     return subject
 
 
@@ -403,27 +424,25 @@ def rc_email_plain(model, ctx, gate, auth, next_action) -> str:
     L.append(f"Hi {ctx.get('owner', 'there')},")
     L.append("")
     L.append(f"Captured RC verification results for {rid}.")
-    L.extend(_next_plain(next_action))
-    L.append("")
-    _g = gate
-    _mpct = _g.get("pass_pct")
-    L.append("GATES (evaluated independently)")
-    L.append(f"  - MRWP UI: {_g['verdict']}"
-             + (f" ({_mpct}% pass across ECS + Local)" if _mpct is not None else ""))
+    L.append("RESULTS (shown separately)")
+    for provider in ("ECS", "Local"):
+        summary = mrwp_leg_summary(model, provider)
+        rate = f"; {summary['fail_pct']}% fail" if summary["available"] else ""
+        L.append(f"  - MRWP {provider}: {summary['headline']}{rate}; {summary['detail']}")
     _auth = auth_leg_summary(model, auth)
-    if _auth["present"]:
-        L.append(f"  - Authenticator ECS: "
-                 f"{'pass' if _auth['verdict'] == 'clean' else 'HOLD'} "
-                 f"({_auth['headline']})")
+    label = ("pass" if _auth["verdict"] == "clean" else
+             "unavailable" if _auth["verdict"] == "unavailable" else "HOLD")
+    L.append(f"  - Authenticator ECS: {label} ({_auth['headline']})")
+    L.append("")
+    L.extend(_next_plain(next_action))
     L.append("")
     ch = model.get("checker") or {}
     L.append("PIPELINE HEALTH")
-    L.append(f"  - Code Complete Checker: fired the release (run {ch.get('run_id')}).")
+    L.append(f"  - Checker: fired the release (run {ch.get('run_id')}) — {build_url(ch.get('run_id'))}")
     park = ("parked at 'Remove RC Tags' (awaiting approval, later phase)"
             if o.get("parked") else "gate already cleared")
-    L.append(f"  - Release Orchestrator: healthy — pre-gate stages green, {park}.")
-    L.append(f"      Versions: {vstr}")
-    L.append(f"      Run: {build_url(o.get('run_id'))}")
+    L.append(f"  - Orchestrator: healthy — pre-gate stages green, {park} — {build_url(o.get('run_id'))}")
+    L.append(f"  - Versions: {vstr}")
     L.append("")
     L.append("RC TESTING — captured results by category:")
     L.append("  " + COUNT_NOTE)
@@ -440,7 +459,8 @@ def rc_email_plain(model, ctx, gate, auth, next_action) -> str:
                 continue
             tag = "  <-- RC gate" if cat == "ui" else ""
             L.append(f"      {_CAT_LABEL.get(cat, cat):14} {c.get('passed')}/{c.get('total')} passed"
-                     f" · {c.get('failed')} failed · {_fail_rate(c.get('failed'), c.get('total'))}% fail{tag}")
+                     f" · {c.get('failed')} failed · {c['passed'] * 100 / c['total']:.2f}% pass"
+                     f" · {_fail_rate(c.get('failed'), c.get('total'))}% fail{tag}")
         fs = r.get("failed_stages") or []
         if fs:
             L.append(f"      Red stages ({len(fs)}): {', '.join(fs)}")
@@ -462,7 +482,7 @@ def rc_email_plain(model, ctx, gate, auth, next_action) -> str:
         suites = t.get("suites") or {}
         verdict = ("PASS (both suites >= %.0f%%)" % AUTH_UI_PASS_THRESHOLD
                    if auth["verdict"] == "clean" else "HOLD")
-        L.append(f"AUTHENTICATOR ECS — separate gate, does NOT affect the UI rate above: {verdict}")
+        L.append(f"AUTHENTICATOR ECS — each Firebase suite evaluated separately: {verdict}")
         L.append(f"  build {b.get('run_id')} ({b.get('version')}), result: {b.get('result')}, "
                  f"UI tests: {t.get('run_id') or 'not available'}")
         for name in AUTH_UI_SUITES:
@@ -473,7 +493,7 @@ def rc_email_plain(model, ctx, gate, auth, next_action) -> str:
             passed, failed = s.get("passed", 0) or 0, s.get("failed", 0) or 0
             pct = auth_pass_pct(s)
             L.append(f"      {name}: {passed}/{passed + failed} passed "
-                     f"({'n/a' if pct is None else f'{pct:.2f}%'})")
+                     f"({'n/a' if pct is None else f'{pct:.2f}% pass; {_fail_rate(failed, passed + failed)}% fail'})")
         L.extend(auth_failure_details_plain(model))
         L.append(f"      Run: {auth_build_url(b.get('run_id'))}")
         L.append("")
@@ -501,6 +521,7 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
     o = model.get("orchestrator") or {}
     vstr = format_versions(o.get("versions"), fallback="n/a")
     ch = model.get("checker") or {}
+    auth_summary = auth_leg_summary(model, auth)
     broker_failure_links = {
         (f["provider"], f["suite"], f["title"]): f["links"]
         for f in (model.get("ui_evidence") or {}).get("failures", [])
@@ -524,6 +545,11 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
         return (f"<span style='display:inline-block;padding:2px 8px;border-radius:10px;"
                 f"background:{bg};color:{fg};font-size:12px;font-weight:600;'>{text}</span>")
 
+    def _rate_color(rate):
+        if rate is None:
+            return "#667085"
+        return "#b42318" if rate >= 5 else "#b54708" if rate > 0 else "#067647"
+
     def _cat_row(cat, c):
         total = c.get("total") or 0
         if not total:
@@ -540,7 +566,8 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
                 f"<td style='padding:5px 10px;font-size:12px;color:#98a2b3;white-space:nowrap;'>{passed}/{total}</td>"
                 f"<td width='130' style='padding:5px 0;'>{_split_bar(passed * 100 / total, h=6)}</td>"
                 f"<td align='right' style='padding:5px 0 5px 10px;font-size:13px;font-weight:700;"
-                f"color:{pct_color};white-space:nowrap;'>{fr}%</td></tr>")
+                f"color:{pct_color};white-space:nowrap;'>{passed * 100 / total:.2f}% pass"
+                f" &middot; {fr}% fail</td></tr>")
 
     def mrwp_card(prov):
         r = (model.get("mrwp") or {}).get(prov) or {}
@@ -552,7 +579,7 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
         cats = t.get("categories") or {}
         ui = cats.get("ui") or {}
         ui_total, ui_pass, ui_fail = ui.get("total") or 0, ui.get("passed") or 0, ui.get("failed") or 0
-        ui_rate = _fail_rate(ui_fail, ui_total)
+        summary = mrwp_leg_summary(model, prov)
         fs = r.get("failed_stages") or []
         red = (f"<div style='margin:8px 0 0;color:#b42318;font-size:12px;'>Red stages "
                f"({len(fs)}): {T.esc(', '.join(fs))}</div>" if fs else "")
@@ -586,7 +613,7 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
         if failure_evidence_error(r):
             suite_html += f"<p>{T.esc(failure_evidence_error(r))}</p>"
 
-        rate_color = "#b42318" if ui_rate >= 5 else ("#b54708" if ui_rate > 0 else "#067647")
+        rate_color = _rate_color(summary["fail_pct"])
         return (
             f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
             f"style='border:1px solid #e4e7ec;border-radius:10px;margin:10px 0;'>"
@@ -596,13 +623,13 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
             f"<span style='color:#98a2b3;font-weight:400;font-size:13px;'> &middot; run {r.get('run_id')} "
             f"&middot; {r.get('ran')}/{r.get('total')} stages</span></td>"
             f"<td align='right'>{_chip('completed' if r.get('complete') is True else 'incomplete', '#eef0f3', '#475467')}</td></tr></table>"
-            # headline = UI-automation failure rate (the RC-critical bucket)
+            # Headline uses success; failure counts remain explicit alongside it.
             f"<div style='margin:10px 0 2px;'>"
-            f"<span style='font-size:26px;font-weight:800;color:{rate_color};'>{str(ui_rate) + '%' if valid_counts(ui) else 'unavailable'}</span>"
-            f"<span style='font-size:13px;color:#667085;'> UI-automation failure rate &nbsp;·&nbsp; "
+            f"<span style='font-size:26px;font-weight:800;color:{rate_color};'>{str(summary['pass_pct']) + '%' if summary['available'] else 'unavailable'}</span>"
+            f"<span style='font-size:13px;color:#667085;'> UI-automation success rate &nbsp;·&nbsp; "
             f"<strong style='color:#12b76a;'>{ui_pass}</strong> passed / "
             f"<strong style='color:#b42318;'>{ui_fail}</strong> failed of {ui_total} distinct UI tests</span></div>"
-            f"{_split_bar(ui_pass * 100 / ui_total) if valid_counts(ui) else ''}"
+            f"{_split_bar(ui_pass * 100 / ui_total) if summary['available'] else ''}"
             # per-category breakdown
             f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
             f"style='margin:10px 0 0;border-top:1px solid #eef0f3;'>{cat_table}</table>"
@@ -612,8 +639,7 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
             f"</td></tr></table>")
 
     def _auth_card():
-        """Separate 'Authenticator ECS' section — its OWN gate (both Firebase suites >=90%),
-        rendered only when the auth leg resolved. Does NOT feed the MRWP UI headline above."""
+        """Both Firebase suites retain their own rates; never average away a failing suite."""
         a = model.get("auth") or {}
         if not a:
             return ""
@@ -632,13 +658,15 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
             pcol = "#067647" if ok else "#b42318"
             passed, failed = s.get("passed", 0) or 0, s.get("failed", 0) or 0
             denom = passed + failed
-            disp = "no result" if not present else (f"{pct:.2f}%" if pct is not None else "n/a")
+            disp = ("no result" if not present else
+                    f"{pct:.2f}% pass &middot; {_fail_rate(failed, denom)}% fail"
+                    if pct is not None else "n/a")
             rows += (
                 f"<tr><td style='padding:5px 0;font-size:13px;color:#1d2939;'>{T.esc(name)}</td>"
                 f"<td style='padding:5px 10px;font-size:12px;color:#98a2b3;white-space:nowrap;'>"
                 f"{passed}/{denom}</td>"
                 f"<td width='130' style='padding:5px 0;'>"
-                f"{_split_bar((pct if pct is not None else 0), h=6)}</td>"
+                f"{_split_bar(pct, h=6) if pct is not None else ''}</td>"
                 f"<td align='right' style='padding:5px 0 5px 10px;font-size:13px;font-weight:700;"
                 f"color:{pcol};white-space:nowrap;'>{disp}</td></tr>")
         bid, tid = b.get("run_id"), t.get("run_id")
@@ -649,10 +677,20 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
                 f"style='color:#0b5cad;font-size:13px;'>Open auth build {bid} &rsaquo;</a>"
                 + (f" &nbsp; <a href='{auth_build_url(tid)}' style='color:#0b5cad;font-size:13px;'>"
                    f"UI tests {tid} &rsaquo;</a>" if tid else "") + "</div>")
+        worst = auth_summary["worst"]
+        worst_rate = round(worst[1], 1) if worst and worst[1] is not None else None
+        headline = (
+            f"<div data-auth-success-rate style='margin:10px 0 2px;'>"
+            f"<span style='font-size:26px;font-weight:800;color:{_rate_color(100 - worst[1])};'>{worst_rate}%</span>"
+            f"<span style='font-size:13px;color:#667085;'> UI-automation success rate "
+            f"(worst gated suite: {T.esc(worst[0])})</span></div>"
+            if worst and worst[1] is not None else
+            f"<p style='color:#667085;'>UI-automation success rate unavailable: "
+            f"{T.esc(auth_summary['headline'])}</p>")
         return (
             f"<p style='margin:16px 0 2px;font-size:15px;font-weight:700;'>Authenticator ECS "
             f"<span style='color:#98a2b3;font-weight:400;font-size:13px;'>&middot; separate gate "
-            f"(does not affect the UI-automation rate above)</span></p>"
+            f"(each Firebase suite must pass independently)</span></p>"
             f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
             f"style='border:1px solid #e4e7ec;border-radius:10px;margin:6px 0;'>"
             f"<tr><td style='padding:14px 16px;'>"
@@ -660,35 +698,54 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
             f"<td style='font-size:14px;font-weight:700;color:#101828;'>Firebase device suites"
             f"{ver_span}</td>"
             f"<td align='right'>{chip}</td></tr></table>"
+            f"{headline}"
+            f"<p style='margin:4px 0;font-size:12px;color:#667085;'>"
+            f"Source-execution rates per suite; not combined with MRWP or averaged across suites.</p>"
             f"<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
             f"style='margin:8px 0 0;border-top:1px solid #eef0f3;'>{rows}</table>"
             f"{auth_failure_details_html(model)}"
             f"{link}</td></tr></table>")
 
-    # Overall headline — UI-automation failures ONLY (the RC-critical bucket), across both providers.
-    def _ui_sum(field):
-        return sum(((((model.get("mrwp") or {}).get(p) or {}).get("tests") or {})
-                    .get("categories", {}).get("ui", {}).get(field, 0) or 0)
-                   for p in ("ECS", "Local"))
-    tot_f, tot_t = _ui_sum("failed"), _ui_sum("total")
-    overall_rate = _fail_rate(tot_f, tot_t)
-
     def _gates_banner():
-        """Two chips at the top so the report contemplates BOTH gates at a glance — the MRWP
-        combined UI gate and the SEPARATE Authenticator-ECS gate (they stay independent)."""
-        g = gate
-        mcol = {"clean": ("#ecfdf3", "#067647"), "warn": ("#fffaeb", "#b54708"),
-                "attention": ("#fef3f2", "#b42318")}.get(g["verdict"], ("#eef0f3", "#475467"))
-        mpct = g.get("pass_pct")
-        mtxt = f"MRWP UI: {g['verdict']}" + (f" &middot; {mpct}%" if mpct is not None else "")
-        cells = f"<td style='padding:0 8px 0 0;'>{_chip(mtxt, *mcol)}</td>"
-        a = auth_leg_summary(model, auth)
-        if a["present"]:
-            acol = ("#ecfdf3", "#067647") if a["verdict"] == "clean" else ("#fef3f2", "#b42318")
-            atxt = "Auth ECS: " + ("pass" if a["verdict"] == "clean" else "HOLD")
-            cells += f"<td style='padding:0 8px;'>{_chip(atxt, *acol)}</td>"
+        cells = ""
+        for provider in ("ECS", "Local"):
+            summary = mrwp_leg_summary(model, provider)
+            colors = (("#ecfdf3", "#067647") if summary.get("fail_pct") == 0 else
+                     ("#fffaeb", "#b54708") if summary["available"] else ("#eef0f3", "#475467"))
+            text = T.esc(f"MRWP {provider}: {summary['headline']}")
+            cells += f"<td style='padding:0 8px 0 0;'>{_chip(text, *colors)}</td>"
+        acol = (("#ecfdf3", "#067647") if auth_summary["verdict"] == "clean" else
+                ("#eef0f3", "#475467") if auth_summary["verdict"] == "unavailable" else ("#fef3f2", "#b42318"))
+        atxt = "Auth ECS: " + ("pass" if auth_summary["verdict"] == "clean" else
+                              "unavailable" if auth_summary["verdict"] == "unavailable" else "HOLD")
+        cells += f"<td style='padding:0 8px;'>{_chip(atxt, *acol)}</td>"
         return ("<table role='presentation' cellpadding='0' cellspacing='0' style='margin:12px 0 0;'>"
                 f"<tr>{cells}</tr></table>")
+
+    def _results_header():
+        cells = []
+        for provider in ("ECS", "Local"):
+            summary = mrwp_leg_summary(model, provider)
+            rate = f"{summary['pass_pct']}%" if summary["available"] else "unavailable"
+            color = _rate_color(summary["fail_pct"])
+            cells.append(
+                f"<td data-result='mrwp-{provider.lower()}' width='33%' "
+                f"style='padding:12px 16px;border-right:1px solid #eef0f3;vertical-align:top;'>"
+                f"<div style='font-size:13px;font-weight:700;'>MRWP {provider}</div>"
+                f"<div style='font-size:22px;font-weight:800;color:{color};'>{rate}</div>"
+                f"<div style='font-size:12px;color:#667085;'>UI-automation success rate</div>"
+                f"<div style='font-size:12px;color:#98a2b3;'>{summary['detail']}</div></td>")
+        worst = auth_summary["worst"]
+        failure_pct = round(100 - worst[1], 1) if worst and worst[1] is not None else None
+        rate = f"{worst[1]:.1f}%" if worst and worst[1] is not None else "unavailable"
+        detail = f"Worst suite: {worst[0]}" if worst and worst[1] is not None else auth_summary["headline"]
+        cells.append(
+            f"<td data-result='auth-ecs' width='34%' style='padding:12px 16px;vertical-align:top;'>"
+            f"<div style='font-size:13px;font-weight:700;'>Authenticator ECS</div>"
+            f"<div style='font-size:22px;font-weight:800;color:{_rate_color(failure_pct)};'>{rate}</div>"
+            f"<div style='font-size:12px;color:#667085;'>UI-automation success rate</div>"
+            f"<div style='font-size:12px;color:#98a2b3;'>{T.esc(detail)}</div></td>")
+        return "".join(cells)
 
     probs = model.get("problems") or []
     issues = (("<div style='margin:12px 0;padding:10px 12px;background:#fef3f2;border:1px solid #fda29b;"
@@ -719,27 +776,25 @@ def rc_email_html(model, ctx, gate, auth, next_action) -> str:
   {_gates_banner()}
 
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:12px 0;border:1px solid #e4e7ec;border-radius:10px;">
-    <tr>
-      <td style="padding:12px 16px;border-right:1px solid #eef0f3;" width="33%">
-        <div style="font-size:12px;color:#667085;">UI-automation failure rate</div>
-        <div style="font-size:22px;font-weight:800;color:{'#b42318' if overall_rate >= 5 else '#b54708'};">{str(overall_rate) + '%' if gate['verdict'] != 'unavailable' else 'unavailable'}</div>
-        <div style="font-size:12px;color:#98a2b3;">{f'{tot_f} failed / {tot_t} distinct UI tests' if gate['verdict'] != 'unavailable' else 'Counts unavailable — refresh verification'}</div>
-      </td>
-      <td style="padding:12px 16px;border-right:1px solid #eef0f3;" width="33%">
-        <div style="font-size:12px;color:#667085;">Checker</div>
-        <div style="font-size:15px;font-weight:700;color:#067647;">&#10003; Fired</div>
-        <div style="font-size:12px;color:#98a2b3;">run {ch.get('run_id')}</div>
-      </td>
-      <td style="padding:12px 16px;" width="34%">
-        <div style="font-size:12px;color:#667085;">Orchestrator</div>
-        <div style="font-size:15px;font-weight:700;color:#067647;">&#10003; Healthy</div>
-        <div style="font-size:12px;color:#98a2b3;">{park}</div>
-      </td>
-    </tr>
+    <tr>{_results_header()}</tr>
   </table>
 
-  <p style="margin:6px 0;color:#475467;">Versions: <strong>{T.esc(vstr)}</strong> &middot;
-     <a href="{build_url(o.get('run_id'))}" style="color:#0b5cad;">orchestrator run {o.get('run_id')}</a></p>
+  <table data-report-metadata role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0;font-size:12px;color:#667085;">
+    <tr data-metadata="checker">
+      <td style="padding:4px 12px 4px 0;font-weight:700;white-space:nowrap;vertical-align:top;">Checker</td>
+      <td style="padding:4px 0;">&#10003; Fired
+        (<a href="{build_url(ch.get('run_id'))}" style="color:#0b5cad;">run {ch.get('run_id')}</a>)</td>
+    </tr>
+    <tr data-metadata="orchestrator">
+      <td style="padding:4px 12px 4px 0;font-weight:700;white-space:nowrap;vertical-align:top;">Orchestrator</td>
+      <td style="padding:4px 0;">&#10003; Healthy &mdash; {park}
+        (<a href="{build_url(o.get('run_id'))}" style="color:#0b5cad;">run {o.get('run_id')}</a>)</td>
+    </tr>
+    <tr data-metadata="versions">
+      <td style="padding:4px 12px 4px 0;font-weight:700;white-space:nowrap;vertical-align:top;">Versions</td>
+      <td style="padding:4px 0;"><strong>{T.esc(vstr)}</strong></td>
+    </tr>
+  </table>
 
   <p style="margin:16px 0 2px;font-size:15px;font-weight:700;">Broker UI-automation results</p>
   <p style="font-size:12px;color:#667085;">{T.esc(COUNT_NOTE)}</p>

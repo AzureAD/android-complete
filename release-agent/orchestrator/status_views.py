@@ -8,7 +8,7 @@ dict that render.py turns into a view. Behaviour is identical to the in-engine v
 from __future__ import annotations
 
 from typing import Optional
-from orchestrator import schedule
+from orchestrator import evidence_store, schedule
 from orchestrator.revision import revision_checked
 
 
@@ -343,7 +343,8 @@ class StatusViewMixin:
             "scout_pending": scout_pending,
             "pending_human": list(selection.pending_human),
             "gate_decisions": len(self.state.gate_decisions),
-            "pipeline_runs": dict(getattr(self.state, "pipeline_runs", {}) or {}),
+            "pipeline_runs": evidence_store.summarize(
+                self.state.pipeline_runs, self.state.release_id),
             "invariant_violations": [
                 violation.as_dict() for violation in self.invariant_violations()
             ],

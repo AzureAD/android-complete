@@ -2,20 +2,20 @@ RELEASE STATE: DATA OWNERSHIP AND STEP BUILDING BLOCKS
 =====================================================
 Updated: 2026-10-16. Baseline: a1390093aa6ce1b84686906fa68197c651aa31be.
 Documentation only: this is not a replacement state schema or runtime input.
-Scope: central state structure, 11 readiness items, all nine preflight steps
-and all three CCD steps.
+Scope: central state structure, 11 readiness items, all nine preflight steps,
+all three CCD steps, and Phase 2's checker/orchestrator captures.
 Complete Phase 0 register: docs\preflight-contracts.txt. This file keeps the
 shared data model and detailed notification/lockdown lifecycle references.
-Phase 1 register: docs\ccd-contracts.txt. Generic phase replay proposal:
-docs\phase-rehearsal-proposal.txt; seven offline CCD replays are implemented,
-generic interactive/live rehearsal commands are NOT.
+Phase 1 register: docs\ccd-contracts.txt. The separate runner/proposal and its
+generated sessions were rejected and removed; only normal focused tests remain.
+Phase 2 first two source-capture contracts: docs\build-verify-contracts.txt.
 Local correction: readiness decline now rejects unknown IDs atomically (A011).
 Flight reminder correction: strings deadline is explicitly dated, not "today"
 on a catch-up run (A013). Offline delivery/recovery proof is recorded below.
 Lockdown corrections: reject malformed evidence; gather all covered years
 (A014-A015). No new persisted fields or automatic CCD changes.
 Remaining preflight corrections and offline phase proof: A016-A021 in the main
-audit record. Phase 1 corrections are A022-A026. The other 58 workflow-step
+audit record. Phase 1 corrections are A022-A026. The other 56 workflow-step
 data contracts are NOT YET AUDITED.
 Progress/findings/next stage: docs\release-audit.txt.
 
@@ -33,7 +33,8 @@ Map current behavior before proposing a new schema or removing data.
 Default: <repo>\.release-runs\<release>\release-state.json.
 One serialized ReleaseState, schema_version 3, with 25 top-level fields.
 Source: orchestrator\state.py:44-106,249-261.
-It currently combines these LOGICAL responsibilities in one physical file:
+The main file indexes these LOGICAL responsibilities; detailed RC evidence now
+lives in separate immutable files, with compact summaries/references in this file:
 
 Group                 Actual root keys
 Identity/runtime      schema_version, workflow_revision, release_id
@@ -64,6 +65,36 @@ services, parameter models and typed EvidenceUpdate objects are also not stored
 as such; selected VALUES may later be persisted by authorized code.
 
 Other generated storage is separate:
+  evidence\rc<N>\mrwp-ecs-<sha256>.json
+  evidence\rc<N>\mrwp-local-<sha256>.json
+  evidence\rc<N>\auth-ecs-<sha256>.json
+    Frozen detailed source snapshots for the three Phase 2 capture lanes.
+    Versioned envelope: schema_version=1, release_id, rc, lane, snapshot, aliases.
+    SHA-256 is over the full UTF-8 file bytes. Equal repeated MRWP failing-suite
+    structures use exact-JSON aliases into tests.suites, restored losslessly.
+    Incomplete historical observations with invalid/missing RC identity use
+    evidence\unresolved, preserving the original invalid identity, not inventing RC1.
+  pipeline_runs.rcs[].ecs/local/auth in persisted JSON:
+    Small source/build/stage/test-count summary plus
+    evidence_ref={schema_version:1,path:<release-relative>,sha256:<64 hex>}.
+    MRWP stage-name lists become *_count summaries; tests keeps totals/count_basis/
+    build_id/result_entries/category counts, not runs/suites/attempts/recovered titles.
+    Auth keeps build/verdict/capture time, test identity and per-suite rates/counts,
+    not test.evidence.
+    State save owns file serialization; handlers still own logical lane updates.
+    File writes complete atomically before the state reference is published.
+    Existing correct files are never overwritten; corrupt collisions fail the save.
+    Load verifies path containment, SHA/schema/release/RC/lane/summary and restores
+    the original logical snapshots before report, telemetry or Phase 3 can consume.
+    Status JSON uses compact summaries too; full Python handler views stay hydrated.
+    Source fingerprints/HTML/delivery bindings therefore do not change just from
+    storage migration. Main schema stays 3; no new root fields.
+    Legacy inline schema-v3 snapshots migrate at the next normal save, not on read;
+    no capture rerun, provider fetch, decision change or reinterpretation of old counts.
+    Missing/corrupt referenced files explicitly block; no ADO substitution. Discovery
+    keeps the release visible with the evidence error instead of treating it absent.
+    Retain all referenced files and historical/orphaned files; no automatic GC.
+    Copy/back up the entire release directory. A state JSON alone is not a full bundle.
   events.jsonl: best-effort command/interaction/event history.
   _automations.json: automation lifecycle registry, separate audit scope.
   Temporary previews and receipt-file arguments are not themselves top-level

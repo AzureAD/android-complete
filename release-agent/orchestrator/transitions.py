@@ -1429,6 +1429,8 @@ class TransitionKernel:
             return self._reject(
                 f"External gate requires {step.approval_command} and a durable provider receipt.",
                 step.phase_id, step.id)
+        if problem := self._gate_precondition_problem(step):
+            return self._reject(problem, step.phase_id, step.id)
         self.state.gate_decisions.append(
             _gate_dict(
                 GateDecision(
@@ -1456,6 +1458,42 @@ class TransitionKernel:
             step.phase_id,
             step.id,
         )
+
+    def _gate_precondition_problem(self, gate: StepDefinition) -> str:
+        """Recheck source/receipt bindings supplied by prerequisite owners, not quality."""
+        from orchestrator.delivery import fingerprint
+        import re
+
+        pending, visited = list(gate.depends_on), set()
+        while pending:
+            sid = pending.pop()
+            if sid in visited:
+                continue
+            visited.add(sid)
+            definition = self.workflow.step(gate.phase_id, sid)
+            pending.extend(definition.depends_on)
+            conditions = self.state.get_step(gate.phase_id, sid).data.get("gate_preconditions", [])
+            if not isinstance(conditions, list):
+                return f"Gate preconditions for {definition.key} are malformed; recover prerequisite evidence."
+            for condition in conditions:
+                if (not isinstance(condition, dict)
+                        or not isinstance(condition.get("path"), list) or not condition["path"]
+                        or any(type(key) not in (str, int) for key in condition["path"])
+                        or ("hash" in condition and (
+                            not isinstance(condition["hash"], str)
+                            or not re.fullmatch(r"[0-9a-f]{64}", condition["hash"])))
+                        or not ("value" in condition or "hash" in condition)):
+                    return f"Gate preconditions for {definition.key} are malformed; recover prerequisite evidence."
+                value = vars(self.state)
+                try:
+                    for key in condition["path"]:
+                        value = value[key]
+                except (KeyError, IndexError, TypeError):
+                    return f"Gate precondition source missing for {definition.key}; refresh prerequisite evidence."
+                if (fingerprint(value) != condition["hash"] if "hash" in condition
+                        else value != condition["value"]):
+                    return f"Gate precondition source changed for {definition.key}; refresh prerequisite evidence."
+        return ""
 
     def deny_gate(self, comment: str = "") -> TransitionResult:
         if rejected := self._invalid():

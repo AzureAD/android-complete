@@ -39,6 +39,7 @@ def args_for(tmp_path, st):
 
 @pytest.mark.parametrize("path,value", [
     (["pipeline_runs", "checker", "run_id"], "900100"),
+    (["pipeline_runs", "checker", "when"], "different captured metadata"),
     (["pipeline_runs", "orchestrator", "run_id"], "900101"),
     (["versions"], {"msal": "changed"}),
     (["pipeline_runs", "rcs", -1, "auth", "test", "run_id"], "900099"),
@@ -112,7 +113,11 @@ def test_report_prominent_consolidated_recommendation(
         assert "rc-retriggered --release" in action
         assert "broker release process" in action
     if auth_failed or mrwp_failed >= 20:
-        assert "skip --release <id> --phase build_verify --step rc_report" in action
+        assert "approve or deny" in action
+    assert "HUMAN rc_report_gate" in action or recommendation == "WAIT"
+    assert "telemetry verification" in action or recommendation == "WAIT"
+    assert "skip --release" not in action
+    assert "No separate RC approval is needed" not in action
 
 
 def test_report_auth_percentages_two_decimals_without_rounding_gate(ready):
